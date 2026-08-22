@@ -414,6 +414,19 @@ const CORE_ENTRY = [
   // walker cannot reach it. Required at runtime for device-profile
   // emulation (the contracts both SKILL.mds tell the LLM to consume verbatim).
   'scripts/lib/device-presets.mjs',
+  // The consumer-friction doctor CLI (consumer-friction-doctor plan) — the
+  // single door for every known adoption-friction failure class. A new
+  // top-level entry imported by nothing, so it must be declared here; the
+  // walker pulls in its lib/doctor/** closure automatically (doctor.mjs does
+  // NOT itself import lib/disowned-paths.mjs — no probe needs it today).
+  'scripts/doctor.mjs',
+  // `ignoredUntrackedPaths`, extracted out of lib/claudemd/file-scanner.mjs so
+  // the doctor and the context-drift scanner share one oracle instead of two
+  // copies (D4). Declared explicitly (closes R1-H6) rather than relying on
+  // file-scanner.mjs's own transitive closure (via check-context-drift.mjs,
+  // already declared) to carry it — a runtime dependency this load-bearing
+  // should not depend on being reached by coincidence through an unrelated entry.
+  'scripts/lib/disowned-paths.mjs',
 ];
 
 /**

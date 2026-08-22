@@ -123,7 +123,19 @@ export async function listUpstreamIssues(opts = {}) {
     params.push(opts.repoId);
     where.push(`i.repo_id = $${params.length}::uuid`);
   }
-  if (opts.before?.createdAt && opts.before?.id) {
+  // All-or-nothing (round-3 audit M17): a PARTIAL cursor (only one of the two
+  // fields) used to be silently treated as "no cursor at all", handing back
+  // page 1 instead of surfacing that the cursor was malformed — a caller
+  // paging through results could quietly restart from the top, or `--before`
+  // hand-edited/truncated by an operator would decode to something wrong
+  // without any signal.
+  if (opts.before != null) {
+    if (!opts.before.createdAt || !opts.before.id) {
+      return {
+        ok: false, cloud: true, rows: [], nextCursor: null,
+        error: 'before cursor must have both createdAt and id, or be omitted entirely',
+      };
+    }
     params.push(opts.before.createdAt, opts.before.id);
     where.push(`(i.created_at, i.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`);
   }
@@ -159,6 +171,33 @@ export async function listUpstreamIssues(opts = {}) {
   } catch (err) {
     process.stderr.write(`  [upstream] listUpstreamIssues failed: ${err.message}\n`);
     return { ok: false, cloud: true, rows: [], nextCursor: null, error: err.message };
+  }
+}
+
+/**
+ * Every TERMINAL (fixed|wont_fix) row's id/state/disposition — the reconciler's
+ * DB side (consumer-friction-doctor plan §2.4, round-1 audit H2/M13).
+ *
+ * Deliberately unpaged, unlike `listUpstreamIssues`: a reconciliation pass
+ * that silently drops rows past a page limit is the exact "adjacency
+ * incomplete" failure class this repo already treats as a false-green — this
+ * table has ~20 terminal rows today, and even at 10x that a single query is
+ * still cheap. If it ever needs paging, that is a deliberate later change,
+ * not a default inherited from an unrelated list view.
+ *
+ * @returns {Promise<{ok: boolean, cloud: boolean, rows: Array<{issueId: string, state: string, disposition: string|null}>, error?: string}>}
+ */
+export async function listTerminalUpstreamIssues() {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, rows: [] };
+  try {
+    const rows = await many(
+      `SELECT id, state, disposition FROM upstream_issues WHERE state IN ('fixed', 'wont_fix') ORDER BY created_at`,
+      [],
+    );
+    return { ok: true, cloud: true, rows: rows.map((r) => ({ issueId: r.id, state: r.state, disposition: r.disposition })) };
+  } catch (err) {
+    process.stderr.write(`  [upstream] listTerminalUpstreamIssues failed: ${err.message}\n`);
+    return { ok: false, cloud: true, rows: [], error: err.message };
   }
 }
 
@@ -205,9 +244,11 @@ export async function findPriorFixes(affectedPath, excludeId = null) {
  * `conflict: true`, never treated as success (an unverified write is an
  * `/audit-code` HIGH in this repo).
  *
- * @param {{id: string, to: string, note?: string|null, commit?: string|null, actor?: string|null}} args
+ * @param {{id: string, to: string, note?: string|null, commit?: string|null, actor?: string|null, disposition?: string|null}} args
  */
-export async function transitionUpstreamIssue({ id, to, note = null, commit = null, actor = null }) {
+export async function transitionUpstreamIssue({
+  id, to, note = null, commit = null, actor = null, disposition = null,
+}) {
   if (!await isCloudEnabled()) return { ok: true, cloud: false };
 
   try {
@@ -254,6 +295,13 @@ export async function transitionUpstreamIssue({ id, to, note = null, commit = nu
       // The CHECK constraint ties these together: only `fixed` may carry a
       // commit, and it must carry one.
       if (to === 'fixed') patch.fixed_in_commit = commit;
+      // `chk_upstream_terminal_has_disposition` mirrors this: a terminal
+      // state (fixed|wont_fix) must carry a disposition, and a non-terminal
+      // state must not. `upstreamTransition` (the CLI-level caller) already
+      // enforces this and formats the wire string; this is the DB-boundary
+      // half — necessary because a future second writer, an admin console,
+      // or a hand-run UPDATE could otherwise bypass the CLI-level check.
+      if (to === 'fixed' || to === 'wont_fix') patch.disposition = disposition;
 
       const res = await updateWhere(
         'upstream_issues', patch, { id: resolvedId, state: current.state }, { returning: ['id'] },

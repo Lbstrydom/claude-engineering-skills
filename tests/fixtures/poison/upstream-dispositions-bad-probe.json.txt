@@ -1,0 +1,12 @@
+{
+  "_description": "POISON FIXTURE — a ledger entry citing a probe id that does not exist in the doctor registry. Overlaid onto scripts/upstream-dispositions.json by the check-gate-poison-pills harness; must never be read as the real ledger.",
+  "entries": [
+    {
+      "schemaVersion": 1,
+      "issueId": "aaaaaaaa-1111-2222-3333-444444444444",
+      "state": "fixed",
+      "disposition": { "kind": "probe", "value": "nonexistent/probe-id-that-does-not-resolve" },
+      "recordedAt": "2026-08-22T00:00:00Z"
+    }
+  ]
+}

@@ -60,6 +60,7 @@ const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', B = '\x1b[1m', D = '\x1b[2
 const SELF_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 const KNOWN_FLAGS = ['--dry-run', '--ref', '--yes', '--help', '-h'];
+const KNOWN_DOCTOR_FLAGS = ['--ref', '--json', '--gate', '--only', '--help', '-h'];
 
 const KEYS = [
   { name: 'OPENAI_API_KEY', req: true, hint: 'GPT auditing (required)' },
@@ -116,6 +117,160 @@ function parseArgs(argv) {
   }
   args.target = positionals[0] ?? null;
   return args;
+}
+
+/**
+ * Parse `install.mjs doctor [target] [flags]`. Called only after `argv[2] ===
+ * 'doctor'` has already been detected by the caller — scanning starts at
+ * index 3 so the literal subcommand word is never mistaken for a flag or the
+ * target positional.
+ */
+export function parseDoctorArgs(argv) {
+  const args = { target: null, ref: null, json: false, gate: false, only: null, help: false };
+  const positionals = [];
+  for (let i = 3; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--help' || a === '-h') { args.help = true; continue; }
+    if (a === '--json') { args.json = true; continue; }
+    if (a === '--gate') { args.gate = true; continue; }
+    if (a === '--ref') {
+      const v = argv[++i];
+      if (!v || v.startsWith('-')) throw new Error('--ref requires a value');
+      args.ref = v;
+      continue;
+    }
+    if (a === '--only') {
+      const v = argv[++i];
+      if (!v || v.startsWith('-')) throw new Error('--only requires a value');
+      args.only = v;
+      continue;
+    }
+    if (a.startsWith('-')) {
+      throw new Error(
+        `unknown flag "${a}". Accepted: ${KNOWN_DOCTOR_FLAGS.join(', ')}. `
+        + 'Refusing to run rather than ignore it.',
+      );
+    }
+    positionals.push(a);
+  }
+  if (positionals.length > 1) {
+    throw new Error(`expected at most one target directory, got ${positionals.length}: ${positionals.join(', ')}`);
+  }
+  args.target = positionals[0] ?? null;
+  return args;
+}
+
+function doctorUsage() {
+  console.log(`${B}claude-engineering-skills doctor${X} — diagnose consumer-adoption friction
+
+${B}Usage (RECOMMENDED — pinned to an immutable commit)${X}
+  npx github:Lbstrydom/claude-engineering-skills#<sha> doctor [target-repo] [options]
+
+${B}Usage (quick — resolves the default branch tip; less strict)${X}
+  npx github:Lbstrydom/claude-engineering-skills doctor [target-repo] [options]
+  node install.mjs doctor [target-repo] [options]
+
+Runs every probe this bundle knows about (worktree hydration, package-manager
+identity, sync isolation, DB/API-key setup, browser prerequisites, ...)
+against [target-repo] (default: the current directory) and prints a fix for
+each finding. Advisory by default (exit 0); pass --gate for a CI-style exit
+code.
+
+${B}Two-stage provenance — why the pinned form is the default recommendation${X}
+(docs/runbooks/consumer-adoption.md §Diagnostics): stage 0 — fetching THIS
+installer via \`npx github:...\` follows npx's own spec resolution, and an
+UNPINNED spec (no \`#<sha>\`) resolves the default branch TIP at request time —
+mutable, not integrity-verified; stage 1 — install.mjs then resolves --ref (or
+the default branch) to an immutable SHA before acquiring the bundle doctor.mjs
+runs from, which is reproducible regardless. \`--ref\` alone does NOT cover
+stage 0 — it is parsed only after stage 0's code is already fetched and
+running. The \`#<sha>\` form above is an ordinary npx capability that pins BOTH
+stages at once; prefer it whenever you can supply a known-good commit.
+
+\`npx\` requires Node.js + npm on YOUR machine (a stage-0 bootstrap prerequisite,
+independent of whatever package manager [target-repo] itself uses).
+
+${B}Options${X}
+  --ref <branch|tag|sha>   Bundle version to diagnose FROM (default: the remote's default branch)
+  --json                   Machine-readable output
+  --gate                   Non-zero exit iff a repo-state probe failed
+  --only <id,id,...>       Narrow the printed report (never narrows --gate's exit-code set)
+`);
+}
+
+/**
+ * The `install.mjs doctor <target>` bootstrap (consumer-friction-doctor plan
+ * §2.3a/§2.6). Acquires the bundle via the SAME SHA-pinned `resolveBundle`
+ * stage 1 uses for a real install — never a second acquisition mechanism —
+ * then invokes the ACQUIRED copy's `scripts/doctor.mjs` with an EXPLICIT
+ * `--consumer-root <target>`. `doctor.mjs` never guesses `subjectRoot` on
+ * this path; guessing here is exactly the class of target-root confusion
+ * R1-H1 exists to close (the npx bootstrap runs from a transient checkout
+ * that is NOT the repo being diagnosed).
+ *
+ * @returns {Promise<number>} the doctor's own exit code, passed through
+ */
+export async function runDoctor({
+  pkg, target, ref = null, json = false, gate = false, only = null,
+  // Seams, injected ONLY by the hermetic test (mirrors bootstrap()'s own
+  // installDepsFn/onStep split). `resolveRefFn`/`acquireBundleFn` need a real
+  // git remote and `installDepsFn` needs a registry, so the offline test
+  // substitutes all three; `spawnDoctorFn` substitutes the actual doctor run.
+  // What is NOT stubbed — and is exactly the thing R1-H1 cares about — is the
+  // ARGV this function builds: the real code path from `target` to
+  // `--consumer-root <target>` always runs, so a test can assert that flag
+  // carries the fixture's target, never the (here, entirely fake) bundleRoot.
+  // None of the four is reachable from the CLI or the environment.
+  resolveRefFn = resolveRef,
+  acquireBundleFn = acquireBundle,
+  installDepsFn = installDeps,
+  spawnDoctorFn = (execPath, argv, opts) => execFileSync(execPath, argv, opts),
+}) {
+  // In --json mode stdout is reserved for doctor.mjs's OWN single JSON
+  // payload (inherited straight through below) — this wrapper's progress
+  // lines go to stderr instead, or they would interleave with that payload
+  // and produce unparseable output for a machine caller.
+  const say = json ? (msg) => process.stderr.write(`${msg}\n`) : (msg) => console.log(msg);
+
+  const sourceUrl = bundleSource(pkg);
+  const resolved = resolveRefFn(sourceUrl, ref);
+  say(`  Source: ${sourceUrl}`);
+  say(`  Version: ${resolved.label} @ ${resolved.sha.slice(0, 12)}`);
+
+  const { withFileLock } = await import('./scripts/lib/file-lock.mjs').catch(() => ({ withFileLock: null }));
+  const lock = lockPath(cacheRoot());
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+
+  const doWork = () => {
+    const bundleRoot = acquireBundleFn(sourceUrl, resolved.sha);
+    say(`  ${G}✓${X} bundle ready at ${bundleRoot}`);
+
+    // doctor.mjs's own transitive deps (e.g. `pg`, for the setup/audit-supabase
+    // probe) must be present in the acquired checkout — same requirement a
+    // real install has, and the same step bootstrap() already runs.
+    installDepsFn(bundleRoot);
+    say(`  ${G}✓${X} dependencies installed`);
+
+    const doctorArgv = [
+      path.join(bundleRoot, 'scripts', 'doctor.mjs'),
+      '--consumer-root', target,
+      '--bundle-sha', resolved.sha,
+      ...(json ? ['--json'] : []),
+      ...(gate ? ['--gate'] : []),
+      ...(only ? ['--only', only] : []),
+    ];
+    try {
+      spawnDoctorFn(process.execPath, doctorArgv, { cwd: bundleRoot, stdio: 'inherit' });
+      return 0;
+    } catch (err) {
+      // execFileSync throws on a non-zero child exit; `err.status` carries the
+      // real code (--gate's 1, a usage error's 2) — pass it through rather than
+      // collapsing every non-zero result to a generic 1.
+      return typeof err.status === 'number' ? err.status : 1;
+    }
+  };
+
+  return withFileLock ? withFileLock(lock, { maxWaitMs: 120_000 }, doWork) : doWork();
 }
 
 /**
@@ -401,6 +556,47 @@ export async function bootstrap({
 }
 
 async function main() {
+  // Round-4 audit M3/M12: install.mjs is a top-level CLI entry point and the
+  // repo-wide CLI_SMOKE_SET relocation-smoke contract requires this handler
+  // on every one — even though install.mjs itself is never a MEMBER of
+  // CLI_SMOKE_SET (it is the acquisition tool, not bundle content that gets
+  // relocated into a consumer's scripts/.claude-skills/). Exits before ANY
+  // network access, bundle acquisition, or install side effect — this only
+  // proves install.mjs's OWN imports/paths survived wherever it is running
+  // from, not the consumer-relocation property CLI_SMOKE_SET members prove.
+  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); return 0; }
+
+  // Subcommand dispatch happens BEFORE parseArgs — that parser has no concept
+  // of a subcommand and would otherwise consume the literal word "doctor" as
+  // the install target positional.
+  if (process.argv[2] === 'doctor') {
+    let dargs;
+    try {
+      dargs = parseDoctorArgs(process.argv);
+    } catch (err) {
+      console.error(`${R}Error${X}: ${err.message}`);
+      return 1;
+    }
+    if (dargs.help) { doctorUsage(); return 0; }
+
+    const target = path.resolve(dargs.target || process.cwd());
+    if (!fs.existsSync(target)) {
+      console.error(`${R}✗${X} Directory not found: ${target}`);
+      return 1;
+    }
+    // Same stdout-is-reserved-for-JSON reasoning as runDoctor's `say` — this
+    // banner is progress narration, not the payload.
+    const bannerOut = dargs.json ? process.stderr : process.stdout;
+    bannerOut.write(`\n${B}══════════════════════════════════════════════════
+  Claude Engineering Skills — Doctor
+══════════════════════════════════════════════════${X}\n\n  Target: ${B}${target}${X}\n\n`);
+
+    const pkg = JSON.parse(fs.readFileSync(path.join(SELF_DIR, 'package.json'), 'utf-8'));
+    return runDoctor({
+      pkg, target, ref: dargs.ref, json: dargs.json, gate: dargs.gate, only: dargs.only,
+    });
+  }
+
   let args;
   try {
     args = parseArgs(process.argv);

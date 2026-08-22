@@ -134,6 +134,21 @@ const GRANDFATHERED_EXEMPTIONS = [
   // relocated-copy invocation) pass with the file present.
   'node scripts/check-stale-skill-surface.mjs --gate --source-surfaces',
   'npm-args:gate', 'on-conflict:check', 'plans:lint', 'plans:status', 'test',
+  // NEW gate, deliberately exempted (2026-08-23, consumer-friction-doctor round-6
+  // audit H7): cross-checks the upstream disposition ledger against the LIVE
+  // upstream_issues terminal-row inventory. Same DB-fixture limitation as
+  // efficacy:check/db:check-rls:gate above — the poison-pill tmpdir isolation has
+  // no AUDIT_DB_URL, so a control run and a tampered-ledger poison run would
+  // identically no-op there (upstreamReconcile returns {ok:true, reconciliation:null}
+  // on cloud-off), proving nothing about the gate's real divergence-detection logic.
+  // A pill would need a seeded, disposable Postgres instance inside the sandbox,
+  // which check-gate-poison-pills.mjs does not provide. Negative evidence instead:
+  // tests/upstream-reconcile-gate.test.mjs drives upstreamCmd directly with an
+  // injected listTerminalUpstreamIssues (no real DB needed) and asserts --gate
+  // throws on all four divergence types plus the migration catch-all sentinel, does
+  // NOT throw on a clean match or without --gate, and (round-6 H6) visibly warns
+  // rather than reading as clean when cloud is off under --gate.
+  'node scripts/cross-skill.mjs upstream reconcile --gate --worksheet',
 ];
 
 test('the exemption list may shrink, never grow — a new gate must be pilled', () => {
@@ -408,6 +423,11 @@ const MANDATORY = {
   // variant is the silent one: the SKILL.md is copied into the worktree while
   // the gitignored tooling tree is not, so the skill reads as fully installed.
   'worktree:preflight:gate': ['worktree-preflight-rejects-skill-without-marker'],
+  // Added with the gate itself (consumer-friction-doctor plan §2.4). Post-
+  // 2026-07-31, so a pill is mandatory. Closes the ratchet's own silent-drift
+  // hole: a ledger entry citing a probe id that has since been renamed or
+  // retired parses as valid JSON and would otherwise report clean.
+  'upstream:coverage:gate': ['upstream-coverage-gate-detects-an-unresolvable-probe-disposition'],
 };
 
 test('every gate the plan made mandatory is contracted — not quietly exempted', () => {

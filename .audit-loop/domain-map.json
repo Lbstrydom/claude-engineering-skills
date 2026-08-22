@@ -30,6 +30,10 @@
       "domain": "install"
     },
     {
+      "pattern": "scripts/lib/doctor/**",
+      "domain": "shared-lib"
+    },
+    {
       "pattern": "scripts/lib/cross-skill/**",
       "domain": "cross-skill-bridge"
     },
@@ -526,7 +530,9 @@
     "shared-lib": [
       "claude-hooks",
       "findings",
-      "plan"
+      "plan",
+      "install",
+      "scripts"
     ],
     "ship": [
       "shared-lib",

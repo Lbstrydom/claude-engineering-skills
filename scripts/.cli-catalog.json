@@ -271,6 +271,14 @@
       "description": "Cluster accumulated tech-debt into ranked refactor candidates (local-only, no LLM call).",
       "category": "diagnostic"
     },
+    "doctor": {
+      "description": "The single consumer-side door for every known adoption-friction failure class — worktree hydration, package-manager identity, sync isolation (all gates), audit-loop/persona-test setup, browser prerequisites. Advisory by default (exit 0); pass --gate for a CI-style exit code. Each finding carries a fix.",
+      "category": "diagnostic"
+    },
+    "doctor:json": {
+      "description": "Doctor, machine-readable output.",
+      "category": "diagnostic"
+    },
     "docs:architecture-intent:check": {
       "description": "Gate on domain-roster drift: fails when .audit-loop/domain-map.json declares a domain docs/architecture-intent.md never documents. The reverse is never flagged — the doc may keep retired domains as rationale.",
       "category": "diagnostic"
@@ -592,8 +600,24 @@
       "description": "Gated DB-integration tests (repo-identity stability + fragmentation guardrail). Requires a disposable AUDIT_DB_TEST_URL; skipped when unset. Never touches the live store.",
       "category": "test"
     },
+    "upstream:coverage": {
+      "description": "Validate scripts/upstream-dispositions.json (the closure-disposition ledger for terminal upstream issues) against the doctor registry and the tracked-test glob: every probe: id resolves, every test: path is tracked and matches tests/**/*.test.mjs, every exempt: reason is non-empty, no duplicate issueId. Human report.",
+      "category": "sync"
+    },
+    "upstream:coverage:gate": {
+      "description": "Same as upstream:coverage, but exits non-zero on drift. Runs as part of `npm run check` — a closed upstream report with neither a resolvable probe id, a real test file, nor a written exemption fails the push.",
+      "category": "sync"
+    },
     "upstream:issues": {
       "description": "Triage worksheet for upstream bug reports filed from consumer repos (bundle staleness + prior fixes).",
+      "category": "sync"
+    },
+    "upstream:reconcile": {
+      "description": "Cross-checks the live upstream_issues terminal rows against the local scripts/upstream-dispositions.json ledger, both directions, and flags any row still carrying the generation-time catch-all sentinel. Advisory, cloud-only — the direction upstream:coverage:gate structurally cannot see.",
+      "category": "sync"
+    },
+    "upstream:reconcile:gate": {
+      "description": "Same reconciliation as upstream:reconcile, but exits non-zero on any missing-from-ledger, ledger-only, state-mismatch, disposition-mismatch, or unresolved catch-all-sentinel row (round-6 audit H7). Runs as part of `npm run check` — no-ops cleanly when cloud is off. Together with upstream:coverage:gate this closes the gap coverage:gate structurally cannot see: coverage:gate validates the LEDGER's internal consistency (credential-free); this validates the ledger against the LIVE terminal-issue inventory.",
       "category": "sync"
     },
     "update-auditloop": {

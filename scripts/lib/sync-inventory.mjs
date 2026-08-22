@@ -105,6 +105,12 @@ const CORE_ENTRY = [
   // list is sync-to-repos.mjs; keep in lock-step. Walker pulls in
   // lib/commit-trailers.mjs + sensitive-paths closure.
   'scripts/ship-commit.mjs',
+  // Consumer-friction doctor CLI. Authoritative list is sync-to-repos.mjs;
+  // keep in lock-step. Walker pulls in lib/doctor/** automatically.
+  'scripts/doctor.mjs',
+  // ignoredUntrackedPaths oracle, shared by the doctor and the context-drift
+  // scanner. Authoritative list is sync-to-repos.mjs; keep in lock-step.
+  'scripts/lib/disowned-paths.mjs',
 ];
 
 // CORE_NON_IMPORTABLE lists modules that are documented runtime injection

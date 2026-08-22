@@ -99,6 +99,15 @@ test('every CLI_SMOKE_SET script runs --selfcheck-relocation → exit 0, prints 
   }
 });
 
+test('install.mjs --selfcheck-relocation → exit 0, prints OK, no side effects (round-4 audit M3/M12)', () => {
+  // install.mjs is deliberately NOT a CLI_SMOKE_SET member (it is the
+  // acquisition tool, never itself relocated into a consumer's
+  // scripts/.claude-skills/) — but the repo-wide top-level-CLI handler
+  // requirement still applies to it, so it gets its own standalone check
+  // rather than joining the CLI_SMOKE_SET loop above.
+  assertSelfcheckOk(path.join(REPO_ROOT, 'install.mjs'));
+});
+
 test('negative control: assertSelfcheckOk rejects a missing/broken handler (deterministic, no hang)', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'selfcheck-neg-'));
   try {

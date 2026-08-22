@@ -44,7 +44,11 @@ import { assertKnownFlags, ArgvError } from './cli-io.mjs';
 // `scripts/check-isolation-inventory.mjs` instead — that script is
 // source-only and never shipped to consumers.
 
-const ALL_GATES = ['1', '2A', '2B', '2C', '3', '4', '5', '6', '7', '8'];
+// Exported (consumer-friction-doctor plan §2.3a) so the doctor's registry
+// filters its own exclusion list (gate1 is migration-only, not a health
+// check) from this module's own constant rather than hand-listing gate ids a
+// second time — one more single-oracle application.
+export const ALL_GATES = ['1', '2A', '2B', '2C', '3', '4', '5', '6', '7', '8'];
 // Backlog-triage fix — every flag this CLI's own parseArgs recognizes, fed to
 // the shared assertKnownFlags oracle (the same one reconcile-repo-identity.mjs
 // and friends use) so an unrecognized flag alongside a recognized one is a
@@ -69,6 +73,7 @@ const CLI_SMOKE_SET = [
                                  // see the trap this comment block warns about);
                                  // handler added 2026-08-16 (Gemini final review)
 
+  'doctor.mjs', // consumer-friction doctor — the single door; must survive the scripts/.claude-skills relocation, declared in sync-to-repos.mjs
   'setup-postgres.mjs', // layout-aware repo-root resolution — must survive the scripts/.claude-skills relocation
   'efficacy-lints-check.mjs', // GREEN≠REALIZED Cluster A CLI — relocation-sensitive lib import
   'tiered-shadow-report.mjs', // tiered-recall Close-out shadow-validation report — reads the consumer's own shadow log
@@ -699,7 +704,11 @@ function gate1(consumerRoot) {
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
-function runGates(opts) {
+// Exported (consumer-friction-doctor plan §2.3a) — already the right adapter
+// shape (owns manifest loading, returns a preflight sentinel on an
+// unreadable/malformed manifest instead of throwing, per-gate try/catch), and
+// was previously reachable only via the test-only `_internals` export below.
+export function runGates(opts) {
   const { consumerRoot, gates } = opts;
   const manifestRes = loadConsumerManifest(consumerRoot);
   const results = [];

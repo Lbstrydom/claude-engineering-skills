@@ -7286,6 +7286,13 @@
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 15
+        },
+        {
+          "column_name": "disposition",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 16
         }
       ]
     }
@@ -10374,7 +10381,7 @@
       "table_name": "symbol_refresh_coverage",
       "constraint_name": "symbol_refresh_coverage_reason_check",
       "constraint_type": "CHECK",
-      "definition": "CHECK (((reason IS NULL) OR (reason = ANY (ARRAY['extraction_failed'::text, 'extraction_timeout'::text, 'not_measured'::text, 'stale_measurement'::text, 'empty_universe'::text, 'zero_cruised'::text, 'zero_attributed'::text, 'budget_exceeded'::text, 'below_floor'::text, 'below_attribution_floor'::text]))))"
+      "definition": "CHECK (((reason IS NULL) OR (reason = ANY (ARRAY['extraction_failed'::text, 'extraction_timeout'::text, 'not_measured'::text, 'stale_measurement'::text, 'empty_universe'::text, 'zero_cruised'::text, 'zero_attributed'::text, 'budget_exceeded'::text, 'below_floor'::text, 'below_attribution_floor'::text, 'malformed_measurement'::text]))))"
     },
     {
       "table_name": "symbol_refresh_coverage",
@@ -10420,6 +10427,12 @@
     },
     {
       "table_name": "upstream_issues",
+      "constraint_name": "chk_upstream_disposition_shape",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((disposition IS NULL) OR (disposition ~ '^(probe|test|exempt):.*\\S.*$'::text)))"
+    },
+    {
+      "table_name": "upstream_issues",
       "constraint_name": "chk_upstream_fixed_commit_shape",
       "constraint_type": "CHECK",
       "definition": "CHECK (((fixed_in_commit IS NULL) OR (fixed_in_commit ~ '^[0-9a-f]{7,40}$'::text)))"
@@ -10429,6 +10442,12 @@
       "constraint_name": "chk_upstream_fixed_has_commit",
       "constraint_type": "CHECK",
       "definition": "CHECK (((state = 'fixed'::text) = (fixed_in_commit IS NOT NULL)))"
+    },
+    {
+      "table_name": "upstream_issues",
+      "constraint_name": "chk_upstream_terminal_has_disposition",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((state = ANY (ARRAY['fixed'::text, 'wont_fix'::text])) = (disposition IS NOT NULL)))"
     },
     {
       "table_name": "upstream_issues",

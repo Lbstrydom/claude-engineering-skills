@@ -1,6 +1,84 @@
 # Project Status Log
 
-## 2026-08-20 — Backlog triage: unlocked-fixes + unremediated-acceptances
+## 2026-08-23 — consumer-friction-doctor plan: full autonomous /cycle implementation
+
+### Consumer Verification (previous ship)
+- **Commit**: `1deb2de938bfe1214461a3c3bc0454e8a115a92c`
+- **Retrieval**: producer-side transfer verified by `git ls-remote origin refs/heads/main` matching local HEAD; `npm run check` on the pushed tree passed (13392 tests, 0 fail).
+- **Result**: `verified` (transfer + pushed-tree battery); `unverified` — concrete blocked prerequisite: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` needs to run inside an actual consumer checkout, and no consumer working tree was opened from that session.
+
+### Changes
+
+Implemented `docs/plans/consumer-friction-doctor.md` end-to-end via
+`/cycle --autonomous` (degenerate single-cluster path — the plan has no §11
+clustering block). New doctor-probe + upstream-disposition-reconciliation
+tooling: a disposition ledger (`scripts/upstream-dispositions.json`) tracking
+every terminal upstream issue's resolution (`probe:`/`test:`/`exempt:`), a
+coverage gate (`upstream:coverage:gate`, credential-free, ledger-internal)
+and a reconciliation gate (`upstream:reconcile:gate`, cross-checks the ledger
+against the live `upstream_issues` DB table), both wired into `npm run check`.
+Three migrations landed live (`upstream_disposition`,
+`upstream_disposition_required`, `upstream_disposition_shape_check` +
+`_reject_blank`). Doctor probe registry widened (`resolveBundleGithubSpec`
+derives GitHub refs from the bundle's own `package.json` instead of hardcoding
+them), backfill-generator hardened (per-row `WHERE state = ...` guard, `--out`
+path containment), and the single-writer poison-pill census widened to also
+catch a bare `require(...).transitionUpstreamIssue(...)` call.
+
+Full audit-code loop: **6 rounds** (max cap reached; quality threshold not
+fully met by round 6, so this is the final round per the skill's "present +
+mandatory Step 7" rule, not a converged stop). 136 findings raised across all
+rounds; round 6 alone: 14 findings, 7 accepted/fixed (including the H7
+quickfix — wiring `upstream:reconcile:gate` into `check`, previously built but
+never invoked by anything — and the H6 compromise: `--gate` now visibly warns
+on stderr when cloud is off instead of silently reading as a clean
+reconciliation), 7 dismissed by GPT deliberation as re-raises of
+already-settled design questions (migration immutability, poison-pill census
+scope, AGENTS.md headroom, `--report-path` duplication, selfcheck-before-flags
+ordering). **Mandatory Step 7 Gemini final review: APPROVE**, 0 new findings,
+0 wrongly-dismissed, 0 over-engineering flags.
+
+Fixed one pre-existing gate-honesty ratchet failure surfaced by the new
+`upstream:reconcile:gate` exemption: `tests/gate-poison-pills.test.mjs`'s
+`GRANDFATHERED_EXEMPTIONS` list requires every post-2026-07-31 exemption to be
+added there deliberately (not just to `_exemptions.json`) — added, with the
+same DB-fixture-limitation reasoning used for `efficacy:check`/
+`db:check-rls:gate`.
+
+### Files Affected
+- `scripts/lib/upstream/*.mjs`, `scripts/lib/doctor/*.mjs`, `scripts/lib/store/upstream-issues.mjs`, `scripts/lib/cross-skill/commands/quality.mjs` — core doctor/reconciliation logic
+- `scripts/check-upstream-probe-coverage.mjs`, `scripts/backfill-upstream-dispositions.mjs`, `scripts/doctor.mjs`, `install.mjs` — CLI entry points
+- `supabase/migrations/2026082*` (4 files) — disposition ledger schema
+- `scripts/upstream-dispositions.json` — the committed disposition ledger (19 entries)
+- `package.json`, `scripts/.cli-catalog.json`, `scripts/gate-contracts/_exemptions.json`, `tests/gate-poison-pills.test.mjs` — new `upstream:reconcile:gate` wired into `npm run check`
+- ~25 new/modified test files covering the above
+
+### Decisions Made
+- Ledger-before-DB write ordering stays non-atomic (deliberate, adjudicated
+  round 1 and re-affirmed round 6) — the accepted crash-window gap is exactly
+  what `upstream reconcile` exists to surface, and it is now a mandatory
+  `--gate` step rather than a manual-only worksheet command.
+- Applied, committed migrations are frozen historical artifacts — a generator
+  bug found round 5 was fixed in the generator (applies to future runs only),
+  not by rewriting the already-applied migration file.
+
+### Pre-existing backlog observed (non-blocking, not acted on this ship)
+- `list-unlocked-fixes`: 166 code-mode findings lack a regression-test lock
+  (0 aged out). Pre-existing, unrelated to this plan; backend/CLI-only repo,
+  so the remedy is `lock-with-test`, not `/ux-lock`.
+- `list-unremediated-acceptances`: 171 total (103 code / 68 plan), 16 aged
+  out past the 30-day ceiling. Pre-existing.
+- 1 open upstream consumer report (wine-cellar-app, HIGH, "admissionPreflight
+  rejects double-extension files") — reports a PR already opened against
+  `origin/main` by the filer; unrelated to this plan, marked `stale` (70
+  commits behind HEAD) by the freshness check. Left for separate triage.
+
+### Next Steps
+- Triage the pre-existing 166/171-item unlocked-fixes/unremediated-acceptances
+  backlog and the 1 open upstream report in a dedicated session.
+- No open blockers from this plan's own implementation.
+
+
 
 ### Plan-mode write-off (documentation-only, no code risk)
 

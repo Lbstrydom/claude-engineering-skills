@@ -20,6 +20,61 @@ present on a fresh clone until you re-sync.
 
 ---
 
+## Diagnostics — the doctor
+
+Hitting friction? Before reaching for any of the scattered checks below
+(sync isolation, worktree preflight, setup, azure/runner doctors — each is
+still documented in its own section further down), run the **one** command
+that covers every known adoption-friction class:
+
+```bash
+# RECOMMENDED — pinned to an immutable commit, once you know a good one
+npx github:Lbstrydom/claude-engineering-skills#<sha> doctor [target-repo]
+
+# once hydrated — inside the consumer repo
+node scripts/.claude-skills/doctor.mjs
+
+# quick, from anywhere, no hydration needed — resolves the default branch
+# TIP at request time; prefer the pinned form above once you can
+npx github:Lbstrydom/claude-engineering-skills doctor [target-repo]
+```
+
+`npx` is a stage-0 bootstrap prerequisite (Node.js + npm on YOUR machine), independent of
+whatever package manager the target repo itself uses (round-3 audit M2/M12) — it runs
+before any target-repo package manager can even be detected. The two `node scripts/…`
+forms above use whichever manager already hydrated `scripts/.claude-skills/`.
+
+Every finding carries a `Fix:` line. Advisory by default (exit 0 — findings
+are payload, not failure); pass `--gate` for a CI-style exit code, `--json`
+for machine-readable output, `--only <id,id,...>` to narrow what's printed
+(never what `--gate` checks), `--consumer-root <path>` to diagnose a repo
+other than the one the code runs in (`install.mjs doctor <target>` always
+passes this explicitly).
+
+**Two acquisition stages, two different trust properties — this is why the
+pinned form is the recommended default, not just a "security-sensitive"
+footnote.** `npx github:...` fetches this installer via npx's own spec
+resolution (stage 0). An UNPINNED spec (no `#<sha>`) resolves the default
+branch's TIP at request time — mutable, not integrity-verified —
+and `install.mjs`'s `--ref` flag cannot protect this stage at all: it is
+parsed only after the code stage 0 already fetched is running. `--ref` (or
+the default branch) IS then resolved to an immutable SHA before
+`install.mjs` acquires the bundle `doctor.mjs` runs from (stage 1) — that
+part is reproducible regardless. The `#<sha>` form pins BOTH stages at once,
+using nothing but an ordinary npx capability:
+`npx github:Lbstrydom/claude-engineering-skills#<sha> doctor [target-repo]`.
+Prefer it whenever you can supply a known-good commit; reach for the
+unpinned form only for a quick, low-stakes first look.
+
+**Closing an upstream report** (`cross-skill.mjs upstream fix|wont-fix`)
+requires `--disposition probe:<doctor-probe-id>|test:<tracked-test-path>|exempt:<reason>`
+— naming the doctor probe that now detects the failure class, the
+regression test that closes it, or a written reason neither applies.
+Ratcheted in `npm run check` by `upstream:coverage:gate`; see
+[Reporting an upstream bug](#reporting-an-upstream-bug--file-it-dont-paste-it) below.
+
+---
+
 ## Runtime prerequisites — and non-Node consumers
 
 **The consumer repo does NOT have to be a Node repo.** The bundle ships in two

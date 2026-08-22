@@ -99,7 +99,7 @@ export async function qualityCmd(ctx) {
  */
 export async function upstreamCmd(ctx) {
   const sub = ctx.verb;
-  const VERBS = ['report', 'list', 'ack', 'fix', 'wont-fix', 'drain'];
+  const VERBS = ['report', 'list', 'ack', 'fix', 'wont-fix', 'drain', 'reconcile'];
   if (!sub || !VERBS.includes(sub)) {
     throw new CommandError('BAD_INPUT', `usage: upstream <${VERBS.join('|')}> [flags]`);
   }
@@ -162,12 +162,75 @@ export async function upstreamCmd(ctx) {
       return { ...res, drain };
     }
 
+    if (sub === 'reconcile') {
+      const res = await m.upstreamReconcile({
+        repoRoot,
+        listTerminalFn: () => ctx.deps.listTerminalUpstreamIssues(),
+      });
+      // Round-3 audit M5: `res.reconciliation` is null in TWO distinct cases —
+      // cloud genuinely off (benign, expected) and a real DB failure
+      // (res.ok === false, res.error set). Collapsing both into the same
+      // "nothing to reconcile against" message hid an actual failure behind
+      // wording that reads as a normal, healthy no-op.
+      if (!res.reconciliation && res.ok === false) {
+        throw new CommandError('RECONCILE_FAILED', res.error || 'listTerminalUpstreamIssues failed', res);
+      }
+      // Round-3 audit H5 compromise (widened round-4, audit H3): --gate must
+      // block on EVERY divergence direction the reconciler can report, not
+      // just the migration catch-all sentinel — a terminal DB row missing
+      // from the ledger (the original crash-window gap), a ledger entry
+      // whose issue is absent or no longer terminal in the DB, a state
+      // disagreement, or a disposition VALUE disagreement are all evidence
+      // the backfill/CLI write path silently missed or diverged from what
+      // was intended (round-4 H3: "a raw migration does not itself prove
+      // every intended row was updated" — this is the blocking check that
+      // proves it after the fact).
+      if (ctx.hasFlag('gate')) {
+        if (res.reconciliation) {
+          const r = res.reconciliation;
+          const problems = [];
+          if (r.missingFromLedger.length) problems.push(`${r.missingFromLedger.length} terminal db row(s) with no ledger entry: ${r.missingFromLedger.join(', ')}`);
+          if (r.ledgerOnly.length) problems.push(`${r.ledgerOnly.length} ledger entr(y/ies) with no matching terminal db row: ${r.ledgerOnly.join(', ')}`);
+          if (r.stateMismatch.length) problems.push(`${r.stateMismatch.length} state mismatch(es): ${r.stateMismatch.join('; ')}`);
+          if (r.dispositionMismatch.length) problems.push(`${r.dispositionMismatch.length} disposition mismatch(es): ${r.dispositionMismatch.join('; ')}`);
+          if (r.needsReview.length) problems.push(`${r.needsReview.length} row(s) still carry the migration catch-all sentinel: ${r.needsReview.join(', ')}`);
+          if (problems.length > 0) {
+            throw new CommandError('RECONCILE_NEEDS_REVIEW', problems.join(' | '), r);
+          }
+        } else {
+          // Round-6 audit H6 compromise: cloud-off must never LOOK like a
+          // clean reconciliation just because --gate found nothing to
+          // object to — sandbox-honesty (AGENTS.md): a gate that can exit 0
+          // having checked nothing must say so audibly, every time, not
+          // only when the caller happens to also pass --worksheet.
+          process.stderr.write('  [upstream reconcile --gate] cloud is off — nothing was actually checked; this is NOT a verified-clean result.\n');
+        }
+      }
+      if (ctx.hasFlag('worksheet')) {
+        if (!res.reconciliation) {
+          process.stdout.write('cloud off — nothing to reconcile against\n');
+        } else {
+          process.stdout.write(`${m.renderReconciliationReport(res.reconciliation)}\n`);
+        }
+        return undefined;
+      }
+      return { ...res, drain };
+    }
+
     if (sub === 'list') {
       const state = ctx.flag('state') || 'open';
       const beforeFlag = ctx.flag('before');
-      const before = beforeFlag
-        ? JSON.parse(Buffer.from(beforeFlag, 'base64url').toString('utf-8'))
-        : null;
+      // Round-4 audit M13: a malformed base64url or invalid JSON in --before
+      // used to escape as an unhandled exception (a stack trace) rather than
+      // the CLI's own standard input-validation error shape.
+      let before = null;
+      if (beforeFlag) {
+        try {
+          before = JSON.parse(Buffer.from(beforeFlag, 'base64url').toString('utf-8'));
+        } catch (err) {
+          throw new CommandError('BAD_INPUT', `--before is not a valid cursor: ${err.message}`);
+        }
+      }
       const res = await m.upstreamList({
         repoRoot, state, before,
         limit: ctx.flag('limit') ? Number(ctx.flag('limit')) : undefined,
@@ -175,6 +238,12 @@ export async function upstreamCmd(ctx) {
         listFn: (o) => ctx.deps.listUpstreamIssues(o),
         priorFixesFn: (p, id) => ctx.deps.findPriorFixes(p, id),
       });
+      // Round-3 audit M17's companion: a malformed --before now returns
+      // ok:false (partial cursor) rather than silently resetting to page 1 —
+      // this must actually surface as a failure, not a quietly-empty list.
+      if (res.ok === false) {
+        throw new CommandError('LIST_FAILED', res.error || 'listUpstreamIssues failed', res);
+      }
       if (ctx.hasFlag('worksheet')) {
         process.stdout.write(`${m.renderWorksheet(res.items || [], { state })}\n`);
         return undefined;
@@ -195,6 +264,12 @@ export async function upstreamCmd(ctx) {
       note: ctx.flag('note'),
       commit: ctx.flag('commit'),
       actor: ctx.flag('actor') || null,
+      // Required for fix/wont-fix (consumer-friction-doctor plan §2.4) —
+      // `upstreamTransition` itself does the validation; this is the CLI
+      // dispatch layer that must parse and forward the flag, traced
+      // separately because requiring it at the service layer alone does
+      // nothing unless something upstream of it actually reads argv.
+      disposition: ctx.flag('disposition'),
       transitionFn: (a) => ctx.deps.transitionUpstreamIssue(a),
     });
     if (!res.ok) {
@@ -203,7 +278,7 @@ export async function upstreamCmd(ctx) {
           : res.conflict ? 'CONFLICT' : 'EXCEPTION');
       throw new CommandError(code, res.errors ? res.errors.join('; ') : res.error, res);
     }
-    return res;
+    return { ...res, drain };
   } catch (err) {
     if (err instanceof CommandError) throw err;
     throw new CommandError('EXCEPTION', err.message);

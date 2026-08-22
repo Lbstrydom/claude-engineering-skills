@@ -24,6 +24,10 @@ import {
   parseEnvelopeFrame, writeEnvelope as writeEnvelopeToDir, drainEnvelopes,
 } from '../outbox-envelope.mjs';
 import { redactSecrets } from '../secret-patterns.mjs';
+import { parseDisposition, formatDisposition, computeLedgerReconciliation } from './dispositions.mjs';
+
+/** Where the committed closure-disposition ledger lives (§2.4). */
+export const DISPOSITION_LEDGER_PATH = 'scripts/upstream-dispositions.json';
 
 /** Envelope format version. Bumping it makes older files `rejected/`. */
 export const OUTBOX_ENVELOPE_VERSION = 1;
@@ -126,7 +130,15 @@ export function classifyReportFreshness({
   if (typeof reportedSha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(reportedSha)) {
     return out('unknown', 'no-stamp');
   }
-  if (shaInHistory === false) return out('unknown', 'sha-not-in-history');
+  // `!== true`, not `=== false` (round-5 audit M11 — same class as M13
+  // above): `resolveGitFacts` deliberately leaves `shaInHistory: null` when
+  // the ancestry check itself errored ("unknown, not 'absent'" — its own
+  // comment), distinct from a confirmed `false`. A `null` used to fall
+  // through to the distance/dirty-based verdict below, so a report whose
+  // history could not even be checked could still read `current`/`stale`.
+  if (shaInHistory !== true) {
+    return out('unknown', shaInHistory === false ? 'sha-not-in-history' : 'sha-history-unverified');
+  }
   // The stamp describes HEAD; the bytes shipped came from the working TREE.
   // When those disagreed at sync time the sha is a LOWER BOUND on what the
   // consumer holds, so neither `stale` nor `current` is assertable.
@@ -138,9 +150,23 @@ export function classifyReportFreshness({
   // AHEAD of its own stamp. That is the 2026-08-01 case exactly — wine ran the
   // nested-search code for 30 minutes before the commit containing it existed,
   // and this function called it "10 commits behind".
-  if (sourceDirty === true) return out('unknown', 'source-tree-dirty');
+  // `!== false`, not `=== true` (round-3 audit M13, raised three times across
+  // R1/R2/R3 under different framings — real, and fixed here rather than
+  // rebutted again): `sourceDirty: null` means UNKNOWN provenance (older or
+  // malformed manifests predating this field — readBundleStamp's own
+  // docstring: "absence must never read as clean"), and `null !== true` was
+  // falling through to the distance-based verdict, which could read `current`
+  // for a report whose provenance was never actually verified clean.
+  if (sourceDirty !== false) return out('unknown', sourceDirty === true ? 'source-tree-dirty' : 'source-dirty-unknown');
   if (distanceAhead === null || distanceAhead === undefined) {
     return out('unknown', 'git-unavailable');
+  }
+  // Round-6 audit M2: a non-numeric or negative distanceAhead (a caller bug,
+  // not a real measurement) used to silently fall through — `NaN > 0` and
+  // `-5 > 0` are both false, so malformed input landed on the SAME branch as
+  // a genuine "at HEAD" (`0 > 0` is also false) and read as `current`.
+  if (!Number.isFinite(distanceAhead) || distanceAhead < 0) {
+    return out('unknown', 'distance-invalid');
   }
   if (distanceAhead > 0) return out('stale', 'behind-head');
   return out('current', 'at-head');
@@ -449,15 +475,78 @@ export async function upstreamList({
 }
 
 /**
+ * Read + parse the committed disposition ledger. Never throws — an absent
+ * file (first-ever transition in a fresh checkout) is `[]`, not an error;
+ * a present-but-corrupt file is also `[]` so the write path below can still
+ * proceed with a fresh array rather than blocking every future transition on
+ * a hand-fixable JSON typo (the GATE, not this write path, is what enforces
+ * the ledger's integrity for `npm run check`).
+ *
+ * @param {string} repoRoot
+ * @returns {Array<object>}
+ */
+function readDispositionLedger(repoRoot) {
+  const p = path.join(repoRoot, DISPOSITION_LEDGER_PATH);
+  try {
+    const parsed = JSON.parse(fs.readFileSync(p, 'utf-8'));
+    return Array.isArray(parsed?.entries) ? parsed.entries : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Upsert one entry into the committed ledger, keyed by `issueId` (exactly one
+ * active disposition per upstream issue — a re-transition on the same issue
+ * REPLACES its prior entry rather than appending a second one).
+ *
+ * Called BEFORE the DB write (§2.4's sequential ledger-then-DB order) — the
+ * cheap local write happens first, so a crash between this call and the DB
+ * write leaves the ledger AHEAD of the store rather than the reverse; the
+ * cloud reconciler (`upstream list --worksheet`) is the advisory backstop for
+ * exactly that gap, not this function.
+ *
+ * @param {string} repoRoot
+ * @param {{issueId: string, state: string, disposition: {kind: string, value: string}}} entry
+ */
+function upsertDispositionLedgerEntry(repoRoot, entry) {
+  const p = path.join(repoRoot, DISPOSITION_LEDGER_PATH);
+  const entries = readDispositionLedger(repoRoot);
+  const withoutThis = entries.filter((e) => e?.issueId !== entry.issueId);
+  withoutThis.push({
+    schemaVersion: 1,
+    issueId: entry.issueId,
+    state: entry.state,
+    disposition: entry.disposition,
+    recordedAt: new Date().toISOString(),
+  });
+  const payload = {
+    _description: 'The upstream-report closure-disposition ledger (consumer-friction-doctor plan §2.4). '
+      + 'One entry per TERMINAL (fixed|wont_fix) upstream_issues row, naming EITHER a doctor probe that now '
+      + 'detects the failure class, a tracked regression test that closes it, or a written exemption. '
+      + 'Validated by `npm run upstream:coverage:gate`. Hand-authored source, same species as '
+      + 'scripts/gate-contracts/_exemptions.json — never generated, never synced to consumers.',
+    entries: withoutThis.sort((a, b) => (a.issueId < b.issueId ? -1 : a.issueId > b.issueId ? 1 : 0)),
+  };
+  atomicWriteFileSync(p, `${JSON.stringify(payload, null, 2)}\n`);
+}
+
+/**
  * Move an issue through its lifecycle.
  *
  * `--commit` is verified to actually resolve in THIS repo before the
  * transition is accepted: an unresolvable commit is a usage error, never a
  * stored string, because that value is the basis for every later ancestry
  * check and a bad one produces confident wrong answers downstream.
+ *
+ * **`--disposition` is required for both terminal states** (consumer-
+ * friction-doctor plan §2.4) — closing a report can no longer be a no-op.
+ * Validated and normalised HERE, before either write, so a malformed
+ * disposition is a usage error rather than a partially-applied transition.
  */
 export async function upstreamTransition({
   repoRoot = process.cwd(), transitionFn, id, to, note = null, commit = null, actor = null,
+  disposition = null,
 }) {
   if (!id) return { ok: false, code: 'BAD_INPUT', errors: ['--id is required'] };
   // Shape-check BEFORE the store sees it. `upstream_issues.id` is a uuid column,
@@ -490,8 +579,40 @@ export async function upstreamTransition({
   if (to === 'wont_fix' && !String(note ?? '').trim()) {
     return { ok: false, code: 'BAD_INPUT', errors: ['--note is required for `wont-fix` (a refusal needs a reason)'] };
   }
+
+  // A bare close throws before any write (§2.4) — only `fixed`/`wont_fix` are
+  // terminal; `ack` (-> 'acknowledged') is unaffected and needs no disposition.
+  let parsedDisposition = null;
+  if (to === 'fixed' || to === 'wont_fix') {
+    if (!disposition) {
+      return {
+        ok: false, code: 'BAD_INPUT',
+        errors: ['--disposition is required to close an upstream report — one of probe:<id>, test:<tracked test path>, exempt:<reason>'],
+      };
+    }
+    const parsed = parseDisposition(disposition);
+    if (!parsed.ok) return { ok: false, code: 'BAD_INPUT', errors: [parsed.error] };
+    parsedDisposition = { kind: parsed.kind, value: parsed.value };
+  }
+
   const safeNote = note ? redactSecrets(String(note)).text : null;
-  return transitionFn({ id: normId, to, note: safeNote, commit, actor });
+  const safeDispositionValue = parsedDisposition?.kind === 'exempt'
+    ? { ...parsedDisposition, value: redactSecrets(parsedDisposition.value).text }
+    : parsedDisposition;
+
+  // Sequential ledger-then-DB write (§2.4) — the cheap local write happens
+  // FIRST, and only then the DB transition. `normId` is whatever the caller
+  // resolved (a full uuid off a printed worksheet card, in the common case);
+  // this function does not itself resolve a short prefix to a full id — that
+  // resolution happens inside `transitionFn`'s store call, same as before.
+  if (parsedDisposition) {
+    upsertDispositionLedgerEntry(repoRoot, { issueId: normId, state: to, disposition: safeDispositionValue });
+  }
+
+  return transitionFn({
+    id: normId, to, note: safeNote, commit, actor,
+    disposition: parsedDisposition ? formatDisposition(safeDispositionValue) : null,
+  });
 }
 
 /** Human-grade worksheet — PowerShell-safe (no angle brackets, no raw JSON). */
@@ -538,6 +659,76 @@ export function renderWorksheet(items, { state = 'open' } = {}) {
     }
     lines.push(`  triage    node scripts/cross-skill.mjs upstream ack --id ${it.id}`);
     lines.push(`            node scripts/cross-skill.mjs upstream fix --id ${it.id} --commit SHA`);
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+/**
+ * The reconciler (plan §2.4, closes round-1 audit H2/M13's "documents the
+ * flaw rather than containing it" critique) — cross-checks the LIVE db's
+ * terminal rows against the committed local ledger, both directions, plus
+ * flags any row still carrying the generation-time catch-all sentinel.
+ *
+ * Advisory, cloud-only (mirrors `upstreamList`): the mandatory, cloudless
+ * `upstream:coverage:gate` validates the ledger's own internal consistency;
+ * THIS is the direction that structurally needs the live db, so it can never
+ * be a `check` gate — it degrades to `{ok:true, cloud:false}` exactly like
+ * every other db-backed upstream command.
+ *
+ * @param {{repoRoot?: string, listTerminalFn: () => Promise<{ok:boolean,cloud:boolean,rows:Array}>}} args
+ */
+export async function upstreamReconcile({ repoRoot = process.cwd(), listTerminalFn }) {
+  const res = await listTerminalFn();
+  if (!res.ok || res.cloud === false) return { ...res, reconciliation: null };
+
+  const ledgerPath = path.join(repoRoot, DISPOSITION_LEDGER_PATH);
+  let ledgerEntries = [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+    ledgerEntries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+  } catch {
+    // Absent/unreadable ledger is a legitimate state to REPORT (every DB row
+    // is then "missing from ledger"), never a reason to throw — the whole
+    // point of this command is to surface exactly that gap.
+  }
+
+  const reconciliation = computeLedgerReconciliation({ dbRows: res.rows, ledgerEntries });
+  return { ok: true, cloud: true, reconciliation };
+}
+
+/** Human-grade reconciliation report — PowerShell-safe, mirrors renderWorksheet. */
+export function renderReconciliationReport({
+  missingFromLedger, ledgerOnly, stateMismatch, dispositionMismatch = [], needsReview,
+}) {
+  const clean = missingFromLedger.length === 0 && ledgerOnly.length === 0
+    && stateMismatch.length === 0 && dispositionMismatch.length === 0 && needsReview.length === 0;
+  if (clean) return 'Reconciliation: clean — every terminal db row matches a ledger entry, and no row needs manual review.';
+
+  const lines = ['Reconciliation — divergence found:', ''];
+  if (missingFromLedger.length) {
+    lines.push(`Terminal db row(s) with NO ledger entry (${missingFromLedger.length}) — the accepted crash-window gap, now surfaced:`);
+    for (const id of missingFromLedger) lines.push(`  - ${id}`);
+    lines.push('');
+  }
+  if (ledgerOnly.length) {
+    lines.push(`Ledger entr(y/ies) with no matching db row (${ledgerOnly.length}) — stale, or the issueId was mistyped:`);
+    for (const id of ledgerOnly) lines.push(`  - ${id}`);
+    lines.push('');
+  }
+  if (stateMismatch.length) {
+    lines.push(`State mismatch between ledger and db (${stateMismatch.length}):`);
+    for (const m of stateMismatch) lines.push(`  - ${m}`);
+    lines.push('');
+  }
+  if (dispositionMismatch.length) {
+    lines.push(`Disposition VALUE mismatch between ledger and db (${dispositionMismatch.length}):`);
+    for (const m of dispositionMismatch) lines.push(`  - ${m}`);
+    lines.push('');
+  }
+  if (needsReview.length) {
+    lines.push(`Row(s) still carrying the generation-time catch-all (${needsReview.length}) — needs a REAL, researched disposition:`);
+    for (const id of needsReview) lines.push(`  - ${id}`);
     lines.push('');
   }
   return lines.join('\n');
