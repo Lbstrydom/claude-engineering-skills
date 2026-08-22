@@ -1482,6 +1482,7 @@
         "repoId": null,
         "buckets": [],
         "shadowOnlyQueue": [],
+        "pendingQueue": [],
         "actionablePairs": [],
         "runs": [],
         "experimentRuns": []

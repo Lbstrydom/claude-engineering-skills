@@ -172,6 +172,16 @@ node scripts/ux-lock-run.mjs spec \
   --source-kind manual [--url <base-url>] --strict-selectors
 ```
 
+> **Diagnosis (docs/plans/skill-efficacy-census.md Phase 1, 2026-08-22)**: a
+> live-store audit found `regression_spec_runs` at 0 rows and every
+> `regression_specs` row attributed to `/ship`'s `lock-with-test` instead of
+> this command. Tracing the actual write path (`recordRegressionSpec` /
+> `recordRegressionSpecRun`, `scripts/ux-lock-run.mjs:335-369`) found it
+> correctly wired — a failed write is counted and reported to stderr, not
+> swallowed. The gap is adoption, not a bug: this deterministic runner is
+> rarely invoked directly, and most fixes get locked via `/ship`'s simpler
+> `lock-with-test` path instead. No code change was warranted.
+
 Pass `--strict-selectors` for newly generated specs (recommended — a spec you
 just authored has no excuse for unmarked structural selectors; the flag fails
 the run instead of warning). Omit it only when re-running legacy suites.

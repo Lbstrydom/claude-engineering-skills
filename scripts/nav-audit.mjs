@@ -381,7 +381,9 @@ function gitIsDirty(root) {
  * meaningful join key for aging/first-seen queries when it actually
  * identifies the code that was audited; a dirty tree's `git rev-parse HEAD`
  * would misattribute uncommitted drift to a stale commit. ANY failure
- * (no cloud, subprocess error, dirty tree) is silent — never fails the audit.
+ * (no cloud, subprocess error, dirty tree) never fails the audit — but a
+ * write failure is now LOGGED, not silently swallowed
+ * (docs/plans/skill-efficacy-census.md Phase 1).
  */
 function recordNavAuditRunTelemetry(root, { headSha, scope, driftKeys, findingCounts }) {
   if (!headSha || gitIsDirty(root)) return;
@@ -389,9 +391,14 @@ function recordNavAuditRunTelemetry(root, { headSha, scope, driftKeys, findingCo
     const csPath = fileURLToPath(new URL('./cross-skill.mjs', import.meta.url));
     const payload = JSON.stringify({ headSha, scope, driftKeys, findingCounts, toolVersion: NAV_TOOL_VERSION });
     execFileSync(process.execPath, [csPath, 'record-nav-audit-run', '--stdin'],
-      { input: payload, encoding: 'utf-8', stdio: ['pipe', 'ignore', 'ignore'] });
-  } catch {
-    // best-effort — never fail the audit over telemetry
+      { input: payload, encoding: 'utf-8', stdio: ['pipe', 'ignore', 'pipe'] });
+  } catch (err) {
+    // best-effort — never fail the audit over telemetry; log so a broken
+    // writer is at least visible, rather than reading identically to "ran
+    // once, successfully, with nothing to report" (docs/plans/skill-efficacy-census.md
+    // Phase 1 — an earlier bare `catch {}` here made this indistinguishable
+    // from a genuine zero-row result to every later reader).
+    process.stderr.write(`  [nav-audit] telemetry write failed: ${err.message}\n`);
   }
 }
 

@@ -156,17 +156,23 @@ export function orderItems(items) {
 const CLI = 'node scripts/cross-skill.mjs';
 
 /**
- * Build the adjudicate command for one item. `--bucket shadow-only` is ALWAYS
- * explicit: this queue is shadow-only by construction, and stating it means the
- * store's ambiguous-bucket refusal can never fire if the same fingerprint later
- * also appears as a primary finding.
+ * Build the adjudicate command for one item. `--bucket` is ALWAYS explicit and
+ * ALWAYS the item's OWN bucket (docs/plans/skill-efficacy-census.md Phase 1 —
+ * an earlier version hardcoded `shadow-only` unconditionally, which silently
+ * mis-scoped every primary-bucket item once the read side started surfacing
+ * them: the printed command adjudicated the wrong bucket, or matched nothing).
+ * `it.bucket` is `null` for a primary-bucket row (per `bucket IS NOT DISTINCT
+ * FROM` semantics store-side); `bucketOpt`'s own convention maps the literal
+ * string `'primary'` to that same `null`, so that is what gets printed —
+ * stating it explicitly means the store's ambiguous-bucket refusal can never
+ * fire if the same fingerprint later appears in another bucket too.
  */
 function adjudicateCmd(it, action) {
-  return `${CLI} final-review-adjudicate --run-id ${it.run_id} --fingerprint ${it.finding_fingerprint} --action ${action} --bucket shadow-only`;
+  return `${CLI} final-review-adjudicate --run-id ${it.run_id} --fingerprint ${it.finding_fingerprint} --action ${action} --bucket ${it.bucket ?? 'primary'}`;
 }
 
 function recordFixCmd(it, state, commitSha) {
-  return `${CLI} final-review-record-fix --run-id ${it.run_id} --fingerprint ${it.finding_fingerprint} --bucket shadow-only --commit ${commitSha} --state ${state}`;
+  return `${CLI} final-review-record-fix --run-id ${it.run_id} --fingerprint ${it.finding_fingerprint} --bucket ${it.bucket ?? 'primary'} --commit ${commitSha} --state ${state}`;
 }
 
 /**

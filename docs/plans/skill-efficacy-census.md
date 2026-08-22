@@ -278,7 +278,7 @@ graph LR
 
   subgraph Dash["dashboard"]
     COL["collect-telemetry.mjs\ncollectSkillCensus"]
-    SEC["sections/skill-census.mjs\n(new tab)"]
+    SEC["scripts/lib/dashboard/sections/skill-census.mjs\n(new tab)"]
     SCHEMA["schema.mjs\nZod addition"]
   end
 
@@ -530,8 +530,9 @@ graph LR
   Emits the per-skill table; `--format worksheet` renders the
   PowerShell-safe real-value table this repo's operator-doc convention
   requires (never `<placeholder>` syntax).
-- **Dashboard tab** (`sections/skill-census.mjs` + a `collectSkillCensus`
-  entry in `collect-telemetry.mjs` + a `schema.mjs` addition). Read-only,
+- **Dashboard tab** (`scripts/lib/dashboard/sections/skill-census.mjs` + a
+  `collectSkillCensus` entry in `collect-telemetry.mjs` + a `schema.mjs`
+  addition). Read-only,
   server-rendered, mirrors `audit-effectiveness.mjs`'s table shape. No new
   client-side interaction beyond the existing `data-search` filter pattern
   already in `sections/skills.mjs`, reused as-is.

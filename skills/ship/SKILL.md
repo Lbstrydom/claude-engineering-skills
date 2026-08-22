@@ -1041,6 +1041,18 @@ closed — and **nothing called them**, so `user_action` stayed null, credit lan
 only in source comments, and the resulting tail read as noise until a manual
 sweep recovered it (2026-07-28). This step is the missing caller.
 
+**Widened to the primary bucket (docs/plans/skill-efficacy-census.md Phase 1,
+2026-08-22)**: the 2026-07-28 fix only reached the shadow-only bucket — the
+READ side (`final-review-pending`) was hard-scoped to `shadowOnlyQueue`, so a
+primary GPT/Gemini-round finding was never surfaced here at all, however long
+it sat fixed with `user_action` still null (a live-store audit found 1,615
+such rows). `final-review-pending` now reads a merged `pendingQueue`
+(shadow-only ∪ primary-bucket fixed-but-unlabelled), and the card threads
+each item's own `bucket` through to its printed command instead of
+hardcoding `shadow-only` — a bug that would have silently mis-scoped every
+primary-bucket item even after the read side was widened. No change to this
+step's own invocation: the same command below now surfaces both buckets.
+
 **Run AFTER the commit lands**, so the sha handed to `--commit` is the real one.
 `$REPO` is the `owner/repo` slug (same value `LEARNING_REPO_NAME` uses — the
 bare repo name silently misses the lookup):
