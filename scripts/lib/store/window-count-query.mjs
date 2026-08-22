@@ -72,7 +72,12 @@ export async function runWindowCountQuery({ repoGuard, table, extraFilter = null
     const n = (v) => Number(v) || 0;
     return { current: n(r.current), prior: n(r.prior), allTime: n(r.all_time) };
   } catch (err) {
-    process.stderr.write(`  [learning] ${errorLabel} failed: ${err.message}\n`);
+    // Round-3 L2 fix: `[learning]` was copied from the pre-refactor readers'
+    // own convention, but this helper now serves multiple domains
+    // (ship-events, plans, regression-specs) — a fixed `[learning]` tag on
+    // all of them misattributes the failure to the adaptive-learning system.
+    // `errorLabel` already names the actual failing function.
+    process.stderr.write(`  [skill-census] ${errorLabel} failed: ${err.message}\n`);
     return null;
   }
 }

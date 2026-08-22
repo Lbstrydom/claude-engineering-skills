@@ -60,7 +60,15 @@ lens earns its keep nowhere" — see the plan's own §1 trade-off: no cloud
 persistence exists yet for `click-test`/`visual-audit` by design, and the
 other three simply have nothing local to point at.
 
-## Per-skill verdicts
+## Per-skill verdicts (PROVISIONAL — start condition not yet met, see above)
+
+These labels are computed from `allTimeCount` and window current/prior only —
+neither is affected by Cluster A's fix, which is why they are reported at all
+before the start condition is met (round-3 M16 fix: an earlier version of
+this memo established that gate, then read as final anyway once it reached
+the table — the word "provisional" now travels with the verdicts themselves,
+not just the section above). What genuinely awaits the gate is the
+conversion-rate section below, not these labels.
 
 Rubric (plan §Phase 4, evaluated in this exact order, first match wins):
 1. **`insufficient-data`** — `allTimeCount` < 5 (checked first, regardless of trend).
