@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "070d6c33ea6468e0",
+  "bundleVersion": "afa9d942078d5232",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -49,14 +49,14 @@
     },
     "audit-code": {
       "path": "skills/audit-code/SKILL.md",
-      "sha": "394337375fce",
-      "size": 36637,
+      "sha": "267908703218",
+      "size": 41113,
       "summary": "Iteratively audit code against a plan with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "394337375fce",
-          "size": 36637
+          "sha": "267908703218",
+          "size": 41113
         },
         {
           "relPath": "examples/contract-test-scaffold.md",
@@ -85,8 +85,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "7a12b259d183",
-          "size": 18858
+          "sha": "820c3f2f2a30",
+          "size": 23853
         }
       ]
     },
@@ -113,8 +113,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "1c2827507c69",
-          "size": 18872
+          "sha": "d75f5dc4cdb5",
+          "size": 23867
         }
       ]
     },
@@ -175,8 +175,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "1c2827507c69",
-          "size": 18872
+          "sha": "d75f5dc4cdb5",
+          "size": 23867
         }
       ]
     },
@@ -198,21 +198,21 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "1c2827507c69",
-          "size": 18872
+          "sha": "d75f5dc4cdb5",
+          "size": 23867
         }
       ]
     },
     "nav-audit": {
       "path": "skills/nav-audit/SKILL.md",
-      "sha": "7b8d79f41878",
-      "size": 13905,
+      "sha": "fd91029e745e",
+      "size": 14980,
       "summary": "Static, code-derived navigation / information-architecture audit — the",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "7b8d79f41878",
-          "size": 13905
+          "sha": "fd91029e745e",
+          "size": 14980
         },
         {
           "relPath": "examples/example-report.md",
@@ -238,19 +238,24 @@
           "relPath": "references/finding-taxonomy.md",
           "sha": "5842e1c0c444",
           "size": 2653
+        },
+        {
+          "relPath": "references/verification-discipline.md",
+          "sha": "d75f5dc4cdb5",
+          "size": 23867
         }
       ]
     },
     "persona-test": {
       "path": "skills/persona-test/SKILL.md",
-      "sha": "3d51c49ce770",
-      "size": 41994,
+      "sha": "32752803a047",
+      "size": 45846,
       "summary": "Persona-driven exploratory browser testing against a live URL.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "3d51c49ce770",
-          "size": 41994
+          "sha": "32752803a047",
+          "size": 45846
         },
         {
           "relPath": "examples/report-and-debrief.md",
@@ -337,8 +342,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "1c2827507c69",
-          "size": 18872
+          "sha": "d75f5dc4cdb5",
+          "size": 23867
         }
       ]
     },
@@ -378,8 +383,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "1c2827507c69",
-          "size": 18872
+          "sha": "d75f5dc4cdb5",
+          "size": 23867
         }
       ]
     },
@@ -398,14 +403,14 @@
     },
     "ux-lock": {
       "path": "skills/ux-lock/SKILL.md",
-      "sha": "59689367853b",
-      "size": 16506,
+      "sha": "6ca4383a4253",
+      "size": 17039,
       "summary": "Generate Playwright e2e specs. Two modes:",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "59689367853b",
-          "size": 16506
+          "sha": "6ca4383a4253",
+          "size": 17039
         },
         {
           "relPath": "references/lock-mode-spec-generation.md",
@@ -419,13 +424,13 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "1c2827507c69",
-          "size": 18872
+          "sha": "d75f5dc4cdb5",
+          "size": 23867
         },
         {
           "relPath": "references/verify-mode-generation.md",
-          "sha": "060dcbfe6923",
-          "size": 9245
+          "sha": "f7cc274fbb08",
+          "size": 11929
         }
       ]
     },
