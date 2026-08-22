@@ -461,9 +461,17 @@ graph LR
   prose and treats it as `caller-checked` with a noted upgrade, rather
   than adding a rarely-used fifth state for one skill pair. `ux-lock`'s
   writer (`record-regression-spec`) and `plans`' writer (`upsert-plan`)
-  are **not** durable-write-registered and default to `unchecked-call-site`
-  pending Phase 1's trace (consistent with the H2/round-4 rule above —
-  neither gets `caller-checked` on assumption).
+  are **not** durable-write-registered but Phase 1's trace (registry.mjs)
+  confirmed both are `caller-checked` anyway: `record-regression-spec` and
+  `upsert-plan` both had `softFail` retired and now throw on a
+  refused/failed write — the strongest form of caller-checking, not merely
+  an inspectable return value. `record-persona-session` (persona-test's
+  writer) traced the same way: `reportsFailure: {all: true}` exits 1 on
+  failure. **Every DB-backed writer this plan reads from turned out to be
+  `caller-checked`** on direct trace — none default to
+  `unchecked-call-site` on assumption; `nav-audit`'s historical rows
+  (before this cluster's catch-narrowing fix) are the one place the
+  ambiguity survives, and only for rows recorded before the fix.
   - `ship-attribution-only` — the seven read-only/meta skills whose ONLY
     signal is the git trailer proxy (git, not a write path with a return
     value at all). `click-test`/`visual-audit` keep `no-table-by-design`
@@ -691,14 +699,20 @@ checklist — strategy-pattern-over-switch).
 
 ### Phase 1 — Close the confirmed label/write gaps
 
-- **Call-site verification (round-4 H2)** — before classifying
-  `persona-test`'s and `plans`' writers as `caller-checked`, trace their
-  actual SKILL.md/command call sites the same way §1 already traced
-  `recordShipEvent`: does the invoking code inspect the writer's return
-  value, or discard it? Any writer not confirmed defaults to
-  `unchecked-call-site` in Phase 2's contract table — no file changes
-  required for this sub-task unless the trace finds a real swallow (in
-  which case, narrow it the same way as `nav-audit.mjs` below).
+- **Call-site verification (round-4 H2) — DONE, no file changes needed.**
+  Traced all three remaining writers against their registry entries in
+  `scripts/lib/cross-skill/registry.mjs`: `record-persona-session`
+  declares `reportsFailure: {all: true}` (a write failure exits 1, per
+  this repo's own retirement of the legacy `softFail` exit-0 quirk);
+  `upsert-plan` **throws** on every `!res.ok` (softFail fully removed);
+  `record-regression-spec` (ux-lock's writer) also has `softFail` retired
+  and throws on a refused/failed write. **All three are `caller-checked`**
+  — stronger evidence than assumed, not weaker. This means, of the seven
+  DB-backed skills, only `nav-audit`'s historical rows (before this
+  cluster's catch-narrowing fix) carry irreducible ambiguity; every other
+  writer's failure mode was already visible at invocation time. Phase 2's
+  contract table (§2) reflects this directly rather than defaulting
+  anything to `unchecked-call-site` on assumption.
 - **`scripts/lib/store/runs-findings.mjs`** (modify) — add a
   primary-bucket pending-credit query alongside the existing
   `shadowOnlyQueue` inside `getFinalReviewStats` (or a sibling exported
@@ -741,7 +755,11 @@ checklist — strategy-pattern-over-switch).
   a sibling) to cover the primary-bucket queue with a canned fixture row
   that has `bucket IS NULL` — the negative control that would have caught
   the original scoping bug (assert the OLD query would have excluded it,
-  the NEW one includes it).
+  the NEW one includes it). **Implemented in `tests/final-review-card.test.mjs`**
+  — the sibling that already covers `adjudicateCmd`/`recordFixCmd`'s output,
+  which is exactly where the hardcoded-bucket bug lived; two new cases assert
+  a `bucket: null` item prints `--bucket primary` (never the old hardcoded
+  `shadow-only`) for both the adjudicate and record-fix command shapes.
 - **Manual verification (round-3 M2 fix)**: Phase 1 changes LIVE query
   semantics (`bucket IS NULL` selection, the two-bucket merge, the
   explicit severity-rank ordering, the `(run_id, finding_fingerprint)`
@@ -972,6 +990,11 @@ each cluster.
     (`runs-findings.mjs`/`final-review-credit.mjs`) and must land before
     Phase 4's memo, or the memo would report a conversion rate computed
     against data the plan itself knows is under-scoped.
+  - Additional files (implementation-time; intent-tagged): `tests/final-review-card.test.mjs`
+    (modify) — the Phase 1 Test bullet's "or a sibling" clause exercised;
+    `tests/fixtures/cross-skill-envelopes.json` (modify) — the `fr-stats-cloud-off`
+    golden fixture gains the new `pendingQueue: []` field, a direct
+    consequence of `getFinalReviewStats`'s widened return shape.
 - **Cluster B** — Phases 2–3 — fix-gate: yes
   - Coupling: Phase 3's dashboard collector is a direct consumer of Phase
     2's `skill-census.mjs` module — they share one aggregation contract
