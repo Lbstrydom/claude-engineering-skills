@@ -1,5 +1,43 @@
 # Project Status Log
 
+## 2026-08-23 — Self-hosted runner management: local inventory, GitHub-truth health, guided teardown
+
+Follow-on to the 2026-08-14 entry below, which shipped only the repo-capability
+half (`runner:doctor`, "can this identity register a runner"). This closes the
+machine half nothing could previously answer: *is a runner actually installed
+and healthy on THIS machine, and for whom?* — the exact question a real
+incident this session (a corporate self-hosted runner sitting, unnoticed, on a
+personal machine, `.service` naming a service that was never actually
+registered, running as a bare foreground process) had no tooling to answer.
+
+Full cycle: `/plan` → `/audit-plan` (3 GPT rounds + 5 Gemini rounds, the last
+three Gemini rounds each a genuine architectural defect — an O(N) paginated
+remote-list design replaced with a direct by-ID lookup, an org-vs-repo owner
+scope-comparison bug, a symlink-based artifact-substitution gap caught before
+any code existed) → autonomous `--cluster`-clustered implementation
+(`docs/plans/self-hosted-runner-management.md`) → per-cluster `/audit-code`.
+
+- **Cluster A** (`scripts/lib/runner-inventory.mjs` pure judgements +
+  `scripts/lib/runner-probe.mjs` fs/exec/gh adapter) — 3 audit rounds; fixed a
+  prototype-pollution-unsafe artifact lookup and a "private" containment
+  resolver that had leaked back out through `_internals`.
+- **Cluster B** (`local`/`remove` CLI sub-commands, the gitignored
+  `runner-hosts.local.json` config surface + committed example, a structural
+  `.runner`/`.credentials`-shape leak guard over `git ls-files`, maintenance-
+  checks + CLI_SMOKE_SET registrations) — 5 audit rounds; fixed a same-root
+  symlink letting `.runner` secretly resolve to `.credentials`, a test-only
+  env override that silently fell back to reading this machine's REAL runner
+  install on malformed input, a leak-guard allowlist matched by directory
+  prefix instead of exact file, and an OAuth-shape false-positive path. 228
+  tests. Two rounds tripped repo-wide regression gates the new files/scripts
+  caused (CLI catalog, doc-ref text classification) — fixed alongside.
+- **Cluster C** (docs) — this entry + the two runbooks + an AGENTS.md stub
+  trimmed to fit 92000-char headroom that had only 48 chars left.
+
+No employer/organization identifier enters this public repo: the two
+pre-existing ones found during planning (a `--repo` usage example, and this
+file's own 2026-08-14 entry below) are scrubbed in this same session.
+
 ## 2026-08-21 — Tiered shadow stood down; Phase 14 closed at the surfaces that report it
 
 Follow-up to the two entries below. Closes the loop rather than adding work.
@@ -1130,7 +1168,7 @@ implementation, not a third gate round.
 
 A work-repo hit "GitHub Actions hosted runners are disabled for this repository" on
 a required `phase-gates` check. Worked through the decision tree live against a
-real GHE org (Wärtsilä): confirmed self-hosted registration is allowed at the repo
+real employer GHE org: confirmed self-hosted registration is allowed at the repo
 level (smoke-tested with a temporary Windows runner, then deregistered and cleaned
 up), explored Azure AI Foundry and AWS ECS as host candidates for a persistent
 org-level runner — both blocked short-term (Azure needs a fresh RBAC grant plus an

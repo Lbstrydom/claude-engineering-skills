@@ -8,7 +8,7 @@ one-paragraph pointer; this doc is the operational depth.
 
 ## What it replicates
 
-9 checks, run as independent subprocesses (never crashes the whole run when
+10 checks, run as independent subprocesses (never crashes the whole run when
 one is skipped or fails). (The count read "7" until 2026-08-13 while the
 manifest already held 8 — `tests/maintenance-checks.test.mjs` pins the KEYS,
 which is the honest inventory; this sentence is prose beside it. Recount from
@@ -23,6 +23,7 @@ which is the honest inventory; this sentence is prose beside it. Recount from
 | `learning-weekly-review` | `learning-weekly-review.yml` | Recurring-issue digest | `AUDIT_DB_URL`, `LEARNING_REPO_NAME` |
 | `cache-hitrate` | *(ad hoc weekly routine)* | `AUDIT_CACHE_SEED` payoff check | `AUDIT_DB_URL` |
 | `debt-health` | *(ad hoc weekly routine)* | `.audit/tech-debt.json` ledger health: stale entries (>`DEBT_HEALTH_TTL_DAYS`, default 180d), recurring entries (>=`DEBT_HEALTH_RECURRENCE_THRESHOLD` distinct audit runs, default 3), and any configured per-path budget violations (see `debt-review.mjs`/`debt-budget-check.mjs`) | none (local file only) |
+| `runner-health` | *(no dedicated workflow — new, [docs/plans/self-hosted-runner-management.md](../plans/self-hosted-runner-management.md))* | `node scripts/actions-runner-doctor.mjs local --json --strict` — flags an unhealthy/unregistered/unreachable self-hosted runner on THIS machine. Advisory identity findings never gate, even here. | none (`gh` optional — degrades to `unknown` per install without it) |
 | `slice-recurrence` ⏳ **one-shot, retires** | *(none — answers one question about one commit)* | Did god-module slice 1 (`a7db0baf`) stop the usage-accounting finding cluster recurring on `legacy-production-audit.mjs`? **Silent no-op until 2026-09-10.** | `AUDIT_DB_URL` |
 
 **`slice-recurrence` is the only entry here that is not a standing concern, and
