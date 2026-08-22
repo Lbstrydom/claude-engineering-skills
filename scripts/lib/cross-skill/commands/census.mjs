@@ -9,10 +9,23 @@ import { CommandError } from '../dispatch.mjs';
 const FORMATS = new Set(['json', 'worksheet']);
 
 /**
- * Positive integer 1-90, or the ArgvError-shaped throw (build-dashboard.mjs's
- * --port pattern). A strict digits-only regex, not `Number.parseInt` alone
- * (round-1 M3/M6 fix) — `parseInt` truncates at the first non-digit, so
- * `--window-days 14days` silently became `14` instead of a validation error.
+ * Positive integer 1-90, or a `BAD_INPUT` CommandError (consolidated-gate G1:
+ * Gemini flagged this as needing `ArgvError`, matching the plan's own text —
+ * both name `build-dashboard.mjs`'s `--port` pattern, but that script is a
+ * standalone top-level CLI, not a `cross-skill.mjs` registry-dispatched
+ * command. A migrated command's own handler-thrown `ArgvError` is NOT given
+ * plain-text-to-stderr treatment by `dispatch.mjs` — that only applies to the
+ * dispatcher's OWN pre-handler flag-NAME check (`assertKnownFlags`) and to
+ * the legacy top-level switch; a handler-thrown `ArgvError` instead falls
+ * through the generic `catch` at the bottom of `dispatch()`, which is worse
+ * than `CommandError` (exit 1 instead of 2, an `EXCEPTION` code instead of
+ * `BAD_INPUT`, and a leaked stack trace in the envelope — confirmed by
+ * capturing this exact case). `CommandError('BAD_INPUT', ...)` — with its
+ * default `exitCode: 2` — is the correct, established convention here,
+ * matching 12 other commands in this same directory). A strict digits-only
+ * regex, not `Number.parseInt` alone (round-1 M3/M6 fix) — `parseInt`
+ * truncates at the first non-digit, so `--window-days 14days` silently
+ * became `14` instead of a validation error.
  */
 function parseWindowDays(raw) {
   if (raw == null) return 14;
