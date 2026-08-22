@@ -10374,7 +10374,7 @@
       "table_name": "symbol_refresh_coverage",
       "constraint_name": "symbol_refresh_coverage_reason_check",
       "constraint_type": "CHECK",
-      "definition": "CHECK (((reason IS NULL) OR (reason = ANY (ARRAY['extraction_failed'::text, 'extraction_timeout'::text, 'not_measured'::text, 'stale_measurement'::text, 'empty_universe'::text, 'zero_cruised'::text, 'zero_attributed'::text, 'budget_exceeded'::text, 'below_floor'::text, 'below_attribution_floor'::text]))))"
+      "definition": "CHECK (((reason IS NULL) OR (reason = ANY (ARRAY['extraction_failed'::text, 'extraction_timeout'::text, 'not_measured'::text, 'stale_measurement'::text, 'empty_universe'::text, 'zero_cruised'::text, 'zero_attributed'::text, 'budget_exceeded'::text, 'below_floor'::text, 'below_attribution_floor'::text, 'malformed_measurement'::text]))))"
     },
     {
       "table_name": "symbol_refresh_coverage",
