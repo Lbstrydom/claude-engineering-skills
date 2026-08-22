@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**5 active · 200 terminal · 27 audit summaries · 4 reference docs**
+**5 active · 199 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -22,9 +22,9 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
-| [Lens Coverage Honesty — a report states what it checked, not only what it found](./lens-coverage-honesty.md) | `Approved` | and implemented (2026-08-20, via `/cycle --autonomous`, |
 | [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `Draft` | narrowed to 8 items (10 topicIds), re-verified open |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
+| [Skill-Efficacy Census — Which of the 16 Bundled Skills Earn Their Keep](./skill-efficacy-census.md) | `Approved` | audited via `/audit-plan` (5 GPT rounds to the |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q1 38 code rows, Q2 unknown (reader reports no total), Q3 68 actionable; measured 2026-08-09 |
 
 ## Superseded / abandoned
@@ -45,7 +45,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 197 completed plans</summary>
+<summary>Show all 196 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -204,7 +204,6 @@ source comments that no docs linter sees — stays valid.
 | [Visual-Audit Contract Validation Debt (2026-07-26 triage)](./refactor-visual-audit-contract-2026-07.md) | `Complete` | all 8 entries closed (7 via `visual-contract-semantic-validation.md`; `fa6e120c` 2026-08-09, see Closing Note |
 | [Repo-Wide Reference-Integrity Gate](./reference-integrity-gate.md) | `Complete` | all three clusters implemented, converged, final-gated |
 | [Remediation-State Fix-Lifecycle Writer (un-starve `unlocked_fixes` + the /ship missing-spec gate)](./remediation-state-fix-lifecycle.md) | `Complete` |  |
-| [Repo-context budget honesty — sections fitted by priority, coverage reported](./repo-context-budget-honesty.md) | `Complete` |  |
 | [Repo-Scoped Skill Surfaces + a Third-Party-Usable Installer](./repo-scoped-skill-surfaces-and-installer.md) | `Complete` |  |
 | [Requirements Layer — a materialized view of the codebase's de-facto requirements](./requirements-layer.md) | `Complete` |  |
 | [Robustness Hardening & R2+ Ledger Auto-Write](./robustness-and-ledger-wiring.md) | `Complete` | shipped — `scripts/lib/ledger.mjs` exports `writeLedgerEntry` + tracks the two-axis state model (`adjudicat… |
