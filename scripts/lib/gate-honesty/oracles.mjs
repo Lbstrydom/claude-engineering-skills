@@ -261,22 +261,27 @@ const CLI_EXIT_RECIPES = {
     expectStderrContains: 'Unknown flag',
     envPrereq: null,
   },
-  // nav-audit tool-error: an invalid nav-contract.json → exit 2. The early
-  // contract check fires before any git/source read, so a bare malformed file
-  // is a sufficient fixture (no git init needed — verified).
+  // nav-audit tool-error: an invalid nav-contract.json → exit 2. A bare `git
+  // init` (no commit needed) makes `git ls-files` succeed trivially, isolating
+  // this scenario to the contract check rather than the (also exit-2, but
+  // differently worded) discovery-failure gate a bare non-repo dir now trips.
   'nav-invalid-contract': {
     args: [],
-    fixture(dir) { atomicWriteFileSync(path.join(dir, 'nav-contract.json'), '{ not valid json'); },
+    fixture(dir) {
+      spawnSync('git', ['init', '-q'], { cwd: dir, encoding: 'utf-8', windowsHide: true });
+      atomicWriteFileSync(path.join(dir, 'nav-contract.json'), '{ not valid json');
+    },
     expectExit: 2,
     expectStderrContains: 'present but invalid',
     envPrereq: null,
   },
   // nav-audit refuse-to-clobber: --bootstrap over an existing contract without
   // --force → exit 2. A distinct behaviour from the tool-error above (different
-  // stated, different stderr) that also exits 2.
+  // stated, different stderr) that also exits 2. Same git-init isolation as above.
   'nav-bootstrap-refuse-clobber': {
     args: ['--bootstrap'],
     fixture(dir) {
+      spawnSync('git', ['init', '-q'], { cwd: dir, encoding: 'utf-8', windowsHide: true });
       atomicWriteFileSync(path.join(dir, 'nav-contract.json'),
         JSON.stringify({ version: 1, navLayers: {}, personaIntents: [] }));
     },
