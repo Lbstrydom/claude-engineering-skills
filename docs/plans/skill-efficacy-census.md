@@ -1,9 +1,11 @@
 # Plan: Skill-Efficacy Census — Which of the 16 Bundled Skills Earn Their Keep
 
 - **Date**: 2026-08-20
-- **Status**: Approved — audited via `/audit-plan` (5 GPT rounds to the
+- **Status**: Complete — audited via `/audit-plan` (5 GPT rounds to the
   absolute cap + 3 Gemini rounds under the genuine-bug exception, all
-  findings resolved); not yet implemented
+  findings resolved); implemented via `/cycle --autonomous` across three
+  clusters (2026-08-22), consolidated Gemini gate APPROVE after 3 rounds,
+  shipped to `main`
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Audit trail**: `/audit-plan` — GPT-5.6 R1 (H:4/M:4) → R2 (H:6/M:3, R1's

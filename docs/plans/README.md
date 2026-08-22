@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**6 active · 200 terminal · 27 audit summaries · 4 reference docs**
+**5 active · 201 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -25,7 +25,6 @@ This is the list to read when asking "what is in flight?".
 | [Lens Coverage Honesty — a report states what it checked, not only what it found](./lens-coverage-honesty.md) | `Approved` | and implemented (2026-08-20, via `/cycle --autonomous`, |
 | [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `Draft` | narrowed to 8 items (10 topicIds), re-verified open |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
-| [Skill-Efficacy Census — Which of the 16 Bundled Skills Earn Their Keep](./skill-efficacy-census.md) | `Approved` | audited via `/audit-plan` (5 GPT rounds to the |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q1 38 code rows, Q2 unknown (reader reports no total), Q3 68 actionable; measured 2026-08-09 |
 
 ## Superseded / abandoned
@@ -46,7 +45,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 197 completed plans</summary>
+<summary>Show all 198 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -221,6 +220,7 @@ source comments that no docs linter sees — stays valid.
 | [Close Two Sibling-Path Defects (bandit_arms NULL key + local FP tracker in the ledger branch)](./sibling-path-suppression-defects.md) | `Complete` | implemented + audited via `/cycle --autonomous` |
 | [Four places that report success without establishing it](./silent-success-cluster.md) | `Complete` |  |
 | [Mega-Plan: Skill-Bundle Consolidation + Public Distribution](./skill-bundle-mega-plan.md) | `Complete` | parent — split into sub-phases E (skill consolidation) / F (install + update infra) / G.1 (storage interfac… |
+| [Skill-Efficacy Census — Which of the 16 Bundled Skills Earn Their Keep](./skill-efficacy-census.md) | `Complete` | audited via `/audit-plan` (5 GPT rounds to the |
 | [Skill Progressive Disclosure Refactor](./skill-progressive-disclosure-refactor.md) | `Complete` | all phases A, B.1, B.2, C1–C6, D, E shipped and tested |
 | [Global skill-surface shadow detection + capture-honesty and repo-scoping fixes](./skill-shadow-and-capture-honesty.md) | `Complete` | Clusters B, C, E implemented + audited; consolidated |
 | [Stage 0 Evidence-Relevance Split (Tiered-Recall Audit Pipeline)](./stage0-evidence-relevance-split.md) | `Complete` | implemented 2026-07-16; all 3 clusters landed via `/cycle --autonomous`. Plan-audit: 3 GPT rounds + 2 Gemin… |
