@@ -247,7 +247,7 @@ export async function recordRegressionSpecRun(specId, run, opts = {}) {
  */
 export async function getRegressionSpecWindowCounts(repoId, { currentStart, priorStart, now }) {
   return runWindowCountQuery({
-    repoGuard: repoId, table: 'regression_specs', extraWhere: "AND source_kind != 'unit-test'",
+    repoGuard: repoId, table: 'regression_specs', extraFilter: { column: 'source_kind', value: 'unit-test', op: '!=' },
     params: [repoId, currentStart, now, priorStart],
     errorLabel: 'getRegressionSpecWindowCounts',
   });

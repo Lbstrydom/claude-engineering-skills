@@ -345,7 +345,7 @@ export async function updatePlanStatus({ repoId, planId, status }) {
  */
 export async function getPlanWindowCounts(repoId, { currentStart, priorStart, now }) {
   return runWindowCountQuery({
-    repoGuard: repoId, table: 'plans', extraWhere: "AND skill = 'plan'",
+    repoGuard: repoId, table: 'plans', extraFilter: { column: 'skill', value: 'plan' },
     params: [repoId, currentStart, now, priorStart],
     errorLabel: 'getPlanWindowCounts',
   });
