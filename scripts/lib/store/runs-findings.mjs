@@ -2109,3 +2109,107 @@ export async function reconcileRemediationProjection(repoId, ledger) {
     return { reconciled: 0, attempted: 0, ok: false, reason: err.message };
   }
 }
+
+// ── Skill-efficacy census (docs/plans/skill-efficacy-census.md Phase 2) ────
+
+/**
+ * Window-scoped counts for `audit-code`/`audit-plan`, keyed by `audit_runs.mode`.
+ *
+ * Returns TWO numbers, never collapsed to one (§2 H2 fix): `roundCount` is
+ * the raw row count — `audit_runs` rows are per-ROUND, not per-invocation, so
+ * this over-counts a multi-round session. `commitsTouched` (distinct
+ * `commit_sha`) is a LOWER BOUND on invocation count instead — a commit can
+ * receive multiple separate sessions, and a session can re-run without a new
+ * commit, so neither number alone is "invocations"; the census reports both,
+ * labelled honestly.
+ *
+ * @param {string} repoId
+ * @param {'code'|'plan'} mode
+ * @param {{currentStart: string, priorStart: string, now: string}} bounds ISO timestamps
+ * @returns {Promise<{roundCount: {current:number,prior:number,allTime:number}, commitsTouched: {current:number,prior:number,allTime:number}}|null>}
+ */
+export async function getAuditRunWindowCounts(repoId, mode, { currentStart, priorStart, now }) {
+  if (!repoId || !await isCloudEnabled()) return null;
+  try {
+    const row = await many(
+      `SELECT
+         count(*) FILTER (WHERE created_at >= $3 AND created_at < $4) AS round_current,
+         count(*) FILTER (WHERE created_at >= $5 AND created_at < $3) AS round_prior,
+         count(*) AS round_all_time,
+         count(DISTINCT commit_sha) FILTER (WHERE created_at >= $3 AND created_at < $4) AS commits_current,
+         count(DISTINCT commit_sha) FILTER (WHERE created_at >= $5 AND created_at < $3) AS commits_prior,
+         count(DISTINCT commit_sha) AS commits_all_time
+         FROM audit_runs WHERE repo_id = $1 AND mode = $2`,
+      [repoId, mode, currentStart, now, priorStart],
+    );
+    const r = row[0] || {};
+    const n = (v) => Number(v) || 0;
+    return {
+      roundCount: { current: n(r.round_current), prior: n(r.round_prior), allTime: n(r.round_all_time) },
+      commitsTouched: { current: n(r.commits_current), prior: n(r.commits_prior), allTime: n(r.commits_all_time) },
+    };
+  } catch (err) {
+    process.stderr.write(`  [learning] getAuditRunWindowCounts failed: ${err.message}\n`);
+    return null;
+  }
+}
+
+/**
+ * Conversion rate for `audit-code`/`audit-plan` (the only two skills with an
+ * `audit_findings` finding lifecycle) — §2's precise definition.
+ *
+ * **Cohort = raise-time** (`audit_findings.created_at` in the window), never
+ * fix-time — a finding raised late in the window may still show pending at
+ * report time even though it is later fixed; that is expected. **Numerator
+ * is a strict SUBSET of the denominator's WHERE clause** (round-3 H1 fix):
+ * denominator = distinct accepted fingerprints in the cohort; numerator =
+ * distinct fingerprints WITHIN that same accepted set that are also
+ * fixed/verified. This guards against the numerator including a
+ * fixed-but-never-accepted finding, which could push the rate above 100%.
+ *
+ * **Right-censoring**: evaluated at report time (current DB state), so a
+ * `current`-window cohort has had systematically less time to accumulate a
+ * fix than `prior`'s — the caller must render the maturity caveat and must
+ * never use this to gate a verdict (§4's decision rubric deliberately does
+ * not).
+ *
+ * @param {string} repoId
+ * @param {'code'|'plan'} mode
+ * @param {{currentStart: string, priorStart: string, now: string}} bounds ISO timestamps
+ * @returns {Promise<{current: {numerator:number,denominator:number}, prior: {numerator:number,denominator:number}}|null>}
+ */
+export async function getAuditFindingConversionRate(repoId, mode, { currentStart, priorStart, now }) {
+  if (!repoId || !await isCloudEnabled()) return null;
+  try {
+    const row = await many(
+      `SELECT
+         count(DISTINCT f.finding_fingerprint) FILTER (
+           WHERE f.created_at >= $3 AND f.created_at < $4 AND f.adjudication_outcome = 'accepted'
+         ) AS current_denominator,
+         count(DISTINCT f.finding_fingerprint) FILTER (
+           WHERE f.created_at >= $3 AND f.created_at < $4 AND f.adjudication_outcome = 'accepted'
+             AND f.remediation_state IN ('fixed', 'verified')
+         ) AS current_numerator,
+         count(DISTINCT f.finding_fingerprint) FILTER (
+           WHERE f.created_at >= $5 AND f.created_at < $3 AND f.adjudication_outcome = 'accepted'
+         ) AS prior_denominator,
+         count(DISTINCT f.finding_fingerprint) FILTER (
+           WHERE f.created_at >= $5 AND f.created_at < $3 AND f.adjudication_outcome = 'accepted'
+             AND f.remediation_state IN ('fixed', 'verified')
+         ) AS prior_numerator
+         FROM audit_findings f
+         JOIN audit_runs r ON r.id = f.run_id
+        WHERE r.repo_id = $1 AND r.mode = $2`,
+      [repoId, mode, currentStart, now, priorStart],
+    );
+    const r = row[0] || {};
+    const n = (v) => Number(v) || 0;
+    return {
+      current: { numerator: n(r.current_numerator), denominator: n(r.current_denominator) },
+      prior: { numerator: n(r.prior_numerator), denominator: n(r.prior_denominator) },
+    };
+  } catch (err) {
+    process.stderr.write(`  [learning] getAuditFindingConversionRate failed: ${err.message}\n`);
+    return null;
+  }
+}

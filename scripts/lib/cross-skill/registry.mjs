@@ -496,6 +496,20 @@ export const REGISTRY = Object.freeze([
     load: () => import('./commands/final-review.mjs').then((m) => m.finalReviewPendingCmd),
   },
   {
+    // docs/plans/skill-efficacy-census.md Phase 2. `ambient-ok`: resolves the
+    // DB-backed rows from the CWD checkout's own identity by default; --repo
+    // is an optional disambiguator, never required (mirrors
+    // final-review-pending's own --repo contract). `degrade-noop`, not
+    // `require`: the seven trailer-proxy skills read `git log` directly and
+    // are fully available even with Postgres down.
+    name: 'skill-census',
+    flags: ['repo', 'window-days', 'format'],
+    positionals: 'none', payload: 'flags',
+    scope: 'ambient-ok', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: { rows: [] },
+    load: () => import('./commands/census.mjs').then((m) => m.skillCensusCmd),
+  },
+  {
     name: 'shadow-overlap',
     flags: [], positionals: 'none', payload: 'json',
     scope: 'none', kind: 'read', cloud: 'degrade-noop',

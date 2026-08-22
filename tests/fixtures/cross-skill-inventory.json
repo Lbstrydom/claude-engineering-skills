@@ -67,6 +67,7 @@
     "resolve-repo-identity",
     "set-active-embedding-model",
     "shadow-overlap",
+    "skill-census",
     "update-plan-status",
     "upsert-plan",
     "upstream",

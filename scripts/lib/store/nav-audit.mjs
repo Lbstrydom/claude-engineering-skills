@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { upsert, many } from '../db/query.mjs';
 import { isCloudEnabled } from './repo.mjs';
+import { runWindowCountQuery } from './window-count-query.mjs';
 
 /**
  * Stable content identity for a run's audited output — sorted so key
@@ -155,4 +156,22 @@ export async function listNavAuditRunHistory(rawArgs) {
     process.stderr.write(`  [nav-audit-store] listNavAuditRunHistory failed: ${err.message}\n`);
     return { ok: false, rows: [], truncated: false, error: err.message };
   }
+}
+
+/**
+ * Window-scoped row counts for the skill-efficacy census
+ * (docs/plans/skill-efficacy-census.md Phase 2). `listNavAuditRunHistory`
+ * returns a truncated recent-history list; this is a separate aggregate
+ * query, purpose-built for the census's current/prior window semantics.
+ *
+ * @param {string} repoId
+ * @param {{currentStart: string, priorStart: string, now: string}} bounds ISO timestamps
+ * @returns {Promise<{current: number, prior: number, allTime: number}|null>}
+ */
+export async function getNavAuditWindowCounts(repoId, { currentStart, priorStart, now }) {
+  return runWindowCountQuery({
+    repoGuard: repoId, table: 'nav_audit_runs',
+    params: [repoId, currentStart, now, priorStart],
+    errorLabel: 'getNavAuditWindowCounts',
+  });
 }

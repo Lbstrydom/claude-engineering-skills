@@ -17,6 +17,7 @@ import path from 'node:path';
 import { findRepoRootFromCwd } from '../assert-repo-root.mjs';
 import { isCloudEnabled } from './repo.mjs';
 import { one, upsert, updateWhere } from '../db/query.mjs';
+import { runWindowCountQuery } from './window-count-query.mjs';
 import { DB_PLAN_STATUSES, toDbPlanStatus } from '../status-vocabulary.mjs';
 
 // ── plans ──────────────────────────────────────────────────────────────────
@@ -330,4 +331,22 @@ export async function updatePlanStatus({ repoId, planId, status }) {
     process.stderr.write(`  [learning] updatePlanStatus failed: ${err.message}\n`);
     return { ok: false, rowCount: 0 };
   }
+}
+
+/**
+ * Window-scoped row counts for the skill-efficacy census
+ * (docs/plans/skill-efficacy-census.md Phase 2). Scoped to `skill='plan'`
+ * (the `/plan` skill's own rows) — `manual` rows are a different, non-skill
+ * source and are excluded per §2's contract table.
+ *
+ * @param {string} repoId
+ * @param {{currentStart: string, priorStart: string, now: string}} bounds ISO timestamps
+ * @returns {Promise<{current: number, prior: number, allTime: number}|null>}
+ */
+export async function getPlanWindowCounts(repoId, { currentStart, priorStart, now }) {
+  return runWindowCountQuery({
+    repoGuard: repoId, table: 'plans', extraWhere: "AND skill = 'plan'",
+    params: [repoId, currentStart, now, priorStart],
+    errorLabel: 'getPlanWindowCounts',
+  });
 }

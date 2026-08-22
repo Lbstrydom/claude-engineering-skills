@@ -10,6 +10,7 @@
 
 import { isCloudEnabled } from './repo.mjs';
 import { many, insertReturning } from '../db/query.mjs';
+import { runWindowCountQuery } from './window-count-query.mjs';
 // Single oracle for "is this string a plausible audit_repos row id" — the same
 // UUID_RE campaign.mjs's CLI and bandit-fp.mjs's own writers already gate on.
 // Reusing it here rather than re-deriving the regex is what keeps a typo'd or
@@ -101,4 +102,23 @@ export async function readShipEvents(repoId, { limit = 10 } = {}) {
     process.stderr.write(`  [learning] readShipEvents failed: ${err.message}\n`);
     return null;
   }
+}
+
+/**
+ * Window-scoped row counts for the skill-efficacy census
+ * (docs/plans/skill-efficacy-census.md Phase 2). Purpose-built rather than
+ * reusing `readShipEvents` — that reader returns a bounded recent-events list
+ * + an outcome breakdown, not an arbitrary current/prior timestamp-window
+ * aggregate.
+ *
+ * @param {string} repoId
+ * @param {{currentStart: string, priorStart: string, now: string}} bounds ISO timestamps
+ * @returns {Promise<{current: number, prior: number, allTime: number}|null>}
+ */
+export async function getShipEventWindowCounts(repoId, { currentStart, priorStart, now }) {
+  return runWindowCountQuery({
+    repoGuard: repoId, table: 'ship_events',
+    params: [repoId, currentStart, now, priorStart],
+    errorLabel: 'getShipEventWindowCounts',
+  });
 }

@@ -523,3 +523,43 @@ export async function getPersonaSessionsByUrl({ url, limit = 3, select = null })
     return [];
   }
 }
+
+/**
+ * Window-scoped row counts for the skill-efficacy census
+ * (docs/plans/skill-efficacy-census.md Phase 2, round-2 H6 fix —
+ * repo-scoped like every other census row, no bundle-wide carve-out).
+ * Mirrors `getPersonaSessionsByRepo`'s own `repo_name` primary / `repo_id`
+ * confirming convention rather than inventing a new one.
+ *
+ * @param {{repoName: string, repoId?: string|null, currentStart: string, priorStart: string, now: string}} args
+ * @returns {Promise<{current: number, prior: number, allTime: number}|null>}
+ */
+export async function getPersonaSessionWindowCounts({ repoName, repoId = null, currentStart, priorStart, now }) {
+  if (!repoName || !await isCloudEnabled()) return null;
+  const scoped = Boolean(repoId);
+  try {
+    const row = scoped
+      ? await many(
+          `SELECT
+             count(*) FILTER (WHERE created_at >= $2 AND created_at < $3) AS current,
+             count(*) FILTER (WHERE created_at >= $4 AND created_at < $2) AS prior,
+             count(*) AS all_time
+             FROM persona_test_sessions
+            WHERE repo_name = $1 AND (repo_id = $5 OR repo_id IS NULL)`,
+          [repoName, currentStart, now, priorStart, repoId],
+        )
+      : await many(
+          `SELECT
+             count(*) FILTER (WHERE created_at >= $2 AND created_at < $3) AS current,
+             count(*) FILTER (WHERE created_at >= $4 AND created_at < $2) AS prior,
+             count(*) AS all_time
+             FROM persona_test_sessions WHERE repo_name = $1`,
+          [repoName, currentStart, now, priorStart],
+        );
+    const r = row[0] || { current: 0, prior: 0, all_time: 0 };
+    return { current: Number(r.current) || 0, prior: Number(r.prior) || 0, allTime: Number(r.all_time) || 0 };
+  } catch (err) {
+    process.stderr.write(`  [persona] getPersonaSessionWindowCounts failed: ${err.message}\n`);
+    return null;
+  }
+}

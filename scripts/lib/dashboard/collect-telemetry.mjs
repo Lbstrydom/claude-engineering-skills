@@ -36,6 +36,7 @@ import {
 } from '../audit/tiered-shadow-summary.mjs';
 import { SHADOW_LOG_PATH } from '../audit/tiered-shadow-compare.mjs';
 import { tieredAuditConfig } from '../config.mjs';
+import { censusAllSkills } from '../store/skill-census.mjs';
 
 const DAYS = 30;
 const MAX_REQ_ITEMS = 200;
@@ -455,6 +456,28 @@ async function collectAuditEffectiveness(root) {
   }
 }
 
+/** Empty skill-census shape (schema-valid; used on absence/error). */
+function emptySkillCensus() {
+  return { cloud: false, repoId: null, repoName: null, windowDays: 14, rows: [] };
+}
+
+/** Collect the skill-efficacy census (docs/plans/skill-efficacy-census.md Phase 3). */
+async function collectSkillCensus(root) {
+  try {
+    const result = await censusAllSkills({ root });
+    if (!result.ok) {
+      return { data: { ...emptySkillCensus(), repoName: result.repoName ?? null }, status: { status: 'unexpected-error', detail: redactSecrets('skill-census produced no usable data this run') } };
+    }
+    const data = { cloud: result.cloud, repoId: result.repoId, repoName: result.repoName, windowDays: result.windowDays, rows: result.rows };
+    if (!result.cloud && !result.rows.some((r) => (r.allTimeCount ?? 0) > 0)) {
+      return { data, status: { status: 'missing-optional', detail: 'cloud store off — DB-backed rows unavailable; trailer-proxy rows still reflect this checkout' } };
+    }
+    return { data, status: { status: 'ok', detail: '' } };
+  } catch (err) {
+    return { data: emptySkillCensus(), status: { status: 'unexpected-error', detail: redactSecrets(`skill-census query failed: ${err.message}`) } };
+  }
+}
+
 /** Empty security telemetry shape (schema-valid; used on absence/error). */
 function emptySecurity() {
   return {
@@ -775,7 +798,7 @@ export async function collectTelemetry(opts = {}) {
   // Scope the Audit Runs tab to this directory's canonical repo row when
   // resolvable; null → project-wide fallback (cloud off / never-audited repo).
   const auditRepoId = await canonicalRepoId(root);
-  const [auditRuns, learning, security, purposeHealth, promptVariants, shipHealth, auditEffectiveness, authorTier, modelAb, tieredShadow, personaTests] = await Promise.all([
+  const [auditRuns, learning, security, purposeHealth, promptVariants, shipHealth, auditEffectiveness, authorTier, modelAb, tieredShadow, personaTests, skillCensus] = await Promise.all([
     collectAuditRuns(auditRepoId),
     collectLearning(root),
     collectSecurity(root),
@@ -787,6 +810,7 @@ export async function collectTelemetry(opts = {}) {
     collectModelAb(),
     collectTieredShadow(root),
     collectPersonaTests(root),
+    collectSkillCensus(root),
   ]);
   const requirements = collectRequirements(root);
 
@@ -810,6 +834,7 @@ export async function collectTelemetry(opts = {}) {
       modelAb: modelAb.status,
       tieredShadow: tieredShadow.status,
       personaTests: personaTests.status,
+      skillCensus: skillCensus.status,
     },
     auditRuns: auditRuns.data,
     requirements: requirements.data,
@@ -823,6 +848,7 @@ export async function collectTelemetry(opts = {}) {
     modelAb: modelAb.data,
     tieredShadow: tieredShadow.data,
     personaTests: personaTests.data,
+    skillCensus: skillCensus.data,
   };
 }
 

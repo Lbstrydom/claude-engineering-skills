@@ -18,6 +18,7 @@
 import path from 'node:path';
 import { isCloudEnabled } from './repo.mjs';
 import { one, upsert } from '../db/query.mjs';
+import { runWindowCountQuery } from './window-count-query.mjs';
 import { buildOwnedInsert, classifyOwnedWrite } from './ownership.mjs';
 
 // ── regression_specs ───────────────────────────────────────────────────────
@@ -229,4 +230,25 @@ export async function recordRegressionSpecRun(specId, run, opts = {}) {
     process.stderr.write(`  [learning] recordRegressionSpecRun failed: ${err.message}\n`);
     return { ok: false, cloud: true, reason: 'write-failed', error: err.message };
   }
+}
+
+/**
+ * Window-scoped row counts for the skill-efficacy census
+ * (docs/plans/skill-efficacy-census.md Phase 2). Counts **specs authored**,
+ * not invocations (round-4 M1 fix) — one `/ux-lock` session can author
+ * several specs, and a `--verify`-mode session authors none at all, so this
+ * row is a proxy, never a direct invocation count. `source_kind !=
+ * 'unit-test'` excludes `/ship`'s `lock-with-test` rows, which share this
+ * table but belong to a different skill.
+ *
+ * @param {string} repoId
+ * @param {{currentStart: string, priorStart: string, now: string}} bounds ISO timestamps
+ * @returns {Promise<{current: number, prior: number, allTime: number}|null>}
+ */
+export async function getRegressionSpecWindowCounts(repoId, { currentStart, priorStart, now }) {
+  return runWindowCountQuery({
+    repoGuard: repoId, table: 'regression_specs', extraWhere: "AND source_kind != 'unit-test'",
+    params: [repoId, currentStart, now, priorStart],
+    errorLabel: 'getRegressionSpecWindowCounts',
+  });
 }

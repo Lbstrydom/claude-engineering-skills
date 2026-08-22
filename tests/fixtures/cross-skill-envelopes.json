@@ -1254,6 +1254,21 @@
         "hint": "cloud disabled — overlap is unmeasurable locally"
       }
     },
+    "skill-census-bad-window": {
+      "args": [
+        "skill-census",
+        "--window-days",
+        "0"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--window-days must be an integer 1-90 (got 0)"
+        }
+      }
+    },
     "resolve-identity-json": {
       "args": [
         "resolve-repo-identity"

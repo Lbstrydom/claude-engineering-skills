@@ -37,6 +37,7 @@ const SECTION_FILES = [
   'learning.mjs',
   'prompt-variants.mjs',
   'audit-effectiveness.mjs',
+  'skill-census.mjs',
   'ship-health.mjs',
   'security.mjs',
   'purpose.mjs',
