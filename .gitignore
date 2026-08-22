@@ -26,6 +26,11 @@ test-results/
 # Private/corporate consumer registry — names a non-public consumer repo,
 # must never be committed to this public repo (see consumer-repos.local.example.json).
 scripts/lib/consumer-repos.local.json
+
+# Private/corporate self-hosted-runner host declarations — extra install
+# roots, expected hostname, acknowledged owners; must never be committed to
+# this public repo (see runner-hosts.local.example.json).
+scripts/lib/runner-hosts.local.json
 .claude/scheduled_tasks.lock
 
 # Audit-loop operational state (local to each machine)

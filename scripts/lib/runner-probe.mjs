@@ -44,6 +44,76 @@ export function defaultInstallRoots(platform = process.platform) {
   ];
 }
 
+/**
+ * Test/operator escape hatch — mirrors `maintenance-checks.mjs`'s
+ * `AUDIT_LOOP_STATE_DIR` override precedent (same repo, same shape of
+ * problem: a hardcoded path with no CLI flag to redirect it).
+ * `defaultInstallRoots`'s built-in paths are process-wide constants
+ * (`C:\actions-runner`, `~/actions-runner`, …) — there is no `--config`
+ * mechanism to SUPPRESS them (config only ever ADDS `extraRoots`). A
+ * CLI-level subprocess test (Cluster B, `tests/runner-doctor-cli.test.mjs`)
+ * has no other way to guarantee it never touches a real install, and on a
+ * machine that genuinely HAS a runner at one of those paths — the plan's own
+ * motivating incident, and verified present on this exact machine during
+ * Cluster B implementation (`C:\actions-runner` exists here) — reading it
+ * unconditionally would leak real, possibly corporate, install data into
+ * test output. Exactly what this whole feature exists to keep out of a
+ * public repo/CI log.
+ *
+ * `RUNNER_PROBE_ROOTS_OVERRIDE` (JSON array, same shape as
+ * `defaultInstallRoots`'s return value) REPLACES the built-in list — but only
+ * when `RUNNER_PROBE_TEST_MODE=1` is ALSO set (audit round 1, M6): requiring
+ * two separately-named env vars together is what keeps an accidental/hostile
+ * single env var from silently redirecting a production run's discovery.
+ * Without `RUNNER_PROBE_TEST_MODE`, the override is IGNORED outright — real
+ * defaults, unconditionally, exactly as if it were never set.
+ *
+ * With test mode on, a malformed or invalid override THROWS rather than
+ * falling back to real defaults (audit round 1, H1/H3) — this variable exists
+ * specifically to keep a test run away from a real, possibly corporate,
+ * install; silently falling back to the very thing it was set to avoid on a
+ * typo would turn a configuration mistake into exactly the leak this feature
+ * exists to prevent. `config.extraRoots` is still appended as normal by the
+ * caller either way.
+ *
+ * @param {string} platform
+ * @returns {Array<{kind:'local', path:string}>|Array<object>}
+ */
+function resolveBuiltInRoots(platform) {
+  const override = process.env.RUNNER_PROBE_ROOTS_OVERRIDE;
+  if (!override || process.env.RUNNER_PROBE_TEST_MODE !== '1') return defaultInstallRoots(platform);
+
+  let parsed;
+  try {
+    parsed = JSON.parse(override);
+  } catch (err) {
+    throw new Error(`RUNNER_PROBE_ROOTS_OVERRIDE is set but not valid JSON: ${err.message}`);
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error('RUNNER_PROBE_ROOTS_OVERRIDE must be a JSON array');
+  }
+  // Per-kind required fields (audit round 3, M2/M7 — the R1 version only
+  // checked `kind`, so `{kind:'local'}` with no `path` passed validation and
+  // failed later with a confusing, un-attributed error instead of naming the
+  // actual malformed entry).
+  for (const [i, entry] of parsed.entries()) {
+    const bad = (why) => { throw new Error(`RUNNER_PROBE_ROOTS_OVERRIDE[${i}] ${why}`); };
+    if (!entry || typeof entry !== 'object') bad("is not an object (must be {kind:'local',path} or {kind:'wsl',distro,pathInDistro})");
+    if (entry.kind === 'local') {
+      if (typeof entry.path !== 'string' || !entry.path) bad("is kind:'local' but has no non-empty string 'path'");
+    } else if (entry.kind === 'wsl') {
+      if (typeof entry.distro !== 'string' || !entry.distro) bad("is kind:'wsl' but has no non-empty string 'distro'");
+      if (typeof entry.pathInDistro !== 'string' || !entry.pathInDistro) bad("is kind:'wsl' but has no non-empty string 'pathInDistro'");
+    } else {
+      bad(`has an unrecognised kind: ${JSON.stringify(entry.kind)} (must be 'local' or 'wsl')`);
+    }
+  }
+  process.stderr.write(
+    '  [runner-probe] RUNNER_PROBE_ROOTS_OVERRIDE active — built-in default install roots are NOT being probed; using the override list instead\n',
+  );
+  return parsed;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // resolveRunnerChild — containment check scoped to an INSTALL DIRECTORY,
 // not a repo (D10/§10). Deliberately not `sensitive-paths.mjs::resolveAndClassify`,
@@ -76,13 +146,33 @@ function resolveRunnerChild(root, name, opts = {}) {
   }
 
   const childPath = path.join(canonicalRoot, name);
-  let canonicalChild;
+
+  // Audit round 3, H1: the containment check below only guards against the
+  // TARGET escaping the root — it says nothing about a file named `.runner`
+  // secretly BEING a symlink to `.credentials`, sitting right next to it in
+  // the SAME root. That would sail through the escape check (the target is
+  // in-root) while returning credential bytes to a caller that only ever
+  // asked for the `.runner` artifact. The real `config.cmd`/`config.sh`
+  // installer always writes these as plain regular files, so `.runner`/
+  // `.service` being a symlink AT ALL — anywhere it points — is refused,
+  // fail-closed, before ever following it.
+  let directLstat;
   try {
-    canonicalChild = fsMod.realpathSync(childPath);
+    directLstat = fsMod.lstatSync(childPath);
   } catch (err) {
     if (err.code === 'ENOENT') {
       return { ok: false, error: { code: 'CHILD_ABSENT', message: `${name} not found under ${canonicalRoot}` } };
     }
+    return { ok: false, error: { code: 'CHILD_UNRESOLVABLE', message: `cannot stat ${childPath}: ${err.code || err.message}` } };
+  }
+  if (directLstat.isSymbolicLink()) {
+    return { ok: false, error: { code: 'ARTIFACT_IS_SYMLINK', message: `${name} under ${canonicalRoot} is a symlink, not a regular file — refusing to follow it` } };
+  }
+
+  let canonicalChild;
+  try {
+    canonicalChild = fsMod.realpathSync(childPath);
+  } catch (err) {
     return { ok: false, error: { code: 'CHILD_UNRESOLVABLE', message: `cannot resolve ${childPath}: ${err.code || err.message}` } };
   }
 
@@ -419,7 +509,7 @@ export function discoverInstalls(opts = {}) {
   } = opts;
 
   const roots = [
-    ...defaultInstallRoots(platform).map((r) => ({ ...r, source: 'built-in' })),
+    ...resolveBuiltInRoots(platform).map((r) => ({ ...r, source: 'built-in' })),
     ...(config.extraRoots || []).map((r) => ({ ...r, source: r.kind === 'wsl' ? 'wsl' : 'extraRoot' })),
   ];
 
@@ -471,6 +561,15 @@ export function discoverInstalls(opts = {}) {
     installs.push({
       ...facts,
       source: r.source,
+      // `kind`/`distro` — not in the plan §3 RunnerInstall snippet (neither
+      // is `source`, already attached above and already relied on by
+      // `assessRunnerIdentity`'s undeclaredInstallFires), but the CLI's
+      // `remove` recipe (D7/Gemini G3/G4) needs to pick a shell dialect and,
+      // for a wsl-kind install, the distro name to wrap the printed command
+      // in `wsl.exe -d <distro> --` — and nothing else on this object carries
+      // either. Additive only; every existing consumer reads named fields.
+      kind: isWsl ? 'wsl' : 'local',
+      ...(isWsl ? { distro: r.distro } : {}),
       supervision: supervision.ok ? supervision.value : facts.supervision,
     });
     candidates.push({ root: facts.root, source: r.source, state: 'discovered', error: null });
@@ -695,6 +794,14 @@ export const _internals = {
   isParentServiceSupervisor,
   defaultGitExec,
   DEFAULT_LOCAL_CONFIG_PATH,
+  // Safe to expose (unlike resolveRunnerChild below): returns only path
+  // DECLARATIONS, never reads file content, and every input it reads
+  // (RUNNER_PROBE_ROOTS_OVERRIDE / RUNNER_PROBE_TEST_MODE) is already a
+  // plain env var any caller can read directly — nothing here is a
+  // capability this export could leak. Added for a direct, in-process unit
+  // test of the test-mode gate (audit round 2, M1) that doesn't need a real
+  // subprocess or this machine's real install paths.
+  resolveBuiltInRoots,
   // `resolveRunnerChild` is deliberately ABSENT from this object (audit round 2,
   // M3/M5): `_internals` is itself an exported, importable value, so putting the
   // generic arbitrary-name resolver on it would have re-opened exactly the

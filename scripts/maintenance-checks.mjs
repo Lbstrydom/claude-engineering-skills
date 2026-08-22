@@ -67,17 +67,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
-// Round-3 audit M3 (accepted, not relocated here): this module lives under
-// lib/brainstorm/ despite being generic filesystem-lock infrastructure —
-// scripts/requirements.mjs is ALSO an independent non-brainstorm consumer,
-// which is real evidence it's misplaced, not a violation this feature
-// introduces. Root cause: historical placement, no cross-cutting lib/
-// home existed when it was written. Minimal fix considered and rejected
-// as out-of-scope here: moving it (updating both existing import sites +
-// domain-map.json + re-running arch:refresh) is a legitimate but separate
-// cleanup, not something to bundle into an unrelated opt-in feature.
-// Residual risk: architecture-intent.md will keep flagging this edge for
-// every future consumer until the module is relocated.
 import { withFileLock, LockTimeoutError } from './lib/file-lock.mjs';
 import { isSourceRepo } from './lib/is-source-repo.mjs';
 
@@ -271,6 +260,22 @@ export const CHECKS = [
     label: 'docs/plans/*.md ledger-capture claims vs. the actual ledger',
     requiredEnv: [],
     steps: [{ script: 'debt-ledger-claims-check.mjs', args: [] }],
+  },
+  {
+    // Local-only, no requiredEnv, no dedicated GH workflow (same "ad hoc"
+    // shape as cache-hitrate above) — self-hosted-runner-management.md D9:
+    // "discoverability rides the opt-in weekly maintenance replica, not
+    // check-setup", so the feature is not a command nobody knows to run.
+    // `local --json --strict` (never --quiet-when-clean: --json already
+    // emits exactly one envelope regardless of rollup, so that flag would be
+    // a no-op here and is reserved for human-mode printing). requiredEnv is
+    // deliberately [] — this check must run with nothing configured; an
+    // absent runner install is the ordinary, non-error `rollup:'clean'` case
+    // (§3), not a skip condition.
+    key: 'runner-health',
+    label: 'Self-hosted-runner inventory + health (this machine)',
+    requiredEnv: [],
+    steps: [{ script: 'actions-runner-doctor.mjs', args: ['local', '--json', '--strict'] }],
   },
   {
     // Local-only, no requiredEnv, no dedicated GH workflow — same "ad hoc"

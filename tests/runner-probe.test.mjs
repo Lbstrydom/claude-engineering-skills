@@ -13,6 +13,7 @@ import {
   readCurrentRepoOwners,
   loadLocalRunnerConfig,
   discoverInstalls,
+  _internals,
 } from '../scripts/lib/runner-probe.mjs';
 
 // `resolveRunnerChild` (the generic, arbitrary-name containment resolver) is
@@ -23,7 +24,10 @@ import {
 // enum-restricted public API, `resolveRunnerArtifact('runner'|'service', …)` —
 // the same path a real caller is limited to.
 
-const FIXTURE_ROOT = path.join(process.cwd(), 'tests', 'fixtures', 'runner', 'synthetic-install');
+// Relative to this test module (audit round 4, L1), not process.cwd() —
+// running the file from any directory other than the repo root would
+// otherwise resolve the fixture to the wrong place.
+const FIXTURE_ROOT = path.join(import.meta.dirname, 'fixtures', 'runner', 'synthetic-install');
 
 // ─────────────────────────────────────────────────────────────────────────
 // Fake, fully in-memory fs — never touches the real filesystem, so a test
@@ -112,6 +116,56 @@ test('defaultInstallRoots: linux/darwin use ~/actions-runner + /opt/actions-runn
 });
 
 // ─────────────────────────────────────────────────────────────────────────
+// resolveBuiltInRoots — the RUNNER_PROBE_ROOTS_OVERRIDE test-mode gate
+// (audit round 1 H1/H3/M6, round 2 M1). In-process, env-var-driven, no
+// subprocess — this is precisely what lets it assert the "ignored without
+// test mode" case WITHOUT ever letting `defaultInstallRoots()`'s hardcoded
+// paths (which cannot be redirected, D10) actually get read from real disk:
+// the assertion is on the RETURNED VALUE, and defaultInstallRoots() itself
+// is pure path computation, no fs touch either.
+// ─────────────────────────────────────────────────────────────────────────
+
+test('resolveBuiltInRoots: RUNNER_PROBE_TEST_MODE unset — override is ignored outright, real defaults returned', () => {
+  const { resolveBuiltInRoots } = _internals;
+  const saved = { override: process.env.RUNNER_PROBE_ROOTS_OVERRIDE, testMode: process.env.RUNNER_PROBE_TEST_MODE };
+  try {
+    delete process.env.RUNNER_PROBE_TEST_MODE;
+    process.env.RUNNER_PROBE_ROOTS_OVERRIDE = 'not valid json'; // would throw if honoured
+    assert.deepEqual(resolveBuiltInRoots('linux'), defaultInstallRoots('linux'));
+  } finally {
+    if (saved.override === undefined) delete process.env.RUNNER_PROBE_ROOTS_OVERRIDE; else process.env.RUNNER_PROBE_ROOTS_OVERRIDE = saved.override;
+    if (saved.testMode === undefined) delete process.env.RUNNER_PROBE_TEST_MODE; else process.env.RUNNER_PROBE_TEST_MODE = saved.testMode;
+  }
+});
+
+test('resolveBuiltInRoots: RUNNER_PROBE_TEST_MODE=1 + malformed override throws, never silently falls back', () => {
+  const { resolveBuiltInRoots } = _internals;
+  const saved = { override: process.env.RUNNER_PROBE_ROOTS_OVERRIDE, testMode: process.env.RUNNER_PROBE_TEST_MODE };
+  try {
+    process.env.RUNNER_PROBE_TEST_MODE = '1';
+    process.env.RUNNER_PROBE_ROOTS_OVERRIDE = 'not valid json';
+    assert.throws(() => resolveBuiltInRoots('linux'), /RUNNER_PROBE_ROOTS_OVERRIDE/);
+  } finally {
+    if (saved.override === undefined) delete process.env.RUNNER_PROBE_ROOTS_OVERRIDE; else process.env.RUNNER_PROBE_ROOTS_OVERRIDE = saved.override;
+    if (saved.testMode === undefined) delete process.env.RUNNER_PROBE_TEST_MODE; else process.env.RUNNER_PROBE_TEST_MODE = saved.testMode;
+  }
+});
+
+test('resolveBuiltInRoots: RUNNER_PROBE_TEST_MODE=1 + a valid override is honoured', () => {
+  const { resolveBuiltInRoots } = _internals;
+  const saved = { override: process.env.RUNNER_PROBE_ROOTS_OVERRIDE, testMode: process.env.RUNNER_PROBE_TEST_MODE };
+  try {
+    process.env.RUNNER_PROBE_TEST_MODE = '1';
+    process.env.RUNNER_PROBE_ROOTS_OVERRIDE = JSON.stringify([{ kind: 'local', path: '/fake/only-root' }]);
+    const roots = resolveBuiltInRoots('linux');
+    assert.deepEqual(roots, [{ kind: 'local', path: '/fake/only-root' }]);
+  } finally {
+    if (saved.override === undefined) delete process.env.RUNNER_PROBE_ROOTS_OVERRIDE; else process.env.RUNNER_PROBE_ROOTS_OVERRIDE = saved.override;
+    if (saved.testMode === undefined) delete process.env.RUNNER_PROBE_TEST_MODE; else process.env.RUNNER_PROBE_TEST_MODE = saved.testMode;
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
 // Containment (R1 H4) — via resolveRunnerArtifact, the only reachable API
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -123,8 +177,24 @@ test('resolveRunnerArtifact: a .runner symlink resolving OUTSIDE the canonicalis
   });
   const result = resolveRunnerArtifact('C:/fake-root', 'runner', { fs: fakeFs });
   assert.equal(result.ok, false);
-  assert.equal(result.error.code, 'ESCAPES_ROOT');
+  // ARTIFACT_IS_SYMLINK now fires before the escape check even runs (audit
+  // round 3, H1) — a `.runner` symlink is refused outright, regardless of
+  // where it points; ESCAPES_ROOT is reserved for the ROOT's own symlink
+  // resolution, covered separately below.
+  assert.equal(result.error.code, 'ARTIFACT_IS_SYMLINK');
   assert.deepEqual(fakeFs.reads, []); // never actually read the escaping target
+});
+
+test('resolveRunnerArtifact: a .runner symlink resolving INSIDE the root is ALSO refused — a runner artifact must be a regular file, not merely non-escaping (audit round 3, H1)', () => {
+  const fakeFs = makeFakeFs({
+    'C:/fake-root': { type: 'dir' },
+    'C:/fake-root/.runner': { type: 'symlink', target: 'C:/fake-root/.credentials' },
+    'C:/fake-root/.credentials': { type: 'file', content: '{"secret":true}' },
+  });
+  const result = resolveRunnerArtifact('C:/fake-root', 'runner', { fs: fakeFs });
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'ARTIFACT_IS_SYMLINK');
+  assert.deepEqual(fakeFs.reads, [], 'the credential file behind the in-root symlink is never read');
 });
 
 test('resolveRunnerArtifact: a .runner resolving INSIDE the root succeeds', () => {
