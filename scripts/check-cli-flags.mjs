@@ -207,6 +207,18 @@ export const BASELINE = new Set([
   'scripts/security-triage.mjs',
   'scripts/spikes/observed-graph-discovery-spike.mjs',
   'scripts/sync-refresh.mjs',
+
+  // Added 2026-08-23 — NOT accepted debt like the rest of this list, but the
+  // deliberate false positive this gate's own docstring anticipates (see
+  // `parsesFlags`: "a library that merely discusses --flags ... the worst
+  // case is one visible false finding"). `readRepoArg(argv)` is a pure
+  // library helper that EXTRACTS --repo's value for its caller; it never
+  // itself decides whether to reject an unknown flag, so it has no
+  // `assertKnownFlags` call to make. Its sole caller,
+  // scripts/actions-runner-doctor.mjs, already calls `assertKnownFlags(...)`
+  // in main() before doing anything consequential — the guard exists, one
+  // file over, where this single-file scanner cannot see it.
+  'scripts/lib/runner-fallback.mjs',
 ]);
 
 /**
