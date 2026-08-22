@@ -339,6 +339,10 @@
     {
       "line": "> node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path');console.log(p.join(p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim()),'.claude','tmp','ship-verification-pending.md'))\"",
       "reason": "Step 6.8. The blockquoted form of the same path-resolution recipe as Step 2. Prints a path; asserts nothing. Matched only because the verb scanner sees `git`."
+    },
+    {
+      "line": "primary GPT/Gemini-round finding was never surfaced here at all, however long",
+      "reason": "Step 6.7 (docs/plans/skill-efficacy-census.md Phase 1, 2026-08-22). Narrates the PRE-FIX bug the widened-bucket change closes -- a primary finding could sit fixed with user_action still null and this step would never show it -- not a guarantee about current or future behaviour. Same shape as the 2026-08-14 migration-realization narrative entries above ('A consumer reported...', 'on every such push...'): a historical description of a defect, matched only because the verb scanner sees 'never'. The actual current-behaviour claim (final-review-pending now reads the merged pendingQueue) is mechanically covered by tests/final-review-card.test.mjs's negative-control assertions (a bucket:null item prints --bucket primary, never --bucket shadow-only)."
     }
   ]
 }
