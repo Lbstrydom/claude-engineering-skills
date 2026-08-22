@@ -145,12 +145,19 @@ export async function finalReviewStatsCmd(ctx) {
     const { writeFileSync, mkdirSync, existsSync } = await import('node:fs');
     const pending = (res.shadowOnlyQueue || []).filter((f) => !f.user_action);
     // Is the requested repo the one this process is standing in? Compared by
-    // BASENAME through the shared oracle, because the two identity systems
-    // spell the same repo differently (`owner/repo` vs the bare directory name).
-    const { repoBaseName } = await import('../../repo-scope.mjs');
+    // FULL identity, never basename — `getFinalReviewStats` resolves `--repo`
+    // against `audit_repos.name` (the `owner/repo` slug), and
+    // `resolveRepoIdentity().name` produces that same slug in the normal
+    // (git-origin-present) case, so exact equality is both correct and
+    // available. A basename-only comparison would let two distinct repos that
+    // happen to share a directory name (e.g. two orgs each hosting "widget")
+    // collide, pulling this checkout's grounding notes into another repo's
+    // worksheet — the sensitive-egress class AGENTS.md's sensitive-paths
+    // doctrine warns against ("compare full identity, never a
+    // substring/basename").
     const { resolveRepoIdentity } = await import('../../repo-identity.mjs');
     const ambientName = resolveRepoIdentity(process.cwd())?.name ?? null;
-    const groundingIsAmbient = Boolean(ambientName && repoBaseName(ambientName) === repoBaseName(repoName));
+    const groundingIsAmbient = Boolean(ambientName && ambientName === repoName);
     const md = renderAdjudicationWorksheet({
       title: `Final-review shadow-only spot-check — repo ${repoName}`,
       introLines: [
