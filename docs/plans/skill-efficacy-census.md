@@ -360,7 +360,7 @@ graph LR
   | `nav-audit` | `nav_audit_runs` | `repo_id` | `created_at` | row count | `id` | observed-record, **quality-flagged** (see evidence-quality enum below) |
   | `click-test`, `visual-audit` | *(none — no DB table)*; falls back to the trailer proxy row below (they can still ship an `AI-Skill`-tagged commit) | — | — | — | — | `no-table-by-design` for the DB dimension; `ship-attribution-only` via the trailer fallback |
   | `ux-lock` | `regression_specs` filtered `source_kind != 'unit-test'` | `repo_id` | `created_at` | row count of **specs authored, NOT invocations** (round-4 M1 fix — one `/ux-lock` invocation can author several specs, so a nonzero count overstates invocation count; conversely a `--verify`-mode invocation authors no spec at all — `plan_verification_runs` is *also* 0 rows per §1, so verify-mode usage is entirely invisible to every signal this census has) | `id` | observed-record, **currently 0** pending Phase 1's diagnosis; the memo must state this row measures "specs authored" and name the verify-mode blind spot rather than implying it measures ux-lock usage generally |
-  | `explain`, `investigate`, `brainstorm`, `security-strategy`, `ai-context-management`, `cycle`, `skills` | git `AI-Skill` trailer count, **CWD checkout only** (see repo-identity note below) | *(git, not DB)* | committer date `%cI` (M2 fix — author date `%aI` is editable/backdatable and weaker evidence of ship time than committer date) | count of commits in window with a non-blank `AI-Skill` trailer, via `git log --format='%H%x09%cI%x09%(trailers:key=AI-Skill,valueonly:separator=%x1f)'` — one tab-separated record per commit (sha, committer date, trailer value(s)); the bare trailers-only form used in this plan's own Phase 0 investigation carries no commit boundary/sha/date and cannot support dedup or ordering, so this is the corrected, complete form (round-3 M1 fix). **The trailer VALUE is the grouping key** (round-5 H1 fix — not a name requiring a separate lookup: `AI-Skill: audit-code` groups directly into the `audit-code` row, confirmed empirically in Phase 0's own trailer census) | commit sha (now present in the output, closing the round-3 M1 gap); a commit with **more than one** `AI-Skill` trailer (unobserved in this repo's history — `/ship` writes exactly one per commit today) splits the trailer field on the `\x1f` separator and **counts toward every distinct skill named** — round-5 H1 fix, replacing round-3's first-value-wins, which would have silently undercounted a genuine (if so-far-unobserved) dual attribution | `ship-attribution-only` — explicitly NOT an invocation count |
+  | `explain`, `investigate`, `brainstorm`, `security-strategy`, `ai-context-management`, `cycle`, `skills` | git `AI-Skill` trailer count, **CWD checkout only** (see repo-identity note below) | *(git, not DB)* | committer date `%cI` (M2 fix — author date `%aI` is editable/backdatable and weaker evidence of ship time than committer date) | count of commits in window with a non-blank `AI-Skill` trailer, via `git log --format='%H%x09%cI%x09%(trailers:key=AI-Skill,valueonly,separator=%x1f)'` — one tab-separated record per commit (sha, committer date, trailer value(s)); the bare trailers-only form used in this plan's own Phase 0 investigation carries no commit boundary/sha/date and cannot support dedup or ordering, so this is the corrected, complete form (round-3 M1 fix). **Implementation-verified correction (Cluster B, 2026-08-22)**: the trailers directive's own options are comma-separated after `trailers:` — an earlier draft here used a colon before `separator=`, which git fails to recognise silently (the whole placeholder prints back literally, unexpanded, no error) rather than erroring; caught live against this repo's own history (a raw match on the colon-form's output found 0 `click-test` commits against a confirmed 4 in the plain trailers-only form). **The trailer VALUE is the grouping key** (round-5 H1 fix — not a name requiring a separate lookup: `AI-Skill: audit-code` groups directly into the `audit-code` row, confirmed empirically in Phase 0's own trailer census) | commit sha (now present in the output, closing the round-3 M1 gap); a commit with **more than one** `AI-Skill` trailer (unobserved in this repo's history — `/ship` writes exactly one per commit today) splits the trailer field on the `\x1f` separator and **counts toward every distinct skill named** — round-5 H1 fix, replacing round-3's first-value-wins, which would have silently undercounted a genuine (if so-far-unobserved) dual attribution | `ship-attribution-only` — explicitly NOT an invocation count |
 
   **Window semantics**: `current` = `[now - windowDays, now)`; `prior` =
   `[now - 2*windowDays, now - windowDays)`; both computed from the same
@@ -866,22 +866,37 @@ checklist — strategy-pattern-over-switch).
   caveat, never disappears from the table (a vanished row is
   indistinguishable from a rendering bug).
 - **`scripts/lib/dashboard/render.mjs`** (modify) — import + wire the new
-  section into the tab list.
+  section into the tab list AND the `SLICERS` map. **A second, independent
+  instance of the same omit-from-array class, found during implementation**:
+  `render.mjs` also carries an `allMissing` array (~line 206) that decides
+  whether to show the page-level "nothing yet" placeholder — a section
+  omitted from it would show that placeholder even when the section
+  genuinely has data, hiding it entirely (the file's own comment names this
+  exact incident for `modelAb`/`tieredShadow`, added 2026-07-13 after both
+  shipped omitted). `skillCensus` must be added to both arrays, not just
+  the tab list.
 - **`scripts/lib/dashboard/schema.mjs`** (modify) — Zod schema for the new
-  data shape (566 lines today; append, don't restructure). **Must register
-  the new key inside `ReferenceDataSchema`'s object literal (line 181),
-  not just define a standalone schema elsewhere in the file** (Gemini
-  Step-6-round-2 finding, confirmed against the file's own documented
-  incident at lines 197-205: this exact schema strips undeclared keys by
-  default, and `navAudit`/`visualAudit` both shipped undetected-broken for
-  a period because their payload was declared nowhere in this object —
-  "the section renders its empty state with no error anywhere." A new
-  `skillCensus` schema that isn't added to this object's key list would
-  repeat that exact incident, silently.
-- **Test**: extend `tests/dashboard-section-contract.test.mjs` with the new
-  section's signature contract; a focused
-  `tests/dashboard-skill-census-section.test.mjs` (create) mirroring
-  `tests/dashboard-collect-reference.test.mjs`'s pattern for the collector.
+  data shape (566 lines today; append, don't restructure). **Corrected
+  target (implementation-time correction, 2026-08-22)**: Gemini's
+  Step-6-round-2 finding named `ReferenceDataSchema` (line 181) as the
+  incident precedent and the registration target — the INCIDENT citation
+  was right (this exact schema strips undeclared keys by default, and
+  `navAudit`/`visualAudit` both shipped undetected-broken because their
+  payload was declared nowhere in that object) but the TARGET schema was
+  wrong: `collectAuditEffectiveness` — the plan's own cited precedent —
+  actually registers under **`TelemetryDataSchema`** (line 279), not
+  `ReferenceDataSchema`, because `collectSkillCensus` is collected via
+  `collectTelemetry`, not `collectReference`. `skillCensus` is registered
+  in `TelemetryDataSchema`, immediately after `auditEffectiveness`, matching
+  where its own data actually flows.
+- **Test**: extend `tests/dashboard-section-contract.test.mjs`'s
+  `SECTION_FILES` array with the new section's signature contract; a
+  focused `tests/dashboard-skill-census-section.test.mjs` (create) mirroring
+  `tests/dashboard-collect-reference.test.mjs`'s consumer-path pattern —
+  runs the real `censusAllSkills` against this repo's live environment
+  (cloud on or off) and asserts structural correctness (16 rows, no
+  unrecognised `signalQuality`, no empty `caveat`) rather than a specific
+  cloud state.
 
 ### Phase 4 — Verdict memo
 
@@ -1001,6 +1016,31 @@ each cluster.
     2's `skill-census.mjs` module — they share one aggregation contract
     and should be reviewed together so a shape change in one doesn't
     silently break the other's test fixture.
+  - Additional files (implementation-time; intent-tagged): the per-skill
+    window-count readers named in prose in §2 materialised as concrete
+    exports — `scripts/lib/store/ship-events.mjs`,
+    `scripts/lib/store/nav-audit.mjs`, `scripts/lib/store/persona.mjs`,
+    `scripts/lib/store/plans.mjs`, `scripts/lib/store/regression-specs.mjs`,
+    `scripts/lib/store/runs-findings.mjs` (all modify — each gains one or
+    two new exported functions, no changes to existing exports).
+    `scripts/lib/cross-skill/store-port.mjs` (modify) — the composed store
+    port every migrated command reads through; `skill-census.mjs` must be
+    added to its composition, or `commands/census.mjs` importing the
+    aggregator directly fails the "port is the only way into the store"
+    conformance check (caught live: `cross-skill-registry-conformance.test.mjs`
+    flagged the direct import on the first test run).
+    `scripts/dev/capture-cross-skill-envelopes.mjs` (modify) +
+    `tests/fixtures/cross-skill-envelopes.json` (modify) — a golden capture
+    case for `skill-census` (the registry conformance suite requires at
+    least one per registered command); the case exercises the `--window-days
+    0` validation-error path specifically, not the cloud-off/live-git path,
+    since `censusAllSkills` reads real commit history even with cloud off
+    and a live-data envelope would carry genuinely volatile fields (commit
+    shas, dates) a golden fixture cannot pin.
+    `tests/cross-skill-registry-ratchet.test.mjs` (modify) — the hardcoded
+    end-state total (71, the historical post-migration command count) moves
+    to 72 for the new command; renamed to `TOTAL_INVENTORY` with a
+    documented cohort line, following the file's own existing pattern.
 - **Cluster C** — Phase 4 — fix-gate: final
   - Depends on Cluster A (so the conversion-rate metric reflects the fixed
     scoping) and Cluster B (the surface it reads from) both being merged.
