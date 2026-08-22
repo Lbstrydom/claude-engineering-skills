@@ -38,13 +38,25 @@ async function main() {
 
   let sourceFiles = [];
   let changedFiles = null;
+  // Only these two modes are live-driven and genuinely need no local source/git
+  // (bootstrap WITHOUT --from-url still drafts its contract from local source).
+  const liveOnlyDiscovery = Boolean(args.verify) || (args.bootstrap && Boolean(args.fromUrl));
   try {
     sourceFiles = listSourceFiles(root);
     if (args.scope === 'diff' && !args.verify) changedFiles = new Set(gitChangedFiles(root));
   } catch (err) {
-    // Non-fatal: --bootstrap --from-url and --verify are live-driven and need no
-    // local source/git. Static extraction simply yields nothing here.
-    process.stderr.write(`[nav-audit] no git/source files (${err.message.split('\n')[0]}) — continuing (live modes don't need them).\n`);
+    if (liveOnlyDiscovery) {
+      process.stderr.write(`[nav-audit] no git/source files (${err.message.split('\n')[0]}) — continuing (live modes don't need them).\n`);
+    } else {
+      // Every other mode (default static audit, --gate, plain --bootstrap) is a
+      // deterministic result callers depend on — a discovery failure must fail
+      // loudly, never silently proceed with an empty source set (which reads as
+      // "nothing to report" rather than "couldn't check" — AGENTS.md's
+      // pre-ship-empirical-verify doctrine: a failed capture must never present
+      // as verified/clean).
+      process.stderr.write(`[nav-audit] ✗ source/git discovery failed (${err.message.split('\n')[0]}) — cannot run a static audit without it.\n`);
+      process.exit(2);
+    }
   }
 
   // Read the contract early so its appRoots/exclude drive extraction.
