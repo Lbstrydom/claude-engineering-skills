@@ -277,6 +277,15 @@ const EXPECTED_EXPORTS = [
   'getModelAbFindingScores',
   'getModelAbArmCost',
   'getAdjudicatorGroundTruth', // model-swap-eval-harness Phase 4
+
+  // skill-efficacy census (docs/plans/skill-efficacy-census.md Phase 2) —
+  // per-skill window-count readers, one per store module
+  'getAuditFindingConversionRate',
+  'getAuditRunWindowCounts',
+  'getPersonaSessionWindowCounts',
+  'getPlanWindowCounts',
+  'getRegressionSpecWindowCounts',
+  'getShipEventWindowCounts',
 ].sort();
 
 // Internal client accessors that must NOT escape (plan §2 / R3/M2).
@@ -457,6 +466,12 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // purely mechanical file-touch reopen of a dismissal the operator had
     // already disproved. Same class as a hardcoded 0 in telemetry: a constant
     // that reads as a measurement. Exported so the string contract is testable.
-    assert.equal(EXPECTED_EXPORTS.length, 186);
+    // 186 → 192: +6 skill-efficacy census window-count readers (2026-08-22,
+    // docs/plans/skill-efficacy-census.md Phase 2) — getAuditFindingConversionRate,
+    // getAuditRunWindowCounts, getPersonaSessionWindowCounts, getPlanWindowCounts,
+    // getRegressionSpecWindowCounts, getShipEventWindowCounts. One per store
+    // module, each answering "how much did this skill get used in the current
+    // vs. prior window" for the `cross-skill.mjs skill-census` report.
+    assert.equal(EXPECTED_EXPORTS.length, 192);
   });
 });
