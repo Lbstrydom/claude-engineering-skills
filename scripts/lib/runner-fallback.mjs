@@ -15,6 +15,8 @@
  * @module scripts/lib/runner-fallback
  */
 
+import { ArgvError } from './cli-io.mjs';
+
 /** Where the no-Actions-at-all fallback lives — this repo's own answer to
  * the same problem for its weekly maintenance workflows. */
 export const FALLBACK_DOC = 'docs/runbooks/local-maintenance-checks.md';
@@ -104,4 +106,73 @@ export function runnerAssetTokens(platform, arch) {
   return { os, arch: archToken };
 }
 
-export const _internals = { assessRunnerFallback, runnerAssetTokens };
+// Owner: starts alnum, then up to 38 more alnum/hyphen chars (GitHub's
+// 39-char username/org cap). Repo: alnum, `.`, `_`, `-`, 1-100 chars. Not a
+// byte-perfect mirror of GitHub's grammar (e.g. it doesn't reject a lone
+// `.`/`..` repo name), but it excludes every shell metacharacter, which is
+// the property that matters: the resolved slug gets printed verbatim into a
+// copy-paste `config --url https://github.com/<slug> ...` recipe
+// (actions-runner-doctor.mjs printRecipe) and passed to `gh api
+// repos/<slug>/...`.
+const REPO_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
+
+/**
+ * Whether `slug` is shaped like a GitHub `owner/repository` slug safe to
+ * both call the API with and print into a shell-command recipe.
+ * @param {unknown} slug
+ * @returns {boolean}
+ */
+export function isValidRepoSlug(slug) {
+  return typeof slug === 'string' && REPO_SLUG_RE.test(slug);
+}
+
+/**
+ * Read `--repo`'s value from argv, distinguishing "flag absent" from "flag
+ * present but empty/missing". Collapsing that distinction (checking only
+ * `if (repoArg)`, which is falsy for both `null` and `''`) let a
+ * present-but-empty `--repo ""` — or `--repo` immediately followed by
+ * another `--flag` with no value of its own — silently fall through to
+ * git-remote resolution instead of being rejected as invalid input (H2,
+ * self-hosted-runner-management Cluster B code audit round 1).
+ * @param {string[]} argv - typically `process.argv`
+ * @returns {{present: boolean, value: string|null}}
+ */
+export function readRepoArg(argv) {
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--') break;
+    if (a.startsWith('--repo=')) return { present: true, value: a.slice('--repo='.length) };
+    if (a === '--repo') {
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith('--')) return { present: true, value: null };
+      return { present: true, value: next };
+    }
+  }
+  return { present: false, value: null };
+}
+
+/**
+ * Turn a `readRepoArg` result (already confirmed `present`) into a validated
+ * slug, or throw. This is the single choke point for a user-supplied
+ * `--repo` — it and `isValidRepoSlug` are what keep an unsafe value out of
+ * both the `gh api repos/<slug>/...` calls and the printed copy-paste
+ * recipe (actions-runner-doctor.mjs printRecipe; M3, same audit round).
+ * @param {{present: true, value: string|null}} repoArg
+ * @returns {string}
+ * @throws {ArgvError} empty/missing value, or a value that isn't a
+ *   plausible `owner/repo` slug
+ */
+export function resolveRepoSlugFromArg(repoArg) {
+  const value = repoArg.value === null ? '' : repoArg.value.trim();
+  if (!value) {
+    throw new ArgvError('--repo requires a value, e.g. --repo owner/name — got none (empty or missing)');
+  }
+  if (!isValidRepoSlug(value)) {
+    throw new ArgvError(`--repo "${value}" is not a valid GitHub owner/repository slug (expected owner/repo, e.g. octocat/hello-world)`);
+  }
+  return value;
+}
+
+export const _internals = {
+  assessRunnerFallback, runnerAssetTokens, isValidRepoSlug, readRepoArg, resolveRepoSlugFromArg,
+};

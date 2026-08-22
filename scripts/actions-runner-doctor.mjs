@@ -35,7 +35,9 @@
 import { execFileSync } from 'node:child_process';
 import { assertKnownFlags, ArgvError, emit } from './lib/cli-io.mjs';
 import { parseOriginRepo } from './lib/branch-protection.mjs';
-import { assessRunnerFallback, runnerAssetTokens } from './lib/runner-fallback.mjs';
+import {
+  assessRunnerFallback, runnerAssetTokens, isValidRepoSlug, readRepoArg, resolveRepoSlugFromArg,
+} from './lib/runner-fallback.mjs';
 
 // CLI relocation smoke contract (AGENTS.md CLI_SMOKE_SET) — proves imports
 // survive relocation into a consumer's scripts/.claude-skills/.
@@ -44,10 +46,7 @@ if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); proces
 const KNOWN_FLAGS = ['--repo', '--json', '--selfcheck-relocation'];
 
 const JSON_OUT = process.argv.includes('--json');
-const repoArg = (() => {
-  const i = process.argv.indexOf('--repo');
-  return i === -1 ? null : process.argv[i + 1];
-})();
+const repoArg = readRepoArg(process.argv);
 
 const err = (m) => process.stderr.write(m + '\n');
 
@@ -68,8 +67,13 @@ function gh(args, { input } = {}) {
   }
 }
 
+/**
+ * Single choke point for the repo slug: every value that reaches `gh api`
+ * calls or the printed copy-paste recipe (printRecipe) passes through here
+ * and through `isValidRepoSlug`, whichever source it came from.
+ */
 function resolveRepoSlug() {
-  if (repoArg) return repoArg;
+  if (repoArg.present) return resolveRepoSlugFromArg(repoArg);
   let url;
   try {
     url = execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf-8' }).trim();
@@ -78,6 +82,9 @@ function resolveRepoSlug() {
   }
   const parsed = parseOriginRepo(url);
   if (!parsed) throw new Error(`origin remote is not a recognisable GitHub URL: ${url}`);
+  if (!isValidRepoSlug(parsed.slug)) {
+    throw new Error(`origin remote resolved to an unexpected slug shape: ${parsed.slug}`);
+  }
   return parsed.slug;
 }
 
