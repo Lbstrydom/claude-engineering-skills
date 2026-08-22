@@ -124,12 +124,12 @@ path Cluster A adds.
   `cycle`'s trailer-proxy signal all clear the floor and show `invest`-shaped
   growth this window — expected, since this repo actively develops itself
   using its own skill chain.
-- **Nine skills sit in `insufficient-data`, and that is a data-completeness
+- **Eleven skills sit in `insufficient-data`, and that is a data-completeness
   finding about this one repo, not a verdict about the skills.** Five of the
-  nine (`persona-test`, `nav-audit`, `ux-lock`, `click-test`, `visual-audit`)
+  eleven (`persona-test`, `nav-audit`, `ux-lock`, `click-test`, `visual-audit`)
   are structurally inapplicable to a repo with no deployed UI — see the
-  caveat above. The remaining four (`explain`, `investigate`,
-  `security-strategy`, `ai-context-management`, `skills`, `brainstorm` at
+  caveat above. The remaining six (`explain`, `investigate`,
+  `security-strategy`, `ai-context-management`, `skills`, and `brainstorm` at
   n=1) genuinely have thin or no trailer history here and would need either
   more elapsed time on this repo or a bundle-wide (not repo-scoped) view to
   say more.
