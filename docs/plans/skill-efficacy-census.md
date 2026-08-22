@@ -49,11 +49,11 @@
   shape, and the dashboard tab is the reader for it).
 
 > **Origin**: a `/brainstorm` round (session `1787245915261`, 2026-08-20) on
-> verification-loop improvements — no briefing doc was persisted from that
-> session — concluded, from intuition, that the highest-leverage improvement
-> to this bundle is not more verification — it is measuring which of the 16
-> skills earn their keep, using the telemetry pipeline this repo already
-> owns. This plan replaces that intuition with a read.
+> verification-loop improvements (`docs/research/verification-loops-brainstorm-briefing.md`)
+> concluded, from intuition, that the highest-leverage improvement to this
+> bundle is not more verification — it is measuring which of the 16 skills
+> earn their keep, using the telemetry pipeline this repo already owns. This
+> plan replaces that intuition with a read.
 
 ---
 
