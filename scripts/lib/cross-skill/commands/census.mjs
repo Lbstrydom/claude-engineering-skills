@@ -44,6 +44,17 @@ function pct(v) {
   return `${v > 0 ? '+' : ''}${v}%`;
 }
 
+/**
+ * Delta AND percentage, both rendered — never just one (§2's `buildTrend`
+ * contract). Consolidated-gate round-2 G1 fix: an earlier version rendered
+ * only `pct()` here, dropping the raw delta the plan requires.
+ */
+function trendLine(trend) {
+  if (trend.delta == null) return '—';
+  const delta = `${trend.delta > 0 ? '+' : ''}${trend.delta}`;
+  return `${delta} (${pct(trend.pct)})`;
+}
+
 function rate(cr) {
   if (!cr) return 'n/a';
   const { numerator, denominator } = cr.current;
@@ -60,8 +71,12 @@ function renderWorksheet(result) {
   for (const r of result.rows) {
     lines.push(`## ${r.skill}`);
     lines.push(`  signal: ${r.signalSource} · quality: ${r.signalQuality}${r.effectiveSince ? ` (effective since ${r.effectiveSince})` : ''}`);
-    lines.push(`  window: current ${r.window.current ?? '—'} · prior ${r.window.prior ?? '—'} · trend ${pct(r.trend.pct)} · all-time ${r.allTimeCount ?? '—'}`);
-    if (r.roundCount) lines.push(`  roundCount (raw, includes re-runs): current ${r.roundCount.current} · prior ${r.roundCount.prior} · all-time ${r.roundCount.allTime}`);
+    // For audit-code/audit-plan, `window`/`allTimeCount` ARE `commitsTouched`
+    // (§2's contract table) — labelled explicitly here so a reader never has
+    // to infer that from the caveat text alone.
+    const windowLabel = r.roundCount ? 'window (commitsTouched, a LOWER BOUND on invocations)' : 'window';
+    lines.push(`  ${windowLabel}: current ${r.window.current ?? '—'} · prior ${r.window.prior ?? '—'} · trend ${trendLine(r.trend)} · all-time ${r.allTimeCount ?? '—'}`);
+    if (r.roundCount) lines.push(`  roundCount (raw, includes re-runs — NOT the same number as window above): current ${r.roundCount.current} · prior ${r.roundCount.prior} · all-time ${r.roundCount.allTime}`);
     if (r.conversionRate) lines.push(`  conversion rate: ${rate(r.conversionRate)}`);
     lines.push(`  last-run: ${r.lastRunAt ?? '—'}`);
     lines.push(`  caveat: ${r.caveat}`);
