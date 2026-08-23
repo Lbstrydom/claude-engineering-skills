@@ -15,6 +15,8 @@
  * @module scripts/lib/audit/tiered-shadow-summary
  */
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /** Pre-registered Phase-14 decision window (docs/plans/tiered-recall-audit-pipeline.md
  * Close-out). Single source — the CLI text output and the dashboard
@@ -472,3 +474,40 @@ export function windowProgress(comparedRuns) {
     max: WINDOW_MAX,
   };
 }
+
+/**
+ * Has the Phase-14 production-flip decision been recorded?
+ *
+ * THE ONE ORACLE for this question, because the alternative already cost
+ * something. Every "window met" message in this subsystem is keyed on
+ * `comparedRuns` alone, so it says "time for the Phase-14 review" forever —
+ * it cannot know the review happened. On 2026-08-21 a reader took that line as
+ * repo state, concluded a cohort was awaiting adjudication, and built a frozen
+ * second code path plus a self-expiring guard test around a decision that had
+ * been closed four days earlier (`e9305550`). The count was right; the
+ * inference was not.
+ *
+ * Two surfaces print that message — `tiered-shadow-report.mjs` and the
+ * dashboard's tiered-shadow section — so this lives here rather than as an
+ * `existsSync` in each. A duplicated inline predicate is how the two spellings
+ * drift, and only one of them gets fixed.
+ *
+ * EXISTENCE-ONLY, deliberately. Parsing a verdict out of the document would
+ * make these headlines depend on someone's markdown phrasing; the whole
+ * message is "a decision exists — go read it".
+ *
+ * Resolved MODULE-RELATIVE, never from cwd: a cwd-relative probe silently
+ * reports "not decided" when the CLI runs from anywhere else, which would
+ * resurrect the stale trigger line this exists to suppress.
+ *
+ * @param {string} [repoRoot] - override, for tests
+ * @returns {boolean}
+ */
+export function phase14Decided(repoRoot = null) {
+  const root = repoRoot
+    ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+  return fs.existsSync(path.join(root, PHASE14_DECISION_DOC));
+}
+
+/** The artifact whose existence means the decision was taken. */
+export const PHASE14_DECISION_DOC = 'docs/research/tiered-recall-phase14-decision.md';

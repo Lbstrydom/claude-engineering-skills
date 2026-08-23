@@ -1327,3 +1327,19 @@ default production path; `AUDIT_TIERED_SHADOW_ENABLED` stays available for
 anyone who wants to keep collecting shadow data, but no further work on
 this plan's own Phase 14 is planned.
 
+> **Superseded 2026-08-21 — the collector is stood down.** "Stays available"
+> meant, in practice, spending on every eligible `/audit-code` run with no
+> consumer for the output. The flag is now off (verified effective:
+> `tieredAuditConfig.shadowEnabled === false`); the 33 collected rows remain in
+> `tiered_shadow_observations` and are still readable, so this stops
+> accumulation, not history. The decision is transcribed at
+> [`docs/research/tiered-recall-phase14-decision.md`](../research/tiered-recall-phase14-decision.md),
+> and both the report CLI and the dashboard now consult it before printing
+> "time for the Phase-14 review" — that line is keyed on `comparedRuns` alone
+> and had already misled a reader into treating this closed decision as open.
+> Reason 2's interpretability gap was **actually closed with evidence** the
+> same day — the check was run against the live table: legacy is 100%
+> unlocalized by design, but tiered carries a verified anchor on 91% of rows,
+> so the 0% overlap is a real signal pointing at the MATCHER, not missing data.
+> See that document's "Interpretability gap closed" section.
+

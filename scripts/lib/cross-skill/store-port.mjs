@@ -29,6 +29,7 @@ import * as personaOutcomes from '../store/persona-outcomes.mjs';
 import * as personaOutcomesBackfill from '../store/persona-outcomes-hash-backfill.mjs';
 import * as armEval from '../store/arm-eval.mjs';
 import * as upstreamIssues from '../store/upstream-issues.mjs';
+import * as skillCensus from '../store/skill-census.mjs';
 import { getCloudState, getCloudInitFailure } from '../store/client-state.mjs';
 
 function compose(...modules) {
@@ -54,5 +55,6 @@ export const STORE_PORT = compose(
   personaOutcomesBackfill,
   armEval,
   upstreamIssues,
+  skillCensus,
   { getCloudState, getCloudInitFailure },
 );

@@ -2553,6 +2553,15 @@ export async function runLegacyProductionAudit(ctx) {
     if (rc.block) {
       fileListContext += `\n\n## Repository Context (tier ${rc.resolvedTier})\n${rc.block}\n`;
       process.stderr.write(`  [repo-context] tier ${rc.requestedTier}→${rc.resolvedTier} (~${rc.tokensEst} tok)${rc.degraded ? ` [degraded: ${rc.fallbackReason}]` : ''}\n`);
+      // Without this line the operator has no signal that the model is being
+      // handed a partial file list — which is precisely how the silent
+      // truncation went unnoticed for 1214 commits.
+      if (rc.truncated) {
+        const dropped = (rc.coverage?.sections || [])
+          .filter((x) => x.state !== 'full')
+          .map((x) => `${x.id}=${x.state}(${x.shown}/${x.total})`).join(' ');
+        process.stderr.write(`  [repo-context] TRUNCATED ${dropped || '(unitemised)'}\n`);
+      }
     }
   } catch (err) {
     process.stderr.write(`  [repo-context] skipped (non-blocking) — ${err.message}\n`);

@@ -1237,11 +1237,22 @@ export async function markRunFindingsAutoDismissed(runId, fingerprints, reason) 
 /**
  * Read the shadow-A/B measurement surface for a repo by name (plan §6). Queries
  * BASE TABLES directly (no view — avoids the view/RLS-bypass question, R1 H5).
- * Returns {ok, cloud, repoId, buckets, shadowOnlyQueue, runs} where:
+ * Returns {ok, cloud, repoId, buckets, shadowOnlyQueue, pendingQueue, runs} where:
  *   - buckets: per (source_model, bucket, severity) DISTINCT-fingerprint counts
  *     (COUNT DISTINCT — R3 M2 dedup at the query layer too).
  *   - shadowOnlyQueue: the human spot-check list — shadow-only findings with
- *     their adjudication state (user_action), newest first.
+ *     their adjudication state (user_action), newest first. Unchanged shape;
+ *     `final-review-stats`'s worksheet is deliberately shadow-only and reads
+ *     this field alone.
+ *   - pendingQueue: `final-review-pending`'s read (docs/plans/skill-efficacy-census.md
+ *     Phase 1) — shadow-only findings UNION ALL primary-bucket findings that are
+ *     fixed/verified but never adjudicated (the label gap this plan closes),
+ *     each row carrying its own `bucket` (never hardcoded downstream). Ordered
+ *     by severity rank then recency at the SQL layer so the highest-leverage
+ *     candidates survive `LIMIT queueLimit` when the true population exceeds
+ *     it; `UNION ALL` is safe here only because the two branches' WHERE
+ *     clauses partition mutually-exclusively on `bucket` — a row cannot match
+ *     both, so no duplicate can occur by construction.
  *   - runs: per (final_review_model, final_review_shadow_model) run count +
  *     aggregate shadow token/latency cost (the operator's cost overlay).
  *
@@ -1249,14 +1260,14 @@ export async function markRunFindingsAutoDismissed(runId, fingerprints, reason) 
  * @param {{queueLimit?: number}} [opts]
  */
 export async function getFinalReviewStats(repoName, { queueLimit = 50 } = {}) {
-  if (!await isCloudEnabled()) return { ok: true, cloud: false, repoId: null, buckets: [], shadowOnlyQueue: [], actionablePairs: [], runs: [], experimentRuns: [] };
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, repoId: null, buckets: [], shadowOnlyQueue: [], pendingQueue: [], actionablePairs: [], runs: [], experimentRuns: [] };
   const repoRow = await one(`SELECT id FROM audit_repos WHERE name = $1 ORDER BY created_at DESC LIMIT 1`, [repoName]);
   const repoId = repoRow?.id || null;
-  if (!repoId) return { ok: true, cloud: true, repoId: null, buckets: [], shadowOnlyQueue: [], actionablePairs: [], runs: [], experimentRuns: [] };
+  if (!repoId) return { ok: true, cloud: true, repoId: null, buckets: [], shadowOnlyQueue: [], pendingQueue: [], actionablePairs: [], runs: [], experimentRuns: [] };
   // Guard: bail cleanly on an un-migrated store (no source_model column).
   if (!await columnExists('audit_findings', 'source_model', many, isCloudEnabled)) {
     process.stderr.write('  [final-review-stats] source_model column absent — run migration 20260610120000\n');
-    return { ok: false, cloud: true, repoId, buckets: [], shadowOnlyQueue: [], actionablePairs: [], runs: [], experimentRuns: [], error: 'NOT_MIGRATED' };
+    return { ok: false, cloud: true, repoId, buckets: [], shadowOnlyQueue: [], pendingQueue: [], actionablePairs: [], runs: [], experimentRuns: [], error: 'NOT_MIGRATED' };
   }
   try {
     const buckets = await many(
@@ -1284,6 +1295,41 @@ export async function getFinalReviewStats(repoName, { queueLimit = 50 } = {}) {
          JOIN audit_runs r ON r.id = f.run_id
         WHERE r.repo_id = $1 AND f.bucket = 'shadow-only'
         ORDER BY f.created_at DESC
+        LIMIT $2`,
+      [repoId, queueLimit]
+    );
+    // The label-gap queue (docs/plans/skill-efficacy-census.md Phase 1): shadow-only
+    // findings (unfiltered for actionability at the SQL level, same as
+    // `shadowOnlyQueue` above — `finalReviewPendingCmd`'s JS-side `isActionable`
+    // filter + `.slice(0, pageSize)` still owns that) UNION ALL primary-bucket
+    // findings that are fixed/verified but never adjudicated. `bucket` is
+    // selected explicitly (constant in the shadow branch, real in the primary
+    // branch) so the CLI/renderer never has to hardcode it.
+    // `severity_rank` is a projected OUTPUT COLUMN, not an inline ORDER BY
+    // expression (manual-verification catch against the live store, round-3
+    // M2 in docs/plans/skill-efficacy-census.md): Postgres rejects an
+    // arbitrary expression in a UNION's trailing ORDER BY ("invalid
+    // UNION/INTERSECT/EXCEPT ORDER BY clause") — only an output column name
+    // or ordinal position is legal there, unlike a plain single SELECT.
+    const pendingQueue = await many(
+      `SELECT f.run_id, f.finding_fingerprint, f.severity, f.category,
+              f.primary_file, f.detail_snapshot, f.source_model,
+              f.user_action, f.remediation_state, f.created_at, f.bucket,
+              (CASE f.severity WHEN 'HIGH' THEN 3 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 1 ELSE 0 END) AS severity_rank
+         FROM audit_findings f
+         JOIN audit_runs r ON r.id = f.run_id
+        WHERE r.repo_id = $1 AND f.bucket = 'shadow-only'
+       UNION ALL
+       SELECT f.run_id, f.finding_fingerprint, f.severity, f.category,
+              f.primary_file, f.detail_snapshot, f.source_model,
+              f.user_action, f.remediation_state, f.created_at, f.bucket,
+              (CASE f.severity WHEN 'HIGH' THEN 3 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 1 ELSE 0 END) AS severity_rank
+         FROM audit_findings f
+         JOIN audit_runs r ON r.id = f.run_id
+        WHERE r.repo_id = $1 AND f.bucket IS NULL
+          AND f.remediation_state IN ('fixed', 'verified')
+          AND f.user_action IS NULL
+        ORDER BY severity_rank DESC, created_at DESC
         LIMIT $2`,
       [repoId, queueLimit]
     );
@@ -1336,10 +1382,10 @@ export async function getFinalReviewStats(repoName, { queueLimit = 50 } = {}) {
           [repoId]
         ))
       : [];
-    return { ok: true, cloud: true, repoId, buckets, shadowOnlyQueue, actionablePairs, runs, experimentRuns };
+    return { ok: true, cloud: true, repoId, buckets, shadowOnlyQueue, pendingQueue, actionablePairs, runs, experimentRuns };
   } catch (err) {
     process.stderr.write(`  [final-review-stats] query failed: ${err.message}\n`);
-    return { ok: false, cloud: true, repoId, buckets: [], shadowOnlyQueue: [], actionablePairs: [], runs: [], experimentRuns: [], error: err.message };
+    return { ok: false, cloud: true, repoId, buckets: [], shadowOnlyQueue: [], pendingQueue: [], actionablePairs: [], runs: [], experimentRuns: [], error: err.message };
   }
 }
 
@@ -2061,5 +2107,109 @@ export async function reconcileRemediationProjection(repoId, ledger) {
     // the durability work exists to eliminate, in the very function whose job
     // is to repair divergence.
     return { reconciled: 0, attempted: 0, ok: false, reason: err.message };
+  }
+}
+
+// ── Skill-efficacy census (docs/plans/skill-efficacy-census.md Phase 2) ────
+
+/**
+ * Window-scoped counts for `audit-code`/`audit-plan`, keyed by `audit_runs.mode`.
+ *
+ * Returns TWO numbers, never collapsed to one (§2 H2 fix): `roundCount` is
+ * the raw row count — `audit_runs` rows are per-ROUND, not per-invocation, so
+ * this over-counts a multi-round session. `commitsTouched` (distinct
+ * `commit_sha`) is a LOWER BOUND on invocation count instead — a commit can
+ * receive multiple separate sessions, and a session can re-run without a new
+ * commit, so neither number alone is "invocations"; the census reports both,
+ * labelled honestly.
+ *
+ * @param {string} repoId
+ * @param {'code'|'plan'} mode
+ * @param {{currentStart: string, priorStart: string, now: string}} bounds ISO timestamps
+ * @returns {Promise<{roundCount: {current:number,prior:number,allTime:number}, commitsTouched: {current:number,prior:number,allTime:number}}|null>}
+ */
+export async function getAuditRunWindowCounts(repoId, mode, { currentStart, priorStart, now }) {
+  if (!repoId || !await isCloudEnabled()) return null;
+  try {
+    const row = await many(
+      `SELECT
+         count(*) FILTER (WHERE created_at >= $3 AND created_at < $4) AS round_current,
+         count(*) FILTER (WHERE created_at >= $5 AND created_at < $3) AS round_prior,
+         count(*) AS round_all_time,
+         count(DISTINCT commit_sha) FILTER (WHERE created_at >= $3 AND created_at < $4) AS commits_current,
+         count(DISTINCT commit_sha) FILTER (WHERE created_at >= $5 AND created_at < $3) AS commits_prior,
+         count(DISTINCT commit_sha) AS commits_all_time
+         FROM audit_runs WHERE repo_id = $1 AND mode = $2`,
+      [repoId, mode, currentStart, now, priorStart],
+    );
+    const r = row[0] || {};
+    const n = (v) => Number(v) || 0;
+    return {
+      roundCount: { current: n(r.round_current), prior: n(r.round_prior), allTime: n(r.round_all_time) },
+      commitsTouched: { current: n(r.commits_current), prior: n(r.commits_prior), allTime: n(r.commits_all_time) },
+    };
+  } catch (err) {
+    process.stderr.write(`  [learning] getAuditRunWindowCounts failed: ${err.message}\n`);
+    return null;
+  }
+}
+
+/**
+ * Conversion rate for `audit-code`/`audit-plan` (the only two skills with an
+ * `audit_findings` finding lifecycle) — §2's precise definition.
+ *
+ * **Cohort = raise-time** (`audit_findings.created_at` in the window), never
+ * fix-time — a finding raised late in the window may still show pending at
+ * report time even though it is later fixed; that is expected. **Numerator
+ * is a strict SUBSET of the denominator's WHERE clause** (round-3 H1 fix):
+ * denominator = distinct accepted fingerprints in the cohort; numerator =
+ * distinct fingerprints WITHIN that same accepted set that are also
+ * fixed/verified. This guards against the numerator including a
+ * fixed-but-never-accepted finding, which could push the rate above 100%.
+ *
+ * **Right-censoring**: evaluated at report time (current DB state), so a
+ * `current`-window cohort has had systematically less time to accumulate a
+ * fix than `prior`'s — the caller must render the maturity caveat and must
+ * never use this to gate a verdict (§4's decision rubric deliberately does
+ * not).
+ *
+ * @param {string} repoId
+ * @param {'code'|'plan'} mode
+ * @param {{currentStart: string, priorStart: string, now: string}} bounds ISO timestamps
+ * @returns {Promise<{current: {numerator:number,denominator:number}, prior: {numerator:number,denominator:number}}|null>}
+ */
+export async function getAuditFindingConversionRate(repoId, mode, { currentStart, priorStart, now }) {
+  if (!repoId || !await isCloudEnabled()) return null;
+  try {
+    const row = await many(
+      `SELECT
+         count(DISTINCT f.finding_fingerprint) FILTER (
+           WHERE f.created_at >= $3 AND f.created_at < $4 AND f.adjudication_outcome = 'accepted'
+         ) AS current_denominator,
+         count(DISTINCT f.finding_fingerprint) FILTER (
+           WHERE f.created_at >= $3 AND f.created_at < $4 AND f.adjudication_outcome = 'accepted'
+             AND f.remediation_state IN ('fixed', 'verified')
+         ) AS current_numerator,
+         count(DISTINCT f.finding_fingerprint) FILTER (
+           WHERE f.created_at >= $5 AND f.created_at < $3 AND f.adjudication_outcome = 'accepted'
+         ) AS prior_denominator,
+         count(DISTINCT f.finding_fingerprint) FILTER (
+           WHERE f.created_at >= $5 AND f.created_at < $3 AND f.adjudication_outcome = 'accepted'
+             AND f.remediation_state IN ('fixed', 'verified')
+         ) AS prior_numerator
+         FROM audit_findings f
+         JOIN audit_runs r ON r.id = f.run_id
+        WHERE r.repo_id = $1 AND r.mode = $2`,
+      [repoId, mode, currentStart, now, priorStart],
+    );
+    const r = row[0] || {};
+    const n = (v) => Number(v) || 0;
+    return {
+      current: { numerator: n(r.current_numerator), denominator: n(r.current_denominator) },
+      prior: { numerator: n(r.prior_numerator), denominator: n(r.prior_denominator) },
+    };
+  } catch (err) {
+    process.stderr.write(`  [learning] getAuditFindingConversionRate failed: ${err.message}\n`);
+    return null;
   }
 }

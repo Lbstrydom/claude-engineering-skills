@@ -1,0 +1,14 @@
+{
+  "extraRoots": [
+    { "kind": "local", "path": "/opt/example-actions-runner" },
+    { "kind": "wsl", "distro": "example-distro", "pathInDistro": "/home/example-user/actions-runner" }
+  ],
+  "expectedHostname": "example-host",
+  "hostnameAliases": ["example-host.example.internal"],
+  "agentNameIsHostname": false,
+  "acknowledgedOwners": [
+    { "host": "github.com", "ownerKind": "org", "ownerSlug": "example-org" }
+  ],
+  "trustedHosts": ["github.com"],
+  "notes": "EXAMPLE TEMPLATE — copy to runner-hosts.local.json (gitignored) and replace every placeholder value above with your own before use. Schema: RunnerHostsConfigSchema in scripts/lib/runner-inventory.mjs (strict — an unrecognised key is a load error, by design). Docs: docs/plans/self-hosted-runner-management.md §3, docs/runbooks/actions-runner-doctor.md."
+}

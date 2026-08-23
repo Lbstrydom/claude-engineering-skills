@@ -33,6 +33,7 @@ import sectionLearning from './sections/learning.mjs';
 import sectionPromptVariants from './sections/prompt-variants.mjs';
 import sectionShipHealth from './sections/ship-health.mjs';
 import sectionAuditEffectiveness from './sections/audit-effectiveness.mjs';
+import sectionSkillCensus from './sections/skill-census.mjs';
 import sectionSecurity from './sections/security.mjs';
 import sectionPurpose from './sections/purpose.mjs';
 import sectionPurposeHealth from './sections/purpose-health.mjs';
@@ -68,6 +69,7 @@ const SLICERS = {
   shipHealth:   (d) => ({ src: d.sources.shipHealth || { status: 'ok', detail: '' }, shipHealth: d.shipHealth || { cloud: false, byOutcome: [], recent: [] } }),
   personaTests: (d) => ({ src: d.sources.personaTests || { status: 'missing-optional', detail: '' }, personaTests: d.personaTests || { cloud: false, latestByPersona: [], trend: [], correlations: { total: 0, byType: [] } } }),
   auditEffectiveness:(d) => ({ src: d.sources.auditEffectiveness || { status: 'ok', detail: '' }, auditEffectiveness: d.auditEffectiveness || { cloud: false, confirmedHits: 0, auditMisses: 0, falsePositives: 0, severityUnderstated: 0, severityOverstated: 0, precision: null, recall: null } }),
+  skillCensus:  (d) => ({ src: d.sources.skillCensus || { status: 'missing-optional', detail: '' }, skillCensus: d.skillCensus || { cloud: false, repoId: null, repoName: null, windowDays: 14, rows: [] } }),
   authorTier:   (d) => ({ src: d.sources.authorTier || { status: 'ok', detail: '' }, authorTier: d.authorTier || { cloud: false, total: 0, bySuggestedTier: [], ladders: [], distinctProviderLadders: 0, diversityGateMet: false, agreement: { agree: 0, disagree: 0, declaredUnknown: 0 } } }),
   modelAb:      (d) => ({ src: d.sources.modelAb || { status: 'missing-optional', detail: '' }, modelAb: d.modelAb || { cloud: false, status: 'off', reason: '', distinctAssignments: 0, minAssignments: 12, spentEur: 0, capEur: null, pendingAdjudication: 0, arms: [] } }),
   security:     (d) => ({ src: d.sources.security || { status: 'ok', detail: '' }, security: d.security || { cloud: false, totalIncidents: 0, embedded: 0, byStatus: [], eventCounts: [], lastRefreshAt: null, recentEvents: [] } }),
@@ -113,6 +115,8 @@ const REGISTRY = {
       desc: 'Recent code/plan audit runs and how many findings each analysis pass raised vs. what a human accepted.' },
     { id: 'auditEffectiveness',title: 'Audit Effectiveness', group: 'Audit pipeline', build: sectionAuditEffectiveness, slice: SLICERS.auditEffectiveness,
       desc: 'Is the audit worth it? Precision and recall of audit findings measured against real user-visible impact.' },
+    { id: 'skillCensus',  title: 'Skill Census',   group: 'Audit pipeline', build: sectionSkillCensus,  slice: SLICERS.skillCensus,
+      desc: 'Which of the 16 bundled skills actually get invoked, how often, and whether their findings get fixed.' },
     { id: 'promptVariants',title: 'Prompt Variants', group: 'Audit pipeline', build: sectionPromptVariants, slice: SLICERS.promptVariants,
       desc: 'Which audit prompt wordings are winning — the bandit that learns from your accept/dismiss decisions.' },
     { id: 'authorTier',   title: 'Author Tier',    group: 'Audit pipeline', build: sectionAuthorTier,   slice: SLICERS.authorTier,
@@ -199,7 +203,7 @@ export function renderDocument(data, kind, assets) {
     // would show the page-level "nothing yet" placeholder while that section
     // actually has data, hiding it entirely. (modelAb + tieredShadow added
     // 2026-07-13 — both had been omitted, the exact bug this comment warns of.)
-    const allMissing = ['auditRuns', 'requirements', 'learning', 'promptVariants', 'auditEffectiveness', 'shipHealth', 'security', 'purposeHealth', 'authorTier', 'modelAb', 'tieredShadow', 'personaTests']
+    const allMissing = ['auditRuns', 'requirements', 'learning', 'promptVariants', 'auditEffectiveness', 'shipHealth', 'security', 'purposeHealth', 'authorTier', 'modelAb', 'tieredShadow', 'personaTests', 'skillCensus']
       .every((n) => (validated.sources[n]?.status || 'ok') === 'missing-optional');
     if (allMissing) {
       pageLevelEmpty = emptyPanel('telemetry-empty',

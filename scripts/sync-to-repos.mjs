@@ -335,6 +335,18 @@ const CORE_ENTRY = [
   // lib/commit-trailers.mjs (+ its sensitive-paths closure). Also in CLI_SMOKE_SET.
   'scripts/ship-commit.mjs',
   '.claude/hooks/quickfix-scan.mjs',
+  // Session-start advisory: a retired skill surface on the machine can shadow
+  // the repo-scoped copy. Registered in the SYNCED .claude/settings.json, so it
+  // must ship too -- it was registered everywhere and shipped nowhere until
+  // 2026-08-20. Walker pulls in lib/install/legacy-surfaces.mjs.
+  '.claude/hooks/legacy-surface-advisory.mjs',
+  // PreToolUse Bash nudge toward the Grep tool. Zero imports, fully portable.
+  // Same registered-but-unshipped bug as the advisory above.
+  '.claude/hooks/bash-grep-nudge.mjs',
+  // PostToolUse parse-check for edited .mjs files. Self-contained apart from
+  // lib/sensitive-paths.mjs, which it resolves across BOTH tooling layouts
+  // (see the hook's header). Also in sync-inventory.mjs — keep in lock-step.
+  '.claude/hooks/syntax-check.mjs',
   // Persona-test consistency mode CLIs (docs/plans/persona-test-consistency-mode.md).
   // Both are user-invoked CLIs; the import-graph walker pulls in their
   // transitive lib closure (scripts/lib/persona-test/* + scripts/lib/ux-lock/*)
@@ -427,6 +439,12 @@ const CORE_ENTRY = [
   // already declared) to carry it — a runtime dependency this load-bearing
   // should not depend on being reached by coincidence through an unrelated entry.
   'scripts/lib/disowned-paths.mjs',
+  // Loaded by .claude/hooks/legacy-surface-advisory.mjs through a COMPUTED
+  // two-layout candidate path (path.join + pathToFileURL), so the static import
+  // walker cannot reach it. Without this entry the hook ships but its inspector
+  // does not, and loadInspector() returns null -- the advisory is silently dead,
+  // which is the exact failure being fixed. Keep in lock-step across both files.
+  'scripts/lib/install/legacy-surfaces.mjs',
 ];
 
 /**

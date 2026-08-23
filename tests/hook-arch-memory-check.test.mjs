@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -306,3 +307,88 @@ describe('hook latency', () => {
 // This live A/B isn't automated because it requires real Claude API spend
 // and judgement on "did Claude reuse appropriately." Worth running once
 // per repo when first deploying, and again after major prompt changes.
+
+
+// -- Tooling-layout resolution ---------------------------------------------
+//
+// `.claude/hooks/` stays at its canonical path in BOTH layouts, but the CLI
+// this hook shells is MAPPED: `scripts/cross-skill.mjs` here,
+// `scripts/.claude-skills/cross-skill.mjs` in a consumer. The hook hardcoded
+// the source path, so in every consumer the `-f` probe missed and it took the
+// "architectural-memory not installed" branch -- exit 0, no output at all.
+// Quieter than the sibling quickfix-scan bug, which at least printed a FATAL.
+// Confirmed 2026-08-20 against two real consumer checkouts.
+//
+// The source-layout case is the control: it proves the stub can produce a
+// callout, so a consumer-layout pass cannot be the silent-skip branch wearing
+// a green tick.
+
+const STUB_CROSS_SKILL = [
+  "const sub = process.argv[2] || '';",
+  "const records = sub === 'get-neighbourhood'",
+  "  ? [{ symbolName: 'stubbedNeighbour', filePath: 'scripts/lib/stub.mjs', startLine: 1,",
+  "      similarityScore: 0.81, recommendation: 'precedent', purposeSummary: 'layout probe' }]",
+  "  : [];",
+  "process.stdout.write(JSON.stringify({ ok: true, cloud: true, records }));",
+].join('\n');
+
+/**
+ * Throwaway repo with the hook at its canonical path and a stub cross-skill.mjs
+ * under `cliRelDir`. Pass `null` to install no CLI at all.
+ */
+function scaffoldArchLayout(cliRelDir) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'arch-layout-')));
+  const hookDir = path.join(root, '.claude', 'hooks');
+  fs.mkdirSync(hookDir, { recursive: true });
+  const hook = path.join(hookDir, 'arch-memory-check.sh');
+  fs.copyFileSync(HOOK, hook);
+  // Make `git rev-parse --show-toplevel` answer with THIS root rather than
+  // whatever repo the system temp dir might sit inside.
+  execFileSync('git', ['init', '-q'], { cwd: root, stdio: 'ignore' });
+  if (cliRelDir) {
+    const cliDir = path.join(root, ...cliRelDir.split('/'));
+    fs.mkdirSync(cliDir, { recursive: true });
+    fs.writeFileSync(path.join(cliDir, 'cross-skill.mjs'), STUB_CROSS_SKILL + '\n');
+  }
+  return { root, hook };
+}
+
+function runArchInLayout(cliRelDir) {
+  const { root, hook } = scaffoldArchLayout(cliRelDir);
+  let stdout = '', exit = 0;
+  try {
+    stdout = execFileSync('bash', [hook, '--prompt', 'fix the login redirect bug'], {
+      cwd: root,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf-8',
+      timeout: 60000,
+      env: { ...process.env, ARCH_MEMORY_HOOK_DISABLE: '0', ...hermeticStoreEnv() },
+    });
+  } catch (err) {
+    exit = err.status ?? 1;
+    stdout = err.stdout?.toString() || '';
+  }
+  return { stdout, exit };
+}
+
+describe('arch-memory-check tooling-layout resolution', () => {
+  it('source layout (scripts/) -- finds cross-skill.mjs and emits the consultation', () => {
+    const r = runArchInLayout('scripts');
+    assert.equal(r.exit, 0);
+    assert.match(r.stdout, /Architectural-memory consultation/);
+    assert.match(r.stdout, /stubbedNeighbour/);
+  });
+
+  it('consumer layout (scripts/.claude-skills/) -- finds cross-skill.mjs and emits the consultation', () => {
+    const r = runArchInLayout('scripts/.claude-skills');
+    assert.equal(r.exit, 0);
+    // The regression: the -f probe missed and the hook silently exited 0.
+    assert.match(r.stdout, /stubbedNeighbour/);
+  });
+
+  it('neither layout -- silently exits 0 (architectural-memory not installed)', () => {
+    const r = runArchInLayout(null);
+    assert.equal(r.exit, 0);
+    assert.equal(r.stdout.trim(), '');
+  });
+});

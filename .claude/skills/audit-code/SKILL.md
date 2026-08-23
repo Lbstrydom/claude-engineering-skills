@@ -540,6 +540,14 @@ Full scope closes both gaps in one run:
 convergence requires `blocked === false`. `baseline` reports progress; it is never the pass
 condition.
 
+**Visibility, not a new gate.** This code-level convergence gate is unchanged.
+What Step 6's census adds is purely the human-readable record: a detector
+that errors during this full-scope re-run is reported as `errored` in the
+CENSUS block, never silently folded into "the census reached zero." The
+exit-2 case above ("no census happened … never a pass") is already a hard
+code-level non-pass and is unaffected — Step 6.7 / Step 7 already have
+standing to act on what the census now makes visible.
+
 ### Step 5.1 — Debt Resolution Prompt
 
 After verification, reopened debt topics with no matching finding this round
@@ -550,15 +558,74 @@ are candidates for resolution. Full prompt + resolver invocation:
 
 ## Step 6 — Convergence Report (Pre-Final)
 
+**Named states, per pass/wave/capability, not a bare "ran".** Attempted-but-
+failed is a different thing from never-attempted (`references/verification-discipline.md`
+§7):
+
+| State | Meaning |
+|---|---|
+| `completed` | finished without error, applicable to the resolved scope — decoupled from finding count: a `completed` pass stays `completed` at 0, 1, or many findings |
+| `errored` | started, did not complete (exception, timeout, non-2xx from a provider) |
+| `ineligible` | does not apply to this repo's resolved language/scope (e.g. a frontend-specific pass on a backend-only diff) |
+| `unavailable` | a concrete missing prerequisite — e.g. `AUDIT_DB_URL` unset for the architectural-memory catalogue |
+| `not-reached` | the round's control flow did not get to this pass/wave before stopping (rare — see below) |
+
+**A per-round execution record.** `arch-memory` is resolved **once**, by
+Step 0.5, before any round's Step 2 begins, and is never re-seeded — Step 0.5
+is not inside the round loop, so a design that "transitions" it per round is
+chronologically unexecutable. Its single resolved value (`completed` /
+`unavailable` under `--scope=full`; `ineligible` under `--scope=diff`, since
+Step 0.5 is `--scope=full only`) is carried forward and rendered identically
+in every round's census. The five passes and three mechanical waves ARE
+seeded fresh each round: at Step 2's round start, seed one row per
+pass/wave identifier `pending`; each owning step transitions only its own
+row(s) on its own invocation. An aborted round finalizes every untouched
+pass/wave row as `not-reached` at round-end, never leaving it `pending` (a
+mid-round state, never a reportable one). Step 6 renders the current
+round's finalized pass/wave rows plus the once-resolved `arch-memory` row —
+not cumulative across rounds for the former.
+
+`not-reached` is rare here: all five passes and three mechanical waves
+execute unconditionally every round by design, and Step 5.0b's full-scope
+detector re-run is mandatory for convergence to be assessed at all. If it
+appears, it signals an aborted run (killed process, hard timeout).
+
 ```
 ═══════════════════════════════════════
-  CONVERGED — Round 4
+  CONVERGED (1 errored · 1 unavailable — see census) — Round 4
   Final: H:0 M:2 L:1
   Rounds: 4 | Time: 14m | Cost: ~$0.20
   Files changed: 6
   Remaining (accepted): [M3], [M7]
+
+  CENSUS
+    structure          completed
+    wiring              completed
+    backend             errored      (timeout after 90s)
+    frontend            completed
+    sustainability      completed
+    quickfix (wave)     completed
+    duplication (wave)  completed
+    adjacency (wave)    completed
+    arch-memory         unavailable  (AUDIT_DB_URL unset)
 ═══════════════════════════════════════
 ```
+
+Identifiers are the real ones — `structure`/`wiring`/`backend`/`frontend`/
+`sustainability` (`scripts/lib/prompt-seeds.mjs`), `quickfix`/`duplication`/
+`adjacency` (`scripts/lib/audit-shadow.mjs`'s `MECHANICAL_WAVES`) — not
+invented labels. Every non-`completed` row carries a mandatory concrete
+reason in parentheses.
+
+**A round with any non-`completed` row cannot print a bare `CONVERGED`.**
+The suffix names **every kind present, with its own count** — never
+hardcode one kind: a census with two non-`completed` rows of two different
+kinds (as above) that names only one silently drops the other from the
+top-level verdict, which is exactly the "issues masked by coverage gaps"
+failure this section exists to prevent. A round with only `ineligible` rows
+(an expected scope exclusion, e.g. no frontend passes on a backend-only
+diff) names them `ineligible`, never folded into "errored" — mislabelling
+an expected exclusion as a failure is its own honesty bug.
 
 Save convergence snapshot to `docs/plans/<name>-audit-summary.md`.
 
@@ -726,7 +793,13 @@ and category-error handling: `references/gemini-gate.md`.
 4. **Stability over speed** — 2 clean rounds required
 5. **No quick fixes** — band-aids rejected by all models
 6. **Deliberation is final** — no infinite debate
-7. **Graceful degradation** — failed passes, missing keys, missing ledger all skip cleanly
+7. **Graceful degradation, reported, not silent** — a failed pass or a missing
+   key for an optional capability degrades the run without crashing it, and
+   Step 6's census now names which pass/wave `errored` or was `unavailable`
+   rather than folding it into a clean-looking skip. A missing ledger is a
+   different mechanism (R2+ rulings-injection and suppression), not a
+   pass/wave execution outcome, and is out of the census's scope by
+   definition.
 8. **No self-review** — Step 7 final gate reviews Claude-GPT transcript
 9. **Adaptive learning** — outcomes logged, FP patterns tracked, prompts improve
 
@@ -743,5 +816,5 @@ situations — read them only when the trigger applies.
 | `references/ledger-format.md` | Adjudication ledger schema + writer invocation example for each finding outcome. | Step 3.5 — about to write ledger entries, OR diagnosing R2+ suppression misbehaviour. |
 | `references/debt-capture.md` | Phase D debt ledger — persist out-of-scope valid findings so they don't re-surface. | Step 3.6 — candidate deferrals present, OR Step 5.1 — debt resolution prompt firing, OR periodically to cluster/resolve the accumulated backlog (see its "Periodic Debt Health" section). |
 | `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Step 7 starting, OR Gemini returned CONCERNS/REJECT and need deliberation rules. |
-| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 4.5 — a finding was fixed WITH a new test or guard and it must be proven red-then-green, OR authoring a contract test from a one-off check. |
+| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 4.5 — a finding was fixed WITH a new test or guard and it must be proven red-then-green, OR authoring a contract test from a one-off check. ALSO Step 6 — about to emit the convergence report's pass/wave census, to apply §7's named-state rule. |
 | `examples/contract-test-scaffold.md` | Contract-test scaffold — subject probe, negative control, vacuous-pass guard, disposition, retirement. | Step 4.5 — promoting a one-off check into a permanent contract test. |

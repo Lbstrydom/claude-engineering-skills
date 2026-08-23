@@ -145,3 +145,76 @@ describe('legacy-surface advisory — never blocks, whatever happens', () => {
     assert.equal(r.out, '', 'an opt-out that still prints is not an opt-out');
   });
 });
+
+// -- Tooling-layout resolution ---------------------------------------------
+//
+// This hook lives at `.claude/hooks/` in BOTH layouts, but its inspector is
+// MAPPED: `scripts/lib/install/` here, `scripts/.claude-skills/lib/install/`
+// in a consumer. It used to `import('../../scripts/lib/install/...')`, which
+// resolves only in this repo; in a consumer it threw, and the call site turns a
+// throw into `return`. So the advisory was silently dead in exactly the repos
+// whose incident motivated it -- a session concluding 'the tooling is not
+// installed' IS the consumer-side scenario this hook exists to prevent.
+//
+// The inspector is STUBBED rather than copied. The real one pulls in zod via
+// schemas-install.mjs, and a scaffold outside the repo has no upward path to
+// node_modules -- so a real copy fails to import for a reason that has nothing
+// to do with layout resolution (observed while writing this: it failed under
+// BOTH layouts, control included, which is the tell). The stub writes a marker
+// when loaded, so the assertion is direct evidence that the hook imported THIS
+// file at THIS path.
+
+/** Stub inspector: records that it was loaded, then reports a clean tree. */
+function stubInspectorSource(markerPath) {
+  return [
+    "import fs from 'node:fs';",
+    `fs.writeFileSync(${JSON.stringify(markerPath)}, 'loaded');`,
+    'export function inspectLegacySurfaces() { return { overall: "absent", surfaces: [] }; }',
+    'export function describeLegacySurfaces() { return []; }',
+  ].join('\n');
+}
+
+function runWithInspectorAt(libRelDir) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lsa-layout-')));
+  const hookDir = path.join(root, '.claude', 'hooks');
+  fs.mkdirSync(hookDir, { recursive: true });
+  const hook = path.join(hookDir, 'legacy-surface-advisory.mjs');
+  fs.copyFileSync(HOOK, hook);
+  const marker = path.join(root, 'inspector-loaded.marker');
+  if (libRelDir) {
+    const dir = path.join(root, ...libRelDir.split('/'));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'legacy-surfaces.mjs'), stubInspectorSource(marker));
+  }
+  // `--repo-root` is the documented test seam for the tree being INSPECTED; it
+  // must NOT move where the hook loads its own code from, so it points
+  // somewhere with no scripts/ tree at all.
+  const inspected = path.join(root, 'inspected');
+  fs.mkdirSync(inspected, { recursive: true });
+  const r = spawnSync(process.execPath, [hook, '--repo-root', inspected], {
+    input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 'layout-probe', prompt: 'x' }),
+    encoding: 'utf-8',
+    timeout: 15000,
+  });
+  return { loaded: fs.existsSync(marker), status: r.status, stderr: r.stderr || '' };
+}
+
+describe('legacy-surface-advisory tooling-layout resolution', () => {
+  it('source layout (scripts/lib/install/) -- loads the inspector', () => {
+    const r = runWithInspectorAt('scripts/lib/install');
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.loaded, 'inspector was not loaded under the source layout');
+  });
+
+  it('consumer layout (scripts/.claude-skills/lib/install/) -- loads the inspector', () => {
+    const r = runWithInspectorAt('scripts/.claude-skills/lib/install');
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.loaded, 'inspector was not loaded under the consumer layout');
+  });
+
+  it('neither layout -- stays silent and never blocks', () => {
+    const r = runWithInspectorAt(null);
+    assert.equal(r.status, 0);
+    assert.equal(r.loaded, false);
+  });
+});

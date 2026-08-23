@@ -968,6 +968,14 @@ async function main() {
     try {
       const rc = getRepoContext({ tier: 'T0', scope: 'plan', baseDir: process.cwd() });
       if (rc.block) invBlock = `\n\n## Repository Context (tier ${rc.resolvedTier})\n${rc.block}\n`;
+      // LOG the structured coverage; never re-render it — `rc.block` already
+      // carries the single model-facing rendering. This line is for the operator.
+      if (rc.truncated) {
+        const dropped = (rc.coverage?.sections || [])
+          .filter((x) => x.state !== 'full')
+          .map((x) => `${x.id}=${x.state}(${x.shown}/${x.total})`).join(' ');
+        process.stderr.write(`  [repo-context] tier ${rc.resolvedTier} TRUNCATED ${dropped || '(unitemised)'}\n`);
+      }
     } catch (err) {
       process.stderr.write(`  [repo-context] skipped (non-blocking) — ${err.message}\n`);
     }

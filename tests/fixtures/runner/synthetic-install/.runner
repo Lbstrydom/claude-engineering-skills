@@ -1,0 +1,9 @@
+{
+  "agentId": 999001,
+  "agentName": "synthetic-test-agent",
+  "poolId": 1,
+  "poolName": "Default",
+  "serverUrl": "https://pipelines.example-ghactions.invalid/00000000-0000-0000-0000-000000000000/",
+  "gitHubUrl": "https://github.com/example-owner/example-repo",
+  "workFolder": "_work"
+}

@@ -499,6 +499,18 @@
       "description": "runner:doctor, machine-readable output.",
       "category": "diagnostic"
     },
+    "runner:local": {
+      "description": "Inventory self-hosted runner installs on THIS machine — health verdict via GitHub (never the local supervisor), plus advisory identity findings (host-name mismatch, foreign owner, service-vs-foreground contradiction).",
+      "category": "diagnostic"
+    },
+    "runner:local:json": {
+      "description": "runner:local, machine-readable output.",
+      "category": "diagnostic"
+    },
+    "runner:remove": {
+      "description": "Two-step guided teardown of a self-hosted runner install: prepare (resolve + request a removal token) then --verify (re-check against GitHub, never cached).",
+      "category": "diagnostic"
+    },
     "requirements:map": {
       "description": "Regenerate docs/requirements-map.md from .requirements/ledger.json.",
       "category": "plans"

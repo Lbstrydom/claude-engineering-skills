@@ -209,6 +209,17 @@ error · `3` needs-bootstrap (no contract).
   HTML is recovered by scanning string/template literals. Recall is still
   hypotheses-not-truth (~80%) — `--verify` raises confidence.
 - Per-screen quality + feel are click-test's and persona-test's job.
+- **Coverage honesty, and what is deliberately not (yet) here**
+  (`references/verification-discipline.md` §7): two existing mechanisms are
+  already instances of the kernel's obligations — the `coverage-gap` finding
+  kind above (a surface the model can't confirm is reachable is *reported*,
+  not silently dropped) and the `authLiveness` degradation table (a run
+  without a live auth sentinel degrades authoritative `misplaced`/`missing`
+  verdicts to `unverified`, "rather than asserting a scorecard for the wrong
+  surface"). A full per-run subject-line and per-edge taxonomy-classified
+  rendering is **deferred, by name**: nav-audit's structured output is
+  rendered by `scripts/nav-audit.mjs`, not composed from this file, so
+  closing that gap is a code change outside this doc's own scope.
 
 ## Reference files
 
@@ -218,4 +229,5 @@ error · `3` needs-bootstrap (no contract).
 | `references/finding-taxonomy.md` | The 10 finding classes with predicate, required evidence, FP guard, and gate-eligibility. | Phase 3 — interpreting a finding or tuning a false positive. |
 | `references/contract-and-bootstrap.md` | The two-artifact split — navMeta/docblock grammar, nav-contract.json schema, and the bootstrap review-queue. | Phase 0 — authoring or bootstrapping the contract and route metadata. |
 | `references/ci-gate-and-verify.md` | Drift-only CI gating, changed-surface scoping, cloud-sourced aging, and the v1.1 --verify runtime mode. | Phase 4 — wiring CI or reasoning about what blocks vs advises. |
+| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Reading the "Honest limits" section, to see which existing mechanisms already serve §7's obligations. |
 | `examples/example-report.md` | A sample /nav-audit run: findings, destination table, mermaid drilldown, and the gate-vs-advisory split. | Want to see the shape of the output before running it. |

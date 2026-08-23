@@ -51,6 +51,7 @@ describe('maintenance-checks — CHECKS manifest', () => {
       'memory-health',
       'migration-drift',
       'model-freshness',
+      'runner-health',
       // One-shot, and deliberately listed here anyway: this inventory is what
       // makes its REMOVAL as deliberate as its addition. When slice-recurrence
       // retires (see scripts/slice-recurrence-check.mjs's header), this line

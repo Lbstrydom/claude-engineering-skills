@@ -153,6 +153,29 @@ describe('renderFinalReviewCard — the state→command matrix', () => {
     assert.match(out, /re-run this check after the commit lands/);
   });
 
+  it('a primary-bucket item prints --bucket primary, never the shadow-only default (docs/plans/skill-efficacy-census.md Phase 1)', () => {
+    // Negative control: item()'s default carries bucket:'shadow-only', so this
+    // asserts specifically on a primary-bucket row (bucket: null, exactly what
+    // `pendingQueue`'s primary branch selects) — the case an earlier version's
+    // hardcoded `--bucket shadow-only` would have silently mis-scoped, either
+    // matching nothing or adjudicating the wrong bucket.
+    const out = renderFinalReviewCard(
+      ready([item({ bucket: null, remediation_state: 'fixed', classification: 'fixed-unlabelled' })], { fixedUnlabelled: 1 }),
+      { commitSha: SHA },
+    );
+    assert.match(out, /--action accepted --bucket primary/);
+    assert.match(out, /--action dismissed --bucket primary/);
+    assert.doesNotMatch(out, /--bucket shadow-only/, 'a primary-bucket row must never print shadow-only');
+  });
+
+  it('a primary-bucket accepted-unfixed item routes record-fix to --bucket primary', () => {
+    const out = renderFinalReviewCard(
+      ready([item({ bucket: null, user_action: 'accepted-permanent', classification: 'accepted-unfixed' })], { acceptedUnfixed: 1 }),
+      { commitSha: SHA },
+    );
+    assert.match(out, /final-review-record-fix .*--bucket primary --commit a1b2c3d --state fixed/);
+  });
+
   it('integrity-warning and unknown emit a warning and NO command', () => {
     const out = renderFinalReviewCard(ready([
       item({ user_action: 'dismissed', remediation_state: 'regressed', classification: 'integrity-warning' }),

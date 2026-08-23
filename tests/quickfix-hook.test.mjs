@@ -174,3 +174,90 @@ describe('quickfix-hook integration', () => {
     assert.equal(r.stdout.trim(), '');
   });
 });
+
+
+// -- Tooling-layout resolution ---------------------------------------------
+//
+// The hook file lives at `.claude/hooks/` in BOTH layouts (sync-path-map.mjs
+// STAYS_AT_CANONICAL_PATH_PREFIXES), but the library it imports is MAPPED:
+// `scripts/lib/` here, `scripts/.claude-skills/lib/` in a consumer. The hook
+// hardcoded the source path, so it was inert in every consumer for the whole
+// life of the isolation layout: the dynamic import threw, main().catch wrote a
+// FATAL line to stderr, and it exited 0. Nudge-not-gate meant nothing surfaced.
+// Confirmed 2026-08-20 against two real consumer checkouts.
+//
+// These tests scaffold a throwaway repo in EACH layout and spawn the real hook
+// against it. The source-layout case is not redundant: it is the control that
+// proves the scaffold itself can produce a hit. Without it, a resolver that
+// found nothing would pass the consumer assertion for the wrong reason -- the
+// hook exits 0 both when it finds no patterns and when it finds no library.
+
+/** Transitive import closure of quickfix-patterns.mjs (all siblings, no deeper). */
+const PATTERN_LIB_CLOSURE = [
+  'quickfix-patterns.mjs',
+  'secret-patterns.mjs',
+  'sensitive-paths.mjs',
+  'quickfix-policy.mjs',
+];
+
+/**
+ * Build a throwaway repo containing the hook at its canonical path and the
+ * pattern library under `libRelDir`. Pass `null` to install NO library.
+ */
+function scaffoldLayout(libRelDir) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'quickfix-layout-'));
+  const hookDir = path.join(root, '.claude', 'hooks');
+  fs.mkdirSync(hookDir, { recursive: true });
+  const hook = path.join(hookDir, 'quickfix-scan.mjs');
+  fs.copyFileSync(HOOK, hook);
+  if (libRelDir) {
+    const libDir = path.join(root, ...libRelDir.split('/'));
+    fs.mkdirSync(libDir, { recursive: true });
+    for (const f of PATTERN_LIB_CLOSURE) {
+      fs.copyFileSync(path.resolve(TEST_DIR, '..', 'scripts', 'lib', f), path.join(libDir, f));
+    }
+  }
+  return { root, hook };
+}
+
+const LAYOUT_PROBE_CONTENT = ['try { go(); } catch (e) {}', ''].join('\n');
+
+function runInLayout(libRelDir) {
+  const { root, hook } = scaffoldLayout(libRelDir);
+  const r = spawnSync('node', [hook], {
+    input: JSON.stringify({
+      tool_name: 'Write',
+      tool_input: { file_path: 'src/probe.ts', content: LAYOUT_PROBE_CONTENT },
+    }),
+    cwd: root,
+    env: { ...process.env, QUICKFIX_TELEMETRY_PATH: path.join(root, 'hits.jsonl') },
+    encoding: 'utf-8',
+    timeout: 15000,
+  });
+  return { stdout: r.stdout || '', stderr: r.stderr || '', status: r.status };
+}
+
+describe('quickfix-hook tooling-layout resolution', () => {
+  it('source layout (scripts/lib/) -- resolves the library and reports the hit', () => {
+    const r = runInLayout('scripts/lib');
+    assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+    assert.match(r.stdout, /empty-catch/);
+  });
+
+  it('consumer layout (scripts/.claude-skills/lib/) -- resolves the library and reports the hit', () => {
+    const r = runInLayout('scripts/.claude-skills/lib');
+    assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+    // The regression this test exists for: the import threw and nothing was scanned.
+    assert.doesNotMatch(r.stderr, /FATAL/);
+    assert.match(r.stdout, /empty-catch/);
+  });
+
+  it('neither layout -- WARNs and exits 0 without scanning (never blocks the tool call)', () => {
+    const r = runInLayout(null);
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout.trim(), '');
+    assert.match(r.stderr, /not found in either tooling layout/);
+    // A repo without the library installed is a supported state, not a crash.
+    assert.doesNotMatch(r.stderr, /FATAL/);
+  });
+});

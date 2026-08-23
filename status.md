@@ -1,5 +1,581 @@
 # Project Status Log
 
+## 2026-08-23 — Self-hosted runner management: local inventory, GitHub-truth health, guided teardown
+
+Follow-on to the 2026-08-14 entry below, which shipped only the repo-capability
+half (`runner:doctor`, "can this identity register a runner"). This closes the
+machine half nothing could previously answer: *is a runner actually installed
+and healthy on THIS machine, and for whom?* — the exact question a real
+incident this session (a corporate self-hosted runner sitting, unnoticed, on a
+personal machine, `.service` naming a service that was never actually
+registered, running as a bare foreground process) had no tooling to answer.
+
+Full cycle: `/plan` → `/audit-plan` (3 GPT rounds + 5 Gemini rounds, the last
+three Gemini rounds each a genuine architectural defect — an O(N) paginated
+remote-list design replaced with a direct by-ID lookup, an org-vs-repo owner
+scope-comparison bug, a symlink-based artifact-substitution gap caught before
+any code existed) → autonomous `--cluster`-clustered implementation
+(`docs/plans/self-hosted-runner-management.md`) → per-cluster `/audit-code`.
+
+- **Cluster A** (`scripts/lib/runner-inventory.mjs` pure judgements +
+  `scripts/lib/runner-probe.mjs` fs/exec/gh adapter) — 3 audit rounds; fixed a
+  prototype-pollution-unsafe artifact lookup and a "private" containment
+  resolver that had leaked back out through `_internals`.
+- **Cluster B** (`local`/`remove` CLI sub-commands, the gitignored
+  `runner-hosts.local.json` config surface + committed example, a structural
+  `.runner`/`.credentials`-shape leak guard over `git ls-files`, maintenance-
+  checks + CLI_SMOKE_SET registrations) — 5 audit rounds; fixed a same-root
+  symlink letting `.runner` secretly resolve to `.credentials`, a test-only
+  env override that silently fell back to reading this machine's REAL runner
+  install on malformed input, a leak-guard allowlist matched by directory
+  prefix instead of exact file, and an OAuth-shape false-positive path. 228
+  tests. Two rounds tripped repo-wide regression gates the new files/scripts
+  caused (CLI catalog, doc-ref text classification) — fixed alongside.
+- **Cluster C** (docs) — this entry + the two runbooks + an AGENTS.md stub
+  trimmed to fit 92000-char headroom that had only 48 chars left.
+
+No employer/organization identifier enters this public repo: the two
+pre-existing ones found during planning (a `--repo` usage example, and this
+file's own 2026-08-14 entry below) are scrubbed in this same session.
+
+## 2026-08-21 — Tiered shadow stood down; Phase 14 closed at the surfaces that report it
+
+Follow-up to the two entries below. Closes the loop rather than adding work.
+
+### Collector off
+
+`AUDIT_TIERED_SHADOW_ENABLED` is now unset — verified **effective**, not
+assumed: `tieredAuditConfig.shadowEnabled === false`, `pipelineEnabled ===
+false`, and the variable appears in no source (`~/.audit-loop.env`, repo
+`.env`, worktree `.env`). I found it already commented out when I went to
+change it — it moved between my earlier check this session (live at line 16)
+and now, so someone else flipped it; I verified rather than claimed the change.
+
+**Machine state, not repo state**: `~/.audit-loop.env` is not committed, so
+this does not affect consumers or other machines. `config.mjs`'s committed
+default was already `false`. The 33 collected rows survive in
+`tiered_shadow_observations` — stopping the collector stops accumulation, not
+history.
+
+Checked before flipping: no test or gate requires the flag ON
+(`tiered-pipeline-wiring.test.mjs` asserts source structure, not runtime
+value), and the report still reads the stored rows with it off.
+
+### The interpretability gap was CLOSED WITH EVIDENCE — and I got this wrong
+
+I wrote that reason 2 was "closed unresolved — nobody is going to run that
+check". A concurrent session ran it the same day (`f79f6870`) against the live
+`tiered_shadow_observations` table: legacy is 100% unlocalized on all 41 rows
+with findings (permanent, by design), but tiered carries at least one
+line-verified finding on **50 of 55 rows (91%)**. The null hypothesis is false
+— the 0% overlap is a real signal pointing at the cross-pipeline **matcher**,
+not at missing data.
+
+My claim was an assertion about the future substituted for a measurement,
+which is the same error as the threshold-trigger misreading it was meant to
+document. Their evidence-based section is the record; my version was dropped
+in the rebase rather than merged, with a note in the doc explaining why.
+
+### The trigger line is fixed at source
+
+The actual root cause of this session's detour: `tiered-shadow-report.mjs` and
+the dashboard's tiered-shadow section both printed *"window met — time for the
+Phase-14 production-flip review"* off `comparedRuns` alone, forever, with no
+knowledge of the decision. Both now check `phase14Decided()` **first** and
+report the closure.
+
+One shared oracle in `lib/audit/tiered-shadow-summary.mjs`, not an
+`existsSync` per surface — two spellings of one predicate is how a fix lands on
+one and misses the other. Existence-only by design: parsing a verdict out of
+prose would make a headline depend on markdown phrasing. Module-relative, never
+cwd, or the probe silently reports "not decided" from another directory and
+resurrects the line it exists to suppress.
+
+Controlled both ways: with the decision doc hidden the old trigger returns; with
+it present both surfaces report CLOSED.
+
+Verified: `npm run check` exit 0.
+
+## 2026-08-21 — Correction: the repo-context legacy pin is retired (its premise was stale)
+
+Same-day follow-up to the entry below. **The pin should never have been built.**
+
+### The error
+
+That entry, and commit `6d1b1bbd`'s message, assert the tiered-recall shadow
+cohort was "MET and awaiting Phase-14 adjudication", and treat that as the
+constraint justifying a frozen second composition path. It was not awaiting
+anything: **Phase 14 was deliberately closed without a production flip on
+2026-08-17**, four days earlier, in `docs/plans/tiered-recall-audit-pipeline.md`
+§"Close-out 2026-08-17" (`e9305550`, plan `Status: Complete`) — *"no further
+work on this plan's own Phase 14 is planned"*, with future tiered-vs-legacy
+decisions handed to `campaign.mjs`.
+
+The evidence I cited was `tiered-shadow-report.mjs`'s closing line — *"the
+plan's pre-registered 10-15 window is met. Time for the Phase-14
+production-flip review."* That is a **generic threshold trigger keyed on
+`comparedRuns` alone**; it has no knowledge of the plan's status and will print
+that sentence forever. The number (33) was accurate; the inference was not. I
+read the report and not the plan.
+
+**Rule worth keeping**: a tool's advisory line describes a threshold, not a
+decision. When one says "time to decide X", the cheap check is X's plan
+`Status:` line — not a re-derivation from the same metric the trigger read.
+
+### What was removed
+
+Writing `docs/research/tiered-recall-phase14-decision.md` — a transcription of
+the existing decision, not a new one — fired the retirement predicate exactly
+as designed: `tests/repo-context-legacy-pin.test.mjs` went red and printed the
+four-step edit. In one commit: `composeLegacy()`, the dead
+`legacyBuildT0`/`legacyBuildT1`, the `compose:'legacy'` argument and option,
+the legacy test cases, and the guard test itself.
+
+`legacyBuildT2`/`legacyBuildT3` were **not** deleted — the guard's own
+instruction ("delete the `legacyBuild*` helpers") was over-broad, and they are
+still the only builders for T2/T3. Renamed `buildDocSection`/`buildSymbolMap`,
+since the `legacy` prefix had become a lie. Checking usage before following the
+instruction is the reason that survived.
+
+`legacy-production-audit.mjs` now runs the budgeted composition like every
+other caller — measured after retirement: `tier T1 · adjacency true · closing
+tag true · truncated true · 7992 tok`, coverage `adjacency full 36/36,
+inventory partial 487/2205`. The audit path gets adjacency for the first time
+since 2026-05-30.
+
+### What stands
+
+The durable fix is untouched and was never contingent on the telemetry
+question: the defect it repairs (budget priority == emission order, `degraded`
+computed before the slice, a slice dropping the closing tag) is real and
+independent. So is the prompt-injection fix the code audit found.
+
+One thing genuinely worked: **the debt did not have to be remembered — it
+announced itself**, named its own removal steps, and refused to be satisfied by
+waiting. That pattern is worth reusing even though this particular debt should
+not have existed.
+
+Verified: 27/27 in `tests/repo-context.test.mjs`, full suite green,
+`npm run check` exit 0.
+
+## 2026-08-21 — Repo-context budget honesty: adjacency delivered, truncation made visible
+
+Full `/cycle --autonomous` run: /plan → /audit-plan (3 GPT rounds + Gemini
+APPROVE) → clustered autonomous implementation (2 clusters) → per-cluster
+fix-gate → consolidated Gemini gate APPROVE → ship.
+
+### The defect
+
+`getRepoContext` composed ONE string and then guillotined it. Three
+consequences followed from that single choice, none fixable by resizing:
+budget priority WAS emission order, so the small high-value adjacency block
+was starved to feed a 2202-file inventory; `degraded` was computed BEFORE the
+slice, so the object reported healthy while carrying 34% of a list; and a
+string slice dropped the closing tag.
+
+Measured at `2d6157f0`: every one of the four production call-site
+configurations returned the same 749-line block out of 2202 files (7995 est.
+tokens against an 8000 budget — the inventory alone was 99.9% of it), with
+`resolvedTier:'T1'`, `degraded:false`, `fallbackReason:null`, **no
+`<adjacency_context>` at all**, and no closing `</repo_inventory>`. The
+prompt header then announced "tier T1" to the model.
+
+Landed 2026-05-17 at 642 tracked files — under budget, working. Crossed it 13
+days later (`c38f93bd`, 830 files). Truncated for the last **1214 commits**.
+HEAD is 2.84x the budget.
+
+**Why the tests never caught it**: both real-repo cases passed
+`maxTokens: 100_000`, and the T1 case's own comment said why — *"lifted from
+the default to ensure the adjacency_context block ... survives truncation as
+the repo's file count grows."* The truncation was observed and the test was
+moved out of its way. The suite covered content-at-an-unrealistic-budget and
+budget-at-unrealistic-content, never the configuration that ships.
+
+### The fix — sections fitted by priority, coverage reported
+
+Tier builders return self-contained sections (own open AND close markup);
+`fitSections` fits them highest-priority-first and emits in a SEPARATE
+`order` axis; the block always states what it dropped. This is the repo's own
+`verification-discipline.md` §7 doctrine (shipped 2026-08-20) applied to a
+report that stated a verdict with no coverage.
+
+- `priority` and `order` deliberately disagree for T1: adjacency is fitted
+  FIRST (so it can never be starved again) but emitted LAST (exactly where it
+  sits today) — fitting and emitting in one order would have inverted every
+  prompt's layout as a side effect of a budget fix. Caught by the Gemini plan gate.
+- The inventory is `truncatable`, truncating inside its own renderer, so T0
+  and `openai-audit.mjs` keep their structure instead of degrading to a
+  coverage-only block, and a partial list says `showing X of N` inline.
+- `truncated` + `coverage` are ADDITIVE; `degraded`/`resolvedTier`/`block`
+  keep their exact prior meaning.
+
+### Telemetry constraint — one pinned call site, with a real expiry
+
+Measured before designing: arm-eval doesn't use this block at all
+(`contextPack` is `intent.pack`); the active bake-off campaign
+`final-review-scoped-2026q3` binds `envelopeScope:"thin"`, which drops the
+block entirely; but the **tiered-recall shadow window is MET** (33 compared
+runs vs a pre-registered 10–15, "Time for the Phase-14 production-flip
+review") and legacy is one half of every compared row. Its contract digest
+hashes correlation logic, NOT prompt content — so a change there would alter
+what a row MEANS without tripping the guard built for that omission class.
+
+So `legacy-production-audit.mjs` alone passes `compose:'legacy'`, routed to a
+**frozen verbatim** `composeLegacy()`. Not a "mode" of the new assembler — the
+plan audit's first HIGH established that a whole-section fitter provably cannot
+reproduce a partial mid-list slice. The REPORTING half is not pinned:
+`truncated`/`coverage` are returned on both paths from day one and logged, so
+the legacy path stops lying immediately even while its bytes stay frozen.
+
+Retirement is the owner's stated trigger — *"after the current bandit arm run
+we move to the durable and remove the legacy"* — enforced by
+`tests/repo-context-legacy-pin.test.mjs`, which fails in BOTH directions and
+does not survive its own predicate: red if the pin loses its justification, red
+the moment `docs/research/tiered-recall-phase14-decision.md` lands, and red on
+a `2026-09-30` calendar backstop so a trigger nobody pulls is still an expiry.
+
+### What the audits changed
+
+- **Plan** (3 GPT rounds, 17 findings, **17 accepted / 0 dismissed / 0
+  deferred — 100% acceptance every round**; Gemini APPROVE, "no false
+  positives"): legacy became a frozen function rather than a mode; `required`
+  moved from section to tier; the inventory became truncatable; the retirement
+  gained a self-expiring guard + calendar backstop.
+- **Code** (Cluster A fix-gate, 2 rounds, H:1→H:0): a real **prompt-injection
+  vector** — `foo<` and `repo_inventory>` are two legal POSIX components that
+  join into `foo</repo_inventory>`, closing the element from inside the
+  inventory and putting everything after it outside the context block. Verified
+  constructible, then fixed by entity-escaping repo-controlled strings.
+  Test assertions moved from nominal to contract-derived twice (hardcoded
+  module/export names → the set the target actually imports; a hardcoded
+  filename → the inventory prefix derived from `listRepoFiles`).
+- **Consolidated Gemini gate**: one HIGH **rebutted as a false positive** —
+  it described `escapeForBlock` as prepending a space when it entity-escapes;
+  executed against running code, `escapeForBlock("foo</repo_inventory>")` →
+  `"foo&lt;/repo_inventory&gt;"`, no closing tag, no space prefix. One LOW
+  accepted: the guard's spread check matched single quotes only, so
+  `compose: "legacy"` would have bypassed it. Round 2: **APPROVE, 0 findings**.
+
+### Verification
+
+`npm run check` exit 0; 13397 tests, 0 fail, skipped 28 (unchanged). Every new
+assertion was seen to fail first: adjacency-priority restored → the delivery
+test fails; coverage line silenced → 4 failures; a fabricated adjacency row →
+rejected (the old `rows.length >= 2` would have accepted it); a double-quoted
+`compose` → caught by the spread check; the decision document created → the
+retirement guard fails naming the exact 4-step edit.
+
+Two of my own bugs were caught by the new tests rather than by review: the
+coverage separator was never reserved, and `coverageUpperBound` rendered
+`shown: 0` when a partial section's `shown` can be wider — both one-character
+budget overshoots that appear only at an exactly-tight budget, which is the
+budget production runs at.
+
+## 2026-08-21 — Final-review request identity: ambient tree state removed from the hash
+
+### Consumer Verification (previous ship)
+
+- **Ship**: `6d3fb9ad66c774dd114d5ef4be6a726919c8e2a1` (`feat: lens coverage honesty — reports state coverage, not only verdict` + `docs: regenerate stale plans index`)
+- **State**: `verified` (transfer + pushed-sha check battery), `unverified` (consumer battery)
+- **Retrieval run**: pre-push hook ran the full `npm run check` chain in a
+  clean checkout of the pushed sha `6d3fb9ad` (not the working tree) —
+  `# pass 13338 / # fail 0`. `git ls-remote origin main` after push ==
+  `6d3fb9ad`, matched against local HEAD — verified by remote-ref comparison,
+  never by `$?`.
+- **Consumer bundle**: pre-push sync reported `Targets: 2/2 reached · Created: 2
+  · Updated: 96 · Unchanged: 1314 · Errors: 0`.
+- **`unverified` — concrete blocked prerequisite**: the authoritative check is
+  `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run *inside* a
+  consumer checkout; no consumer working tree was opened from this session, so
+  the pre-push sync report is a pre-check, NOT the verdict.
+- **Not inherited**: the pushed-sha clean-checkout green (23-gate `check` chain
+  + 13,338 tests) is real evidence for the *producer* artifact; it says nothing
+  about the receiver's view and was not used as evidence for the consumer row.
+
+### The flake, and what it actually was
+
+`tests/final-review-prompt-cache.test.mjs` — "identical inputs produce an
+identical fingerprint" — failed roughly 1-in-3 full-suite runs and passed in
+isolation. The reported hypothesis was live-catalog model drift between the two
+calls. **Falsified**: `refreshCatalogAndWarn()` is called only from `main()`
+(gemini-review.mjs), never from `runFinalReview`, and `CLAUDE_OPUS_MODEL` is a
+module-level `let` bound once at import — the model printed
+`claude-opus-4-8` on all four probe calls. The ~6.9s duration was not network
+either: it is three `git ls-files` shell-outs per call, uncached.
+
+**Real cause.** On a `full` envelope `runFinalReview` splices in
+`repoContextBlock` — `listRepoFiles` = tracked ∪ untracked-but-unignored minus
+deletions, re-read per call. Its header line carries the file COUNT, so one
+file appearing anywhere moves the hash even when it sorts far past the block's
+truncation cut (which lands at `scripts/lib/dashboard/assets/dashboard.css`,
+749 of 2196 files).
+
+Measured, with controls:
+- quiescent double call → equal (negative control: the assertion is not broken);
+- untracked file created between calls → `54aebeef…` vs `560ce401…`;
+- the REAL perturber `tests/historical-replay.fixture.mjs` at its real path →
+  `e9939e1e…` vs `bfd414f0…`, back to `e9939e1e…` once removed.
+
+Polling `git ls-files` every 2s through a full `npm test` caught the inventory
+hash moving `6ed477da → 307cf89f` mid-run, with exactly one file responsible —
+written into `tests/` by `tests/test-guard-false-green.test.mjs:350`, which
+then spawns a child test process before removing it. Node runs test files in
+parallel, so its create/delete boundaries land inside other suites' calls.
+
+### Production implication (narrower than it first looked)
+
+The fingerprint was telling the truth — the two calls really did send different
+bytes. The defect is in what the consumer infers. `summary.mjs` reroll detection
+intersects fingerprint SETS, so ambient drift can only ever **lose** a pair, and
+an empty `rerollPairs` reads as "no rerolls", never "unknown". One such miss is
+already in the recorded log: snapshot `d49d421591de` (2026-08-10), `opus` vs
+`solo-opus` — the exact pair `comparison/fingerprint.mjs`'s docstring says the
+machinery exists to catch.
+
+Scope, measured over 30 recorded snapshots / 139 arm records: 93 ran `thin`,
+which drops the block entirely, so this fires on `full` only. Also measured:
+all **78** rerolls the runtime fingerprint has ever detected are cases the
+pre-flight `armRequestFingerprint` would have missed — it earns its keep and
+could not simply be replaced.
+
+### Fix — additive, deliberately off a CONTRACT_EPOCH bump
+
+Followed the precedent already in the same file (`bucketsMatched`,
+gemini-review.mjs): keep the recorded field's exact meaning, add the corrected
+one beside it. Bumping the epoch would have discarded 30 snapshots of real,
+expensive evidence over a metadata refinement — the findings, costs and
+verdicts in them were never wrong.
+
+- **`requestIdentity`** (gemini-review.mjs) — same inputs, ambient repo-context
+  block replaced by a fixed token, `ri1:`-prefixed. Elided pre-redaction where
+  the block sits verbatim. The elision is **asserted** (`ambientElided` in the
+  envelope accounting) — a `.replace()` that silently matches nothing would
+  degrade back to ambient-dependence with no signal.
+- **`summary.mjs` unions both sets** — monotone, since the `ri1:` prefix keeps
+  the vocabularies disjoint: only ever adds a detection, never removes one.
+  Arms predating either field still read as unknown.
+- **`bakeoff-collect.mjs`** carries `requestIdentities` beside `requestFingerprints`.
+- **`tests/*.fixture.mjs` gitignored** — independently correct; a transient test
+  file had no business in the repo inventory. Verified with `git check-ignore`
+  that the three tracked `tests/fixtures/test-guard/*.fixture.mjs` are untouched
+  (`git ls-files` pathspec globbing would have lied here — `*` crosses `/` there
+  but not in gitignore).
+
+### Verification
+
+The flaky assertion became a stronger one: it perturbs the tree on purpose and
+asserts invariance, so the race is a proof rather than something to re-run
+until green. Every new test was seen to fail first:
+
+| Control | Result |
+|---|---|
+| elision defeated | both identity tests fail |
+| probe path made gitignored | vacuity guard fires ("probe must be VISIBLE, or this test proves nothing") |
+| union reverted to fingerprints-only | false-negative test fails |
+| **old assertion shape under continuous churn** | **0 pass / 6 fail** |
+| **new shape, identical churn** | **22 pass / 0 fail, ×3 runs** |
+
+Full suite: 13346 tests, 0 fail, skipped unchanged at 28. `npm run check` exit 0.
+
+Two of my own edits broke repo invariants and the gates caught both: the
+heredoc collapsed `\u0000` into three **literal NUL bytes** in
+gemini-review.mjs, and an `fs.rmSync` call missed the required
+`recursive: true`. Both fixed; the escape produces an identical runtime string,
+so behaviour is unchanged.
+
+### Open, not done in this session
+
+The `full` envelope spends ~8000 tokens on an inventory truncated to 749 of
+2196 files — an alphabetical prefix, so it can only falsify "module X is
+missing" claims for files starting a–s, while `verifyExistenceFindings` already
+does that mechanically against the *full* inventory on both reviewer paths.
+`thin` drops it entirely. Removing it changes what the reviewer sees and breaks
+`full`'s byte-identity bridge to the 38 recorded shadow runs, so it was left
+alone pending a decision. Being investigated next.
+## 2026-08-20 — Lens coverage honesty: a report states what it checked, not only what it found
+
+### Consumer Verification (previous ship)
+- **Commit**: `c747afa8c84f13a6e02932c976fac535ae6967b8`
+- **Retrieval**: `git fetch origin main` → `git rev-parse origin/main` compared
+  against local HEAD (remote-ref comparison, never `$?`); pre-push sync report
+  (`Targets: 2/2 reached · Created: 2 · Updated: 158 · Errors: 0`) plus a
+  follow-up `npm run sync:dry` (`create: 0 · update: 2 · unchanged: 1408`).
+- **Result**: `verified` (transfer + sync) / `unverified` — blocked
+  prerequisite: the authoritative check
+  (`scripts/.claude-skills/lib/sync-isolation-verify.mjs`) must run *inside* a
+  consumer checkout, and no consumer working tree was opened from that
+  session; the residual `update: 2` was left unexplained for the next
+  consumer-side run to identify.
+
+
+Authored, audited, and implemented `docs/plans/lens-coverage-honesty.md` end
+to end in one session — `/brainstorm` → hand-authored plan → `/audit-plan`
+(3 GPT rounds + 2 Gemini rounds) → `/cycle --autonomous` implementation
+(degenerate single-cluster path, no §11 block) → code audit → mandatory
+Gemini gate → this ship.
+
+### The idea
+A verification report should state its COVERAGE, not just pass/fail — a
+green that checked nothing is indistinguishable from a green that checked
+everything. `/ship` Step 6.8 already had this rule in its strongest form
+(three terminal states, `unverified` must name a concrete blocked
+prerequisite); this promotes it from one `/ship` step to a bundle-wide
+reporting contract via the canonical `verification-discipline.md` §7,
+propagated by the existing `sync-shared-audit-refs.mjs`.
+
+### Phase 0 census — the plan shrank on contact with the code
+Of 9 lenses that emit a findings verdict, only **3 had a real gap**
+(ux-lock, persona-test, audit-code) — click-test and visual-audit already
+independently implement the full pattern; nav-audit needed a packaging fix,
+not a report rewrite.
+
+### Changes
+- **Kernel**: `docs/audit/shared-references/verification-discipline.md` +§7
+  — three obligations (subject line / non-coverage line with a 4-kind
+  taxonomy / verdict coupling), three coverage shapes (enumeration /
+  degradation / boundary-disclosure), synced to 8 consumers (added
+  `nav-audit` to `EXPECTED_CONSUMERS` in `sync-shared-audit-refs.mjs` — a
+  one-entry data-map edit, not new tooling).
+- **ux-lock**: skipped-criteria counts in the VERIFY report; a full
+  mutually-exclusive `PLAN_NOT_SHIPPED > PLAN_PARTIAL > PLAN_SATISFIED`
+  precedence table; the status label documented as agent-emitted prose, not
+  a computed/persisted value.
+- **persona-test**: redesigned the coverage block as a third shape
+  ("boundary disclosure") after `/audit-plan` correctly rejected a
+  click-test-style reached/not-reached list — persona-test's exploration is
+  adaptive, with no pre-declared surface set to diff against. A defined
+  session work-record (reached surfaces, step budget, declared focus, origin
+  policy, an exhaustive terminal-reason enum, auth state) and a composed
+  Ready-for-users eligibility predicate that generalises the pre-existing
+  `authWallUntested` cap without silently dropping it.
+- **audit-code**: a per-round pass/wave census (5 passes + 3 mechanical
+  waves + arch-memory) with 5 named states, replacing the bare "ran";
+  `CONVERGED` gets a compound-label suffix naming every non-`completed` kind
+  present, never hardcoding one.
+- **nav-audit**: documented which existing mechanisms (`coverage-gap`
+  finding kind, `authLiveness` degradation) already serve the kernel's
+  obligations, and explicitly deferred full conformance as a named,
+  code-bearing follow-up (its report is CLI-rendered, not agent-composed —
+  out of this plan's no-code-changes boundary).
+- `tests/gate-honesty.test.mjs`: registered 3 new document-only gate ids in
+  the pinned v1 census (a one-shot edit the test itself forces on any
+  coverage change — caught immediately by `npm test`, not a plan defect).
+
+### Audit trail
+- `/audit-plan`: R1 (H:2 M:4 L:1, 7/7 accepted) → R2 (H:3 M:1, 4/4 accepted
+  — caught a real internal inconsistency: my own R1 fix introduced a
+  `skipped` state absent from its own 4-state table) → R3 (H:2 M:2, 4/4
+  accepted — caught that my "generalised" persona-test cap silently dropped
+  the pre-existing auth-wall safety guarantee). Gemini R1 `CONCERNS` (2 new
+  — a chronology bug in my own R3 fix, a hardcoded-kind bug in a verdict
+  label) → R2 **`APPROVE`**.
+- Code audit: `PASS` H:0 M:1 L:1 — M1 dismissed (describes
+  `gate-honesty.test.mjs`'s pre-existing, intentional manual-pin design, not
+  a defect this plan introduced); L1 fixed (plan status line). Mandatory
+  Gemini gate: **`APPROVE`**, one LOW (missing `statedIn`/`stated` on one new
+  gate — fixed).
+- Two red-then-green negative controls for the frontmatter byte-match
+  contract (per verification-discipline §3): both confirmed RED with the
+  exact expected mismatch, then restored GREEN.
+
+### Files affected
+See `docs/plans/lens-coverage-honesty.md` §7 (file manifest) and §10
+(Implementation Log) for the complete, verified list.
+
+### Next steps
+None outstanding for this plan. The nav-audit full-conformance deferral
+(§3.4/§5) and the pre-existing 262-row unlocked-fixes / 275-row
+unremediated-acceptances backlog (measured this session, entirely
+unrelated to this work) are separate, already-tracked items.
+
+---
+
+## 2026-08-20 — Edit-time syntax gate + verification-loop review
+
+Origin: a review of Anthropic's "Building verification loops in Claude Code
+with skills" against this bundle. We already exceed it on standalone, embedded
+and chained verification; PR-based is a settled decline (local-first CI). A
+`/brainstorm --debate` round (session `1787245915261`, GPT-5.6-terra +
+gemini-pro, $0.088, focal artifact
+`docs/research/verification-loops-brainstorm-briefing.md`) triaged three
+candidates. Both models independently declined A (`allowed-tools`
+least-privilege — fails closed and silent on unobservable consumer surfaces)
+and C (Stop-hook — incompatible with a shared working tree, cried-wolf shape).
+Only B survived, and it is small; the round's durable output was the framing
+that a report should state verification **coverage**, not pass/fail, plus the
+observation that we argued a bundle-shaped decision from intuition while owning
+the telemetry to measure it.
+
+Three plans spun into separate worktree sessions (plan-only, not implemented
+here): `skill-efficacy-census`, `lens-coverage-honesty`,
+`consumer-friction-doctor`.
+
+### B — shipped: PostToolUse `.mjs` parse check
+
+`.claude/hooks/syntax-check.mjs` + `tests/hook-syntax-check.test.mjs` (16
+tests). Closes the only edit→push gap the regex quick-fix scanner cannot see:
+a file that does not parse. Advisory, never `continue:false`; every uncertainty
+fails open.
+
+- **Scope is `.mjs` ONLY, and the boundary is measured, not chosen** (Node
+  v22.23.2, 2026-08-20): `node --check` exits 1 on **JSX inside a `.js` file**,
+  so scoping to `.js` would false-positive on every valid React component in a
+  consumer. `.ts` likewise. Module-type ambiguity turned out *not* to be the
+  risk — Node 22 accepts ESM syntax in `.js` with no `"type":"module"`. The
+  rationale is in the hook header so a future widening must confront it.
+- **Mutation-tested twice** (a green suite proves nothing until seen to fail):
+  widening the extension guard to `.js` → 5 tests red incl. the JSX guard;
+  removing the consumer-layout candidate → the layout test red. Both reverted.
+- Resolves `sensitive-paths.mjs` across **both** tooling layouts, tested under
+  each. Fail-open on the feature is simultaneously fail-closed on safety — no
+  classifier means no read, because `node --check` prints the offending source
+  line.
+- Registration (`.claude/settings.json`) and sync-list entries move together
+  deliberately: settings.json is deep-merged into consumers, so committing the
+  registration alone would ship a dangling hook reference at the next sync.
+
+### Found while building, filed not fixed
+
+- **`quickfix-scan.mjs` is inert in every consumer repo.** It resolves
+  `<root>/scripts/lib/quickfix-patterns.mjs`; consumers keep tooling under
+  `scripts/.claude-skills/lib/`. `sync-rewriter.mjs`'s `COMMAND_REGEX` only
+  rewrites `node scripts/X.mjs` command strings, never a JS path expression —
+  so the import throws, `main().catch` logs FATAL, exit 0. Nudge-not-gate means
+  it has failed silently for the whole life of the isolation layout. Reproduced
+  against a **scaffolded** consumer layout — confirm against a real checkout
+  before writing it up as measured.
+- **Flaky determinism test**: `final-review-prompt-cache.test.mjs:197` asserts
+  two identical review requests fingerprint identically; failed once in a full
+  run (6.9s, network-shaped), passed in isolation and in the re-run.
+  Hypothesis: the fingerprint carries a live-catalog-resolved model id. The
+  production implication is the concern — two identical bake-off arms could
+  fingerprint as different.
+
+### Pre-push latency — measured (`npm run check`, this tree, 2026-08-20)
+
+| Measure | Value |
+|---|---|
+| 23 gates | **77.2s**, all green |
+| `gates:poison` | **33.4s — 43% of gate time** |
+| npm spawn floor | fastest gate 593ms × 23 ≈ **14s (18%) pure process startup** |
+| `npm test` | 13,362 tests — **110s and 226s on consecutive identical runs** |
+
+The 2× run-to-run variance on an unchanged suite is the most actionable figure:
+it is network-bound, the same root as the flake above. Pinning
+`MODEL_CATALOG_REFRESH=skip` in the test env would plausibly cut variance and
+the flake together. Not acted on — the numbers are a measurement, not yet a
+diagnosis.
+
+### Ship-gate signals
+
+`list-unremediated-acceptances` reports **`agedOut: 14`** — 14 accepted
+findings passed the 30-day ceiling unremediated *after* `practiceStart`. Those
+will not surface in that nudge again. Distinct from the 115 open / 71 notYetDue
+/ 42 accepted-permanent. `list-unlocked-fixes` `agedOut: 0`. One open HIGH
+upstream report from wine-cellar-app (double-extension files classified as
+`extension`) awaiting triage.
+
+## 2026-08-20 — Backlog triage: unlocked-fixes + unremediated-acceptances
 ## 2026-08-23 — consumer-friction-doctor plan: full autonomous /cycle implementation
 
 ### Consumer Verification (previous ship)
@@ -671,7 +1247,7 @@ implementation, not a third gate round.
 
 A work-repo hit "GitHub Actions hosted runners are disabled for this repository" on
 a required `phase-gates` check. Worked through the decision tree live against a
-real GHE org (Wärtsilä): confirmed self-hosted registration is allowed at the repo
+real employer GHE org: confirmed self-hosted registration is allowed at the repo
 level (smoke-tested with a temporary Windows runner, then deregistered and cleaned
 up), explored Azure AI Foundry and AWS ECS as host candidates for a persistent
 org-level runner — both blocked short-term (Azure needs a fresh RBAC grant plus an

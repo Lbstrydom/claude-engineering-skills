@@ -26,6 +26,11 @@ test-results/
 # Private/corporate consumer registry — names a non-public consumer repo,
 # must never be committed to this public repo (see consumer-repos.local.example.json).
 scripts/lib/consumer-repos.local.json
+
+# Private/corporate self-hosted-runner host declarations — extra install
+# roots, expected hostname, acknowledged owners; must never be committed to
+# this public repo (see runner-hosts.local.example.json).
+scripts/lib/runner-hosts.local.json
 .claude/scheduled_tasks.lock
 
 # Audit-loop operational state (local to each machine)
@@ -209,3 +214,16 @@ docs/personal/
 .stryker-tmp/
 .stryker-*.conf.json
 reports/mutation/
+
+# Transient test-generated fixtures written INTO tests/ (not tests/fixtures/) so
+# a replayed historical file's own relative specifiers resolve unchanged — see
+# tests/test-guard-false-green.test.mjs. `.fixture.mjs` already keeps them out of
+# the `*.test.mjs` glob; this keeps them out of the repo INVENTORY too.
+#
+# Not cosmetic: `listRepoFiles` counts tracked ∪ untracked-but-unignored, and
+# that count is rendered into the final-review prompt, so a file blinking in and
+# out of tests/ during a parallel `npm test` perturbs another suite's request
+# hash. Measured 2026-08-20 — this exact file was the observed perturbation.
+# The fingerprint no longer depends on it (see `requestIdentity` in
+# gemini-review.mjs); this removes the churn at source as well.
+tests/*.fixture.mjs

@@ -426,6 +426,10 @@ const BINARY_EXT = new Set([
 const TEXT_BASENAMES = new Set([
   '.gitignore', '.gitattributes', '.npmrc', '.nvmrc', '.npmignore',
   'Dockerfile', 'Makefile', 'LICENSE', 'CODEOWNERS', 'repo-id',
+  // actions/runner's own extensionless config basenames, synthesised (fake
+  // values) in tests/fixtures/runner/synthetic-install/ for the runner-doctor
+  // suite — all JSON or plain text, never opaque binaries.
+  '.credentials', '.credentials_rsaparams', '.runner', '.service',
 ]);
 const TEXT_DIR_PREFIXES = ['.githooks/'];
 

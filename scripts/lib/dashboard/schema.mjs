@@ -406,6 +406,29 @@ export const TelemetryDataSchema = z.object({
     precision: z.number().nullable(),
     recall: z.number().nullable(),
   }).optional(),
+  // Skill-efficacy census — docs/plans/skill-efficacy-census.md Phase 3.
+  skillCensus: z.object({
+    cloud: z.boolean(),
+    repoId: z.string().nullable(),
+    repoName: z.string().nullable(),
+    windowDays: z.number(),
+    rows: z.array(z.object({
+      skill: z.string(),
+      signalSource: z.string(),
+      signalQuality: z.enum(['caller-checked', 'unchecked-call-site', 'no-table-by-design', 'ship-attribution-only']),
+      effectiveSince: z.string().nullable(),
+      window: z.object({ current: count.nullable(), prior: count.nullable() }),
+      allTimeCount: count.nullable(),
+      trend: z.object({ delta: z.number().nullable(), pct: z.number().nullable() }),
+      roundCount: z.object({ current: count, prior: count, allTime: count }).optional(),
+      conversionRate: z.object({
+        current: z.object({ numerator: count, denominator: count }),
+        prior: z.object({ numerator: count, denominator: count }),
+      }).nullable(),
+      lastRunAt: z.string().nullable(),
+      caveat: z.string(),
+    })),
+  }).optional(),
   // Author-tier observation (model-tier-observation) — observation-only. Suggested
   // tier × converged, declared ladder partition keys, the cross-model-bias
   // diversity gate. Optional so pre-feature snapshots validate.

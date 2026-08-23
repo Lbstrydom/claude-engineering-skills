@@ -145,12 +145,19 @@ export async function finalReviewStatsCmd(ctx) {
     const { writeFileSync, mkdirSync, existsSync } = await import('node:fs');
     const pending = (res.shadowOnlyQueue || []).filter((f) => !f.user_action);
     // Is the requested repo the one this process is standing in? Compared by
-    // BASENAME through the shared oracle, because the two identity systems
-    // spell the same repo differently (`owner/repo` vs the bare directory name).
-    const { repoBaseName } = await import('../../repo-scope.mjs');
+    // FULL identity, never basename — `getFinalReviewStats` resolves `--repo`
+    // against `audit_repos.name` (the `owner/repo` slug), and
+    // `resolveRepoIdentity().name` produces that same slug in the normal
+    // (git-origin-present) case, so exact equality is both correct and
+    // available. A basename-only comparison would let two distinct repos that
+    // happen to share a directory name (e.g. two orgs each hosting "widget")
+    // collide, pulling this checkout's grounding notes into another repo's
+    // worksheet — the sensitive-egress class AGENTS.md's sensitive-paths
+    // doctrine warns against ("compare full identity, never a
+    // substring/basename").
     const { resolveRepoIdentity } = await import('../../repo-identity.mjs');
     const ambientName = resolveRepoIdentity(process.cwd())?.name ?? null;
-    const groundingIsAmbient = Boolean(ambientName && repoBaseName(ambientName) === repoBaseName(repoName));
+    const groundingIsAmbient = Boolean(ambientName && ambientName === repoName);
     const md = renderAdjudicationWorksheet({
       title: `Final-review shadow-only spot-check — repo ${repoName}`,
       introLines: [
@@ -227,19 +234,23 @@ export async function finalReviewPendingCmd(ctx) {
     const diagnostic = res?.error === 'NOT_MIGRATED' ? 'NOT_MIGRATED' : 'CLOUD_UNREACHABLE';
     return done({ schemaVersion: 1, state: 'unavailable', diagnostic });
   }
-  if (!Array.isArray(res.shadowOnlyQueue) || !Array.isArray(res.actionablePairs)) {
+  if (!Array.isArray(res.pendingQueue) || !Array.isArray(res.actionablePairs)) {
     return done({ schemaVersion: 1, state: 'unavailable', diagnostic: 'MALFORMED_RESPONSE' });
   }
 
   const counts = summariseCounts(res.actionablePairs);
-  const items = orderItems(res.shadowOnlyQueue)
+  const items = orderItems(res.pendingQueue)
     .map((r) => ({ ...r, classification: classifyFinalReviewOutcome(r) }))
     .filter((r) => isActionable(r.classification))
     .slice(0, pageSize)
     // Display-safe projection ONLY — `detail_snapshot` is deliberately dropped:
-    // it is free-form model prose and has no place in a ship card.
+    // it is free-form model prose and has no place in a ship card. `bucket`
+    // is the row's REAL bucket (docs/plans/skill-efficacy-census.md Phase 1
+    // fix) — an earlier version hardcoded `'shadow-only'` here, which made
+    // every primary-bucket row's printed action resolve to the wrong bucket
+    // even after the read side was widened.
     .map((r) => ({
-      run_id: r.run_id, finding_fingerprint: r.finding_fingerprint, bucket: 'shadow-only',
+      run_id: r.run_id, finding_fingerprint: r.finding_fingerprint, bucket: r.bucket ?? null,
       classification: r.classification, severity: r.severity, category: r.category,
       user_action: r.user_action ?? null, remediation_state: r.remediation_state ?? null,
       primary_file: r.primary_file ?? null, created_at: r.created_at ?? null,

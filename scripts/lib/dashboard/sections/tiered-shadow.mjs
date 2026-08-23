@@ -29,7 +29,15 @@ export default function sectionTieredShadow({ src, tieredShadow }, ui) {
   // states (progress bar %, "within window but not met yet" message).
   const n = t.comparedRuns;
   const pctOfMax = Math.min(100, Math.round((100 * n) / t.windowMax));
-  const windowState = t.windowMet
+  // A RECORDED DECISION OUTRANKS THE THRESHOLD. `windowMet` is keyed on
+  // comparedRuns alone, so it says "time for the Phase-14 review" forever and
+  // cannot know the review happened — which is exactly how a reader concluded
+  // on 2026-08-21 that a closed cohort was still awaiting adjudication. Same
+  // precedence as tiered-shadow-report.mjs, from the same oracle
+  // (`phase14Decided`), so the two surfaces cannot drift apart.
+  const windowState = t.phase14Decided
+    ? { cls: 'ok', msg: `Phase 14 is CLOSED — the production-flip decision is recorded in docs/research/tiered-recall-phase14-decision.md. These ${n} compared runs are kept for reference; further tiered-vs-legacy evaluation goes through campaign.mjs.` }
+    : t.windowMet
     ? { cls: 'ok', msg: `Window met (${n}/${t.windowMax} compared runs) — time for the Phase-14 production-flip review.` }
     : n >= t.windowMin
       ? { cls: 'ok', msg: `${n}/${t.windowMax} compared runs — inside the pre-registered ${t.windowMin}–${t.windowMax} window; a few more before the Phase-14 review.` }

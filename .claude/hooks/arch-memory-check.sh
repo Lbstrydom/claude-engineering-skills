@@ -141,8 +141,26 @@ if command -v git >/dev/null 2>&1; then
 fi
 [[ -z "$REPO_ROOT" ]] && REPO_ROOT="$(pwd)"
 
-CROSS_SKILL="$REPO_ROOT/scripts/cross-skill.mjs"
-if [[ ! -f "$CROSS_SKILL" ]]; then
+# Two candidate tooling layouts. `.claude/hooks/` stays at its canonical path
+# in both (sync-path-map.mjs STAYS_AT_CANONICAL_PATH_PREFIXES), but the CLI this
+# hook shells is mapped: `scripts/cross-skill.mjs` here,
+# `scripts/.claude-skills/cross-skill.mjs` in a consumer. The sync's rewriter
+# only touches `node scripts/<path>` command STRINGS, never this shell variable,
+# so the resolution has to happen here, at runtime.
+#
+# Hardcoding the source path made this hook inert in every consumer — and more
+# quietly than quickfix-scan's version of the same bug, because the not-found
+# branch below exits 0 with no output at all. Confirmed 2026-08-20 against two
+# real consumer checkouts, where cross-skill.mjs exists only under
+# scripts/.claude-skills/.
+CROSS_SKILL=""
+for candidate in "$REPO_ROOT/scripts/cross-skill.mjs" "$REPO_ROOT/scripts/.claude-skills/cross-skill.mjs"; do
+  if [[ -f "$candidate" ]]; then
+    CROSS_SKILL="$candidate"
+    break
+  fi
+done
+if [[ -z "$CROSS_SKILL" ]]; then
   # Repo doesn't have architectural-memory installed — silently skip
   exit 0
 fi

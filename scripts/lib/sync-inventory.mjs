@@ -68,6 +68,15 @@ const CORE_ENTRY = [
   'scripts/reconcile-repo-identity.mjs',
   'scripts/tiered-shadow-report.mjs',
   '.claude/hooks/quickfix-scan.mjs',
+  // Session-start advisory: a retired skill surface on the machine can shadow
+  // the repo-scoped copy. Registered in the SYNCED .claude/settings.json, so it
+  // must ship too -- it was registered everywhere and shipped nowhere until
+  // 2026-08-20. Walker pulls in lib/install/legacy-surfaces.mjs.
+  '.claude/hooks/legacy-surface-advisory.mjs',
+  // PreToolUse Bash nudge toward the Grep tool. Zero imports, fully portable.
+  // Same registered-but-unshipped bug as the advisory above.
+  '.claude/hooks/bash-grep-nudge.mjs',
+  '.claude/hooks/syntax-check.mjs',
   'scripts/persona-consistency-run.mjs',
   // Deterministic /ux-lock runner (WS2). Authoritative list is sync-to-repos.mjs;
   // keep in lock-step. Walker pulls in lib/playwright-runner.mjs +
@@ -142,6 +151,12 @@ const CORE_NON_IMPORTABLE = [
   // scripts/lib/device-presets.mjs prep|prep-matrix`) — never statically
   // imported, so the walker can't reach it. Mirrors sync-to-repos.mjs.
   'scripts/lib/device-presets.mjs',
+  // Loaded by .claude/hooks/legacy-surface-advisory.mjs through a COMPUTED
+  // two-layout candidate path (path.join + pathToFileURL), so the static import
+  // walker cannot reach it. Without this entry the hook ships but its inspector
+  // does not, and loadInspector() returns null -- the advisory is silently dead,
+  // which is the exact failure being fixed. Keep in lock-step across both files.
+  'scripts/lib/install/legacy-surfaces.mjs',
 ];
 
 const LEARNING_ENTRY = [

@@ -93,7 +93,11 @@ const PINNED_DOCUMENT_ONLY = {
   // detector gate IS enforced by evaluateConvergenceWithDetectors and unit-pinned, but the
   // CLOSED oracle registry has no fit for a ledger-plus-repo trigger, and claiming one that
   // does not bind is the fake-check class this suite exists to catch.
-  'audit-code': ['mechanical-vs-architectural-label', 'rigor-pressure-stop', 'detector-blocks-convergence'],
+  // `convergence-census-and-label` (2026-08-20, lens-coverage-honesty): the
+  // per-pass/wave CENSUS block + the CONVERGED compound-label suffix are
+  // agent-composed report content from the round's own recorded outcomes; no
+  // CLI exit code, no fit in the closed oracle registry.
+  'audit-code': ['mechanical-vs-architectural-label', 'rigor-pressure-stop', 'detector-blocks-convergence', 'convergence-census-and-label'],
   'visual-audit': ['partial-matrix-refusal', 'vlm-advisory-only'],
   'ai-context-management': ['never-write-without-confirmation'],
   explain: [],
@@ -120,8 +124,15 @@ const PINNED_DOCUMENT_ONLY = {
   // has no CLI to bind an exit code to) and `p0p1-shape-mismatch-never-benign`
   // (runAutoCorrelate lives in cross-skill.mjs, which exports nothing, and
   // record-persona-session exits 0 either way by design).
-  'persona-test': ['consistency-exit-codes-live', 'persona-finding-hash-single-source', 'no-typed-input-values-persisted', 'finding-severity-literal-p0-p3', 'p0p1-shape-mismatch-never-benign'],
-  'ux-lock': ['verify-is-a-report-not-a-blocker', 'status-rubric'],
+  // `overall-verdict-boundary-cap` (2026-08-20, lens-coverage-honesty): the
+  // Ready-for-users composed eligibility predicate is agent-computed from the
+  // session work-record during exploratory mode; no CLI, no exit code.
+  'persona-test': ['consistency-exit-codes-live', 'persona-finding-hash-single-source', 'no-typed-input-values-persisted', 'finding-severity-literal-p0-p3', 'p0p1-shape-mismatch-never-benign', 'overall-verdict-boundary-cap'],
+  // `status-rubric-precedence` (2026-08-20, lens-coverage-honesty): the
+  // first-match-wins PLAN_NOT_SHIPPED > PLAN_PARTIAL > PLAN_SATISFIED table is
+  // agent-composed report prose over live plan_satisfaction data; same
+  // disposition class as status-rubric beside it.
+  'ux-lock': ['verify-is-a-report-not-a-blocker', 'status-rubric', 'status-rubric-precedence'],
   // `unremediated-acceptances-never-blocks` added 2026-07-27 with /ship Step 0.5e.
   // Document-only for the same reason as step-0-5-gates-non-blocking beside it:
   // the READ half is mechanically honest (getUnremediatedAcceptances returns []
@@ -233,7 +244,12 @@ describe('gate-honesty — real skills/', () => {
     //   Document-only because omitting --run-id fails nothing — the review runs
     //   and silently records no gemini_verdict, which is the defect the step
     //   documents, not a refusal an oracle could bind to.
-    assert.equal(totalDocOnly, 45);   // +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5)
+    // 45 → 48: +3 (lens-coverage-honesty, 2026-08-20) — audit-code
+    //   (convergence-census-and-label), persona-test (overall-verdict-boundary-cap),
+    //   ux-lock (status-rubric-precedence). All three are agent-composed report
+    //   content over live run state; no CLI exit code, no fit in the closed
+    //   oracle registry — see the per-skill comments in PINNED_DOCUMENT_ONLY above.
+    assert.equal(totalDocOnly, 48);   // +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));

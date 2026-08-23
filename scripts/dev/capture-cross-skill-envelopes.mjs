@@ -155,6 +155,12 @@ export const CASES = [
   { id: 'fr-pending-no-repo', args: ['final-review-pending'] },
   { id: 'fr-pending-cloud-off', args: ['final-review-pending', '--repo', 'owner/repo'] },
   { id: 'shadow-overlap-cloud-off', args: ['shadow-overlap', '--json', '{"runIds":["r1"]}'] },
+  // docs/plans/skill-efficacy-census.md Phase 2. A validation-error case, not
+  // the cloud-off/live-git path: censusAllSkills reads real commit history
+  // even with cloud off, so its envelope carries genuinely volatile fields
+  // (commit shas, dates) a golden fixture cannot pin. --window-days 0 fails
+  // before any of that runs, giving a deterministic, environment-independent envelope.
+  { id: 'skill-census-bad-window', args: ['skill-census', '--window-days', '0'] },
   // `volatile` names fields whose value is derived from the ENVIRONMENT rather
   // than from the command's contract. Here the repo name comes from the cwd,
   // and every run gets a fresh randomised temp dir — so the field differs on

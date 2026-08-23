@@ -176,6 +176,8 @@ export const KNOWN_FLAGS = [
   '--queue-limit', '--worksheet', '--run-id', '--fingerprint', '--action', '--bucket',
   // final-review-pending: --render emits the card text instead of JSON
   '--render', '--page-size',
+  // skill-census: docs/plans/skill-efficacy-census.md Phase 2
+  '--window-days',
   // lock-with-test: record a unit/integration test as a finding's regression lock
   '--finding', '--test', '--description',
   '--commit', '--state',

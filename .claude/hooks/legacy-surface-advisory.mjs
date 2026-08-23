@@ -48,7 +48,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /**
  * The tree to inspect. `--repo-root` is a TEST SEAM, deliberately a CLI arg and
@@ -64,6 +64,39 @@ function resolveRepoRoot(argv) {
 }
 
 const REPO_ROOT = resolveRepoRoot(process.argv);
+
+// The inspector module is layout-MAPPED: `scripts/lib/...` in this repo,
+// `scripts/.claude-skills/lib/...` in a consumer. This hook's own path is
+// canonical in BOTH layouts, so it cannot derive which one it is in -- it must
+// try both, exactly as quickfix-scan.mjs and syntax-check.mjs do.
+//
+// The former bare `import('../../scripts/lib/install/legacy-surfaces.mjs')`
+// resolved only in this repo. In a consumer it threw, and the catch at the call
+// site treats a throw as `return` -- so the advisory was silently dead in
+// exactly the repos whose incident motivated it.
+//
+// Anchored on this FILE, not on REPO_ROOT: `--repo-root` is a test seam for the
+// tree being INSPECTED, and pointing it at a fixture must not move where the
+// hook loads its own code from.
+const HOOK_DIR = path.dirname(fileURLToPath(import.meta.url));
+const INSTALL_ROOT = path.resolve(HOOK_DIR, '..', '..');
+const INSPECTOR_CANDIDATES = Object.freeze([
+  path.join(INSTALL_ROOT, 'scripts', 'lib', 'install', 'legacy-surfaces.mjs'),
+  path.join(INSTALL_ROOT, 'scripts', '.claude-skills', 'lib', 'install', 'legacy-surfaces.mjs'),
+]);
+
+/**
+ * @returns {Promise<object|null>} the inspector module, or null when neither
+ *   layout has it (a partial checkout) -- in which case the hook says nothing.
+ */
+async function loadInspector(candidates = INSPECTOR_CANDIDATES) {
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) continue;
+    try { return await import(pathToFileURL(candidate).href); }
+    catch { /* try the next layout */ }
+  }
+  return null;
+}
 const SENTINEL_DIR = path.join(REPO_ROOT, '.audit', 'legacy-surface-advisory');
 
 /** Read the hook envelope, tolerating an absent/malformed one. */
@@ -126,7 +159,8 @@ async function main() {
   let inspection;
   let describe;
   try {
-    const mod = await import('../../scripts/lib/install/legacy-surfaces.mjs');
+    const mod = await loadInspector();
+    if (!mod) return;   // inspector absent in both layouts -- say nothing
     describe = mod.describeLegacySurfaces;
     inspection = mod.inspectLegacySurfaces({ repoRoot: REPO_ROOT });
   } catch {

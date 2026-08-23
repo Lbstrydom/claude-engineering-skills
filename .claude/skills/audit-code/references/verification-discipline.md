@@ -342,6 +342,93 @@ excuse. **Never inherit the producer-side green.**
 
 ---
 
+## 7. A report states its coverage, not only its verdict
+
+> **Measured**: of nine lenses in this bundle that emit a findings verdict, two
+> (click-test, visual-audit) arrived independently at the discipline below;
+> three (ux-lock, persona-test, audit-code) did not, and each was able to emit
+> a clean verdict over an itinerary the report never stated.
+
+§6's rule is scoped to one artifact class — what a consumer receives after a
+push. The asymmetry behind it is not: **a check that wrongly fails is annoying
+and visible; a check that wrongly passes is invisible, and it spends the
+trust budget a real check would need.** That applies to every surface a lens
+declines to check, not only to a post-push retrieval.
+
+**Three obligations.**
+
+1. **The subject line — what was checked, with what instrument.** A verdict
+   without an itinerary is unfalsifiable: the reader cannot tell a thorough
+   pass from a vacuous one, because the two look identical in the transcript.
+
+2. **The non-coverage line — what had no applicable check, and why, by a
+   named kind.** For a lens that enumerates a bounded surface set (a route
+   list, a pass/wave set), every surface **never attempted** carries a reason
+   of one of four kinds:
+
+   - `blocked` — a concrete missing prerequisite (an auth wall with no
+     bootstrap, no network, an absent credential *or unset config for an
+     optional capability* — the latter is still a nameable, concrete thing:
+     "AUDIT_DB_URL unset", not a vaguer "disabled"). §6's rule verbatim.
+   - `out-of-scope` — another lens owns it; **name that lens**.
+   - `not-reached` — the run's own budget ran out (step cap, route list,
+     device matrix, node budget) before the surface was attempted.
+   - `not-applicable` — the check does not apply here at all: a detector
+     ineligible for the resolved repo/language/scope, or a surface no lens in
+     the bundle owns (an honest `not-applicable, unowned` is itself useful
+     information — a gap in the *bundle*, not a defect in the *run*).
+
+   **A surface that WAS attempted but did not complete is a different thing
+   from a surface that was never attempted.** Call the attempted-but-failed
+   outcome `errored`. It is **not** one of the four kinds above and must not
+   be folded into one — doing so hides whether the check ran at all, the
+   exact ambiguity this section exists to prevent. Both `errored` and the
+   four never-attempted kinds count as "not covered" for the verdict-coupling
+   rule below, but each is reported under its own distinct label.
+
+   A bare "not applicable" with no kind and no name is not a reason.
+
+3. **The verdict coupling — the clean label is reserved for a run that was
+   also complete.** Zero findings plus a non-empty non-coverage line (of
+   either shape) gets a *distinct* label from zero findings with nothing
+   uncovered. And: **issues are never masked by coverage gaps** — a run with
+   findings *and* gaps surfaces both, never collapses to the gap label.
+
+**Three shapes, not one artefact.** A coverage block is itself a claim, and
+the obligation above is shape-neutral — it does not prescribe one report
+format:
+
+- **Enumeration** — the lens discovers or defines a bounded surface set (a
+  route crawl, a pass/wave set), so it owes a per-surface state using the
+  vocabulary above.
+- **Degradation** — a single verdict downgrades (to `unverified`, or an
+  equivalent) when capture is incomplete, carrying the same vocabulary
+  applied to the capture as a whole, not per-surface.
+- **Boundary disclosure** — for a lens whose exploration is *adaptive*
+  (plan-as-you-go rather than crawl-a-known-set), there is no surface set to
+  enumerate honestly. The report states what was **actually reached** plus
+  the **boundaries that bounded the run** (a step budget, a declared focus, a
+  safety-policy restriction, an auth state), from a record the run itself
+  populated as it went — never composed at report time — and says explicitly
+  that this is not an inventory scan. The four-kind taxonomy does not apply
+  here: there is no enumerated set for a kind to describe an entry of.
+
+A fourth case is worth naming so it is not silently absorbed into one of the
+three: a lens whose report is **rendered by a script**, not composed by the
+agent from these instructions, cannot be brought to conformance by editing
+this reference alone — that would need a code change, a different kind of
+work with a different owner. Such a lens should be documented honestly:
+which existing mechanisms already serve one of the three obligations, and
+which remain deferred, by name, rather than silently claimed.
+
+**The reciprocal warning.** A coverage block is exactly as unfalsifiable as
+the verdict it decorates if it is composed at report time rather than
+**derived from the run's own record** — and it is *more* dangerous, because
+it stops the reader checking. Where nothing was recorded, the honest block
+says that; it does not reconstruct.
+
+---
+
 ## Where these came from
 
 Three of the six describe a capability that was **documented, believed, and never
