@@ -214,15 +214,27 @@ invariants of each wave and lens) and the **naming convention** live in
 [`docs/reference/skill-roster.md`](docs/reference/skill-roster.md) — read it before
 renaming a skill or "simplifying" a wave.
 
-- **plan**: code that doesn't exist yet. Auto-detects backend/frontend/full-stack; the frontend path emits the machine-parseable "Acceptance Criteria" section `/ux-lock verify` consumes.
-- **audit-plan**: refines plans before implementation (max 3 rounds, rigor-pressure stop). Single-file edits.
-- **audit-code**: code just written — 5 LLM passes + R2+ suppression, plus mechanical waves (duplication; Wave 6 containment adjacency). Suppress an intentional duplicate with a `// @duplicate-justification: target=<file>:<symbol> reason=<why>` pragma above the declaration. **Adding a mechanical wave? Declare it in `MECHANICAL_WAVES` ([`audit-shadow.mjs`](scripts/lib/audit-shadow.mjs))** — or `PASS_PROMPTS` silently enrols it in the model-A/B/C shadow's **paid** generator comparison.
-- **ux-lock**: locks a fix's DOM contract (Playwright e2e); verify mode grades a `/plan` plan against the live app. Specs LOCATE via the semantic ladder and never import app source; [`selector-policy.mjs`](scripts/lib/ux-lock/selector-policy.mjs) `classifySelector` is the **single policy oracle** — never add a second classifier.
-- **persona-test**: deployed app, narrative QA. Three modes — exploratory (MCP-driven), pair (two opposed personas; ~92% disjoint findings), consistency (deterministic canary; contradictions land in the session ledger and the canary's own `expectedContradictions` is the gate — the candidate/promotion path was retired 2026-08-11, and its `max` count is now loosenable, so treat raising it like deleting a test). HTML attribute contract: [`consistency-contract.md`](docs/reference/consistency-contract.md).
-- **click-test**: deployed app, structural DOM audit — the mechanical complement to persona-test (duplicate IDs, orphan labels, ARIA misuse, heading hierarchy, touch targets). Catches what personas never trigger because there's no narrative reason to notice it.
-- **nav-audit**: the **system** lens (persona=journey, click=page, nav=system). Static nav graph from source, asking "is what's OFFERED what's NEEDED?", grounded in the persona registry. `--verify <url>` reconciles static-vs-live. CI gate is **drift-only**.
-- **visual-audit**: the **paint** lens. Math-first and deterministic (computed styles, geometry, forced pseudo-state); the VLM is advisory and never gates. Verify-primary — the static run emits NO paint findings. CI gate is **drift-only**. Scope firewall: *include a check only if you can assert it on a computed style without knowing what the page is FOR* — signifiers in, affordance judgments out (those are persona-test's).
-- **ship**: packaging and delivery.
+Which lens, not how it works — every mode, flag and mechanism is in the roster:
+
+- **plan** — code that doesn't exist yet; its frontend path emits the machine-parseable "Acceptance Criteria" section `/ux-lock verify` consumes.
+- **audit-plan** — refines a plan before implementation. Single-file edits.
+- **audit-code** — code just written: LLM passes + R2+ suppression + mechanical waves.
+- **ux-lock** — locks a fix's DOM contract (Playwright e2e); verify mode grades a plan against the live app.
+- **persona-test** — deployed app, narrative QA (exploratory · pair · consistency).
+- **click-test** — deployed app, structural DOM audit; catches what personas never trigger, because there's no narrative reason to notice it.
+- **nav-audit** — the **system** lens (persona=journey, click=page, nav=system): is what's OFFERED what's NEEDED?
+- **visual-audit** — the **paint** lens: math-first, deterministic; the VLM never gates.
+- **ship** — packaging and delivery.
+
+**Four imperatives the roster is too late to tell you.** **(1)** A new mechanical
+wave must be declared in `MECHANICAL_WAVES` ([audit-shadow.mjs](scripts/lib/audit-shadow.mjs)),
+or `PASS_PROMPTS` silently enrols it in the model-A/B/C shadow's **paid** comparison.
+**(2)** `classifySelector` ([selector-policy.mjs](scripts/lib/ux-lock/selector-policy.mjs))
+is ux-lock's **single** policy oracle — never add a second classifier.
+**(3)** persona-consistency's `expectedContradictions.max` is loosenable — treat
+raising it like deleting a test. **(4)** visual-audit's scope firewall: *include a
+check only if you can assert it on a computed style without knowing what the page
+is FOR* — signifiers in, affordance judgments out (those are persona-test's).
 
 ## Consumer-repo layout (isolation)
 
@@ -517,6 +529,15 @@ Self-check: `node scripts/lib/model-resolver.mjs resolve | catalog`.
 - When rewrapping an LLM error, surface `err.status` + the real provider
   `error.message` — don't collapse to `"API error ${status}"` (it names the bad model).
 - **OpenRouter**: one model id → many backends w/ incompatible ctx limits, picked per request; and reasoning tokens count against `max_tokens`. Unpinned runs fail at random, reading as model flakiness — always send `provider:{require_parameters,sort}` + `reasoning:{effort}`. [experiment-4](docs/research/experiment-4-cheap-final-reviewer-smoke.md)
+- **A model id carries its ROUTE, and the two are never reconciled.** Some models
+  are reached BOTH natively and via OpenRouter (`qwen3.8-max` vs `qwen/qwen3.8-max`);
+  `transportForModel` dispatches on exactly that shape and the routes bill
+  differently, so **never "normalise" `source_model`** — it erases the routing
+  decision and corrupts costing. What must NOT vary by route is the vendor
+  **family**: call `modelFamily`, never a local head-of-string helper. Reading the
+  vendor off whichever half of the id was present is how a model grading its own
+  output got recorded as unbiased (`self_family`, fixed 2026-08-23). A new vendor
+  needs `VENDOR_ALIASES` too — `npm test` fails until it has it.
 
 → Resolution-order detail, live-catalog mechanics, startup-log example, static-pool
 maintenance: [`docs/reference/model-resolution.md`](docs/reference/model-resolution.md).

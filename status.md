@@ -132,6 +132,28 @@ must-NOT-fire guards stay green.
 - **History floors at 2026-07-14** (the Supabase wipe); local raw transcripts are
   capped at newest-25 + 14 days.
 
+### AGENTS.md
+
+The route-vs-family rule landed in the **Model Resolution → Anti-patterns**
+list, because a gate that fires on a *new vendor* still cannot teach an agent
+"these two spellings are two routes, never reconcile them" — which is the
+mistake this session made first, and would make again.
+
+The file was at **91,964/92,000 chars** (36 left), so this required condensing
+before adding, not shaving to fit. The per-skill dossier under `## Skill Chain`
+was the honest candidate: the section already says per-skill depth lives in
+[`docs/reference/skill-roster.md`](docs/reference/skill-roster.md), and all five
+of its load-bearing details were verified present there before removing them.
+Descriptions condensed to one identity line per skill; the four imperatives a
+reader would otherwise get wrong *before* reaching the roster (`MECHANICAL_WAVES`
+enrolment, ux-lock's single `classifySelector` oracle, the loosenable
+`expectedContradictions.max`, visual-audit's scope firewall) kept inline.
+
+Net: **91,964 → 91,782** — one more invariant resident and the file 182 chars
+smaller. Headroom is still only 218 and the advisory still fires; the next
+invariant needs another condense, and `## Architecture` (7,941) is the largest
+remaining candidate.
+
 ### Regression Lock Status
 
 348 unlocked (166 code / 182 plan), `agedOut: 0`, 229 pre-practice. Both changes
