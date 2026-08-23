@@ -148,8 +148,8 @@ never read as either a confirmed success or a confirmed failure.
 ## Local config — keeping private orgs out of this public repo
 
 Copy [`scripts/lib/runner-hosts.local.example.json`](../../scripts/lib/runner-hosts.local.example.json)
-to `scripts/lib/runner-hosts.local.json` (gitignored — never committed) to
-declare:
+to `runner-hosts.local.json` in the same directory (gitignored — never
+committed) to declare:
 
 - `extraRoots` — additional install directories to check, `{kind:'local',
   path}` or `{kind:'wsl', distro, pathInDistro}`
