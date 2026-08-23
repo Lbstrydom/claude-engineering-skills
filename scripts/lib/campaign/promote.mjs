@@ -193,6 +193,14 @@ export function classifyLogEntry(entry, {
       // as free is lesson (e), and the CHECK constraint enforces the pairing.
       costUsd: Number.isFinite(arm?.costUsd) ? arm.costUsd : null,
       costStatus: Number.isFinite(arm?.costUsd) ? 'priced' : 'unpriced',
+      // The RAW observation behind `costUsd`, so an unpriced row still says
+      // what it CONSUMED (2026-08-23). `campaign_arm_runs.usage` was null on
+      // all 84 rows — 65 of them priced — because nothing ever passed it: the
+      // column existed, `recordArmRun` accepted it, and no caller supplied it.
+      // That made an unpriced arm's spend unrecoverable from this table (the
+      // tokens survived only in `audit_runs`), which is what turned a missing
+      // price into a permanently "unknown" arm total in `campaign.mjs status`.
+      usage: arm?.usage ?? null,
       // §7 Phase 4: each attempt's OWN provenance, populated at promotion
       // time — never a single entry-level value (round 5, H2).
       planContentHash: arm?.planContentHash ?? null,
@@ -398,6 +406,7 @@ export async function promoteFromLog({ config, lock, configDigest, entries, conf
           const res = await store.recordArmRun({
             cohortId: cohort.id, snapshotRowId: snap.id, snapshotId: entry.snapshotId, armId: arm.armId, attempt: p.attempt,
             auditRunId: p.auditRunId, costUsd: p.costUsd, costStatus: p.costStatus, error: p.error,
+            usage: p.usage ?? null,
             supersedePrior: p.supersedePrior, planContentHash: p.planContentHash ?? null, configDigest: p.configDigest ?? null,
           });
           if (res.ok) promotedCount += 1;

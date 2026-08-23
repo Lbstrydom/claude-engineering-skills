@@ -343,6 +343,14 @@
     {
       "line": "primary GPT/Gemini-round finding was never surfaced here at all, however long",
       "reason": "Step 6.7 (docs/plans/skill-efficacy-census.md Phase 1, 2026-08-22). Narrates the PRE-FIX bug the widened-bucket change closes -- a primary finding could sit fixed with user_action still null and this step would never show it -- not a guarantee about current or future behaviour. Same shape as the 2026-08-14 migration-realization narrative entries above ('A consumer reported...', 'on every such push...'): a historical description of a defect, matched only because the verb scanner sees 'never'. The actual current-behaviour claim (final-review-pending now reads the merged pendingQueue) is mechanically covered by tests/final-review-card.test.mjs's negative-control assertions (a bucket:null item prints --bucket primary, never --bucket shadow-only)."
+    },
+    {
+      "line": "**Never blocks, no override flag** — same reasoning as 0.5h: collection state",
+      "reason": "Step 0.5i (2026-08-23). The same nudge-not-gate guarantee as step-0-5-gates-non-blocking, unremediated-acceptances-never-blocks and upstream-queue-never-blocks above, and document-only for the identical reason: 'never blocks' is a claim about what the AGENT does with a non-empty result, and there is deliberately no override flag to assert against (the absence of one is the point). The READ half IS mechanically honest and is the part that could be gotten wrong: `campaign.mjs stale` returns 0 on every path -- no campaigns dir, unreadable config, cloud off, unreachable store, and nothing stalled -- so a query failure can make this step neither stricter nor blind. Same deeper reason as 0.5h: collection state is CLOUD state the commit being pushed cannot change, so blocking on it would be the cried-wolf shape that earns --no-verify."
+    },
+    {
+      "line": "never collected at all (never-started is not stalled). Prints its own card; pass",
+      "reason": "Step 0.5i (2026-08-23). Describes the verb's SILENCE conditions, not an enforcement claim -- matched only because the verb scanner sees 'never'. Each named condition is a real branch in verbStale (no .campaigns dir; per-config loadCampaign throw; !ev.ok; !ev.latestArmRunAt; complete >= targetN; days < STALE_AFTER_DAYS), and the never-started case is the load-bearing one: a campaign with no arm runs has latestArmRunAt null, which must read as 'nothing to say' rather than being date-arithmetic'd into infinite staleness. The instruction to pass the tool's card through verbatim is a rendering rule for the agent (one rendering, owned by the tool), the same one-rendering discipline repo-context.mjs's renderCoverage carries."
     }
   ]
 }

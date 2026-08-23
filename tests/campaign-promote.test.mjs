@@ -93,6 +93,58 @@ describe('bake-off log promotion', () => {
     assert.deepEqual(cls.armRuns.map((a) => [a.armId, a.costStatus]), [['opus', 'priced'], ['kimi', 'priced']]);
   });
 
+  // ── the raw observation survives an UNPRICED arm ──────────────────────────
+  //
+  // Guards the always-null class, not just this one field. Measured 2026-08-23:
+  // `campaign_arm_runs.usage` was null on all 84 rows — 65 of them PRICED —
+  // because the column existed, `recordArmRun` accepted it, and no caller ever
+  // supplied it. Nothing failed; the value simply was not there, which is the
+  // same shape as the campaign's own lesson (e) (`total_cost_estimate` null on
+  // all 128 runs: "an always-null metric reads as free, not broken").
+  //
+  // Why it MATTERS rather than being cosmetic: `costUsd` is DERIVED, and it is
+  // null whenever any of the arm's calls is unpriced. Without the raw counts
+  // beside it, an arm that ran before its model was priced is unrecoverable
+  // from this table forever — the spend is simply unknown, and `campaign.mjs
+  // status` reports the arm's whole total as "unknown". With them, a later
+  // repricing is arithmetic.
+  //
+  // Asserted on BOTH the priced and unpriced paths on purpose: a fix that only
+  // populated usage when pricing succeeded would restore the field exactly
+  // where it was already least needed.
+  it('carries the RAW usage through, priced or not — the derived cost is not the only record', () => {
+    const usage = {
+      primary: { model: 'gemini-pro-latest', usage: { input_tokens: 100, output_tokens: 20 } },
+      shadow: { model: 'qwen3.8-max', usage: { input_tokens: 54274, output_tokens: 10116 } },
+    };
+    const cls = classifyLogEntry({
+      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1', transcript: 't.json',
+      arms: {
+        opus: { runId: 'r1', costUsd: 1.5, usage },
+        // The load-bearing one: no costUsd (its model was unpriced at
+        // collection time), so `costUsd` is null and `costStatus` unpriced —
+        // and the tokens are the ONLY surviving evidence of what it consumed.
+        kimi: { runId: 'r2', usage },
+      },
+    }, ctx);
+    const [priced, unpriced] = cls.armRuns;
+    assert.equal(priced.costStatus, 'priced');
+    assert.deepEqual(priced.usage, usage, 'a priced arm still records what it consumed');
+    assert.equal(unpriced.costStatus, 'unpriced');
+    assert.equal(unpriced.costUsd, null, 'unpriced stays null — never a fabricated 0');
+    assert.deepEqual(unpriced.usage, usage, 'an UNPRICED arm must still record its tokens');
+  });
+
+  it('an arm that reported no usage records null — absent is not an empty reading', () => {
+    // The honest degenerate case: `{}` would claim a zero-token call, which is
+    // a measurement. Absence must stay absence, same rule as costUsd's null.
+    const cls = classifyLogEntry({
+      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1', transcript: 't.json',
+      arms: { opus: { runId: 'r1', costUsd: 1.5 } },
+    }, ctx);
+    assert.equal(cls.armRuns[0].usage, null);
+  });
+
   it('an entry with no lockDigest is INELIGIBLE — never adopted into the current cohort', () => {
     // This is the five-false-greens rule: evidence collected under an unknown
     // contract cannot be relabelled into a cohort it was not produced under.

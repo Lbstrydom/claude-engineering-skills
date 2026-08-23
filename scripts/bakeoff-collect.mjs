@@ -231,6 +231,20 @@ export function readArmResult(outPath) {
   return {
     costUsd: cost.usd,
     unpricedModels: cost.unpricedModels,
+    // The RAW per-call token counts, carried beside the derived `costUsd`
+    // rather than instead of it (2026-08-23). `costUsd` is a DERIVED value and
+    // it is null whenever pricing is unavailable for any of the arm's calls —
+    // at which point, without this, the observation was gone: nothing recorded
+    // what the call actually consumed, so a later fix to the pricing table
+    // could not recover the spend, and `campaign_arm_runs.usage` sat null on
+    // 84 of 84 rows for the column's whole life (measured 2026-08-23 — the
+    // same always-null shape as the campaign's own lesson (e), one table over).
+    // Keyed per CALL, because `armCostUsd` prices two of them and either can
+    // be the one that fails; a single flattened total could not say which.
+    usage: {
+      primary: j._model ? { model: j._model, usage: j._usage ?? null } : null,
+      shadow: shadow.model ? { model: shadow.model, usage: shadow.usage ?? null } : null,
+    },
     // Request identity for BOTH calls this arm makes. Two arms sharing a
     // fingerprint issued the same request and differ only in how the result is
     // reported — a reroll, not a second configuration. Null on entries written

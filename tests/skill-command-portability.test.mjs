@@ -69,6 +69,12 @@ const SOURCE_REPO_ONLY = new Map([
   // control is a centralized research baseline that sweeps sibling repos from
   // here rather than fragmenting across consumers.
   ['scripts/solo-control-audit.mjs', 'source-repo-gated research baseline (Step 6.5b says so explicitly)'],
+  // /ship Step 0.5i says so in its own text: "Source-repo-gated — run ONLY
+  // when package.json.name === claude-engineering-skills". Model-comparison
+  // campaigns are declared in `.campaigns/`, which exists only here; a
+  // consumer has no campaign to be stalled on, so shipping the CLI would add
+  // a command whose only honest output in a consumer is silence.
+  ['scripts/campaign.mjs', 'source-repo-gated: campaigns are declared in .campaigns/, which only this repo has'],
 ]);
 
 describe('skill commands survive the consumer-repo relocation', () => {

@@ -36,6 +36,7 @@
  * @module scripts/campaign
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { z } from 'zod';
@@ -80,8 +81,19 @@ const KNOWN_FLAGS = Object.freeze([
 
 const VERBS = Object.freeze([
   'status', 'cluster', 'adjudicate', 'override', 'verdict', 'reconcile',
-  'declare-inconclusive', 'quarantine', 'unquarantine',
+  'declare-inconclusive', 'quarantine', 'unquarantine', 'stale',
 ]);
+
+/**
+ * Days without a new snapshot before a COLLECTING campaign is called stale.
+ *
+ * 7 rather than 1-2: collection is a deliberate, spend-bearing act an operator
+ * schedules, so a few quiet days is normal working rhythm, not a problem. The
+ * failure this exists to catch is the campaign nobody remembers — measured
+ * 2026-08-23, `final-review-scoped-2026q3` sat at 9/12 for three days with no
+ * surface anywhere saying so, and it was noticed only because someone asked.
+ */
+const STALE_AFTER_DAYS = 7;
 
 // ── CLI plumbing ────────────────────────────────────────────────────────────
 
@@ -177,6 +189,61 @@ function buildSensitivityVariants(ev) {
   });
 }
 
+/**
+ * `stale` — the only surface that speaks WITHOUT being asked about a specific
+ * campaign. A NUDGE, never a gate: it exits 0 in every case, including when
+ * the store is unreachable, so it can be wired into `/ship` or a hook without
+ * ever becoming a reason a push fails.
+ *
+ * Why it exists: `status` answers a question, and answering only when asked is
+ * exactly how a campaign goes quiet unnoticed. Measured 2026-08-23 —
+ * `final-review-scoped-2026q3` sat at 9/12 for three days while 17 unrelated
+ * audit runs went past it, and nothing anywhere said so.
+ *
+ * Deliberately generic over every config in `.campaigns/`, not keyed to any
+ * campaign id: a check that has to be edited to notice the NEXT campaign is a
+ * check that will not notice the next campaign.
+ *
+ * Silent when there is nothing to say — a nudge that prints on every invocation
+ * becomes noise, and noise is what earns `--no-verify`.
+ */
+async function verbStale({ asJson }) {
+  const dir = '.campaigns';
+  if (!fs.existsSync(dir)) return 0;
+  const ids = fs.readdirSync(dir).filter((f) => f.endsWith('.json'))
+    .map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8'))?.id).filter(Boolean);
+
+  const report = [];
+  for (const id of ids) {
+    let config; let lock;
+    try { ({ config, lock } = loadCampaign(id)); } catch { continue; }
+    const ev = await readCohortEvidence({ config, lock });
+    // Cloud off / unreadable / never collected: nothing to claim. An absent
+    // reading is NOT "stale" — that would indict a campaign for the store
+    // being down, the false-positive that makes a nudge ignorable.
+    if (!ev.ok || !ev.latestArmRunAt) continue;
+    const complete = ev.snapshots.filter((s) => {
+      const ok = new Set(s.armRuns.filter((r) => r.supersededAt == null && !r.error).map((r) => r.armId));
+      return config.arms.filter((a) => a.type !== 'replicate').every((a) => ok.has(a.id));
+    }).length;
+    if (complete >= config.targetN) continue; // finished collecting; not stale
+    const days = Math.floor((Date.now() - new Date(ev.latestArmRunAt).getTime()) / 86_400_000);
+    if (days < STALE_AFTER_DAYS) continue;
+    report.push({ campaignId: id, complete, targetN: config.targetN, daysSinceLastSnapshot: days });
+  }
+
+  if (asJson) { process.stdout.write(`${JSON.stringify({ ok: true, stale: report }, null, 2)}\n`); return 0; }
+  if (report.length === 0) return 0;
+  const L = ['⚠ CAMPAIGN COLLECTION STALLED (non-blocking)'];
+  for (const r of report) {
+    L.push(`  ${r.campaignId}: ${r.complete}/${r.targetN} snapshots, no new evidence in ${r.daysSinceLastSnapshot} day(s)`);
+  }
+  L.push('  A campaign short of targetN is NOT decision-eligible — the evidence is banked but unusable.');
+  L.push('  Collect more, or close it out: node scripts/campaign.mjs declare-inconclusive --campaign <id> --reason "<why>"');
+  process.stdout.write(`${L.join('\n')}\n`);
+  return 0;
+}
+
 async function verbStatus(campaignId, { asJson }) {
   const { config, lock } = loadCampaign(campaignId);
   const ev = await readCohortEvidence({ config, lock });
@@ -208,7 +275,16 @@ async function verbStatus(campaignId, { asJson }) {
   }
   L.push('  spend per arm (ALL attempts, superseded included — a retried arm was paid for twice):');
   for (const [armId, s] of Object.entries(result.spend)) {
-    const money = s.costEvidence === 'known' ? `$${s.spendUsd.toFixed(4)}` : 'unknown';
+    // A bare `unknown` says an arm's total is unavailable but not how far off
+    // it is, or that anything is even wrong — an operator reads one arm's
+    // "unknown" beside another's "$26.15" as a quirk, not as a defect to fix.
+    // Naming the unpriced attempt count turns it into a measurement: "3 of 9"
+    // is a data gap worth chasing, "9 of 9" is a model nobody ever priced.
+    // Same lesson (e) shape the campaign already carries — an always-null
+    // metric reads as free, not broken — applied to its rendering.
+    const money = s.costEvidence === 'known'
+      ? `$${s.spendUsd.toFixed(4)}`
+      : `unknown (${s.unpricedAttempts} of ${s.attempts} attempt(s) unpriced)`;
     L.push(`    ${armId}: ${money}${s.attempts > 1 ? ` over ${s.attempts} attempts` : ''}`);
   }
   L.push(`  adjudication overhead: ${ev.overhead.costEvidence === 'known' ? `$${Number(ev.overhead.spendUsd).toFixed(4)}` : 'unknown'} over ${ev.overhead.attempts ?? 0} attempt(s)`);
@@ -839,6 +915,7 @@ async function verbDeclareInconclusive(campaignId, { reason, actor }) {
 // convention). Substitute your own campaign id and finding uuid.
 const USAGE = [
   'Usage (substitute your own campaign id / finding uuid — these examples paste as-is):',
+  '  node scripts/campaign.mjs stale                                     # every campaign; silent when none is stalled',
   '  node scripts/campaign.mjs status               --campaign final-review-2026q3 --json',
   '  node scripts/campaign.mjs cluster              --campaign final-review-2026q3 --recluster',
   '  node scripts/campaign.mjs adjudicate           --campaign final-review-2026q3 --limit 10 --dry-run',
@@ -870,6 +947,7 @@ async function main() {
 
   const asJson = process.argv.includes('--json');
   switch (verb) {
+    case 'stale':       return verbStale({ asJson });
     case 'status':      return verbStatus(arg('campaign'), { asJson });
     case 'verdict':     return verbVerdict(arg('campaign'), { asJson });
     case 'cluster':     return verbCluster(arg('campaign'), { recluster: process.argv.includes('--recluster') });

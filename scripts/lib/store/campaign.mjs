@@ -1727,6 +1727,12 @@ export async function loadCohortEvidence({ repoId: rid, config, lock }) {
     : null;
   const ruleChangedAfterFirstArmRun = firstArmRunAt != null
     && eventLog.rows.some((e) => e.kind === 'rule_changed' && String(e.created_at) > String(firstArmRunAt));
+  // The other end of the same series, for staleness. Null when nothing has
+  // been collected — which a reader must NOT round to "stale since forever":
+  // a campaign that has never run is not a campaign that stopped running.
+  const latestArmRunAt = armRunRows.rows.length > 0
+    ? armRunRows.rows.map((r) => r.created_at).sort().at(-1)
+    : null;
 
   return {
     ok: true,
@@ -1761,5 +1767,6 @@ export async function loadCohortEvidence({ repoId: rid, config, lock }) {
     overhead,
     declaredInconclusive: declared ? { reason: declared.detail?.reason ?? 'declared by operator' } : null,
     ruleChangedAfterFirstArmRun,
+    latestArmRunAt,
   };
 }

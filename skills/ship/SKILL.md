@@ -539,6 +539,37 @@ describe a defect that a LATER commit already fixed, so `fix --commit` may be th
 correct verb on a report you have not touched. Do not close one on the strength of
 the worksheet's evidence alone — confirm against current code.
 
+### 0.5i — Stalled comparison campaigns (advisory, source-repo only)
+
+**Source-repo-gated** — run ONLY when `package.json.name === "claude-engineering-skills"`.
+Campaigns are declared in `.campaigns/`, which exists only here; a consumer has
+no campaign to be stalled on, and `campaign.mjs` is deliberately not in the
+consumer bundle for that reason.
+
+A campaign short of `targetN` is **not decision-eligible** — the spend is
+banked but the evidence cannot answer anything yet. Nothing surfaced that:
+`campaign.mjs status` answers when asked, and answering only when asked is how
+a campaign goes quiet. Measured 2026-08-23 — `final-review-scoped-2026q3` sat
+at 9/12 for three days while 17 unrelated audit runs went past it, noticed only
+because someone thought to ask.
+
+```bash
+node scripts/campaign.mjs stale 2>/dev/null
+```
+
+**Never blocks, no override flag** — same reasoning as 0.5h: collection state
+is CLOUD state the commit cannot change, so it can only advise. Silent when no
+campaign is stalled, when the store is unreachable, and when a campaign has
+never collected at all (never-started is not stalled). Prints its own card; pass
+it through verbatim rather than re-rendering it — the counts and the remedy line
+belong to the tool, not to this prose.
+
+Do **not** treat a stalled campaign as a reason to collect right now: collection
+is spend-bearing and revision-pinned (`npm run fixture:create`), so it is a
+deliberate scheduled act, not a pre-push chore. The nudge exists so the decision
+is *made*, including the decision to close it out with
+`declare-inconclusive`.
+
 ### 0.5f — Override flags
 
 If `$ARGUMENTS` contains `--no-tests`, `--ignore-p0`, or `--skip-ux-lock`,
@@ -547,7 +578,7 @@ record which override is active — it goes into the ship_event.
 > **Numbering note**: this sub-step is `0.5f`, not `0.5d`, because two H2
 > sections below already claim `Step 0.5c` and `Step 0.5d` (a pre-existing
 > collision referenced from ~20 other files, so renumbering them is out of
-> scope here). The H3 sub-step order is `0.5a → 0.5b → 0.5e → 0.5g → 0.5h → 0.5f`.
+> scope here). The H3 sub-step order is `0.5a → 0.5b → 0.5e → 0.5g → 0.5h → 0.5i → 0.5f`.
 
 ---
 
