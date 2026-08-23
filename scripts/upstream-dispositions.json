@@ -3,135 +3,202 @@
   "entries": [
     {
       "schemaVersion": 1,
-      "issueId": "9e6850d3-b910-40d5-b082-d7deeede54c5",
-      "state": "fixed",
-      "disposition": { "kind": "exempt", "value": "Ordinary config-value tuning (GEMINI_REVIEW_TIMEOUT_MS too tight) — no environment signature a probe could detect, and no dedicated regression test locks the specific timeout value." },
-      "recordedAt": "2026-08-22T00:00:00Z"
-    },
-    {
-      "schemaVersion": 1,
-      "issueId": "d902962b-f6ce-4986-8fe4-e86e07d59fa3",
-      "state": "fixed",
-      "disposition": { "kind": "probe", "value": "sync/fresh-clone-contract" },
-      "recordedAt": "2026-08-22T00:00:00Z"
-    },
-    {
-      "schemaVersion": 1,
-      "issueId": "df083b3a-e06f-4d5f-ba70-7fafbe751c8c",
-      "state": "wont_fix",
-      "disposition": { "kind": "exempt", "value": "Process issue (report filed from the wrong — synced consumer — copy of a source-repo-only e2e test), not a code defect. wont_fix is the correct terminal state; there is nothing here for a probe or a test to close." },
-      "recordedAt": "2026-08-22T00:00:00Z"
-    },
-    {
-      "schemaVersion": 1,
-      "issueId": "65f9fe89-e766-4580-8a41-c0390fb7231e",
-      "state": "fixed",
-      "disposition": { "kind": "exempt", "value": "Ordinary code defect (a repo-identity object passed where a uuid was expected in one call site) — no environment signature, and no regression test could be confidently identified as covering this specific fix rather than the surrounding feature generally." },
-      "recordedAt": "2026-08-22T00:00:00Z"
-    },
-    {
-      "schemaVersion": 1,
       "issueId": "08b4f5fc-1de9-4a78-8094-25589100b774",
       "state": "fixed",
-      "disposition": { "kind": "test", "value": "tests/unit-test-lock-kind.test.mjs" },
-      "recordedAt": "2026-08-22T00:00:00Z"
-    },
-    {
-      "schemaVersion": 1,
-      "issueId": "bf44711e-81a7-404d-bc0b-33fa68b84903",
-      "state": "fixed",
-      "disposition": { "kind": "test", "value": "tests/schema-realization.test.mjs" },
+      "disposition": {
+        "kind": "test",
+        "value": "tests/unit-test-lock-kind.test.mjs"
+      },
       "recordedAt": "2026-08-22T00:00:00Z"
     },
     {
       "schemaVersion": 1,
       "issueId": "0e61e88e-8294-4144-8bae-84c15db85ea6",
       "state": "fixed",
-      "disposition": { "kind": "test", "value": "tests/schema-realization.test.mjs" },
-      "recordedAt": "2026-08-22T00:00:00Z"
-    },
-    {
-      "schemaVersion": 1,
-      "issueId": "da67a8c1-ec15-4e82-b14d-9b56c983c0a9",
-      "state": "fixed",
-      "disposition": { "kind": "test", "value": "tests/view-writer-key-contract.test.mjs" },
-      "recordedAt": "2026-08-22T00:00:00Z"
-    },
-    {
-      "schemaVersion": 1,
-      "issueId": "5b67666e-0cfe-44d0-b398-a007cd81edad",
-      "state": "fixed",
-      "disposition": { "kind": "test", "value": "tests/disowned-paths.test.mjs" },
-      "recordedAt": "2026-08-22T00:00:00Z"
-    },
-    {
-      "schemaVersion": 1,
-      "issueId": "23544fca-b629-4f15-83d0-dcbcff76f21c",
-      "state": "fixed",
-      "disposition": { "kind": "test", "value": "tests/view-writer-key-contract.test.mjs" },
+      "disposition": {
+        "kind": "test",
+        "value": "tests/schema-realization.test.mjs"
+      },
       "recordedAt": "2026-08-22T00:00:00Z"
     },
     {
       "schemaVersion": 1,
       "issueId": "167084b3-97de-4ddc-9526-5da4ef10bfbf",
       "state": "fixed",
-      "disposition": { "kind": "probe", "value": "sync/orphaned-tooling" },
+      "disposition": {
+        "kind": "probe",
+        "value": "sync/orphaned-tooling"
+      },
+      "recordedAt": "2026-08-22T00:00:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "23544fca-b629-4f15-83d0-dcbcff76f21c",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/view-writer-key-contract.test.mjs"
+      },
       "recordedAt": "2026-08-22T00:00:00Z"
     },
     {
       "schemaVersion": 1,
       "issueId": "575256de-a3ce-48f6-b77a-de061feccf37",
       "state": "fixed",
-      "disposition": { "kind": "test", "value": "tests/ship-commit-cli.test.mjs" },
+      "disposition": {
+        "kind": "test",
+        "value": "tests/ship-commit-cli.test.mjs"
+      },
       "recordedAt": "2026-08-22T00:00:00Z"
     },
     {
       "schemaVersion": 1,
-      "issueId": "96a829f8-d2b9-457a-b5ab-530b5530dad8",
+      "issueId": "5b67666e-0cfe-44d0-b398-a007cd81edad",
       "state": "fixed",
-      "disposition": { "kind": "test", "value": "tests/cross-skill-unlocked-scope.test.mjs" },
+      "disposition": {
+        "kind": "test",
+        "value": "tests/disowned-paths.test.mjs"
+      },
+      "recordedAt": "2026-08-22T00:00:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "64223218-e2c4-4b40-afcf-27daff855da6",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/audit-scope-merge.test.mjs"
+      },
+      "recordedAt": "2026-08-23T13:46:21.251Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "65f9fe89-e766-4580-8a41-c0390fb7231e",
+      "state": "fixed",
+      "disposition": {
+        "kind": "exempt",
+        "value": "Ordinary code defect (a repo-identity object passed where a uuid was expected in one call site) — no environment signature, and no regression test could be confidently identified as covering this specific fix rather than the surrounding feature generally."
+      },
       "recordedAt": "2026-08-22T00:00:00Z"
     },
     {
       "schemaVersion": 1,
       "issueId": "897aa607-8808-458d-8188-5c1f38caef7f",
       "state": "fixed",
-      "disposition": { "kind": "exempt", "value": "Cosmetic lint fix (an unused eslint-disable comment in a synced file) — no runtime behaviour, no environment signature, and this repo's test suite does not run ESLint, so no test can regression-lock a lint-only change." },
-      "recordedAt": "2026-08-22T00:00:00Z"
-    },
-    {
-      "schemaVersion": 1,
-      "issueId": "a0b58a34-5519-4b52-9b07-c9d2c9d56335",
-      "state": "fixed",
-      "disposition": { "kind": "test", "value": "tests/ux-lock-capture.test.mjs" },
-      "recordedAt": "2026-08-22T00:00:00Z"
-    },
-    {
-      "schemaVersion": 1,
-      "issueId": "b5c1860c-8da8-4567-a370-812bd31680d3",
-      "state": "wont_fix",
-      "disposition": { "kind": "test", "value": "tests/persona-consistency-run-args.test.mjs" },
+      "disposition": {
+        "kind": "exempt",
+        "value": "Cosmetic lint fix (an unused eslint-disable comment in a synced file) — no runtime behaviour, no environment signature, and this repo's test suite does not run ESLint, so no test can regression-lock a lint-only change."
+      },
       "recordedAt": "2026-08-22T00:00:00Z"
     },
     {
       "schemaVersion": 1,
       "issueId": "8c62cfcc-ef70-4158-9aed-a00bd232c4ee",
       "state": "fixed",
-      "disposition": { "kind": "test", "value": "tests/persona-consistency-run-args.test.mjs" },
+      "disposition": {
+        "kind": "test",
+        "value": "tests/persona-consistency-run-args.test.mjs"
+      },
       "recordedAt": "2026-08-22T00:00:00Z"
     },
     {
       "schemaVersion": 1,
-      "issueId": "d6849e0b-1767-42bc-b4af-b24ed080274b",
+      "issueId": "96a829f8-d2b9-457a-b5ab-530b5530dad8",
       "state": "fixed",
-      "disposition": { "kind": "test", "value": "tests/repo-descriptor-callsite-contract.test.mjs" },
+      "disposition": {
+        "kind": "test",
+        "value": "tests/cross-skill-unlocked-scope.test.mjs"
+      },
+      "recordedAt": "2026-08-22T00:00:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "9e6850d3-b910-40d5-b082-d7deeede54c5",
+      "state": "fixed",
+      "disposition": {
+        "kind": "exempt",
+        "value": "Ordinary config-value tuning (GEMINI_REVIEW_TIMEOUT_MS too tight) — no environment signature a probe could detect, and no dedicated regression test locks the specific timeout value."
+      },
+      "recordedAt": "2026-08-22T00:00:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "a0b58a34-5519-4b52-9b07-c9d2c9d56335",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/ux-lock-capture.test.mjs"
+      },
+      "recordedAt": "2026-08-22T00:00:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "b5c1860c-8da8-4567-a370-812bd31680d3",
+      "state": "wont_fix",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/persona-consistency-run-args.test.mjs"
+      },
       "recordedAt": "2026-08-22T00:00:00Z"
     },
     {
       "schemaVersion": 1,
       "issueId": "b5e44db7-c418-4f5e-9791-d53cdf0ee432",
       "state": "fixed",
-      "disposition": { "kind": "probe", "value": "hydration/tooling-absent" },
+      "disposition": {
+        "kind": "probe",
+        "value": "hydration/tooling-absent"
+      },
+      "recordedAt": "2026-08-22T00:00:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "bf44711e-81a7-404d-bc0b-33fa68b84903",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/schema-realization.test.mjs"
+      },
+      "recordedAt": "2026-08-22T00:00:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "d6849e0b-1767-42bc-b4af-b24ed080274b",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/repo-descriptor-callsite-contract.test.mjs"
+      },
+      "recordedAt": "2026-08-22T00:00:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "d902962b-f6ce-4986-8fe4-e86e07d59fa3",
+      "state": "fixed",
+      "disposition": {
+        "kind": "probe",
+        "value": "sync/fresh-clone-contract"
+      },
+      "recordedAt": "2026-08-22T00:00:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "da67a8c1-ec15-4e82-b14d-9b56c983c0a9",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/view-writer-key-contract.test.mjs"
+      },
+      "recordedAt": "2026-08-22T00:00:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "df083b3a-e06f-4d5f-ba70-7fafbe751c8c",
+      "state": "wont_fix",
+      "disposition": {
+        "kind": "exempt",
+        "value": "Process issue (report filed from the wrong — synced consumer — copy of a source-repo-only e2e test), not a code defect. wont_fix is the correct terminal state; there is nothing here for a probe or a test to close."
+      },
       "recordedAt": "2026-08-22T00:00:00Z"
     }
   ]

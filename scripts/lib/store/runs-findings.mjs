@@ -2034,8 +2034,41 @@ export async function markFindingsRemediation(repoId, updates) {
       );
       if (!finding?.id) continue;
       const affected = await withTx(async () => {
+        // `user_action` is filled here, and ONLY out of an undecided state.
+        //
+        // The two axes are independent (`remediation_state` = did a fix land;
+        // `user_action` = what did we decide about the finding), and nothing
+        // has ever written the second one at fix time — so a finding could be
+        // fixed, have its fix recorded, and still read as never adjudicated.
+        // Measured 2026-08-23 on the live store: **1,512 findings in this repo
+        // alone (549 HIGH) carried remediation_state fixed/verified with
+        // user_action NULL**, which is why the credit for a real catch lands in
+        // a source comment and the audit's tail reads as noise. A shipped fix
+        // is evidence the finding was real, which is exactly the inference
+        // `/ship` Step 6.7's card already offers a human ("`accepted` only for a
+        // fixed-but-unlabelled one").
+        //
+        // The NULL/`needs_triage` guard is the same one the `needs_triage` and
+        // `auto_dismissed` writers above use, and it is what keeps this a
+        // PROJECTION rather than a re-adjudication: a human `dismissed`,
+        // `deferred` or `accepted-permanent` is never overwritten. A
+        // `dismissed` row that later lands a fix stays contradictory ON PURPOSE
+        // — `classifyFinalReviewOutcome` surfaces those for reconciliation, and
+        // silently resolving one here is what the sibling comment below refuses
+        // to do for `adjudication_outcome`.
+        // `$1 IN ('fixed','verified')` is load-bearing: `TERMINAL_REMEDIATION`
+        // also admits `regressed`, and a regressed finding is terminal but
+        // emphatically NOT fixed — stamping `fix-now` on one would fabricate a
+        // decision nobody made, out of the one signal that says the opposite.
         const rows = await many(
-          `UPDATE audit_findings SET remediation_state = $1 WHERE id = $2 RETURNING id`,
+          `UPDATE audit_findings
+              SET remediation_state = $1,
+                  user_action = CASE
+                    WHEN $1 IN ('fixed','verified')
+                     AND (user_action IS NULL OR user_action = 'needs_triage')
+                    THEN 'fix-now'
+                    ELSE user_action END
+            WHERE id = $2 RETURNING id`,
           [state, finding.id]
         );
         if (rows.length === 0) return 0; // 0-row → do not write a phantom event

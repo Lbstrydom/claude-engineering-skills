@@ -1,5 +1,141 @@
 # Project Status Log
 
+## 2026-08-23 — Closing out the open items from the telemetry ship
+
+Follow-on to the entry below. Five items were left open there; this works
+through all five. Two produced code changes, two closed on verification, one is
+deliberately deferred with the reasoning recorded rather than the work done.
+
+### 1. Upstream report `64223218` — CLOSED, verified fixed
+
+wine-cellar-app reported `admissionPreflight`/`mergeScopeFiles` rejecting
+double-extension files (`public/index.html.template`) because both derived the
+extension from the last `.`.
+
+**Already fixed on main** — PR #77, merge `889568d0` (2026-08-17), authored by
+the reporter. It read `open` only because their bundle was **117 commits
+behind**. Verified by running the report's own repro against current source,
+both directions:
+
+| input | result |
+|---|---|
+| `public/index.html.template` | `admitted: true` |
+| `package-lock.json.lock` (negative control) | `admitted: false`, `reason: extension` |
+
+`resolveReferenceExtension` (plan-paths.mjs) is now the single shared oracle
+both call sites consume, so the two can no longer disagree on the same input.
+Closed with `disposition: test:tests/audit-scope-merge.test.mjs`, which pins
+both directions. **Upstream queue is now empty.**
+
+### 2. Aged-out unremediated acceptances — 26 → 22, by verification not relabelling
+
+Each of the 26 was treated as a hypothesis about current code and checked, not
+written off by age. Four closed on evidence:
+
+| finding | verdict |
+|---|---|
+| `f0b68563` — `SAFE_KD_ID_RE` coerces non-strings | **already fixed** (`57567df5`) — the explicit `typeof !== 'string'` guard is there |
+| `e78f5cec` — `buildHermeticEnv` doesn't provision dirs | **already fixed** (`c65b0065`) — the caller mkdirs from the same env object it returns |
+| `09fd36d4` — tiered-pipeline is a ~57KB god module | **already fixed** (`d8ad0fb6`) — decomposed into 10 sibling modules, now 38KB/613 lines |
+| `87a0ed42` — missing tenant scoping on the run→repo lookup | **dismissed** — this store is documented single-tenant (AGENTS.md: the pool "owns `public` and bypasses RLS (correct here)"), and the downstream write is already run-scoped via `WHERE EXISTS … af.run_id = $6` |
+
+Three of the four were fixed **in the same session that raised them** and simply
+never labelled — which is item 3's defect, showing up as data.
+
+The remaining 22 are genuinely open, and were measured rather than assumed:
+
+- **God-module family** (`883ce465` HIGH, `44de2aa8`, `5ec8eec7`, `64f1d3a4`, …)
+  — still true, and getting worse: `legacy-production-audit.mjs` is now
+  **269KB / 5,016 lines** (the finding cited ~2,200 lines),
+  `runs-findings.mjs` 112KB (cited 63KB). Deliberately deferred by
+  [`god-module-and-layering-debt.md`](docs/plans/god-module-and-layering-debt.md)
+  §10, which names both the independence and a **dated trigger** — the
+  `[be-services]` persistence tail measured 4 weeks after Cluster 2, i.e. from
+  ~2026-09-10. Not re-litigated here.
+- **Debt-ledger contract** (`dd651e36` HIGH, `75981b9b` HIGH, `92fe5776`) —
+  **verified real**: `.audit/tech-debt.json` holds 149 entries of which **58
+  carry `classification: null`**, and [`debt-capture.mjs:131`](scripts/lib/debt-capture.mjs)
+  still writes `finding.classification || null`. Left open with the measurement
+  on the record.
+
+**The 30-day ceiling itself is the unfixed part.** These rows leave the nudge by
+the passage of time, and nothing I did changes that. The obligations survive in
+the debt ledger and the plan above; the store row aging out is a bookkeeping
+gap, not a lost obligation — recorded here so it is not discharged by silence.
+
+### 3. `user_action` was never written at fix time — FIXED (root cause)
+
+Correcting the previous entry's framing. The card's 415 rows are not all one
+class: it is **382 unadjudicated, 34 accepted-unfixed, 3 fixed-unlabelled**. I
+had labelled the whole population from the first row's classification.
+
+The real number is worse and elsewhere. Measured across the store:
+
+> **1,512 findings in this repo (549 HIGH) carry `remediation_state`
+> fixed/verified with `user_action` NULL.**
+
+Because [`markFindingsRemediation`](scripts/lib/store/runs-findings.mjs) wrote
+only the remediation axis. A finding could be raised, fixed, and have its fix
+recorded, and still read as never adjudicated — which is exactly why credit for
+a real catch ends up in a source comment and the audit's tail reads as noise.
+AGENTS.md already names this ("One missing write-back, two symptoms: set
+`user_action` at fix time"); nothing had done it.
+
+The projector now fills `user_action = 'fix-now'` in the same UPDATE, guarded
+twice:
+
+- `$1 IN ('fixed','verified')` — `TERMINAL_REMEDIATION` also admits `regressed`,
+  and stamping a decision on a regressed row would fabricate one out of the
+  single signal saying the opposite.
+- `user_action IS NULL OR user_action = 'needs_triage'` — the same guard the
+  `needs_triage` and `auto_dismissed` writers 800 lines above already use. A
+  human `dismissed` / `deferred` / `accepted-permanent` is never overwritten,
+  so this stays a projection rather than a re-adjudication. `dismissed` + fixed
+  deliberately stays contradictory; `classifyFinalReviewOutcome` surfaces those.
+
+Three tests in [mark-findings-remediation.test.mjs](tests/mark-findings-remediation.test.mjs),
+one per direction — the two negative ones carry the weight. **Run against real
+Postgres** in the disposable container (`npm run db:local up`), 18 pass / 0 fail
+/ **0 skipped**, and red-then-green verified: reverting the CASE fails exactly
+the fill test and leaves both guards green.
+
+**The 1,512-row backlog is NOT backfilled.** `learning-backfill-outcomes` works
+a different axis (it drained 11 and resolved 52 `learning_decisions`, refreshing
+313 clusters — worth having, not this). A bulk `user_action` write needs a
+classifier, never raw SQL; the fix above stops the population growing, which is
+the part that was in scope.
+
+### 4. `meta-assess.mjs` has never run — diagnosed, deliberately not fixed
+
+Previous entry said it "reads the local `.audit/outcomes.jsonl` (20 rows)". The
+file has 20 lines but `loadOutcomes` yields **8** usable records against a
+`minOutcomes` of 20, so every invocation returns
+`{"skipped":true,"reason":"Insufficient data: 8 outcomes (need 20)"}`. Neither
+gate above it is the blocker: `runCount` is 692 with no `lastAssessmentAtRun`,
+so `shouldRunAssessment` returns true.
+
+So the periodic meta-assessment reads a local file with 8 records while the
+store holds **3,528 adjudicated findings**. That is why
+`.audit/meta-assessments.jsonl` has never existed.
+
+**Not fixed here, and that is a scope call rather than an oversight.**
+`computeAssessmentMetrics` consumes an outcome shape (`.accepted`, `.pass`,
+`.repoFingerprint`, `.promptVariant`) that `audit_findings` does not have, and
+`fpTracker`/`bandit` are local objects — so this is a store-backed source plus a
+shape adapter plus its tests, not a swap. Independence: nothing in this session
+depends on it. Next step is a plan, not a patch.
+
+### 5. AGENTS.md headroom — left as a standing advisory
+
+The invariant landed in the previous commit (91,964 → 91,782, headroom 218). The
+advisory still fires. I did **not** condense further: the remaining large
+sections are load-bearing rather than duplicated — the "four shapes consumers
+keep reporting" block, for instance, is four distinct defect classes each with
+its own gate. Condensing with no invariant waiting for the room is precisely the
+"shave words to squeeze under the cap" the advisory warns against. The right
+moment is when the next invariant arrives and can justify what it displaces.
+
+
 ## 2026-08-23 — Per-pass model + cost attribution, and a route-independent vendor family
 
 Started as a telemetry health check and turned up two defects, one measured and

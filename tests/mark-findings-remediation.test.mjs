@@ -131,7 +131,12 @@ describe('markFindingsRemediation — DB write shape (integration)', { skip }, (
   const FP_WITH_EVENT = 'fpevent1';
   const FP_NO_ROUND = 'fpevent2';
   const FP_NO_EVENT_ROW = 'fpevent3';
+  // user_action fill (2026-08-23): one row per direction the CASE must take.
+  const FP_UA_NULL = 'fpua1';        // undecided + fixed  -> filled
+  const FP_UA_DISMISSED = 'fpua2';   // human decision     -> untouched
+  const FP_UA_REGRESSED = 'fpua3';   // terminal-not-fixed -> untouched
   let findingIdWithEvent, findingIdNoRound, findingIdNoEventRow;
+  let findingIdUaNull, findingIdUaDismissed, findingIdUaRegressed;
   let eventIdWithEvent;
 
   before(async () => {
@@ -185,6 +190,20 @@ describe('markFindingsRemediation — DB write shape (integration)', { skip }, (
     await insEvent(findingIdNoRound, 'severity_adjusted', 'fixed', 'compromise', 'partially valid', 2);
 
     findingIdNoEventRow = await insFinding(FP_NO_EVENT_ROW, 'accepted', 'pending');
+
+    const insFindingUa = async (fp, userAction) => {
+      const row = await q.one(
+        `INSERT INTO audit_findings
+           (run_id, finding_fingerprint, pass_name, severity, category, adjudication_outcome, remediation_state, user_action)
+         VALUES ($1, $2, 'test', 'HIGH', 'test', 'accepted', 'pending', $3)
+         RETURNING id`,
+        [runId, fp, userAction]
+      );
+      return row.id;
+    };
+    findingIdUaNull = await insFindingUa(FP_UA_NULL, null);
+    findingIdUaDismissed = await insFindingUa(FP_UA_DISMISSED, 'dismissed');
+    findingIdUaRegressed = await insFindingUa(FP_UA_REGRESSED, null);
   });
 
   after(async () => {
@@ -196,6 +215,52 @@ describe('markFindingsRemediation — DB write shape (integration)', { skip }, (
     await q.query('DELETE FROM audit_repos WHERE id = $1', [repoId]);
     const { closePool } = await import('../scripts/lib/db/client.mjs');
     await closePool();
+  });
+
+  // ── user_action fill (2026-08-23) ──────────────────────────────────────────
+  // Measured on the live store the day this landed: 1,512 findings in the
+  // source repo (549 HIGH) sat at remediation_state fixed/verified with
+  // user_action NULL, because this projector wrote only the first axis. A fixed
+  // finding that reads as never-adjudicated is why a real catch's credit ends
+  // up in a source comment and the audit tail reads as noise.
+  //
+  // All three directions are asserted, and the two NEGATIVE ones carry the
+  // weight: a fill that overwrites a human decision, or that stamps a decision
+  // onto a REGRESSED row, is strictly worse than the gap it closes.
+  it('fills user_action on a fix when the finding was never adjudicated', async () => {
+    const res = await mod.markFindingsRemediation(repoId, [
+      { findingFingerprint: FP_UA_NULL, state: 'fixed' },
+    ]);
+    assert.equal(res.updated, 1, 'vacuous-pass guard: the projection must actually have run');
+    const row = await q.one(
+      `SELECT remediation_state, user_action FROM audit_findings WHERE id = $1`, [findingIdUaNull]);
+    assert.equal(row.remediation_state, 'fixed');
+    assert.equal(row.user_action, 'fix-now',
+      'a shipped fix is evidence the finding was real — the label must stop being NULL');
+  });
+
+  it('never overwrites a human decision already on the row', async () => {
+    const res = await mod.markFindingsRemediation(repoId, [
+      { findingFingerprint: FP_UA_DISMISSED, state: 'fixed' },
+    ]);
+    assert.equal(res.updated, 1, 'vacuous-pass guard: the projection must actually have run');
+    const row = await q.one(
+      `SELECT remediation_state, user_action FROM audit_findings WHERE id = $1`, [findingIdUaDismissed]);
+    assert.equal(row.remediation_state, 'fixed', 'the remediation axis still projects');
+    assert.equal(row.user_action, 'dismissed',
+      'dismissed + fixed stays contradictory ON PURPOSE — classifyFinalReviewOutcome surfaces it for reconciliation; resolving it here would be a silent re-adjudication');
+  });
+
+  it('does not stamp a decision onto a REGRESSED finding', async () => {
+    const res = await mod.markFindingsRemediation(repoId, [
+      { findingFingerprint: FP_UA_REGRESSED, state: 'regressed' },
+    ]);
+    assert.equal(res.updated, 1, 'vacuous-pass guard: the projection must actually have run');
+    const row = await q.one(
+      `SELECT remediation_state, user_action FROM audit_findings WHERE id = $1`, [findingIdUaRegressed]);
+    assert.equal(row.remediation_state, 'regressed');
+    assert.equal(row.user_action, null,
+      'regressed is terminal but NOT fixed — filling it would fabricate a decision out of the one signal that says the opposite');
   });
 
   it('projects remediation_state + round WITHOUT clobbering adjudication_outcome/ruling', async () => {
