@@ -138,6 +138,10 @@
       "domain": "learning-store"
     },
     {
+      "pattern": "scripts/lib/assessment-source.mjs",
+      "domain": "learning-store"
+    },
+    {
       "pattern": "scripts/install-skills.mjs",
       "domain": "install"
     },
@@ -473,6 +477,7 @@
       "stores"
     ],
     "learning-store": [
+      "audit-orchestration",
       "findings",
       "shared-lib",
       "stores"

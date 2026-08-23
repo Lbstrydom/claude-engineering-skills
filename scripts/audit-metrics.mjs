@@ -67,8 +67,16 @@ export async function fetchCloudMetrics(_sb, days, repoId = null) {
   const [runs, passStats, findings] = await Promise.all([
     many(`SELECT * FROM audit_runs WHERE created_at >= $1 AND ${runScope}`, params),
     many(`SELECT * FROM audit_pass_stats WHERE created_at >= $1 AND ${childScope}`, params),
+    // Widened for meta-assess's store-backed outcome source (docs/plans/
+    // meta-assess-store-backed-source.md M1/D5): created_at, round_raised,
+    // prompt_variant_id added so adaptFindingsToOutcomes can map a full
+    // outcome record. Purely additive — verified safe: this function's one
+    // existing caller (lib/dashboard/collect-telemetry.mjs) never reads
+    // `cloud.findings`. Deliberately NOT repo_id — audit_findings has no such
+    // column (confirmed against the live schema); every row here is already
+    // scoped to one repo via the childScope subquery below.
     many(
-      `SELECT severity, adjudication_outcome, pass_name
+      `SELECT severity, adjudication_outcome, pass_name, created_at, round_raised, prompt_variant_id
          FROM audit_findings WHERE created_at >= $1 AND ${childScope}`,
       params
     ),

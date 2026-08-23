@@ -64,6 +64,13 @@ export const DESTRUCTIVE_SUITE_FILES = Object.freeze([
 // regression-spec-multi-finding-lock.test.mjs came to be committed and then
 // never executed by the DB job at all.
 export const ISOLATED_SUITE_FILES = Object.freeze([
+  // Enrolled 2026-08-23 (docs/plans/meta-assess-store-backed-source.md, the
+  // R2/M1 fix's own contract test): asserts fetchCloudMetrics's widened
+  // findings/pass-stats SELECTs return every column the new outcome-source
+  // adapters read, against a real seeded schema — a mock cannot prove the
+  // widened SELECT reaches real column names (Gemini G1 caught exactly that
+  // class of bug in this plan's own draft SQL).
+  'tests/audit-metrics-findings-contract.test.mjs',
   // campaign-adjudication's LIVE half needs the campaign spine migrated and
   // intact; its pure half runs everywhere and is a no-op here.
   'tests/campaign-adjudication.test.mjs',
@@ -96,6 +103,15 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // and its three partial unique indexes from Phase 1's migration. Two
   // edits, always — this list AND postgres-parity.yml.
   'tests/campaign-quarantine.test.mjs',
+  // Enrolled 2026-08-17 (docs/plans/refactor-misc-small-items-2026-07.md,
+  // topicId 8c95c520): proves the is_identity/identity_generation columns
+  // added to both generate-expected-schema.mjs's and setup-postgres.mjs's
+  // hand-duplicated tables query round-trip against a real
+  // GENERATED ALWAYS AS IDENTITY column, and that diffSchemas actually
+  // detects a real divergence — needs a real Postgres catalog
+  // (information_schema.columns), not something a mock can fabricate. Two
+  // edits, always — this list AND postgres-parity.yml.
+  'tests/postgres-parity-identity-columns.test.mjs',
   // ── Enrolled 2026-08-11 ──────────────────────────────────────────────────
   // Every entry below was `AUDIT_DB_TEST_URL`-gated and named by NO runner, so
   // each skipped itself everywhere and node reported the skip as a pass: 15

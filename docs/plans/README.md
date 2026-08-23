@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**6 active · 202 terminal · 27 audit summaries · 4 reference docs**
+**7 active · 202 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -23,7 +23,8 @@ This is the list to read when asking "what is in flight?".
 |---|---|---|
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
 | [Lens Coverage Honesty — a report states what it checked, not only what it found](./lens-coverage-honesty.md) | `Approved` | and implemented (2026-08-20, via `/cycle --autonomous`, |
-| [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `Draft` | narrowed to 8 items (10 topicIds), re-verified open |
+| [Store-backed outcome source for `meta-assess`](./meta-assess-store-backed-source.md) | `Approved` |  |
+| [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `In Progress` | code for all 7 in-scope topicIds landed under |
 | [Self-Hosted Runner Management (optional, machine-aware)](./self-hosted-runner-management.md) | `Approved` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q1 38 code rows, Q2 unknown (reader reports no total), Q3 68 actionable; measured 2026-08-09 |

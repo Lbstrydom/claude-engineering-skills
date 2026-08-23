@@ -1,5 +1,81 @@
 # Project Status Log
 
+## 2026-08-23 — meta-assess reads the store: full /cycle (plan → 4 GPT + 3 Gemini rounds → autonomous implementation)
+
+Closes the last open item from the two telemetry ships earlier today:
+`scripts/meta-assess.mjs` had never produced output (`loadOutcomes` yielded
+single digits against a `minOutcomes` of 20, while the store held thousands
+of adjudicated findings). Ran the full `/cycle --autonomous` chain end to
+end on [docs/plans/meta-assess-store-backed-source.md](docs/plans/meta-assess-store-backed-source.md).
+
+### Plan audit — 4 GPT rounds, 3 Gemini rounds (1 over the default cap)
+
+Acceptance stayed 100% through round 3, 86% at round 4 (the one dismissal —
+GPT demanding exhaustive per-consumer schema documentation — was itself
+confirmed as the right call by Gemini's independent review). Gemini round 1
+caught a real bug the GPT rounds missed: the M1 fix's widened SQL SELECT
+included `repo_id` on `audit_findings` — a column that does not exist there
+(verified against the live schema; every store query would have 42703'd,
+and the plan's own graceful-degradation rule would have silently converted
+that into a "clean" local fallback, hiding a 100%-broken integration).
+Gemini round 2 caught a second, independent design bug at the cap itself —
+the tail-slice (`outcomes.slice(-windowSize)`) was unconditional, so a
+store-backed call carrying thousands of records would have been silently
+truncated to 50 before any metric was computed, defeating the plan's entire
+premise. Both warranted the cap's named exception (concrete design defect,
+not rigor pressure); round 3 closed APPROVE, 0 new findings.
+
+### Implementation — one autonomous cluster (below the §11 threshold)
+
+8 files from the plan's §7, plus a pre-existing test file
+(`tests/meta-assess.test.mjs`) the signature change broke at 2 of 7 call
+sites (JS silently accepts extra positional args, so 5 sites degraded
+harmlessly and 2 broke for real).
+
+Manual verification against the live store (the plan's own §9 mandate)
+found a real bug neither review caught: `resolveOutcomeSource`'s `byPass`
+field was the whole `passRatesFromPassStats` wrapper object instead of its
+inner map — the markdown report rendered `invalidRowCount` as a fake pass
+name with a percentage. Fixed, locked with a regression test.
+
+Also not predicted by any audit round: a domain-layering violation
+(`scripts/lib/assessment-source.mjs` auto-tagged the `shared-lib` fallback
+domain, which can't reach `audit-orchestration`/`stores`). Retagged to
+`learning-store` — matching its sole caller and its actual purpose — and
+declared the one missing `audit-orchestration` edge, following the
+single-file-rule pattern `scripts/meta-assess.mjs` itself already uses in
+`.audit-loop/domain-map.json`.
+
+**Live result** (`node scripts/meta-assess.mjs --metrics-only --json --force`):
+`provenance: 'store'`, `window.outcomeCount: 2231` (not 50 — confirms the
+tail-slice fix holds against real data), 12 real per-pass dismiss rates with
+coverage, 5,280 findings / 3,173 pass-stat rows, 0 excluded. All three
+`source` modes (`store`/`local`/`auto`) independently verified live.
+
+Full detail, every finding's disposition, and the three red-then-green
+guard checks: the plan's own Audit Trail + Implementation Log sections.
+
+### Verification
+
+`npm test`: 13,872 tests, 0 fail (32 skipped — 4 new: this plan's own
+DB-gated suite reporting skipped outside the container, matching its
+siblings' pattern, plus 3 unrelated pre-existing Windows/live-store-content
+skips). The one DB-gated suite (`tests/audit-metrics-findings-contract.test.mjs`)
+run for real against a disposable Postgres container: 3/3.
+`db:enrolment:gate`, `plans:lint`, `docs:refs:gate` (clean once the new
+plan doc was staged — it resolves against the git index, not the
+filesystem), `plans:index:check` (regenerated `docs/plans/README.md`),
+and `tests/arm-vocabulary-layering.test.mjs` (clean post-retag) all pass.
+
+**Not exhaustively re-verified**: `npm run check`'s remaining gates against
+the full shared working tree — a concurrent session's own unrelated,
+uncommitted fixtures (`tests/fixtures/tiered-shadow-airgap-probe.mjs`,
+`tests/install/fixtures/**`) trip `knip:gate` independent of anything here.
+Left untouched per scope discipline; the authoritative check is the
+pre-push hook's isolated worktree at the commit actually being pushed,
+which won't contain those files.
+
+
 ## 2026-08-23 — Closing out the open items from the telemetry ship
 
 Follow-on to the entry below. Five items were left open there; this works

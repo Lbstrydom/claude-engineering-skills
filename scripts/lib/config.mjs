@@ -496,6 +496,18 @@ export const assessmentConfig = Object.freeze({
   windowSize: safeInt(process.env.META_ASSESS_WINDOW, 50),
   model: resolveModel(process.env.META_ASSESS_MODEL || 'latest-flash'),
   fallbackGptModel: resolveModel(process.env.META_ASSESS_GPT_FALLBACK || 'latest-gpt-mini'),
+  // Store-backed outcome source (docs/plans/meta-assess-store-backed-source.md
+  // D1a). `source` picks which of the two `resolveOutcomeSource` paths runs;
+  // `windowDays` is the STORE path's time bound — distinct from `windowSize`
+  // above, which is the LOCAL path's count bound and is unchanged by this.
+  source: validatedEnum('META_ASSESS_SOURCE', new Set(['auto', 'store', 'local']), 'auto'),
+  // Bounds [1, 365]: a malformed-but-integer value (0, negative, or a
+  // multi-year span) would otherwise query an unintended future window or
+  // scan the entire findings history on every periodic run — same rationale
+  // as `auditRuntimeConfig.mapReduceConcurrency` below.
+  windowDays: clampConfigNumber(process.env.META_ASSESS_WINDOW_DAYS, {
+    fallback: 30, min: 1, max: 365, parser: Number.parseInt, envVar: 'META_ASSESS_WINDOW_DAYS',
+  }),
 });
 
 // ── /cycle deploy-topology Config (GREEN ≠ REALIZED #7) ──────────────────────

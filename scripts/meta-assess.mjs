@@ -27,11 +27,14 @@
 import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadOutcomes, computePassEffectiveness, FalsePositiveTracker } from './lib/findings.mjs';
+import { computePassEffectiveness, FalsePositiveTracker } from './lib/findings.mjs';
 import { PromptBandit } from './bandit.mjs';
 import { assessmentConfig, PASS_NAMES } from './lib/config.mjs';
 import { MetaAssessmentSchema, zodToGeminiSchema } from './lib/schemas.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
+import { resolveOutcomeSource } from './lib/assessment-source.mjs';
+import { resolveRepoIdentity } from './lib/repo-identity.mjs';
+import { getRepoIdByUuid } from './lib/store/repo.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
 
@@ -39,15 +42,27 @@ const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', B = '\x1b[1
 
 /**
  * Compute assessment metrics from outcome data. Pure function, no LLM.
- * @param {object[]} outcomes - Raw outcome records from outcomes.jsonl
- * @param {FalsePositiveTracker} fpTracker
- * @param {PromptBandit} bandit
- * @param {{ windowSize?: number }} options
+ *
+ * @param {object[]} outcomes - Outcome records, from either provenance
+ *   (docs/plans/meta-assess-store-backed-source.md).
+ * @param {{ windowSize?: number, byPass?: object|null,
+ *   provenance?: 'store'|'local'|'none'|'store-unavailable' }} [options]
+ *   `byPass` (D2a) — when non-null (provenance:'store'), mirrored into the
+ *   report verbatim and the internal per-finding byPass loop below does not
+ *   run. When null/omitted (provenance:'local' or a caller that predates
+ *   this plan), the internal loop runs exactly as it always has.
+ *   `provenance` (Gemini G1/round 2) — the ONLY input that gates the
+ *   tail-slice. `'store'` skips it entirely (the store's own time-bound,
+ *   D1b, already bounds the window; a second count-based slice on top would
+ *   silently discard most of a large store result and defeat the entire
+ *   point of reading the store). Any other value, including omitted,
+ *   preserves today's unconditional slice — this is the D2a/D4 "byte-
+ *   identical for provenance:'local'" contract's mechanism.
  * @returns {object} Structured metrics object
  */
-export function computeAssessmentMetrics(outcomes, fpTracker, bandit, options = {}) {
+export function computeAssessmentMetrics(outcomes, options = {}) {
   const windowSize = options.windowSize || assessmentConfig.windowSize;
-  const windowed = outcomes.slice(-windowSize);
+  const windowed = options.provenance === 'store' ? outcomes : outcomes.slice(-windowSize);
 
   if (windowed.length === 0) {
     return emptyMetrics();
@@ -67,11 +82,22 @@ export function computeAssessmentMetrics(outcomes, fpTracker, bandit, options = 
   const dismissed = windowed.filter(o => !o.accepted).length;
   const fpRateOverall = windowed.length > 0 ? dismissed / windowed.length : 0;
 
-  const byPass = {};
-  for (const pass of PASS_NAMES) {
-    const passOutcomes = windowed.filter(o => o.pass === pass);
-    if (passOutcomes.length > 0) {
-      byPass[pass] = passOutcomes.filter(o => !o.accepted).length / passOutcomes.length;
+  // D2a — a resolver-supplied byPass (store provenance) is mirrored verbatim;
+  // its shape is the richer per-pass object (raised/accepted/dismissed/
+  // decided/coverage/dismissRate/measured), NOT the flat {[pass]: number}
+  // map the internal loop below produces. Only run the internal loop when
+  // no resolver value was supplied (local provenance, or any caller that
+  // predates this plan) — this IS the D2a "presence, not policy" rule.
+  let byPass;
+  if (options.byPass != null) {
+    byPass = options.byPass;
+  } else {
+    byPass = {};
+    for (const pass of PASS_NAMES) {
+      const passOutcomes = windowed.filter(o => o.pass === pass);
+      if (passOutcomes.length > 0) {
+        byPass[pass] = passOutcomes.filter(o => !o.accepted).length / passOutcomes.length;
+      }
     }
   }
 
@@ -91,6 +117,7 @@ export function computeAssessmentMetrics(outcomes, fpTracker, bandit, options = 
     findingsLeadingToChanges: accepted.length,
     totalFindings: windowed.length,
     changeRate: windowed.length > 0 ? accepted.length / windowed.length : 0,
+    measured: true, // guaranteed by the windowed.length===0 guard above (D4)
   };
 
   // ── Severity Calibration ─────────────────────────────────────────────────
@@ -103,11 +130,21 @@ export function computeAssessmentMetrics(outcomes, fpTracker, bandit, options = 
   const medRate = bySeverity.MEDIUM.total > 0 ? bySeverity.MEDIUM.accepted / bySeverity.MEDIUM.total : 0;
   const lowRate = bySeverity.LOW.total > 0 ? bySeverity.LOW.accepted / bySeverity.LOW.total : 0;
 
+  // D4 applied to the per-bucket rates, not just the top-level metrics named
+  // in emptyMetrics() — a severity bucket with zero occurrences this window
+  // is the identical fabricated-zero pattern one level down (a HIGH
+  // acceptance rate of 0% reads as "every HIGH finding was rejected", not as
+  // "no HIGH findings existed this window").
   const severityCalibration = {
-    highAcceptanceRate: highRate,
-    mediumAcceptanceRate: medRate,
-    lowAcceptanceRate: lowRate,
+    highAcceptanceRate: bySeverity.HIGH.total > 0 ? highRate : null,
+    mediumAcceptanceRate: bySeverity.MEDIUM.total > 0 ? medRate : null,
+    lowAcceptanceRate: bySeverity.LOW.total > 0 ? lowRate : null,
     miscalibrated: bySeverity.HIGH.total >= 3 && highRate < medRate,
+    measured: {
+      HIGH: bySeverity.HIGH.total > 0,
+      MEDIUM: bySeverity.MEDIUM.total > 0,
+      LOW: bySeverity.LOW.total > 0,
+    },
   };
 
   // ── Convergence Speed ────────────────────────────────────────────────────
@@ -136,12 +173,13 @@ export function computeAssessmentMetrics(outcomes, fpTracker, bandit, options = 
     avgRoundsToConverge: Math.round(avgRounds * 10) / 10,
     medianRoundsToConverge: medianRounds,
     trend: convTrend,
+    measured: true, // guaranteed by the windowed.length===0 guard above (D4)
   };
 
   return {
     window,
     metrics: {
-      fpRate: { overall: Math.round(fpRateOverall * 1000) / 1000, byPass, trend: fpTrend },
+      fpRate: { overall: Math.round(fpRateOverall * 1000) / 1000, byPass, trend: fpTrend, measured: true },
       signalQuality,
       severityCalibration,
       convergenceSpeed,
@@ -149,14 +187,27 @@ export function computeAssessmentMetrics(outcomes, fpTracker, bandit, options = 
   };
 }
 
+/**
+ * The empty-window report (D4). Every rate is `null`, never `0` — a `0` here
+ * used to be indistinguishable from "measured, and genuinely perfect", which
+ * is the exact defect this plan exists to remove from the file that
+ * publishes these numbers. `totalFindings`/`findingsLeadingToChanges` stay
+ * `0` deliberately: those are real COUNTS of an empty set (a true zero), not
+ * rates computed over data that doesn't exist — the same
+ * absence-vs-measured-zero distinction `resolveOutcomeSource`'s `coverage`
+ * field makes for record counts.
+ */
 function emptyMetrics() {
   return {
     window: { fromRun: 0, toRun: 0, outcomeCount: 0, dateRange: 'N/A' },
     metrics: {
-      fpRate: { overall: 0, byPass: {}, trend: 'stable' },
-      signalQuality: { findingsLeadingToChanges: 0, totalFindings: 0, changeRate: 0 },
-      severityCalibration: { highAcceptanceRate: 0, mediumAcceptanceRate: 0, lowAcceptanceRate: 0, miscalibrated: false },
-      convergenceSpeed: { avgRoundsToConverge: 0, medianRoundsToConverge: 0, trend: 'stable' },
+      fpRate: { overall: null, byPass: {}, trend: 'stable', measured: false },
+      signalQuality: { findingsLeadingToChanges: 0, totalFindings: 0, changeRate: null, measured: false },
+      severityCalibration: {
+        highAcceptanceRate: null, mediumAcceptanceRate: null, lowAcceptanceRate: null,
+        miscalibrated: false, measured: { HIGH: false, MEDIUM: false, LOW: false },
+      },
+      convergenceSpeed: { avgRoundsToConverge: null, medianRoundsToConverge: null, trend: 'stable', measured: false },
     },
   };
 }
@@ -352,30 +403,48 @@ export function storeAssessment(result, logPath = ASSESSMENT_LOG) {
  */
 export function formatAssessmentReport(result) {
   const m = result.metrics;
+  // D4 — every rate above can now be `null` (unmeasured), never a fabricated
+  // 0. `%('...')` formats a null/undefined rate as "n/a" rather than
+  // crashing on `null.toFixed` or silently printing "NaN%".
+  const pct = (rate) => (rate == null || !Number.isFinite(rate)) ? 'n/a' : `${(rate * 100).toFixed(1)}%`;
   const lines = [
     `# Audit-Loop Meta-Assessment — ${new Date().toISOString().slice(0, 10)}`,
     '',
     `**Health**: ${result.overallHealth}`,
     `**Window**: ${result.window.outcomeCount} outcomes (${result.window.dateRange})`,
+    `**Source**: ${result.provenance ?? 'n/a'} (scope: ${result.scope ?? 'n/a'})`,
+    ...(result.coverage
+      ? [`**Coverage**: ${result.coverage.recordsTotal - result.coverage.recordsExcluded}/${result.coverage.recordsTotal} findings valid, ${result.coverage.passStatRowsTotal - result.coverage.passStatRowsExcluded}/${result.coverage.passStatRowsTotal} pass-stat rows valid`]
+      : []),
     '',
     '## Metrics',
     '',
     `| Metric | Value |`,
     `|--------|-------|`,
-    `| FP Rate (overall) | ${(m.fpRate.overall * 100).toFixed(1)}% (${m.fpRate.trend}) |`,
-    `| Signal Quality | ${(m.signalQuality.changeRate * 100).toFixed(1)}% findings accepted |`,
-    `| HIGH acceptance | ${(m.severityCalibration.highAcceptanceRate * 100).toFixed(1)}% |`,
-    `| MEDIUM acceptance | ${(m.severityCalibration.mediumAcceptanceRate * 100).toFixed(1)}% |`,
-    `| LOW acceptance | ${(m.severityCalibration.lowAcceptanceRate * 100).toFixed(1)}% |`,
+    `| FP Rate (overall) | ${pct(m.fpRate.overall)} (${m.fpRate.trend}) |`,
+    `| Signal Quality | ${pct(m.signalQuality.changeRate)} findings accepted |`,
+    `| HIGH acceptance | ${pct(m.severityCalibration.highAcceptanceRate)} |`,
+    `| MEDIUM acceptance | ${pct(m.severityCalibration.mediumAcceptanceRate)} |`,
+    `| LOW acceptance | ${pct(m.severityCalibration.lowAcceptanceRate)} |`,
     `| Severity miscalibrated | ${m.severityCalibration.miscalibrated ? 'YES' : 'no'} |`,
-    `| Avg rounds to converge | ${m.convergenceSpeed.avgRoundsToConverge} (${m.convergenceSpeed.trend}) |`,
+    `| Avg rounds to converge | ${m.convergenceSpeed.avgRoundsToConverge ?? 'n/a'} (${m.convergenceSpeed.trend}) |`,
     '',
     '### FP Rate by Pass',
     '',
   ];
 
-  for (const [pass, rate] of Object.entries(m.fpRate.byPass)) {
-    lines.push(`- **${pass}**: ${(rate * 100).toFixed(1)}%`);
+  // D2a — `byPass` is a flat `{[pass]: number}` map for provenance:'local'
+  // (today's shape, unchanged) but the richer nested per-pass object for
+  // provenance:'store'. Render whichever shape arrived rather than assuming
+  // the number — a bare `rate * 100` on the nested object silently prints
+  // "NaN%" for every pass instead of failing loudly.
+  for (const [pass, entry] of Object.entries(m.fpRate.byPass)) {
+    if (typeof entry === 'number') {
+      lines.push(`- **${pass}**: ${pct(entry)}`);
+    } else if (entry && typeof entry === 'object') {
+      const coverageStr = entry.coverage == null ? 'n/a' : pct(entry.coverage);
+      lines.push(`- **${pass}**: ${pct(entry.dismissRate)} dismiss rate (${entry.decided}/${entry.raised} decided, ${coverageStr} coverage)`);
+    }
   }
 
   if (result.diagnosis) {
@@ -418,20 +487,72 @@ async function main() {
     }
   }
 
-  // Load data
-  const outcomes = loadOutcomes('.audit/outcomes.jsonl');
+  // ── Load data — the store-backed source (docs/plans/meta-assess-store-
+  // backed-source.md D1a) ─────────────────────────────────────────────────
+  // Identity ownership is main()'s alone (D1a) — resolveOutcomeSource never
+  // resolves it. `source:'local'` skips this entirely: a local file read has
+  // no cross-repo risk, unlike an unscoped store query.
+  const source = assessmentConfig.source;
+  let repoId = null;
+  if (source !== 'local') {
+    try {
+      const identity = resolveRepoIdentity();
+      repoId = (await getRepoIdByUuid(identity.repoUuid))?.id ?? null;
+    } catch {
+      repoId = null; // resolveRepoIdentity never throws in practice, but never let identity failure crash the assessment
+    }
+  }
+
+  let sourceResult;
+  if (source !== 'local' && repoId === null) {
+    // Identity failed. 'store' promised no fallback (D1a) — hard-skip
+    // without ever calling the resolver. 'auto' degrades to source:'local'
+    // (Gemini G2) — the store half of 'auto' is unreachable, not the whole
+    // assessment; this is the SAME call a pool-absent/query-throw failure
+    // would make, so resolveOutcomeSource never sees "identity failed" as a
+    // distinct case (it only ever sees source:'local' or a real repoId).
+    if (source === 'store') {
+      sourceResult = {
+        records: [], byPass: null, provenance: 'none', scope: 'unresolved',
+        coverage: { recordsTotal: 0, recordsExcluded: 0, passStatRowsTotal: 0, passStatRowsExcluded: 0 },
+        window: { mode: 'count', days: null, sinceIso: null, windowSize: 0 },
+      };
+    } else {
+      sourceResult = await resolveOutcomeSource({ source: 'local' });
+    }
+  } else {
+    sourceResult = await resolveOutcomeSource({
+      days: assessmentConfig.windowDays, repoId, source,
+    });
+  }
+
+  const { records: outcomes, byPass, provenance, scope, coverage, queryError } = sourceResult;
+
+  if (queryError) {
+    process.stderr.write(`  [meta-assess] WARNING: store query failed with an UNCLASSIFIED error (${queryError.cause}) — falling back to local, but this may be a real bug, not unavailability: ${queryError.message?.slice(0, 150)}\n`);
+  }
+
+  // Count gate tests against the RESOLVED record count (whichever provenance
+  // answered), and names that provenance in its skip reason (D1a/§7) — not
+  // the pre-resolution local-file count the original gate read.
   if (outcomes.length < assessmentConfig.minOutcomes) {
-    const msg = `Insufficient data: ${outcomes.length} outcomes (need ${assessmentConfig.minOutcomes}). Use --force with low minOutcomes to override.`;
-    if (jsonMode) console.log(JSON.stringify({ skipped: true, reason: msg }));
+    const msg = `Insufficient data: ${outcomes.length} outcomes (provenance: ${provenance}; need ${assessmentConfig.minOutcomes}). Use --force with low minOutcomes to override.`;
+    if (jsonMode) console.log(JSON.stringify({ skipped: true, reason: msg, provenance, scope, coverage }));
     else process.stderr.write(`  [meta-assess] ${msg}\n`);
     return;
   }
 
+  // fpTracker/bandit are UNCHANGED by the source above (D6) — FalsePositiveTracker
+  // reads its own independent `.audit/fp-tracker.json`, never the outcomes
+  // array, so it stays local + unconditional regardless of provenance.
   const fpTracker = new FalsePositiveTracker();
   const bandit = new PromptBandit();
 
   // Phase 1: Deterministic metrics
-  const metrics = computeAssessmentMetrics(outcomes, fpTracker, bandit);
+  const metrics = computeAssessmentMetrics(outcomes, { byPass, provenance });
+  metrics.provenance = provenance;
+  metrics.scope = scope;
+  metrics.coverage = coverage;
   const samples = sampleOutcomes(outcomes);
   const fpPatterns = fpTracker.getReport?.() || [];
 
@@ -448,15 +569,29 @@ async function main() {
     result = await runLLMAssessment(metrics, samples, fpPatterns);
   } catch (err) {
     process.stderr.write(`  [meta-assess] LLM failed: ${err.message?.slice(0, 100)} — falling back to metrics-only\n`);
+    // D4 — `fpRate.overall`/`miscalibrated` can now be `null`/unmeasured; an
+    // unmeasured rate must not silently read as "healthy" (comparing
+    // `null > 0.5` is `false` in JS, which would otherwise default to
+    // healthy by accident) nor as "degraded" — it is its own explicit state.
+    const fp = metrics.metrics.fpRate.overall;
     result = {
       ...metrics,
       diagnosis: 'LLM assessment unavailable — metrics-only report.',
       recommendations: [],
-      overallHealth: metrics.metrics.fpRate.overall > 0.5 ? 'degraded'
+      overallHealth: fp == null ? 'unmeasured'
+        : fp > 0.5 ? 'degraded'
         : metrics.metrics.severityCalibration.miscalibrated ? 'needs_attention'
         : 'healthy',
     };
   }
+  // `runLLMAssessment`'s success path overlays only `.window`/`.metrics`
+  // onto its Zod-validated result — provenance/scope/coverage never travel
+  // through that path on their own, so set them here for both outcomes
+  // (idempotent on the catch path, where they already arrived via the
+  // `...metrics` spread above).
+  result.provenance = provenance;
+  result.scope = scope;
+  result.coverage = coverage;
 
   // Phase 3: Store + output
   storeAssessment(result);
@@ -471,7 +606,9 @@ async function main() {
   }
 
   // Summary to stderr
-  process.stderr.write(`  [meta-assess] Health: ${result.overallHealth} | FP: ${(metrics.metrics.fpRate.overall * 100).toFixed(1)}% | Recommendations: ${result.recommendations?.length || 0}\n`);
+  const fpOverall = metrics.metrics.fpRate.overall;
+  const fpStr = fpOverall == null ? 'n/a' : `${(fpOverall * 100).toFixed(1)}%`;
+  process.stderr.write(`  [meta-assess] Health: ${result.overallHealth} | Provenance: ${provenance} | FP: ${fpStr} | Recommendations: ${result.recommendations?.length || 0}\n`);
 }
 
 // CLI entry point — only when invoked directly

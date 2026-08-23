@@ -209,6 +209,7 @@ jobs:
         # Postgres.
         run: |
           node --test --test-concurrency=1 \
+            tests/audit-metrics-findings-contract.test.mjs \
             tests/campaign-adjudication.test.mjs \
             tests/campaign-promote.test.mjs \
             tests/campaign-quarantine.test.mjs \
@@ -221,6 +222,7 @@ jobs:
             tests/persist-kept-embeddings.test.mjs \
             tests/persona-outcomes-hash-backfill.test.mjs \
             tests/plans-ship-persona-correlation.test.mjs \
+            tests/postgres-parity-identity-columns.test.mjs \
             tests/refresh-provenance-promotion.test.mjs \
             tests/refresh-runs-repo-scoping.test.mjs \
             tests/regression-spec-multi-finding-lock.test.mjs \
