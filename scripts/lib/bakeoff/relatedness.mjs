@@ -40,33 +40,79 @@ function extractTokens(text) {
 }
 
 /**
+ * Every finding in a transcript, whichever shape it arrived in.
+ *
+ * TWO shapes are real and both must work (fixed 2026-08-23, before this
+ * heuristic had ever gated a real collection). The original implementation
+ * read `transcriptJson.findings[]` only — a shape `build-audit-transcript.mjs`
+ * does NOT produce. Every archived transcript nests them under
+ * `rounds[].findings[]`, so against real input the citation set was always
+ * empty, every pairing returned `related: false`, and the soft gate would have
+ * demanded `--confirm-mismatch` on correct and incorrect pairings alike.
+ *
+ * That is strictly worse than no check: a guard that fires on everything
+ * teaches the operator to pass the override reflexively, which is precisely
+ * the failure the Gemini round-1 G2 fix (the clean-audit false positive) was
+ * written to avoid — reintroduced through the input shape instead of the
+ * threshold. Measured on the 4 real pairings this was first pointed at:
+ * 3 known-correct and 1 deliberately-wrong control ALL returned
+ * `related: false`, i.e. the heuristic could not discriminate at all.
+ *
+ * Accepting both shapes rather than migrating callers to one: the archive
+ * holds 86 transcripts written over months by several producers, and a
+ * heuristic that silently reads nothing is the exact failure being fixed —
+ * so it must not depend on every historical artifact having one layout.
+ */
+function allFindings(transcriptJson) {
+  if (Array.isArray(transcriptJson?.findings)) return transcriptJson.findings;
+  if (Array.isArray(transcriptJson?.rounds)) {
+    return transcriptJson.rounds.flatMap((r) => {
+      if (Array.isArray(r?.findings)) return r.findings;
+      if (Array.isArray(r?.result?.findings)) return r.result.findings;
+      return [];
+    });
+  }
+  return null; // structurally unreadable — distinct from "readable and empty"
+}
+
+/**
  * Does a bake-off transcript look related to the plan it is being paired
  * with?
  *
  * Two distinct empty cases, two different defaults (Gemini gate round 1,
- * G2): a structurally invalid transcript (`findings` missing or not an
- * array) cannot even attempt a comparison — `related: false`, since a
- * malformed input is not evidence of a clean pairing. A VALID but EMPTY
- * `findings: []` — a genuinely clean, 0-finding review — poses none of the
- * mixed-pairing risk `--confirm-mismatch` exists to catch, so it returns
- * `related: true, reason: 'no-findings-to-compare'` rather than forcing
- * every clean audit through the confirmation flag.
+ * G2): a structurally invalid transcript (no findings ANYWHERE — neither
+ * top-level nor under `rounds`) cannot even attempt a comparison —
+ * `related: false`, since a malformed input is not evidence of a clean
+ * pairing. A VALID but EMPTY finding set — a genuinely clean, 0-finding
+ * review — poses none of the mixed-pairing risk `--confirm-mismatch` exists
+ * to catch, so it returns `related: true, reason: 'no-findings-to-compare'`
+ * rather than forcing every clean audit through the confirmation flag.
  *
- * @param {{findings?: Array<{section?: string, file?: string}>}} transcriptJson
+ * @param {{findings?: Array<object>, rounds?: Array<object>}} transcriptJson
  * @param {string} planText - the plan's raw markdown body
  * @returns {{overlap: string[], related: boolean, reason?: string}}
  */
 export function planLooksRelated(transcriptJson, planText) {
-  if (!Array.isArray(transcriptJson?.findings)) {
+  const findings = allFindings(transcriptJson);
+  if (findings === null) {
     return { overlap: [], related: false };
   }
-  if (transcriptJson.findings.length === 0) {
+  if (findings.length === 0) {
     return { overlap: [], related: true, reason: 'no-findings-to-compare' };
   }
   const transcriptTokens = new Set();
-  for (const f of transcriptJson.findings) {
+  for (const f of findings) {
+    // Every field a finding cites a location in. `section` is prose that
+    // usually LEADS with the path; `_primaryFile` and `affectedFiles` are the
+    // structured fields the audit pipeline actually populates — reading only
+    // `file` (which no producer writes) was the second half of the same
+    // shape mismatch as `rounds` above.
     for (const t of extractTokens(f?.section)) transcriptTokens.add(t);
     for (const t of extractTokens(f?.file)) transcriptTokens.add(t);
+    for (const t of extractTokens(f?._primaryFile)) transcriptTokens.add(t);
+    for (const one of (Array.isArray(f?.affectedFiles) ? f.affectedFiles : [])) {
+      for (const t of extractTokens(one)) transcriptTokens.add(t);
+    }
   }
   const planTokens = extractTokens(planText);
   const overlap = [...transcriptTokens].filter((t) => planTokens.has(t)).sort();

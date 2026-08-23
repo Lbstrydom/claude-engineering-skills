@@ -52,6 +52,52 @@ describe('planLooksRelated — collection-time relatedness heuristic', () => {
     assert.deepEqual(planLooksRelated(null, 'plan text'), { overlap: [], related: false });
   });
 
+  // ── the REAL transcript shape ─────────────────────────────────────────────
+  //
+  // Fixed 2026-08-23, before this heuristic had ever gated a live collection.
+  // It read `transcriptJson.findings[]` — a shape `build-audit-transcript.mjs`
+  // does not produce. Every one of the 86 archived transcripts nests findings
+  // under `rounds[].findings[]` and names the file in `_primaryFile` /
+  // `affectedFiles`, never `.file`. So against real input the citation set was
+  // always empty and EVERY pairing returned related:false — measured on 3
+  // known-correct pairings plus a deliberately-wrong control, all four
+  // indistinguishable.
+  //
+  // Worse than no check: a guard that fires on everything teaches the operator
+  // to pass `--confirm-mismatch` reflexively, which is the same failure the
+  // G2 clean-audit fix above exists to prevent, reintroduced through the input
+  // SHAPE rather than the threshold. The fixture below therefore mirrors the
+  // real producer's layout exactly rather than the one the function wished for.
+  it('reads the REAL producer shape: rounds[].findings with _primaryFile/affectedFiles', () => {
+    const transcript = {
+      audit_mode: 'code',
+      rounds: [
+        { findings: [{ section: 'scripts/memory-health.mjs — RPC window', _primaryFile: 'scripts/memory-health.mjs' }] },
+        { findings: [{ section: 'a prose section naming no path', affectedFiles: ['scripts/lib/linter.mjs'] }] },
+      ],
+    };
+    const r = planLooksRelated(transcript, 'the plan touches memory-health.mjs and linter.mjs');
+    assert.equal(r.related, true);
+    assert.deepEqual(r.overlap, ['linter.mjs', 'memory-health.mjs']);
+  });
+
+  it('NEGATIVE CONTROL for the shape fix: rounds[] present but citing an unrelated plan still reads false', () => {
+    // The discrimination the broken version could not do: same shape, wrong
+    // plan. Without this, a fix that merely returned `true` more often would
+    // pass the case above and still be useless.
+    const transcript = { rounds: [{ findings: [{ _primaryFile: 'scripts/memory-health.mjs' }] }] };
+    assert.equal(planLooksRelated(transcript, 'a plan about runner-inventory.mjs only').related, false);
+  });
+
+  it('a rounds[] array carrying no findings at all is EMPTY, not unreadable', () => {
+    // `rounds` present but every round findings-free is the clean-audit case
+    // in the real shape — it must take G2's related:true path, not the
+    // malformed related:false one.
+    const r = planLooksRelated({ rounds: [{ findings: [] }, { verdict: 'APPROVE' }] }, 'plan text');
+    assert.equal(r.related, true);
+    assert.equal(r.reason, 'no-findings-to-compare');
+  });
+
   it('round 6 (Gemini gate MEDIUM correction): a FULL relative path in the transcript matches a BARE basename in the plan\'s prose', () => {
     const transcript = { findings: [{ section: 'scripts/bakeoff-collect.mjs — retry scoping' }] };
     const planProse = 'This plan modifies bakeoff-collect.mjs to consult the store before retrying.';
