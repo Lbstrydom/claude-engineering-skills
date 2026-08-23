@@ -118,6 +118,7 @@ const PROFILES = Object.freeze({
       command: 'npx',
       args: ['eslint', '--format', 'json', '--no-error-on-unmatched-pattern', '.'],
       scope: 'project',
+      scopeToFiles: true,
       availabilityProbe: ['npx', ['eslint', '--version']],
       parser: 'parseEslintOutput',
     }],
@@ -196,6 +197,7 @@ const PROFILES = Object.freeze({
       command: 'ruff',
       args: ['check', '--output-format', 'json', '.'],
       scope: 'project',
+      scopeToFiles: true,
       availabilityProbe: ['ruff', ['--version']],
       parser: 'parseRuffOutput',
       fallback: {
@@ -204,6 +206,7 @@ const PROFILES = Object.freeze({
         command: 'flake8',
         args: ['--format', 'pylint', '.'],
         scope: 'project',
+        scopeToFiles: true,
         availabilityProbe: ['flake8', ['--version']],
         parser: 'parseFlake8PylintOutput',
       },

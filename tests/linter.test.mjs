@@ -18,6 +18,8 @@ import {
   formatLintSummary,
   setExecFileSync,
   resetExecFileSync,
+  setExistsSync,
+  resetExistsSync,
 } from '../scripts/lib/linter.mjs';
 import { ProducerFindingSchema } from '../scripts/lib/schemas.mjs';
 import { semanticId } from '../scripts/lib/findings.mjs';
@@ -396,6 +398,100 @@ describe('runTool with mocked execFileSync', () => {
     setExecFileSync((cmd, args) => 'v8.0.0');
     const result = runTool(bad, ['src/foo.js'], 'js');
     assert.equal(result.status, 'failed');
+  });
+});
+
+// ── runTool with scopeToFiles (per-file invocation instead of whole-repo) ───
+
+describe('runTool with scopeToFiles', () => {
+  beforeEach(() => {
+    setExecFileSync(() => { throw new Error('not mocked'); });
+    setExistsSync(() => true); // default: everything exists
+  });
+  afterEach(() => {
+    resetExecFileSync();
+    resetExistsSync();
+  });
+
+  const scopedEslintConfig = {
+    id: 'eslint',
+    kind: 'linter',
+    command: 'npx',
+    args: ['eslint', '--format', 'json', '--no-error-on-unmatched-pattern', '.'],
+    scope: 'project',
+    scopeToFiles: true,
+    availabilityProbe: ['npx', ['eslint', '--version']],
+    parser: 'parseEslintOutput',
+  };
+
+  test('invokes with -- separator + audited files instead of the whole-repo "."', () => {
+    let capturedArgs = null;
+    setExecFileSync((cmd, args) => {
+      if (args.includes('--version')) return 'v8.0.0';
+      capturedArgs = args;
+      return '[]';
+    });
+    runTool(scopedEslintConfig, ['a.js', '-rf.js'], 'js');
+    assert.deepEqual(
+      capturedArgs.slice(-3),
+      ['--', 'a.js', '-rf.js'],
+    );
+    assert.ok(!capturedArgs.includes('.'), 'the whole-repo "." positional must not survive scoping');
+  });
+
+  test('drops deleted files (not on disk) instead of passing them to the tool', () => {
+    setExistsSync((f) => f !== 'deleted.js');
+    let capturedArgs = null;
+    setExecFileSync((cmd, args) => {
+      if (args.includes('--version')) return 'v8.0.0';
+      capturedArgs = args;
+      return '[]';
+    });
+    runTool(scopedEslintConfig, ['a.js', 'deleted.js'], 'js');
+    assert.deepEqual(capturedArgs.slice(-2), ['--', 'a.js']);
+  });
+
+  test('skips invocation entirely when every audited file is deleted', () => {
+    setExistsSync(() => false);
+    let invoked = false;
+    setExecFileSync((cmd, args) => {
+      if (args.includes('--version')) return 'v8.0.0';
+      invoked = true;
+      return '[]';
+    });
+    const result = runTool(scopedEslintConfig, ['deleted.js'], 'js');
+    assert.equal(result.status, 'no_tool');
+    assert.equal(result.findings.length, 0);
+    assert.equal(invoked, false, 'execFileSync must not run the tool with an empty scoped file set');
+  });
+
+  test('throws a clear error above the scoping ceiling instead of risking E2BIG', () => {
+    setExecFileSync((cmd, args) => (args.includes('--version') ? 'v8.0.0' : '[]'));
+    const tooMany = Array.from({ length: 2001 }, (_, i) => `f${i}.js`);
+    assert.throws(
+      () => runTool(scopedEslintConfig, tooMany, 'js'),
+      /2000-file scoping ceiling/,
+    );
+  });
+
+  test('a non-scoped tool (tsc) still runs project-wide, unaffected', () => {
+    const tscConfig = {
+      id: 'tsc',
+      kind: 'typeChecker',
+      command: 'npx',
+      args: ['tsc', '--noEmit', '--pretty', 'false'],
+      scope: 'project',
+      availabilityProbe: ['npx', ['tsc', '--version']],
+      parser: 'parseTscOutput',
+    };
+    let capturedArgs = null;
+    setExecFileSync((cmd, args) => {
+      if (args.includes('--version')) return 'v8.0.0';
+      capturedArgs = args;
+      return '';
+    });
+    runTool(tscConfig, ['a.ts'], 'ts');
+    assert.deepEqual(capturedArgs, ['tsc', '--noEmit', '--pretty', 'false']);
   });
 });
 

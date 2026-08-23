@@ -40,6 +40,7 @@ import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 import { atomicWriteFileSync } from '../lib/file-io.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 const DEFAULT_OUT = path.join(REPO_ROOT, 'tests', 'fixtures', 'expected-schema.json');
@@ -59,6 +60,8 @@ const QUERIES = {
         'data_type', data_type,
         'is_nullable', is_nullable,
         'column_default', column_default,
+        'is_identity', is_identity,
+        'identity_generation', identity_generation,
         'ordinal_position', ordinal_position
       ) ORDER BY ordinal_position) AS columns
     FROM information_schema.columns
@@ -137,14 +140,18 @@ const QUERIES = {
   sequences: `
     SELECT
       c.relname AS sequence_name,
+      -- deptype 'a' (auto) is a legacy serial's ownership; deptype 'i'
+      -- (internal) is what GENERATED ... AS IDENTITY uses. Both must be
+      -- checked or an identity column's owning sequence resolves to null
+      -- here (audit R1-M17, found while adding identity-column capture).
       (SELECT attrelid::regclass::text || '.' || attname
         FROM pg_attribute
         WHERE attrelid = (SELECT refobjid
                           FROM pg_depend
-                          WHERE objid = c.oid AND deptype = 'a' LIMIT 1)
+                          WHERE objid = c.oid AND deptype IN ('a', 'i') LIMIT 1)
           AND attnum = (SELECT refobjsubid
                         FROM pg_depend
-                        WHERE objid = c.oid AND deptype = 'a' LIMIT 1)) AS owned_by
+                        WHERE objid = c.oid AND deptype IN ('a', 'i') LIMIT 1)) AS owned_by
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE c.relkind = 'S' AND n.nspname = 'public'
@@ -262,7 +269,20 @@ async function main() {
   process.stderr.write(`  [expected-schema] wrote ${outPath}\n`);
 }
 
-main().catch((err) => {
-  process.stderr.write(`ERROR: ${err.stack || err.message}\n`);
-  process.exit(1);
-});
+// Mirrors the `_internals` pattern setup-postgres.mjs already uses for its
+// own (hand-duplicated, kept-in-lock-step) copy of QUERIES.tables — lets a
+// test exercise the REAL query text directly instead of a third copy.
+export const _internals = Object.freeze({ QUERIES });
+
+// Entrypoint guard (matches setup-postgres.mjs's own convention) — without
+// this, `_internals` above couldn't be imported from a test at all: `main()`
+// was previously called unconditionally on import, so a test importing this
+// module for QUERIES would trigger a real DB preflight (or a hard
+// process.exit(2) with AUDIT_DB_URL unset) as a side effect of the import.
+const invoked = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename);
+if (invoked) {
+  main().catch((err) => {
+    process.stderr.write(`ERROR: ${err.stack || err.message}\n`);
+    process.exit(1);
+  });
+}

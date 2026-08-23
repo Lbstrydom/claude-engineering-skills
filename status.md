@@ -1,5 +1,95 @@
 # Project Status Log
 
+## 2026-08-23 — Misc-cluster debt: full /cycle (re-audit plan → 4 GPT + 3 Gemini rounds → autonomous implementation → live-DB verification)
+
+Re-reviewed [docs/plans/refactor-misc-small-items-2026-07.md](docs/plans/refactor-misc-small-items-2026-07.md)
+(a 2026-07-26 tech-debt triage cluster) and found it stale in both
+directions: 5 of the 8 remaining "open" entries had already shipped under
+other work, and 1 (schemas.mjs) was mis-triaged from the start. Narrowed
+to 9 items (10 topicIds), then ran `/cycle --autonomous code` on the 7
+still-genuinely-open ones.
+
+### Plan re-audit — 4 GPT rounds + 3 Gemini rounds
+
+Every round through R3 caught a real bug in the PREVIOUS round's own fix
+design, not a new independent defect: an unfalsifiable test acceptance
+criterion, a shared-directory test-isolation race, a hand-duplicated SQL
+query the fix would have silently left out of sync, a drifting scope
+count. R4 (GPT) shifted to rigor pressure (demanding a DRY refactor the
+fix doesn't depend on) — dismissed with a documented independence
+argument — and R4 was where the round-3 default cap normally stops, but
+the loop had already earned two genuine-bug extensions past R2's default
+cap. Gemini caught two real, sharp bugs GPT missed entirely across 3
+rounds: an air-gap fix design that assumed the wrong file contained the
+env-clearing code, and a linter-scoping fix that would crash on deleted
+files from a diff (a scoping filter round 2 added to fix an earlier
+Gemini finding then reintroduced the exact "empty file set" edge case an
+earlier round had correctly ruled out — caught by Gemini a third time).
+
+### Implementation — degenerate single-cluster (below the §11 threshold)
+
+`scripts/lib/linter.mjs` gained real per-file tool scoping (eslint/ruff/
+flake8 now invoked against the audited file set via `--`, not the whole
+repo) instead of the docstring-only fix R1 proposed — R2's audit caught
+that "no tool accepts per-file args" was a claim about current config,
+not a real limitation. `scripts/memory-health.mjs`'s `numEnv()` gained
+real bounds validation plus a hard `exit(2)` on any explicit-but-invalid
+threshold — R1's fallback-and-warn design was itself a silent-false-green
+gap in the exact class the file exists to prevent, and R2/R3 caught two
+further edge cases in that fix (`Number(" ")` coercing to a valid-looking
+0; whitespace wrongly classified as "absent" instead of "invalid").
+`scripts/postgres-parity/generate-expected-schema.mjs` +
+`scripts/setup-postgres.mjs` gained `is_identity`/`identity_generation`
+capture (both hand-duplicated copies), plus an unrelated real bug found
+while verifying: the `sequences` query's `owned_by` subquery only checked
+`deptype='a'` (legacy `serial`), never `'i'` (what `GENERATED ALWAYS AS
+IDENTITY` actually uses) — so the new identity columns' own owning
+sequences would have resolved to `null`. `tests/install/receipt.test.mjs`
+and `tests/sensitive-paths-canonical.test.mjs` got their originally-scoped
+fixes (per-test `mkdtempSync` isolation; real `{skip}` instead of a bare
+early `return`).
+
+A concurrent session was editing the shared working tree throughout
+(`scripts/lib/assessment-source.mjs`, `scripts/audit-metrics.mjs`,
+`scripts/lib/config.mjs`, `scripts/meta-assess.mjs`, this same
+`status.md`) — one audit round's diff-scope computation leaked their
+untracked file in via a broad `git status`/`git ls-files --others`
+re-scan mid-session; caught and dismissed (`git status` confirmed it was
+never mine), and every subsequent round's `--changed`/`--files` used a
+fixed file list instead of re-scanning.
+
+### Live-DB verification (closes a real gap, not a shortcut)
+
+`tests/fixtures/expected-schema.json` could not be regenerated without a
+live migrated Postgres — flagged as a genuine, documented, environment-
+blocked prerequisite (not silently deferred) after `/audit-code`'s
+mandatory Gemini gate returned `APPROVE`. Checked whether Docker was
+actually available before accepting the block: it was.
+`npm run db:local:regen` regenerated the fixture from a real fresh
+replay; reproduced twice independently (byte-identical diff both times).
+The new `tests/postgres-parity-identity-columns.test.mjs` suite (5
+assertions: round-trip, the `deptype` sequence-ownership fix, the two
+hand-duplicated queries agreeing, and both directions of
+`diffSchemas` — no false positive AND no false negative) passed against
+two independent fresh containers. The exact CI drift-check step from
+`.github/workflows/postgres-parity.yml` ("Verify schema matches the
+committed manifest") was reproduced locally and reported "manifest
+matches live schema" — this would otherwise have broken that CI job on
+push, invisibly to a local `npm test` run (the suite is
+`AUDIT_DB_TEST_URL`-gated and self-skips without a live DB).
+
+### Verification
+
+`npm test`: 13,872 tests, 0 fail, 32 skipped (4 new Windows-platform
+skips from the `sensitive-paths-canonical.test.mjs` fix, using real
+`{skip}` instead of a silently-passing early return). `/audit-code`:
+6 GPT rounds (round cap) + 1 rebuttal round (2 HIGH findings both
+factually false — one directly reproduced as false, `--selfcheck-relocation`
+does work; one a misreading of a pre-existing test's purpose — both
+withdrawn by GPT on rebuttal) + Gemini `APPROVE`, 0 new findings.
+`npm run db:enrolment:gate`: 31 enrolled (was 30). Persona-test/ux-lock
+skipped — backend-only scope, no UI changes.
+
 ## 2026-08-23 — meta-assess reads the store: full /cycle (plan → 4 GPT + 3 Gemini rounds → autonomous implementation)
 
 Closes the last open item from the two telemetry ships earlier today:

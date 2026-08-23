@@ -501,6 +501,8 @@ const SHARED_CATALOG_QUERIES = {
         'data_type', data_type,
         'is_nullable', is_nullable,
         'column_default', column_default,
+        'is_identity', is_identity,
+        'identity_generation', identity_generation,
         'ordinal_position', ordinal_position
       ) ORDER BY ordinal_position) AS columns
     FROM information_schema.columns
@@ -572,14 +574,18 @@ const SHARED_CATALOG_QUERIES = {
   sequences: `
     SELECT
       c.relname AS sequence_name,
+      -- deptype 'a' (auto) is a legacy serial's ownership; deptype 'i'
+      -- (internal) is what GENERATED ... AS IDENTITY uses. Both must be
+      -- checked or an identity column's owning sequence resolves to null
+      -- here (audit R1-M17, found while adding identity-column capture).
       (SELECT attrelid::regclass::text || '.' || attname
         FROM pg_attribute
         WHERE attrelid = (SELECT refobjid
                           FROM pg_depend
-                          WHERE objid = c.oid AND deptype = 'a' LIMIT 1)
+                          WHERE objid = c.oid AND deptype IN ('a', 'i') LIMIT 1)
           AND attnum = (SELECT refobjsubid
                         FROM pg_depend
-                        WHERE objid = c.oid AND deptype = 'a' LIMIT 1)) AS owned_by
+                        WHERE objid = c.oid AND deptype IN ('a', 'i') LIMIT 1)) AS owned_by
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE c.relkind = 'S' AND n.nspname = 'public'

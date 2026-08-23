@@ -66,8 +66,7 @@ describe('resolveAndClassify — fail-closed on resolution errors', () => {
     } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
-  it('returns sensitive + resolutionFailed for a broken symlink', () => {
-    if (skipOnWin) return;
+  it('returns sensitive + resolutionFailed for a broken symlink', { skip: skipOnWin && 'fs.symlinkSync requires elevated privileges on Windows' }, () => {
     const repoRoot = mkdtemp();
     try {
       const target = path.join(repoRoot, 'will-be-deleted.ts');
@@ -82,8 +81,7 @@ describe('resolveAndClassify — fail-closed on resolution errors', () => {
 });
 
 describe('resolveAndClassify — symlink escape detection (WS-CANON)', () => {
-  it('flags escapedRepo when the canonical path resolves outside repoRoot', () => {
-    if (skipOnWin) return;
+  it('flags escapedRepo when the canonical path resolves outside repoRoot', { skip: skipOnWin && 'fs.symlinkSync requires elevated privileges on Windows' }, () => {
     const repoRoot = mkdtemp();
     const outside = mkdtemp();
     try {
@@ -102,8 +100,7 @@ describe('resolveAndClassify — symlink escape detection (WS-CANON)', () => {
     }
   });
 
-  it('does NOT flag escape for a symlink that stays inside repoRoot', () => {
-    if (skipOnWin) return;
+  it('does NOT flag escape for a symlink that stays inside repoRoot', { skip: skipOnWin && 'fs.symlinkSync requires elevated privileges on Windows' }, () => {
     const repoRoot = mkdtemp();
     try {
       const target = path.join(repoRoot, 'src/real.ts');
@@ -119,8 +116,7 @@ describe('resolveAndClassify — symlink escape detection (WS-CANON)', () => {
 });
 
 describe('resolveAndClassify — canonical re-classification', () => {
-  it('classifies canonical target as sensitive even when lexical name is innocent', () => {
-    if (skipOnWin) return;
+  it('classifies canonical target as sensitive even when lexical name is innocent', { skip: skipOnWin && 'fs.symlinkSync requires elevated privileges on Windows' }, () => {
     // Repo contains an "innocent.ts" symlink that resolves into `secrets/`
     // INSIDE the repo. Lexical sees "innocent.ts" → null; canonical sees
     // `secrets/db.yaml` → sensitive. Classifier MUST flag it.

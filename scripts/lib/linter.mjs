@@ -5,18 +5,29 @@
  * Design:
  * - Uses execFileSync with argv arrays (no shell, no path concat)
  * - Status envelope distinguishes no_tool / failed / timeout from ok
- * - Post-filters project-scoped tool output to audited file set
+ * - Tools whose config marks `scopeToFiles: true` (eslint, ruff, flake8) are
+ *   invoked against exactly the audited file set, via a `--` end-of-options
+ *   separator (so a filename like `-rf.js` is never read as a flag) and
+ *   filtered to files that still exist on disk (a diff's deleted files have
+ *   nothing to lint, and passing them explicitly would crash the tool rather
+ *   than silently skip, the way project-wide invocation does). A tool
+ *   without `scopeToFiles` (tsc) runs project-wide at repo root, because its
+ *   analysis is not meaningfully scopable to a file subset — config
+ *   resolution and cross-file type checking need the whole project. Either
+ *   way, output is ALSO post-filtered to the audited file set as
+ *   defense-in-depth (a no-op for already-scoped tools, the sole mechanism
+ *   for project-wide ones).
  * - Graceful: missing tools never block the audit
  *
  * SECURITY: running repo-configured linters means executing code/config the
  * repo owner controls (ESLint configs can `require()` custom rules). This is
- * equivalent to running `npm test` in the repo. Gated behind `--no-tools` CLI
- * flag or `AUDIT_LOOP_ALLOW_TOOLS=1` env. Every invocation is logged to stderr
- * for auditability.
+ * equivalent to running `npm test` in the repo. Gated behind the `--no-tools`
+ * CLI flag. Every invocation is logged to stderr for auditability.
  * @module scripts/lib/linter
  */
 
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { normalizePath } from './file-io.mjs';
 import { getProfileForFile } from './language-profiles.mjs';
@@ -52,6 +63,12 @@ const TOOL_TIMEOUT_MS = 60_000;
 const TOOL_MAX_BUFFER_BASE = 10 * 1024 * 1024;    // 10MB
 const TOOL_MAX_BUFFER_PER_FILE = 100 * 1024;      // +100KB per file
 
+// A scoped invocation's argv grows with the audited file count. `runTool`
+// has no caller today that exceeds a diff's file count (orders of magnitude
+// under OS ARG_MAX) — this is a clear-error guard against a future misuse,
+// not a working ceiling meant to ever be hit; see docs/plans/refactor-misc-small-items-2026-07.md.
+const MAX_SCOPED_FILES = 2000;
+
 /** Scale buffer with audited file count. Prevents overflow on large repos. */
 function computeMaxBuffer(fileCount) {
   return TOOL_MAX_BUFFER_BASE + fileCount * TOOL_MAX_BUFFER_PER_FILE;
@@ -65,6 +82,16 @@ let _execFileSync = execFileSync;
 export function setExecFileSync(fn) { _execFileSync = fn; }
 /** @internal test-only */
 export function resetExecFileSync() { _execFileSync = execFileSync; }
+
+// ── existsSync indirection (testable) ────────────────────────────────────────
+// Same pattern as _execFileSync — tests fake file presence without touching
+// real disk (`setExistsSync()`).
+let _existsSync = existsSync;
+
+/** @internal test-only */
+export function setExistsSync(fn) { _existsSync = fn; }
+/** @internal test-only */
+export function resetExistsSync() { _existsSync = existsSync; }
 
 // ── Tool Availability ────────────────────────────────────────────────────────
 
@@ -114,10 +141,30 @@ export function runTool(toolConfig, auditedFiles, profileId) {
     return { status: 'failed', findings: [], usage: { files: 0 }, latencyMs: Date.now() - startMs, stderr: `unknown parser: ${toolConfig.parser}`, toolId, toolKind };
   }
 
-  process.stderr.write(`  [tool] ${profileId}/${toolId}: executing ${toolConfig.command} ${toolConfig.args.join(' ')}\n`);
+  let args = toolConfig.args;
+  if (toolConfig.scopeToFiles) {
+    // Deleted files exist in a diff but not on disk. Project-wide invocation
+    // tolerates that silently (nothing to traverse); passing a deleted path
+    // explicitly makes the tool fail loudly instead. Drop them — there is
+    // nothing to lint in a file that no longer exists.
+    const existing = auditedFiles.filter(f => _existsSync(f));
+    if (existing.length === 0) {
+      process.stderr.write(`  [tool] ${profileId}/${toolId}: no existing files to scope to (all ${auditedFiles.length} deleted) — skipping\n`);
+      return { status: 'no_tool', findings: [], usage: { files: 0 }, latencyMs: 0, stderr: '', toolId, toolKind };
+    }
+    if (existing.length > MAX_SCOPED_FILES) {
+      throw new Error(`[tool] ${profileId}/${toolId}: ${existing.length} files exceeds the ${MAX_SCOPED_FILES}-file scoping ceiling — this caller needs its own design, not silent truncation`);
+    }
+    // Trailing '.' is the profile's whole-repo positional arg; replace it
+    // with '--' (end-of-options — so a filename like '-rf.js' is never read
+    // as a flag) followed by the scoped files.
+    args = [...toolConfig.args.slice(0, -1), '--', ...existing];
+  }
+
+  process.stderr.write(`  [tool] ${profileId}/${toolId}: executing ${toolConfig.command} ${args.join(' ')}\n`);
 
   try {
-    const stdout = _execFileSync(toolConfig.command, toolConfig.args, {
+    const stdout = _execFileSync(toolConfig.command, args, {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: TOOL_TIMEOUT_MS,

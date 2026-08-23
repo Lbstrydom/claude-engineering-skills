@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**7 active · 202 terminal · 27 audit summaries · 4 reference docs**
+**6 active · 203 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -24,7 +24,6 @@ This is the list to read when asking "what is in flight?".
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
 | [Lens Coverage Honesty — a report states what it checked, not only what it found](./lens-coverage-honesty.md) | `Approved` | and implemented (2026-08-20, via `/cycle --autonomous`, |
 | [Store-backed outcome source for `meta-assess`](./meta-assess-store-backed-source.md) | `Approved` |  |
-| [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `Draft` | narrowed to 8 items (10 topicIds), re-verified open |
 | [Self-Hosted Runner Management (optional, machine-aware)](./self-hosted-runner-management.md) | `Approved` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q1 38 code rows, Q2 unknown (reader reports no total), Q3 68 actionable; measured 2026-08-09 |
@@ -47,7 +46,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 199 completed plans</summary>
+<summary>Show all 200 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -199,6 +198,7 @@ source comments that no docs linter sees — stays valid.
 | [Failure-Contract Refactor — Stop Reporting Dependency Failure As Success](./refactor-failure-contract.md) | `Complete` | implemented + audited (3 GPT + 2 Gemini plan-audit |
 | [Install-Transaction WAL + VCS Parsing Debt (2026-07-26 triage)](./refactor-install-wal-vcs-2026-07.md) | `Complete` |  |
 | [Learning / Persona / Quickfix Reliability Debt (2026-07-26 triage)](./refactor-learning-persona-quickfix-2026-07.md) | `Complete` | all 21 entries resolved, none of them via this |
+| [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `Complete` | 2026-08-23) — code for all 7 in-scope topicIds |
 | [Model-Eval / Pricing Debt (2026-07-26 triage)](./refactor-model-eval-pricing-2026-07.md) | `Complete` |  |
 | [Refactor skill-governance — remove the `.github/skills/` escape hatch everywhere it still exists](./refactor-skill-governance.md) | `Complete` |  |
 | [Refactor static-analysis — make "I can't tell" representable in the repo's own guards and lints](./refactor-static-analysis.md) | `Complete` | implemented, code-audited (Cluster A: 6 GPT |

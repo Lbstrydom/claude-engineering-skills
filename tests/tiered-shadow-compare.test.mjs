@@ -13,14 +13,15 @@ import path from 'node:path';
 // would NOT reliably take effect first. Only a dynamic `await import()`,
 // which executes in normal top-to-bottom order, guarantees the override
 // lands before the module (and its store/db transitive imports) evaluates.
-// Prior value captured + restored so this override never leaks into a
-// differently-configured process.
-const _priorAuditDbUrl = process.env.AUDIT_DB_URL;
-process.env.AUDIT_DB_URL = '';
-process.on('exit', () => {
-  if (_priorAuditDbUrl === undefined) delete process.env.AUDIT_DB_URL;
-  else process.env.AUDIT_DB_URL = _priorAuditDbUrl;
-});
+//
+// Clears BOTH AUDIT_DB_URL and its alias AUDIT_POSTGRES_URL — client.mjs's
+// resolveDbUrl() falls back to the alias when the canonical var is empty, so
+// clearing only one still leaves a path to a real DB. Extracted into a
+// shared, directly-testable helper (see tests/helpers/air-gap.mjs) rather
+// than inlined here, so the air-gap itself has its own regression coverage
+// independent of this file's test bodies.
+import { airGapDbUrl } from './helpers/air-gap.mjs';
+airGapDbUrl();
 
 const {
   buildShadowCtx, compareAuditRunResults, runShadowTieredPipeline,

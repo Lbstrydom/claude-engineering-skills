@@ -103,6 +103,15 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // and its three partial unique indexes from Phase 1's migration. Two
   // edits, always — this list AND postgres-parity.yml.
   'tests/campaign-quarantine.test.mjs',
+  // Enrolled 2026-08-17 (docs/plans/refactor-misc-small-items-2026-07.md,
+  // topicId 8c95c520): proves the is_identity/identity_generation columns
+  // added to both generate-expected-schema.mjs's and setup-postgres.mjs's
+  // hand-duplicated tables query round-trip against a real
+  // GENERATED ALWAYS AS IDENTITY column, and that diffSchemas actually
+  // detects a real divergence — needs a real Postgres catalog
+  // (information_schema.columns), not something a mock can fabricate. Two
+  // edits, always — this list AND postgres-parity.yml.
+  'tests/postgres-parity-identity-columns.test.mjs',
   // ── Enrolled 2026-08-11 ──────────────────────────────────────────────────
   // Every entry below was `AUDIT_DB_TEST_URL`-gated and named by NO runner, so
   // each skipped itself everywhere and node reported the skip as a pass: 15

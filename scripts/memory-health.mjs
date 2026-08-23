@@ -24,37 +24,79 @@
 import './lib/load-env.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 
+// Config errors from an EXPLICITLY-set-but-invalid env var (never from an
+// absent one — absence is a normal default, not a misconfiguration).
+// Collected at module init (numEnv calls below run synchronously at import
+// time); main() hard-fails on this list before evaluating anything, so an
+// operator's bad config can't silently produce a green run — audit R1-H5:
+// a stderr WARNING alone is easy to miss on a CI job that still exits 0/1,
+// and this file's own stated design goal is "never silent", which a warning
+// on an otherwise-successful run does not actually satisfy.
+const CONFIG_ERRORS = [];
+
 // Parse a numeric env var, falling back to the default on absent/garbage. A bare
 // `Number("abc")` → NaN, and every threshold comparison against NaN is false → no
 // trigger ever fires → a silent FALSE-GREEN (the class this whole gate exists to
-// avoid). Warn loudly when an explicit value is unparseable so it's never silent.
-function numEnv(name, fallback) {
+// avoid).
+//
+// `min`/`max` reject an in-range-but-still-invalid value the same way: a
+// negative or fractional MEMORY_HEALTH_MIN_FINDINGS is finite (passes the
+// bare finiteness check) but structurally defeats the very guard it
+// configures — `insufficient = total < minFindingsForSignal`, and
+// `total` is always >= 0, so a threshold of 0 (not just negative) makes
+// `<` permanently false. `integer` catches the same class for count-typed
+// vars silently accepting a fractional value.
+function numEnv(name, fallback, { min = -Infinity, max = Infinity, integer = false } = {}) {
   const raw = process.env[name];
+  // ONLY a truly absent/empty var (never set, or `VAR=` with nothing after
+  // it) is "unset" — that's a normal default, not a misconfiguration. A
+  // whitespace-only value is NOT the same thing: someone wrote bytes into
+  // that env var. audit R2-H2 found that a bare `Number(" ")` coerces to 0,
+  // which for a var whose bounds include 0 (clusterMedianPairs' {min:0})
+  // would silently pass validity as a legitimate explicit "0" — so R2 made
+  // whitespace fall back silently. audit R3-H3 correctly called that a
+  // regression against the whole point of CONFIG_ERRORS: it turned an
+  // explicit (if malformed) value into a silent no-signal fallback, exactly
+  // the failure mode this function exists to close. Fixed properly: treat
+  // a non-empty-but-blank value as ALWAYS invalid (never as "absent"), so
+  // it hard-fails through CONFIG_ERRORS like any other malformed value.
   if (raw == null || raw === '') return fallback;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) {
-    process.stderr.write(`memory-health: WARNING — ${name}="${raw}" is not a finite number; using ${fallback}\n`);
+  const trimmed = raw.trim();
+  const n = Number(trimmed);
+  const bad = trimmed === '' || !Number.isFinite(n) || n < min || n > max || (integer && !Number.isInteger(n));
+  if (bad) {
+    const msg = `${name}="${raw}" is out of range/type [${min},${max}]${integer ? ' integer' : ''}`;
+    process.stderr.write(`memory-health: WARNING — ${msg}; using ${fallback}\n`);
+    CONFIG_ERRORS.push(msg);
     return fallback;
   }
   return n;
 }
 
-const WINDOW_DAYS = numEnv('MEMORY_HEALTH_WINDOW_DAYS', 30);
+// A 0-day window is degenerate (no observation period) — floor is 1, the
+// correctness bound, independent of what a *sensible* window size is.
+const WINDOW_DAYS = numEnv('MEMORY_HEALTH_WINDOW_DAYS', 30, { min: 1, integer: true });
 
 const THRESHOLDS = {
-  fuzzyReraiseRate: numEnv('MEMORY_HEALTH_FUZZY_RATE', 0.15),
-  clusterMedianPairs: numEnv('MEMORY_HEALTH_CLUSTER_MEDIAN', 5),
-  recurrenceRate: numEnv('MEMORY_HEALTH_RECURRENCE_RATE', 0.10),
-  minFindingsForSignal: numEnv('MEMORY_HEALTH_MIN_FINDINGS', 50),
+  fuzzyReraiseRate: numEnv('MEMORY_HEALTH_FUZZY_RATE', 0.15, { min: 0, max: 1 }),
+  // Unlike minFindingsForSignal below, this gates with `>=` (density trigger
+  // fires MORE easily at 0, not less), so 0 is a valid, non-bypassing value.
+  clusterMedianPairs: numEnv('MEMORY_HEALTH_CLUSTER_MEDIAN', 5, { min: 0, integer: true }),
+  recurrenceRate: numEnv('MEMORY_HEALTH_RECURRENCE_RATE', 0.10, { min: 0, max: 1 }),
+  // Must be >= 1, not >= 0: `insufficient = total_findings_in_window <
+  // minFindingsForSignal`, and total_findings_in_window is always >= 0, so a
+  // threshold of 0 makes the `<` comparison permanently false — the exact
+  // bypass this bound exists to close (same shape as a negative value).
+  minFindingsForSignal: numEnv('MEMORY_HEALTH_MIN_FINDINGS', 50, { min: 1, integer: true }),
   // Semantic cluster density (2026-07-21 migration off trigram): cosine over
   // finding_embeddings, same-file cross-run. 0.85 is the prototype's measuring
   // threshold (superset of trigram 0.5); higher-cosine churn is what the 0.92
   // suppression already removes.
-  clusterCosine: numEnv('MEMORY_HEALTH_CLUSTER_COSINE', 0.85),
+  clusterCosine: numEnv('MEMORY_HEALTH_CLUSTER_COSINE', 0.85, { min: 0, max: 1 }),
   // Coverage honesty: below this embedded-fraction the semantic reading is
   // NOT authoritative (unscored findings could harbour unseen churn), so the
   // trigger degrades to `unknown` rather than a false GREEN.
-  clusterMinCoverage: numEnv('MEMORY_HEALTH_CLUSTER_MIN_COVERAGE', 0.5),
+  clusterMinCoverage: numEnv('MEMORY_HEALTH_CLUSTER_MIN_COVERAGE', 0.5, { min: 0, max: 1 }),
 };
 
 // Server-side bound on the metrics RPC. Sized against the constraint that
@@ -67,7 +109,10 @@ const THRESHOLDS = {
 // error) while still using the time the check really has. The migrations'
 // own `SET statement_timeout` clause is decorative and cannot do this — see
 // the note in scripts/lib/db/rpc.mjs.
-const RPC_TIMEOUT_MS = numEnv('MEMORY_HEALTH_RPC_TIMEOUT_MS', 240_000);
+// 0 is Postgres's own sentinel for "unlimited statement timeout" — exactly
+// the runaway this constant exists to prevent (audit R1-M3), so the
+// correctness floor is 1ms, not 0.
+const RPC_TIMEOUT_MS = numEnv('MEMORY_HEALTH_RPC_TIMEOUT_MS', 240_000, { min: 1, integer: true });
 
 function parseArgs(argv) {
   const args = { out: null, json: false };
@@ -81,7 +126,8 @@ function parseArgs(argv) {
         'Exit codes:\n' +
         '  0 — all metrics within thresholds (or insufficient data)\n' +
         '  1 — at least one trigger fired — graphify-shape adoption worth reconsidering\n' +
-        '  2 — Supabase connection / RPC failed (treated as infra error, not a health signal)\n'
+        '  2 — DB connection / RPC failed, OR an explicit env-var threshold is invalid\n' +
+        '      (neither is a health signal — fix the config or connection and re-run)\n'
       );
       process.exit(0);
     }
@@ -385,6 +431,20 @@ function atomicWrite(filePath, contents) {
 
 async function main() {
   const args = parseArgs(process.argv);
+
+  // Hard-fail on explicit-but-invalid config BEFORE evaluating anything — a
+  // misconfigured decision gate must not exit 0/1 as if it evaluated real
+  // thresholds. Distinct exit 2, matching this file's own existing "not a
+  // health signal, an infra/operational error" precedent for RPC failures.
+  if (CONFIG_ERRORS.length > 0) {
+    process.stderr.write(
+      `memory-health: ${CONFIG_ERRORS.length} invalid config value(s) — refusing to run with silently-substituted defaults:\n`
+      + CONFIG_ERRORS.map((m) => `  - ${m}\n`).join('')
+      + 'Fix the env var(s) above, or unset them to use the built-in defaults.\n'
+    );
+    process.exit(2);
+  }
+
   let metrics;
   try {
     metrics = await callRpc();
@@ -425,7 +485,7 @@ async function main() {
   process.exit((evaluation.firedCount > 0 || friction.hardFail || friction.errored) ? 1 : 0);
 }
 
-export const _internals = { atomicWrite, evaluateClusterDensity, capNote, THRESHOLDS };
+export const _internals = { atomicWrite, evaluateClusterDensity, capNote, THRESHOLDS, numEnv, CONFIG_ERRORS };
 
 const isMain = (() => {
   try {
