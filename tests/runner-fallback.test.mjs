@@ -97,6 +97,19 @@ test('isValidRepoSlug: accepts plausible owner/repo slugs', () => {
   assert.ok(isValidRepoSlug('org-name/repo_name.js'));
 });
 
+test('isValidRepoSlug: accepts a GitHub Enterprise Managed User (EMU) owner', () => {
+  // GitHub synthesizes EMU identities as `<username>_<enterprise-shortcode>`
+  // — a real, live example this class of machine authenticates against.
+  assert.ok(isValidRepoSlug('louis-strydom_wartsila/storyline'));
+  assert.ok(isValidRepoSlug('octocat_myco/hello-world'));
+});
+
+test('isValidRepoSlug: rejects malformed underscore placement in the owner segment', () => {
+  assert.equal(isValidRepoSlug('_octocat/hello-world'), false, 'leading underscore');
+  assert.equal(isValidRepoSlug('octocat_/hello-world'), false, 'trailing underscore');
+  assert.equal(isValidRepoSlug('octo__cat/hello-world'), false, 'doubled underscore');
+});
+
 test('isValidRepoSlug: rejects shell metacharacters and malformed shapes (M3)', () => {
   // M3: the resolved slug is interpolated unescaped into a printed
   // copy-paste `config --url https://github.com/<slug> ...` recipe.
@@ -110,6 +123,9 @@ test('isValidRepoSlug: rejects shell metacharacters and malformed shapes (M3)', 
   assert.equal(isValidRepoSlug(''), false);
   assert.equal(isValidRepoSlug(null), false);
   assert.equal(isValidRepoSlug(undefined), false);
+  // Regression: the underscore widening must not open a metacharacter path.
+  assert.equal(isValidRepoSlug('octocat_; rm -rf ~/hello-world'), false, 'metachar after underscore');
+  assert.equal(isValidRepoSlug('octocat_`whoami`/hello-world'), false, 'backtick after underscore');
 });
 
 test('resolveRepoSlugFromArg: returns the value for a valid slug', () => {

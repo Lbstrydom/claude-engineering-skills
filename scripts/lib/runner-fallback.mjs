@@ -106,15 +106,19 @@ export function runnerAssetTokens(platform, arch) {
   return { os, arch: archToken };
 }
 
-// Owner: starts alnum, then up to 38 more alnum/hyphen chars (GitHub's
-// 39-char username/org cap). Repo: alnum, `.`, `_`, `-`, 1-100 chars. Not a
+// Owner: either a standard github.com owner (starts alnum, then up to 38
+// more alnum/hyphen chars — GitHub's 39-char username/org cap), or a GitHub
+// Enterprise Managed User (EMU) owner, which GitHub itself synthesizes as
+// `<username>_<enterprise-shortcode>` — exactly one underscore, never
+// leading/trailing/doubled. Repo: alnum, `.`, `_`, `-`, 1-100 chars. Not a
 // byte-perfect mirror of GitHub's grammar (e.g. it doesn't reject a lone
 // `.`/`..` repo name), but it excludes every shell metacharacter, which is
 // the property that matters: the resolved slug gets printed verbatim into a
 // copy-paste `config --url https://github.com/<slug> ...` recipe
 // (actions-runner-doctor.mjs printRecipe) and passed to `gh api
 // repos/<slug>/...`.
-const REPO_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
+const REPO_SLUG_RE =
+  /^(?:[A-Za-z0-9][A-Za-z0-9-]{0,38}|[A-Za-z0-9][A-Za-z0-9-]{0,38}_[A-Za-z0-9-]{1,38})\/[A-Za-z0-9._-]{1,100}$/;
 
 /**
  * Whether `slug` is shaped like a GitHub `owner/repository` slug safe to
