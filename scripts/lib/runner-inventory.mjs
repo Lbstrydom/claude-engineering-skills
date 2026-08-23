@@ -246,9 +246,16 @@ export function parseRunnerConfig(rawContent, context = {}) {
     return { root, error: { code: 'MALFORMED', detail: 'no .runner content supplied' } };
   }
 
+  // The real actions/runner installer writes `.runner` as UTF-8 WITH a BOM
+  // on Windows (verified against a live install) — JSON.parse has no BOM
+  // tolerance, so every genuine Windows install failed to parse until this
+  // strip. Only the BOM codepoint itself; never a wider trim that could mask
+  // other leading-whitespace corruption.
+  const content = rawContent.charCodeAt(0) === 0xFEFF ? rawContent.slice(1) : rawContent;
+
   let parsed;
   try {
-    parsed = JSON.parse(rawContent);
+    parsed = JSON.parse(content);
   } catch (err) {
     return { root, error: { code: 'MALFORMED', detail: `not valid JSON: ${err.message}` } };
   }

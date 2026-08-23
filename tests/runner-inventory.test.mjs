@@ -432,6 +432,13 @@ test('parseRunnerConfig: truncated/invalid JSON returns the error variant, never
   assert.equal(result.agentId, undefined);
 });
 
+test('parseRunnerConfig: a leading UTF-8 BOM does not break parsing (field verification, 2026-08-23 — the real actions/runner installer writes .runner as UTF-8-with-BOM on Windows; this failed against a live install before the fix)', () => {
+  const withBom = '\uFEFF' + SYNTHETIC_RUNNER_JSON;
+  const result = parseRunnerConfig(withBom, { root: 'C:/actions-runner' });
+  assert.equal(result.error, undefined);
+  assert.equal(result.agentId, 999001);
+});
+
 test('parseRunnerConfig: valid JSON that is not an object (array, null, string) is MALFORMED', () => {
   for (const content of ['[]', 'null', '"just a string"', '42']) {
     const result = parseRunnerConfig(content, { root: '/x' });
