@@ -30,6 +30,30 @@ AUDIT_DB_SSL_MODE=no-verify       # Supabase poolers use an internal CA
   preserve server-side prepared statements and the `options=-c search_path=public`
   startup pin the `db/` seam relies on.
 
+**Azure Database for PostgreSQL — Flexible Server:**
+
+```
+AUDIT_DB_URL=postgres://<role>:<password>@<name>.postgres.database.azure.com:5432/audit_loop
+AUDIT_DB_SSL_MODE=require         # the server sets require_secure_transport = ON
+```
+
+- `sslmode=require` is mandatory — the server refuses plaintext connections.
+- **No `NODE_EXTRA_CA_CERTS` needed.** Azure's chain is already in Node's
+  bundled trust store — verified on Node 22.23 against PostgreSQL 18.4 with
+  `rejectUnauthorized: true`. This is where Azure differs from Supabase, whose
+  shared poolers use an internal CA and do need `no-verify`. Don't copy the
+  Supabase setting across; `require` is both correct and stricter here.
+- Access is IP-allowlisted per firewall rule, so a working DSN is **not**
+  portable to another developer's machine. A connection that *hangs* is the
+  firewall; a connection that reports a *certificate* error is not. Tell them
+  apart before debugging the wrong one:
+
+  ```powershell
+  (Test-NetConnection -ComputerName <name>.postgres.database.azure.com -Port 5432).TcpTestSucceeded
+  ```
+
+  `False` → your IP needs adding by whoever owns the server.
+
 **Plain / self-hosted Postgres** (localhost, Docker, RDS, Neon, Railway, …):
 
 ```
@@ -59,9 +83,50 @@ no separate read/write keys):
   `CREATEROLE` is an explicit v1-unsupported case (plan §10).
 - **Runtime role** (the `pg.Pool` in [`scripts/lib/db/client.mjs`](../../scripts/lib/db/client.mjs))
   — owns the audit-loop objects, OR holds full DML + `EXECUTE` on the 9 RPCs +
-  schema/sequence `USAGE`. Ownership **bypasses RLS** — correct for the single-tenant
+  schema/sequence `USAGE` **plus `BYPASSRLS`** (see below).
+  Ownership **bypasses RLS** — correct for the single-tenant
   store. On a Supabase project, `AUDIT_DB_URL` is the `postgres`-role string and
   naturally owns `public`.
+
+### A non-owner runtime role needs `BYPASSRLS` (2026-08-23)
+
+Full DML alone is not enough, and the failure is silent in the dangerous
+direction: `SELECT` returns **zero rows** instead of erroring, so a
+misconfigured role reads as an empty store rather than a broken one.
+
+The store inherits RLS-enabled tables from its Supabase ancestry but carries
+almost no policies. Measured on the Azure `audit_loop` store: **59 of 76 public
+tables have `relrowsecurity = true` and zero policies**; the only 7 policies are
+`TO public` on the `symbol_*` / `domain_summaries` tables. A role that neither
+owns the table nor holds `BYPASSRLS` is default-denied across most of the schema.
+
+`GRANT service_role TO <runtime role>` does **not** fix this — the compat
+bootstrap creates `service_role` with `rolbypassrls = false`, and no policy names
+it. Grant the attribute on the role itself:
+
+```sql
+CREATE ROLE audit_app WITH LOGIN BYPASSRLS PASSWORD '<strong password>';
+```
+
+A `CREATEROLE` role can confer `BYPASSRLS` only when it holds the attribute
+itself (PG 16+) — an Azure server admin does. Verify before trusting a new role:
+
+```sql
+SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user;
+```
+
+### Migrations need the admin DSN
+
+Once the runtime role is genuinely least-privilege it has no `CREATE` on
+`public`, so `setup-postgres.mjs --migrate` fails with `permission denied for
+schema public`. That is the boundary working, not a fault. Shell env beats
+`.env` in the loader, so override for migration runs without editing any file:
+
+```bash
+AUDIT_DB_URL="postgres://<admin>:<password>@<host>:5432/audit_loop" \
+AUDIT_DB_SSL_MODE=require \
+node scripts/setup-postgres.mjs --migrate
+```
 
 ## Setup recipe
 
@@ -248,7 +313,7 @@ AUDIT_DB_URL=… node scripts/setup-postgres.mjs --check-drift
 
 `AUDIT_DB_URL` and the LLM API keys (`OPENAI_API_KEY`, `GEMINI_API_KEY`,
 `ANTHROPIC_API_KEY`) are **shared across all consumer repos** using this bundle — same
-Supabase project, same accounts. Rather than duplicating them in each repo's `.env`,
+store, same accounts. Rather than duplicating them in each repo's `.env`,
 the loader supports a per-user shared file at **`~/.audit-loop.env`** that consumers
 auto-inherit.
 
@@ -298,6 +363,21 @@ recovery.
 **Opt-out**: don't run `setup:cloud`. The file never gets created; consumer repos that
 need cloud just set `AUDIT_DB_URL` in their own `.env` directly. Public-repo safety —
 the file lives in `os.homedir()`, never in any git tree.
+
+**Current topology** (2026-08-23): the shared file points every consumer repo at
+the self-hosted NAS store (see
+[`self-hosted-store.md`](self-hosted-store.md)). One repo — `storyline` — is
+deliberately pinned to a separate Azure Postgres store by a repo-local
+`AUDIT_DB_URL`, so its telemetry stays out of the shared learning corpus. The
+legacy Supabase audit project is gone; `SUPABASE_AUDIT_*` keys still lying around
+in consumer `.env` files are dead config read by no runtime code.
+
+**Pinning one repo to a different store**: set `AUDIT_DB_URL` **and**
+`AUDIT_DB_SSL_MODE` in that repo's own `.env`. The loader treats the DB vars as
+one bundle keyed by DSN provenance — when a higher-precedence layer supplies a
+DSN, the shared layer contributes **none** of the DB-group keys. So a repo-local
+DSN can never be silently paired with the shared file's SSL mode; setting only
+the URL and inheriting the mode is impossible by design. Set both or neither.
 
 ## Prerequisites
 
