@@ -18,6 +18,8 @@
     "files:tests/fixtures/gate-honesty/negative/nonexistent-implementation/missing-impl-tests.mjs",
     "files:tests/fixtures/gate-honesty/negative/stated-absent/real-impl.mjs",
     "files:tests/fixtures/gate-honesty/negative/stated-absent/real-tests.mjs",
-    "files:tests/fixtures/harness-plan/src/service.mjs"
+    "files:tests/fixtures/harness-plan/src/service.mjs",
+    "files:tests/fixtures/tiered-shadow-airgap-probe.mjs",
+    "files:tests/install/fixtures/receipt-cleanup-on-failure.mjs"
   ]
 }
