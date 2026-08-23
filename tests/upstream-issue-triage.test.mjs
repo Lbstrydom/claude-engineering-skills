@@ -21,7 +21,7 @@ import {
   parseEnvelope, writeEnvelope, drainOutbox, upstreamTransition,
   OUTBOX_ENVELOPE_VERSION, VALID_SEVERITIES,
 } from '../scripts/lib/upstream/commands.mjs';
-import { LEGAL_TRANSITIONS } from '../scripts/lib/store/upstream-issues.mjs';
+import { LEGAL_TRANSITIONS, listUpstreamIssues } from '../scripts/lib/store/upstream-issues.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 const SHA = 'a'.repeat(40);
@@ -53,8 +53,34 @@ test('freshness: sha absent from this history → unknown(sha-not-in-history)', 
   assert.equal(r.reason, 'sha-not-in-history');
 });
 
+test('freshness: shaInHistory null/undefined (ancestry check errored) is UNKNOWN, not current/stale (closes round-5 audit M11)', () => {
+  // resolveGitFacts deliberately leaves shaInHistory:null when the ancestry
+  // check itself failed to run — "unknown, not absent" (its own comment).
+  // This used to fall through to the distance-based verdict just like
+  // sourceDirty:null did before round-3 M13.
+  for (const v of [null, undefined]) {
+    const r = classifyReportFreshness({
+      reportedSha: SHA, shaInHistory: v, distanceAhead: 4, sourceDirty: false,
+    });
+    assert.equal(r.verdict, 'unknown', `shaInHistory=${v} must be unknown, not stale/current`);
+    assert.equal(r.reason, 'sha-history-unverified');
+  }
+});
+
+test('freshness: a non-numeric or negative distanceAhead is unknown, not current (closes round-6 audit M2)', () => {
+  for (const bad of [NaN, 'not-a-number', -5, -0.5]) {
+    const r = classifyReportFreshness({
+      reportedSha: SHA, shaInHistory: true, distanceAhead: bad, sourceDirty: false,
+    });
+    assert.equal(r.verdict, 'unknown', `distanceAhead=${bad} must be unknown, not current/stale`);
+    assert.equal(r.reason, 'distance-invalid');
+  }
+});
+
 test('freshness: git unavailable → unknown, NOT current', () => {
-  const r = classifyReportFreshness({ reportedSha: SHA, shaInHistory: true, distanceAhead: null });
+  const r = classifyReportFreshness({
+    reportedSha: SHA, shaInHistory: true, distanceAhead: null, sourceDirty: false,
+  });
   assert.equal(r.verdict, 'unknown');
   assert.equal(r.reason, 'git-unavailable');
 });
@@ -86,39 +112,81 @@ test('freshness: dirty at distance 0 is NOT current — the bundle may be AHEAD 
   assert.equal(r.reason, 'source-tree-dirty');
 });
 
-test('freshness: sourceDirty null/absent preserves the old verdicts — absence is not "clean"', () => {
-  // Every manifest published before the field existed reads null here. Those
-  // must keep behaving exactly as before rather than degrading en masse to
-  // unknown, which would make the whole signal useless overnight.
-  for (const v of [null, undefined, false]) {
+test('freshness: sourceDirty === false (confirmed clean) uses the distance-based verdict', () => {
+  const r = classifyReportFreshness({
+    reportedSha: SHA, shaInHistory: true, distanceAhead: 4, sourceDirty: false,
+  });
+  assert.equal(r.verdict, 'stale');
+  assert.equal(r.reason, 'behind-head');
+});
+
+test('freshness: sourceDirty null/absent is UNKNOWN provenance, not "clean" (closes round-3 audit M13)', () => {
+  // Every manifest published before the field existed reads null here. This
+  // used to fall through to the distance-based verdict (the exact bug this
+  // test previously enshrined as correct) — an unverified provenance report
+  // could read `current`. readBundleStamp's own docstring: "absence must
+  // never read as clean" — this is the caller-side half of that contract.
+  for (const v of [null, undefined]) {
     const r = classifyReportFreshness({
       reportedSha: SHA, shaInHistory: true, distanceAhead: 4, sourceDirty: v,
     });
-    assert.equal(r.verdict, 'stale', `sourceDirty=${v} must not change the verdict`);
-    assert.equal(r.reason, 'behind-head');
+    assert.equal(r.verdict, 'unknown', `sourceDirty=${v} must be unknown, not stale/current`);
+    assert.equal(r.reason, 'source-dirty-unknown');
   }
 });
 
 test('freshness: behind HEAD → stale, carrying distance and age', () => {
   const r = classifyReportFreshness({
-    reportedSha: SHA, shaInHistory: true, distanceAhead: 28, ageDays: 3,
+    reportedSha: SHA, shaInHistory: true, distanceAhead: 28, ageDays: 3, sourceDirty: false,
   });
   assert.equal(r.verdict, 'stale');
   assert.equal(r.distanceAhead, 28);
   assert.equal(r.ageDays, 3);
 });
 
-test('freshness: at HEAD → current', () => {
-  const r = classifyReportFreshness({ reportedSha: SHA, shaInHistory: true, distanceAhead: 0 });
+test('freshness: at HEAD with confirmed-clean provenance → current', () => {
+  const r = classifyReportFreshness({
+    reportedSha: SHA, shaInHistory: true, distanceAhead: 0, sourceDirty: false,
+  });
   assert.equal(r.verdict, 'current');
 });
 
 test('freshness: age alone never makes a verdict — no invented staleness threshold', () => {
   const r = classifyReportFreshness({
-    reportedSha: SHA, shaInHistory: true, distanceAhead: 0, ageDays: 9999,
+    reportedSha: SHA, shaInHistory: true, distanceAhead: 0, ageDays: 9999, sourceDirty: false,
   });
   assert.equal(r.verdict, 'current', 'a very old bundle that is still at HEAD is current');
   assert.equal(r.ageDays, 9999, 'age is reported…');
+});
+
+// ── listUpstreamIssues: the `before` cursor is all-or-nothing (round-3 audit M17) ──
+//
+// A fake, unreachable DSN is enough here: the partial-cursor check returns
+// before any query is issued, so no real DB connection is ever attempted.
+// Same technique as tests/mark-findings-remediation.test.mjs's DB-error path.
+
+test('listUpstreamIssues rejects a PARTIAL before cursor (createdAt with no id) rather than silently paging from the top', async () => {
+  const prev = process.env.AUDIT_DB_URL;
+  process.env.AUDIT_DB_URL = 'postgresql://nobody@127.0.0.1:1/nonexistent';
+  try {
+    const r = await listUpstreamIssues({ before: { createdAt: '2026-01-01T00:00:00Z' } });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /before cursor must have both/);
+  } finally {
+    if (prev === undefined) delete process.env.AUDIT_DB_URL; else process.env.AUDIT_DB_URL = prev;
+  }
+});
+
+test('listUpstreamIssues rejects a PARTIAL before cursor (id with no createdAt)', async () => {
+  const prev = process.env.AUDIT_DB_URL;
+  process.env.AUDIT_DB_URL = 'postgresql://nobody@127.0.0.1:1/nonexistent';
+  try {
+    const r = await listUpstreamIssues({ before: { id: 'aaaaaaaa-1111-2222-3333-444444444444' } });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /before cursor must have both/);
+  } finally {
+    if (prev === undefined) delete process.env.AUDIT_DB_URL; else process.env.AUDIT_DB_URL = prev;
+  }
 });
 
 // ── annotatePriorFix: the direction fixture ─────────────────────────────────

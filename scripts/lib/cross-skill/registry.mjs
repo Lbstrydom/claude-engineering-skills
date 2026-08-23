@@ -771,8 +771,13 @@ export const REGISTRY = Object.freeze([
   {
     name: 'upstream',
     flags: ['title', 'body', 'severity', 'affected-path', 'actor', 'id', 'note', 'commit',
-      'state', 'before', 'limit', 'repo-id', { name: 'worksheet', kind: 'boolean' }],
-    positionals: { verbs: ['report', 'list', 'ack', 'fix', 'wont-fix', 'drain'] },
+      'state', 'before', 'limit', 'repo-id', 'disposition', { name: 'worksheet', kind: 'boolean' },
+      // `--gate` (round-3 audit H5 compromise): `reconcile --gate` exits non-zero
+      // when any terminal db row still carries the migration-generated catch-all
+      // sentinel disposition — a post-deploy release-completion check, not just
+      // an advisory worksheet.
+      { name: 'gate', kind: 'boolean' }],
+    positionals: { verbs: ['report', 'list', 'ack', 'fix', 'wont-fix', 'drain', 'reconcile'] },
     payload: 'none',
     scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop', degradeShape: {},
     load: () => import('./commands/quality.mjs').then((m) => m.upstreamCmd),

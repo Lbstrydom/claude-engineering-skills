@@ -31,6 +31,7 @@ import path from 'node:path';
 import {
   resolveCloudConfig, sharedEnvPath, discoverLocalEnvPath,
 } from './lib/shared-cloud-config.mjs';
+import { Report } from './lib/doctor/report.mjs';
 
 // ── Arg parsing ───────────────────────────────────────────────────────────────
 
@@ -50,8 +51,13 @@ const REPO_NAME = path.basename(REPO_PATH);
 /**
  * Load .env from the target repo path without polluting process.env,
  * so multiple repos can be checked in sequence.
+ *
+ * Exported (consumer-friction-doctor plan §2.3a) — this is the exact function
+ * the doctor's probe adapters call as `loadEnv(ctx.subjectRoot)`, the same one
+ * this CLI already uses via its own `--repo-path` flag. No new
+ * environment-loading mechanism is introduced.
  */
-function loadEnv(repoPath) {
+export function loadEnv(repoPath) {
   const envFile = path.join(repoPath, '.env');
   if (!fs.existsSync(envFile)) return {};
 
@@ -123,42 +129,24 @@ ORDER BY CASE severity WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2 ELSE 3 END, count
 `.trim();
 
 // ── Report builder ────────────────────────────────────────────────────────────
+// `Report` moved to `lib/doctor/report.mjs` (consumer-friction-doctor plan §6)
+// so this CLI and the doctor's probe adapters render findings through one
+// class. Imported above; unchanged shape.
 
-class Report {
-  constructor() {
-    this.sections = [];
-    this.failures = 0;
-    this.warnings = 0;
-  }
+// ── Doctor adapter result shape ────────────────────────────────────────────
 
-  section(title) {
-    this.sections.push({ title, items: [] });
-    return this;
-  }
-
-  _last() { return this.sections.at(-1); }
-
-  pass(label, detail = '') {
-    this._last().items.push({ status: 'PASS', label, detail, fix: null });
-  }
-
-  fail(label, detail = '', fix = '') {
-    this._last().items.push({ status: 'FAIL', label, detail, fix });
-    this.failures++;
-  }
-
-  warn(label, detail = '', fix = '') {
-    this._last().items.push({ status: 'WARN', label, detail, fix });
-    this.warnings++;
-  }
-
-  info(label, detail = '') {
-    this._last().items.push({ status: 'INFO', label, detail, fix: null });
-  }
-
-  fix(label, detail = '') {
-    this._last().items.push({ status: 'FIX', label, detail, fix: null });
-  }
+/**
+ * Flatten a `Report` into the plain `{items, failures, warnings}` shape the
+ * doctor's probe adapters return (§2.3a) — never the class instance itself,
+ * so a caller needs no `Report` import to consume the result.
+ * @param {Report} report
+ */
+function toAdapterResult(report) {
+  return {
+    items: report.sections.flatMap((s) => s.items.map((it) => ({ ...it, section: s.title }))),
+    failures: report.failures,
+    warnings: report.warnings,
+  };
 }
 
 // ── Feature: Audit-Loop ───────────────────────────────────────────────────────
@@ -208,7 +196,7 @@ function checkAuditApiKeys(env, report) {
   }
 }
 
-async function checkAuditSupabase(env, report) {
+async function checkAuditSupabase(env, report, repoPath = REPO_PATH) {
   // M4 — AUDIT_DB_URL is the new runtime persistence env. The legacy
   // SUPABASE_AUDIT_URL + ANON_KEY pair is sunset for runtime; we still
   // surface them as informational (other tooling may read them during
@@ -217,9 +205,17 @@ async function checkAuditSupabase(env, report) {
   // config so the warn correctly reflects whether ~/.audit-loop.env is
   // providing the value. process.env first (genuine externals), then local
   // .env via worktree-safe discovery, then ~/.audit-loop.env.
+  //
+  // `repoPath` defaults to this CLI's own module-level REPO_PATH (derived
+  // from `--repo-path`/cwd) so main()'s call site is unchanged — but it is a
+  // real parameter, not a closure over that constant, because the doctor's
+  // adapter (`evaluateAuditSupabase`) must resolve local `.env` discovery
+  // against an arbitrary `subjectRoot`, never this CLI's own argv-derived
+  // path (closes the R3-H1 class: the subjectRoot must actually reach
+  // EVERY environment-loading call, not just `loadEnv` itself).
   const cloud = resolveCloudConfig({
     processEnv: env,                                     // env from loadEnv() — the target repo's local .env contents
-    localEnvPath: discoverLocalEnvPath(REPO_PATH),
+    localEnvPath: discoverLocalEnvPath(repoPath),
   });
   if (cloud.AUDIT_DB_URL.source === 'unset') {
     if (fs.existsSync(sharedEnvPath())) {
@@ -271,15 +267,15 @@ async function checkAuditSupabase(env, report) {
   }
 }
 
-async function checkAuditLoop(env, report) {
+async function checkAuditLoop(env, report, repoPath = REPO_PATH) {
   report.section('Audit-Loop');
   checkAuditApiKeys(env, report);
-  await checkAuditSupabase(env, report);
+  await checkAuditSupabase(env, report, repoPath);
 }
 
 // ── Feature: Persona-Test ─────────────────────────────────────────────────────
 
-async function checkPersonaTest(env, report) {
+async function checkPersonaTest(env, report, repoPath = REPO_PATH) {
   report.section('Persona-Test');
 
   // M4: persona session memory lives in the SAME Postgres store as the audit
@@ -288,11 +284,12 @@ async function checkPersonaTest(env, report) {
   // Supabase project or supabase-js client anymore; the legacy
   // PERSONA_TEST_SUPABASE_URL / _ANON_KEY vars are read by NO runtime code.
   // Probe the persona tables through the same pg seam the audit tables use.
+  const repoName = path.basename(repoPath);
   if (env.PERSONA_TEST_REPO_NAME) {
     report.pass('PERSONA_TEST_REPO_NAME', env.PERSONA_TEST_REPO_NAME);
   } else {
     report.warn('PERSONA_TEST_REPO_NAME not set', 'audit-loop cross-references will not work',
-      `Add PERSONA_TEST_REPO_NAME=${REPO_NAME} to .env`);
+      `Add PERSONA_TEST_REPO_NAME=${repoName} to .env`);
   }
 
   // DSN is injected by injectResolvedDbEnv() in main(). Absent → cloud is off;
@@ -578,10 +575,10 @@ async function checkBrowser(report) {
  * runs on its own Postgres. Injecting both makes the probe correct for either.
  * Never clobber a genuine shell export (`process.env[key] === undefined` guard).
  */
-function injectResolvedDbEnv(env) {
+export function injectResolvedDbEnv(env, repoPath = REPO_PATH) {
   const cloud = resolveCloudConfig({
     processEnv: env,
-    localEnvPath: discoverLocalEnvPath(REPO_PATH),
+    localEnvPath: discoverLocalEnvPath(repoPath),
   });
   for (const key of ['AUDIT_DB_URL', 'AUDIT_DB_SSL_MODE']) {
     const v = cloud[key]?.value;
@@ -589,6 +586,41 @@ function injectResolvedDbEnv(env) {
       process.env[key] = v;
     }
   }
+}
+
+// ── Doctor probe adapters (consumer-friction-doctor plan §2.3a) ────────────
+//
+// Each function is the pure-ish (process.env DSN injection aside — see
+// injectResolvedDbEnv's own docstring on the "genuine shell export" guard,
+// pre-existing behaviour this plan does not change) counterpart of the
+// mutate-a-passed-Report checks above: it builds its OWN Report, runs the
+// SAME check body `main()` uses, and returns `{items, failures, warnings}`
+// instead of mutating a caller-supplied instance. `scripts/lib/doctor/probes.mjs`
+// calls these with `ctx.subjectRoot` — never this CLI's own argv-derived
+// REPO_PATH — which is why every check body above now takes `repoPath` as a
+// real parameter rather than closing over the module constant.
+
+/** `evaluateAuditSetup` — API-key configuration only; no I/O, no DB. */
+export function evaluateAuditSetup(env) {
+  const report = new Report();
+  report.section('Audit-Loop (API keys)');
+  checkAuditApiKeys(env, report);
+  return toAdapterResult(report);
+}
+
+/** `evaluateAuditSupabase` — DSN + table/view presence. Needs `process.env.AUDIT_DB_URL`. */
+export async function evaluateAuditSupabase(env, repoPath = REPO_PATH) {
+  const report = new Report();
+  report.section('Audit-Loop (Supabase)');
+  await checkAuditSupabase(env, report, repoPath);
+  return toAdapterResult(report);
+}
+
+/** `evaluatePersonaTest` — persona tables. Needs `process.env.AUDIT_DB_URL`. */
+export async function evaluatePersonaTest(env, repoPath = REPO_PATH) {
+  const report = new Report();
+  await checkPersonaTest(env, report, repoPath);
+  return toAdapterResult(report);
 }
 
 async function main() {
@@ -608,9 +640,20 @@ async function main() {
   process.exit(report.failures > 0 ? 1 : 0);
 }
 
-try {
-  await main();
-} catch (err) {
-  console.error(`check-setup failed: ${err.message}`);
-  process.exit(1);
+// Guarded (consumer-friction-doctor plan §2.3a) — this file is now also a
+// LIBRARY (the doctor's probes.mjs imports `loadEnv`/`evaluateAuditSetup`/
+// etc.), and an unguarded top-level `await main()` would call `process.exit()`
+// the instant any importer loaded this module. Same invocation-detection
+// pattern every other dual CLI/library entry point in this repo uses
+// (skills-hydrate.mjs, sync-isolation-verify.mjs).
+const invokedDirectly = import.meta.url === `file://${process.argv[1]}`
+  || process.argv[1]?.endsWith('check-setup.mjs');
+
+if (invokedDirectly) {
+  try {
+    await main();
+  } catch (err) {
+    console.error(`check-setup failed: ${err.message}`);
+    process.exit(1);
+  }
 }

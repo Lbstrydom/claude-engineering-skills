@@ -308,11 +308,11 @@ Every top-level CLI script that needs to prove its imports survive relocation im
 if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 ```
 
-at the head of `main()`. Today: `check-setup.mjs`, `cross-skill.mjs`, `cache-hitrate-check.mjs`, `symbol-index/drift.mjs`, `security-memory/refresh-incidents.mjs`. Library modules (no `main()`) instead get an import-test in [`tests/relocation-guard.test.mjs`](tests/relocation-guard.test.mjs). The CI guard fails if a CLI script in `CLI_SMOKE_SET` lacks the handler.
+at the head of `main()`. Today: `check-setup.mjs`, `doctor.mjs`, `cross-skill.mjs`, plus others in `CLI_SMOKE_SET`. Library modules (no `main()`) get an import-test in [`tests/relocation-guard.test.mjs`](tests/relocation-guard.test.mjs); the CI guard fails if a `CLI_SMOKE_SET` script lacks the handler.
 
 ### Adopting these skills in a new consumer repo
 
-See [`docs/runbooks/consumer-adoption.md`](docs/runbooks/consumer-adoption.md) for the one-time migration recipe (legacy file cleanup, gitignore block, manifest layout transition).
+See [`docs/runbooks/consumer-adoption.md`](docs/runbooks/consumer-adoption.md) §Diagnostics for the migration recipe and `doctor` — one command over every adoption-friction class, ratcheted by `npm run upstream:coverage:gate`.
 
 ## Browser Tool Setup (persona-test)
 

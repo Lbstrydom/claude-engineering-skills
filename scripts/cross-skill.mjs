@@ -158,7 +158,7 @@ const [subcommand, ...rest] = process.argv.slice(2);
  * CLI (`friction-log` → friction-log.mjs, `learning-replay` → learning/replay.mjs),
  * so those CLIs' own flags are included too.
  */
-const KNOWN_FLAGS = [
+export const KNOWN_FLAGS = [
   // ── Global / payload ──────────────────────────────────────────────────────
   '--json', '--stdin', '--help', '--selfcheck-relocation',
   // Registry introspection (conformance/ratchet suites read the running CLI's
@@ -219,7 +219,11 @@ const KNOWN_FLAGS = [
   // ── upstream <report|list|ack|fix|wont-fix|drain> ─────────────────────────
   // (--title, --body, --severity, --commit, --state, --limit, --out, --worksheet
   //  are already declared above and shared with other subcommands)
-  '--affected-path', '--id', '--note', '--before',
+  // `--disposition` (consumer-friction-doctor plan §2.4): required for
+  // `fix`/`wont-fix` — one of probe:<id>, test:<path>, exempt:<reason>.
+  // `--gate` (round-3 audit H5 compromise): `reconcile --gate` exits non-zero
+  // on any unresolved catch-all-sentinel row.
+  '--affected-path', '--id', '--note', '--before', '--disposition', '--gate',
   // ── write-spill <status|drain> (durable audit-store writes) ───────────────
   '--cap',
   // `--paths` is deliberately NOT here. An older acceptance criterion
@@ -1097,4 +1101,12 @@ async function main() {
   }
 }
 
-main();
+// Guarded so this module can be safely IMPORTED (e.g. by
+// tests/cross-skill-flag-registry-parity.test.mjs, round-3 audit H3) without
+// executing the CLI against the importing process's own argv — matching the
+// `invokedDirectly` convention every other top-level CLI script in this
+// bundle already follows.
+const invokedDirectly = import.meta.url === `file://${process.argv[1]}`
+  || process.argv[1]?.endsWith('cross-skill.mjs');
+
+if (invokedDirectly) main();

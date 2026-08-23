@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "gate": "upstream:coverage:gate",
+  "guards": "every TERMINAL upstream report carries a disposition that resolves — a doctor probe id, a tracked regression test, or a written exemption",
+  "gates": [
+    {
+      "id": "upstream-coverage-gate-detects-an-unresolvable-probe-disposition",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "npm run upstream:coverage:gate",
+      "implementation": "scripts/check-upstream-probe-coverage.mjs",
+      "tests": ["tests/gate-poison-pills.test.mjs"],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": ["scripts/check-upstream-probe-coverage.mjs", "--gate"],
+        "needsGit": true,
+        "overlay": {
+          "scripts/upstream-dispositions.json": "tests/fixtures/poison/upstream-dispositions-bad-probe.json.txt"
+        },
+        "expectExit": 1,
+        "expectStderr": "does not resolve",
+        "why": "A ledger entry citing a probe id the doctor registry no longer has — the exact drift a probe rename or retirement would produce silently otherwise. This is the SILENT variant: the file parses as valid JSON, every OTHER entry is untouched, and without this gate the ratchet would report a closed upstream report as covered when its cited probe has quietly stopped existing. `needsGit` (round-2 audit H6): the isolated copy gets a REAL git repo (init+add+commit of the tracked file set) so `check-upstream-probe-coverage.mjs`'s `git ls-files` call succeeds for real, rather than the gate needing a filesystem-walk fallback that could not prove tracking."
+      }
+    }
+  ]
+}
