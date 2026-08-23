@@ -30,7 +30,7 @@ import {
 // still only ever touches persistence through this module's own functions.
 export { withTx };
 import { isCloudEnabled } from './repo.mjs';
-import { STATIC_POOL, OSS_POOL, parseClaudeModel, parseGeminiModel, parseOpenAIModel } from '../model-resolver.mjs';
+import { STATIC_POOL, OSS_POOL, parseClaudeModel, parseGeminiModel, parseOpenAIModel, modelFamily } from '../model-resolver.mjs';
 import { OSS_PRICING } from '../model-pricing.mjs';
 import { FINDING_MATCH_SCHEMA_VERSION } from '../config.mjs';
 import { terminalEvent } from '../campaign/verdict.mjs';
@@ -476,16 +476,18 @@ export function assignCalibrationSample(rows, { campaignId, key, rate, minPerArm
  *
  * Family, not exact id: an Opus adjudicator judging a Sonnet arm is the same
  * bias question as one judging another Opus. Bias made visible, not denied.
+ *
+ * Family resolution lives in `modelFamily` (model-resolver.mjs), not in a
+ * local helper here. The helper it replaced read the vendor off whichever half
+ * of the id was present, so the SAME model reached by two routes — the bare
+ * native id vs the OpenRouter `vendor/model` slug, both of which this repo
+ * deliberately keeps distinct — resolved to two families and a self-judging
+ * model was recorded as unbiased. See that function's docstring for the
+ * measurement and for why the two ids must stay distinct everywhere else.
  */
 export function isSelfFamily(adjudicatorModel, armModel) {
-  const fam = (m) => {
-    const s = String(m ?? '').toLowerCase();
-    if (s.includes('/')) return s.split('/')[0];
-    const head = s.split(/[-.]/)[0];
-    return head || null;
-  };
-  const a = fam(adjudicatorModel);
-  const b = fam(armModel);
+  const a = modelFamily(adjudicatorModel);
+  const b = modelFamily(armModel);
   if (!a || !b) return null;   // unknown, never a confident `false`
   return a === b;
 }

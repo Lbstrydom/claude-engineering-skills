@@ -117,7 +117,7 @@ import { createOpenRouterClient } from '../openai-client.mjs';
 import { createAnthropicClient } from '../anthropic-client.mjs';
 import { ossStructuredCall } from '../oss-structured-output.mjs';
 import { createGeminiReviewSubprocessAdapters } from './final-adjudication.mjs';
-import { MODEL, getPassPrompt, buildCachePrompt, callGPT, safeCallGPT } from './llm-helpers.mjs';
+import { MODEL, getPassPrompt, buildCachePrompt, callGPT, safeCallGPT, wireModel } from './llm-helpers.mjs';
 import {
   LlmError, classifyLlmError, buildReducePayload, normalizeFindingsForOutput as _normalizeFindingsForOutput,
   resolveLedgerPath, MAX_REDUCE_JSON_CHARS, MAP_FAILURE_THRESHOLD, RETRY_MAX_ATTEMPTS,
@@ -741,10 +741,19 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
   // Collect findings + aggregate usage (including failed units)
   const allFindings = [];
   const mapUsage = { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_tokens: 0 };
+  // The model that actually served this pass, for `audit_pass_stats.source_model`.
+  // Taken from the units themselves rather than re-read from `wireModel()` at
+  // return time: today those agree (MODEL is set once by `main()` before any
+  // pass runs), but that is a whole-process invariant, and telemetry that is
+  // correct only while it holds would go quietly wrong the day a pass picks its
+  // own model — reporting a model that never ran, with no way to tell. First
+  // unit wins; they are all dispatched identically.
+  let dispatchedModel = null;
   let effectiveFailures = 0;
   for (let i = 0; i < results.length; i++) {
     if (results[i].status === 'fulfilled') {
       const val = results[i].value;
+      dispatchedModel ??= val?.model ?? null;
       if (val?.usage) {
         mapUsage.input_tokens += val.usage.input_tokens ?? 0;
         mapUsage.output_tokens += val.usage.output_tokens ?? 0;
@@ -793,7 +802,7 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
       result: { pass_name: passName, findings: [], quick_fix_warnings: [], summary: `Map-reduce: ${units.length} units, 0 findings. ${effectiveFailures} units failed.` },
       usage: mapUsage,
       latencyMs: Date.now() - mapStart,
-      mapUnitStatus, unitsAttempted, unitsFailed,
+      mapUnitStatus, unitsAttempted, unitsFailed, model: dispatchedModel,
     };
   }
 
@@ -814,7 +823,7 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
       latencyMs: Date.now() - mapStart,
       _mapFailureRate: failureRate,
       _reduceSkipped: true,
-      mapUnitStatus, unitsAttempted, unitsFailed,
+      mapUnitStatus, unitsAttempted, unitsFailed, model: dispatchedModel,
     };
   }
 
@@ -833,7 +842,7 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
         // makes that enum value reachable at all.
         _executionMeta: buildExecutionMeta({ reduceStatus: ReduceStatus.BUDGET_EXCEEDED, reduceSkipped: true }) },
       usage: mapUsage, latencyMs: Date.now() - mapStart, _reduceSkipped: true,
-      mapUnitStatus, unitsAttempted, unitsFailed,
+      mapUnitStatus, unitsAttempted, unitsFailed, model: dispatchedModel,
     };
   }
   const { json: findingsJson, includedCount, totalCount } = payload;
@@ -886,7 +895,7 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
       // than the instance.
       usage: { ...addUsage(mapUsage, reduceResult?.usage ?? {}), latency_ms: totalLatency },
       latencyMs: totalLatency,
-      mapUnitStatus, unitsAttempted, unitsFailed,
+      mapUnitStatus, unitsAttempted, unitsFailed, model: dispatchedModel,
     };
   }
 
@@ -912,7 +921,7 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
     },
     latencyMs: totalLatency,
     _mapCompletionRate: mapCompletionRate,
-    mapUnitStatus, unitsAttempted, unitsFailed,
+    mapUnitStatus, unitsAttempted, unitsFailed, model: dispatchedModel,
   };
 }
 
@@ -3336,6 +3345,25 @@ export async function runLegacyProductionAudit(ctx) {
       // mechanical detectors) or produced no result. `?? null` rather than a
       // default, because a default here is exactly the fabrication removed.
       _reasoning: result?.reasoningEffort ?? null,
+      // The model that served this pass, for `audit_pass_stats.source_model`.
+      // Same measured-not-guessed contract as `_reasoning`: `null` means no LLM
+      // call was dispatched (the mechanical detectors — duplication, adjacency,
+      // orphan-introduced, event-wiring-symmetry — and any pass that never ran),
+      // which is an honest absence rather than an attribution to a model that
+      // did no work.
+      //
+      // `result.model` covers every shape, map-reduce included: that path now
+      // carries the id its own units reported (`dispatchedModel`), so this is a
+      // measurement in all cases rather than config re-read after the fact.
+      //
+      // The remaining fallback is narrow and named: a map-reduce pass whose
+      // units ALL rejected has no unit result to read, yet the calls were still
+      // dispatched and still billed. `mapUnitStatus` is the SAME discriminator
+      // `mapReduceFailureReason` above uses to recognise that shape, and
+      // `wireModel()` is what those calls were sent to. Attributing a total
+      // failure's spend to the model that failed beats attributing it to none.
+      _model: result?.model
+        ?? (result?.mapUnitStatus !== undefined ? wireModel() : null),
     };
   });
 
@@ -4113,6 +4141,24 @@ export async function runLegacyProductionAudit(ctx) {
     // a 4th hand-listed pass array that also excluded architecture/
     // orphan-introduced.
     for (const entry of passRegistry) {
+      // Model + cost attribution (2026-08-23). `source_model`, `cost_usd` and
+      // `usage_unmeterable` exist on `audit_pass_stats` and `recordPassStats`
+      // has always written them — but the ONLY caller that ever supplied them
+      // was the model-A/B shadow, so every production row carried NULL and the
+      // per-pass log was model-blind for its whole history.
+      //
+      // `costFromUsage` (analytics), deliberately NOT its sibling
+      // `costForBudget` (spend-cap): the latter never returns null and falls
+      // back to a conservative OVER-estimate so a € ceiling can't be
+      // overshot — correct there, a fabricated measurement here. This one is
+      // null-honest, so an unpriced model or unmeterable usage lands as NULL
+      // rather than as a $0 indistinguishable from a genuinely free call.
+      //
+      // Both fields stay `undefined` when no model was dispatched (mechanical
+      // detectors, skipped passes): `recordPassStats` omits an undefined column
+      // entirely, so the row reads NULL — "no call was made", never "a call was
+      // made and cost nothing".
+      const cost = entry._model ? costFromUsage(entry.usage, entry._model) : null;
       writePromises.push(durableWrite('audit.passStats', {
         runId: cloudRunId,
         passName: entry.name,
@@ -4125,6 +4171,9 @@ export async function runLegacyProductionAudit(ctx) {
           inputTokens: entry.usage?.input_tokens,
           outputTokens: entry.usage?.output_tokens,
           latencyMs: entry.latencyMs,
+          sourceModel: entry._model ?? undefined,
+          costUsd: cost ? cost.totalUsd : undefined,
+          usageUnmeterable: cost ? cost.unmeterable : undefined,
           // The effort the pass ACTUALLY dispatched with, carried back from the
           // call itself (`_reasoning` above). 6ae952bf removed a second copy of
           // a name→level guess here; 2026-08-12 removed the guess entirely,

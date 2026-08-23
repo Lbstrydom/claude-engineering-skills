@@ -164,7 +164,14 @@ export function normalisePromptInput(opts) {
 // The wire-level model id. Public path: the resolved sentinel (MODEL). Azure
 // path: the deployment name (§1.5 H4 — never feed a deployment through
 // resolveModel; the sentinel stays for logging/pricing only).
-function wireModel() {
+//
+// Exported because it is the ONLY honest answer to "what model served this
+// pass" for a caller that never sees an individual call result — notably
+// `runMapReducePass`, whose N map units + reduce all dispatch here. It is a
+// process-level constant for the life of a run (`MODEL` is reassigned only by
+// `openai-audit.mjs`'s `main()`, before any pass runs), so reading it after
+// the fact returns the same id the units were sent to.
+export function wireModel() {
   return azureConfig.active ? azureConfig.gptDeployment : MODEL;
 }
 
@@ -208,6 +215,10 @@ async function parseStructured(openai, requestParams, callOpts, ctx) {
   const truncated = choice?.finish_reason === 'length';
   return {
     output_parsed: parsed,
+    // Echoed so the caller's `response.model` read is answered on THIS path too
+    // rather than silently falling through to what we sent — the two agree in
+    // the normal case and the provider is the authority when they don't.
+    model: completion.model ?? ctx.model,
     status: truncated ? 'incomplete' : 'completed',
     incomplete_details: truncated ? { reason: 'max_tokens' } : undefined,
     // Surface raw text for the bracket-repair path only when parsing failed.
@@ -329,7 +340,17 @@ export async function _callGPTOnce(openai, opts) {
     // fabricated measurement, and one this line is the only honest source for:
     // the fallback to `REASONING_EFFORT` is resolved here, so a call site that
     // passes no `reasoning` at all cannot be reconstructed anywhere else.
-    return { result, usage, latencyMs, reasoningEffort: effort };
+    // `model` is the SAME argument as `reasoningEffort` above, one column over:
+    // `audit_pass_stats.source_model` was NULL on every production row since the
+    // table existed, because the only caller that ever supplied it was the
+    // model-A/B shadow (concluded 2026-07-09). Without it the per-pass log
+    // records tokens/latency/accept-rate against no model, so "did the new GPT
+    // release change accept-rate or cost" is unanswerable from six weeks of
+    // rows. `response.model` is the server's report of what actually served the
+    // call (the concrete dated snapshot, which can be more specific than what we
+    // sent); `wm` is what we dispatched, and is the honest fallback on the
+    // chat-completions path where the provider echoes nothing.
+    return { result, usage, latencyMs, reasoningEffort: effort, model: response.model ?? wm };
 
   } catch (err) {
     clearTimeout(timer);
@@ -462,6 +483,12 @@ export async function safeCallGPT(openai, opts, emptyResult) {
       // for, not a claim that it ran. Omitting it here would leave a failed
       // pass indistinguishable from one that never dispatched.
       reasoningEffort: opts.reasoning ?? REASONING_EFFORT,
+      // Stamped on the degraded path for the same reason as `reasoningEffort`
+      // directly above: the call WAS dispatched to this model and burned the
+      // tokens reported above, so attributing them to it is a fact about what
+      // happened. Omitting it would file a failed pass's real spend against no
+      // model at all.
+      model: wireModel(),
       error: err.message
     };
   }

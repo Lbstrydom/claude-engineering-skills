@@ -257,6 +257,109 @@ export function isDeepseekModel(id) {
 }
 
 /**
+ * Canonical vendor tokens `modelFamily` resolves to. Exported so the coverage
+ * test can assert that every model this repo routes to lands on one of these
+ * rather than on an un-canonicalised passthrough.
+ */
+export const MODEL_VENDORS = Object.freeze([
+  'anthropic', 'google', 'openai', 'xai', 'qwen', 'deepseek', 'moonshot', 'zhipu',
+]);
+
+/**
+ * Every spelling that names a vendor, mapped to its canonical token — BOTH the
+ * OpenRouter `vendor/` namespace and the head of the bare native id, because
+ * this repo reaches several of these models both ways on purpose and the two
+ * spellings share no substring (`moonshotai` vs `kimi`, `z-ai` vs `glm`).
+ *
+ * Extend this whenever a pool gains a vendor; the pool-coverage test in
+ * `tests/model-family-route-independence.test.mjs` fails until you do.
+ */
+const VENDOR_ALIASES = Object.freeze({
+  anthropic: 'anthropic', claude: 'anthropic',
+  google: 'google', gemini: 'google',
+  openai: 'openai', gpt: 'openai', o: 'openai',
+  'x-ai': 'xai', xai: 'xai', grok: 'xai',
+  qwen: 'qwen', alibaba: 'qwen',
+  deepseek: 'deepseek',
+  moonshotai: 'moonshot', moonshot: 'moonshot', kimi: 'moonshot',
+  'z-ai': 'zhipu', zhipu: 'zhipu', glm: 'zhipu',
+});
+
+/**
+ * The vendor family a model id belongs to, INDEPENDENT of the route it was
+ * reached by. `null` when the id is absent or unusable — never a guess.
+ *
+ * **The incident (2026-08-23).** One model reached two ways carries two ids,
+ * and that is deliberate, not a storage inconsistency: `transportForModel`
+ * dispatches on exactly that shape (`isAlibabaModel`/`isDeepseekModel`, the
+ * bare native ids, checked BEFORE the generic `'/'` OpenRouter catch-all), and
+ * `model-pricing.mjs` keys prices on the verbatim id because the routes bill
+ * differently — `qwen3.8-max` (native Alibaba) at $2.00/$6.00 per 1M against
+ * `qwen/qwen3.7-max` (OpenRouter) at $1.25/$3.75. So the two spellings must
+ * BOTH survive in `audit_findings.source_model`; collapsing them would erase
+ * the routing decision and corrupt costing.
+ *
+ * What must NOT depend on the route is the FAMILY. `isSelfFamily`'s local
+ * helper derived the vendor from whichever half of the string was present —
+ * the namespace when there was a `/`, otherwise the head before the first
+ * `-`/`.` — so the same model resolved to two families depending on how it was
+ * addressed. Measured on the live store: `qwen/qwen3.8-max` → `qwen` but
+ * `qwen3.8-max` → `qwen3`; likewise `moonshotai/…` vs `kimi-…` and `z-ai/…`
+ * vs `glm-…`. Three of four cross-route pairs returned a confident `false`,
+ * so a model grading its own output was recorded as unbiased in the one field
+ * that exists to make that bias visible. (`deepseek` matched only by luck: its
+ * vendor slug happens to equal the head of its bare id.)
+ *
+ * **Why a table and not a shape rule.** The first attempt at this simply
+ * dropped the `vendor/` namespace and compared what was left. That makes the
+ * cross-route pairs agree, and it is WRONG, because the namespace is the only
+ * unambiguous vendor information in the string: discarding it splits
+ * `moonshotai/kimi-k2` from `moonshotai/other` — two arms from ONE vendor,
+ * which is the case this predicate most needs to catch once a campaign runs
+ * several arms per vendor. `tests/campaign-adjudicate.test.mjs` already pinned
+ * that, and caught it.
+ *
+ * So both spellings are mapped onto a canonical vendor token instead:
+ *   - a `vendor/` namespace resolves through `VENDOR_ALIASES`;
+ *   - a bare id resolves on its head (up to the first `-`/`.`) with a trailing
+ *     version stripped, so `qwen3` and `qwen` are one vendor and a future
+ *     `qwen4-max` does not split off again.
+ * An id whose vendor is not in the table falls back to that token unchanged —
+ * still route-stable and still same-vendor-equal, just not canonicalised.
+ * `npm test` forbids that state for anything we actually route to: the
+ * pool-coverage test walks every id in `STATIC_POOL`/`OSS_POOL`/`OSS_PRICING`/
+ * `XAI_POOL`/`ALIBABA_POOL`/`DEEPSEEK_POOL` and fails on one that lands
+ * outside `MODEL_VENDORS`. Adding an arm with a new vendor is therefore two
+ * edits — the pool and this table — and the suite says so rather than a
+ * comment nobody reads.
+ *
+ * Consequence worth naming: the OpenAI o-series folds in with `gpt`
+ * (`o3-mini` → `openai`). That is the right answer for a VENDOR test and
+ * matches this function's own contract — an Opus adjudicator judging a Sonnet
+ * arm is already `true`.
+ *
+ * @param {string|null|undefined} id
+ * @returns {string|null}
+ */
+export function modelFamily(id) {
+  if (typeof id !== 'string') return null;
+  const s = id.trim().toLowerCase();
+  if (!s) return null;
+  if (s.includes('/')) {
+    // The namespace is authoritative: it names the vendor outright, and two
+    // ids sharing it are the same vendor whatever their model names are.
+    const ns = s.slice(0, s.indexOf('/'));
+    return ns ? (VENDOR_ALIASES[ns] ?? ns) : null;
+  }
+  const head = s.split(/[-.]/)[0];
+  if (!head) return null;
+  // `|| head` guards an all-digit head: stripping would empty it, and the
+  // digits are then the only identity there is.
+  const base = head.replace(/\d+$/, '') || head;
+  return VENDOR_ALIASES[base] ?? base;
+}
+
+/**
  * DeepSeek's own public API — UNLIKE `resolveAlibabaCreds`, this IS a
  * universal endpoint (like `XAI_BASE_URL`), so it is hardcoded rather than
  * read from an env var with no fallback.

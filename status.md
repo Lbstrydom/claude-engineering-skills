@@ -1,5 +1,167 @@
 # Project Status Log
 
+## 2026-08-23 — Per-pass model + cost attribution, and a route-independent vendor family
+
+Started as a telemetry health check and turned up two defects, one measured and
+one latent. The health picture itself is fine: every production table wrote
+within 24h, `.audit/write-spill/lost/` is empty, and 416 of 911 runs in the last
+30 days carry outcome labels. `memory:health` reads **AMBER** — cluster density
+21–24 against a threshold of 5, driven by wine-cellar-app — which is the known
+state the already-shipped semantic-suppress path addresses, not a new signal.
+
+### 1. `audit_pass_stats` was model-blind and cost-blind for its whole history
+
+**Measured before the change: `source_model` NULL on all 5,459 rows, `cost_usd`
+NULL on all 5,459.** The columns have existed since migration 20260701120000 and
+`recordPassStats` has always written them — but the only caller that ever
+supplied them was `audit-shadow.mjs`, the model-A/B/C shadow **concluded
+2026-07-09**. So six weeks of per-pass findings-raised / accepted / dismissed /
+tokens / latency were recorded against no model, and "did the new GPT release
+change accept-rate or cost" was unanswerable from the log built to answer it.
+`audit_runs` has no auditor-model column at all (`author_model` 0/1149;
+`final_review_model` 316/1149, reviewer only), so there was no second source.
+
+The model now comes back from the call that dispatched it — the same
+measured-not-guessed contract `reasoningEffort` already had one column over, and
+for the same reason: config re-read after the fact is a second source that can
+drift from the request.
+
+- [llm-helpers.mjs](scripts/lib/audit/llm-helpers.mjs) — `_callGPTOnce` returns
+  `model: response.model ?? wm` (the provider's echo wins; it can name a more
+  specific dated snapshot than we sent). The chat-completions fallback shape
+  echoes `model` too, so that read is answered on both transports. `safeCallGPT`
+  stamps it on the degraded path as well — a failed pass still burned the tokens
+  it reports, and omitting the model files real spend against nobody.
+- [legacy-production-audit.mjs](scripts/lib/audit/legacy-production-audit.mjs) —
+  `runMapReducePass` threads `dispatchedModel` from its own units through all
+  five return sites; `_model` on each registry entry; `sourceModel` / `costUsd` /
+  `usageUnmeterable` supplied at the `audit.passStats` write.
+
+Two deliberate calls. **`costFromUsage`, not `costForBudget`** — the latter never
+returns null and falls back to a conservative over-estimate, correct for a spend
+cap and a fabricated measurement in a telemetry row. And **map-reduce reads its
+own units rather than `wireModel()`**: those agree today because `MODEL` is set
+once by `main()` before any pass runs, but that is a whole-process invariant, and
+telemetry correct only while it holds goes quietly wrong the day a pass picks its
+own model. `wireModel()` survives only as a narrow, named fallback for a
+map-reduce pass whose units *all* rejected — the calls were still dispatched and
+still billed.
+
+Both fields stay NULL when no call was dispatched (mechanical detectors, skipped
+passes) — absence, never a $0 indistinguishable from a genuinely free call.
+
+**Verified live**, against a pinned baseline of 5,459 rows / 0 attributed:
+
+| run | pass | `source_model` | `cost_usd` | tokens |
+|---|---|---|---|---|
+| direct call | `structure` | `gpt-5.6-terra` | $0.0696 | 25761 / 522 |
+| forced map-reduce | `be-services` | `gpt-5.6-terra` | $0.1210 | 14802 / 8398 |
+| both runs | all 19 non-dispatching passes | NULL | NULL | 0 / 0 |
+
+Token sums reconcile against the run logs exactly (`be-services` = map + reduce).
+New suite [pass-stats-model-attribution.test.mjs](tests/pass-stats-model-attribution.test.mjs)
+went 0/4 → 4/4 across the change. Verification spend: $0.30.
+
+### 2. `isSelfFamily` split one model across two routes — and the first fix broke a worse case
+
+The store holds both `qwen3.8-max` and `qwen/qwen3.8-max`, `deepseek-v4-pro` and
+`deepseek/deepseek-v4-pro`. **This is deliberate, not a storage inconsistency**:
+`transportForModel` dispatches on exactly that shape (the bare native ids checked
+*before* the generic `'/'` OpenRouter catch-all), and `model-pricing` keys on the
+verbatim id because the routes bill differently — `qwen3.8-max` at $2.00/$6.00
+per 1M against `qwen/qwen3.7-max` at $1.25/$3.75. Normalising the ids would erase
+the routing decision and corrupt costing. They stay distinct.
+
+What must *not* vary by route is the **family**. `isSelfFamily`'s local helper
+read the vendor off whichever half of the string was present, so the same model
+resolved two ways:
+
+| pair | before | after |
+|---|---|---|
+| `qwen3.8-max` / `qwen/qwen3.8-max` | `false` | `true` |
+| `kimi-k2-thinking` / `moonshotai/kimi-k2-thinking` | `false` | `true` |
+| `glm-5.2` / `z-ai/glm-5.2` | `false` | `true` |
+| `deepseek-v4-pro` / `deepseek/deepseek-v4-pro` | `true` (luck) | `true` |
+
+`self_family` is the only field recording whether a model graded its own output,
+and every `false` there is a confident wrong answer, not an abstention. The
+deepseek row is why a single spot-check would have cleared this: its vendor slug
+coincidentally equals the head of its bare id.
+
+**The first fix was wrong, and the existing suite caught it.** Simply dropping
+the `vendor/` namespace makes those pairs agree while discarding the only
+unambiguous vendor information in the string — it split `moonshotai/kimi-k2` from
+`moonshotai/other`, i.e. two arms from one vendor, which is the case this
+predicate most needs once a campaign runs several arms per vendor.
+`tests/campaign-adjudicate.test.mjs` had pinned exactly that and failed.
+
+So both spellings map onto a canonical vendor token instead:
+[`modelFamily`](scripts/lib/model-resolver.mjs) resolves a `vendor/` namespace
+through `VENDOR_ALIASES`, and a bare id on its head with a trailing version
+stripped (so `qwen3` and `qwen` are one vendor and a future `qwen4-max` does not
+split off again). `isSelfFamily` now delegates rather than carrying its own copy.
+
+**The table is gated, not commented.** A new pool entry whose vendor is unmapped
+falls through to an un-canonicalised token and silently stops matching that
+vendor's other spelling — the original defect, one vendor over. The coverage test
+walks every id in `STATIC_POOL` / `OSS_POOL` / `OSS_PRICING` / `XAI_POOL` /
+`ALIBABA_POOL` / `DEEPSEEK_POOL` (31 ids, 8 vendors) and fails on one that lands
+outside `MODEL_VENDORS`, so adding an arm with a new vendor is two edits and the
+suite says so. Confirmed to fire: injecting `brandnewvendor/some-model` into
+`XAI_POOL` produced `add their vendor to VENDOR_ALIASES: ["brandnewvendor/some-model"]`.
+
+**No backfill needed, and that was checked rather than assumed.** All 217 stored
+adjudication events used `claude-opus-4-8` as adjudicator, so re-running the new
+predicate over every distinct stored pair changes **0 rows**. The defect was
+latent, waiting for the first non-Claude adjudicator — which the arm rotation was
+heading toward.
+
+New suite [model-family-route-independence.test.mjs](tests/model-family-route-independence.test.mjs),
+10 tests; the three fix-detecting ones go red without the change while the three
+must-NOT-fire guards stay green.
+
+### Still open (deliberately not done here)
+
+- **No standing trend report.** `audit-metrics.mjs` is a rolling 30-day snapshot;
+  nothing computes week-over-week. Not urgent — the rows are timestamped, so
+  trends stay derivable retroactively, and now with a model dimension.
+- **`meta-assess.mjs` has never produced output here.** `.audit/meta-assessments.jsonl`
+  is absent, and it reads the *local* `.audit/outcomes.jsonl` (20 rows, 1 with a
+  triage result) rather than the store — so even when Step 8.5 fires, its trend
+  is built on nearly nothing.
+- **History floors at 2026-07-14** (the Supabase wipe); local raw transcripts are
+  capped at newest-25 + 14 days.
+
+### Regression Lock Status
+
+348 unlocked (166 code / 182 plan), `agedOut: 0`, 229 pre-practice. Both changes
+here ship with their own new test suites, each red-then-green verified, so this
+push adds locks rather than obligations.
+
+### Unremediated Acceptances
+
+161 open (93 code / 68 plan), 42 accepted-permanent, `notYetDue: 16`.
+**`agedOut: 26` (3 HIGH / 23 MEDIUM)** — past the 30-day ceiling and never shown
+again. Not addressed in this session; flagged here so the decision is on the
+record rather than discharged by silence.
+
+### Upstream
+
+1 open consumer report: `admissionPreflight/mergeScopeFiles reject double-extension
+files (index.html.template) as 'extension'` (HIGH, from wine-cellar-app,
+`64223218`). Untriaged — unrelated to this change.
+
+
+### Consumer Verification (previous ship)
+
+- **Ship**: `37e89ed74c10084a9d7a40223c0d65f50f868e20` (`feat: consumer-friction doctor + upstream-disposition reconciliation gate`), on branch `claude/consumer-friction-doctor-plan-f570d7` (NOT YET merged to `main` — open feature branch, PR not created).
+- **State**: `verified` (transfer + pushed-tree battery + consumer isolation), `unverified` (fresh-clone battery)
+- **Retrieval run**: `git ls-remote origin refs/heads/claude/consumer-friction-doctor-plan-f570d7` == local HEAD `37e89ed7` — verified by remote-ref comparison, never by `$?` (the foreground push hit the Bash tool's timeout at exit 143 and had to be re-run in the background to actually observe completion).
+- **Consumer bundle**: pre-push sync reported `Targets: 2/2 reached · Created: 26 · Updated: 198 · Unchanged: 1210 · Errors: 0`. Additionally ran the AUTHORITATIVE check post-push: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` inside the `ai-organiser` consumer checkout — all 8 gates passed.
+- **`unverified` — concrete blocked prerequisite**: no fresh clone-to-tempdir + `npm run check` battery was run against the pushed branch tip (advisory-only step, skipped for time; the pre-push hook itself already ran the full `check` suite in a clean checkout of this exact commit and passed).
+- **Not inherited**: the producer-side green (13521 tests, 0 fail) was not used as evidence for the consumer-bundle row above — that row rests on the isolation-verify run.
+
+
 ## 2026-08-23 — Self-hosted runner management: local inventory, GitHub-truth health, guided teardown
 
 Follow-on to the 2026-08-14 entry below, which shipped only the repo-capability
