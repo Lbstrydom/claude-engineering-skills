@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**6 active · 203 terminal · 27 audit summaries · 4 reference docs**
+**4 active · 205 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -22,8 +22,6 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
-| [Lens Coverage Honesty — a report states what it checked, not only what it found](./lens-coverage-honesty.md) | `Approved` | and implemented (2026-08-20, via `/cycle --autonomous`, |
-| [Store-backed outcome source for `meta-assess`](./meta-assess-store-backed-source.md) | `Approved` |  |
 | [Self-Hosted Runner Management (optional, machine-aware)](./self-hosted-runner-management.md) | `Approved` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q1 38 code rows, Q2 unknown (reader reports no total), Q3 68 actionable; measured 2026-08-09 |
@@ -46,7 +44,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 200 completed plans</summary>
+<summary>Show all 202 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -143,10 +141,12 @@ source comments that no docs linter sees — stays valid.
 | [Honest failure across the learning / brainstorm / persona-promote seams](./learning-persona-quickfix-honest-failure.md) | `Complete` | 2026-08-09) — all 5 phases shipped across 3 clusters; |
 | [Learning-Store Signal Recovery — Identity, Outcomes, Dead Loops](./learning-store-signal-recovery.md) | `Complete` | Clusters A–D landed 2026-06-03/04 with their own |
 | [Learning System v2 — Adaptive Prompt Evolution & Contextual Bandits](./learning-system-v2.md) | `Complete` | shipped — Supabase tables `learning_decisions`, `recurring_finding_clusters`, `bandit_arms`, `false_positiv… |
+| [Lens Coverage Honesty — a report states what it checked, not only what it found](./lens-coverage-honesty.md) | `Complete` | implemented 2026-08-20 via `/cycle --autonomous` |
 | [Pipeline liveness + canonical-path enforcement (WS3 follow-up)](./liveness-and-canonical-paths.md) | `Complete` |  |
 | [Local Navigable Dashboard Subsystem](./local-dashboard.md) | `Complete` | shipped as 8f98d46 (initial), follow-ups 53d1413, 94a1668, 63f5e70, 371142d, 0da1881 |
 | [Local Disposable DB Test Container](./local-db-test-container.md) | `Complete` |  |
 | [Local Weekly Maintenance Checks (opt-in)](./local-maintenance-checks.md) | `Complete` | implemented (retroactive plan — written after implementation, for /audit-code |
+| [Store-backed outcome source for `meta-assess`](./meta-assess-store-backed-source.md) | `Complete` | implemented 2026-08-23, all 8+2 files landed, manual |
 | [Audit-Loop Meta-Assessment System](./meta-assessment-system.md) | `Complete` |  |
 | [Migration ↔ compat-bootstrap coupling — assert the surface, don't relocate the DDL](./migration-bootstrap-coupling.md) | `Complete` | 2026-07-19) — implemented; §5 questions settled empirically, and Q2 resolved to an option the plan had not … |
 | [Migration-drift detector for the audit-loop store](./migration-drift-detector.md) | `Complete` | code shipped (edffa19), operator bootstrap done via Supabase CLI, expected-schema regenerated (b13552d), --… |

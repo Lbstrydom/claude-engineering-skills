@@ -1,7 +1,12 @@
 # Plan: Store-backed outcome source for `meta-assess`
 
 - **Date**: 2026-08-23
-- **Status**: Approved
+- **Status**: Complete — implemented 2026-08-23, all 8+2 files landed, manual
+  verification against the live NAS store confirmed real-data provenance
+  (`window.outcomeCount: 2231`, `provenance: 'store'`), all three named
+  red-then-green guards restored, `npm test` green (13,872 tests). See
+  Implementation Log for the one unpredicted domain-layering fix
+  (`assessment-source.mjs` retagged `shared-lib` → `learning-store`).
 - **Author**: Claude + pill
 - **Scope**: backend
 - **Target domain(s)**: `learning-store`, `findings`, `audit-orchestration`, `shared-lib`

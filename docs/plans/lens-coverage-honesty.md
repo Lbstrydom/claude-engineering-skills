@@ -1,8 +1,10 @@
 # Plan: Lens Coverage Honesty — a report states what it checked, not only what it found
 
 - **Date**: 2026-08-20
-- **Status**: Approved and implemented (2026-08-20, via `/cycle --autonomous`,
-  degenerate single-cluster path) — see §10 Implementation Log.
+- **Status**: Complete — implemented 2026-08-20 via `/cycle --autonomous`
+  (degenerate single-cluster path); see §10 Implementation Log for the full
+  verification trail (red-then-green guards, gate-honesty re-check, `npm test`
+  green).
 - **Origin**: `/brainstorm` session 1787245915261 (2026-08-20), focal artifact
   [`docs/research/verification-loops-brainstorm-briefing.md`](../research/verification-loops-brainstorm-briefing.md).
   The briefing asked which of three verification-loop candidates to build; the
