@@ -266,6 +266,60 @@ describe('local --json', () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// Flag-before-subcommand ordering (final-review-scoped-2026q3 adjudicated
+// finding, fixed 2026-08-24). SUBCOMMAND used to be read as a bare
+// `process.argv[2] === 'local'` — a POSITIONAL read — so `--json local`
+// (flag first) missed the subcommand entirely and silently ran the LEGACY
+// top-level command instead (still reporting `ok: true`, just for the
+// wrong question). `local --json` and `--json local` must now produce the
+// SAME command's output, byte-for-byte.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('--json before the subcommand ("--json local") vs after ("local --json")', () => {
+  it('produce byte-identical stdout+stderr+status', () => {
+    const subcommandFirst = runCli(['local', '--json', '--config', absentConfigPath], {
+      env: { RUNNER_PROBE_ROOTS_OVERRIDE: '[]' },
+      cwd: noGitCwd,
+    });
+    const flagFirst = runCli(['--json', 'local', '--config', absentConfigPath], {
+      env: { RUNNER_PROBE_ROOTS_OVERRIDE: '[]' },
+      cwd: noGitCwd,
+    });
+    assert.equal(flagFirst.status, subcommandFirst.status);
+    assert.equal(flagFirst.stdout, subcommandFirst.stdout);
+    assert.equal(flagFirst.stderr, subcommandFirst.stderr);
+  });
+
+  it('--json local resolves the `local` inventory command, not the legacy no-sub-command report', () => {
+    const r = runCli(['--json', 'local', '--config', absentConfigPath], {
+      env: { RUNNER_PROBE_ROOTS_OVERRIDE: '[]' },
+      cwd: noGitCwd,
+    });
+    assert.equal(r.status, 0, `stderr=${r.stderr}`);
+    const envelope = JSON.parse(r.stdout);
+    // The `local` envelope shape (installs/rollup/notProbed) is disjoint
+    // from the legacy top-level shape (repo/actionsEnabled/verdict) — this
+    // fails on the OLD code, which resolved `--repo` from argv (absent
+    // here), so the legacy path threw over a missing/invalid repo instead
+    // of ever producing this envelope at all.
+    assert.deepEqual(envelope.installs, []);
+    assert.equal(envelope.rollup, 'clean');
+    assert.equal(envelope.repo, undefined, 'must not be the legacy no-sub-command envelope shape');
+    assert.equal(envelope.verdict, undefined, 'must not be the legacy no-sub-command envelope shape');
+  });
+
+  it('a value-taking flag before the subcommand does not eat the subcommand token ("--config <path> local")', () => {
+    const r = runCli(['--config', absentConfigPath, 'local', '--json'], {
+      env: { RUNNER_PROBE_ROOTS_OVERRIDE: '[]' },
+      cwd: noGitCwd,
+    });
+    assert.equal(r.status, 0, `stderr=${r.stderr}`);
+    const envelope = JSON.parse(r.stdout);
+    assert.equal(envelope.rollup, 'clean');
+  });
+});
+
 describe('local --strict exit-code mapping across all 4 rollups', () => {
   it('clean: exit 0 even under --strict', () => {
     const r = runCli(['local', '--json', '--strict', '--config', absentConfigPath], {

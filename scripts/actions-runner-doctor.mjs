@@ -87,9 +87,45 @@ const KNOWN_FLAGS = [
 // unknown), per the plan's D1 (§2) and R1 M3 (§9). `assertKnownFlags`
 // already skips non-`--` tokens, so 'local'/'remove' being positional here
 // needs no special-casing in the flag validator.
-const SUBCOMMAND = (process.argv[2] === 'local' || process.argv[2] === 'remove') ? process.argv[2] : null;
+//
+// Fixed 2026-08-24 (final-review-scoped-2026q3): the subcommand used to be
+// read as a bare `process.argv[2] === 'local'`, a POSITIONAL read — so
+// `--json local` (flag first) missed it entirely and silently ran the
+// LEGACY top-level command instead, while still reporting `ok: true`. The
+// fix scans for the first token that isn't itself a flag (or a flag's
+// value), wherever it falls in argv, so `local --json` and `--json local`
+// resolve to the same subcommand.
+const VALUE_FLAGS = new Set(['--repo', '--config', '--host', '--owner-kind', '--owner', '--agent-id']);
 
-const JSON_OUT = process.argv.includes('--json');
+function firstPositionalToken(argv) {
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--') break; // POSIX terminator — nothing after is a flag
+    if (a.startsWith('--')) {
+      // `--flag=value` is one token; `--flag value` (space form) is two —
+      // a value-taking flag's next token is consumed here so it's never
+      // mistaken for the subcommand (e.g. `--repo my-org/my-repo local`).
+      if (!a.includes('=') && VALUE_FLAGS.has(a)) {
+        const next = argv[i + 1];
+        if (next !== undefined && !next.startsWith('--')) i++;
+      }
+      continue;
+    }
+    return a;
+  }
+  return null;
+}
+
+const _firstPositional = firstPositionalToken(process.argv);
+const SUBCOMMAND = (_firstPositional === 'local' || _firstPositional === 'remove') ? _firstPositional : null;
+
+// Single oracle for "--json was passed" (Fixed 2026-08-24, same finding):
+// this used to be a bare `process.argv.includes('--json')` here, while
+// `runLocal` separately called `hasFlag('json')` — two answers to the same
+// question that could (and did) disagree, since the bare form doesn't
+// understand `--json=false`/`--json=value` or the `--` terminator. Every
+// caller now reads `JSON_OUT`.
+const JSON_OUT = hasFlag('json');
 const repoArg = readRepoArg(process.argv);
 
 const err = (m) => process.stderr.write(m + '\n');
@@ -291,7 +327,10 @@ function printLocalHuman(envelope) {
 function runLocal() {
   assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'actions-runner-doctor local' });
 
-  const jsonOut = hasFlag('json');
+  // JSON_OUT is the module-level single oracle for "--json was passed" —
+  // do not recompute it here (that was the drift: this used to call
+  // hasFlag('json') independently of the module-level JSON_OUT).
+  const jsonOut = JSON_OUT;
   const quietWhenClean = hasFlag('quiet-when-clean');
   // R2 H2 — machine mode always emits exactly one envelope; quiet mode is
   // human-output-only. Refuse rather than silently pick a winner.
