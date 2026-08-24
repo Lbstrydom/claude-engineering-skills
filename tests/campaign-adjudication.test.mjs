@@ -444,20 +444,23 @@ describe('campaign store against a live schema', { skip }, () => {
   it('a SUPERSEDED arm-run is excluded from the calibration denominator', async () => {
     // Regression: the calibration query joined campaign_arm_runs on
     // audit_run_id + cohort_id WITHOUT filtering superseded_at, so a worksheet
-    // row on a superseded run counted toward `assigned` while being
-    // unsatisfiable by construction -- adjudicate skips it (no live cohort
-    // finding) and recordHumanOverride refuses it (no live agent verdict to
-    // name). The gate could then never be cleared by doing the work correctly,
-    // which is the cried-wolf shape this repo has already paid for.
+    // row on a superseded run counted toward `assigned` -- the denominator --
+    // while being unsatisfiable by construction: adjudicate SKIPS it (no live
+    // cohort finding) and recordHumanOverride REFUSES it (no live agent
+    // verdict to name). The gate could then never be cleared by doing the work
+    // correctly, which is the cried-wolf shape this repo has already paid for.
     //
     // Measured on final-review-scoped-2026q3 (2026-08-24): one qwen row,
     // superseded 2026-08-19 with ZERO adjudication events, held the campaign
     // at 15/16 with no sanctioned action able to close it.
-    const before = await store.calibrationSummary(ids.cohortId);
-    const assignedBefore = before.perArm.kimi.assigned;
-
+    //
+    // Uses a DEDICATED arm id rather than a shared-fixture arm: an earlier
+    // draft inserted against `kimi` and broke two later tests that read it,
+    // which is test-order coupling rather than a finding about the product.
+    const armId = 'zz-superseded-calib';
     const orphanRun = (await client.query(
-      `INSERT INTO audit_runs (repo_id, mode) VALUES ((SELECT repo_id FROM audit_runs WHERE id = $1), 'code') RETURNING id`,
+      `INSERT INTO audit_runs (repo_id, plan_file, mode)
+       VALUES ((SELECT repo_id FROM audit_runs WHERE id = $1), 'docs/plans/x.md', 'code') RETURNING id`,
       [ids.runOpus],
     )).rows[0].id;
     const orphanFinding = (await client.query(
@@ -465,12 +468,11 @@ describe('campaign store against a live schema', { skip }, () => {
        VALUES ($1, 'fp-superseded-calib', 'backend', 'HIGH', 'Backend', 'on a superseded run') RETURNING id`,
       [orphanRun],
     )).rows[0].id;
-    // A SUPERSEDED arm-run for the same arm, pointing at that run.
     await client.query(
       `INSERT INTO campaign_arm_runs (cohort_id, snapshot_row_id, snapshot_id, arm_id, attempt, audit_run_id, superseded_at, cost_status)
-       SELECT cohort_id, snapshot_row_id, snapshot_id, 'kimi', 99, $2, NOW(), 'unpriced'
-         FROM campaign_arm_runs WHERE cohort_id = $1 AND arm_id = 'kimi' LIMIT 1`,
-      [ids.cohortId, orphanRun],
+       SELECT cohort_id, snapshot_row_id, snapshot_id, $3, 99, $2, NOW(), 'unpriced'
+         FROM campaign_arm_runs WHERE cohort_id = $1 LIMIT 1`,
+      [ids.cohortId, orphanRun, armId],
     );
     await client.query(
       `INSERT INTO campaign_worksheet_rows (worksheet_id, worksheet_row_id, finding_id, calibration_assigned)
@@ -478,9 +480,20 @@ describe('campaign store against a live schema', { skip }, () => {
       [ids.cohortId, orphanFinding],
     );
 
-    const after = await store.calibrationSummary(ids.cohortId);
-    assert.equal(after.perArm.kimi.assigned, assignedBefore,
+    const summary = await store.calibrationSummary(ids.cohortId);
+    // The arm is calibration-ASSIGNED and would have counted before the fix.
+    // Excluded now, it contributes no denominator at all -- so the arm either
+    // does not appear, or appears with assigned 0. Both are "not counted";
+    // asserting the disjunction avoids pinning an incidental representation.
+    const arm = summary.perArm[armId];
+    assert.equal(arm?.assigned ?? 0, 0,
       'a calibration row on a SUPERSEDED arm-run must not enter the denominator');
+
+    // Leave the shared fixture as found -- the rows above are this test's own.
+    await client.query('DELETE FROM campaign_worksheet_rows WHERE worksheet_row_id = $1', ['wr-superseded-calib']);
+    await client.query('DELETE FROM campaign_arm_runs WHERE arm_id = $1', [armId]);
+    await client.query('DELETE FROM audit_findings WHERE id = $1', [orphanFinding]);
+    await client.query('DELETE FROM audit_runs WHERE id = $1', [orphanRun]);
   });
 
   it('a snapshot recorded at a different sha is REFUSED, not silently updated', async () => {
