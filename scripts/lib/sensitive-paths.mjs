@@ -92,6 +92,15 @@ export const SENSITIVE_PATTERNS = Object.freeze([
   /(^|\/)[^/]+\.env$/,                                         // foo.env style
   /(^|\/)secrets?(\..+)?$/,                                    // secret, secrets, secrets.json
   /(^|\/)credentials?(\..+)?$/,                                // credential, credentials, credentials.yaml
+  // Dot-prefixed (hidden-file) form of the same words — fixed 2026-08-24
+  // (final-review-scoped-2026q3 finding). The two patterns above anchor on
+  // "(^|/)" immediately before the literal word, so a leading dot (as in
+  // real GitHub Actions runner registration files `.credentials` /
+  // `.credentials_rsaparams`) defeated the match entirely: fail-open on a
+  // module whose documented contract is fail-closed. This is the general
+  // class — dot + secret|credential word, optionally an `_suffix` (as in
+  // `_rsaparams`) or a `.ext` — not an allowlist of those two names.
+  /(^|\/)\.(secrets?|credentials?)(?:_[\w-]+)?(\..+)?$/,       // .secrets, .credentials, .credentials_rsaparams
   /\.(pem|key|crt|cer|der|p12|pfx|gpg|asc)$/i,                 // cert/key bundles
   /(^|\/)(secrets?|credentials?)[\w-]*\//,                     // sensitive dirs incl. variants (secret-keys/, credential-store/) — Gemini H4
   /(^|\/)(private|\.aws|\.ssh)\//,                              // other sensitive directories

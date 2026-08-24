@@ -79,6 +79,38 @@ describe('classifyPath — sensitive positives', () => {
   }
 });
 
+// 2026-08-24 final-review-scoped-2026q3 adjudicated finding: the credential/
+// secret regexes admitted no leading dot, so the REAL GitHub Actions runner
+// registration files (tests/fixtures/runner/synthetic-install/.credentials,
+// .credentials_rsaparams) classified as null — a fail-open on this module's
+// documented fail-closed contract. The class is "dot-prefixed
+// credential-shaped basename", not these two literal names.
+describe('classifyPath — dot-prefixed credential/secret basenames (fail-open regression)', () => {
+  const positives = [
+    '.credentials',
+    '.credentials_rsaparams',
+    '.secrets',
+    'tests/fixtures/runner/synthetic-install/.credentials',
+    'tests/fixtures/runner/synthetic-install/.credentials_rsaparams',
+  ];
+  for (const p of positives) {
+    it(`classifies ${p} as sensitive`, () => {
+      assert.equal(classifyPath(p), 'sensitive', `failed for ${p}`);
+    });
+  }
+
+  // Boundary: a longer word that merely starts with "credentials" must not
+  // false-positive just because it happens to follow a dot.
+  const negatives = [
+    '.credentialsomething',
+  ];
+  for (const p of negatives) {
+    it(`does NOT classify ${p} as sensitive`, () => {
+      assert.notEqual(classifyPath(p), 'sensitive', `${p} unexpectedly classified as sensitive`);
+    });
+  }
+});
+
 describe('classifyPath — sensitive negatives', () => {
   const cases = [
     'src/env-config.ts',    // contains "env" but isn't .env
