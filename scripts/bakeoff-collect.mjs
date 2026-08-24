@@ -256,6 +256,22 @@ export function readArmResult(outPath) {
     // sets, which can only ADD reroll detections, never remove one: the
     // `ri1:` prefix makes the two vocabularies non-overlapping by construction.
     requestIdentities: [j._requestIdentity ?? null, shadow.requestIdentity ?? null].filter(Boolean),
+    // The SHADOW call's identity ALONE — the arm's own distinguishing request.
+    // The two arrays above union the arm's PRIMARY and SHADOW calls, and every
+    // arm makes a primary call with the same model and prompts, so any two arms
+    // collide there by construction. That made the reroll detector report
+    // `grok=deepseek=gemini-control` as "same prompt, same model, same effort"
+    // for three demonstrably DIFFERENT models (measured, snapshot e77eb5cab57f:
+    // all three carry primary fingerprint 38d0ded5e68d21a2 while their shadow
+    // fingerprints differ correctly). A reroll is a claim about the ARMS, so it
+    // has to be judged on the call that distinguishes them.
+    //
+    // Kept as a SEPARATE field rather than narrowing the arrays: an entry
+    // written before this field exists must still read as it did, and the
+    // genuine detection this machinery was built for (opus vs solo-opus —
+    // identical shadow request, different downstream bucketing) is preserved,
+    // because those two DO share this value.
+    shadowRequestIds: [shadow.requestFingerprint ?? null, shadow.requestIdentity ?? null].filter(Boolean),
     primaryVerdict: j.verdict ?? null,
     primaryFindings: (j.new_findings || []).length,
     // Counted the shadow's way, so `solo-opus` can be compared against the Opus

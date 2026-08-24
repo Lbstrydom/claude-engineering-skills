@@ -408,6 +408,70 @@ describe('summarise surfaces every arm (bakeoff-collect)', () => {
     assert.ok(summarise([e], 12, SCOPE_NULL).totals.rerollPairs.includes('opus=solo-opus'));
   });
 
+  it('a SHARED PRIMARY call is not a reroll — only the shadow call identifies an arm', () => {
+    // Measured 2026-08-23 on snapshot e77eb5cab57f: grok, deepseek and
+    // gemini-control all carried primary fingerprint 38d0ded5e68d21a2 (every
+    // arm issues the same primary call) while their shadow fingerprints
+    // differed correctly. The detector unioned both calls and announced
+    // "grok=deepseek=gemini-control — same prompt, same model, same effort"
+    // for three demonstrably different models. A reroll is a claim about the
+    // ARMS, so it has to be judged on the call that distinguishes them.
+    const e = {
+      campaignId: 'c', snapshotId: 'a', contractEpoch: CONTRACT_EPOCH,
+      arms: {
+        opus: {
+          ...ran(5, 2),
+          requestFingerprints: ['sharedPRIMARY', 'opusSHADOW'],
+          shadowRequestIds: ['opusSHADOW'],
+        },
+        kimi: {
+          ...ran(1, 2),
+          requestFingerprints: ['sharedPRIMARY', 'kimiSHADOW'],
+          shadowRequestIds: ['kimiSHADOW'],
+        },
+        // The third declared arm: without it the snapshot is INCOMPLETE and
+        // rerollPairs is [] for a reason that has nothing to do with the fix —
+        // a vacuous pass. Caught by the sibling test below failing.
+        'solo-opus': {
+          primaryVerdict: 'CONCERNS',
+          primaryFindings: 4,
+          requestFingerprints: ['sharedPRIMARY', 'soloSHADOW'],
+          shadowRequestIds: ['soloSHADOW'],
+        },
+      },
+    };
+    assert.deepEqual(summarise([e], 12, SCOPE_NULL).totals.rerollPairs, [],
+      'sharing only the primary call must NOT report the arms as identical');
+  });
+
+  it('the genuine reroll still fires on shadowRequestIds — the fix must not silence opus=solo-opus', () => {
+    // The negative control for the case above: two arms that really do issue
+    // the same request share the SHADOW id too, so narrowing the comparison
+    // preserves the detection this machinery was built for.
+    const e = {
+      campaignId: 'c', snapshotId: 'a', contractEpoch: CONTRACT_EPOCH,
+      arms: {
+        opus: {
+          ...ran(5, 2),
+          requestFingerprints: ['sharedPRIMARY', 'sameSHADOW'],
+          shadowRequestIds: ['sameSHADOW'],
+        },
+        kimi: {
+          ...ran(1, 2),
+          requestFingerprints: ['sharedPRIMARY', 'kimiSHADOW'],
+          shadowRequestIds: ['kimiSHADOW'],
+        },
+        'solo-opus': {
+          primaryVerdict: 'CONCERNS',
+          primaryFindings: 4,
+          requestFingerprints: ['sharedPRIMARY', 'sameSHADOW'],
+          shadowRequestIds: ['sameSHADOW'],
+        },
+      },
+    };
+    assert.ok(summarise([e], 12, SCOPE_NULL).totals.rerollPairs.includes('opus=solo-opus'));
+  });
+
   it('the ri1: prefix is load-bearing — it is the only thing keeping the two vocabularies disjoint', () => {
     // Unioning two sets is only safe because no identity can equal a
     // fingerprint. If the `ri1:` prefix were ever dropped, a 16-hex identity

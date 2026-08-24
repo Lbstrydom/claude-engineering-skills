@@ -415,10 +415,27 @@ export function summarise(entries, target = DEFAULT_TARGET, scope) {
     // monotone: `ri1:`-prefixed values cannot collide with bare-hex ones, so
     // this only ever ADDS a detection — no previously-reported pair is lost,
     // and an arm predating either field still reads as unknown, never distinct.
-    const byArm = arms.map((a) => [a.id, new Set([
-      ...(e.arms?.[a.id]?.requestFingerprints ?? []),
-      ...(e.arms?.[a.id]?.requestIdentities ?? []),
-    ])]);
+    // Prefer the SHADOW-ONLY ids when the entry carries them (2026-08-24).
+    // The two arrays below union the arm's PRIMARY and SHADOW calls, and every
+    // arm issues a primary call with the same model/prompts — so ANY two arms
+    // intersect there by construction, and the detector reported
+    // `grok=deepseek=gemini-control` as "same prompt, same model, same effort"
+    // for three different models (measured, snapshot e77eb5cab57f: shared
+    // primary 38d0ded5e68d21a2, correctly-distinct shadow fingerprints).
+    // A reroll is a claim about the ARMS, so it must be judged on the call
+    // that distinguishes them.
+    //
+    // Falls back to the union for entries written before `shadowRequestIds`
+    // existed, so no already-collected snapshot changes meaning; the genuine
+    // detection this exists for (opus vs solo-opus) survives either way,
+    // since those two share the SHADOW request too.
+    const byArm = arms.map((a) => {
+      const arm = e.arms?.[a.id];
+      const shadowOnly = arm?.shadowRequestIds;
+      return [a.id, new Set(Array.isArray(shadowOnly) && shadowOnly.length > 0
+        ? shadowOnly
+        : [...(arm?.requestFingerprints ?? []), ...(arm?.requestIdentities ?? [])])];
+    });
     for (let i = 0; i < byArm.length; i++) {
       for (let k = i + 1; k < byArm.length; k++) {
         const shared = [...byArm[i][1]].filter((fp) => byArm[k][1].has(fp));
