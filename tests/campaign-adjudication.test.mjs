@@ -441,6 +441,48 @@ describe('campaign store against a live schema', { skip }, () => {
     assert.equal(summary.perArm.opus.selfFamilyShare, 1);
   });
 
+  it('a SUPERSEDED arm-run is excluded from the calibration denominator', async () => {
+    // Regression: the calibration query joined campaign_arm_runs on
+    // audit_run_id + cohort_id WITHOUT filtering superseded_at, so a worksheet
+    // row on a superseded run counted toward `assigned` while being
+    // unsatisfiable by construction -- adjudicate skips it (no live cohort
+    // finding) and recordHumanOverride refuses it (no live agent verdict to
+    // name). The gate could then never be cleared by doing the work correctly,
+    // which is the cried-wolf shape this repo has already paid for.
+    //
+    // Measured on final-review-scoped-2026q3 (2026-08-24): one qwen row,
+    // superseded 2026-08-19 with ZERO adjudication events, held the campaign
+    // at 15/16 with no sanctioned action able to close it.
+    const before = await store.calibrationSummary(ids.cohortId);
+    const assignedBefore = before.perArm.kimi.assigned;
+
+    const orphanRun = (await client.query(
+      `INSERT INTO audit_runs (repo_id, mode) VALUES ((SELECT repo_id FROM audit_runs WHERE id = $1), 'code') RETURNING id`,
+      [ids.runOpus],
+    )).rows[0].id;
+    const orphanFinding = (await client.query(
+      `INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category, detail_snapshot)
+       VALUES ($1, 'fp-superseded-calib', 'backend', 'HIGH', 'Backend', 'on a superseded run') RETURNING id`,
+      [orphanRun],
+    )).rows[0].id;
+    // A SUPERSEDED arm-run for the same arm, pointing at that run.
+    await client.query(
+      `INSERT INTO campaign_arm_runs (cohort_id, snapshot_row_id, snapshot_id, arm_id, attempt, audit_run_id, superseded_at, cost_status)
+       SELECT cohort_id, snapshot_row_id, snapshot_id, 'kimi', 99, $2, NOW(), 'unpriced'
+         FROM campaign_arm_runs WHERE cohort_id = $1 AND arm_id = 'kimi' LIMIT 1`,
+      [ids.cohortId, orphanRun],
+    );
+    await client.query(
+      `INSERT INTO campaign_worksheet_rows (worksheet_id, worksheet_row_id, finding_id, calibration_assigned)
+       SELECT id, 'wr-superseded-calib', $2, true FROM campaign_worksheets WHERE cohort_id = $1 LIMIT 1`,
+      [ids.cohortId, orphanFinding],
+    );
+
+    const after = await store.calibrationSummary(ids.cohortId);
+    assert.equal(after.perArm.kimi.assigned, assignedBefore,
+      'a calibration row on a SUPERSEDED arm-run must not enter the denominator');
+  });
+
   it('a snapshot recorded at a different sha is REFUSED, not silently updated', async () => {
     const res = await store.upsertSnapshot({ cohortId: ids.cohortId, snapshotId: 'snapA', auditedSha: 'different', transcriptPath: 't.json' });
     assert.equal(res.ok, false);

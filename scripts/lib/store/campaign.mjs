@@ -1554,7 +1554,21 @@ export async function calibrationSummary(cohortId) {
            FROM campaign_worksheet_rows wr
            JOIN campaign_worksheets w ON w.id = wr.worksheet_id
            JOIN audit_findings f      ON f.id = wr.finding_id
+           -- SUPERSEDED arm-runs are excluded (2026-08-24). Without this the
+           -- denominator counted rows unsatisfiable by construction: a superseded
+           -- run contributes no LIVE cohort finding, so adjudicate SKIPS it and
+           -- recordHumanOverride REFUSES it (that writer requires a live agent
+           -- verdict to override) -- the row can never receive a human event from
+           -- any sanctioned action, yet it blocked the gate forever.
+           -- Measured on final-review-scoped-2026q3: 76 worksheet rows sat on
+           -- superseded runs, 14 calibration-assigned, and one (qwen, superseded
+           -- 2026-08-19, ZERO adjudication events) held the campaign at 15/16
+           -- with no way to close it. Excluding them also makes this denominator
+           -- agree with the evidence set: loadCohortArmRuns already drops
+           -- superseded rows, so calibrating over them measured a population that
+           -- never counted as evidence in the first place.
            JOIN campaign_arm_runs ar  ON ar.audit_run_id = f.run_id AND ar.cohort_id = w.cohort_id
+                                     AND ar.superseded_at IS NULL
            LEFT JOIN LATERAL (
              SELECT e.id, e.self_family FROM finding_adjudication_events e
               WHERE e.finding_id = wr.finding_id AND e.adjudicator_kind = 'agent' AND e.superseded_at IS NULL
