@@ -361,6 +361,42 @@ describe('runPredicate — call-shape resolution', () => {
     });
     assert.equal(r.state, 'unknown');
   });
+
+  // final-review-scoped-2026q3 adjudicated finding, 2026-08-24:
+  // findContradictingCallSite only recognises a call whose callee resolves
+  // to a NAMED IMPORT of `symbol` from a provenance module. A call written
+  // LOCALLY inside the provenance module itself (e.g. one exported helper
+  // calling another local function of the same name) resolves to neither
+  // `resolvesToNamedImport` nor `resolvesToModuleBinding` — it matches
+  // nothing, and the predicate fell through to `holds`/evidence:[], which
+  // is byte-identical to a genuinely clean scan. A local call inside the
+  // module that defines/exports the symbol is not provably a violation
+  // (the symbol IS allowed to reference itself there), but it must not be
+  // reported as "checked and clean" either — it degrades to `unknown` with
+  // named evidence instead.
+  it('a local call to the symbol INSIDE its own provenance module → unknown, never a silent holds', () => {
+    const file = 'scripts/lib/file-io.mjs';
+    const src = "export function readFileOrDie(p) { return p; }\nexport function helper() { return readFileOrDie('x'); }\n";
+    const r = runPredicate(PREDICATE, fixtureDeps({ analyzed: [file], sources: { [file]: src } }));
+    assert.equal(r.state, 'unknown');
+    assert.equal(r.evidence[0].file, file);
+    assert.equal(r.evidence[0].line, 2);
+  });
+
+  it('positive control: a genuine imported-call contradiction elsewhere still wins over an ambiguous local call — they must not both read holds', () => {
+    const provFile = 'scripts/lib/file-io.mjs';
+    const provSrc = "export function readFileOrDie(p) { return p; }\nexport function helper() { return readFileOrDie('x'); }\n";
+    const consumerFile = 'scripts/lib/consumer.mjs';
+    const consumerSrc = "import { readFileOrDie } from './file-io.mjs';\nreadFileOrDie('x');\n";
+    const r = runPredicate(PREDICATE, fixtureDeps({
+      analyzed: [provFile, consumerFile],
+      sources: { [provFile]: provSrc, [consumerFile]: consumerSrc },
+    }));
+    assert.equal(r.state, 'contradicted');
+    assert.equal(r.evidence[0].file, consumerFile);
+    assert.equal(r.evidence[0].line, 2);
+    assert.notEqual(r.state, 'holds');
+  });
 });
 
 // ── (d) checkRegistryParity ──────────────────────────────────────────────

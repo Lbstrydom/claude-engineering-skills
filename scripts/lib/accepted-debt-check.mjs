@@ -381,6 +381,55 @@ function findContradictingCallSite(ast, fromFileAbsPath, { symbol, provenanceAbs
 }
 
 /**
+ * Find a call to `symbol` written LOCALLY inside one of its own provenance
+ * modules — a shape `findContradictingCallSite` cannot see, since that
+ * function only recognises a callee resolving to a NAMED IMPORT of
+ * `symbol` from a provenance module. A call from inside the module that
+ * defines/exports `symbol` needs no import at all, so it resolves to
+ * neither `resolvesToNamedImport` nor `resolvesToModuleBinding` — it is
+ * genuinely invisible to the contradiction check, not merely compliant.
+ *
+ * Scoped tightly to avoid false positives: only fires when `fromFileAbsPath`
+ * IS one of `provenanceAbsPaths` (so an unrelated file that happens to
+ * define its own same-named local function is never touched — that shape
+ * is already correctly excluded by real scope resolution elsewhere), and
+ * only for a bare-identifier callee that does NOT resolve as a named import
+ * of `symbol` from another provenance module (which would already be a
+ * legitimate re-export chain, not a local call).
+ *
+ * Deliberately does not classify the call as `contradicted` — the symbol
+ * is defined in this file, so referencing it here is not provably a scope
+ * violation. But it must not be silently reported as `holds` either: the
+ * caller folds a hit from this function into `unknown` evidence.
+ *
+ * @param {object} ast
+ * @param {string} fromFileAbsPath
+ * @param {{symbol: string, provenanceAbsPaths: string[]}} spec
+ * @returns {{line: number} | null}
+ */
+function findLocalProvenanceCallSite(ast, fromFileAbsPath, { symbol, provenanceAbsPaths }) {
+  if (!provenanceAbsPaths.includes(fromFileAbsPath)) return null;
+
+  let found = null;
+  traverse(ast, {
+    'CallExpression|OptionalCallExpression'(nodePath) {
+      if (found) return;
+      const callee = nodePath.node.callee;
+      if (callee.type !== 'Identifier' || callee.name !== symbol) return;
+
+      const calleePath = nodePath.get('callee');
+      for (const provAbs of provenanceAbsPaths) {
+        if (resolvesToNamedImport(calleePath, { importedName: symbol, moduleAbsPath: provAbs, fromFileAbsPath })) {
+          return; // a genuine cross-module import chain, not a local call
+        }
+      }
+      found = { line: nodePath.node.loc?.start?.line ?? 0 };
+    },
+  });
+  return found;
+}
+
+/**
  * Execute the one V1 predicate type: `no-invocation-outside-scope`.
  * @param {{type:'no-invocation-outside-scope', symbol:string, provenanceModules:string[], allowedGlobs:string[]}} predicate
  * @param {{enumerateTrackedSources?: Function, readTrackedSource?: Function, hasSymbol?: Function}} [deps]
@@ -453,6 +502,26 @@ export function runPredicate(predicate, {
         state: 'contradicted',
         evidence: [{ file, line: contradictedSite.line, reason: `${symbol}(...) invoked here, outside allowedGlobs` }],
       };
+    }
+
+    // Not a cross-module contradiction — but a local call inside the
+    // symbol's OWN provenance module is invisible to the check above and
+    // must not silently read as a clean scan either. Doesn't return early:
+    // a genuine `contradicted` found in a later file still takes priority
+    // (this only ever downgrades an otherwise-`holds` result to `unknown`).
+    let localSite;
+    try {
+      localSite = findLocalProvenanceCallSite(ast, path.resolve(file), { symbol, provenanceAbsPaths });
+    } catch (err) {
+      evidence.push({ file, reason: `analysis failed: ${safeErrorClass(err)}: ${err.message}` });
+      continue;
+    }
+    if (localSite) {
+      evidence.push({
+        file,
+        line: localSite.line,
+        reason: `${symbol}(...) invoked locally inside its own provenance module — not resolvable as a cross-module import site, so this cannot be mechanically confirmed as compliant or as a contradiction; requires manual verification`,
+      });
     }
   }
 
