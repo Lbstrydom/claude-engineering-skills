@@ -4,22 +4,38 @@ summary: Step 7 Gemini independent review protocol — transcript, verdict handl
 
 # Gemini Independent Review — Step 7 Protocol
 
+> **GENERATED COPY — do not edit.** The canonical is
+> [`docs/audit/shared-references/gemini-gate.md`](../../../docs/audit/shared-references/gemini-gate.md).
+> Regenerate with `node scripts/sync-shared-audit-refs.mjs`; `npm run check`
+> fails on drift. Relative links above were rewritten for this location,
+> so this file is NOT byte-identical to the canonical by design.
+
 After the final GPT audit round (whether converged or not), run
 Gemini 3.1 Pro as an independent third reviewer. This step is MANDATORY —
 Gemini provides cross-model perspective that catches blind spots in the
 Claude-GPT deliberation.
 
-**Provider / no-key degradation ladder (don't just skip):**
+**Provider / no-key degradation ladder (don't just skip).** Each rung asks
+whether a ROUTE exists, not whether one public variable is set — the rung 2a
+Azure branch was missing until 2026-08-27, so on an Azure-only tenant (no
+`GEMINI_API_KEY`, no `ANTHROPIC_API_KEY`) this ladder sent the reader to rung 3
+while `gemini-review.mjs` would in fact have used Foundry Claude. That is the
+env-var-instead-of-route class AGENTS.md records three prior instances of, and
+it made this ladder disagree with the auto-selection order documented below.
 1. `GEMINI_API_KEY` set → Gemini (preferred).
-2. else `ANTHROPIC_API_KEY` set → `gemini-review.mjs` auto-falls-back to Claude Opus (no flag needed).
-3. **else neither key** → do NOT silently skip. Run an **independent adversarial
+2. else the **Azure profile is active** (`AZURE_OPENAI_ENDPOINT`) → Foundry
+   Claude, via `azureConfig.claudeRoute`. No flag needed, and no public key is
+   involved — this rung is unreachable by a check that only reads
+   `ANTHROPIC_API_KEY`.
+3. else `ANTHROPIC_API_KEY` set → `gemini-review.mjs` auto-falls-back to Claude Opus (no flag needed).
+4. **else no route at all** → do NOT silently skip. Run an **independent adversarial
    review agent** over the union diff as the gate: spawn a fresh agent (Task/Agent)
    with the plan + the diff + the accumulated findings and the instruction *"act as
    an independent final reviewer — find what the author and GPT missed; default to
    skepticism."* Record its verdict in the same `APPROVE`/`CONCERNS`/`REJECT` shape
    and run the same closed loop. This preserves the cross-perspective gate when no
    provider key is available (it is the documented substitute, not a bypass).
-4. **only** when neither a key nor an independent agent is available → output
+5. **only** when neither a route nor an independent agent is available → output
    `FINAL_GATE_SKIPPED` and do not claim full final-gate validation.
 
 ## Build the transcript — a REAL step, run it
@@ -31,8 +47,13 @@ inferred from this document (reported 2026-08-08); the builder exists so the
 MANDATORY gate is never blocked on invented state.
 
 ```bash
-node scripts/build-audit-transcript.mjs --sid $SID
+node scripts/build-audit-transcript.mjs --sid $SID --changed "$CHANGED"
 ```
+
+**`--changed` is shown from the first example on purpose** — a code audit is
+the common case and the builder REFUSES without it, so an example that omits it
+is an example that does not run (round-6 audit M2). Plan mode is the exception
+and is covered below.
 
 That discovers every `.audit/$SID-r<N>-result.json`, picks up
 `.audit/$SID-ledger.json` when present, infers the mode from the session-id

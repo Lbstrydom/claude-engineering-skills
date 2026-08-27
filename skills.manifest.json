@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "78710e7f716e46d2",
+  "bundleVersion": "1b6718bbf035f980",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -70,18 +70,18 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "d06171b8c769",
-          "size": 11228
+          "sha": "4f8c09d495a8",
+          "size": 12623
         },
         {
           "relPath": "references/ledger-format.md",
-          "sha": "f0118568cb2e",
-          "size": 6936
+          "sha": "b03c9c7da84d",
+          "size": 7316
         },
         {
           "relPath": "references/prerequisite-ladder.md",
-          "sha": "a2e62d2d1eec",
-          "size": 5296
+          "sha": "312754aa9e41",
+          "size": 5962
         },
         {
           "relPath": "references/r2-plus-mode.md",
@@ -108,18 +108,18 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "d06171b8c769",
-          "size": 11228
+          "sha": "4f8c09d495a8",
+          "size": 12623
         },
         {
           "relPath": "references/ledger-format.md",
-          "sha": "f0118568cb2e",
-          "size": 6936
+          "sha": "b03c9c7da84d",
+          "size": 7316
         },
         {
           "relPath": "references/prerequisite-ladder.md",
-          "sha": "a2e62d2d1eec",
-          "size": 5296
+          "sha": "312754aa9e41",
+          "size": 5962
         },
         {
           "relPath": "references/verification-discipline.md",

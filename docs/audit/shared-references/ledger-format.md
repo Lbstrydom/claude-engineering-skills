@@ -4,6 +4,10 @@ summary: Adjudication ledger schema + writer invocation example for each finding
 
 # Adjudication Ledger — Writing Entries
 
+This is the canonical copy. Consuming skills carry a `references/ledger-format.md`
+synced by `node scripts/sync-shared-audit-refs.mjs` and drift-checked in
+`npm run check`. **Edit this file, never a copy.**
+
 After each deliberation round, write ledger entries for every finding
 before proceeding to Step 4 (Fix). The ledger is the source of truth for
 R2+ rulings injection and post-output suppression.

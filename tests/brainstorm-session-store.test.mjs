@@ -24,7 +24,7 @@ function mkV2Envelope({ topic = 't', sid = 'sid-x' } = {}) {
     capturedAt: new Date().toISOString(),
     schemaVersion: 2,
     // Arch-context fields — WriteSchema (validated by appendSession) requires them.
-    archContextAttached: false, archContextChars: 0, archContextWarning: null, debateSkipped: null,
+    archContextAttached: false, archContextChars: 0, archContextWarning: null, debateSkipped: null, debate: [],
   };
 }
 
@@ -507,4 +507,62 @@ describe('appendQuarantine — durability under real concurrent writers', () => 
   // (2) is the half a refactor silently breaks — and did, historically. So the
   // regression lock lives there, and this test is a load/validity check
   // standing beside it rather than pretending to be the proof.
+});
+
+describe('round allocation rejects unsafe integers (round-1 audit H1)', () => {
+  // `Number.isInteger(1e100)` is TRUE, so the old `Number.isInteger(r) && r >= 0`
+  // predicate accepted a corrupt-but-parseable line as a usable round. The next
+  // round became 1e100 + 1 — which, past 2^53, is 1e100 again, so every later
+  // append collided on one value and the session stopped ordering.
+  const CORRUPT_ROUNDS = [1e100, Number.MAX_VALUE, 2 ** 53, -0.0001, NaN, Infinity, '3'];
+
+  for (const bad of CORRUPT_ROUNDS) {
+    it(`a persisted round of ${String(bad)} falls back to the file index`, async () => {
+      const root = mkTmp();
+      // Hand-write one corrupt line, then append through the real writer.
+      const line = JSON.stringify({ ...mkV2Envelope({ sid: 'h1' }), round: bad });
+      fs.writeFileSync(path.join(root, 'h1.jsonl'), line + '\n');
+
+      const r = await appendSession({ sid: 'h1', envelope: mkV2Envelope({ sid: 'h1' }), root });
+      assert.equal(r.round, 1, 'next round must come from the file index, not the corrupt value');
+      assert.ok(Number.isSafeInteger(r.round), 'an allocated round must be a safe integer');
+    });
+  }
+
+  it('a legitimate large-but-safe round is still honoured', async () => {
+    const root = mkTmp();
+    const safe = Number.MAX_SAFE_INTEGER - 10;
+    fs.writeFileSync(
+      path.join(root, 'h2.jsonl'),
+      JSON.stringify({ ...mkV2Envelope({ sid: 'h2' }), round: safe }) + '\n',
+    );
+    const r = await appendSession({ sid: 'h2', envelope: mkV2Envelope({ sid: 'h2' }), root });
+    assert.equal(r.round, safe + 1, 'the guard must not reject valid rounds');
+  });
+});
+
+describe('the round SUCCESSOR must be safe too (round-5 audit H1)', () => {
+  it('a session at MAX_SAFE_INTEGER refuses to append rather than colliding', async () => {
+    const root = mkTmp();
+    fs.writeFileSync(
+      path.join(root, 'h3.jsonl'),
+      JSON.stringify({ ...mkV2Envelope({ sid: 'h3' }), round: Number.MAX_SAFE_INTEGER }) + '\n',
+    );
+    // max + 1 is 2^53 — not a safe integer, and the value every later append
+    // would compute too, so the sequence would silently stop advancing.
+    await assert.rejects(
+      () => appendSession({ sid: 'h3', envelope: mkV2Envelope({ sid: 'h3' }), root }),
+      (e) => /no safe next round/.test(e.message),
+    );
+  });
+
+  it('one below the boundary still appends — the guard must not overreach', async () => {
+    const root = mkTmp();
+    fs.writeFileSync(
+      path.join(root, 'h4.jsonl'),
+      JSON.stringify({ ...mkV2Envelope({ sid: 'h4' }), round: Number.MAX_SAFE_INTEGER - 1 }) + '\n',
+    );
+    const r = await appendSession({ sid: 'h4', envelope: mkV2Envelope({ sid: 'h4' }), root });
+    assert.equal(r.round, Number.MAX_SAFE_INTEGER);
+  });
 });

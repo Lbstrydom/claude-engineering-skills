@@ -55,7 +55,9 @@ function quarantineLockPath(sid, rootOverride = null) {
  * Read raw lines for round-number computation under the lock. Applies
  * §13.B file-index fallback for V1 records (no `round` field). Audit
  * R1-H9: a non-numeric `round` field would poison Math.max — coerce
- * to file-index whenever the parsed value isn't a finite integer.
+ * to file-index whenever the parsed value isn't a SAFE non-negative integer
+ * (2026-08-27: "finite integer" let `1e100` through, which is an integer by
+ * `Number.isInteger` and unusable as a counter).
  *
  * @returns {Array<{round: number, _raw: object|null, _invalid?: boolean}>}
  */
@@ -67,12 +69,39 @@ function readLinesUnvalidated(sid, rootOverride = null) {
     try {
       const parsed = JSON.parse(line);
       const r = parsed.round;
-      const safeRound = (Number.isInteger(r) && r >= 0) ? r : idx;
+      // `Number.isInteger` alone admits UNSAFE integers — `Number.isInteger(1e100)`
+      // is true — so a corrupt-but-parseable line could set the next round to
+      // 1e100+1 and every later append would collide at that value (adding 1 to
+      // an unsafe integer is a no-op). `isSafeInteger` is the actual predicate
+      // the allocator needs; the file-index fallback already handles everything
+      // it rejects.
+      const safeRound = (Number.isSafeInteger(r) && r >= 0) ? r : idx;
       return { round: safeRound, _raw: parsed };
     } catch {
       return { round: idx, _raw: null, _invalid: true };
     }
   });
+}
+
+/**
+ * The next round number after `rounds`, or `null` when no successor is safe.
+ *
+ * Round 1 of the audit fixed the INPUT side (`Number.isSafeInteger` on each
+ * stored value); round 5 caught that the OUTPUT side was still open. A stored
+ * round of exactly `Number.MAX_SAFE_INTEGER` passes the input guard, and
+ * `max + 1` is then `2^53` — not a safe integer, and the same value every later
+ * append would compute, so the sequence would silently stop advancing. Guarding
+ * an input without guarding its successor is half a fix.
+ *
+ * Returns `null` rather than clamping: a session at `MAX_SAFE_INTEGER` rounds
+ * is corrupt, and inventing a colliding number would hide that behind data loss.
+ *
+ * @param {number[]} rounds
+ * @returns {number|null}
+ */
+function nextRoundAfter(rounds) {
+  const next = Math.max(...rounds) + 1;
+  return Number.isSafeInteger(next) ? next : null;
 }
 
 /**
@@ -109,7 +138,15 @@ export async function appendSession({ sid, envelope, root = null }) {
     const existing = readLinesUnvalidated(sid, root).filter(e => !e._invalid);
     const nextRound = existing.length === 0
       ? 0
-      : Math.max(...existing.map(e => e.round)) + 1;
+      : nextRoundAfter(existing.map(e => e.round));
+
+    if (nextRound === null) {
+      throw new Error(
+        `appendSession: session "${sid}" has no safe next round — the highest persisted `
+        + 'round sits at the safe-integer boundary, which means the file is corrupt. '
+        + 'Inspect it rather than appending.',
+      );
+    }
 
     const finalEnvelope = {
       ...envelope,
@@ -172,6 +209,12 @@ function normalizeArchFields(envelope) {
     // is the honest value for a row written before the field existed: nothing
     // recorded a skip, so nothing is claimed.
     debateSkipped: envelope.debateSkipped ?? null,
+    // `debate` is required on the WRITE schema (round-2 audit M4 — it is what
+    // makes the debate/debateSkipped pair judgeable), and a legacy row predates
+    // it, so the read-modify-write path needs the same canonicalisation. Empty
+    // is the honest value: a row written before the field existed recorded no
+    // debate round.
+    debate: envelope.debate ?? [],
   };
 }
 

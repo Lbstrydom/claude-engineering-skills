@@ -14,6 +14,7 @@
  * @module scripts/lib/brainstorm/schemas
  */
 import { z } from 'zod';
+import { DEBATE_SKIP_REASONS } from './debate-outcome.mjs';
 
 export const PROVIDER_STATES = [
   'success',
@@ -55,15 +56,25 @@ export const ProviderResultSchema = z.object({
 });
 
 /**
- * Debate round entry. State enum is narrower than ProviderResult — debate
- * is only attempted when both providers succeeded in round 1, so there
- * are no `misconfigured` / `blocked` cases (caught earlier in round 1).
- * Plan §12.A canonical 4-case state machine.
+ * Debate round entry.
+ *
+ * **The state enum is `PROVIDER_STATES`, not a narrower list** (corrected
+ * 2026-08-27). It used to be `['success','malformed','timeout','http_error',
+ * 'empty']`, on the rationale that "debate is only attempted when both
+ * providers succeeded in round 1, so there are no misconfigured / blocked
+ * cases (caught earlier in round 1)". That reasoning does not hold: round 1
+ * succeeding says nothing about the DEBATE call, which is a fresh API request
+ * that can itself be content-filtered (`blocked`) or hit the output ceiling
+ * (`truncated`). Because `dispatchDebateCall` maps any unlisted state to
+ * `http_error`, both were persisted under a wrong label — the same
+ * undisclosed-state defect `debateSkipped` below exists to fix, one function
+ * over. Deriving from the authoritative contract means a new provider state
+ * cannot silently become `http_error` here either.
  */
 export const DebateRoundSchema = z.object({
   provider: z.enum(BRAINSTORM_PROVIDERS),
   reactingTo: z.enum(BRAINSTORM_PROVIDERS),
-  state: z.enum(['success', 'malformed', 'timeout', 'http_error', 'empty']),
+  state: z.enum(PROVIDER_STATES),
   text: z.string().nullable(),
   errorMessage: z.string().nullable(),
   httpStatus: z.number().int().nullable(),
@@ -104,6 +115,34 @@ export const BrainstormEnvelopeV1Schema = z.object({
  * record by the session-store reader (so callers can tell synthesised
  * data apart from real data).
  */
+/**
+ * `debate` and `debateSkipped` are two halves of ONE outcome, so the legal
+ * values are PAIRS — and per-field validation cannot see an illegal pair.
+ * Without this, an envelope carrying a populated `debate` array AND a non-null
+ * `debateSkipped` validated cleanly, asserting both that the round ran and
+ * that it was cancelled. A reader resolving that contradiction has to pick a
+ * side, and either choice is sometimes wrong.
+ *
+ * Legal: skipped non-null ⇒ `debate` empty (requested, cancelled) · skipped
+ * null ⇒ `debate` empty (not requested) or populated (it ran).
+ *
+ * @param {object} env
+ * @param {import('zod').RefinementCtx} ctx
+ */
+function debateOutcomeIsCoherent(env, ctx) {
+  // `?? []` so an ABSENT debate key is judged as the empty case rather than
+  // silently skipping the check — belt to the write schema's braces above,
+  // because this refinement also guards READS, where `debate` stays optional
+  // for legacy rows.
+  if (env.debateSkipped && (env.debate ?? []).length > 0) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['debateSkipped'],
+      message: 'debateSkipped is set while debate[] is non-empty — a round cannot be both cancelled and completed',
+    });
+  }
+}
+
 export const BrainstormEnvelopeV2Schema = BrainstormEnvelopeV1Schema.extend({
   sid: z.string().min(1),
   round: z.number().int().min(0),
@@ -132,7 +171,10 @@ export const BrainstormEnvelopeV2Schema = BrainstormEnvelopeV1Schema.extend({
   // block and no explanation after the user had already paid for round 1. When
   // the debate DID run, this is null and `debate` carries the entries.
   debateSkipped: z.object({
-    reason: z.enum(['not-a-pair', 'round-1-incomplete']),
+    // Derived from the classifier's own constant, never a second hand-written
+    // copy: two owners of one closed set are free to drift, and the drift would
+    // surface as a valid classification failing to persist.
+    reason: z.enum(DEBATE_SKIP_REASONS),
     detail: z.string().min(1),
   }).nullable().optional(),
   artifactContext: z.object({
@@ -148,7 +190,7 @@ export const BrainstormEnvelopeV2Schema = BrainstormEnvelopeV1Schema.extend({
     })),
     policyAttached: z.boolean(),
   }).nullable().optional(),
-});
+}).superRefine(debateOutcomeIsCoherent);
 
 /**
  * Writers MUST emit V2 strict. Non-V2 writes are bugs. Stricter than V2
@@ -167,6 +209,13 @@ export const BrainstormEnvelopeWriteSchema = BrainstormEnvelopeV2Schema.required
   // skipped" are once again indistinguishable. The VALUE may still be null —
   // that is the "not requested / it ran" case.
   debateSkipped: true,
+  // Required for the SAME reason, and it is what makes the pair contract TOTAL
+  // (round-2 audit M4). `debateOutcomeIsCoherent` can only judge a pair it can
+  // see: with `debate` optional, an envelope carrying a non-null
+  // `debateSkipped` and NO `debate` key skipped the refinement entirely and
+  // validated. The writer emits `debate` unconditionally, so requiring the key
+  // costs nothing and closes the hole.
+  debate: true,
 });
 
 /**
@@ -175,7 +224,23 @@ export const BrainstormEnvelopeWriteSchema = BrainstormEnvelopeV2Schema.required
  */
 export const BrainstormOutputSchema = z.union([
   BrainstormEnvelopeV2Schema,
-  BrainstormEnvelopeV1Schema,
+  // V1 may only catch records that do NOT claim to be V2. Without this refusal
+  // the union was a validation BYPASS (round-5 audit M5): a `schemaVersion: 2`
+  // record failing a V2-specific rule — the debate/debateSkipped coherence
+  // refinement, say — fell through to V1, which is a plain `z.object` and so
+  // ACCEPTED it while silently STRIPPING every V2 field (sid, round, debate,
+  // debateSkipped). The contradictory envelope the refinement exists to reject
+  // parsed cleanly, and the caller got back a V1 record nobody wrote. A version
+  // claim says which contract applies; honouring it is what makes the union a
+  // fallback rather than an escape hatch.
+  //
+  // `.extend({schemaVersion: z.undefined()})`, NOT `.refine()`: a plain
+  // `z.object` STRIPS undeclared keys, so a refinement reading
+  // `r.schemaVersion` inspects the already-stripped OUTPUT and always sees
+  // `undefined` — the check passes for exactly the records it exists to reject.
+  // Declaring the key makes the rejection happen during object parsing, on the
+  // input, where the value is still there.
+  BrainstormEnvelopeV1Schema.extend({ schemaVersion: z.undefined().optional() }),
 ]);
 
 /**

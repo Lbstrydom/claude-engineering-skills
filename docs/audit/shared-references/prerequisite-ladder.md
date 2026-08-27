@@ -7,6 +7,11 @@ summary: Step 0 prerequisite ladder — absent helper bundle or auditor route, a
 Step 0 of `/audit-plan` and `/audit-code` lists prerequisites. This is what to
 do when one of them is not there.
 
+This is the canonical copy. Consuming skills carry a
+`references/prerequisite-ladder.md` synced by
+`node scripts/sync-shared-audit-refs.mjs` and drift-checked in `npm run check`.
+**Edit this file, never a copy.**
+
 **The failure this exists to stop.** The audit family used to state
 prerequisites and stop — *"Validate: plan file exists, `OPENAI_API_KEY` is
 set"* — with nothing said about the other branch. So the flow died mid-run on a
@@ -27,6 +32,11 @@ report and the commit.
 ## Rung 0 — resolve the prerequisite before deciding anything
 
 Run the check first; do not infer availability from a variable name.
+
+> `npm run <script>` below names a **package.json script**, not a package
+> manager — pnpm, yarn and bun read the same entry and just invoke it
+> differently. Use whichever your repo declares (`package-manager.mjs` is the
+> code-level oracle for the same question).
 
 - **Helper bundle** — the scripts this skill invokes live in `scripts/` in this
   source repo and in `scripts/.claude-skills/` in a consumer. In a linked git
@@ -53,7 +63,7 @@ reviewer to review, so the whole flow degrades rather than one step.
    `/ship` uses. A bare "not applicable" is not a reason.
 2. **Offer the substitute, and label it.** Spawn an independent adversarial
    review agent over the same scope with the plan and the diff, exactly as
-   `references/gemini-gate.md` Rung 3 does for the final reviewer, and record
+   `references/gemini-gate.md`'s last rung does for the final reviewer, and record
    its verdict in the same `APPROVE` / `CONCERNS` / `REJECT` shape. This is a
    documented substitute, not a bypass, and it is labelled as one in the report.
 3. **Do not present the substitute as the audit.** The report header says

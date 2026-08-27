@@ -4,7 +4,9 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 
-import { findSyncTargets, EXPECTED_CONSUMERS, syncPairs } from '../scripts/sync-shared-audit-refs.mjs';
+import { findSyncTargets, EXPECTED_CONSUMERS, syncPairs , renderForTarget } from '../scripts/sync-shared-audit-refs.mjs';
+
+const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 
 let TMP;
 
@@ -148,7 +150,15 @@ describe('sync-shared-audit-refs', () => {
     // target unconditionally, so the first missing one threw ENOENT and the
     // documented bootstrap had never once executed (found by a plan-audit
     // final gate, 2026-08-07, reproduced before this fix).
-    const CANONICAL = 'CANONICAL BODY';
+    // Carries the provenance sentence because `renderForTarget` now REFUSES a
+    // canonical without one (round-6 audit M5) — a fixture missing it would be
+    // testing a shape the synchronizer no longer accepts.
+    const CANONICAL = [
+      'CANONICAL BODY',
+      '',
+      'This is the canonical copy. **Edit this file, never a copy.**',
+      '',
+    ].join('\n');
 
     function pair(basename, skill) {
       const canonical = path.join(TMP, 'docs/audit/shared-references', basename);
@@ -172,7 +182,13 @@ describe('sync-shared-audit-refs', () => {
 
       assert.equal(r.writes, 1);
       assert.equal(r.bootstrapped, 1, 'a first write is reported as a bootstrap, not a re-sync');
-      assert.equal(fs.readFileSync(p.target, 'utf-8'), CANONICAL);
+      // The copy is RENDERED, not copied: the provenance sentence is replaced by
+      // the GENERATED COPY banner, which is the whole point of the substitution.
+      const written = fs.readFileSync(p.target, 'utf-8');
+      assert.match(written, /CANONICAL BODY/);
+      assert.match(written, /GENERATED COPY — do not edit/);
+      assert.doesNotMatch(written, /This is the canonical copy./,
+        'the copy must not still claim to be the canonical');
       assert.match(r.lines.join(''), /\(bootstrapped\)/);
     });
 
@@ -226,5 +242,57 @@ describe('sync-shared-audit-refs', () => {
       );
       assert.match(out, /IN SYNC|DRIFT/);
     });
+  });
+});
+
+describe('a canonical with no provenance sentence is REFUSED (round-6 audit M5)', () => {
+  it('renderForTarget itself stays a PURE transform — the refusal is not here', () => {
+    // It must remain idempotent on an already-rendered copy (which carries the
+    // banner, not the sentence), and it is the link-rewriter unit under test.
+    const out = renderForTarget('# X\n\njust a body\n', 'docs/audit/shared-references/x.md',
+      'skills/audit-code/references/x.md', process.cwd());
+    assert.match(out, /just a body/);
+  });
+
+  it('syncPairs throws rather than writing an unmarked copy', () => {
+    const dir = path.join(TMP, 'docs/audit/shared-references');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'noprov.md'), '# X\n\njust a body\n');
+    assert.throws(
+      () => syncPairs([{
+        canonical: path.join(dir, 'noprov.md'),
+        target: path.join(TMP, 'skills', 'some-skill', 'references', 'noprov.md'),
+        skill: 'some-skill', basename: 'noprov.md',
+      }]),
+      /carries no canonical self-description/,
+      'writing the body unchanged is a success path that did nothing — the exact bypass '
+      + 'that let gemini-gate.md and ledger-format.md ship copies with no provenance',
+    );
+  });
+
+  it('a canonical WITH the sentence still syncs — the guard must not overreach', () => {
+    const dir = path.join(TMP, 'docs/audit/shared-references');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'prov.md'),
+      '# X\n\nThis is the canonical copy. **Edit this file, never a copy.**\n');
+    const target = path.join(TMP, 'skills', 'some-skill', 'references', 'prov.md');
+    const r = syncPairs([{
+      canonical: path.join(dir, 'prov.md'), target, skill: 'some-skill', basename: 'prov.md',
+    }]);
+    assert.equal(r.writes, 1);
+    assert.match(fs.readFileSync(target, 'utf-8'), /GENERATED COPY — do not edit/);
+  });
+
+  it('every shipped canonical carries the sentence, so none can render unmarked', () => {
+    const dir = path.join(REPO_ROOT, 'docs', 'audit', 'shared-references');
+    const canonicals = fs.readdirSync(dir).filter((f) => f.endsWith('.md'));
+    assert.ok(canonicals.length >= 4, 'vacuous-pass guard: the directory must not be empty');
+    for (const f of canonicals) {
+      assert.match(
+        fs.readFileSync(path.join(dir, f), 'utf-8'),
+        /This is the canonical copy\./,
+        `${f} would render copies with no provenance banner`,
+      );
+    }
   });
 });

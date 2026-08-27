@@ -29,7 +29,7 @@ import { buildBrainstormSystemPrompt, DEFAULT_WORD_TARGET } from './lib/brainsto
 import { loadArtifacts } from './lib/brainstorm/artifact-context.mjs';
 import { loadPolicyPack } from './lib/brainstorm/policy-context.mjs';
 import { buildDebatePrompt } from './lib/brainstorm/debate-prompt.mjs';
-import { classifyDebateOutcome } from './lib/brainstorm/debate-outcome.mjs';
+import { classifyDebateOutcome, isDebateEligible } from './lib/brainstorm/debate-outcome.mjs';
 import { appendSession, pruneOldSessions, loadSession } from './lib/brainstorm/session-store.mjs';
 import { saveInsight } from './lib/brainstorm/insight-store.mjs';
 
@@ -695,8 +695,9 @@ async function runDebateRound({ providers, round1, args, resolvedModels, assembl
   // following the skill rendered neither a debate block nor an explanation —
   // after the user had already paid for round 1. The one-provider case did not
   // even get the stderr WARN, so it was silent on every surface.
+  // Same oracle as the classifier — never a second copy of the eligibility test.
   const successByProvider = {};
-  for (const r of round1) successByProvider[r.provider] = r.state === 'success' ? r : null;
+  for (const r of round1) successByProvider[r.provider] = isDebateEligible(r) ? r : null;
 
   const outcome = classifyDebateOutcome({ providers, round1 });
   if (!outcome.ok) {
@@ -763,7 +764,14 @@ async function dispatchDebateCall({ provider, reactingTo, systemPrompt, userMess
   // r1 has the ProviderResultSchema shape; project the fields the DebateRoundSchema expects
   return {
     provider, reactingTo,
-    state: r1.state === 'success' ? 'success' : (r1.state === 'malformed' || r1.state === 'timeout' || r1.state === 'http_error' || r1.state === 'empty' ? r1.state : 'http_error'),
+    // Pass the provider's own state through. This used to collapse anything
+    // outside a hardcoded five-state list to `http_error`, so a debate response
+    // that was content-filtered (`blocked`) or hit the output ceiling
+    // (`truncated`) was persisted under a label naming a transport failure that
+    // never happened. DebateRoundSchema now accepts the full PROVIDER_STATES
+    // contract, so there is nothing left to collapse — and a state the schema
+    // does not know fails at the write boundary rather than being renamed.
+    state: r1.state,
     text: r1.text ?? null,
     errorMessage: r1.errorMessage ?? null,
     httpStatus: r1.httpStatus ?? null,

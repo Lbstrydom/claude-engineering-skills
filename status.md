@@ -1,5 +1,99 @@
 # Project Status Log
 
+## 2026-08-27 — Consumer-report degradation disclosure: brainstorm debate-skip + audit prerequisite ladder (full /audit-code, 6 GPT rounds + Gemini gate)
+
+### Consumer Verification (previous ship)
+- **Ship**: `0027db5b5bcee097fa5d821aba962df5d79c667b` on `main` (two commits: `bbd0b0b6` telemetry attribution, `0027db5b` AGENTS.md invariant).
+- **State**: `verified` (transfer + consumer bundle), `unverified` (fresh-clone battery).
+- **Retrieval run**: `git ls-remote origin refs/heads/main` → `0027db5b`, and `git merge-base --is-ancestor` confirms BOTH shipped commits are ancestors of that remote ref. Verified by remote-ref comparison, never by `$?` — the FIRST push attempt this session exited 0 through a pipe while the push was actually **rejected non-fast-forward** (a concurrent session had pushed `bf70f2f6`); rebased onto it, zero file overlap.
+- **Consumer bundle**: pre-push sync reported `Targets: 2/2 reached · Created: 0 · Updated: 10 · Unchanged: 1454 · Errors: 0`.
+- **`unverified` — concrete blocked prerequisite**: no fresh clone-to-tempdir + `npm run check` battery was run against the pushed tip. The pre-push hook did run the full `check` in a clean throwaway worktree at this exact commit and passed, but that is the producer side.
+- **Not inherited**: the producer-side green (13,803 tests, 0 fail, 28 skipped) is NOT evidence for the consumer-bundle row above — that rests on the sync run's own reported counts.
+- **Live store verification (this ship's actual subject)**: `audit_pass_stats` went from 0/5,459 rows carrying `source_model` to two real audit runs writing `gpt-5.6-terra` + priced `cost_usd`, with all 19 non-dispatching passes NULL. Token sums reconcile against the run logs.
+
+### Origin
+
+A prompt described five upstream consumer reports by uuid, repo_id and
+bundleSha. **None of the five existed in `upstream_issues`**, and the cited
+repo_id matched no `audit_repos` row — verified by direct query, not by
+`upstream list`'s empty read alone. Checked the technical claims on their
+merits anyway; three held up. Two implemented and audited here; one (the dead
+worktree-preflight runbook pointer) shipped separately as `13acf83e`.
+
+### Changes
+
+- **`debateSkipped` envelope field** (`scripts/lib/brainstorm/schemas.mjs`,
+  `session-store.mjs`, `debate-outcome.mjs`, `brainstorm-round.mjs`): a
+  requested-but-cancelled `--debate` round used to emit `debate: []`, byte-
+  identical to a run that never requested one. Now `null` = not requested/it
+  ran, `{reason, detail}` = requested and cancelled. New pure classifier
+  `classifyDebateOutcome` / `isDebateEligible` — extracted because
+  `brainstorm-round.mjs` exports nothing, so the original bug had no test
+  boundary. `skills/brainstorm/SKILL.md` renders the disclosure.
+- **`docs/audit/shared-references/prerequisite-ladder.md`**: `/audit-plan`,
+  `/audit-code`, `/cycle` had no defined behaviour for an absent helper bundle
+  or GPT route — the flow died mid-run after the user had already paid for the
+  artifact being audited. Four-rung ladder, synced into both audit skills;
+  reuses existing vocabulary (Step 6 census states, `.audit/last-audit-run.json`,
+  `AI-Gate: not-run`) rather than inventing new state.
+
+### Audit — 6 GPT rounds + Gemini final gate (mandatory)
+
+R1 H:1 M:6 L:3 → R2 H:2 M:6 L:1 → R3 H:3 M:0 L:0 → R5 (full-scope re-run) H:1
+M:7 → R6 H:1 M:5 L:2. 20 accepted, 13 dismissed (11 GPT-overruled on
+deliberation, all challenged with evidence), 4 deferred with independence
+stated. Round-3 H1 was the sharpest: `success` + `text: null` is schema-valid
+(`ProviderResultSchema` permits null text for every state), so my own round-2
+distinctness fix still crashed on a real-but-empty response — fixed with one
+shared `isDebateEligible` oracle instead of two copies of the eligibility test.
+Round-5 M5 found a validation bypass I introduced in round 2: unioning V2
+before a permissive V1 meant a `schemaVersion:2` record failing V2 fell through
+and silently stripped every V2 field — refined with `.extend({schemaVersion:
+z.undefined().optional()})`, not `.refine()` (a refine reads the
+already-stripped output). Round-6 M5 found the general form of something I'd
+only patched an instance of in round 1: `renderForTarget` silently returned an
+unmarked copy when a canonical lacked its provenance sentence — is how two
+existing shared references shipped with no GENERATED COPY banner for their
+whole life. First fix attempt put the throw in the wrong function (broke 6
+link-rewriter unit tests); moved to the `syncPairs` seam, which must enforce
+the invariant `renderForTarget` cannot (it must stay pure and idempotent).
+
+**Gemini final gate**: first pass `CONCERNS_REMAINING` — one `new_findings`
+claim refuted by direct reproduction (misdescribed the actual `!== 2` check as
+`< 2`; live-tested with 3 providers, correctly rejected), one
+`wrongly_dismissed` partially accepted (added `--selfcheck-relocation` to
+`sync-shared-audit-refs.mjs`, kept). Attempted to also enrol it in
+`CLI_SMOKE_SET`; the repo's own `tests/cli-smoke-set-sync-parity.test.mjs`
+caught it immediately — not declared in `sync-to-repos.mjs`'s entries, the
+exact trap the module's own comments document twice
+(`verify-anchor-contract.mjs`, `model-eval-{auditor,adjudicator}.mjs`).
+Reverted the enrolment, kept the handler. Re-reviewed → **APPROVE**.
+
+Every fix mutation-tested red-then-green; four required a genuine negative
+control after an initial anchor-matched-the-wrong-line mistake (M2's mutation
+silently hit `ProviderResultSchema` instead of `DebateRoundSchema` on the first
+try — caught by asserting the mutated line's surrounding context before
+trusting the result).
+
+### Files Affected
+
+32 files — schemas/session-store/debate-outcome/round in `scripts/lib/brainstorm/`
+and `scripts/`, four shared audit references + their synced skill copies, five
+brainstorm test files + a new one, `sync-shared-audit-refs.mjs`,
+`skills.manifest.json`. Full list: `docs/plans/consumer-report-degradation-disclosure.md`
+§Files Changed.
+
+### Next Steps
+
+- Deferred, on record with independence stated: `/cycle` Step 3's mode-table
+  self-contradiction (M1); `syncPairs`'s split-root coupling to `renderForTarget`
+  (round-1 L3 / round-2 M6); the atomicity of `cpSync` in `skills:hydrate`
+  (round-2 H1). None block; none are load-bearing on this change.
+- The repo's pre-existing backlog is unrelated and untouched: 238 unlocked
+  fixes (111 aged out), 162 unremediated acceptances (34 aged out), surfaced by
+  Step 0.5 and left as-is.
+
+
 ## 2026-08-23 — Misc-cluster debt: full /cycle (re-audit plan → 4 GPT + 3 Gemini rounds → autonomous implementation → live-DB verification)
 
 Re-reviewed [docs/plans/refactor-misc-small-items-2026-07.md](docs/plans/refactor-misc-small-items-2026-07.md)

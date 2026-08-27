@@ -123,7 +123,7 @@ export function findSyncTargets(rootDir = ROOT) {
  *
  * Neither flag takes a value; both are booleans.
  */
-const KNOWN_FLAGS = ['--check', '--dry-run'];
+const KNOWN_FLAGS = ['--check', '--dry-run', '--selfcheck-relocation'];
 
 /**
  * Apply (or report on) a set of canonical→target pairs.
@@ -203,8 +203,18 @@ export function renderForTarget(srcText, canonicalPath, targetPath, repoRoot) {
     + `> fails on drift. Relative links above were rewritten for this location,\n`
     + `> so this file is NOT byte-identical to the canonical by design.`;
 
+  // Pure transform: substitute when the sentence is there, otherwise leave the
+  // text alone. It deliberately does NOT refuse a canonical that lacks the
+  // sentence — this function is also the link-rewriter unit under test, and it
+  // must stay IDEMPOTENT on an already-rendered copy (which carries the banner,
+  // not the sentence). The provenance invariant is enforced one level up, in
+  // `syncPairs`, which is the caller that actually knows it is producing a copy
+  // FROM a canonical. See the round-6 audit M5 note there.
   return SELF_DESC.test(rewritten) ? rewritten.replace(SELF_DESC, banner) : rewritten;
 }
+
+/** The sentence `renderForTarget` substitutes for the generated-copy banner. */
+export const CANONICAL_SELF_DESCRIPTION = /This is the canonical copy./;
 
 export function syncPairs(pairs, { check = false, dry = false } = {}) {
   let writes = 0, unchanged = 0, drift = 0, bootstrapped = 0;
@@ -213,8 +223,27 @@ export function syncPairs(pairs, { check = false, dry = false } = {}) {
   for (const { canonical, target, skill, basename } of pairs) {
     // Rendered per target, not copied: relative links must resolve from the
     // COPY's directory, and the copy must not claim to be the canonical.
+    //
+    // **A canonical with no self-description is REFUSED here** (round-6 audit
+    // M5). `renderForTarget` substitutes that sentence for the GENERATED COPY
+    // banner, and when it is absent the substitution is a silent no-op: sync
+    // reported success and the copy sat in `skills/*/references/` claiming
+    // nothing about being generated. That is how `gemini-gate.md` and
+    // `ledger-format.md` shipped unmarked copies for their whole life — a
+    // success path that returned green having done nothing. Checked on the
+    // canonical's own bytes, before rendering, because after rendering the
+    // sentence is gone by design.
+    const canonicalText = fs.readFileSync(canonical, 'utf-8');
+    if (!CANONICAL_SELF_DESCRIPTION.test(canonicalText)) {
+      throw new Error(
+        `sync-shared-audit-refs: ${basename} carries no canonical self-description, so its `
+        + 'generated copies would claim nothing about being generated. Add '
+        + '"This is the canonical copy. … **Edit this file, never a copy.**" to '
+        + `${canonical} — renderForTarget substitutes it for the GENERATED COPY banner.`,
+      );
+    }
     const srcBuf = Buffer.from(
-      renderForTarget(fs.readFileSync(canonical, 'utf-8'), canonical, target, ROOT),
+      renderForTarget(canonicalText, canonical, target, ROOT),
       'utf-8',
     );
     const exists = fs.existsSync(target);
@@ -251,6 +280,13 @@ function main() {
   // canonical, so `--check`/`--dry-run` are safety flags over a mutating
   // default: a dropped `--chek` performs the real sync. Guard first.
   assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'sync-shared-audit-refs' });
+
+  // AGENTS.md CLI smoke contract (Step 7.1 of the 2026-08-27 audit, accepting
+  // Gemini's wrongly_dismissed on M6): this script IS synced to consumers
+  // (scripts/lib/sync-path-map.mjs maps it into scripts/.claude-skills/), so
+  // it needs to prove its imports survive relocation — the condition the
+  // contract is scoped to. Handled before any mutating path runs.
+  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
   const DRY = process.argv.includes('--dry-run');
   const CHECK = process.argv.includes('--check');

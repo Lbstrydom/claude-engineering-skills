@@ -28,6 +28,30 @@
 export const DEBATE_SKIP_REASONS = Object.freeze(['not-a-pair', 'round-1-incomplete']);
 
 /**
+ * Is this round-1 result something a peer can actually react to?
+ *
+ * **`state === 'success'` is not sufficient, and assuming it was is what
+ * round-3 caught.** `ProviderResultSchema` declares `text: z.string().nullable()`
+ * for EVERY state, success included — so `{provider:'gemini', state:'success',
+ * text:null}` is schema-valid. The old check filtered on the state label alone,
+ * authorised the debate, and `buildDebatePrompt` then threw
+ * `otherResponse required and non-empty` inside `Promise.all`, crashing the run.
+ * The label was a proxy for the thing actually needed — quotable text — and the
+ * two came apart.
+ *
+ * This is the SINGLE eligibility oracle: `runDebateRound` builds its peer map
+ * from it too, rather than carrying a second copy of the state test. Two
+ * spellings of "did this provider give us something to argue with" is how the
+ * classifier and the dispatcher would drift back apart.
+ *
+ * @param {{state?: string, text?: string|null}|undefined} result
+ * @returns {boolean}
+ */
+export function isDebateEligible(result) {
+  return result?.state === 'success' && typeof result.text === 'string' && result.text.trim() !== '';
+}
+
+/**
  * Decide whether a debate round can run.
  *
  * @param {object} input
@@ -42,23 +66,43 @@ export function classifyDebateOutcome({ providers, round1 }) {
 
   // A debate is one voice reacting to ONE other. Three voices have no canonical
   // pairing and one has no peer, so the round is defined only for exactly two.
-  if (list.length !== 2) {
+  //
+  // DISTINCT is part of that, and counting positions was not enough (round-2
+  // audit M2/M5). `['openai','openai']` has length 2 and, given one successful
+  // openai result, satisfied every check below — so this returned `{ok:true}`
+  // and `runDebateRound` went on to evaluate `providers.find(p => p !== speaker)`,
+  // which is `undefined` for BOTH speakers. The peer lookup then yielded
+  // `undefined` and `peerResp.text` threw a TypeError, crashing the run. The
+  // contract was always "two distinct voices"; only the arithmetic half was
+  // being checked.
+  const distinct = new Set(list);
+  if (list.length !== 2 || distinct.size !== 2) {
+    const shape = list.length === 2
+      ? `the same voice twice (${list.join(', ')})`
+      : `${list.length}${list.length ? ` (${list.join(', ')})` : ''}`;
     return {
       ok: false,
       skipped: {
         reason: 'not-a-pair',
-        detail: `a debate round needs exactly 2 voices; this run used ${list.length}`
-          + `${list.length ? ` (${list.join(', ')})` : ''}`,
+        detail: `a debate round needs exactly 2 distinct voices; this run used ${shape}`,
       },
     };
   }
 
-  // `success` is the only state carrying text worth reacting to. `truncated`
-  // is deliberately NOT accepted: the peer prompt quotes the response verbatim
-  // as the thing to pressure-test, and half an argument invites a rebuttal of a
-  // position its author never finished stating.
-  const stateOf = (p) => results.find((r) => r?.provider === p)?.state ?? 'absent';
-  const succeeded = list.filter((p) => stateOf(p) === 'success');
+  // `truncated` is deliberately not eligible: the peer prompt quotes the
+  // response verbatim as the thing to pressure-test, and half an argument
+  // invites a rebuttal of a position its author never finished stating.
+  // Eligibility itself is `isDebateEligible` — see why the state label alone
+  // was not enough.
+  const resultOf = (p) => results.find((r) => r?.provider === p);
+  const stateOf = (p) => {
+    const r = resultOf(p);
+    if (!r) return 'absent';
+    // Distinguish "said success but sent nothing" from a plain failure — the
+    // operator needs to know which, and they read very differently.
+    return isDebateEligible(r) ? r.state : (r.state === 'success' ? 'success-but-empty' : r.state);
+  };
+  const succeeded = list.filter((p) => isDebateEligible(resultOf(p)));
   if (succeeded.length !== list.length) {
     return {
       ok: false,
