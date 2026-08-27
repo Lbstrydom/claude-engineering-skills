@@ -37,7 +37,7 @@ const envelopeObj = (sid, round) => ({
   }],
   totalCostUsd: 0, sid, round,
   capturedAt: '2026-08-11T00:00:00.000Z', schemaVersion: 2,
-  archContextAttached: false, archContextChars: 0, archContextWarning: null,
+  archContextAttached: false, archContextChars: 0, archContextWarning: null, debateSkipped: null,
 });
 const envelope = (sid, round) => JSON.stringify(envelopeObj(sid, round));
 

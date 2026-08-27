@@ -271,6 +271,7 @@ describe('schema — arch-context fields', () => {
       archContextAttached: true,
       archContextChars: 1234,
       archContextWarning: null,
+      debateSkipped: null,
     }));
     assert.equal(r.success, true);
   });
@@ -280,6 +281,7 @@ describe('schema — arch-context fields', () => {
       archContextAttached: false,
       archContextChars: 0,
       archContextWarning: '--with-arch requested but ...',
+      debateSkipped: null,
     }));
     assert.equal(r.success, true);
   });

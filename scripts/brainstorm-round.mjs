@@ -29,6 +29,7 @@ import { buildBrainstormSystemPrompt, DEFAULT_WORD_TARGET } from './lib/brainsto
 import { loadArtifacts } from './lib/brainstorm/artifact-context.mjs';
 import { loadPolicyPack } from './lib/brainstorm/policy-context.mjs';
 import { buildDebatePrompt } from './lib/brainstorm/debate-prompt.mjs';
+import { classifyDebateOutcome } from './lib/brainstorm/debate-outcome.mjs';
 import { appendSession, pruneOldSessions, loadSession } from './lib/brainstorm/session-store.mjs';
 import { saveInsight } from './lib/brainstorm/insight-store.mjs';
 
@@ -535,8 +536,11 @@ async function runBrainstormMode(args) {
 
   // Optional debate round (§12.A canonical 4-case state machine)
   let debateResults = [];
+  // null = the debate round was not requested. Set only when `--debate` was
+  // passed and the round could not run; stays null when it did run.
+  let debateSkipped = null;
   if (args.debate) {
-    debateResults = await runDebateRound({
+    const outcome = await runDebateRound({
       providers: args.models,
       round1: settled,
       args: { ...args, maxTokens, reasoningEffort, wordTarget },
@@ -545,6 +549,8 @@ async function runBrainstormMode(args) {
       withContextText: assembledContext.withContextEffective,
       originalTopic: topic,
     });
+    debateResults = outcome.results;
+    debateSkipped = outcome.skipped;
   }
 
   // Build envelope (V2)
@@ -561,7 +567,10 @@ async function runBrainstormMode(args) {
     sid,
     capturedAt: new Date().toISOString(),
     schemaVersion: 2,
-    ...(debateResults.length > 0 ? { debate: debateResults } : { debate: [] }),
+    debate: debateResults,
+    // Always emitted (WriteSchema requires the key). null = not requested, or
+    // requested and it ran; an object = requested and cancelled, with the why.
+    debateSkipped,
     // Arch-context fields — always emitted (WriteSchema requires them).
     // archContextChars is the post-redaction, post-truncation length of
     // the wrapped block actually sent (docs/plans/brainstorm-arch-context.md).
@@ -678,14 +687,21 @@ function generateSid() {
 }
 
 async function runDebateRound({ providers, round1, args, resolvedModels, assembledContext, withContextText, originalTopic }) {
-  // §12.A canonical state machine — entries only when both providers succeeded
+  // §12.A canonical state machine — entries only when both providers succeeded.
+  //
+  // A skip returns `{results: [], skipped: {reason, detail}}` rather than a bare
+  // `[]`. The bare form made a requested-but-cancelled debate byte-identical to
+  // one that was never requested (both landed as `debate: []`), so an agent
+  // following the skill rendered neither a debate block nor an explanation —
+  // after the user had already paid for round 1. The one-provider case did not
+  // even get the stderr WARN, so it was silent on every surface.
   const successByProvider = {};
   for (const r of round1) successByProvider[r.provider] = r.state === 'success' ? r : null;
-  if (providers.length !== 2 || providers.some(p => !successByProvider[p])) {
-    if (providers.length === 2) {
-      process.stderr.write(`  [brainstorm] WARN: debate skipped — only ${providers.filter(p => successByProvider[p]).length}/2 providers succeeded in round 1, no peer-response pair available\n`);
-    }
-    return [];
+
+  const outcome = classifyDebateOutcome({ providers, round1 });
+  if (!outcome.ok) {
+    process.stderr.write(`  [brainstorm] WARN: debate skipped — ${outcome.skipped.detail}\n`);
+    return { results: [], skipped: outcome.skipped };
   }
 
   const tasks = providers.map(speaker => {
@@ -707,7 +723,7 @@ async function runDebateRound({ providers, round1, args, resolvedModels, assembl
       resolvedModels,
     });
   });
-  return await Promise.all(tasks);
+  return { results: await Promise.all(tasks), skipped: null };
 }
 
 /**

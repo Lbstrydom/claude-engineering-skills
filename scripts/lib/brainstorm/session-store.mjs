@@ -164,6 +164,14 @@ function normalizeArchFields(envelope) {
     archContextAttached: envelope.archContextAttached ?? false,
     archContextChars: envelope.archContextChars ?? 0,
     archContextWarning: envelope.archContextWarning ?? null,
+    // Same treatment for the debate-skip disclosure, and it is load-bearing on
+    // the WRITE side too: appendSession re-writes a loaded row, and a
+    // read-modify-write is a CONSTRUCTOR as far as the write schema is
+    // concerned. Promoting `debateSkipped` to required without canonicalising
+    // it here made every append of a legacy row fail at the boundary. `null`
+    // is the honest value for a row written before the field existed: nothing
+    // recorded a skip, so nothing is claimed.
+    debateSkipped: envelope.debateSkipped ?? null,
   };
 }
 

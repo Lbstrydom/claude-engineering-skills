@@ -124,6 +124,17 @@ export const BrainstormEnvelopeV2Schema = BrainstormEnvelopeV1Schema.extend({
   // absent for every round that didn't request an artifact, so `null` is a
   // real value meaning "not requested" — distinct from an object whose
   // `attached` is empty, which means "requested and all refused".
+  // Debate outcome (`--debate`). `null` means the debate round was NOT
+  // REQUESTED; an object means it was requested and did not produce a pair,
+  // and says why. Same not-requested-vs-requested-and-empty distinction
+  // `artifactContext` draws above, and for the same reason: `debate: []` alone
+  // was emitted in BOTH cases, so a skill-following agent rendered no debate
+  // block and no explanation after the user had already paid for round 1. When
+  // the debate DID run, this is null and `debate` carries the entries.
+  debateSkipped: z.object({
+    reason: z.enum(['not-a-pair', 'round-1-incomplete']),
+    detail: z.string().min(1),
+  }).nullable().optional(),
   artifactContext: z.object({
     requested: z.number().int().nonnegative(),
     attached: z.array(z.object({
@@ -150,6 +161,12 @@ export const BrainstormEnvelopeWriteSchema = BrainstormEnvelopeV2Schema.required
   archContextAttached: true,
   archContextChars: true,
   archContextWarning: true,
+  // Promoted to required on write for the same reason as the arch fields: the
+  // KEY must be present so a writer that forgets it fails at the boundary
+  // rather than emitting an envelope where "not requested" and "requested and
+  // skipped" are once again indistinguishable. The VALUE may still be null —
+  // that is the "not requested / it ran" case.
+  debateSkipped: true,
 });
 
 /**

@@ -50,7 +50,7 @@ describe('assembleResumeContext — verbatim quota', () => {
         topic: 'first round topic', redactionCount: 0, resolvedModels: { openai: 'g' },
         providers: [{ provider: 'openai', state: 'success', text: 'first round response', errorMessage: null, httpStatus: null, usage: null, latencyMs: 0, estimatedCostUsd: null }],
         totalCostUsd: 0, sid: 's1', capturedAt: new Date().toISOString(), schemaVersion: 2,
-        archContextAttached: false, archContextChars: 0, archContextWarning: null,
+        archContextAttached: false, archContextChars: 0, archContextWarning: null, debateSkipped: null,
       },
     });
     const out = assembleResumeContext({ sid: 's1', providers: PROVIDERS, opts: { root } });
@@ -68,7 +68,7 @@ describe('assembleResumeContext — verbatim quota', () => {
           topic: `round ${i}`, redactionCount: 0, resolvedModels: { openai: 'g' },
           providers: [{ provider: 'openai', state: 'success', text: `r${i} response`, errorMessage: null, httpStatus: null, usage: null, latencyMs: 0, estimatedCostUsd: null }],
           totalCostUsd: 0, sid: 's5', capturedAt: new Date().toISOString(), schemaVersion: 2,
-          archContextAttached: false, archContextChars: 0, archContextWarning: null,
+          archContextAttached: false, archContextChars: 0, archContextWarning: null, debateSkipped: null,
         },
       });
     }
