@@ -59,6 +59,17 @@ golden-path workflow without thinking about it.
 
 ## Step 0 — Parse Input
 
+> **A prerequisite that does not resolve is a stop, not a mid-flow death.**
+> /cycle spends real money on /plan before it ever reaches an audit step, so
+> resolve the audit prerequisites HERE — the helper scripts, and a GPT route
+> (`OPENAI_API_KEY` **or** an active Azure profile). If one is absent, the
+> ladder in /audit-code's `references/prerequisite-ladder.md` decides what
+> happens: hydrate and retry, run the labelled adversarial-agent substitute, or
+> report `AUDIT_NOT_RUN` and stop. Whichever rung applies, say so before
+> generating the plan rather than after paying for it, and carry the same
+> `AUDIT_DEGRADED` / `AUDIT_NOT_RUN` label into Step 6's handoff to /ship so a
+> degraded run cannot reach a commit looking clean.
+
 | Input shape | Mode |
 |---|---|
 | `/cycle <task description>` (no file path) | **FULL** — generate plan, audit it, wait for impl, audit code, ship |

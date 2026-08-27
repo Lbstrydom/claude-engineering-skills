@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "03e7c9595d0c993e",
+  "bundleVersion": "78710e7f716e46d2",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -49,14 +49,14 @@
     },
     "audit-code": {
       "path": "skills/audit-code/SKILL.md",
-      "sha": "838cf4342455",
-      "size": 42040,
+      "sha": "12f15b21790d",
+      "size": 42915,
       "summary": "Iteratively audit code against a plan with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "838cf4342455",
-          "size": 42040
+          "sha": "12f15b21790d",
+          "size": 42915
         },
         {
           "relPath": "examples/contract-test-scaffold.md",
@@ -79,6 +79,11 @@
           "size": 6936
         },
         {
+          "relPath": "references/prerequisite-ladder.md",
+          "sha": "a2e62d2d1eec",
+          "size": 5296
+        },
+        {
           "relPath": "references/r2-plus-mode.md",
           "sha": "84472f97d437",
           "size": 5547
@@ -92,14 +97,14 @@
     },
     "audit-plan": {
       "path": "skills/audit-plan/SKILL.md",
-      "sha": "c7013fe0ef7f",
-      "size": 23511,
+      "sha": "8e3c5e27e6ce",
+      "size": 24392,
       "summary": "Iteratively audit a plan file (docs/plans/*.md) with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "c7013fe0ef7f",
-          "size": 23511
+          "sha": "8e3c5e27e6ce",
+          "size": 24392
         },
         {
           "relPath": "references/gemini-gate.md",
@@ -112,6 +117,11 @@
           "size": 6936
         },
         {
+          "relPath": "references/prerequisite-ladder.md",
+          "sha": "a2e62d2d1eec",
+          "size": 5296
+        },
+        {
           "relPath": "references/verification-discipline.md",
           "sha": "d75f5dc4cdb5",
           "size": 23867
@@ -120,14 +130,14 @@
     },
     "brainstorm": {
       "path": "skills/brainstorm/SKILL.md",
-      "sha": "61b692ff1023",
-      "size": 20917,
+      "sha": "a5dcb8e18607",
+      "size": 21794,
       "summary": "Multi-LLM concept-level brainstorming. Sends the user's topic to OpenAI",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "61b692ff1023",
-          "size": 20917
+          "sha": "a5dcb8e18607",
+          "size": 21794
         }
       ]
     },
@@ -151,14 +161,14 @@
     },
     "cycle": {
       "path": "skills/cycle/SKILL.md",
-      "sha": "c5a32135eab9",
-      "size": 34091,
+      "sha": "9f56a528c4ac",
+      "size": 34832,
       "summary": "End-to-end feature cycle orchestrator. Runs the full skill chain in",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "c5a32135eab9",
-          "size": 34091
+          "sha": "9f56a528c4ac",
+          "size": 34832
         }
       ]
     },

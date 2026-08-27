@@ -51,6 +51,7 @@ const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', X = '\x1b[0m', B = '\x1b[1
 export const EXPECTED_CONSUMERS = Object.freeze({
   'ledger-format.md': ['audit-plan', 'audit-code'],
   'gemini-gate.md': ['audit-plan', 'audit-code'],
+  'prerequisite-ladder.md': ['audit-plan', 'audit-code'],
   'verification-discipline.md': [
     'investigate', 'audit-code', 'ux-lock', 'ship', 'explain', 'plan', 'audit-plan',
     'nav-audit',

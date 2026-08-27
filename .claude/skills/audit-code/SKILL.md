@@ -39,9 +39,18 @@ against). Optional flags: `--scope diff|plan|full`.
 
 ## Step 0 — Parse Input and Validate
 
-Validate: plan file exists, `OPENAI_API_KEY` is set. Optional:
-`GEMINI_API_KEY` for Step 7 (falls back to Claude Opus when absent).
-`SUPABASE_AUDIT_URL` for cloud learning (optional).
+Validate: plan file exists, the helper scripts resolve, and a GPT route is
+available — `OPENAI_API_KEY` **or** an active Azure profile
+(`AZURE_OPENAI_ENDPOINT`); ask which ROUTE exists, not whether one variable is
+set. Optional: `GEMINI_API_KEY` for Step 7 (falls back to Claude Opus when
+absent). `AUDIT_DB_URL` for cloud learning (optional).
+
+**If a prerequisite does not resolve, follow `references/prerequisite-ladder.md`
+— do not proceed as though it did, and do not die mid-flow.** It defines the
+hydrate-then-retry step for absent helper scripts, the labelled adversarial-agent
+substitute when the GPT legs have no route, and which of `AUDIT_DEGRADED` /
+`AUDIT_NOT_RUN` to report so a run that did not happen stays distinguishable
+from one that passed.
 
 Initialise session ID: `SID=audit-code-$(date +%s)`.
 
@@ -824,5 +833,6 @@ situations — read them only when the trigger applies.
 | `references/ledger-format.md` | Adjudication ledger schema + writer invocation example for each finding outcome. | Step 3.5 — about to write ledger entries, OR diagnosing R2+ suppression misbehaviour. |
 | `references/debt-capture.md` | Phase D debt ledger — persist out-of-scope valid findings so they don't re-surface. | Step 3.6 — candidate deferrals present, OR Step 5.1 — debt resolution prompt firing, OR periodically to cluster/resolve the accumulated backlog (see its "Periodic Debt Health" section). |
 | `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Step 7 starting, OR Gemini returned CONCERNS/REJECT and need deliberation rules. |
+| `references/prerequisite-ladder.md` | Step 0 prerequisite ladder — absent helper bundle or auditor route, and reporting a run that did not happen. | Step 0 — a prerequisite did not resolve (helper scripts missing, no GPT route), OR about to report a run that degraded or did not happen. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 4.5 — a finding was fixed WITH a new test or guard and it must be proven red-then-green, OR authoring a contract test from a one-off check. ALSO Step 6 — about to emit the convergence report's pass/wave census, to apply §7's named-state rule. |
 | `examples/contract-test-scaffold.md` | Contract-test scaffold — subject probe, negative control, vacuous-pass guard, disposition, retirement. | Step 4.5 — promoting a one-off check into a permanent contract test. |

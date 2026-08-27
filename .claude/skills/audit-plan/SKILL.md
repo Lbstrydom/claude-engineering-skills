@@ -44,8 +44,18 @@ description with no path (PLAN_CYCLE: generate-then-audit).
 | `<plan-file>` | PLAN_AUDIT — audit existing plan iteratively |
 | `<task description>` (no path) | PLAN_CYCLE — generate plan, then audit |
 
-Validate: `OPENAI_API_KEY` is set. `GEMINI_API_KEY` for Step 6 (falls back to
-Claude Opus when absent). `AUDIT_DB_URL` for cloud learning (optional).
+Validate: the helper scripts resolve, and a GPT route is available —
+`OPENAI_API_KEY` **or** an active Azure profile (`AZURE_OPENAI_ENDPOINT`); ask
+which ROUTE exists, not whether one variable is set. `GEMINI_API_KEY` for Step 6
+(falls back to Claude Opus when absent). `AUDIT_DB_URL` for cloud learning
+(optional).
+
+**If a prerequisite does not resolve, follow `references/prerequisite-ladder.md`
+— do not proceed as though it did, and do not die mid-flow.** It defines the
+hydrate-then-retry step for absent helper scripts, the labelled adversarial-agent
+substitute when the GPT legs have no route, and which of `AUDIT_DEGRADED` /
+`AUDIT_NOT_RUN` to report so a run that did not happen stays distinguishable
+from one that passed.
 
 Initialise session ID: `SID=audit-plan-$(date +%s)`.
 
@@ -481,4 +491,5 @@ situations — read them only when the trigger applies.
 |---|---|---|
 | `references/ledger-format.md` | Adjudication ledger schema + writer invocation example for each finding outcome. | Step 3.5 — about to write ledger entries, OR diagnosing R2+ suppression misbehaviour. |
 | `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Step 6 starting, OR Gemini returned CONCERNS/REJECT and need deliberation rules. |
+| `references/prerequisite-ladder.md` | Step 0 prerequisite ladder — absent helper bundle or auditor route, and reporting a run that did not happen. | Step 0 — a prerequisite did not resolve (helper scripts missing, no GPT route), OR about to report a run that degraded or did not happen. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 3 — applying the grounding rubric to a plan whose Code Trace cites `file:line`. |
