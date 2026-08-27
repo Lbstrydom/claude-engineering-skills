@@ -26,18 +26,63 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
+ * The consumer-side `skills:hydrate` npm script, as documented in
+ * `docs/runbooks/consumer-adoption.md` §"Linked git worktrees" → Remedy 1.
+ *
+ * **Why a second implementation of `scripts/skills-hydrate.mjs` is legitimate,
+ * and why it is pinned anyway.** A consumer cannot run that script: it syncs
+ * into `scripts/.claude-skills/`, which is precisely the gitignored tree absent
+ * from every linked worktree — the bootstrap problem the remedy exists to solve.
+ * So a consumer needs a package.json one-liner depending on nothing but node and
+ * git. The duplication is FORCED, not sloppy. What is not forced is letting the
+ * two drift: the runbook must quote this constant byte-for-byte, and
+ * `tests/skills-hydrate.test.mjs` asserts the one-liner emits the same
+ * user-visible messages `planHydration` does for the branches they share.
+ */
+export const CONSUMER_HYDRATE_NPM_SCRIPT = "\"skills:hydrate\": \"node -e \\\"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});console.log('[hydrate] copied '+src)\\\"\"";
+
+/**
  * The canonical marker block, inserted verbatim into every in-scope SKILL.md.
  *
  * Byte-identity across copies is the whole anti-drift mechanism — it is what
  * lets the gate compare rather than merely detect, and it is why this constant
- * exists instead of 16 hand-written paragraphs. The SUBSTANCE deliberately
- * lives in the runbook, not here: this block is a trigger, sized so that
- * carrying it in every skill costs almost nothing.
+ * exists instead of 16 hand-written paragraphs.
+ *
+ * **Why the remedy is INLINE and not merely cited** (2026-08-27). The block used
+ * to be a pure trigger — "run `npm run skills:hydrate`, detail in the runbook" —
+ * on the assumption that the substance was one hop away. In an UNADOPTED consumer
+ * both hops are dead ends at once: the npm script does not exist yet (that IS the
+ * symptom the block is explaining), and `docs/runbooks/` is not in the sync's
+ * CORE_ASSETS, so the runbook holding Remedy 1 is absent from the repo entirely.
+ * Measured 2026-08-27: neither consumer of this bundle carries the runbook, and
+ * one carries no `skills:hydrate` script either. A reader hits the failure,
+ * follows the pointer, finds nothing, and concludes no remedy exists — which is
+ * what a consumer reported after a session of manual workarounds.
+ *
+ * So the block now carries `CONSUMER_HYDRATE_NPM_SCRIPT` itself. The reader needs
+ * no second artifact, and byte-pinning comes for free: `checkSkill` already
+ * compares this whole constant across all 16 copies, so the recipe embedded here
+ * cannot drift from the one `checkDocumentedRecipes` pins in the runbook. The
+ * runbook citation stays, labelled source-repo-only, because it carries the
+ * rationale — the part a blocked reader does not need.
+ *
+ * A skill file is the ONLY carrier that reaches this reader: it is copied into the
+ * worktree with the `.claude/` tree, while everything the sync writes into
+ * `scripts/.claude-skills/` is by construction absent. Same rule as the runbook's
+ * own — a remedy has to ride on what reaches the reader.
  */
 export const MARKER_BLOCK = `> **Worktree preflight** — in a linked git worktree the synced tooling tree
 > \`scripts/.claude-skills/\` is absent — it is gitignored, so \`git worktree add\`
 > does not populate it, and every command below that uses it dies on a bare
-> \`MODULE_NOT_FOUND\`. Run \`npm run skills:hydrate\` first. Detail:
+> \`MODULE_NOT_FOUND\`. Run \`npm run skills:hydrate\` first.
+>
+> If this repo defines no such script, it has not adopted the remedy yet. Add
+> this entry to its \`package.json\` \`scripts\` and run it — it copies the tooling
+> tree in from the main checkout, and leans on nothing but node and git:
+>
+> ${CONSUMER_HYDRATE_NPM_SCRIPT}
+>
+> Rationale (source repo only — \`docs/runbooks/\` is not synced to consumers):
 > \`docs/runbooks/consumer-adoption.md\` §"Linked git worktrees".`;
 
 /**
@@ -49,6 +94,16 @@ export const MARKER_BLOCK = `> **Worktree preflight** — in a linked git worktr
  * disposition in all 16 contracts for a sentence that makes no enforcement
  * claim at all. The first draft said "`git worktree add` never populates it";
  * the plainer wording above is both accurate and cheap.
+ *
+ * That still holds for the PROSE. It stopped holding for the whole block on
+ * 2026-08-27, when the remedy was inlined: `CONSUMER_HYDRATE_NPM_SCRIPT` is a
+ * node one-liner, and every such one-liner carries `require` and `process.exit`
+ * — two ENFORCEMENT_VERBS — with no phrasing available that avoids them. So the
+ * recipe line is dispositioned as an `ignoredCandidates` entry in all 16
+ * contracts, which is what that field is for: a line carrying a verb while
+ * making no enforcement claim. Editing the constant re-fires the check and the
+ * 16 dispositions have to be re-stated; that is the price of the recipe
+ * reaching a reader who can reach nothing else, and it is worth paying.
  */
 
 /**
@@ -140,22 +195,6 @@ export const EXEMPTIONS = Object.freeze({});
 export const MAIN_CHECKOUT_PATH_RECIPE = "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path');console.log(p.join(p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim()),'.claude','tmp','ship-verification-pending.md'))\"";
 
 /**
- * The consumer-side `skills:hydrate` npm script, as documented in
- * `docs/runbooks/consumer-adoption.md` §"Linked git worktrees" → Remedy 1.
- *
- * **Why a second implementation of `scripts/skills-hydrate.mjs` is legitimate,
- * and why it is pinned anyway.** A consumer cannot run that script: it syncs
- * into `scripts/.claude-skills/`, which is precisely the gitignored tree absent
- * from every linked worktree — the bootstrap problem the remedy exists to solve.
- * So a consumer needs a package.json one-liner depending on nothing but node and
- * git. The duplication is FORCED, not sloppy. What is not forced is letting the
- * two drift: the runbook must quote this constant byte-for-byte, and
- * `tests/skills-hydrate.test.mjs` asserts the one-liner emits the same
- * user-visible messages `planHydration` does for the branches they share.
- */
-export const CONSUMER_HYDRATE_NPM_SCRIPT = "\"skills:hydrate\": \"node -e \\\"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});console.log('[hydrate] copied '+src)\\\"\"";
-
-/**
  * Do the DOCS still quote the canonical recipes byte-for-byte?
  *
  * Closes the last two hand-copied spellings this subsystem had (2026-08-14):
@@ -183,7 +222,13 @@ export const CONSUMER_HYDRATE_NPM_SCRIPT = "\"skills:hydrate\": \"node -e \\\"co
 export function checkDocumentedRecipes(rootDir, io = {}) {
   const read = io.readFile ?? ((p) => fs.readFileSync(p, 'utf-8'));
   const subjects = [
-    { file: 'skills/ship/SKILL.md', marker: '--git-common-dir', canonical: MAIN_CHECKOUT_PATH_RECIPE, needs: 'node -e' },
+    // `excludes` disambiguates two recipes that share a substring. Both are node
+    // one-liners resolving the main checkout via `--git-common-dir`, so ship's
+    // (marker `--git-common-dir`, needs `node -e`) also matches the hydrate
+    // recipe now inlined in every skill's MARKER_BLOCK — and compared it against
+    // the WRONG canonical, reporting drift on a line that is byte-correct. A
+    // subject claims a line only when no other subject's key appears on it.
+    { file: 'skills/ship/SKILL.md', marker: '--git-common-dir', canonical: MAIN_CHECKOUT_PATH_RECIPE, needs: 'node -e', excludes: ['"skills:hydrate"'] },
     { file: 'docs/runbooks/consumer-adoption.md', marker: '"skills:hydrate"', canonical: CONSUMER_HYDRATE_NPM_SCRIPT, needs: '"skills:hydrate"' },
   ];
   const mismatches = [];
@@ -200,6 +245,7 @@ export function checkDocumentedRecipes(rootDir, io = {}) {
     const lines = text.split('\n');
     for (const [i, raw] of lines.entries()) {
       if (!raw.includes(s.marker) || !raw.includes(s.needs)) continue;
+      if (s.excludes?.some((x) => raw.includes(x))) continue;
       checked++;
       const bare = raw.replace(/^>\s?/, '').trim();
       if (bare !== s.canonical.trim()) {

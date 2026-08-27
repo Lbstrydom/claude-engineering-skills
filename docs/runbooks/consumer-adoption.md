@@ -543,6 +543,18 @@ reporting consumer, a committed `.audit-loop/expected-schema.json`). Don't.
 
 ### Remedy 1 — hydrate the worktree (preferred when working there)
 
+> **This page does not reach a consumer — the skill files do.** `docs/runbooks/`
+> is not in the sync's `CORE_ASSETS`, so in a consumer repo this runbook is
+> simply absent, and in an unadopted one the `skills:hydrate` script is absent
+> too. A reader who hit the failure and followed the old preflight pointer
+> therefore found nothing at either end and concluded no remedy existed —
+> reported 2026-08-27 after a session of manual workarounds. Since then the
+> worktree-preflight marker block in every SKILL.md carries the script below
+> **inline**, generated from the same `CONSUMER_HYDRATE_NPM_SCRIPT` constant, so
+> a blocked reader needs nothing but the skill file already in front of them.
+> This page keeps the rationale — the part they do not need while blocked.
+
+
 Copy the main checkout's tree. The destination is gitignored in the worktree
 too, so nothing tracked is touched, and plain `npm run <script>` then works
 unchanged — which is why this beats rewiring every npm script to be

@@ -206,6 +206,10 @@
   ],
   "ignoredCandidates": [
     {
+      "line": "> \"skills:hydrate\": \"node -e \\\"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});console.log('[hydrate] copied '+src)\\\"\"",
+      "reason": "The worktree-preflight marker block's inlined `skills:hydrate` recipe. Every node one-liner carries `require` and `process.exit`, two ENFORCEMENT_VERBS, and no phrasing of a runnable recipe avoids them — the verbs are JavaScript here, not an enforcement claim about this skill. The recipe is inlined rather than cited because in an unadopted consumer both of the old pointers are dead at once (no `skills:hydrate` script yet, and `docs/runbooks/` is not synced), so a skill file is the only carrier that reaches the reader. Byte-identical across all 16 contracts by construction: it is generated from CONSUMER_HYDRATE_NPM_SCRIPT via MARKER_BLOCK, and `checkSkill` pins the block in every copy."
+    },
+    {
       "line": "# as an ARGUMENT (process.argv[1]), never embed it as a literal string inside",
       "reason": "Comment instructing future editors of this Step 7 snippet not to reintroduce a literal /tmp path string for Node to independently re-resolve. The actual invariant is mechanically enforced repo-wide by tests/skill-tmp-path-safety.test.mjs (scans every skills/**/*.md for require/readFileSync/existsSync called on a string-literal path), not by anything this skill's own execution exits on."
     },

@@ -19,7 +19,15 @@ description: |
 > **Worktree preflight** — in a linked git worktree the synced tooling tree
 > `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
 > does not populate it, and every command below that uses it dies on a bare
-> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first. Detail:
+> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first.
+>
+> If this repo defines no such script, it has not adopted the remedy yet. Add
+> this entry to its `package.json` `scripts` and run it — it copies the tooling
+> tree in from the main checkout, and leans on nothing but node and git:
+>
+> "skills:hydrate": "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});console.log('[hydrate] copied '+src)\""
+>
+> Rationale (source repo only — `docs/runbooks/` is not synced to consumers):
 > `docs/runbooks/consumer-adoption.md` §"Linked git worktrees".
 
 ## Usage
