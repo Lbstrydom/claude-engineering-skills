@@ -12,14 +12,20 @@ import { isCloudEnabled } from './repo.mjs';
 
 /**
  * Upsert PersistedDebtEntry rows for a repo. Idempotent on
- * `(repo_id, topic_id)`. Returns `{ok, error?}`.
+ * `(repo_id, topic_id)`. Returns `{ok, reason?, error?}` — `reason` is set
+ * ('no-op' | 'cloud-off') exactly when `ok:true` reflects nothing being
+ * attempted, so a caller distinguishing "really wrote" from "declined" (the
+ * durable-write seam's `debt.entries` writer, `scripts/lib/audit-store-writers.mjs`)
+ * doesn't have to re-probe `isCloudEnabled()` itself. `error`, when present,
+ * is the raw Error (not a stringified message) so a caller that rethrows it
+ * (for connection-vs-artifact classification) keeps `err.code`.
  *
  * @param {string|null} repoId - from upsertRepo(); null skips the call
  * @param {object[]} entries - PersistedDebtEntry-shaped
  */
 export async function upsertDebtEntries(repoId, entries) {
-  if (!repoId || !Array.isArray(entries) || entries.length === 0) return { ok: true };
-  if (!await isCloudEnabled()) return { ok: true };
+  if (!repoId || !Array.isArray(entries) || entries.length === 0) return { ok: true, reason: 'no-op' };
+  if (!await isCloudEnabled()) return { ok: true, reason: 'cloud-off' };
   const rows = entries.map((e) => ({
     repo_id: repoId,
     topic_id: e.topicId,
@@ -54,7 +60,7 @@ export async function upsertDebtEntries(repoId, entries) {
     return { ok: true };
   } catch (err) {
     process.stderr.write(`  [learning] upsertDebtEntries failed: ${err.message}\n`);
-    return { ok: false, error: err.message };
+    return { ok: false, error: err };
   }
 }
 

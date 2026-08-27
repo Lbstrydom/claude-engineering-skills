@@ -38,6 +38,7 @@ import { syncBanditArms, syncFalsePositivePatterns } from './store/bandit-fp.mjs
 import {
   recordConvergenceState, recordDiffComplexity, backfillLearningOutcome,
 } from './store/learning-decisions.mjs';
+import { upsertDebtEntries } from './store/debt.mjs';
 
 /**
  * Turn a store receipt into a `durableWrite` result.
@@ -242,6 +243,38 @@ export function registerAuditStoreWriters() {
   registerWriter('learning.fpPatterns', {
     schemaVersion: 1,
     replay: (payload) => receipt(syncFalsePositivePatterns(payload.repoId, payload.patterns)),
+  });
+
+  // ── debt.entries ───────────────────────────────────────────────────────────
+  // Step 3.6's cloud mirror of `.audit/tech-debt.json` — `debt-auto-capture.mjs`'s
+  // `syncToCloud`. Was `lost`-only (an un-registered, fire-and-forget call to
+  // `upsertDebtEntries`) on the theory, recorded in
+  // `tests/audit-store-durability-call-site.test.mjs`, that `debt_entries` is
+  // "recomputed from the findings that produced it on every audit run" — true
+  // only for a deferral that gets RE-raised. A one-off deferral, captured once
+  // and never revisited, gets exactly one chance to sync; a transient upsert
+  // failure on that one chance was permanent. Reproduced in a consumer
+  // 2026-08-27: local `tech-debt.json` at 228 entries, cloud mirror at 197 — 31
+  // captured locally that never landed in the store, with nothing to retry them.
+  // Idempotent on `(repo_id, topic_id)` (the same constraint `upsertDebtEntries`
+  // upserts against via `ON CONFLICT`), so it is safely replayable.
+  //
+  // `upsertDebtEntries` predates the `{applied, reason, error}` shape `receipt()`
+  // expects — it returns `{ok, reason?, error?}` (see its own docstring) — so
+  // this writer maps it directly rather than through `receipt()`. `reason` is
+  // set exactly when `ok:true` reflects nothing attempted ('no-op' | 'cloud-off'),
+  // which durableWrite must read as `declined`, not `applied` — conflating the
+  // two would mark a cloud-off run's envelope `written` and delete it, so the
+  // deferral is never retried once the store comes back.
+  registerWriter('debt.entries', {
+    schemaVersion: 1,
+    rowKey: (row) => `${row.repo_id}:${row.topic_id}`,
+    replay: async (payload) => {
+      const r = await upsertDebtEntries(payload.repoId, payload.entries);
+      if (r.error) throw r.error; // original Error object — isConnectionScoped needs err.code
+      if (r.reason) return { applied: false, declined: true, reason: r.reason };
+      return { applied: true };
+    },
   });
 
   _registered = true;

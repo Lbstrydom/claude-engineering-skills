@@ -184,7 +184,11 @@ const NOT_A_DURABLE_WRITE = {
   recordNavAuditRun: 'Operator /nav-audit CLI write; returns {status, error} which its handler maps to the envelope.',
   recordUpstreamIssue: 'Consumer-side upstream report. It ALREADY has its own durability mechanism — a write-ahead outbox on disk drained on every subsequent upstream verb — which is a stronger guarantee than the spill queue, not a weaker one.',
   recordFindingResolution: 'Learning telemetry. Telemetry failures never crash a run by design, and the learning outbox (.audit/learning-outbox/) is that subsystem\'s own spill path.',
-  upsertDebtEntries: 'Debt ledger projection; recomputed from the findings that produced it on every audit run.',
+  // upsertDebtEntries: now REGISTERED as `debt.entries` (2026-08-27) — the prior
+  // exemption's premise ("recomputed from the findings that produced it on
+  // every audit run") only holds for a re-raised deferral, not a one-off
+  // capture, and a consumer measured 31 entries that never synced. See
+  // audit-store-writers.mjs's `debt.entries` registration for the full story.
   upsertFrictionRow: 'Friction-log CLI; THROWS, so the failure is already representable to its caller.',
   upsertComparison: 'Operator model-eval-auditor.mjs --manifest CLI write (D3a cohort persistence). Returns {ok, error, id} and its ONE call site (runManifestDriver) checks !ensured.ok and throws RunPreflightError before spawning any arm — a failed write aborts the whole manifest run rather than proceeding on a null cohort id.',
 

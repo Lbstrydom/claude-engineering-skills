@@ -1829,7 +1829,8 @@
           "audit.passStats",
           "audit.suppressionEvents",
           "learning.banditArms",
-          "learning.fpPatterns"
+          "learning.fpPatterns",
+          "debt.entries"
         ],
         "drainCap": 100
       }

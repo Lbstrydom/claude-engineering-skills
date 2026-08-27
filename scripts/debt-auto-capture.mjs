@@ -42,8 +42,14 @@ import { readDebtLedger, writeDebtEntries, DEFAULT_DEBT_LEDGER_PATH } from './li
 import {
   findRoundLedgers, readDeferredEntries, collectDebtIdentities, findUncapturedDeferrals,
 } from './lib/debt-capture-trail.mjs';
-import { resolveRepoForStore, upsertDebtEntries, initLearningStore } from './learning-store.mjs';
+import { resolveRepoForStore, initLearningStore } from './learning-store.mjs';
 import { generateRepoProfile } from './lib/context.mjs';
+import { durableWrite } from './lib/durable-write.mjs';
+// Side-effecting import — populates the process-local writer registry
+// (`debt.entries` among others) the same way the orchestrator does. Without
+// it this CLI, run standalone, would find zero handlers and every write
+// would report `lost` regardless of what actually happened.
+import './lib/audit-store-writers.mjs';
 
 // ── Arg parsing ──────────────────────────────────────────────────────────────
 
@@ -206,23 +212,29 @@ function buildEntries(deferredEntries, reason, sid, args) {
 // ── Cloud sync ───────────────────────────────────────────────────────────────
 
 /**
- * Sync entries to Supabase. Returns true on success, false on failure,
- * null when Supabase is not configured.
- * Non-blocking — callers must not fail on a false return.
+ * Sync entries to Supabase via the durable-write seam (`debt.entries` in
+ * `scripts/lib/audit-store-writers.mjs`) — a failed upsert spills to
+ * `.audit/write-spill/` for a later `cross-skill.mjs write-spill drain`
+ * instead of being silently dropped (2026-08-27: a consumer's cloud mirror
+ * had drifted 31 entries behind its local ledger with no way to recover
+ * them). Returns the `durableWrite` outcome, or `null` when there is no repo
+ * identity to sync against (Supabase not configured, or repo unresolved) —
+ * distinct from a real failure. Non-blocking — callers must not fail on a
+ * non-`written` outcome.
  */
 async function syncToCloud(entries) {
+  let repoId;
   try {
     await initLearningStore();
     const profile = generateRepoProfile();
     // Cluster A (§2.1): stable repo_uuid identity, not the volatile fingerprint.
     const ref = await resolveRepoForStore({ profile });
-    const repoId = ref?.repoRowId ?? null;
-    if (!repoId) return null;
-    const { ok } = await upsertDebtEntries(repoId, entries);
-    return ok;
+    repoId = ref?.repoRowId ?? null;
   } catch {
-    return false;
+    return null;
   }
+  if (!repoId) return null;
+  return durableWrite('debt.entries', { repoId, entries });
 }
 
 // ── Capture-trail check ─────────────────────────────────────────────────────
@@ -259,12 +271,18 @@ function checkCaptureTrail(justProcessedLedgerPath) {
 
 // ── Summary card ─────────────────────────────────────────────────────────────
 
-function cloudSyncLabel(cloudOk) {
-  if (cloudOk === null) return 'skipped (no Supabase)';
-  return cloudOk ? 'ok' : 'failed (non-blocking)';
+function cloudSyncLabel(cloudSync) {
+  if (cloudSync === null) return 'skipped (no Supabase)';
+  switch (cloudSync.outcome) {
+    case 'written': return 'ok';
+    case 'skipped': return `skipped (${cloudSync.error || 'declined'})`;
+    case 'spilled': return `failed — queued for retry via \`write-spill drain\` (${cloudSync.error || 'unknown'})`;
+    case 'lost': return `failed — NOT queued for retry (${cloudSync.error || 'unknown'})`;
+    default: return `unrecognised outcome: ${cloudSync.outcome}`;
+  }
 }
 
-function printSummary({ built, skipped, result, reason, sid, cloudOk, trail }) {
+function printSummary({ built, skipped, result, reason, sid, cloudSync, trail }) {
   const sensitive = built.filter(b => b.sensitivity.sensitive).length;
   const totalRedactions = built.reduce((n, b) => n + b.redactions.length, 0);
   const skippedLine = skipped.length > 0 ? `\n  Skipped:  ${skipped.length} (see stderr)` : '';
@@ -278,7 +296,7 @@ function printSummary({ built, skipped, result, reason, sid, cloudOk, trail }) {
     `  Inserted: ${result.inserted} | Updated: ${result.updated}${rejectedSuffix}`,
     `  Sensitive (redacted): ${sensitive}${redactionSuffix}`,
     `  Total ledger: ${result.total} entries`,
-    `  Cloud sync: ${cloudSyncLabel(cloudOk)}`,
+    `  Cloud sync: ${cloudSyncLabel(cloudSync)}`,
     `  Run SID: ${sid}`,
     '═══════════════════════════════════════',
   ].join('\n'));
@@ -379,10 +397,10 @@ async function main() {
     process.exit(1);
   }
 
-  const cloudOk = await syncToCloud(entries);
+  const cloudSync = await syncToCloud(entries);
   const trail = checkCaptureTrail(ledgerPath);
 
-  printSummary({ built, skipped, result, reason, sid, cloudOk, trail });
+  printSummary({ built, skipped, result, reason, sid, cloudSync, trail });
 
   if (result.rejected.length > 0 && result.rejected.length === built.length) {
     process.exit(1); // All rejected — something systemic is wrong
