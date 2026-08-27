@@ -8,11 +8,13 @@ one-paragraph pointer; this doc is the operational depth.
 
 ## What it replicates
 
-10 checks, run as independent subprocesses (never crashes the whole run when
+13 checks, run as independent subprocesses (never crashes the whole run when
 one is skipped or fails). (The count read "7" until 2026-08-13 while the
-manifest already held 8 — `tests/maintenance-checks.test.mjs` pins the KEYS,
-which is the honest inventory; this sentence is prose beside it. Recount from
-`CHECKS` if they ever disagree again.)
+manifest already held 8, and this table itself drifted from 10 to 12 without
+anyone noticing — two whole rows, `context-staleness` and `accepted-debt`,
+were simply missing below. `tests/maintenance-checks.test.mjs` pins the KEYS,
+which is the honest inventory; this sentence and the table below are prose
+beside it. Recount from `CHECKS` if they ever disagree again.)
 
 | Check | Source workflow | What it does | Required env |
 |---|---|---|---|
@@ -23,7 +25,11 @@ which is the honest inventory; this sentence is prose beside it. Recount from
 | `learning-weekly-review` | `learning-weekly-review.yml` | Recurring-issue digest | `AUDIT_DB_URL`, `LEARNING_REPO_NAME` |
 | `cache-hitrate` | *(ad hoc weekly routine)* | `AUDIT_CACHE_SEED` payoff check | `AUDIT_DB_URL` |
 | `debt-health` | *(ad hoc weekly routine)* | `.audit/tech-debt.json` ledger health: stale entries (>`DEBT_HEALTH_TTL_DAYS`, default 180d), recurring entries (>=`DEBT_HEALTH_RECURRENCE_THRESHOLD` distinct audit runs, default 3), and any configured per-path budget violations (see `debt-review.mjs`/`debt-budget-check.mjs`) | none (local file only) |
+| `debt-ledger-claims` | *(ad hoc weekly routine)* | `docs/plans/*.md` "captured to / named in the debt ledger" claims vs. whether the cited `topicId` actually resolves in `.audit/tech-debt.json` | none (local files only) |
+| `debt-capture-trail` | *(ad hoc weekly routine)* | Every `ruling: 'defer'` entry across `.audit/*-ledger.json` (round ledgers, Step 3.5) vs. `.audit/tech-debt.json` (Step 3.6) — catches a debt-capture invocation that never ran, which `debt-health` cannot see because it only ever reads `tech-debt.json` itself | none (local files only) |
+| `context-staleness` | *(none — git-only report, never a gate)* | Flags `AGENTS.md`/`CLAUDE.md` citations to code that moved after the citing line did | none (git only) |
 | `runner-health` | *(no dedicated workflow — new, [docs/plans/self-hosted-runner-management.md](../plans/self-hosted-runner-management.md))* | `node scripts/actions-runner-doctor.mjs local --json --strict` — flags an unhealthy/unregistered/unreachable self-hosted runner on THIS machine. Advisory identity findings never gate, even here. | none (`gh` optional — degrades to `unknown` per install without it) |
+| `accepted-debt` | *(none — source-repo-only, see [`AGENTS.md`](../../AGENTS.md#accepted-technical-debt))* | AGENTS.md's "Accepted Technical Debt" table's revisit-trigger predicates vs. actual repo state | none (local repo state only) |
 | `slice-recurrence` ⏳ **one-shot, retires** | *(none — answers one question about one commit)* | Did god-module slice 1 (`a7db0baf`) stop the usage-accounting finding cluster recurring on `legacy-production-audit.mjs`? **Silent no-op until 2026-09-10.** | `AUDIT_DB_URL` |
 
 **`slice-recurrence` is the only entry here that is not a standing concern, and
@@ -51,6 +57,18 @@ the accumulating backlog back to an operator — `debt-review.mjs` (LLM or
 CLIs with no scheduled caller. This check closes that gap without an LLM
 call or any required env, so it runs the same in a fresh clone as it does
 here.
+
+`debt-capture-trail` closes a DIFFERENT gap `debt-health` cannot see, since
+"capture happens automatically" above describes the intent, not a guarantee:
+Step 3.6 is a manual CLI invocation an LLM-driven audit session is only
+*instructed*, in prose, to run — nothing mechanical enforces that it did.
+`debt-health-check.mjs` only ever reads `.audit/tech-debt.json` itself, so a
+`ruling: 'defer'` that was never captured leaves that file looking exactly as
+healthy as one with nothing to capture — it stayed green through an 11-day
+stretch in a real consumer repo where 517 defer rulings across daily audit
+runs were silently never written. `debt-capture-trail` reads the round
+ledgers (`.audit/*-ledger.json`, Step 3.5) directly and cross-checks every
+deferred entry against the debt ledger by `topicId`.
 
 `arch-maintenance` runs **incremental** refresh (`symbol-index/refresh.mjs`),
 not `arch:refresh:full` — the workflow uses `:full` because CI is stateless;
@@ -113,7 +131,7 @@ push time.
 ## Commands
 
 ```bash
-npm run maintenance:run       # run all 6 checks now, human output (foreground, not backgrounded)
+npm run maintenance:run       # run all checks now, human output (foreground, not backgrounded)
 npm run maintenance:run -- --json   # machine-readable
 npm run maintenance:status    # show the last recorded run, without running anything
 ```

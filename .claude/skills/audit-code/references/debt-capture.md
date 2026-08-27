@@ -142,3 +142,26 @@ call and no required env — see
 [`docs/runbooks/local-maintenance-checks.md`](../../../docs/runbooks/local-maintenance-checks.md).
 It's opt-in (`AUDIT_LOOP_WEEKLY_MAINTENANCE=1`) and never blocks a push;
 `npm run debt:health` runs it on demand.
+
+## Verifying capture actually happened
+
+The capture command above is a manual step this SKILL.md *instructs* the
+operator (you) to run — nothing mechanical enforces that it did. `debt-health`
+above can't see the gap either: it only ever reads `.audit/tech-debt.json`
+itself, so a `ruling: 'defer'` entry that was never captured leaves that file
+looking exactly as healthy as one with nothing to capture. Two backstops:
+
+- **Every `debt-auto-capture.mjs` run self-checks.** After a successful write,
+  it re-scans every round ledger in the same `.audit/` directory and prints a
+  `WARN:` line (non-fatal — this run already succeeded) naming any deferred
+  entry from an *earlier* invocation that still has no matching entry in
+  `.audit/tech-debt.json`.
+- **`npm run debt:capture-trail`** (`scripts/debt-capture-trail-check.mjs`,
+  wired into `maintenance-checks.mjs` as `debt-capture-trail`) is the
+  standalone, deterministic version of the same cross-check — cross-checks
+  every `ruling: 'defer'` entry across `.audit/*-ledger.json` against
+  `.audit/tech-debt.json` by `topicId`, independent of whether debt-auto-
+  capture ever ran again to trip the WARN above. Exit 1 (`attention`) when
+  anything is uncaptured; **`0 uncaptured` against a non-zero deferred total
+  is the pass — `N uncaptured` against a non-zero total is a failure to fix,
+  never a pass**, same doctrine as Step 3.5b's `labelled: 0` case.

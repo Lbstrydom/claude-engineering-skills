@@ -3,8 +3,8 @@
  * @fileoverview Local replica of the 5 weekly GitHub Actions maintenance
  * workflows (architectural-drift, migration-drift, model-freshness,
  * memory-health, learning-weekly-review) plus cache-hitrate-check,
- * debt-health, debt-ledger-claims, context-staleness, and accepted-debt (ad
- * hoc — no dedicated workflow file; accepted-debt is additionally
+ * debt-health, debt-ledger-claims, debt-capture-trail, context-staleness,
+ * and accepted-debt (ad hoc — no dedicated workflow file; accepted-debt is additionally
  * sourceRepoOnly, see its CHECKS entry), and one DISPOSABLE one-shot
  * (slice-recurrence, which retires itself — see its script header), for
  * operators whose org blocks GitHub-hosted Actions runners (or who just
@@ -260,6 +260,29 @@ export const CHECKS = [
     label: 'docs/plans/*.md ledger-capture claims vs. the actual ledger',
     requiredEnv: [],
     steps: [{ script: 'debt-ledger-claims-check.mjs', args: [] }],
+  },
+  {
+    // Local-only, no requiredEnv, no dedicated GH workflow — same "ad hoc"
+    // shape as debt-health above, and it reads the same ledger file too, but
+    // a THIRD question distinct from both siblings: not the debt ledger's
+    // own health, and not a plan doc's claim about it, but whether Step 3.6
+    // (a manual CLI invocation an LLM-driven audit session is only
+    // *instructed*, in prose, to run) actually ran. debt-health-check.mjs
+    // can't see this gap — it only ever reads tech-debt.json itself, and a
+    // ruling that was never captured leaves that file looking exactly as
+    // healthy as one with nothing to capture. Cross-checks every
+    // `ruling: 'defer'` entry across `.audit/*-ledger.json` (the round
+    // ledgers Step 3.5 writes) against tech-debt.json by topicId. Found live
+    // 2026-08-27: 517 defer rulings across 11 days of daily audit runs in a
+    // consumer repo, silently uncaptured, with this exact maintenance run
+    // never reporting anything wrong because debt-health-check.mjs has no
+    // way to see a ledger entry that was never written.
+    // `attention` = a deferred entry has no matching debt-ledger entry, or a
+    // round ledger failed to parse; never blocks.
+    key: 'debt-capture-trail',
+    label: 'Step 3.6 debt-capture trail (round-ledger deferrals vs. tech-debt.json)',
+    requiredEnv: [],
+    steps: [{ script: 'debt-capture-trail-check.mjs', args: [] }],
   },
   {
     // Local-only, no requiredEnv, no dedicated GH workflow (same "ad hoc"

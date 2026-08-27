@@ -47,6 +47,8 @@
     "debt:health:json": "node scripts/debt-health-check.mjs --json",
     "debt:ledger-claims": "node scripts/debt-ledger-claims-check.mjs",
     "debt:ledger-claims:json": "node scripts/debt-ledger-claims-check.mjs --json",
+    "debt:capture-trail": "node scripts/debt-capture-trail-check.mjs",
+    "debt:capture-trail:json": "node scripts/debt-capture-trail-check.mjs --json",
     "debt:review": "node scripts/debt-review.mjs --local-only",
     "debt:budget": "node scripts/debt-budget-check.mjs",
     "context:check": "node scripts/check-context-drift.mjs --strict",

@@ -267,6 +267,14 @@
       "description": "Debt-ledger claim check, JSON output.",
       "category": "diagnostic"
     },
+    "debt:capture-trail": {
+      "description": "Verify every round-ledger ruling:'defer' entry (.audit/*-ledger.json) has a matching entry in .audit/tech-debt.json — catches a Step 3.6 debt-capture invocation that never ran (human report). Never blocks a push.",
+      "category": "diagnostic"
+    },
+    "debt:capture-trail:json": {
+      "description": "Debt-capture trail check, JSON output.",
+      "category": "diagnostic"
+    },
     "debt:review": {
       "description": "Cluster accumulated tech-debt into ranked refactor candidates (local-only, no LLM call).",
       "category": "diagnostic"

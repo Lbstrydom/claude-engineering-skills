@@ -1,5 +1,59 @@
 # Project Status Log
 
+## 2026-08-27 — Step 3.6 debt capture had no deterministic gate: a new cross-ledger check + advisory backstop
+
+### Origin
+
+Consumer repo `storyline` filed
+(`c0c73227baed8cbb029dfdd06fb7b7b57994cf80bd463b03f2a9f7bfff0ecce4`):
+`debt-auto-capture.mjs` (Step 3.6) is a manual CLI invocation an LLM-driven
+audit session is only *instructed* to run — nothing mechanical enforces that
+it did. In `storyline` this silently stopped for 11 days: 517
+`ruling: 'defer'` entries across that window's `.audit/*-ledger.json` round
+ledgers were never captured into `.audit/tech-debt.json`, invisible to
+future-round suppression, `debt-review.mjs` clustering, and
+`debt-budget-check.mjs`'s policy gate. `debt-health-check.mjs` (already
+wired into `maintenance-checks.mjs` as `debt-health` — the report's first ask
+turned out to already be shipped, re-verified against code rather than the
+report's description) stayed green the whole time, because it only ever
+reads `tech-debt.json` itself; a ruling that was never captured leaves that
+file looking exactly as healthy as one with nothing to capture.
+
+### Changes
+
+- **`scripts/lib/debt-capture-trail.mjs`** (new, pure) + **
+  `scripts/debt-capture-trail-check.mjs`** (new CLI): cross-checks every
+  `ruling: 'defer'` entry across `.audit/*-ledger.json` against
+  `.audit/tech-debt.json` by `topicId` (+ `contentAliases`). `0 uncaptured`
+  against a non-zero deferred total is the pass; `N uncaptured` is a failure
+  to fix, never a pass — same doctrine as Step 3.5b's `labelled: 0` case.
+  Wired into `maintenance-checks.mjs` as the `debt-capture-trail` ad hoc
+  check (local-only, no required env, no dedicated GH workflow — the ledgers
+  are gitignored machine-local state, same reasoning as `debt-health` /
+  `debt-ledger-claims`).
+- **`debt-auto-capture.mjs`** now self-checks after every successful write:
+  re-scans round ledgers in the same `.audit/` directory and prints a
+  non-fatal `WARN:` naming any *earlier* invocation's still-uncaptured
+  deferral — surfaces the gap the next time ANY audit round captures debt,
+  without waiting for someone to separately run or enable the maintenance
+  check.
+- Fixed a stale doc table along the way: `docs/runbooks/local-maintenance-checks.md`
+  said "10 checks" and was missing two whole rows (`context-staleness`,
+  `accepted-debt`) against the real 12-entry (now 13) `CHECKS` manifest —
+  found because this change was already editing that exact table.
+
+### Verification
+
+`npm test` — 13,978 tests, 2 initially failing (both from this change: a
+missing `.cli-catalog.json` entry for the two new npm scripts, fixed; and the
+skills-manifest-vs-HEAD freshness check, which fails on any uncommitted
+skill-reference edit by design and resolves at commit time). Re-ran the
+affected suites green after the catalog fix. No `/audit-code` round run yet —
+tests written test-first per the deterministic-seam tier, not yet through the
+GPT/Gemini gate.
+
+---
+
 ## 2026-08-27 — Fix Azure APIM 401 in symbol-index summarisers (consumer-cited report unfiled in store)
 
 ### Consumer Verification (previous ship)

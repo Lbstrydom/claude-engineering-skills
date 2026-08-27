@@ -10,6 +10,19 @@
  * Step 3.6 previously required. Run it after Step 3.5 (ledger write) and
  * before Step 4 (fix) to make the blocking gate automatic.
  *
+ * After a successful write, this also re-scans every round ledger in the
+ * same `.audit/` directory (see `checkCaptureTrail()`) and WARNs — non-
+ * fatally, this run already succeeded — about any `ruling: 'defer'` entry
+ * from an EARLIER, forgotten invocation that still has no matching entry in
+ * `.audit/tech-debt.json`. Nothing enforces that Step 3.6 runs every round —
+ * it's a manual CLI invocation an LLM-driven audit session is only
+ * *instructed* to run — so the standalone
+ * `scripts/debt-capture-trail-check.mjs` (wired into `maintenance-checks.mjs`
+ * as `debt-capture-trail`) is the deterministic backstop; this WARN is the
+ * cheap version that surfaces the same gap the very next time ANY audit
+ * round captures debt, without waiting for someone to separately run or
+ * enable that maintenance check.
+ *
  * Usage:
  *   node scripts/debt-auto-capture.mjs --ledger <path>
  *   node scripts/debt-auto-capture.mjs --ledger <path> --reason blocked-by --blocked-by "owner/repo#123"
@@ -25,7 +38,10 @@ import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildDebtEntry } from './lib/debt-capture.mjs';
-import { writeDebtEntries } from './lib/debt-ledger.mjs';
+import { readDebtLedger, writeDebtEntries, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
+import {
+  findRoundLedgers, readDeferredEntries, collectDebtIdentities, findUncapturedDeferrals,
+} from './lib/debt-capture-trail.mjs';
 import { resolveRepoForStore, upsertDebtEntries, initLearningStore } from './learning-store.mjs';
 import { generateRepoProfile } from './lib/context.mjs';
 
@@ -209,6 +225,38 @@ async function syncToCloud(entries) {
   }
 }
 
+// ── Capture-trail check ─────────────────────────────────────────────────────
+
+/**
+ * After a successful write, re-scan every round ledger in the same directory
+ * as the one just processed (including it — its entries should now resolve)
+ * for `ruling: 'defer'` entries with no matching debt-ledger entry. Advisory
+ * only: the CURRENT invocation already succeeded, so this never changes the
+ * exit code — it exists so a gap from an EARLIER, forgotten invocation
+ * surfaces the very next time this command runs at all, rather than staying
+ * invisible until someone separately remembers to run
+ * `debt-capture-trail-check.mjs` (round-3, gap #2 of the 2026-08-27 report:
+ * 517 defer rulings across 11 days went uncaptured with no run of THIS
+ * command to ever notice — reading round ledgers here closes that even when
+ * nobody runs the standalone maintenance check either).
+ *
+ * @param {string} justProcessedLedgerPath
+ * @returns {{deferredTotal: number, uncaptured: object[], corruptLedgers: object[]}|null} null on any read failure — never fatal
+ */
+function checkCaptureTrail(justProcessedLedgerPath) {
+  try {
+    const auditDir = path.dirname(justProcessedLedgerPath);
+    const roundLedgers = findRoundLedgers(auditDir).map(readDeferredEntries);
+    const debtLedgerPath = path.resolve(DEFAULT_DEBT_LEDGER_PATH);
+    const debtIdentities = fs.existsSync(debtLedgerPath)
+      ? collectDebtIdentities(readDebtLedger({ events: [] }).entries)
+      : new Set();
+    return findUncapturedDeferrals({ roundLedgers, debtIdentities });
+  } catch {
+    return null; // advisory — a read failure here must not affect this run's own result
+  }
+}
+
 // ── Summary card ─────────────────────────────────────────────────────────────
 
 function cloudSyncLabel(cloudOk) {
@@ -216,7 +264,7 @@ function cloudSyncLabel(cloudOk) {
   return cloudOk ? 'ok' : 'failed (non-blocking)';
 }
 
-function printSummary({ built, skipped, result, reason, sid, cloudOk }) {
+function printSummary({ built, skipped, result, reason, sid, cloudOk, trail }) {
   const sensitive = built.filter(b => b.sensitivity.sensitive).length;
   const totalRedactions = built.reduce((n, b) => n + b.redactions.length, 0);
   const skippedLine = skipped.length > 0 ? `\n  Skipped:  ${skipped.length} (see stderr)` : '';
@@ -240,6 +288,21 @@ function printSummary({ built, skipped, result, reason, sid, cloudOk }) {
     for (const r of result.rejected) {
       console.log(`  [${r.entry?.topicId || '?'}] ${r.reason?.slice(0, 120)}`);
     }
+  }
+
+  // Advisory — never changes this run's own exit code (see checkCaptureTrail).
+  // A non-zero uncaptured count here almost always means an EARLIER round's
+  // debt-auto-capture invocation never ran at all, not this one.
+  if (trail && trail.uncaptured.length > 0) {
+    console.warn(`\nWARN: ${trail.uncaptured.length} deferred entr${trail.uncaptured.length === 1 ? 'y' : 'ies'} from other round ledger(s) in this directory ${trail.uncaptured.length === 1 ? 'is' : 'are'} still uncaptured:`);
+    for (const u of trail.uncaptured) {
+      console.warn(`  [${u.topicId}] ${u.severity || 'unknown'} — from ${u.ledgerPath}`);
+    }
+    console.warn('  Recapture with: node scripts/debt-auto-capture.mjs --ledger <round-ledger-path> --run <sid>');
+  }
+  if (trail && trail.corruptLedgers.length > 0) {
+    console.warn(`\nWARN: ${trail.corruptLedgers.length} round ledger(s) could not be parsed — capture status unverifiable:`);
+    for (const c of trail.corruptLedgers) console.warn(`  ${c.path} — ${c.error}`);
   }
 }
 
@@ -317,8 +380,9 @@ async function main() {
   }
 
   const cloudOk = await syncToCloud(entries);
+  const trail = checkCaptureTrail(ledgerPath);
 
-  printSummary({ built, skipped, result, reason, sid, cloudOk });
+  printSummary({ built, skipped, result, reason, sid, cloudOk, trail });
 
   if (result.rejected.length > 0 && result.rejected.length === built.length) {
     process.exit(1); // All rejected — something systemic is wrong
