@@ -40,7 +40,7 @@ async function summariseBatch(batch) {
     return batch.map(() => null);
   }
   const client = azureConfig.active
-    ? await createAnthropicClient({ baseURL: azureConfig.claudeBaseUrl })
+    ? await createAnthropicClient({ azureRoute: azureConfig.claudeRoute })
     : await createAnthropicClient();
   const model = azureConfig.active ? azureConfig.summaryDeployment : MODEL;
   const lines = batch.map((s, i) =>

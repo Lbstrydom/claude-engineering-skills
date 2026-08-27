@@ -1,5 +1,44 @@
 # Project Status Log
 
+## 2026-08-27 — Fix Azure APIM 401 in symbol-index summarisers (consumer-cited report unfiled in store)
+
+### Consumer Verification (previous ship)
+- **Ship**: `9c95e0bd3d274ec3420e341651c3744e45cc6680` on `main` (two commits: `30445802` the audit fix, `9c95e0bd` plans:index regeneration).
+- **State**: `verified` (transfer + consumer bundle content), `unverified` (fresh-clone battery).
+- **Retrieval run**: `git ls-remote origin refs/heads/main` → `9c95e0bd`, and `git merge-base --is-ancestor` confirms both shipped commits are ancestors of that remote ref.
+- **Consumer bundle**: pre-push sync reported `Targets: 3/3 reached · Created: 0 · Updated: 33 · Unchanged: 2175 · Errors: 0`. Spot-checked content, not just the summary line, in all three consumers (wine-cellar-app, ai-organiser, storyline): `debateSkipped` present in `schemas.mjs`, `isDebateEligible` present in `debate-outcome.mjs` (confirms the round-3 fix landed, not just round-1), and all three shared references (`gemini-gate.md`, `ledger-format.md`, `prerequisite-ladder.md`) carry the `GENERATED COPY — do not edit` banner in every consumer copy (confirms round-6 M5's fix).
+- **Known absence, not a defect**: `sync-shared-audit-refs.mjs` itself is not present under any consumer's `scripts/.claude-skills/` — it is not declared in `sync-to-repos.mjs`'s entries, which is exactly the round-6 finding that made me revert its `CLI_SMOKE_SET` enrolment. Consistent, expected, out of this ship's scope.
+- **`unverified` — concrete blocked prerequisite**: no fresh clone-to-tempdir + `npm run check` battery was run against the pushed tip. The pre-push hook ran the full `check` in a clean throwaway worktree at this commit and passed (producer side only).
+- **Live audit-store verification (this ship's actual subject)**: run `09bfc10a-b6b7-41e6-ab87-c184767de6b9` (Gemini) — first pass `CONCERNS_REMAINING`, second pass after Step 7.1 deliberation `APPROVE`, both persisted. `AI-Gate: waived` on the shipped commit (not `passed`) is correct and expected: the committed tree includes status.md and the plan's implementation-log addendum written after Gemini approved, so it differs from the audited tree by design — `ship-commit`'s tree-identity check refused `passed` and named the reason precisely.
+
+### Origin
+
+A prompt cited an upstream consumer report (fingerprint `b2a2210c…`, filed "from storyline", title naming this exact defect). **The fingerprint does not exist in `upstream_issues`** — checked directly by fingerprint, then by title/affected-path search across all 20 rows in the store; `upstream list` also read empty. Same class as the entry directly below (fabricated/hallucinated report metadata attached to a real prompt). Verified the underlying technical claim on its own merits instead of trusting the citation: both call sites and the exact anti-pattern existed live in source.
+
+### Changes
+
+- **`scripts/symbol-index/summarise.mjs`, `scripts/symbol-index/summarise-domains.mjs`**: both called
+  `createAnthropicClient({ baseURL: azureConfig.claudeBaseUrl })` under the Azure work profile —
+  missing `azureRoute`, so `anthropic-client.mjs` silently defaults the auth header to Bearer. On an
+  APIM-fronted tenant that's a bare 401 (the exact 2026-08-13 incident shape, fixed then in
+  `gemini-review.mjs` but never migrated to these two call sites). Both failure paths degrade
+  silently — `summarised=0/N`, `failed=1` — rather than erroring loud, so `arch:refresh:full` reports
+  success with zero purpose summaries/embeddings on an APIM tenant. Fixed both to
+  `{ azureRoute: azureConfig.claudeRoute }`, matching `gemini-review.mjs`'s already-fixed call sites.
+- Swept `scripts/**/*.mjs` for the same anti-pattern — no other occurrences.
+- New regression guard `tests/anthropic-client-azure-route-callsites.test.mjs`: static scan for
+  `createAnthropicClient({ baseURL: azureConfig... })` anywhere under `scripts/`. Red-then-green
+  verified (fails when the pattern is reintroduced into `summarise.mjs`, passes on the fix).
+
+### Files Affected
+- `scripts/symbol-index/summarise.mjs` — Azure client construction fix
+- `scripts/symbol-index/summarise-domains.mjs` — same fix
+- `tests/anthropic-client-azure-route-callsites.test.mjs` (new) — regression guard
+
+Full suite: 13913 pass / 0 fail / 31 pre-existing skip.
+
+---
+
 ## 2026-08-27 — Consumer-report degradation disclosure: brainstorm debate-skip + audit prerequisite ladder (full /audit-code, 6 GPT rounds + Gemini gate)
 
 ### Consumer Verification (previous ship)

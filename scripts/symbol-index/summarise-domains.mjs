@@ -75,7 +75,7 @@ async function callHaiku(prompt, modelId, timeoutMs = 60000) {
     throw e;
   }
   const client = azureConfig.active
-    ? await createAnthropicClient({ baseURL: azureConfig.claudeBaseUrl })
+    ? await createAnthropicClient({ azureRoute: azureConfig.claudeRoute })
     : await createAnthropicClient();
   const model = azureConfig.active ? azureConfig.summaryDeployment : modelId;
   const startMs = Date.now();
