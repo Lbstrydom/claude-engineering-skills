@@ -5,13 +5,20 @@
  * merge, post-output suppression, deterministic finding-verification gate,
  * ledger auto-write, and shared-verdict computation.
  *
- * A pure function of `FinalizationData` (`assembleFindings(data)`): it does
- * not mutate its input and returns a NEW `AssembledFindings` value. Ledger
- * auto-write physically stays here (not in run-persistence.mjs, despite
- * being ledger-shaped) — it sits inline in the ORIGINAL code between the
- * verification gate and verdict computation, reading the gate's own output
- * (a refuted finding must be known BEFORE the write), and this plan's
- * dependency direction prohibits 4b from importing 4c to call it out-of-line.
+ * `assembleFindings(data)` does not mutate its `data` input and returns a NEW
+ * `AssembledFindings` value — that half of "pure function" is real and is
+ * what the plan's dependency-direction/data-flow reasoning relies on. It is
+ * NOT side-effect-free in the stricter sense (real-audit finding): it writes
+ * merge diagnostics to `process.stderr`, and its ledger auto-write step
+ * performs real file I/O (`batchWriteLedger`) and cloud persistence calls
+ * (`markFindingsRemediation`, `reconcileRemediationProjection`, `appendEvents`)
+ * as an intentional, deliberate exception — see the ledger-auto-write
+ * reasoning below. Ledger auto-write physically stays here (not in
+ * run-persistence.mjs, despite being ledger-shaped) — it sits inline in the
+ * ORIGINAL code between the verification gate and verdict computation,
+ * reading the gate's own output (a refuted finding must be known BEFORE the
+ * write), and this plan's dependency direction prohibits 4b from importing
+ * 4c to call it out-of-line.
  *
  * Extracted verbatim from `legacy-production-audit.mjs`'s tail — no behavior
  * change beyond taking one `data: FinalizationData` param instead of closing
@@ -81,7 +88,9 @@ function mapReduceFailureReason(result) {
 
 /**
  * Assemble, dedup, suppress, verify and verdict-score this run's findings.
- * Pure function of `FinalizationData` — does not mutate `data`.
+ * Does not mutate `data` and returns a NEW value — see the module docblock
+ * for why this stops short of a stricter no-side-effects "pure function"
+ * claim (stderr diagnostics + the ledger auto-write's real I/O).
  * @param {import('./finalization-contract.mjs').FinalizationDataSchema} data
  * @returns {Promise<import('./finalization-contract.mjs').AssembledFindingsSchema>}
  */
@@ -614,6 +623,14 @@ export async function assembleFindings(data) {
   allFindings.length = 0;
   allFindings.push(...passes.findings);
   suppressionData = passes.suppressionData ?? undefined;
+  // `passes.suppressedCount` (local+cloud FP-pass total) is a DIFFERENT number
+  // from `suppressionData.suppressedCount` (ledger-reraise-suppression only,
+  // stays 0 when the FP passes are what fired — see runSuppressionPasses'
+  // own docblock). Carried separately so run-telemetry.mjs's suppression-
+  // event dispatch gate can check "did a suppression PASS fire" without
+  // misreading the ledger's count (audit finding, real-audit round 1: this
+  // exact substitution was the bug — fixed by not conflating the two).
+  const fpPassSuppressedCount = passes.suppressedCount;
 
   // ── Deterministic finding-verification gate (code mode only) ──────────
   // Resolves "missing file/module/symbol" findings against the real repo.
@@ -825,7 +842,7 @@ export async function assembleFindings(data) {
 
   return {
     allFindings, passRegistry, allResults, failedPasses, verdict, high, medium, low, reopenedSet,
-    linterOverlapData, totalUsage, cacheMetrics, passTimings, summaryLines,
+    linterOverlapData, totalUsage, cacheMetrics, passTimings, summaryLines, fpPassSuppressedCount,
     ...(suppressionData !== undefined ? { suppressionData } : {}),
     ...(debtMemoryData !== undefined ? { debtMemoryData } : {}),
     ...(ledgerRejectedCount !== undefined ? { ledgerRejectedCount } : {}),

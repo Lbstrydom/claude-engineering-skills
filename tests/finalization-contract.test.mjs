@@ -118,6 +118,7 @@ describe('AssembledFindingsSchema', () => {
       cacheMetrics: null,
       passTimings: {},
       summaryLines: [],
+      fpPassSuppressedCount: 0,
       ...overrides,
     };
   }

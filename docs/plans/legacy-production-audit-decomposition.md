@@ -162,6 +162,7 @@ graph LR
     Persist["run-persistence.mjs"]
     Telemetry["run-telemetry.mjs"]
     Coord["run-finalization.mjs\n(thin coordinator)"]
+    Contract["finalization-contract.mjs\n(Zod data contract)"]
   end
 
   subgraph Existing["Existing detector modules (unchanged)"]
@@ -185,6 +186,10 @@ graph LR
   Coord --> Assembly
   Coord --> Persist
   Coord --> Telemetry
+  Assembly --> Contract
+  Persist --> Contract
+  Telemetry --> Contract
+  Coord --> Contract
 ```
 
 ### Key design decisions
@@ -642,9 +647,24 @@ claim in prose — a new test asserting the import graph, added in Phase 4's
 close-out.
 
 - **`tests/finding-assembly.test.mjs`, `tests/run-persistence.test.mjs`,
-  `tests/run-telemetry.test.mjs`** (create) — see the characterization-test
-  plan below; these replace the single, under-specified
-  `tests/run-finalization.test.mjs` the original draft proposed.
+  `tests/run-telemetry.test.mjs`, `tests/run-finalization.test.mjs`**
+  (create) — see the characterization-test plan below. **Correction
+  (post-merge, real-audit round 3): all four exist**, each covering the
+  module's own exported functions DIRECTLY (not through wave orchestration)
+  — a genuinely different-in-kind check from
+  `tests/finalization-characterization.test.mjs`'s golden-master harness
+  (which drives the same stages indirectly, through the real
+  `runLegacyProductionAudit` entry point and stubbed GPT calls). This closed
+  a real gap the round-1/round-2/round-3 real-GPT-audit passes kept
+  re-raising (Structure category): a hand-constructed, minimal-but-complete
+  `FinalizationData` object is a valid direct call into
+  `assembleFindings`/`runTelemetry`/`runPersistence`/`finalizeRun`, since all
+  four are pure functions of their `data`/`assembled` params with no closure
+  over the orchestrator — so this is real coverage, not a near-duplicate of
+  the characterization harness. `runTelemetry`'s own cloud-write body stays
+  covered only through the characterization harness (cloud OFF there too,
+  per this repo's no-whole-provider-mock doctrine); its dedicated file
+  covers the one independently-testable export, `classifyShadowFailureSafe`.
 
 ### Phase 5 — Verification and close-out
 
