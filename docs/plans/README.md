@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**4 active · 206 terminal · 27 audit summaries · 4 reference docs**
+**3 active · 207 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -22,7 +22,6 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
-| [Self-Hosted Runner Management (optional, machine-aware)](./self-hosted-runner-management.md) | `Approved` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q1 38 code rows, Q2 unknown (reader reports no total), Q3 68 actionable; measured 2026-08-09 |
 
@@ -44,7 +43,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 203 completed plans</summary>
+<summary>Show all 204 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -217,6 +216,7 @@ source comments that no docs linter sees — stays valid.
 | [SAST Triage — Route, Never Suppress](./sast-triage-routing.md) | `Complete` |  |
 | [Isolate engineering-skills tooling in consumer repos under `scripts/.claude-skills/`](./scripts-claude-skills-isolation.md) | `Complete` | 2026-06-02) — archived to docs/completed/. All phases done; both consumers migrated. Phases 0/1/5 (source i… |
 | [Proactive Security Memory v1](./security-memory-v1.md) | `Complete` | shipped — `/security-strategy` skill + `scripts/security-memory/` (refresh-incidents, parse-strategy, incid… |
+| [Self-Hosted Runner Management (optional, machine-aware)](./self-hosted-runner-management.md) | `Complete` | implemented 2026-08-23 across three clusters: |
 | [Remove the legacy fallback from the tiered-SHADOW path](./shadow-no-legacy-fallback.md) | `Complete` | implemented 2026-07-17 via `/cycle --autonomous`. Plan-audit: 3 GPT rounds (7 findings, all fixed) + Gemini… |
 | [Shadow write-gate + orchestrator smoke execution](./shadow-write-gate-and-orchestrator-smoke.md) | `Complete` |  |
 | [Shared cloud-config file for consumer repos](./shared-cloud-config.md) | `Complete` |  |

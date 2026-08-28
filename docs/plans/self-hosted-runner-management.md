@@ -1,7 +1,17 @@
 # Plan: Self-Hosted Runner Management (optional, machine-aware)
 
 - **Date**: 2026-08-22
-- **Status**: Approved
+- **Status**: Complete — implemented 2026-08-23 across three clusters:
+  `4a6f85ae` (Cluster A, pure inventory judgements + impure probe adapter),
+  `67bbebe4` (Cluster B, CLI wiring + private-config surface + leak guard),
+  `bd34a732` (Cluster C, docs + close-out), plus field-verification fix
+  `673d84a1` (strip UTF-8 BOM before parsing `.runner`) and post-ship fix
+  `1c2a4235` (`--json local` ran the wrong command, 2026-08-24). Shipped
+  design matches the approved plan function-for-function — the only
+  deltas are cosmetic (`resolveRunnerChild` → `resolveRunnerArtifact`) and
+  line-number drift in `actions-runner-doctor.mjs` from the plan's own
+  code landing. Status was left at `Approved` after implementation; this
+  is the correction, not a re-plan.
 - **Author**: Claude + pill
 - **Scope**: backend (CLI + libs; no UI)
 
