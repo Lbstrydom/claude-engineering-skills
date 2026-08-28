@@ -1,6 +1,27 @@
 # Project Status Log
 
-## 2026-08-28 — Worktree ship silently under-synced private consumers (root-cause fix)
+## 2026-08-28 — legacy-production-audit-decomposition Cluster C shipped; real audit gates found a false-negative in check-setup.mjs
+
+### Changes
+- Decomposed `scripts/lib/audit/legacy-production-audit.mjs` (5,065 lines) into 12 focused modules per `docs/plans/legacy-production-audit-decomposition.md` — Clusters A (cache/scheduler), B (5 pass wrappers), C (the finalization-tail split: `finalization-contract.mjs`, `finding-assembly.mjs`, `run-telemetry.mjs`, `run-persistence.mjs`, `run-finalization.mjs`). The spine (`legacy-production-audit.mjs`) now wraps its body in a top-level `try/finally` so `cleanupCache()` runs on every exit path — a real regression the golden-master characterization harness caught before it shipped.
+- Two adversarial-agent code reviews (documented substitutes, believed at the time to be the only route available — see below) each converged APPROVE after fixing one genuine HIGH bug and several lower-severity issues; PR #81 merged.
+- **Real audit gates then found the substitute assumption was wrong**: `check-setup.mjs` reports `OPENAI_API_KEY missing` in this worktree, but `scripts/lib/config.mjs` actually resolves it (and `GEMINI_API_KEY`/`ANTHROPIC_API_KEY`) via the shared `~/.audit-loop.env` fallback — confirmed live with a real `openai.models.list()` call. Ran the real `/audit-code` loop (6 rounds, this repo's cap) and the real Gemini final gate against the full Cluster A+B+C diff. Found and fixed one real MEDIUM bug (`run-telemetry.mjs`'s suppression-event dispatch was reading the wrong suppression-count field — `suppressionData.suppressedCount`, the ledger-only reraise count, instead of the local+cloud FP-pass total — silently under-recording provenance); fixed two docblock-honesty overclaims (`finalization-contract.mjs`/`finding-assembly.mjs` claiming stricter "immutable"/"pure function" guarantees than the code provides); created `tests/finding-assembly.test.mjs`, `tests/run-persistence.test.mjs`, `tests/run-telemetry.test.mjs`, `tests/run-finalization.test.mjs` (real direct-call coverage, closing a gap the audit kept re-raising); fixed a missing node in the plan's mermaid component diagram. Challenged and disproved one Gemini HIGH finding (an alleged null-deref on a skipped wave's `.result`) with cited code evidence — confirmed false positive on Gemini's own round-2 re-review. PR #82 merged.
+- Everything else across 6 GPT rounds + the Gemini round was confirmed pre-existing, verbatim-relocated behavior (checked directly against the pre-decomposition monolith at `aae1b18e`) or an already-reasoned, disclosed design trade-off — each on record in the adjudication ledger with its specific evidence.
+
+### Files Affected
+- `scripts/lib/audit/legacy-production-audit.mjs` — spine, 5065 → ~1700 lines
+- `scripts/lib/audit/{finalization-contract,finding-assembly,run-telemetry,run-persistence,run-finalization,pass-result-cache,map-reduce-scheduler,architecture-pass,orphan-pass,event-wiring-pass,duplication-pass,adjacency-pass}.mjs` — new
+- `scripts/lib/robustness.mjs` — gained `tallyWriteOutcomes`
+- ~14 test files created/repointed; `docs/plans/legacy-production-audit-decomposition.md` corrected post-merge
+
+### Decisions Made
+- `check-setup.mjs` gives a false negative on GPT/Gemini/Claude availability in this worktree — it should be widened to check the `~/.audit-loop.env` fallback path `config.mjs` actually uses, or it will keep sending future sessions down the adversarial-agent-substitute path unnecessarily. **Not fixed this session** — flagged here as a real, verified gap worth a follow-up.
+- `AI-Gate: waived` (not `passed`) on the second commit (`fix(audit): resolve real GPT+Gemini findings...`) — `ship-commit.mjs` could not mechanically verify the committed tree against the audited tree hash for a scoped, multi-round commit, and correctly refused an unverifiable `passed` claim per its own honesty contract, per its own `AGENT FIX:` guidance.
+
+### Next Steps
+- Consider fixing `check-setup.mjs`'s narrower `.env` resolution (see Decisions Made).
+- `npm test`: 13949 → 14049 pass, 0 fail (100 new tests across both PRs).
+
 
 ### Consumer Verification (previous ship)
 - **Ship**: `bc6487f66d516813ba6a7d2eb57f67c48a7d2181` on `main` (GitHub token-permission check in `check-setup`). Rebased onto a concurrent push (`006b7d8d`, PR #81 legacy-production-audit decomposition) before writing `status.md` — zero file overlap, verified by `git diff --name-only` over my six paths.
