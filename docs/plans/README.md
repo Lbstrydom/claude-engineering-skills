@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**2 active · 208 terminal · 27 audit summaries · 4 reference docs**
+**3 active · 208 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -21,6 +21,7 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
+| [Decompose `legacy-production-audit.mjs`](./legacy-production-audit-decomposition.md) | `Approved` | `/audit-plan` complete: GPT 5 rounds (absolute cap, |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | first real burndown pass landed 2026-08-28. Q1: |
 
