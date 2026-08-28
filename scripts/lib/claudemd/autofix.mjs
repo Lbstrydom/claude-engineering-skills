@@ -173,7 +173,7 @@ export function applyFixes(findings, repoRoot, options = {}) {
       const line = lines[lineIdx];
 
       // Only fix standalone markdown links (entire line is a link or list-item link)
-      const standaloneLink = /^\s*(?:[-*]\s+)?\[([^\]]*)\]\(([^)]+)\)\s*$/.exec(line);
+      const standaloneLink = /^\s*(?:[-*+]\s+|\d+[.)]\s+)?\[([^\]]*)\]\(([^)]+)\)\s*$/.exec(line);
       if (!standaloneLink) {
         skipped.push({ file: finding.file, line: finding.line, reason: 'reference embedded in prose' });
         continue;
