@@ -36,7 +36,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
+
+// fef4d8cd fix — main() parsed flags via bare argv.includes()/indexOf() checks
+// with no rejection of unknown flags, so a typo (e.g. `--gat`) silently fell
+// through to report-only/exit-0 instead of erroring. Same assertKnownFlags
+// guard install-skills.mjs already uses.
+const KNOWN_FLAGS = ['--selfcheck-relocation', '--gate', '--format', '--format=json', '--repo', '--source-surfaces'];
 // The shadow predicate, the surface vocabulary and the reader live in `lib/`
 // so gate 8 — which is SYNCED to consumers and may only import its own `lib/`
 // siblings — can share this exact implementation instead of carrying a second
@@ -103,6 +110,8 @@ export function decideStaleSurfaceExit({ gate, shadowedCount }) {
 
 function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+
+  assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'check-stale-skill-surface' });
 
   const argv = process.argv.slice(2);
   const gate = argv.includes('--gate');
@@ -412,4 +421,14 @@ const isMain = (() => {
   } catch { return false; }
 })();
 
-if (isMain) main();
+if (isMain) {
+  try {
+    main();
+  } catch (err) {
+    if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
+      process.stderr.write(`${err.message}\n`);
+      process.exit(2);
+    }
+    throw err;
+  }
+}

@@ -117,7 +117,6 @@ export const BASELINE = new Set([
   // removed with the script. It only ever reported on install receipts, and
   // every surface that wrote one is retired
   // (docs/plans/repo-scoped-skill-surfaces-and-installer.md §2 D2/D3/D4).
-  'scripts/check-stale-skill-surface.mjs',
   'scripts/check-sync.mjs',
   'scripts/context-staleness.mjs',
   'scripts/debt-resolve.mjs',
