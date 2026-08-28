@@ -2,15 +2,22 @@
  * @fileoverview Phase 4a contract for the finalization tail split
  * (docs/plans/legacy-production-audit-decomposition.md Phase 4).
  *
- * `FinalizationDataSchema` is the immutable, serializable INPUT snapshot the
- * orchestration spine builds ONCE, right after all six waves have run and
- * their results are known — enumerated by direct source reading of
- * `runLegacyProductionAudit`'s tail (:1771-3311 as of this plan's Cluster C
- * work), not guessed. Nothing mutates it in place: `finding-assembly.mjs`'s
- * `assembleFindings(data)` returns a NEW `AssembledFindingsSchema` value; the
- * coordinator composes the downstream form by spreading the original
- * immutable fields together with that output, and THAT composed value —
- * never the pre-assembly snapshot — is what `run-persistence.mjs` and
+ * `FinalizationDataSchema` is the INPUT snapshot the orchestration spine
+ * builds ONCE, right after all six waves have run and their results are
+ * known — enumerated by direct source reading of `runLegacyProductionAudit`'s
+ * tail (:1771-3311 as of this plan's Cluster C work), not guessed. **No stage
+ * REASSIGNS any of its top-level fields** — `finding-assembly.mjs`'s
+ * `assembleFindings(data)` returns a NEW `AssembledFindingsSchema` value
+ * rather than writing back into `data`. That is a narrower guarantee than
+ * "immutable": the schema does not freeze or deep-copy on validation (real-
+ * audit finding — `allPaths`/`subjectFiles` are `Set` instances, several
+ * fields are `z.unknown()`, and a caller COULD mutate what it's handed), and
+ * `AssembledFindings` is not JSON-serializable as-is (the `Set`-typed
+ * `reopenedSet`) despite the schema's name. Both are genuine relaxations from
+ * an actual `Object.freeze`+JSON-round-trip contract, not typos. The
+ * coordinator composes the downstream form by spreading the original fields
+ * together with 4b's output, and THAT composed value — never the
+ * pre-assembly snapshot — is what `run-persistence.mjs` and
  * `run-telemetry.mjs` each receive alongside their own capability schema.
  *
  * Wave-result objects (`structureResult`, `backendResults[]`, etc.) are
@@ -32,8 +39,10 @@
 import { z } from 'zod';
 
 /**
- * The shared, immutable INPUT snapshot built once by the orchestration spine
- * after all six waves complete. No stage may mutate this object.
+ * The shared INPUT snapshot built once by the orchestration spine after all
+ * six waves complete. No stage may mutate this object (see the module
+ * docblock for how that guarantee is enforced-by-convention, not by
+ * `Object.freeze`).
  */
 export const FinalizationDataSchema = z.object({
   // ── Run identity / control ──────────────────────────────────────────
@@ -127,6 +136,14 @@ export const AssembledFindingsSchema = z.object({
   medium: z.number().int(),
   low: z.number().int(),
   suppressionData: z.unknown().optional(),
+  // The local+cloud FP-pass suppression total — DELIBERATELY separate from
+  // `suppressionData.suppressedCount` (ledger-reraise-suppression only,
+  // stays 0 when only the FP passes fired). Conflating the two was a real
+  // bug (real-audit round 1, post-merge): run-telemetry.mjs's suppression-
+  // event dispatch gate read the wrong field and silently under-recorded
+  // provenance whenever ledger suppression didn't fire but a local/cloud FP
+  // pass did.
+  fpPassSuppressedCount: z.number().int(),
   debtMemoryData: z.unknown().optional(),
   ledgerRejectedCount: z.number().int().optional(),
   ledgerWriteError: z.string().optional(),

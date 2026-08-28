@@ -155,7 +155,10 @@ export async function runTelemetry(data, assembled, mergedResult, telemetryServi
     // the ledger path but NOT for the local/cloud passes: both are unconditional
     // and can suppress on round 1, where the bare gate would silently drop their
     // provenance. A suppression on R1 is no less accountable than one on R2.
-    if ((isR2Plus || (assembled.suppressionData?.suppressedCount > 0)) && mergedResult._suppression) {
+    // `fpPassSuppressedCount`, NOT `suppressionData.suppressedCount` — the
+    // latter is the LEDGER count (stays 0 when only the FP passes fired); a
+    // real-audit bug fix, see finalization-contract.mjs's field comment.
+    if ((isR2Plus || (assembled.fpPassSuppressedCount > 0)) && mergedResult._suppression) {
       writePromises.push(durableWrite('audit.suppressionEvents', {
         runId: cloudRunId, suppressionResult: mergedResult._suppression,
       }));
