@@ -51,13 +51,25 @@ const audit = await import('../scripts/openai-audit.mjs');
 const { runMultiPassCodeAudit } = audit.__testExports;
 
 const lpa = await import('../scripts/lib/audit/legacy-production-audit.mjs');
-const {
-  validateLedgerForR2, deriveFindingsFromReport, runMapReducePass, initResultCache, cachePassResult,
-  writeLearningState, cleanupCache, classifyShadowFailureSafe, runOrphanIntroducedPass, dedupReplacementId,
-  buildSuppressionStats,
-} = lpa.__testExports;
+// legacy-production-audit-decomposition Phase 4: validateLedgerForR2/
+// buildSuppressionStats moved to run-persistence.mjs, classifyShadowFailureSafe
+// to run-telemetry.mjs, dedupReplacementId to finding-assembly.mjs — all real
+// (non-gated) exports of their new modules, same convention as
+// resolveOrphanScopeRefs/writeLearningState's earlier moves.
+const { validateLedgerForR2, buildSuppressionStats } = await import('../scripts/lib/audit/run-persistence.mjs');
+const { classifyShadowFailureSafe } = await import('../scripts/lib/audit/run-telemetry.mjs');
+const { dedupReplacementId } = await import('../scripts/lib/audit/finding-assembly.mjs');
 // Real (non-gated) exports — both directly importable without AUDIT_EXPORTS_FOR_TESTS.
 const { runLegacyProductionAudit, buildAuditRunContext } = lpa;
+// legacy-production-audit-decomposition Phases 1-2: relocated to their own
+// modules, real (non-gated) exports.
+const { initResultCache, cachePassResult, cleanupCache } = await import('../scripts/lib/audit/pass-result-cache.mjs');
+const { runMapReducePass } = await import('../scripts/lib/audit/map-reduce-scheduler.mjs');
+// legacy-production-audit-decomposition Phase 3: relocated to their own
+// modules, real (non-gated) exports.
+const { deriveFindingsFromReport } = await import('../scripts/lib/audit/architecture-pass.mjs');
+const { runOrphanIntroducedPass } = await import('../scripts/lib/audit/orphan-pass.mjs');
+const { writeLearningState } = await import('../scripts/lib/robustness.mjs');
 
 const { clampConfigNumber } = await import('../scripts/lib/config.mjs');
 const { FindingSchema, LedgerEntrySchema, ReduceStatus, REDUCE_STATUS_VALUES, reduceStatusFromErrorCategory, ExecutionMetaSchema } = await import('../scripts/lib/schemas.mjs');
@@ -387,7 +399,7 @@ describe('suppression provenance — the write side', () => {
   });
 
   it('the orchestrator actually populates it on the completion payload', () => {
-    const src = fs.readFileSync(path.resolve('scripts/lib/audit/legacy-production-audit.mjs'), 'utf-8');
+    const src = fs.readFileSync(path.resolve('scripts/lib/audit/run-persistence.mjs'), 'utf-8');
     assert.match(src, /suppressionStats: buildSuppressionStats\(/,
       'completionStats must carry the block, or the column stays as dead as it was for four months');
   });
@@ -761,7 +773,9 @@ describe('Phase 5 — deriveFindingsFromReport schema conformance', () => {
 
 describe('Phase 6 — monotonic tool-finding IDs (static regression guard)', () => {
   it('tool findings no longer derive their id from the severity-scoped findingCounter', () => {
-    const src = fs.readFileSync(path.resolve('scripts/lib/audit/legacy-production-audit.mjs'), 'utf-8');
+    // legacy-production-audit-decomposition Phase 4: tool-finding normalisation
+    // (including this counter) moved to finding-assembly.mjs (4b).
+    const src = fs.readFileSync(path.resolve('scripts/lib/audit/finding-assembly.mjs'), 'utf-8');
     assert.match(src, /let toolIdCounter = 0;/, 'expected a dedicated run-wide monotonic tool-id counter');
     assert.doesNotMatch(src, /id: `T\$\{findingCounter\[tf\.severity\]\}`/,
       'tool-finding id must not be derived from the severity-scoped findingCounter');
@@ -1036,7 +1050,9 @@ describe('Item 3 — classifyShadowFailureSafe guards its own recovery import', 
 
 describe('Item 4 — fuzzy-dedup replacement carries the NEW finding\'s _hash (static regression guard)', () => {
   it('the fuzzy-dedup branch no longer keeps the replaced finding\'s stale _hash', () => {
-    const src = fs.readFileSync(path.resolve('scripts/lib/audit/legacy-production-audit.mjs'), 'utf-8');
+    // legacy-production-audit-decomposition Phase 4: the dedup logic moved to
+    // finding-assembly.mjs (4b).
+    const src = fs.readFileSync(path.resolve('scripts/lib/audit/finding-assembly.mjs'), 'utf-8');
     assert.doesNotMatch(
       src, /_hash: allFindings\[dupeIdx\]\._hash/,
       'fuzzy-dedup replacement must not retain the REPLACED finding\'s _hash — it must use the new finding\'s hash, matching the exact-dedup branch'
@@ -1080,7 +1096,9 @@ describe('dedupReplacementId — a dedup replacement\'s id must match its severi
 });
 
 describe('run-cost telemetry reaches the store (2026-08-10 regression)', () => {
-  const SRC = fs.readFileSync('scripts/lib/audit/legacy-production-audit.mjs', 'utf-8');
+  // legacy-production-audit-decomposition Phase 4: completionStats moved to
+  // run-persistence.mjs (4c).
+  const SRC = fs.readFileSync('scripts/lib/audit/run-persistence.mjs', 'utf-8');
 
   it('the recordRunComplete payload carries costEstimate', () => {
     // `recordRunComplete` has always mapped stats.costEstimate ->
@@ -1212,7 +1230,8 @@ describe('an unreadable --diff file: legacy path fails loud, context-builder fai
 // for internals that aren't exported for direct injection.
 describe('event-wiring detection failure boundary (static regression guard)', () => {
   it('the detectEventWiringAsymmetry call inside runEventWiringSymmetryPass is wrapped in its own try/catch returning state: ERROR', () => {
-    const src = fs.readFileSync(path.resolve('scripts/lib/audit/legacy-production-audit.mjs'), 'utf-8');
+    // legacy-production-audit-decomposition Phase 3: relocated to event-wiring-pass.mjs.
+    const src = fs.readFileSync(path.resolve('scripts/lib/audit/event-wiring-pass.mjs'), 'utf-8');
     const fnStart = src.indexOf('async function runEventWiringSymmetryPass(');
     assert.ok(fnStart >= 0, 'runEventWiringSymmetryPass must exist');
     const fnBody = src.slice(fnStart, fnStart + 4000);
@@ -1243,7 +1262,9 @@ describe('event-wiring detection failure boundary (static regression guard)', ()
 // tallied — matching the sibling `learning.banditArms` fix already pinned
 // by this file's "Item 1" tests above.
 describe('syncFalsePositivePatterns reaches the store through an awaited durableWrite (static regression guard)', () => {
-  const SRC = fs.readFileSync('scripts/lib/audit/legacy-production-audit.mjs', 'utf-8');
+  // legacy-production-audit-decomposition Phase 4: the fpTracker cloud-sync
+  // block moved to run-telemetry.mjs (4d).
+  const SRC = fs.readFileSync('scripts/lib/audit/run-telemetry.mjs', 'utf-8');
 
   it('no fire-and-forget syncFalsePositivePatterns(...).catch( call site remains', () => {
     // Precise match on the historical buggy shape (nested parens defeat a
@@ -1335,7 +1356,9 @@ describe('debt-escalation event write result is captured, not assumed (static re
 // run polluted real session state anyway.
 // ═══════════════════════════════════════════════════════════════════════
 describe('noCloudRecording gates the session-ledger counter AND the session-manifest write (static regression guard)', () => {
-  const SRC = fs.readFileSync('scripts/lib/audit/legacy-production-audit.mjs', 'utf-8');
+  // legacy-production-audit-decomposition Phase 4: the session ledger/
+  // manifest writes moved to run-persistence.mjs (4c).
+  const SRC = fs.readFileSync('scripts/lib/audit/run-persistence.mjs', 'utf-8');
 
   it('the runsSinceDebtReview counter increment is wrapped in writeLearningState(learningWritesAllowed, ...)', () => {
     const blockIdx = SRC.indexOf("const sessionLedgerPath = path.resolve(AUDIT_DIR, SESSION_LEDGER_FILE);");

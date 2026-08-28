@@ -347,7 +347,20 @@ describe('writer-set oracle — derived from the store modules, not enumerated',
 // ── The call sites the plan names ───────────────────────────────────────────
 
 describe('orchestrator call sites', () => {
-  const ORCH = 'scripts/lib/audit/legacy-production-audit.mjs';
+  // legacy-production-audit-decomposition Phase 4: the finalization tail's
+  // store writes moved out of the single orchestrator file into
+  // run-telemetry.mjs (4d) and run-persistence.mjs (4c), coordinated by
+  // run-finalization.mjs. `ORCH` reads across all four, concatenated — a
+  // single-file check here would silently stop seeing exactly the call sites
+  // this suite exists to police, reading clean because it never looked.
+  const ORCH_FILES = [
+    'scripts/lib/audit/legacy-production-audit.mjs',
+    'scripts/lib/audit/run-telemetry.mjs',
+    'scripts/lib/audit/run-persistence.mjs',
+    'scripts/lib/audit/run-finalization.mjs',
+  ];
+  const ORCH = ORCH_FILES.join(', ');
+  const readOrch = () => ORCH_FILES.map(read).join('\n');
 
   // ── The direction the store-side oracle structurally cannot see ────────────
   //
@@ -367,7 +380,7 @@ describe('orchestrator call sites', () => {
   test('every store writer the ORCHESTRATOR imports is registered or exempted', async () => {
     await import('../scripts/lib/audit-store-writers.mjs');
     const writersSrc = read('scripts/lib/audit-store-writers.mjs');
-    const src = read(ORCH);
+    const src = readOrch();
 
     // Every writer-shaped symbol declared anywhere under scripts/lib/store.
     const storeWriters = new Set();
@@ -409,7 +422,7 @@ describe('orchestrator call sites', () => {
     // If this regex ever stops matching, the test above still passes — having
     // checked one import form instead of two. A guard that quietly narrows its
     // own scope is the failure this whole suite is about.
-    const src = read(ORCH);
+    const src = readOrch();
     const dynamic = [...src.matchAll(/(?:const|let|var)\s*\{([^}]*)\}\s*=\s*await\s+import\(/g)];
     assert.ok(dynamic.length > 0,
       'no destructured dynamic import found in the orchestrator — either the file changed shape or the '
@@ -417,7 +430,7 @@ describe('orchestrator call sites', () => {
   });
 
   test('no audit-store write in the orchestrator is fire-and-forget any more', () => {
-    const src = read(ORCH);
+    const src = readOrch();
     // The literal defect: a store writer called with a trailing `.catch(` and no
     // await. Asserted on the four names the plan traced, because THIS test is
     // about those call sites; the oracle above is what catches a fifth writer.
@@ -436,7 +449,7 @@ describe('orchestrator call sites', () => {
     // because there are TWO processes, and the CLI is the one that would
     // quarantine every artifact if it forgot (final-review shadow, MEDIUM).
     // Half a two-sided contract is the shape that reads as covered.
-    const src = read(ORCH);
+    const src = readOrch();
     assert.match(src, /import '\.\.\/audit-store-writers\.mjs'/,
       'without this import durableWrite throws for every id — the orchestrator half of the bootstrap');
     // RETARGETED (command-registry Cluster D): write-spill migrated to the
@@ -460,7 +473,7 @@ describe('orchestrator call sites', () => {
   });
 
   test('a lost write makes the run incomplete — in the result AND in the persisted row', () => {
-    const src = read(ORCH);
+    const src = readOrch();
     // Two writers of one verdict (the returned object and the column) is exactly
     // the shape that drifts, so both are pinned to the same expression.
     // SPILLED counts as incomplete too (Cluster B audit M16): at the moment the
@@ -508,7 +521,7 @@ describe('orchestrator call sites', () => {
     // was never an uncaught crash; it was that return being silently thrown
     // away at the call site, leaving a failed local marker write visible only
     // as an isolated stderr line with nothing recorded alongside it.
-    const src = read(ORCH);
+    const src = readOrch();
     const callIndex = src.indexOf('writeGateEvidence({');
     assert.ok(callIndex !== -1, 'precondition: the call site exists');
     const before = src.slice(Math.max(0, callIndex - 100), callIndex);

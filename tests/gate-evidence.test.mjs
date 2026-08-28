@@ -210,7 +210,9 @@ describe('WIRING PIN: the audit pipeline actually calls the writer', () => {
     // (`recordConvergenceState` sat unused for months). Pin the call site.
     const fs = await import('node:fs');
     const path = await import('node:path');
-    const src = fs.readFileSync(path.join(import.meta.dirname, '../scripts/lib/audit/legacy-production-audit.mjs'), 'utf-8');
+    // legacy-production-audit-decomposition Phase 4: the commit-provenance
+    // gate-evidence writes moved to run-persistence.mjs (4c).
+    const src = fs.readFileSync(path.join(import.meta.dirname, '../scripts/lib/audit/run-persistence.mjs'), 'utf-8');
     assert.match(src, /writeGateEvidence\(\{/, 'the marker writer must be invoked by the audit');
     // The convergence verdict is now recorded THROUGH the durable-write seam
     // (2026-08-13) rather than by a direct `recordConvergenceState(cloudRunId…)`

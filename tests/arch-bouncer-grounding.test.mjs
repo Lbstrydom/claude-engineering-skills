@@ -12,7 +12,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { groundArchFindingsToReport } from '../scripts/lib/audit/legacy-production-audit.mjs';
+// legacy-production-audit-decomposition Phase 3: relocated to architecture-pass.mjs.
+import { groundArchFindingsToReport } from '../scripts/lib/audit/architecture-pass.mjs';
 
 // The exact reproduction: the mechanical report flagged ONLY stores->plan.
 const REPORT = {

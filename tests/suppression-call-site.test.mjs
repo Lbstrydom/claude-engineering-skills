@@ -37,6 +37,32 @@ const SRC = path.join(
   '..', 'scripts', 'lib', 'audit', 'legacy-production-audit.mjs'
 );
 const src = fs.readFileSync(SRC, 'utf8');
+// legacy-production-audit-decomposition Phase 3: writeLearningState itself
+// relocated to robustness.mjs, and runOrphanIntroducedPass (with its
+// emitOrphanRunMetrics gate sites) relocated to orphan-pass.mjs — both are
+// now read from their own file rather than the shrinking orchestrator.
+const robustnessSrc = fs.readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'lib', 'robustness.mjs'), 'utf8'
+);
+const orphanPassSrc = fs.readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'lib', 'audit', 'orphan-pass.mjs'), 'utf8'
+);
+// legacy-production-audit-decomposition Phase 4: the suppression-composition
+// call site (runSuppressionPasses + the ledger branch it must sit OUTSIDE of)
+// moved to finding-assembly.mjs (4b); the learning-state sinks (bandit/
+// fpTracker cloud sync, outcomes.jsonl append) moved to run-telemetry.mjs
+// (4d). Both read separately from `src` (which stays the spine, for the
+// checks that are still pre-finalization — learningWritesAllowed's
+// declaration, the bandit non-persisting-view swap).
+const fasrc = fs.readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'lib', 'audit', 'finding-assembly.mjs'), 'utf8'
+);
+const telemetrySrc = fs.readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'lib', 'audit', 'run-telemetry.mjs'), 'utf8'
+);
+const persistenceSrc = fs.readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'lib', 'audit', 'run-persistence.mjs'), 'utf8'
+);
 
 /**
  * Index range of the `if (mergedLedger.entries.length > 0) { … }` block, by
@@ -45,13 +71,13 @@ const src = fs.readFileSync(SRC, 'utf8');
  * pointed INSIDE this branch — it would have recreated the bug it claimed to fix).
  */
 function ledgerBranchRange() {
-  const open = src.indexOf('if (mergedLedger.entries.length > 0)');
+  const open = fasrc.indexOf('if (mergedLedger.entries.length > 0)');
   assert.notEqual(open, -1, 'the ledger branch landmark moved — update this test deliberately');
-  const braceStart = src.indexOf('{', open);
+  const braceStart = fasrc.indexOf('{', open);
   let depth = 0;
-  for (let i = braceStart; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}') { depth--; if (depth === 0) {
+  for (let i = braceStart; i < fasrc.length; i++) {
+    if (fasrc[i] === '{') depth++;
+    else if (fasrc[i] === '}') { depth--; if (depth === 0) {
       // KNOWN LIMITATION (Gemini consolidated-gate finding): this counter
       // doesn't tokenize, so an unmatched brace inside a string/template/
       // comment within the branch skews the range — and a TRUNCATED range
@@ -59,7 +85,7 @@ function ledgerBranchRange() {
       // false-green, the dangerous direction). Sanity-guard: the branch is
       // known to contain the suppression composition's ledger merge; if the
       // computed range lost it, the range is wrong — fail loudly instead.
-      const range = src.slice(open, i);
+      const range = fasrc.slice(open, i);
       assert.ok(range.includes('mergedLedger'), 'ledgerBranchRange sanity: computed range lost its own landmark content — brace counting skewed (string/template brace inside the branch?)');
       assert.ok(i - open > 200, 'ledgerBranchRange sanity: implausibly small range — brace counting skewed');
       return { start: open, end: i };
@@ -69,7 +95,7 @@ function ledgerBranchRange() {
 }
 
 test('runSuppressionPasses is called exactly once', () => {
-  const calls = src.match(/runSuppressionPasses\(/g) || [];
+  const calls = fasrc.match(/runSuppressionPasses\(/g) || [];
   assert.equal(calls.length, 1, 'exactly one composition call site — two would double-suppress');
 });
 
@@ -78,18 +104,18 @@ test('the composition call is OUTSIDE the ledger branch (the invariant WS-B and 
   // ledger state — a run with an empty merged ledger (exactly the case each pass
   // serves) would suppress nothing. That nesting is the whole defect.
   const { end } = ledgerBranchRange();
-  const call = src.indexOf('runSuppressionPasses(');
+  const call = fasrc.indexOf('runSuppressionPasses(');
   assert.notEqual(call, -1, 'the composition call is missing entirely');
   assert.ok(call > end, 'runSuppressionPasses must be called AFTER the ledger branch closes, never inside it');
 });
 
 test('the composition call is unconditional — no `if` guards it', () => {
-  const call = src.indexOf('runSuppressionPasses(');
-  const decl = src.lastIndexOf('const passes', call);
+  const call = fasrc.indexOf('runSuppressionPasses(');
+  const decl = fasrc.lastIndexOf('const passes', call);
   assert.notEqual(decl, -1, 'expected `const passes = runSuppressionPasses(...)`');
   // Look at the statement that precedes the declaration: it must not be an
   // `if (...)` opening a block around it.
-  const preceding = src.slice(Math.max(0, decl - 200), decl);
+  const preceding = fasrc.slice(Math.max(0, decl - 200), decl);
   assert.ok(
     !/\bif\s*\([^)]*\)\s*\{\s*$/.test(preceding),
     'the call must not be wrapped in a conditional — null tracker AND null policy are already no-ops'
@@ -101,15 +127,15 @@ test('the composition RESULT is assigned back to _suppressionData', () => {
   // synthesized envelope and then dropping it silently re-creates the
   // no-provenance hole the synthesis exists to close.
   assert.match(
-    src,
-    /_suppressionData\s*=\s*passes\.suppressionData/,
-    'the seam’s returned/synthesized envelope must reach _suppressionData'
+    fasrc,
+    /suppressionData\s*=\s*passes\.suppressionData/,
+    'the seam’s returned/synthesized envelope must reach suppressionData'
   );
 });
 
 test('allFindings is replaced from the pass result', () => {
-  const call = src.indexOf('runSuppressionPasses(');
-  const after = src.slice(call, call + 600);
+  const call = fasrc.indexOf('runSuppressionPasses(');
+  const after = fasrc.slice(call, call + 600);
   assert.match(after, /allFindings\.length\s*=\s*0/, 'expected the clear-then-push replacement');
   assert.match(after, /allFindings\.push\(\.\.\.passes\.findings\)/, 'findings must come from the pass result');
 });
@@ -119,11 +145,11 @@ test('WS-C: populateFindingMetadata runs BEFORE the ledger branch, and not insid
   // the branch read them (.audit/outcomes.jsonl, audit_findings.primary_file).
   // Nested, a no-ledger run silently records the raw section string and [].
   const { start, end } = ledgerBranchRange();
-  const enrich = src.indexOf('populateFindingMetadata(f, f._pass)');
+  const enrich = fasrc.indexOf('populateFindingMetadata(f, f._pass)');
   assert.notEqual(enrich, -1, 'the enrichment loop is missing');
   assert.ok(enrich < start, 'enrichment must run BEFORE the ledger branch opens');
 
-  const inBranch = src.slice(start, end);
+  const inBranch = fasrc.slice(start, end);
   assert.ok(
     !/for \(const f of allFindings\)\s*\{\s*populateFindingMetadata/.test(inBranch),
     'the in-branch enrichment loop must be REMOVED, not duplicated — two call sites is a second source of truth'
@@ -132,7 +158,7 @@ test('WS-C: populateFindingMetadata runs BEFORE the ledger branch, and not insid
 
 test('WS-B: the local fpTracker loop has not crept back into the ledger branch', () => {
   const { start, end } = ledgerBranchRange();
-  const inBranch = src.slice(start, end);
+  const inBranch = fasrc.slice(start, end);
   assert.ok(
     !/fpTracker\.shouldSuppress\(/.test(inBranch),
     'the local tracker loop belongs in runLocalFpPass, outside the branch — this is the regression to a known-bad shape'
@@ -150,7 +176,7 @@ test('no DANGLING reference to a local the refactor removed', () => {
   // refactor has left a reference to something that no longer exists.
   for (const gone of ['cloudPass', 'localPass', 'fpSuppressed']) {
     assert.ok(
-      !new RegExp(`\\b${gone}\\b`).test(src),
+      !new RegExp(`\\b${gone}\\b`).test(fasrc),
       `\`${gone}\` no longer exists — a reference to it is a ReferenceError at runtime, and no unit test executes this function`
     );
   }
@@ -186,7 +212,7 @@ test('every learning-state sink sits under the writeLearningState gate', () => {
   // writer instead of re-deriving the list from 5 differently-shaped
   // conditionals. Assertions below pin the NEW shape, same invariant: every
   // sink is unreachable when learningWritesAllowed is false.
-  assert.match(src, /^function writeLearningState\(allowed, fn\) \{\s*\n\s*if \(!allowed\) return;\s*\n\s*return fn\(\);\s*\n\}/m,
+  assert.match(robustnessSrc, /^export function writeLearningState\(allowed, fn\) \{\s*\n\s*if \(!allowed\) return;\s*\n\s*return fn\(\);\s*\n\}/m,
     'the single choke point every learning-state write must go through');
 
   // The bandit-arms cloud sink + bandit.flush share one writeLearningState call.
@@ -202,11 +228,14 @@ test('every learning-state sink sits under the writeLearningState gate', () => {
   // Anchored on the flush, not on the first `if (bandit)` — there are two such
   // blocks (the earlier one registers arms) and picking the wrong one is how a
   // scan like this passes while asserting nothing about the real sink.
-  const flushIdx = src.indexOf('bandit.flush();');
+  // legacy-production-audit-decomposition Phase 4: the bandit/fpTracker cloud
+  // sinks and the outcomes.jsonl append loop moved to run-telemetry.mjs (4d) —
+  // read from `telemetrySrc`, not the shrinking spine.
+  const flushIdx = telemetrySrc.indexOf('bandit.flush();');
   assert.ok(flushIdx > 0, 'the bandit flush/sync block must exist');
-  const banditIdx = src.lastIndexOf('\n  if (bandit) {', flushIdx);
+  const banditIdx = telemetrySrc.lastIndexOf('\n  if (bandit) {', flushIdx);
   assert.ok(banditIdx > 0, 'bandit.flush must sit inside an `if (bandit)` block');
-  const banditBlock = src.slice(banditIdx, src.indexOf('\n  }', flushIdx));
+  const banditBlock = telemetrySrc.slice(banditIdx, telemetrySrc.indexOf('\n  }', flushIdx));
   assert.match(banditBlock, /writeLearningState\(learningWritesAllowed,\s*async\s*\(\)\s*=>\s*\{/,
     'the bandit block must open with a writeLearningState gate');
   assert.match(banditBlock, /bandit\.flush\(\);/, 'bandit.flush must be inside that gate');
@@ -217,26 +246,28 @@ test('every learning-state sink sits under the writeLearningState gate', () => {
   // fifth such write — so it now goes through `durableWrite('learning.fpPatterns')`
   // and is awaited. Same block-extraction discipline as above, for the same
   // reason: a lazy cross-file match would find a later gate and prove nothing.
-  const fpIdx = src.indexOf('\n  if (fpTracker) {');
+  const fpIdx = telemetrySrc.indexOf('\n  if (fpTracker) {');
   assert.ok(fpIdx > 0, 'the fpTracker sync block must exist');
-  const fpBlock = src.slice(fpIdx, src.indexOf('\n  }', fpIdx));
+  const fpBlock = telemetrySrc.slice(fpIdx, telemetrySrc.indexOf('\n  }', fpIdx));
   assert.match(fpBlock, /writeLearningState\(learningWritesAllowed,\s*async\s*\(\)\s*=>\s*\{/,
     'the fpTracker block must open with a writeLearningState gate');
   assert.match(fpBlock, /durableWrite\('learning\.fpPatterns'/,
     'the FP-pattern cloud sink must be inside that gate');
   // No sink calls writeLearningState with a literal `true` (that would
   // silently re-open the ungated leak this whole mechanism exists to close).
-  const hardcodedAllowed = src.match(/writeLearningState\(\s*true\s*,/g) || [];
+  // Checked across every file that now calls writeLearningState — a single-
+  // file check here would silently stop seeing the other two.
+  const hardcodedAllowed = (src + telemetrySrc + persistenceSrc).match(/writeLearningState\(\s*true\s*,/g) || [];
   assert.equal(hardcodedAllowed.length, 0, 'no writeLearningState call site may hardcode allowed=true');
 
   // The LOCAL bandit reward stream (audit R2-H1): the per-finding
   // appendOutcome loop must be gated too — a shadow's findings would
   // otherwise train the real bandit.
-  assert.match(src, /writeLearningState\(learningWritesAllowed,\s*\(\)\s*=>\s*\{\s*for\s*\(const f of allFindings\)\s*\{[\s\S]{0,200}?appendOutcome\(/,
+  assert.match(telemetrySrc, /writeLearningState\(learningWritesAllowed,\s*\(\)\s*=>\s*\{\s*for\s*\(const f of allFindings\)\s*\{[\s\S]{0,200}?appendOutcome\(/,
     'the outcomes.jsonl append loop must be gated via writeLearningState');
   // And the orphan-metrics emits (audit R1-H1): both sites inside
   // runOrphanIntroducedPass gate on the threaded flag via writeLearningState.
-  const emitGates = src.match(/writeLearningState\(learningWritesAllowed,\s*\(\)\s*=>\s*emitOrphanRunMetrics\(/g) || [];
+  const emitGates = orphanPassSrc.match(/writeLearningState\(learningWritesAllowed,\s*\(\)\s*=>\s*emitOrphanRunMetrics\(/g) || [];
   assert.equal(emitGates.length, 2, `both emitOrphanRunMetrics sites gated (found ${emitGates.length})`);
 });
 

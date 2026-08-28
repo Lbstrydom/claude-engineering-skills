@@ -14,6 +14,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   normalizeArchCategory,
@@ -74,9 +75,13 @@ test('DRIFT GUARD: the mechanical detector emits exactly MECHANICAL_ARCH_CATEGOR
   // the mechanical pass without adding it to the shared set, this pins the
   // regression — the new mechanical finding would otherwise be wrongly demoted
   // to `Coupling concern` by the backstop.
+  // legacy-production-audit-decomposition Phase 3: the mechanical architecture
+  // detector (deriveFindingsFromReport) relocated to architecture-pass.mjs.
+  // fileURLToPath (not a manual pathname strip) for a platform-correct path —
+  // the strip form resolves incorrectly on some absolute-path checkouts
+  // (audit-code Cluster B M10).
   const src = fs.readFileSync(
-    path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\//, '')),
-      '..', 'scripts/lib/audit/legacy-production-audit.mjs'),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts/lib/audit/architecture-pass.mjs'),
     'utf-8',
   );
   const found = new Set(
