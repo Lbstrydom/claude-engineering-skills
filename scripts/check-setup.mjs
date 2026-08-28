@@ -32,6 +32,13 @@ import {
   resolveCloudConfig, sharedEnvPath, discoverLocalEnvPath,
 } from './lib/shared-cloud-config.mjs';
 import { Report } from './lib/doctor/report.mjs';
+import { parseOriginRepo } from './lib/branch-protection.mjs';
+import {
+  EXPECTED_SOURCE_VAR, READ_PROBES, TOKEN_SOURCE_KINDS, WRITE_REQUIREMENTS,
+  evaluateExpectedSource, formatPermissionGroups, identifyToken,
+  probeGitHubPermissions, readGhKeyringToken, resolveDefaultBranch,
+  resolveTokenSources, tokenFingerprint, tokenKind, tokenSourceKind,
+} from './lib/doctor/github-permissions.mjs';
 
 // ── Arg parsing ───────────────────────────────────────────────────────────────
 
@@ -326,6 +333,277 @@ async function checkPersonaTest(env, report, repoPath = REPO_PATH) {
   }
 }
 
+// ── Feature: GitHub ───────────────────────────────────────────────────────────
+
+/**
+ * Resolve `owner/repo` from the target repo's `origin` remote.
+ *
+ * `execFileSync` with an explicit `cwd`: this CLI supports `--repo-path`, so
+ * reading the remote of whatever repo the process happens to sit in would
+ * report on the wrong repository.
+ *
+ * @returns {{slug:string, reason?:undefined}|{slug:null, reason:string}}
+ */
+function resolveGitHubSlug(repoPath) {
+  let url;
+  try {
+    url = execFileSync('git', ['remote', 'get-url', 'origin'], {
+      cwd: repoPath, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  } catch {
+    return { slug: null, reason: 'no `origin` remote (or not a git repo)' };
+  }
+  const parsed = parseOriginRepo(url);
+  if (!parsed) return { slug: null, reason: 'the `origin` remote is not a github.com URL' };
+  return { slug: parsed.slug };
+}
+
+/**
+ * GitHub token + permission health.
+ *
+ * NEVER blocking — every finding here is PASS/WARN/INFO and the exit code is
+ * untouched. A repo that never talks to GitHub is correctly configured with no
+ * token at all, and a repo whose token lacks `administration=read` is fine
+ * until someone runs `ensure-branch-protection`. The point is to make the wall
+ * legible BEFORE it is hit, not to add a new one.
+ *
+ * The permission names printed here are read out of GitHub's own
+ * `X-Accepted-Github-Permissions` response header, never hardcoded — see
+ * `lib/doctor/github-permissions.mjs` for why that distinction is load-bearing.
+ */
+async function checkGitHub(env, report, repoPath = REPO_PATH) {
+  report.section('GitHub');
+
+  const { slug, reason: slugReason } = resolveGitHubSlug(repoPath);
+  if (!slug) {
+    report.info('GitHub checks skipped', slugReason);
+    return;
+  }
+
+  // Which `.env` — worktree-safe discovery, the same resolution every other
+  // env-reading check in this file uses. A linked worktree has no `.env` of its
+  // own and must be credited with the main worktree's, or this reports "no
+  // token in .env" for a repo whose .env has one.
+  const envFilePath = discoverLocalEnvPath(repoPath, { onNotice() {} });
+  const fileEnv = envFilePath ? loadEnv(path.dirname(envFilePath)) : env;
+
+  const { sources, winner, ghReason } = resolveTokenSources({
+    processEnv: process.env,
+    fileEnv,
+    envFilePath,
+    gh: readGhKeyringToken(),
+  });
+
+  if (!winner) {
+    // Absence is not a failure — INFO, not WARN. A consumer with no GitHub
+    // token has not misconfigured anything; there is simply nothing to check.
+    report.info(
+      'GitHub token not configured — permission checks skipped',
+      'no GH_TOKEN/GITHUB_TOKEN in the environment or .env, and '
+        + (ghReason || '`gh` is not authenticated'),
+    );
+    return;
+  }
+
+  // A repo may DECLARE which source should win here (`GH_TOKEN_SOURCE_EXPECTED`
+  // in its .env) — see evaluateExpectedSource for why this is a falsifiable
+  // declaration rather than a suppression flag.
+  const expected = evaluateExpectedSource(
+    fileEnv[EXPECTED_SOURCE_VAR] ?? process.env[EXPECTED_SOURCE_VAR],
+    winner.id,
+  );
+
+  // Report the declaration ON the source line when it holds. A marker that is
+  // live must look different from one that was silently ignored — a typo in the
+  // variable NAME is otherwise indistinguishable from a working opt-out, and
+  // the repo would believe it had declared something it had not.
+  report.pass('Token source', `${winner.label} — ${tokenKind(winner.token)}`
+    + (expected.state === 'match' ? `  [declared: ${EXPECTED_SOURCE_VAR}=${expected.declared}]` : ''));
+
+  if (expected.state === 'invalid') {
+    report.warn(
+      `${EXPECTED_SOURCE_VAR} is not a recognised value`,
+      `got "${expected.declared}" — the declaration is being ignored, so it is suppressing nothing`,
+      `Set it to one of: ${TOKEN_SOURCE_KINDS.join(' | ')}`,
+    );
+  } else if (expected.state === 'mismatch') {
+    report.warn(
+      `${EXPECTED_SOURCE_VAR}=${expected.declared}, but the ${expected.actual ?? 'unknown'} source is winning`,
+      `this repo declared that its ${expected.declared} token should be used, and it is not — ${winner.label} took precedence`,
+      expected.declared === 'dotenv'
+        ? 'Unset GH_TOKEN/GITHUB_TOKEN in your shell so the repo .env wins, or update the declaration'
+        : 'Remove the higher-precedence token, or update the declaration to match reality',
+    );
+  }
+
+  // ── Source comparison ──
+  // The reason this half exists: `gh` silently prefers its keyring token, so a
+  // repo `.env` holding a DIFFERENT token with different permissions produces a
+  // `gh` failure that no amount of staring at `.env` explains. Compare the
+  // sources by IDENTITY (who each token authenticates as) rather than by value —
+  // the values must never be printed, and two different strings can legitimately
+  // be the same account.
+  const byFingerprint = new Map();
+  for (const s of sources) {
+    const fp = tokenFingerprint(s.token);
+    if (!byFingerprint.has(fp)) byFingerprint.set(fp, { token: s.token, labels: [] });
+    byFingerprint.get(fp).labels.push(s.label);
+  }
+
+  const identities = new Map();
+  for (const [fp, entry] of byFingerprint) {
+    identities.set(fp, { ...entry, identity: await identifyToken(entry.token) });
+  }
+
+  const winnerIdentity = identities.get(tokenFingerprint(winner.token)).identity;
+  if (winnerIdentity.error) {
+    report.warn('Could not reach api.github.com', `${winnerIdentity.error} — permission checks skipped`);
+    return;
+  }
+  if (winnerIdentity.status === 401) {
+    report.warn(
+      'Token rejected by GitHub (401)',
+      `${winner.label} is expired or revoked — permission checks skipped`,
+      'Refresh it: `gh auth login` for the keyring, or replace the token in your .env',
+    );
+    return;
+  }
+  if (winnerIdentity.login) {
+    report.pass(
+      'Authenticated as',
+      winnerIdentity.login + (winnerIdentity.scopes ? `  (OAuth scopes: ${winnerIdentity.scopes})` : ''),
+    );
+  }
+
+  if (identities.size > 1) {
+    const described = [...identities.values()].map((e) => {
+      const who = e.identity.login || (e.identity.status === 401 ? 'rejected (401)' : 'unidentified');
+      return `${e.labels.join(' = ')} -> ${who}`;
+    });
+    const logins = new Set([...identities.values()].map((e) => e.identity.login || `?${e.identity.status}`));
+    if (logins.size > 1 && expected.state === 'match') {
+      // Declared intentional AND holding — the split is this repo's design, so
+      // it is INFO. The consequence is still stated in full: the declaration
+      // governs which token THIS tooling uses, and cannot change what a bare
+      // `gh` command does, so the trap it names is still live.
+      report.info(
+        'Multiple GitHub tokens configured, and they are different accounts — declared intentional',
+        `${described.join('; ')} — ${EXPECTED_SOURCE_VAR}=${expected.declared} says this is expected. Note it does NOT change \`gh\`'s own precedence (GH_TOKEN > GITHUB_TOKEN > keyring): a bare \`gh\` command here still runs as the keyring account unless the .env token is exported into the environment`,
+      );
+    } else if (logins.size > 1) {
+      report.warn(
+        'Multiple GitHub tokens configured, and they are DIFFERENT accounts',
+        `${described.join('; ')} — this check used ${winner.label}, but bare \`gh\` commands follow \`gh\`'s own precedence (GH_TOKEN > GITHUB_TOKEN > keyring), so they may run as a different account with different permissions`,
+        `Remove the token you did not mean to use, run \`gh auth switch\` so the keyring matches your .env, or declare the split as intentional with ${EXPECTED_SOURCE_VAR}=${tokenSourceKind(winner.id) ?? 'dotenv'} in this repo's .env`,
+      );
+    } else {
+      report.info(
+        'Multiple GitHub tokens configured',
+        `${described.join('; ')} — same account, so precedence does not change behaviour`,
+      );
+    }
+  }
+
+  // ── Permission probes ──
+  const branch = await resolveDefaultBranch({ slug, token: winner.token });
+  const results = await probeGitHubPermissions({ slug, branch, token: winner.token });
+
+  // Which credential model GitHub actually described. A fine-grained token gets
+  // `X-Accepted-Github-Permissions` (`checks=read`); a classic PAT / `gh auth
+  // login` OAuth token gets `X-Accepted-Oauth-Scopes` (`repo`) instead. Naming
+  // it makes the requirement strings below legible — `repo` and `checks=read`
+  // are not the same vocabulary and would otherwise look like a bug.
+  const models = new Set(results.filter((r) => r.headerPresent).map((r) => r.model));
+  if (models.has('oauth')) {
+    report.info('Access model',
+      'classic OAuth scopes (X-Accepted-Oauth-Scopes) — this token is scoped, not fine-grained; the scopes it HOLDS are on the "Authenticated as" line above');
+  } else if (models.has('fine-grained')) {
+    report.info('Access model', 'fine-grained permissions (X-Accepted-Github-Permissions)');
+  }
+
+  const grantHint = models.has('oauth')
+    ? 'Add the scope: `gh auth refresh -s <scope>` for the `gh` keyring, or regenerate the classic PAT with it ticked'
+    : `Grant it to ${winner.label.replace(/\s*\(.*\)$/, '')}: fine-grained PAT -> Repository permissions -> set the named permission to Read`;
+
+  // Aggregate by permission requirement — two endpoints can require the same
+  // permission, and one line per permission is what the operator acts on.
+  const RANK = { granted: 0, unknown: 1, missing: 2, unauthorized: 3, error: 3 };
+  const perPermission = new Map();
+  for (const r of results) {
+    if (r.error) {
+      report.warn(`Probe failed: ${r.id}`, r.error);
+      continue;
+    }
+    if (!r.headerPresent) {
+      // The whole mechanism IS the header. If GitHub sends NEITHER of the two
+      // it uses, say so rather than silently reporting nothing — a check that
+      // quietly measures nothing is worse than one that admits it could not.
+      report.info(
+        `Access requirement not declared for ${r.id}`,
+        `HTTP ${r.status} — neither X-Accepted-Github-Permissions nor X-Accepted-Oauth-Scopes was returned`,
+      );
+      continue;
+    }
+    if (r.permissions.length === 0) {
+      // GitHub declared that this endpoint needs NOTHING (an empty
+      // `X-Accepted-Oauth-Scopes` — measured on a classic token against
+      // `.../check-runs`, `.../pulls`, `.../actions/runs` and
+      // `.../branches/{b}/protection`). These must NOT be aggregated: they
+      // share no permission, only the absence of one, so a single 404 among
+      // them would drag the others' 200s down to UNKNOWN under
+      // worst-verdict-wins. There is no permission to report, so report the
+      // ENDPOINT — and only when it did not simply succeed, since "an endpoint
+      // requiring no permission worked" is not news.
+      if (r.verdict !== 'granted') {
+        report.info(
+          `${r.id}  HTTP ${r.status}`,
+          `no permission is required for this endpoint, so this is not a permission problem — ${r.reason}`,
+        );
+      }
+      continue;
+    }
+    const key = formatPermissionGroups(r.permissions);
+    if (!perPermission.has(key)) {
+      perPermission.set(key, {
+        verdict: r.verdict, status: r.status, reasons: [], alternatives: r.permissions.length > 1,
+      });
+    }
+    const agg = perPermission.get(key);
+    agg.reasons.push(r.reason);
+    // Worst verdict wins: two endpoints behind one permission disagreeing means
+    // it is granted only partially, and the restrictive read is the honest one.
+    if (RANK[r.verdict] > RANK[agg.verdict]) { agg.verdict = r.verdict; agg.status = r.status; }
+  }
+
+  for (const [permission, agg] of perPermission) {
+    const why = agg.reasons.join('; ');
+    if (agg.verdict === 'granted') {
+      // With alternatives GitHub only tells us at least one was accepted — say
+      // exactly that rather than claiming every listed permission is granted.
+      report.pass(`${permission}  GRANTED${agg.alternatives ? ' (at least one alternative)' : ''}`, why);
+    } else if (agg.verdict === 'missing') {
+      report.warn(`${permission}  MISSING`, `HTTP 403 — ${why}`, grantHint);
+    } else if (agg.verdict === 'unknown') {
+      report.info(
+        `${permission}  UNKNOWN`,
+        `HTTP 404 — either the permission is missing or the resource does not exist; ${why}`,
+      );
+    } else {
+      report.warn(`${permission}  ${agg.verdict.toUpperCase()}`, `HTTP ${agg.status} — ${why}`);
+    }
+  }
+
+  // Write requirements are DOCUMENTED, never probed: every endpoint that would
+  // prove one mutates the repo (dispatch a workflow, open a PR, file an issue).
+  // A setup doctor must not change what it inspects.
+  report.info(
+    'Write access (documented, never probed — those endpoints have side effects)',
+    WRITE_REQUIREMENTS
+      .map((w) => `${models.has('oauth') ? `scope ${w.scope}` : w.permission} — ${w.reason}`)
+      .join('\n         '),
+  );
+}
+
 // ── Output ────────────────────────────────────────────────────────────────────
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
@@ -401,7 +679,7 @@ function printJsonReport(report) {
 
 // ── Consistency-mode (Phase 6.5 — Playwright bootstrap probe) ────────────────
 
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
   detectPackageManager, packageManagerInvocation, execBinaryArgs,
@@ -623,6 +901,17 @@ export async function evaluatePersonaTest(env, repoPath = REPO_PATH) {
   return toAdapterResult(report);
 }
 
+/**
+ * `evaluateGitHub` — token source + read-only permission probes. Network I/O
+ * (api.github.com), no DB. Degrades to a single INFO item when the repo has no
+ * GitHub remote or no token, so it is safe to run in any consumer.
+ */
+export async function evaluateGitHub(env, repoPath = REPO_PATH) {
+  const report = new Report();
+  await checkGitHub(env, report, repoPath);
+  return toAdapterResult(report);
+}
+
 async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   const env = loadEnv(REPO_PATH);
@@ -633,6 +922,7 @@ async function main() {
   await checkPersonaTest(env, report);
   await checkConsistencyMode(env, report);
   await checkBrowser(report);
+  await checkGitHub(env, report);
 
   if (JSON_MODE) printJsonReport(report);
   else printReport(report);

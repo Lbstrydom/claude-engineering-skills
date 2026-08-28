@@ -75,6 +75,104 @@ Ratcheted in `npm run check` by `upstream:coverage:gate`; see
 
 ---
 
+### GitHub token permissions — stop rediscovering the 403
+
+`check-setup` (and the doctor's `machine/github-permissions` probe) reports
+which GitHub token you are actually using and which permissions it holds:
+
+```bash
+node scripts/.claude-skills/check-setup.mjs
+```
+
+Every consumer running `/ship`, `/audit-code` or `cross-skill.mjs` eventually
+hits a `gh` command that dies on a bare `403`, and each one rediscovers by
+trial and error which permission was missing. GitHub already answers that
+question on every REST response — it is just not printed anywhere a human
+looks. Measured 2026-08-28 with `gh api -i`:
+
+```
+repos/{owner}/{repo}/commits/main/check-runs → 403
+X-Accepted-Github-Permissions: checks=read
+```
+
+The header comes back on `200`s and `403`s alike, so the section probes a
+table of **read-only** endpoints and reads the required permission back out
+of the response. **Permission names are never hardcoded** — a hardcoded table
+is a claim about GitHub's authorization rules that nothing keeps current, and
+it would drift silently the next time GitHub re-partitions a permission.
+
+Two credential models, two headers, both handled (a classic `gho_`/`ghp_`
+token gets **no** `X-Accepted-Github-Permissions` at all — verified live):
+
+| Token | Required-access header | Granted set |
+|---|---|---|
+| Fine-grained PAT / App | `X-Accepted-Github-Permissions: checks=read` | probe outcome per endpoint |
+| Classic PAT / OAuth | `X-Accepted-Oauth-Scopes: repo` | `X-Oauth-Scopes` on any response |
+
+Reading what it tells you:
+
+- **GRANTED / MISSING / UNKNOWN.** `403` is MISSING. `404` is deliberately
+  UNKNOWN, never MISSING: GitHub answers `404` both when a fine-grained token
+  cannot see a resource at all and when the resource genuinely does not exist
+  (a repo with no branch protection). Calling that MISSING would send you to
+  fix a permission that was never the problem.
+- **Write access is documented, never probed.** Every endpoint that would
+  prove a write permission has a side effect — dispatching a workflow, opening
+  a PR, filing an issue. A setup doctor must not change what it inspects, so
+  the write requirements are printed as a table and left untested.
+- **Nothing here blocks.** Findings are PASS/WARN/INFO and never touch the
+  exit code. A backend-only consumer that never opens a PR is correctly
+  configured without `pull_requests=read`. The probe is `class: 'machine'` in
+  the doctor for the same reason: it reads account state, not repo state.
+- **No token at all is an INFO, not a warning.** A consumer that does not talk
+  to GitHub has not misconfigured anything.
+
+#### The token-source trap
+
+The section names the source it used — `GH_TOKEN` (shell export),
+`GITHUB_TOKEN`, the repo `.env`, or `gh`'s keyring — and, when more than one
+is present, compares their **identities** (via `GET /user`) rather than their
+values, which are never printed:
+
+```
+[PASS] Token source  GH_TOKEN (shell export) — OAuth token
+[PASS] Authenticated as  Lbstrydom  (OAuth scopes: gist, read:org, repo, workflow)
+[WARN] Multiple GitHub tokens configured, and they are DIFFERENT accounts
+       GH_TOKEN (shell export) -> Lbstrydom; `gh` keyring -> louis-strydom_wartsila
+```
+
+This exists because a consumer lost significant time to exactly this: the
+repo `.env` held one token while `gh` silently used a *different* keyring
+token with different permissions, and nothing ever compared the two — so
+every hour of debugging went into permissions on the token that was not being
+used. `gh`'s own precedence is `GH_TOKEN` > `GITHUB_TOKEN` > keyring; the
+repo `.env` is invisible to it entirely.
+
+To make the keyring answer honestly, `gh auth token` is invoked with
+`GH_TOKEN`/`GITHUB_TOKEN` scrubbed from its environment — `gh` echoes those
+back when set, which would make the two sources agree by construction and the
+warning could never fire.
+
+**When the split is deliberate**, declare it in the repo's `.env` rather than
+learning to ignore the warning:
+
+```bash
+# accepted values: shell | dotenv | keyring
+GH_TOKEN_SOURCE_EXPECTED=dotenv
+```
+
+This is a **checked declaration, not a mute**. While it holds, the finding drops
+to INFO and the source line is annotated `[declared: …]` — so a live marker looks
+different from one that was silently ignored, which is what a typo in the
+variable *name* would otherwise produce. The day the declared source stops
+winning, it warns *harder* than the generic case, naming the intent no longer
+being met; an unrecognised *value* is reported as invalid rather than accepted as
+an opt-out. The declaration governs which token this tooling uses and cannot
+change `gh`'s own precedence, so the INFO still states that a bare `gh` command
+runs as the keyring account unless the `.env` token is exported.
+
+---
+
 ## Runtime prerequisites — and non-Node consumers
 
 **The consumer repo does NOT have to be a Node repo.** The bundle ships in two

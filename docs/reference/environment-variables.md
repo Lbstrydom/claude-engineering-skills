@@ -64,6 +64,17 @@ gateway + termination watchdog) are documented in the
 | `AUDIT_DISMISSAL_REOPEN_REQUIRES_DECLARATION` | No | `true` | Layer 3. When true (default), a **dismissed** ledger entry whose file changed reopens only if the re-raise sets `is_reopened: true`; otherwise it is suppressed with a `declared=no` reason and counted in `reopenTelemetry.relitigationSuppressed`. `fixed`/`verified` entries are unaffected — they always reopen on touch, because regression detection must not depend on the model noticing. Set to `false` to restore the pre-2026-08-14 uniform behaviour. |
 | `AUDIT_AUTHOR_TIER_HINT` | No | — | **Observation-only** (never routes). Optional author-model hint (concrete id e.g. `claude-sonnet-4-6`, or a logical tier `economy\|standard\|frontier`) read by the `author_tier` recorder in `openai-audit.mjs` to capture actual-vs-suggested tier + the ladder partition key. A concrete id populates the partition key; a bare logical tier leaves it null. See [`docs/plans/model-tier-observation.md`](../plans/model-tier-observation.md). |
 
+## GitHub (check-setup "GitHub" section)
+
+Read by `check-setup.mjs` and the doctor's `machine/github-permissions` probe.
+Nothing here is required, and nothing here blocks — absence of a GitHub token is
+a supported state, not a misconfiguration.
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `GH_TOKEN` / `GITHUB_TOKEN` | No | — | The GitHub token the checks probe with. Resolved in `gh`'s own precedence (`GH_TOKEN` > `GITHUB_TOKEN` > `gh` keyring), with the repo `.env` slotted under genuine shell exports. A value present in `.env` is attributed to the FILE even though `load-env.mjs` has already put it in `process.env`. Not consumed by this repo's own tooling beyond the check — it is read to answer "which token would `gh` use here, and what does it grant?". |
+| `GH_TOKEN_SOURCE_EXPECTED` | No | — | Declares which source SHOULD win in this repo: `shell` \| `dotenv` \| `keyring`. A **falsifiable declaration, not a mute**: when it holds, the "multiple tokens, different accounts" finding drops from WARN to INFO and the source line is annotated `[declared: …]`; when the declared source stops winning it WARNS *harder* than the generic case, naming the intent that is no longer met. An unrecognised value is reported as invalid rather than treated as an opt-out, so a typo cannot suppress the warning by accident. Set it in the repo `.env` next to the token it describes. Example: a work repo whose `.env` holds a work PAT while the `gh` keyring is logged into a personal account sets `GH_TOKEN_SOURCE_EXPECTED=dotenv`. It does **not** change `gh`'s precedence — a bare `gh` command still uses the keyring unless the `.env` token is exported. |
+
 ## persona-test
 
 | Variable | Required | Default | Purpose |

@@ -1,5 +1,127 @@
 # Project Status Log
 
+## 2026-08-28 — GitHub token-permission check in `check-setup` (header-derived, never hardcoded)
+
+### Consumer Verification (previous ship)
+- **Ship**: `aae1b18e1f94cf73828fef6670e2fe3ee4e4550b` on `main`.
+- **State**: `verified` (transfer + producer-side battery in an isolated clean checkout), `unverified` (consumer-bundle content + independent fresh-clone battery).
+- **Retrieval run**: `git ls-remote origin refs/heads/main` → `aae1b18e`, matches; `git merge-base --is-ancestor HEAD origin/main` exit 0.
+- **Producer-side battery**: the pre-push hook ran the full `check` suite in a throwaway worktree checked out at this exact commit (`aae1b18e`) — not the working tree — and passed on the second attempt (13,980 tests, 0 fail, 31 skip). The first attempt failed one test (`tests/sync-target-path.test.mjs` idempotency check, comparing dependency sets across two sync runs) with strong circumstantial evidence of concurrent-session interference (10 peer sessions active; the repo's own `package.json` already matched the "second run" result when investigated, consistent with it being mid-flux during the first run's read) rather than a real regression — the retry, a fresh clean checkout, passed clean.
+- **`unverified` — consumer bundle**: this ship's own push output reported `Targets: 2/2 reached · Updated: 2 · Unchanged: 1472 · Errors: 0`, but no consumer repo content was spot-checked (unlike the prior ship note this one supersedes) — no registered consumer repo checkout was available in this session to verify against.
+- **`unverified` — independent fresh clone**: no separate `git clone` into a tempdir was run outside the pre-push hook's own throwaway worktree; the hook's clean-checkout run is a strong proxy (fresh checkout, fresh install, full suite) but was not run independently of the push itself.
+
+### Origin
+
+Requested feature: extend `scripts/check-setup.mjs` with a GitHub section
+matching the existing Audit-Loop / Persona-Test style. Every consumer running
+`/ship`, `/audit-code` or `cross-skill.mjs` eventually hits a `gh` command that
+dies on a bare `403` and rediscovers by trial and error which permission was
+missing — the answer is on every REST response and nothing printed it.
+
+### Changes
+
+- **`scripts/lib/doctor/github-permissions.mjs`** (new). Probes 7 read-only
+  `GET`s and reads the required permission out of GitHub's own response header.
+  **No permission name is hardcoded** — a test asserts the probe table contains
+  none, because a hardcoded table is a claim about GitHub's authorization rules
+  that nothing keeps current and would drift silently on the next
+  re-partition.
+- **Two credential models, both measured live** (2026-08-28, `gh api -i`
+  against `Lbstrydom/claude-engineering-skills`). Fine-grained PAT →
+  `X-Accepted-Github-Permissions: checks=read`. A classic `gho_`/`ghp_` token
+  gets **no such header on any endpoint** and uses `X-Accepted-Oauth-Scopes:
+  repo` instead. Reading only the first would have made the check silently
+  measure nothing for most consumers — it was written that way first and the
+  gap was found by running it, not by review.
+- **Token-source reporting + identity comparison.** Names which of `GH_TOKEN`
+  (shell), `GITHUB_TOKEN`, the repo `.env`, or `gh`'s keyring won, and compares
+  all present sources by **identity** (`GET /user`), never by value. Closes a
+  consumer's lost-time incident: `.env` held one token, `gh` silently used a
+  different keyring token with different permissions, and nothing compared
+  them.
+- **`GH_TOKEN_SOURCE_EXPECTED`** (`shell|dotenv|keyring`) — a repo declares
+  which source should win. Deliberately a **falsifiable declaration, not a
+  mute**: holding → the finding drops to INFO and the source line is annotated
+  `[declared: …]`; violated → warns *harder* than the generic case; an
+  unrecognised value is reported invalid rather than accepted as an opt-out.
+- **Doctor probe** `machine/github-permissions`, `class: 'machine'` — advisory,
+  never gating, because it reads account state rather than repo state.
+
+### Files Affected
+
+| File | Change |
+|---|---|
+| `scripts/lib/doctor/github-permissions.mjs` | new — probe table, dual-header parsing, token-source resolution, expected-source adjudication |
+| `tests/github-permissions.test.mjs` | new — 32 tests, fixtures transcribed from real `gh api -i` responses |
+| `scripts/check-setup.mjs` | new `GitHub` section + `evaluateGitHub` adapter |
+| `scripts/lib/doctor/probes.mjs` | registers the probe; `checkSetupProbe` gains a `cls` param |
+| `docs/reference/environment-variables.md` | new `## GitHub` section |
+| `docs/runbooks/consumer-adoption.md` | §Diagnostics subsection incl. the marker |
+
+### Decisions Made
+
+- **`404` is UNKNOWN, never MISSING.** GitHub answers `404` both when a
+  fine-grained token cannot see a resource at all and when the resource
+  genuinely does not exist (a repo with no branch protection). Reporting that
+  as MISSING sends an operator to fix a permission that was never the problem.
+- **Write requirements are documented, never probed.** Every endpoint that
+  would prove one has a side effect (dispatch a workflow, open a PR, file an
+  issue). A setup doctor must not change what it inspects. Both vocabularies
+  are carried (`pull_requests=write` / scope `repo`) — a reader on a classic
+  PAT cannot act on a fine-grained name.
+- **Never blocking.** All findings are PASS/WARN/INFO; no token at all is an
+  INFO, not a WARN. A backend-only consumer that never opens a PR is correctly
+  configured without `pull_requests=read`.
+- **`gh auth token` is invoked with `GH_TOKEN`/`GITHUB_TOKEN` scrubbed from its
+  environment.** `gh` echoes them back when set, which would make the two
+  sources agree *by construction* and the disagreement warning could never
+  fire — a check that looks alive and measures nothing.
+- **Endpoints declaring no requirement are not aggregated.** They share no
+  permission, only the absence of one, so a single `404` among them would drag
+  the others' `200`s down to UNKNOWN under worst-verdict-wins.
+
+### Verification
+
+- `npm run check` — exit 0. **14,014 tests, 0 fail, 31 skipped** (the same
+  pre-existing 31; the new suite skips none). All 26 gates pass.
+- **Mutation-tested, red-then-green, five mutants, each caught**: `404`→missing
+  (1 fail), removing the env scrub (1), dropping the OAuth-header branch (1),
+  implementing the marker as a blunt mute (2), accepting a typo'd marker value
+  (1). Restored green each time.
+- **Run against two real repos**, not just this one. This repo under the
+  fine-grained work PAT initially reported `administration=read MISSING` — which
+  turned out to be the *wrong `gh` account active*, not a missing grant, and the
+  check is what surfaced it. `gh auth switch --user Lbstrydom` cleared it.
+- **`C:\GIT\storyline`** (work PAT in its `.env`): reported `checks=read
+  MISSING`, confirmed independently with `gh api -i` (403 +
+  `X-Accepted-Github-Permissions: checks=read`) rather than trusting the new
+  tool's own answer. Marker added to that repo's `.env`; the account-split
+  finding correctly dropped to INFO, and forcing a wrong value still warns.
+
+### Correction worth recording
+
+An earlier run of `npm run check` in this session was reported as passing when
+it had not. The command was `npm run check > log 2>&1; echo "EXIT=$?"`, so the
+harness recorded the **`echo`'s** exit code — the same masking failure as
+piping through `tail`. `gates:poison` had in fact failed, because its harness
+copies **tracked files only** and the new module was still untracked, so
+`upstream:coverage:gate`'s control run died on `ERR_MODULE_NOT_FOUND`. Staging
+the new files fixed it; nothing in the code was wrong. Generalises: a compound
+command ending in `echo` reports the echo, and a background-task exit code is
+only as trustworthy as the last command in the chain.
+
+### Next Steps
+
+- **storyline's work PAT still lacks `checks=read`** — everything else, down to
+  `secrets=read` and `actions_variables=read`, is granted on a token issued
+  today (expiry 2027-08-29), which is consistent with an enterprise policy
+  restricting the Checks permission for that EMU account rather than a
+  UI oversight. Not verifiable from here (no enterprise-settings access).
+  storyline's own `.env` claims the omission is deliberate, citing a note in its
+  `status.md` that does not exist there — so that rationale is unverified.
+- Not built, deliberately: a per-permission "known not needed" marker. That is a
+  different mechanism from the source declaration and nothing has asked for it.
+
 ## 2026-08-28 — Debt-backlog cleanup + standing-queue-burndown pass 2 + tech-debt singleton sweep
 
 ### Consumer Verification (previous ship)

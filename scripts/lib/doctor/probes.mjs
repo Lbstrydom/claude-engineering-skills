@@ -16,7 +16,7 @@ import { readBundleStamp } from '../upstream/commands.mjs';
 import { reportToProbeOutcome } from './report.mjs';
 import {
   loadEnv, injectResolvedDbEnv, evaluateAuditSetup, evaluateAuditSupabase,
-  evaluatePersonaTest, checkPlaywrightAvailable,
+  evaluatePersonaTest, evaluateGitHub, checkPlaywrightAvailable,
 } from '../../check-setup.mjs';
 
 // ── sync-isolation-verify gate adapter (§2.3a) ──────────────────────────────
@@ -222,9 +222,9 @@ const PACKAGE_MANAGER_PROBE = {
 
 // ── check-setup adapters (§2.3a) ────────────────────────────────────────────
 
-function checkSetupProbe({ id, title, fix, evaluate, needsDb = false }) {
+function checkSetupProbe({ id, title, fix, evaluate, needsDb = false, cls = 'repo' }) {
   return {
-    id, title, class: 'repo', fix,
+    id, title, class: cls, fix,
     async run(ctx) {
       const env = loadEnv(ctx.subjectRoot);
       if (needsDb) injectResolvedDbEnv(env, ctx.subjectRoot);
@@ -259,6 +259,19 @@ const CHECK_SETUP_PROBES = [
     fix: 'Set AUDIT_DB_URL in .env and run `node scripts/setup-postgres.mjs --migrate` (see the finding detail).',
     evaluate: (env, repoPath) => evaluatePersonaTest(env, repoPath),
     needsDb: true,
+  }),
+  checkSetupProbe({
+    id: 'machine/github-permissions',
+    title: 'GitHub token source + read-only permission probe',
+    // `class: 'machine'`, deliberately: what this reads is a MACHINE/account
+    // fact (which token your shell, your .env and `gh`'s keyring hold, and
+    // what GitHub grants it) — not repo state. Gate level follows the kind of
+    // state read: repo state may block a push, machine state may only advise.
+    // A CI runner with a scoped ephemeral token would otherwise fail a gate
+    // for a permission its human operator never needs.
+    fix: 'See the finding detail: it names the missing permission, the endpoint that needs it, and which token source was used.',
+    evaluate: (env, repoPath) => evaluateGitHub(env, repoPath),
+    cls: 'machine',
   }),
 ];
 
