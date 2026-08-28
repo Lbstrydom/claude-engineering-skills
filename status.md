@@ -1,5 +1,81 @@
 # Project Status Log
 
+## 2026-08-28 — Standing-queue-burndown: first real Q1/Q2 pass, and a correction to the plan's aging arithmetic
+
+### Origin
+
+`docs/plans/standing-queue-burndown.md` (§2 Q1, §3 Q2) documents two live
+non-blocking `/ship` nudges — unlocked HIGH code fixes, and accepted findings
+never remediated — with a route and exit criterion each, but neither had ever
+actually been worked. Ran via `/cycle --autonomous docs/plans/standing-queue-burndown.md`.
+
+### Correction found before doing any work
+
+The plan's Q1 section read `agedOutByMode.code` as a subset of `byMode.code`
+("70 of 97 aged out, ~27 actionable"). Reading `unlocked_fixes`/
+`unlocked_fixes_all`'s view definitions
+(`supabase/migrations/20260811040000_unlocked_fixes_aged_visibility.sql`)
+shows the two are disjoint: `byMode` (no `--all-ages`) is `is_recent` rows
+only, `agedOutByMode` is always the `NOT is_recent` complement. The correct
+current-actionable population is `byMode.code` itself. Corrected in the plan
+doc, with the migration citation, so the next reader doesn't repeat the
+subtraction.
+
+### Q1 — unlocked code fixes (§2)
+
+95 code rows measured before this pass. 92 investigated (parallel read-only
+agents, one per distinct `primary_file`, searching for a genuinely covering
+existing regression test — not a same-named-file guess): **62 locked** via
+`lock-with-test` with real evidence (specific test name + line range read and
+cited per row); ~27 left open (no test found, or only partial coverage for a
+`[SYSTEMIC]`/compound finding); 3 `primary_file` values were bogus plan-section
+citations, unactionable via this route. No test was written as part of this
+pass — only genuinely pre-existing coverage was locked. `byMode.code`: 95 → 33.
+
+### Q2 — accepted findings never remediated (§3)
+
+94 open code rows measured before this pass. Applied the plan's triage rule:
+63 `remediation_state: 'planned'` skipped as in-flight; of the 31 `pending`
+rows, 17 had a real `primary_file` (14 were bogus citations) and were checked
+against current source + git history. **3 confirmed genuinely fixed** and
+closed with `final-review-record-fix --state fixed`:
+- `21dfdc50` — `scripts/lib/audit/findings-pipeline.mjs` fingerprint-collision
+  fix, commit `7ed02805`.
+- `5b208484` — `scripts/lib/audit/event-wiring-corpus.mjs` ref-anchored
+  `git ls-files`→`ls-tree` fix, commit `382790b0`.
+- `83c1a5ec` — the `persona-consistency-locked` bypass was closed by retiring
+  the whole state in migration `20260811150000_retire_consistency_candidate_promotion.sql`
+  (commit `e833b2aa`) rather than validating it in place; fix lives outside
+  the finding's `primary_file`, noted explicitly.
+
+13 of the 17 real-path rows were confirmed still open, each with specific
+evidence (e.g. `scripts/lib/store/runs-findings.mjs` has grown from ~91K to
+114K chars since acceptance — the cited decomposition never happened). One
+(`6485990d`) looks like a mis-accepted finding — the cited test file contains
+none of the described logic, and the behavior it names is this repo's own
+documented `ADJACENCY_INCOMPLETE` control-marker convention, not a defect;
+left open and flagged for human triage rather than closed either way.
+`byMode.code`: 94 → 91.
+
+### What was NOT done
+
+No test was written, no code fix was implemented, and no row was closed
+without a specific, cited piece of evidence. Both queues remain open (33 / 91
+code rows) and will keep growing between passes — this was a burndown pass,
+not a close-out, matching the plan's own doctrine (§0: route to real
+evidence, never fabricate).
+
+### Verification
+
+All 65 store writes (62 locks + 3 fix-records) confirmed via direct CLI
+invocation (`lock-with-test`, `final-review-record-fix`), each returning
+`{ok:true, locked:true}` / `{ok:true, updated:1}`. Re-measured both queues
+post-pass to confirm the counts moved as expected. `/audit-code` on the
+resulting plan-doc diff: round 1, PASS, H:0 M:0 L:0. Gemini final review:
+APPROVE, 0 new findings.
+
+---
+
 ## 2026-08-27 — Step 3.6 debt capture had no deterministic gate: a new cross-ledger check + advisory backstop
 
 ### Origin

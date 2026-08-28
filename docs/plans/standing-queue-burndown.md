@@ -1,16 +1,11 @@
 # Plan: Standing Queue Burndown — the three gates that fire on every ship
 
-- **Status**: In Progress — re-measured 2026-08-28. Q1: 97 raw code rows, but
-  70 have aged out (`agedOutByMode.code`) — **~27 currently actionable**, an
-  aging concept added since 2026-08-09 that this doc did not previously
-  document (§2). Q2: its stated blocker is **resolved** — the reader now
-  reports a true total, **162** open (94 code / 68 plan), 34 aged out, 42
-  already `accepted-permanent` (§3). Q3: **rescoped out of this plan's active
-  burndown** — it measures the `bucket = 'shadow-only'` credit backlog by
-  construction (not a mixed primary+shadow queue), and its growth (68 → 482)
-  tracks the still-`In Progress` Final-Review Shadow Bake-Off's own arm
-  expansion, not new unworked debt this plan owns (§4).
-- **Date**: 2026-08-09 (re-measured 2026-08-28)
+- **Status**: In Progress — first real burndown pass landed 2026-08-28. Q1:
+  62 code findings locked with real regression tests this session (§2). Q2: 3
+  code findings closed with `final-review-record-fix` after confirming the fix
+  in the codebase (§3). Both queues are large, actively-growing, shared state
+  — this pass made a dent, not a close-out. Q3 stays rescoped out (§4).
+- **Date**: 2026-08-09 (re-measured 2026-08-28, burndown pass 2026-08-28)
 - **Origin**: `/ship` Steps 0.5b, 0.5e and 6.7 have surfaced the same three
   non-blocking queues on every push for weeks. They were reported as prose,
   acknowledged, and never worked. This document gives each queue a route and an
@@ -65,23 +60,56 @@ node scripts/cross-skill.mjs list-unlocked-fixes
 ```
 
 **Measured 2026-08-09**: `byMode.total` 98 — 38 code, 60 plan.
-**Re-measured 2026-08-28**: `byMode.total` **227** — **97 code**, 130 plan.
+**Re-measured 2026-08-28 (before burndown)**: `byMode.total` **225** —
+**95 code**, 130 plan. **Re-measured 2026-08-28 (after burndown, same
+session)**: `byMode.total` **163** — **33 code**, 130 plan — 62 code rows
+locked in this pass (below).
 
 **The plan rows are not work**, unchanged reasoning from 2026-08-09: their
 `primary_file` is a plan section reference ("§9 testing strategy"), not a code
 artifact, and no lock can exist for them.
 
-**An aging dimension landed since 2026-08-09 and changes what "97" means.**
-The reader now also returns `allAges`, `agedOut`, `agedOutByMode`,
-`prePractice`, `practiceStart` (`scripts/lib/store/ship-nudges.mjs`,
-`countAgedUnlockedFixes`). `practiceStart` is this repo's earliest
-audit-sourced `regression_specs` row — the moment regression-locking was
-first practised here; a finding older than that is `prePractice` and can
-never be locked. **Re-measured 2026-08-28: `agedOutByMode.code` 70 of the 97**
-— so the currently-actionable population is **~27**, lower than 2026-08-09's
-raw 38, not higher. Citing the raw 97 without the aging split overstates the
-live work by roughly 3.5x. Pass `--all-ages` only to audit historical debt,
-never to size current work.
+**Correction to this doc's prior aging arithmetic — `byMode` and
+`agedOutByMode` are DISJOINT populations, not "N of M".** The earlier version
+of this section read `agedOutByMode.code` as a subset of `byMode.code` ("70
+of the 97 ... ~27 currently actionable"). Reading the view definitions
+(`supabase/migrations/20260811040000_unlocked_fixes_aged_visibility.sql`)
+shows this is wrong: `byMode` (no `--all-ages`) queries `unlocked_fixes`,
+which is `unlocked_fixes_all WHERE is_recent` (fixed within 14 days);
+`agedOutByMode` (`countAgedUnlockedFixes`) always queries
+`unlocked_fixes_all WHERE NOT is_recent` — the *complement*, split further
+into `agedOut` (post-practice) and `prePractice`. The two counts can never
+overlap; the correct current-actionable population is simply `byMode.code`
+itself (everything the 14-day nudge window is currently showing), not
+`byMode.code − agedOutByMode.code`. **Do not repeat the old subtraction** —
+the two are read from the same JSON response but describe non-overlapping
+finding sets.
+
+**An aging dimension landed since 2026-08-09** (`allAges`, `agedOut`,
+`agedOutByMode`, `prePractice`, `practiceStart` —
+`scripts/lib/store/ship-nudges.mjs`, `countAgedUnlockedFixes`).
+`practiceStart` is this repo's earliest audit-sourced `regression_specs` row;
+a finding that aged out of the 14-day window *before* that date is
+`prePractice` and was never a live obligation. Pass `--all-ages` only to
+audit historical debt, never to size current work — `byMode.code` (default,
+no flag) is already the correct current-actionable count.
+
+**Burndown pass, 2026-08-28**: of the 95 code rows measured before this pass,
+92 were investigated (parallel read-only agents per distinct `primary_file`,
+grouped; 3 were not reached due to a bookkeeping slip in one batch — harmless,
+they remain in the queue for the next pass). Of those 92: **62 had a genuine,
+already-existing regression test** that specifically asserts the described
+fixed behavior (not a same-named-file guess) and were locked via
+`lock-with-test`; **~27 had no test found, or only partial/low-confidence
+coverage for a `[SYSTEMIC]`/compound finding**, and were deliberately left
+unlocked rather than writing a rushed test or stretching a loosely-related one
+into "coverage" (see AGENTS.md verification discipline — a false-positive
+lock is worse than an open finding); **3 `primary_file` values were bogus**
+(plan-section citations like "§2 proposed architecture ...", not real paths)
+and are unactionable via this route — likely mis-scoped at audit time, not a
+lock gap. The 62 locks are individually resolvable in
+`.audit`/the store by finding id if any needs re-review; no fabricated
+evidence was recorded.
 
 **`/ux-lock` is the wrong route for essentially all of them.** It drives a live
 URL via Playwright, and this repo has no frontend — a 2026-07-23 census found
@@ -97,7 +125,9 @@ the writer refuses a missing path or an empty rationale.
 
 **Exit criterion**: `byMode.code` reaches 0, or each remaining row carries a
 recorded lock or an explicit declined-on-the-merits note. Plan rows are
-excluded from the criterion by construction.
+excluded from the criterion by construction. **Not met** — 33 code rows
+remain open after this pass (down from 95); the queue also grows between
+passes as new audits land, so 0 is a moving target, not a one-time close-out.
 
 ## 3. Q2 — accepted findings that were never remediated
 
@@ -111,12 +141,42 @@ node scripts/cross-skill.mjs list-unremediated-acceptances
 — the reader could not say whether 20 was the whole queue.
 
 **Resolved since 2026-08-09 — the reader now reports a true total.**
-**Re-measured 2026-08-28**: `total` **162** open — `byMode` 94 code / 68 plan;
-`byDisposition.acceptedPermanent` **42** (declined-on-the-merits, correctly
-excluded from `open`); the same aging split as Q1 applies here too: `agedOut`
-34 (all code), `notYetDue` 49. The 2026-08-09 note calling this "the first
-work item" is stale — the gap it named is closed and the exit criterion below
-is now directly evaluable.
+**Re-measured 2026-08-28 (before burndown)**: `total` **162** open — `byMode`
+94 code / 68 plan; `byDisposition.acceptedPermanent` **42**
+(declined-on-the-merits, correctly excluded from `open`); the same aging
+split as Q1 applies here too — but see the Q1 correction above:
+`agedOutByMode`/`notYetDue` are NOT a subset of `open` to subtract, they are
+independently computed cross-cuts reported alongside it (`agedOut` 34, all
+code; `notYetDue` 49). The 2026-08-09 note calling this "the first work item"
+is stale — the gap it named is closed and the exit criterion below is now
+directly evaluable.
+
+**Burndown pass, 2026-08-28**: applied the triage rule below to the 94 open
+code rows. 63 were `remediation_state: 'planned'` — skipped as in-flight per
+the rule. Of the remaining 31 `pending` rows, 17 had a real `primary_file`
+path (14 were bogus plan-section/function-name citations, unactionable via
+this route); those 17 were read against current source with git-history
+cross-checks. **3 were confirmed genuinely fixed** and closed with
+`final-review-record-fix --state fixed`:
+- `21dfdc50` (`scripts/lib/audit/findings-pipeline.mjs`) — fingerprint
+  collision fix, commit `7ed02805`.
+- `5b208484` (`scripts/lib/audit/event-wiring-corpus.mjs`) — ref-anchored
+  `git ls-files`→`ls-tree` fix, commit `382790b0`.
+- `83c1a5ec` (`scripts/cross-skill.mjs`, code since moved) — the
+  `persona-consistency-locked` bypass was closed by *retiring the whole
+  state* in migration `20260811150000_retire_consistency_candidate_promotion.sql`
+  (commit `e833b2aa`), not by validating it in place as the finding assumed;
+  flagged here since the fix lives outside the finding's `primary_file`.
+
+**13 of the 17 real-path rows were confirmed still open** (not fixed) with
+specific evidence per row (e.g. `scripts/lib/store/runs-findings.mjs` grew
+from ~91K to 114K chars since acceptance — the opposite of the cited
+decomposition). One (`6485990d`, citing `tests/audit-base-ancestry.test.mjs`)
+looks like a **mis-accepted finding** — the cited test contains none of the
+described logic; the actual behavior it names (`ADJACENCY_INCOMPLETE`) is
+this repo's own documented control-marker convention
+(`scripts/lib/audit/control-markers.mjs`), not a defect. Left open,
+flagged here for human triage rather than closed either way.
 
 **Close a row** — both keys are projected by the view (the fingerprint only
 since migration `20260808200000`; if yours predates it, run
@@ -136,7 +196,9 @@ file path. A row at `remediation_state: 'planned'` with a live plan is
 in-flight, not forgotten; drop it from the list.
 
 **Exit criterion**: the reader reports a true total, and that total reaches 0
-or every remaining row is `planned` against a live plan.
+or every remaining row is `planned` against a live plan. **Not met** — 91
+code rows remain open (down from 94; 63 `planned`, 28 `pending` with no
+confirmed fix). Re-measured post-pass total: 159 open overall (94→91 code).
 
 ## 4. Q3 — final-review shadow-only credit backlog (rescoped 2026-08-28)
 
@@ -211,11 +273,20 @@ entry for it.
 **Q3 is out of active sequencing** (§4) — it tracks another plan's live
 collection rate, not debt this plan can close. Between the two remaining:
 
-Q1 first — its aging-adjusted population (~27) is now the smaller,
-better-bounded one, with a known route (`lock-with-test`) that produces a
-durable artifact (a regression test). Q2 second — 162 open rows, but its
-former blocker (no total) is resolved, so it is a well-scoped, if larger,
-population with a direct closing command.
+Q1 first — smaller, with a known route (`lock-with-test`) that produces a
+durable artifact (a regression test). Q2 second — larger, but its former
+blocker (no total) is resolved, so it is a well-scoped population with a
+direct closing command.
+
+**Both queues grow between passes** (new audits land continuously in this
+repo, run by concurrent sessions) — a burndown pass should re-measure first,
+work the currently-actionable set, and stop; it is not a one-time close-out.
+The 2026-08-28 pass moved Q1 code from 95→33 and Q2 code from 94→91, using
+parallel read-only investigation (per distinct `primary_file`) to find
+genuine existing test coverage (Q1) or a genuine already-landed fix (Q2)
+before writing any lock or closing any row — no test was written and no fix
+was implemented as part of this pass; both are out of this plan's scope
+(§0 doctrine: this file routes to real evidence, it doesn't fabricate any).
 
 Nothing here blocks a ship, by design. A gate that fires on state the current
 commit cannot change is the cried-wolf shape that earns `--no-verify`.
