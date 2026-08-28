@@ -1,5 +1,86 @@
 # Project Status Log
 
+## 2026-08-28 — Debt-backlog cleanup + standing-queue-burndown pass 2 + tech-debt singleton sweep
+
+### Consumer Verification (previous ship)
+- **Ship**: `00ddf8b2a465a3c4ca03f5871c78383b9cc4661f` on `main` (rebased onto a concurrent push, `e133a64a` — zero functional overlap, both only touched `status.md`, resolved by prepending both entries).
+- **State**: `verified` (transfer + consumer bundle content), `unverified` (fresh-clone battery).
+- **Retrieval run**: `git ls-remote origin refs/heads/main` → `00ddf8b2`, and `git merge-base --is-ancestor HEAD origin/main` exit 0.
+- **Consumer bundle**: pre-push sync reported `Targets: 3/3 reached · Created: 0 · Updated: 12 · Unchanged: 2199 · Errors: 0`. Spot-checked content, not just the summary line, in `storyline` (the consumer that filed the originating report): `scripts/.claude-skills/lib/debt-capture-trail.mjs` present with the upstream-owned banner, and `scripts/.claude-skills/maintenance-checks.mjs` contains 3 references to `debt-capture-trail` (the new CHECKS entry).
+- **Known, unrelated**: `storyline`'s sync log shows a `pnpm install failed: ERR_PNPM_ADDING_TO_ROOT` for its audit-loop deps — pre-existing pnpm-workspace friction, orthogonal to this ship's content, not investigated further.
+- **`unverified` — concrete blocked prerequisite**: no fresh clone-to-tempdir + `npm run check` battery was run against the pushed tip. The pre-push hook did run the full `check` in a clean throwaway worktree at the pre-rebase commit and passed (13,975 pass / 0 fail / 31 skip); the final pushed sha differs only by the rebase's `status.md` merge, so the producer-side battery is strong evidence but not itself consumer-side proof.
+
+### Origin
+
+Ran from a fresh worktree assigned the `.audit/tech-debt.json` backlog (149
+entries, 27 clusters by leverage). Cluster #1 (`legacy-production-audit.mjs`,
+28 entries) was explicitly out of scope — a parallel session owns its
+decomposition plan (`docs/plans/legacy-production-audit-decomposition.md`).
+After clearing the debt clusters, continued into `standing-queue-burndown.md`
+(a second same-day pass) and then a sweep of the debt entries too small to
+have formed a named cluster.
+
+### Changes
+
+- **Debt-ledger cleanup** — 96 entries across 24 file clusters (2-12 entries
+  each) investigated via 8 parallel read-only agents grouped by file: 50
+  already fixed since being logged (verified against current code/commits,
+  not trusted from the ledger text), 8 fixed directly in 4 commits
+  (`c01f1f63`, `a654b7c9`, `f9f83d36`, `b4915bc8`), 38 left open as
+  deliberate tradeoffs or genuinely non-trivial. `npm test` green
+  (13,949 pass / 0 fail) before pushing.
+- **Standing-queue-burndown pass 2** (same day, separate session from the
+  first pass logged below) — Q1 unlocked-fixes 33→28 (4 more genuine
+  existing-test locks, independently re-verified — one against the live
+  migration trigger SQL directly, not just the agent's report — before
+  writing); Q2 unremediated-acceptances 91→90 (1 more closed with a
+  confirmed landed fix, commit `ef1220c1`). Plan doc updated in `2d86b8b7`.
+- **Tech-debt singleton sweep** — 25 more entries (below the 2-entry cluster
+  threshold the first pass used) investigated the same way: 14 resolved
+  (already fixed, no code change needed — e.g. a whole module deleted as
+  dead code, a test file rewritten to behavioral assertions), 11 left open.
+  Ledger: 149 → 77 entries total across the whole session.
+
+### Files Affected
+
+- `scripts/lib/claudemd/autofix.mjs` — `standaloneLink` regex extended to
+  `+`/ordered markdown list markers
+- `scripts/check-stale-skill-surface.mjs`, `scripts/check-cli-flags.mjs` —
+  `assertKnownFlags` guard added; baseline shrunk
+- `scripts/lib/accepted-debt-check.mjs` — escaped-pipe-aware table-row split
+  + CommonMark fence-indent guard
+- `scripts/lib/learning/quickfix-stats.mjs` — cache-fault stderr signal
+  distinguishing it from the absent-cache case; range validation on
+  `shouldSkipPattern`'s inputs
+- `docs/plans/standing-queue-burndown.md`, `docs/plans/README.md` — pass 2
+  results recorded
+
+### Decisions Made
+
+- `.audit/tech-debt.json` is gitignored/machine-local, so this worktree had
+  none — operated directly on the main worktree's copy via `--ledger` rather
+  than forking a copy, since `debt-resolve.mjs` writes go through a proper
+  file lock (safe under concurrent sessions).
+- Left every debt entry and standing-queue row that resolved to
+  `legacy-production-audit.mjs` untouched, including ones only discoverable
+  mid-investigation (e.g. a bare function name that grepped back to that
+  file) — impact-based scope, not just the entries named up front.
+- No fabricated `resolved`/`fixed`/`lock` verdict anywhere: every one cites a
+  specific commit, a read test body, or a deleted file, independently
+  spot-checked (not just trusting the investigating agent's report) before
+  writing to the shared store.
+
+### Next Steps
+
+- 38 + 11 = 49 open debt entries remain (deliberate tradeoffs or genuinely
+  non-trivial) — a candidate list for a future `/plan` pass if the user wants
+  them actually fixed, not something to force here.
+- Both standing-queue-burndown queues will keep growing between passes; the
+  next pass should re-measure first, per the plan's own doctrine.
+- `docs/plans/ship-commit-transaction.md` stays trigger-gated, not started.
+
+---
+
 ## 2026-08-28 — Standing-queue-burndown: first real Q1/Q2 pass, and a correction to the plan's aging arithmetic
 
 ### Origin
