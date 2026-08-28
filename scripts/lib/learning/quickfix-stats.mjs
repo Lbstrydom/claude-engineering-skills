@@ -63,7 +63,12 @@ export function loadStats(cachePath = CACHE_PATH) {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || !parsed.patterns) return { patterns: {} };
     return parsed;
-  } catch {
+  } catch (err) {
+    // 1e84d7d28aa9/72ee57a942c9 fix — the absent-cache case (handled above by
+    // !fs.existsSync, silent) is a normal first-run state; a read or parse
+    // failure reaching THIS catch is a real fault and must not be
+    // indistinguishable from it.
+    process.stderr.write(`[quickfix-stats] cache read/parse failed at ${cachePath}, degrading to empty: ${err.message}\n`);
     return { patterns: {} };
   }
 }
@@ -83,7 +88,14 @@ export function shouldSkipPattern(patternName, stats) {
   if (!patternName || !stats || !stats.patterns) return false;
   const p = stats.patterns[patternName];
   if (!p) return false;
-  if (typeof p.acceptanceRate !== 'number' || typeof p.totalHits !== 'number') return false;
+  // 8609c7c83837/9ea85fcf813a fix — a type-only guard let a malformed cache
+  // row (e.g. a negative acceptanceRate) satisfy the skip condition; range-
+  // check both fields and treat anything invalid as "never skip".
+  if (
+    typeof p.acceptanceRate !== 'number' || !Number.isFinite(p.acceptanceRate) ||
+    p.acceptanceRate < 0 || p.acceptanceRate > 1 ||
+    typeof p.totalHits !== 'number' || !Number.isFinite(p.totalHits) || p.totalHits < 0
+  ) return false;
   return p.acceptanceRate < SKIP_THRESHOLD && p.totalHits >= MIN_HITS;
 }
 
