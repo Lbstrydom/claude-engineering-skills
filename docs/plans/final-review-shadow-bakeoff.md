@@ -1,7 +1,11 @@
 # Plan: Final-Review Shadow Bake-Off (marginal-value re-test)
 
 - **Date**: 2026-07-29
-- **Status**: In Progress (activated 2026-07-31 — see §0 Activation Addendum)
+- **Status**: In Progress (activated 2026-07-31 — see §0 Activation Addendum).
+  **`final-review-2026q3` is dead** (0 snapshots, abandoned 2026-08-14 for
+  `final-review-scoped-2026q3`, the sole campaign of record going forward —
+  see §0.7c). Current progress: **8/12** toward N=12, 4 to go; qwen/deepseek
+  pricing gap open (§0.7c).
 - **Author**: Claude + Louis
 
 > ## ⏸ PARKED 2026-07-29 — read this before implementing anything below
@@ -405,6 +409,52 @@ the §6.3 gate scores *accepted* HIGH/MED clusters, and the tail-labelling pass
 showed roughly 40% of raw shadow findings get dismissed. Snapshots 2-3 findings
 persist under their own `source_model`; label them via the ordinary
 `final-review-stats --worksheet` flow before reading anything into the totals.
+
+### 0.7c Campaign migration, 2026-08-28 — `final-review-2026q3` abandoned, `final-review-scoped-2026q3` is now the campaign of record
+
+- **`final-review-2026q3`** (the P₁/P₂/Opus/Kimi design measured through §0.7b
+  above) has **zero complete snapshots** and hasn't been touched since
+  2026-08-14 (`6671f7ef`, "scope the shadow final reviewer's envelope, add xAI
+  Grok as a 4th arm") — the moment the envelope-scoping fix landed, this
+  un-scoped campaign was abandoned rather than migrated. It spent **$10.05**
+  before abandonment (1 incomplete snapshot, bought nothing usable) — a real
+  but small sunk cost from before the design correction, not waste with no
+  cause. **Dead. Not to be resumed or re-measured.**
+- **`final-review-scoped-2026q3`** (created the same day, `62364a64`) is the
+  successor and is now this plan's **sole campaign of record**. Confirmed via
+  `.campaigns/final-review-scoped-2026q3.json`: `envelopeScope: "thin"` (the
+  corrected default this repo settled on), `targetN: 12` (matches §0.5's N
+  reduction), `costCeilingUsdPerAccepted: 8` (matches §6.3 rows 4/5's $8
+  ceiling) — same experiment, corrected envelope, not a different one.
+- **Arm count grew from 4 to 6, deliberately, not by drift.** `opus`/`kimi`
+  are this plan's original two shadow arms. `grok`/`qwen`/`deepseek` were
+  added under the role-agnostic comparison-campaign framework's arm-count
+  flexibility axis (`docs/plans/role-agnostic-comparison-core.md` /
+  `comparison-tooling-consolidation.md`), which generalized this plan's
+  bespoke bake-off machinery into shared tooling. `gemini-control`
+  (`type: "control"`) continues this plan's original P₁/P₂ stochastic-recall
+  check from §0.7 observation 3 — same idea, now run through the generalized
+  harness instead of hand-rolled.
+- **Progress, measured 2026-08-28** (`node scripts/bakeoff-collect.mjs
+  --campaign final-review-scoped-2026q3 --progress`, read-only): **8/12
+  complete**, 4 incomplete. Raw uniques so far: opus=39 kimi=18 grok=6 qwen=24
+  deepseek=17 gemini-control=14 — **not the verdict**, same warning as §0.7b
+  (unadjudicated). Spend **$30.48 total** ($3.81/snapshot). **`qwen` and
+  `deepseek` report `unpriced`** — a real, still-open gap. `154111d0`
+  ("unpriced renders as free, not missing") fixed the DISPLAY side (unpriced
+  no longer silently reads as $0); the underlying pricing data for these two
+  arms is still missing. Until it lands, §6.3 rows 4/5's $8/accepted ceiling
+  cannot be evaluated for qwen or deepseek specifically, even once N=12 and
+  adjudication are complete.
+- **Budget note**: §3's ~$28 estimate was sized for the original 4-arm/N=15
+  design. The current 6-arm/N=12 design is a different shape, not directly
+  comparable — $30.48 against 6 arms is not "over budget" the way it would
+  read against the old 4-arm estimate, but the estimate itself is stale and
+  has not been re-derived for the current arm count.
+- **4 more snapshots** reach N=12; nothing else mechanically blocks the
+  stopping rule. Recommend closing the qwen/deepseek pricing gap before or
+  alongside those final snapshots, so N=12 isn't reached with 2 of 6 arms
+  unscoreable against the cost ceiling.
 
 > **Audit trail** — `/audit-plan` (SID `audit-plan-1785325355`). **GPT 3 rounds**
 > (H:6→6→4, M:3→2→2; 23 findings, **all valid, all in-scope, all fixed — zero
