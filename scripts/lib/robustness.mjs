@@ -121,6 +121,133 @@ export function normalizeFindingsForOutput(findings, semanticIdFn) {
   return deduped;
 }
 
+/**
+ * Add one `safeCallGPT` usage envelope into an accumulator, treating a null
+ * accumulator as "nothing measured yet".
+ *
+ * Shared primitive (legacy-production-audit-decomposition Phase 2) — used by
+ * both `map-reduce-scheduler.mjs`'s `runMapReducePass` and `adjacency-pass.mjs`'s
+ * bouncer-usage accumulation; neither may import from the other, so this lives
+ * in the pre-existing shared robustness module rather than being duplicated or
+ * given its own new file.
+ *
+ * @param {object|null} acc
+ * @param {{input_tokens?:number, cached_tokens?:number, output_tokens?:number, reasoning_tokens?:number, latency_ms?:number}} next
+ */
+export function addUsage(acc, next) {
+  const base = acc ?? { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 };
+  return {
+    input_tokens: base.input_tokens + (next.input_tokens ?? 0),
+    cached_tokens: base.cached_tokens + (next.cached_tokens ?? 0),
+    output_tokens: base.output_tokens + (next.output_tokens ?? 0),
+    reasoning_tokens: base.reasoning_tokens + (next.reasoning_tokens ?? 0),
+    latency_ms: base.latency_ms + (next.latency_ms ?? 0),
+  };
+}
+
+/**
+ * The choke point for the audit pipeline's `if (learningWritesAllowed)` /
+ * `if (X && learningWritesAllowed)` convention used to gate ad hoc (bandit
+ * flush + sync, FP-pattern sync, the outcomes.jsonl append loop, and the
+ * orphan-metrics emits) — nothing stopped a future write from skipping the
+ * check entirely (audit fb7cec72, 2026-07-17). `grep "writeLearningState("`
+ * enumerates those call sites in one shot instead of requiring a full-file read.
+ *
+ * Relocated here from `legacy-production-audit.mjs` (legacy-production-audit-
+ * decomposition Phase 3), earlier than its ultimate Phase 4d destination
+ * (`run-telemetry.mjs`): Phase 3's orphan-pass.mjs needs it now, and — per
+ * this plan's dependency direction — a pass module may import only
+ * established shared primitives, never back into legacy-production-audit.mjs.
+ * Trivial and dependency-free, so an early move costs nothing; run-telemetry.mjs
+ * will import it from here too when Phase 4d lands, exactly as
+ * pass-result-cache.mjs/map-reduce-scheduler.mjs already do for `addUsage`.
+ *
+ * **NOT exhaustive over every persistence-capable call in the audit
+ * pipeline** — a later audit (H1-H4, 2026-07-24) correctly found OTHER
+ * cloud-write/telemetry sites this wrapper does not cover: debt-memory
+ * writes, ledger writes, and session writes. See
+ * docs/plans/audit-backlog-triage-hardening.md item 1's "Explicitly NOT in
+ * scope" framing (item 5's God-orchestrator decomposition — this plan —
+ * covers the eventual real fix). Full lint-level enforcement of even the
+ * sites this wrapper DOES cover (forbidding a raw store call outside it) is
+ * also out of scope here.
+ *
+ * **THIS PARAGRAPH HAS BEEN WRONG TWICE — 2026-08-13.** It first claimed
+ * those sites "silently discard failures (`.catch(() => {})`)" long after
+ * they had been fixed to check and log; the file contains zero such
+ * swallows. Then, corrected, it still listed `recordDiffComplexity` and
+ * `backfillLearningOutcome` as uncovered — and within the hour both were
+ * routed through `durableWrite`, along with `recordConvergenceState`.
+ *
+ * That is the reason it is worth writing down rather than just editing: the
+ * FIRST stale version was cited by `docs/plans/god-module-and-layering-debt.md`
+ * as the authority for a whole cluster of work, and that cluster had to be
+ * re-cut on contact with the code. A docstring enumerating call sites decays
+ * every time somebody moves one, and a decayed one is not a cosmetic defect —
+ * it is a false premise other plans build on. **Prefer `grep durableWrite(` /
+ * `grep writeLearningState(` over trusting this list.**
+ *
+ * The distinction the list existed to draw is still the right one, and now
+ * has a mechanical answer instead of prose: a logged failure is not a
+ * REPRESENTED one. A write reaches `writeOutcomes` only through
+ * `durableWrite`, and `tests/audit-store-durability-call-site.test.mjs`
+ * checks BOTH directions — store exports registered-or-exempted, and
+ * orchestrator imports likewise. `reconcileRemediationProjection` and
+ * `markFindingsRemediation` stay outside the seam deliberately (the on-disk
+ * ledger is their durable copy) and instead return enough for their caller
+ * to report a failure or a shortfall.
+ *
+ * @param {boolean} allowed
+ * @param {() => any} fn
+ */
+export function writeLearningState(allowed, fn) {
+  if (!allowed) return;
+  return fn();
+}
+
+// ── Durable-write outcome tally ─────────────────────────────────────────────
+
+/**
+ * Fold `durableWrite` results into the run's write-outcome tally.
+ *
+ * Kept as a named helper rather than an inline reduce because the SHAPE is the
+ * contract: `{written, spilled, lost}` reaches `audit_runs.write_outcomes`, and
+ * `lost > 0` is what makes a run `incomplete`. `byWriter` is carried too — a
+ * bare total says a write was lost, not WHICH, and the operator's next question
+ * is always which.
+ *
+ * `skipped` is counted but is NOT a failure: it means the store declined the
+ * write (cloud off), which is a supported mode. Only `lost` makes a run
+ * incomplete — conflating the two would mark every local-only run as broken.
+ *
+ * Lives here (not in legacy-production-audit.mjs) because the tally is created
+ * early in the orchestration spine — before the finalization coordinator's
+ * three stage modules exist — and threads through both: the spine's own
+ * pre-wave writes (`audit.planLink`, `audit.diffComplexity`) and
+ * `run-telemetry.mjs`/`run-persistence.mjs`'s post-wave writes all fold into
+ * the SAME accumulating object, so one exported definition is the only way to
+ * avoid three independently-drifting copies of a bug-shaped reduce.
+ *
+ * @param {{written:number, spilled:number, lost:number, skipped:number, byWriter:Record<string,object>}} tally
+ * @param {Array<{outcome:string, writerId:string, error?:string}>} results
+ */
+const WRITE_OUTCOMES = new Set(['written', 'spilled', 'lost', 'skipped']);
+
+export function tallyWriteOutcomes(tally, results) {
+  for (const r of results) {
+    if (!r || typeof r.outcome !== 'string') continue;
+    // An unrecognised outcome is counted as `lost`, never dropped. Silently
+    // ignoring it would let a future outcome name read as a clean run — the
+    // false-zero shape this whole mechanism exists to remove.
+    const bucket = WRITE_OUTCOMES.has(r.outcome) ? r.outcome : 'lost';
+    tally[bucket]++;
+    const w = tally.byWriter[r.writerId] ?? (tally.byWriter[r.writerId] = { written: 0, spilled: 0, lost: 0, skipped: 0 });
+    w[bucket]++;
+    if (bucket !== 'written' && r.error && !w.lastError) w.lastError = String(r.error).slice(0, 300);
+  }
+  return tally;
+}
+
 // ── JSON Repair ──────────────────────────────────────────────────────────────
 
 /**

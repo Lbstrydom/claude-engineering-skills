@@ -30,9 +30,12 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
+// legacy-production-audit-decomposition Phase 3: relocated to orphan-pass.mjs,
+// a real (non-gated) export.
+const { resolveOrphanScopeRefs } = await import('../scripts/lib/audit/orphan-pass.mjs');
+
 process.env.AUDIT_EXPORTS_FOR_TESTS = '1';
 const lpa = await import('../scripts/lib/audit/legacy-production-audit.mjs');
-const { resolveOrphanScopeRefs } = lpa.__testExports;
 
 describe('resolveOrphanScopeRefs — the orphan wave analyses the range the audit is scoped to', () => {
   it('dirty tree → working-tree mode (headRef null), so uncommitted work is analysed', () => {

@@ -327,7 +327,9 @@ describe('reasoningEffort is reported by the call, not inferred from the pass na
 
   it('the orchestrator reads the reported value and keeps no name→level table', async () => {
     const fs = await import('node:fs');
-    const src = fs.readFileSync('scripts/lib/audit/legacy-production-audit.mjs', 'utf-8');
+    // legacy-production-audit-decomposition Phase 4: the pass-registry
+    // construction (including this field) moved to finding-assembly.mjs (4b).
+    const src = fs.readFileSync('scripts/lib/audit/finding-assembly.mjs', 'utf-8');
     assert.match(src, /_reasoning: result\?\.reasoningEffort \?\? null/,
       'the registry entry must read the effort the call reported');
     // The defect itself: a function mapping pass NAMES to reasoning levels.

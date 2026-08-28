@@ -1,25 +1,25 @@
 # Requirements Map — claude-engineering-skills
 
-_Generated from `.requirements/ledger.json` — 4179 requirement(s) across 594 file(s). Do not hand-edit; regenerate with `node scripts/requirements.mjs render`._
+_Generated from `.requirements/ledger.json` — 4238 requirement(s) across 606 file(s). Do not hand-edit; regenerate with `node scripts/requirements.mjs render`._
 
 ## At a glance
 
 ```mermaid
 pie title Active invariants by kind
-  "security" : 55
-  "safety" : 128
-  "correctness" : 165
+  "security" : 56
+  "safety" : 127
+  "correctness" : 160
   "behavioural" : 44
-  "persistence" : 64
+  "persistence" : 66
 ```
 
 | Status | Count |
 |---|---|
-| 🟢 active — enforced by /audit-code | 456 |
-| 🟡 needs-review — awaiting your call | 27 |
-| ⚪ inferred-only — refine backlog | 3696 |
+| 🟢 active — enforced by /audit-code | 453 |
+| 🟡 needs-review — awaiting your call | 33 |
+| ⚪ inferred-only — refine backlog | 3752 |
 
-## 🟡 Needs review (27)
+## 🟡 Needs review (33)
 
 | Gap | Assertion | Files |
 |---|---|---|
@@ -32,6 +32,7 @@ pie title Active invariants by kind
 | untested | When inserting a run row fails specifically because selector_policy_violations is an undefined column, the insert must be retried once without that field, while all other errors must propagate. | scripts/lib/store/plans-ship.mjs |
 | contradictory | An arm must be marked replicate when and only when it is not a scored campaign arm. | scripts/lib/bakeoff/arms.mjs |
 | untested | Every persisted finding must have a deterministic fingerprint derived from its supplied `_hash` or from its severity, category, section, primary file, and detail, so distinct hashless findings do not | scripts/lib/store/runs-findings.mjs |
+| contradictory | When --diff is supplied but does not name a readable file, the audit must fail rather than continue without diff annotations or with a git-range interpretation. | scripts/lib/audit/legacy-production-audit.mjs |
 | contradictory | A modified, renamed, or copied symbol must be considered changed only when a base-side symbol with the same file identity, name, and kind has a different body-aware signature hash. | scripts/lib/audit/duplication-detector.mjs |
 | contradictory | A snapshot may count as complete only when it has contract epoch e3-scoped-envelope and every scoped arm completed without error, with solo arms evidenced by primaryVerdict and non-solo arms evidenced | scripts/lib/bakeoff/summary.mjs, scripts/lib/bakeoff/log.mjs |
 | contradictory | A modified, renamed, or copied symbol must be considered a duplication candidate only when no base symbol with the same name and kind exists or its body-aware signature hash differs from the current s | scripts/lib/audit/duplication-detector.mjs |
@@ -46,14 +47,19 @@ pie title Active invariants by kind
 | untested | When a cloud run ID is available, final-review persistence must record the primary verdict and primary findings regardless of whether the shadow reviewer is skipped or fails, while shadow findings and | scripts/gemini-review.mjs |
 | untested | recordPlanVerificationItems may retry without the skipped column only when the initial insert fails with PostgreSQL undefined-column error 42703, preserving all other criterion fields for older schema | scripts/lib/store/plans-ship.mjs |
 | contradictory | An adjudication event must delete prior finding_adjudication_events, insert the replacement event, and update the corresponding audit_findings denormalized outcome patch within one transaction. | scripts/lib/store/runs-findings.mjs |
+| contradictory | An unreadable optional diff file must degrade diffText to null and log the failure instead of throwing during audit-context construction. | scripts/lib/audit/legacy-production-audit.mjs |
+| untested | Model-shadow execution and any failure while classifying a model-shadow failure must never propagate out of telemetry or abort the primary audit. | scripts/lib/audit/run-telemetry.mjs |
 | untested | Collection must refuse a declared preflight artifact unless the artifact exists, its recomputed SHA-256 equals the declared digest, and its disposition is pass. | scripts/lib/bakeoff/spawn.mjs |
 | contradictory | Envelope scope resolution must accept only full, thin, or gap; prefer a nonblank CLI scope over a nonblank environment scope; and report a supplied invalid scope with ok:false instead of silently trea | scripts/lib/final-review/scope.mjs |
+| untested | Observation-only shadow execution failures, including failures while classifying the original shadow failure, must not abort the primary audit result path. | scripts/lib/audit/run-telemetry.mjs |
 | contradictory | Purpose-health windowDays must be converted to a floored integer bounded from 1 through 365 before it is used in database queries. | scripts/lib/store/purpose-health.mjs |
+| untested | Round-2-or-later orphan-introduced and event-wiring-symmetry passes must consume the already validated in-memory ledger rather than independently parsing the ledger file. | scripts/lib/audit/legacy-production-audit.mjs |
+| contradictory | When a diffFile is explicitly provided but cannot be read, the audit must fail rather than continue without diff annotations or with a substituted scope. | scripts/lib/audit/legacy-production-audit.mjs |
 | untested | A quickfix pattern may be skipped only when its numeric acceptance rate is below the configured threshold and its total hit count is at least the configured minimum. | scripts/lib/learning/quickfix-stats.mjs |
 
 ## 🟢 Active invariants — by kind
 
-### security (55)
+### security (56)
 
 | ID | Assertion | Governs |
 |---|---|---|
@@ -86,6 +92,7 @@ pie title Active invariants by kind
 | `REQ-security-669edab0` | Imports from a scanned spec or in-test-root helper must be reported as app-module-import violations when they resolve outside the resolved test root, are absolute or URL imports, or are non-literal dy | scripts/lib/ux-lock/selector-policy.mjs |
 | `REQ-security-67e0e4ca` | Candidate statement and condition excerpts that trigger the egress payload scanner must be withheld from candidate payloads and recorded as incompleteness instead of emitted verbatim. | scripts/lib/audit/adjacency-detector.mjs |
 | `REQ-security-681ec9a3` | A predicate exception must not abort routing or demote a finding, and its recorded diagnostic message must be secret-redacted and capped at 200 characters. | scripts/lib/security/triage-router.mjs |
+| `REQ-security-6b616a4d` | A cloud convergence-state record must include the audited SHA and tree for every recorded run, and may set `round_converged_after` only when convergence passes both finding thresholds and the detector | scripts/lib/audit/run-persistence.mjs |
 | `REQ-security-6f64c388` | Intent-normalization cache keys must incorporate the redacted intent, normalizer ID, and a hash derived from the current normalization prompt. | scripts/lib/arch-memory/normalize-intent.mjs |
 | `REQ-security-72b6bd5c` | Visual finding explanations must send screenshot pixels to the model only when both screenshot permission is enabled and a crop path is supplied. | scripts/lib/visual/explain.mjs |
 | `REQ-security-7a2fa5cd` | The dashboard server must refuse any requested file whose realpath is outside the dashboard root realpath, including files reached through symlinks. | scripts/lib/dashboard/serve.mjs |
@@ -113,7 +120,7 @@ pie title Active invariants by kind
 | `REQ-security-eaac6be2` | Persisted provider-readiness messages and codes must be redacted before classification results are returned, and redaction failure must produce the fixed [REDACTED:redaction-failed] marker rather than | scripts/lib/audit/provider-readiness.mjs |
 | `REQ-security-ec84be21` | Live navigation target normalization must exclude mailto, tel, javascript, bare same-page hash, and cross-origin absolute links from internal navigation destinations. | scripts/lib/nav/verify.mjs |
 
-### safety (128)
+### safety (127)
 
 | ID | Assertion | Governs |
 |---|---|---|
@@ -146,7 +153,6 @@ pie title Active invariants by kind
 | `REQ-safety-2b76f5c0` | When persona cloud is enabled, `record-persona-session` must reject a session if canonical repository resolution returns an error rather than persisting an unreconciled `repoId`/`repoName` pair. | scripts/cross-skill.mjs |
 | `REQ-safety-2c13bda8` | A shadow final-review persistence failure must not roll back or remove successfully persisted primary final-review findings. | scripts/lib/store/runs-findings.mjs |
 | `REQ-safety-2d2a080c` | Coverage configuration values outside their accepted types or ranges must fall back to defaults and emit an `invalid` warning rather than throwing, while unrecognized coverage keys must be ignored wit | scripts/lib/symbol-index/graph-verdict.mjs |
-| `REQ-safety-2f0ee7b3` | Architecture-bouncer findings naming a file-like section must be discarded unless that normalized file is a mechanical violation endpoint or an unmapped file, while findings with no file-like section | scripts/lib/audit/legacy-production-audit.mjs |
 | `REQ-safety-30730181` | Tailwind TypeScript configuration files must not be executed by token extraction and must instead yield a warning directing callers to a generated JSON token source. | scripts/lib/visual/tokens.mjs |
 | `REQ-safety-325874dc` | Unreadable, absent, or empty sync destination content must never be classified as upstream-owned. | scripts/lib/sync-ownership.mjs |
 | `REQ-safety-346a2457` | The regression-lock worksheet must not emit a pasteable `lock-with-test` command when the closest same-basename test candidate is classified as belonging to an unrelated module. | scripts/cross-skill.mjs |
@@ -156,7 +162,6 @@ pie title Active invariants by kind
 | `REQ-safety-38b1baaa` | Adjacency convergence must be blocked whenever the result contains candidates or incompleteness, or has failed or control-unavailable state. | scripts/lib/audit/adjacency-state.mjs |
 | `REQ-safety-3c1d2185` | An expected worktree identity must include a full 40-character lowercase SHA-1 head and exactly one ref disposition—an attached safe branch or detached state—and partial, contradictory, or pre-bundle | scripts/lib/worktree-identity.mjs |
 | `REQ-safety-3e04e96a` | The test guard reporter must emit a versioned JSON report even when no failures are observed, so a missing report is distinguishable from a clean run. | scripts/lib/test-guard-reporter.mjs |
-| `REQ-safety-3f853a53` | Observation-only audit runs must not append outcomes, flush bandit state, synchronize learning data, or backfill learning outcomes unless learningWritesAllowed is true. | scripts/lib/audit/legacy-production-audit.mjs |
 | `REQ-safety-421e22b5` | The sync CLI must reject unknown command-line flags before performing any synchronization writes. | scripts/sync-to-repos.mjs |
 | `REQ-safety-42ee75a0` | Any campaign containing xAI-routed arms must declare exactly one distinct xAI model and include a passing pre-flight whose model string exactly matches that declared xAI model. | scripts/lib/campaign/config.mjs |
 | `REQ-safety-44653f5a` | An exemption for a gate added on or after `2026-07-31` must fail unless it includes a non-empty `policyOverride` reason. | scripts/check-gate-poison-pills.mjs |
@@ -167,25 +172,24 @@ pie title Active invariants by kind
 | `REQ-safety-4e288c04` | Intent normalization must truncate input to 2000 characters, truncate provider output to 400 characters, and enforce a 10-second deadline on availability checks, client construction, and provider call | scripts/lib/arch-memory/normalize-intent.mjs |
 | `REQ-safety-51d20079` | `contentExistsAtMappedRange` must return `null` rather than infer pre-existence when the base file cannot be resolved, the quote is empty, or the supplied inclusive mapped range is non-integer, invali | scripts/lib/vcs.mjs |
 | `REQ-safety-5237b7f2` | Generation must restore the process working directory after an audit attempt, including when the audit pipeline throws. | scripts/lib/model-eval/arm-generation.mjs |
+| `REQ-safety-52f8c101` | The audit verdict must be INCOMPLETE when any pass fails or when any map-reduce pass completes fewer than 66 percent of its map units. | scripts/lib/audit/finding-assembly.mjs |
 | `REQ-safety-55adff20` | Token-overlap evidence must score zero when either token set is empty or when the smaller token set has fewer than two informative tokens. | scripts/lib/persona/audit-correlator.mjs |
 | `REQ-safety-5b0062dd` | Loading domain rules must treat missing or unreadable domain-map configuration as no rules and must exclude malformed rules or domains that do not match the configured domain-name format. | scripts/lib/symbol-index/domain-tagger.mjs |
 | `REQ-safety-5b5aee72` | Before writing any consumer files, sync must abort that target when its managed .gitignore or .gitattributes block is malformed or when a trackable destination lacks an EOL pin. | scripts/sync-to-repos.mjs |
 | `REQ-safety-5b72f5dd` | Adaptive learners must use their fallback behavior unless the sample count and threshold are both finite non-negative numbers and the sample count is at least the threshold, whose default is 30. | scripts/lib/learning/cold-start.mjs |
 | `REQ-safety-5c94ee07` | Each projected finding must cap category and section at 120 characters, file at 400 characters, and detail at 400 characters, while marking ordinary truncation without exceeding the applicable cap. | scripts/lib/final-review/gap-projection.mjs |
 | `REQ-safety-5e1e06db` | A finding with no cited source resolvable at its audited revision is recorded as an `unverifiable` `needs_triage` verdict without being sent to the adjudicator model. | scripts/campaign.mjs |
-| `REQ-safety-5f362409` | Map-reduce audit execution must limit concurrently active map-unit GPT calls to auditRuntimeConfig.mapReduceConcurrency. | scripts/lib/audit/legacy-production-audit.mjs |
 | `REQ-safety-6295f5ef` | The pre-push-hook installer must never overwrite or uninstall an existing pre-push hook unless that hook contains a recognized current or legacy managed-hook marker. | scripts/install-prepush-hook.mjs |
 | `REQ-safety-6857facd` | A calibration probe set must contain at least 30 probes, at least 10 relation:"none" hard negatives, at least four nonempty strata, and required identity fields for every positive probe before calibra | scripts/lib/arch-memory/calibrate.mjs |
 | `REQ-safety-6b2c9905` | Gate 8 must fail if a skill name deployed by the consumer manifest under `.claude/skills/` also exists under `.github/skills/` or `.agents/skills/`, and must fail if either shadowing surface cannot be | scripts/lib/sync-isolation-verify.mjs |
 | `REQ-safety-6b3ec0ef` | Stage-1 triage provider failures or missing provider results must throw rather than fabricate a dismissal result. | scripts/lib/audit/tiered-provider-calls.mjs |
+| `REQ-safety-6baec085` | The audit must abort rather than emit a verdict when its resolved non-full scope contains no implementation subject files. | scripts/lib/audit/legacy-production-audit.mjs |
 | `REQ-safety-6c77c203` | Promoting a persona-consistency candidate must validate its witness snapshot, contradiction payload, and non-empty journey steps before rendering or persisting a locked regression spec. | scripts/persona-consistency-promote.mjs |
 | `REQ-safety-6cfefacf` | Stage 1 triage must be given both an admission budget and a worst-case candidate duration calculated from the `stage1_triage` OSS operation policy. | scripts/lib/audit/tiered-pipeline.mjs |
-| `REQ-safety-6d890cab` | Tiered-pipeline provider handles must be constructed only when tiered or shadow mode is enabled and the caller explicitly sets allowTiered, so programmatic callers remain hermetic regardless of enviro | scripts/lib/audit/legacy-production-audit.mjs |
 | `REQ-safety-6e8a1b8f` | Repository-context generation must degrade through its defined lower tiers without throwing and must report the first failure reason for the requested tier when degradation occurs. | scripts/lib/repo-context.mjs |
 | `REQ-safety-6eb73b41` | The stale-skill-surface check must exit with failure whenever any live or shadowing skill surface cannot be inspected, regardless of whether --gate was supplied. | scripts/check-stale-skill-surface.mjs |
 | `REQ-safety-6f5390ed` | Campaign-arm resolution and preflight-artifact verification must succeed before the collector creates its output directory or spawns any provider arm. | scripts/bakeoff-collect.mjs |
 | `REQ-safety-70ebe070` | A path-scope finding may be demoted to bucket D only when its rule ID has the producer test suffix and its primary repository-relative path matches a configured non-reachable glob. | scripts/lib/security/predicates.mjs |
-| `REQ-safety-71e54150` | Failure to construct optional tiered providers must not prevent construction of an audit run context, and Anthropic failures must be represented by classified readiness metadata rather than only a nul | scripts/lib/audit/legacy-production-audit.mjs |
 | `REQ-safety-7347992f` | A missing, unreadable, cloud-disabled, or schema-invalid stored coverage record must be returned as null rather than as a clean coverage verdict. | scripts/lib/store/arch/coverage.mjs |
 | `REQ-safety-73ae816c` | Auditor evaluation must terminate as a preflight failure when any deterministically selected corpus case is unavailable or blocked by the egress gate rather than scoring a reduced sample. | scripts/model-eval-auditor.mjs |
 | `REQ-safety-740bd255` | Only a non-empty-reason `@on-conflict-ok` pragma may suppress findings or the `unresolved-conflict-key-nullability` diagnostic, and it must not suppress row-resolution, conflict-target-resolution, par | scripts/lib/lint/on-conflict.mjs |
@@ -205,8 +209,8 @@ pie title Active invariants by kind
 | `REQ-safety-9ea63031` | Clone updates must use `git pull --ff-only` and must not issue git push, merge, rebase, reset, stash, or force commands. | scripts/update-auditloop.mjs |
 | `REQ-safety-9eb53ef5` | Shadow audit contexts must disable ledger, debt-ledger, cloud-recording, and bandit persistence while preserving the original run ID and isolating generatorOutcomes from the real audit context. | scripts/lib/audit/tiered-shadow-compare.mjs |
 | `REQ-safety-a0e173f6` | Citation scanning must report malformed pinned citations and all configured document, citation, blob, Git-call, and runtime budget breaches as unresolvable findings rather than silently skipping them. | scripts/lib/doc-citations.mjs |
-| `REQ-safety-a23d3dd9` | The audit verdict must be INCOMPLETE if any pass fails or if any map-reduce pass completes fewer than 66% of its map units. | scripts/lib/audit/legacy-production-audit.mjs |
 | `REQ-safety-a34d58ab` | The visual audit must reject --full-dom unless --verify <url> is also supplied, exiting with tool-error status 2 rather than performing a silent static-mode no-op. | scripts/visual-audit.mjs |
+| `REQ-safety-a72194ea` | Tiered-only provider handles must be constructed only when tiered pipeline or shadow mode is enabled and the individual invocation explicitly sets allowTiered true. | scripts/lib/audit/legacy-production-audit.mjs |
 | `REQ-safety-a9cfe515` | A campaign may be decision-eligible only when its derived state is DECISION_READY and every eligibility gate passes, and an ineligible campaign must expose every failing gate in its watermark. | scripts/lib/campaign/verdict.mjs |
 | `REQ-safety-adc74d55` | In default drift mode, on-conflict lint findings must gate only when their locations are changed relative to the resolved or explicitly supplied base, including all lines of untracked files under scri | scripts/on-conflict-lint.mjs |
 | `REQ-safety-b13bfbc5` | Migration mode must not apply the compatibility bootstrap when the database auth schema is owned by supabase_admin or supabase_auth_admin. | scripts/setup-postgres.mjs |
@@ -215,12 +219,14 @@ pie title Active invariants by kind
 | `REQ-safety-b5bcc490` | An installer must not overwrite an existing unmanaged file or a receipt-managed file whose content hash has drifted unless force is explicitly enabled. | scripts/lib/install/conflict-detector.mjs |
 | `REQ-safety-bb8b4eee` | A detector check must block convergence when its scope reaches no files, scope census is unavailable, ripgrep fails, or any match lacks a disposition. | scripts/lib/audit/detector.mjs |
 | `REQ-safety-bbaf2581` | An adjacency control selected for an audit must report control-unavailable rather than not-applicable when it has zero coverage and input-bound or parse-failure incompleteness prevents inspection. | scripts/lib/audit/adjacency-state.mjs |
+| `REQ-safety-bcbc3bdf` | Failure to create, write, or clean up the intermediate result cache must not fail the audit run and must emit a diagnostic to stderr. | scripts/lib/audit/pass-result-cache.mjs |
 | `REQ-safety-be9fb31d` | Campaign arm resolution must reject missing, ambiguous, unknown, or colliding campaign selections rather than falling back to a legacy or default arm set. | scripts/lib/bakeoff/arms.mjs |
 | `REQ-safety-c1bd81a8` | A caller requiring an explicit push range must receive an error when no explicit base is provided instead of an inferred, potentially under-scoped range. | scripts/lib/push-range.mjs |
 | `REQ-safety-c2a63867` | Architecture-intent configuration loading must fail with `ArchIntentConfigError` when the domain-map file is missing, unreadable as JSON, schema-invalid, or semantically invalid. | scripts/lib/arch-intent/load-config.mjs |
 | `REQ-safety-c3c3399c` | Bootstrap mode must refuse to overwrite an existing nav-contract.json unless --force is supplied. | scripts/nav-audit.mjs |
 | `REQ-safety-c58e3367` | Every declared arm model must map to an explicitly supported OpenRouter, Anthropic, Gemini, or xAI transport, and unsupported or empty model identifiers must fail before a reviewer subprocess is spawn | scripts/lib/bakeoff/arms.mjs |
 | `REQ-safety-ca17791a` | Quickfix minimum-hit values must accept only finite positive integers and otherwise fall back to the supplied default. | scripts/lib/quickfix-policy.mjs |
+| `REQ-safety-ca7a3067` | If the architecture LLM bouncer fails, every reported cross-domain violation must still yield a MEDIUM deterministic finding and no deterministic architecture finding may have HIGH severity. | scripts/lib/audit/architecture-pass.mjs |
 | `REQ-safety-cacd1ca6` | The managed `.gitignore` rules must ignore all `.audit/` runtime output while destructive post-sync untracking must remain limited to the explicit `UNTRACK_PATTERNS` allowlist and must not broadly unt | scripts/sync-to-repos.mjs |
 | `REQ-safety-ccc69841` | Claiming a campaign receipt must exclusively create an intent receipt and must report an existing receipt as already claimed rather than overwrite it. | scripts/lib/campaign/lock.mjs |
 | `REQ-safety-cd571bd5` | The final-review hard deadline must be at least two Gemini per-attempt timeouts plus 60000 milliseconds, even when FINAL_REVIEW_HARD_DEADLINE_MS configures a lower value. | scripts/lib/config.mjs |
@@ -246,7 +252,7 @@ pie title Active invariants by kind
 | `REQ-safety-faca1023` | The persona outcome hash backfill must refuse to run unless the live persona finding hash version equals its fixed v2 target version and a repoId is supplied. | scripts/lib/store/persona-outcomes-hash-backfill.mjs |
 | `REQ-safety-fea6126d` | Only finding classes in the gate-eligible class set may be eligible to block the visual-audit gate. | scripts/lib/visual/schema.mjs |
 
-### correctness (165)
+### correctness (160)
 
 | ID | Assertion | Governs |
 |---|---|---|
@@ -314,7 +320,6 @@ pie title Active invariants by kind
 | `REQ-correctness-509d12fb` | Git-based repository inventory must include tracked and untracked non-ignored files while excluding files deleted from the working tree. | scripts/lib/repo-inventory.mjs |
 | `REQ-correctness-5955ad95` | Pending findings must not produce local outcome records or cloud adjudication-event writes. | scripts/lib/outcome-sync.mjs |
 | `REQ-correctness-597e8591` | The persona migration must copy only columns present in both source rows and the target table, while JSON and JSONB values must be serialized before parameter binding. | scripts/migrations/2026-05-20-persona-test-to-audit-loop.mjs |
-| `REQ-correctness-59d61d4d` | Successful map-reduce pass usage accounting must aggregate input, output, reasoning, and cached tokens from both map units and the reduce call. | scripts/lib/audit/legacy-production-audit.mjs |
 | `REQ-correctness-5a4d8782` | A validation manifest must pass only when every graded high-dismissal and omission-dismissal stratum is at or below its false-dismissal threshold and the aggregate graded false-dismissal rate is at or | scripts/lib/solo-control/cheap-triager-validate.mjs |
 | `REQ-correctness-5a88ae77` | Each navigate journey step must specify exactly one of url or routeKey. | scripts/lib/persona-test/schemas.mjs |
 | `REQ-correctness-5dc3ed1e` | Running build-manifest with --check must fail when the manifest's complete serialized bytes differ from a fresh canonical regeneration, even if bundleVersion and schemaVersion match. | scripts/build-manifest.mjs |
@@ -322,11 +327,10 @@ pie title Active invariants by kind
 | `REQ-correctness-5fcbcf84` | Domain tagging must normalize path separators, match complete paths rather than partial paths, and return the first matching valid rule's domain. | scripts/lib/symbol-index/domain-tagger.mjs |
 | `REQ-correctness-61ff63eb` | Finalized visual findings must be deduplicated by class, surfaceId, nodeKey, device, theme, and property, with only the first finding for each such key retained. | scripts/lib/visual/findings.mjs |
 | `REQ-correctness-6208b849` | Calibration selection must include rows whose HMAC-derived score is below the configured rate and deterministically top up each arm to at least five selected rows or all of that arm's rows when fewer | scripts/lib/store/campaign.mjs |
+| `REQ-correctness-655af727` | Architecture findings returned by the LLM must be discarded when their file-like section is not a mechanically flagged violation endpoint or unmapped file. | scripts/lib/audit/architecture-pass.mjs |
 | `REQ-correctness-655ea064` | The sync check must count bandit_arms globally without a repo_id predicate and count false_positive_patterns only for the resolved repository. | scripts/check-sync.mjs |
-| `REQ-correctness-6619c165` | Every merged finding must be enriched with normalized primary-file and affected-file metadata before ledger suppression is evaluated or finding persistence is performed. | scripts/lib/audit/legacy-production-audit.mjs |
 | `REQ-correctness-66bc565d` | Logical tier classification and model descriptions must canonicalize deprecated IDs before classification so a deprecated ID and its effective sentinel do not produce different logical tiers or partit | scripts/lib/model-resolver.mjs |
 | `REQ-correctness-67be5aa2` | Drafted navigation layers must include only container selectors evidenced with at least two distinct non-dynamic navigation targets. | scripts/lib/nav/bootstrap-draft.mjs |
-| `REQ-correctness-67ec0ec6` | For round 2 and later, only entries accepted by LedgerEntrySchema may be supplied as prior adjudicated ledger entries for suppression, while schema-valid pending batch entries must be excluded without | scripts/lib/audit/legacy-production-audit.mjs |
 | `REQ-correctness-6d5224a6` | Finding clustering must return unknown coverage and no clusters when resolvable cited-file coverage is below the configured coverage floor. | scripts/lib/campaign/adjudicate.mjs |
 | `REQ-correctness-6de9e5ff` | Findings without severity must not be persisted, while findings without a category must be persisted using the visible `(missing — producer omitted category)` marker. | scripts/lib/store/runs-findings.mjs |
 | `REQ-correctness-6e892838` | The audit verdict must be computed with `incomplete: true` whenever Stage 2 has unresolved adjudications or clean-region failures. | scripts/lib/audit/tiered-pipeline.mjs |
@@ -338,7 +342,6 @@ pie title Active invariants by kind
 | `REQ-correctness-74e03a97` | A returned persona run context must pass `PersonaRunContextSchema` validation and use null for unavailable optional identity or git fields rather than emitting unchecked values. | scripts/lib/persona-test/context.mjs |
 | `REQ-correctness-75752957` | An architecture report must be clean only when it has no violations, unmapped source files, or dead domains and no stack has error status. | scripts/lib/arch-intent/adapter-contract.mjs |
 | `REQ-correctness-784c89af` | Connection-scoped replay failures must abort the drain without consuming retry attempts for queued artifacts, while artifact-scoped retryable failures must persist incremented attempts and permanent o | scripts/lib/durable-write.mjs |
-| `REQ-correctness-79038f9b` | Duplication detector findings classified as deterministic must be emitted independently of semantic-candidate bouncer results. | scripts/lib/audit/legacy-production-audit.mjs |
 | `REQ-correctness-7a064d9b` | Layout physics must suppress overlap findings for ancestor-descendant pairs, explicitly allowed overlaps, and nodes in different fixed or absolute stacking layers. | scripts/lib/visual/layout-physics.mjs |
 | `REQ-correctness-7d5bd894` | An arm's ranking score must credit each accepted assignment-canonical cluster at most once using the cluster's maximum accepted severity and best accepted remediation multiplier, apply unique-coverage | scripts/lib/model-ab-decision.mjs |
 | `REQ-correctness-8142e6d3` | An orphan finding must be classified as left-orphan when its target existed at the base revision and born-orphan otherwise. | scripts/lib/audit/orphan-introduced.mjs |
@@ -358,12 +361,10 @@ pie title Active invariants by kind
 | `REQ-correctness-9b009d12` | A match result must conserve each input side such that its count equals matched findings plus side-only findings plus unmatchable findings. | scripts/lib/finding-match.mjs |
 | `REQ-correctness-9b5c6c96` | Claude Opus primary and shadow reviewer clients must use the SDK backend regardless of the ambient CLAUDE_BACKEND setting. | scripts/gemini-review.mjs |
 | `REQ-correctness-9d566453` | A missing repo-relative file may be marked confirmed only when the supplied repository inventory is complete; otherwise it must remain requires_verification. | scripts/lib/audit/finding-verification.mjs |
-| `REQ-correctness-9db386eb` | Architecture-intent findings returned from a successful LLM bouncer call must be limited to files present in the mechanical architecture report. | scripts/lib/audit/legacy-production-audit.mjs |
 | `REQ-correctness-a35134b5` | Path classification must normalize backslashes to forward slashes, strip a leading drive-letter slash and leading './', and compare paths case-insensitively before applying skip patterns. | scripts/lib/sensitive-paths.mjs |
 | `REQ-correctness-a3520138` | Resolved audit ranges must use immutable commit object IDs and must refuse an explicit base that is malformed, unresolvable, not an ancestor of HEAD, or cannot be checked reliably. | scripts/lib/worktree-identity.mjs |
 | `REQ-correctness-a445b287` | Adjacency audit state must be composed by a single call to buildAdjacencyState only after analysis, bouncer, and decision-mapping incompleteness facts have been merged. | scripts/lib/audit/adjacency-compose.mjs |
 | `REQ-correctness-a51d7675` | For every legal source path handled by sync, mapping it to a consumer destination and then mapping back must reproduce the original normalized source path. | scripts/lib/sync-path-map.mjs |
-| `REQ-correctness-a94da236` | When a deduplicated finding is replaced by one of a different severity, its identifier must be regenerated with the new severity's H, M, or L prefix, while replacements of the same severity retain the | scripts/lib/audit/legacy-production-audit.mjs |
 | `REQ-correctness-a953e1b8` | An arm may clear the effectiveness floor only if its accepted findings per complete snapshot are both at least the incumbent rate minus the configured margin and strictly greater than zero. | scripts/lib/campaign/verdict.mjs |
 | `REQ-correctness-adef5200` | Visual-audit scorecards must count only gate-eligible findings as violations and must mark listed unverifiable surfaces as unverified. | scripts/lib/visual/render.mjs |
 | `REQ-correctness-b270cc84` | Per-arm finding aggregates must include every declared arm ID and represent arms with no observations from complete snapshots as unknown rather than as measured zero. | scripts/lib/bakeoff/summary.mjs |
@@ -390,7 +391,6 @@ pie title Active invariants by kind
 | `REQ-correctness-cf53e7e5` | Tiered-shadow decision-window progress must be calculated from decision-grade `comparedRuns`, not total shadow attempts, so failed or excluded shadow attempts cannot satisfy the production-flip review | scripts/tiered-shadow-report.mjs |
 | `REQ-correctness-d0079290` | An incremental symbol-index refresh must promote to full re-embedding when a prior active embedding identity exists and differs from the provenance identity about to be published. | scripts/symbol-index/refresh-mode.mjs |
 | `REQ-correctness-d0789de4` | A duplicate adjudication must atomically map the duplicate fingerprint to the canonical equivalence root, reject self-referential mappings, and assign the duplicate the canonical finding's outcome. | scripts/lib/store/model-ab.mjs |
-| `REQ-correctness-d0ce70a4` | Every registered audit pass, including quickfix, architecture, and orphan-introduced passes, must have its findings processed through the common cross-pass deduplication pipeline before the merged res | scripts/lib/audit/legacy-production-audit.mjs |
 | `REQ-correctness-d1c3931a` | When a required discovery generator fails outside shadow mode, the returned audit result must preserve the captured discovery generator outcomes and identify itself as runStatus fallback_legacy with t | scripts/lib/audit/discovery-fallback.mjs |
 | `REQ-correctness-d28756d9` | Debt review in LLM mode must exit with code 1 when OPENAI_API_KEY is unavailable. | scripts/debt-review.mjs |
 | `REQ-correctness-d756d05e` | When no committed repository ID exists but a git origin is available, repository identity must be a UUIDv5 derived from the canonicalized origin URL rather than the checkout path. | scripts/lib/repo-identity.mjs |
@@ -398,6 +398,7 @@ pie title Active invariants by kind
 | `REQ-correctness-db28300e` | The import graph populated flag must be set only for a full refresh or for an incremental refresh whose prior active snapshot was already marked populated. | scripts/symbol-index/refresh.mjs |
 | `REQ-correctness-db53f358` | Ledger entries written from triage must derive their topic identity, semantic hash, latest finding identifier, affected files, severity, category, and pass from the round result finding rather than ac | scripts/write-ledger-entries.mjs |
 | `REQ-correctness-dcf34bfe` | Findings with no file or section locus must be counted as unmatchable and must not be classified as primaryOnly or shadowOnly. | scripts/lib/finding-match.mjs |
+| `REQ-correctness-de1621a4` | Tool findings accepted into a run must receive unique monotonically increasing T-prefixed IDs regardless of their severity. | scripts/lib/audit/finding-assembly.mjs |
 | `REQ-correctness-df7257d3` | A live model ID may be reported as missing from STATIC_POOL only when it matches the provider's relevant tier pattern and either cannot be parsed or is newer than the best static model in the same res | scripts/check-model-freshness.mjs |
 | `REQ-correctness-e086754e` | Every contradictory gap assessment must identify at least one conflicting requirement ID. | scripts/lib/requirements/schema.mjs |
 | `REQ-correctness-e22e4469` | A missing `allowedDeps` field in a valid architecture-intent configuration must be represented as null rather than as an empty dependency map. | scripts/lib/arch-intent/load-config.mjs |
@@ -427,7 +428,6 @@ pie title Active invariants by kind
 | `REQ-behavioural-19096e7a` | When `--no-tests` is supplied, the CLI must invoke Git with `--no-verify` and must cap `AI-Gate` to `waived` only with fresh audit evidence or otherwise to `not-run`. | scripts/ship-commit.mjs |
 | `REQ-behavioural-1a6f88a8` | Triage findings must be ordered by severity with unknown severities ahead of HIGH, then HIGH, MEDIUM, and LOW, and ties must be ordered by newest creation time first. | scripts/learning/weekly-review.mjs |
 | `REQ-behavioural-228b264f` | Evaluation history queries must exclude active `running` and `pending_shadow` runs, order retained runs by descending `(created_at, run_id)`, and paginate with a maximum requested page size of 500. | scripts/lib/store/model-eval.mjs |
-| `REQ-behavioural-23c26eda` | Linter and type-checker findings must be excluded from verdict counts unless strict-lint mode is enabled. | scripts/lib/audit/legacy-production-audit.mjs |
 | `REQ-behavioural-25c2f774` | When a selected brainstorm provider lacks its required API key, the run must return a per-provider misconfigured result rather than failing the entire round. | scripts/brainstorm-round.mjs |
 | `REQ-behavioural-2b20ccb7` | A topic-scoped insight listing must return an empty list when that topic has no allocated slug and must not fall back to listing insights for other topics. | scripts/lib/brainstorm/insight-store.mjs |
 | `REQ-behavioural-2c56e849` | A quickfix suppression marker valid for the edited file type must suppress its line, and for multiline candidates may suppress the candidate from its immediately preceding non-catch line. | scripts/lib/quickfix-patterns.mjs |
@@ -445,6 +445,7 @@ pie title Active invariants by kind
 | `REQ-behavioural-6a68cafb` | Bandit selection must force exploration among arms with fewer than the configured minimum pulls before using Thompson sampling among fully warmed arms. | scripts/bandit.mjs |
 | `REQ-behavioural-70f929e2` | createLearningAdapter must attempt structured generation through available providers in Gemini, then Claude, then OpenAI order and must return null if none produces a valid result. | scripts/lib/llm-wrappers.mjs |
 | `REQ-behavioural-79154031` | The judge payload must omit candidate/baseline and model identity, assign opaque blind IDs, and shuffle pooled candidate and baseline findings before submission to the judge. | scripts/lib/model-eval/blind-judge.mjs |
+| `REQ-behavioural-7af17649` | Every finding produced by the quickfix pass must have is_quick_fix set to true regardless of whether the model supplied that field. | scripts/lib/audit/legacy-production-audit.mjs |
 | `REQ-behavioural-8d03e30e` | A GPT generator must be invoked only when both an adapter is supplied and the caller-provided trigger decision fires, and otherwise must record a skipped outcome with the applicable reason. | scripts/lib/audit/discovery-portfolio.mjs |
 | `REQ-behavioural-8d496868` | Orphan skills claimed by skills-lock.json must be classified as toolManaged, unclaimed names with an on-disk live counterpart as contested, unclaimed names without one as theirs, and unclaimed names w | scripts/lib/skill-surface-identity.mjs |
 | `REQ-behavioural-90431cbb` | An empty debt ledger must produce the empty-ledger report and exit successfully without invoking clustering or requiring an API key. | scripts/debt-review.mjs |
@@ -465,7 +466,7 @@ pie title Active invariants by kind
 | `REQ-behavioural-f0449b6f` | When cloud storage is disabled, abortRefreshRun must return {aborted:false} without attempting a database update. | scripts/lib/store/arch/refresh-runs.mjs |
 | `REQ-behavioural-f7481864` | Architecture context attachment must be disabled when noArch is true, even if withArch is true or the topic has architecture intent. | scripts/lib/brainstorm/arch-context.mjs |
 
-### persistence (64)
+### persistence (66)
 
 | ID | Assertion | Governs |
 |---|---|---|
@@ -480,7 +481,6 @@ pie title Active invariants by kind
 | `REQ-persistence-2c1c66ce` | Round 2 or later audits must require a resolvable ledger path unless --no-ledger is explicitly supplied. | scripts/openai-audit.mjs |
 | `REQ-persistence-2c6173d9` | Writing a visual contract must refuse to overwrite an existing contract unless force is explicitly enabled and must atomically persist the validated normalized contract rather than the raw input objec | scripts/lib/visual/contract.mjs |
 | `REQ-persistence-302e7db7` | The symbol embedding composition version must be derived from the compose function source so a composition-template change changes COMPOSE_VERSION. | scripts/lib/symbol-index.mjs |
-| `REQ-persistence-415fe798` | The round-1 session manifest must be written atomically so later rounds cannot read a partially written ledger-path manifest. | scripts/lib/audit/legacy-production-audit.mjs |
 | `REQ-persistence-4483bb4f` | GPT judge output must be atomically checkpointed after each processed commit so an interruption loses at most the in-flight commit’s grading work. | scripts/solo-control-audit.mjs |
 | `REQ-persistence-4c7863b2` | Without --rev, the probe must load its diff and changed-file snapshots from the committed anchor-contract fixture bundle resolved relative to this script rather than from the caller's working director | scripts/verify-anchor-contract.mjs |
 | `REQ-persistence-4ca84fbf` | When reconciling supplied and ambient repository identity, differing repository basenames or differing repository row IDs must reject the write, and successful reconciliation must use the ambient cano | scripts/lib/repo-scope.mjs |
@@ -505,6 +505,7 @@ pie title Active invariants by kind
 | `REQ-persistence-95ab6a1f` | Save mode must refuse to save an insight unless the specified session exists and contains the specified non-negative round. | scripts/brainstorm-round.mjs |
 | `REQ-persistence-962455b6` | The checker must scan only tracked repository files obtained from `git ls-files`, so ignored and untracked files do not define the citation-resolution index or default scan set. | scripts/check-docs-refs.mjs |
 | `REQ-persistence-9c23f3e5` | A persona-consistency promotion must durably journal its intended file and candidate transition before writing the temporary spec file or requesting the database candidate-to-locked transition. | scripts/persona-consistency-promote.mjs |
+| `REQ-persistence-9d841d6e` | If write outcomes change after the initial cloud completion write, the completion row must be durably rewritten with the final tally and corresponding run status. | scripts/lib/audit/run-persistence.mjs |
 | `REQ-persistence-a205906d` | When filtering a rename, a skipped source with visible destination must become an addition, a visible source with skipped destination must become a deletion, two skipped endpoints must produce no diff | scripts/lib/sensitive-paths.mjs |
 | `REQ-persistence-a6fffb0a` | Repeated saves with the same sid, round, and insight text for a resolved topic slug must return the existing matching file without creating another file. | scripts/lib/brainstorm/insight-store.mjs |
 | `REQ-persistence-a87a5ab5` | When recording a correlation with a non-null auditFindingId, recordPersonaAuditCorrelation must remove any null-audit_finding_id correlation for the same persona session and finding hash before upsert | scripts/lib/store/plans-ship.mjs |
@@ -513,6 +514,8 @@ pie title Active invariants by kind
 | `REQ-persistence-aa62d2e8` | A prompt revision identifier must be the prefix rev- followed by the first 12 hexadecimal characters of the SHA-256 hash of its prompt text. | scripts/lib/prompt-registry.mjs |
 | `REQ-persistence-ae635f44` | Persisted or compared Azure embedding provenance must identify both the normalized Azure endpoint origin and embedding deployment, whereas Gemini provenance must identify the concrete model used. | scripts/lib/embed-text.mjs |
 | `REQ-persistence-b33b3465` | Gate 2A must fail if any path under `scripts/.claude-skills/` appears either in porcelain git status or in tracked git files, including clean committed files. | scripts/lib/sync-isolation-verify.mjs |
+| `REQ-persistence-b71f71d6` | A finalized run must be marked incomplete when any durable write is spilled or lost, or when the local ledger write failed. | scripts/lib/audit/run-finalization.mjs |
+| `REQ-persistence-b7d37f4e` | Each cached pass result must be written atomically so a crash cannot leave a torn JSON cache artifact. | scripts/lib/audit/pass-result-cache.mjs |
 | `REQ-persistence-b87b122f` | After a successful legacy cleanup, each receipt must be removed only when all of its managed files were deleted and otherwise rewritten to retain exactly the surviving managed files. | scripts/install-skills.mjs |
 | `REQ-persistence-b9c920f9` | Re-recording a finding with the same run ID and fingerprint must update only columns owned by the finding write and must not overwrite adjudication fields. | scripts/lib/store/runs-findings.mjs |
 | `REQ-persistence-ba5c03f1` | A forced recollection of an existing snapshot must append a new log entry marked with retriedArmIds rather than overwrite or delete the prior collection record. | scripts/bakeoff-collect.mjs |
@@ -649,8 +652,10 @@ pie title Active invariants by kind
 | `scripts/lib/audit-store-writers.mjs` | 2 | 0 | 1 |
 | `scripts/lib/audit/adjacency-compose.mjs` | 2 | 0 | 3 |
 | `scripts/lib/audit/adjacency-detector.mjs` | 2 | 0 | 6 |
+| `scripts/lib/audit/adjacency-pass.mjs` | 0 | 0 | 4 |
 | `scripts/lib/audit/adjacency-report.mjs` | 0 | 0 | 7 |
 | `scripts/lib/audit/adjacency-state.mjs` | 3 | 0 | 2 |
+| `scripts/lib/audit/architecture-pass.mjs` | 2 | 0 | 4 |
 | `scripts/lib/audit/candidate-envelope.mjs` | 1 | 0 | 7 |
 | `scripts/lib/audit/control-markers.mjs` | 1 | 0 | 0 |
 | `scripts/lib/audit/convergence.mjs` | 0 | 0 | 5 |
@@ -664,24 +669,34 @@ pie title Active invariants by kind
 | `scripts/lib/audit/discovery-portfolio.mjs` | 1 | 0 | 6 |
 | `scripts/lib/audit/discovery-prompts.mjs` | 0 | 0 | 8 |
 | `scripts/lib/audit/duplication-detector.mjs` | 2 | 2 | 9 |
+| `scripts/lib/audit/duplication-pass.mjs` | 0 | 0 | 4 |
 | `scripts/lib/audit/duplication-report.mjs` | 1 | 0 | 5 |
+| `scripts/lib/audit/event-wiring-pass.mjs` | 0 | 0 | 4 |
 | `scripts/lib/audit/evidence-triage.mjs` | 0 | 0 | 21 |
 | `scripts/lib/audit/final-adjudication.mjs` | 1 | 0 | 12 |
+| `scripts/lib/audit/finalization-contract.mjs` | 0 | 0 | 0 |
+| `scripts/lib/audit/finding-assembly.mjs` | 2 | 0 | 14 |
 | `scripts/lib/audit/finding-grounding.mjs` | 0 | 0 | 4 |
 | `scripts/lib/audit/finding-verification.mjs` | 2 | 0 | 3 |
 | `scripts/lib/audit/findings-pipeline.mjs` | 0 | 0 | 7 |
 | `scripts/lib/audit/gate-evidence.mjs` | 1 | 0 | 2 |
 | `scripts/lib/audit/glob-match.mjs` | 0 | 0 | 1 |
 | `scripts/lib/audit/gpt-sentinel-trigger.mjs` | 1 | 0 | 2 |
-| `scripts/lib/audit/legacy-production-audit.mjs` | 15 | 0 | 68 |
+| `scripts/lib/audit/legacy-production-audit.mjs` | 3 | 4 | 29 |
 | `scripts/lib/audit/llm-helpers.mjs` | 0 | 0 | 11 |
 | `scripts/lib/audit/malformed-details.mjs` | 0 | 0 | 4 |
+| `scripts/lib/audit/map-reduce-scheduler.mjs` | 0 | 0 | 18 |
 | `scripts/lib/audit/orphan-introduced.mjs` | 1 | 0 | 10 |
 | `scripts/lib/audit/orphan-metrics.mjs` | 2 | 0 | 3 |
+| `scripts/lib/audit/orphan-pass.mjs` | 0 | 0 | 6 |
+| `scripts/lib/audit/pass-result-cache.mjs` | 2 | 0 | 4 |
 | `scripts/lib/audit/plan-audit-cloud.mjs` | 0 | 0 | 4 |
 | `scripts/lib/audit/prompt-builder.mjs` | 0 | 0 | 8 |
 | `scripts/lib/audit/provider-readiness.mjs` | 1 | 0 | 3 |
 | `scripts/lib/audit/review-effort-event.mjs` | 0 | 0 | 2 |
+| `scripts/lib/audit/run-finalization.mjs` | 1 | 0 | 3 |
+| `scripts/lib/audit/run-persistence.mjs` | 2 | 0 | 24 |
+| `scripts/lib/audit/run-telemetry.mjs` | 0 | 2 | 11 |
 | `scripts/lib/audit/stage0-debt-routing.mjs` | 0 | 0 | 3 |
 | `scripts/lib/audit/stage0-relevance-context.mjs` | 0 | 0 | 3 |
 | `scripts/lib/audit/stage1-triage.mjs` | 1 | 0 | 13 |
@@ -955,7 +970,7 @@ pie title Active invariants by kind
 | `scripts/lib/requirements/schema.mjs` | 2 | 0 | 5 |
 | `scripts/lib/retry-transient-fs.mjs` | 0 | 0 | 4 |
 | `scripts/lib/rng.mjs` | 0 | 0 | 4 |
-| `scripts/lib/robustness.mjs` | 0 | 0 | 6 |
+| `scripts/lib/robustness.mjs` | 0 | 0 | 10 |
 | `scripts/lib/rule-metadata.mjs` | 1 | 0 | 0 |
 | `scripts/lib/sanitizer.mjs` | 0 | 0 | 4 |
 | `scripts/lib/schemas-install.mjs` | 0 | 0 | 4 |

@@ -573,7 +573,16 @@ once Phase 4 lands.
   the SPINE's
   `finally`, plus a 3rd new scenario — a forced failure during an EARLY
   wave, before the coordinator is ever reached — asserting cleanup still
-  ran. **10 scenarios total** (was 9).
+  ran. **10 scenarios total** (was 9). **Implementation correction (post-
+  closure, union-diff final review)**: only 9 were delivered. The "forced
+  permanent 4c failure" scenario is structurally unreachable through this
+  harness — it runs cloud OFF by design (per this repo's no-whole-provider-
+  mock testing doctrine), and every write inside `run-persistence.mjs`
+  beyond its Zod-validation guards is internally try/caught (best-effort,
+  never throws) when cloud is off, so there is no genuine uncaught-throw
+  path to force without faking a store connection. Documented in
+  `tests/finalization-characterization.test.mjs` at the point the 3rd
+  scenario would have gone.
   **`:3251-4850` is
   now fully partitioned across 4b/4c/4d/coordinator with no unassigned
   range** — the line-count target below is computed from this partition,
@@ -676,7 +685,10 @@ pattern, moving harness authoring into Phase 4a where it belongs:
   because of, and the one the round-4-only pair would have missed. These
   are new-code verification, not diffed against a pre-Phase-4 baseline (no
   equivalent behavior exists yet to diff against). **10 scenarios total**
-  across Phase 4a–4d, not double-counted as two separate sets.
+  across Phase 4a–4d, not double-counted as two separate sets. **Correction
+  (post-closure): 9 delivered** — see the implementation correction at this
+  section's cache-lifecycle bullet above for why the "forced permanent 4c
+  failure" scenario is not exercisable through this harness.
 - A live pre/post `/audit-code --scope diff` run remains an empirical
   smoke check only (closes H3 from round 1) — provider output, timing,
   cache state, and cloud persistence all vary between two live runs, so it
@@ -722,13 +734,18 @@ described above, per the pre-ship-empirical-verify doctrine.
 - **Characterization tests, written and baseline-captured in Phase 4a,
   before any of 4b/4c/4d's code moves** (**corrected round-5 M2 — this
   bullet previously said "Phase 5," stale after the round-3 H1 fix moved
-  harness authoring to 4a**; closes round-1 H3): **10 total scenarios** —
+  harness authoring to 4a**; closes round-1 H3): **10 total scenarios
+  designed, 9 delivered** (correction, post-closure) —
   the 7 named in the finalization behavior matrix (round 1, round 2+,
   cloud-off, generator fallback, incomplete adjudication, empty pass,
-  forced write failure) plus the 3 cache-lifecycle scenarios (forced 4b
-  failure, forced permanent 4c failure, and forced early-wave failure
-  before the coordinator is ever reached — the 3rd added after the Gemini
-  gate's G1 caught that the first 2 alone would miss it), all asserting
+  forced write failure) plus 2 of the 3 designed cache-lifecycle scenarios
+  (forced 4b failure and forced early-wave failure before the coordinator is
+  ever reached — the latter added after the Gemini gate's G1 caught that
+  the first alone would miss it). The 3rd designed scenario, forced
+  permanent 4c failure, was found during implementation to be structurally
+  unreachable through this cloud-off harness (see the correction at the
+  cache-lifecycle design bullet above) and was not delivered. All delivered
+  scenarios assert
   `cleanupCache` still ran via the orchestration spine's top-level
   `finally` (§4, corrected after G1 — not the coordinator's own, narrower
   one). Each stage re-runs the full set against the 4a-captured

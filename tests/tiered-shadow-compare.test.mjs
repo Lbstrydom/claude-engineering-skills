@@ -407,7 +407,10 @@ describe('compareAuditRunResults — "lines N-M" prose fallback (partial fix, no
 // pin the fixes at the source with readFileSync guards.
 describe('cost producers — legacy + tiered both price real usage (static guards)', () => {
   test('legacy-production-audit prices totalUsage into _usage.costUsd via costFromUsage', () => {
-    const src = fs.readFileSync(path.resolve('scripts/lib/audit/legacy-production-audit.mjs'), 'utf-8');
+    // legacy-production-audit-decomposition Phase 4: the totalUsage pricing
+    // moved to finding-assembly.mjs (4b), alongside the pass-registry
+    // assembly it's derived from.
+    const src = fs.readFileSync(path.resolve('scripts/lib/audit/finding-assembly.mjs'), 'utf-8');
     assert.match(src, /costFromUsage/, 'legacy must price its token totals');
     assert.match(src, /totalUsage\.costUsd\s*=/, 'the priced cost must land on _usage.costUsd (what the comparison reads)');
   });

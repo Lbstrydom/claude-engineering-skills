@@ -33,9 +33,9 @@ process.env.AUDIT_DB_URL = '';
 process.env.AUDIT_NO_PREFLIGHT = '1';
 
 const audit = await import('../scripts/openai-audit.mjs');
-const lpa = await import('../scripts/lib/audit/legacy-production-audit.mjs');
 const { runMultiPassCodeAudit } = audit.__testExports;
-const { collectReducePassStatuses } = lpa.__testExports;
+// legacy-production-audit-decomposition Phase 1: relocated to pass-result-cache.mjs.
+const { collectReducePassStatuses } = await import('../scripts/lib/audit/pass-result-cache.mjs');
 const { ReduceStatus, ExecutionMetaSchema } = await import('../scripts/lib/schemas.mjs');
 
 const FIXTURE_DIR = 'tests/fixtures/harness-plan';

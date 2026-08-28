@@ -342,7 +342,9 @@ test('the production verdict site calls the oracle with the resolver, not the co
   // shape, not the runtime flow; the runtime half is verified empirically by
   // running /audit-code with the ledger withheld (plan §9, D1).
   const { readFile } = await import('node:fs/promises');
-  const src = await readFile(new URL('../scripts/lib/audit/legacy-production-audit.mjs', import.meta.url), 'utf8');
+  // legacy-production-audit-decomposition Phase 4: this call site moved to
+  // run-persistence.mjs (4c) as part of the commit-provenance gate evidence.
+  const src = await readFile(new URL('../scripts/lib/audit/run-persistence.mjs', import.meta.url), 'utf8');
 
   assert.match(src, /evaluateConvergenceWithDetectors\(/,
     'the verdict site must call the detector-aware oracle');

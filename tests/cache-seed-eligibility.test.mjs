@@ -11,9 +11,9 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
-process.env.AUDIT_EXPORTS_FOR_TESTS = '1';
-const { __testExports } = await import('../scripts/lib/audit/legacy-production-audit.mjs');
-const { decideSeed } = __testExports;
+// legacy-production-audit-decomposition Phase 2: relocated to
+// map-reduce-scheduler.mjs, a real (non-gated) export.
+const { decideSeed } = await import('../scripts/lib/audit/map-reduce-scheduler.mjs');
 
 // A prompt comfortably above the default 1024-token floor (~4 chars/token).
 const bigPrompt = () => ({ system: 'x'.repeat(4000), messages: [{ content: 'y'.repeat(4000) }] });
