@@ -244,7 +244,7 @@ const CHECK_SETUP_PROBES = [
     id: 'setup/audit-api-keys',
     title: 'Audit-loop API keys (OpenAI/Gemini/Anthropic/Azure)',
     fix: 'Add the missing key(s) to .env — see the finding detail for which.',
-    evaluate: (env) => evaluateAuditSetup(env),
+    evaluate: (env, repoPath) => evaluateAuditSetup(env, repoPath),
   }),
   checkSetupProbe({
     id: 'setup/audit-supabase',

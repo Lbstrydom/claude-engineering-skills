@@ -158,12 +158,30 @@ function toAdapterResult(report) {
 
 // ── Feature: Audit-Loop ───────────────────────────────────────────────────────
 
-function checkAuditApiKeys(env, report) {
+function apiKeySourceSuffix(source) {
+  if (source === 'shared') return '  (inherited from ~/.audit-loop.env)';
+  if (source === 'process-env') return '  (set via shell export — not in any .env file)';
+  return '';
+}
+
+function checkAuditApiKeys(env, report, repoPath = REPO_PATH, cloudConfigOverrides = {}) {
   // Azure work profile (docs/runbooks/azure-work-profile.md): AZURE_OPENAI_ENDPOINT
   // active means the GPT auditor authenticates via AZURE_OPENAI_API_KEY —
   // OPENAI_API_KEY is not used at all, so failing on its absence here told
   // a correctly-configured corporate install its setup was broken
-  // (2026-07-14 fresh-installer audit).
+  // (2026-07-14 fresh-installer audit). Azure vars are per-repo, not in
+  // SHARED_VARS, so they still read the raw `env` object directly.
+  //
+  // OPENAI_API_KEY/GEMINI_API_KEY/ANTHROPIC_API_KEY ARE in SHARED_VARS —
+  // resolve them the same way checkAuditSupabase resolves AUDIT_DB_URL below,
+  // or a key genuinely available via ~/.audit-loop.env reads as "missing"
+  // (the false negative this repo's own status.md flagged as unfixed).
+  const cloud = resolveCloudConfig({
+    processEnv: env,
+    localEnvPath: discoverLocalEnvPath(repoPath),
+    ...cloudConfigOverrides,
+  });
+
   const azureActive = !!(env.AZURE_OPENAI_ENDPOINT || '').trim();
   if (azureActive) {
     if (env.AZURE_OPENAI_API_KEY) {
@@ -183,18 +201,18 @@ function checkAuditApiKeys(env, report) {
         'Azure embeddings will use the default guess "text-embedding-3-large", which may not be deployed',
         'Run `npm run azure:doctor -- --fix` to probe your resource and lock in the real deployment name');
     }
-  } else if (env.OPENAI_API_KEY) {
-    report.pass('OPENAI_API_KEY', 'GPT-5.4 audit');
+  } else if (cloud.OPENAI_API_KEY.value) {
+    report.pass(`OPENAI_API_KEY${apiKeySourceSuffix(cloud.OPENAI_API_KEY.source)}`, 'GPT-5.4 audit');
   } else {
     report.fail('OPENAI_API_KEY missing', 'required for all audits',
       'Add OPENAI_API_KEY=sk-... to .env');
   }
 
-  if (env.GEMINI_API_KEY) {
-    report.pass('GEMINI_API_KEY', 'Step 7 final review');
+  if (cloud.GEMINI_API_KEY.value) {
+    report.pass(`GEMINI_API_KEY${apiKeySourceSuffix(cloud.GEMINI_API_KEY.source)}`, 'Step 7 final review');
   } else if (azureActive && (env.AZURE_AI_ENDPOINT || '').trim()) {
     report.pass('Step 7 reviewer', 'Foundry Claude (Azure profile) — Gemini not needed');
-  } else if (env.ANTHROPIC_API_KEY) {
+  } else if (cloud.ANTHROPIC_API_KEY.value) {
     report.warn('GEMINI_API_KEY not set', 'ANTHROPIC_API_KEY present — Claude Opus used as Step 7 fallback');
   } else {
     report.warn('GEMINI_API_KEY not set',
@@ -276,7 +294,7 @@ async function checkAuditSupabase(env, report, repoPath = REPO_PATH) {
 
 async function checkAuditLoop(env, report, repoPath = REPO_PATH) {
   report.section('Audit-Loop');
-  checkAuditApiKeys(env, report);
+  checkAuditApiKeys(env, report, repoPath);
   await checkAuditSupabase(env, report, repoPath);
 }
 
@@ -879,10 +897,10 @@ export function injectResolvedDbEnv(env, repoPath = REPO_PATH) {
 // real parameter rather than closing over the module constant.
 
 /** `evaluateAuditSetup` — API-key configuration only; no I/O, no DB. */
-export function evaluateAuditSetup(env) {
+export function evaluateAuditSetup(env, repoPath = REPO_PATH, cloudConfigOverrides = {}) {
   const report = new Report();
   report.section('Audit-Loop (API keys)');
-  checkAuditApiKeys(env, report);
+  checkAuditApiKeys(env, report, repoPath, cloudConfigOverrides);
   return toAdapterResult(report);
 }
 

@@ -64,16 +64,71 @@ describe('evaluateAuditSetup (adapter row 1)', () => {
   });
 
   it('no OPENAI_API_KEY and no Azure profile -> fails, and reportToProbeOutcome reduces it to fail', () => {
-    const result = evaluateAuditSetup({});
-    assert.ok(result.failures > 0);
-    const outcome = reportToProbeOutcome(result);
-    assert.equal(outcome.status, 'fail');
-    assert.match(outcome.detail, /OPENAI_API_KEY/);
+    // Isolated repoPath + sharedPath — evaluateAuditSetup now resolves keys
+    // through resolveCloudConfig (shared-cloud-config.mjs), so leaving this on
+    // the real REPO_PATH/~/.audit-loop.env would make the assertion depend on
+    // whichever machine runs the suite.
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-adapter-apikeys-empty-repo-'));
+    const sharedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-adapter-apikeys-empty-shared-'));
+    try {
+      const result = evaluateAuditSetup({}, repoDir, { sharedPath: path.join(sharedDir, '.audit-loop.env') });
+      assert.ok(result.failures > 0);
+      const outcome = reportToProbeOutcome(result);
+      assert.equal(outcome.status, 'fail');
+      assert.match(outcome.detail, /OPENAI_API_KEY/);
+    } finally {
+      fs.rmSync(repoDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(sharedDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
   });
 
-  it('a valid OPENAI_API_KEY clears the failure', () => {
-    const result = evaluateAuditSetup({ OPENAI_API_KEY: 'sk-fixture' });
-    assert.equal(result.failures, 0);
+  it('a valid OPENAI_API_KEY passed via process env clears the failure', () => {
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-adapter-apikeys-pe-repo-'));
+    const sharedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-adapter-apikeys-pe-shared-'));
+    try {
+      const result = evaluateAuditSetup(
+        { OPENAI_API_KEY: 'sk-fixture' }, repoDir, { sharedPath: path.join(sharedDir, '.audit-loop.env') },
+      );
+      assert.equal(result.failures, 0);
+    } finally {
+      fs.rmSync(repoDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(sharedDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('a key present ONLY in ~/.audit-loop.env (shared, not local .env, not process env) resolves and is reported as inherited — regression test for the check-setup.mjs false negative', () => {
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-adapter-apikeys-shared-repo-'));
+    const sharedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-adapter-apikeys-shared-shared-'));
+    const sharedPath = path.join(sharedDir, '.audit-loop.env');
+    fs.writeFileSync(sharedPath, 'OPENAI_API_KEY=sk-fixture-shared\nGEMINI_API_KEY=gm-fixture-shared\n');
+    try {
+      const result = evaluateAuditSetup({}, repoDir, { sharedPath });
+      assert.equal(result.failures, 0, 'OPENAI_API_KEY inherited from the shared file must clear the failure');
+      const detail = JSON.stringify(result.items);
+      assert.match(detail, /OPENAI_API_KEY.*inherited from ~\/\.audit-loop\.env/);
+      assert.match(detail, /GEMINI_API_KEY.*inherited from ~\/\.audit-loop\.env/);
+    } finally {
+      fs.rmSync(repoDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(sharedDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('a LOCAL .env key is resolved against the PASSED repoPath, not a module-level default (mirrors evaluateAuditSupabase\'s root-threading)', () => {
+    const repoA = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-adapter-apikeys-repoA-'));
+    const repoB = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-adapter-apikeys-repoB-'));
+    const sharedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-adapter-apikeys-repoAB-shared-'));
+    const sharedPath = path.join(sharedDir, '.audit-loop.env');
+    fs.writeFileSync(path.join(repoA, '.env'), 'OPENAI_API_KEY=sk-fixture-local\n');
+    try {
+      const resultA = evaluateAuditSetup({}, repoA, { sharedPath });
+      const resultB = evaluateAuditSetup({}, repoB, { sharedPath });
+      assert.equal(resultA.failures, 0, 'repoA has a local OPENAI_API_KEY — must pass');
+      assert.ok(resultB.failures > 0, 'repoB has no local .env and no shared key — must fail');
+    } finally {
+      fs.rmSync(repoA, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(repoB, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(sharedDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
   });
 });
 
