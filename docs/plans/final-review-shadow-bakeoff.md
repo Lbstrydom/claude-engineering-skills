@@ -1,11 +1,14 @@
 # Plan: Final-Review Shadow Bake-Off (marginal-value re-test)
 
 - **Date**: 2026-07-29
-- **Status**: In Progress (activated 2026-07-31 — see §0 Activation Addendum).
-  **`final-review-2026q3` is dead** (0 snapshots, abandoned 2026-08-14 for
-  `final-review-scoped-2026q3`, the sole campaign of record going forward —
-  see §0.7c). Current progress: **8/12** toward N=12, 4 to go; qwen/deepseek
-  pricing gap open (§0.7c).
+- **Status**: Complete — **VERDICT: KEEP opus** (SELECT opus, the incumbent;
+  no challenger cleared the relative floor). N reached 12/12 on
+  `final-review-scoped-2026q3` (`final-review-2026q3` is dead, see §0.7c),
+  `DECISION_READY`, sensitivity-invariant across all 6 matcher variants. Full
+  reasoning and caveats in §0.7d; write-up at
+  [`docs/research/final-review-shadow-bakeoff-verdict.md`](../research/final-review-shadow-bakeoff-verdict.md).
+  No production change — this closes the marginal-value question the plan
+  was activated to answer.
 - **Author**: Claude + Louis
 
 > ## ⏸ PARKED 2026-07-29 — read this before implementing anything below
@@ -455,6 +458,63 @@ persist under their own `source_model`; label them via the ordinary
   stopping rule. Recommend closing the qwen/deepseek pricing gap before or
   alongside those final snapshots, so N=12 isn't reached with 2 of 6 arms
   unscoreable against the cost ceiling.
+
+### 0.7d Close-out, 2026-08-28 — VERDICT: KEEP opus, terminal, campaign complete
+
+**N reached 12/12 the same day as §0.7c**, unattended, between that
+measurement and this one. `node scripts/campaign.mjs status --campaign
+final-review-scoped-2026q3` reports state **`DECISION_READY`, every gate
+passed**, lock `e52eec728688fcab`. `node scripts/campaign.mjs verdict
+--campaign final-review-scoped-2026q3`:
+
+| Arm | Accepted (of 12 snapshots) | Rate/snapshot | vs. floor (1.416667) |
+|---|---|---|---|
+| **opus** (incumbent) | 23 | **1.916667** | CLEARS |
+| qwen | 15 | 1.25 | blocked — 0.167 short |
+| deepseek | 10 | 0.833333 | blocked |
+| kimi | 8 | 0.666667 | blocked |
+| grok | 1 | 0.083333 | blocked |
+
+**VERDICT: SELECT opus** (`$1.5721`/accepted). Decision rule: a challenger
+must clear `opus's own rate − 0.5/snapshot` (the pre-registered relative
+floor, `floorMargin: 0.5` in the campaign config); none did, so cost
+(`costCeilingUsdPerAccepted: 8`) was never reached as a tiebreak for the
+challengers — they're disqualified on effectiveness, not price. **This is a
+KEEP decision: no change to the production final-review shadow.**
+
+**Sensitivity check passed, not skipped**: `matcher sensitivity: INVARIANT
+— identical decision at all 6 matcher variant(s)`. The verdict does not
+depend on the cross-arm clustering threshold, which the campaign's own
+adjudication-verdict module documents as itself unvalidated ("PROVISIONAL —
+labels are model-generated... Not a validated calibration") — the sweep is
+what makes that acceptable: the outcome is the same regardless of where that
+threshold sits.
+
+**One honest caveat, not a disqualifier.** The adjudicator model is
+`latest-opus` — same family as the incumbent arm being judged. Calibration
+sample self-family share: opus **77%**, every other arm 0%. Override rates
+(how often a human calibration reviewer disagreed with the agent
+adjudicator) ran 37–69% across arms, opus's own at 37%. A same-family
+adjudicator judging its own arm's findings is a real methodological risk
+this repo has hit before (`self_family`, fixed 2026-08-23 elsewhere) — but
+opus's lead here (23 vs. qwen's next-best 15, a 53% margin) is large enough
+that a leniency effect would have to be implausibly strong to flip the
+result. Recorded rather than waved away.
+
+**This decision rule is a generalization of the plan's original §6.3, not
+the same rule.** §6.3 (pre-registered 2026-07-29) specified an ABSOLUTE
+floor — `marginal ≥ 0.2 accepted HIGH/MED per run` — against a
+zero-shadow baseline. The live campaign's `decisionRule` (shipped under
+the role-agnostic comparison-campaign framework, §0.7c) is a RELATIVE
+floor against a declared incumbent (`floorMargin: 0.5` below opus's own
+rate) — a different question (which shadow model, given one already
+exists) than the one originally pre-registered (whether to have a shadow
+at all). Both share the same `$8`/accepted cost ceiling. This is disclosed
+here rather than silently presented as an unmodified execution of §6.3.
+
+**Full verdict write-up**: [`docs/research/final-review-shadow-bakeoff-verdict.md`](../research/final-review-shadow-bakeoff-verdict.md).
+**Campaign closed. No further collection planned** — `final-review-2026q3` is
+dead (§0.7c) and `final-review-scoped-2026q3` has reached its terminal state.
 
 > **Audit trail** — `/audit-plan` (SID `audit-plan-1785325355`). **GPT 3 rounds**
 > (H:6→6→4, M:3→2→2; 23 findings, **all valid, all in-scope, all fixed — zero
