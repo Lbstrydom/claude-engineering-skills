@@ -20,7 +20,9 @@ import crypto from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
 import { ensureAuditDeps } from './lib/install/deps.mjs';
-import { CONSUMER_REPOS, resolveAdHocTarget, canonicaliseRegistryTarget } from './lib/consumer-repos.mjs';
+import {
+  CONSUMER_REPOS, resolveAdHocTarget, canonicaliseRegistryTarget, localRegistryStatus,
+} from './lib/consumer-repos.mjs';
 import {
   writeManifest, detectOwnershipRegression, getGitMeta, buildConsumerManifest, listDirtyPaths,
 } from './lib/sync-manifest.mjs';
@@ -2018,6 +2020,24 @@ async function main() {
 
   // Summary
   console.log('─'.repeat(40));
+
+  // Say where the target LIST came from, before any count. `N/N reached` is
+  // true by construction — it counts the list it was handed — so no count can
+  // ever reveal a list that was silently short. The private registry is
+  // gitignored and therefore absent from every linked worktree, which is
+  // exactly how a private consumer went stale under a green summary
+  // (2026-08-28, shipping bc6487f6). Reported in BOTH branches: a dry run is
+  // precisely when an operator is checking who they are about to reach.
+  // Printed only when it is NOT the ordinary same-checkout case, so the common
+  // run stays quiet.
+  const registryStatus = localRegistryStatus();
+  if (registryStatus.source === 'main-checkout') {
+    console.log(
+      `  ${D}Private consumer registry read from the MAIN checkout `
+      + `(this worktree has none): ${registryStatus.path}${X}`,
+    );
+  }
+
   if (DRY_RUN) {
     console.log(`${Y}DRY RUN complete${X} — no files written`);
     console.log(`  Would create: ${totalNew}  update: ${totalUpdated}  unchanged: ${totalUnchanged}`);

@@ -639,6 +639,42 @@ there — so **every worktree reads as a fresh repo full of unowned files**.
 `--adopt-orphans` clears the abort by overwriting *tracked* files (in the
 reporting consumer, a committed `.audit-loop/expected-schema.json`). Don't.
 
+### Shipping FROM a worktree — the private registry (fixed 2026-08-28)
+
+The same class, on the source side, and it cost a consumer a stale bundle before
+it was found. `scripts/lib/consumer-repos.local.json` — the gitignored registry
+naming private/corporate consumers that must not appear in this public repo — is
+absent from every linked worktree, because `git worktree add` copies only
+tracked content. A `/ship` from a worktree therefore resolved **only** the two
+committed `BASE_REPOS` and printed:
+
+```
+Sync complete
+  Targets: 2/2 reached  Created: 2  Updated: 78  Unchanged: 1420  Errors: 0
+```
+
+`2/2` was true of the list it built and silent about the list it should have
+built, so a private consumer went stale with nothing in the push output to hint
+at it. Note this is the *second half* of the 2026-07-30 fix: that one anchored
+the registry's consumer **paths** to the main checkout, but the lookup of the
+**file listing them** was left behind on `import.meta.dirname`.
+
+`consumer-repos.mjs` now looks in the running checkout first and falls back to
+`<main-checkout>/scripts/lib/`, so a worktree inherits the main checkout's
+registry. Falling back — rather than committing the registry — is the only
+option that keeps private consumer paths out of a public repo, which is the
+whole reason the file is gitignored. When the fallback is used, the sync says
+so, in both real and `--dry-run` runs:
+
+```
+  Private consumer registry read from the MAIN checkout (this worktree has none): …
+```
+
+That line exists because **no count can report a list that was silently short** —
+`N/N reached` counts the list it was handed. If you are shipping from a worktree
+and a private consumer matters, check the target list (`→ <name>` lines), not
+the summary.
+
 ### Remedy 1 — hydrate the worktree (preferred when working there)
 
 > **This page does not reach a consumer — the skill files do.** `docs/runbooks/`

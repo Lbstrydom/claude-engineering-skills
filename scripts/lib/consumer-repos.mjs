@@ -138,17 +138,94 @@ const BASE_REPOS = [
   { name: 'ai-organiser',    alias: 'ai',   path: path.resolve(SIBLING_ANCHOR, '..', 'ai-organiser') },
 ];
 
+const LOCAL_REGISTRY_BASENAME = 'consumer-repos.local.json';
+
+/**
+ * Where the local registry may live, most-specific first.
+ *
+ * **The bug this fixes (field-found 2026-08-28), and why it is the SAME bug as
+ * `SIBLING_ANCHOR` one layer over.** The 2026-07-30 fix above taught the
+ * registry's consumer *paths* to hang off the main checkout — but the lookup of
+ * the file that LISTS them still used `import.meta.dirname`, i.e. the worktree.
+ * `consumer-repos.local.json` is gitignored, so `git worktree add` never
+ * populates it: a `/ship` from a linked worktree resolved only the two
+ * committed `BASE_REPOS`, silently dropped every privately-registered consumer,
+ * and printed `Targets: 2/2 reached · Errors: 0` — true of the list it built,
+ * and silent about the list it should have built. Measured shipping `bc6487f6`:
+ * one consumer went stale with nothing in the push output to hint at it.
+ *
+ * Half a fix would have been worse than none here: anchoring the paths while
+ * leaving the file lookup behind is what produced a bug that only appears in
+ * worktrees, only for private consumers, and only as an absence.
+ *
+ * Falling back to the main checkout — rather than, say, committing the registry
+ * — is the only option that keeps private consumer paths out of this public
+ * repo, which is the whole reason the file is gitignored.
+ *
+ * @returns {Array<{path:string, source:'running-checkout'|'main-checkout'}>}
+ */
+export function localRegistryCandidates() {
+  return registryCandidatesFor(import.meta.dirname, REPO_ROOT, SIBLING_ANCHOR);
+}
+
+/**
+ * Pure core of {@link localRegistryCandidates}, split out for the same reason
+ * `mainCheckoutRoot` is: it can then be driven over fixture directories, where
+ * the alternative — creating a real git worktree and re-importing this module
+ * inside it — would test the module loader as much as the layout rules.
+ *
+ * @param {string} libDir         directory this module runs from (`scripts/lib`)
+ * @param {string} repoRoot       root of the checkout it was loaded from
+ * @param {string} siblingAnchor  the main checkout (equals `repoRoot` outside a worktree)
+ */
+function registryCandidatesFor(libDir, repoRoot, siblingAnchor) {
+  const candidates = [
+    { path: path.join(libDir, LOCAL_REGISTRY_BASENAME), source: 'running-checkout' },
+  ];
+  // Only when they differ — in the main checkout the two ARE the same file, and
+  // a duplicate candidate would make `localRegistryStatus` report a
+  // main-checkout fallback on a run that never fell back, which is a lie in the
+  // one line added to make this visible.
+  if (siblingAnchor !== repoRoot) {
+    candidates.push({
+      path: path.join(siblingAnchor, 'scripts', 'lib', LOCAL_REGISTRY_BASENAME),
+      source: 'main-checkout',
+    });
+  }
+  return candidates;
+}
+
+/**
+ * Which registry the merged list was actually built from.
+ *
+ * Exported so `sync-to-repos.mjs` can SAY where the target list came from. A
+ * "N/N reached" line is true by construction — it counts the list it was handed
+ * — so it can never report a list that was silently short. Naming the source is
+ * what makes the difference visible.
+ *
+ * @returns {{path:string|null, source:'running-checkout'|'main-checkout'|'absent'}}
+ */
+export function localRegistryStatus({ candidates, exists = fs.existsSync } = {}) {
+  for (const c of candidates ?? localRegistryCandidates()) {
+    if (exists(c.path)) return c;
+  }
+  return { path: null, source: 'absent' };
+}
+
 /**
  * Local, GITIGNORED override for private/corporate consumers that must NOT be
  * named in this public repo. Create `scripts/lib/consumer-repos.local.json` on
  * the dev machine (see consumer-repos.local.example.json). Shape:
  *   { "repos": [ { "name": "...", "alias": "work", "path": "../audit-loop" } ] }
  * `path` may be absolute or relative to the repo root. Never committed.
+ *
+ * Found via {@link localRegistryCandidates}, so a linked worktree inherits the
+ * main checkout's registry instead of silently resolving fewer consumers.
  * @returns {Array<{name:string,alias:string,path:string}>}
  */
 function loadLocalRepos() {
-  const localPath = path.join(import.meta.dirname, 'consumer-repos.local.json');
-  if (!fs.existsSync(localPath)) return [];
+  const { path: localPath, source } = localRegistryStatus();
+  if (source === 'absent') return [];
   try {
     const raw = JSON.parse(fs.readFileSync(localPath, 'utf8'));
     const entries = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.repos) ? raw.repos : null);
@@ -389,4 +466,6 @@ export function canonicaliseRegistryTarget(entry) {
  * re-importing this module inside it) would test the module loader as much as
  * the layout rules.
  */
-export const _internals = { mainCheckoutRoot, SIBLING_ANCHOR, REPO_ROOT };
+export const _internals = {
+  mainCheckoutRoot, SIBLING_ANCHOR, REPO_ROOT, LOCAL_REGISTRY_BASENAME, registryCandidatesFor,
+};

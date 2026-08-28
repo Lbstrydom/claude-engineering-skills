@@ -1,5 +1,91 @@
 # Project Status Log
 
+## 2026-08-28 — Worktree ship silently under-synced private consumers (root-cause fix)
+
+### Consumer Verification (previous ship)
+- **Ship**: `bc6487f66d516813ba6a7d2eb57f67c48a7d2181` on `main` (GitHub token-permission check in `check-setup`). Rebased onto a concurrent push (`006b7d8d`, PR #81 legacy-production-audit decomposition) before writing `status.md` — zero file overlap, verified by `git diff --name-only` over my six paths.
+- **State**: `verified` (transfer + consumer-bundle content, spot-checked by RUNNING the consumer's own copy), `unverified` (independent fresh-clone battery).
+- **Retrieval run**: `git ls-remote origin main` → `bc6487f6`, byte-matched against local HEAD. Deliberately not read from `git push`'s exit code — see the correction in this ship's status.md entry.
+- **Consumer bundle — a real gap found and closed by this step.** The push's own sync reported `Targets: 2/2 reached · Created: 2 · Updated: 78 · Errors: 0`, a clean bill of health for an INCOMPLETE sync: `scripts/lib/consumer-repos.local.json` is **gitignored**, so it is absent from every linked worktree, and the third consumer (`storyline`) was silently not a target. A push from the main checkout would have reached 3/3. Remedied in-session by copying the registry into the worktree and running `npm run sync -- --target storyline` (`Targets: 1/1 · Created: 13 · Updated: 92 · Errors: 0`), then removing the copy.
+- **Consumer-side proof (not inherited producer-side green)**: in `C:\GIT\storyline`, ran the consumer's OWN `node scripts/.claude-skills/check-setup.mjs`. It rendered the new GitHub section correctly, including the `[declared: GH_TOKEN_SOURCE_EXPECTED=dotenv]` annotation and the downgraded INFO. `lib/doctor/github-permissions.mjs` present (25,934 bytes) with the upstream-owned banner; `check-setup.mjs` carries 7 references to the new section. Same two checks pass in `wine-cellar-app`.
+- **Instrument cross-check**: that consumer run reported the `gh` keyring as the WORK account, contradicting an earlier reading of `Lbstrydom` in the same session. Investigated rather than assumed a bug: no `GH_CONFIG_DIR`/`GH_HOST` redirect in storyline's `.env`, and a manually scrubbed `gh auth token` agreed — the active account had genuinely flipped back (`hosts.yml` mtime 17:23, ~20 min before the check), most plausibly a concurrent session on this machine. The check was correct; the machine state changed under it. Restored with `gh auth switch --user Lbstrydom`.
+- **`unverified` — independent fresh clone**: no `git clone` into a tempdir + full battery was run against the pushed tip outside the pre-push hook's own throwaway worktree. The hook did run the full `check` in a clean checkout at the pushed commit and passed; that is a strong producer-side proxy, not consumer-side proof.
+- **Follow-up worth taking**: the silent under-sync above is systemic, not a one-off — any `/ship` from a linked worktree under-delivers to every `.local.json`-registered consumer and reports `Errors: 0`. Same shape as the repo's own documented failure class #4 ("only tracked content is guaranteed to reach a worktree"), one file over. A gate should compare the resolved target list against a durable source, or the sync should report that the registry was absent.
+
+### Origin
+
+Found by the previous ship's own Step 6.8 consumer-side verification, not by a
+test or a report. The push that shipped `bc6487f6` printed
+`Targets: 2/2 reached · Created: 2 · Updated: 78 · Errors: 0` — and had silently
+delivered to two consumers instead of three.
+
+### Root cause — the second half of a fix that landed a month earlier
+
+`scripts/lib/consumer-repos.local.json` is the gitignored registry naming
+private/corporate consumers that must not appear in this public repo. It is
+untracked, so `git worktree add` never populates it.
+
+The 2026-07-30 fix (`mainCheckoutRoot` / `SIBLING_ANCHOR`) taught the registry's
+consumer **paths** to anchor to the main checkout. The lookup of the **file that
+lists them** was left behind on `import.meta.dirname` — i.e. the worktree. So
+from any linked worktree `loadLocalRepos()` found nothing, resolved only the two
+committed `BASE_REPOS`, and reported success.
+
+Half a fix was worse than none: anchoring the paths while leaving the file
+lookup behind produced a bug that appears only in worktrees, only for private
+consumers, and only as an absence.
+
+### Changes
+
+- **`scripts/lib/consumer-repos.mjs`** — `localRegistryCandidates()` tries the
+  running checkout first, then `<main-checkout>/scripts/lib/`. Order is
+  load-bearing: a worktree that *does* have its own registry keeps using it. The
+  main-checkout candidate is added **only when the two differ**, so
+  `localRegistryStatus()` can never report a fallback on a run that never fell
+  back — a lie in the very line added to make the fallback visible.
+  `registryCandidatesFor()` is the pure core, exposed via `_internals` for
+  fixture-driven tests, matching how `mainCheckoutRoot` is already tested.
+- **`scripts/sync-to-repos.mjs`** — reports the registry's provenance when the
+  fallback is used, in **both** real and `--dry-run` runs. `N/N reached` is true
+  by construction (it counts the list it was handed), so no count can ever
+  reveal a list that was silently short; naming the source is what makes the
+  difference visible.
+- **`tests/consumer-repos-worktree-anchor.test.mjs`** — 6 new tests in the same
+  bug's existing home (19 total).
+- **`docs/runbooks/consumer-adoption.md`** — §"Shipping FROM a worktree".
+
+### Decisions Made
+
+- **Fall back rather than commit the registry.** Committing it would put private
+  consumer paths into a public repo, which is the entire reason the file is
+  gitignored.
+- **Fall back rather than only warn.** A warning would have been the band-aid:
+  it makes the silence audible but still under-delivers. The file exists and is
+  reachable; the bug was looking in the wrong place.
+- **No durable target-list ledger.** A worktree cut from a clone that never had
+  the registry still under-syncs silently — but that machine has no private
+  consumers to miss, so there is nothing to detect. An artifact no current
+  requirement needs is the over-engineering cliff.
+
+### Verification
+
+- `npm run check` — exit 0. **14,093 tests, 0 fail, 31 skipped.**
+- **Mutation-tested, red-then-green.** Reintroducing the original bug
+  (`if (false)` on the differ check) fails **2** tests; always adding the
+  fallback fails 1; dropping running-checkout priority fails 3. Restored green.
+- **End-to-end from this worktree**: `CONSUMER_REPOS` resolves
+  `story -> C:/GIT/storyline`, and a dry run reaches **3 targets** and prints
+  the provenance line.
+- **Caught a dead-code mistake in my own fix**: the provenance line was first
+  placed inside the non-dry-run branch, so a `--dry-run` would never have shown
+  it. Found by checking reachability rather than trusting the read, then moved
+  above the branch — which is also what let it be proven without writing files.
+
+### Next Steps
+
+- None outstanding for this defect. The GitHub token-permission check shipped in
+  `bc6487f6` is unaffected by this change.
+
 ## 2026-08-28 — GitHub token-permission check in `check-setup` (header-derived, never hardcoded)
 
 ### Consumer Verification (previous ship)

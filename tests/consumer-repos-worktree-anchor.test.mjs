@@ -25,10 +25,11 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
-  CONSUMER_REPOS, sourceRepoRoot, sourceRepoRoots, assertNotSourceRepo, _internals,
+  CONSUMER_REPOS, sourceRepoRoot, sourceRepoRoots, assertNotSourceRepo,
+  localRegistryStatus, _internals,
 } from '../scripts/lib/consumer-repos.mjs';
 
-const { mainCheckoutRoot } = _internals;
+const { mainCheckoutRoot, registryCandidatesFor, LOCAL_REGISTRY_BASENAME } = _internals;
 
 let tmp;
 beforeEach(() => { tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ces-wt-'))); });
@@ -172,5 +173,77 @@ describe('containment refuses every source root, not just the running one', () =
     for (const root of outermost) {
       assert.doesNotThrow(() => assertNotSourceRepo(`${root}-other`, 'test'));
     }
+  });
+});
+
+describe('the local registry FILE is found off the main checkout too', () => {
+  // The second half of the same bug, field-found 2026-08-28 shipping bc6487f6.
+  // The 2026-07-30 fix above anchored the registry's consumer PATHS to the main
+  // checkout; the lookup of the file that LISTS them still used the worktree's
+  // own `scripts/lib`. That file is gitignored, so `git worktree add` never
+  // populates it: a /ship from a worktree resolved only the committed
+  // BASE_REPOS, silently dropped every private consumer, and still printed
+  // `Targets: 2/2 reached · Errors: 0`.
+
+  const LIB = ['scripts', 'lib'];
+
+  test('in the main checkout there is exactly ONE candidate', () => {
+    // Not two identical ones. A duplicate would make localRegistryStatus report
+    // a `main-checkout` fallback on a run that never fell back — a lie in the
+    // very line added to make the fallback visible.
+    const root = path.join(tmp, 'main');
+    const cands = registryCandidatesFor(path.join(root, ...LIB), root, root);
+    assert.equal(cands.length, 1);
+    assert.equal(cands[0].source, 'running-checkout');
+  });
+
+  test('from a worktree the main checkout is offered as a second candidate', () => {
+    const main = path.join(tmp, 'main');
+    const wt = path.join(main, '.claude', 'worktrees', 'wt');
+    const cands = registryCandidatesFor(path.join(wt, ...LIB), wt, main);
+    assert.deepEqual(cands.map((c) => c.source), ['running-checkout', 'main-checkout']);
+    // Order is load-bearing: a worktree that DOES have its own registry must
+    // keep using it, so the running checkout is tried first.
+    assert.equal(cands[0].path, path.join(wt, ...LIB, LOCAL_REGISTRY_BASENAME));
+    assert.equal(cands[1].path, path.join(main, ...LIB, LOCAL_REGISTRY_BASENAME));
+  });
+
+  test('the failing case: worktree has no registry, main checkout does', () => {
+    // This is the exact production shape. Under the old lookup the answer was
+    // `absent` and the private consumer silently vanished from the target list.
+    const main = path.join(tmp, 'main');
+    const wt = path.join(main, '.claude', 'worktrees', 'wt');
+    const mainRegistry = path.join(main, ...LIB, LOCAL_REGISTRY_BASENAME);
+    const candidates = registryCandidatesFor(path.join(wt, ...LIB), wt, main);
+
+    const status = localRegistryStatus({ candidates, exists: (p) => p === mainRegistry });
+    assert.equal(status.source, 'main-checkout');
+    assert.equal(status.path, mainRegistry);
+  });
+
+  test('a worktree with its OWN registry keeps it — the fallback never overrides', () => {
+    const main = path.join(tmp, 'main');
+    const wt = path.join(main, '.claude', 'worktrees', 'wt');
+    const candidates = registryCandidatesFor(path.join(wt, ...LIB), wt, main);
+    // Both exist: first match must win.
+    const status = localRegistryStatus({ candidates, exists: () => true });
+    assert.equal(status.source, 'running-checkout');
+  });
+
+  test('neither present is `absent`, not an error — most machines have no registry', () => {
+    const main = path.join(tmp, 'main');
+    const wt = path.join(main, '.claude', 'worktrees', 'wt');
+    const candidates = registryCandidatesFor(path.join(wt, ...LIB), wt, main);
+    const status = localRegistryStatus({ candidates, exists: () => false });
+    assert.deepEqual(status, { path: null, source: 'absent' });
+  });
+
+  test('the real running checkout reports a coherent status', () => {
+    // Weak by design — the answer depends on the machine — but it pins the
+    // contract that the reported path, when there is one, actually exists.
+    const status = localRegistryStatus();
+    assert.ok(['running-checkout', 'main-checkout', 'absent'].includes(status.source));
+    if (status.source === 'absent') assert.equal(status.path, null);
+    else assert.ok(fs.existsSync(status.path), `${status.path} was reported but does not exist`);
   });
 });
