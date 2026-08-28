@@ -117,6 +117,53 @@ describe('file-lock / withFileLockSync — contention declines, never blocks or 
   });
 });
 
+describe('file-lock / tryAcquireLock — EPERM is treated as contention, like EEXIST', () => {
+  // Windows: two processes racing {flag:'wx'} on the same lock path can
+  // surface libuv's uv_fs_open race as EPERM instead of the POSIX EEXIST —
+  // reproduced live via tests/write-ledger-entries.test.mjs's two-real-
+  // process "two simultaneous writers" test, which crashed outright before
+  // this fix. Both codes mean the same thing here: someone else won the
+  // create race, not a genuine permission failure.
+  let originalWriteFileSync;
+
+  afterEach(() => {
+    if (originalWriteFileSync) {
+      fs.writeFileSync = originalWriteFileSync;
+      originalWriteFileSync = null;
+    }
+  });
+
+  it('returns null (not a throw) on EPERM from the exclusive create', () => {
+    originalWriteFileSync = fs.writeFileSync;
+    fs.writeFileSync = () => {
+      const err = new Error('operation not permitted');
+      err.code = 'EPERM';
+      throw err;
+    };
+    assert.equal(_internals.tryAcquireLock(lockPath), null);
+  });
+
+  it('still returns null on the POSIX EEXIST shape (unchanged behaviour)', () => {
+    originalWriteFileSync = fs.writeFileSync;
+    fs.writeFileSync = () => {
+      const err = new Error('file already exists');
+      err.code = 'EEXIST';
+      throw err;
+    };
+    assert.equal(_internals.tryAcquireLock(lockPath), null);
+  });
+
+  it('still throws on an unrelated error code — not a blanket swallow', () => {
+    originalWriteFileSync = fs.writeFileSync;
+    fs.writeFileSync = () => {
+      const err = new Error('read-only file system');
+      err.code = 'EROFS';
+      throw err;
+    };
+    assert.throws(() => _internals.tryAcquireLock(lockPath), /read-only file system/);
+  });
+});
+
 describe('file-lock / withFileLockSync — stale lock recovery', () => {
   it('recovers a lock owned by a dead PID that is older than the stale threshold', () => {
     // PID 0x7FFFFFFE is not a live process on any platform we run on.

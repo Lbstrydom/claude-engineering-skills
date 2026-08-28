@@ -105,7 +105,16 @@ function tryAcquireLock(lockPath) {
     fs.writeFileSync(lockPath, payload, { flag: 'wx' });
     return token;
   } catch (err) {
-    if (err.code === 'EEXIST') return null;
+    // EEXIST is the POSIX signal for "O_CREAT|O_EXCL lost the race". On
+    // Windows, libuv's uv_fs_open can surface the SAME race as EPERM instead
+    // — two processes calling {flag:'wx'} on one path is exactly this
+    // function's own contention case, not a real permission failure (a
+    // genuinely unwritable directory would keep failing every retry and
+    // still bounds out via the caller's maxWaitMs/attempts cap, same as
+    // sustained EEXIST does). Reproduced via two real concurrent CLI
+    // processes racing this exact lock (tests/write-ledger-entries.test.mjs
+    // "two simultaneous writers"), not simulated.
+    if (err.code === 'EEXIST' || err.code === 'EPERM') return null;
     throw err;
   }
 }
