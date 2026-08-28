@@ -59,14 +59,24 @@ function isFenceClose(trimmed, openChar, openLen) {
   return m[1][0] === openChar && m[1].length >= openLen;
 }
 
+/**
+ * Is `line`'s leading whitespace within CommonMark's fence-indent budget
+ * (0-3 spaces)? A line indented 4+ spaces is an indented code block, not a
+ * fence delimiter (7906c127df70 fix — the fence tracker used to `trim()`
+ * before testing, erasing this distinction).
+ * @param {string} line
+ * @returns {boolean}
+ */
+function withinFenceIndent(line) {
+  return line.length - line.trimStart().length < 4;
+}
+
 // ── Table parsing ────────────────────────────────────────────────────────
 
 /**
- * Split a markdown table row into cells. Safe for this table's actual
- * content — none of its cells contain a literal `|` (verified against the
- * live AGENTS.md table); a row that did would need escaping this doesn't
- * handle, which is exactly why malformed rows are rejected below rather
- * than silently mis-split.
+ * Split a markdown table row into cells, honouring an escaped pipe (`\|`)
+ * as literal cell content rather than a column delimiter (2b5d31aaafe8 fix
+ * — a raw `split('|')` misread an escaped pipe as an extra column).
  * @param {string} line
  * @returns {string[]}
  */
@@ -74,7 +84,7 @@ function splitTableRow(line) {
   let t = line.trim();
   if (t.startsWith('|')) t = t.slice(1);
   if (t.endsWith('|')) t = t.slice(0, -1);
-  return t.split('|');
+  return t.split(/(?<!\\)\|/).map((cell) => cell.replace(/\\\|/g, '|'));
 }
 
 /**
@@ -107,11 +117,12 @@ export function parseAgentsDebtTable(markdown) {
   let headingLineIdx = -1;
   for (let i = 0; i < allLines.length; i++) {
     const trimmed = allLines[i].trim();
+    const canFence = withinFenceIndent(allLines[i]);
     if (fence) {
-      if (isFenceClose(trimmed, fence.char, fence.len)) fence = null;
+      if (canFence && isFenceClose(trimmed, fence.char, fence.len)) fence = null;
       continue;
     }
-    const opened = matchFenceOpen(trimmed);
+    const opened = canFence ? matchFenceOpen(trimmed) : null;
     if (opened) { fence = opened; continue; }
     if (headingRe.test(trimmed)) { headingLineIdx = i; break; }
   }
@@ -125,11 +136,12 @@ export function parseAgentsDebtTable(markdown) {
   let sectionEndLineIdx = allLines.length;
   for (let i = headingLineIdx + 1; i < allLines.length; i++) {
     const trimmed = allLines[i].trim();
+    const canFence = withinFenceIndent(allLines[i]);
     if (fence) {
-      if (isFenceClose(trimmed, fence.char, fence.len)) fence = null;
+      if (canFence && isFenceClose(trimmed, fence.char, fence.len)) fence = null;
       continue;
     }
-    const opened = matchFenceOpen(trimmed);
+    const opened = canFence ? matchFenceOpen(trimmed) : null;
     if (opened) { fence = opened; continue; }
     if (headerLineIdx === -1 && headerRowRe.test(trimmed)) { headerLineIdx = i; continue; }
     // Ends at a heading of the SAME OR HIGHER level (Gemini gate G1, round 1:
