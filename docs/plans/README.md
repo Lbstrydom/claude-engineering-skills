@@ -23,7 +23,7 @@ This is the list to read when asking "what is in flight?".
 |---|---|---|
 | [Decompose `legacy-production-audit.mjs`](./legacy-production-audit-decomposition.md) | `Approved` | `/audit-plan` complete: GPT 5 rounds (absolute cap, |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
-| [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | first real burndown pass landed 2026-08-28. Q1: |
+| [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | two burndown passes landed 2026-08-28. Pass 1: Q1 |
 
 ## Superseded / abandoned
 

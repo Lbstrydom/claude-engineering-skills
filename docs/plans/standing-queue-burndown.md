@@ -1,11 +1,13 @@
 # Plan: Standing Queue Burndown — the three gates that fire on every ship
 
-- **Status**: In Progress — first real burndown pass landed 2026-08-28. Q1:
-  62 code findings locked with real regression tests this session (§2). Q2: 3
-  code findings closed with `final-review-record-fix` after confirming the fix
-  in the codebase (§3). Both queues are large, actively-growing, shared state
-  — this pass made a dent, not a close-out. Q3 stays rescoped out (§4).
-- **Date**: 2026-08-09 (re-measured 2026-08-28, burndown pass 2026-08-28)
+- **Status**: In Progress — two burndown passes landed 2026-08-28. Pass 1: Q1
+  62 code findings locked, Q2 3 code findings closed (§2/§3). Pass 2 (same day,
+  separate session): Q1 4 more code findings locked (33→28), Q2 1 more code
+  finding closed (91→90) — both queues had already re-grown between passes
+  from new audits landing. Both queues are large, actively-growing, shared
+  state — these passes made a dent, not a close-out. Q3 stays rescoped out
+  (§4).
+- **Date**: 2026-08-09 (re-measured 2026-08-28, burndown passes 2026-08-28 x2)
 - **Origin**: `/ship` Steps 0.5b, 0.5e and 6.7 have surfaced the same three
   non-blocking queues on every push for weeks. They were reported as prose,
   acknowledged, and never worked. This document gives each queue a route and an
@@ -111,6 +113,21 @@ lock gap. The 62 locks are individually resolvable in
 `.audit`/the store by finding id if any needs re-review; no fabricated
 evidence was recorded.
 
+**Burndown pass 2, 2026-08-28 (same day, separate session)**: re-measured
+`byMode.code` at **33** (queue had already re-grown from new audits landing
+between the two passes, despite the first pass closing 62). Excluded 5 rows
+citing `scripts/lib/audit/legacy-production-audit.mjs` — out of scope while
+another session actively works its decomposition plan — and 6 more bogus
+`primary_file` rows (section/function-name citations), leaving 22 investigated
+via parallel read-only agents grouped by file. Of those: **4 had a genuine,
+already-existing regression test** (independently re-verified by reading the
+test bodies and, for the DB-gated one, the migration trigger SQL directly)
+and were locked via `lock-with-test`; **18 had no real coverage**, including
+three `openai-audit.mjs` rows that turned out to be re-raises of a plan claim
+the codebase itself had already corrected (commit `82af2301`: the real
+`detectEventWiringAsymmetry` call site is `legacy-production-audit.mjs`, not
+`openai-audit.mjs`). Post-pass: `byMode.code` **28**.
+
 **`/ux-lock` is the wrong route for essentially all of them.** It drives a live
 URL via Playwright, and this repo has no frontend — a 2026-07-23 census found
 22/22 accumulated rows were backend/CLI findings with no URL to drive. The
@@ -125,9 +142,10 @@ the writer refuses a missing path or an empty rationale.
 
 **Exit criterion**: `byMode.code` reaches 0, or each remaining row carries a
 recorded lock or an explicit declined-on-the-merits note. Plan rows are
-excluded from the criterion by construction. **Not met** — 33 code rows
-remain open after this pass (down from 95); the queue also grows between
-passes as new audits land, so 0 is a moving target, not a one-time close-out.
+excluded from the criterion by construction. **Not met** — 28 code rows
+remain open after pass 2 (95→33→28 across the two 2026-08-28 passes); the
+queue also grows between passes as new audits land, so 0 is a moving target,
+not a one-time close-out.
 
 ## 3. Q2 — accepted findings that were never remediated
 
@@ -178,6 +196,24 @@ this repo's own documented control-marker convention
 (`scripts/lib/audit/control-markers.mjs`), not a defect. Left open,
 flagged here for human triage rather than closed either way.
 
+**Burndown pass 2, 2026-08-28 (same day, separate session)**: re-measured —
+91 open code rows (queue had re-grown from new audits between passes despite
+pass 1 closing 3). 63 `planned` (skipped, in-flight), 28 `pending`; of those,
+13 had bogus `primary_file` citations and 3 cited
+`scripts/lib/audit/legacy-production-audit.mjs` (out of scope — another
+session owns its decomposition plan), leaving 12 real-path rows investigated.
+**1 confirmed genuinely fixed** and closed:
+- `04582bd2` (`cmdLearningQuickfixStats` CLI-contract-drift) — the legacy
+  dispatch map's flag rejection was closed by the Cluster D command-registry
+  migration, commit `ef1220c1`.
+
+**11 of the 12 confirmed still open**, mostly deliberate tradeoffs (e.g. the
+same `AUDIT_LOOP_STATE_DIR` lock-scoping seam as Q1's maintenance-checks.mjs
+cluster) or genuinely non-trivial (cross-store transaction spanning multiple
+exported functions, a SYSTEMIC error-conflation issue only 1-of-3 read paths
+fixed). The `6485990d` mis-accepted-finding flag from pass 1 was re-confirmed
+and still needs human triage, not a code fix. Post-pass: 90 open code rows.
+
 **Close a row** — both keys are projected by the view (the fingerprint only
 since migration `20260808200000`; if yours predates it, run
 `node scripts/setup-postgres.mjs --migrate` rather than hand-deriving one):
@@ -196,9 +232,10 @@ file path. A row at `remediation_state: 'planned'` with a live plan is
 in-flight, not forgotten; drop it from the list.
 
 **Exit criterion**: the reader reports a true total, and that total reaches 0
-or every remaining row is `planned` against a live plan. **Not met** — 91
-code rows remain open (down from 94; 63 `planned`, 28 `pending` with no
-confirmed fix). Re-measured post-pass total: 159 open overall (94→91 code).
+or every remaining row is `planned` against a live plan. **Not met** — 90
+code rows remain open after pass 2 (94→91→90 across the two 2026-08-28
+passes; 63 `planned`, 27 `pending` with no confirmed fix). Re-measured
+post-pass total: 158 open overall.
 
 ## 4. Q3 — final-review shadow-only credit backlog (rescoped 2026-08-28)
 
@@ -281,10 +318,12 @@ direct closing command.
 **Both queues grow between passes** (new audits land continuously in this
 repo, run by concurrent sessions) — a burndown pass should re-measure first,
 work the currently-actionable set, and stop; it is not a one-time close-out.
-The 2026-08-28 pass moved Q1 code from 95→33 and Q2 code from 94→91, using
-parallel read-only investigation (per distinct `primary_file`) to find
-genuine existing test coverage (Q1) or a genuine already-landed fix (Q2)
-before writing any lock or closing any row — no test was written and no fix
+Two 2026-08-28 passes (same day, separate sessions) moved Q1 code
+95→33→28 and Q2 code 94→91→90, each re-growing between passes despite the
+prior pass's closes, using parallel read-only investigation (per distinct
+`primary_file`) to find genuine existing test coverage (Q1) or a genuine
+already-landed fix (Q2) before writing any lock or closing any row — no test
+was written and no fix
 was implemented as part of this pass; both are out of this plan's scope
 (§0 doctrine: this file routes to real evidence, it doesn't fabricate any).
 
