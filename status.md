@@ -1,5 +1,53 @@
 # Project Status Log
 
+## 2026-08-29 — /ship 0.5h read ONE store; AGENTS.md condensed for real headroom
+
+### Origin
+Both items were named as known gaps in the entry below and are now closed.
+
+### 0.5h was blind to an entire consumer, and reported that as a clean queue
+Step 0.5h ran `cross-skill.mjs upstream list`, which reads whatever store `AUDIT_DB_URL` names in THIS repo. Consumers are not on one store: `storyline` files into a corporate Azure Postgres while this repo defaults to the NAS one. **The step printed `0 open` in the same session that consumer had EIGHT open reports, four of them HIGH.** A triage nudge blind to a whole consumer was reporting its blindness as good news.
+
+Third instance of the store-scoping class in two days, and the earliest in the lifecycle: the disposition ledger could not *reconcile* a cross-store closure; this one could not *see* the report at all.
+
+**[`scripts/upstream-queues.mjs`](scripts/upstream-queues.mjs) + [`lib/upstream/store-discovery.mjs`](scripts/lib/upstream/store-discovery.mjs)** (`npm run upstream:queues`) resolve each registered consumer's store the way that consumer's own tooling does — its `.env`, then the shared `~/.audit-loop.env` — **inheriting `load-shared-env`'s layering rather than re-inventing it**: both DSN spellings (`AUDIT_POSTGRES_URL` is the other one `resolveDbUrl` reads), and the whole-bundle rule that an SSL mode never crosses layers away from its DSN. Deduped by `storeFingerprint`, so repos sharing a store are queried once. Each store is asked in a child process, because `db/client.mjs`'s pool is a module-global latched to `AUDIT_DB_URL` at init.
+
+Two properties it must not lose, both guarded and both verified red-then-green:
+- **UNQUERIED is never rendered as empty.** A store nobody could reach, and a consumer whose DSN could not be resolved, are reported explicitly; a run that reached nothing says `NOTHING WAS CHECKED` rather than `0 open`. Reproducing that equivalence inside the fix would be the whole point missed — restoring it fails 2 of the 23 tests.
+- **The DSN never reaches an operator-facing string.** Stores are named by fingerprint + the consumers using them. This output is pasted into a public repo's status log and one store is a corporate internal host.
+
+### Two defects found by running it, not by reading it
+- **The first cut read a bare `process.env.AUDIT_DB_URL`**, which is unset in a linked worktree — so the fan-out silently EXCLUDED this repo's own store, a regression against the single-store read it replaces. Now imports `lib/load-env.mjs` like every other CLI.
+- **Reading only `.env` reported three of four real repos as having no store.** They carry no per-repo DSN and take the shared config, which is how `setup:cloud` provisions a consumer. A false alarm as misleading as the false clean it replaced.
+
+### Two gates found two more
+- **`arm-vocabulary-layering`**: `store-discovery.mjs` is `shared-lib` and imported `lib/db/client.mjs` (`stores`) for one pure helper. Fixed by the top-preference route (refactor > retag > declare) — `storeFingerprint` is injected, which the module was already shaped for. Omitting it **throws**: a missing fingerprint would make every store unresolvable, i.e. every consumer queue silently invisible, arriving as a clean result.
+- **`check-gate-contracts`**: three prose lines in the new 0.5h carry `ENFORCEMENT_VERBS`. Each states a property of something *other* than a /ship gate — the fan-out's rendering, its exit code, the uuid rule another gate imposes — and each is bound executably where it belongs, named in its disposition. The ratchet runs the checker in an isolated worktree at the **committed** state, so the dispositions only took effect once committed.
+
+### AGENTS.md — condensed, not shaved
+The file was at **40 characters** of headroom, and its own advisory warns that shaving words to squeeze under the cap is how a file stays permanently full. So this moved a section instead: the **chain diagram and the one-line-per-skill index** went to [`docs/reference/skill-roster.md`](docs/reference/skill-roster.md), which is where the elaboration already lived and which already said AGENTS.md kept them. AGENTS.md keeps the prose chain summary, the file-structure rule, the three surface invariants and the four imperatives — the things that constrain *any* change to a skill.
+
+Headroom **40 → 1,638 chars**. The store-scoping invariant then fit (**698 left**), stated once for all three instances: *an unasked question must never render as an empty result*, and *a store is named to operators by fingerprint + the consumers using it, never a hostname*.
+
+### Files Affected
+- New: `scripts/upstream-queues.mjs`, `scripts/lib/upstream/store-discovery.mjs`, `tests/upstream-store-discovery.test.mjs`
+- Modified: `skills/ship/SKILL.md` (0.5h rewritten), `skills/ship/gate-contract.json`, `package.json` (`upstream:queues`), `scripts/.cli-catalog.json`, `AGENTS.md`, `docs/reference/skill-roster.md`
+
+### Measured
+| Signal | Value |
+|---|---|
+| 0.5h before | `0 open` (1 store) |
+| 0.5h after | **8 open across 2 stores**, 4 HIGH |
+| `npm run check` | exit 0 |
+| Store-discovery suite | 23 pass; unqueried-as-clean restored ⇒ 2 fail |
+| AGENTS.md headroom | 40 → **698** chars (1,962 moved to the roster) |
+
+### Decisions Made
+- **A separate source-repo CLI, not a `cross-skill.mjs` verb.** `cross-skill.mjs` is synced to consumers, where "read every consumer's store" is meaningless and the registry it needs is absent. Same disposition as `check-upstream-probe-coverage.mjs`.
+- **Fingerprints, not hostnames, everywhere operator-facing** — consistent with the ledger fix in the entry below, and for the same reason: this repo is public and one consumer's store is corporate.
+- **Advisory, always exit 0.** The queue is cloud state the commit cannot change; a gate firing on something the author cannot fix earns `--no-verify`.
+- **Triage still writes to the ambient store.** The fan-out is READ-only; closing a report belonging to another store needs that store's DSN in the environment. Making the transition path multi-store is a larger change and is not smuggled in here — 0.5h now says so explicitly.
+
 ## 2026-08-29 — consumer divergence is DECLARED, not inferred: the sync stops silently reverting merged work
 
 ### Consumer Verification (previous ship)
@@ -72,8 +120,8 @@ The push-triggered sync reverted `storyline`'s 16 `SKILL.md` — **the exact fai
 **Why the e2e suite missed it — the more useful lesson.** It ran exactly ONE sync after diverging and asserted "it refused". *A guard whose second invocation is inert is indistinguishable from a working one until you invoke it twice.* The suite now runs a second and a third sync and asserts the manifest never adopts the consumer's bytes; restoring the bug fails 7 of its 17 tests. The same blind spot would hide any once-only guard, and none of the red-then-green neutering above could see it — every one of those probes was also single-invocation.
 
 ### Known gaps, named
-- **`/ship` Step 0.5h reads ONE store.** It reported `0 open` here while storyline's Azure store carries several genuinely open reports (`5b67f273`, `7af14dd6`, `0f5d87a2`, `b3b4ac36`, `71287365`). Same store-scoping class as the ledger defect above, on the READ side, and NOT fixed by this change — the triage nudge is blind to any consumer on another store. Worth its own pass.
-- **AGENTS.md has 40 characters of headroom.** Four blocks were condensed to fit the new invariant; the file's own advisory warns that shaving words is how it stays permanently full, and names `## Architecture` (7,941) and `## Skill Chain` (6,301) as condensation candidates. Not done here — it is a separate, deliberate pass.
+- **`/ship` Step 0.5h reads ONE store.** It reported `0 open` here while storyline's Azure store carries several genuinely open reports (`5b67f273`, `7af14dd6`, `0f5d87a2`, `b3b4ac36`, `71287365`). Same store-scoping class as the ledger defect above, on the READ side, and NOT fixed by this change — the triage nudge is blind to any consumer on another store. Worth its own pass. **CLOSED by the entry above (`npm run upstream:queues`).**
+- **AGENTS.md has 40 characters of headroom.** **CLOSED by the entry above** — the chain diagram and per-skill index moved to the roster; headroom 40 → 698. Four blocks were condensed to fit the new invariant; the file's own advisory warns that shaving words is how it stays permanently full, and names `## Architecture` (7,941) and `## Skill Chain` (6,301) as condensation candidates. Not done here — it is a separate, deliberate pass.
 
 ## 2026-08-29 — the aged-out backlog was UNCLOSABLE, not ignored: view/writer row-set contract + 55 locks + 13 acceptances closed
 
