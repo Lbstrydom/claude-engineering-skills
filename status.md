@@ -1,5 +1,69 @@
 # Project Status Log
 
+## 2026-08-29 — consumer divergence is DECLARED, not inferred: the sync stops silently reverting merged work
+
+### Consumer Verification (previous ship)
+- **Ships covered**: `b59bd8f0789b5db2115d61b2cfa855e9fa7ee743` (verification-discipline §3c/§3d) and `76d72a253e6d92a8351e07eb16d09f4e5a78b0bd` (ship-nudges close-path row-set fix). Both on `main`; neither had been folded into a status.md entry when written.
+- **State**: `verified` (transfer + consumer-bundle content for both), `unverified` (independent fresh-clone battery).
+- **Transfer — `verified`**: `git ls-remote origin main` → `76d72a253e6d92a8351e07eb16d09f4e5a78b0bd`, byte-matched against local HEAD. Read from the remote ref, never from `git push`'s exit code.
+- **Consumer bundle — `verified`, SUBJECT checked, not only the hash**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run **in wine-cellar-app** → 8/8 gates, exit 0, for both ships. Then the content checks a hash cannot make:
+  - b59bd8f0: `grep -c '^### 3c\|^### 3d' .claude/skills/audit-code/references/verification-discipline.md` → **2**.
+  - 76d72a25: `grep -n 'SELECT \* FROM unlocked_fixes' scripts/.claude-skills/lib/store/ship-nudges.mjs` → line **232** carries `FROM unlocked_fixes_all` (the fixed close path), while lines 182/188 keep the sampler's intended all-ages/windowed split. The behavioural change arrived, not merely a consistent manifest.
+- **Sync fan-out**: `Targets: 3/3 reached · Updated: 6 · Unchanged: 2244 · Errors: 0`, with the worktree-registry fallback line firing (`Private consumer registry read from the MAIN checkout`) — the correct path from a linked worktree per the 2026-08-28 fix. Note `N/N reached` still cannot reveal a SHORT list: "3/3" evidences that three known targets were written, not that three is the right number.
+- **`unverified` — independent fresh clone**: no `git clone` into a tempdir + full battery. Blocked prerequisite: not run this session. The pre-push hook did run the full `check` in its own throwaway worktree at each pushed sha and passed — a producer-side proxy, explicitly not consumer-side proof.
+- **Suite at the shipped tip**: `npm test` → 14,128 tests, 0 fail, 31 skipped (133s), run in the source worktree before the 76d72a25 commit.
+
+### Origin
+Five upstream reports from `storyline`, four open and one (`5b1a121e`, HIGH) documenting the failure actually occurring: a sync at `14:11:25Z` from `667b2488` reverted four separate pieces of already-merged work in that consumer. Two were caught by consumer-side gates; two passed unnoticed and a later `git commit -a` would have enshrined them. The ask was a durable mechanism, not a fifth patch.
+
+### The root cause, and a correction to how the reports read
+The sync's ownership model asked ONE question of every destination — *did a previous sync write this?* A yes (an entry in the consumer's gitignored `scripts/.sync-manifest.json`) licensed an **unconditional** overwrite. It never asked whether the consumer had changed it since. The project already had a concept of ownership — the `⚠ UPSTREAM-OWNED` banner — but only in one direction: `sourceDirty` tracks dirt on the SOURCE side and nothing recorded deliberate divergence on the CONSUMER side.
+
+**The correction**: `263e49e8`/`36be3a03`/`29a9f4cf` were already fixed by `13acf83e` (2026-08-27), which inlined the hydrate recipe into the marker block. Sync `667b248` is what *delivered* that fix. The consumer's condensed one-liner — which cites `../../../docs/runbooks/consumer-adoption.md`, a file only `storyline` has — is the older, weaker form for any repo that has not authored its own runbook. So porting it upstream (the reports' preferred remedy) would have regressed every fresh consumer to the "pointer to nothing" they objected to. Declined on those grounds; the diagnosis behind it is what got built.
+
+### Changes — the sync (`9d8c9660`)
+- **The divergence gate** ([scripts/lib/sync-divergence.mjs](scripts/lib/sync-divergence.mjs)). The manifest already stores the sha of what the last sync wrote, so the three-way base was free: `disk === base` ⇒ overwrite freely; `disk !== base` is consumer content — **tracked ⇒ REFUSE and exit non-zero**, untracked ⇒ overwrite loudly. **Basing it on the manifest and not on `HEAD` is what stops it firing on ordinary upstream updates** — the failure mode that gets a gate `--no-verify`'d. `readVcsState` separates git's exit 1 ("no") from 128 ("could not run"); collapsing them would fail OPEN. `--overwrite-diverged` consents, per run.
+- **The consumer's declaration** ([scripts/lib/sync-overrides.mjs](scripts/lib/sync-overrides.mjs)). Committed `.sync-overrides.json`; `reason` required; malformed **ABORTS** the target (fail-open would silently resume clobbering the paths it protects while the run reported clean); `gitignoreExtra` folds into the managed fence, which is how `.audit-loop/cache/` was lost from *inside* a fence whose own marker says DO NOT EDIT INSIDE. `scripts/.claude-skills/**` may never be claimed — that would turn the one governance rule the banner enforces into an opt-out.
+- **Never un-pin** ([scripts/lib/sync-pin-guard.mjs](scripts/lib/sync-pin-guard.mjs)). `deepMerge` gives a source leaf authority and replaces arrays wholesale, so upstream's unpinned `npx` fetch silently replaced a consumer's `node_modules` launcher on every sync. Guard **plus an independent post-condition** on the final bytes — a check sharing its only implementation with the thing it checks proves nothing. Holds even under `--overwrite-diverged`.
+- **The in-repo trace** ([scripts/lib/sync-receipt.mjs](scripts/lib/sync-receipt.mjs)). Committed `.sync-receipt.json`, a *deliberate* generated-artifact-policy exception: the policy's own test is "does its dirtiness carry information", and here it is the only information there is. Does not churn on a no-op run.
+- `.audit-loop/cache/` added to `MANAGED_IGNORE_PATTERNS` — this repo has gitignored it since the directory existed; consumers never received it.
+
+### Changes — the upstream-report machinery (`35f62552`)
+Closing the five reports surfaced three defects, none reachable by reading the code:
+- **Closing by ID PREFIX left `npm run check` permanently red.** The store resolves a prefix, so the close succeeded — but the committed ledger records `--id` verbatim and `upstream:coverage:gate` requires a uuid. The entry was written and then rejected by a gate nothing could withdraw it from: the writer accepting a key its own reader refuses. A terminal transition now demands the full uuid at the boundary, before either write.
+- **The disposition ledger was single-store, and consumers are not.** `ledgerOnly` carried THREE causes under one reason string — *stale*, *mistyped*, and *belongs to a store this run is not connected to*. Only the third applied (storyline files into a corporate Azure store, not this repo's NAS one), it is not a defect, and it failed the push. Entries now carry an optional `storeFingerprint`; a foreign entry is partitioned into `otherStore` — reported every run including a clean one, never gating.
+- **The stamp had to be a fingerprint, not `dbIdentity`.** That value is credential-free but not identity-free: it is a hostname, this ledger is committed to a **public** repo, and `git grep` confirmed storyline's corporate Azure host was **not** already tracked here. Equality is the only operation the reconciler performs, so `sha256(dbIdentity)` is sufficient and is the only disclosure-safe form. A raw `store` field is now **refused** by the validator, not merely unused.
+
+### Files Affected
+- New: `scripts/lib/sync-{divergence,overrides,pin-guard,receipt}.mjs`; `tests/sync-{divergence,overrides,pin-guard,receipt}.test.mjs`, `tests/sync-consumer-divergence-e2e.test.mjs`, `tests/upstream-ledger-store-scope.test.mjs`
+- Modified: `scripts/sync-to-repos.mjs`, `scripts/lib/sync-eol-pins.mjs`, `scripts/lib/db/client.mjs` (`storeFingerprint`), `scripts/lib/upstream/{commands,dispositions}.mjs`, `scripts/lib/cross-skill/commands/quality.mjs`, `scripts/upstream-dispositions.json`, `AGENTS.md`, `docs/runbooks/consumer-adoption.md`
+- Plan: `docs/plans/consumer-sync-durability.md` (Status: Complete)
+
+### Measured
+| Signal | Value |
+|---|---|
+| `npm test` | 14,231 pass, **0 fail**, 31 skipped (233s) |
+| `npm run check` | exit 0 |
+| `sync --dry-run --target storyline` | **16 SKILL.md refused** as `diverged-committed`; the pinned `mcp.json` launcher held; exit 1 |
+| Reconcile from NAS store | exit 0, 5 entries named out-of-scope |
+| Reconcile from Azure store | exit 0, 20 entries named out-of-scope |
+| `upstream:coverage:gate` | 25 dispositions, all resolve |
+| AGENTS.md | 91,960 / 92,000 chars (**40 left**) |
+
+### Decisions Made
+- **Every guard verified RED-then-green by neutering it, in both directions where one exists**: divergence gate (7/14 fail), pin guard (4/18), uuid boundary (4/9), store partition **twice** — disabled (7/21) and over-applied so every entry reads foreign (6/21). The second of that pair is the one that matters: a partition that swallowed genuinely stale entries would look identical to a working one from a green suite alone.
+- **Region-level ownership markers DEFERRED, with reason.** They would let a consumer keep only *part* of a synced file (the `repo-electron-target` case). File-level overrides plus `gitignoreExtra` cover every reported case today, and a marker-aware three-way merge is larger than any current requirement. The cost is bounded and visible: an overridden file stops receiving upstream updates, and `upstreamMoved` says so every run.
+- **A literal transcluded fragment DECLINED**: `SKILL.md` has no include mechanism — Copilot, Cursor and Claude Code all read the file raw. `MARKER_BLOCK` is already one constant byte-pinned across all 16 copies, so the block already has one edit site; the copies are generated output.
+- **The first-sync boundary is named, not closed.** With no manifest entry there is nothing to compare against, so `NO_BASE` writes. Correct for a genuine adoption; it means a hand-adopted consumer is overwritten on that one run. Not silent — the ownership preflight already reports both shapes. Asking git per file would cost two execs across 751 files on exactly the runs where the manifest is missing.
+- **A guard I wrote was INERT and I only caught it by running the gate for real.** The first store-identity helper imported a `config.db` that does not exist (the export is `dbConfig`) and its own `try/catch` swallowed the TypeError, so every entry went unstamped and the partition never fired — while every unit test passed. It now reads `process.env` (which `dbConfig` itself names as the resolver of record) and reports a derivation failure loudly.
+
+### Report dispositions
+`263e49e8` / `36be3a03` / `29a9f4cf` → **fixed** @ `13acf83e` (already fixed before triage). `5b1a121e` → **fixed** @ `f3d97141` — all four of its remedies except (1), including its "minimum ask" verbatim. `ab61aefa` → **wont-fix**: the specific ask declined per above, the defect it diagnosed is what this builds. Each carries a written note to the reporter.
+
+### Known gaps, named
+- **`/ship` Step 0.5h reads ONE store.** It reported `0 open` here while storyline's Azure store carries several genuinely open reports (`5b67f273`, `7af14dd6`, `0f5d87a2`, `b3b4ac36`, `71287365`). Same store-scoping class as the ledger defect above, on the READ side, and NOT fixed by this change — the triage nudge is blind to any consumer on another store. Worth its own pass.
+- **AGENTS.md has 40 characters of headroom.** Four blocks were condensed to fit the new invariant; the file's own advisory warns that shaving words is how it stays permanently full, and names `## Architecture` (7,941) and `## Skill Chain` (6,301) as condensation candidates. Not done here — it is a separate, deliberate pass.
+
 ## 2026-08-29 — the aged-out backlog was UNCLOSABLE, not ignored: view/writer row-set contract + 55 locks + 13 acceptances closed
 
 ### Changes
