@@ -1,5 +1,37 @@
 # Project Status Log
 
+## 2026-08-29 — the aged-out backlog was UNCLOSABLE, not ignored: view/writer row-set contract + 55 locks + 13 acceptances closed
+
+### Changes
+- **Root cause of the "obligations discharged by delay" signal, found by trying to clear it.** `/ship` Step 0.5b reports `agedOut` and tells the operator to *"lock them, or write them off — waiting is not a way to clear this gate"*, and prints `lock-with-test` as the remedy. That command refused **every one of the 125 aged-out rows**. `unlocked_fixes` is `unlocked_fixes_all WHERE is_recent` (14 days), the nudge sources its keys from `unlocked_fixes_all` via `--all-ages`, and `findUnlockedFixInRepo` — the writer's eligibility lookup — re-queried the **windowed** view. The read and the writer agreed about the KEY (`audit_finding_id`, projected by both) and disagreed about the **row set**. Waiting was therefore the only thing that could ever happen to those rows; the step's own instruction was unfollowable. Fixed in [scripts/lib/store/ship-nudges.mjs](scripts/lib/store/ship-nudges.mjs) — the CLOSE path reads `unlocked_fixes_all`; the LIMIT-20 sampler above it stays windowed on purpose (an unbounded pre-push nudge is noise).
+- **Second axis added to [tests/view-writer-key-contract.test.mjs](tests/view-writer-key-contract.test.mjs): ELIGIBILITY, not just projection.** The existing file asks *"does the view project the keys the writer needs"* — necessary and not sufficient, and structurally blind to this defect. The new block asserts that when a close-contract declares an unwindowed `_all` sibling, the writer's lookup names THAT relation. Written red first (it failed on the real assertion, with a "guards a vacuous pass" subtest confirming the function body was actually found), then green. `unlocked_fixes` / `lock-with-test` is now a declared close-contract alongside `unremediated_acceptances`; `final-review-record-fix` is recorded as `unwindowed: null` because it closes against the base `audit_findings` table by `(run_id, finding_fingerprint, bucket)` and has no age bound — checked, not assumed.
+- **Signal 1 triage — 55 of 73 aged-out CODE rows locked, each against a named test whose assertions were read first.** 45 by verified category→guard mapping (`emit-exit-coupling`, `cross-skill-registry-conformance` softFail/okless-written-reason, `cross-skill-store-calls`, `store-ownership`, `cross-skill-unlocked-scope`, `check-cli-flags`, `audit-store-durability-call-site`, `check-emit-exit-agreement-cli`), 10 individually verified against current source.
+- **One genuine coverage gap found and closed while triaging**: finding `d2c4fe8a` (`upsertPlanCmd` treating `{ok:true, planId:null}` as success) was fixed in source but nothing asserted it. Rather than claim a nearby test — the fake-check class this repo audits for — added three cases to [tests/cross-skill-store-calls.test.mjs](tests/cross-skill-store-calls.test.mjs) and **proved them red** by stubbing the guard to `if (false)`: the target assertion failed, the happy-path negative control stayed green, so the assertion discriminates rather than blanket-fails.
+- **Signal 2 — 13 of 34 aged-out acceptances closed in the right direction.** 5 marked `fixed` against measured evidence (4 god-orchestrator findings: `legacy-production-audit.mjs` is **1701 lines** against the findings' own cited "~2,200" / "~2,280", decomposed into 12 modules per the 2026-08-28 entry; plus `persona-outcomes-hash-backfill.test.mjs`, now enrolled at [scripts/db-test-container.mjs:128](scripts/db-test-container.mjs)). 8 module-size / coupling **judgements** adjudicated `accepted` → `accepted-permanent`: they were accepted on the merits, so carrying them as `pending` was a bookkeeping error, not an open obligation.
+
+### Files Affected
+- `scripts/lib/store/ship-nudges.mjs` — `findUnlockedFixInRepo` reads `unlocked_fixes_all`
+- `tests/view-writer-key-contract.test.mjs` — eligibility axis + `unlocked_fixes` close-contract row
+- `tests/cross-skill-store-calls.test.mjs` — `upsert-plan — a receipt is not a write` (3 cases)
+- Store rows only (no source change): 55 `regression_specs`, 5 remediations, 8 dispositions
+
+### Measured
+| Signal | Before | After |
+|---|---|---|
+| 0.5b `agedOut` code | 73 | **18** |
+| 0.5b `agedOut` plan | 52 | 52 (structurally unlockable — see below) |
+| 0.5e `agedOut` | 34 | **21** |
+| 0.5e `acceptedPermanent` | 42 | 50 |
+| `npm test` | — | 14,128 tests, 0 fail, 31 skipped (133s) |
+
+### Decisions Made
+- **Two findings are marked `fixed` in the store but are NOT fixed in the code, and I did not lock them.** `70ad56a7` / `99e3d8f4` on `scripts/maintenance-checks.mjs`: the lock is still `path.join(REPO_ROOT, '.audit-loop')` (so linked worktrees still do not share it) and `AUDIT_LOOP_STATE_DIR` still relocates `LOCK_PATH` (line 103). The remediation was a **disclosure warning** at line 120-122, not a fix, and `tests/maintenance-checks.test.mjs` asserts nothing about `runExclusive`/`LOCK_PATH`. Locking these would have recorded a lock that does not exist. Left open, named here.
+- **`56069072` likewise left open** — the `|| 0` / `|| null` coercions it names are still at `scripts/lib/store/plan-verification.mjs:57-62`.
+- **11 `[Structure] Missing planned X` rows written off**: verified by `ls` that every planned store and command module now exists (`scripts/lib/store/**` 32 modules, `scripts/lib/cross-skill/commands/**` 12). These were mid-decomposition "not yet built" observations. Not locked, because a module's existence is already asserted by the imports that would break — claiming a dedicated test would be an overclaim.
+- **4 written off as design decisions, not defects**: `32754705` (`upsertRepo` ignoring `repoName` — a documented frozen compat contract, reasoning in the source), `4ce2a627` (engines now `>=22.18.0`, which is exactly the fix; npm enforces it at install and a test would duplicate the package manager), `4e40123f` (SYSTEMIC CLI coupling — the decomposition IS the fix; a coupling judgement has no oracle), `f875f7a1` (DRY in test setup — no runtime regression to lock).
+- **The 52 aged-out PLAN rows cannot be locked by any mechanism** — their `primary_file` is a plan section, there is no code artifact, and `/ship` Step 0.5b says so itself. They will sit in `agedOut` permanently. The step already splits `agedOutByMode.code` / `.plan` in its printed card, so the prose is honest; the headline number is not actionable and should be read as its code half.
+- **21 acceptances deliberately left open.** They are real hypotheses about current code (N+1 writes/queries, evidence-resolution ambiguity, shared mutable shadow context, two REOPENED `check-docs-refs` findings, migration preflight gaps) and each needs verification against the code before it can be closed in either direction. Closing them on category alone is exactly the shortcut that produced the 42 stale `accepted-permanent` rows this entry is partly correcting.
+
 ## 2026-08-29 — verification-discipline §3c/§3d: diagnostic code has no happy path
 
 ### Consumer Verification (previous ship)

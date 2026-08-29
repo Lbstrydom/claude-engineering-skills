@@ -200,6 +200,22 @@ export async function getUnlockedFixes(scope, opts = {}) {
  * finding usually was not in those 20 (so the lookup silently missed), and a
  * foreign row's `repo_id` could be written straight into a regression spec.
  *
+ * **Reads `unlocked_fixes_all`, NOT the windowed `unlocked_fixes` (fixed
+ * 2026-08-29).** The sampler above is windowed on purpose — it feeds a
+ * pre-push nudge, and an unbounded nudge becomes noise. This lookup is the
+ * CLOSE path, and an obligation does not expire just because the reminder
+ * stopped printing it. Scoped to the windowed view, it refused every row past
+ * 14 days: measured on this repo, all 125 `agedOut` rows (73 code / 52 plan)
+ * that `/ship` Step 0.5b had just told the operator to "lock, or write off"
+ * were unclosable by the only command the step names. The step's own
+ * "waiting is not a way to clear this gate" line was therefore unfollowable —
+ * waiting was the only thing that could happen to them.
+ *
+ * The read and the writer agreed about the KEY (`audit_finding_id` is
+ * projected by both) and disagreed about the ROW SET, which is why
+ * `view-writer-key-contract.test.mjs`'s projection axis could not see it. That
+ * file now carries an eligibility axis too.
+ *
  * @param {{repoId: string, findingId: string}} a
  * @returns {Promise<object|null>}
  */
@@ -208,7 +224,7 @@ export async function findUnlockedFixInRepo({ repoId, findingId }) {
   if (!await isCloudEnabled()) return null;
   try {
     const rows = await many(
-      `SELECT * FROM unlocked_fixes WHERE repo_id = $1 AND audit_finding_id = $2 LIMIT 1`,
+      `SELECT * FROM unlocked_fixes_all WHERE repo_id = $1 AND audit_finding_id = $2 LIMIT 1`,
       [repoId, findingId]
     );
     return rows[0] ?? null;

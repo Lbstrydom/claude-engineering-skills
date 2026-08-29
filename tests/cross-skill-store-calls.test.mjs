@@ -90,6 +90,38 @@ describe('record-ship-event — the write template', () => {
   });
 });
 
+describe('upsert-plan — a receipt is not a write', () => {
+  // Locks audit finding d2c4fe8a (aged out of /ship Step 0.5b unlocked, and
+  // unclosable until 2026-08-29 because the close path queried the WINDOWED
+  // view). The handler's own comment calls this "the exact shape this handler
+  // just closed, one field over": `{ok:true, planId:null}` used to fall
+  // through to `ok: !!planId` and surface as a soft `{ok:false}` at exit 0.
+  const payload = JSON.stringify({ path: 'docs/plans/x.md', skill: 'plan' });
+
+  it('a well-formed receipt is a success (negative control — the guard must not fire on the happy path)', async () => {
+    const { deps } = recordingDeps({ upsertPlan: async () => ({ ok: true, planId: 'plan-1' }) });
+    const r = await dispatch(argv('upsert-plan', '--json', payload), { deps, cloudGate: 'ready' });
+    assert.equal(r.envelope.ok, true);
+    assert.equal(r.envelope.planId, 'plan-1');
+  });
+
+  it('ok:true with NO planId is a hard failure, never a soft ok:false at exit 0', async () => {
+    const { deps } = recordingDeps({ upsertPlan: async () => ({ ok: true, planId: null }) });
+    const r = await dispatch(argv('upsert-plan', '--json', payload), { deps, cloudGate: 'ready' });
+    assert.equal(r.envelope.ok, false);
+    assert.equal(r.envelope.error.code, 'PLAN_WRITE_UNVERIFIED');
+    assert.notEqual(r.exitCode, 0,
+      'a write the command cannot evidence must not exit 0 — that is the reading that made an outage invisible');
+  });
+
+  it('an UNHANDLED !ok reason still fails closed (no fall-through as a non-event)', async () => {
+    const { deps } = recordingDeps({ upsertPlan: async () => ({ ok: false, reason: 'a-reason-added-later' }) });
+    const r = await dispatch(argv('upsert-plan', '--json', payload), { deps, cloudGate: 'ready' });
+    assert.equal(r.envelope.error.code, 'PLAN_WRITE_FAILED');
+    assert.match(r.envelope.error.message, /a-reason-added-later/);
+  });
+});
+
 describe('persona-outcomes — the explicit-required template', () => {
   it('summary resolves the REQUESTED repo by name, then reads with that id', async () => {
     const { deps, calls } = recordingDeps();
