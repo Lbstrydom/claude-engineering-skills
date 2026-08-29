@@ -55,6 +55,36 @@ describe('upstreamTransition — the disposition ratchet', () => {
     assert.equal(res.ok, false);
   });
 
+  it('closing by ID PREFIX is refused — the ledger key the gate reads is a uuid', async () => {
+    // The writer used to accept a prefix (the store resolves it) and record it
+    // verbatim, while `upstream:coverage:gate` requires a uuid-shaped issueId.
+    // So a prefixed close SUCCEEDED and left `npm run check` permanently red
+    // with the report already closed — a read handing back a key its writer
+    // rejects, inverted. Hit live 2026-08-29 closing five reports.
+    let called = false;
+    const res = await upstreamTransition({
+      repoRoot: repo, id: ISSUE_ID.slice(0, 8), to: 'wont_fix', note: 'a reason',
+      disposition: 'exempt:some reason',
+      transitionFn: async () => { called = true; return { ok: true }; },
+    });
+    assert.equal(res.ok, false);
+    assert.match(res.errors.join(' '), /FULL uuid/);
+    assert.equal(called, false, 'refused BEFORE the DB write');
+    assert.equal(fs.existsSync(path.join(repo, DISPOSITION_LEDGER_PATH)), false,
+      'refused BEFORE the ledger write');
+  });
+
+  it('a prefix is still fine for `ack`, which writes no ledger entry', async () => {
+    // The direction the guard must NOT fire: the prefix ergonomics are only a
+    // problem because of the ledger key, so a transition with no ledger entry
+    // keeps them.
+    const res = await upstreamTransition({
+      repoRoot: repo, id: ISSUE_ID.slice(0, 8), to: 'acknowledged',
+      transitionFn: async () => ({ ok: true }),
+    });
+    assert.equal(res.ok, true);
+  });
+
   it('`ack` needs no disposition and never touches the ledger', async () => {
     let seen = null;
     const res = await upstreamTransition({

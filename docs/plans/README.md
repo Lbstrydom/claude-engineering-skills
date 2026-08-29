@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**2 active · 209 terminal · 27 audit summaries · 4 reference docs**
+**2 active · 210 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -42,7 +42,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 206 completed plans</summary>
+<summary>Show all 207 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -91,6 +91,7 @@ source comments that no docs linter sees — stays valid.
 | [Harden consumer deployment — prevent silent local-patching of synced tooling](./consumer-deployment-hardening.md) | `Complete` | all three phases built, tested, and deployed (the |
 | [Consumer friction doctor + upstream-report ratchet](./consumer-friction-doctor.md) | `Complete` | audited 3 GPT plan rounds (18/18 findings accepted) + 2 Gemini plan |
 | [Degradation Disclosure — Debate Skip + Audit Prerequisite Ladder](./consumer-report-degradation-disclosure.md) | `Complete` | both changes shipped (`c2f9f068` brainstorm, `30445802` |
+| [Consumer sync durability — making deliberate divergence survive](./consumer-sync-durability.md) | `Complete` |  |
 | [Audit Context Brief Generator](./context-brief.md) | `Complete` | shipped — `scripts/lib/context.mjs` (`readProjectContextForPass`, `readRepoProfile`, `generateBriefViaGemin… |
 | [VS Code GitHub Copilot compatibility audit + fixes](./copilot-compat-audit.md) | `Complete` |  |
 | [Cross-Agent Delivery Parity](./cross-agent-delivery-parity.md) | `Complete` |  |

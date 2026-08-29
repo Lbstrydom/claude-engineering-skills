@@ -898,6 +898,113 @@ this clone (e.g. `C:\GIT\claude-engineering-skills` + `C:\GIT\audit-loop`).
 `consumer-repos.local.json` is gitignored and never leaves the machine; local
 entries merge into `--target` resolution (and win on alias collision).
 
+## Diverging from the bundle deliberately (`.sync-overrides.json`)
+
+Most of what the sync writes should never be edited locally. But some of it
+legitimately has to differ per consumer — a repo-local adapter section in a
+`SKILL.md`, an MCP launcher pinned to `node_modules` because the repo runs a
+supply-chain pinning gate, a `.gitignore` entry for a runtime output. Before
+2026-08-29 there was no way to say so, and the sync reverted such work silently.
+
+### What the sync does now
+
+Every intended write is compared against the sha the LAST sync recorded for that
+destination (`scripts/.sync-manifest.json`). That comparison — not a comparison
+against your `HEAD` — is what distinguishes an ordinary upstream update from
+your own change:
+
+| On disk vs. our last write | Tracked here? | What the sync does |
+|---|---|---|
+| identical | — | overwrites silently (nothing of yours is lost) |
+| **changed** | yes | **REFUSES, and the run exits non-zero** |
+| changed | no (gitignored tooling) | overwrites, and says so per file |
+| changed, and declared in `.sync-overrides.json` | — | **holds** — your file is not touched |
+
+A refusal is not a partial failure to be waved through: every other file in the
+bundle still syncs, and the run fails so the reversion cannot pass unnoticed.
+
+### Declaring a divergence
+
+Create `.sync-overrides.json` at the consumer's repo root and **commit it**:
+
+```json
+{
+  "version": 1,
+  "overrides": [
+    { "path": ".vscode/mcp.json", "reason": "pinned launchers; verify-mcp-server-pinning gates this" },
+    { "glob": ".claude/skills/*/SKILL.md", "reason": "repo-electron-target sections; upstream report 5b1a121e" }
+  ],
+  "gitignoreExtra": [
+    { "pattern": ".audit-loop/cache/", "reason": "local audit cache, never committed here" }
+  ]
+}
+```
+
+- `path` is exact; `glob` supports `*` (within one segment) and `**` (across).
+  Paths are POSIX and repo-relative; backslashes are folded, so a pasted Windows
+  path still matches.
+- **`reason` is required on every entry.** A reasonless override is
+  indistinguishable from a forgotten one a year later.
+- **A malformed file ABORTS the target.** Failing open would silently resume
+  overwriting exactly the paths you wrote it to protect, while the sync reported
+  clean.
+- **`gitignoreExtra` patterns are appended inside the sync's own managed fence.**
+  The fence is rewritten wholesale each run, so a line you add inside it by hand
+  is deleted on the next sync — declare it here instead and it survives.
+- **`scripts/.claude-skills/**` may not be overridden.** That tree is
+  upstream-owned; a local patch there is invisible to review and helps no other
+  consumer. File it instead — see §Reporting an upstream bug below.
+
+### When an overridden file also changes upstream
+
+The sync holds your version and says so on every run. When upstream's bytes for
+that path have MOVED since your last sync, it says that too, with both shas, and
+records `upstreamMoved: true` in `.sync-receipt.json`. An override freezes a
+path; it must never also freeze your knowledge that upstream moved on — review
+periodically whether the divergence still applies.
+
+### Discarding a divergence on purpose
+
+`npm run sync -- --target <name> --overwrite-diverged` consents to the
+overwrite. Every path it consumes is printed and listed in the receipt. One
+thing it cannot do: move an MCP launcher from a pinned local path to an
+unpinned `npx -y …@latest` fetch. That is a supply-chain regression, refused by
+construction whatever flags are passed.
+
+### `.sync-receipt.json` — the in-repo trace
+
+Every sync writes a small, **committed** receipt at the consumer's root naming
+the upstream commit, what was created/updated, what was held, and what was
+refused. It exists because `scripts/.sync-manifest.json` is gitignored, which is
+why the 2026-08-29 reversion left no evidence in the repo at all. Commit it with
+the rest of the sync's output; a no-op sync does not rewrite it, so it does not
+churn.
+
+CI can read it directly — for example, failing when an override has gone stale:
+
+```bash
+node -e "const r=require('./.sync-receipt.json');const s=r.overridesHeld.filter(h=>h.upstreamMoved);if(s.length){console.error('stale overrides:',s.map(h=>h.path).join(', '));process.exit(1)}"
+```
+
+---
+
+## Blocked on an upstream bug
+
+Patching upstream-owned **source** in a fork or consumer is never allowed (see
+the governance rule in AGENTS.md). A **runtime / env / DB** unblock — say an
+`ALTER` while a schema migration is pending upstream — is acceptable if you:
+
+1. report the bug so it is fixed here (`cross-skill.mjs upstream report`);
+2. **label it `TEMP — pending upstream fix`** wherever it lives; and
+3. **reconcile** once the fix lands (`git pull upstream` +
+   `setup-postgres --migrate`, etc.).
+
+Prefer waiting when it is not urgent. The failure this prevents is a local DB
+workaround that *diverges* from the eventual upstream migration, or that leaves
+the live schema silently ahead of the migration ledger.
+
+---
+
 ## Keeping a consumer updated (one-directional)
 
 Sync is **canonical → local clone → consumer**. Nothing pushes back to

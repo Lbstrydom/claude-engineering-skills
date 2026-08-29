@@ -35,6 +35,20 @@
  */
 
 import { LAYOUT_CONSTANTS } from './sync-path-map.mjs';
+import { RECEIPT_PATH } from './sync-receipt.mjs';
+
+/**
+ * Destinations the sync writes on EVERY run without them appearing in a
+ * bundle's file list.
+ *
+ * The module's rule is "pin every destination the sync writes that a consumer
+ * can track" — and `computeEolPins` only ever sees `repo.files`, so a surface
+ * written outside that loop is invisible to it. That is exactly how
+ * `.audit-loop/expected-schema.json` churned unnoticed before this module
+ * existed; folding the receipt in HERE, rather than at the one call site, keeps
+ * the rule and its enforcement in the same file.
+ */
+export const ALWAYS_WRITTEN_DESTINATIONS = Object.freeze([RECEIPT_PATH]);
 
 /**
  * Covering globs for the tracked synced surfaces, in emission order.
@@ -53,6 +67,7 @@ export const EOL_PIN_GLOBS = Object.freeze([
   LAYOUT_CONSTANTS.MANIFEST_PATH,
   `${LAYOUT_CONSTANTS.MIGRATIONS_DEST_PREFIX}**`,
   LAYOUT_CONSTANTS.EXPECTED_SCHEMA_DEST,
+  RECEIPT_PATH,
 ]);
 
 /** Sentinel standing in for `**` between the two wildcard passes. NUL cannot
@@ -115,7 +130,7 @@ export function isPinExempt(destRel) {
 export function computeEolPins(destRels) {
   const seen = new Set();
   const candidates = [];
-  for (const d of destRels || []) {
+  for (const d of [...(destRels || []), ...ALWAYS_WRITTEN_DESTINATIONS]) {
     const p = normalise(d);
     if (seen.has(p)) continue;
     seen.add(p);

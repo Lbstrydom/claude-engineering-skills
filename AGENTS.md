@@ -244,73 +244,81 @@ This source repo's tooling deploys to consumer repos under
 side via a managed block in their root `.gitignore`. The directory
 isn't tracked — fresh clones of a consumer repo need to re-run
 `npm run sync -- --target <name>` from THIS repo to hydrate it. (The `--` is
-load-bearing: without it npm eats `--target` as its own config and forwards the
-value as a bare positional the script ignores, so the sync writes into EVERY
+load-bearing: without it npm swallows `--target` and the sync writes into EVERY
 consumer instead of the named one. Verified 2026-07-20.)
 
 > **Upstream-owned — never patch the synced copy (governance).** A failure in a
-> consumer's `scripts/.claude-skills/**` file is an **UPSTREAM** bug: push back
-> and fix it HERE (claude-engineering-skills) + re-sync — do **not** edit the
-> synced copy in the consumer. It's gitignored (invisible to review), overwritten
-> on the next sync (your fix is lost), and the bug persists for every other
-> consumer. Each synced tooling file now carries a banner saying exactly this
-> (injected by `sync-banner.mjs`). Drift backstops (already exist — no new
-> tooling): `npm run sync:dry` from this repo shows any consumer file that
-> differs from source; the synced `sync-isolation-verify` hash-checks a
-> consumer's tree against its manifest. This is the band-aid-vs-root-cause rule
-> at the consumer/upstream seam — the local edit is the band-aid; the upstream
-> fix is the root. Repo-specific **push gates** have a sanctioned home — the committed, never-rewritten `.githooks/pre-push.local` ([recipe](docs/runbooks/consumer-adoption.md)), never an edit to the managed hook.
+> consumer's `scripts/.claude-skills/**` file is an **UPSTREAM** bug: fix it HERE
+> + re-sync — never edit the synced copy. It's gitignored (invisible to review),
+> overwritten next sync (your fix is lost), and the bug lives on for every other
+> consumer. Each synced tooling file carries a banner saying exactly this
+> (`sync-banner.mjs`). Drift backstops: `npm run sync:dry` here shows any consumer
+> file differing from source; the synced `sync-isolation-verify` hash-checks a
+> consumer's tree against its manifest. Band-aid-vs-root-cause at the
+> consumer/upstream seam — the local edit is the band-aid. Repo-specific **push
+> gates** belong in the committed `.githooks/pre-push.local`
+> ([recipe](docs/runbooks/consumer-adoption.md)), never in the managed hook.
 >
 > **File the report, don't paste it.** Consumer: `cross-skill.mjs upstream report --title … --affected-path <synced path>`
 > (body on **stdin**) — it auto-captures the repo, the bundle sha, and whether the path is really
 > upstream-owned. Here: `npm run upstream:issues` → `upstream ack|fix|wont-fix`. Worksheet + why prose
 > reports failed: [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Reporting an upstream bug.
 
-> **Four shapes consumers keep reporting — check for them when adding a gate or nudge (2026-08-08).**
-> Each is a general defect class; the incidents behind them are in
-> [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Three shapes
-> and §Linked git worktrees.
-> *(1) A read handing back a key its writer rejects* — **a new close-this-row nudge means a new row in**
-> [`view-writer-key-contract.test.mjs`](tests/view-writer-key-contract.test.mjs).
-> *(2) A gate judging files the repo does not own* — the predicate is **ignored AND untracked**, not a
-> longer exclusion list, and you ask it of the **candidates**, never of the repo (a whole-repo
-> `ls-files --others --ignored` ENOBUFs past spawnSync's 1MiB `maxBuffer`, and a fail-open guard reads
-> that as "nothing disowned").
-> *(3) A check verifying one direction only* — ask of any set comparison: **which side am I iterating,
-> and what is unrepresentable from it?**
-> *(4) A documented command whose tooling cannot be present where it runs* (2026-08-13) — the synced
-> tree is gitignored, so it is absent from **every** linked worktree while the SKILL.md that names it
-> is copied in. **Only tracked content is guaranteed to reach a worktree**, so a remedy must ride on
-> `package.json`, never on a synced script or a `.claude/` hook. Gate: `npm run worktree:preflight:gate`.
+> **Four shapes consumers keep reporting — check for them when adding a gate or
+> nudge.** General defect classes, one line each; the incidents, the predicates and
+> the measured inert windows are in
+> [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Three shapes / §Linked git worktrees.
+> *(1)* A read handing back a key its writer rejects — a new close-this-row nudge
+> means a new row in [`view-writer-key-contract.test.mjs`](tests/view-writer-key-contract.test.mjs).
+> *(2)* A gate judging files the repo does not own — the predicate is **ignored AND
+> untracked**, asked of the **candidates**, never of the repo.
+> *(3)* A check verifying one direction only — of any set comparison ask: **which
+> side am I iterating, and what is unrepresentable from it?**
+> *(4)* A documented command whose tooling cannot be present where it runs —
+> **only tracked content is guaranteed to reach a linked worktree**, so a remedy
+> must ride on `package.json`, never on a synced script or a `.claude/` hook.
+> Gate: `npm run worktree:preflight:gate`.
 
-> **Upstream bug, but you're blocked? Source patch = forbidden; a labelled
-> runtime/env workaround is OK and must reconcile.** Editing upstream-owned
-> *source* in a fork/consumer is never allowed (above). But a **runtime/env/DB**
-> unblock (e.g. an `ALTER` while a schema migration is pending upstream) is
-> acceptable IF you (1) report the bug so it's fixed here, (2) **label it
-> `TEMP — pending upstream fix`**, and (3) **reconcile** once the fix lands
-> (`git pull upstream` + `setup-postgres --migrate`, etc.). Prefer waiting when
-> not urgent. A local DB workaround that *diverges* from the eventual upstream
-> migration, or that silently leaves the live schema ahead of the migration
-> ledger, is the failure mode this rule prevents.
+> **Upstream bug, but you're blocked?** Patching upstream-owned *source* stays
+> forbidden; a **runtime/env/DB** unblock is OK if you report it, label it
+> `TEMP — pending upstream fix`, and reconcile when the fix lands. Recipe +
+> the divergence it prevents: [consumer-adoption.md](docs/runbooks/consumer-adoption.md)
+> §"Blocked on an upstream bug".
+
+> **Consumer divergence is DECLARED, never inferred — and the sync must never
+> revert it silently** (2026-08-29). Ownership was one-directional: a manifest
+> entry licensed an unconditional overwrite, so a consumer's *merged* work was
+> reverted leaving no in-repo trace (the manifest is gitignored) and `git status`
+> showed an ordinary edit. **(1)** The manifest hash is the three-way BASE —
+> `disk === base` ⇒ overwrite freely, `disk !== base` is consumer content:
+> **tracked ⇒ REFUSE + fail** (`--overwrite-diverged` consents), untracked ⇒
+> overwrite loudly. Basing it on the manifest and not HEAD is what stops it firing
+> on ordinary updates. **(2)** Standing divergence is declared in the committed
+> `.sync-overrides.json` — `reason` required, malformed ⇒ ABORT (never
+> fail-open), and `scripts/.claude-skills/**` may never be claimed (that is an
+> upstream report). **(3)** Every sync writes the committed `.sync-receipt.json`,
+> a deliberate generated-artifact-policy exception: its dirtiness is the only
+> evidence a sync ran. Adding a co-owned config? A merge may never move a launcher
+> from a pinned path to an unpinned fetch — `sync-pin-guard.mjs`, guard **plus**
+> an independent post-condition.
+> [Plan](docs/plans/consumer-sync-durability.md).
 
 ### Sync mechanics — pointer
 
-Sync-behavior detail (why the isolated subdir exists, the what-goes-where table,
-the managed-gitignore runtime-outputs block + self-healing untrack semantics, the
-`sync-*` module list): [`docs/runbooks/consumer-adoption.md`](docs/runbooks/consumer-adoption.md)
-§"Sync internals". One structural invariant stays here: **the sync layout's single
-source of truth is [`scripts/lib/sync-path-map.mjs`](scripts/lib/sync-path-map.mjs)**
-— never hand-compute a consumer path.
+Sync-behavior detail (the isolated subdir, the what-goes-where table, the
+managed-gitignore block + untrack semantics, the `sync-*` module list):
+[`consumer-adoption.md`](docs/runbooks/consumer-adoption.md) §"Sync internals".
+One structural invariant stays here: **the sync layout's single source of truth is
+[`sync-path-map.mjs`](scripts/lib/sync-path-map.mjs)** — never hand-compute a
+consumer path.
 
 **A consumer's package manager is [`package-manager.mjs`](scripts/lib/package-manager.mjs)'s
-answer, never a hardcoded `npm`/`npx`** — and the managers are not swappable:
-npm aborts on pnpm's symlinked tree (so dep install never once worked in a pnpm
-consumer, measured 2026-08-15), while `pnpm add` in an npm repo quietly leaves a
-second lockfile. Both directions corrupt, so two lockfiles + no `packageManager`
-field is **ambiguous and left alone**, never guessed. Adjudicate an install by
-RE-PROBING `node_modules`, never the exit code: pnpm exits non-zero on
-`ERR_PNPM_IGNORED_BUILDS` after a fully successful install.
+answer, never a hardcoded `npm`/`npx`** — and the managers are not swappable: npm
+aborts on pnpm's symlinked tree (dep install never once worked in a pnpm consumer,
+measured 2026-08-15), while `pnpm add` in an npm repo leaves a second lockfile. So
+two lockfiles + no `packageManager` field is **ambiguous and left alone**, never
+guessed. Adjudicate an install by RE-PROBING `node_modules`, never the exit code:
+pnpm exits non-zero on `ERR_PNPM_IGNORED_BUILDS` after a successful install.
 
 ### CLI smoke contract (`--selfcheck-relocation`)
 

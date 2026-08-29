@@ -20,7 +20,9 @@ import { fileURLToPath } from 'node:url';
 import { updateManagedBlock, parseGitignoreState } from '../scripts/lib/sync-gitignore.mjs';
 import {
   EOL_PIN_GLOBS, computeEolPins, renderEolPinLines, globToRegExp, isPinExempt,
+  ALWAYS_WRITTEN_DESTINATIONS,
 } from '../scripts/lib/sync-eol-pins.mjs';
+import { RECEIPT_PATH } from '../scripts/lib/sync-receipt.mjs';
 import { LAYOUT_CONSTANTS, sourceRelToDestRel } from '../scripts/lib/sync-path-map.mjs';
 import { getAllConsumerInventories } from '../scripts/lib/sync-inventory.mjs';
 
@@ -98,8 +100,14 @@ describe('sync EOL-pin completeness (the guard the old shape test could not make
     // regression under repair, and it must fail loudly if the destination
     // constant is renamed out from under the covering glob.
     const { pins } = computeEolPins([LAYOUT_CONSTANTS.EXPECTED_SCHEMA_DEST]);
-    assert.deepEqual(pins, [LAYOUT_CONSTANTS.EXPECTED_SCHEMA_DEST]);
+    assert.ok(pins.includes(LAYOUT_CONSTANTS.EXPECTED_SCHEMA_DEST));
     assert.ok(EOL_PIN_GLOBS.includes(LAYOUT_CONSTANTS.EXPECTED_SCHEMA_DEST));
+    // The receipt rides along on every call (ALWAYS_WRITTEN_DESTINATIONS): it is
+    // written on every sync without appearing in any bundle's file list, so the
+    // module folds it in rather than leaving the one call site to remember —
+    // the parallel-list drift that produced this very regression.
+    assert.deepEqual(pins.filter((p) => p !== RECEIPT_PATH),
+      [LAYOUT_CONSTANTS.EXPECTED_SCHEMA_DEST]);
   });
 
   it('an unpinned trackable destination is REPORTED, not silently dropped', () => {
@@ -110,12 +118,16 @@ describe('sync EOL-pin completeness (the guard the old shape test could not make
       `${LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR}/whatever.mjs`,
     ]);
     assert.deepEqual(uncovered, ['docs/some-new-tracked-surface.md']);
-    assert.deepEqual(pins, [], 'the exempt tooling-dir path must not produce a pin');
+    assert.deepEqual(pins.filter((p) => p !== RECEIPT_PATH), [],
+      'the exempt tooling-dir path must not produce a pin');
   });
 
   it('only globs that matched something are emitted', () => {
     const { pins } = computeEolPins(['.vscode/mcp.json']);
-    assert.deepEqual(pins, ['.vscode/mcp.json'],
+    assert.deepEqual(pins.filter((p) => p !== RECEIPT_PATH), ['.vscode/mcp.json'],
       'the block must be a function of the bundle, not a static list');
+    // …and the always-written set is genuinely always written, so its pin is
+    // not a static list entry sneaking back in — it is a destination.
+    assert.ok(ALWAYS_WRITTEN_DESTINATIONS.includes(RECEIPT_PATH));
   });
 });

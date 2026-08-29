@@ -33,6 +33,15 @@ import { rewriteCommandSurface, buildOwnedSourceTails } from './lib/sync-rewrite
 import { injectUpstreamBanner, BANNER_BODY } from './lib/sync-banner.mjs';
 import { classifyOwnership, describeEvidence } from './lib/sync-ownership.mjs';
 import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mjs';
+import {
+  BASE_STATE, ACTION, classifyAgainstBase, decideAction, describeReason, readVcsState,
+  isSyncBookkeeping,
+} from './lib/sync-divergence.mjs';
+import {
+  OVERRIDES_PATH, loadOverrides, matchOverride, renderGitignoreExtras,
+} from './lib/sync-overrides.mjs';
+import { guardPinDowngrades, assertNoPinDowngrade } from './lib/sync-pin-guard.mjs';
+import { RECEIPT_PATH, buildReceipt, receiptShouldWrite } from './lib/sync-receipt.mjs';
 import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
 import { computeEolPins, renderEolPinLines } from './lib/sync-eol-pins.mjs';
 import { getGitLocalEnvVarNames } from './lib/git-env-sanitize.mjs';
@@ -83,6 +92,13 @@ const MANAGED_IGNORE_PATTERNS = [
   'logs/mcp-*.log',
   'logs/mcp-*.log.gz',
   '.audit/',                          // ALL audit-loop runtime output (see above)
+  // The local audit cache. THIS repo has gitignored it since the directory
+  // existed (`.gitignore` line 69) and the synced tooling writes it in every
+  // consumer, but it was never in the block — so a consumer that added the line
+  // itself, INSIDE our fence, had it deleted again on the next sync (observed
+  // 2026-08-29, report 5b1a121e). A runtime output our own tooling produces
+  // belongs in the block that self-provisions ignores for our runtime outputs.
+  '.audit-loop/cache/',
   '.audit-loop/*-observed.json',      // domain-deps / nav-graph / visual observed envelopes
   '.audit-loop/*-verify-result.json', // nav-audit / visual-audit --verify results
   '.audit-loop/*-drift-ledger.json',  // nav / visual local drift caches
@@ -165,6 +181,12 @@ const NO_PROMPT = process.argv.includes('--no-prompt');
 // only thing standing between a sync and a consumer's own file. See the ABORT
 // branch below for why an orphan can exist at all.
 const ADOPT_ORPHANS = process.argv.includes('--adopt-orphans');
+// Escape hatch for the divergence guard below. Deliberately a FLAG and not an
+// env var: an env var set once in a shell survives into every later run in that
+// session, and this is the one control whose whole value is that the operator
+// reaffirms it per run. Every path it consumes is named in the output and
+// recorded in `.sync-receipt.json`.
+const OVERWRITE_DIVERGED = process.argv.includes('--overwrite-diverged');
 
 // The single banner line used as an ownership fingerprint when adopting
 // orphans. `BANNER_BODY` is an ARRAY of lines — passing it straight to
@@ -1103,7 +1125,7 @@ function assessConsumerAzureEmbed(repoPath) {
  */
 const KNOWN_FLAGS = [
   '--dry-run', '--no-prompt', '--adopt-orphans', '--target',
-  '--target-path', '--quiet-legacy-check',
+  '--target-path', '--quiet-legacy-check', '--overwrite-diverged',
 ];
 
 /**
@@ -1272,6 +1294,13 @@ async function main() {
 
     let repoNew = 0, repoUpdated = 0, repoUnchanged = 0, repoErrors = 0;
     let repoRemaps = 0, repoRewrites = 0, repoGcDeletions = 0;
+    // Receipt inputs. Collected as we go so the committed trace describes what
+    // this run ACTUALLY did, not what it set out to do.
+    const receiptCreated = [];
+    const receiptUpdated = [];
+    const receiptOverridesHeld = [];
+    const receiptDivergedOverwritten = [];
+    const divergenceRefusals = [];
 
     console.log(`${B}→ ${repo.name}${X} (${repo.path})`);
 
@@ -1391,6 +1420,44 @@ async function main() {
     const priorLayout = priorManifest?.layout || 'legacy';
     const priorFiles = priorManifest?.files || {};
 
+    // ── Pre-flight #0: the consumer's own ownership declaration ────────────
+    // Read before anything else consults it, and a malformed file ABORTS this
+    // target. Fail-open here would silently resume overwriting the very paths
+    // the consumer wrote this file to protect — the worst failure mode a guard
+    // can have, because the operator's evidence that it is working is that the
+    // sync ran clean. All errors are reported at once so a consumer fixes them
+    // in one pass instead of one per sync.
+    const overridesDoc = loadOverrides(repo.path);
+    if (overridesDoc.errors.length) {
+      console.log(`  ${R}ABORT${X}  ${OVERRIDES_PATH} is invalid; refusing to sync this target:`);
+      for (const e of overridesDoc.errors) console.log(`    ${R}${e}${X}`);
+      totalErrors++;
+      console.log('');
+      continue;
+    }
+    if (overridesDoc.present) {
+      const n = overridesDoc.overrides.length;
+      const g = overridesDoc.gitignoreExtra.length;
+      console.log(`  ${D}overrides${X} ${OVERRIDES_PATH}: ${n} path rule(s), ${g} declared gitignore pattern(s)`);
+    }
+
+    // The previous receipt is the only durable record of what upstream's bytes
+    // were at the last hold, so it is what makes "upstream has changed this
+    // overridden path SINCE" answerable at all. Absent or malformed reads as
+    // "no prior knowledge" — no `upstreamMoved` claim is made from it, because
+    // an unknown is not a no.
+    const receiptPath = path.join(repo.path, RECEIPT_PATH);
+    let priorReceipt = null;
+    try {
+      if (fs.existsSync(receiptPath)) {
+        priorReceipt = JSON.parse(fs.readFileSync(receiptPath, 'utf-8'));
+      }
+    } catch { /* unreadable prior receipt — no prior knowledge, never a claim */ }
+    const priorReceiptHeld = new Map();
+    for (const h of priorReceipt?.overridesHeld || []) {
+      if (h && typeof h.path === 'string') priorReceiptHeld.set(h.path, h);
+    }
+
     // ── Ownership-rollback detection ──────────────────────────────────────
     // The manifest is TRACKED while the files it owns are gitignored, so a
     // merge/reset/checkout rolls the ownership record backwards while the files
@@ -1445,6 +1512,14 @@ async function main() {
         // comparing the untrack allow-list against it read half the truth.
         LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR + '/',
         ...MANAGED_IGNORE_PATTERNS,
+        // Consumer-declared patterns, appended INSIDE our own fence. The block
+        // is rewritten wholesale every sync, so a line a consumer adds inside it
+        // is deleted on the next run — which is how `.audit-loop/cache/` was
+        // lost from a consumer on 2026-08-29, from inside a fence whose own
+        // marker says DO NOT EDIT INSIDE. That fence protects the region from
+        // humans and not from us. Making the block `upstream ∪ declared` gives
+        // the consumer a place to put the line that the sync will honour.
+        ...renderGitignoreExtras(overridesDoc.gitignoreExtra),
       ],
     );
     if (giPreview.action === 'abort') {
@@ -1690,10 +1765,23 @@ async function main() {
         // idempotency assertion in tests/sync-target-path.test.mjs.)
         try {
           const src = JSON.parse(srcContent);
-          const merged = dstExists
-            ? deepMerge(JSON.parse(fs.readFileSync(dstPath, 'utf-8')), src)
-            : src;
-          outContent = JSON.stringify(merged, null, 2) + '\n';
+          const existingJson = dstExists ? JSON.parse(fs.readFileSync(dstPath, 'utf-8')) : null;
+          const merged = existingJson ? deepMerge(existingJson, src) : src;
+          // Supply-chain invariant: a merge may never move a server launcher
+          // from a pinned local path to an unpinned network fetch. `deepMerge`
+          // gives a source leaf authority and replaces arrays wholesale, so
+          // upstream's `npx -y …@latest` silently un-pinned a consumer that had
+          // deliberately pointed at node_modules (report 5b1a121e). Guard, then
+          // an INDEPENDENT post-condition on the final value — a check that
+          // shares its only implementation with the thing it checks proves
+          // nothing.
+          const guarded = guardPinDowngrades(existingJson, merged);
+          if (guarded.held.length) {
+            const names = guarded.held.map((h) => `${h.key}.${h.server}`).join(', ');
+            console.log(`  ${Y}pinned${X} ${dstRel} ${D}— kept this repo's pinned launcher for ${names} (upstream's is an unpinned fetch)${X}`);
+          }
+          assertNoPinDowngrade({ relPath: dstRel, existing: existingJson, outbound: guarded.value });
+          outContent = JSON.stringify(guarded.value, null, 2) + '\n';
         } catch (err) {
           console.log(`  ${R}ERR${X}  ${dstRel}: JSON merge failed: ${err.message?.slice(0, 100)}`);
           repoErrors++; totalErrors++;
@@ -1730,11 +1818,73 @@ async function main() {
         continue;
       }
 
+      // ── Consumer-divergence gate ────────────────────────────────────────
+      //
+      // Everything above this point asked only "is this destination OURS?".
+      // A yes has always licensed an unconditional overwrite, so a consumer's
+      // deliberate, merged divergence was reverted silently and the only record
+      // was a gitignored manifest (upstream report 5b1a121e). This asks the
+      // second question — "has the consumer changed it since we last wrote it?"
+      // — against the base the manifest already carries, so it cannot fire on
+      // an ordinary upstream update (see lib/sync-divergence.mjs).
+      // The sync's own bookkeeping is exempt: it carries a timestamp/HEAD sha
+      // and so differs on EVERY run, which would print "overwrote consumer
+      // content" on every sync of every consumer and train the operator to
+      // ignore the one line that matters.
+      const bookkeeping = isSyncBookkeeping(dstRel);
+      const override = bookkeeping ? null : matchOverride(dstRel, overridesDoc.overrides);
+      const baseState = bookkeeping ? BASE_STATE.PRISTINE : classifyAgainstBase({
+        baseHash: priorFiles[dstRel] ?? (priorLayout === 'legacy' ? priorFiles[srcRel] : undefined),
+        diskHash: dstHash,
+      });
+      // git is consulted ONLY for a diverged path — a handful per run in steady
+      // state, so the 751-file bundle never pays for it.
+      const vcs = (!override && baseState === BASE_STATE.DIVERGED)
+        ? readVcsState(repo.path, dstRel)
+        : null;
+      const decision = decideAction({
+        baseState,
+        vcs,
+        overrideActive: Boolean(override),
+        allowOverwriteDiverged: OVERWRITE_DIVERGED,
+      });
+
+      if (decision.action === ACTION.HOLD) {
+        const priorHeld = priorReceiptHeld.get(dstRel);
+        const upstreamMoved = Boolean(priorHeld && priorHeld.upstreamSha
+          && priorHeld.upstreamSha !== srcHash);
+        receiptOverridesHeld.push({
+          path: dstRel, reason: override.reason, upstreamSha: srcHash, upstreamMoved,
+        });
+        console.log(`  ${D}hold${X}  ${dstRel} ${D}(${describeReason(decision.reason)}: ${override.reason})${X}`);
+        if (upstreamMoved) {
+          // An override freezes a path. It must never also freeze the
+          // consumer's knowledge that upstream has moved on — a silently stale
+          // override is the same class of invisible drift as the silent
+          // overwrite this whole change exists to end.
+          console.log(`    ${Y}upstream content for this path CHANGED since your last sync${X} ${D}(${priorHeld.upstreamSha.slice(0, 7)} → ${srcHash.slice(0, 7)}); review whether the override still applies${X}`);
+        }
+        continue;
+      }
+
+      if (decision.action === ACTION.REFUSE) {
+        divergenceRefusals.push({ path: dstRel, reason: decision.reason });
+        continue;
+      }
+
       const isNew = dstHash === null;
       const remappedLabel = dstRel !== srcRel ? ` ${D}(was ${srcRel})${X}` : '';
       const rewriteLabel = rewriteResult.hits ? ` ${D}[${rewriteResult.hits} rewrites]${X}` : '';
       const label = isNew ? `${G}new${X}  ` : `${Y}upd${X}  `;
       console.log(`  ${label} ${dstRel}${remappedLabel}${rewriteLabel}`);
+      if (decision.action === ACTION.WRITE_LOUD) {
+        // Non-negotiable #1 of the fix: the sync must be LOUD about every
+        // overwrite of content it did not itself write, even the ones it is
+        // allowed to perform. Printed per-file rather than only in the summary,
+        // because the summary is what an operator skims and the path is what
+        // they need.
+        console.log(`    ${Y}overwrote consumer content${X} ${D}— ${describeReason(decision.reason)}${X}`);
+      }
 
       if (DRY_RUN) {
         if (!isNew) {
@@ -1764,8 +1914,11 @@ async function main() {
         }
       }
 
-      if (isNew) { repoNew++; totalNew++; }
-      else { repoUpdated++; totalUpdated++; }
+      if (isNew) { repoNew++; totalNew++; if (!bookkeeping) receiptCreated.push(dstRel); }
+      else { repoUpdated++; totalUpdated++; if (!bookkeeping) receiptUpdated.push(dstRel); }
+      if (decision.action === ACTION.WRITE_LOUD) {
+        receiptDivergedOverwritten.push({ path: dstRel, reason: decision.reason });
+      }
     }
 
     // ── GC: delete files removed from upstream (Gemini v3 G3 fix) ──────────
@@ -1950,6 +2103,66 @@ async function main() {
       catch (err) { if (err.code !== 'ENOENT') { /* leave dangling — next run will reconcile */ } }
     }
 
+    // ── Divergence refusals — the loud half of the guard ───────────────────
+    //
+    // These destinations were NOT written: each carries consumer changes made
+    // since our last sync, and overwriting one would revert work the consumer's
+    // own history vouches for. The rest of the target is fully synced; the run
+    // still fails, because a partial sync reported as success is how the
+    // silence started.
+    if (divergenceRefusals.length) {
+      console.log(`  ${R}REFUSED${X} ${divergenceRefusals.length} file(s) changed in this repo since our last sync — not overwritten:`);
+      for (const { path: p, reason } of divergenceRefusals.slice(0, 20)) {
+        console.log(`    ${R}diverged${X} ${p} ${D}(${describeReason(reason)})${X}`);
+      }
+      if (divergenceRefusals.length > 20) {
+        console.log(`    ${D}... ${divergenceRefusals.length - 20} more (all listed in ${RECEIPT_PATH})${X}`);
+      }
+      console.log(`    ${D}Resolve it one of three ways:${X}`);
+      console.log(`    ${D}  • keep the divergence: declare each path in ${OVERRIDES_PATH} with a reason${X}`);
+      console.log(`    ${D}  • adopt upstream: revert your change, then re-run the sync${X}`);
+      console.log(`    ${D}  • discard the divergence deliberately: re-run with --overwrite-diverged${X}`);
+      console.log(`    ${D}  If upstream's version is WRONG for consumers, say so: cross-skill.mjs upstream report${X}`);
+      repoErrors++; totalErrors++;
+    }
+
+    // ── In-repo trace ─────────────────────────────────────────────────────
+    // The manifest is gitignored, which is exactly why the 2026-08-29 reversion
+    // left no evidence. This receipt is COMMITTED: a reviewer sees a sync in the
+    // diff, and CI can read it without any of our machinery (it reaches linked
+    // worktrees, which the gitignored manifest never does).
+    if (!DRY_RUN) {
+      try {
+        const receipt = buildReceipt({
+          syncedAt: new Date().toISOString(),
+          source: {
+            repo: 'Lbstrydom/claude-engineering-skills',
+            branch: sourceGitMeta?.branch ?? null,
+            commitSha: sourceGitMeta?.commitSha ?? null,
+            sourceDirty: sourceDirtyPaths === null
+              ? null
+              : repo.files.some((srcRel) => sourceDirtyPaths.has(srcRel)),
+          },
+          created: receiptCreated,
+          updated: receiptUpdated,
+          gcDeleted: gcDeletions,
+          overridesHeld: receiptOverridesHeld,
+          divergedOverwritten: receiptDivergedOverwritten,
+          divergenceRefused: divergenceRefusals,
+          unchanged: repoUnchanged,
+        });
+        if (receiptShouldWrite(priorReceipt, receipt)) {
+          atomicWriteFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n');
+          console.log(`  ${D}receipt${X} ${RECEIPT_PATH} updated ${D}(commit it — it is the in-repo record that this sync ran)${X}`);
+        }
+      } catch (err) {
+        // Advisory: the trace failing must not fail a sync that succeeded, but
+        // it must never be silent either — a missing trace is the condition
+        // this whole mechanism exists to end.
+        console.log(`  ${Y}receipt write failed${X} ${D}(this sync left no in-repo trace): ${err.message?.slice(0, 100)}${X}`);
+      }
+    }
+
     const parts = [];
     if (repoNew > 0) parts.push(`${G}+${repoNew} new${X}`);
     if (repoUpdated > 0) parts.push(`${Y}~${repoUpdated} updated${X}`);
@@ -1957,6 +2170,8 @@ async function main() {
     if (repoRemaps > 0) parts.push(`${D}${repoRemaps} remapped${X}`);
     if (repoRewrites > 0) parts.push(`${D}${repoRewrites} rewritten${X}`);
     if (repoGcDeletions > 0) parts.push(`${D}${repoGcDeletions} gc-deleted${X}`);
+    if (receiptOverridesHeld.length > 0) parts.push(`${D}${receiptOverridesHeld.length} held${X}`);
+    if (divergenceRefusals.length > 0) parts.push(`${R}${divergenceRefusals.length} diverged${X}`);
     if (repoErrors > 0) parts.push(`${R}${repoErrors} errors${X}`);
     console.log(`  ${parts.join('  ')}`);
 

@@ -600,11 +600,32 @@ export async function upstreamTransition({
     ? { ...parsedDisposition, value: redactSecrets(parsedDisposition.value).text }
     : parsedDisposition;
 
+  // A TERMINAL transition must carry a FULL uuid, not a prefix.
+  //
+  // The prefix form is fine for the store — `transitionFn` resolves it — but the
+  // ledger write below records `normId` verbatim, and
+  // `check-upstream-probe-coverage.mjs --gate` requires every ledger entry's
+  // `issueId` to be uuid-shaped. So a prefixed close succeeded, wrote an entry
+  // the gate then rejected, and left `npm run check` permanently red with the
+  // report already closed — the writer accepting a key its own reader refuses,
+  // shape (1) of the four AGENTS.md names. Caught 2026-08-29 closing five
+  // reports by prefix.
+  //
+  // Rejecting at the boundary rather than resolving here keeps the deliberate
+  // ledger-then-DB ordering below (the cheap local write must survive a DB
+  // failure) — resolving would require a store round-trip before it. `ack` is
+  // untouched: it writes no ledger entry, so a prefix stays convenient there.
+  if (parsedDisposition && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(normId)) {
+    return {
+      ok: false, code: 'BAD_INPUT',
+      errors: [`--id "${id}" is a prefix; closing a report needs the FULL uuid, because the `
+        + 'committed disposition ledger is keyed by it and `upstream:coverage:gate` rejects a '
+        + 'prefix. Get it from: npm run upstream:issues'],
+    };
+  }
+
   // Sequential ledger-then-DB write (§2.4) — the cheap local write happens
-  // FIRST, and only then the DB transition. `normId` is whatever the caller
-  // resolved (a full uuid off a printed worksheet card, in the common case);
-  // this function does not itself resolve a short prefix to a full id — that
-  // resolution happens inside `transitionFn`'s store call, same as before.
+  // FIRST, and only then the DB transition.
   if (parsedDisposition) {
     upsertDispositionLedgerEntry(repoRoot, { issueId: normId, state: to, disposition: safeDispositionValue });
   }

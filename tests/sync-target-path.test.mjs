@@ -75,6 +75,12 @@ async function run(argv, opts = {}) {
  */
 const VOLATILE_BOOKKEEPING = [
   'scripts/.sync-manifest.json',
+  // The in-repo sync trace (lib/sync-receipt.mjs). Carries `syncedAt` and the
+  // source stamp, so two targets synced seconds apart differ by construction —
+  // the same reason the manifest above is excluded. Unlike the others it is
+  // COMMITTED in a consumer on purpose; that makes its churn meaningful there
+  // and still meaningless for a byte-parity comparison between two fixtures.
+  '.sync-receipt.json',
   'scripts/.claude-skills/.sync-watermark.json',
   '.skills-fit-check.json',
   // npm-owned. Both embed the package NAME, which differs between fixture repos
