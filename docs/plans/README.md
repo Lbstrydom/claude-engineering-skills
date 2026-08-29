@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**3 active · 208 terminal · 27 audit summaries · 4 reference docs**
+**2 active · 209 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -21,7 +21,6 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
-| [Decompose `legacy-production-audit.mjs`](./legacy-production-audit-decomposition.md) | `Approved` | `/audit-plan` complete: GPT 5 rounds (absolute cap, |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | two burndown passes landed 2026-08-28. Pass 1: Q1 |
 
@@ -43,7 +42,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 205 completed plans</summary>
+<summary>Show all 206 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -142,6 +141,7 @@ source comments that no docs linter sees — stays valid.
 | [Honest failure across the learning / brainstorm / persona-promote seams](./learning-persona-quickfix-honest-failure.md) | `Complete` | 2026-08-09) — all 5 phases shipped across 3 clusters; |
 | [Learning-Store Signal Recovery — Identity, Outcomes, Dead Loops](./learning-store-signal-recovery.md) | `Complete` | Clusters A–D landed 2026-06-03/04 with their own |
 | [Learning System v2 — Adaptive Prompt Evolution & Contextual Bandits](./learning-system-v2.md) | `Complete` | shipped — Supabase tables `learning_decisions`, `recurring_finding_clusters`, `bandit_arms`, `false_positiv… |
+| [Decompose `legacy-production-audit.mjs`](./legacy-production-audit-decomposition.md) | `Complete` | shipped across Clusters A, B, C (PRs #81, #82, |
 | [Lens Coverage Honesty — a report states what it checked, not only what it found](./lens-coverage-honesty.md) | `Complete` | implemented 2026-08-20 via `/cycle --autonomous` |
 | [Pipeline liveness + canonical-path enforcement (WS3 follow-up)](./liveness-and-canonical-paths.md) | `Complete` |  |
 | [Local Navigable Dashboard Subsystem](./local-dashboard.md) | `Complete` | shipped as 8f98d46 (initial), follow-ups 53d1413, 94a1668, 63f5e70, 371142d, 0da1881 |

@@ -1,10 +1,15 @@
 # Plan: Decompose `legacy-production-audit.mjs`
 
 - **Date**: 2026-08-28
-- **Status**: Approved — `/audit-plan` complete: GPT 5 rounds (absolute cap,
-  24/24 findings accepted), Gemini 2 rounds (hard cap, both fixed,
-  `architectural_coherence: Strong`). See Audit Trail at the bottom. Not
-  yet implemented.
+- **Status**: Complete — shipped across Clusters A, B, C (PRs #81, #82,
+  merged 2026-08-28). Spine `legacy-production-audit.mjs` 5,065 → 1,701
+  lines; 12 new modules extracted per the File-Level Plan below. Real
+  `/audit-code` + Gemini gates (not the `/audit-plan` rounds cited below)
+  ran against each cluster's diff and caught genuine bugs before merge —
+  see `status.md` 2026-08-28 "legacy-production-audit-decomposition Cluster
+  C shipped" for the fix list and the two follow-ups it left open
+  (`check-setup.mjs`'s narrower `.env` resolution, since fixed in
+  `39d6cd8e`).
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `audit-orchestration`
