@@ -2,6 +2,7 @@ import { createAnthropicClient } from '../anthropic-client.mjs';
 import { azureConfig } from '../config.mjs';
 import { BRAINSTORM_SYSTEM_PROMPT } from './prompt.mjs';
 import { estimateCostUsd } from './pricing.mjs';
+import { isAbortFailure, abortMessage } from './error-classify.mjs';
 
 /**
  * /brainstorm's Azure second voice — Claude on Azure AI Foundry.
@@ -110,7 +111,7 @@ export async function callAzureClaude({ topic, model, maxTokens, timeoutMs = 600
     };
   } catch (err) {
     clearTimeout(timer);
-    return classifyError({ err, latencyMs: Date.now() - startMs });
+    return classifyError({ err, latencyMs: Date.now() - startMs, signal: controller.signal, timeoutMs });
   }
 }
 
@@ -144,7 +145,7 @@ export function _classifyCompletion({ text, stopReason }) {
   return { state: 'success', text, errorMessage: null };
 }
 
-function classifyError({ err, latencyMs }) {
+function classifyError({ err, latencyMs, signal = null, timeoutMs = null }) {
   const base = {
     provider: 'azure-claude',
     text: null,
@@ -153,8 +154,11 @@ function classifyError({ err, latencyMs }) {
     estimatedCostUsd: null,
   };
 
-  if (err?.name === 'AbortError' || err?.code === 'ABORT_ERR') {
-    return { ...base, state: 'timeout', errorMessage: 'Aborted after timeout', httpStatus: null };
+  // Signal-first: the adapter aborted on its own timeout, so `signal.aborted`
+  // is authoritative regardless of how the SDK wrapped the rejection. Sniffing
+  // the error shape alone read an OpenAI `APIUserAbortError` as `malformed`.
+  if (isAbortFailure({ err, signal })) {
+    return { ...base, state: 'timeout', errorMessage: abortMessage(timeoutMs), httpStatus: null };
   }
 
   const status = err?.status ?? err?.response?.status ?? null;

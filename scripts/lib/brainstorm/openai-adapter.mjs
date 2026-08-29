@@ -2,6 +2,7 @@ import { createOpenAIClient } from '../openai-client.mjs';
 import { azureConfig } from '../config.mjs';
 import { BRAINSTORM_SYSTEM_PROMPT } from './prompt.mjs';
 import { estimateCostUsd } from './pricing.mjs';
+import { isAbortFailure, abortMessage } from './error-classify.mjs';
 
 // Routed through the shared Azure-aware seam, not a raw `new OpenAI()` —
 // the 2026-07-14 fresh-installer audit found this adapter was the one
@@ -99,7 +100,7 @@ export async function callOpenAI({ topic, model, maxTokens, timeoutMs = 60000, r
   } catch (err) {
     clearTimeout(timer);
     const latencyMs = Date.now() - startMs;
-    return classifyError({ err, latencyMs });
+    return classifyError({ err, latencyMs, signal: controller.signal, timeoutMs });
   }
 }
 
@@ -131,7 +132,7 @@ export function _classifyCompletion({ text, finishReason }) {
   return { state: 'success', text, errorMessage: null };
 }
 
-function classifyError({ err, latencyMs }) {
+function classifyError({ err, latencyMs, signal = null, timeoutMs = null }) {
   const base = {
     provider: 'openai',
     text: null,
@@ -140,8 +141,11 @@ function classifyError({ err, latencyMs }) {
     estimatedCostUsd: null,
   };
 
-  if (err?.name === 'AbortError' || err?.code === 'ABORT_ERR') {
-    return { ...base, state: 'timeout', errorMessage: 'Aborted after timeout', httpStatus: null };
+  // Signal-first: the adapter aborted on its own timeout, so `signal.aborted`
+  // is authoritative regardless of how the SDK wrapped the rejection. Sniffing
+  // the error shape alone read an OpenAI `APIUserAbortError` as `malformed`.
+  if (isAbortFailure({ err, signal })) {
+    return { ...base, state: 'timeout', errorMessage: abortMessage(timeoutMs), httpStatus: null };
   }
 
   const status = err?.status ?? err?.response?.status ?? null;

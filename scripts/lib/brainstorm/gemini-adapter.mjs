@@ -2,6 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { BRAINSTORM_SYSTEM_PROMPT } from './prompt.mjs';
 import { estimateCostUsd } from './pricing.mjs';
 import { normalizeGeminiUsage } from '../gemini-usage.mjs';
+import { isAbortFailure, abortMessage } from './error-classify.mjs';
 
 let _client = null;
 function client() {
@@ -71,7 +72,7 @@ export async function callGemini({ topic, model, maxTokens, timeoutMs = 60000, s
   } catch (err) {
     clearTimeout(timer);
     const latencyMs = Date.now() - startMs;
-    return classifyError({ err, latencyMs });
+    return classifyError({ err, latencyMs, signal: controller.signal, timeoutMs });
   }
 }
 
@@ -112,7 +113,7 @@ export function _classifyCompletion({ text, finishReason }) {
   return { state: 'success', text, errorMessage: null };
 }
 
-function classifyError({ err, latencyMs }) {
+function classifyError({ err, latencyMs, signal = null, timeoutMs = null }) {
   const base = {
     provider: 'gemini',
     text: null,
@@ -121,8 +122,11 @@ function classifyError({ err, latencyMs }) {
     estimatedCostUsd: null,
   };
 
-  if (err?.name === 'AbortError' || err?.code === 'ABORT_ERR') {
-    return { ...base, state: 'timeout', errorMessage: 'Aborted after timeout', httpStatus: null };
+  // Signal-first: the adapter aborted on its own timeout, so `signal.aborted`
+  // is authoritative regardless of how the SDK wrapped the rejection. Sniffing
+  // the error shape alone read an OpenAI `APIUserAbortError` as `malformed`.
+  if (isAbortFailure({ err, signal })) {
+    return { ...base, state: 'timeout', errorMessage: abortMessage(timeoutMs), httpStatus: null };
   }
 
   // Google SDK surfaces HTTP errors via err.status or in the message
