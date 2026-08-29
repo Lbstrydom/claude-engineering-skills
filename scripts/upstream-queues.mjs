@@ -64,6 +64,7 @@ import { CONSUMER_REPOS } from './lib/consumer-repos.mjs';
 import {
   discoverStores, describeStore, readRepoEnvText, readSharedEnvText,
 } from './lib/upstream/store-discovery.mjs';
+import { storeFingerprint } from './lib/db/client.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = path.join(REPO_ROOT, 'scripts', 'cross-skill.mjs');
@@ -227,6 +228,7 @@ function main() {
       sslMode: process.env.AUDIT_DB_SSL_MODE || null,
     },
     readEnvText: readRepoEnvText,
+    fingerprintOf: storeFingerprint,
     sharedEnvText: readSharedEnvText(),
   });
 

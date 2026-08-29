@@ -355,6 +355,18 @@
     {
       "line": "never collected at all (never-started is not stalled). Prints its own card; pass",
       "reason": "Step 0.5i (2026-08-23). Describes the verb's SILENCE conditions, not an enforcement claim -- matched only because the verb scanner sees 'never'. Each named condition is a real branch in verbStale (no .campaigns dir; per-config loadCampaign throw; !ev.ok; !ev.latestArmRunAt; complete >= targetN; days < STALE_AFTER_DAYS), and the never-started case is the load-bearing one: a campaign with no arm runs has latestArmRunAt null, which must read as 'nothing to say' rather than being date-arithmetic'd into infinite staleness. The instruction to pass the tool's card through verbatim is a rendering rule for the agent (one rendering, owned by the tool), the same one-rendering discipline repo-context.mjs's renderCoverage carries."
+    },
+    {
+      "line": "> names**, never a DSN or hostname — this output gets pasted into a public",
+      "reason": "0.5h. A disclosure property of `upstream-queues.mjs`'s RENDERING, not a gate /ship enforces: `describeStore` returns a fingerprint plus consumer names and there is no /ship exit code to assert about it. The claim is real and is bound executably where it belongs — tests/upstream-store-discovery.test.mjs, 'describeStore — never leaks the DSN', which asserts the rendered string contains none of the credential, user, host or scheme. Dispositioned here rather than reworded because the sentence is the reason the fan-out prints fingerprints at all, and a reader of this step needs it."
+    },
+    {
+      "line": "cannot change is the cried-wolf shape that earns `--no-verify`. It always exits 0.",
+      "reason": "0.5h. States that `upstream-queues.mjs` is advisory — it exits 0 whatever the queues hold, because the queue is CLOUD state the commit being shipped cannot change. That is a property of the invoked CLI, asserted in its own module (`main()` ends `process.exit(0)` unconditionally on the non-usage path), not a gate /ship itself runs. `--no-verify` appears as the NAME of the failure mode being avoided, not as an instruction."
+    },
+    {
+      "line": "`upstream:coverage:gate` rejects a non-uuid key. Full ids: `npm run upstream:issues`",
+      "reason": "0.5h. Names a constraint another gate imposes so the reader does not close a report by prefix and leave `npm run check` red — the live 2026-08-29 failure this sentence exists to pre-empt. The enforcement is `upstreamTransition`'s boundary check plus check-upstream-probe-coverage.mjs's uuid shape rule, both bound in tests/upstream-disposition-ratchet.test.mjs ('closing by ID PREFIX is refused'). /ship neither performs nor can assert it."
     }
   ]
 }

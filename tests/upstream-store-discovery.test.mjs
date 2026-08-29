@@ -99,6 +99,16 @@ describe('resolveRepoStore — layering', () => {
 });
 
 describe('discoverStores', () => {
+  test('refuses without a fingerprint function rather than defaulting', () => {
+    // Defaulting would make every store unresolvable — every consumer queue
+    // silently invisible, arriving as a clean result. That is the failure this
+    // module exists to end, so it must not be reachable by omission.
+    assert.throws(
+      () => discoverStores({ repos: [], readEnvText: () => null }),
+      /fingerprintOf is required/,
+    );
+  });
+
   const repos = [
     { name: 'wine', path: '/w' },
     { name: 'organiser', path: '/o' },
@@ -112,6 +122,7 @@ describe('discoverStores', () => {
   const base = {
     repos,
     readEnvText: (p) => envs[p] ?? null,
+    fingerprintOf: storeFingerprint,
     sharedEnvText: `AUDIT_DB_URL=${NAS_DSN}\n`,
     self: { name: 'this repo', url: NAS_DSN, sslMode: null },
   };

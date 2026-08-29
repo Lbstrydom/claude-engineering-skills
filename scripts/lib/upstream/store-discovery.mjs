@@ -48,8 +48,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { resolveEnvValue } from '../env-setting.mjs';
-import { storeFingerprint } from '../db/client.mjs';
 import { DSN_GROUP_KEYS, sharedEnvPath } from '../shared-cloud-config.mjs';
+
+// `storeFingerprint` is INJECTED rather than imported. This module is
+// `shared-lib`; `lib/db/client.mjs` is `stores`, and that edge is a layering
+// violation `arm-vocabulary-layering` fails on. The preference order there is
+// refactor > retag > declare, and injection is the refactor: the module was
+// already injection-shaped for its IO (`readEnvText`, `repoExists`), so the one
+// pure helper it wanted from the store layer joins them instead of dragging a
+// domain edge behind it. Callers pass `storeFingerprint` from lib/db/client.mjs.
 
 /** Why a consumer contributed no store. */
 export const UNRESOLVED = Object.freeze({
@@ -136,20 +143,27 @@ export function resolveRepoStore({ repoEnvText, sharedEnvText }) {
  * @param {{name: string, url: string|null, sslMode: string|null}} [input.self]
  *   this repo's own store, included so the fan-out is a superset of today's read
  * @param {(repoPath: string) => string|null} input.readEnvText
+ * @param {(dsn: string) => string|null} input.fingerprintOf — `storeFingerprint`
  * @param {string|null} [input.sharedEnvText]
  * @param {(repoPath: string) => boolean} [input.repoExists]
  * @returns {{stores: Array<{fingerprint: string, url: string, sslMode: string|null, repos: string[]}>,
  *            unresolved: Array<{repo: string, reason: string}>}}
  */
 export function discoverStores({
-  repos, self = null, readEnvText, sharedEnvText = null, repoExists = () => true,
+  repos, self = null, readEnvText, fingerprintOf, sharedEnvText = null, repoExists = () => true,
 }) {
+  if (typeof fingerprintOf !== 'function') {
+    // Refused rather than defaulted: a missing fingerprint function would make
+    // every store unresolvable, i.e. every consumer's queue silently invisible —
+    // the exact failure this module exists to end, arriving as a clean result.
+    throw new TypeError('discoverStores: fingerprintOf is required (pass storeFingerprint from lib/db/client.mjs)');
+  }
   /** @type {Map<string, {fingerprint: string, url: string, sslMode: string|null, repos: string[]}>} */
   const byFingerprint = new Map();
   const unresolved = [];
 
   const add = (name, url, sslMode) => {
-    const fingerprint = storeFingerprint(url);
+    const fingerprint = fingerprintOf(url);
     if (!fingerprint) { unresolved.push({ repo: name, reason: UNRESOLVED.BAD_DSN }); return; }
     const existing = byFingerprint.get(fingerprint);
     if (existing) {
