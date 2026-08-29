@@ -628,6 +628,10 @@
       "description": "Same as upstream:coverage, but exits non-zero on drift. Runs as part of `npm run check` — a closed upstream report with neither a resolvable probe id, a real test file, nor a written exemption fails the push.",
       "category": "sync"
     },
+    "upstream:queues": {
+      "description": "Open upstream reports across EVERY store this maintainer's consumers file into, not just the ambient AUDIT_DB_URL. Resolves each registered consumer's store the way that consumer's own tooling does (its .env, then the shared ~/.audit-loop.env), dedupes by storeFingerprint so repos sharing a store are queried once, and asks each in a child process. Replaces the single-store read in /ship 0.5h, which printed `0 open` while a consumer on another store had 8 open reports. Advisory (always exit 0), and it distinguishes UNQUERIED from empty — a store nobody could reach is never counted as zero. Prints a fingerprint plus consumer names, never a DSN or hostname.",
+      "category": "sync"
+    },
     "upstream:issues": {
       "description": "Triage worksheet for upstream bug reports filed from consumer repos (bundle staleness + prior fixes).",
       "category": "sync"

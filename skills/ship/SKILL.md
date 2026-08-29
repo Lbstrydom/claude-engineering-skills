@@ -526,21 +526,52 @@ consumer reports sat unread, one of them already fixed ~45 minutes earlier and
 still showing `open`. A queue nobody is prompted to read is a queue that decays.
 
 ```bash
-node scripts/cross-skill.mjs upstream list 2>/dev/null
+npm run upstream:queues 2>/dev/null
 ```
+
+Print its stdout verbatim — it renders the finished card, so there is nothing to
+parse and no formatting decision here.
+
+> **Read EVERY consumer's store, not the ambient one** (fixed 2026-08-29). This
+> step used to run `cross-skill.mjs upstream list`, which queries whatever store
+> `AUDIT_DB_URL` names in THIS repo. Consumers are not on one store: `storyline`
+> files into a corporate Azure Postgres while this repo defaults to the NAS one,
+> so the step printed **`0 open`** in the very session that consumer had EIGHT
+> genuinely open reports — four of them HIGH, the oldest already a day old. A
+> triage nudge blind to an entire consumer was reporting its blindness as a
+> clean queue.
+>
+> `upstream-queues.mjs` resolves each registered consumer's store the way that
+> consumer's own tooling does (its `.env`, then the shared `~/.audit-loop.env`),
+> dedupes by `storeFingerprint` so repos sharing a store are queried once, and
+> asks each one in a child process. It prints a **fingerprint plus the consumer
+> names**, never a DSN or hostname — this output gets pasted into a public
+> repo's status log and one store is a corporate internal host.
 
 **Never blocks, and there is no override flag** — the queue is CLOUD state, not
 repo state, so it can only advise; a check firing on something the commit
-cannot change is the cried-wolf shape that earns `--no-verify`. Cloud off or
-unreachable ⇒ silently skipped. If `rows` is non-empty, print at most 3, HIGH first:
+cannot change is the cried-wolf shape that earns `--no-verify`. It always exits 0.
 
+**Read the `unqueried` / `no store` lines, and do not treat the count as
+complete when either is present.** They are the whole point of the rewrite: a
+store nobody could reach and a consumer whose DSN could not be resolved are both
+reported explicitly rather than counted as zero. If NO store answered, the card
+says `NOTHING WAS CHECKED` instead of `0 open` — that is not a clean queue, it
+is an unasked question, and reporting it as clean is the defect this replaced.
+
+Triage against **the store that owns the row** — `upstream ack|fix|wont-fix`
+writes to the ambient `AUDIT_DB_URL`, which is only one of them. For a report
+belonging to another consumer's store, run the transition with that store's DSN
+in the environment:
+
+```bash
+node scripts/cross-skill.mjs upstream ack --id <the full uuid>     # or fix --commit / wont-fix
 ```
-ⓘ UPSTREAM REPORTS OPEN (non-blocking)
-  <n> consumer report(s) awaiting triage (showing <=3):
-    • [<severity>] <title> — from <repo_name>
-  node scripts/cross-skill.mjs upstream ack --id <the id>     # or fix --commit / wont-fix
-  Full worksheet with freshness + prior-fix evidence: npm run upstream:issues
-```
+
+Closing a report needs the **FULL uuid**, not a prefix: the store resolves a
+prefix but the committed disposition ledger records what you typed, and
+`upstream:coverage:gate` rejects a non-uuid key. Full ids: `npm run upstream:issues`
+(ambient store) or the card above.
 
 Before triaging, check `freshness` and `priorFixes` on the row: a report can
 describe a defect that a LATER commit already fixed, so `fix --commit` may be the

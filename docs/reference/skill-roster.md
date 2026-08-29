@@ -2,14 +2,53 @@
 
 Moved out of `AGENTS.md` (2026-08-10) under its progressive-disclosure rule:
 subsystem-grade detail belongs in `docs/` with a short stub in AGENTS.md,
-because AGENTS.md is loaded every session and size is a cost. AGENTS.md keeps
-the chain diagram, a one-line scope per skill, and the invariants that constrain
-*any* change to a skill. Everything below is the elaboration.
+because AGENTS.md is loaded every session and size is a cost. AGENTS.md keeps the
+invariants that constrain *any* change to a skill; the chain diagram and the
+one-line scope per skill moved here on 2026-08-29. Everything below is the
+elaboration.
 
 Each skill is a sibling — they share env vars and the cloud audit store but have
 distinct scopes. The authoritative flow for each lives in `skills/<name>/SKILL.md`;
 this file records the scope boundaries and the design invariants that are not
 obvious from reading the skill.
+
+## The chain, and which lens is which
+
+Moved from `AGENTS.md` 2026-08-29 under the same progressive-disclosure rule
+that created this file: the diagram and the one-line-per-skill index are the
+elaboration of a pointer, and AGENTS.md had run to 40 characters of headroom.
+The invariants that constrain *any* change to a skill stayed there.
+
+```
+/plan                             → architecture & UX planning (auto-detects backend/frontend/full-stack)
+        ↓
+/audit-plan                      → iterative plan refinement (max 3 rounds, rigor-pressure stop)
+        ↓
+/audit-code                      → multi-pass code audit (R2+ suppression, debt capture)
+        ↓
+(/cycle runs this whole chain end-to-end, pausing for human implementation between audit-plan and audit-code)
+        ↓
+/ux-lock                         → Playwright e2e spec for each fix (locks in DOM contract)
+        ↓
+deploy to Railway / live URL
+        ↓
+/click-test + /persona-test + /nav-audit + /visual-audit → four lenses: page DOM ∥ journey narrative ∥ system IA/nav ∥ paint/visual
+  (structural)  (narrative)   (system)    (paint)        Disjoint coverage — run on UI PRs. nav-audit + visual-audit are static (--verify <url> confirms against the live app).
+        ↓
+/ship                            → commit + push (with UX P0 warning from persona-test)
+```
+
+Which lens, not how it works — every mode, flag and mechanism is in the roster:
+
+- **plan** — code that doesn't exist yet; its frontend path emits the machine-parseable "Acceptance Criteria" section `/ux-lock verify` consumes.
+- **audit-plan** — refines a plan before implementation. Single-file edits.
+- **audit-code** — code just written: LLM passes + R2+ suppression + mechanical waves.
+- **ux-lock** — locks a fix's DOM contract (Playwright e2e); verify mode grades a plan against the live app.
+- **persona-test** — deployed app, narrative QA (exploratory · pair · consistency).
+- **click-test** — deployed app, structural DOM audit; catches what personas never trigger, because there's no narrative reason to notice it.
+- **nav-audit** — the **system** lens (persona=journey, click=page, nav=system): is what's OFFERED what's NEEDED?
+- **visual-audit** — the **paint** lens: math-first, deterministic; the VLM never gates.
+- **ship** — packaging and delivery.
 
 ## `plan`
 

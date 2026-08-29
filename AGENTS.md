@@ -139,24 +139,16 @@
 
 ## Skill Chain
 
-```
-/plan                             → architecture & UX planning (auto-detects backend/frontend/full-stack)
-        ↓
-/audit-plan                      → iterative plan refinement (max 3 rounds, rigor-pressure stop)
-        ↓
-/audit-code                      → multi-pass code audit (R2+ suppression, debt capture)
-        ↓
-(/cycle runs this whole chain end-to-end, pausing for human implementation between audit-plan and audit-code)
-        ↓
-/ux-lock                         → Playwright e2e spec for each fix (locks in DOM contract)
-        ↓
-deploy to Railway / live URL
-        ↓
-/click-test + /persona-test + /nav-audit + /visual-audit → four lenses: page DOM ∥ journey narrative ∥ system IA/nav ∥ paint/visual
-  (structural)  (narrative)   (system)    (paint)        Disjoint coverage — run on UI PRs. nav-audit + visual-audit are static (--verify <url> confirms against the live app).
-        ↓
-/ship                            → commit + push (with UX P0 warning from persona-test)
-```
+16 skills, run in this order: **plan → audit-plan → *(implement)* → audit-code
+→ ux-lock → deploy → the four UI lenses → ship**, with `/cycle` driving the whole
+chain and pausing for human implementation. The four lenses are **disjoint** and
+run together on a UI PR — click-test (page DOM) ∥ persona-test (journey) ∥
+nav-audit (system IA) ∥ visual-audit (paint).
+
+Diagram, one-line scope per skill, and per-skill depth (modes, flags, the design
+invariants of each wave and lens) + the naming convention:
+[`docs/reference/skill-roster.md`](docs/reference/skill-roster.md) — read it before
+renaming a skill or "simplifying" a wave.
 
 **Skill file structure** (Phase B.1+ — progressive disclosure):
 
@@ -209,22 +201,7 @@ packaged/synced; no contract = `uncontracted`, not failed) — `npm run
 skills:check`/`gates:check` validate it; details: `docs/reference/gate-honesty.md`.
 
 Each skill is a sibling — they share env vars and the cloud audit store but have
-distinct scopes. **Per-skill depth** (modes, flags, two-artifact splits, the design
-invariants of each wave and lens) and the **naming convention** live in
-[`docs/reference/skill-roster.md`](docs/reference/skill-roster.md) — read it before
-renaming a skill or "simplifying" a wave.
-
-Which lens, not how it works — every mode, flag and mechanism is in the roster:
-
-- **plan** — code that doesn't exist yet; its frontend path emits the machine-parseable "Acceptance Criteria" section `/ux-lock verify` consumes.
-- **audit-plan** — refines a plan before implementation. Single-file edits.
-- **audit-code** — code just written: LLM passes + R2+ suppression + mechanical waves.
-- **ux-lock** — locks a fix's DOM contract (Playwright e2e); verify mode grades a plan against the live app.
-- **persona-test** — deployed app, narrative QA (exploratory · pair · consistency).
-- **click-test** — deployed app, structural DOM audit; catches what personas never trigger, because there's no narrative reason to notice it.
-- **nav-audit** — the **system** lens (persona=journey, click=page, nav=system): is what's OFFERED what's NEEDED?
-- **visual-audit** — the **paint** lens: math-first, deterministic; the VLM never gates.
-- **ship** — packaging and delivery.
+distinct scopes.
 
 **Four imperatives the roster is too late to tell you.** **(1)** A new mechanical
 wave must be declared in `MECHANICAL_WAVES` ([audit-shadow.mjs](scripts/lib/audit-shadow.mjs)),
@@ -258,6 +235,19 @@ consumer instead of the named one. Verified 2026-07-20.)
 > consumer/upstream seam — the local edit is the band-aid. Repo-specific **push
 > gates** belong in the committed `.githooks/pre-push.local`
 > ([recipe](docs/runbooks/consumer-adoption.md)), never in the managed hook.
+>
+> **Consumers are not all on ONE store, and every reader must say which it asked**
+> (third instance, 2026-08-29). A consumer files into whatever store ITS
+> `AUDIT_DB_URL` names; this repo's is a different one. Every single-store read is
+> therefore blind to a consumer and reports that blindness as good news —
+> `/ship` 0.5h printed `0 open` while a consumer had 8 open reports (fixed: `npm
+> run upstream:queues` fans out over every consumer's store, deduped by
+> `storeFingerprint`), and the committed disposition ledger failed the push on
+> entries whose rows live elsewhere (fixed: an optional `storeFingerprint` per
+> entry; foreign ones are reported, never gated). Two rules for the next reader:
+> **an unasked question must never render as an empty result**, and a store is
+> named to operators by **fingerprint + the consumers using it** — never a
+> hostname, because this repo is public and one consumer's store is corporate.
 >
 > **File the report, don't paste it.** Consumer: `cross-skill.mjs upstream report --title … --affected-path <synced path>`
 > (body on **stdin**) — it auto-captures the repo, the bundle sha, and whether the path is really

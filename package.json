@@ -165,6 +165,7 @@
     "knip:baseline": "node scripts/knip-gate.mjs --update-baseline",
     "knip:exports": "npx knip --include exports,types,enumMembers",
     "upstream:issues": "node scripts/cross-skill.mjs upstream list --worksheet",
+    "upstream:queues": "node scripts/upstream-queues.mjs",
     "upstream:reconcile": "node scripts/cross-skill.mjs upstream reconcile --worksheet",
     "upstream:reconcile:gate": "node scripts/cross-skill.mjs upstream reconcile --gate --worksheet",
     "gates:poison": "node scripts/check-gate-poison-pills.mjs",
