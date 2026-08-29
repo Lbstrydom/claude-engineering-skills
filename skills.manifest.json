@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "88ce26d2ae1d2e59",
+  "bundleVersion": "2462177965be0bb7",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -90,8 +90,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "820c3f2f2a30",
-          "size": 23853
+          "sha": "5c326af57bcc",
+          "size": 27463
         }
       ]
     },
@@ -123,8 +123,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "d75f5dc4cdb5",
-          "size": 23867
+          "sha": "c4763505595c",
+          "size": 27477
         }
       ]
     },
@@ -185,8 +185,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "d75f5dc4cdb5",
-          "size": 23867
+          "sha": "c4763505595c",
+          "size": 27477
         }
       ]
     },
@@ -208,8 +208,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "d75f5dc4cdb5",
-          "size": 23867
+          "sha": "c4763505595c",
+          "size": 27477
         }
       ]
     },
@@ -251,8 +251,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "d75f5dc4cdb5",
-          "size": 23867
+          "sha": "c4763505595c",
+          "size": 27477
         }
       ]
     },
@@ -352,8 +352,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "d75f5dc4cdb5",
-          "size": 23867
+          "sha": "c4763505595c",
+          "size": 27477
         }
       ]
     },
@@ -393,8 +393,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "d75f5dc4cdb5",
-          "size": 23867
+          "sha": "c4763505595c",
+          "size": 27477
         }
       ]
     },
@@ -434,8 +434,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "d75f5dc4cdb5",
-          "size": 23867
+          "sha": "c4763505595c",
+          "size": 27477
         },
         {
           "relPath": "references/verify-mode-generation.md",

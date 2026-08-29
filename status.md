@@ -1,5 +1,33 @@
 # Project Status Log
 
+## 2026-08-29 — verification-discipline §3c/§3d: diagnostic code has no happy path
+
+### Consumer Verification (previous ship)
+- **Ship**: `81179bf53d00361496e001f95f8a18cbfcc0ad34` on `main` (worktree private-consumer-registry fix).
+- **State**: `verified` (transfer + the fix's own effect, observed in production), `unverified` (independent fresh-clone battery).
+- **Retrieval run**: `git ls-remote origin main` → `81179bf5`, byte-matched against local HEAD. Not read from `git push`'s exit code.
+- **The fix verified itself in production, which is the strongest evidence available here.** The push that SHIPPED it ran the pre-push sync from the linked worktree and reported `Targets: 3/3 reached · Updated: 3 · Unchanged: 2247 · Errors: 0`, where the immediately preceding push from the same worktree reported `2/2`. The new provenance line also fired in the real (non-dry-run) path: `Private consumer registry read from the MAIN checkout (this worktree has none): C:\GIT\claude-engineering-skills\scripts\lib\consumer-repos.local.json`. Both halves — the fallback and the honesty line — are therefore confirmed against a real run, not only against tests.
+- **`unverified` — independent fresh clone**: no `git clone` into a tempdir + full battery outside the pre-push hook's own throwaway worktree. The hook ran the full `check` in a clean checkout at `81179bf5` and passed; a strong producer-side proxy, not consumer-side proof.
+- **Not re-checked this ship**: per-consumer file content. The previous ship's note covers that for `bc6487f6` (storyline + wine-cellar-app spot-checked, storyline's own copy executed). This ship changed only source-repo-side tooling (`consumer-repos.mjs`, `sync-to-repos.mjs` are both source-only, confirmed via the sync inventory), so no consumer-visible bundle content changed beyond the 3 routine updates.
+
+### Changes
+- Added **§3c "Code that only runs after a failure needs a manufactured failure"** to the canonical `docs/audit/shared-references/verification-discipline.md`, closing a gap §3 left open. §3 is framed around checks (guards, probes, assertions) and asks you to prove one *can* fail; it does not reach logging, error formatting, failure classification or retry decisions. Those share a property that makes green output worthless as evidence about them: **the happy path never executes them**, so a fully passing suite is not weak evidence — it is zero evidence, and it reads as reassurance. The rule: manufacture a real failure of the real tool, in the same pass that adds the diagnostic. Three steps — drive the actual tool to an actual error, read what the handler *printed* (not what it was meant to print), and check the diagnostic names the cause.
+- Added **§3d "Intermittent means race — 'the environment' is a claim, not an explanation"** as a short sibling of §3's *suspect the instrument before the subject*, with a census-not-repro discriminator.
+- Evidence for both is a consumer field report (a Windows Electron app with a self-hosted CI runner, 2026-08-28/29), not this repo. §3c: adding `/L*v` logging + a failure tail to one `msiexec` drill introduced three defects into that single diagnostic path — a `/\r?\n/` split mangled to a literal newline, a UTF-16LE log read as UTF-8 (null-separated mojibake in the CI error message), and a last-60-lines tail that missed `Error 1335 … cabinet file 'cab2.cab' … is corrupt` at line 1480 of 2131. The drill ran green end-to-end between the second and third. §3d: three failures all attributed to a contended CI machine before anyone read the code, all three the same shape (a guard applied at one call site, missed at another).
+- Fixed two stale counts found while editing. The canonical's intro said **"Six rules"** while carrying seven (`## 7` arrived later, from the lens-coverage-honesty work at `53120366`) — now "Seven rules … Six outlived the engagement that produced them; §7 was added later", and the closing "Three of the six" is now "Three of the original six". `AGENTS.md` said the file syncs into **"seven skills'"** `references/` against a measured eight (`sync-shared-audit-refs.mjs` writes 8 copies; `ls -d skills/*/references/verification-discipline.md | wc -l` = 8) — `nav-audit` was added since that line was written.
+
+### Files Affected
+- `docs/audit/shared-references/verification-discipline.md` — canonical; +§3c, +§3d, intro/tail count fixes
+- `skills/{audit-code,audit-plan,explain,investigate,nav-audit,plan,ship,ux-lock}/references/verification-discipline.md` — synced copies (`sync-shared-audit-refs.mjs`)
+- `.claude/skills/**` equivalents + `skills.manifest.json` — regenerated (`npm run skills:regenerate`)
+- `AGENTS.md` — one word, `seven skills` → `eight skills` (zero character delta)
+
+### Decisions Made
+- **The new subsections were deliberately NOT summarised into `AGENTS.md`.** `npm run context:check` reports the file at **91,782 / 92,000 characters (218 left)** and advises *"the next invariant will not fit, and shaving words to squeeze under the cap is how a file stays permanently full — condense first"*. §3c/§3d are subsections of §3, and AGENTS.md's §3 bullet already points at the canonical, so adding them would spend the last of the headroom on depth that is already resident one hop away. Condensing AGENTS.md is a separate task; it is flagged, not done.
+- Included §3d despite it being offered as optional and more repo-flavoured than §3c. It earns the place because all three instances are **one shape**, which yields a concrete instrument — a census, not a repro: take the guard the passing path relies on and enumerate every call site that needs it. Kept to ~15 lines and hung explicitly off §3 so it reads as a sharpening, not a competing rule.
+- Edited the canonical and re-synced rather than the requested `skills/audit-code/references/` copy directly — that copy carries a `GENERATED COPY — do not edit` banner and `npm run check` fails on drift.
+- **No new reference-table entry needed** — `skill-refs-parser.mjs`'s orphan-file guard fires on new *files*, and this edits an existing one. `check-skill-refs` reports 16 passed / 0 failed; `sync-shared-audit-refs --check` reports 14 pairs, 0 drifted.
+
 ## 2026-08-28 — legacy-production-audit-decomposition Cluster C shipped; real audit gates found a false-negative in check-setup.mjs
 
 ### Changes

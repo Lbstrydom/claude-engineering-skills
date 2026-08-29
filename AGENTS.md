@@ -1322,7 +1322,7 @@ codes: [`docs/reference/sensitive-paths-and-vcs.md`](docs/reference/sensitive-pa
 
 Six rules from a 2026-08-07 field report, each led by its measurement. Canonical:
 [`docs/audit/shared-references/verification-discipline.md`](docs/audit/shared-references/verification-discipline.md),
-synced into seven skills' `references/` by `sync-shared-audit-refs.mjs` and
+synced into eight skills' `references/` by `sync-shared-audit-refs.mjs` and
 byte-checked in `npm run check`. **Edit the canonical, never a copy.**
 
 - **Pin a line number to the commit you read it at** — `path:120 (a4ec98da)`.

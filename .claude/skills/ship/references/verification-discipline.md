@@ -4,8 +4,9 @@ summary: Verification discipline — pinned citations, figure provenance, two-di
 
 # Verification Discipline
 
-Six rules that outlived the engagement that produced them. Each is led by its
-measurement, because the measurement is the argument. Field report:
+Seven rules, each led by its measurement, because the measurement is the
+argument. Six outlived the engagement that produced them; §7 was added later,
+from the lens-coverage-honesty work. Field report:
 `wine-cellar-app/docs/upstream-issues/claude-engineering-skills-feedback-2026-08-07.md`; design + audit trail:
 [`docs/plans/verification-discipline-cluster.md`](../../../docs/plans/verification-discipline-cluster.md).
 
@@ -253,6 +254,64 @@ Three things make it sustainable rather than shelfware:
 Not a push gate: it is slow and drifts with unrelated refactors. On-demand, or
 nightly CI.
 
+### 3c. Code that only runs after a failure needs a manufactured failure
+
+> **Measured 2026-08-29**: adding `/L*v` verbose logging and a failure tail to a
+> single `msiexec` drill introduced **three defects into that one diagnostic
+> path**, and the drill ran green end-to-end between the second and the third.
+> A `/\r?\n/` split mangled into a literal newline; a UTF-16LE log read as UTF-8,
+> printing null-separated mojibake into the CI error message; and a last-60-lines
+> tail that missed the real cause — `Error 1335 … cabinet file 'cab2.cab' … is
+> corrupt` at **line 1480 of 2131**, the tail holding only rollback bookkeeping.
+> The opacity it was fixing had already cost days: the same bare exit code 1603
+> was written off twice, in two sessions, as self-clearing runner residue.
+
+Logging, error formatting, failure classification and retry decisions sit outside
+§3's framing because of one shared property: **the happy path never executes
+them.** §3 asks you to prove a check *can* fail. Here the reporter **is** the
+subject, and the failure is an **input you must manufacture before the code under
+test runs at all**. So a fully passing suite is not weak evidence that a reporter
+works — it is **zero** evidence, and it reads as reassurance. That is the trap.
+
+**Manufacture a real failure of the real tool, in the same pass that adds the
+diagnostic:**
+
+1. **Drive the actual tool to an actual error** — not a stub, not a hand-written
+   fixture. `msiexec /i C:\nonexistent\nope.msi /quiet /norestart /L*v <path>`
+   → exit 1619, in about ten seconds.
+2. **Read what the handler printed**, not what it was meant to print. Encoding,
+   line splitting and truncation are invisible to review and observable only
+   here — the UTF-16LE defect had already survived two green drills.
+3. **Check the diagnostic names the cause.** A verbose log does not end at the
+   failure, so a fixed tail of N lines is an assumption about where the cause
+   sits. That one was wrong by 650 lines, and CI named nothing.
+
+Ten seconds against a defect that had already survived a full drill. "We'll find
+out next time it breaks" is not the cheaper trade — next time is a CI failure
+diagnosable only if the full log happens to still be on the runner's disk.
+
+### 3d. Intermittent means race — "the environment" is a claim, not an explanation
+
+> **Measured 2026-08**: three failures in one repo, each attributed to a
+> shared/contended CI machine before anyone read the code, two of them
+> independently by more than one session. All three were the **same shape** — a
+> guard that exists and is applied at one call site and missed at another: a
+> confirm-dialog handler registered by one app launcher but not a second; an
+> export wait using a local 30s timeout at one call site while a shared helper
+> used the command's real 120s contract at two others; a process-tree wait
+> applied before uninstall but not before upgrade.
+
+Sibling of *suspect the instrument before the subject*: **a failure that comes
+and goes is evidence of a race**, and "the machine was busy" is a hypothesis that
+has to be tested — re-run on an idle machine, check for overlapping jobs — not
+the default explanation. Untested, it is a claim about mutable state with no
+query behind it (§1b), and it costs nothing to assert, which is why it keeps
+winning.
+
+The cheap discriminator is a **census, not a repro**: take the guard the passing
+path relies on and enumerate every call site that needs it. The failing site is
+usually the one nobody added it to.
+
 ---
 
 ## 4. Reproducing a figure is not verifying its attribution
@@ -431,7 +490,7 @@ says that; it does not reconstruct.
 
 ## Where these came from
 
-Three of the six describe a capability that was **documented, believed, and never
+Three of the original six describe a capability that was **documented, believed, and never
 exercised**. That is the family resemblance, and it is why the rules are phrased
 as steps rather than principles — the same ask, filed as a principle three weeks
 earlier, produced two further instances of its own failure class.
