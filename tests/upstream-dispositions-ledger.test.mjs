@@ -239,8 +239,13 @@ describe('computeLedgerReconciliation (round-1 audit H2/M13 — the bidirectiona
       dbRows: [dbRow(id, 'fixed', 'exempt:x')],
       ledgerEntries: [ledgerEntry(id, 'fixed')],
     });
+    // Kept as a WHOLE-SHAPE assertion on purpose: it is what catches a new
+    // bucket being added without anyone deciding whether the gate should block
+    // on it. `otherStore` (2026-08-29, store-scoped reconciliation) is empty
+    // here because neither side carries a fingerprint.
     assert.deepEqual(r, {
       missingFromLedger: [], ledgerOnly: [], stateMismatch: [], dispositionMismatch: [], needsReview: [],
+      otherStore: [],
     });
   });
 

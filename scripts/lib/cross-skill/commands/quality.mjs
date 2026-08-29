@@ -10,12 +10,51 @@
 import { CommandError } from '../dispatch.mjs';
 
 /**
- * `quality <add|mirror|digest|link|session-review>`.
+ * Which database the upstream rows this run touches actually live in, as a
+ * one-way `storeFingerprint`.
  *
- * Every verb returns the C8 shape; `ok:false` is an argv/contract error and
- * exits 2 — expressed here by throwing rather than by returning a
- * failure-shaped envelope.
+ * A FINGERPRINT and not the identity: the ledger this stamps is committed to a
+ * PUBLIC repo, and one consumer's store is a corporate internal hostname that
+ * was not previously tracked here. Equality is the only operation the
+ * reconciler performs, so a digest is both sufficient and the only
+ * disclosure-safe form.
+ *
+ * The committed disposition ledger lives in ONE repo while the reports it
+ * closes are filed by consumers into whatever store each consumer's
+ * `AUDIT_DB_URL` names — and those differ. Stamping the entry is what lets
+ * `computeLedgerReconciliation` tell "this entry is stale" from "this entry
+ * belongs to a store I am not connected to", which were one bucket, and one
+ * push failure, until 2026-08-29.
+ *
+ * **Reads `process.env` directly, not `config.mjs`.** `dbConfig` documents
+ * itself as "documentation + convenience" and names `db/client.mjs`'s
+ * pool-init re-read of `process.env` as the resolver of record — so the stamp
+ * must come from the same place the connection does, or it can describe a
+ * database this run never talked to. The first cut of this helper imported a
+ * `config.db` that does not exist (the export is `dbConfig`) and its own
+ * try/catch swallowed the TypeError, so every entry silently went unstamped
+ * and the partition never fired. Caught only by running the gate for real.
+ *
+ * `null` (cloud off, or an unparseable DSN) is a legitimate answer and is
+ * written as ABSENCE, never as a guess: an invented store value would make the
+ * entry foreign to every run and so permanently unreconcilable.
+ *
+ * @returns {Promise<string|null>}
  */
+async function currentStoreFingerprint() {
+  const dsn = process.env.AUDIT_DB_URL;
+  if (!dsn) return null;
+  try {
+    const { storeFingerprint } = await import('../../db/client.mjs');
+    return storeFingerprint(dsn);
+  } catch (err) {
+    // Loud, because silence here un-stamps every future entry and the symptom
+    // (a foreign entry failing the push) surfaces nowhere near the cause.
+    process.stderr.write(`  [upstream] could not derive the store identity — entries will be written UNSTAMPED: ${err.message}\n`);
+    return null;
+  }
+}
+
 export async function qualityCmd(ctx) {
   const sub = ctx.verb;
   if (!sub) {
@@ -166,6 +205,7 @@ export async function upstreamCmd(ctx) {
       const res = await m.upstreamReconcile({
         repoRoot,
         listTerminalFn: () => ctx.deps.listTerminalUpstreamIssues(),
+        currentStore: await currentStoreFingerprint(),
       });
       // Round-3 audit M5: `res.reconciliation` is null in TWO distinct cases —
       // cloud genuinely off (benign, expected) and a real DB failure
@@ -194,6 +234,16 @@ export async function upstreamCmd(ctx) {
           if (r.stateMismatch.length) problems.push(`${r.stateMismatch.length} state mismatch(es): ${r.stateMismatch.join('; ')}`);
           if (r.dispositionMismatch.length) problems.push(`${r.dispositionMismatch.length} disposition mismatch(es): ${r.dispositionMismatch.join('; ')}`);
           if (r.needsReview.length) problems.push(`${r.needsReview.length} row(s) still carry the migration catch-all sentinel: ${r.needsReview.join(', ')}`);
+          // `r.otherStore` is DELIBERATELY absent from `problems`, and must
+          // stay absent. Those entries close reports living in a database this
+          // run is not connected to, so it has no evidence about them either
+          // way — failing on them is asserting staleness from absence, and it
+          // is what made five real closures unrecordable on 2026-08-29. It is
+          // still reported (stderr below, and in the --worksheet render), so
+          // "not checked" never masquerades as "checked and clean".
+          if (r.otherStore?.length) {
+            process.stderr.write(`  [upstream reconcile --gate] ${r.otherStore.length} ledger entr(y/ies) belong to another store and were NOT checked: ${r.otherStore.join(', ')}\n`);
+          }
           if (problems.length > 0) {
             throw new CommandError('RECONCILE_NEEDS_REVIEW', problems.join(' | '), r);
           }
@@ -270,6 +320,10 @@ export async function upstreamCmd(ctx) {
       // separately because requiring it at the service layer alone does
       // nothing unless something upstream of it actually reads argv.
       disposition: ctx.flag('disposition'),
+      // Stamped at WRITE time, from the store this very command is about to
+      // transition — not looked up later, when the ambient DSN may be a
+      // different one entirely.
+      storeFingerprint: await currentStoreFingerprint(),
       transitionFn: (a) => ctx.deps.transitionUpstreamIssue(a),
     });
     if (!res.ok) {

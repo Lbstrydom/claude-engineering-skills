@@ -175,40 +175,82 @@ raw. Upstream's answer is `scripts/lib/worktree-preflight.mjs`'s `MARKER_BLOCK`
 
 ---
 
-## 4b. Two defects found while closing those reports
+## 4b. Three defects found while closing those reports
 
-Both are in the upstream-report machinery, not the sync, and both were hit by
-the act of closing five reports at once.
+All three are in the upstream-report machinery rather than the sync, and all
+three were surfaced by the act of closing five reports at once — none is
+reachable by reading the code.
 
-**Closing by ID PREFIX left `npm run check` permanently red.** The store
-resolves a prefix, so `upstream fix --id 5b1a121e` succeeded — but
-`upstreamTransition` records `--id` VERBATIM in the committed disposition
-ledger, and `check-upstream-probe-coverage.mjs --gate` requires every
-`issueId` to be uuid-shaped. So the report closed, the ledger entry was
-written, and the gate then rejected an entry nothing could withdraw. The writer
-accepted a key its own reader refuses — shape (1) of the four AGENTS.md names,
-inverted. **Fixed here**: a terminal transition now demands the full uuid at the
-boundary, before either write, which preserves the deliberate ledger-then-DB
-ordering (resolving instead would need a store round-trip before the local
-write). `ack` writes no ledger entry, so prefixes stay convenient there.
-Guarded by `tests/upstream-disposition-ratchet.test.mjs`, verified red-then-green.
+### Closing by ID PREFIX left `npm run check` permanently red
 
-**The disposition ledger is single-store, and consumers are not.** OPEN — named,
-not fixed. `scripts/upstream-dispositions.json` is committed here and reconciled
-by `upstream:reconcile:gate` against whatever store `AUDIT_DB_URL` points at.
-These five reports were filed from `storyline`, which uses a different store
-(corporate Azure) from this repo's default, so closing them wrote five ledger
-entries with no matching row in the store the gate reads, and
-`RECONCILE_NEEDS_REVIEW` failed the push. The entries were removed; the
-dispositions live on the `upstream_issues` rows themselves, in the store that
-owns them, which is what the reporting consumer actually reads.
+The store resolves a prefix, so `upstream fix --id 5b1a121e` succeeded — but
+`upstreamTransition` recorded `--id` VERBATIM in the committed disposition
+ledger, and `check-upstream-probe-coverage.mjs --gate` requires every `issueId`
+to be uuid-shaped. The report closed, the entry was written, and the gate then
+rejected an entry nothing could withdraw. The writer accepted a key its own
+reader refuses — shape (1) of the four AGENTS.md names, inverted.
 
-The consequence to be aware of: **a report filed from a consumer on a different
-store cannot be recorded in this repo's committed ledger at all**, so the
-upstream-coverage ratchet silently under-counts closures for those consumers.
-Fixing it means deciding what identity a ledger entry carries (store, or repo,
-or both) — a real design question, and larger than this change. Not smuggled in
-here.
+**Fixed**: a terminal transition demands the full uuid at the boundary, before
+either write, preserving the deliberate ledger-then-DB ordering (resolving
+instead would need a store round-trip before the local write). `ack` writes no
+ledger entry, so prefixes stay convenient there.
+
+### The disposition ledger was single-store, and consumers are not
+
+`scripts/upstream-dispositions.json` is committed here and reconciled by
+`upstream:reconcile:gate` against whatever store `AUDIT_DB_URL` names. These
+five reports were filed from `storyline`, which uses a corporate Azure store,
+not this repo's default — so closing them produced five entries with no matching
+row in the store the gate reads, and `RECONCILE_NEEDS_REVIEW` failed the push.
+
+The root cause is the same shape as the sync defect this plan exists for:
+`ledgerOnly` carried THREE causes under one reason string — *stale*, *mistyped*,
+and *belongs to a store this run is not connected to*. Only the third applied,
+and it is not a defect at all.
+
+**Fixed**: each entry now carries an optional `storeFingerprint`, and
+`computeLedgerReconciliation` takes a `currentStore`. An entry whose fingerprint
+differs is partitioned into `otherStore` — reported on every run (including a
+clean one), never counted as divergence, and never gating. This run has no
+evidence about such an entry either way, and absence of evidence must not read
+as evidence of staleness.
+
+Three properties keep it honest:
+
+- **Unstamped stays legal.** Promoting the field to required would break every
+  legacy read-modify-write. An entry with no fingerprint reconciles exactly as
+  before, and the writer preserves a fingerprint an earlier write established
+  rather than stripping it.
+- **No `currentStore` disables the partition entirely** — an unparseable ambient
+  DSN degrades to the old behaviour rather than excusing everything.
+- **Out-of-scope is never silent.** Both fingerprints are printed, so "not
+  checked" cannot masquerade as "checked and clean".
+
+Verified live from BOTH stores: exit 0 from each, each correctly naming the
+other's entries as out of scope (5 from one side, 20 from the other). All five
+closures are now permanently recorded in the committed ledger.
+
+### The stamp had to be a fingerprint, not the identity
+
+`dbIdentity` is credential-free but not identity-free: it is a hostname. The
+ledger is committed to a **public** GitHub repo, and `storyline`'s store is a
+corporate internal Azure host that `git grep` confirmed was not previously
+tracked here — so stamping the identity would have published infrastructure the
+private-consumer registry is gitignored precisely to keep out.
+
+The reconciler performs exactly one operation on the value: equality. So
+`storeFingerprint` (`sha256(dbIdentity)`, 16 hex chars) is both sufficient and
+the only disclosure-safe form. A raw `store` field is now **refused** by the
+validator rather than merely unused — a tolerated one would sit in a public repo
+indefinitely.
+
+Two smaller traps caught while building it, both by running the gate rather than
+reading the code: the first cut of the identity helper imported a `config.db`
+that does not exist (the export is `dbConfig`) and its own `try/catch` swallowed
+the TypeError, so the guard was **inert** and every entry went unstamped; and
+`dbConfig` documents itself as convenience, naming `db/client.mjs`'s
+`process.env` re-read as the resolver of record — so the stamp must come from
+the same place the connection does.
 
 ---
 
@@ -223,9 +265,18 @@ here.
 - [x] A consumer's pinned MCP launcher survives, even under `--overwrite-diverged`.
 - [x] `.sync-receipt.json` is written, committed (not gitignored), and does not churn on a no-op sync.
 - [x] `.audit-loop/cache/` is in the managed `.gitignore` block.
+- [x] A ledger entry for a report in ANOTHER store does not fail the push, is
+      reported on every run, and does not suppress a genuinely stale entry.
+- [x] The committed ledger contains no hostname — only fingerprints.
 
-Guarded by `tests/sync-{divergence,overrides,pin-guard,receipt}.test.mjs` and the
-end-to-end `tests/sync-consumer-divergence-e2e.test.mjs`, which drives the real
-CLI against a real `git init` consumer and replays the 2026-08-29 sequence. Both
-the divergence gate and the pin guard were verified red-then-green by neutering
-them (7/14 and 4/18 respectively).
+Guarded by `tests/sync-{divergence,overrides,pin-guard,receipt}.test.mjs`, the
+end-to-end `tests/sync-consumer-divergence-e2e.test.mjs` (which drives the real
+CLI against a real `git init` consumer and replays the 2026-08-29 sequence), and
+`tests/upstream-ledger-store-scope.test.mjs` for §4b.
+
+Every guard here was verified RED-then-green by neutering it, in both directions
+where a direction exists: the divergence gate (7/14 fail), the pin guard (4/18),
+the uuid boundary (4/9), and the store partition twice — disabled (7/21) and
+over-applied so every entry reads foreign (6/21). The second of that pair is the
+one that matters: a partition that swallowed genuinely stale entries would look
+identical to a working one from a green suite alone.

@@ -4,6 +4,7 @@
     {
       "schemaVersion": 1,
       "issueId": "08b4f5fc-1de9-4a78-8094-25589100b774",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
       "disposition": {
         "kind": "test",
@@ -14,6 +15,7 @@
     {
       "schemaVersion": 1,
       "issueId": "0e61e88e-8294-4144-8bae-84c15db85ea6",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
       "disposition": {
         "kind": "test",
@@ -24,6 +26,7 @@
     {
       "schemaVersion": 1,
       "issueId": "167084b3-97de-4ddc-9526-5da4ef10bfbf",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
       "disposition": {
         "kind": "probe",
@@ -34,6 +37,7 @@
     {
       "schemaVersion": 1,
       "issueId": "23544fca-b629-4f15-83d0-dcbcff76f21c",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
       "disposition": {
         "kind": "test",
@@ -43,7 +47,41 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "263e49e8-9b1e-4a8a-b80f-bc58e2531811",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/worktree-preflight-gate.test.mjs"
+      },
+      "recordedAt": "2026-08-29T17:12:04.549Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "29a9f4cf-a66f-4da4-a030-1128bf78b6c8",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/worktree-preflight-gate.test.mjs"
+      },
+      "recordedAt": "2026-08-29T17:12:06.357Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "36be3a03-6a8f-496f-96f6-a5da084f8fc3",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/worktree-preflight-gate.test.mjs"
+      },
+      "recordedAt": "2026-08-29T17:12:05.482Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "575256de-a3ce-48f6-b77a-de061feccf37",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
       "disposition": {
         "kind": "test",
@@ -53,7 +91,19 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "5b1a121e-7de6-4399-b43b-9b3de1e9d5ea",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/sync-consumer-divergence-e2e.test.mjs"
+      },
+      "recordedAt": "2026-08-29T17:11:32.593Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "5b67666e-0cfe-44d0-b398-a007cd81edad",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
       "disposition": {
         "kind": "test",
@@ -64,6 +114,7 @@
     {
       "schemaVersion": 1,
       "issueId": "64223218-e2c4-4b40-afcf-27daff855da6",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
       "disposition": {
         "kind": "test",
@@ -74,6 +125,7 @@
     {
       "schemaVersion": 1,
       "issueId": "65f9fe89-e766-4580-8a41-c0390fb7231e",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
       "disposition": {
         "kind": "exempt",
@@ -84,6 +136,7 @@
     {
       "schemaVersion": 1,
       "issueId": "897aa607-8808-458d-8188-5c1f38caef7f",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
       "disposition": {
         "kind": "exempt",
@@ -94,6 +147,7 @@
     {
       "schemaVersion": 1,
       "issueId": "8c62cfcc-ef70-4158-9aed-a00bd232c4ee",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
       "disposition": {
         "kind": "test",
@@ -104,6 +158,7 @@
     {
       "schemaVersion": 1,
       "issueId": "96a829f8-d2b9-457a-b5ab-530b5530dad8",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
       "disposition": {
         "kind": "test",
@@ -114,6 +169,7 @@
     {
       "schemaVersion": 1,
       "issueId": "9e6850d3-b910-40d5-b082-d7deeede54c5",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
       "disposition": {
         "kind": "exempt",
@@ -124,6 +180,7 @@
     {
       "schemaVersion": 1,
       "issueId": "a0b58a34-5519-4b52-9b07-c9d2c9d56335",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
       "disposition": {
         "kind": "test",
@@ -133,7 +190,19 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "ab61aefa-80ab-4a64-ab18-a9f11ca09e01",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "wont_fix",
+      "disposition": {
+        "kind": "exempt",
+        "value": "the specific ask (adopt this consumer's condensed preflight form upstream) would regress every fresh consumer; the general defect it names is fixed by the divergence mechanism in f3d9714"
+      },
+      "recordedAt": "2026-08-29T17:14:10.000Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "b5c1860c-8da8-4567-a370-812bd31680d3",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "wont_fix",
       "disposition": {
         "kind": "test",
@@ -144,6 +213,7 @@
     {
       "schemaVersion": 1,
       "issueId": "b5e44db7-c418-4f5e-9791-d53cdf0ee432",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
       "disposition": {
         "kind": "probe",
@@ -154,6 +224,7 @@
     {
       "schemaVersion": 1,
       "issueId": "bf44711e-81a7-404d-bc0b-33fa68b84903",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
       "disposition": {
         "kind": "test",
@@ -164,6 +235,7 @@
     {
       "schemaVersion": 1,
       "issueId": "d6849e0b-1767-42bc-b4af-b24ed080274b",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
       "disposition": {
         "kind": "test",
@@ -174,6 +246,7 @@
     {
       "schemaVersion": 1,
       "issueId": "d902962b-f6ce-4986-8fe4-e86e07d59fa3",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
       "disposition": {
         "kind": "probe",
@@ -184,6 +257,7 @@
     {
       "schemaVersion": 1,
       "issueId": "da67a8c1-ec15-4e82-b14d-9b56c983c0a9",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
       "disposition": {
         "kind": "test",
@@ -194,6 +268,7 @@
     {
       "schemaVersion": 1,
       "issueId": "df083b3a-e06f-4d5f-ba70-7fafbe751c8c",
+      "storeFingerprint": "d5a9d07b91225a93",
       "state": "wont_fix",
       "disposition": {
         "kind": "exempt",

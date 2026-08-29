@@ -506,16 +506,37 @@ function readDispositionLedger(repoRoot) {
  * cloud reconciler (`upstream list --worksheet`) is the advisory backstop for
  * exactly that gap, not this function.
  *
+ * `storeFingerprint` records WHICH database this issue lives in (a one-way
+ * digest — this file is committed to a PUBLIC repo and one consumer's store is
+ * a corporate internal host, so the hostname itself must never land here).
+ * Without it, an entry closing a report
+ * filed by a consumer on a different store reads as `ledgerOnly` to every
+ * reconcile run here and fails the push — the state that forced five real
+ * closures to be deleted from this file by hand on 2026-08-29. Written only
+ * when the caller could determine it; omitted otherwise, because an INVENTED
+ * store value would be worse than none (it would make the entry foreign to
+ * every run, and so permanently unreconcilable).
+ *
  * @param {string} repoRoot
- * @param {{issueId: string, state: string, disposition: {kind: string, value: string}}} entry
+ * @param {{issueId: string, state: string, disposition: {kind: string, value: string}, storeFingerprint?: string|null}} entry
  */
 function upsertDispositionLedgerEntry(repoRoot, entry) {
   const p = path.join(repoRoot, DISPOSITION_LEDGER_PATH);
   const entries = readDispositionLedger(repoRoot);
+  const prior = entries.find((e) => e?.issueId === entry.issueId);
   const withoutThis = entries.filter((e) => e?.issueId !== entry.issueId);
+  // A re-transition that cannot determine the store must not STRIP one an
+  // earlier write established — a read-modify-write is a constructor, and
+  // silently dropping a field on re-write is how the entry would become
+  // legacy-shaped again without anybody deciding that.
+  const storeFingerprint = (typeof entry.storeFingerprint === 'string' && entry.storeFingerprint.trim())
+    ? entry.storeFingerprint.trim()
+    : (typeof prior?.storeFingerprint === 'string' && prior.storeFingerprint.trim()
+      ? prior.storeFingerprint : null);
   withoutThis.push({
     schemaVersion: 1,
     issueId: entry.issueId,
+    ...(storeFingerprint ? { storeFingerprint } : {}),
     state: entry.state,
     disposition: entry.disposition,
     recordedAt: new Date().toISOString(),
@@ -546,7 +567,7 @@ function upsertDispositionLedgerEntry(repoRoot, entry) {
  */
 export async function upstreamTransition({
   repoRoot = process.cwd(), transitionFn, id, to, note = null, commit = null, actor = null,
-  disposition = null,
+  disposition = null, storeFingerprint = null,
 }) {
   if (!id) return { ok: false, code: 'BAD_INPUT', errors: ['--id is required'] };
   // Shape-check BEFORE the store sees it. `upstream_issues.id` is a uuid column,
@@ -627,7 +648,9 @@ export async function upstreamTransition({
   // Sequential ledger-then-DB write (§2.4) — the cheap local write happens
   // FIRST, and only then the DB transition.
   if (parsedDisposition) {
-    upsertDispositionLedgerEntry(repoRoot, { issueId: normId, state: to, disposition: safeDispositionValue });
+    upsertDispositionLedgerEntry(repoRoot, {
+      issueId: normId, state: to, disposition: safeDispositionValue, storeFingerprint,
+    });
   }
 
   return transitionFn({
@@ -699,7 +722,7 @@ export function renderWorksheet(items, { state = 'open' } = {}) {
  *
  * @param {{repoRoot?: string, listTerminalFn: () => Promise<{ok:boolean,cloud:boolean,rows:Array}>}} args
  */
-export async function upstreamReconcile({ repoRoot = process.cwd(), listTerminalFn }) {
+export async function upstreamReconcile({ repoRoot = process.cwd(), listTerminalFn, currentStore = null }) {
   const res = await listTerminalFn();
   if (!res.ok || res.cloud === false) return { ...res, reconciliation: null };
 
@@ -714,19 +737,38 @@ export async function upstreamReconcile({ repoRoot = process.cwd(), listTerminal
     // point of this command is to surface exactly that gap.
   }
 
-  const reconciliation = computeLedgerReconciliation({ dbRows: res.rows, ledgerEntries });
+  const reconciliation = computeLedgerReconciliation({ dbRows: res.rows, ledgerEntries, currentStore });
   return { ok: true, cloud: true, reconciliation };
 }
 
 /** Human-grade reconciliation report — PowerShell-safe, mirrors renderWorksheet. */
 export function renderReconciliationReport({
   missingFromLedger, ledgerOnly, stateMismatch, dispositionMismatch = [], needsReview,
+  otherStore = [],
 }) {
   const clean = missingFromLedger.length === 0 && ledgerOnly.length === 0
     && stateMismatch.length === 0 && dispositionMismatch.length === 0 && needsReview.length === 0;
-  if (clean) return 'Reconciliation: clean — every terminal db row matches a ledger entry, and no row needs manual review.';
+  // `otherStore` is deliberately NOT part of `clean`: it is not divergence, it
+  // is scope. But it is still PRINTED on a clean run, because an entry nothing
+  // in this run can adjudicate should never be invisible — that silence is how
+  // a genuinely stale foreign entry would live forever.
+  const outOfScope = otherStore.length
+    ? [
+      `Not reconciled — ${otherStore.length} ledger entr(y/ies) belong to another store:`,
+      ...otherStore.map((e) => `  - ${e}`),
+      '  These are out of scope for this run, not divergence. To check them, re-run',
+      '  reconcile with the AUDIT_DB_URL of the store named above.',
+      '',
+    ]
+    : [];
+  if (clean) {
+    return [
+      'Reconciliation: clean — every terminal db row matches a ledger entry, and no row needs manual review.',
+      ...(outOfScope.length ? ['', ...outOfScope] : []),
+    ].join('\n');
+  }
 
-  const lines = ['Reconciliation — divergence found:', ''];
+  const lines = ['Reconciliation — divergence found:', '', ...outOfScope];
   if (missingFromLedger.length) {
     lines.push(`Terminal db row(s) with NO ledger entry (${missingFromLedger.length}) — the accepted crash-window gap, now surfaced:`);
     for (const id of missingFromLedger) lines.push(`  - ${id}`);

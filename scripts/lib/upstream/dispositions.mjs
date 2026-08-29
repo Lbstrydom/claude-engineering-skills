@@ -132,6 +132,27 @@ export function validateLedgerEntryShape(entry) {
   if (typeof entry.issueId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entry.issueId)) {
     problems.push(`issueId must be a uuid-shaped string, got ${JSON.stringify(entry.issueId)}`);
   }
+  // `storeFingerprint` is OPTIONAL and stays that way. Promoting it to required
+  // would break every legacy read-modify-write (a re-write is a constructor)
+  // and force a backfill on entries whose store nobody can still establish.
+  // Present-but-malformed is still rejected — an unrecognisable value would
+  // silently make the entry foreign to every run, i.e. permanently
+  // unreconcilable, which is worse than absent.
+  //
+  // A FINGERPRINT, never the hostname: this file is committed to a public repo
+  // and one consumer's store is a corporate internal host. See
+  // `storeFingerprint` in lib/db/client.mjs.
+  if (entry.storeFingerprint !== undefined) {
+    if (typeof entry.storeFingerprint !== 'string' || !/^[0-9a-f]{16}$/.test(entry.storeFingerprint)) {
+      problems.push(`storeFingerprint, when present, must be 16 lowercase hex characters (lib/db/client.mjs storeFingerprint), got ${JSON.stringify(entry.storeFingerprint)}`);
+    }
+  }
+  // A raw host:port/database value is REFUSED outright rather than tolerated:
+  // it is exactly the disclosure the fingerprint exists to prevent, and a
+  // tolerated one would sit in a public repo indefinitely.
+  if (entry.store !== undefined) {
+    problems.push('store must not be present — use storeFingerprint (a raw host:port/database value would publish infrastructure in this public repo)');
+  }
   if (!['fixed', 'wont_fix'].includes(entry.state)) {
     problems.push(`state must be "fixed" or "wont_fix" (only terminal states carry a disposition), got ${JSON.stringify(entry.state)}`);
   }
@@ -259,6 +280,28 @@ export function computeDispositionDivergences({ ledgerEntries, registryProbeIds,
  *      longer matches what the ledger recorded (round-1 audit H2's sharper
  *      point — the ORIGINAL reconciler description only checked direction 1).
  *
+ * **`currentStore` partitions direction 2, and that is load-bearing.** The
+ * ledger is committed in ONE repo; the reports it closes are filed by consumers
+ * into whatever store each consumer's `AUDIT_DB_URL` names, and those are not
+ * the same store — `storyline` files into a corporate Azure Postgres while this
+ * repo defaults to the NAS one. So `ledgerOnly` had THREE causes wearing one
+ * reason string ("stale, or the issueId was mistyped"): stale, mistyped, and
+ * *belongs to a store this run is not connected to*. The third is not a defect
+ * at all, and it failed the push — which is why five real closures could not be
+ * recorded here on 2026-08-29 and had to be deleted from the ledger by hand.
+ *
+ * An entry whose `storeFingerprint` differs from `currentStore` is therefore
+ * partitioned into `otherStore` and never counted as divergence: this run has
+ * no evidence about it either way, and absence of evidence must not read as
+ * evidence of staleness. An entry with NO fingerprint is legacy — every entry
+ * written before the field existed was written against the ambient store — so
+ * it reconciles exactly as before. Passing no `currentStore` disables the
+ * partition entirely, which is what keeps every existing caller correct.
+ *
+ * Both sides are `storeFingerprint` values (lib/db/client.mjs), not hostnames:
+ * the ledger is committed to a PUBLIC repo and equality is the only operation
+ * performed, so a digest is both sufficient and the only disclosure-safe form.
+ *
  * Also compares the terminal DISPOSITION VALUE itself, not just presence/state
  * (round-2 audit M12 — the original version selected `disposition` from the DB
  * row and then never read it): a row whose disposition text differs from what
@@ -286,8 +329,21 @@ export function computeDispositionDivergences({ ledgerEntries, registryProbeIds,
  *   needsReview: string[],
  * }}
  */
-export function computeLedgerReconciliation({ dbRows, ledgerEntries }) {
-  const ledgerByIssueId = new Map(ledgerEntries.map((e) => [e.issueId, e]));
+export function computeLedgerReconciliation({ dbRows, ledgerEntries, currentStore = null }) {
+  // An entry is FOREIGN only when both stores are known AND they differ.
+  // Unknown on either side falls through to the legacy path — the reconciler
+  // must never claim an entry is out of scope on the strength of a value it
+  // does not have.
+  const isForeign = (e) => Boolean(currentStore)
+    && typeof e?.storeFingerprint === 'string' && e.storeFingerprint.trim() !== ''
+    && e.storeFingerprint !== currentStore;
+
+  const localEntries = ledgerEntries.filter((e) => !isForeign(e));
+  const otherStore = ledgerEntries
+    .filter(isForeign)
+    .map((e) => `${e.issueId} (store ${e.storeFingerprint}, this run is ${currentStore})`);
+
+  const ledgerByIssueId = new Map(localEntries.map((e) => [e.issueId, e]));
   const dbByIssueId = new Map(dbRows.map((r) => [r.issueId, r]));
 
   const missingFromLedger = [];
@@ -315,5 +371,5 @@ export function computeLedgerReconciliation({ dbRows, ledgerEntries }) {
 
   const ledgerOnly = [...ledgerByIssueId.keys()].filter((id) => !dbByIssueId.has(id));
 
-  return { missingFromLedger, ledgerOnly, stateMismatch, dispositionMismatch, needsReview };
+  return { missingFromLedger, ledgerOnly, stateMismatch, dispositionMismatch, needsReview, otherStore };
 }

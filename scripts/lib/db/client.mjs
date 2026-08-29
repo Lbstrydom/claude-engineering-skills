@@ -27,6 +27,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createHash } from 'node:crypto';
 import { loadSharedEnv } from '../load-shared-env.mjs';
 
 // ── pg type-parser OIDs (timestamps + dates → string, not Date) ────────────
@@ -161,6 +162,34 @@ export function dbIdentity(dsn) {
   const port = u.port || '5432';
   const database = decodeURIComponent(u.pathname.replace(/^\//, ''));
   return `${canonHost}:${port}/${database}`;
+}
+
+/**
+ * A one-way fingerprint of the database a DSN addresses — `dbIdentity` hashed.
+ *
+ * **Why a hash and not the identity itself.** The identity is credential-free
+ * but it is not IDENTITY-free: it is a hostname. The consumer-report
+ * disposition ledger that consumes this is COMMITTED to a public GitHub repo,
+ * and one of the consumers filing reports is a corporate repo whose store is
+ * `<something>.postgres.database.azure.com` — an internal resource name that
+ * has no business being published, and which was not previously tracked here.
+ * The same rule the private-consumer registry follows (gitignored so a private
+ * repo's NAME never lands in this repo) applies to its infrastructure.
+ *
+ * The only operation the reconciler performs on this value is EQUALITY, so a
+ * digest satisfies it exactly. Nothing downstream needs to recover the host,
+ * and nothing can.
+ *
+ * 16 hex characters (64 bits): collision-irrelevant for a set of stores that
+ * numbers in the single digits, and short enough to read in a report line.
+ *
+ * @param {string} dsn
+ * @returns {string|null} 16 lowercase hex chars, or null if the DSN is unparseable
+ */
+export function storeFingerprint(dsn) {
+  const identity = dbIdentity(dsn);
+  if (!identity) return null;
+  return createHash('sha256').update(identity).digest('hex').slice(0, 16);
 }
 
 /**
