@@ -118,7 +118,35 @@ dirtiness carry information?* — and here it is the only information there is.
 The receipt is an event record, not a derived view of source. It does not churn:
 `receiptShouldWrite` skips a no-op run whose body would be identical.
 
-### 2.5 Known boundary: the first sync has no base
+### 2.5 The refusal must survive the manifest write (shipped broken, fixed same day)
+
+The first cut of §2.1 had a defect that made it protect exactly ONCE, and it
+reached a real consumer before anyone caught it.
+
+The consumer manifest is rebuilt at the end of each target from the bytes on
+disk. For a REFUSED path we wrote nothing — so hashing the disk recorded the
+CONSUMER's content as *our* base. `classifyAgainstBase` compares against that
+base, so the very next sync read `disk === base`, classified `PRISTINE`, and
+overwrote freely.
+
+Observed 2026-08-29, on `storyline`, minutes after the mechanism shipped: the
+push-triggered sync refused all 16 `SKILL.md` (`Errors: 1`, nothing written),
+and the next sync overwrote all 16 as an ordinary update with the receipt
+reading `divergenceRefused: 0`. The consumer's own CI gate is what said so.
+
+**The rule the code now follows**: the manifest records *what we last wrote*.
+For a refused or held path we wrote nothing, so the PRIOR entry is carried
+forward — and omitted entirely when there was none, because inventing a base is
+what caused this.
+
+**Why the e2e suite missed it, which is the more useful lesson.** It ran exactly
+ONE sync after diverging and asserted "it refused". A guard whose second
+invocation is inert is indistinguishable from a working one until you invoke it
+twice. `tests/sync-consumer-divergence-e2e.test.mjs` now runs a second and third
+sync and asserts the manifest never adopts the consumer's bytes; restoring the
+bug fails 7 of its 17 tests.
+
+### 2.6 Known boundary: the first sync has no base
 
 With no manifest entry there is nothing to compare against, so `NO_BASE` writes.
 That is correct for a genuine first sync — refusing would fire on every adoption
@@ -264,6 +292,8 @@ the same place the connection does.
 - [x] An override may not claim `scripts/.claude-skills/**`.
 - [x] A consumer's pinned MCP launcher survives, even under `--overwrite-diverged`.
 - [x] `.sync-receipt.json` is written, committed (not gitignored), and does not churn on a no-op sync.
+- [x] A refusal SURVIVES: a second and third consecutive sync still refuse, and
+      the manifest never adopts the consumer's bytes as our base.
 - [x] `.audit-loop/cache/` is in the managed `.gitignore` block.
 - [x] A ledger entry for a report in ANOTHER store does not fail the push, is
       reported on every run, and does not suppress a genuinely stale entry.

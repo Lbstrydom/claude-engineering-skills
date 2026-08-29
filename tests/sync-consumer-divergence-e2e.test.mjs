@@ -27,6 +27,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile, execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -165,6 +166,42 @@ describe('a consumer diverges on a tracked synced file, and commits it', () => {
     assert.match(result.out, /\.sync-overrides\.json/);
     assert.match(result.out, /--overwrite-diverged/);
     assert.match(result.out, /upstream report/);
+  });
+});
+
+describe('the refusal SURVIVES a second sync (it did not, and that shipped)', () => {
+  // The defect this pins, in production on 2026-08-29: the manifest is rebuilt
+  // from the bytes on disk, so a REFUSED path recorded the consumer's own
+  // content as our base. The next run compared disk to that base, saw
+  // PRISTINE, and overwrote all 16 SKILL.md of the consumer whose report
+  // prompted this mechanism — receipt reading `divergenceRefused: 0`.
+  //
+  // The suite above could not see it because it ran exactly ONE sync after
+  // diverging. A guard whose SECOND invocation is inert is indistinguishable
+  // from a working one until you invoke it twice, and "it refused" was the
+  // only thing being asserted.
+  it('refuses again on the very next run, and still has not written the file', async () => {
+    const second = await sync();
+    assert.notEqual(second.code, 0, 'the second sync must refuse too, not overwrite');
+    assert.match(stripAnsi(second.out), /REFUSED/);
+    assert.ok(second.out.includes(SUBJECT), 'the second run stopped naming the diverged path');
+    assert.match(read(SUBJECT), /CONSUMER FORM, deliberately condensed/,
+      'the second sync reverted the consumer content the first one protected');
+  });
+
+  it('the manifest still records OUR last write, not the consumer bytes', async () => {
+    // The mechanism, asserted directly rather than only through its symptom:
+    // recording the consumer's hash is what makes the next run read PRISTINE.
+    const manifest = JSON.parse(read('scripts/.sync-manifest.json'));
+    const onDisk = `sha256:${createHash('sha256').update(fs.readFileSync(path.join(consumer, SUBJECT))).digest('hex')}`;
+    assert.notEqual(manifest.files[SUBJECT], onDisk,
+      'the manifest adopted the consumer content as our base — the refusal erased its own evidence');
+  });
+
+  it('and a THIRD run is still refusing — the state is stable, not merely delayed', async () => {
+    const third = await sync();
+    assert.notEqual(third.code, 0);
+    assert.match(read(SUBJECT), /CONSUMER FORM, deliberately condensed/);
   });
 });
 

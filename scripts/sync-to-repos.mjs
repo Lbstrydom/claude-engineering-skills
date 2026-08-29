@@ -2002,8 +2002,40 @@ async function main() {
         // For consumer-side: compute hashes of the actual DESTINATION files
         // (post-rewrite). The source-side `.sync-manifest.json` produced
         // earlier is independent and stays.
+        // Paths we did NOT write this run: refused (consumer content we must
+        // not clobber) or held (a declared override).
+        //
+        // **The manifest records what WE last wrote, and for these we wrote
+        // nothing.** Hashing the bytes on disk here would record the CONSUMER's
+        // content as our base — and the base is exactly what
+        // `classifyAgainstBase` compares against, so the very next sync would
+        // read `disk === base`, classify PRISTINE, and overwrite freely. The
+        // refusal would protect once and then erase its own evidence.
+        //
+        // That is not hypothetical: it shipped on 2026-08-29 and reverted the
+        // 16 SKILL.md of the consumer whose report prompted this whole
+        // mechanism. The first sync refused them (Errors: 1, nothing written)
+        // and then recorded their bytes as the base; the next sync overwrote
+        // all 16 as an ordinary update, receipt reading `divergenceRefused: 0`.
+        // The e2e test missed it because it only ever ran ONE sync after
+        // diverging — a guard whose second invocation is inert looks identical
+        // to a working one until you invoke it twice.
+        //
+        // So: carry the PRIOR entry forward, and omit the path entirely when
+        // there was none (we have still never written it, and inventing a base
+        // is what caused this).
+        const notWrittenByUs = new Set([
+          ...divergenceRefusals.map((d) => d.path),
+          ...receiptOverridesHeld.map((h) => h.path),
+        ]);
         const consumerFileMap = {};
         for (const dstRel of intendedDests) {
+          if (notWrittenByUs.has(dstRel)) {
+            const carried = priorFiles[dstRel]
+              ?? (priorLayout === 'legacy' ? priorFiles[intendedWrites.get(dstRel)] : undefined);
+            if (carried) consumerFileMap[dstRel] = carried;
+            continue;
+          }
           const abs = path.join(repo.path, dstRel);
           if (!fs.existsSync(abs)) continue;
           const buf = fs.readFileSync(abs);

@@ -60,6 +60,17 @@ Closing the five reports surfaced three defects, none reachable by reading the c
 ### Report dispositions
 `263e49e8` / `36be3a03` / `29a9f4cf` → **fixed** @ `13acf83e` (already fixed before triage). `5b1a121e` → **fixed** @ `f3d97141` — all four of its remedies except (1), including its "minimum ask" verbatim. `ab61aefa` → **wont-fix**: the specific ask declined per above, the defect it diagnosed is what this builds. Each carries a written note to the reporter.
 
+### The mechanism shipped BROKEN, and the consumer's own gate caught it (`55e7bf14`)
+The push-triggered sync reverted `storyline`'s 16 `SKILL.md` — **the exact failure this entire change exists to prevent**, committed forty minutes after shipping the prevention.
+
+**The defect**: the consumer manifest is rebuilt from the bytes on disk at the end of each target. For a REFUSED path we wrote nothing, so hashing the disk recorded the CONSUMER's content as *our* base. `classifyAgainstBase` compares against that base — so the next sync read `disk === base`, classified `PRISTINE`, and overwrote freely. The guard protected once and then erased its own evidence.
+
+**Observed**: run 1 (during `git push`) refused all 16 (`Errors: 1`, nothing written). Run 2 overwrote all 16 as an ordinary update, receipt reading `divergenceRefused: 0`. Caught by `storyline`'s own `verify-sync-invariants.mjs` — the consumer-side gate this change was supposed to make unnecessary.
+
+**Fixed**: the manifest records *what we last wrote*; for a refused or held path the prior entry is carried forward, and omitted entirely when there was none (inventing a base is what caused this). The 16 files were restored from the consumer's `HEAD`; two consecutive syncs now both exit 1 with the consumer form intact, and its gate passes.
+
+**Why the e2e suite missed it — the more useful lesson.** It ran exactly ONE sync after diverging and asserted "it refused". *A guard whose second invocation is inert is indistinguishable from a working one until you invoke it twice.* The suite now runs a second and a third sync and asserts the manifest never adopts the consumer's bytes; restoring the bug fails 7 of its 17 tests. The same blind spot would hide any once-only guard, and none of the red-then-green neutering above could see it — every one of those probes was also single-invocation.
+
 ### Known gaps, named
 - **`/ship` Step 0.5h reads ONE store.** It reported `0 open` here while storyline's Azure store carries several genuinely open reports (`5b67f273`, `7af14dd6`, `0f5d87a2`, `b3b4ac36`, `71287365`). Same store-scoping class as the ledger defect above, on the READ side, and NOT fixed by this change — the triage nudge is blind to any consumer on another store. Worth its own pass.
 - **AGENTS.md has 40 characters of headroom.** Four blocks were condensed to fit the new invariant; the file's own advisory warns that shaving words is how it stays permanently full, and names `## Architecture` (7,941) and `## Skill Chain` (6,301) as condensation candidates. Not done here — it is a separate, deliberate pass.
