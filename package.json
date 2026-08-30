@@ -183,7 +183,9 @@
     "doctor": "node scripts/doctor.mjs",
     "doctor:json": "node scripts/doctor.mjs --json",
     "upstream:coverage": "node scripts/check-upstream-probe-coverage.mjs",
-    "upstream:coverage:gate": "node scripts/check-upstream-probe-coverage.mjs --gate"
+    "upstream:coverage:gate": "node scripts/check-upstream-probe-coverage.mjs --gate",
+    "remediation:reconcile": "node scripts/remediation-reconcile.mjs",
+    "remediation:reconcile:apply": "node scripts/remediation-reconcile.mjs --apply"
   },
   "keywords": [
     "claude",

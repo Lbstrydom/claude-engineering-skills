@@ -2013,6 +2013,81 @@ export function normalizeRemediationUpdates(updates) {
  * @param {Array<{findingFingerprint:string, state?:string, action?:string, resolvedRound?:number}>} updates
  * @returns {Promise<{updated:number}>}
  */
+/**
+ * The single write of a terminal `remediation_state` onto an ALREADY-RESOLVED
+ * `audit_findings.id` — extracted from `markFindingsRemediation`'s loop body
+ * (behaviour-preserving; locked by its existing test suite) so a second
+ * caller that already knows the row id (no fingerprint/window resolution
+ * needed) doesn't duplicate this transaction's careful rules. See the inline
+ * comments below for what each of them protects against.
+ *
+ * @param {string} findingId - audit_findings.id, already resolved by the caller
+ * @param {string} state - a member of TERMINAL_REMEDIATION
+ * @param {{resolvedRound?: number|null}} [opts]
+ * @returns {Promise<number>} rows affected in audit_findings (0 or 1)
+ */
+async function projectRemediationState(findingId, state, { resolvedRound = null } = {}) {
+  return withTx(async () => {
+    // `user_action` is filled here, and ONLY out of an undecided state.
+    //
+    // The two axes are independent (`remediation_state` = did a fix land;
+    // `user_action` = what did we decide about the finding), and nothing
+    // has ever written the second one at fix time — so a finding could be
+    // fixed, have its fix recorded, and still read as never adjudicated.
+    // Measured 2026-08-23 on the live store: **1,512 findings in this repo
+    // alone (549 HIGH) carried remediation_state fixed/verified with
+    // user_action NULL**, which is why the credit for a real catch lands in
+    // a source comment and the audit's tail reads as noise. A shipped fix
+    // is evidence the finding was real, which is exactly the inference
+    // `/ship` Step 6.7's card already offers a human ("`accepted` only for a
+    // fixed-but-unlabelled one").
+    //
+    // The NULL/`needs_triage` guard is the same one the `needs_triage` and
+    // `auto_dismissed` writers above use, and it is what keeps this a
+    // PROJECTION rather than a re-adjudication: a human `dismissed`,
+    // `deferred` or `accepted-permanent` is never overwritten. A
+    // `dismissed` row that later lands a fix stays contradictory ON PURPOSE
+    // — `classifyFinalReviewOutcome` surfaces those for reconciliation, and
+    // silently resolving one here is what the sibling comment below refuses
+    // to do for `adjudication_outcome`.
+    // `$1 IN ('fixed','verified')` is load-bearing: `TERMINAL_REMEDIATION`
+    // also admits `regressed`, and a regressed finding is terminal but
+    // emphatically NOT fixed — stamping `fix-now` on one would fabricate a
+    // decision nobody made, out of the one signal that says the opposite.
+    const rows = await many(
+      `UPDATE audit_findings
+          SET remediation_state = $1,
+              user_action = CASE
+                WHEN $1 IN ('fixed','verified')
+                 AND (user_action IS NULL OR user_action = 'needs_triage')
+                THEN 'fix-now'
+                ELSE user_action END
+        WHERE id = $2 RETURNING id`,
+      [state, findingId]
+    );
+    if (rows.length === 0) return 0; // 0-row → do not write a phantom event
+    // UPDATE, never delete+insert: `finding_adjudication_events.adjudication_outcome`
+    // is NOT NULL with no default, and this projector never re-adjudicates a
+    // finding (Gemini-gate-2 — that would desync the DB from a human
+    // severity_adjusted ruling), so it must touch remediation_state (+round,
+    // when known) only, leaving adjudication_outcome/ruling/ruling_rationale
+    // untouched on the existing row.
+    const eventRows = resolvedRound != null
+      ? await many(
+          `UPDATE finding_adjudication_events SET remediation_state = $1, round = $2 WHERE finding_id = $3 RETURNING id`,
+          [state, resolvedRound, findingId]
+        )
+      : await many(
+          `UPDATE finding_adjudication_events SET remediation_state = $1 WHERE finding_id = $2 RETURNING id`,
+          [state, findingId]
+        );
+    if (eventRows.length === 0) {
+      process.stderr.write(`  [lifecycle] projectRemediationState(${findingId}): audit_findings projected but no adjudication_events row exists to update\n`);
+    }
+    return rows.length;
+  });
+}
+
 export async function markFindingsRemediation(repoId, updates) {
   if (!repoId || !await isCloudEnabled()) return { updated: 0, attempted: 0 };
   const { valid } = normalizeRemediationUpdates(updates);
@@ -2033,69 +2108,84 @@ export async function markFindingsRemediation(repoId, updates) {
         [repoId, fp]
       );
       if (!finding?.id) continue;
-      const affected = await withTx(async () => {
-        // `user_action` is filled here, and ONLY out of an undecided state.
-        //
-        // The two axes are independent (`remediation_state` = did a fix land;
-        // `user_action` = what did we decide about the finding), and nothing
-        // has ever written the second one at fix time — so a finding could be
-        // fixed, have its fix recorded, and still read as never adjudicated.
-        // Measured 2026-08-23 on the live store: **1,512 findings in this repo
-        // alone (549 HIGH) carried remediation_state fixed/verified with
-        // user_action NULL**, which is why the credit for a real catch lands in
-        // a source comment and the audit's tail reads as noise. A shipped fix
-        // is evidence the finding was real, which is exactly the inference
-        // `/ship` Step 6.7's card already offers a human ("`accepted` only for a
-        // fixed-but-unlabelled one").
-        //
-        // The NULL/`needs_triage` guard is the same one the `needs_triage` and
-        // `auto_dismissed` writers above use, and it is what keeps this a
-        // PROJECTION rather than a re-adjudication: a human `dismissed`,
-        // `deferred` or `accepted-permanent` is never overwritten. A
-        // `dismissed` row that later lands a fix stays contradictory ON PURPOSE
-        // — `classifyFinalReviewOutcome` surfaces those for reconciliation, and
-        // silently resolving one here is what the sibling comment below refuses
-        // to do for `adjudication_outcome`.
-        // `$1 IN ('fixed','verified')` is load-bearing: `TERMINAL_REMEDIATION`
-        // also admits `regressed`, and a regressed finding is terminal but
-        // emphatically NOT fixed — stamping `fix-now` on one would fabricate a
-        // decision nobody made, out of the one signal that says the opposite.
-        const rows = await many(
-          `UPDATE audit_findings
-              SET remediation_state = $1,
-                  user_action = CASE
-                    WHEN $1 IN ('fixed','verified')
-                     AND (user_action IS NULL OR user_action = 'needs_triage')
-                    THEN 'fix-now'
-                    ELSE user_action END
-            WHERE id = $2 RETURNING id`,
-          [state, finding.id]
-        );
-        if (rows.length === 0) return 0; // 0-row → do not write a phantom event
-        // UPDATE, never delete+insert: `finding_adjudication_events.adjudication_outcome`
-        // is NOT NULL with no default, and this projector never re-adjudicates a
-        // finding (Gemini-gate-2 — that would desync the DB from a human
-        // severity_adjusted ruling), so it must touch remediation_state (+round,
-        // when known) only, leaving adjudication_outcome/ruling/ruling_rationale
-        // untouched on the existing row.
-        const eventRows = resolvedRound != null
-          ? await many(
-              `UPDATE finding_adjudication_events SET remediation_state = $1, round = $2 WHERE finding_id = $3 RETURNING id`,
-              [state, resolvedRound, finding.id]
-            )
-          : await many(
-              `UPDATE finding_adjudication_events SET remediation_state = $1 WHERE finding_id = $2 RETURNING id`,
-              [state, finding.id]
-            );
-        if (eventRows.length === 0) {
-          process.stderr.write(`  [lifecycle] markFindingsRemediation(${fp}): audit_findings projected but no adjudication_events row exists to update\n`);
-        }
-        return rows.length;
-      });
+      const affected = await projectRemediationState(finding.id, state, { resolvedRound });
       if (affected > 0) updated += 1;
       else process.stderr.write(`  [lifecycle] markFindingsRemediation(${fp}): 0-row update (finding vanished) — not counted\n`);
     } catch (err) {
       process.stderr.write(`  [lifecycle] markFindingsRemediation(${fp}) failed: ${err.message}\n`);
+    }
+  }
+  return { updated, attempted: valid.length };
+}
+
+// ── Remediation-state verification reconciler writer ────────────────────────
+// docs/plans/remediation-state-verification-reconciler.md. ID-addressed —
+// unlike `markFindingsRemediation` above, the caller already knows
+// `audit_finding_id` (it came straight off the row
+// `getStaleAcceptedFindingsForVerification` selected), so there is no
+// fingerprint+window resolution to do and no reason to inherit that
+// function's 14-day bound, which would defeat this reconciler's entire
+// purpose. `resolved` writes the terminal `remediation_state='verified'`
+// (via the same `projectRemediationState` transaction `markFindingsRemediation`
+// uses); `still-present`/`uncertain` only bump the two throttle columns —
+// this is what stops an unresolved verdict from being re-asked on every
+// subsequent run while the file sits unchanged (see the plan's Decision B).
+
+const VALID_VERIFICATION_OUTCOMES = new Set(['resolved', 'still-present', 'uncertain']);
+
+/**
+ * Apply out-of-band verification results to `audit_findings`. Fail-open PER
+ * ACTION, mirroring `markFindingsRemediation` — one bad row never aborts the
+ * batch.
+ *
+ * @param {string} repoId
+ * @param {Array<{findingId: string, outcome: 'resolved'|'still-present'|'uncertain',
+ *                 checkedAtCommit: string, rationale?: string}>} actions
+ * @returns {Promise<{updated: number, attempted: number}>}
+ */
+export async function applyRemediationVerificationResults(repoId, actions) {
+  if (!repoId || !await isCloudEnabled()) return { updated: 0, attempted: 0 };
+  const valid = (Array.isArray(actions) ? actions : []).filter(
+    (a) => a && typeof a.findingId === 'string' && a.findingId
+      && VALID_VERIFICATION_OUTCOMES.has(a.outcome) && typeof a.checkedAtCommit === 'string' && a.checkedAtCommit
+  );
+  if (valid.length === 0) return { updated: 0, attempted: 0 };
+  // A store that hasn't yet run the `remediation_last_checked_*` migration
+  // (a consumer on its own DSN, not-yet-migrated) degrades to "the throttle
+  // columns are absent" — probed once (columnExists caches per-process), not
+  // per action, and skipped rather than left to fail loudly on every row.
+  // The terminal write below never touches these columns, so a `resolved`
+  // verdict still lands correctly either way — only the re-check throttle is
+  // unavailable until the store migrates, which fails toward MORE
+  // verification (never toward silently skipping a real check).
+  const hasThrottleColumns = await columnExists('audit_findings', 'remediation_last_checked_at', many, isCloudEnabled);
+  let updated = 0;
+  for (const { findingId, outcome, checkedAtCommit } of valid) {
+    try {
+      if (outcome === 'resolved') {
+        const affected = await projectRemediationState(findingId, 'verified', { resolvedRound: null });
+        if (affected === 0) {
+          process.stderr.write(`  [lifecycle] applyRemediationVerificationResults(${findingId}): 0-row update on the terminal write (finding vanished) — not counted\n`);
+          continue;
+        }
+        if (!hasThrottleColumns) { updated += 1; continue; }
+      } else if (!hasThrottleColumns) {
+        // Nothing to project (not resolved) and nowhere to stamp the throttle
+        // — genuinely a no-op on this store, not a failure.
+        continue;
+      }
+      // Tracking columns are bumped for EVERY outcome, including the terminal
+      // one above — a single UPDATE covers both, since a resolved finding's
+      // row still needs the "last checked" stamp like any other.
+      const rows = await many(
+        `UPDATE audit_findings SET remediation_last_checked_at = now(), remediation_last_checked_commit = $1
+          WHERE id = $2 RETURNING id`,
+        [checkedAtCommit, findingId]
+      );
+      if (rows.length > 0) updated += 1;
+      else process.stderr.write(`  [lifecycle] applyRemediationVerificationResults(${findingId}): 0-row tracking-column update (finding vanished) — not counted\n`);
+    } catch (err) {
+      process.stderr.write(`  [lifecycle] applyRemediationVerificationResults(${findingId}) failed: ${err.message}\n`);
     }
   }
   return { updated, attempted: valid.length };

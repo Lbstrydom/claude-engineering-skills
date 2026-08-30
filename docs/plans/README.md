@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**2 active · 210 terminal · 27 audit summaries · 4 reference docs**
+**2 active · 211 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -42,7 +42,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 207 completed plans</summary>
+<summary>Show all 208 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -209,6 +209,7 @@ source comments that no docs linter sees — stays valid.
 | [Visual-Audit Contract Validation Debt (2026-07-26 triage)](./refactor-visual-audit-contract-2026-07.md) | `Complete` | all 8 entries closed (7 via `visual-contract-semantic-validation.md`; `fa6e120c` 2026-08-09, see Closing Note |
 | [Repo-Wide Reference-Integrity Gate](./reference-integrity-gate.md) | `Complete` | all three clusters implemented, converged, final-gated |
 | [Remediation-State Fix-Lifecycle Writer (un-starve `unlocked_fixes` + the /ship missing-spec gate)](./remediation-state-fix-lifecycle.md) | `Complete` |  |
+| [Remediation-State Verification Reconciler (out-of-band, LLM-checked)](./remediation-state-verification-reconciler.md) | `Complete` |  |
 | [Repo-context budget honesty — sections fitted by priority, coverage reported](./repo-context-budget-honesty.md) | `Complete` |  |
 | [Repo-Scoped Skill Surfaces + a Third-Party-Usable Installer](./repo-scoped-skill-surfaces-and-installer.md) | `Complete` |  |
 | [Requirements Layer — a materialized view of the codebase's de-facto requirements](./requirements-layer.md) | `Complete` |  |

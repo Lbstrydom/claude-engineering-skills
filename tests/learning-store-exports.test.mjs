@@ -121,6 +121,12 @@ const EXPECTED_EXPORTS = [
   // them AND its foreign repo_id could be written into a regression spec.
   'findUnlockedFixInRepo',
   'getUnremediatedAcceptances', // accepted-but-never-remediated /ship nudge (2026-07-27)
+  // remediation-state verification reconciler read side
+  // (docs/plans/remediation-state-verification-reconciler.md) — a THIRD reader
+  // over this view family, unbounded by age, ordered by the reconciler's OWN
+  // throttle column rather than severity.
+  'getStaleAcceptedFindingsForVerification',
+  'countStaleAcceptedFindingsForVerification',
   // Read-time work-unit grouping for the two nudge readers above. Public
   // because the grouping is computed at READ time — deliberately not persisted
   // yet — so the command handler needs the vectors, and a caller that cannot
@@ -245,6 +251,10 @@ const EXPECTED_EXPORTS = [
   'reconcileRemediationProjection',// DB-driven self-heal sweep (14-day window)
   'buildLedgerTerminalIndex',      // pure — fingerprint → terminal state index
   'selectReconcileTargets',        // pure — DB-vs-ledger disagreement selector
+  // remediation-state VERIFICATION reconciler (docs/plans/remediation-state-verification-reconciler.md)
+  // — id-addressed sibling of markFindingsRemediation above, for the population
+  // that lifecycle is structurally blind to (session/round/14-day-bounded).
+  'applyRemediationVerificationResults',
   // dashboard audit-run findings viewer (docs/plans/dashboard-audit-run-viewer.md)
   'getRunFindings',
   'getRunMeta',
@@ -472,6 +482,13 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // getRegressionSpecWindowCounts, getShipEventWindowCounts. One per store
     // module, each answering "how much did this skill get used in the current
     // vs. prior window" for the `cross-skill.mjs skill-census` report.
-    assert.equal(EXPECTED_EXPORTS.length, 192);
+    // 192 → 195: +3 for the remediation-state VERIFICATION reconciler
+    // (docs/plans/remediation-state-verification-reconciler.md, 2026-08-30) —
+    // applyRemediationVerificationResults (runs-findings, id-addressed writer),
+    // getStaleAcceptedFindingsForVerification + countStaleAcceptedFindingsForVerification
+    // (ship-nudges, unbounded-age read side). Closes the gap the existing
+    // fixed-lifecycle machinery (session-scoped, round-diff-scoped, 14-day-
+    // bounded) cannot reach: upstream report 97d09c1c-8dd0-42d1-bfdb-93963f0c07a0.
+    assert.equal(EXPECTED_EXPORTS.length, 195);
   });
 });

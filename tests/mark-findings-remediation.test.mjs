@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import {
   buildLedgerTerminalIndex, selectReconcileTargets,
   markFindingsRemediation, reconcileRemediationProjection,
-  normalizeRemediationUpdates,
+  normalizeRemediationUpdates, applyRemediationVerificationResults,
 } from '../scripts/lib/store/runs-findings.mjs';
 
 const TEST_URL = process.env.AUDIT_DB_TEST_URL;
@@ -113,6 +113,49 @@ test('markFindingsRemediation ignores updates missing a fingerprint or state', a
     // cloud-off returns {updated:0}; the guard-skip logic is exercised regardless.
     const r = await markFindingsRemediation('repo-1', [{ action: 'mark-fixed' }, { findingFingerprint: 'a' }]);
     assert.equal(r.updated, 0);
+  } finally { if (prev !== undefined) process.env.AUDIT_DB_URL = prev; }
+});
+
+// ── applyRemediationVerificationResults — cloud-off / validation (pure-ish) ──
+// docs/plans/remediation-state-verification-reconciler.md. ID-addressed
+// sibling of markFindingsRemediation above — same fail-open, cloud-off-no-op
+// contract, asserted the same way.
+
+test('applyRemediationVerificationResults is a no-op when cloud is disabled (fail-open)', async () => {
+  const prev = process.env.AUDIT_DB_URL;
+  delete process.env.AUDIT_DB_URL;
+  try {
+    const r = await applyRemediationVerificationResults('repo-1', [
+      { findingId: 'id-1', outcome: 'resolved', checkedAtCommit: 'sha1' },
+    ]);
+    assert.deepEqual(r, { updated: 0, attempted: 0 });
+  } finally { if (prev !== undefined) process.env.AUDIT_DB_URL = prev; }
+});
+
+test('applyRemediationVerificationResults filters out malformed actions before counting attempted', async () => {
+  const prev = process.env.AUDIT_DB_URL;
+  delete process.env.AUDIT_DB_URL;
+  try {
+    // cloud-off short-circuits to {updated:0, attempted:0} regardless, but this
+    // exercises the filter without a live store: a garbage action array must
+    // not throw.
+    const r = await applyRemediationVerificationResults('repo-1', [
+      { findingId: 'id-1', outcome: 'not-a-real-outcome', checkedAtCommit: 'sha1' },
+      { findingId: '', outcome: 'resolved', checkedAtCommit: 'sha1' },
+      { outcome: 'resolved', checkedAtCommit: 'sha1' },
+      { findingId: 'id-2', outcome: 'resolved' },
+      null,
+    ]);
+    assert.deepEqual(r, { updated: 0, attempted: 0 });
+  } finally { if (prev !== undefined) process.env.AUDIT_DB_URL = prev; }
+});
+
+test('applyRemediationVerificationResults tolerates a non-array actions argument', async () => {
+  const prev = process.env.AUDIT_DB_URL;
+  delete process.env.AUDIT_DB_URL;
+  try {
+    assert.deepEqual(await applyRemediationVerificationResults('repo-1', undefined), { updated: 0, attempted: 0 });
+    assert.deepEqual(await applyRemediationVerificationResults('repo-1', null), { updated: 0, attempted: 0 });
   } finally { if (prev !== undefined) process.env.AUDIT_DB_URL = prev; }
 });
 
@@ -314,6 +357,107 @@ describe('markFindingsRemediation — DB write shape (integration)', { skip }, (
     assert.equal(res.updated, 1, 'a missing sibling event row must not roll back the audit_findings projection');
     const finding = await q.one(`SELECT remediation_state FROM audit_findings WHERE id = $1`, [findingIdNoEventRow]);
     assert.equal(finding.remediation_state, 'fixed');
+  });
+});
+
+// ── applyRemediationVerificationResults — DB write shape (integration) ──────
+// docs/plans/remediation-state-verification-reconciler.md. Needs a real
+// Postgres for the same reason the block above does: the two throttle columns
+// (`remediation_last_checked_at`/`remediation_last_checked_commit`) and the
+// `resolved` → terminal-`verified` write via the shared `projectRemediationState`
+// helper both need constraint-enforcing SQL to prove, not a mock that could
+// silently re-implement the bug.
+describe('applyRemediationVerificationResults — DB write shape (integration)', { skip }, () => {
+  let q, repoId, runId, applyRemediationVerificationResultsLive;
+  const FP_RESOLVED = 'rvfp1';
+  const FP_STILL_PRESENT = 'rvfp2';
+  const FP_UNCERTAIN = 'rvfp3';
+  let findingIdResolved, findingIdStillPresent, findingIdUncertain;
+
+  before(async () => {
+    const { assertDisposableDbUrl, _resetForTest } = await import('../scripts/lib/db/client.mjs');
+    const savedUrl = process.env.AUDIT_DB_URL;
+    assertDisposableDbUrl(TEST_URL, { productionUrl: savedUrl });
+    process.env.AUDIT_DB_URL = TEST_URL;
+    _resetForTest?.();
+    q = await import('../scripts/lib/db/query.mjs');
+    const mod = await import('../scripts/lib/store/runs-findings.mjs');
+    applyRemediationVerificationResultsLive = mod.applyRemediationVerificationResults;
+
+    repoId = crypto.randomUUID();
+    runId = crypto.randomUUID();
+    await q.query(`INSERT INTO audit_repos (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
+      [repoId, `test-rv-${repoId.slice(0, 8)}`]);
+    await q.query(`INSERT INTO audit_runs (id, repo_id, plan_file, mode) VALUES ($1, $2, 'docs/plans/test-fixture.md', 'code')
+                   ON CONFLICT (id) DO NOTHING`, [runId, repoId]);
+
+    const insFinding = async (fp) => {
+      const row = await q.one(
+        `INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category, adjudication_outcome, remediation_state)
+         VALUES ($1, $2, 'test', 'HIGH', 'test', 'accepted', 'pending') RETURNING id`,
+        [runId, fp]
+      );
+      return row.id;
+    };
+    findingIdResolved = await insFinding(FP_RESOLVED);
+    findingIdStillPresent = await insFinding(FP_STILL_PRESENT);
+    findingIdUncertain = await insFinding(FP_UNCERTAIN);
+  });
+
+  after(async () => {
+    if (!q) return;
+    await q.query('DELETE FROM audit_findings WHERE run_id = $1', [runId]);
+    await q.query('DELETE FROM audit_runs WHERE id = $1', [runId]);
+    await q.query('DELETE FROM audit_repos WHERE id = $1', [repoId]);
+    const { closePool } = await import('../scripts/lib/db/client.mjs');
+    await closePool();
+  });
+
+  it('a "resolved" outcome writes the terminal remediation_state AND bumps the throttle columns', async () => {
+    const r = await applyRemediationVerificationResultsLive(repoId, [
+      { findingId: findingIdResolved, outcome: 'resolved', checkedAtCommit: 'deadbeef1' },
+    ]);
+    assert.equal(r.updated, 1, 'vacuous-pass guard');
+    const row = await q.one(
+      `SELECT remediation_state, remediation_last_checked_at, remediation_last_checked_commit
+         FROM audit_findings WHERE id = $1`, [findingIdResolved]);
+    assert.equal(row.remediation_state, 'verified',
+      'an explicit reconciler verification is the STRONGER claim than the in-round predicate\'s implicit "fixed"');
+    assert.ok(row.remediation_last_checked_at, 'the throttle timestamp must be stamped even on a terminal write');
+    assert.equal(row.remediation_last_checked_commit, 'deadbeef1');
+  });
+
+  it('"still-present" and "uncertain" leave remediation_state untouched but still bump the throttle', async () => {
+    const r = await applyRemediationVerificationResultsLive(repoId, [
+      { findingId: findingIdStillPresent, outcome: 'still-present', checkedAtCommit: 'deadbeef2' },
+      { findingId: findingIdUncertain, outcome: 'uncertain', checkedAtCommit: 'deadbeef2' },
+    ]);
+    assert.equal(r.updated, 2, 'vacuous-pass guard');
+    for (const id of [findingIdStillPresent, findingIdUncertain]) {
+      const row = await q.one(
+        `SELECT remediation_state, remediation_last_checked_commit FROM audit_findings WHERE id = $1`, [id]);
+      assert.equal(row.remediation_state, 'pending',
+        'a NOT-resolved verdict must never move remediation_state — the whole point of the throttle is to ' +
+        'stop re-asking, not to silently close the finding');
+      assert.equal(row.remediation_last_checked_commit, 'deadbeef2');
+    }
+  });
+
+  it('re-applying the same "resolved" action is idempotent (no duplicate event row, no error)', async () => {
+    const first = await applyRemediationVerificationResultsLive(repoId, [
+      { findingId: findingIdResolved, outcome: 'resolved', checkedAtCommit: 'deadbeef3' },
+    ]);
+    const second = await applyRemediationVerificationResultsLive(repoId, [
+      { findingId: findingIdResolved, outcome: 'resolved', checkedAtCommit: 'deadbeef4' },
+    ]);
+    assert.equal(first.updated, 1);
+    assert.equal(second.updated, 1);
+    const events = await q.many(
+      `SELECT id FROM finding_adjudication_events WHERE finding_id = $1`, [findingIdResolved]);
+    assert.equal(events.length, 1, 'the second write must UPDATE the same event row, never insert a second one');
+    const row = await q.one(
+      `SELECT remediation_last_checked_commit FROM audit_findings WHERE id = $1`, [findingIdResolved]);
+    assert.equal(row.remediation_last_checked_commit, 'deadbeef4', 'the throttle still advances on a re-application');
   });
 });
 

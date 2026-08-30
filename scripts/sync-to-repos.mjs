@@ -426,6 +426,17 @@ const CORE_ENTRY = [
   'scripts/check-model-freshness.mjs',
   'scripts/context-staleness.mjs',
   'scripts/debt-health-check.mjs',
+  // Remediation-state verification reconciler
+  // (docs/plans/remediation-state-verification-reconciler.md) — a standalone
+  // CLI nothing imports, spawned as a subprocess both by
+  // scripts/maintenance-checks.mjs's `remediation-reconcile` CHECKS entry
+  // (same shape as its siblings just above — declare or it MODULE_NOT_FOUNDs
+  // in every consumer, exactly the 2026-07-22 wine-cellar-app incident this
+  // comment block already records once) and by /ship Step 0.5e's best-effort
+  // capped call. The walker pulls in its scripts/lib/remediation-verification.mjs
+  // + sensitive-paths.mjs + vcs.mjs closure automatically. Also in
+  // CLI_SMOKE_SET (sync-isolation-verify.mjs).
+  'scripts/remediation-reconcile.mjs',
   // Reached only via `await import('./lib/redact.mjs')` in cross-skill.mjs
   // + learning-store.mjs (dynamic specifier — walker cannot follow).
   // Required at runtime for candidate-write redaction.

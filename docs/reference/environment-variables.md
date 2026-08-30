@@ -103,3 +103,14 @@ govern.
 | `LEARNING_DISABLE` | No | — | Set to `1` to disable all adaptive-learning live behaviour and telemetry recording (single env-var kill switch). |
 | `LEARNING_REPO_NAME` | Required for weekly-review | — | Per-repo gate for `weekly-review.mjs`. Aborts if missing — prevents cross-tenant data leakage in the digest issue body. **Must be the `owner/repo` slug** (matches `audit_repos.name`, derived from the git origin URL via `resolveRepoIdentity()`) — the bare repo name silently misses the lookup (`{posted:false, reason:'unknown-repo'}`), which is exactly how this sat broken for weeks in every consumer before 2026-07-22. `install.mjs`/`setup.mjs` now derive it automatically; don't hand-type it. |
 | `LEARNING_QUEUE_CAP_PER_TYPE` | No | `64` | Per-`decision_type` bounded sub-queue cap. Increase for high-throughput audits. |
+
+## Remediation-state verification reconciler
+
+`scripts/remediation-reconcile.mjs` — the out-of-band writer for `accepted`/
+`severity_adjusted` findings stuck `pending`/`planned` outside the live-audit-
+round lifecycle's reach. [`docs/plans/remediation-state-verification-reconciler.md`](../plans/remediation-state-verification-reconciler.md).
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `AUDIT_REMEDIATION_RECONCILE_ENABLED` | No | `true` | Set to `false` to disable the reconciler entirely (both the `/ship` 0.5e capped call and the `remediation-reconcile` weekly-maintenance entry check this before any DB/LLM call). |
+| `AUDIT_REMEDIATION_RECONCILE_MODEL` | No | `latest-sonnet` (sentinel — see [Model Resolution](model-resolution.md)) | The verifier model. A real code-reading judgment call per file batch, not a naming/labelling task — Haiku is too weak, Opus is unnecessary. |
