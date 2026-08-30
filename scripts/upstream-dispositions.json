@@ -135,6 +135,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "7e2eda8d-a26b-4f0f-8b5d-17a8d87fdc5b",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "wont_fix",
+      "disposition": {
+        "kind": "exempt",
+        "value": "accidental CLI flag-validation probe, not a real finding"
+      },
+      "recordedAt": "2026-08-30T08:38:28.920Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "897aa607-8808-458d-8188-5c1f38caef7f",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
