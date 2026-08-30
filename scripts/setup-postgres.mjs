@@ -163,20 +163,44 @@ function parseArgs(argv) {
 
 // ── Preflight (plan R10 / R3/H3) ───────────────────────────────────────────
 
+/** The stub roles a fresh bootstrap creates. Absent ⇒ we need CREATEROLE. */
+export const STUB_ROLES = Object.freeze(['anon', 'authenticated', 'service_role']);
+
 /**
  * Check that the current session role can:
- *   - create roles (CREATEROLE attribute), AND
+ *   - create any stub role that is MISSING (CREATEROLE attribute), AND
  *   - create the three required extensions (pgcrypto, pg_trgm, vector).
  *
  * Both are non-fatal in adopt-mode (we don't touch roles or extensions on
  * a pre-provisioned DB), but fatal in --migrate mode on a fresh DB.
  *
+ * **`missingRoles`, not `canCreateRole`, is what strict mode judges (2026-08-30).**
+ * This asked whether the session role COULD create roles and never whether the
+ * roles already EXISTED, so a managed Postgres — where the app role is
+ * deliberately not granted CREATEROLE — failed preflight on every run after the
+ * one that bootstrapped it. `--migrate` was therefore unrunnable for that
+ * store's entire post-bootstrap life, which is not a privilege problem: there
+ * was nothing left to create. Measured in a consumer's Azure store: all three
+ * stub roles present, 131 migrations applied, and the next two could not be —
+ * they sat unapplied for days while the consumer's tooling silently ran against
+ * a schema older than its code, and the drift only surfaced when a write hit
+ * the realization guard.
+ *
+ * The EXTENSION check in this same function already had the right shape —
+ * `present` short-circuits, and only a genuinely `missing` one fails. The role
+ * check is now its sibling. Generalising: **a capability probe is the wrong
+ * question whenever the capability is only needed to reach a state that may
+ * already hold.** Ask about the state; ask about the privilege only for the
+ * part of the state that is absent.
+ *
  * @param {import('pg').Pool} pool
- * @returns {Promise<{canCreateRole: boolean, extensions: Record<string, 'present'|'available'|'missing'>}>}
+ * @returns {Promise<{canCreateRole: boolean, missingRoles: string[],
+ *   extensions: Record<string, 'present'|'available'|'missing'>}>}
  */
-async function preflight(pool) {
+export async function preflight(pool) {
   const result = {
     canCreateRole: false,
+    missingRoles: [],
     extensions: {},
   };
 
@@ -187,6 +211,13 @@ async function preflight(pool) {
   if (roleRes.rows[0]) {
     result.canCreateRole = !!(roleRes.rows[0].rolcreaterole || roleRes.rows[0].rolsuper);
   }
+
+  // …and which stub roles are actually absent. Only these need the privilege.
+  const stubRes = await pool.query(
+    `SELECT rolname FROM pg_roles WHERE rolname = ANY($1::text[])`, [STUB_ROLES],
+  );
+  const present = new Set(stubRes.rows.map((r) => r.rolname));
+  result.missingRoles = STUB_ROLES.filter((r) => !present.has(r));
 
   // Extensions — pg_extension (installed) ∪ pg_available_extensions (installable).
   for (const ext of ['pgcrypto', 'pg_trgm', 'vector']) {
@@ -199,9 +230,21 @@ async function preflight(pool) {
   return result;
 }
 
-function reportPreflight(p, { strict }) {
+export function reportPreflight(p, { strict }) {
   process.stderr.write(`\n${G}── Preflight ──${X}\n`);
-  process.stderr.write(`  current_user CREATEROLE: ${p.canCreateRole ? G + 'yes' + X : Y + 'no' + X}\n`);
+  // Report the STATE first and the privilege second — in that order, because
+  // the privilege only matters for roles that are absent, and printing it
+  // alone is what made "CREATEROLE: no" read as a blocker on a store that had
+  // every role it needed.
+  process.stderr.write(
+    `  stub roles: ${p.missingRoles.length === 0
+      ? `${G}all present${X} (${STUB_ROLES.join(', ')})`
+      : `${Y}missing${X} ${p.missingRoles.join(', ')}`}\n`,
+  );
+  process.stderr.write(
+    `  current_user CREATEROLE: ${p.canCreateRole ? G + 'yes' + X : Y + 'no' + X}`
+    + `${!p.canCreateRole && p.missingRoles.length === 0 ? ` ${G}(not needed — nothing to create)${X}` : ''}\n`,
+  );
   for (const [ext, state] of Object.entries(p.extensions)) {
     const colour = state === 'present' ? G : state === 'available' ? Y : R;
     process.stderr.write(`  extension ${ext}: ${colour}${state}${X}\n`);
@@ -212,9 +255,13 @@ function reportPreflight(p, { strict }) {
   // Strict mode (--migrate against a fresh DB): hard requirements.
   const missing = Object.entries(p.extensions).filter(([, v]) => v === 'missing');
   const errors = [];
-  if (!p.canCreateRole) {
+  // Only the roles that are genuinely ABSENT need the privilege. A managed
+  // Postgres whose app role lacks CREATEROLE but whose stub roles were created
+  // once, at bootstrap, has nothing left to create — and failing it here made
+  // `--migrate` permanently unrunnable there. See preflight()'s docblock.
+  if (!p.canCreateRole && p.missingRoles.length > 0) {
     errors.push(
-      'CREATEROLE privilege required to create the anon/authenticated/service_role stub roles.\n' +
+      `CREATEROLE privilege required to create the missing stub role(s): ${p.missingRoles.join(', ')}.\n` +
       '   Either GRANT CREATEROLE TO <current_user>, or hand off setup to a superuser.\n' +
       '   Managed-Postgres-without-CREATEROLE is an explicit v1-unsupported case ' +
       '(docs/plans/postgres-parity.md §10).'
@@ -279,9 +326,38 @@ const LEDGER_DDL = `
 // audit-loop. Idempotent on re-run.
 const LEDGER_RLS = `ALTER TABLE audit_loop_migrations ENABLE ROW LEVEL SECURITY`;
 
+/**
+ * Create the ledger table only if it is ABSENT.
+ *
+ * **`IF NOT EXISTS` is not a substitute for asking whether it exists**
+ * (2026-08-30). For several object types Postgres checks the PRIVILEGE before
+ * it evaluates the existence short-circuit, so `CREATE TABLE IF NOT EXISTS`
+ * raises `42501 permission denied for schema public` against a role that lacks
+ * CREATE on the schema — even when the table is already there and the statement
+ * would have been a no-op. On a managed Postgres the runtime role deliberately
+ * does not own `public` (measured in a consumer's Azure store: `public` owned by
+ * `azure_pg_admin`, tables by `psqladmin`, `has_schema_privilege(...,'CREATE')`
+ * false), so this aborted `--migrate` on a database whose ledger had 131 rows
+ * in it.
+ *
+ * Third instance of the same shape in this one file — the others were
+ * `CREATE EXTENSION IF NOT EXISTS` in the compat bootstrap and the preflight's
+ * CREATEROLE demand. The rule: **probe the state, then act on what is missing.**
+ * An `IF NOT EXISTS` clause expresses the intent; it does not implement it.
+ */
 async function ensureLedger(pool) {
-  await pool.query(LEDGER_DDL);
-  await pool.query(LEDGER_RLS);
+  const exists = await pool.query(`SELECT to_regclass('public.audit_loop_migrations') AS t`);
+  if (!exists.rows[0]?.t) {
+    await pool.query(LEDGER_DDL);
+  }
+  // Likewise: enabling RLS requires table ownership, so only touch it when it
+  // is not already on. A no-op ALTER is still an ownership check.
+  const rls = await pool.query(
+    `SELECT relrowsecurity FROM pg_class WHERE oid = to_regclass('public.audit_loop_migrations')`,
+  );
+  if (rls.rows[0] && rls.rows[0].relrowsecurity === false) {
+    await pool.query(LEDGER_RLS);
+  }
 }
 
 async function readLedger(pool) {
@@ -739,26 +815,100 @@ async function assertSurfacePresent(pool, { dryRun = false } = {}) {
   process.exit(1);
 }
 
+/**
+ * Does any PENDING migration reference the compat surface the bootstrap provides?
+ *
+ * Deliberately a COARSE yes/no over the pending files, not an attempt to derive
+ * the required-object list from them — `parseRequiredSurface`'s docblock records
+ * why deriving the LIST that way is both over- and under-inclusive (70+ English
+ * words matched `TO <role>` out of comment prose, while `pgcrypto` was missed
+ * entirely). A yes/no needs none of that precision, and it fails toward the
+ * strict behaviour: a false positive just reinstates the old unconditional
+ * precondition, which is exactly what shipped before this existed.
+ *
+ * @param {string[]} pendingFiles
+ * @returns {Promise<boolean>}
+ */
+export async function pendingMigrationsNeedSurface(pendingFiles) {
+  for (const f of pendingFiles) {
+    const sql = await fs.promises.readFile(path.join(MIGRATIONS_DIR, f), 'utf-8');
+    if (/\bauth\.(users|uid)\b/i.test(sql)) return true;
+    if (/\bTO\s+(anon|authenticated|service_role)\b/i.test(sql)) return true;
+    if (/\bCREATE\s+EXTENSION\b/i.test(sql)) return true;
+  }
+  return false;
+}
+
 async function runMigrate(pool, { dryRun }) {
   const supabaseManaged = await isSupabaseManaged(pool);
+  // Ask whether the bootstrap has anything LEFT TO DO before running it
+  // (2026-08-30). `findMissingSurface` is the oracle the precondition below
+  // already trusts, and its own docstring states the principle — "asserting the
+  // SURFACE rather than its provenance is the whole design". The bootstrap
+  // decision was the one place that judged PROVENANCE instead ("is this
+  // Supabase?"), so every other managed Postgres re-ran a bootstrap whose whole
+  // effect was already present.
+  //
+  // On Azure Flexible Server that is not merely wasteful, it is FATAL: measured
+  // against a consumer's store, `CREATE EXTENSION IF NOT EXISTS vector` raises
+  // 42501 ("only members of azure_pg_admin are allowed to") even though the
+  // extension IS installed — the platform's allowlist hook fires ahead of the
+  // IF-NOT-EXISTS short-circuit. So `--migrate` could never run there after
+  // bootstrap, and that store silently drifted 2 migrations behind its own
+  // tooling until a write hit the realization guard.
+  const requiredSurface = parseRequiredSurface(await fs.promises.readFile(BOOTSTRAP_SQL, 'utf-8'));
+  const missingSurface = await findMissingSurface(pool, requiredSurface);
+
+  // What is actually PENDING decides both the bootstrap and the precondition
+  // below, so read the ledger FIRST (2026-08-30). Both used to be evaluated
+  // against the whole historical migration set on every run, which is right for
+  // a fresh database and wrong for an established one: the early migrations
+  // reference `auth.users`/`auth.uid()` and a LATER migration drops them again,
+  // so a healthy long-lived store legitimately has no `auth` schema. Measured in
+  // a consumer's Azure store — 131 migrations applied, 2 pending, neither
+  // touching the auth surface — and `--migrate` demanded a schema whose absence
+  // its own migrations had caused, then tried to recreate it.
+  await ensureLedger(pool);
+  const ledger = await readLedger(pool);
+  const files = await listMigrations();
+  const pendingFiles = [];
+  for (const f of files) {
+    const h = await sha256(path.join(MIGRATIONS_DIR, f));
+    if (!(ledger.has(f) && ledger.get(f) === h)) pendingFiles.push(f);
+  }
+  const surfaceNeeded = await pendingMigrationsNeedSurface(pendingFiles);
+
   process.stderr.write(`\n${G}── Compat bootstrap ──${X}\n`);
   if (supabaseManaged) {
     process.stderr.write(`  ${Y}skipped${X} — Supabase-managed \`auth\` schema detected (R16)\n`);
+  } else if (pendingFiles.length === 0) {
+    process.stderr.write(`  ${Y}skipped${X} — no pending migrations; nothing needs the bootstrap\n`);
+  } else if (missingSurface.length === 0) {
+    process.stderr.write(`  ${Y}skipped${X} — required surface already complete `
+      + `(${requiredSurface.roles.length} roles, ${requiredSurface.extensions.length} extensions, `
+      + `${requiredSurface.schemas.length} schema); nothing for the bootstrap to create\n`);
+  } else if (!surfaceNeeded) {
+    process.stderr.write(`  ${Y}skipped${X} — ${missingSurface.length} bootstrap object(s) absent, but no `
+      + `pending migration references the auth surface (${pendingFiles.length} pending)\n`);
   } else {
-    process.stderr.write(`  applying ${path.relative(REPO_ROOT, BOOTSTRAP_SQL)}\n`);
+    process.stderr.write(`  applying ${path.relative(REPO_ROOT, BOOTSTRAP_SQL)} `
+      + `(${missingSurface.length} object(s) missing)\n`);
     await applyBootstrap(pool, dryRun);
   }
 
   // Assert the SURFACE, not its provenance — this passes on managed Supabase
   // (platform-provided) and on a bootstrapped self-hosted DB alike, and fails
-  // before migration 1 anywhere else.
+  // before migration 1 anywhere else. Scoped to the PENDING set for the reason
+  // above: a surface no pending migration references cannot fail this run.
   process.stderr.write(`\n${G}── Precondition ──${X}\n`);
-  await assertSurfacePresent(pool, { dryRun });
+  if (pendingFiles.length > 0 && surfaceNeeded) {
+    await assertSurfacePresent(pool, { dryRun });
+  } else {
+    process.stderr.write(`  ${G}✓${X} not required — `
+      + `${pendingFiles.length === 0 ? 'no pending migrations' : 'no pending migration references the auth surface'}\n`);
+  }
 
   process.stderr.write(`\n${G}── Migrations ──${X}\n`);
-  await ensureLedger(pool);
-  const ledger = await readLedger(pool);
-  const files = await listMigrations();
 
   let applied = 0, skipped = 0;
   for (const f of files) {

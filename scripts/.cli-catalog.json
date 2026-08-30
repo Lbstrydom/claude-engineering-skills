@@ -695,6 +695,10 @@
     "fixture:remove": {
       "description": "Remove a pinned fixture, unlinking node_modules first and reconciling the worktree registry with disk.",
       "category": "diagnostic"
+    },
+    "stores:drift": {
+      "description": "Migration drift across EVERY consumer store, not just the ambient one (advisory; never blocks).",
+      "category": "sync"
     }
   }
 }

@@ -1,5 +1,46 @@
 # Project Status Log
 
+## 2026-08-30 — `IF NOT EXISTS` states an intent; it does not implement one
+
+### How it surfaced
+
+Closing consumer upstream report `1315e360` was refused by the write-path realization guard: that consumer's store was **2 migrations behind**. The `.sql` files had synced to disk days earlier and were never applied, so its code and schema disagreed silently — the `annotation` event shipped that morning could not have worked there. Nothing in this repo could have said so.
+
+### Nobody could apply them, and the reason was the same mistake four times
+
+`setup-postgres --migrate` failed before reaching a single migration. Each check asked whether it COULD create something and never whether the something already EXISTED:
+
+| Check | Reported | Reality |
+|---|---|---|
+| preflight `CREATEROLE` | privilege required | all three stub roles already present |
+| `CREATE EXTENSION IF NOT EXISTS vector` | `42501` | extension installed; Azure's allowlist hook fires *ahead of* the IF-NOT-EXISTS short-circuit |
+| `CREATE TABLE IF NOT EXISTS audit_loop_migrations` | `42501 permission denied for schema public` | ledger had 131 rows in it |
+| surface precondition | `auth` schema + `auth.users` missing | dropped by the migrations' own later steps |
+
+Measured by replaying the bootstrap in a rolled-back transaction against the live store. The rule: **`IF NOT EXISTS` expresses the intent and does not implement it** — for several object types Postgres evaluates the privilege check before the existence short-circuit. Probe the state; act only on what is missing. The `auth.uid()` block six lines above the role blocks already had the right idiom.
+
+The fourth is a different flavour worth naming separately: the precondition judged the WHOLE historical migration set on every run. That is right for a fresh database and wrong for an established one, where the early migrations create the auth surface and a later one drops it. It now follows what is actually PENDING, and `pendingMigrationsNeedSurface` fails toward the strict behaviour.
+
+### What was NOT fixable here
+
+The runtime DSN in a consumer's `.env` cannot apply migrations at all on managed Postgres — measured, `must be owner of table audit_findings` (42501); `public` is owned by `azure_pg_admin`, the tables by `psqladmin`. That is an operator action with the owner DSN, and no upstream change reaches it. `/ship` now says so where it says the rest.
+
+### The prevention: `npm run stores:drift`
+
+Step 0.5g checked the AMBIENT store only — the same single-store blindness `upstream-queues` closed for reports one day earlier, one subsystem over. [`store-drift.mjs`](scripts/store-drift.mjs) fans `--check-drift` out over every consumer store, reusing that file's `discoverStores` rather than growing a second copy. Advisory, never blocks; `unqueried` and `no store` print beside the good news, and zero stores answering says `NOTHING WAS CHECKED` rather than `all current`.
+
+`orphanLedger` is deliberately NOT counted as behind — a store knowing a migration this checkout lacks is a stale *working tree*, and counting it would make every out-of-date branch indict its consumers. This repo's own store reported exactly that during development.
+
+### Two instrument defects caught in the writing
+
+The first `tests/store-drift.test.mjs` reported **1 pass having executed none of its assertions** — importing the module ran its bare `main()` and the `process.exit(0)` inside it. A suite that cannot fail, arriving through the module system rather than the runner. `main()` is now entry-point-guarded.
+
+And a source assertion counted `EXCEPTION WHEN duplicate_object` **4** times against a real 3 — the fourth was in the explaining comment I had just written. A check reading its own prose as evidence about the code.
+
+### Closed
+
+Report `1315e360` verified against `origin/main` claim by claim and closed `fixed` against `3486b145`, disposition `test:tests/embed-provenance.test.mjs` (which names both reported files and asserts the import, so it is coverage rather than a same-named file). The report's own diagnosis was accurate on every point, including the `provenanceId`-not-`requestModel` caveat. Its migrations were applied by a concurrent session mid-investigation, not by this one. Queue: 0 open across 2 stores.
+
 ## 2026-08-30 — a freshness oracle built on mtime was wrong in the HEALTHY case
 
 ### Consumer Verification (previous ship)
