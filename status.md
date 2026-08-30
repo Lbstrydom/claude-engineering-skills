@@ -1,5 +1,76 @@
 # Project Status Log
 
+## 2026-08-30 — a freshness oracle built on mtime was wrong in the HEALTHY case
+
+### Consumer Verification (previous ship)
+
+**Artifact**: commit `101bd92e` (PR #92, merged as `fabb3c02`) + the consumer bundle its pre-push sync produced.
+
+**Retrieval run**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run **from inside each consumer**, plus a direct content check of the three shipped upstream files in all three trees.
+
+**Result — the shipped change: `verified` in all three consumers.** `lib/upstream/events.mjs` present (4,591 bytes, `ANNOTATION_EVENT` exported) in `wine-cellar-app`, `ai-organiser` and `storyline`; `lib/upstream/commands.mjs` carries `upstreamAnnotate` and `drainAnnotationOutbox` in all three.
+
+**Result — delivery: `failed`, then fixed.** `storyline`'s gate 2B reported **2 missing** manifest entries, one of them **this push's own migration** (`.audit-loop/migrations/20260830160000_upstream_issue_annotation_event.sql`; the other was the previous ship's `20260830140000_…`). The manifest claimed both, disk had neither — so that consumer had the JS half of the feature and not the schema half, and `upstream annotate` there would have failed with a `23514` check violation. A plain `node scripts/sync-to-repos.mjs --target storyline` wrote both (`+2 new`) and gate 2B returned to `0 missing`.
+
+**Worth a look next session — the mechanism is NOT established.** The migration was carried by two consecutive pushes (`027cae67`, `101bd92e`), each of which ran the pre-push sync, and in both cases it did not reach `storyline`; one ordinary re-sync did. Both pre-push syncs ended `Sync completed with errors — Errors: 2`, on **refused divergences** (a consumer file committed on their side, which the 2026-08-29 durability work correctly refuses to overwrite). The hypothesis is that a refusal aborts the remainder of that target's writes while the manifest is still written as if complete — which would be the manifest-claims-a-file-that-is-not-on-disk state gate 2B exists to catch. **That is a hypothesis, not a finding**: nothing was isolated, and the ordering inside the sync was not read. Do not act on it without reproducing it (a target with one declared divergence plus one genuinely new file should be enough).
+
+**Pre-existing, unrelated to this push, and each needing an operator decision — not a defect to fix here:**
+- `ai-organiser` — **exit 0, all 8 gates green.**
+- `wine-cellar-app` — gate 2B, 4 hash-mismatched `.claude/hooks/*.mjs`. These are the paths the sync refused as diverged (committed on their side). Resolve by declaring them in `.sync-overrides.json` with a reason, or `--overwrite-diverged`.
+- `storyline` — gate 2B, the same 4 `.claude/skills/*/SKILL.md` mismatches the previous ship recorded; gate 5, 2 stale `node scripts/ux/...` invocations (`ux:driver`, `ux:verb`) in its `package.json`. Unchanged from the last note.
+
+**The first verification run was the INSTRUMENT, not the artifact.** Invoking the verifier as `node <consumer>/scripts/.claude-skills/lib/sync-isolation-verify.mjs` from the source worktree gave **exit 3** and *byte-identical* failures in all three consumers — `113 stale ownership-confirmed paths`, `30 relocation smoke failures`, `manifest.layout is "legacy"`. Three unrelated repos reporting the same three numbers is not a coincidence; the script self-locates from **cwd**, so it was auditing the source tree three times. Re-run with `cd <consumer> && node scripts/.claude-skills/…` the real verdicts are exit 0 / 1 / 1 above. Read a probe's own cwd before believing its output.
+
+### The block, and the two things it was not
+
+A push died on `npm ci failed in sandbox (exit 1)`, preceded by `main checkout's node_modules predates its own package-lock.json (possible stale install) — installing`. Neither half of that was what it appeared to be.
+
+**The named cause was not the cause.** `npm ci` against this repo's manifests in an isolated temp dir succeeds in 13s, exit 0, printing the same single `node-domexception` deprecation warning the failing run printed. Reproduced again here in a real sandbox worktree with the exact spawn options: **exit 0 in 46s, 236 top-level entries.**
+
+**`shell: IS_WIN` is ruled OUT.** It is *required* — Node 22 refuses to spawn a `.cmd` without it (`EINVAL`, measured) — and it round-trips a child's exit status faithfully (0→0, 3→3). It cannot manufacture the non-zero it was suspected of.
+
+**The install had not finished.** The failing sandbox holds 234 top-level entries against a fresh install's 236, and the two missing are exactly `.bin` and `.package-lock.json` — npm's two end-of-reify artifacts. The count coincidentally matching the main checkout's 234 is what made it read as complete. Set-differenced, not counted.
+
+**Why nothing could be recovered afterwards.** npm *does* record `verbose cwd` in its debug log, and a live sandbox's log shows the `ces-prepush-…` cwd plainly. But `logs-max` defaults to **10**: the failing run's log had been rotated out by later npm invocations before anyone looked, and `stdio: 'inherit'` had put the error hundreds of lines upstream of the `✗` in the meantime. The evidence was destroyed by design, and the sandbox — the last copy — was deleted by the cleanup path.
+
+### The oracle was inverted, not approximate
+
+`modulesStale` compared `package-lock.json`'s mtime against the `node_modules` *directory*'s. `npm install` writes the lockfile **last**, and a directory's mtime moves only when a *top-level* entry is added or removed. Measured on a tree `npm install` had just called *"up to date in 6s"*:
+
+| | package-lock.json | node_modules/ | verdict |
+|---|---|---|---|
+| after `npm ci` | 13:21:19 | 13:22:07 | fresh |
+| after a no-op `npm install` | 13:24:07 | 13:22:07 | **STALE** |
+
+It then stays STALE until something unrelated adds a top-level entry — a build tool creating `node_modules/.cache` will do it — at which point the same tree reads FRESH with the lockfile 18 days older. One verdict, decided by an unrelated event. Its own comment conceded false *negatives*; the expensive, actually-occurring error was the false positive, and on 2026-08-30 it forced the `npm ci` that then failed.
+
+[`lib/installed-tree-identity.mjs`](scripts/lib/installed-tree-identity.mjs) replaces it with npm's own record: `node_modules/.package-lock.json`, the hidden lockfile npm writes at the end of every install describing the tree actually on disk. Compared by content, both directions — nothing installed that the lockfile does not pin, nothing required by the lockfile that is not installed. **Key counts must not be compared**: 455 declared against 410 recorded here, and all 45 absentees carry `optional` (43 also `dev`), with zero version/`resolved` mismatches across the 410 shared keys. ~1ms, against the ~45s install the flap was triggering. Fails closed on every ambiguous input, exactly like its `dependency-identity` sibling.
+
+### The sweeper was not broken — the premise was
+
+`sweepStaleSandboxes` printed no line during the failing run, which read as a defect. `STALE_SANDBOX_AGE_MS` is **6h**, not "predates this run": the three husks present were **3h**, 1.6h and live. Printing nothing was correct. Verified separately, since "correct by argument" is not the same as correct — `git worktree remove --force` on the 4.6h husk succeeded fully in 26s, and `rmSync` provably does not follow the `node_modules` junction into the main checkout. Those husks exist because cleanup never ran (a hard-killed process, the one signal path `main()` cannot trap), not because the sweeper failed.
+
+What *was* broken is that silence carried two meanings — "%TEMP% is clean" and "husks are here, all too young" — and the second is what made the first read as a bug. It now says which, and only when there is something to say. **An unasked question must never render as an empty result** — the same rule the multi-store upstream queue landed on the day before, one subsystem over.
+
+### What ships
+
+- npm ci output **captured** rather than inherited; last 30 lines printed adjacent to the `✗`, full transcript persisted to `<sandbox>/.prepush-npm-ci.log`, npm's own debug-log path echoed when it named one (never implied — it rotates).
+- The sandbox is **preserved** on a *provisioning* failure and only then. A failing `npm run check` is the ordinary red push; preserving there would leak ~1GB per failure, so the flag is set at the throw site, not in the catch — asserted by position, since a reader cannot otherwise tell the two apart.
+- npm exiting 0 is checked against the hidden-lockfile postcondition — the same rule `lib/prepush-sandbox-cleanup.mjs` already encodes for `git worktree remove`, now applied to the tool that motivated writing it down.
+- An explicit `maxBuffer`, because on overflow `spawnSync` **kills the child** and reports `ENOBUFS` — the capture would otherwise have introduced a brand-new way for provisioning to fail.
+
+### Instrument discipline
+
+Every new guard was shown to fail before it passed: the oracle stubbed inert → 14 fail; `young` dropped from the survey → 2 fail; the four new source guards → 4 fail; all green on restore. The failure path was exercised end to end against a dangling commit carrying an out-of-sync lockfile — the real `npm error 404` now prints beside the `✗`, the sandbox is preserved, the transcript is written.
+
+Three source-regex guards in [`tests/prepush-sandbox-honesty.test.mjs`](tests/prepush-sandbox-honesty.test.mjs) pinned implementation text this change replaces, and now pin the property instead. One of them was bounded by a fixed ±character window and had silently stopped covering its own target as the block grew — the same decay class as a line-numbered citation, in a test.
+
+The new suite's **first run reproduced the bug the repo already has a module for**: it read `<repoRoot>/node_modules`, which a linked worktree does not have. It now uses `findNodeModules`. That helper exists because the same mistake had been made twice before; this is the third, caught in minutes because the second one turned it into a shared function.
+
+### Not addressed, deliberately
+
+`provisionArtifacts` copies gitignored artifacts from `repoRoot`, which in a linked worktree has none — it blocked the verification push on `.audit-loop/domain-deps-observed.json` until the file was copied in by hand. Same worktree class as the `node_modules` bug, but a different correct fix (a worktree's `.audit-loop/` may legitimately differ from the main checkout's, so "walk up" is not obviously right here). Left for its own change rather than folded into this one.
+
 ## 2026-08-30 — the upstream issue log had no way to correct a note once written
 
 ### Consumer Verification (previous ship)

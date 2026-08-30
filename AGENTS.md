@@ -462,6 +462,16 @@ near-zero and looks like lost progress.
   bit, and the worktree-`node_modules` resolution rule (a tool hard-coding
   `<repoRoot>/node_modules` breaks in a worktree and nowhere else; never hand-link
   one in): [prepush-sandbox.md](docs/runbooks/prepush-sandbox.md) §2.1–2.2.
+- **An mtime freshness oracle is usually wrong in the HEALTHY case, not merely
+  lossy** — the writer's own ordering decides it. `npm install` writes
+  `package-lock.json` LAST and a directory's mtime moves only on a TOP-LEVEL
+  add/remove, so `lock newer than node_modules/` was the normal post-install
+  state and the pre-push gate read STALE on a tree npm had just called *"up to
+  date"* (then FRESH, same tree, once something created `node_modules/.cache`).
+  Before writing one, ask **who writes these two paths, in what order**; then use
+  the tool's own content record instead — npm keeps `node_modules/.package-lock.json`.
+  Compare CONTENT, never key counts (455 declared vs 410 installed here; every
+  absentee `optional`). [prepush-sandbox.md](docs/runbooks/prepush-sandbox.md) §4.
 
 #### Testing doctrine — pointer
 
