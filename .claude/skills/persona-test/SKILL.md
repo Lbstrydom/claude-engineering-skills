@@ -219,9 +219,16 @@ authenticated (e.g., landing on a logged-in view instead of a login
 form) before assuming a login wall will block the run. If it isn't, and
 this is a repeat session against the same app, ask whether a
 `--storage-state` bootstrap has been set up for it — see
-`references/auth-bootstrap.md`. This is a **one-time per-session setup
-step**, not something to attempt mid-exploration (see Phase 3's login-wall
-special case for what happens when no bootstrap exists).
+`references/auth-bootstrap.md`. **Seed it before the MCP server
+connects**: `.mcp.json` is read once, at connect time, so running the
+seeding step mid-session writes a fresh token to disk that nobody
+re-reads — the browser keeps carrying whatever was on disk at connect,
+and with a short-lived token that run still hits a login wall later, even
+though setup looked fine. This is a **one-time per-session setup step**,
+not something to attempt mid-exploration. If a login wall does appear
+mid-run anyway, it may be that connect-time race rather than a broken
+bootstrap — see Phase 3's login-wall special case for the decision order
+that tells them apart before reporting anything.
 
 ---
 
@@ -427,16 +434,27 @@ field disagree.
 ### Special cases
 
 - **404 / page-not-found** → 1 retry after 5s; if still 404, emit P0 "Target URL unreachable" and stop
-- **Login wall** → if an auth bootstrap was expected but the session still
-  landed on a login form (misconfigured/expired `storageState` —
-  `references/auth-bootstrap.md`), emit **P1** "Auth bootstrap did not
-  authenticate the session" (this is a setup regression, not a normal
-  gap). Otherwise (no bootstrap was ever configured for this app), emit P3
-  "App requires login; test scope limited to public surface", continue
-  with public pages only, and set `authWallUntested = true` for Phase 4 (and
-  the session work-record's `authState = 'auth-wall-untested'`) —
-  this run did **not** cover the app's primary authenticated surfaces, and
-  the report must say so even when it finds 0 P0s there.
+- **Login wall** → branches three ways, in this order:
+  1. **No bootstrap was ever configured for this app** → emit P3 "App
+     requires login; test scope limited to public surface", continue with
+     public pages only, and set `authWallUntested = true` for Phase 4 (and
+     the session work-record's `authState = 'auth-wall-untested'`) — this
+     run did **not** cover the app's primary authenticated surfaces, and
+     the report must say so even when it finds 0 P0s there.
+  2. **A bootstrap was configured, and this looks like the connect-time
+     race** (short-lived token, session has been running a while, a
+     `storageState` file exists on disk) → this is a rig problem, not
+     signal about the product. Attempt the escape hatch in
+     `references/auth-bootstrap.md` (re-seed, then inject the refreshed
+     `storageState` via `browser_evaluate` and reload). If it clears the
+     login wall, continue the run normally — do **not** emit a finding for
+     the recovery; the report's Auth coverage line may note the
+     mid-session refresh as context, but it is not a P0-P3 item.
+  3. **The escape hatch fails after a fresh re-seed** (or the app's
+     session is HttpOnly-cookie-based and unrecoverable in-session) → this
+     is a genuine setup regression. Emit **P1** "Auth bootstrap did not
+     authenticate the session" (misconfigured/expired `storageState` —
+     `references/auth-bootstrap.md`).
 - **Page-load timeout** → retry once with viewport reset; if it still times out, emit P1 "Slow initial load (>15s)" and continue
 - **Visible JS errors / console errors** → emit P1 or higher with the exact error text
 
@@ -975,7 +993,7 @@ situations — read them only when the trigger applies.
 |---|---|---|
 | `references/audit-correlation.md` | Pre-test audit enrichment + post-test persona↔audit correlation emission — full rules. | `audit_link = true` AND (Phase 0d fetches audit candidates OR Phase 6b's manual-repair path is needed). |
 | `references/browser-tool-detection.md` | Full browser-tool detection algorithm with tier priority, fallback rules, and Windows caveats. | Phase 1 tool selection fails on first try, OR the user is on Windows and Playwright MCP tools aren't appearing. |
-| `references/auth-bootstrap.md` | Sanctioned pattern for auth-gated exploratory testing via MCP-server storageState, not in-session injection. | Phase 1 detects a login-gated target, OR Phase 3 hits a login wall and no auth bootstrap is configured. |
+| `references/auth-bootstrap.md` | Sanctioned auth-gated exploratory-testing pattern via MCP-server storageState, plus its connect-time-race escape hatch. | Phase 1 detects a login-gated target, OR Phase 3 hits a login wall (bootstrap configured or not). |
 | `references/consistency-mode.md` | Full consistency-mode grammar, manifest schema, canary schema, runner exit codes, contradiction kinds. | Phase 3b runs (i.e., `--mode consistency` was passed) and you need the full grammar reference; OR the user asks how the rig decides severity / coercion / negative-space. |
 | `references/persona-debrief-format.md` | Full persona debrief generation rules, tone guide, and output wrapper. | About to write the Phase 5b debrief. |
 | `references/session-history.md` | Post-session history readback — recurring-issue surface + cross-session pattern detection. | Phase 6c runs AND Supabase is configured. |
