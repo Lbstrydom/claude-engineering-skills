@@ -242,7 +242,13 @@ async function _llmCondense(content) {
   // Try Claude Haiku first (better quality — captures all constraints)
   // `cli` backend (CLAUDE_BACKEND=cli) routes via `claude -p` so this draws
   // from the Max 20x Agent SDK credit instead of the raw-API meter.
-  if (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_BACKEND === 'cli') {
+  // Availability is a ROUTE question, never a public-env-var one: an Azure work
+  // profile reaches Claude through its own endpoint and never sets
+  // ANTHROPIC_API_KEY, so the old raw-key test skipped this branch outright on a
+  // corporate tenant and the brief silently degraded to Gemini (AGENTS.md,
+  // "An availability gate must ask whether a ROUTE exists").
+  const { isClaudeAvailable } = await import('./anthropic-client.mjs');
+  if (isClaudeAvailable()) {
     const budget = budgetFor('Claude');
     if (budget) {
       try {

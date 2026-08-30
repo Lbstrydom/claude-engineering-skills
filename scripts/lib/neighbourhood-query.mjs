@@ -519,8 +519,10 @@ export async function getIncidentNeighbourhoodForIntent(adapters, args, repoRoot
       const FailureModesSchema = z.object({
         failureModes: z.array(z.string().min(20).max(200)).min(1).max(3),
       });
-      if (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_BACKEND === 'cli') {
-        const { createAnthropicClient } = await import('./anthropic-client.mjs');
+      // ROUTE, not key — an Azure tenant has no ANTHROPIC_API_KEY, so the old
+      // test skipped the rephrase entirely there (AGENTS.md availability-gate rule).
+      const { createAnthropicClient, isClaudeAvailable } = await import('./anthropic-client.mjs');
+      if (isClaudeAvailable()) {
         const client = await createAnthropicClient();
         const { resolveModel } = await import('./model-resolver.mjs');
         const haikuModel = resolveModel('latest-haiku');

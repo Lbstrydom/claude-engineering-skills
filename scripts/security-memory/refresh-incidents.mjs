@@ -37,7 +37,7 @@ import { resolveRepoIdentity, persistRepoIdentity } from '../lib/repo-identity.m
 import { redactSecrets } from '../lib/secret-patterns.mjs';
 import { preWriteSecretGate } from '../lib/security/secret-classifier.mjs';
 import { symbolIndexConfig, azureConfig } from '../lib/config.mjs';
-import { embedText } from '../lib/embed-text.mjs';
+import { embedText, resolveEmbedProfile } from '../lib/embed-text.mjs';
 import { parseSecurityStrategy } from './parse-strategy.mjs';
 import { classifyMitigation, runSemgrepIfNeeded } from './incident-status.mjs';
 import { emit } from '../lib/cli-io.mjs';
@@ -167,11 +167,20 @@ async function main() {
   // override) but the fallback is the same value the QUERY path uses,
   // so writer and reader can never silently drift.
   const active = await getActiveSnapshot(repoId);
-  // Under the Azure profile, embed-text uses the Azure deployment — record THAT
-  // as the provenance model so reads and writes agree on the vector space.
-  const modelToUse = azureConfig.active
-    ? azureConfig.embedDeployment
-    : (active?.activeEmbeddingModel || symbolIndexConfig.embedModel);
+  // `requestModel` is what we SEND (bare Azure deployment, or the concrete
+  // Gemini id); `provenanceId` is the endpoint-qualified identity we PERSIST.
+  // They are different strings under Azure and conflating them is the bug this
+  // replaced: recording the bare `azureConfig.embedDeployment` made a
+  // deployment-name collision across two Azure RESOURCES look like one vector
+  // space, and left this index's provenance in a format the arch index — which
+  // has used `resolveEmbedProfile()` since it was introduced — cannot match.
+  // Found by the final reviewer (2026-08-30) as the third caller that never
+  // adopted the unifying helper; `symbol-index/embed.mjs` carries the same pair.
+  const embedProfile = resolveEmbedProfile({
+    concreteModel: active?.activeEmbeddingModel || symbolIndexConfig.embedModel,
+  });
+  const requestModel = embedProfile.requestModel;
+  const modelToUse = embedProfile.provenanceId;
   const dimToUse = active?.activeEmbeddingDim || symbolIndexConfig.embedDim;
 
   // R2-H5: v1 storage hard-coded to VECTOR(768). Hard-fail before any
@@ -257,7 +266,9 @@ async function main() {
     if (needsEmbed) {
       try {
         const text = redactSecrets(`${inc.description} ${inc.lessons_learned || ''}`).text;
-        embedding = await generateEmbedding(text, modelToUse, dimToUse);
+        // requestModel, NOT modelToUse: the latter is the endpoint-qualified
+        // provenance we persist, and sending it as a Gemini model id would 404.
+        embedding = await generateEmbedding(text, requestModel, dimToUse);
       } catch (err) {
         embedError = err.message;
         logWarn(`embed failed for ${inc.incident_id}: ${err.message}`);

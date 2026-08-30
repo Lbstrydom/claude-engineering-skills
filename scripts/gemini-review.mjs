@@ -1024,7 +1024,12 @@ const PROVIDERS = {
       // absent, so on any machine running CLAUDE_BACKEND=cli the final gate had
       // no working fallback at all. The shadow path was pinned on 2026-07-26;
       // the primary was missed because it is only reached without a Gemini key.
-      return createAnthropicClient({ backend: 'sdk' });
+      //
+      // `azureRoute: null` — this provider IS "public Opus", a different id from
+      // `azure-claude` below. An omitted route would adopt the tenant's Azure
+      // Claude on an Azure machine, so `--provider claude-opus` would silently
+      // stop meaning what it says.
+      return createAnthropicClient({ backend: 'sdk', azureRoute: null });
     },
   },
   'azure-claude': {
@@ -1789,7 +1794,10 @@ async function buildShadowClient(canonicalProvider) {
   // Cost note: this bills ANTHROPIC_API_KEY rather than drawing Max-20x Agent
   // SDK credit. Accepted deliberately — the pre-registered window is ~20 runs,
   // and a shadow that produces no parseable verdict has zero value at any price.
-  return createAnthropicClient({ backend: 'sdk' });
+  // `azureRoute: null` keeps that cost note TRUE on an Azure machine: the shadow
+  // arm is named `claude-opus`, so it must stay the public service rather than
+  // adopting the tenant's route and quietly changing what the A/B compares.
+  return createAnthropicClient({ backend: 'sdk', azureRoute: null });
 }
 
 // ── Model-eval adjudicator Tier A/B override (model-swap-eval-harness
