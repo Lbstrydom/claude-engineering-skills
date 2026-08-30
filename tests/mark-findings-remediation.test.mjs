@@ -170,7 +170,7 @@ test('applyRemediationVerificationResults tolerates a non-array actions argument
 // assumption and stayed green. This block needs a real constraint-enforcing
 // Postgres, so it only runs with `AUDIT_DB_TEST_URL` set.
 describe('markFindingsRemediation — DB write shape (integration)', { skip }, () => {
-  let mod, q, repoId, runId;
+  let mod, q, repoId, runId, savedAuditDbUrl;
   const FP_WITH_EVENT = 'fpevent1';
   const FP_NO_ROUND = 'fpevent2';
   const FP_NO_EVENT_ROW = 'fpevent3';
@@ -184,9 +184,9 @@ describe('markFindingsRemediation — DB write shape (integration)', { skip }, (
 
   before(async () => {
     const { assertDisposableDbUrl, _resetForTest } = await import('../scripts/lib/db/client.mjs');
-    const savedUrl = process.env.AUDIT_DB_URL;
+    savedAuditDbUrl = process.env.AUDIT_DB_URL;
     // Refuses a production-identical DSN (the July 2026 wipe incident guard).
-    assertDisposableDbUrl(TEST_URL, { productionUrl: savedUrl });
+    assertDisposableDbUrl(TEST_URL, { productionUrl: savedAuditDbUrl });
     process.env.AUDIT_DB_URL = TEST_URL;
     _resetForTest?.();
     q = await import('../scripts/lib/db/query.mjs');
@@ -250,6 +250,15 @@ describe('markFindingsRemediation — DB write shape (integration)', { skip }, (
   });
 
   after(async () => {
+    // Restore AUDIT_DB_URL BEFORE any early return — `before()` can throw
+    // (e.g. assertDisposableDbUrl refusing) after already overwriting it, and
+    // a leaked disposable DSN corrupts the "production" baseline every later
+    // describe block in this PROCESS compares against — including a sibling
+    // DB-integration suite in this same file, which is exactly how this was
+    // found (2026-08-30): its own assertDisposableDbUrl read the leaked
+    // TEST_URL as `productionUrl` and refused itself, never running.
+    if (savedAuditDbUrl === undefined) delete process.env.AUDIT_DB_URL;
+    else process.env.AUDIT_DB_URL = savedAuditDbUrl;
     if (!q) return;
     // FK is ON DELETE CASCADE finding_adjudication_events -> audit_findings, so
     // deleting audit_findings is sufficient to clean up both tables.
@@ -368,7 +377,7 @@ describe('markFindingsRemediation — DB write shape (integration)', { skip }, (
 // helper both need constraint-enforcing SQL to prove, not a mock that could
 // silently re-implement the bug.
 describe('applyRemediationVerificationResults — DB write shape (integration)', { skip }, () => {
-  let q, repoId, runId, applyRemediationVerificationResultsLive;
+  let q, repoId, runId, applyRemediationVerificationResultsLive, savedAuditDbUrl;
   const FP_RESOLVED = 'rvfp1';
   const FP_STILL_PRESENT = 'rvfp2';
   const FP_UNCERTAIN = 'rvfp3';
@@ -376,8 +385,8 @@ describe('applyRemediationVerificationResults — DB write shape (integration)',
 
   before(async () => {
     const { assertDisposableDbUrl, _resetForTest } = await import('../scripts/lib/db/client.mjs');
-    const savedUrl = process.env.AUDIT_DB_URL;
-    assertDisposableDbUrl(TEST_URL, { productionUrl: savedUrl });
+    savedAuditDbUrl = process.env.AUDIT_DB_URL;
+    assertDisposableDbUrl(TEST_URL, { productionUrl: savedAuditDbUrl });
     process.env.AUDIT_DB_URL = TEST_URL;
     _resetForTest?.();
     q = await import('../scripts/lib/db/query.mjs');
@@ -402,9 +411,24 @@ describe('applyRemediationVerificationResults — DB write shape (integration)',
     findingIdResolved = await insFinding(FP_RESOLVED);
     findingIdStillPresent = await insFinding(FP_STILL_PRESENT);
     findingIdUncertain = await insFinding(FP_UNCERTAIN);
+    // A pre-existing event row — `projectRemediationState` only ever UPDATEs
+    // this table (never inserts, by design: it must not re-adjudicate a
+    // finding), so without one here the idempotency test below would be
+    // asserting on a row that can never exist, for a reason unrelated to
+    // idempotency at all.
+    await q.query(
+      `INSERT INTO finding_adjudication_events (finding_id, adjudication_outcome, remediation_state, ruling, ruling_rationale, round)
+       VALUES ($1, 'accepted', 'pending', 'sustain', 'real bug, needs fix', 1)`,
+      [findingIdResolved]
+    );
   });
 
   after(async () => {
+    // See the sibling block's after() above for why this restore is
+    // load-bearing, not cosmetic — the same leak this block's own
+    // assertDisposableDbUrl fell victim to before that fix.
+    if (savedAuditDbUrl === undefined) delete process.env.AUDIT_DB_URL;
+    else process.env.AUDIT_DB_URL = savedAuditDbUrl;
     if (!q) return;
     await q.query('DELETE FROM audit_findings WHERE run_id = $1', [runId]);
     await q.query('DELETE FROM audit_runs WHERE id = $1', [runId]);
