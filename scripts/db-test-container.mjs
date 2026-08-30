@@ -136,6 +136,14 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   'tests/symbol-file-imports.test.mjs',
   'tests/unremediated-acceptance-disposition.test.mjs',
   'tests/symbols-count-for-snapshot.test.mjs',
+  // Enrolled 2026-08-30 with the non-lifecycle `annotation` event. Everything
+  // it asserts is a property only Postgres has: the widened event CHECK, the
+  // annotation-needs-a-note CHECK firing on whitespace as well as NULL, the
+  // append-only trigger still refusing UPDATE on an annotation row, and
+  // `recordUpstreamIssueAnnotation` leaving every `upstream_issues` column
+  // untouched (whole-row equality — a stubbed store cannot show that at all).
+  // Two edits, always — this list AND postgres-parity.yml.
+  'tests/upstream-issue-annotation-db.test.mjs',
 ]);
 
 /**

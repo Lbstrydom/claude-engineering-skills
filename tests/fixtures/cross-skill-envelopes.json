@@ -1704,7 +1704,7 @@
         "ok": false,
         "error": {
           "code": "BAD_INPUT",
-          "message": "usage: upstream <report|list|ack|fix|wont-fix|drain|reconcile> [flags]"
+          "message": "usage: upstream <report|list|ack|fix|wont-fix|annotate|history|drain|reconcile> [flags]"
         }
       }
     },
@@ -1718,7 +1718,7 @@
         "ok": false,
         "error": {
           "code": "BAD_INPUT",
-          "message": "usage: upstream <report|list|ack|fix|wont-fix|drain|reconcile> [flags]"
+          "message": "usage: upstream <report|list|ack|fix|wont-fix|annotate|history|drain|reconcile> [flags]"
         }
       }
     },

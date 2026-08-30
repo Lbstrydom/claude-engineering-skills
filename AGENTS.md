@@ -251,7 +251,10 @@ consumer instead of the named one. Verified 2026-07-20.)
 >
 > **File the report, don't paste it.** Consumer: `cross-skill.mjs upstream report --title … --affected-path <synced path>`
 > (body on **stdin**) — it auto-captures the repo, the bundle sha, and whether the path is really
-> upstream-owned. Here: `npm run upstream:issues` → `upstream ack|fix|wont-fix`. Worksheet + why prose
+> upstream-owned. Here: `npm run upstream:issues` → `upstream ack|fix|wont-fix|annotate|history`. **Pass every
+> `--note` as `-` (stdin)** — a backtick in an argv note runs as command substitution and silently
+> elides text the append-only log cannot then repair; `annotate` appends a state-neutral event,
+> the only legal repair (never a second `fixed`). Worksheet + why prose
 > reports failed: [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Reporting an upstream bug.
 
 > **Four shapes consumers keep reporting — check for them when adding a gate or

@@ -235,7 +235,8 @@ jobs:
             tests/symbol-index-drift-justification.test.mjs \
             tests/model-eval-comparison-store.test.mjs \
             tests/symbols-count-for-snapshot.test.mjs \
-            tests/unremediated-acceptance-disposition.test.mjs
+            tests/unremediated-acceptance-disposition.test.mjs \
+            tests/upstream-issue-annotation-db.test.mjs
 
       - name: Env-gated DB tests (G1 date parser + G3 withTx + setup integration)
         # --test-concurrency=1 is LOAD-BEARING: node --test runs each test

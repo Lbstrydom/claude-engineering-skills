@@ -1,5 +1,70 @@
 # Project Status Log
 
+## 2026-08-30 — the upstream issue log had no way to correct a note once written
+
+### Consumer Verification (previous ship)
+
+**Artifact**: commit `081cbbfc3c412bd2dbe624ba91cc99bd4560ee02` (PR #90) + the consumer bundle it synced.
+
+**Retrieval run**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in `C:/GIT/storyline`, plus a direct content check of the six files this commit changed.
+
+**Result — the shipped change: `verified`.** All four bundle-eligible files carry the new code in the consumer: `findingEmbeddingSpace` present in `lib/embed-text.mjs`, `lib/store/runs-findings.mjs` and `lib/store/ship-nudges.mjs`; `assertEmbeddingSpace` + the `embedding_model = $6::text` predicate present in `lib/semantic-suppression.mjs`. The only byte difference from source is the 5-line upstream-owned sync banner. `semantic-suppress.mjs` and `memory-pgvector-prototype.mjs` are absent by design (source-repo-only CLIs, not in the bundle).
+
+A first comparison reported all four as DIFFER. That was the **instrument**, not the artifact — the hash filter stripped every `^ * ` JSDoc continuation line along with the banner. Caught by diffing one file properly instead of trusting the hash.
+
+**Result — the consumer tree overall: `failed`, on three gates that predate this push and touch nothing it shipped.**
+- **gate 2B** — 4 hash-mismatched manifest entries, all `.claude/skills/*/SKILL.md` (click-test, nav-audit, …). This commit touched no skill file.
+- **gate 2C** — **6072 orphans, all under `scripts/.claude-skills/node_modules/`**. A dependency install inside the synced tree; the manifest never claimed them. This is the orphaned-synced-tooling class gate 2C exists to catch, now firing in `storyline`. Clear with `rm -rf scripts/.claude-skills/` + `npm run sync -- --target storyline` from the source repo.
+- **gate 5** — 2 stale `node scripts/ux/...` invocations in the consumer's `package.json` (`ux:driver`, `ux:verb`).
+
+`sync-isolation-verify` exits **1**. Note the exit code must be read unpiped — `| tail` masked it as 0 on the first run.
+
+### The gap: two correct properties, and no third option between them
+
+`upstream_issue_events` is append-only **by trigger**, and `event` was CHECK'd to the four lifecycle values. Both are right and both stay. What was missing was a way to say *"this note needs a correction"*.
+
+The concrete case: closing report `0f5d87a2` via `upstream fix --note "…"`, an unescaped backtick in the note ran as **shell command substitution** and silently elided one sentence from the stored text. Nothing downstream can detect that — what reaches the CLI is a shorter, well-formed string. The only two repairs available were both wrong: mutate the append-only row (refused, correctly), or emit a **second `fixed` event**, corrupting the lifecycle record to fix a typo. The note stood with a hole in it.
+
+### `annotation` — a fifth event that is deliberately not a state
+
+Migration [`20260830160000_upstream_issue_annotation_event.sql`](supabase/migrations/20260830160000_upstream_issue_annotation_event.sql) widens the event CHECK (same auto-generated constraint name, so it is a redefinition rather than a second accumulated constraint) and adds `chk_upstream_event_annotation_has_note` as an **implication**, not a column NOT NULL — the lifecycle events keep a nullable note, because an `ack` legitimately carries none.
+
+Exclusion from state derivation is **structural, not conventional**: `annotation` is neither a key nor a destination in `LEGAL_TRANSITIONS`, so `transitionUpstreamIssue` rejects it from every state. `recordUpstreamIssueAnnotation` touches **no** column of `upstream_issues` — not `state`, not `disposition`, not `updated_at` (that is the lifecycle's timestamp, read by triage as *"when did this issue last MOVE"*; bumping it for a note would make an annotated-but-stalled report look freshly worked). Legal from a terminal state — the case it exists for. The DB suite asserts whole-row equality before/after rather than a hand-listed column set, since "touches nothing" is the claim.
+
+### Nothing had ever READ the event log
+
+Before this, **no code in the repo `SELECT`ed `upstream_issue_events` at all** — every event ever written was write-only. Adding an annotation without a reader would have been the write-with-no-reader shape rather than a fix for it, so `upstream history` ships alongside: it marks annotations `[does not change state]`, and **reports — never reconciles** — a disagreement between the folded event stream and the row's `state` column, since the two are written in one transaction and can only diverge via an out-of-band write. The vocabulary is one oracle ([`lib/upstream/events.mjs`](scripts/lib/upstream/events.mjs)), pure so the store can import it without a layering inversion, and pinned to the **live** SQL CHECK — the parity test scans every migration and takes the last one that redefines the constraint, because a fixed-file read would pin a definition the database no longer has.
+
+**Full uuid on `annotate`, for a different reason than a closure's.** A close needs it because the committed disposition ledger is keyed by what was typed and `upstream:coverage:gate` rejects a non-uuid. An annotation writes no ledger entry — it needs the full uuid because the row it appends can never be moved or removed, and a prefix that resolves to the *wrong* issue is invisible to the store's `LIMIT 2` ambiguity check.
+
+### The papercut itself: notes now come off stdin
+
+`--note -` reads stdin on every note-bearing verb, and `annotate` with the flag absent falls back to stdin the way `upstream report --body` always has. The asymmetry is deliberate: on `ack`/`fix`/`wont-fix` the note is *optional* and usually omitted, so a bare "no flag ⇒ read stdin" fallback there would block forever on an inherited pipe with no writer (a hook, a `/ship` step), turning an omitted note into a hang.
+
+### Cloud-off was a success envelope over a discarded note
+
+First cut returned `{ok:true, cloud:false}` having written nothing anywhere — the same contract `ack`/`fix` have, but for those the note is secondary to a transition that cannot happen offline, whereas an annotation's note **is** the whole operation. It is now write-ahead, like `upstream report`: the envelope lands on disk before any remote attempt, and every subsequent `upstream` verb drains it.
+
+- **A second outbox directory**, not a `kind` field in the report one. Folding them together would force `parseEnvelope`'s validator into a union — "a report OR an annotation" — and a predicate that answers two questions answers neither: a malformed report would validate as a well-formed annotation and be applied as one. One directory per payload shape keeps each validator total over its own frame.
+- **The caller mints the row's primary key**, and that is what makes queuing safe at all. An annotation has *no natural* unique key (two identical corrections minutes apart are two legitimate rows), so a retry after a lost acknowledgement would append a second copy the append-only log could not remove. `upstream_issue_events.id` is a real uuid PK, hence a legal `ON CONFLICT (id) DO NOTHING` arbiter; a replay returns `created:false`, which the drain counts as **applied**. Omitting the id keeps plain-append behaviour — asserted in both directions.
+- **Terminal refusals are quarantined, not retried.** `notFound`/`ambiguous` are facts about the target, not the store, and the drain is capped + oldest-first, so one unfixable envelope at the head would starve every correction behind it.
+
+**One in-scope fix beyond the ask**: `upstream drain` returned `{ok:true, drained:0}` when the outbox was *unreadable* — "I could not look" rendering as "nothing pending", with no `error` field for the dispatcher to catch. Pre-existing, but the shipped behaviour rides on it now that a queued annotation is a correction existing nowhere else. Now `DRAIN_UNAVAILABLE`, exit 2.
+
+### Corrected a claim I had written one commit earlier
+
+The durability-census exemption for `recordUpstreamIssueAnnotation` originally read *"no rowKey and none is available"*. The client-minted event id falsified that within the same session; the entry now names the real reason (its own write-ahead outbox, same ground as `recordUpstreamIssue`).
+
+### Verification
+
+51 tests — 43 pure + 8 DB-gated (`tests/upstream-issue-annotation{,-db}.test.mjs`, the latter enrolled in **both** `ISOLATED_SUITE_FILES` and `postgres-parity.yml`). Every behaviour has a **demonstrated failing direction**: reverting the migration on a live container fails 5 of 7 DB cases; dropping only the note CHECK fails exactly the note case; and cloud-off-doesn't-spool, replay-as-failure, quarantine-removed, validator-drops-eventId, `ON CONFLICT` removed and the drain guard disabled each turn a specific assertion red.
+
+Full loop run against a real Postgres: spool offline → drain → row → `history` renders it tagged state-neutral, with a backtick and `$HOME` intact through stdin, issue still `fixed`, queue cleared. Schema fixture regenerated from a fresh replay (`db:local:regen`); the diff is exactly the two constraints. Migration applied to the live store — `--check-drift` reports 130/130, no drift.
+
+`npm test` **14366 pass / 0 fail** (measured, `npm test`); `db:suites:gate` green; whole `check` chain green.
+
+**A negative-control harness lied first.** My initial mutation run reported the cloud-off spooling test as GREEN. The anchor `if (!cloudEnabled) {` occurs twice in the file and `String.replace` had mutated `upstreamReport` instead. Re-aimed, it fails 7 tests. Trusting the first result would have shipped an unproven test reported as proven — the instrument, not the subject ([verification-discipline](docs/audit/shared-references/verification-discipline.md) §3).
+
 ## 2026-08-30 — AGENTS.md headroom: the Azure section condensed to a stub
 
 ### Why a move and not a trim

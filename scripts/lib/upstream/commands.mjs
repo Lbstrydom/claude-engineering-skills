@@ -25,6 +25,7 @@ import {
 } from '../outbox-envelope.mjs';
 import { redactSecrets } from '../secret-patterns.mjs';
 import { parseDisposition, formatDisposition, computeLedgerReconciliation } from './dispositions.mjs';
+import { foldEventsToState, NON_LIFECYCLE_EVENTS } from './events.mjs';
 
 /** Where the committed closure-disposition ledger lives (§2.4). */
 export const DISPOSITION_LEDGER_PATH = 'scripts/upstream-dispositions.json';
@@ -47,6 +48,19 @@ export const DRAIN_CAP = (() => {
 })();
 
 export const VALID_SEVERITIES = Object.freeze(['BLOCKER', 'HIGH', 'MEDIUM', 'LOW']);
+
+/**
+ * An issue id or id PREFIX: hex and dashes only, at least 8 characters.
+ *
+ * Hex-and-dashes is not cosmetic — the store resolves a prefix with
+ * `id::text LIKE $1 || '%'`, and `%`/`_` are LIKE wildcards living in the DATA,
+ * where parameterisation does not reach. An unfiltered `%` would match every
+ * row and then "resolve" to whichever sorted first.
+ */
+export const ISSUE_ID_OR_PREFIX_RE = /^[0-9a-f][0-9a-f-]{7,35}$/;
+
+/** A FULL uuid. Required by any write that cannot be re-aimed after the fact. */
+export const ISSUE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const MAX_TITLE_LEN = 200;
 export const MAX_BODY_BYTES = 65536;
 
@@ -583,7 +597,7 @@ export async function upstreamTransition({
   // "resolve" to an arbitrary one. Parameterisation does not help here — the
   // wildcards are in the DATA, not the SQL.
   const normId = String(id).trim().toLowerCase();
-  if (!/^[0-9a-f][0-9a-f-]{7,35}$/.test(normId)) {
+  if (!ISSUE_ID_OR_PREFIX_RE.test(normId)) {
     return {
       ok: false, code: 'BAD_INPUT',
       errors: [`--id "${id}" is not an issue id or id prefix — expected at least 8 `
@@ -636,7 +650,7 @@ export async function upstreamTransition({
   // ledger-then-DB ordering below (the cheap local write must survive a DB
   // failure) — resolving would require a store round-trip before it. `ack` is
   // untouched: it writes no ledger entry, so a prefix stays convenient there.
-  if (parsedDisposition && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(normId)) {
+  if (parsedDisposition && !ISSUE_UUID_RE.test(normId)) {
     return {
       ok: false, code: 'BAD_INPUT',
       errors: [`--id "${id}" is a prefix; closing a report needs the FULL uuid, because the `
@@ -657,6 +671,331 @@ export async function upstreamTransition({
     id: normId, to, note: safeNote, commit, actor,
     disposition: parsedDisposition ? formatDisposition(safeDispositionValue) : null,
   });
+}
+
+/** The `--note` value that means "read it from stdin instead". */
+export const STDIN_SENTINEL = '-';
+
+/**
+ * Resolve a `--note` without routing prose through a shell.
+ *
+ * **The papercut this exists for.** A note reaches the CLI as an argv string
+ * the shell has ALREADY rewritten: closing report `0f5d87a2` on 2026-08-30,
+ * an unescaped backtick in `--note` ran as command substitution and silently
+ * elided one sentence from the stored text. Nothing downstream can detect that
+ * — what arrives is a shorter, well-formed string — and because the event log
+ * is append-only the mistake could not be repaired, which is the same incident
+ * that motivated `annotate`.
+ *
+ * Two ways in, and the asymmetry is deliberate:
+ *
+ *  - **`--note -`** reads stdin on EVERY note-bearing verb. An explicit
+ *    sentinel, because on `ack`/`fix`/`wont-fix` the note is OPTIONAL and
+ *    usually omitted: a bare "no flag, so read stdin" fallback there would
+ *    block forever on an inherited pipe with no writer (a hook, a `/ship`
+ *    step), turning an omitted note into a hang.
+ *  - **an absent flag when the note is REQUIRED** falls back to stdin,
+ *    mirroring `upstream report`'s `--body`. Safe for the same reason it is
+ *    safe there: the value is required, so waiting for it is the expected
+ *    behaviour rather than a surprise.
+ *
+ * Lives here rather than in the dispatcher so it is testable without a real
+ * stdin — `readStdin` is injected, and the dispatcher stays thin.
+ *
+ * @param {{flag: string|null|undefined, readStdin: () => Promise<string>, required?: boolean}} args
+ * @returns {Promise<string|null>}
+ */
+export async function resolveNoteInput({ flag, readStdin, required = false }) {
+  if (flag === STDIN_SENTINEL) return readStdin();
+  if (flag !== undefined && flag !== null) return flag;
+  return required ? readStdin() : null;
+}
+
+/**
+ * The annotation write-ahead outbox — a SECOND directory, deliberately.
+ *
+ * `outbox-envelope.mjs` is the shared mechanism; what is not shared is the
+ * payload. Folding annotations into `OUTBOX_DIR` would force `parseEnvelope`'s
+ * validator into a union ("a report OR an annotation"), and a predicate that
+ * answers two questions answers neither — a malformed report would validate as
+ * a well-formed annotation and be applied as one. One directory per payload
+ * shape keeps each validator total over its own frame.
+ */
+export const ANNOTATION_OUTBOX_DIR = path.join('.audit', 'upstream-annotation-outbox');
+
+export function annotationOutboxDir(repoRoot) { return path.join(repoRoot, ANNOTATION_OUTBOX_DIR); }
+
+/**
+ * Validate an annotation envelope read back off disk.
+ *
+ * `eventId` is required in the FRAME, not merely carried: it is the row's
+ * primary key, and an envelope without it cannot be replayed idempotently — a
+ * retry would append a second copy of the note that the append-only log could
+ * not then remove.
+ */
+export function parseAnnotationEnvelope(text) {
+  return parseEnvelopeFrame(text, {
+    version: OUTBOX_ENVELOPE_VERSION,
+    validatePayload: (p) => ISSUE_UUID_RE.test(String(p.issueId ?? ''))
+      && ISSUE_UUID_RE.test(String(p.eventId ?? ''))
+      && typeof p.note === 'string' && p.note.trim() !== ''
+      && (p.actor === null || typeof p.actor === 'string'),
+  });
+}
+
+/**
+ * Drain queued annotations.
+ *
+ * **`notFound` / `ambiguous` are QUARANTINED, not retried.** They are terminal
+ * facts about the target, not transient facts about the store, and the drain is
+ * capped + oldest-first — so one permanently-failing envelope at the head would
+ * block every annotation behind it. Quarantining preserves the operator's text
+ * as evidence in `rejected/` while taking it out of the queue, which is the
+ * disposition `drainEnvelopes` reserves `{quarantined: true}` for.
+ *
+ * A REPLAY (`created: false`) resolves `true`: the row is already in the store,
+ * which is precisely what "durably applied" means.
+ */
+export async function drainAnnotationOutbox({ repoRoot = process.cwd(), annotateFn, cap = DRAIN_CAP } = {}) {
+  const dir = annotationOutboxDir(repoRoot);
+  return drainEnvelopes({
+    dir,
+    cap,
+    parse: parseAnnotationEnvelope,
+    apply: async (envelope, { file }) => {
+      const p = envelope.payload;
+      const res = await annotateFn({ id: p.issueId, note: p.note, actor: p.actor, eventId: p.eventId });
+      if (res?.ok && res.cloud !== false) return true;
+      if (res?.notFound || res?.ambiguous) {
+        quarantineEnvelope(dir, file);
+        return { quarantined: true };
+      }
+      // Cloud off, or a real store error: leave it queued for the next drain.
+      return false;
+    },
+  });
+}
+
+/**
+ * Move a claimed envelope into `rejected/` without ever clobbering earlier
+ * evidence — the same never-overwrite rule the shared core applies to a poison
+ * frame, applied here because this consumer owns the disposition.
+ *
+ * @param {string} dir the outbox directory
+ * @param {string} file the CLAIMED path the drain handed back
+ */
+function quarantineEnvelope(dir, file) {
+  try {
+    const rej = path.join(dir, 'rejected');
+    fs.mkdirSync(rej, { recursive: true });
+    const base = path.basename(file).replace(/\.claimed$/, '');
+    let dest = path.join(rej, base);
+    for (let n = 1; fs.existsSync(dest); n += 1) dest = path.join(rej, `${base}.${n}`);
+    fs.renameSync(file, dest);
+  } catch { /* the reclaim sweep picks up an unmoved claim on the next drain */ }
+}
+
+/**
+ * Append a correction / added-context note to an issue's log, WITHOUT moving
+ * it through the lifecycle.
+ *
+ * **The gap this closes.** `upstream_issue_events` is append-only by trigger
+ * and `event` was CHECK'd to the four lifecycle values, so a note stored with a
+ * mistake in it had exactly two repairs and both were wrong: mutate the
+ * append-only row (refused, correctly), or emit a SECOND terminal event —
+ * corrupting the lifecycle record in order to fix a typo. Closing report
+ * `0f5d87a2` on 2026-08-30, an unescaped backtick in `--note` ran as shell
+ * command substitution and silently elided one sentence from the stored text,
+ * and the note had to stand with a hole in it. Both properties that forced that
+ * are correct and are kept; what was missing was a fifth, state-neutral event.
+ *
+ * **The FULL uuid is required, and for a different reason than a closure's.**
+ * A close needs it because the committed disposition ledger records what was
+ * typed verbatim and `upstream:coverage:gate` rejects a non-uuid key. An
+ * annotation writes no ledger entry — it needs the full uuid because the row it
+ * writes can never be edited or removed. A prefix that resolves to the WRONG
+ * single issue (a typo that still matches something) is not detectable by the
+ * store's `LIMIT 2` ambiguity check, and the resulting note is then permanently
+ * attached to an unrelated report. Every other write here can be re-aimed by
+ * repeating it; this one cannot.
+ *
+ * The note is secret-redacted on the same path a transition note is — it lands
+ * in a shared store whose DSN holders are one trust domain.
+ *
+ * @param {{annotateFn: Function, id: string, note?: string|null, actor?: string|null}} args
+ */
+export async function upstreamAnnotate({
+  repoRoot = process.cwd(), annotateFn, id, note = null, actor = null,
+  cloudEnabled = true, newEventId = () => crypto.randomUUID(),
+}) {
+  if (!id) return { ok: false, code: 'BAD_INPUT', errors: ['--id is required'] };
+  const normId = String(id).trim().toLowerCase();
+  if (!ISSUE_ID_OR_PREFIX_RE.test(normId)) {
+    return {
+      ok: false, code: 'BAD_INPUT',
+      errors: [`--id "${id}" is not an issue id — expected at least 8 hex characters `
+        + '(dashes allowed). Full ids: npm run upstream:issues'],
+    };
+  }
+  if (!ISSUE_UUID_RE.test(normId)) {
+    return {
+      ok: false, code: 'BAD_INPUT',
+      errors: [`--id "${id}" is a prefix; annotating needs the FULL uuid, because the event `
+        + 'it appends is append-only — a note attached to the wrong issue by a prefix that '
+        + 'happens to resolve can never be moved or removed. Get it from: npm run upstream:issues'],
+    };
+  }
+
+  const text = String(note ?? '').trim();
+  if (!text) {
+    return {
+      ok: false, code: 'BAD_INPUT',
+      errors: ['--note is required for `annotate` (an annotation IS the note). '
+        + 'Pass `--note -` to read it from stdin, which is also how to keep backticks '
+        + 'and $ out of your shell.'],
+    };
+  }
+
+  const safeNote = redactSecrets(text).text;
+  // The row's PRIMARY KEY, minted HERE rather than by the column default, so
+  // the envelope and the eventual row are the same object: a replay after a
+  // lost acknowledgement conflicts on it instead of appending a second copy of
+  // a note the append-only log could not then remove.
+  const eventId = newEventId();
+  const payload = { issueId: normId, eventId, note: safeNote, actor };
+
+  // Write-ahead, exactly as `upstreamReport` does: the envelope lands on disk
+  // BEFORE any remote attempt, so a success line is never printed having
+  // persisted nothing. The fingerprint is the event id, which is already a
+  // safe basename.
+  const envelopePath = writeEnvelopeToDir(annotationOutboxDir(repoRoot), {
+    v: OUTBOX_ENVELOPE_VERSION, fingerprint: eventId, payload,
+    createdAt: new Date().toISOString(),
+  });
+
+  if (!cloudEnabled) {
+    // The defect this closes: cloud-off used to resolve `{ok:true, cloud:false}`
+    // having written nothing anywhere, so the operator's correction was
+    // discarded behind a success envelope. It is now queued, and every
+    // subsequent `upstream` verb drains it.
+    return { ok: true, cloud: false, spooled: true, path: envelopePath, eventId, issueId: normId };
+  }
+
+  const res = await annotateFn({ id: normId, note: safeNote, actor, eventId });
+
+  if (res?.ok && res.cloud !== false) {
+    fs.rmSync(envelopePath, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
+    return { ...res, spooled: false, eventId, issueId: normId };
+  }
+
+  // A TERMINAL refusal is not a queue candidate. `notFound`/`ambiguous` are
+  // facts about the target that no amount of retrying changes, and the drain is
+  // capped and oldest-first — a permanently-failing envelope at the head would
+  // block every annotation behind it. The operator is standing right here and
+  // gets the error synchronously, so the envelope is removed rather than
+  // preserved as evidence they already hold.
+  if (res?.notFound || res?.ambiguous) {
+    fs.rmSync(envelopePath, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
+    return { ...res, ok: false, spooled: false, eventId, issueId: normId };
+  }
+
+  // Anything else — the store was reachable enough to try and did not apply the
+  // write. Leave it queued and SAY SO, rather than returning a bare failure that
+  // implies the note is gone.
+  return {
+    ok: true, cloud: false, spooled: true, path: envelopePath, eventId, issueId: normId,
+    error: res?.error ?? null,
+  };
+}
+
+/**
+ * One issue's full append-only log — the READ side `upstream_issue_events`
+ * never had.
+ *
+ * Until this landed, nothing in the repo SELECTed that table: every event ever
+ * written was write-only. Adding an `annotation` without a reader would have
+ * been the write-with-no-reader shape rather than a fix for it, so the two ship
+ * together.
+ *
+ * A PREFIX is fine here, unlike on `annotate`: this is a read, a wrong resolve
+ * shows the operator the wrong card and nothing is durably wrong, and the
+ * store's `LIMIT 2` reports genuine ambiguity rather than picking.
+ *
+ * @param {{historyFn: Function, id: string}} args
+ */
+export async function upstreamHistory({ historyFn, id }) {
+  if (!id) return { ok: false, code: 'BAD_INPUT', errors: ['--id is required'] };
+  const normId = String(id).trim().toLowerCase();
+  if (!ISSUE_ID_OR_PREFIX_RE.test(normId)) {
+    return {
+      ok: false, code: 'BAD_INPUT',
+      errors: [`--id "${id}" is not an issue id or id prefix — expected at least 8 `
+        + 'hex characters (dashes allowed). Full ids: npm run upstream:issues'],
+    };
+  }
+  return historyFn(normId);
+}
+
+/**
+ * Render one issue's log. PURE — PowerShell-safe, mirrors `renderWorksheet`.
+ *
+ * Two things it must do that a plain dump would not:
+ *
+ *  1. **Mark non-lifecycle events as such, in the render.** An `annotation`
+ *     sits in the same chronological stream as the transitions but says nothing
+ *     about where the issue is; printed identically it would read as one more
+ *     step in the lifecycle, which is precisely the corruption a second `fixed`
+ *     event would have caused.
+ *  2. **Report a disagreement between the log and the row, never reconcile
+ *     it.** `foldEventsToState` re-derives the state from the stream (skipping
+ *     non-lifecycle events by construction); the row's `state` column is
+ *     written in the same transaction as its event, so the two can only diverge
+ *     via an out-of-band write — which is the single thing an append-only log
+ *     exists to make visible. Picking a side would hide it.
+ */
+export function renderIssueHistory({ issue, events }) {
+  if (!issue) return 'No such upstream issue.';
+  const list = events ?? [];
+  const lines = [
+    `[${issue.severity}] ${issue.title}`,
+    `  id        ${issue.id}`,
+    `  from      ${issue.repo_name || issue.repo_id}`,
+    `  path      ${issue.affected_path}`,
+    `  state     ${issue.state}${issue.disposition ? `  (${issue.disposition})` : ''}`,
+    '',
+    `  history (${list.length} event(s), append-only):`,
+  ];
+  if (!list.length) {
+    // Never rendered as a clean empty history: a row always has at least its
+    // `reported` event, so zero means the log was not read, not that nothing
+    // happened.
+    lines.push('    (none recorded — every issue has at least a `reported` event, so this is');
+    lines.push('     an unread or truncated log, not an empty history)');
+  }
+  for (const e of list) {
+    const when = e.created_at ? new Date(e.created_at).toISOString() : '(no timestamp)';
+    const tag = NON_LIFECYCLE_EVENTS.includes(e.event) ? ' [does not change state]' : '';
+    lines.push(`    - ${when}  ${e.event}${tag}${e.actor ? `  by ${e.actor}` : ''}`);
+    for (const l of String(e.note ?? '').split('\n')) {
+      if (l.trim()) lines.push(`        ${l}`);
+    }
+  }
+
+  const folded = foldEventsToState(list);
+  if (folded.unknown.length) {
+    lines.push('');
+    lines.push(`  NOTE: the log carries event value(s) this tooling does not declare: ${[...new Set(folded.unknown)].join(', ')}.`);
+    lines.push('        The state below was derived from the events it DOES understand.');
+  }
+  if (list.length && folded.state !== null && folded.state !== issue.state) {
+    lines.push('');
+    lines.push(`  WARNING: the event log folds to "${folded.state}" but the row says "${issue.state}".`);
+    lines.push('           These are written in one transaction, so a disagreement means an');
+    lines.push('           out-of-band write. Reported, not reconciled — neither side is assumed.');
+  }
+  lines.push('');
+  lines.push(`  annotate  node scripts/cross-skill.mjs upstream annotate --id ${issue.id} --note -`);
+  return lines.join('\n');
 }
 
 /** Human-grade worksheet — PowerShell-safe (no angle brackets, no raw JSON). */

@@ -1220,6 +1220,45 @@ sha**, and whether the cited path is really upstream-owned.
 `/ship` Step 0.5h prints the open count — **advisory**: cloud state nudges, never
 blocks.
 
+**Pass notes on stdin, not as an argv string.** Every `--note` accepts `-`, which
+reads the note from stdin the way `upstream report` already reads its body:
+
+```bash
+printf '%s' 'the note, with a `backtick` and a $VAR, verbatim' | node scripts/cross-skill.mjs upstream fix --id THE_FULL_UUID --commit SHA --disposition test:tests/upstream-issue-annotation.test.mjs --note -
+```
+
+An argv note reaches the CLI already rewritten by the shell, and nothing
+downstream can tell: closing `0f5d87a2` on 2026-08-30, an unescaped backtick ran
+as command substitution and elided one sentence from the stored text.
+
+**Correcting a note after the fact:** `upstream annotate --id THE_FULL_UUID --note -`.
+The log is append-only by trigger and the four lifecycle values are CHECK'd, so
+the only repairs previously available were both wrong — rewrite the append-only
+row, or emit a second `fixed` event, corrupting the lifecycle record to fix a
+typo. `annotate` appends a fifth, **state-neutral** `annotation` event: it is
+rendered in the history and deliberately skipped by every state derivation, and
+it is legal from a terminal state (that is the case it exists for). It requires
+the **FULL uuid**, for a different reason than a closure does — a closure needs
+it because the committed disposition ledger is keyed by what was typed; an
+annotation needs it because the row it writes can never be moved or removed, and
+a prefix that resolves to the wrong issue is undetectable.
+
+**With the cloud off, an annotation is QUEUED, not discarded.** It write-aheads to
+`.audit/upstream-annotation-outbox/` (its own directory — one payload shape per
+validator) and every later `upstream` verb drains it, exactly as `upstream report`
+has always worked. The envelope carries the event row's primary key, so a replay
+after a lost acknowledgement conflicts on it instead of appending a second copy
+of the note. A terminal refusal (the issue does not exist, or the id is
+ambiguous) is moved to `rejected/` rather than retried — the drain is capped and
+oldest-first, so one unfixable envelope at the head would starve every
+correction behind it.
+
+**Reading the log:** `upstream history --id THE_ID_OR_PREFIX --worksheet`. A prefix
+is fine here (it is a read). The card marks annotations as state-neutral and
+REPORTS — never reconciles — a disagreement between the folded event stream and
+the row's `state` column, since the two are written in one transaction and can
+only diverge via an out-of-band write.
+
 Why the worksheet exists (2026-07-31): prose reports arrived with a non-existent
 path, against an unknowable version, for a bug fixed the day before. The
 worksheet answers "already fixed?" mechanically. Two reports sat unread on

@@ -138,7 +138,7 @@ export async function qualityCmd(ctx) {
  */
 export async function upstreamCmd(ctx) {
   const sub = ctx.verb;
-  const VERBS = ['report', 'list', 'ack', 'fix', 'wont-fix', 'drain', 'reconcile'];
+  const VERBS = ['report', 'list', 'ack', 'fix', 'wont-fix', 'annotate', 'history', 'drain', 'reconcile'];
   if (!sub || !VERBS.includes(sub)) {
     throw new CommandError('BAD_INPUT', `usage: upstream <${VERBS.join('|')}> [flags]`);
   }
@@ -158,13 +158,38 @@ export async function upstreamCmd(ctx) {
   // with nothing pending costs one stat. Triggering only on report/list would
   // mean the outbox never drains on a consumer — `list` is a source-side
   // command consumers never run, and `report` is by definition rare.
+  // TWO outboxes, and both must drain here. Reports and annotations are queued
+  // separately (one payload shape per directory, see `ANNOTATION_OUTBOX_DIR`),
+  // so a drain that walked only the report directory would leave every queued
+  // correction on disk forever — a write-ahead queue nothing drains is just a
+  // slower way of losing the note.
   const drainIfPending = async () => {
     if (!cloud) return { drained: 0, rejected: 0, failed: 0, skipped: 'cloud-off' };
+    const merge = (a, b) => ({
+      drained: (a.drained ?? 0) + (b.drained ?? 0),
+      rejected: (a.rejected ?? 0) + (b.rejected ?? 0),
+      failed: (a.failed ?? 0) + (b.failed ?? 0),
+      reports: a,
+      annotations: b,
+      // A state either side reports as unusable must survive the merge — an
+      // unreadable annotation outbox must not be averaged away by a healthy
+      // report one, which is the "unasked question rendering as a clean result"
+      // shape this repo keeps closing.
+      ...(a.state === 'unavailable' || b.state === 'unavailable'
+        ? { state: 'unavailable', reason: a.reason ?? b.reason }
+        : {}),
+      ...(a.error || b.error ? { error: a.error ?? b.error } : {}),
+    });
     try {
-      return await m.drainOutbox({
+      const reports = await m.drainOutbox({
         repoRoot,
         recordFn: async (p) => ctx.deps.recordUpstreamIssue({ ...p, repoId: p.repoId ?? await scopedRepoId() }),
       });
+      const annotations = await m.drainAnnotationOutbox({
+        repoRoot,
+        annotateFn: (a) => ctx.deps.recordUpstreamIssueAnnotation(a),
+      });
+      return merge(reports, annotations);
     } catch (err) {
       // Returned rather than swallowed: an explicit `upstream drain` must never
       // report a success shape when the drain actually failed. On the
@@ -178,6 +203,19 @@ export async function upstreamCmd(ctx) {
     if (sub === 'drain') {
       const r = await drainIfPending();
       if (r.error) throw new CommandError('DRAIN_FAILED', r.error, { cloud, ...r });
+      // `state: 'unavailable'` is the drain saying it could not LOOK — an
+      // unreadable outbox directory, an unrecoverable claim, an unreachable
+      // sink. It carries no `error`, so it used to return `{ok:true,
+      // drained:0}`: a caller checking `$?`, and an operator reading the line,
+      // both see "nothing pending" over a queue that is still full. That is the
+      // unasked-question-rendering-as-a-clean-result shape, and it now matters
+      // more, because a queued ANNOTATION is an operator's correction that
+      // exists nowhere else.
+      if (r.state === 'unavailable') {
+        throw new CommandError('DRAIN_UNAVAILABLE',
+          `the outbox could not be read, so nothing was drained and nothing was proven empty: ${r.reason ?? 'no reason given'}`,
+          { cloud, ...r });
+      }
       return { ok: true, cloud, ...r };
     }
 
@@ -306,12 +344,52 @@ export async function upstreamCmd(ctx) {
       return { ...res, nextCursor, drain };
     }
 
+    if (sub === 'history') {
+      const res = await m.upstreamHistory({
+        id: ctx.flag('id'),
+        historyFn: (i) => ctx.deps.getUpstreamIssueHistory(i),
+      });
+      if (res.ok === false) {
+        const code = res.code || (res.notFound ? 'NOT_FOUND' : res.ambiguous ? 'AMBIGUOUS_ID' : 'HISTORY_FAILED');
+        throw new CommandError(code, res.errors ? res.errors.join('; ') : res.error, res);
+      }
+      if (ctx.hasFlag('worksheet')) {
+        // `cloud:false` is an UNASKED question, never an empty history — the
+        // same distinction `upstream-queues.mjs` exists to preserve.
+        process.stdout.write(res.cloud === false
+          ? 'cloud off — the event log was NOT read; this is not an empty history\n'
+          : `${m.renderIssueHistory(res)}\n`);
+        return undefined;
+      }
+      return { ...res, drain };
+    }
+
+    if (sub === 'annotate') {
+      const res = await m.upstreamAnnotate({
+        // `repoRoot` + `cloudEnabled` are what let this write AHEAD to disk
+        // instead of discarding the note when the store is off — the same
+        // contract `upstream report` has had since it shipped.
+        repoRoot,
+        cloudEnabled: cloud,
+        id: ctx.flag('id'),
+        note: await m.resolveNoteInput({ flag: ctx.flag('note'), readStdin, required: true }),
+        actor: ctx.flag('actor') || null,
+        annotateFn: (a) => ctx.deps.recordUpstreamIssueAnnotation(a),
+      });
+      if (!res.ok) {
+        const code = res.code || (res.notFound ? 'NOT_FOUND'
+          : res.ambiguous ? 'AMBIGUOUS_ID' : 'EXCEPTION');
+        throw new CommandError(code, res.errors ? res.errors.join('; ') : res.error, res);
+      }
+      return { ...res, drain };
+    }
+
     // ack | fix | wont-fix
     const to = sub === 'ack' ? 'acknowledged' : sub === 'fix' ? 'fixed' : 'wont_fix';
     const res = await m.upstreamTransition({
       repoRoot, to,
       id: ctx.flag('id'),
-      note: ctx.flag('note'),
+      note: await m.resolveNoteInput({ flag: ctx.flag('note'), readStdin }),
       commit: ctx.flag('commit'),
       actor: ctx.flag('actor') || null,
       // Required for fix/wont-fix (consumer-friction-doctor plan §2.4) —
