@@ -142,6 +142,14 @@
     {
       "line": "surfaces were never covered. Example:",
       "reason": "Tail of the same overall-verdict-boundary-cap elaboration sentence, immediately before the worked example block. Same gate."
+    },
+    {
+      "line": "requires login; test scope limited to public surface\", continue with",
+      "reason": "Added 2026-08-30 (auth-bootstrap connect-time race fix). Continuation of Phase 3's login-wall special case, branch 1 (no bootstrap configured) — the model's own classification of which of three branches it is in while running the Plan→Act→Reflect loop. Rewrapped from the pre-existing \"'App requires login...continue' \" ignoredCandidates entry above when the case was restructured into a numbered three-way branch; same disposition (exploratory mode has no CLI/exit code)."
+    },
+    {
+      "line": "**The escape hatch fails after a fresh re-seed** (or the app's",
+      "reason": "Added 2026-08-30 (auth-bootstrap connect-time race fix). Phase 3's login-wall special case, branch 3: the model's own judgement that a fresh re-seed plus the documented escape-hatch injection (references/auth-bootstrap.md) still didn't clear the login wall, which is what makes it a genuine setup regression rather than the connect-time race. Exploratory mode has no CLI, so there is no exit code a cli-exit recipe can assert; same disposition class as the other login-wall-branch candidates in this file."
     }
   ]
 }

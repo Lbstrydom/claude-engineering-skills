@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "379b44cecbb1d8c9",
+  "bundleVersion": "0f5e2f03eb78f9e8",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -258,14 +258,14 @@
     },
     "persona-test": {
       "path": "skills/persona-test/SKILL.md",
-      "sha": "dd73e09a1080",
-      "size": 46773,
+      "sha": "29a587495dc3",
+      "size": 47988,
       "summary": "Persona-driven exploratory browser testing against a live URL.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "dd73e09a1080",
-          "size": 46773
+          "sha": "29a587495dc3",
+          "size": 47988
         },
         {
           "relPath": "examples/report-and-debrief.md",
@@ -279,8 +279,8 @@
         },
         {
           "relPath": "references/auth-bootstrap.md",
-          "sha": "67ee12258d6c",
-          "size": 4181
+          "sha": "b04fb14fec4a",
+          "size": 7810
         },
         {
           "relPath": "references/browser-tool-detection.md",
