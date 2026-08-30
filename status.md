@@ -1,5 +1,67 @@
 # Project Status Log
 
+## 2026-08-30 — the aged-out unlocked-fix backlog: 27 code obligations, worked to zero-minus-two
+
+`/ship` Step 0.5b reported **107 aged-out** unlocked fixes (27 code / 80 plan) against `practiceStart 2026-07-29` — obligations that existed under a live locking practice and expired because the 14-day nudge window stopped printing them. Waiting is what discharged them, which is exactly what that count exists to catch. All 27 code rows are now dispositioned: **25 locked to a real test, 2 written off below.** Aged-out fell 107 → 82; aged-out **code** 27 → 2.
+
+Measured before and after with the same read (`unlocked_fixes_all`, `NOT is_recent`, `fixed_at >= practiceStart`, `audit_mode='code'`, repo `6461a693`), not with the windowed worksheet — the worksheet is capped at the 14-day window and cannot see any of these.
+
+### The plan class (80 rows) is written off, and it is not a backlog
+
+`audit_mode='plan'` findings reference plan SECTIONS — `§4 phase 4b–4d`, `§7 cluster c`, `§2 key design decisions`. A regression spec binds a finding to a **test file**; there is no artifact for a plan section to bind to, so **no lock of any kind can exist for them** and no amount of work moves the number. They are counted by `countAgedUnlockedFixes` because it splits by `audit_mode` for reporting, not because they are actionable. Left alone deliberately: the honest number to work is the **code** half, and 80 unworkable rows sitting in the same total is what makes the headline read like a bigger debt than it is.
+
+The 231 `prePractice` rows are likewise not obligations — they aged out before this repo had ever locked anything.
+
+### This repo has no frontend, so a unit test IS the lock
+
+`/ux-lock` drives a live URL through Playwright; there is nothing here to drive. Every lock below is a `lock-with-test --test tests/…` binding, and **each target test was read before locking** — a same-named file is not proof of coverage. Where an existing suite already carried the finding (several name the finding id in their own header), that suite is the lock. Where none did, a test was written.
+
+Two new tests, both verified red-then-green before use:
+
+- [`tests/store-domain-split.test.mjs`](tests/store-domain-split.test.mjs) — locks the five `plans-ship.mjs` split findings (`4f4e2005`, `223f0529`, `e9738f0b`, `3ad850f6`, `7b3a93cc`). **It needed to exist because a silent re-merge is invisible to every other suite**: the barrel is `export * from` lines, so folding the six siblings back in leaves the public surface byte-identical — `learning-store-exports` still sees its 93 functions, every consumer import still resolves, and `store-module-free-variables` (the split's *correctness* guard) has ~30 other store modules and stays above its ≥10 floor. Nothing in `npm test` asserted the modules exist. Two halves: the barrel's `export *` targets must all resolve (derived from the barrel source, never a re-typed list), and each planned module must **DECLARE** its assigned exports — half one alone passes for a barrel over six empty files. Negative control: renaming one entry to a missing module and raising the target floor fails exactly 2 of 10.
+- [`tests/engines-node-range.test.mjs`](tests/engines-node-range.test.mjs) — locks `4ce2a627`. Pins the **property**, not today's string: the lowest Node `package.json` permits must satisfy every locked dependency's `engines.node` in `package-lock.json` (317 such packages). Asserting `engines.node === '>=22.18.0'` would have locked the answer and left the property to re-break on the next dependency bump, which is how it broke the first time. `semver` is not a dependency here, so `satisfies` is a small evaluator that **throws** on any comparator or root-range shape it cannot parse — a range checker that skips what it does not understand reports a clean tree it never read. The pre-fix `>=22` declaration is kept as a live negative control that must still be rejected.
+
+### The 25 locks
+
+| finding | lock |
+|---|---|
+| `d8a8f11a` bakeoff-collect scope | `tests/bakeoff-module-contract.test.mjs` — the extracted modules are governed by `MODULE_CONTRACT` as a resolved AST import graph |
+| `d09149a4`, `20b6fd47` undefined `repoId` | `tests/persona-consistency-run-args.test.mjs` — *"runConsistency — reaches journey execution"* |
+| `70ad56a7` `AUDIT_LOOP_STATE_DIR` lock relocation | `tests/maintenance-checks.test.mjs` — the override announcement, both directions |
+| `04ae179e` read-path tenancy, `1a11988d` ownership seam | `tests/store-ownership.test.mjs` |
+| `3b447241`, `0450134f`, `56069072`, `ca43a0a9`, `e0d0609e` plan-verification write contract | `tests/plan-verify-items-write-result.test.mjs` |
+| `4f4e2005`, `223f0529`, `e9738f0b`, `3ad850f6`, `7b3a93cc` store split | `tests/store-domain-split.test.mjs` (new) |
+| `4e40123f` CLI/command coupling | `tests/cross-skill-registry-ratchet.test.mjs` — the legacy-dispatch count may only decrease |
+| `a29798ae`, `cf64dad6` missing command modules | `tests/cross-skill-registry-conformance.test.mjs` — *"every loader resolves to a function"* |
+| `32754705` `upsertRepo` compat shim | `tests/repo-identity-store.test.mjs` — names the finding id; DB-gated and enrolled in **both** required places |
+| `f875f7a1` guard-args DRY | `tests/worktree-guard-args-dedup.test.mjs` — names the finding id; asserts the *absence* of a second copy |
+| `76f73e3c` planned verification artifacts | `tests/ship-commit-worktree-identity.test.mjs` — the artifact the finding reported absent |
+| `d28da717`, `7c0142c3` campaigns dashboard | `tests/dashboard-campaigns.test.mjs` — imports both modules by name, asserts the renderer signature |
+| `4ce2a627` runtime-compatibility contract | `tests/engines-node-range.test.mjs` (new) |
+
+### Two written off, with the reason
+
+**`99e3d8f4` — `[Sustainability] Locking correctness`, `scripts/maintenance-checks.mjs`.** The finding asks for the single-instance lock to be scoped to the repository's shared **Git identity** rather than to `path.join(REPO_ROOT, '.audit-loop')`. **No code implements that, so there is no fix to lock.** What shipped for this cluster was the sibling `70ad56a7` mitigation — a stderr announcement when `AUDIT_LOOP_STATE_DIR` relocates the lock — plus a written acceptance in the source itself (`maintenance-checks.mjs`, the comment block above `STATE_DIR`: *"Deliberately NOT force the lock repo-relative"*, because pinning it would reintroduce the concurrent-test-process defect the seam was added to fix). The row is marked `fixed` in the store; on the code it is an **accepted risk**, and the distinction is worth stating plainly rather than absorbing into a lock on the announcement test.
+
+One correction while checking it: the finding's premise — *"the pre-push hook runs maintenance from a throwaway worktree"* — is **wrong**. `.githooks/pre-push` invokes `maintenance-checks.mjs` from the real `$REPO_ROOT`; only `check` runs in `prepush-check.mjs`'s sandbox. The residual hazard is real but different: `REPO_ROOT` is derived from the script's own location, so two **linked worktrees** of this repo each take their own lock, and unlike the env-override case nothing announces it. Recorded here as debt, not silently.
+
+**`e48af822` — `[Sustainability] [SYSTEMIC] Monolithic modules and orchestration functions`, `tests/model-eval-core.test.mjs`.** Remediated and verifiable in git: `972d3a6c` (2026-08-16) deleted that 1,266-line suite and split it into eight focused ones (`model-eval-{cost,store,verdict,route-catalog,deterministic-scorer,structured-extractor,config-schema}`, `model-eval-adjudicator-manifest`), alongside the `bakeoff/**` and `campaign/**` extractions. It is written off rather than locked because **its named artifact no longer exists** and the half that remains — "a test module has not re-grown" — has no oracle short of a line-count gate this repo has deliberately never adopted. The module half of the same finding *is* covered: `campaign/promote.mjs` and the extracted `bakeoff/**` modules are governed by `tests/bakeoff-module-contract.test.mjs`, which is `d8a8f11a`'s lock.
+
+### The push found a flaky test in the file I had just locked a finding to
+
+`npm test` and `npm run check` were both green here, twice. The pre-push hook then failed with **1 of 14485** — `maintenance-checks — isOverdue`, *"a heartbeat exactly at the interval boundary is not yet overdue"*, `true !== false`.
+
+Not caused by this change, but in scope by impact rather than authorship: it blocks the push, and it lives in `tests/maintenance-checks.test.mjs` — the very file `70ad56a7` was locked to an hour earlier. A lock whose target fails at random is not a lock.
+
+**It was never a boundary test.** `isOverdue` reads `Date.now()` itself, so a `lastRunAt` built from a SECOND `Date.now()` in the test is `interval + whatever elapsed between the two calls` — strictly greater the moment the two reads straddle a millisecond tick. Measured **1 failure in 200** local iterations; it lost the race in the sandbox. The green runs were luck, and the odds are the same for every future push.
+
+Fixed with a frozen clock (`t.mock.timers.enable({ apis: ['Date'], now })`) — the only way exactly-at-the-boundary is assertable, and the only way to tell `>` from `>=` at all. Two guards came with it: an assertion that the clock really is frozen (deleting the `enable` call fails it — verified), and the `now - interval - 1` case, without which the original assertion also passes for an `isOverdue` that never returns true. 5/5 clean runs after.
+
+### What is left
+
+`agedOut` is now **82 — 80 plan (unlockable by construction) + the 2 above**. The remaining `byMode.code: 33` are **in-window** rows the nudge will keep surfacing on its own; they are not part of this backlog and were not touched.
+
+
 ## 2026-08-30 — `IF NOT EXISTS` states an intent; it does not implement one
 
 ### How it surfaced

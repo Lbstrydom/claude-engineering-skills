@@ -287,9 +287,26 @@ describe('maintenance-checks — isOverdue', () => {
     assert.equal(isOverdue({ lastRunAt }, 7), true);
   });
 
-  it('a heartbeat exactly at the interval boundary is not yet overdue (strictly-greater-than semantics)', () => {
-    const lastRunAt = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  // FROZEN CLOCK, and it has to be. `isOverdue` reads `Date.now()` itself, so a
+  // `lastRunAt` built from a SECOND `Date.now()` in the test is `interval + the
+  // milliseconds that elapsed between the two calls` — strictly greater than the
+  // interval the moment the two reads straddle a millisecond tick. That is not a
+  // boundary test, it is a race: measured 1 failure in 200 local iterations, and
+  // it lost the race inside the pre-push sandbox on 2026-08-30 and blocked a push
+  // (`true !== false`). Exactly-at-the-boundary is only assertable against a clock
+  // that does not move, which is also the only way to tell `>` from `>=` here.
+  it('a heartbeat exactly at the interval boundary is not yet overdue (strictly-greater-than semantics)', (t) => {
+    const NOW = Date.UTC(2026, 7, 30, 12, 0, 0);
+    const INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+    t.mock.timers.enable({ apis: ['Date'], now: NOW });
+    const lastRunAt = new Date(NOW - INTERVAL_MS).toISOString();
+    assert.equal(Date.now() - Date.parse(lastRunAt), INTERVAL_MS,
+      'the clock must actually be frozen — otherwise this is the racy test again, passing by luck');
     assert.equal(isOverdue({ lastRunAt }, 7), false);
+    // The other side of the boundary, one millisecond over: `>` must fire.
+    // Without this the assertion above also passes for an isOverdue that never
+    // returns true at all.
+    assert.equal(isOverdue({ lastRunAt: new Date(NOW - INTERVAL_MS - 1).toISOString() }, 7), true);
   });
 });
 
