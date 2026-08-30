@@ -35,8 +35,8 @@ import { assertKnownFlags } from './lib/cli-io.mjs';
 import { getPool } from './lib/db/client.mjs';
 import { isCloudEnabled } from './lib/store/repo.mjs';
 import { initLearningStore, recordAdjudicationEvent } from './learning-store.mjs';
-import { embedText } from './lib/embed-text.mjs';
-import { symbolIndexConfig, semanticSuppressConfig } from './lib/config.mjs';
+import { embedText, findingEmbeddingSpace } from './lib/embed-text.mjs';
+import { semanticSuppressConfig } from './lib/config.mjs';
 import { greedyReRaiseClusters, toVectorLiteral, buildOpenFindingsQuery, CAP_ORDERS } from './lib/semantic-suppression.mjs';
 
 export const KNOWN_FLAGS = Object.freeze([
@@ -51,10 +51,20 @@ export const KNOWN_FLAGS = Object.freeze([
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
 const arg = (argv, n, d) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : d; };
 
-async function embedMissing(pool, rows, { model, dim, concurrency, log }) {
+async function embedMissing(pool, rows, { space, concurrency, log }) {
+  // FRESHNESS IS (snapshot_hash, model, dim), NOT snapshot_hash ALONE.
+  //
+  // This check used to compare the text hash only, so a row embedded in a
+  // DIFFERENT vector space counted as "cached" and was never re-embedded: after
+  // a provider switch the store would hold a permanent mix of Gemini and Azure
+  // vectors, cosine-compared against each other, with no run able to clear it.
+  // Including the space makes this reconciler the BACKFILL — a stale-space row
+  // is re-embedded in place on the next run, no migration and no separate
+  // script. It is also why the writer fix below needs no offline backfill.
   const { rows: have } = await pool.query(
-    'SELECT finding_id, snapshot_hash FROM finding_embeddings WHERE finding_id = ANY($1::uuid[])',
-    [rows.map((r) => r.id)]);
+    `SELECT finding_id, snapshot_hash FROM finding_embeddings
+      WHERE finding_id = ANY($1::uuid[]) AND embedding_model = $2::text AND dimension = $3::int`,
+    [rows.map((r) => r.id), space.provenanceId, space.dim]);
   const haveHash = new Map(have.map((h) => [h.finding_id, h.snapshot_hash]));
   const todo = rows.filter((r) => haveHash.get(r.id) !== r.hash);
   if (!todo.length) { log(`  embeddings: all ${rows.length} cached`); return; }
@@ -64,14 +74,14 @@ async function embedMissing(pool, rows, { model, dim, concurrency, log }) {
     while (i < todo.length) {
       const r = todo[i++];
       try {
-        const { result } = await embedText(r.snap, { dim, model });
+        const { result } = await embedText(r.snap, { dim: space.dim, model: space.requestModel });
         await pool.query(
           `INSERT INTO finding_embeddings (finding_id, embedding, embedding_model, dimension, snapshot_hash)
            VALUES ($1::uuid,$2::vector,$3,$4,$5)
            ON CONFLICT (finding_id) DO UPDATE SET embedding=EXCLUDED.embedding,
              embedding_model=EXCLUDED.embedding_model, dimension=EXCLUDED.dimension,
              snapshot_hash=EXCLUDED.snapshot_hash, created_at=now()`,
-          [r.id, toVectorLiteral(result), model, dim, r.hash]);
+          [r.id, toVectorLiteral(result), space.provenanceId, space.dim, r.hash]);
         done++;
       } catch (e) { log(`  [embed] ${r.id.slice(0, 8)} failed: ${e.message?.slice(0, 70)}`); }
     }
@@ -98,7 +108,9 @@ async function main() {
     process.exit(2);
   }
   const concurrency = Number(arg(argv, '--concurrency', '6'));
-  const model = symbolIndexConfig.embedModel, dim = symbolIndexConfig.embedDim;
+  // `requestModel` on the wire, `provenanceId` persisted + compared. Both were
+  // `symbolIndexConfig.embedModel` — the Gemini default — even under Azure.
+  const space = findingEmbeddingSpace();
   const log = (m) => process.stderr.write(m + '\n');
 
   await initLearningStore();
@@ -123,12 +135,16 @@ async function main() {
   if (open.length < 2) { console.log('too few findings'); await pool.end(); process.exit(0); }
 
   const withHash = open.map((r) => ({ ...r, hash: crypto.createHash('sha256').update(r.snap).digest('hex').slice(0, 16) }));
-  await embedMissing(pool, withHash, { model, dim, concurrency, log });
+  await embedMissing(pool, withHash, { space, concurrency, log });
 
-  // Load embeddings + cluster (pure).
+  // Load embeddings + cluster (pure). Scoped to the ONE space, for the same
+  // reason nearestOpenReRaise is: a cosine between two spaces is not a
+  // similarity, and here it would dismiss a real open finding as a duplicate.
   const { rows: embRows } = await pool.query(
-    'SELECT finding_id, embedding::text AS vec FROM finding_embeddings WHERE finding_id = ANY($1::uuid[]) AND embedding IS NOT NULL',
-    [withHash.map((r) => r.id)]);
+    `SELECT finding_id, embedding::text AS vec FROM finding_embeddings
+      WHERE finding_id = ANY($1::uuid[]) AND embedding IS NOT NULL
+        AND embedding_model = $2::text AND dimension = $3::int`,
+    [withHash.map((r) => r.id), space.provenanceId, space.dim]);
   const vecOf = new Map(embRows.map((e) => [e.finding_id, e.vec.slice(1, -1).split(',').map(Number)]));
   const findings = withHash
     .filter((r) => vecOf.has(r.id))

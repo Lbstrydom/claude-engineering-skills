@@ -237,6 +237,28 @@ export function buildOpenFindingsQuery({ repoId, windowDays, cap, order = 'oldes
 }
 
 /**
+ * A `finding_embeddings` vector space is the PAIR `(embedding_model, dimension)`.
+ * Build it with `findingEmbeddingSpace()` (lib/embed-text.mjs) — the one resolver
+ * every writer and reader shares — and hand it to every similarity read.
+ *
+ * Exported so the record-time hook can validate before its fail-open loop
+ * swallows the error, and so tests can assert the omission throws.
+ *
+ * @param {{provenanceId?:string, dim?:number}|null} space
+ * @param {string} caller  named in the message so the offending seam is obvious
+ */
+export function assertEmbeddingSpace(space, caller) {
+  const model = space?.provenanceId;
+  const dim = space?.dim;
+  if (typeof model !== 'string' || model.length === 0 || !Number.isInteger(dim) || dim <= 0) {
+    throw new Error(
+      `${caller}: embeddingSpace {provenanceId, dim} is required — comparing vectors across ` +
+      'embedding spaces suppresses real findings. Build it with findingEmbeddingSpace().',
+    );
+  }
+}
+
+/**
  * Find the nearest OPEN finding for a repo by cosine over finding_embeddings,
  * using the pgvector `<=>` operator. Returns the single best match at/above
  * `threshold`, or null.
@@ -252,12 +274,31 @@ export function buildOpenFindingsQuery({ repoId, windowDays, cap, order = 'oldes
  * @param {number} args.threshold
  * @param {string} [args.excludeRunId]
  * @param {string} [args.excludeFindingId]
+ * @param {{provenanceId:string, dim:number}} args.embeddingSpace  REQUIRED — see below
  * @returns {Promise<{finding_id:string, cosine:number, primary_file:string, detail_snapshot:string}|null>}
  */
 export async function nearestOpenReRaise({
   pool, repoId, embedding, threshold, excludeRunId = null, excludeFindingId = null,
-  sameFileScope = null,
+  sameFileScope = null, embeddingSpace = null,
 }) {
+  // SPACE SCOPING IS MANDATORY, NOT OPTIONAL (2026-08-30).
+  //
+  // Cosine between vectors from two different embedding models is a number,
+  // not a similarity — it is meaningless, and at these thresholds it is
+  // meaningless in a way that SUPPRESSES A REAL FINDING. Every reader of
+  // `finding_embeddings` used to compare unconditionally: `embedding_model` was
+  // written by three writers and read by none, an index on `(embedding_model,
+  // dimension)` served no query, and the column's only job — telling two spaces
+  // apart — was one nothing performed. That was survivable only because all
+  // three writers hard-coded the same Gemini default, which is also why the
+  // corruption was invisible: under Azure the vectors changed space and the
+  // label did not.
+  //
+  // Defaulting this argument to "no filter" would re-create exactly that state
+  // one caller at a time, so an absent/partial space is a hard throw rather
+  // than a silent unscoped query. `partitionRecordTimeReRaises` is fail-open
+  // and would swallow it per-finding, so it validates up front too.
+  assertEmbeddingSpace(embeddingSpace, 'nearestOpenReRaise');
   if (!repoId || !Array.isArray(embedding) || embedding.length === 0) return null;
   const lit = toVectorLiteral(embedding);
   // SAME-FILE FILTER IN THE QUERY, not only in decideReRaise.
@@ -287,6 +328,8 @@ export async function nearestOpenReRaise({
         AND ($3::uuid IS NULL OR r.id <> $3::uuid)
         AND ($4::uuid IS NULL OR f.id <> $4::uuid)
         AND ($5::text[] IS NULL OR f.primary_file = ANY($5::text[]))
+        AND e.embedding_model = $6::text
+        AND e.dimension = $7::int
         AND NOT EXISTS (SELECT 1 FROM finding_adjudication_events ev
               WHERE ev.finding_id = f.id
                 AND (ev.adjudication_outcome = 'dismissed'
@@ -299,7 +342,8 @@ export async function nearestOpenReRaise({
     // node-postgres already binds a JS array as a Postgres array literal —
     // exactly what `= ANY($5::text[])` needs. Passing the marker here would
     // bind an object and fail.
-    [lit, repoId, excludeRunId, excludeFindingId, scoped ? sameFileScope : null],
+    [lit, repoId, excludeRunId, excludeFindingId, scoped ? sameFileScope : null,
+      embeddingSpace.provenanceId, embeddingSpace.dim],
   );
   const r = rows[0];
   if (!r || Number(r.cosine) < threshold) return null;
@@ -328,11 +372,17 @@ export async function nearestOpenReRaise({
  * @param {(text:string)=>Promise<number[]>} args.embed   detail → vector (secret-redacted by the caller's embedText)
  * @param {number} args.threshold
  * @param {boolean} args.requireSameFile
+ * @param {{provenanceId:string, dim:number}} args.embeddingSpace  REQUIRED (see assertEmbeddingSpace)
  * @param {(msg:string)=>void} [args.log]
  * @returns {Promise<{kept:object[], suppressed:Array<{finding:object, matchedId:string, cosine:number}>,
  *                    vectorByFinding: Map<object, number[]>}>}
  */
-export async function partitionRecordTimeReRaises({ pool, repoId, runId, findings, embed, threshold, requireSameFile, log = () => {} }) {
+export async function partitionRecordTimeReRaises({ pool, repoId, runId, findings, embed, threshold, requireSameFile, embeddingSpace, log = () => {} }) {
+  // BEFORE the fail-open loop, deliberately. Inside it, a missing space would be
+  // caught per-finding and reported as "keep-on-error" — indistinguishable from
+  // a provider blip, and the hook would run permanently inert while looking
+  // healthy. A wiring bug must fail loudly; only RUNTIME faults fail open.
+  assertEmbeddingSpace(embeddingSpace, 'partitionRecordTimeReRaises');
   const kept = [], suppressed = [];
   const vectorByFinding = new Map();
   for (const f of findings) {
@@ -350,6 +400,7 @@ export async function partitionRecordTimeReRaises({ pool, repoId, runId, finding
       vec = await embed(text.slice(0, 500));
       neighbour = await nearestOpenReRaise({
         pool, repoId, embedding: vec, threshold, excludeRunId: runId, sameFileScope: candidateFiles,
+        embeddingSpace,
       });
     } catch (err) {
       log(`  [semantic-suppress] keep-on-error: ${err.message?.slice(0, 80)}`);

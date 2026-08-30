@@ -36,8 +36,7 @@ import { assertKnownFlags } from './lib/cli-io.mjs';
 import { getPool } from './lib/db/client.mjs';
 import { isCloudEnabled, resolveRepoForStore } from './lib/store/repo.mjs';
 import { initLearningStore } from './learning-store.mjs';
-import { embedText } from './lib/embed-text.mjs';
-import { symbolIndexConfig } from './lib/config.mjs';
+import { embedText, findingEmbeddingSpace } from './lib/embed-text.mjs';
 
 export const KNOWN_FLAGS = Object.freeze([
   '--selfcheck-relocation', '--repo', '--thresholds', '--window-days', '--cap', '--no-embed', '--concurrency', '--clusters',
@@ -48,15 +47,18 @@ const G = '\x1b[32m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m
 function arg(argv, name, def) { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : def; }
 
 /** Embed a batch with bounded concurrency; returns [{finding_id, vec, model, dim, hash}]. */
-async function embedFindings(rows, { model, dim, concurrency }) {
+async function embedFindings(rows, { space, concurrency }) {
   const out = [];
   let i = 0;
   async function worker() {
     while (i < rows.length) {
       const r = rows[i++];
       try {
-        const { result } = await embedText(r.snap, { dim, model });
-        out.push({ finding_id: r.id, vec: result, model, dim, hash: r.hash });
+        const { result } = await embedText(r.snap, { dim: space.dim, model: space.requestModel });
+        // `provenanceId`, never the request model: under Azure the wire needs the
+        // bare deployment while the STORED identity must be endpoint-qualified,
+        // or the same alias on two resources reads as one vector space.
+        out.push({ finding_id: r.id, vec: result, model: space.provenanceId, dim: space.dim, hash: r.hash });
       } catch (e) {
         process.stderr.write(`  [embed] ${r.id.slice(0, 8)} failed: ${e.message?.slice(0, 80)}\n`);
       }
@@ -78,8 +80,10 @@ async function main() {
   const thresholds = String(arg(argv, '--thresholds', '0.80,0.85,0.90'))
     .split(',').map(Number).filter((n) => n > 0 && n < 1);
   const noEmbed = argv.includes('--no-embed');
-  const model = symbolIndexConfig.embedModel;
-  const dim = symbolIndexConfig.embedDim;
+  // The ONE vector space for this run: `requestModel` on the wire,
+  // `provenanceId` persisted and compared. Both were `symbolIndexConfig.embedModel`
+  // — the Gemini default — even when embedText routed to Azure.
+  const space = findingEmbeddingSpace();
 
   await initLearningStore();
   if (!await isCloudEnabled()) { console.error('AUDIT_DB_URL unset — cloud store required'); process.exit(1); }
@@ -117,14 +121,18 @@ async function main() {
   // 2. Embed those not yet stored (or whose snapshot changed).
   const withHash = open.map((r) => ({ ...r, hash: crypto.createHash('sha256').update(r.snap).digest('hex').slice(0, 16) }));
   if (!noEmbed) {
+    // Freshness is (snapshot_hash, model, dim) — a row made in a DIFFERENT
+    // space is stale no matter how fresh its text hash, and scoping the cache
+    // check is what re-embeds it rather than leaving two spaces mixed forever.
     const { rows: have } = await pool.query(
-      'SELECT finding_id, snapshot_hash FROM finding_embeddings WHERE finding_id = ANY($1::uuid[])',
-      [withHash.map((r) => r.id)]);
+      `SELECT finding_id, snapshot_hash FROM finding_embeddings
+        WHERE finding_id = ANY($1::uuid[]) AND embedding_model = $2::text AND dimension = $3::int`,
+      [withHash.map((r) => r.id), space.provenanceId, space.dim]);
     const haveMap = new Map(have.map((h) => [h.finding_id, h.snapshot_hash]));
     const todo = withHash.filter((r) => haveMap.get(r.id) !== r.hash);
-    process.stderr.write(`  ${todo.length} to embed (${withHash.length - todo.length} cached), model=${model} dim=${dim}\n`);
+    process.stderr.write(`  ${todo.length} to embed (${withHash.length - todo.length} cached), model=${space.provenanceId} dim=${space.dim}\n`);
     if (todo.length) {
-      const embedded = await embedFindings(todo, { model, dim, concurrency });
+      const embedded = await embedFindings(todo, { space, concurrency });
       for (const e of embedded) {
         await pool.query(
           `INSERT INTO finding_embeddings (finding_id, embedding, embedding_model, dimension, snapshot_hash)
@@ -145,13 +153,14 @@ async function main() {
     WITH pop AS (
       SELECT f.id, LEFT(f.detail_snapshot,500) AS snap, f.finding_fingerprint AS fp, e.embedding
       FROM audit_findings f JOIN finding_embeddings e ON e.finding_id = f.id
-      WHERE f.id = ANY($1::uuid[]) AND e.embedding IS NOT NULL),
+      WHERE f.id = ANY($1::uuid[]) AND e.embedding IS NOT NULL
+        AND e.embedding_model = $2::text AND e.dimension = $3::int),
     pairs AS (
       SELECT similarity(a.snap, b.snap) AS trg, (1 - (a.embedding <=> b.embedding)) AS cos
       FROM pop a JOIN pop b ON a.id < b.id AND a.fp <> b.fp)
     SELECT count(*) AS total_pairs,
            count(*) FILTER (WHERE trg > 0.5) AS trigram_pairs
-    FROM pairs`, [ids]);
+    FROM pairs`, [ids, space.provenanceId, space.dim]);
 
   console.log(`\n${B}Population (embedded, cross-fingerprint):${X} ${cmp.total_pairs} candidate pairs`);
   console.log(`  ${B}Trigram similar-pairs (>0.5):${X} ${cmp.trigram_pairs}   ${D}(this is the memory_health metric)${X}`);
@@ -162,14 +171,15 @@ async function main() {
       WITH pop AS (
         SELECT f.id, LEFT(f.detail_snapshot,500) AS snap, f.finding_fingerprint AS fp, e.embedding
         FROM audit_findings f JOIN finding_embeddings e ON e.finding_id=f.id
-        WHERE f.id = ANY($1::uuid[]) AND e.embedding IS NOT NULL),
+        WHERE f.id = ANY($1::uuid[]) AND e.embedding IS NOT NULL
+          AND e.embedding_model = $2::text AND e.dimension = $3::int),
       pairs AS (
         SELECT similarity(a.snap,b.snap) AS trg, (1-(a.embedding <=> b.embedding)) AS cos
         FROM pop a JOIN pop b ON a.id<b.id AND a.fp<>b.fp)
-      SELECT count(*) FILTER (WHERE cos > $2) AS sem,
-             count(*) FILTER (WHERE cos > $2 AND trg <= 0.5) AS sem_not_trg,
-             count(*) FILTER (WHERE trg > 0.5 AND cos <= $2) AS trg_not_sem
-      FROM pairs`, [ids, t]);
+      SELECT count(*) FILTER (WHERE cos > $4) AS sem,
+             count(*) FILTER (WHERE cos > $4 AND trg <= 0.5) AS sem_not_trg,
+             count(*) FILTER (WHERE trg > 0.5 AND cos <= $4) AS trg_not_sem
+      FROM pairs`, [ids, space.provenanceId, space.dim, t]);
     console.log(`  ${t.toFixed(2)}             ${String(row.sem).padStart(6)}     ${G}${String(row.sem_not_trg).padStart(6)}${X}     ${String(row.trg_not_sem).padStart(6)}`);
   }
 
@@ -180,14 +190,15 @@ async function main() {
     WITH pop AS (
       SELECT f.id, LEFT(f.detail_snapshot,500) AS snap, f.finding_fingerprint AS fp, f.primary_file, e.embedding
       FROM audit_findings f JOIN finding_embeddings e ON e.finding_id=f.id
-      WHERE f.id = ANY($1::uuid[]) AND e.embedding IS NOT NULL)
+      WHERE f.id = ANY($1::uuid[]) AND e.embedding IS NOT NULL
+        AND e.embedding_model = $2::text AND e.dimension = $3::int)
     SELECT round((1-(a.embedding <=> b.embedding))::numeric,3) AS cos,
            round(similarity(a.snap,b.snap)::numeric,3) AS trg,
            (a.primary_file=b.primary_file) AS same_file,
            left(a.snap,95) AS a_snip, left(b.snap,95) AS b_snip
     FROM pop a JOIN pop b ON a.id<b.id AND a.fp<>b.fp
-    WHERE (1-(a.embedding <=> b.embedding)) > $2 AND similarity(a.snap,b.snap) <= 0.5
-    ORDER BY (1-(a.embedding <=> b.embedding)) DESC LIMIT 6`, [ids, midT]);
+    WHERE (1-(a.embedding <=> b.embedding)) > $4 AND similarity(a.snap,b.snap) <= 0.5
+    ORDER BY (1-(a.embedding <=> b.embedding)) DESC LIMIT 6`, [ids, space.provenanceId, space.dim, midT]);
 
   console.log(`\n${B}Examples — semantic caught, trigram missed${X} (cos>${midT}, trg≤0.5):`);
   if (examples.length === 0) console.log(`  ${D}none — trigram already covers the similar pairs at this threshold${X}`);
@@ -199,7 +210,7 @@ async function main() {
 
   console.log(`\n${D}Read: a high "sem∧¬trg" count with genuine re-raise examples ⇒ pgvector recovers churn signal trigram misses ⇒ worth promoting. Near-zero ⇒ trigram is sufficient.${X}`);
 
-  if (argv.includes('--clusters')) await reportClusters(pool, ids, midT);
+  if (argv.includes('--clusters')) await reportClusters(pool, ids, midT, space);
 
   await pool.end();
 }
@@ -226,15 +237,16 @@ async function main() {
  *
  * Measures, never writes — a prototype that mutates the store is a promotion.
  */
-async function reportClusters(pool, ids, tau) {
+async function reportClusters(pool, ids, tau, space) {
   const { rows: edges } = await pool.query(`
     WITH pop AS (
       SELECT f.id, f.finding_fingerprint AS fp, e.embedding
       FROM audit_findings f JOIN finding_embeddings e ON e.finding_id = f.id
-      WHERE f.id = ANY($1::uuid[]) AND e.embedding IS NOT NULL)
+      WHERE f.id = ANY($1::uuid[]) AND e.embedding IS NOT NULL
+        AND e.embedding_model = $2::text AND e.dimension = $3::int)
     SELECT a.id AS a, b.id AS b, (1 - (a.embedding <=> b.embedding)) AS cos
     FROM pop a JOIN pop b ON a.id < b.id AND a.fp <> b.fp
-    WHERE (1 - (a.embedding <=> b.embedding)) > $2`, [ids, tau]);
+    WHERE (1 - (a.embedding <=> b.embedding)) > $4`, [ids, space.provenanceId, space.dim, tau]);
 
   // Union-find over the edge list.
   const parent = new Map();

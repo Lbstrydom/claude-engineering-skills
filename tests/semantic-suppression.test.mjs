@@ -110,7 +110,10 @@ test('toVectorLiteral formats + rejects non-finite', () => {
 
 // ── record-time hook: partitionRecordTimeReRaises ──────────────────────────
 
-const RT = { threshold: 0.92, requireSameFile: true, runId: 'run-1' };
+// A vector space is the PAIR (embedding_model, dimension); the hook refuses to
+// run without one, so every case supplies it (see the throw test at the end).
+const SPACE = Object.freeze({ provenanceId: 'gemini-embedding-001', dim: 768 });
+const RT = { threshold: 0.92, requireSameFile: true, runId: 'run-1', embeddingSpace: SPACE };
 
 test('record-time: suppresses a finding matching a same-file open neighbour', async () => {
   const pool = mockPool({ finding_id: 'open-9', primary_file: 'a/b.mjs', detail_snapshot: 'x', cosine: 0.97 });
@@ -144,6 +147,33 @@ test('record-time: FAIL-OPEN — a query error keeps the finding', async () => {
   const findings = [{ detail: 'a'.repeat(40), section: 'a/b.mjs', _hash: 'fp1' }];
   const r = await partitionRecordTimeReRaises({ pool, repoId: 'r', embed: okEmbed, findings, ...RT });
   assert.equal(r.kept.length, 1);
+});
+
+test('record-time: the space reaches the QUERY — a suppression is always within one space', async () => {
+  // The hook is where a suppression actually drops a store row, so this is the
+  // seam that must not compare across spaces. Assert on the emitted query's
+  // bound parameters, not on the argument object: threading `embeddingSpace`
+  // into `partitionRecordTimeReRaises` and forgetting to pass it on to
+  // `nearestOpenReRaise` would leave the guard satisfied and the query unscoped.
+  let seen = null;
+  const pool = { query: async (_sql, params) => { seen = params; return { rows: [] }; } };
+  const findings = [{ detail: 'a'.repeat(40), section: 'a/b.mjs', _hash: 'fp1' }];
+  await partitionRecordTimeReRaises({ pool, repoId: 'r', embed: okEmbed, findings, ...RT });
+  assert.equal(seen[5], SPACE.provenanceId, 'the model must be bound in the query the hook issues');
+  assert.equal(seen[6], SPACE.dim);
+});
+
+test('record-time: a MISSING space throws — a wiring bug must not fail open into permanent inertness', async () => {
+  // This one is deliberately NOT fail-open. Inside the per-finding try/catch a
+  // missing space would be reported as "keep-on-error" — indistinguishable from
+  // a provider blip — and the hook would suppress nothing, forever, while
+  // looking healthy. Runtime faults fail open; wiring bugs fail loud.
+  const pool = { query: async () => ({ rows: [] }) };
+  const findings = [{ detail: 'a'.repeat(40), section: 'a/b.mjs', _hash: 'fp1' }];
+  const { embeddingSpace: _drop, ...noSpace } = RT;
+  await assert.rejects(
+    () => partitionRecordTimeReRaises({ pool, repoId: 'r', embed: okEmbed, findings, ...noSpace }),
+    (err) => /embeddingSpace .*is required/.test(err.message));
 });
 
 test('record-time: a too-short detail is kept without embedding (nothing to compare)', async () => {

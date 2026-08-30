@@ -26,9 +26,9 @@ import { many, one, query, insertReturning, updateWhere, deleteWhere, withTx, pg
 import { getPool } from '../db/client.mjs';
 import { isCloudEnabled, getRepoIdByName } from './repo.mjs';
 import crypto from 'node:crypto';
-import { semanticSuppressConfig, symbolIndexConfig } from '../config.mjs';
+import { semanticSuppressConfig } from '../config.mjs';
 import { partitionRecordTimeReRaises, toVectorLiteral } from '../semantic-suppression.mjs';
-import { embedText } from '../embed-text.mjs';
+import { embedText, findingEmbeddingSpace } from '../embed-text.mjs';
 
 /**
  * Prospective semantic re-raise suppression at the store-write boundary — the
@@ -53,20 +53,27 @@ async function applyRecordTimeSuppression(runId, findings, passName) {
     const runRow = await one('SELECT repo_id FROM audit_runs WHERE id = $1', [runId]);
     const repoId = runRow?.repo_id;
     if (!repoId) return { kept: findings, vectorByFinding: null };
+    // ONE space for the whole batch: `requestModel` goes on the wire (a bare
+    // Azure deployment; the endpoint-qualified id 404s), `provenanceId` is what
+    // gets persisted and compared. Both were `symbolIndexConfig.embedModel` —
+    // the GEMINI default — even when embedText routed to Azure, so the stored
+    // provenance did not describe the vectors that were made.
+    const space = findingEmbeddingSpace();
     const embed = async (text) => {
-      const { result } = await embedText(text, { dim: symbolIndexConfig.embedDim, model: symbolIndexConfig.embedModel });
+      const { result } = await embedText(text, { dim: space.dim, model: space.requestModel });
       return result;
     };
     const { kept, suppressed, vectorByFinding } = await partitionRecordTimeReRaises({
       pool, repoId, runId, findings, embed,
       threshold: semanticSuppressConfig.threshold,
       requireSameFile: semanticSuppressConfig.requireSameFile,
+      embeddingSpace: space,
       log: (m) => process.stderr.write(m + '\n'),
     });
     if (suppressed.length) {
       process.stderr.write(`  [semantic-suppress] recorded ${kept.length}, suppressed ${suppressed.length} re-raise(s) of existing open findings\n`);
     }
-    return { kept, vectorByFinding };
+    return { kept, vectorByFinding, embeddingSpace: space };
   } catch (err) {
     process.stderr.write(`  [semantic-suppress] disabled for this batch (keep-all): ${err.message?.slice(0, 100)}\n`);
     return { kept: findings, vectorByFinding: null };
@@ -100,9 +107,15 @@ async function applyRecordTimeSuppression(runId, findings, passName) {
  *
  * @returns {Promise<{persisted: number, failed: number}>}
  */
-export async function persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByFingerprint, runId) {
+export async function persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByFingerprint, runId, embeddingSpace) {
   const result = { persisted: 0, failed: 0 };
   if (!vectorByFinding || vectorByFinding.size === 0) return result;
+  // The space these vectors were ACTUALLY made in, passed down from the call
+  // that made them. Re-resolving it here would look identical today and
+  // mislabel the batch the moment the two resolutions can disagree — the exact
+  // shape of the bug being fixed. The fallback covers only direct unit-test
+  // callers; production always threads it.
+  const space = embeddingSpace || findingEmbeddingSpace();
   for (const f of keptFindings) {
     const vec = vectorByFinding.get(f);
     if (!vec) continue;
@@ -116,7 +129,7 @@ export async function persistKeptEmbeddings(exec, keptFindings, vectorByFinding,
          SELECT $1::uuid, $2::vector, $3, $4, $5
           WHERE EXISTS (SELECT 1 FROM audit_findings af WHERE af.id = $1::uuid AND af.run_id = $6::uuid)
          ON CONFLICT (finding_id) DO UPDATE SET embedding=EXCLUDED.embedding, embedding_model=EXCLUDED.embedding_model, dimension=EXCLUDED.dimension, snapshot_hash=EXCLUDED.snapshot_hash, created_at=now()`,
-        [id, toVectorLiteral(vec), symbolIndexConfig.embedModel, symbolIndexConfig.embedDim, hash, runId]);
+        [id, toVectorLiteral(vec), space.provenanceId, space.dim, hash, runId]);
       if ((res?.rowCount ?? 0) === 0) {
         result.failed++;
         process.stderr.write(`  [semantic-suppress] embedding write affected 0 rows for finding ${id} (run ${runId}) — not persisted\n`);
@@ -672,7 +685,7 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   // Prospective semantic re-raise suppression (record-time hook). Fail-open:
   // returns every finding when disabled or on any error. Only `merged` findings
   // (the code-audit path that carries the measured churn) are considered.
-  const { kept: suppressionKept, vectorByFinding } = await applyRecordTimeSuppression(runId, findings, passName);
+  const { kept: suppressionKept, vectorByFinding, embeddingSpace } = await applyRecordTimeSuppression(runId, findings, passName);
   // ── Intra-batch fingerprint dedup (durability plan Phase 3) ───────────────
   // `audit_findings_run_fingerprint_uniq_full` (migration 20260812070000) makes
   // `(run_id, finding_fingerprint)` unique, and a multi-row INSERT carrying the
@@ -822,7 +835,7 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
     // targets. Best-effort; keyed by fingerprint→id (unique within a batch).
     if (vectorByFinding && vectorByFinding.size > 0) {
       const idByFingerprint = new Map((inserted.rows || []).map((r) => [r.finding_fingerprint, r.id]));
-      const embedResult = await persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByFingerprint, runId);
+      const embedResult = await persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByFingerprint, runId, embeddingSpace);
       if (embedResult.failed > 0) {
         process.stderr.write(`  [semantic-suppress] embedding persistence: ${embedResult.persisted} ok, ${embedResult.failed} failed this batch\n`);
       }
