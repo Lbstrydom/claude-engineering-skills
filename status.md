@@ -1,5 +1,48 @@
 # Project Status Log
 
+## 2026-08-30 — a bare `createAnthropicClient()` reached PUBLIC Anthropic on an Azure tenant
+
+### The report asked for a sweep; the sweep found the DEFAULT was wrong
+Upstream `7af14dd6` (HIGH, from `storyline`) was closed on 2026-08-27 for its two named `symbol-index` call sites and ended with *"worth grepping the rest of the bundle for any other call sites that predate the incident fix"*. That sweep is this entry — left open at the last closure because judging it needs an Azure tenant, and `storyline` is one.
+
+**Measured there, not reasoned about.** `azureConfig.active` true, `AZURE_CLAUDE_ROUTE=apim`, a routed Claude call live in **1.4 s** — and a bare `createAnthropicClient()` doing one of two things depending only on whose machine it ran on:
+
+| machine | bare call |
+|---|---|
+| carries a personal key in `~/.audit-loop.env` | **corporate source → `api.anthropic.com` on that personal credential** |
+| no personal key — the real corporate machine | throws `ANTHROPIC_API_KEY required`, beside an unused working route |
+
+`isClaudeAvailable()` returned **false** on that tenant, so `context.mjs`, `neighbourhood-query.mjs` and `audit-loop.mjs`'s **MANDATORY** final review skipped themselves silently. Fourth instance of the availability-gate class.
+
+### The fix is the seam, not the call sites
+Patching the ~30 bare call sites would have been the **fifth** per-site fix of this shape. Instead an OMITTED `azureRoute` adopts the environment's route, so a bare call is correct by construction; `azureRoute: null` is the explicit opt-out for the three arms whose provider id *means* the public service (`claude-opus`, its shadow, model-eval's non-azure branch) — omitting it there would make an A/B compare a provider with itself.
+
+`buildClaudeRoute` moved to a pure [`azure-claude-route.mjs`](scripts/lib/azure-claude-route.mjs) so `anthropic-client` reads the same oracle without importing `config.mjs`, whose module-level `loadSharedEnv()` injects exactly the personal credential this keeps off a corporate host. With a route resolved, `ANTHROPIC_API_KEY` is now **unreachable** rather than outranked. Off Azure everything is byte-identical (the resolver keys on `AZURE_OPENAI_ENDPOINT`); a half-configured profile throws rather than demoting to public.
+
+**Verified end-to-end in the consumer after sync**, with `ANTHROPIC_API_KEY` deleted: a bare call reached the APIM endpoint and answered. An earlier probe read empty and was *not* accepted as a pass — the default redactor had eaten the all-caps sentinel, a probe artifact found by printing the raw response rather than trusting the empty string.
+
+### What the audit found, and what it manufactured
+`/audit-code` on the diff raised 11. Gemini final review: **0 new, 0 wrongly-dismissed, coherence Strong, no Claude bias, 8 GPT false positives confirmed.**
+
+- **2 fabricated.** Both claimed the test supplies `secret = '[REDACTED:openai-key]'`. The real line is `'sk-or-v1-DEADBEEFDEADBEEF'` — `DEADBEEF` *is* a substring of the credential, so the assertion proves exactly what it claims. **The egress redactor rewrote the source before the model saw it, and the model then reasoned about its own redaction.** Grep the quote first.
+- **1 false**: `AZURE_AI_API_KEY` "missing from `TOUCHED`" — it is on line 41.
+- **1 refuted by both reviewers independently**: the `/openai/v1` plan mismatch, superseded by the plan's own dated 2026-08-12 log entry. Small real hazard fixed anyway — those lines carried no forward pointer, so `SUPERSEDED` callouts were added.
+- **3** were my own untracked scratch probe. Deleted.
+- **2** deferred on *independence*, not authorship, with the reasoning recorded per entry.
+
+**Gemini caught a bookkeeping error of mine**: I mapped rulings to finding IDs by assumed ordinal and shifted four of them. Substantively right, attached to the wrong rows — and the ledger feeds the next round's suppression, so it matters. Re-mapped by matching on content.
+
+### The one real new finding, and the bigger thing behind it
+`refresh-incidents.mjs` resolved `modelToUse = azureConfig.embedDeployment` itself instead of calling `resolveEmbedProfile()`, so under Azure the **security** index stored a bare deployment name while the **arch** index stored the endpoint-qualified id — two provenance formats in one store, and a deployment-name collision across two Azure resources reading as one vector space.
+
+The call-site list guarding this was **hand-written and did not know that file existed**. Replaced with a CENSUS iterating the filesystem — the only side that can see a caller nobody mentioned — plus a mirror check for stale entries. It immediately found **five more** `embedText()` callers: two query-side and exempt, but **three persist `finding_embeddings.embedding_model` as the configured Gemini default even when Azure made the vectors**. Same defect, third table.
+
+**Deliberately not fixed here**, exempted *with the reason written down*: that change alters the stored string, so old and new rows would stop comparing inside `semantic-suppress`'s similarity matching. It needs a backfill/compat decision, not a one-line swap. Spawned as its own task.
+
+### AGENTS.md
+Depth lives in [`azure-work-profile.md`](docs/runbooks/azure-work-profile.md) §"Which Claude a bare `createAnthropicClient()` reaches"; AGENTS.md keeps the rule plus a pointer. Headroom **698 → 510** — net 188 chars for a new load-bearing invariant, after a first draft that cost 428.
+
+
 ## 2026-08-30 — persona-test: auth-bootstrap connect-time race fixed
 
 ### Consumer Verification (previous ship)
