@@ -109,9 +109,27 @@ describe('the sandbox forbids the silent-skip paths', () => {
     // Temp-dir state is MACHINE state: it may warn, never block.
     assert.match(runnerSrc, /sweepStaleSandboxes\(os\.tmpdir\(\)\)/);
     const idx = runnerSrc.indexOf('sweepStaleSandboxes(os.tmpdir())');
-    const region = runnerSrc.slice(Math.max(0, idx - 400), idx + 900);
-    assert.match(region, /catch \(err\)/, 'the sweep must not be able to throw out of main()');
-    assert.doesNotMatch(region, /return 1;/, 'a sweep failure must never fail the push');
+    // Bounded by the STRUCTURE, not by a character count: a fixed ±N window
+    // silently stops covering the thing it was written to cover as soon as the
+    // block grows (which is exactly what a logging addition did on 2026-08-30).
+    const catchIdx = runnerSrc.indexOf('catch (err)', idx);
+    assert.ok(catchIdx !== -1, 'the sweep must not be able to throw out of main()');
+    assert.doesNotMatch(
+      runnerSrc.slice(idx, catchIdx), /return 1;/,
+      'a sweep failure must never fail the push',
+    );
+  });
+
+  it('says what the sweep SAW when it swept nothing (2026-08-30)', () => {
+    // Silence was ambiguous: "temp is clean" and "three husks are here, all
+    // younger than the threshold" printed identically, and a failing push with
+    // three husks on disk was therefore read as a broken sweeper. Measured
+    // afterwards, the oldest was 3h old against a 6h threshold and the sweep had
+    // been exactly right. An unasked question must never render as an empty
+    // result. Behaviour of `young` itself: tests/prepush-sandbox-cleanup.test.mjs.
+    assert.match(runnerSrc, /const \{ swept, failed, young \} = sweepStaleSandboxes/);
+    assert.match(runnerSrc, /if \(!swept\.length && young\.length\)/,
+      'the "saw husks, swept none" case must be reported, and only that case');
   });
 
   it('pins a worktree-scoped core.bare=false on the sandbox, right after creating it (2026-07-23)', () => {
@@ -154,7 +172,67 @@ describe('the sandbox forbids the silent-skip paths', () => {
     // as surely as into the check run itself.
     assert.match(runnerSrc, /provisionNodeModules\(sandbox, repoRoot, gitEnv\)/);
     assert.match(runnerSrc, /function provisionNodeModules\(sandbox, repoRoot, gitEnv\)/);
-    assert.match(runnerSrc, /NPM, \['ci', '--ignore-scripts', '--no-audit', '--no-fund'\], \{\s*cwd: sandbox, stdio: 'inherit', shell: IS_WIN, \.\.\.\(gitEnv \? \{ env: gitEnv \} : \{\}\)/);
+    const ciIdx = runnerSrc.indexOf("NPM, ['ci', '--ignore-scripts', '--no-audit', '--no-fund']");
+    assert.ok(ciIdx !== -1, 'the npm ci spawn must still use the pinned argv');
+    assert.match(
+      runnerSrc.slice(ciIdx, ciIdx + 600), /\.\.\.\(gitEnv \? \{ env: gitEnv \} : \{\}\)/,
+      'the sanitized env must reach the npm ci spawn, not just the check spawn',
+    );
+  });
+
+  it('CAPTURES npm ci output instead of inheriting it, and surfaces it on failure (2026-08-30)', () => {
+    // Inheriting looked like the transparent choice and was the opposite: npm's
+    // diagnosis landed hundreds of lines upstream of the ✗ that reported it, and
+    // npm's own debug log — the fallback — is rotated out by `logs-max` (default
+    // 10) within a handful of later npm runs. Measured on the 2026-08-30
+    // failure: the log was already gone, and the operator saw no npm error at
+    // all, so the cause is permanently unrecoverable.
+    const ciIdx = runnerSrc.indexOf("NPM, ['ci', '--ignore-scripts', '--no-audit', '--no-fund']");
+    const spawnOpts = runnerSrc.slice(ciIdx, ciIdx + 600);
+    assert.doesNotMatch(spawnOpts, /stdio: 'inherit'/, 'npm ci output must be captured, not inherited');
+    assert.match(spawnOpts, /stdio: \['ignore', 'pipe', 'pipe'\]/);
+    assert.match(
+      spawnOpts, /maxBuffer:/,
+      'an explicit maxBuffer is required — on overflow spawnSync KILLS the child and reports '
+      + 'ENOBUFS, which would be a brand-new way for provisioning to fail',
+    );
+    assert.match(runnerSrc, /function reportFailedInstall\(/);
+    assert.match(runnerSrc, /NPM_FAILURE_TAIL_LINES/, 'the tail of npm output must be printed beside the failure');
+    assert.match(runnerSrc, /\.prepush-npm-ci\.log/, 'the full transcript must be persisted');
+    // shell:IS_WIN is REQUIRED, not incidental — Node 22 refuses to spawn a
+    // `.cmd` without it (EINVAL). Measured on win32, it round-trips a child's
+    // exit status faithfully (0→0, 3→3), so it was ruled OUT as a cause of the
+    // fabricated non-zero exit it was suspected of.
+    assert.match(spawnOpts, /shell: IS_WIN/);
+  });
+
+  it('treats npm exiting 0 as a claim, not proof the install finished (2026-08-30)', () => {
+    // The same rule lib/prepush-sandbox-cleanup.mjs encodes for `git worktree
+    // remove`. npm writes `.bin/` and the hidden lockfile LAST, at the end of
+    // reify; the 2026-08-30 sandbox held 234 of the expected 236 top-level
+    // entries and was missing exactly those two — which is how we know the
+    // install died at finalisation rather than being externally killed.
+    const ciIdx = runnerSrc.indexOf("NPM, ['ci', '--ignore-scripts', '--no-audit', '--no-fund']");
+    const after = runnerSrc.slice(ciIdx);
+    assert.match(after, /const finished = fs\.existsSync\(hiddenLockPath\)/);
+    assert.match(after, /'node_modules', '\.package-lock\.json'/);
+    assert.match(after, /r\.status !== 0 \|\| !finished/,
+      'an unfinished install must fail even when npm reported success');
+  });
+
+  it('PRESERVES the sandbox when provisioning failed, and only then (2026-08-30)', () => {
+    // The sandbox is the last surviving evidence of a provisioning failure, and
+    // deleting it is what made 2026-08-30 unreconstructable. But a failing `npm
+    // run check` is the ordinary red push — preserving there would leak a ~1GB
+    // husk on every one, so the flag is set by the throw site, not by the catch.
+    assert.match(runnerSrc, /err\.preserveSandbox = true;/);
+    assert.match(runnerSrc, /if \(err\?\.preserveSandbox\) preserveSandbox = true;/);
+    assert.match(runnerSrc, /sandbox PRESERVED as evidence/);
+
+    const flagIdx = runnerSrc.indexOf('err.preserveSandbox = true;');
+    const checkSpawnIdx = runnerSrc.indexOf("NPM, ['run', 'check']");
+    assert.ok(flagIdx !== -1 && checkSpawnIdx !== -1 && flagIdx < checkSpawnIdx,
+      'only a PROVISIONING failure may set the flag — it must not be reachable from the check run');
   });
 
   it('compares package.json, not just package-lock.json, before trusting the linked node_modules (item 5 — sast-sandbox-backlog-hardening.md)', () => {
@@ -238,17 +316,41 @@ describe('the sandbox forbids the silent-skip paths', () => {
     );
   });
 
-  it('installs when the main checkout\'s node_modules predates its own package-lock.json (finding 2ec7f704)', () => {
+  it('installs when the main checkout\'s node_modules does not match its own package-lock.json (finding 2ec7f704)', () => {
     // Matching manifests between the two CHECKOUTS says nothing about whether
     // the MAIN checkout's own node_modules still reflects its OWN current
     // lockfile — e.g. a developer edited package-lock.json locally and never
-    // re-ran `npm install`. This is a cheap mtime heuristic, not a full
-    // conformance check (which would cost what linking exists to avoid).
-    assert.match(runnerSrc, /const lockMainMtime = statMtimeMs\(lockMain\)/);
-    assert.match(runnerSrc, /const mainModulesMtime = mainModules \? statMtimeMs\(mainModules\) : null/);
+    // re-ran `npm install`. The PROPERTY is unchanged since 2026-08-20; the
+    // MECHANISM was replaced on 2026-08-30.
+    //
+    // It used to be an mtime heuristic — lockfile newer than the node_modules
+    // directory ⇒ possibly stale. That is wrong in the HEALTHY case, not merely
+    // lossy: `npm install` writes the lockfile last and a directory's mtime only
+    // moves when a top-level entry is added or removed, so a tree npm had just
+    // called "up to date in 6s" read STALE (lock 13:24:07, node_modules
+    // 13:22:07) and stayed STALE until something unrelated created
+    // `node_modules/.cache`, at which point the same tree read FRESH with the
+    // lockfile 18 days older. On 2026-08-30 that coin-flip landed on STALE,
+    // forced an `npm ci` that failed, and blocked a push.
+    //
+    // npm's own hidden lockfile is the content oracle. Verdict behaviour —
+    // both directions, optional deps, and every fail-closed input — is
+    // tests/prepush-installed-tree-identity.test.mjs; what is pinned HERE is
+    // that the runner asks it, asks it about the MAIN checkout's tree, and
+    // still routes the answer into the link-vs-install decision.
+    assert.doesNotMatch(
+      runnerSrc, /statMtimeMs/,
+      'the mtime heuristic must not come back — it reports STALE on a healthy install',
+    );
+    assert.match(runnerSrc, /from '\.\/lib\/installed-tree-identity\.mjs'/);
     assert.match(
-      runnerSrc,
-      /const modulesStale = Boolean\(\s*lockMainMtime !== null && mainModulesMtime !== null && lockMainMtime > mainModulesMtime,\s*\)/,
+      runnerSrc, /const hiddenLock = mainModules \? path\.join\(mainModules, '\.package-lock\.json'\) : null;/,
+      'the hidden lockfile must be read from the checkout that OWNS the modules, not from repoRoot',
+    );
+    assert.match(runnerSrc, /installedTreeStale\(readOrNull\(lockMain\), readOrNull\(hiddenLock\)\)/);
+    assert.match(
+      runnerSrc, /: \{ stale: true, reason: 'no node_modules to compare against' \}/,
+      'no node_modules at all must install, never link',
     );
     assert.match(
       runnerSrc,

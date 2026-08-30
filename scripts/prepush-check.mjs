@@ -51,6 +51,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { log } from './lib/cli-io.mjs';
 import { dependencySetChanged } from './lib/dependency-identity.mjs';
+import { installedTreeStale } from './lib/installed-tree-identity.mjs';
 import { countTopLevelEntries, findNodeModules } from './lib/node-modules-resolver.mjs';
 import { GIT_LOCK_RETRY_DELAYS_MS, withGitLockRetry } from './lib/git-lock-retry.mjs';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
@@ -207,22 +208,23 @@ function provisionNodeModules(sandbox, repoRoot, gitEnv) {
   // Manifest identity between the two CHECKOUTS says nothing about whether the
   // MAIN checkout's own node_modules still reflects its OWN current lockfile —
   // e.g. a developer edited package-lock.json locally (or pulled a commit that
-  // changed it) and never re-ran `npm install`. A full conformance check (an
-  // `npm ls`-equivalent walk of the installed tree) costs exactly what linking
-  // exists to avoid, so this stays a cheap, best-effort heuristic rather than a
-  // proof: if the main checkout's lockfile is newer than its node_modules
-  // directory, something installed it later touched the lock without
-  // reinstalling. False negatives remain (an unrelated touch can bump either
-  // mtime) — this narrows the exposure named in finding 2ec7f704, it does not
-  // close it; a real close would require the same cost the link exists to save.
-  const statMtimeMs = (p) => {
-    try { return fs.statSync(p).mtimeMs; } catch { return null; }
-  };
-  const lockMainMtime = statMtimeMs(lockMain);
-  const mainModulesMtime = mainModules ? statMtimeMs(mainModules) : null;
-  const modulesStale = Boolean(
-    lockMainMtime !== null && mainModulesMtime !== null && lockMainMtime > mainModulesMtime,
-  );
+  // changed it) and never re-ran `npm install`. That is npm's hidden lockfile's
+  // question, and lib/installed-tree-identity.mjs asks it by CONTENT: which
+  // packages are on disk, at which versions, versus which the lockfile pins.
+  //
+  // It replaces an mtime heuristic that was not merely lossy but systematically
+  // wrong (2026-08-30): `npm install` writes package-lock.json LAST, and a
+  // directory's mtime only moves when a TOP-LEVEL entry is added or removed, so
+  // "lock newer than node_modules/" is the NORMAL state of a perfectly healthy
+  // install — and it flips back to "fresh" whenever an unrelated tool happens to
+  // create something like node_modules/.cache. See that module's fileoverview
+  // for the measurements. The content compare costs ~1ms here against the tens
+  // of seconds of `npm ci` the flap was triggering, and it fails CLOSED.
+  const hiddenLock = mainModules ? path.join(mainModules, '.package-lock.json') : null;
+  const installed = mainModules
+    ? installedTreeStale(readOrNull(lockMain), readOrNull(hiddenLock))
+    : { stale: true, reason: 'no node_modules to compare against' };
+  const modulesStale = installed.stale;
   const lockChanged = filePairChanged(lockMain, lockSandbox) || deps.changed || modulesStale;
   // Name the cause of every install. A silent 40s pause mid-push is
   // indistinguishable from a hang, and "which input moved" is the first thing
@@ -231,7 +233,7 @@ function provisionNodeModules(sandbox, repoRoot, gitEnv) {
   if (!mainModules) {
     log(`  no node_modules found at or above ${repoRoot} — installing`);
   } else if (modulesStale) {
-    log('  main checkout\'s node_modules predates its own package-lock.json (possible stale install) — installing');
+    log(`  main checkout's installed tree does not match its own package-lock.json — installing (${installed.reason})`);
   } else if (lockChanged) {
     log(`  dependency tree may differ — installing (${
       deps.changed ? deps.reason : 'package-lock.json differs between the checkouts'})`);
@@ -251,11 +253,117 @@ function provisionNodeModules(sandbox, repoRoot, gitEnv) {
   // --ignore-scripts: the `prepare` lifecycle runs install-git-hooks.mjs, which
   // writes core.hooksPath. That config is shared with the main checkout, so
   // letting it run from a throwaway worktree could repoint the real repo's hooks.
+  //
+  // CAPTURED, not `stdio: 'inherit'` (2026-08-30). Inherit looks like the more
+  // transparent choice and is the opposite: npm's diagnosis lands hundreds of
+  // lines upstream of the `✗` that reports it, and npm's own debug log — the
+  // fallback — is rotated away by `logs-max` (default 10) within a handful of
+  // later npm invocations. Measured on the 2026-08-30 failure: the run's log was
+  // already gone by the time anyone looked, and the operator saw no npm error at
+  // all. Capturing costs one buffer and puts the error text adjacent to the
+  // failure, in the transcript, permanently.
+  //
+  // shell:IS_WIN is REQUIRED, not incidental: Node 22 refuses to spawn a `.cmd`
+  // without it (EINVAL). Measured on this platform, it round-trips a child's
+  // exit status faithfully (0→0, 3→3), so it cannot manufacture the non-zero
+  // status it was suspected of.
+  //
+  // maxBuffer is set explicitly and generously: on overflow spawnSync KILLS the
+  // child and reports ENOBUFS, which would be a brand-new way for provisioning
+  // to fail — the default 1 MiB is well within reach of a noisy install.
+  log(`  running npm ci in ${sandbox}`);
+  const startedAt = Date.now();
   const r = spawnSync(NPM, ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], {
-    cwd: sandbox, stdio: 'inherit', shell: IS_WIN, ...(gitEnv ? { env: gitEnv } : {}),
+    cwd: sandbox,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    shell: IS_WIN,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+    ...(gitEnv ? { env: gitEnv } : {}),
   });
-  if (r.status !== 0) throw new Error(`npm ci failed in sandbox (exit ${r.status})`);
+  const elapsedS = ((Date.now() - startedAt) / 1000).toFixed(0);
+  const output = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+
+  // npm exiting 0 is not evidence that the install FINISHED — the same rule
+  // lib/prepush-sandbox-cleanup.mjs encodes for `git worktree remove`. npm
+  // writes `.bin/` and the hidden lockfile last, at the end of reify; the
+  // 2026-08-30 sandbox had 234 of the expected 236 top-level entries and was
+  // missing exactly those two, which is how we know the install died at the
+  // finalisation step rather than being externally killed. Stat the artifact.
+  const hiddenLockPath = path.join(sandbox, 'node_modules', '.package-lock.json');
+  const finished = fs.existsSync(hiddenLockPath);
+
+  if (r.error || r.status !== 0 || !finished) {
+    reportFailedInstall(sandbox, {
+      output,
+      elapsedS,
+      status: r.status,
+      signal: r.signal,
+      spawnError: r.error,
+      finished,
+    });
+    const cause = r.error ? `could not spawn npm (${r.error.code ?? r.error.message})`
+      : r.status !== 0 ? `exit ${r.status}${r.signal ? ` / signal ${r.signal}` : ''}`
+        : 'npm exited 0 but never wrote node_modules/.package-lock.json — the install did not finish';
+    const err = new Error(`npm ci failed in sandbox (${cause})`);
+    // The sandbox is the evidence: deleting it on the way out is what made the
+    // 2026-08-30 failure unreconstructable. See main()'s cleanup.
+    err.preserveSandbox = true;
+    throw err;
+  }
+
+  // One line instead of npm's full transcript. npm's own summary ("added N
+  // packages in Ns") is the part worth keeping; the rest is only interesting
+  // when something went wrong, and that path prints it.
+  const summary = output.split('\n').map((l) => l.trim()).filter(Boolean)
+    .findLast((l) => /^(added|changed|removed|up to date)\b/.test(l));
+  log(`  npm ci ok in ${elapsedS}s${summary ? ` — ${summary}` : ''}`);
   return 'installed';
+}
+
+/** How many trailing lines of npm's output to surface on a failed install. */
+const NPM_FAILURE_TAIL_LINES = 30;
+
+/**
+ * Print everything needed to diagnose a failed `npm ci` WITHOUT re-running it,
+ * and persist the full transcript beside the preserved sandbox.
+ *
+ * The 2026-08-30 failure could not be diagnosed after the fact from anything
+ * that survived: npm's stderr went to an inherited stdio nobody retained, its
+ * debug log was rotated out by `logs-max`, and the sandbox was deleted by the
+ * cleanup path. Each of the three is closed here.
+ *
+ * @param {string} sandbox
+ * @param {{output: string, elapsedS: string, status: number|null,
+ *          signal: string|null, spawnError?: Error, finished: boolean}} detail
+ */
+function reportFailedInstall(sandbox, detail) {
+  const lines = detail.output.split(/\r?\n/);
+  const tail = lines.slice(-NPM_FAILURE_TAIL_LINES).join('\n').trimEnd();
+
+  log(`  ✗ npm ci failed after ${detail.elapsedS}s `
+    + `(exit ${detail.status}${detail.signal ? `, signal ${detail.signal}` : ''}`
+    + `${detail.spawnError ? `, spawn error ${detail.spawnError.code ?? detail.spawnError.message}` : ''})`);
+  if (!detail.finished) {
+    log('    node_modules/.package-lock.json is absent — npm never reached the end of the install.');
+  }
+  log(`  ── last ${Math.min(NPM_FAILURE_TAIL_LINES, lines.length)} line(s) of npm output ──`);
+  log(tail || '    (npm produced no output)');
+  log('  ────────────────────────────────────────');
+
+  // npm names its own debug log in the failure output when it wrote one. Echo
+  // it, but never IMPLY one exists — logs-max rotates them away, which is
+  // precisely why the transcript above is captured rather than deferred to.
+  const npmLog = detail.output.match(/A complete log of this run can be found in:\s*(\S.*)/);
+  if (npmLog) log(`  npm debug log (may already be rotated): ${npmLog[1].trim()}`);
+
+  try {
+    const dest = path.join(sandbox, '.prepush-npm-ci.log');
+    fs.writeFileSync(dest, detail.output);
+    log(`  full npm output: ${dest}`);
+  } catch (err) {
+    log(`  (could not persist the npm transcript: ${err.message})`);
+  }
 }
 
 function copyIfPresent(sandbox, repoRoot, rel) {
@@ -348,9 +456,18 @@ function main() {
   // not. Deliberately advisory: an uncleanable temp directory is MACHINE
   // state, and machine state may warn but must never block a push.
   try {
-    const { swept, failed } = sweepStaleSandboxes(os.tmpdir());
+    const { swept, failed, young } = sweepStaleSandboxes(os.tmpdir());
     if (swept.length) log(`  swept ${swept.length} stale sandbox husk(s) from ${os.tmpdir()}`);
     if (failed.length) log(`  ⚠ ${failed.length} stale sandbox husk(s) still un-removable, e.g. ${failed[0]}`);
+    // Say what was seen and left. Without this, "no sweep line" means both "temp
+    // is clean" and "three husks are sitting there, all too young to sweep" —
+    // and on 2026-08-30 that ambiguity was read as a broken sweeper for hours.
+    // Only printed when there IS something, so a clean machine stays silent.
+    if (!swept.length && young.length) {
+      const oldestH = (Math.max(...young.map((h) => h.ageMs)) / 3_600_000).toFixed(1);
+      log(`  ${young.length} sandbox husk(s) present, none swept — oldest is ${oldestH}h old, `
+        + `under the ${STALE_SANDBOX_AGE_MS / 3_600_000}h threshold (a concurrent push's sandbox is always young)`);
+    }
     // Metadata written only when there was something to reconcile: a husk from
     // an interrupted run can still be REGISTERED, so its directory disappearing
     // is exactly when `git worktree list` needs pruning to stop showing a
@@ -362,10 +479,23 @@ function main() {
     log(`  ⚠ stale-sandbox sweep failed (continuing): ${err.message}`);
   }
 
+  // Set only by a PROVISIONING failure (see provisionNodeModules). A failing
+  // `npm run check` must NOT preserve — that is the ordinary "your code is
+  // broken" outcome and would leak a ~1GB husk on every red push. A sandbox we
+  // could not even BUILD is the opposite: it is the only remaining evidence of
+  // why, and rebuilding it by hand is minutes of work.
+  let preserveSandbox = false;
   let cleanedUp = false;
   const cleanup = () => {
     if (cleanedUp) return;
     cleanedUp = true;
+    if (preserveSandbox) {
+      log(`  sandbox PRESERVED as evidence: ${sandbox}`);
+      log('    Inspect it, then remove it with:');
+      log(`      git worktree remove --force "${sandbox}"`);
+      log(`    A later push sweeps it automatically once it is ${STALE_SANDBOX_AGE_MS / 3_600_000}h old.`);
+      return;
+    }
     removeWorktree(sandbox, repoRoot);
   };
   // A killed hook must not leave worktrees behind; git would keep listing them.
@@ -506,6 +636,7 @@ function main() {
 
     return r.status ?? 1;
   } catch (err) {
+    if (err?.preserveSandbox) preserveSandbox = true;
     log(`✗  pre-push sandbox failed: ${err.message}`);
     log('   The push was NOT verified. Fix the above, or bypass with: git push --no-verify');
     log('   To run the checks against the working tree instead: AUDIT_PREPUSH_SANDBOX=0');

@@ -22,6 +22,7 @@ import {
   STALE_SANDBOX_AGE_MS,
   findStaleSandboxes,
   removeSandboxDir,
+  surveySandboxes,
   sweepStaleSandboxes,
 } from '../scripts/lib/prepush-sandbox-cleanup.mjs';
 
@@ -147,6 +148,36 @@ describe('findStaleSandboxes — age rule and prefix scoping', () => {
 
   it('returns [] for an unreadable temp dir instead of throwing', () => {
     assert.deepEqual(findStaleSandboxes(path.join(tmp, 'does-not-exist'), { now: NOW }), []);
+  });
+
+  it('surveySandboxes reports the husks it deliberately LEFT, not just the ones it takes', () => {
+    // Silence is ambiguous (2026-08-30). The runner logged only when it swept,
+    // so "temp is clean" and "three husks are here, all too young" printed
+    // identically — and a failing push with three husks on disk was read as a
+    // broken sweeper for hours. Measured afterwards: the oldest was 3h old
+    // against a 6h threshold, and the sweep had been exactly right.
+    const young = makeDir(`${SANDBOX_PREFIX}beef0001-4444`, 3 * 60 * 60 * 1000);
+    const { stale, young: retained } = surveySandboxes(tmp, { now: NOW });
+    assert.equal(stale.includes(young), false, 'a 3h husk is not stale under a 6h threshold');
+    const row = retained.find((h) => h.dir === young);
+    assert.ok(row, 'the husk it declined to sweep must be REPORTED, not silently dropped');
+    assert.equal(row.ageMs, 3 * 60 * 60 * 1000, 'the age must be carried so the caller can name it');
+  });
+
+  it('surveySandboxes ignores foreign temp dirs in BOTH buckets', () => {
+    // A prefix-scoping bug that leaked only into the new `young` bucket would
+    // make the runner report other tools' temp dirs as this gate's husks.
+    const foreign = makeDir('ces-db-test-YoUnG1', 60_000);
+    const { stale, young } = surveySandboxes(tmp, { now: NOW });
+    assert.equal(stale.includes(foreign), false);
+    assert.equal(young.some((h) => h.dir === foreign), false);
+  });
+
+  it('sweepStaleSandboxes carries `young` through so the caller need not re-scan', () => {
+    const fresh = makeDir(`${SANDBOX_PREFIX}beef0002-5555`, 30_000);
+    const { young } = sweepStaleSandboxes(tmp, { now: NOW });
+    assert.ok(young.some((h) => h.dir === fresh));
+    assert.equal(fs.existsSync(fresh), true, 'a young husk must survive the sweep');
   });
 
   it('sweepStaleSandboxes actually removes what it reports (not a vacuous green)', () => {

@@ -199,12 +199,45 @@ refused explicitly rather than left to `typeof`.
 **Manifest identity between the two checkouts is not proof the MAIN checkout's
 own `node_modules` still reflects its OWN lockfile** (finding 2ec7f704,
 2026-08-20) — e.g. a developer edited `package-lock.json` locally and never
-re-ran `npm install`. A full conformance check costs exactly what linking
-exists to avoid, so `provisionNodeModules` adds one cheap mtime heuristic
-instead of a proof: if the main checkout's `package-lock.json` is newer than
-its `node_modules` directory, that installs rather than links. False negatives
-remain (an unrelated touch can bump either mtime) — this narrows the exposure,
-it does not close it.
+re-ran `npm install`. `provisionNodeModules` answers that with
+[`lib/installed-tree-identity.mjs`](../../scripts/lib/installed-tree-identity.mjs),
+which compares the root lockfile against **npm's own hidden lockfile**,
+`node_modules/.package-lock.json` — the record npm writes at the end of every
+install describing the tree that is actually on disk. Both directions are
+checked (nothing installed that the lockfile does not pin; nothing required by
+the lockfile that is not installed), optional deps npm skipped for this platform
+are not staleness, and every ambiguous input installs. ~1ms for this repo's
+455/410-entry pair.
+
+> **It replaced an mtime heuristic that was wrong in the healthy case**
+> (2026-08-30). The old rule was "`package-lock.json` newer than the
+> `node_modules` directory ⇒ possible stale install". But `npm install` writes
+> the lockfile **last**, and a directory's mtime only moves when a *top-level*
+> entry is added or removed — so on a tree `npm install` had just called *"up to
+> date in 6s"* the lockfile was 2 minutes newer and the oracle read STALE.
+> Measured: lockfile 13:24:07, `node_modules/` 13:22:07, verdict STALE. It then
+> read FRESH on the same tree with the lockfile **18 days older**, because
+> something unrelated created `node_modules/.cache` and bumped the directory.
+> Same tree, opposite verdicts, decided by an unrelated event. On 2026-08-30 it
+> landed on STALE, forced an `npm ci` that then failed, and blocked a push.
+> Pinned in [`tests/prepush-installed-tree-identity.test.mjs`](../../tests/prepush-installed-tree-identity.test.mjs).
+
+**A failed `npm ci` keeps its evidence.** Its output is captured rather than
+inherited: on failure the last 30 lines print next to the `✗`, the full
+transcript is written to `<sandbox>/.prepush-npm-ci.log`, and **the sandbox is
+not deleted** (a later push sweeps it once it is 6h old; `git worktree remove
+--force <path>` removes it now). A failing `npm run check` — the ordinary red
+push — does *not* preserve anything. Inheriting stdio looked more transparent
+and was the opposite: on 2026-08-30 the operator saw no npm error at all, and
+npm's own debug log had already been rotated out by `logs-max` (default 10) by
+the time anyone looked.
+
+**npm exiting 0 is not evidence the install finished.** The same rule the
+cleanup module encodes for `git worktree remove`. npm writes `.bin/` and the
+hidden lockfile last; the 2026-08-30 sandbox held 234 of the expected 236
+top-level entries and was missing exactly those two — which is how we know it
+died at finalisation rather than being externally killed. `provisionNodeModules`
+now stats the hidden lockfile after `npm ci` and fails if it is absent.
 
 > **A worktree push now links, like any other.** Until 2026-08-11 this section
 > said to *expect `installed` every time* in a worktree and called it "not a bug

@@ -103,6 +103,29 @@ export function removeSandboxDir(dir) {
  * @returns {string[]} absolute paths
  */
 export function findStaleSandboxes(tmpDir, opts = {}) {
+  return surveySandboxes(tmpDir, opts).stale;
+}
+
+/**
+ * Split the sandbox husks in `tmpDir` into those old enough to sweep and those
+ * deliberately left alone.
+ *
+ * `young` exists because SILENCE IS AMBIGUOUS (2026-08-30). The runner logged a
+ * line only when it swept something, so "swept nothing because %TEMP% is clean"
+ * and "swept nothing because every husk is younger than the six-hour threshold"
+ * printed identically. A failing push with three husks on disk and no sweep line
+ * read as a broken sweeper; measured afterwards, the oldest was 3h old and the
+ * sweep had been exactly right. An unasked question must never render as an
+ * empty result — so the caller can now say which of the two it is.
+ *
+ * @param {string} tmpDir
+ * @param {object} [opts]
+ * @param {number} [opts.now] - injectable clock, so the age rule is testable
+ * @param {number} [opts.maxAgeMs]
+ * @param {string} [opts.prefix]
+ * @returns {{stale: string[], young: Array<{dir: string, ageMs: number}>}}
+ */
+export function surveySandboxes(tmpDir, opts = {}) {
   const {
     now = Date.now(),
     maxAgeMs = STALE_SANDBOX_AGE_MS,
@@ -113,10 +136,11 @@ export function findStaleSandboxes(tmpDir, opts = {}) {
   try {
     entries = fs.readdirSync(tmpDir, { withFileTypes: true });
   } catch {
-    return []; // unreadable temp dir is not this gate's problem
+    return { stale: [], young: [] }; // unreadable temp dir is not this gate's problem
   }
 
   const stale = [];
+  const young = [];
   for (const entry of entries) {
     // Prefix-scoped on purpose: %TEMP% is shared with every other tool on the
     // machine, and with this repo's own test fixtures (ces-db-test-*,
@@ -124,27 +148,32 @@ export function findStaleSandboxes(tmpDir, opts = {}) {
     if (!entry.isDirectory() || !entry.name.startsWith(prefix)) continue;
     const abs = path.join(tmpDir, entry.name);
     try {
-      if (now - fs.statSync(abs).mtimeMs >= maxAgeMs) stale.push(abs);
+      const ageMs = now - fs.statSync(abs).mtimeMs;
+      if (ageMs >= maxAgeMs) stale.push(abs);
+      else young.push({ dir: abs, ageMs });
     } catch {
       // Vanished or unstattable between readdir and stat — nothing to do.
     }
   }
-  return stale;
+  return { stale, young };
 }
 
 /**
  * Remove every stale husk in `tmpDir`. Never throws.
  *
  * @param {string} tmpDir
- * @param {object} [opts] - forwarded to findStaleSandboxes
- * @returns {{swept: string[], failed: string[]}}
+ * @param {object} [opts] - forwarded to surveySandboxes
+ * @returns {{swept: string[], failed: string[], young: Array<{dir: string, ageMs: number}>}}
+ *   `young` is what was seen and deliberately NOT swept — see
+ *   {@link surveySandboxes} for why reporting it matters.
  */
 export function sweepStaleSandboxes(tmpDir, opts = {}) {
+  const { stale, young } = surveySandboxes(tmpDir, opts);
   const swept = [];
   const failed = [];
-  for (const dir of findStaleSandboxes(tmpDir, opts)) {
+  for (const dir of stale) {
     if (removeSandboxDir(dir).removed) swept.push(dir);
     else failed.push(dir);
   }
-  return { swept, failed };
+  return { swept, failed, young };
 }
