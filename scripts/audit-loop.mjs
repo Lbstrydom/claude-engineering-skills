@@ -20,6 +20,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildAuditTranscript, readRoundResult } from './lib/audit/transcript.mjs';
+import { isClaudeAvailable } from './lib/anthropic-client.mjs';
 import { archiveTranscript, formatArchiveOutcome, isArchiveFailure } from './lib/audit/transcript-archive.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
@@ -459,7 +460,10 @@ async function main() {
   // Step 7 — Gemini Final Review (MANDATORY unless skipped)
   if (!args.skipGemini) {
     const hasGemini = !!process.env.GEMINI_API_KEY;
-    const hasClaude = !!process.env.ANTHROPIC_API_KEY;
+    // ROUTE, not key: on an Azure work profile Claude is reachable through the
+    // tenant's own endpoint with no ANTHROPIC_API_KEY set, and gating the
+    // MANDATORY final review on the public var skipped it outright there.
+    const hasClaude = isClaudeAvailable();
 
     if (hasGemini || hasClaude) {
       banner('STEP 7 — Final Review (Gemini/Claude Opus)');

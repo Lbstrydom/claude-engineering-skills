@@ -321,7 +321,9 @@ describe('buildShadowClient pins backend:sdk — a conversational backend silent
     const body = fn.slice(0, fn.indexOf('\n}'));
     assert.match(
       body,
-      /return createAnthropicClient\(\{\s*backend:\s*'sdk'\s*\}\)/,
+      // `backend:'sdk'` as an OPTION, not the sole option — the call also pins
+      // `azureRoute: null` since 2026-08-30 (asserted in shadow-gateway-provider).
+      /return createAnthropicClient\(\{[^)]*backend:\s*'sdk'/,
       'the claude-opus shadow branch must pin backend:sdk — a bare createAnthropicClient() '
       + 'inherits CLAUDE_BACKEND=cli and returns markdown prose, which drops every observation',
     );

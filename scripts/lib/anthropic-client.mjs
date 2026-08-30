@@ -45,6 +45,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { resolveClaudeRouteFromEnv } from './azure-claude-route.mjs';
 
 /** Short, non-reversible token for cache keys — never store raw key material. */
 function keyDigest(k) {
@@ -185,7 +186,15 @@ export function isClaudeAvailable() {
   // is the only part the chain cannot supply for us, so it is the availability
   // signal; credentials themselves surface at call time via the AWS SDK.
   if (backend === 'bedrock') return Boolean(resolveAwsRegion());
-  return Boolean(process.env.ANTHROPIC_API_KEY);
+  // A ROUTE, not a public env var. An Azure work profile reaches Claude through
+  // its own endpoint and credential and never sets ANTHROPIC_API_KEY, so the
+  // key test alone reported a fully-working backend as unavailable — the
+  // fourth instance of the availability-gate class AGENTS.md records, and the
+  // one that made every `if (process.env.ANTHROPIC_API_KEY)` call site skip
+  // itself silently on a corporate tenant. Measured in consumer `storyline`
+  // 2026-08-30: azureConfig.active true, live APIM Claude call succeeding, and
+  // this function returning false.
+  return Boolean(process.env.ANTHROPIC_API_KEY) || Boolean(resolveClaudeRouteFromEnv());
 }
 
 /**
@@ -309,6 +318,11 @@ function reconcileBackendWithBaseUrl(backend, baseURL, backendWasExplicit) {
  *   pins the endpoint, the credential and the auth header together, so the
  *   APIM subscription key can never be sent to the direct Foundry host (or
  *   vice versa). Overrides `options.baseURL`.
+ *
+ *   OMITTED → the environment's own route is adopted when the Azure work
+ *   profile is active (sdk backend, no explicit baseURL/apiKey), and nothing
+ *   changes off Azure. Pass `azureRoute: null` to opt out explicitly and target
+ *   public api.anthropic.com even on an Azure machine.
  * @param {string} [options.claudeBin] - Override `CLAUDE_BIN` (cli backend only)
  * @param {number} [options.timeoutMs] - Per-call default subprocess timeout (cli backend)
  * @param {((text: string) => string)|null} [options.redactor] - Egress redactor.
@@ -337,7 +351,35 @@ export async function createAnthropicClient(options = {}) {
   // the three belong to one service and are never separately overridable. Absent,
   // we fall back to the legacy `options.baseURL` + env-sniff below, which is what
   // every pre-2026-08-13 caller relied on.
-  const azureRoute = options.azureRoute || null;
+  // An OMITTED `azureRoute` adopts the environment's own route when the Azure
+  // work profile is active; `azureRoute: null` is the explicit opt-out that
+  // says "public api.anthropic.com, deliberately".
+  //
+  // Why the default flipped (2026-08-30, upstream report 7af14dd6's follow-up).
+  // Requiring every call site to pass the route made correctness a property of
+  // 30-odd call sites instead of this seam, and it failed exactly as that
+  // predicts: five separate fixes patched individual sites while new bare calls
+  // kept appearing. Measured in consumer `storyline` (a corporate Azure tenant)
+  // on 2026-08-30, a bare call did one of two things, neither of them "target
+  // public Anthropic on purpose":
+  //   - on a machine carrying a personal key in ~/.audit-loop.env, it sent
+  //     CORPORATE source to api.anthropic.com on that PERSONAL credential;
+  //   - on a machine without one, it threw `ANTHROPIC_API_KEY required` while a
+  //     working APIM Claude route sat unused in the same process.
+  // Auto-adoption is inert off Azure: `resolveClaudeRouteFromEnv()` returns null
+  // unless AZURE_OPENAI_ENDPOINT is set, so the public path is byte-identical
+  // (AGENTS.md "Opt-in invariant").
+  //
+  // Restricted to the `sdk` backend on purpose: `cli` spawns `claude -p` against
+  // Anthropic's own service and `bedrock` speaks AWS, and neither can honour a
+  // baseURL — auto-adopting there would coerce or throw rather than route.
+  const routeWasGiven = Object.prototype.hasOwnProperty.call(options, 'azureRoute');
+  const candidateBackend = options.backend || resolveBackend();
+  const azureRoute = routeWasGiven
+    ? (options.azureRoute || null)
+    : ((candidateBackend === 'sdk' && !options.baseURL && !options.apiKey)
+      ? resolveClaudeRouteFromEnv()
+      : null);
   const effectiveBaseURL = normalizeBaseUrl(
     azureRoute?.baseUrl || options.baseURL || process.env.ANTHROPIC_BASE_URL || '',
   );
@@ -354,7 +396,13 @@ export async function createAnthropicClient(options = {}) {
   // When targeting an Azure/Foundry endpoint, the Azure key MUST win over a
   // stray public ANTHROPIC_API_KEY — otherwise we'd send the public key to the
   // corporate endpoint. An explicit options.apiKey still overrides everything.
-  const effectiveApiKey = options.apiKey || (effectiveBaseURL ? azureKey : '') || process.env.ANTHROPIC_API_KEY || '';
+  // With a resolved route, ANTHROPIC_API_KEY is UNREACHABLE — not merely
+  // outranked. An independent post-condition on the 2026-08-13 rule that an
+  // endpoint and its credential are one unit: no env state may put the public
+  // key on a corporate host. Without a route the legacy precedence is exact.
+  const effectiveApiKey = azureRoute
+    ? (options.apiKey || azureKey || '')
+    : (options.apiKey || (effectiveBaseURL ? azureKey : '') || process.env.ANTHROPIC_API_KEY || '');
   // `bearer` reproduces the legacy behaviour exactly, so a caller that passes no
   // route (or a foundry route) emits a byte-identical request to today's.
   const azureAuthMode = azureRoute?.authMode || 'bearer';

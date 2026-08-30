@@ -276,6 +276,51 @@ embedding routing changed 2026-08-12, see below):
   Sonnet: Haiku here is 10K TPM / 10 RPM vs Sonnet's 200K / 200, and `arch:refresh`
   is a hundreds-of-calls batch where Azure quota — not per-token cost — binds.
 
+## Which Claude a bare `createAnthropicClient()` reaches
+
+**Since 2026-08-30 an omitted `azureRoute` adopts the tenant's route.** On an
+active profile a bare `await createAnthropicClient()` targets
+`azureConfig.claudeRoute` — the endpoint, the credential and the header that
+carries it, resolved together. Off Azure nothing changes: the resolver keys on
+`AZURE_OPENAI_ENDPOINT`, so the public path is byte-identical (the opt-in
+invariant). `isClaudeAvailable()` follows the same route, so a call site gated
+on it no longer skips itself on a tenant that has no `ANTHROPIC_API_KEY`.
+
+**Why the default flipped.** Requiring every call site to pass the route made
+correctness a property of ~30 call sites rather than of the seam, and it failed
+exactly as that predicts — five separate fixes patched individual sites while
+new bare calls kept appearing (upstream report `7af14dd6` asked for the sweep).
+Measured in a corporate consumer on 2026-08-30, with `azureConfig.active` true
+and a live APIM Claude call succeeding in 1.4 s, a bare call did one of two
+things depending only on whose machine it ran on:
+
+| machine | bare `createAnthropicClient()` |
+|---|---|
+| carries a personal key in `~/.audit-loop.env` | **corporate source → `api.anthropic.com` on that personal credential** |
+| no personal key (the real corporate machine) | throws `ANTHROPIC_API_KEY required`, beside an unused working route |
+
+Neither is "target public Anthropic on purpose", which is why the default is
+adoption rather than a lint.
+
+**The opt-out is `azureRoute: null`,** and it belongs anywhere a provider id
+*means* the public service rather than "whatever Claude this machine has":
+`gemini-review.mjs`'s `claude-opus` provider and its shadow arm (distinct ids
+from `azure-claude`, and the shadow's cost note says it bills
+`ANTHROPIC_API_KEY`), and `model-eval/provider-adapter.mjs`'s non-azure branch.
+Omitting it there would make an A/B silently compare a provider with itself and
+read as agreement.
+
+**With a route resolved, `ANTHROPIC_API_KEY` is unreachable** — not merely
+outranked. That is the independent post-condition on the 2026-08-13 rule that an
+endpoint and its credential are one unit: no environment state may put the
+public key on a corporate host.
+
+Guarded by [`tests/anthropic-azure-route-default.test.mjs`](../../tests/anthropic-azure-route-default.test.mjs),
+which asserts on the **emitted request** (URL + headers as the installed SDK
+sends them) and pins the three directions a naive "make Azure work" fix breaks:
+the public path unchanged, the `azureRoute: null` opt-out, and `cli`/`bedrock`
+left uncoerced.
+
 ## Provider precedence (final reviewer)
 
 Deterministic, top wins:

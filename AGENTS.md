@@ -888,19 +888,26 @@ stay logical sentinels (dodges the `gpt-5.3 → latest-gpt` remap footgun);
 
 **Load-bearing gotchas** (the operational depth is in the guide):
 - **An availability gate must ask whether a ROUTE exists, not whether a public
-  env var is set** — third instance fixed 2026-08-13. Routing a call site
-  through the Azure-aware seam does nothing if an `if (!process.env.OPENAI_API_KEY)`
-  guard upstream returns first: the Azure branch becomes unreachable, dead code
-  on exactly the installs it was written for. `openai-audit.mjs` (`!azureConfig.active
-  && !OPENAI_API_KEY`) and `check-setup.mjs` were fixed at their gates; /brainstorm
-  was not, and was unusable on an Azure-only consumer for a month while its adapter
-  was already Azure-aware. The envelope tell is a **failure with zero latency** —
-  nothing was called. So: **when you move a call site onto the seam, grep the whole
-  path it takes for the public key name**, and let ONE oracle own the answer
-  (`lib/brainstorm/provider-availability.mjs`) — the two brainstorm dispatch sites
-  each carried their own copy of the test, so fixing one would have left the other
-  wrong. Tests that spawn such a CLI must scrub `AZURE_*` explicitly, or they pass
-  or spend by whose machine they run on. **A profile-dependent DEFAULT is the other
+  env var is set** — fourth instance fixed 2026-08-30. An
+  `if (!process.env.OPENAI_API_KEY)` guard upstream of an Azure-aware seam makes
+  the Azure branch unreachable — dead code on exactly the installs it was written
+  for; the envelope tell is a **failure with zero latency**, nothing was called.
+  So **grep the whole path a call site takes for the public key name**, and let
+  ONE oracle own the answer (`lib/brainstorm/provider-availability.mjs` — two
+  dispatch sites each held their own copy, so fixing one left the other wrong).
+  **`isClaudeAvailable()`, never `ANTHROPIC_API_KEY`** — a tenant sets no such
+  key, so the raw test read a working backend as absent and three call sites
+  skipped themselves silently. **An OMITTED `azureRoute` now ADOPTS the tenant's
+  route** (`resolveClaudeRouteFromEnv`, the pure module `anthropic-client` reads
+  without importing `config.mjs`): correctness moved off ~30 call sites onto the
+  seam after five per-site patches failed to hold. Measured in a corporate
+  consumer, a bare call sent **corporate source to public Anthropic on a personal
+  key** from `~/.audit-loop.env`, or threw, beside an unused working route. Pass
+  **`azureRoute: null`** where an id *means* the public service (`claude-opus` vs
+  `azure-claude`) — omitting it makes an A/B compare a provider with itself.
+  Tests that spawn such a CLI must scrub `AZURE_*`
+  explicitly, or they pass or spend by whose machine they run on. **A
+  profile-dependent DEFAULT is the other
   half**: /brainstorm's default is "two voices", and which two is a property of the
   profile (`defaultProviders()` — `openai,gemini` public, `openai,azure-claude` on
   Azure, since no Gemini exists in a tenant), never a constant. Adding a voice means

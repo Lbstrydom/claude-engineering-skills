@@ -405,16 +405,34 @@ describe('Anthropic reviewer transports pin the sdk backend', () => {
   // needs a real CLI spawn and a 50K-token payload.
   const SRC = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
 
+  // `backend: 'sdk'` as an OPTION, not as the sole option: since 2026-08-30
+  // both sites also pass `azureRoute: null`, pinned separately below. Requiring
+  // the exact two-character call shape would make every future option a false
+  // failure while proving nothing extra.
+  const PINS_SDK = /createAnthropicClient\(\{[^)]*backend:\s*'sdk'/;
+
   it('the shadow builder pins backend sdk', () => {
     const fn = SRC.slice(SRC.indexOf('async function buildShadowClient'));
-    assert.match(fn.slice(0, fn.indexOf('\n}\n')), /createAnthropicClient\(\{\s*backend:\s*'sdk'\s*\}\)/);
+    assert.match(fn.slice(0, fn.indexOf('\n}\n')), PINS_SDK);
   });
 
   it('the PRIMARY claude-opus provider pins backend sdk — never the ambient env', () => {
     const block = SRC.slice(SRC.indexOf("'claude-opus': {"));
     const body = block.slice(0, block.indexOf("'azure-claude': {"));
-    assert.match(body, /createAnthropicClient\(\{\s*backend:\s*'sdk'\s*\}\)/);
+    assert.match(body, PINS_SDK);
     assert.doesNotMatch(body, /createAnthropicClient\(\s*\)/, 'ambient-backend construction reintroduced');
+  });
+
+  it('both Anthropic arms pin azureRoute:null — they MEAN the public service', () => {
+    // `claude-opus` is a different provider id from `azure-claude`, and the
+    // shadow's cost note says it bills ANTHROPIC_API_KEY. Since an OMITTED
+    // route now adopts the tenant's Azure Claude, dropping this pin would make
+    // both arms silently become `azure-claude` on any Azure machine — the A/B
+    // would then compare a provider against itself and read as agreement.
+    const shadow = SRC.slice(SRC.indexOf('async function buildShadowClient'));
+    assert.match(shadow.slice(0, shadow.indexOf('\n}\n')), /azureRoute:\s*null/);
+    const block = SRC.slice(SRC.indexOf("'claude-opus': {"));
+    assert.match(block.slice(0, block.indexOf("'azure-claude': {")), /azureRoute:\s*null/);
   });
 });
 

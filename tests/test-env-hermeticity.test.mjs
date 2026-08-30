@@ -86,7 +86,16 @@ describe('scrubRoutingEnv — the pure contract', () => {
   });
 });
 
-describe('DRIFT GUARD: the scrub list tracks what config.mjs actually reads', () => {
+describe('DRIFT GUARD: the scrub list tracks what the config layer actually reads', () => {
+  // The census spans BOTH files since 2026-08-30: `buildClaudeRoute` moved to
+  // azure-claude-route.mjs so anthropic-client.mjs could consult it without
+  // importing config.mjs. Reading config.mjs alone would have declared
+  // AZURE_CLAUDE_ROUTE / AZURE_AI_API_KEY "no longer read" while they still
+  // steer every Claude request — a census whose SOURCE SET is narrower than the
+  // behaviour it guards reports a hole as a clean bill of health.
+  const CONFIG_SOURCES = ['scripts/lib/config.mjs', 'scripts/lib/azure-claude-route.mjs'];
+  const readConfigLayer = () => CONFIG_SOURCES
+    .map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf-8')).join('\n');
   // The recurring class this week: a hygiene list and a resolution list drift
   // apart (the anthropic beforeEach saved 3 of the 4 vars the factory reads).
   // This pin makes the drift a test failure instead of a latent hole: every
@@ -100,7 +109,7 @@ describe('DRIFT GUARD: the scrub list tracks what config.mjs actually reads', ()
   const CREDENTIAL_ALLOWLIST = new Set(['AZURE_OPENAI_API_KEY', 'AZURE_AI_API_KEY']);
 
   test('every AZURE_* var buildAzureConfig consumes is scrubbed or a documented credential', () => {
-    const src = fs.readFileSync(path.join(ROOT, 'scripts/lib/config.mjs'), 'utf-8');
+    const src = readConfigLayer();
     const consumed = new Set([...src.matchAll(/env\.(AZURE_[A-Z_]+)/g)].map((m) => m[1]));
     assert.ok(consumed.size >= 8, `sanity: expected the Azure var census to find the known set, got ${consumed.size}`);
     for (const v of consumed) {
@@ -114,12 +123,12 @@ describe('DRIFT GUARD: the scrub list tracks what config.mjs actually reads', ()
 
   test('MIRROR: nothing in the scrub list is dead weight for the Azure family', () => {
     // Every scrubbed AZURE_* var must actually be consumed somewhere in
-    // config.mjs — a stale entry hides a rename (the var would silently stop
-    // being scrubbed under its new name while the old name stays green).
-    const src = fs.readFileSync(path.join(ROOT, 'scripts/lib/config.mjs'), 'utf-8');
+    // the config layer — a stale entry hides a rename (the var would silently
+    // stop being scrubbed under its new name while the old name stays green).
+    const src = readConfigLayer();
     const consumed = new Set([...src.matchAll(/env\.(AZURE_[A-Z_]+)/g)].map((m) => m[1]));
     for (const v of SCRUBBED_ROUTING_ENV.filter((k) => k.startsWith('AZURE_'))) {
-      assert.ok(consumed.has(v), `${v} is scrubbed but config.mjs no longer reads it — renamed?`);
+      assert.ok(consumed.has(v), `${v} is scrubbed but the config layer no longer reads it — renamed?`);
     }
   });
 });

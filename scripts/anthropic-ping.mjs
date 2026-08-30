@@ -19,15 +19,20 @@
  * @module scripts/anthropic-ping
  */
 import { briefConfig } from './lib/config.mjs';
-import { createAnthropicClient, resolveBackend } from './lib/anthropic-client.mjs';
+import { createAnthropicClient, resolveBackend, isClaudeAvailable } from './lib/anthropic-client.mjs';
 
 async function main() {
   const backend = resolveBackend();
   const model = briefConfig.claudeModel;
   process.stderr.write(`[anthropic-ping] backend=${backend} model=${model}\n`);
 
-  if (backend === 'sdk' && !process.env.ANTHROPIC_API_KEY) {
-    process.stderr.write(`[anthropic-ping] sdk backend requires ANTHROPIC_API_KEY in .env\n`);
+  // ROUTE, not key. An Azure work profile reaches Claude through the tenant's
+  // own endpoint and never sets ANTHROPIC_API_KEY, so the raw-key test refused
+  // to ping a backend that works (AGENTS.md availability-gate rule).
+  if (!isClaudeAvailable()) {
+    process.stderr.write(
+      `[anthropic-ping] no Claude route: the sdk backend needs ANTHROPIC_API_KEY in .env, `
+      + `or an active Azure work profile (AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY)\n`);
     process.exit(1);
   }
 

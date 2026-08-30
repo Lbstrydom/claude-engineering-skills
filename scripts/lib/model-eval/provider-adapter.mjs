@@ -189,14 +189,17 @@ async function invokeNativeAnthropic({ route, messages, schema, signal, dials })
     if (!azureConfig.active || !azureConfig.claudeRoute) {
       throw new Error('invokeStructured: route.provider is "azure" but Azure Anthropic routing is not configured (AZURE_OPENAI_ENDPOINT unset)');
     }
-    // Explicit route — createAnthropicClient() with NO args always targets the
-    // PUBLIC api.anthropic.com; it does not auto-detect azureConfig. The route
-    // (not a bare baseURL) is what pairs the endpoint with its own credential
-    // and auth header.
+    // The route (not a bare baseURL) is what pairs the endpoint with its own
+    // credential and auth header.
     client = await createAnthropicClient({ azureRoute: azureConfig.claudeRoute });
     model = route.deploymentId;
   } else {
-    client = await createAnthropicClient();
+    // `azureRoute: null` is the EXPLICIT public opt-out. Since 2026-08-30 an
+    // OMITTED route adopts the environment's own Azure route when the work
+    // profile is active; here the caller has already chosen a non-azure route,
+    // so a bare call on an Azure machine would silently redirect a public-provider
+    // arm onto the tenant's Claude and mis-attribute the comparison.
+    client = await createAnthropicClient({ azureRoute: null });
     model = route.resolvedModel;
   }
   const jsonSchema = JSON.stringify(z.toJSONSchema(schema));
