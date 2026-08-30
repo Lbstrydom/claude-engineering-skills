@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import fs, { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { resolveEmbedProfile, azureProvenanceId, providerTag } from '../scripts/lib/embed-text.mjs';
+import { resolveEmbedProfile, azureProvenanceId, providerTag, findingEmbeddingSpace } from '../scripts/lib/embed-text.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const src = (rel) => readFileSync(path.join(repoRoot, rel), 'utf8');
@@ -116,6 +116,183 @@ describe('D2 regression: the production call sites actually use the shared resol
       'reverted to resolving the deployment locally — the split-brain bug');
   });
 
+  // ── the three finding_embeddings writers (promoted from EXEMPT 2026-08-30) ──
+  //
+  // COMPAT DECISION, recorded here because the deferral rested on the opposite
+  // premise. The gap was left open on the belief that changing the stored string
+  // would make old and new rows "stop comparing" inside semantic-suppress. It
+  // would not: NOTHING read `finding_embeddings.embedding_model`. It was written
+  // by three writers, read by no query, and the btree index on
+  // `(embedding_model, dimension)` served nothing. Every similarity read —
+  // `nearestOpenReRaise`, `getFindingEmbeddings`, the
+  // `memory_health_semantic_cluster` RPC, and this prototype's own pair
+  // queries — selected by finding_id and compared cosine across whatever models
+  // happened to be present.
+  //
+  // So the hazard ran the OTHER way: vectors from two spaces were ALREADY being
+  // compared, and the one column that could have detected it lied. And because
+  // `resolveEmbedProfile` returns `provenanceId === concreteModel` off Azure,
+  // the fix is a NO-OP on the stored string except under Azure, i.e. exactly
+  // where it was already wrong and the rows need re-embedding anyway. No
+  // backfill script, no column version, no dual-format transition: the
+  // reconciler's freshness check now includes the space, so a stale-space row
+  // is re-embedded in place on the next run.
+  const runsFindings = src('scripts/lib/store/runs-findings.mjs');
+  const suppress = src('scripts/semantic-suppress.mjs');
+  const proto = src('scripts/memory-pgvector-prototype.mjs');
+  const core = src('scripts/lib/semantic-suppression.mjs');
+
+  for (const [rel, code] of [
+    ['scripts/lib/store/runs-findings.mjs', runsFindings],
+    ['scripts/semantic-suppress.mjs', suppress],
+    ['scripts/memory-pgvector-prototype.mjs', proto],
+  ]) {
+    test(`${rel} resolves ONE space and never re-reads the Gemini default`, () => {
+      assert.match(code, /import\s*\{[^}]*findingEmbeddingSpace[^}]*\}\s*from\s*['"][^'"]*embed-text/,
+        'must resolve the space through the shared helper, not locally');
+      assert.match(code, /findingEmbeddingSpace\(/);
+      // The regression that re-opens the bug: reaching for the configured
+      // Gemini default at an embed or persist site. Comments are stripped first
+      // so the explanatory prose naming it does not satisfy its own guard.
+      const codeOnly = code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      assert.doesNotMatch(codeOnly, /symbolIndexConfig\.embed(Model|Dim)\b/,
+        'the space comes from findingEmbeddingSpace(), never from symbolIndexConfig directly');
+    });
+
+    test(`${rel} sends requestModel on the wire and persists provenanceId`, () => {
+      // The pair is the whole point and the two halves are NOT interchangeable:
+      // under Azure the API needs the bare deployment (the endpoint-qualified id
+      // 404s) while the STORED identity must be endpoint-qualified (or the same
+      // alias on two resources reads as one vector space).
+      assert.match(code, /model:\s*space\.requestModel\b/,
+        'the embedText call must send requestModel');
+      assert.match(code, /space\.provenanceId\b/,
+        'the persisted embedding_model must be provenanceId');
+      // Scoped to the embedText CALL, not to any `model:` key — the prototype
+      // legitimately carries `model: space.provenanceId` in the row accumulator
+      // it later BINDS, which is the correct half of the pair.
+      assert.doesNotMatch(code, /embedText\([^)]*model:\s*space\.provenanceId/,
+        'sending the endpoint-qualified id to the provider 404s under Azure');
+    });
+  }
+
+  test('every finding_embeddings INSERT binds provenanceId, never a request model', () => {
+    // Source-level because the bug was a WIRING divergence: the value reached
+    // the INSERT from a different resolution than the one that made the vector.
+    for (const [rel, code] of [
+      ['scripts/lib/store/runs-findings.mjs', runsFindings],
+      ['scripts/semantic-suppress.mjs', suppress],
+    ]) {
+      assert.match(code, /INSERT INTO finding_embeddings/, `${rel} still writes the table`);
+      assert.match(code, /space\.provenanceId,\s*space\.dim/,
+        `${rel}: the INSERT must bind (provenanceId, dim) as the stored identity`);
+    }
+    // The prototype binds via its per-row accumulator, so assert the accumulator
+    // is built from provenanceId rather than the request model.
+    assert.match(proto, /vec:\s*result,\s*model:\s*space\.provenanceId/);
+    assert.match(proto, /\[e\.finding_id,[\s\S]*?e\.model, e\.dim, e\.hash\]/);
+  });
+
+  test('the READ side scopes to one vector space — the half a string swap would miss', () => {
+    // Making the provenance truthful is only half the fix. Before this, every
+    // reader compared cosine across whatever models were present, which is not a
+    // similarity — and at these thresholds it DISMISSES A REAL OPEN FINDING.
+    assert.match(core, /AND e\.embedding_model = \$6::text/,
+      'nearestOpenReRaise must filter to the caller-supplied space');
+    assert.match(core, /AND e\.dimension = \$7::int/,
+      'a space is (model, dim) — the dim is not implied');
+    assert.match(core, /assertEmbeddingSpace\(embeddingSpace, 'nearestOpenReRaise'\)/,
+      'an absent space must throw, not silently fall back to an unscoped query');
+    assert.match(suppress, /embedding_model = \$2::text AND dimension = \$3::int/,
+      'the reconciler cluster read must be space-scoped too');
+  });
+
+  test('BACKFILL: freshness is (snapshot_hash, model, dim) — this is what re-embeds stale-space rows', () => {
+    // The compat strategy, mechanised. The cache check compared the text hash
+    // ALONE, so a row made in another space counted as fresh and was never
+    // re-embedded — two spaces mixed forever with no run able to clear it.
+    // Scoping the check makes the reconciler self-healing, which is why no
+    // offline backfill script exists.
+    for (const [rel, code] of [['scripts/semantic-suppress.mjs', suppress], ['scripts/memory-pgvector-prototype.mjs', proto]]) {
+      assert.match(code, /SELECT finding_id, snapshot_hash FROM finding_embeddings\s+WHERE finding_id = ANY\(\$1::uuid\[\]\) AND embedding_model = \$2::text AND dimension = \$3::int/,
+        `${rel}: the freshness query must be scoped to the current space`);
+    }
+  });
+
+  test('CENSUS 2: every finding_embeddings SIMILARITY READ is space-scoped', () => {
+    // The writer census cannot see this class at all — these files never call
+    // `embedText`, they only COMPARE what it produced. And the read side is
+    // where the damage lands: an unscoped cosine dismisses a real open finding
+    // or groups unrelated ones. Iterate the filesystem again, this time on the
+    // table name, and require every file that selects `embedding` from it to
+    // constrain `embedding_model`.
+    const READERS = new Map();
+    const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) return e.name === 'node_modules' ? [] : walk(abs);
+      return e.isFile() && e.name.endsWith('.mjs') ? [abs] : [];
+    });
+    for (const abs of walk(path.join(repoRoot, 'scripts'))) {
+      const code = readFileSync(abs, 'utf8');
+      // A similarity read: pulls the vector column out of the table. A write
+      // (INSERT/UPDATE) names the column too, so require a SELECT-ish read of
+      // `embedding` alongside the table reference.
+      if (!/FROM finding_embeddings|JOIN finding_embeddings/.test(code)) continue;
+      if (!/\be\.embedding\b|embedding::text|\bembedding IS NOT NULL/.test(code)) continue;
+      READERS.set(path.relative(repoRoot, abs).split(path.sep).join('/'), code);
+    }
+    assert.ok(READERS.size >= 4, `expected to find the known readers, found ${READERS.size}`);
+    const unscoped = [...READERS].filter(([, code]) => !/embedding_model\s*=\s*\$\d+::text/.test(code)).map(([rel]) => rel);
+    assert.deepEqual(unscoped, [],
+      `these compare finding_embeddings vectors without constraining embedding_model: ${unscoped.join(', ')}. `
+      + 'A cosine across two embedding models is not a similarity.');
+  });
+
+  test('the memory-health RPC is space-scoped too (the deferral, closed 2026-08-30)', () => {
+    // This test used to assert the OPPOSITE: it pinned the gap open so it could
+    // not go quiet, and was written to FAIL once the predicate landed. It landed
+    // (migration 20260830150000), so the assertion is inverted rather than
+    // deleted -- the RPC is the last unscoped reader and must not silently
+    // become one again.
+    //
+    // The predicate is between the two sides of the self-join (a vs b), NOT a
+    // function parameter: the RPC is CROSS-REPO and different repos legitimately
+    // sit in different spaces, so a single global model filter would be wrong for
+    // every repo but one.
+    const rpc = src('supabase/migrations/20260830150000_memory_health_cluster_vector_space.sql');
+    assert.match(rpc, /AND a\.embedding_model = b\.embedding_model/,
+      'pairs must share a model -- a cosine across two models is not a similarity');
+    assert.match(rpc, /AND a\.dimension = b\.dimension/,
+      'a space is (model, dim); the dim is not implied');
+    // CREATE OR REPLACE resets proconfig AND the ACL, so a replacement that
+    // forgets either silently drops the search_path pin or the grant.
+    assert.match(rpc, /SET search_path = pg_catalog, public/);
+    assert.match(rpc, /SET statement_timeout = '120s'/);
+    assert.match(rpc, /GRANT EXECUTE ON FUNCTION memory_health_semantic_cluster/);
+  });
+
+  test('COVERAGE follows the pair scoping, or fixing it INTRODUCES a false clean', () => {
+    // The half that is easy to miss. Pairs can only form within one space, so
+    // for a repo split across two the comparable population is the LARGEST
+    // space -- not the total embedded count. Leaving coverage as embedded/open
+    // would report ~100% over a store where half the rows can never be compared
+    // to the other half: a high-confidence GREEN derived from a halved
+    // population, which is the exact false-clean the coverage number exists to
+    // prevent. Scoping the pairs without scoping coverage is a REGRESSION.
+    const rpc = src('supabase/migrations/20260830150000_memory_health_cluster_vector_space.sql');
+    assert.match(rpc, /100\.0 \* COALESCE\(sp\.comparable_findings, 0\) \/ pop\.open_findings/,
+      'per-repo coverage_pct must divide by comparable, not embedded');
+    assert.match(rpc, /100\.0 \* total_comparable \/ total_open/,
+      'top-level coverage.pct must divide by comparable, not embedded');
+    // And the reader must ACT on it, or these are columns nothing reads -- the
+    // very defect this whole change closes.
+    const reader = src('scripts/memory-health.mjs');
+    assert.match(reader, /sem\.coverage\?\.comparable/,
+      'memory-health.mjs must read the comparable count');
+    assert.match(reader, /splitAcrossSpaces/,
+      'a coverage drop caused by a stale vector space must be distinguishable from one caused by unembedded rows');
+  });
+
   test('CENSUS: every embedText writer is enumerated above — a fourth cannot hide', () => {
     // The defect was not that a call site was wrong; it was that this list was
     // written by hand and did not know the call site existed. Iterate the side
@@ -126,6 +303,10 @@ describe('D2 regression: the production call sites actually use the shared resol
       'scripts/symbol-index/refresh.mjs',
       'scripts/symbol-index/embed.mjs',
       'scripts/security-memory/refresh-incidents.mjs',
+      // The three `finding_embeddings` writers, promoted from EXEMPT 2026-08-30.
+      'scripts/lib/store/runs-findings.mjs',
+      'scripts/semantic-suppress.mjs',
+      'scripts/memory-pgvector-prototype.mjs',
     ]);
     // Every exemption carries its reason; an unreasoned one is how a list stops
     // being a census.
@@ -136,22 +317,6 @@ describe('D2 regression: the production call sites actually use the shared resol
       // stored identity, which neighbourhood-query already does via its own guard.
       ['scripts/lib/audit/duplication-detector.mjs', 'query-side; persists no provenance'],
       ['scripts/lib/neighbourhood-query.mjs', 'query-side; persists no provenance'],
-      // KNOWN GAP, deliberately not fixed here (found by this census on
-      // 2026-08-30, while fixing the security index). These three DO persist
-      // `finding_embeddings.embedding_model`, and all three record
-      // `symbolIndexConfig.embedModel` — the configured GEMINI default — even
-      // when `embedText` routed the call to Azure. That is the same D2 defect
-      // `resolveEmbedProfile` exists to kill, in a third table.
-      //
-      // Not folded into this commit because it is not a like-for-like edit: the
-      // fix CHANGES THE STORED STRING, so existing rows and new rows would
-      // disagree, and `semantic-suppress` matches within a vector space. It
-      // needs a backfill/compat decision, not a one-line swap. Tracked as its
-      // own item; when it lands, move these three up to NAMED with real
-      // assertions rather than deleting the entry.
-      ['scripts/lib/store/runs-findings.mjs', 'KNOWN GAP: finding_embeddings provenance — needs backfill design'],
-      ['scripts/semantic-suppress.mjs', 'KNOWN GAP: finding_embeddings provenance — needs backfill design'],
-      ['scripts/memory-pgvector-prototype.mjs', 'KNOWN GAP: finding_embeddings provenance — needs backfill design'],
     ]);
     const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
       const abs = path.join(dir, e.name);

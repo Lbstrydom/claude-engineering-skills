@@ -218,6 +218,7 @@ jobs:
             tests/final-review-adjudicate.test.mjs \
             tests/graph-coverage-db.test.mjs \
             tests/mark-findings-remediation.test.mjs \
+            tests/memory-health-cluster-space.test.mjs \
             tests/on-conflict-scope-identity.test.mjs \
             tests/persist-kept-embeddings.test.mjs \
             tests/persona-outcomes-hash-backfill.test.mjs \

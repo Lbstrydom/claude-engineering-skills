@@ -690,3 +690,68 @@ cluster commit(s); no stateful teardown because nothing persists Azure state.
   chat completions. `npm run azure:doctor` exits 0 on its inactive fast path,
   which exercises none of the changed routing. Close it on the Azure-configured
   machine with `npm run azure:doctor -- --fix` + `npm run azure:limits`.
+
+### 2026-08-30 (`finding_embeddings` provenance — and the compat decision the deferral got backwards)
+
+Closes the KNOWN GAP the census opened earlier the same day: the three
+`finding_embeddings` writers persisted `symbolIndexConfig.embedModel` — the
+configured **Gemini** default — even when `embedText` routed the call to Azure.
+
+- **The stated blocker was false, and checking it changed the whole shape of the
+  fix.** The gap was deferred on the belief that changing the stored string would
+  make old and new rows "stop comparing" inside `semantic-suppress`. They would
+  not have: **nothing read the column.** `embedding_model` was written by three
+  writers, read by no query, and the btree index on `(embedding_model, dimension)`
+  served nothing. Every similarity read — `nearestOpenReRaise`,
+  `getFindingEmbeddings`, the `memory_health_semantic_cluster` RPC, and the
+  prototype's own pair queries — selected on `finding_id` and compared cosine
+  across whatever models the table happened to hold.
+- **So the hazard ran the other way.** Vectors from two spaces were *already*
+  being compared, and the one column that could have detected it lied. The
+  deferral had protected a comparison that was never happening from a divergence
+  that could not occur.
+- **No backfill was needed, for a reason worth stating.** `resolveEmbedProfile`
+  returns `provenanceId === concreteModel` off Azure, so the swap is a **no-op on
+  the stored string** everywhere except Azure — exactly where it was already
+  wrong, and where the rows must be re-embedded regardless because they were made
+  in a different space. There is no old-format/new-format transition to manage.
+- **The backfill is the freshness predicate.** The reconcilers treated a row as
+  cached when its `snapshot_hash` matched, ignoring the model, so a row from
+  another space was never re-embedded — two spaces mixed permanently, with no run
+  able to clear it. Freshness is now `(snapshot_hash, embedding_model, dimension)`,
+  which makes `semantic-suppress` self-healing: a stale-space row is re-embedded
+  in place on the next run. No migration, no offline script.
+- **Truthful provenance was only half of it.** The readers now name the space
+  they compare within: `nearestOpenReRaise` binds `(provenanceId, dim)` as SQL
+  predicates and **throws** on an absent or partial space rather than degrading
+  to an unscoped query (defaulting to "no filter" is how the original state
+  returns one caller at a time). `partitionRecordTimeReRaises` validates *before*
+  its fail-open loop, so a wiring bug fails loudly instead of suppressing nothing
+  forever while looking healthy — runtime faults fail open, wiring bugs do not.
+  `semantic-suppress`, the prototype and `getFindingEmbeddings` are scoped too.
+- **A second census, because the first could not see this class.** The writer
+  census iterates `embedText()` callers; the readers never call it. `CENSUS 2`
+  iterates the filesystem for `finding_embeddings` similarity reads and requires
+  each to constrain `embedding_model` — it finds four, all scoped.
+- **One deferral, named rather than silent.** `memory_health_semantic_cluster`
+  still joins unscoped. Deferred on **independence**, not authorship: it is a
+  metric, it suppresses nothing, and nothing in this change calls it — while
+  every reader fixed above sits on a path that drops or groups a store row.
+  Fixing it needs a migration plus an expected-schema fixture regen. A test
+  asserts the gap still exists and fails once it is closed, so it cannot go quiet.
+- **Verification**: nine source mutations (hardcoded wire model, request-model
+  persisted instead of provenance, unscoped freshness, unscoped read, silent
+  space default, dropped hook validation, unscoped work-unit clustering, and the
+  RPC gaining the predicate) each turn the suite red from a 0-failure baseline;
+  both census directions fire (a new unnamed `embedText` caller, and a NAMED
+  entry whose file is renamed away). Full suite **14336 pass / 0 fail / 31
+  skipped** (all DB-gated); `npm run check` exits 0.
+- **Live Azure verification: `unverified`** — blocked prerequisite:
+  `azureConfig.active` is `false` on this machine, so every assertion above is
+  off-Azure, where the stored string is unchanged by construction. The behaviour
+  that only appears under Azure — an endpoint-qualified `embedding_model` landing
+  in `finding_embeddings`, and old bare-name rows being re-embedded by the
+  freshness predicate — needs the Azure-configured consumer (`storyline`, APIM
+  route). Close it there with `npm run semantic-suppress -- --repo <name>`
+  (dry-run) and a `SELECT DISTINCT embedding_model, dimension FROM
+  finding_embeddings` before and after an `--apply` run.

@@ -300,11 +300,13 @@ describe('nearestOpenReRaise — the same-file filter is IN the query', () => {
   // lets one high-cosine different-file row shadow every eligible same-file
   // duplicate beneath it. Latent while the guard was inert; live once it works.
   const fakePool = () => { const rec = {}; return { rec, query: async (sql, params) => { rec.sql = sql; rec.params = params; return { rows: [] }; } }; };
+  // A `finding_embeddings` vector space is the PAIR (embedding_model, dimension).
+  const SPACE = Object.freeze({ provenanceId: 'gemini-embedding-001', dim: 768 });
 
   it('binds the candidate file set as a SQL predicate, not a post-filter', async () => {
     const { nearestOpenReRaise } = await import('../scripts/lib/semantic-suppression.mjs');
     const p = fakePool();
-    await nearestOpenReRaise({ pool: p, repoId: 'r', embedding: [1, 2], threshold: 0.9, sameFileScope: ['scripts/a.mjs'] });
+    await nearestOpenReRaise({ pool: p, repoId: 'r', embedding: [1, 2], threshold: 0.9, sameFileScope: ['scripts/a.mjs'], embeddingSpace: SPACE });
     assert.match(p.rec.sql, /f\.primary_file = ANY\(\$5::text\[\]\)/);
     assert.deepEqual(p.rec.params[4], ['scripts/a.mjs'], 'a PLAIN array — pgArray() is for the write builders, not a raw WHERE');
   });
@@ -312,15 +314,62 @@ describe('nearestOpenReRaise — the same-file filter is IN the query', () => {
   it('unscoped is byte-identical to the pre-change behaviour (param null)', async () => {
     const { nearestOpenReRaise } = await import('../scripts/lib/semantic-suppression.mjs');
     const p = fakePool();
-    await nearestOpenReRaise({ pool: p, repoId: 'r', embedding: [1, 2], threshold: 0.9 });
+    await nearestOpenReRaise({ pool: p, repoId: 'r', embedding: [1, 2], threshold: 0.9, embeddingSpace: SPACE });
     assert.equal(p.rec.params[4], null, 'requireSameFile:false must not gain a constraint');
   });
 
   it('an EMPTY scope short-circuits without querying, never matching on an empty array', async () => {
     const { nearestOpenReRaise } = await import('../scripts/lib/semantic-suppression.mjs');
     const p = fakePool();
-    assert.equal(await nearestOpenReRaise({ pool: p, repoId: 'r', embedding: [1, 2], threshold: 0.9, sameFileScope: [] }), null);
+    assert.equal(await nearestOpenReRaise({ pool: p, repoId: 'r', embedding: [1, 2], threshold: 0.9, sameFileScope: [], embeddingSpace: SPACE }), null);
     assert.equal(p.rec.sql, undefined, 'no query issued for an unresolvable candidate');
+  });
+});
+
+describe('nearestOpenReRaise — the vector SPACE is in the query too (2026-08-30)', () => {
+  // Before this, `embedding_model` was written by three writers and read by NO
+  // query: every similarity read compared cosine across whatever models the
+  // table happened to hold. That is not a similarity, and at these thresholds it
+  // DISMISSES A REAL OPEN FINDING. It stayed invisible because all three writers
+  // hard-coded the same Gemini default even when embedText routed to Azure — the
+  // vectors changed space and the label did not.
+  const fakePool = () => { const rec = {}; return { rec, query: async (sql, params) => { rec.sql = sql; rec.params = params; return { rows: [] }; } }; };
+  const SPACE = Object.freeze({ provenanceId: 'https://contoso.openai.azure.com::text-embedding-3-large', dim: 768 });
+
+  it('binds (provenanceId, dim) as SQL predicates, so two spaces cannot be compared', async () => {
+    const { nearestOpenReRaise } = await import('../scripts/lib/semantic-suppression.mjs');
+    const p = fakePool();
+    await nearestOpenReRaise({ pool: p, repoId: 'r', embedding: [1, 2], threshold: 0.9, embeddingSpace: SPACE });
+    assert.match(p.rec.sql, /e\.embedding_model = \$6::text/);
+    assert.match(p.rec.sql, /e\.dimension = \$7::int/);
+    assert.equal(p.rec.params[5], SPACE.provenanceId);
+    assert.equal(p.rec.params[6], 768);
+  });
+
+  it('the endpoint-qualified id is bound VERBATIM — never normalised to the bare alias', async () => {
+    // The whole point of the qualified form (H8): the same deployment alias on
+    // two Azure resources must not read as one vector space. A reader that
+    // trimmed the origin would silently re-merge them.
+    const { nearestOpenReRaise } = await import('../scripts/lib/semantic-suppression.mjs');
+    const p = fakePool();
+    await nearestOpenReRaise({ pool: p, repoId: 'r', embedding: [1, 2], threshold: 0.9, embeddingSpace: SPACE });
+    assert.ok(String(p.rec.params[5]).startsWith('https://'), 'the origin must survive into the predicate');
+  });
+
+  it('an ABSENT or PARTIAL space THROWS — it never degrades to an unscoped query', async () => {
+    // The direction that must not fire silently. Defaulting to "no filter" would
+    // re-create the unscoped comparison one caller at a time, and the query would
+    // still return rows — a green, wrong result. Cover the partial cases too: a
+    // space missing its dim is not a space.
+    const { nearestOpenReRaise } = await import('../scripts/lib/semantic-suppression.mjs');
+    for (const bad of [undefined, null, {}, { provenanceId: 'm' }, { dim: 768 }, { provenanceId: '', dim: 768 }, { provenanceId: 'm', dim: 0 }]) {
+      const p = fakePool();
+      await assert.rejects(
+        () => nearestOpenReRaise({ pool: p, repoId: 'r', embedding: [1, 2], threshold: 0.9, embeddingSpace: bad }),
+        (err) => /embeddingSpace .*is required/.test(err.message),
+        `embeddingSpace=${JSON.stringify(bad)} must throw`);
+      assert.equal(p.rec.sql, undefined, 'and must not have issued a query first');
+    }
   });
 });
 

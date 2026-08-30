@@ -25,6 +25,7 @@ import {
 } from './lib/consumer-repos.mjs';
 import {
   writeManifest, detectOwnershipRegression, getGitMeta, buildConsumerManifest, listDirtyPaths,
+  findUndeliveredEntries,
 } from './lib/sync-manifest.mjs';
 import { collectImportClosure } from './lib/module-graph.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
@@ -35,6 +36,7 @@ import { classifyOwnership, describeEvidence } from './lib/sync-ownership.mjs';
 import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mjs';
 import {
   BASE_STATE, ACTION, classifyAgainstBase, decideAction, describeReason, readVcsState,
+  eolInsensitiveEqual,
   isSyncBookkeeping,
 } from './lib/sync-divergence.mjs';
 import {
@@ -1304,6 +1306,10 @@ async function main() {
     }
 
     let repoNew = 0, repoUpdated = 0, repoUnchanged = 0, repoErrors = 0;
+    // Counted, not silent: a non-zero value means two checkouts of this repo
+    // disagree on line endings, which is worth knowing even though the sync now
+    // absorbs it. Silence would hide the condition that used to block a target.
+    let repoEolOnly = 0;
     let repoRemaps = 0, repoRewrites = 0, repoGcDeletions = 0;
     // Receipt inputs. Collected as we go so the committed trace describes what
     // this run ACTUALLY did, not what it set out to do.
@@ -1829,6 +1835,36 @@ async function main() {
         continue;
       }
 
+      // Same content, different line endings ⇒ still nothing to do.
+      //
+      // The sync copies WORKING-TREE bytes, and two checkouts of one commit do
+      // not agree on those: measured 2026-08-30, this repo's linked worktree
+      // held `.claude/hooks/bash-grep-nudge.mjs` with CRLF (2,222 bytes) while
+      // its main checkout held LF (2,155) — `.gitattributes` pins `eol=lf` and
+      // git calls BOTH clean. So whichever checkout last synced a consumer set
+      // that consumer's line endings, and the next sync from the other checkout
+      // read the difference as consumer content.
+      //
+      // With teeth: those files are TRACKED in the consumer, so the classifier
+      // fails closed to REFUSE, the whole target exits 1, and the refusal
+      // carries the stale base forward — self-perpetuating. Four files blocked
+      // a consumer's entire bundle over a difference no human made. AGENTS.md
+      // names the tell exactly: git says clean and the tool says changed, so
+      // the tool is comparing the wrong thing.
+      //
+      // Placed HERE rather than inside `classifyAgainstBase` deliberately: the
+      // manifest must keep hashing exact disk bytes, because there the hash is
+      // a transfer-integrity contract (`sync-isolation-verify` gate 2B). This
+      // folds EOL for one question only — is there anything to write? — and a
+      // file that reaches this branch gets its manifest entry refreshed from
+      // disk below, which is what lets a consumer stuck in the refusal loop
+      // settle instead of diverging for ever.
+      if (dstExists && eolInsensitiveEqual(outContent, fs.readFileSync(dstPath))) {
+        repoUnchanged++; totalUnchanged++;
+        repoEolOnly++;
+        continue;
+      }
+
       // ── Consumer-divergence gate ────────────────────────────────────────
       //
       // Everything above this point asked only "is this destination OURS?".
@@ -2008,6 +2044,10 @@ async function main() {
     // aborts the WHOLE target, so the consumer silently stops receiving every
     // future update. A failure here is therefore a failed sync, not a warning.
     let manifestWritten = false;
+    // Declared outside the try so the post-condition below can read the map
+    // that was actually written, rather than re-deriving it from the manifest
+    // on disk — re-reading would test the file parser, not the delivery.
+    let consumerFileMapForCheck = {};
     if (!DRY_RUN) {
       try {
         // For consumer-side: compute hashes of the actual DESTINATION files
@@ -2044,7 +2084,19 @@ async function main() {
           if (notWrittenByUs.has(dstRel)) {
             const carried = priorFiles[dstRel]
               ?? (priorLayout === 'legacy' ? priorFiles[intendedWrites.get(dstRel)] : undefined);
-            if (carried) consumerFileMap[dstRel] = carried;
+            // …but only while the file is still THERE. Carrying a base for a
+            // destination that is absent makes the manifest assert delivery of
+            // something the consumer does not have, and the manifest is the
+            // record every later reader trusts. Reachable through the HOLD
+            // branch specifically: `matchOverride` fires before any disk test,
+            // so an override on a path the consumer has since deleted would
+            // carry a stale base forward for ever. (REFUSE cannot reach it —
+            // a refusal requires a diverged disk hash, which requires the file.)
+            // Omitting is also operationally free: with no base,
+            // `classifyAgainstBase` returns NO_BASE, which is the same WRITE
+            // decision an absent file already produces.
+            const stillThere = fs.existsSync(path.join(repo.path, dstRel));
+            if (carried && stillThere) consumerFileMap[dstRel] = carried;
             continue;
           }
           const abs = path.join(repo.path, dstRel);
@@ -2070,6 +2122,7 @@ async function main() {
         });
         atomicWriteFileSync(priorManifestPath, JSON.stringify(consumerManifest, null, 2) + '\n');
         manifestWritten = true;
+        consumerFileMapForCheck = consumerFileMap;
         // High-water mark for rollback detection (see the check at read time).
         // Written only after the manifest actually landed, so it never claims
         // ownership of a record that does not exist. A failure here degrades
@@ -2089,6 +2142,38 @@ async function main() {
         console.log(`  ${R}manifest write FAILED${X}: ${err.message?.slice(0, 120)}`);
         console.log(`    ${D}files were written but are now unowned; the in-progress journal is`);
         console.log(`    kept so the next run adopts them. Re-run sync to reconcile.${X}`);
+        repoErrors++; totalErrors++;
+      }
+    }
+
+    // ── Post-condition: the manifest must describe what is ON DISK ────────
+    //
+    // Everything above reports what this run DID. This asks the different
+    // question — what the consumer now HAS — because the two drift apart
+    // between runs and only one direction was ever checked (the mirror image,
+    // a file on disk the manifest lost, is re-adopted by content above).
+    // See `findUndeliveredEntries` for the measured incident.
+    //
+    // Counted as a target error so the exit code carries it: a sync that ends
+    // with the consumer missing files this repo believes it delivered has not
+    // succeeded, and `Errors: 0` over that state is the false-green this
+    // check exists to remove. It does NOT re-write them — the next sync
+    // already re-delivers an absent destination as `new`, and the one case
+    // where it would not be a re-delivery is a file the consumer deleted
+    // deliberately (the same reason GC only ADVISES on an orphaned tracked
+    // path).
+    if (!DRY_RUN && manifestWritten) {
+      const undelivered = findUndeliveredEntries(consumerFileMapForCheck, {
+        exists: (rel) => fs.existsSync(path.join(repo.path, rel)),
+      });
+      if (undelivered.length) {
+        console.log(`  ${R}UNDELIVERED${X} ${undelivered.length} file(s) the manifest claims are NOT on disk:`);
+        for (const rel of undelivered.slice(0, 20)) console.log(`    ${R}absent${X}  ${rel}`);
+        if (undelivered.length > 20) console.log(`    ${D}... ${undelivered.length - 20} more${X}`);
+        console.log(`    ${D}This consumer is missing content this sync recorded as delivered.${X}`);
+        console.log(`    ${D}Most likely something removed them after the write (they arrive UNTRACKED${X}`);
+        console.log(`    ${D}in a consumer that tracks the destination). Re-run the sync to re-deliver;${X}`);
+        console.log(`    ${D}if it recurs, find what is deleting them before trusting any later sync.${X}`);
         repoErrors++; totalErrors++;
       }
     }
@@ -2214,6 +2299,10 @@ async function main() {
     if (repoRewrites > 0) parts.push(`${D}${repoRewrites} rewritten${X}`);
     if (repoGcDeletions > 0) parts.push(`${D}${repoGcDeletions} gc-deleted${X}`);
     if (receiptOverridesHeld.length > 0) parts.push(`${D}${receiptOverridesHeld.length} held${X}`);
+    // Reported, never silent. It is not an error — the sync absorbs it — but a
+    // non-zero count means two checkouts of THIS repo disagree on line endings,
+    // and that is the condition that used to block a whole target.
+    if (repoEolOnly > 0) parts.push(`${D}${repoEolOnly} eol-only${X}`);
     if (divergenceRefusals.length > 0) parts.push(`${R}${divergenceRefusals.length} diverged${X}`);
     if (repoErrors > 0) parts.push(`${R}${repoErrors} errors${X}`);
     console.log(`  ${parts.join('  ')}`);

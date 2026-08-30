@@ -265,19 +265,39 @@ function evaluateClusterDensity(metrics, insufficient) {
     };
   }
   const median = Number(sem.median_similar_pairs);
+  // `pct` is comparable/open — the largest single vector space, NOT the total
+  // embedded count (migration 20260830150000). Pairs can only form within one
+  // space, so a store holding two of them has a smaller comparable population
+  // than its embedded count suggests, and reporting the latter would be a
+  // high-confidence GREEN over a halved population. Nothing else changes here:
+  // a mixed store simply falls under the existing floor and reads `unknown`.
   const coveragePct = Number(sem.coverage?.pct ?? 0);
   const lowCoverage = coveragePct / 100 < THRESHOLDS.clusterMinCoverage;
+  // Distinguish the two ways coverage drops, because the remedies differ: rows
+  // never embedded (run the reconciler) vs rows embedded in a space that is no
+  // longer the active one (re-embed them — the reconciler's freshness predicate
+  // now treats a stale-space row as stale). `embedded > comparable` is exactly
+  // the second case. A pre-migration store omits the field and reports null.
+  const embedded = Number(sem.coverage?.embedded ?? 0);
+  const comparable = sem.coverage?.comparable == null ? null : Number(sem.coverage.comparable);
+  const splitAcrossSpaces = comparable != null && embedded > comparable;
+  const splitNote = splitAcrossSpaces
+    ? ` — ${embedded - comparable} of ${embedded} embedded finding(s) sit in a non-active vector space and cannot be compared; re-embed with \`semantic-suppress\``
+    : '';
   return {
     fired: !insufficient && !lowCoverage && median >= THRESHOLDS.clusterMedianPairs,
     unknown: lowCoverage,
     actual: median,
     threshold: THRESHOLDS.clusterMedianPairs,
-    similarity: `semantic cosine>${THRESHOLDS.clusterCosine}, same-file cross-run`,
+    similarity: `semantic cosine>${THRESHOLDS.clusterCosine}, same-file cross-run, one vector space`,
     coveragePct,
+    embedded,
+    comparable,
+    splitAcrossSpaces,
     trigramActual: Number(trigram.median_similar_pairs),
     reading: lowCoverage
-      ? `median semantic same-file re-raise pairs — UNKNOWN (only ${coveragePct}% of open findings embedded; below the ${Math.round(THRESHOLDS.clusterMinCoverage * 100)}% floor)`
-      : `median semantic same-file re-raise pairs (${coveragePct}% coverage; trigram companion: ${Number(trigram.median_similar_pairs)})`,
+      ? `median semantic same-file re-raise pairs — UNKNOWN (only ${coveragePct}% of open findings comparable; below the ${Math.round(THRESHOLDS.clusterMinCoverage * 100)}% floor)${splitNote}`
+      : `median semantic same-file re-raise pairs (${coveragePct}% comparable; trigram companion: ${Number(trigram.median_similar_pairs)})${splitNote}`,
   };
 }
 
@@ -395,7 +415,17 @@ function renderMarkdown(metrics, evaluation, friction = { available: false, reas
     lines.push('Top repos by same-file re-raise pairs:');
     for (const r of [...cdPerRepo].slice(0, 10)) {
       const name = r.repo_name || r.repo_id || '(unknown)';
-      const cov = isSemantic ? ` — ${r.coverage_pct}% embedded (${r.embedded_findings}/${r.open_findings})` : '';
+      // `coverage_pct` is comparable/open. Print the comparable count when it
+      // differs from the embedded one, so a repo split across vector spaces
+      // says WHY its coverage dropped rather than only that it did — otherwise
+      // `embedding_spaces` would be a field nothing reads, which is the defect
+      // migration 20260830150000 exists to close.
+      const comparable = r.comparable_findings == null ? null : Number(r.comparable_findings);
+      const embedded = Number(r.embedded_findings);
+      const split = comparable != null && embedded > comparable
+        ? `, ${r.embedding_spaces} vector spaces — only ${comparable} comparable`
+        : '';
+      const cov = isSemantic ? ` — ${r.coverage_pct}% comparable (${comparable ?? embedded}/${r.open_findings}${split})` : '';
       lines.push(`- ${name} — ${r.similar_pairs} pairs across ${r.open_findings} open findings${cov}`);
     }
   }

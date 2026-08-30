@@ -37,6 +37,7 @@
 
 import { isCloudEnabled } from './repo.mjs';
 import { many } from '../db/query.mjs';
+import { findingEmbeddingSpace } from '../embed-text.mjs';
 
 /**
  * Recent fixes lacking a regression spec (from the `unlocked_fixes` view).
@@ -689,6 +690,14 @@ export async function countAgedUnremediatedAcceptances(scope) {
  * same unit `persistKeptEmbeddings` trusts. It reads nothing the caller could
  * not already read.
  *
+ * VECTOR-SPACE scoping (2026-08-30) is the second axis, and it is not the
+ * caller's to supply: the caller has ids, not an embedding identity. These
+ * vectors are clustered by cosine, and a cosine between two embedding models is
+ * not a similarity — it would group unrelated findings into one work unit. So
+ * the query returns only rows from the space the CURRENT config would embed in;
+ * a row from another space is `unclustered`, which is the honest answer (it was
+ * never compared) and the one this function already degrades to.
+ *
  * @param {string[]} findingIds
  * @returns {Promise<Map<string, number[]>>}
  */
@@ -697,11 +706,13 @@ export async function getFindingEmbeddings(findingIds) {
   if (!Array.isArray(findingIds) || findingIds.length === 0) return out;
   if (!await isCloudEnabled()) return out;
   try {
+    const space = findingEmbeddingSpace();
     const rows = await many(
       `SELECT finding_id, embedding::text AS vec
          FROM finding_embeddings
-        WHERE finding_id = ANY($1::uuid[]) AND embedding IS NOT NULL`,
-      [findingIds]);
+        WHERE finding_id = ANY($1::uuid[]) AND embedding IS NOT NULL
+          AND embedding_model = $2::text AND dimension = $3::int`,
+      [findingIds, space.provenanceId, space.dim]);
     for (const r of rows) {
       const vec = String(r.vec).slice(1, -1).split(',').map(Number);
       if (vec.length > 0 && vec.every(Number.isFinite)) out.set(r.finding_id, vec);

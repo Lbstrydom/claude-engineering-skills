@@ -67,6 +67,27 @@ describe('persistKeptEmbeddings — write-success verification + run scoping (co
     assert.equal(exec.calls.length, 0);
   });
 
+  it('binds the CALLER-SUPPLIED space as embedding_model/dimension, not a locally re-resolved one', async () => {
+    // The provenance defect (2026-08-30): this INSERT bound
+    // `symbolIndexConfig.embedModel` — the configured GEMINI default — even when
+    // `embedText` had routed the batch to Azure, so the stored string did not
+    // describe the vectors. Asserted on the BOUND PARAMETERS rather than on the
+    // source, because the value has to arrive from the call that made the
+    // vectors: an implementation that re-resolved it here would read identically
+    // and still be the bug.
+    const exec = fakeExec(() => ({ rowCount: 1 }));
+    const f = makeFinding('fp-space');
+    const space = { provenanceId: 'https://contoso.openai.azure.com::text-embedding-3-large', dim: 768 };
+    const out = await persistKeptEmbeddings(
+      exec, [f], new Map([[f, VEC]]), new Map([['fp-space', 'id-1']]), RUN_ID, space);
+    assert.deepEqual(out, { persisted: 1, failed: 0 });
+    const [{ params }] = exec.calls;
+    assert.equal(params[2], space.provenanceId, 'embedding_model must be the endpoint-qualified provenance id');
+    assert.equal(params[3], space.dim);
+    assert.notEqual(params[2], 'text-embedding-3-large',
+      'the bare deployment is the WIRE model — persisting it lets two Azure resources read as one space');
+  });
+
   it('a 0-rowCount UPSERT is counted as a failure AND logged (not silently treated as success)', async () => {
     const f = makeFinding('fp1');
     const exec = fakeExec(() => ({ rowCount: 0 }));

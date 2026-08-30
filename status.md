@@ -41,6 +41,78 @@ And a source assertion counted `EXCEPTION WHEN duplicate_object` **4** times aga
 
 Report `1315e360` verified against `origin/main` claim by claim and closed `fixed` against `3486b145`, disposition `test:tests/embed-provenance.test.mjs` (which names both reported files and asserts the import, so it is coverage rather than a same-named file). The report's own diagnosis was accurate on every point, including the `provenanceId`-not-`requestModel` caveat. Its migrations were applied by a concurrent session mid-investigation, not by this one. Queue: 0 open across 2 stores.
 
+## 2026-08-30 — the memory-health RPC: closing the one deferral, and what applying it revealed
+
+Companion to the `finding_embeddings` entry below. `memory_health_semantic_cluster` was the last unscoped reader of that table — deferred there on independence (a metric, suppresses nothing), with a test that asserted the gap still existed and **failed once it was closed**. This closes it; that test is inverted rather than deleted.
+
+### The predicate is between the two sides of the self-join, not a parameter
+The RPC is **cross-repo**, and repos legitimately sit in different vector spaces — this repo on Gemini, a consumer on Azure. A single global model filter would have been wrong for every repo but one. `a.embedding_model = b.embedding_model AND a.dimension = b.dimension` is correct for all of them and needs no argument, so the signature — and every caller — is unchanged.
+
+### Scoping the pairs WITHOUT scoping coverage would have introduced a false clean
+The half that is easy to miss. Pairs only form within a space, so for a repo split across two the comparable population is the **largest space**, not the total embedded count. Leaving `coverage_pct` as embedded/open would report ~100% coverage over a store where half the rows can never be compared to the other half — a confident GREEN derived from a halved population, which is exactly the false-clean the coverage number exists to prevent.
+
+`coverage_pct` is now comparable/open. That deliberately reuses the **existing** `clusterMinCoverage` → `unknown` machinery in `memory-health.mjs` rather than adding a field: a new column nothing read would have repeated the very defect this change closes. `embedded_findings` keeps its old meaning; `comparable_findings` + `embedding_spaces` sit beside it and are **read** by the reporter, so a coverage drop caused by a stale vector space is distinguishable from one caused by unembedded rows — different remedies.
+
+### Verified on a real Postgres, because a regex over a .sql file proves nothing about a plpgsql function
+Promoted the one-off probe to [`tests/memory-health-cluster-space.test.mjs`](tests/memory-health-cluster-space.test.mjs), **enrolled in both required places** (`db-test-container.mjs` + `postgres-parity.yml`). Note the enrolment gate passed with only the first edit — the second is caught by knowing the rule, not by the gate.
+
+Seeded a genuine same-file cross-run pair on a disposable pg16: **same space → 1 pair, 100% coverage, 1 space**; **cross space → 0 pairs, 50% coverage, 2 spaces, 1 comparable**. Negative controls: removing the pair predicate fails 1 test; reverting coverage to embedded/open fails 1 test; restore → green.
+
+**My first negative-control run reported 3/3 green having measured nothing** — bash `/tmp` and Node's `C:\tmp` are different directories, so the mutated SQL never reached the server. Suspect the instrument first; a mutation harness that cannot mutate reports a clean pass.
+
+### Applying it to the live store surfaced two things
+- **It restored EXECUTE grants that had silently been lost.** Before applying, the live `proacl` read `{postgres=X/postgres}` — the `anon`/`authenticated` grants the 2026-07-21 migration specifies were gone, the documented "`CREATE OR REPLACE` resets the ACL" hazard having already bitten once, unnoticed. Re-stating them restored both. Verified via `pg_proc`, not by reading the migration.
+- **The space predicate made it 13x FASTER, not slower**: 2.6s → **0.2s** on the live store, with `median=29` and 71% coverage byte-identical (this store is single-space, so `comparable === embedded` = 284). The predicate prunes the self-join.
+
+That timing also attributed a scare: `npm run memory-health` exits 2 on a statement timeout. At 0.2s that cannot be this RPC — it is `memory_health_metrics`, the pre-existing NAS slowness already documented in AGENTS.md. **Not introduced here, but the gate is currently not completing on this store**, and with the semantic metric now readable, `median_similar_pairs = 29` against a threshold of 5 at 71% coverage — above the floor, so a real FIRED reading, not `unknown`.
+
+### Consumer evidence that settled the sibling remedy
+A read-only probe of the Azure consumer's store: its **arch index** already carries the correct endpoint-qualified id and all 4,829 `symbol_embeddings` were rebuilt under it on 2026-08-27 — the earlier `resolveEmbedProfile` fix working in production. But its 3,145 `finding_embeddings` rows span 08-14..08-29, **straddling** that rebuild, and two repos share the table.
+
+So **a cheap SQL relabel of those rows is not defensible** — an option worth naming because it is the tempting one. The store cannot say which rows were Azure-made; rows predating the rebuild may genuinely be Gemini, and the column that would have recorded the difference is the column that lied. That information is lost. Re-embedding is the only remedy that establishes truth, because it makes the vectors it labels. Handed off as a prompt rather than run from here: it spends against a corporate tenant and writes 3,145 rows to its store.
+
+Full suite **14339 pass / 0 fail / 31 skipped**; `npm run check` exits 0.
+
+
+## 2026-08-30 — `finding_embeddings` provenance: the deferral rested on a premise that was false
+
+### Checking the stated blocker changed the whole shape of the fix
+The 2026-08-30 census (`8929ee48`) found three writers persisting `finding_embeddings.embedding_model` as `symbolIndexConfig.embedModel` — the configured **Gemini** default — even when `embedText` had routed to Azure. It deferred them with a reason: *the fix changes the stored string, so old and new rows would stop comparing inside `semantic-suppress`.*
+
+**They would not have. Nothing read the column.** Written by three writers, read by no query; the btree index on `(embedding_model, dimension)` served nothing. Every similarity read — `nearestOpenReRaise`, `getFindingEmbeddings`, the `memory_health_semantic_cluster` RPC, the prototype's four pair queries — selected on `finding_id` and compared cosine across whatever models the table held.
+
+So the hazard ran the **other way**: two spaces were *already* being compared, and the one column that could have detected it lied. The deferral had protected a comparison that never happened from a divergence that could not occur.
+
+### No backfill, for a reason worth stating
+`resolveEmbedProfile` returns `provenanceId === concreteModel` off Azure, so the swap is a **no-op on the stored string** everywhere except Azure — exactly where it was already wrong, and where the rows must be re-embedded regardless because they were made in a different space. There is no old-format/new-format transition to manage.
+
+**The backfill is the freshness predicate.** The reconcilers treated a row as cached when its `snapshot_hash` matched, ignoring the model — so a row from another space was never re-embedded, and two spaces stayed mixed with no run able to clear it. Freshness is now `(snapshot_hash, embedding_model, dimension)`, making `semantic-suppress` self-healing in place. No migration, no offline script.
+
+### Truthful provenance was only half of it
+The readers now name the space they compare within. `nearestOpenReRaise` binds `(provenanceId, dim)` as SQL predicates and **throws** on an absent or partial space rather than degrading to an unscoped query — defaulting to "no filter" is how the original state returns one caller at a time. `partitionRecordTimeReRaises` validates *before* its fail-open loop: a wiring bug must fail loudly, or the hook suppresses nothing forever while looking healthy. Runtime faults still fail open. `semantic-suppress`, the prototype and `getFindingEmbeddings` are scoped too.
+
+`findingEmbeddingSpace()` (embed-text.mjs) is the one resolver all six files share.
+
+### A second census, because the first could not see this class
+The writer census iterates `embedText()` callers; the readers never call it. **CENSUS 2** iterates the filesystem for `finding_embeddings` similarity reads and requires each to constrain `embedding_model` — four found, all scoped. Same lesson as the first: *which side am I iterating, and what is unrepresentable from it?*
+
+### One deferral, named rather than silent
+`memory_health_semantic_cluster` still joins unscoped. Deferred on **independence**, not authorship: it is a metric, it suppresses nothing, and nothing in this change calls it — while every reader fixed above sits on a path that drops or groups a store row. Closing it needs a migration plus an expected-schema fixture regen. A test asserts the gap still exists and **fails once it is closed**, so it cannot go quiet the way the first one did.
+
+### Verification
+Ten source mutations each turn the suite red from a 0-failure baseline: hardcoded wire model; request-model persisted instead of provenance (×2 files); unscoped freshness; unscoped read; silent space default; dropped hook validation; unscoped work-unit clustering; dropped space threading; RPC gaining the predicate. Both census directions fire (a new unnamed `embedText` caller; a NAMED entry renamed away). The `assertEmbeddingSpace` guard was **seen to fail against five real callers** before they were updated — that is how it is known not to be inert.
+
+Full suite **14337 pass / 0 fail / 31 skipped** (all DB-gated); `npm run check` exits 0.
+
+One run reported a failure in `audit-no-files-cli.test.mjs` and was chased rather than assumed: a 90 s subprocess-budget flake the test's own docstring documents, under contention from back-to-back suite runs. The CLI exits 1 with the refusal in ~17 s standalone; the suite passes 3/3 at ~23 s.
+
+**Live Azure verification: `unverified`** — blocked prerequisite: `azureConfig.active` is false on this machine, so every assertion is off-Azure, where the stored string is unchanged *by construction*. The suite cannot in principle exercise what this fix is for. Close it on `storyline` (APIM route): `SELECT DISTINCT embedding_model, dimension FROM finding_embeddings` before and after a `semantic-suppress --apply` run.
+
+### Pre-ship gates
+- Migrations realized. Upstream queues **0 open across 2 stores**. No stalled campaigns.
+- Unlocked fixes: 33 code / 114 plan, `agedOut` **107** (27 code / 80 plan) — carried, not addressed here.
+- Unremediated acceptances: 136 open (71 code / 65 plan), 50 accepted-permanent, `agedOut` 17 (3 HIGH), `notYetDue` 94. Auto-reconcile examined 1, resolved 0.
+
 ## 2026-08-30 — a freshness oracle built on mtime was wrong in the HEALTHY case
 
 ### Consumer Verification (previous ship)
