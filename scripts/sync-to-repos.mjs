@@ -36,6 +36,7 @@ import { classifyOwnership, describeEvidence } from './lib/sync-ownership.mjs';
 import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mjs';
 import {
   BASE_STATE, ACTION, classifyAgainstBase, decideAction, describeReason, readVcsState,
+  eolInsensitiveEqual,
   isSyncBookkeeping,
 } from './lib/sync-divergence.mjs';
 import {
@@ -1305,6 +1306,10 @@ async function main() {
     }
 
     let repoNew = 0, repoUpdated = 0, repoUnchanged = 0, repoErrors = 0;
+    // Counted, not silent: a non-zero value means two checkouts of this repo
+    // disagree on line endings, which is worth knowing even though the sync now
+    // absorbs it. Silence would hide the condition that used to block a target.
+    let repoEolOnly = 0;
     let repoRemaps = 0, repoRewrites = 0, repoGcDeletions = 0;
     // Receipt inputs. Collected as we go so the committed trace describes what
     // this run ACTUALLY did, not what it set out to do.
@@ -1830,6 +1835,36 @@ async function main() {
         continue;
       }
 
+      // Same content, different line endings ⇒ still nothing to do.
+      //
+      // The sync copies WORKING-TREE bytes, and two checkouts of one commit do
+      // not agree on those: measured 2026-08-30, this repo's linked worktree
+      // held `.claude/hooks/bash-grep-nudge.mjs` with CRLF (2,222 bytes) while
+      // its main checkout held LF (2,155) — `.gitattributes` pins `eol=lf` and
+      // git calls BOTH clean. So whichever checkout last synced a consumer set
+      // that consumer's line endings, and the next sync from the other checkout
+      // read the difference as consumer content.
+      //
+      // With teeth: those files are TRACKED in the consumer, so the classifier
+      // fails closed to REFUSE, the whole target exits 1, and the refusal
+      // carries the stale base forward — self-perpetuating. Four files blocked
+      // a consumer's entire bundle over a difference no human made. AGENTS.md
+      // names the tell exactly: git says clean and the tool says changed, so
+      // the tool is comparing the wrong thing.
+      //
+      // Placed HERE rather than inside `classifyAgainstBase` deliberately: the
+      // manifest must keep hashing exact disk bytes, because there the hash is
+      // a transfer-integrity contract (`sync-isolation-verify` gate 2B). This
+      // folds EOL for one question only — is there anything to write? — and a
+      // file that reaches this branch gets its manifest entry refreshed from
+      // disk below, which is what lets a consumer stuck in the refusal loop
+      // settle instead of diverging for ever.
+      if (dstExists && eolInsensitiveEqual(outContent, fs.readFileSync(dstPath))) {
+        repoUnchanged++; totalUnchanged++;
+        repoEolOnly++;
+        continue;
+      }
+
       // ── Consumer-divergence gate ────────────────────────────────────────
       //
       // Everything above this point asked only "is this destination OURS?".
@@ -2264,6 +2299,10 @@ async function main() {
     if (repoRewrites > 0) parts.push(`${D}${repoRewrites} rewritten${X}`);
     if (repoGcDeletions > 0) parts.push(`${D}${repoGcDeletions} gc-deleted${X}`);
     if (receiptOverridesHeld.length > 0) parts.push(`${D}${receiptOverridesHeld.length} held${X}`);
+    // Reported, never silent. It is not an error — the sync absorbs it — but a
+    // non-zero count means two checkouts of THIS repo disagree on line endings,
+    // and that is the condition that used to block a whole target.
+    if (repoEolOnly > 0) parts.push(`${D}${repoEolOnly} eol-only${X}`);
     if (divergenceRefusals.length > 0) parts.push(`${R}${divergenceRefusals.length} diverged${X}`);
     if (repoErrors > 0) parts.push(`${R}${repoErrors} errors${X}`);
     console.log(`  ${parts.join('  ')}`);

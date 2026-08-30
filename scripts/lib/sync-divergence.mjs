@@ -53,6 +53,7 @@
 import { spawnSync } from 'node:child_process';
 
 import { LAYOUT_CONSTANTS } from './sync-path-map.mjs';
+import { canonicalizeEol } from './file-io.mjs';
 
 /**
  * The sync's OWN bookkeeping destinations, which are exempt from the
@@ -81,6 +82,67 @@ export const SYNC_BOOKKEEPING_DESTS = Object.freeze(new Set([
  */
 export function isSyncBookkeeping(destRel) {
   return SYNC_BOOKKEEPING_DESTS.has(String(destRel || '').replace(/\\/g, '/'));
+}
+
+/**
+ * Are two byte sequences the same content apart from CRLF-vs-LF?
+ *
+ * ## Why the divergence question must ask this
+ *
+ * The sync copies WORKING-TREE bytes, and two checkouts of the same commit do
+ * not agree on line endings. Measured 2026-08-30 on
+ * `.claude/hooks/bash-grep-nudge.mjs`, one commit, four trees:
+ *
+ * | tree                                   | bytes | CR |
+ * |----------------------------------------|-------|----|
+ * | this repo's linked worktree            |  2222 | 67 |
+ * | this repo's main checkout              |  2155 |  0 |
+ * | `wine-cellar-app` (synced from main)   |  2155 |  0 |
+ * | `storyline` (synced from the worktree) |  2222 | 67 |
+ *
+ * `.gitattributes` already pins `* text=auto eol=lf`, and git calls the CRLF
+ * copy **CLEAN** — that is the documented behaviour, not a misconfiguration.
+ * So whichever checkout last synced a consumer decides that consumer's line
+ * endings, and the next sync from the OTHER checkout sees a different sha and
+ * concludes the consumer edited the file.
+ *
+ * That is precisely the AGENTS.md rule — *"the tell is a diff where git says
+ * clean and your tool says changed: git is right, the tool is comparing the
+ * wrong thing"* — and here it had teeth: the four hooks it hit are TRACKED in
+ * the consumer, so the classifier fails closed to REFUSE, every sync to that
+ * consumer exits 1, and the refusal carries the stale base forward so the
+ * state is self-perpetuating. Four files blocked a whole consumer's bundle for
+ * a difference no human made.
+ *
+ * ## Why NOT to canonicalise everywhere
+ *
+ * The manifest keeps hashing the exact bytes on disk, deliberately: there the
+ * hash IS a transfer-integrity contract (`sync-isolation-verify` gate 2B), and
+ * AGENTS.md is explicit that EOL folding does not belong where the exact bytes
+ * are the contract. This fold applies to ONE question — *did the consumer
+ * change this content?* — where a line ending introduced by a different
+ * checkout is not an answer of "yes".
+ *
+ * ## Binary is excluded, and fails closed
+ *
+ * A NUL byte means the exact bytes are the contract, so binaries compare
+ * strictly. Folding there could call two genuinely different files equal —
+ * `0x0D 0x0A` is ordinary data in a binary, not a line ending.
+ *
+ * PURE. Accepts Buffers or strings.
+ *
+ * @param {Buffer|string} a
+ * @param {Buffer|string} b
+ * @returns {boolean}
+ */
+export function eolInsensitiveEqual(a, b) {
+  const ba = Buffer.isBuffer(a) ? a : Buffer.from(String(a ?? ''), 'utf-8');
+  const bb = Buffer.isBuffer(b) ? b : Buffer.from(String(b ?? ''), 'utf-8');
+  if (ba.equals(bb)) return true;
+  // `includes(0)` on a Buffer searches for the BYTE 0x00 — the standard
+  // is-this-text test, and the same NUL-makes-it-binary rule git applies.
+  if (ba.includes(0) || bb.includes(0)) return false;
+  return canonicalizeEol(ba).equals(canonicalizeEol(bb));
 }
 
 /** How on-disk content relates to the base the last sync recorded. */
