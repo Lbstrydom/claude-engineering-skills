@@ -13,8 +13,17 @@
 
 import { many, one, insertReturning, updateWhere, withTx } from '../db/query.mjs';
 import { isCloudEnabled } from './repo.mjs';
+import { ANNOTATION_EVENT } from '../upstream/events.mjs';
 
-/** Legal lifecycle transitions. `fixed` / `wont_fix` are terminal. */
+/**
+ * Legal lifecycle transitions. `fixed` / `wont_fix` are terminal.
+ *
+ * This map is also what keeps the non-lifecycle `annotation` event out of the
+ * state machine STRUCTURALLY rather than by convention: it is neither a key
+ * nor a destination here, so `transitionUpstreamIssue` rejects it as an illegal
+ * transition from every state. Annotations are written by
+ * `recordUpstreamIssueAnnotation`, which touches no column of `upstream_issues`.
+ */
 export const LEGAL_TRANSITIONS = Object.freeze({
   open: Object.freeze(['acknowledged', 'fixed', 'wont_fix']),
   acknowledged: Object.freeze(['fixed', 'wont_fix']),
@@ -322,5 +331,161 @@ export async function transitionUpstreamIssue({
   } catch (err) {
     process.stderr.write(`  [upstream] transitionUpstreamIssue failed: ${err.message}\n`);
     return { ok: false, cloud: true, error: err.message };
+  }
+}
+
+/**
+ * Append a correction / added-context note to an issue's log WITHOUT moving it
+ * through the lifecycle.
+ *
+ * **Why this is not a transition.** The log is append-only by trigger and
+ * `upstream_issues.state` is CHECK'd to four values, so a note stored with a
+ * mistake in it previously had two repairs and both were wrong: rewrite the
+ * append-only row, or emit a second terminal event — corrupting the lifecycle
+ * record to fix a typo. This writes an `annotation` event and touches NO column
+ * of `upstream_issues`: not `state`, not `disposition`, not even `updated_at`.
+ * `updated_at` is deliberate — it is the lifecycle's timestamp, read by triage
+ * as "when did this issue last MOVE", and bumping it for a note would make an
+ * annotated-but-stalled report look freshly worked.
+ *
+ * Because it writes no `upstream_issues` row, it is invisible to
+ * `tests/upstream-single-writer-census.test.mjs`'s single-terminal-writer rule
+ * by construction rather than by exemption, and it writes no disposition-ledger
+ * entry — so the full-uuid requirement its caller enforces is NOT the ledger's
+ * (`upstreamAnnotate` states the reason it has instead).
+ *
+ * Durability is the caller's write-ahead outbox
+ * (`upstream/commands.mjs` `ANNOTATION_OUTBOX_DIR`), not the audit-store spill
+ * queue — see the exemption entry in
+ * `tests/audit-store-durability-call-site.test.mjs`.
+ *
+ * Legal from ANY state including the terminal ones — annotating a closed report
+ * is the case that motivated this.
+ *
+ * Prefix resolution mirrors `transitionUpstreamIssue`: the same `LIMIT 2`
+ * ambiguity detection, and the same requirement that callers pre-validate the
+ * id's shape, because `%` and `_` are LIKE wildcards living in the DATA, where
+ * parameterisation does not reach.
+ *
+ * **`eventId` makes a replay idempotent, and it is the reason this write can be
+ * queued at all.** An annotation has no natural unique key — two identical
+ * corrections minutes apart are two legitimate rows — so a retry after a lost
+ * acknowledgement would silently duplicate the note, which is exactly the shape
+ * an append-only log cannot then repair. A caller that may retry (the write-ahead
+ * outbox) therefore mints the row's PRIMARY KEY up front and passes it here, and
+ * the insert arbitrates on it: `upstream_issue_events.id` is a real uuid PK, and
+ * a logical key would not have been a legal `ON CONFLICT` target. Omitted ⇒ the
+ * column default generates one, which is correct for a caller that never retries.
+ *
+ * `created: false` means the row was already there — a REPLAY, not a failure.
+ *
+ * @param {{id: string, note: string, actor?: string|null, eventId?: string|null}} args
+ * @returns {Promise<{ok: boolean, cloud: boolean, id?: string, state?: string, eventId?: string, created?: boolean, notFound?: boolean, ambiguous?: boolean, error?: string}>}
+ */
+export async function recordUpstreamIssueAnnotation({ id, note, actor = null, eventId = null }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false };
+  // An empty note is refused HERE as well as at the CLI and in the CHECK: this
+  // is the durable boundary, and the CLI is one of several possible callers.
+  if (typeof note !== 'string' || !note.trim()) {
+    return { ok: false, cloud: true, error: 'an annotation must carry a non-empty note' };
+  }
+
+  try {
+    return await withTx(async () => {
+      const matches = await many(
+        `SELECT id, state FROM upstream_issues WHERE id::text LIKE $1 || '%' ORDER BY id LIMIT 2`,
+        [id],
+      );
+      if (matches.length === 0) return { ok: false, cloud: true, notFound: true };
+      if (matches.length > 1) {
+        return {
+          ok: false, cloud: true, ambiguous: true,
+          error: `id "${id}" matches more than one issue — use more characters`,
+        };
+      }
+      const current = matches[0];
+      // Hand-written rather than `insertReturning`: the builder cannot express
+      // an ON CONFLICT clause (same reason `recordUpstreamIssue`'s insert is
+      // hand-written), and the conflict clause is what makes a queued replay
+      // safe. `COALESCE($1, gen_random_uuid())` keeps the no-eventId caller on
+      // the column's own default behaviour.
+      const inserted = await one(
+        `INSERT INTO upstream_issue_events (id, issue_id, event, note, actor)
+         VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5)
+         ON CONFLICT (id) DO NOTHING
+         RETURNING id`,
+        [eventId, current.id, ANNOTATION_EVENT, note, actor],
+      );
+      // No row back means the PK was already present — this is a REPLAY of a
+      // write that already landed, which is a success for the caller and must
+      // not be reported as a failure (a retrying outbox would queue it forever).
+      // Distinguishable from a first write by `created`.
+      if (!inserted) {
+        return {
+          ok: true, cloud: true, created: false,
+          id: current.id, state: current.state, eventId,
+        };
+      }
+      return {
+        ok: true, cloud: true, created: true,
+        id: current.id, state: current.state, eventId: inserted.id,
+      };
+    });
+  } catch (err) {
+    process.stderr.write(`  [upstream] recordUpstreamIssueAnnotation failed: ${err.message}\n`);
+    return { ok: false, cloud: true, error: err.message };
+  }
+}
+
+/**
+ * One issue plus its whole append-only event log, chronologically.
+ *
+ * **This is the read side the log never had.** Until now nothing in the repo
+ * SELECTed `upstream_issue_events` at all — every event ever written was
+ * write-only, so an annotation added without this would land somewhere no
+ * operator surface could show it, which is the write-with-no-reader shape this
+ * repo keeps closing rather than a new instance of it.
+ *
+ * Unpaged, like `listTerminalUpstreamIssues`: an issue's log is a handful of
+ * rows by construction (four lifecycle events maximum, plus annotations), and a
+ * history view that silently truncated would be worse than useless — the whole
+ * point is that the record is complete.
+ *
+ * `(created_at, id)` ordering, not `created_at` alone: two events written in the
+ * same transaction share a `now()`, so the timestamp is not a total order.
+ *
+ * @param {string} id full uuid or prefix
+ * @returns {Promise<{ok: boolean, cloud: boolean, issue?: object|null, events?: Array<object>, notFound?: boolean, ambiguous?: boolean, error?: string}>}
+ */
+export async function getUpstreamIssueHistory(id) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, issue: null, events: [] };
+  try {
+    const matches = await many(
+      `SELECT i.*, r.name AS repo_name
+         FROM upstream_issues i
+         LEFT JOIN audit_repos r ON r.id = i.repo_id
+        WHERE i.id::text LIKE $1 || '%'
+        ORDER BY i.id LIMIT 2`,
+      [id],
+    );
+    if (matches.length === 0) return { ok: false, cloud: true, notFound: true, issue: null, events: [] };
+    if (matches.length > 1) {
+      return {
+        ok: false, cloud: true, ambiguous: true, issue: null, events: [],
+        error: `id "${id}" matches more than one issue — use more characters`,
+      };
+    }
+    const issue = matches[0];
+    const events = await many(
+      `SELECT id, event, note, actor, created_at
+         FROM upstream_issue_events
+        WHERE issue_id = $1::uuid
+        ORDER BY created_at, id`,
+      [issue.id],
+    );
+    return { ok: true, cloud: true, issue, events };
+  } catch (err) {
+    process.stderr.write(`  [upstream] getUpstreamIssueHistory failed: ${err.message}\n`);
+    return { ok: false, cloud: true, issue: null, events: [], error: err.message };
   }
 }

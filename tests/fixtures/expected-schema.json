@@ -12405,9 +12405,15 @@
     },
     {
       "table_name": "upstream_issue_events",
+      "constraint_name": "chk_upstream_event_annotation_has_note",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((event <> 'annotation'::text) OR ((note IS NOT NULL) AND (btrim(note) <> ''::text))))"
+    },
+    {
+      "table_name": "upstream_issue_events",
       "constraint_name": "upstream_issue_events_event_check",
       "constraint_type": "CHECK",
-      "definition": "CHECK ((event = ANY (ARRAY['reported'::text, 'acknowledged'::text, 'fixed'::text, 'wont_fix'::text])))"
+      "definition": "CHECK ((event = ANY (ARRAY['reported'::text, 'acknowledged'::text, 'fixed'::text, 'wont_fix'::text, 'annotation'::text])))"
     },
     {
       "table_name": "upstream_issue_events",

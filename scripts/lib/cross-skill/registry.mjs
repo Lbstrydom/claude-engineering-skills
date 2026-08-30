@@ -777,7 +777,7 @@ export const REGISTRY = Object.freeze([
       // sentinel disposition — a post-deploy release-completion check, not just
       // an advisory worksheet.
       { name: 'gate', kind: 'boolean' }],
-    positionals: { verbs: ['report', 'list', 'ack', 'fix', 'wont-fix', 'drain', 'reconcile'] },
+    positionals: { verbs: ['report', 'list', 'ack', 'fix', 'wont-fix', 'annotate', 'history', 'drain', 'reconcile'] },
     payload: 'none',
     scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop', degradeShape: {},
     load: () => import('./commands/quality.mjs').then((m) => m.upstreamCmd),
