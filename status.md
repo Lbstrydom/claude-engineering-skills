@@ -1,5 +1,46 @@
 # Project Status Log
 
+## 2026-08-30 — AGENTS.md headroom: the Azure section condensed to a stub
+
+### Why a move and not a trim
+`ctx/agents-md-headroom` read **510 characters left**, and the advisory says plainly that shaving words to squeeze under the cap is how a file stays permanently full. The header's own remedy is a stub + `docs/<topic>.md`, not a higher cap. Same disposition as the 2026-08-29 `## Skill Chain` move, and the same test applied to each line: does it change how you write code (stays), or is it mechanics, an env table, an incident narrative or a recipe (moves)?
+
+`## Azure AI Foundry Work Profile` **7,067 → 4,280 chars**; headroom **510 → 3,297**. The 92,000 cap is untouched.
+
+**Kept resident** — the opt-in invariant verbatim, the seam one-liner, and four invariants that constrain any code reaching a provider: an availability gate asks whether a ROUTE exists, not whether a public env var is set · the deployment is CONSTRUCTOR-level route state · an endpoint and its credential are ONE resolved unit · a deployment or resource switch is a DIFFERENT vector space.
+
+**Moved to the guide** — the role table, the final-reviewer precedence chain, the arch-index-on-Sonnet quota rationale, `api-version`, the `azure:doctor` recipe, and the incident prose behind each invariant.
+
+### Seven facts were resident ONLY in AGENTS.md
+The move was audited mechanically rather than by reading: ~30 distinguishing tokens from the pre-change section were grepped against both files, and seven had **no home in the guide** — a silent deletion had the audit not run. They were added to [`docs/runbooks/azure-work-profile.md`](docs/runbooks/azure-work-profile.md), not dropped:
+
+- the client cache key carrying **purpose + deployment**, and per-candidate `clientFor` when probing;
+- tests that spawn one of these CLIs must scrub `AZURE_*`;
+- the 2026-08-13 APIM-key-to-Foundry-host incident and why that route was **unrepresentable**;
+- adding a `/brainstorm` voice is a multi-table change — adapter map, `PROVIDER_INPUT_CEILING_TOKENS`, `resolvedModels` schema key, each failing differently;
+- `credentialShared`; `MODEL_CATALOG_REFRESH`'s auto-skip under Azure; `resolveEmbedProfile()` by name.
+
+**Generalises**: a "condense to a pointer" edit is a deletion unless something enumerates what the target already holds. The pointer being present is not evidence the depth is.
+
+### Files Affected
+- Modified: `AGENTS.md`, `docs/runbooks/azure-work-profile.md`
+
+### Measured
+| Signal | Value |
+|---|---|
+| AGENTS.md | 91,490 → **88,703** / 92,000 chars |
+| Headroom | 510 → **3,297** chars |
+| Azure section | 7,067 → **4,280** chars |
+| `npm run context:check` | `OK No context drift detected` |
+| `npm run docs:refs` | every new link resolves; `GONE` rows are pre-existing placeholders |
+| `npm run check` | exit 0 |
+| `npm test` | 14,351 tests, **0 fail**, 31 skipped (366 s) |
+
+### Open — a flaky test, and possibly a hole in the guard that should have caught it
+The **first** `check` run reported `# pass 14319 # fail 1 # todo 0` **and exited 0**. Two re-runs (`npm test` standalone, then `check` again) both gave `# fail 0`, so the failure is flaky and unrelated to this change — a docs-only diff.
+
+But exit 0 alongside a non-todo `test:fail` is exactly the dd83e1f8 condition `adjudicateRun` exists to fail on. Either the guard has a hole or that failure took a path it does not key on. **The test could not be identified**: the task output file retained only its last 47 lines and the run is gone. Recorded here rather than dropped; chasing it is its own task, and the first step is capturing full `check` output to disk so the next occurrence is diagnosable.
+
 ## 2026-08-30 — a bare `createAnthropicClient()` reached PUBLIC Anthropic on an Azure tenant
 
 ### The report asked for a sweep; the sweep found the DEFAULT was wrong
