@@ -568,8 +568,10 @@ had nothing to do with. Running it here surfaces the same block before that work
 >
 > **The runtime DSN usually cannot apply migrations.** A consumer's `.env` carries its
 > *runtime* role; on managed Postgres that role does not own the tables (measured:
-> `must be owner of table audit_findings`, 42501). Applying needs the owner DSN:
-> `AUDIT_DB_URL=<owner dsn> node scripts/setup-postgres.mjs --migrate`.
+> `must be owner of table audit_findings`, 42501). That is the least-privilege boundary
+> working — do NOT resolve it by granting the runtime role ownership, or by putting an
+> admin DSN in `.env`. Which role to use, and where its credential belongs (a secret
+> store, never a file): `references/migration-credentials.md`.
 
 ### 0.5h — Upstream issue queue (advisory, source-repo only)
 
@@ -1328,6 +1330,7 @@ situations — read them only when the trigger applies.
 
 | File | Summary | Read when |
 |---|---|---|
+| `references/migration-credentials.md` | Which role applies migrations, why the runtime DSN cannot, and where its credential belongs (never in .env). | Step 0.5g — a store is behind and `--migrate` is refused with `42501` (`must be owner of table …` / `permission denied for schema public`). |
 | `references/python-environment-discovery.md` | Python pre-push command discovery — env wrapper detection + per-tool probe order. | detect-stack returned `python` or `mixed` with Python files in the diff. |
 | `references/status-md-format.md` | status.md session-log template + update rules + persona / UX status sections. | Step 2 — creating status.md for the first time, OR appending UX / Persona / Regression-Lock / Plan-Verify sections. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 6.8 — the push succeeded and the artifact must be verified from the consumer side. |
