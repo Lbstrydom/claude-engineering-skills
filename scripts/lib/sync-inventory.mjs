@@ -110,6 +110,10 @@ const CORE_ENTRY = [
   'scripts/check-model-freshness.mjs',
   'scripts/context-staleness.mjs',
   'scripts/debt-health-check.mjs',
+  // Remediation-state verification reconciler — spawned by maintenance-checks.mjs's
+  // `remediation-reconcile` entry AND by /ship Step 0.5e. Authoritative list is
+  // sync-to-repos.mjs; keep in lock-step.
+  'scripts/remediation-reconcile.mjs',
   // Deterministic /ship commit helper (AI-* provenance trailers). Authoritative
   // list is sync-to-repos.mjs; keep in lock-step. Walker pulls in
   // lib/commit-trailers.mjs + sensitive-paths closure.

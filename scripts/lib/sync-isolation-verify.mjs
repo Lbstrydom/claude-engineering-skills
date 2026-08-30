@@ -80,6 +80,7 @@ const CLI_SMOKE_SET = [
   'ship-commit.mjs', // deterministic /ship commit helper — AI-* provenance trailers (docs/reference/commit-provenance.md)
   'ensure-branch-protection.mjs', // strengthen-only main-branch ruleset tool — declared in sync-to-repos.mjs entries; a cloned consumer self-applies
   'maintenance-checks.mjs', // local weekly-maintenance replica — spawns sibling checks, must survive relocation
+  'remediation-reconcile.mjs', // remediation-state verification reconciler — spawned by maintenance-checks.mjs AND /ship 0.5e; declared in sync-to-repos.mjs CORE_ENTRY
   // Self-hosted-runner doctor — already declared in sync-to-repos.mjs (plan's
   // Context Summary); its --selfcheck-relocation handler existed but was
   // unverified in consumers until Cluster B (self-hosted-runner-management.md).

@@ -713,3 +713,75 @@ export async function getFindingEmbeddings(findingIds) {
   }
   return out;
 }
+
+// ── Remediation-state verification reconciler read side ────────────────────
+// docs/plans/remediation-state-verification-reconciler.md. A THIRD reader
+// over the `unremediated_acceptances_all` view family, alongside the two
+// above — unbounded by age (the 7/30-day maturity window that shapes the
+// human-facing nudge has no bearing on what an out-of-band reconciler should
+// re-check) and ordered by staleness of its OWN throttle column, not by
+// severity. This is a single-repo tool (it resolves its own repo from cwd and
+// never reads across repos), so it takes a plain `repoId`, not the
+// `{repoId, allRepos}` scope object its siblings use — the fence in
+// tests/cross-skill-unlocked-scope.test.mjs accepts either shape, provided an
+// un-fenced reader's SQL always carries a literal `repo_id = $1` predicate,
+// which both statements below do.
+
+/**
+ * Rows eligible for out-of-band remediation verification: `accepted`/
+ * `severity_adjusted` findings still `pending`/`planned`, regardless of age,
+ * excluding anything a human already dispositioned `accepted-permanent`
+ * (`is_open_disposition` — a closed decision is not a leak this reconciler
+ * should second-guess). Ordered NEVER-CHECKED FIRST, then oldest-checked
+ * first, so a capped run makes steady progress across invocations instead of
+ * re-sampling the same rows — deliberately different from the nudge's
+ * severity-first order, because this reader's job is full-backlog
+ * convergence, not human attention-prioritisation.
+ *
+ * @param {string} repoId
+ * @param {{limit?: number|null, offset?: number|null}} [opts]
+ * @returns {Promise<object[]>}
+ */
+export async function getStaleAcceptedFindingsForVerification(repoId, opts = {}) {
+  if (!repoId || typeof repoId !== 'string') {
+    throw new Error('getStaleAcceptedFindingsForVerification: repoId is required');
+  }
+  if (!await isCloudEnabled()) return [];
+  const { limit, offset } = resolveNudgePage(opts);
+  try {
+    return await many(
+      `SELECT * FROM unremediated_acceptances_all WHERE repo_id = $1 AND is_open_disposition ` +
+      `ORDER BY remediation_last_checked_at ASC NULLS FIRST, accepted_at ASC, audit_finding_id ` +
+      `LIMIT $2 OFFSET $3`,
+      [repoId, limit, offset]
+    );
+  } catch (err) {
+    process.stderr.write(`  [learning] getStaleAcceptedFindingsForVerification failed: ${err.message}\n`);
+    return [];
+  }
+}
+
+/**
+ * The denominator `getStaleAcceptedFindingsForVerification` cannot report —
+ * same reason every capped reader in this file carries one: a capped read
+ * whose caller reports `rows.length` states a floor as a total.
+ *
+ * @param {string} repoId
+ * @returns {Promise<number>}
+ */
+export async function countStaleAcceptedFindingsForVerification(repoId) {
+  if (!repoId || typeof repoId !== 'string') {
+    throw new Error('countStaleAcceptedFindingsForVerification: repoId is required');
+  }
+  if (!await isCloudEnabled()) return 0;
+  try {
+    const rows = await many(
+      `SELECT count(*)::int AS n FROM unremediated_acceptances_all WHERE repo_id = $1 AND is_open_disposition`,
+      [repoId]
+    );
+    return Number(rows?.[0]?.n) || 0;
+  } catch (err) {
+    process.stderr.write(`  [learning] countStaleAcceptedFindingsForVerification failed: ${err.message}\n`);
+    return 0;
+  }
+}

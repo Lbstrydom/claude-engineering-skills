@@ -299,9 +299,14 @@ describe('the fence covers the whole view family, not just the reported one', ()
   // could have dropped out — the exact loss this is here to report — and it
   // would still have passed. Found only because the retarget forced a re-count,
   // which is the argument for re-measuring a floor rather than porting it.
+  //
+  // RAISED 8 → 10 (remediation-state-verification-reconciler.md): a THIRD
+  // reader over this view family — `getStaleAcceptedFindingsForVerification` +
+  // its counter `countStaleAcceptedFindingsForVerification`, both in
+  // ship-nudges.mjs, reading `unremediated_acceptances_all` unbounded by age.
   it('finds the readers at all (guards against the regex silently matching nothing)', () => {
-    assert.ok(readers.length >= 8,
-      `expected >=8 nudge-view readers, found ${readers.length} (${readers.map((r) => r.name).join(', ')}) ` +
+    assert.ok(readers.length >= 10,
+      `expected >=10 nudge-view readers, found ${readers.length} (${readers.map((r) => r.name).join(', ')}) ` +
       '— if this dropped, the scan below is passing vacuously. A reader whose view name is ' +
       'INTERPOLATED rather than written out is invisible here and will show up as a missing reader.');
   });
@@ -378,9 +383,13 @@ describe('a capped nudge reader must impose its OWN total order', () => {
   // Same reasoning as the reader floor above: this read `>= 2` while six paged
   // statements existed, so an interpolated view name could remove two thirds of
   // the coverage without failing anything.
+  //
+  // RAISED 6 → 7 (remediation-state-verification-reconciler.md):
+  // `getStaleAcceptedFindingsForVerification` adds one paged statement; its
+  // counter has no LIMIT and correctly does not join this count.
   it('finds paged statements at all (vacuous-pass guard)', () => {
-    assert.ok(pagedStatements.length >= 6,
-      `expected >=6 paged nudge-view reads, found ${pagedStatements.length} — if this dropped, ` +
+    assert.ok(pagedStatements.length >= 7,
+      `expected >=7 paged nudge-view reads, found ${pagedStatements.length} — if this dropped, ` +
       'the assertions below are checking less than they claim. A read whose view name is ' +
       'INTERPOLATED is invisible to this scan.');
   });

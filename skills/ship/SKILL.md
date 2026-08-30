@@ -249,6 +249,32 @@ block reason. Cloud off → it still runs + prints; Playwright missing → exit 
 
 ### 0.5e — Accepted findings that were never remediated
 
+**First, a capped auto-reconcile pass (best-effort, never blocks, no override
+flag).** The live-audit-round lifecycle that would otherwise flip
+`remediation_state` to `fixed` is session-scoped, round-diff-scoped, and
+14-day-bounded ([`docs/plans/remediation-state-verification-reconciler.md`](../../docs/plans/remediation-state-verification-reconciler.md))
+— outside that intersection (the common case for a row that survives to reach
+this step at all) nothing else will ever re-check it. Run this BEFORE the
+query below, so its counts reflect what a machine already closed rather than a
+growing pile a human could have been spared:
+
+```bash
+node scripts/remediation-reconcile.mjs --apply --cap 5 2>/dev/null
+```
+
+Swallow any failure exactly like every other 0.5-step (`try { … } catch { log,
+continue }`) — this is advisory infrastructure, not a precondition for
+shipping. Files with no code change since acceptance cost nothing (skipped
+before any LLM call); a file that was simply deleted resolves mechanically,
+no LLM needed. Report its one-line summary alongside the nudge below:
+`Auto-reconciled: <resolved> verified (<mechanicallyResolved> of those by
+file-deletion, no LLM call), <stillPresent> still open, <uncertain> uncertain`
+— note `resolved` already INCLUDES the mechanically-resolved count, it is not
+a fifth bucket to add on top. `AUDIT_REMEDIATION_RECONCILE_ENABLED=false`
+opts out entirely (kill switch, not a flag on this command); an absent Claude
+credential degrades to the free mechanical-resolution path only, never a
+failure.
+
 ```bash
 node scripts/cross-skill.mjs list-unremediated-acceptances
 ```

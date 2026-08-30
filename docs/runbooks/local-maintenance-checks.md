@@ -8,7 +8,7 @@ one-paragraph pointer; this doc is the operational depth.
 
 ## What it replicates
 
-13 checks, run as independent subprocesses (never crashes the whole run when
+14 checks, run as independent subprocesses (never crashes the whole run when
 one is skipped or fails). (The count read "7" until 2026-08-13 while the
 manifest already held 8, and this table itself drifted from 10 to 12 without
 anyone noticing — two whole rows, `context-staleness` and `accepted-debt`,
@@ -29,6 +29,7 @@ beside it. Recount from `CHECKS` if they ever disagree again.)
 | `debt-capture-trail` | *(ad hoc weekly routine)* | Every `ruling: 'defer'` entry across `.audit/*-ledger.json` (round ledgers, Step 3.5) vs. `.audit/tech-debt.json` (Step 3.6) — catches a debt-capture invocation that never ran, which `debt-health` cannot see because it only ever reads `tech-debt.json` itself | none (local files only) |
 | `context-staleness` | *(none — git-only report, never a gate)* | Flags `AGENTS.md`/`CLAUDE.md` citations to code that moved after the citing line did | none (git only) |
 | `runner-health` | *(no dedicated workflow — new, [docs/plans/self-hosted-runner-management.md](../plans/self-hosted-runner-management.md))* | `node scripts/actions-runner-doctor.mjs local --json --strict` — flags an unhealthy/unregistered/unreachable self-hosted runner on THIS machine. Advisory identity findings never gate, even here. | none (`gh` optional — degrades to `unknown` per install without it) |
+| `remediation-reconcile` | *(no dedicated workflow, [docs/plans/remediation-state-verification-reconciler.md](../plans/remediation-state-verification-reconciler.md))* | `node scripts/remediation-reconcile.mjs --apply` — the out-of-band reconciler for `accepted`/`severity_adjusted` findings stuck `remediation_state` `pending`/`planned` (unbounded by age; the live-audit-round lifecycle is session-scoped, round-diff-scoped, and 14-day-bounded, so it can never reach these on its own). Verifies each stuck finding whose file changed since acceptance against current code (LLM judgment call, or mechanically when the file was simply deleted) and writes `verified`/tracking columns accordingly. Never blocks. | `AUDIT_DB_URL` (an absent Claude credential degrades to the free mechanical path only) |
 | `accepted-debt` | *(none — source-repo-only, see [`AGENTS.md`](../../AGENTS.md#accepted-technical-debt))* | AGENTS.md's "Accepted Technical Debt" table's revisit-trigger predicates vs. actual repo state | none (local repo state only) |
 | `slice-recurrence` ⏳ **one-shot, retires** | *(none — answers one question about one commit)* | Did god-module slice 1 (`a7db0baf`) stop the usage-accounting finding cluster recurring on `legacy-production-audit.mjs`? **Silent no-op until 2026-09-10.** | `AUDIT_DB_URL` |
 

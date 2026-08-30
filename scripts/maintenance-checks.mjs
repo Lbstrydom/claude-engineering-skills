@@ -301,6 +301,26 @@ export const CHECKS = [
     steps: [{ script: 'actions-runner-doctor.mjs', args: ['local', '--json', '--strict'] }],
   },
   {
+    // AUDIT_DB_URL only — NOT an LLM credential. remediation-reconcile.mjs
+    // degrades gracefully with no Claude credential (it still applies the
+    // free mechanical "file deleted" resolutions and reports the rest as
+    // skipped, never throws), so gating this entry on ANTHROPIC_API_KEY would
+    // skip that free path too on a store-only machine.
+    //
+    // docs/plans/remediation-state-verification-reconciler.md — the
+    // out-of-band reconciler for `accepted`/`severity_adjusted` findings
+    // stuck `pending`/`planned` that the live-audit-round lifecycle
+    // (session-scoped, round-diff-scoped, 14-day-bounded) structurally
+    // cannot reach. Uncapped here (no `--cap`) — the weekly cadence itself
+    // bounds total spend, unlike the small capped call /ship Step 0.5e makes
+    // on every push. `--apply` because a dry-run report nobody reads changes
+    // nothing; this entry exists specifically to close the loop unattended.
+    key: 'remediation-reconcile',
+    label: 'Remediation-state out-of-band verification (accepted findings stuck pending/planned)',
+    requiredEnv: ['AUDIT_DB_URL'],
+    steps: [{ script: 'remediation-reconcile.mjs', args: ['--apply'] }],
+  },
+  {
     // Local-only, no requiredEnv, no dedicated GH workflow — same "ad hoc"
     // shape as debt-health above, and deliberately NOT the same system: that
     // one covers .audit/tech-debt.json (audit-captured findings, TTL/

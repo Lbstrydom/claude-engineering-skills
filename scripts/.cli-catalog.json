@@ -527,6 +527,14 @@
       "description": "Fail if docs/requirements-map.md is stale against the ledger (Category-B freshness gate, in the pre-push check).",
       "category": "plans"
     },
+    "remediation:reconcile": {
+      "description": "Dry-run report: accepted/severity_adjusted findings stuck pending/planned outside the live-audit-round lifecycle's reach, whose file changed since acceptance.",
+      "category": "audit"
+    },
+    "remediation:reconcile:apply": {
+      "description": "Verify (LLM judgment call, or mechanically when the file was deleted) and write remediation_state='verified' + throttle columns for each stuck finding whose file changed since acceptance.",
+      "category": "audit"
+    },
     "security:refresh": {
       "description": "Refresh the security-incident memory from docs/security-strategy.md.",
       "category": "security"
