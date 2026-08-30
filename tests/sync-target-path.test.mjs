@@ -233,5 +233,20 @@ describe('sync --target-path — it actually deploys', () => {
       'the dependency set the sync installs must not churn on re-sync');
     assert.deepEqual([...after.keys()].sort(), [...before.keys()].sort());
     for (const [rel, sha] of before) assert.equal(sha, after.get(rel), `${rel} churned on re-sync`);
+
+    // The DELIVERY post-condition, end to end: the manifest is a claim about
+    // the consumer's tree, and until 2026-08-30 nothing ever checked it against
+    // that tree. One consumer ended two pushes missing a migration its manifest
+    // claimed — the JS half of a feature without the schema half — while every
+    // source-side signal read `Targets: 3/3 reached`. The unit half lives in
+    // tests/sync-delivery-postcondition.test.mjs; this is the half that proves
+    // a REAL sync satisfies it.
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(target, 'scripts', '.sync-manifest.json'), 'utf8'),
+    );
+    const claimedButAbsent = Object.keys(manifest.files ?? {})
+      .filter((rel) => !fs.existsSync(path.join(target, rel)));
+    assert.deepEqual(claimedButAbsent, [],
+      'the manifest must not claim files the consumer does not have');
   });
 });
