@@ -281,6 +281,63 @@ export function generateManifest(rootDir, files, opts = {}) {
  * @param {{generatedAt: string, repo?: string, sourceGitMeta: {commitSha: string|null, branch: string|null}, files: Record<string,string>}} args
  * @returns {{generatedAt: string, repo: string, branch: string, commitSha: string|null, files: Record<string,string>, layout: 'isolated'}}
  */
+/**
+ * Manifest entries whose file is NOT on disk — the sync's own post-condition.
+ *
+ * ## The gap this closes
+ *
+ * The sync reports what it DID (`+2 new · ~10 updated · Errors: 0`) and never
+ * checks what IS. Those are different claims, and a consumer's own git
+ * operations move the two apart between runs: `.audit-loop/migrations/**` is a
+ * TRACKED destination in at least one consumer, so a freshly-synced `.sql`
+ * arrives there UNTRACKED, and anything that removes untracked files takes it
+ * with no signal on either side.
+ *
+ * Measured 2026-08-30: `storyline` ended two consecutive pushes without
+ * `20260830160000_upstream_issue_annotation_event.sql`, while its manifest
+ * claimed it. That consumer had the JS half of a feature and not the schema
+ * half, so `upstream annotate` there would have failed with a `23514` check
+ * violation — and every source-side signal said `Targets: 3/3 reached`. The
+ * only thing that noticed was `sync-isolation-verify` run BY HAND from inside
+ * the consumer, which no source-side workflow invokes.
+ *
+ * ## Why this direction specifically
+ *
+ * The opposite drift — a file on disk that the manifest has lost — is already
+ * handled, and handled well: `classifyOwnership` re-adopts it by content
+ * (`sync-ownership.mjs`), because a tracked manifest can be rolled back by a
+ * merge while the files it describes survive. Nothing was ever checking the
+ * mirror image. That is shape (3) of the four AGENTS.md names — *a check
+ * verifying one direction only* — in the one place where the missing direction
+ * is the one that silently under-delivers.
+ *
+ * ## Why it REPORTS rather than re-writing
+ *
+ * A missing entry self-heals on the next sync already: an absent destination
+ * has no `dstHash`, so the write loop classifies it `new` and writes it. Adding
+ * a repair here would duplicate that path, and would do it in the one place
+ * where the file might be absent because the consumer *deleted it on purpose* —
+ * the same reason GC advises rather than acting on an orphaned TRACKED path.
+ * What was missing is not delivery, it is NOTICING: `Errors: 0` must stop being
+ * printable over an incomplete tree. A gap that persists across runs then says
+ * so every run, which is exactly the signal an operator needs to find whatever
+ * is removing the file.
+ *
+ * PURE — `exists` is injected, so the post-condition is testable without a
+ * consumer tree.
+ *
+ * @param {Record<string, string>} fileMap the consumer manifest's `files`
+ * @param {{exists: (relPath: string) => boolean}} io
+ * @returns {string[]} relative paths the manifest claims but disk lacks, sorted
+ */
+export function findUndeliveredEntries(fileMap, { exists }) {
+  const out = [];
+  for (const rel of Object.keys(fileMap ?? {})) {
+    if (!exists(rel)) out.push(rel);
+  }
+  return out.sort();
+}
+
 export function buildConsumerManifest({ generatedAt, repo, sourceGitMeta, files, sourceDirty = null }) {
   return {
     generatedAt,

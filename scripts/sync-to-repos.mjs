@@ -25,6 +25,7 @@ import {
 } from './lib/consumer-repos.mjs';
 import {
   writeManifest, detectOwnershipRegression, getGitMeta, buildConsumerManifest, listDirtyPaths,
+  findUndeliveredEntries,
 } from './lib/sync-manifest.mjs';
 import { collectImportClosure } from './lib/module-graph.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
@@ -2008,6 +2009,10 @@ async function main() {
     // aborts the WHOLE target, so the consumer silently stops receiving every
     // future update. A failure here is therefore a failed sync, not a warning.
     let manifestWritten = false;
+    // Declared outside the try so the post-condition below can read the map
+    // that was actually written, rather than re-deriving it from the manifest
+    // on disk — re-reading would test the file parser, not the delivery.
+    let consumerFileMapForCheck = {};
     if (!DRY_RUN) {
       try {
         // For consumer-side: compute hashes of the actual DESTINATION files
@@ -2044,7 +2049,19 @@ async function main() {
           if (notWrittenByUs.has(dstRel)) {
             const carried = priorFiles[dstRel]
               ?? (priorLayout === 'legacy' ? priorFiles[intendedWrites.get(dstRel)] : undefined);
-            if (carried) consumerFileMap[dstRel] = carried;
+            // …but only while the file is still THERE. Carrying a base for a
+            // destination that is absent makes the manifest assert delivery of
+            // something the consumer does not have, and the manifest is the
+            // record every later reader trusts. Reachable through the HOLD
+            // branch specifically: `matchOverride` fires before any disk test,
+            // so an override on a path the consumer has since deleted would
+            // carry a stale base forward for ever. (REFUSE cannot reach it —
+            // a refusal requires a diverged disk hash, which requires the file.)
+            // Omitting is also operationally free: with no base,
+            // `classifyAgainstBase` returns NO_BASE, which is the same WRITE
+            // decision an absent file already produces.
+            const stillThere = fs.existsSync(path.join(repo.path, dstRel));
+            if (carried && stillThere) consumerFileMap[dstRel] = carried;
             continue;
           }
           const abs = path.join(repo.path, dstRel);
@@ -2070,6 +2087,7 @@ async function main() {
         });
         atomicWriteFileSync(priorManifestPath, JSON.stringify(consumerManifest, null, 2) + '\n');
         manifestWritten = true;
+        consumerFileMapForCheck = consumerFileMap;
         // High-water mark for rollback detection (see the check at read time).
         // Written only after the manifest actually landed, so it never claims
         // ownership of a record that does not exist. A failure here degrades
@@ -2089,6 +2107,38 @@ async function main() {
         console.log(`  ${R}manifest write FAILED${X}: ${err.message?.slice(0, 120)}`);
         console.log(`    ${D}files were written but are now unowned; the in-progress journal is`);
         console.log(`    kept so the next run adopts them. Re-run sync to reconcile.${X}`);
+        repoErrors++; totalErrors++;
+      }
+    }
+
+    // ── Post-condition: the manifest must describe what is ON DISK ────────
+    //
+    // Everything above reports what this run DID. This asks the different
+    // question — what the consumer now HAS — because the two drift apart
+    // between runs and only one direction was ever checked (the mirror image,
+    // a file on disk the manifest lost, is re-adopted by content above).
+    // See `findUndeliveredEntries` for the measured incident.
+    //
+    // Counted as a target error so the exit code carries it: a sync that ends
+    // with the consumer missing files this repo believes it delivered has not
+    // succeeded, and `Errors: 0` over that state is the false-green this
+    // check exists to remove. It does NOT re-write them — the next sync
+    // already re-delivers an absent destination as `new`, and the one case
+    // where it would not be a re-delivery is a file the consumer deleted
+    // deliberately (the same reason GC only ADVISES on an orphaned tracked
+    // path).
+    if (!DRY_RUN && manifestWritten) {
+      const undelivered = findUndeliveredEntries(consumerFileMapForCheck, {
+        exists: (rel) => fs.existsSync(path.join(repo.path, rel)),
+      });
+      if (undelivered.length) {
+        console.log(`  ${R}UNDELIVERED${X} ${undelivered.length} file(s) the manifest claims are NOT on disk:`);
+        for (const rel of undelivered.slice(0, 20)) console.log(`    ${R}absent${X}  ${rel}`);
+        if (undelivered.length > 20) console.log(`    ${D}... ${undelivered.length - 20} more${X}`);
+        console.log(`    ${D}This consumer is missing content this sync recorded as delivered.${X}`);
+        console.log(`    ${D}Most likely something removed them after the write (they arrive UNTRACKED${X}`);
+        console.log(`    ${D}in a consumer that tracks the destination). Re-run the sync to re-deliver;${X}`);
+        console.log(`    ${D}if it recurs, find what is deleting them before trusting any later sync.${X}`);
         repoErrors++; totalErrors++;
       }
     }
