@@ -978,11 +978,23 @@ export async function recordFinalReviewFindings(runId, { primary = [], shadow = 
  * @returns {Promise<{ok: boolean, updated: number, cloud: boolean, reason?: string, buckets?: Array<string|null>}>}
  */
 export async function adjudicateFinalReviewFinding(runId, fingerprint, action, opts = {}) {
-  if (!await isCloudEnabled()) return { ok: false, updated: 0, cloud: false, reason: 'cloud-disabled' };
+  // Validate the CALL SHAPE before touching the environment. `isCloudEnabled()`
+  // used to run first, so a caller bug (a typo'd action literal) on a
+  // cloud-disabled machine silently returned `{ok:false, reason:'cloud-disabled'}`
+  // instead of the clear "must be 'accepted' or 'dismissed'" throw — a
+  // programming error misreported as an environment condition, and only
+  // reachable in an environment where cloud happens to be off (found via CI:
+  // main's own postgres-parity `db-suite` job runs this suite with
+  // AUDIT_DB_URL deliberately unset for the drift-justification step's
+  // destructive-guard isolation, so the test — which asserts the rejection
+  // unconditionally — never saw it on a developer machine where a personal
+  // ~/.audit-loop.env silently re-populates AUDIT_DB_URL on every import of
+  // config.mjs/db/client.mjs, masking the ordering bug there).
   const userAction = action === 'accepted' ? 'accepted-permanent'
     : action === 'dismissed' ? 'dismissed'
     : null;
   if (!userAction) throw new Error(`adjudicateFinalReviewFinding: action must be 'accepted' or 'dismissed', got '${action}'`);
+  if (!await isCloudEnabled()) return { ok: false, updated: 0, cloud: false, reason: 'cloud-disabled' };
   const outcome = action === 'accepted' ? 'accepted' : 'dismissed';
   if (!await columnExists('audit_findings', 'bucket', many, isCloudEnabled)) {
     process.stderr.write('  [learning] adjudicate: bucket column absent — run migration 20260610120000\n');
