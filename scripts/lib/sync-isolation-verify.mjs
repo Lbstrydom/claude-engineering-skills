@@ -33,6 +33,7 @@ import { buildOwnedSourceTailsFromConsumerManifest, COMMAND_REGEX as SHARED_COMM
 import { parseGitignoreState } from './sync-gitignore.mjs';
 import { LAYOUT_CONSTANTS } from './sync-path-map.mjs';
 import { SyncManifestSchema, hashFile } from './sync-manifest.mjs';
+import { loadOverrides, matchOverride, OVERRIDES_PATH } from './sync-overrides.mjs';
 import { enumerateNpmRunRefs } from './npm-script-enumerator.mjs';
 import { listSurfaceNames, compareSkillSurfaces } from './skill-surface-identity.mjs';
 import { assertKnownFlags, ArgvError } from './cli-io.mjs';
@@ -314,8 +315,45 @@ function gate2B(consumerRoot, manifest) {
   // and .claude/settings.json — those files are written by sync too and
   // their hashes are recorded. Verifying only the isolated tree leaves
   // a coverage gap where a corrupted skill .md would pass the gate.
+  //
+  // ── Declared overrides are HELD, not corrupt (2026-08-30) ──────────────
+  //
+  // A path in `.sync-overrides.json` is one the consumer told the sync not to
+  // overwrite, and the sync obeys by leaving the file alone and carrying the
+  // PRIOR base forward in the manifest. So the manifest deliberately records
+  // one thing and the disk deliberately holds another, for ever — and this
+  // gate read that as a hash mismatch.
+  //
+  // The consequence was that the documented remedy defeated the verifier:
+  // `storyline` declared four SKILL.md overrides (its `<!-- repo-electron-target -->`
+  // adapter blocks, which upstream cannot carry because they are repo-specific),
+  // did exactly what the sync's own REFUSED message instructs, and its
+  // `sync-isolation-verify` has exited 1 ever since — on precisely the four
+  // paths it had just legitimised. A check that fires because you followed its
+  // advice trains an operator to ignore it, which costs the other seven gates
+  // their credibility too.
+  //
+  // Held paths are still REPORTED, never hidden: the whole point of an override
+  // is that it is a standing, reviewable decision, and a divergence nobody can
+  // see is the failure mode the override mechanism exists to end.
+  const { overrides, errors: overrideErrors } = loadOverrides(consumerRoot);
+  // A malformed overrides file FAILS the gate rather than being ignored. Treating
+  // it as "no overrides" would fail-open in the other direction — every declared
+  // path would silently become a mismatch again — and the sync itself aborts on
+  // a malformed overrides file, so a verifier that shrugged at one would
+  // disagree with the tool it verifies.
+  if (overrideErrors.length) {
+    return {
+      gate: '2B',
+      pass: false,
+      error: `${OVERRIDES_PATH} is unusable, so held paths cannot be told from corrupted ones: ${overrideErrors.join('; ')}`,
+      details: { overrideErrors },
+    };
+  }
+
   const missing = [];
   const mismatched = [];
+  const held = [];
   for (const [destRel, expected] of Object.entries(manifest.files || {})) {
     // The manifest cannot record its own final hash: writing the self-entry
     // mutates the file, which changes the hash (chicken-and-egg). Skip it —
@@ -323,20 +361,34 @@ function gate2B(consumerRoot, manifest) {
     // Use the layout constant so this never drifts from the actual manifest path.
     if (destRel === LAYOUT_CONSTANTS.MANIFEST_PATH) continue;
     const abs = path.join(consumerRoot, destRel);
+    // ABSENCE is still a failure even under an override. An override says "do
+    // not overwrite my version", never "I do not need this file" — and since
+    // 2026-08-30 the sync omits a held path from the manifest entirely when it
+    // is not on disk, so an entry that is both claimed and missing is a real
+    // fault whatever the overrides say.
     if (!fs.existsSync(abs)) { missing.push(destRel); continue; }
     let actual;
     try { actual = hashFile(abs); } catch (err) { missing.push(destRel); continue; }
-    if (actual !== expected) mismatched.push({ path: destRel, expected, actual });
+    if (actual === expected) continue;
+    if (matchOverride(destRel, overrides)) {
+      held.push({ path: destRel, reason: matchOverride(destRel, overrides).reason });
+      continue;
+    }
+    mismatched.push({ path: destRel, expected, actual });
   }
   if (missing.length || mismatched.length) {
     return {
       gate: '2B',
       pass: false,
       error: `${missing.length} missing + ${mismatched.length} hash-mismatched manifest entries.`,
-      details: { missing: missing.slice(0, 50), mismatched: mismatched.slice(0, 50) },
+      details: { missing: missing.slice(0, 50), mismatched: mismatched.slice(0, 50), held },
     };
   }
-  return { gate: '2B', pass: true };
+  // Passing, and still saying what it excused — an operator must be able to see
+  // that N paths were skipped on the strength of a declaration they can review.
+  return held.length
+    ? { gate: '2B', pass: true, details: { held } }
+    : { gate: '2B', pass: true };
 }
 
 /**
@@ -525,6 +577,11 @@ function gate5(consumerRoot, manifest) {
   const scripts = pkg.scripts || {};
   const stale = [];
   const unresolved = [];
+  // Refs that resolve to the CONSUMER's own scripts. Collected rather than
+  // discarded: a passing gate that silently ignored half its subjects would be
+  // the vacuous pass this file keeps closing elsewhere.
+  const consumerOwned = [];
+  const ownedSourceTails = buildOwnedSourceTailsFromConsumerManifest(manifest);
   for (const ref of allRefs) {
     const body = scripts[ref];
     if (!body) continue; // script doesn't exist in consumer; informational only
@@ -546,6 +603,32 @@ function gate5(consumerRoot, manifest) {
         }
         continue;
       }
+      // ── Ownership-aware, like gate 3 (2026-08-30) ────────────────────────
+      //
+      // "Not under .claude-skills/" is not the same as "stale". This gate
+      // exists to catch a PRE-ISOLATION path — a consumer script still calling
+      // `node scripts/openai-audit.mjs` after that tool moved to
+      // `scripts/.claude-skills/openai-audit.mjs`. Only an UPSTREAM-OWNED tail
+      // can be at the wrong path, because only upstream files moved.
+      //
+      // Measured in `storyline`: it flagged `ux:driver`/`ux:verb`, which run
+      // `node scripts/ux/ux-driver.mjs` — files that exist and are the
+      // CONSUMER's own (zero occurrences in its manifest). The refs reach this
+      // gate because the consumer's `<!-- repo-electron-target -->` adapter
+      // block, carried in four SKILL.md it has DECLARED as overrides,
+      // deliberately redirects the browser lenses at its own Electron driver.
+      // So the gate was telling a consumer that its own working scripts were
+      // stale upstream paths, on the strength of a prefix.
+      //
+      // Gate 3 already had the right test and this one never got it — the same
+      // one-directional-check family as gate 2B above. `ownedSourceTails` is
+      // derived from the consumer's OWN manifest, so a consumer's own tree is
+      // never judged by it.
+      const tailIsOurs = ownedSourceTails.has(tail);
+      if (!tailIsOurs) {
+        consumerOwned.push({ npmScript: ref, body, target: `scripts/${tail}` });
+        continue;
+      }
       stale.push({ npmScript: ref, body, staleInvocation: m[0] });
     }
   }
@@ -564,10 +647,12 @@ function gate5(consumerRoot, manifest) {
       gate: '5',
       pass: false,
       error: parts.join(' '),
-      details: { stale, unresolved },
+      details: { stale, unresolved, consumerOwned },
     };
   }
-  return { gate: '5', pass: true };
+  return consumerOwned.length
+    ? { gate: '5', pass: true, details: { consumerOwned } }
+    : { gate: '5', pass: true };
 }
 
 function gate6(manifest) {
@@ -758,6 +843,15 @@ function formatText(results) {
   for (const r of results) {
     if (r.pass) {
       lines.push(`  ✓ gate ${r.gate}`);
+      // A PASS that excused something must say what it excused. Gate 2B skips
+      // paths declared in `.sync-overrides.json`, and a bare `✓` would make a
+      // standing divergence invisible in the default output — which is the
+      // failure mode the override mechanism exists to end, reintroduced one
+      // layer up. The JSON format already carried this; the text format is
+      // what an operator actually reads.
+      for (const h of r.details?.held ?? []) {
+        lines.push(`     held  ${h.path} ${h.reason ? `(${String(h.reason).slice(0, 120)})` : ''}`);
+      }
     } else {
       allPass = false;
       lines.push(`  ✗ gate ${r.gate}: ${r.error || '(no message)'}`);
