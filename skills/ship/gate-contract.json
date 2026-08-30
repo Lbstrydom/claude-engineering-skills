@@ -393,8 +393,16 @@
       "reason": "0.5g. States WHY the drift reader is advisory (a gate the pushed commit cannot satisfy earns --no-verify) — design rationale for another CLI's exit behaviour, not a gate /ship enforces about itself. Same class as the upstream:coverage:gate entry."
     },
     {
-      "line": "> `must be owner of table audit_findings`, 42501). Applying needs the owner DSN:",
-      "reason": "0.5g. Quotes a measured Postgres error to explain that a consumer's RUNTIME DSN cannot apply migrations — an operator instruction about setup-postgres.mjs against a foreign store, not a refusal /ship implements. The scanner matches on 'must'."
+      "line": "> `must be owner of table audit_findings`, 42501). That is the least-privilege boundary",
+      "reason": "0.5g's cross-store drift note, reworded 2026-08-30 to point at references/migration-credentials.md. Quotes a measured Postgres 42501 to explain that a consumer's RUNTIME DSN cannot apply migrations — an operator fact about setup-postgres.mjs against a foreign store, not a refusal /ship implements. The scanner matches on 'must'. (Replaces the entry for the pre-reword wording of the same line.)"
+    },
+    {
+      "line": "> store, never a file): `references/migration-credentials.md`.",
+      "reason": "0.5g. A pointer to the reference that carries the credential-handling procedure; 'never a file' is guidance about where an operator keeps a secret, not a gate /ship enforces. The scanner matches on 'never'."
+    },
+    {
+      "line": "| `references/migration-credentials.md` | Which role applies migrations, why the runtime DSN cannot, and where its credential belongs (never in .env). | Step 0.5g — a store is behind and `--migrate` is refused with `42501` (`must be owner of table …` / `permission denied for schema public`). |",
+      "reason": "The reference-index ROW for migration-credentials.md. Its Summary column must byte-match the file's `summary:` frontmatter (skills:check enforces that), so the enforcement verbs 'never'/'must'/'refused' are inherited from the reference's own one-line summary and cannot be reworded away independently. Index rows describe what a document covers; they are not gate claims about /ship's behaviour."
     }
   ]
 }
