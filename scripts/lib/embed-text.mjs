@@ -108,6 +108,39 @@ export function resolveEmbedProfile({ azure = azureConfig, concreteModel } = {})
 }
 
 /**
+ * The vector-space identity for the `finding_embeddings` table — the SAME
+ * resolver the arch and security indexes use, plus the dimension, because a
+ * space is `(model, dim)` and not the model alone.
+ *
+ * Why a named helper rather than three inline `resolveEmbedProfile` calls: the
+ * three `finding_embeddings` writers (store/runs-findings.mjs,
+ * semantic-suppress.mjs, memory-pgvector-prototype.mjs) and the readers that
+ * scope to a space must agree on one value. They previously agreed by accident
+ * — every one of them hard-coded `symbolIndexConfig.embedModel`, which is the
+ * GEMINI default even when `embedText` routed the call to Azure. Truthful
+ * provenance is only half the fix; the other half is that the readers can now
+ * name the space they are comparing within.
+ *
+ * COMPAT (2026-08-30): off-Azure this returns `provenanceId === concreteModel`,
+ * i.e. byte-identical to the string those three writers already stored, so the
+ * switch is a no-op on existing rows. The string changes ONLY under Azure —
+ * exactly where it was previously WRONG, and where the affected rows must be
+ * re-embedded anyway because they were made in a different space.
+ *
+ * @param {{azure?: typeof azureConfig, concreteModel?: string, dim?: number}} [opts]
+ * @returns {{kind: string, requestModel: string, provenanceId: string, dim: number}}
+ */
+export function findingEmbeddingSpace(opts = {}) {
+  const {
+    azure = azureConfig,
+    concreteModel = symbolIndexConfig.embedModel,
+    dim = symbolIndexConfig.embedDim,
+  } = opts;
+  const profile = resolveEmbedProfile({ azure, concreteModel });
+  return { ...profile, dim };
+}
+
+/**
  * Is ANY embedding provider configured? Distinguishes provider-ABSENT (a
  * deterministic config state — callers should degrade gracefully, the same
  * way they already do for cloud-disabled) from provider-ERROR (a real call
