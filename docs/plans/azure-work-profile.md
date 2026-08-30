@@ -84,7 +84,8 @@ and pick the summary model.
 The arch-memory query surfaced **existing Azure prior art** in the unported
 "corporate kit": [`docs/plans/security/files/scripts/lib/security/azure-embed.mjs`](../plans/security/files/scripts/lib/security/azure-embed.mjs)
 (similarity **0.76 → reuse/justify-divergence**). Its client construction is
-the **canonical Azure-OpenAI v1 pattern** we will lift verbatim:
+the **canonical Azure-OpenAI v1 pattern** we will lift verbatim (superseded for
+`gpt`/`embed` by the 2026-08-12 log entry — deployment-qualified routing):
 
 ```js
 new OpenAI({
@@ -207,6 +208,14 @@ Therefore:
 **Decision: Azure exposes everything as an OpenAI-shaped surface, so the new
 structure is exactly ONE client factory + ONE embedding router** — not a
 provider-abstraction framework (see §5 right-sizing).
+
+> **SUPERSEDED for `gpt`/`embed` — see the 2026-08-12 implementation-log entry
+> below ("deployment-qualified routing").** Those two purposes are built as
+> `AzureOpenAI({endpoint, deployment, apiVersion})` and the SDK derives
+> `/openai/deployments/{deployment}/…`; a resource exposing only the standard
+> deployment-qualified API has no `/openai/v1/*` route and 404s. The `/openai/v1`
+> text in this section is the original contract, kept as the record of what was
+> decided in June, not as current guidance.
 
 - **GPT auditor** → Azure OpenAI v1 (`AZURE_OPENAI_ENDPOINT/openai/v1`).
 - **Final reviewer (Opus 4.6, replacing Gemini)** → Azure AI Foundry

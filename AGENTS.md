@@ -897,14 +897,12 @@ stay logical sentinels (dodges the `gpt-5.3 → latest-gpt` remap footgun);
   dispatch sites each held their own copy, so fixing one left the other wrong).
   **`isClaudeAvailable()`, never `ANTHROPIC_API_KEY`** — a tenant sets no such
   key, so the raw test read a working backend as absent and three call sites
-  skipped themselves silently. **An OMITTED `azureRoute` now ADOPTS the tenant's
-  route** (`resolveClaudeRouteFromEnv`, the pure module `anthropic-client` reads
-  without importing `config.mjs`): correctness moved off ~30 call sites onto the
-  seam after five per-site patches failed to hold. Measured in a corporate
-  consumer, a bare call sent **corporate source to public Anthropic on a personal
-  key** from `~/.audit-loop.env`, or threw, beside an unused working route. Pass
-  **`azureRoute: null`** where an id *means* the public service (`claude-opus` vs
-  `azure-claude`) — omitting it makes an A/B compare a provider with itself.
+  skipped themselves silently. **An OMITTED `azureRoute` ADOPTS the tenant's
+  route**, so a bare call is correct by construction; pass **`azureRoute: null`**
+  only where an id *means* the public service (`claude-opus` vs `azure-claude`).
+  Measured, mechanism, opt-out list:
+  [azure-work-profile.md](docs/runbooks/azure-work-profile.md) §"Which Claude a
+  bare `createAnthropicClient()` reaches".
   Tests that spawn such a CLI must scrub `AZURE_*`
   explicitly, or they pass or spend by whose machine they run on. **A
   profile-dependent DEFAULT is the other
