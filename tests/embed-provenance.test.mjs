@@ -248,23 +248,49 @@ describe('D2 regression: the production call sites actually use the shared resol
       + 'A cosine across two embedding models is not a similarity.');
   });
 
-  test('DEFERRED, not silent: the memory-health RPC is the one unscoped reader left', () => {
-    // Named here rather than left unmentioned. `memory_health_semantic_cluster`
-    // joins finding_embeddings and counts cosine pairs with no model predicate,
-    // so its cluster-density number can mix two spaces.
+  test('the memory-health RPC is space-scoped too (the deferral, closed 2026-08-30)', () => {
+    // This test used to assert the OPPOSITE: it pinned the gap open so it could
+    // not go quiet, and was written to FAIL once the predicate landed. It landed
+    // (migration 20260830150000), so the assertion is inverted rather than
+    // deleted -- the RPC is the last unscoped reader and must not silently
+    // become one again.
     //
-    // Deferred on INDEPENDENCE, not on authorship: it is a metric, it suppresses
-    // nothing, and nothing in this change calls it or depends on its output —
-    // whereas every reader fixed above sits on a path that drops or groups a
-    // store row. Fixing it means a new migration plus an expected-schema fixture
-    // regen, which is a real scope boundary and not "the correct fix is bigger".
-    //
-    // This test exists so the gap cannot go quiet: it FAILS once the RPC gains
-    // the predicate, at which point delete it rather than weaken it.
-    const rpc = src('supabase/migrations/20260721140000_memory_health_semantic_cluster.sql');
-    assert.match(rpc, /LEFT JOIN finding_embeddings e ON e\.finding_id = f\.id/);
-    assert.doesNotMatch(rpc, /e\.embedding_model\s*=/,
-      'the RPC is now space-scoped — remove this deferral test, the gap is closed');
+    // The predicate is between the two sides of the self-join (a vs b), NOT a
+    // function parameter: the RPC is CROSS-REPO and different repos legitimately
+    // sit in different spaces, so a single global model filter would be wrong for
+    // every repo but one.
+    const rpc = src('supabase/migrations/20260830150000_memory_health_cluster_vector_space.sql');
+    assert.match(rpc, /AND a\.embedding_model = b\.embedding_model/,
+      'pairs must share a model -- a cosine across two models is not a similarity');
+    assert.match(rpc, /AND a\.dimension = b\.dimension/,
+      'a space is (model, dim); the dim is not implied');
+    // CREATE OR REPLACE resets proconfig AND the ACL, so a replacement that
+    // forgets either silently drops the search_path pin or the grant.
+    assert.match(rpc, /SET search_path = pg_catalog, public/);
+    assert.match(rpc, /SET statement_timeout = '120s'/);
+    assert.match(rpc, /GRANT EXECUTE ON FUNCTION memory_health_semantic_cluster/);
+  });
+
+  test('COVERAGE follows the pair scoping, or fixing it INTRODUCES a false clean', () => {
+    // The half that is easy to miss. Pairs can only form within one space, so
+    // for a repo split across two the comparable population is the LARGEST
+    // space -- not the total embedded count. Leaving coverage as embedded/open
+    // would report ~100% over a store where half the rows can never be compared
+    // to the other half: a high-confidence GREEN derived from a halved
+    // population, which is the exact false-clean the coverage number exists to
+    // prevent. Scoping the pairs without scoping coverage is a REGRESSION.
+    const rpc = src('supabase/migrations/20260830150000_memory_health_cluster_vector_space.sql');
+    assert.match(rpc, /100\.0 \* COALESCE\(sp\.comparable_findings, 0\) \/ pop\.open_findings/,
+      'per-repo coverage_pct must divide by comparable, not embedded');
+    assert.match(rpc, /100\.0 \* total_comparable \/ total_open/,
+      'top-level coverage.pct must divide by comparable, not embedded');
+    // And the reader must ACT on it, or these are columns nothing reads -- the
+    // very defect this whole change closes.
+    const reader = src('scripts/memory-health.mjs');
+    assert.match(reader, /sem\.coverage\?\.comparable/,
+      'memory-health.mjs must read the comparable count');
+    assert.match(reader, /splitAcrossSpaces/,
+      'a coverage drop caused by a stale vector space must be distinguishable from one caused by unembedded rows');
   });
 
   test('CENSUS: every embedText writer is enumerated above — a fourth cannot hide', () => {

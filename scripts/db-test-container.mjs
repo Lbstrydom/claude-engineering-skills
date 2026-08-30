@@ -76,6 +76,15 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   'tests/campaign-adjudication.test.mjs',
   'tests/candidate-audit-findings-window.test.mjs',
   'tests/db-schema-realization-live.test.mjs',
+  // Enrolled 2026-08-30 with migration 20260830150000 (the vector-space
+  // scoping of memory_health_semantic_cluster). It is a plpgsql function, so
+  // the sibling assertions in embed-provenance.test.mjs are source-level only
+  // and prove nothing about behaviour; this seeds a real same-file cross-run
+  // pair and asserts it counts in ONE space and not across TWO, plus that the
+  // replacement kept its search_path pin and ACL (pg_proc, not the file text).
+  // Truncates the audit tables, so it is disposable-DSN guarded.
+  // Two edits, always — this list AND postgres-parity.yml.
+  'tests/memory-health-cluster-space.test.mjs',
   'tests/regression-spec-multi-finding-lock.test.mjs',
   // Enrolled 2026-08-12 with the D7 ownership joins (Phase 7). It needs an
   // intact, fully migrated schema: it seeds two repos and two plans, then
