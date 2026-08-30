@@ -185,7 +185,8 @@
     "upstream:coverage": "node scripts/check-upstream-probe-coverage.mjs",
     "upstream:coverage:gate": "node scripts/check-upstream-probe-coverage.mjs --gate",
     "remediation:reconcile": "node scripts/remediation-reconcile.mjs",
-    "remediation:reconcile:apply": "node scripts/remediation-reconcile.mjs --apply"
+    "remediation:reconcile:apply": "node scripts/remediation-reconcile.mjs --apply",
+    "stores:drift": "node scripts/store-drift.mjs"
   },
   "keywords": [
     "claude",

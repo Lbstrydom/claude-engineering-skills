@@ -543,6 +543,34 @@ had nothing to do with. Running it here surfaces the same block before that work
 - **On a block**: run `node scripts/setup-postgres.mjs --migrate`, then continue — Step 6.3
   will pass without a retry once the migration is applied.
 
+> **This checks the AMBIENT store only — the consumers get their own read** (added
+> 2026-08-30, source-repo only). `--check-migrations` asks whether *this* process's
+> `AUDIT_DB_URL` is current. Consumers are not on one store, so a consumer whose store
+> falls behind is invisible from here until one of its own writes hits the realization
+> guard. Measured: a consumer's store sat **2 migrations behind for a day** — the `.sql`
+> files had synced to disk and were never applied, so its code and schema disagreed
+> silently and the `annotation` event shipped the day before could not have worked
+> there. It surfaced only when a routine upstream-report closure was refused.
+>
+> ```bash
+> npm run stores:drift
+> ```
+>
+> Print its stdout verbatim — it renders the finished card. **Never blocks, no override
+> flag**, same reasoning as 0.5h: applying a migration to a consumer's production
+> database is an operator decision, and a gate firing on something the commit cannot
+> change is what earns `--no-verify`.
+>
+> **Read the `unqueried` / `no store` lines.** A store nobody could reach and a consumer
+> whose DSN could not be resolved are reported explicitly rather than counted as
+> current; if NO store answered, the card says `NOTHING WAS CHECKED` instead of
+> `all current`.
+>
+> **The runtime DSN usually cannot apply migrations.** A consumer's `.env` carries its
+> *runtime* role; on managed Postgres that role does not own the tables (measured:
+> `must be owner of table audit_findings`, 42501). Applying needs the owner DSN:
+> `AUDIT_DB_URL=<owner dsn> node scripts/setup-postgres.mjs --migrate`.
+
 ### 0.5h — Upstream issue queue (advisory, source-repo only)
 
 **Source-repo-gated** — run ONLY when `package.json.name === "claude-engineering-skills"`.

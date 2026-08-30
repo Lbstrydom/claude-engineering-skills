@@ -36,6 +36,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "1315e360-8cd8-418c-a370-659f641cf0fb",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/embed-provenance.test.mjs"
+      },
+      "recordedAt": "2026-08-30T18:31:00.157Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "167084b3-97de-4ddc-9526-5da4ef10bfbf",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",

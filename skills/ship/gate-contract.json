@@ -379,6 +379,22 @@
     {
       "line": "credential degrades to the free mechanical-resolution path only, never a",
       "reason": "0.5e. Describes scripts/remediation-reconcile.mjs's own graceful-degradation behaviour (no Claude credential -> mechanical-only, never a crash) — a property of that CLI, asserted by its own tests, not a /ship gate. Same 'names another component's behaviour, not this skill's' shape as the upstream:coverage:gate entry immediately above."
+    },
+    {
+      "line": "> files had synced to disk and were never applied, so its code and schema disagreed",
+      "reason": "0.5g's new cross-store drift note. Narrates the 2026-08-30 INCIDENT (a consumer store 2 migrations behind while its .sql files sat on disk) — a past measurement, not a claim about what /ship enforces. The scanner matches on 'never'."
+    },
+    {
+      "line": "> Print its stdout verbatim — it renders the finished card. **Never blocks, no override",
+      "reason": "0.5g's cross-store drift sub-step. Identical shape and disposition to step-0-5-gates-non-blocking and the 0.5h upstream-queues entry: 'never blocks, no override flag' describes what the AGENT does with npm run stores:drift's output, not a /ship CLI exit code. store-drift.mjs's own always-exit-0 contract is asserted in tests/store-drift.test.mjs."
+    },
+    {
+      "line": "> database is an operator decision, and a gate firing on something the commit cannot",
+      "reason": "0.5g. States WHY the drift reader is advisory (a gate the pushed commit cannot satisfy earns --no-verify) — design rationale for another CLI's exit behaviour, not a gate /ship enforces about itself. Same class as the upstream:coverage:gate entry."
+    },
+    {
+      "line": "> `must be owner of table audit_findings`, 42501). Applying needs the owner DSN:",
+      "reason": "0.5g. Quotes a measured Postgres error to explain that a consumer's RUNTIME DSN cannot apply migrations — an operator instruction about setup-postgres.mjs against a foreign store, not a refusal /ship implements. The scanner matches on 'must'."
     }
   ]
 }
