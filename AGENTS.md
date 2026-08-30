@@ -862,98 +862,66 @@ from GitHub, never the local service manager). Detail: [`docs/runbooks/actions-r
 
 ## Azure AI Foundry Work Profile
 
-Run the **same** bundle in a corporate Azure environment (restricted models)
-without drifting from the public-profile repo. Full guide:
-[`docs/runbooks/azure-work-profile.md`](docs/runbooks/azure-work-profile.md); plan +
-audit trail: [`docs/plans/azure-work-profile.md`](docs/plans/azure-work-profile.md).
+**What it is**: running the **same** bundle in a corporate Azure environment
+(restricted models) without drifting from the public-profile repo — env-selected
+role swaps, GPT auditor → Azure OpenAI, final reviewer → Opus on Foundry
+(replacing Gemini), embeddings → `text-embedding-3-large` (`dimensions: 768`).
+**When you need the dossier**: standing a tenant up, choosing an
+`AZURE_CLAUDE_ROUTE`, debugging a 401/404/429, or reading the env-var,
+final-reviewer-precedence, deployment-quota or throttling tables.
+**Pointer**: [`docs/runbooks/azure-work-profile.md`](docs/runbooks/azure-work-profile.md)
+(guide) + [`docs/plans/azure-work-profile.md`](docs/plans/azure-work-profile.md)
+(plan/audit trail); template
+[`defaults/work-profile.env.example`](defaults/work-profile.env.example).
 
 > **Opt-in invariant (load-bearing).** The Azure path activates **only** when
 > `AZURE_OPENAI_ENDPOINT` is set. With no Azure env vars, client construction and
 > resolved models are **byte-identical** to the public path (regression-guarded
 > by `tests/openai-client.test.mjs`). It never touches your personal setup.
 
-| Role | Public | Azure work profile |
-|---|---|---|
-| GPT auditor | `new OpenAI()` → api.openai.com | Azure OpenAI, deployment-qualified via the SDK's `AzureOpenAI` (`AZURE_OPENAI_ENDPOINT/openai/deployments/<deployment>/…`), deployment `AZURE_OPENAI_GPT_DEPLOYMENT` |
-| Final reviewer | Gemini → Claude Opus fallback | **Opus on Foundry** (`AZURE_AI_ENDPOINT`), deployment `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` — replaces Gemini |
-| Embeddings | Gemini `gemini-embedding-001` | Azure `text-embedding-3-large` (`dimensions: 768`) |
-
-**Seam (mirrors `anthropic-client.mjs`)**: [`scripts/lib/openai-client.mjs`](scripts/lib/openai-client.mjs)
+**Seam** (mirrors `anthropic-client.mjs`): [`openai-client.mjs`](scripts/lib/openai-client.mjs)
 `createOpenAIClient({purpose})` + [`embed-text.mjs`](scripts/lib/embed-text.mjs)
-`embedText()` route to Azure or public by env presence; `azureConfig` in
-[config.mjs](scripts/lib/config.mjs). Wire deployment comes from the
-`AZURE_*_DEPLOYMENT` vars while `OPENAI_AUDIT_MODEL` / `CLAUDE_FINAL_REVIEW_MODEL`
-stay logical sentinels (dodges the `gpt-5.3 → latest-gpt` remap footgun);
-`MODEL_CATALOG_REFRESH` auto-skips under Azure.
+`embedText()` route to Azure or public **by env presence**; `azureConfig` in
+[config.mjs](scripts/lib/config.mjs).
 
-**Load-bearing gotchas** (the operational depth is in the guide):
-- **An availability gate must ask whether a ROUTE exists, not whether a public
-  env var is set** — fourth instance fixed 2026-08-30. An
+**Four invariants that constrain any code reaching a provider** (the mechanics,
+incidents and opt-out lists are in the guide):
+
+- **An availability gate must ask whether a ROUTE exists, not whether a public env
+  var is set** — fourth instance fixed 2026-08-30. An
   `if (!process.env.OPENAI_API_KEY)` guard upstream of an Azure-aware seam makes
   the Azure branch unreachable — dead code on exactly the installs it was written
-  for; the envelope tell is a **failure with zero latency**, nothing was called.
-  So **grep the whole path a call site takes for the public key name**, and let
-  ONE oracle own the answer (`lib/brainstorm/provider-availability.mjs` — two
-  dispatch sites each held their own copy, so fixing one left the other wrong).
-  **`isClaudeAvailable()`, never `ANTHROPIC_API_KEY`** — a tenant sets no such
-  key, so the raw test read a working backend as absent and three call sites
-  skipped themselves silently. **An OMITTED `azureRoute` ADOPTS the tenant's
-  route**, so a bare call is correct by construction; pass **`azureRoute: null`**
+  for; the envelope tell is a **failure with zero latency**, nothing was called. So
+  **grep the whole path a call site takes for the public key name**, let ONE oracle
+  own the answer (`lib/brainstorm/provider-availability.mjs` — two dispatch sites
+  each held their own copy, so fixing one left the other wrong), and use
+  **`isClaudeAvailable()`, never `ANTHROPIC_API_KEY`** (a tenant sets no such key).
+  An **OMITTED `azureRoute` ADOPTS the tenant's route**, so a bare
+  `createAnthropicClient()` is correct by construction; pass **`azureRoute: null`**
   only where an id *means* the public service (`claude-opus` vs `azure-claude`).
-  Measured, mechanism, opt-out list:
-  [azure-work-profile.md](docs/runbooks/azure-work-profile.md) §"Which Claude a
-  bare `createAnthropicClient()` reaches".
-  Tests that spawn such a CLI must scrub `AZURE_*`
-  explicitly, or they pass or spend by whose machine they run on. **A
-  profile-dependent DEFAULT is the other
-  half**: /brainstorm's default is "two voices", and which two is a property of the
-  profile (`defaultProviders()` — `openai,gemini` public, `openai,azure-claude` on
-  Azure, since no Gemini exists in a tenant), never a constant. Adding a voice means
-  every table that must know: adapter map, `PROVIDER_INPUT_CEILING_TOKENS`, the
-  `resolvedModels` schema key (a non-`.strict()` `z.object` **strips** an
-  undeclared key and the writer emits `parse`d data, so the id vanishes silently)
-  — the ceiling table was the one missed, and only running it caught the FATAL.
-- **The deployment is CONSTRUCTOR-level route state, not a body field** (fixed
-  2026-08-12). `gpt` and `embed` are built as `AzureOpenAI({endpoint, deployment,
-  apiVersion})` and the SDK derives `/openai/deployments/{deployment}/…` itself —
-  never concatenate an operation path, and never share one client across purposes
-  (the cache key carries purpose + deployment). A caller probing *candidate*
-  deployments must build a client per candidate (`selectEmbedDeployment`'s
-  `clientFor`), or every probe silently hits the configured one. `api-version`
-  defaults to the dated `2025-03-01-preview` here; the Foundry-Claude route is
-  untouched and keeps `/openai/v1` + the undated `preview`.
-- **Vector-space safety + embedding-deployment doctor**: provenance is the single
-  endpoint-qualified `resolveEmbedProfile()` identity; a deployment/resource switch
-  is a distinct space and `refresh` auto-promotes to full so spaces can't mix. Unset
-  `AZURE_OPENAI_EMBED_DEPLOYMENT` → guessed default may 400 → `npm run azure:doctor -- --fix` probes + locks the real name in. [Recipe](docs/runbooks/azure-work-profile.md) §3.
-- **An endpoint and the credential it is addressed with are ONE unit** (fixed
-  2026-08-13). Claude's base URL was hard-wired to `AZURE_AI_ENDPOINT` while
-  `anthropic-client.mjs` picked the credential by sniffing `AZURE_OPENAI_API_KEY`
-  off the ambient env and always sent it as Bearer — so on any APIM-fronted
-  tenant (two different services) every call shipped the APIM subscription key to
-  the direct Foundry host for a bare `401`, and the APIM route was
-  **unrepresentable**: no env combination reached it. Now `azureConfig.claudeRoute`
-  resolves `{origin, baseUrl, authMode, apiKey, credentialVar}` together, selected
-  by `AZURE_CLAUDE_ROUTE=apim|foundry`; pass it as `createAnthropicClient({azureRoute})`
-  — **never a bare `baseURL`**. Generalise it: *if a change can make one host
-  receive another's credential, the two were resolved apart and must not be.*
-  A cross-service key fallback stays legal but is flagged `credentialShared`, and
-  `npm run azure:routes` prints every route's credential **variable name** (never
-  its value) plus a live probe. Assert these on the **emitted request**, not the
-  client config ([azure-claude-route.test.mjs](tests/azure-claude-route.test.mjs));
-  the Anthropic SDK binds its transport at construction, so a post-hoc
-  `globalThis.fetch` patch observes nothing and the request escapes to the network.
-- **Final-reviewer precedence** (top wins): `--provider` → `FINAL_REVIEW_PROVIDER`
-  → Gemini (if `GEMINI_API_KEY`) → Azure `azure-claude` (only when the profile is
-  active) → public Opus. A stray `AZURE_OPENAI_ENDPOINT` no longer silently hijacks
-  the reviewer; persist with `gemini-review.mjs set-provider azure-claude`.
-- **Arch-index summaries stay on Sonnet** (not Haiku) under Azure — deployment quota,
-  not per-token cost, is the binding constraint on the `arch:refresh` batch.
-
-→ **Setup, env-var reference, provider-precedence detail, Foundry-Anthropic API shape,
-deployment quotas, rate-limits + throttling, rollback**: [`docs/runbooks/azure-work-profile.md`](docs/runbooks/azure-work-profile.md)
-(guide) + [`docs/plans/azure-work-profile.md`](docs/plans/azure-work-profile.md)
-(plan/audit). Template: [`defaults/work-profile.env.example`](defaults/work-profile.env.example).
+  Tests spawning such a CLI must scrub `AZURE_*` explicitly, or they pass — or
+  spend — by whose machine they run on. **A profile-dependent DEFAULT is the other
+  half**: which two voices /brainstorm runs is a property of the profile
+  (`defaultProviders()`), never a constant, and adding one is a multi-table change.
+- **The deployment is CONSTRUCTOR-level route state, not a body field** (2026-08-12).
+  Build `AzureOpenAI({endpoint, deployment, apiVersion})` and let the SDK derive
+  `/openai/deployments/{deployment}/…` — **never concatenate an operation path**,
+  and never share one client across purposes (the cache key carries purpose +
+  deployment). Probing *candidate* deployments needs a client per candidate.
+- **An endpoint and the credential it is addressed with are ONE unit** (2026-08-13).
+  `azureConfig.claudeRoute` resolves `{origin, baseUrl, authMode, apiKey,
+  credentialVar}` together; pass it as `createAnthropicClient({azureRoute})` —
+  **never a bare `baseURL`**. Generalise it: *if a change can make one host receive
+  another's credential, the two were resolved apart and must not be.* Assert these
+  on the **emitted request**, not the client config
+  ([azure-claude-route.test.mjs](tests/azure-claude-route.test.mjs)) — the Anthropic
+  SDK binds its transport at construction, so a post-hoc `globalThis.fetch` patch
+  observes nothing and the request escapes to the network.
+- **A deployment or resource switch is a DIFFERENT vector space.** Provenance is the
+  single endpoint-qualified `resolveEmbedProfile()` identity, and `arch:refresh`
+  auto-promotes to a full re-embed so two spaces can't mix. An unset
+  `AZURE_OPENAI_EMBED_DEPLOYMENT` falls back to a guess that may 400 —
+  `npm run azure:doctor -- --fix` probes and locks the real name in.
 
 ## Cross-Skill Data Loop
 

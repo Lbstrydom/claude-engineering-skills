@@ -48,6 +48,17 @@ back in if you really do hold a key.
 > [`provider-availability.mjs`](../../scripts/lib/brainstorm/provider-availability.mjs);
 > the second voice: [`azure-claude-adapter.mjs`](../../scripts/lib/brainstorm/azure-claude-adapter.mjs).
 
+**Adding a voice is a multi-table change.** A provider id must be declared in
+every table that must know it, and the tables fail differently: the adapter map
+(absent ⇒ no dispatch), `PROVIDER_INPUT_CEILING_TOKENS` (absent ⇒ FATAL at call
+time — this is the one that was missed, and only a live run caught it), and the
+`resolvedModels` schema key (absent ⇒ **silent**: a non-`.strict()` `z.object`
+strips the undeclared key and the writer emits the `parse`d data, so the model id
+vanishes from the record with no error anywhere). And because the default itself
+is profile-dependent — `defaultProviders()` returns `openai,gemini` on a public
+install and `openai,azure-claude` on an active Azure profile — a new voice is
+never "just a constant": run it on **both** profiles before calling it done.
+
 ## Setup
 
 ### 1. Provide credentials
@@ -85,7 +96,19 @@ to missing subscription key"*.
 When the `foundry` route falls back to `AZURE_OPENAI_API_KEY` (no dedicated
 `AZURE_AI_API_KEY`), the credential is being sent to a service it may not belong
 to. That is legal — some tenants really do share one key — so it is permitted but
-flagged `[SHARED across services]` in `azure:routes` and in any 401 message.
+flagged `credentialShared` on the resolved route — surfaced as `[SHARED across
+services]` in `azure:routes` and in any 401 message. `azure:routes` prints each
+route's credential **variable name**, never its value, plus a live probe.
+
+> **Why this is one resolved unit (fixed 2026-08-13).** Claude's base URL used to
+> be hard-wired to `AZURE_AI_ENDPOINT` while `anthropic-client.mjs` picked the
+> credential by sniffing `AZURE_OPENAI_API_KEY` off the ambient env and always sent
+> it as Bearer. On an APIM-fronted tenant — two different services — every call
+> therefore shipped the APIM subscription key to the direct Foundry host for a bare
+> `401`, and the APIM route was **unrepresentable**: no combination of env vars
+> reached it. `azureConfig.claudeRoute` now resolves `{origin, baseUrl, authMode,
+> apiKey, credentialVar}` **together**, selected by `AZURE_CLAUDE_ROUTE`, and call
+> sites pass it as `createAnthropicClient({azureRoute})` — never a bare `baseURL`.
 
 Check what you have configured, without sending a single secret to your terminal:
 
@@ -187,8 +210,9 @@ failures preserve config) — except the architectural-memory vector-space
 invalidation warning, which is specific to the embedding slot and does not
 print for `--target gpt`/`--target claude`.
 
-> **The deployment name IS the vector-space identity.** Provenance is stored
-> endpoint-qualified (`azure-openai:<endpoint-origin>::<deployment>`), so changing
+> **The deployment name IS the vector-space identity.** Provenance is the single
+> endpoint-qualified `resolveEmbedProfile()` identity
+> (`azure-openai:<endpoint-origin>::<deployment>`), so changing
 > the deployment — or pointing `AZURE_OPENAI_ENDPOINT` at a different resource with
 > the same alias — is a *different* vector space. The doctor warns before it
 > writes, and the next `arch:refresh` auto-promotes to a full re-embed so the index
@@ -410,6 +434,8 @@ for the annotated list. Notes:
   `CLAUDE_FINAL_REVIEW_MODEL` stay logical sentinels (for logging/pricing); the
   wire-level deployment comes from the `AZURE_*_DEPLOYMENT` vars. This avoids
   the `gpt-5.3 → latest-gpt` remap footgun.
+  `MODEL_CATALOG_REFRESH` **auto-skips** under an active Azure profile: the live
+  public catalog describes models a tenant does not serve.
 - **`api-version`** defaults to **`2025-03-01-preview`**, the dated version the
   deployment-qualified GPT/embedding surface expects. The undated `preview`
   sentinel belongs to the older `/openai/v1` surface and is still the default on
@@ -435,6 +461,21 @@ chat-completions + `zodResponseFormat` **only** on a positive Responses-unsuppor
 signal ([`openai-responses-capability.mjs`](../../scripts/lib/openai-responses-capability.mjs)
 — a generic 404 stays fatal, per "never retry 404"). `azureConfig` lives in
 [config.mjs](../../scripts/lib/config.mjs) (`buildAzureConfig`, fail-fast + redacted).
+
+**One client per purpose; the deployment is CONSTRUCTOR-level route state.** The
+`gpt` and `embed` clients are built as `AzureOpenAI({endpoint, deployment,
+apiVersion})` and the SDK derives `/openai/deployments/{deployment}/…` itself — the
+bundle never concatenates an operation path, and never shares one client across
+purposes: the client cache key carries **purpose + deployment**. A caller probing
+*candidate* deployments must therefore build a client per candidate
+(`selectEmbedDeployment`'s `clientFor`); reusing one silently sends every probe to
+the already-configured deployment, so the ladder "verifies" a name it never called.
+Fixed 2026-08-12, together with the `/openai/v1`-surface 404s above.
+
+**Tests that spawn one of these CLIs must scrub `AZURE_*` explicitly.** The seams
+key on ambient env, so a child process inherits whatever profile the developer's
+machine carries — an unscrubbed spawn passes, fails, or *spends* according to whose
+machine ran it.
 
 **Role swaps**: GPT auditor → Azure OpenAI, deployment-qualified
 (`AZURE_OPENAI_ENDPOINT/openai/deployments/<deployment>/…`,
