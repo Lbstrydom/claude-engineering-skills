@@ -21,7 +21,7 @@
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { ArgvError } from './lib/cli-io.mjs';
-import { loadAllSkills } from './lib/skills-index.mjs';
+import { loadAllSkills, resolveSkillsRoot, SKILL_ROOT_CANDIDATES } from './lib/skills-index.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 
 const HELP_TEXT = `skills-help — quick reference for all available skills
@@ -89,9 +89,19 @@ export function filterBySearch(skills, term) {
 
 // ── Renderers ───────────────────────────────────────────────────────────
 
-function renderCompactMd(skills) {
+function renderCompactMd(skills, root = resolveSkillsRoot()) {
   if (skills.length === 0) {
-    return '_No skills found in `skills/`._\n';
+    // Name the root ACTUALLY searched, and distinguish "looked and found
+    // nothing" from "there was nowhere to look". The old text hardcoded
+    // `skills/`, so a wrong-place read rendered as an empty repo — in a
+    // consumer, which carries only `.claude/skills/`, that was 67 tracked
+    // skill files reported as none (upstream report 5b67f273).
+    if (root.origin === 'none') {
+      const looked = SKILL_ROOT_CANDIDATES.map((c) => `\`${c}/\``).join(' and ');
+      return `_No skills directory here — looked for ${looked}._\n`;
+    }
+    const searched = root.origin === 'authoring' ? SKILL_ROOT_CANDIDATES[0] : SKILL_ROOT_CANDIDATES[1];
+    return `_No skills found in \`${searched}/\`._\n`;
   }
   const lines = [
     `# Available skills (${skills.length} total)`,

@@ -58,6 +58,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "2837b033-efc8-4ede-b373-35fdf4a6531f",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "exempt",
+        "value": "skill-prose change (Step 6.5 gained --if-present); no CLI exit code or importable seam to bind, and the absent npm script it tolerates is a consumer-side condition this repo cannot construct in a test"
+      },
+      "recordedAt": "2026-08-30T06:03:24.041Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "29a9f4cf-a66f-4da4-a030-1128bf78b6c8",
       "storeFingerprint": "c7177057dcafa55d",
       "state": "fixed",
@@ -69,6 +80,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "2b7988de-e944-41f9-a3e6-c37acc35063a",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/ship-commit-cli.test.mjs"
+      },
+      "recordedAt": "2026-08-30T06:03:23.114Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "36be3a03-6a8f-496f-96f6-a5da084f8fc3",
       "storeFingerprint": "c7177057dcafa55d",
       "state": "fixed",
@@ -77,6 +99,17 @@
         "value": "tests/worktree-preflight-gate.test.mjs"
       },
       "recordedAt": "2026-08-29T17:12:05.482Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "4d5cd75b-e44a-46b1-aa56-25706dfc8e07",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "exempt",
+        "value": "skill-prose ordering change across Steps 2 and 6.8; the contract is which FILE a note is written to and when it is consumed, with no CLI exit code or importable seam a test in the closed oracle registry can assert"
+      },
+      "recordedAt": "2026-08-30T06:03:24.891Z"
     },
     {
       "schemaVersion": 1,
@@ -132,6 +165,39 @@
         "value": "Ordinary code defect (a repo-identity object passed where a uuid was expected in one call site) — no environment signature, and no regression test could be confidently identified as covering this specific fix rather than the surrounding feature generally."
       },
       "recordedAt": "2026-08-22T00:00:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "71287365-3f7f-4c81-aa47-d624115d600d",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/brainstorm-abort-classification.test.mjs"
+      },
+      "recordedAt": "2026-08-30T06:05:28.339Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "7af14dd6-820d-4176-9144-5e38a9484c34",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/azure-claude-route.test.mjs"
+      },
+      "recordedAt": "2026-08-30T06:04:59.227Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "7e2eda8d-a26b-4f0f-8b5d-17a8d87fdc5b",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "wont_fix",
+      "disposition": {
+        "kind": "exempt",
+        "value": "accidental CLI flag-validation probe, not a real finding"
+      },
+      "recordedAt": "2026-08-29T22:17:09.207Z"
     },
     {
       "schemaVersion": 1,
@@ -198,6 +264,17 @@
         "value": "the specific ask (adopt this consumer's condensed preflight form upstream) would regress every fresh consumer; the general defect it names is fixed by the divergence mechanism in f3d9714"
       },
       "recordedAt": "2026-08-29T17:14:10.000Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "b3b4ac36-4bd5-48f0-8a55-3b4104718f52",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "exempt",
+        "value": "the remedy is a SKILL.md ladder the agent follows at Step 0 (skills/audit-code/references/prerequisite-ladder.md); it prescribes what to report when a prerequisite does not resolve, which has no CLI exit code or importable seam in the closed oracle registry to assert"
+      },
+      "recordedAt": "2026-08-30T06:05:29.244Z"
     },
     {
       "schemaVersion": 1,

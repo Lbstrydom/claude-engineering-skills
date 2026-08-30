@@ -177,6 +177,34 @@ export function parseSkill(skillFile, { onSkip } = {}) {
 }
 
 /**
+ * Where a repo's skills live, in preference order.
+ *
+ * `skills/` is the AUTHORING tree and exists only in the source repo;
+ * `.claude/skills/` is the generated copy the sync writes into every consumer.
+ * A consumer has only the second, so a reader that knows only the first sees
+ * an empty repo (upstream report `5b67f273`).
+ */
+export const SKILL_ROOT_CANDIDATES = Object.freeze(['skills', '.claude/skills']);
+
+/**
+ * Resolve the skills root for `cwd`, or `{root: null}` when neither exists.
+ *
+ * Returns the ORIGIN alongside the path so a caller can say which tree it
+ * read. Never guesses: a null root is reported, not silently treated as an
+ * empty skill set — that equivalence is the defect this exists to remove.
+ *
+ * @param {string} [cwd]
+ * @returns {{root: string|null, origin: 'authoring'|'generated'|'none'}}
+ */
+export function resolveSkillsRoot(cwd = process.cwd()) {
+  for (const [i, candidate] of SKILL_ROOT_CANDIDATES.entries()) {
+    const abs = path.resolve(cwd, candidate);
+    if (fs.existsSync(abs)) return { root: abs, origin: i === 0 ? 'authoring' : 'generated' };
+  }
+  return { root: null, origin: 'none' };
+}
+
+/**
  * Scan all skills/* directories for SKILL.md files. Returns sorted by name.
  * Excludes the .claude/skills/ mirror (regenerated, not authoritative).
  *
@@ -186,12 +214,50 @@ export function parseSkill(skillFile, { onSkip } = {}) {
  * and a one-line warning goes to stderr instead, which is what the dashboard
  * and skills-help collectors get for free.
  *
+ * **The root is DISCOVERED, not assumed** (upstream report `5b67f273`). This
+ * defaulted to a top-level `skills/` and returned `[]` through the
+ * `existsSync` guard below when it was absent — so in a consumer that carries
+ * only `.claude/skills/` (which is every consumer: the sync writes the
+ * generated copy there and the authoring tree is source-repo-only)
+ * `skills-help.mjs` printed "_No skills found in `skills/`._" over 67 tracked
+ * skill files. A silently-wrong empty result, not an error, so it read as
+ * "this repo has no skills" rather than "I looked in the wrong place".
+ *
+ * `resolveSkillsRoot` therefore prefers the authoring tree and falls back to
+ * the generated one, and an ABSENT root is reported through `onSkip` instead
+ * of vanishing: "nothing here" and "no such directory" are different answers
+ * and only one of them is a fact about the skills.
+ *
+ * An explicit `skillsRoot` argument still wins outright — `collect-reference`
+ * passes one deliberately, because the dashboard documents the AUTHORING tree
+ * and must not silently fall back to the generated mirror.
+ *
  * @param {string} [skillsRoot]
  * @param {{onSkip?: (info: {file: string, reason: string, detail?: string}) => void}} [opts]
  */
-export function loadAllSkills(skillsRoot = 'skills', { onSkip } = {}) {
-  const root = path.resolve(skillsRoot);
-  if (!fs.existsSync(root)) return [];
+export function loadAllSkills(skillsRoot = undefined, { onSkip } = {}) {
+  const resolved = skillsRoot === undefined
+    ? resolveSkillsRoot()
+    : { root: path.resolve(skillsRoot), origin: 'explicit' };
+  const report0 = onSkip ?? ((info) => {
+    process.stderr.write(
+      `  [skills-index] ${info.file}: skipped (${info.reason}${info.detail ? ` — ${info.detail}` : ''})
+`,
+    );
+  });
+  if (resolved.root === null) {
+    report0({
+      file: SKILL_ROOT_CANDIDATES.join(' | '),
+      reason: 'no-skills-root',
+      detail: 'neither the authoring tree nor the generated copy exists here',
+    });
+    return [];
+  }
+  const root = resolved.root;
+  if (!fs.existsSync(root)) {
+    report0({ file: path.relative(process.cwd(), root).replace(/\\/g, '/'), reason: 'skills-root-absent' });
+    return [];
+  }
   const entries = fs.readdirSync(root, { withFileTypes: true });
   const report = onSkip ?? ((info) => {
     process.stderr.write(
