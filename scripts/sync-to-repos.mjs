@@ -616,6 +616,15 @@ const SYNC_ISOLATION_ENTRY = [
   'scripts/lib/sync-isolation-verify.mjs',
   'scripts/lib/npm-script-enumerator.mjs',
   'scripts/lib/remove-legacy-synced.mjs',
+  // Gate 2B reads the consumer's `.sync-overrides.json` so a DECLARED
+  // divergence is reported as held rather than as a hash mismatch. This list
+  // is hand-maintained, not a walked closure — `sync-gitignore.mjs` and
+  // `npm-script-enumerator.mjs` above are here for the same reason, each an
+  // import of the verifier — so an undeclared import ships a verifier that
+  // dies on MODULE_NOT_FOUND in every consumer while this repo stays green.
+  // That is the exact trap the CLI_SMOKE_SET note further up records happening
+  // for months. Its own closure is `sync-path-map.mjs`, already listed.
+  'scripts/lib/sync-overrides.mjs',
 ];
 
 /**

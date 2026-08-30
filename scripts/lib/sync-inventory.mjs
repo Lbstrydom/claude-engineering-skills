@@ -215,6 +215,10 @@ const SYNC_ISOLATION_ENTRY = [
   'scripts/lib/sync-isolation-verify.mjs',
   'scripts/lib/npm-script-enumerator.mjs',
   'scripts/lib/remove-legacy-synced.mjs',
+  // Gate 2B reads the consumer's `.sync-overrides.json`. Two edits, always —
+  // this list AND the one in sync-to-repos.mjs; the lock-step test in
+  // tests/sync-inventory-parity.test.mjs is what catches the half-edit.
+  'scripts/lib/sync-overrides.mjs',
 ];
 
 function syncMigrations() {

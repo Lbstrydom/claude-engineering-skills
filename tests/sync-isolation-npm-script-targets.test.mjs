@@ -72,11 +72,56 @@ describe('gate 5 — npm scripts must resolve to a shipped tool', () => {
 
   it('still reports a STALE non-isolated invocation (pre-existing behaviour)', () => {
     const manifest = consumer('audit', 'node scripts/openai-audit.mjs');
+    // The manifest must ESTABLISH that `openai-audit.mjs` is ours, because
+    // "stale" means an UPSTREAM file left at its pre-isolation path — and only
+    // the consumer's own manifest can say which tails upstream owns. This
+    // fixture used to assert staleness while declaring nothing but a SKILL.md,
+    // so it was really testing the prefix, which is the thing that turned out
+    // to be wrong (see the consumer-owned case below).
+    manifest.files[`${TOOL_DIR}/openai-audit.mjs`] = 'sha-not-read-by-gate5';
 
     const res = gate5(root, manifest);
     assert.equal(res.pass, false);
     assert.equal(res.details.stale.length, 1);
     assert.deepEqual(res.details.unresolved, []);
+  });
+
+  it('does NOT call a CONSUMER-OWNED script stale just because it lives under scripts/', () => {
+    // Measured in `storyline` 2026-08-30: gate 5 flagged `ux:driver` →
+    // `node scripts/ux/ux-driver.mjs`, a file that EXISTS and is the consumer's
+    // own (zero occurrences in its manifest). The refs reach the gate because
+    // the consumer's `<!-- repo-electron-target -->` adapter block, carried in
+    // four SKILL.md it has declared as overrides, deliberately points the
+    // browser lenses at its own Electron driver. The gate was telling a
+    // consumer its own working scripts were stale upstream paths, on the
+    // strength of a path prefix — and gate 3 had had the ownership test all
+    // along.
+    const manifest = consumer('ux:driver', 'node scripts/ux/ux-driver.mjs');
+    write('scripts/ux/ux-driver.mjs', '// the consumer\'s own driver\n');
+
+    const res = gate5(root, manifest);
+    assert.equal(res.pass, true, 'a consumer-owned script is not a stale upstream path');
+    assert.deepEqual(res.details.consumerOwned, [{
+      npmScript: 'ux:driver',
+      body: 'node scripts/ux/ux-driver.mjs',
+      target: 'scripts/ux/ux-driver.mjs',
+    }], 'and it is REPORTED — a pass that silently ignored its subjects is vacuous');
+  });
+
+  it('ownership comes from the MANIFEST, not from the file existing', () => {
+    // The two must not be conflated. An upstream tail left at the legacy path
+    // is stale whether or not the file is there; a consumer tail is not stale
+    // either way. Same body, same disk state, opposite verdicts — decided
+    // solely by what the manifest claims.
+    const owned = consumer('audit', 'node scripts/openai-audit.mjs');
+    owned.files[`${TOOL_DIR}/openai-audit.mjs`] = 'x';
+    write('scripts/openai-audit.mjs', '// present on disk\n');
+    assert.equal(gate5(root, owned).pass, false, 'upstream tail at the legacy path is stale');
+
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'iso-npmtarget-b-'));
+    const theirs = consumer('audit', 'node scripts/openai-audit.mjs');
+    write('scripts/openai-audit.mjs', '// present on disk\n');
+    assert.equal(gate5(root, theirs).pass, true, 'an undeclared tail is the consumer\'s own');
   });
 
   it('ignores an `npm run X` the consumer never wired', () => {
