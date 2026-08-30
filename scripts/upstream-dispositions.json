@@ -25,6 +25,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "0f5d87a2-bd56-4b3c-a54e-1fe91cd0af0e",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/debt-capture-trail.test.mjs"
+      },
+      "recordedAt": "2026-08-30T06:28:55.320Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "167084b3-97de-4ddc-9526-5da4ef10bfbf",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
@@ -143,6 +154,17 @@
         "value": "tests/disowned-paths.test.mjs"
       },
       "recordedAt": "2026-08-22T00:00:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "5b67f273-4877-44ee-b0cc-a14b23c6fd8f",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/skills-root-discovery.test.mjs"
+      },
+      "recordedAt": "2026-08-30T06:27:54.354Z"
     },
     {
       "schemaVersion": 1,
