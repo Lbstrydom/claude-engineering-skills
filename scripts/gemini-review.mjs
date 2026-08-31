@@ -2259,8 +2259,11 @@ const PING_TRANSPORTS = {
     return (r.content?.[0]?.text || '').trim();
   },
   async openai(client, model) {
+    // max_tokens, not max_completion_tokens — must match REVIEW_TRANSPORTS.openai's
+    // real request body, or the ping validates a shape the review never sends and
+    // can pass while the real call 400s on a gateway strict about the param name.
     const r = await client.chat.completions.create({
-      model, max_completion_tokens: 32, messages: [{ role: 'user', content: 'Reply with exactly: ready' }],
+      model, max_tokens: 32, messages: [{ role: 'user', content: 'Reply with exactly: ready' }],
     });
     return (r.choices?.[0]?.message?.content || '').trim();
   },

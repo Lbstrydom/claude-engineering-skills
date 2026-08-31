@@ -14,7 +14,7 @@ drifting from the work repo.
 
 | Role | Public profile | Azure work profile |
 |---|---|---|
-| GPT auditor | `api.openai.com` | Azure OpenAI, deployment-qualified (`AZURE_OPENAI_ENDPOINT/openai/deployments/<deployment>/…`), deployment `AZURE_OPENAI_GPT_DEPLOYMENT` (`gpt-5.5`) |
+| GPT auditor | `api.openai.com` | Azure OpenAI, deployment-qualified (`AZURE_OPENAI_ENDPOINT/openai/deployments/<deployment>/…`), deployment `AZURE_OPENAI_GPT_DEPLOYMENT` — tenant-chosen name, discover yours with `npm run azure:doctor -- --target gpt --fix` (e.g. `gpt-5.6-terra`) |
 | Final reviewer | Gemini (→ Claude Opus fallback) | **Claude Opus on Azure Foundry** (`AZURE_AI_ENDPOINT`), deployment `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` (`claude-opus-4-7`) — opt in with `set-provider azure-claude` (no longer automatic; see Provider precedence below) |
 | Embeddings | Gemini `gemini-embedding-001` | Azure OpenAI `text-embedding-3-large` (`dimensions: 768`) |
 | Author (coding) | your choice in the IDE | Sonnet 4.6 in VS Code (unchanged; out of the bundle's scope) |
@@ -292,10 +292,15 @@ embedding routing changed 2026-08-12, see below):
   route: `Authorization: Bearer` on `foundry`, `api-key` on `apim`. Both
   measured live 2026-08-13 against an APIM-fronted tenant — the APIM host
   rejects Bearer, the Foundry host rejects the APIM subscription key.
-- Deployments: `gpt-5.5` (auditor — replaces the deprecating `gpt-5.3-chat`,
-  retires 2026-06-29), `claude-opus-4-7` (reviewer — 100K TPM, holds a full audit
-  transcript; the older `claude-opus-4-6` at 10K TPM can 429 unrecoverably),
-  `claude-sonnet-4-6` (arch summaries), `text-embedding-3-large` (embeddings).
+- Deployments: the GPT auditor deployment is **tenant-chosen, not a fixed
+  name** — Azure gateways rename/retire model families over time (this repo's
+  own work tenant moved `gpt-5.5` → `gpt-5.6-terra` on 2026-08-21 when the
+  gateway began serving the `gpt-5.6-*` family). Don't hardcode a literal;
+  discover your tenant's real name with `npm run azure:doctor -- --target gpt --fix`.
+  The rest of that verification: `claude-opus-4-7` (reviewer — 100K TPM, holds
+  a full audit transcript; the older `claude-opus-4-6` at 10K TPM can 429
+  unrecoverably), `claude-sonnet-4-6` (arch summaries), `text-embedding-3-large`
+  (embeddings).
 - **`claude-haiku-4-5` now exists on Foundry** but summaries deliberately stay on
   Sonnet: Haiku here is 10K TPM / 10 RPM vs Sonnet's 200K / 200, and `arch:refresh`
   is a hundreds-of-calls batch where Azure quota — not per-token cost — binds.
@@ -496,8 +501,10 @@ Claude) **stream** — `max_tokens` (32000) exceeds the SDK's non-streaming ceil
 plain `messages.create()` throws "Streaming is required…". Deployments: `claude-opus-4-7`
 (reviewer — 100K TPM, holds a full audit transcript; the older `claude-opus-4-6` at
 10K TPM 429s unrecoverably on big audits), `claude-sonnet-4-6` (summaries). GPT auditor
-deployment falls back to a concrete `OPENAI_AUDIT_MODEL` (`gpt-5.5`; the prior
-`gpt-5.3-chat` is 10K TPM, retires 2026-06-29) when `AZURE_OPENAI_GPT_DEPLOYMENT` unset.
+deployment falls back to a concrete `OPENAI_AUDIT_MODEL` when `AZURE_OPENAI_GPT_DEPLOYMENT`
+is unset — either way the value is your tenant's own deployment name (e.g.
+`gpt-5.6-terra`), not a fixed id; run `npm run azure:doctor -- --target gpt --fix`
+to discover and lock in the real one.
 
 **Arch-index summaries route to Sonnet** via Foundry (`summarise.mjs` /
 `summarise-domains.mjs` → `createAnthropicClient({baseURL})`, deployment
@@ -511,8 +518,10 @@ deployment quota — not per-token cost — is the binding constraint.
 command if missing (never auto-installs), then chains `--migrate`.
 
 **Rate limits**: fresh Azure deployments often ship tiny default quotas; the
-`contoso-ai-dev` workhorses sit at **100K TPM / 100 RPM** (`gpt-5.5`, `claude-opus-4-7`),
-`claude-sonnet-4-6` at 200K/200, `text-embedding-3-large` at 100K/600. `npm run
+`contoso-ai-dev` workhorses sit at **100K TPM / 100 RPM** (the GPT auditor
+deployment — a tenant-chosen name, e.g. `gpt-5.6-terra`, see above — and
+`claude-opus-4-7`), `claude-sonnet-4-6` at 200K/200, `text-embedding-3-large`
+at 100K/600. `npm run
 azure:limits` probes each deployment's live TPM/RPM + reset window. Management (opt-in,
 no-op on the public path): a global in-flight concurrency cap
 ([`scripts/lib/azure-throttle.mjs`](../../scripts/lib/azure-throttle.mjs),

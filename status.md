@@ -1,5 +1,27 @@
 # Project Status Log
 
+## 2026-08-31 — Ported four fixes that had landed only in the `audit-loop` mirror
+
+A prior session had made four fixes directly in the company `audit-loop` mirror instead of here, against the repo's own fork-governance rule (never patch the synced/downstream copy — fix upstream, let it flow down). Replicated the intent of each (not a blind diff-apply — two of the touched files had drifted independently since the mirror last synced).
+
+### Changes
+- **[scripts/lib/brainstorm/pricing.mjs](scripts/lib/brainstorm/pricing.mjs)** — the local `RATES` table matched by raw `modelId.startsWith(key)` with no key-length preference, so `'gpt-5.6-terra'.startsWith('gpt-5')` silently matched the bare `gpt-5` entry (no `gpt-5.6` key existed to take priority), under-pricing every `gpt-5.6-terra` estimate by ~2x on input tokens. Now delegates to the repo-wide pricing SSoT (`model-pricing.mjs`/`config.mjs`'s `modelPricing`), which resolves by FAMILY via `pricingKey()` first. `priceFor`/`estimateCostUsd` now return `null` for an unpriced model (every caller already treats that as "unknown", never "free"); `preflightEstimateUsd` still always returns a number, falling back to the SSoT's `FALLBACK_PRICE_USD` over-estimate, since it feeds a pre-call spend ceiling.
+- **[scripts/gemini-review.mjs](scripts/gemini-review.mjs)** — `PING_TRANSPORTS.openai` sent `max_completion_tokens`, while the real `REVIEW_TRANSPORTS.openai` request body sends `max_tokens`. The ping validated a shape the review never sends — could pass while the real call 400s on a gateway strict about the param name. Fixed the ping to match.
+- **[docs/runbooks/azure-work-profile.md](docs/runbooks/azure-work-profile.md) + [defaults/work-profile.env.example](defaults/work-profile.env.example)** — several places hardcoded the literal `gpt-5.5` GPT-auditor deployment name as portable fact. Azure deployment names are tenant-chosen (the mirror's own tenant renamed it to `gpt-5.6-terra` on 2026-08-21 when the gateway began serving the `gpt-5.6-*` family). Generalized to point readers at `npm run azure:doctor -- --target gpt --fix` to discover their own tenant's name, keeping `gpt-5.6-terra` only as an illustrative example.
+- **Azure Postgres schema-drift facts (mirror-reported, not ported)** — the mirror's *local* dev Postgres had accumulated undocumented drift (extra `.model` columns on 5 tables, 6 orphan legacy tables, missing `security_incidents` columns, a stale enum, two NOT-NULL/all-NULL columns) before its migration to Azure Flexible Server. Queried this repo's own store directly (shared NAS Postgres, 131 migrations, `AUDIT_DB_URL`) rather than trusting the report by inference: none of it applies here — none of the extra columns or tables exist, the enum matches its migration-defined labels, and the two flagged NOT-NULL columns (`domain_summaries.composition_hash`, `refresh_runs.repo_id`) are 100% populated in real data (71/71, 108/108). Dropped per the report's own escape clause.
+
+### Files Affected
+- `scripts/lib/brainstorm/pricing.mjs` — rewritten to wrap `model-pricing.mjs`
+- `scripts/gemini-review.mjs` — one-line `PING_TRANSPORTS.openai` fix
+- `docs/runbooks/azure-work-profile.md`, `defaults/work-profile.env.example` — deployment-name guidance generalized
+- `tests/brainstorm-round.test.mjs` — reasserted against real SSoT rates + added null-cost-policy coverage
+
+### Decisions Made
+- Did not add a `gpt-5.6` entry to `config.mjs`'s `modelPricing` table — confirmed it's a pre-existing gap affecting every consumer of that SSoT already (not something my fix introduced or worsened; my fix makes an unpriced `gpt-5.6-terra` correctly report `null` instead of silently mis-pricing against `gpt-5`), and out of this task's stated scope.
+
+### Verification
+Full suite: 14,496 pass / 0 fail / 39 pre-existing skips.
+
 ## 2026-08-31 — I leaked a corporate hostname into the public repo, in the test that asserts locators never leak
 
 Caught by the user asking a different question entirely ("who is upstream, I thought we were?"), which prompted a repo-wide grep for tenant identifiers.

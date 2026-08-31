@@ -45,30 +45,35 @@ describe('brainstorm prompt module', () => {
 });
 
 describe('brainstorm pricing', () => {
-  it('returns rates for known models', () => {
-    assert.deepEqual(priceFor('gpt-5'), { input: 1.25, output: 10.0 });
-    assert.deepEqual(priceFor('gemini-pro-latest'), { input: 1.25, output: 10.0 });
+  it('delegates to the repo-wide pricing SSoT (model-pricing.mjs) for known models', () => {
+    assert.deepEqual(priceFor('gpt-5'), { input: 2.5, output: 10 });
+    assert.deepEqual(priceFor('gemini-pro-latest'), { input: 1.25, output: 5 });
   });
 
-  it('matches by prefix for versioned IDs', () => {
+  it('resolves versioned IDs by FAMILY via pricingKey(), not raw prefix matching', () => {
     const v = priceFor('gpt-5-2025-11-01');
-    assert.equal(v.input, 1.25, 'should match gpt-5 prefix');
+    assert.equal(v.input, 2.5, 'should resolve to the gpt-5 family rate');
   });
 
-  it('falls back to default for unknown', () => {
-    assert.deepEqual(priceFor('unknown-model-xyz'), { input: 1.25, output: 10.0 });
+  it('returns null for an unpriced model (null-cost policy, never a guessed fallback rate)', () => {
+    assert.equal(priceFor('unknown-model-xyz'), null);
   });
 
   it('estimateCostUsd accounts for input AND output (Gemini-G2 v2)', () => {
     const cost = estimateCostUsd({ modelId: 'gpt-5', inputTokens: 100_000, outputTokens: 1_000 });
-    // 100k * 1.25/1M + 1k * 10/1M = 0.125 + 0.01 = 0.135
-    assert.ok(cost > 0.13 && cost < 0.14, `unexpected cost: ${cost}`);
+    // 100k * 2.5/1M + 1k * 10/1M = 0.25 + 0.01 = 0.26
+    assert.ok(cost > 0.25 && cost < 0.27, `unexpected cost: ${cost}`);
+  });
+
+  it('estimateCostUsd returns null for an unpriced model instead of a fallback number', () => {
+    const cost = estimateCostUsd({ modelId: 'unknown-model-xyz', inputTokens: 100, outputTokens: 100 });
+    assert.equal(cost, null);
   });
 
   it('preflight estimate uses chars/4 as token proxy', () => {
     const cost = preflightEstimateUsd({ modelId: 'gpt-5', inputChars: 4000, maxOutputTokens: 1000 });
-    // 1000 input + 1000 output → (1000*1.25 + 1000*10)/1M = 0.01125
-    assert.ok(cost > 0.011 && cost < 0.012, `unexpected preflight: ${cost}`);
+    // 1000 input + 1000 output → (1000*2.5 + 1000*10)/1M = 0.0125
+    assert.ok(cost > 0.0124 && cost < 0.0126, `unexpected preflight: ${cost}`);
   });
 });
 
