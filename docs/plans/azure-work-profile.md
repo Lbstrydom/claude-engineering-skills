@@ -761,6 +761,13 @@ configured **Gemini** default — even when `embedText` routed the call to Azure
     and the stored vectors' L2 norm is 1.0000 (range 0.9995–1.0004), matching the
     known-Azure `symbol_embeddings` at 1.0000. Neither is conclusive alone; both
     together are.
+  - **The MIGRATION is live there too, verified on the function body rather than
+    the ledger** (2026-08-31). `proconfig` alone proves nothing here — the old and
+    new definitions carry the same two `SET` clauses — so the check is
+    `pg_get_functiondef`: the space predicate (`a.embedding_model =
+    b.embedding_model`, `a.dimension = b.dimension`) and `comparable_findings`
+    are all PRESENT. `proacl` carries `anon=X` and `authenticated=X` beside the
+    tenant's own roles, i.e. the grants survived the `CREATE OR REPLACE`.
   - **Read the store identity FIRST when closing a disposition like this.** The
     consumer's own first attempt at this verification reported "zero rows" — it
     had queried a local Docker Postgres, because an ad-hoc script that imports
