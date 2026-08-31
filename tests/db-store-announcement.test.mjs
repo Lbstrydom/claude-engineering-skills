@@ -32,7 +32,12 @@ import { storeFingerprint, dbIdentity } from '../scripts/lib/db/client.mjs';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLIENT_SRC = fs.readFileSync(path.join(repoRoot, 'scripts/lib/db/client.mjs'), 'utf8');
 
-const AZURE = 'postgresql://audit_app:pw@gd-ai-dev-psql.postgres.database.azure.com:5432/audit_loop';
+// Placeholder host, matching the convention every sibling Azure test already
+// uses (`tenant-apim.azure-api.net` in anthropic-azure-route-default.test.mjs).
+// This repo is PUBLIC and one consumer's store is corporate: AGENTS.md's
+// fingerprint-not-hostname rule governs test fixtures too, not just runtime
+// output. The assertions below need only that two DSNs differ.
+const AZURE = 'postgresql://audit_app:pw@tenant-psql.postgres.database.azure.com:5432/audit_loop';
 const LOCAL = 'postgresql://postgres:postgres@192.168.1.176:5433/postgres';
 
 describe('storeFingerprint — the identity the announcement prints', () => {
@@ -71,7 +76,7 @@ describe('storeFingerprint — the identity the announcement prints', () => {
     // repo is public. The digest is one-way, so this asserts the property
     // rather than the implementation.
     const fp = storeFingerprint(AZURE);
-    for (const secret of ['gd-ai-dev-psql', 'azure', 'audit_app', 'pw', '5432', 'audit_loop']) {
+    for (const secret of ['tenant-psql', 'azure', 'audit_app', 'pw', '5432', 'audit_loop']) {
       assert.ok(!fp.includes(secret), `fingerprint leaked "${secret}"`);
     }
   });

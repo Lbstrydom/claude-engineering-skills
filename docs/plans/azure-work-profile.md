@@ -746,12 +746,25 @@ configured **Gemini** default — even when `embedText` routed the call to Azure
   both census directions fire (a new unnamed `embedText` caller, and a NAMED
   entry whose file is renamed away). Full suite **14336 pass / 0 fail / 31
   skipped** (all DB-gated); `npm run check` exits 0.
-- **Live Azure verification: `unverified`** — blocked prerequisite:
-  `azureConfig.active` is `false` on this machine, so every assertion above is
-  off-Azure, where the stored string is unchanged by construction. The behaviour
-  that only appears under Azure — an endpoint-qualified `embedding_model` landing
-  in `finding_embeddings`, and old bare-name rows being re-embedded by the
-  freshness predicate — needs the Azure-configured consumer (`storyline`, APIM
-  route). Close it there with `npm run semantic-suppress -- --repo <name>`
-  (dry-run) and a `SELECT DISTINCT embedding_model, dimension FROM
-  finding_embeddings` before and after an `--apply` run.
+- **Live Azure verification: `verified` (2026-08-31).** Superseded the
+  `unverified` disposition this entry originally carried. Measured against the
+  Azure-configured consumer's store (fingerprint `c7177057dcafa55d`, db
+  `audit_loop`; named by digest, never by host — this repo is public and that
+  store is corporate): **all 3,145 `finding_embeddings` rows carry the
+  endpoint-qualified `embedding_model`**, where before the fix all 3,145 carried
+  the bare `gemini-embedding-001` default.
+  - **It was a genuine RE-EMBED, not a relabel** — the distinction this change
+    exists to protect, so it was checked rather than assumed. Two independent
+    signals: every row's `created_at` moved to the backfill date (the
+    `ON CONFLICT DO UPDATE … created_at=now()` path; a bare
+    `UPDATE SET embedding_model=…` would have left the original spread intact),
+    and the stored vectors' L2 norm is 1.0000 (range 0.9995–1.0004), matching the
+    known-Azure `symbol_embeddings` at 1.0000. Neither is conclusive alone; both
+    together are.
+  - **Read the store identity FIRST when closing a disposition like this.** The
+    consumer's own first attempt at this verification reported "zero rows" — it
+    had queried a local Docker Postgres, because an ad-hoc script that imports
+    `db/client.mjs` without `lib/load-env.mjs` falls back to a different, real,
+    populated database and the wrong-store read looks exactly like a right one.
+    Closed upstream the same day: `getPool()` now prints
+    `[db/client] store <fingerprint> (db=<name>)` on every connect.

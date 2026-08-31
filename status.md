@@ -1,5 +1,22 @@
 # Project Status Log
 
+## 2026-08-31 — I leaked a corporate hostname into the public repo, in the test that asserts locators never leak
+
+Caught by the user asking a different question entirely ("who is upstream, I thought we were?"), which prompted a repo-wide grep for tenant identifiers.
+
+`tests/db-store-announcement.test.mjs` used a **real** Azure Postgres host as a fixture DSN, while every sibling Azure test uses a sanitised placeholder (`tenant-apim.azure-api.net` in `anthropic-azure-route-default.test.mjs`). It shipped in `31564cd9` — inside the file whose own docstring explains the fingerprint-not-hostname rule, and which contains an assertion named "NO LOCATOR LEAKS". The rule was being enforced on the runtime output while being broken in the fixture two lines above it.
+
+**AGENTS.md's rule governs test fixtures too, not just emitted strings.** That is now stated in the file.
+
+Sanitised to `tenant-psql.postgres.database.azure.com`. Scope of the exposure, stated plainly rather than minimised: it is an internal, non-public host **name**, with no credential (the fixture password is the literal `pw`), but it is in pushed public history and removing it from HEAD does not remove it from history. A rewrite of public `main` was **not** done unilaterally — several other sessions are working off that branch, so the trade-off is the user's to make.
+
+The gitignored `.claude/tmp/ship-verification-pending.md` also carries the APIM hostname; untracked, so it never left the machine.
+
+### Also closed: "upstream" was us
+The same question exposed a drift in how I was writing. "Upstream carries the Azure verification as `unverified`" described no third party — it was a line in **this repo's** `docs/plans/azure-work-profile.md`, mine to close, with evidence already in hand. Now `verified`: 3,145 rows on the endpoint-qualified id, confirmed a genuine re-embed rather than a relabel (all `created_at` moved, matching the `ON CONFLICT DO UPDATE … created_at=now()` path; L2 norm 1.0000 against known-Azure `symbol_embeddings`). The store is named in that doc by **fingerprint**, not host.
+
+The older 2026-08-12 entry's `unverified` stays open — its close-out needs `azure:doctor --fix` on the Azure machine and was not part of this.
+
 ## 2026-08-31 — a wrong-store read returns rows and looks exactly like a right one
 
 ### The incident
