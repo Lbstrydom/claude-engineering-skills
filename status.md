@@ -1,5 +1,53 @@
 # Project Status Log
 
+## 2026-08-31 — a wrong-store read returns rows and looks exactly like a right one
+
+### The incident
+A consumer session verifying the Azure `finding_embeddings` backfill reported **"storyline has zero rows."** It had queried a local Docker Postgres on `:5433` instead of the tenant store. Its ad-hoc scripts imported `lib/db/client.mjs` directly without first importing `lib/load-env.mjs`, so they skipped the repo's own `.env` and fell back to whatever `~/.audit-loop.env` names — **a different, real, populated database.**
+
+The wrong-store read does not error. It returns rows, or zero rows, and is indistinguishable from a correct answer. It surfaced only because the figure contradicted another account and someone thought to check `inet_server_addr()` by hand. **Had the two agreed, the wrong number would have been believed** — and the remedy under discussion was a re-embed billed against a corporate Azure tenant.
+
+`client.mjs:367` already stated the assumption that broke: *"the cwd `.env` is the entrypoint's job (every real CLI imports `lib/load-env.mjs`)."* An ad-hoc verification script is not a real CLI, and nothing told it so.
+
+### The fix: make the process say which store it reached
+`getPool()` now emits one line on connect:
+
+```
+  [db/client] store d5a9d07b91225a93 (db=audit_loop)
+```
+
+**A fingerprint, never a hostname** — AGENTS.md requires a store be named to operators by fingerprint because this repo is public and one consumer's store is corporate. `storeFingerprint` already existed and was used by exactly one reporting path; the connect path itself was silent.
+
+The database *name* is included because it is the at-a-glance discriminator (`audit_loop` vs `postgres`) and is not a locator. But the name alone is **not** sufficient, which the three live stores demonstrate:
+
+| store | fingerprint | db |
+|---|---|---|
+| Azure tenant | `c7177057dcafa55d` | `audit_loop` |
+| local docker | `a91832160cb67a98` | `postgres` |
+| upstream NAS | `d5a9d07b91225a93` | `audit_loop` |
+
+The first and third share a database name and differ only in digest. Name-only reporting would have misled in exactly the direction the incident went.
+
+stderr, not stdout — every CLI here keeps stdout clean for JSON. Latched once per process, and the latch is cleared by `_resetForTest`, or a suite reconnecting to a different store would get silence: the blindness reproduced inside the tests.
+
+### Verification
+[tests/db-store-announcement.test.mjs](tests/db-store-announcement.test.mjs) asserts both halves — that the line **identifies** the store and that it **leaks no locator**. Three mutations from a green baseline: `getPool` stops announcing → 1 fail; prints the raw DSN instead of the digest → 2; the reset latch dropped → 1; restore → green. A fourth check pins the emitted template's interpolations to exactly `${fp}` and `${db}`, so a future edit cannot quietly widen it to a host.
+
+Live: connecting from this repo prints `store d5a9d07b91225a93 (db=audit_loop)`.
+
+An earlier version of that last test sliced the source between two markers and over-ran into `getPool`, failing on unrelated text — a reminder that a source-scanning assertion is only as good as its boundaries. It now matches the emitted template directly.
+
+Full suite **14492 pass / 0 fail / 39 skipped**; `npm run check` exits 0.
+
+### Two of my own claims were wrong, the same way
+Both were proxies read in place of the resolved value, and the consumer session caught both by refusing to take either account on faith:
+
+- **"`LEARNING_REPO_NAME` is unset"** — I text-scanned `.env` line-by-line with `startsWith()` instead of asking the config what it resolved. It was set.
+- **The "before" state I handed over** was real when measured but stale when delivered: another session's backfill had already run. **A reading from a live store is a claim about mutable state and must carry its timestamp**; mine did not. The consumer nearly spent money re-embedding 3,145 rows that were already correct.
+
+The backfill itself was confirmed genuine rather than a relabel — every row's `created_at` moved to 08-30 (the `ON CONFLICT DO UPDATE ... created_at=now()` path; a bare `UPDATE` would have left the originals), and the stored vectors' L2 norm is 1.0000 against the known-Azure `symbol_embeddings` at 1.0000.
+
+
 ## 2026-08-30 — the aged-out unlocked-fix backlog: 27 code obligations, worked to zero-minus-two
 
 `/ship` Step 0.5b reported **107 aged-out** unlocked fixes (27 code / 80 plan) against `practiceStart 2026-07-29` — obligations that existed under a live locking practice and expired because the 14-day nudge window stopped printing them. Waiting is what discharged them, which is exactly what that count exists to catch. All 27 code rows are now dispositioned: **25 locked to a real test, 2 written off below.** Aged-out fell 107 → 82; aged-out **code** 27 → 2.

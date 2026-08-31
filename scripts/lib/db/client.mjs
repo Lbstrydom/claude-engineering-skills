@@ -517,6 +517,50 @@ export function buildPoolConfig(url, pgTypes) {
  *
  * @returns {Promise<import('pg').Pool | null>}
  */
+/** Latch so the store line is emitted once per process, not per getPool() call. */
+let _announcedStore = null;
+
+/**
+ * Say WHICH store this process connected to, once, on stderr.
+ *
+ * WHY (2026-08-31, measured in a consumer). `getPool()` announced nothing, so a
+ * process had no way to know which database it had reached — and an ad-hoc
+ * script that imports `db/client.mjs` WITHOUT first importing `lib/load-env.mjs`
+ * silently skips the repo's own `.env` and falls back to whatever
+ * `~/.audit-loop.env` names. That is a different, real, populated database, so
+ * the wrong-store read does not error: it returns rows, or zero rows, and looks
+ * exactly like a correct answer.
+ *
+ * It cost a real false finding. A consumer session verifying the Azure
+ * `finding_embeddings` backfill reported "storyline has zero rows" — measured
+ * against a local Docker Postgres on `:5433` instead of the tenant store. It
+ * only surfaced because the number contradicted another account and someone
+ * checked `inet_server_addr()` by hand. Had it agreed, the wrong figure would
+ * have been believed, and the remedy under discussion was a re-embed billed
+ * against a corporate Azure tenant.
+ *
+ * FINGERPRINT, NEVER A HOSTNAME. AGENTS.md: a store is named to operators by
+ * fingerprint plus the consumers using it, because this repo is public and one
+ * consumer's store is corporate. `storeFingerprint` is a one-way digest of
+ * host+port+database, so two processes on the same store print the same 16 hex
+ * chars and two processes on different stores cannot print the same ones — which
+ * is the entire question this line exists to answer. The database NAME is
+ * included because it is the discriminator that would have caught the incident
+ * at a glance (`audit_loop` vs `postgres`) and is not a locator.
+ *
+ * stderr, not stdout: every CLI here keeps stdout clean for JSON.
+ *
+ * @param {string} dsn
+ */
+function announceStore(dsn) {
+  const fp = storeFingerprint(dsn);
+  if (!fp || _announcedStore === fp) return;
+  _announcedStore = fp;
+  let db = 'unknown';
+  try { db = new URL(dsn).pathname.replace(/^\//, '') || 'unknown'; } catch { /* keep 'unknown' */ }
+  process.stderr.write(`  [db/client] store ${fp} (db=${db})\n`);
+}
+
 export async function getPool() {
   if (_pool) return _pool;
   if (_initPromise) return _initPromise;
@@ -559,6 +603,8 @@ export async function getPool() {
     pool.on('error', (err) => {
       process.stderr.write(`  [db/client] idle pool client error: ${err?.message || err}\n`);
     });
+
+    announceStore(url);
 
     _pool = pool;
     return _pool;
@@ -605,4 +651,8 @@ export async function closePool() {
  */
 export async function _resetForTest() {
   await closePool();
+  // Clear the store-announcement latch too, or a test that reconnects to a
+  // DIFFERENT store gets silence — which is the exact blindness the line was
+  // added to remove, reproduced inside the suite.
+  _announcedStore = null;
 }
