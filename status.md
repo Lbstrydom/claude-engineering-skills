@@ -4,6 +4,11 @@
 
 A prior session had made four fixes directly in the company `audit-loop` mirror instead of here, against the repo's own fork-governance rule (never patch the synced/downstream copy — fix upstream, let it flow down). Replicated the intent of each (not a blind diff-apply — two of the touched files had drifted independently since the mirror last synced).
 
+### Consumer Verification (previous ship)
+- **Commit**: bd5c8103 (main, pushed 2026-08-31)
+- **Retrieval**: pre-push hook's clean-worktree `check` (full suite + ~20 gates) at this exact commit, plus post-push `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run inside the storyline consumer (C:\GIT\storyline), plus a direct grep of the synced files there.
+- **Result**: verified — all 8 isolation gates pass in storyline (only the 4 pre-existing declared `.sync-overrides.json` holds, unrelated to this change); `scripts/.claude-skills/lib/brainstorm/pricing.mjs` and `scripts/.claude-skills/gemini-review.mjs` in storyline both contain the ported fixes (`resolvePrice`/`FALLBACK_PRICE_USD` delegation; `max_tokens: 32` in the openai ping).
+
 ### Changes
 - **[scripts/lib/brainstorm/pricing.mjs](scripts/lib/brainstorm/pricing.mjs)** — the local `RATES` table matched by raw `modelId.startsWith(key)` with no key-length preference, so `'gpt-5.6-terra'.startsWith('gpt-5')` silently matched the bare `gpt-5` entry (no `gpt-5.6` key existed to take priority), under-pricing every `gpt-5.6-terra` estimate by ~2x on input tokens. Now delegates to the repo-wide pricing SSoT (`model-pricing.mjs`/`config.mjs`'s `modelPricing`), which resolves by FAMILY via `pricingKey()` first. `priceFor`/`estimateCostUsd` now return `null` for an unpriced model (every caller already treats that as "unknown", never "free"); `preflightEstimateUsd` still always returns a number, falling back to the SSoT's `FALLBACK_PRICE_USD` over-estimate, since it feeds a pre-call spend ceiling.
 - **[scripts/gemini-review.mjs](scripts/gemini-review.mjs)** — `PING_TRANSPORTS.openai` sent `max_completion_tokens`, while the real `REVIEW_TRANSPORTS.openai` request body sends `max_tokens`. The ping validated a shape the review never sends — could pass while the real call 400s on a gateway strict about the param name. Fixed the ping to match.
