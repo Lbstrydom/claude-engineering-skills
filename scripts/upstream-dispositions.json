@@ -124,6 +124,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "3e2c17f5-8a88-48df-b566-6661058dc2e1",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "exempt",
+        "value": "multi-part report — triaged each claim against current source individually, see note"
+      },
+      "recordedAt": "2026-09-01T14:04:23.064Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "4d5cd75b-e44a-46b1-aa56-25706dfc8e07",
       "storeFingerprint": "c7177057dcafa55d",
       "state": "fixed",
