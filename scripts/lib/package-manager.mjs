@@ -212,19 +212,45 @@ export function packageManagerInvocation(pm) {
 }
 
 /**
+ * True when `repoRoot` is the ROOT of a pnpm workspace — the one case `pnpm
+ * add` refuses to touch without an explicit `-w`/`--workspace-root` flag
+ * (`ERR_PNPM_ADDING_TO_ROOT`, ~pnpm 7+), on the theory that adding to the
+ * workspace root is usually a mistake. Detected by the same signal pnpm
+ * itself uses — presence of `pnpm-workspace.yaml` — not a lockfile guess: a
+ * workspace and a plain single-package pnpm repo both carry `pnpm-lock.yaml`,
+ * so the lockfile can't tell them apart.
+ * @param {string} repoRoot
+ * @returns {boolean}
+ */
+export function isPnpmWorkspaceRoot(repoRoot) {
+  return fs.existsSync(path.join(repoRoot, 'pnpm-workspace.yaml'));
+}
+
+/**
  * Per-manager argv for "add these as dev dependencies".
  *
  * `--legacy-peer-deps` is npm-only and deliberately not translated: it bypasses
  * ESLint / framework peer-dep conflicts that are orthogonal to the audit loop,
  * and the other managers neither accept the flag nor fail the same way.
  *
+ * `repoRoot` is optional and pnpm-only: pass it when the target might be a
+ * pnpm workspace root, so `-w` can be added ahead of time rather than
+ * discovered from a failed install. Omitted (or not a workspace root) →
+ * byte-identical to before this parameter existed. Found live 2026-08-30 in
+ * a consumer whose `pnpm-workspace.yaml` made every automated dep-install
+ * silently fail at the root with no lasting record beyond a stderr line the
+ * sync log scrolled past — the consumer worked around it by hand-adding the
+ * same 11 packages.
+ *
  * @param {string} pm
  * @param {string[]} pkgs
+ * @param {string} [repoRoot]
  * @returns {string[]}
  */
-export function addDevDepsArgs(pm, pkgs) {
+export function addDevDepsArgs(pm, pkgs, repoRoot = null) {
   switch (pm) {
     case 'pnpm':
+      return ['add', '-D', ...(repoRoot && isPnpmWorkspaceRoot(repoRoot) ? ['-w'] : []), ...pkgs];
     case 'yarn':
       return ['add', '-D', ...pkgs];
     case 'bun':
@@ -275,14 +301,19 @@ export function displayCommand(pm, args) {
  * conflicts in someone else's tree, not something to tell a human to type.
  * Use this in setup hints; use {@link addDevDepsArgs} for the command we run.
  *
+ * `repoRoot` is optional and pnpm-only, mirroring {@link addDevDepsArgs} — a
+ * hand-typed command must carry `-w` too, or a workspace-root user copies
+ * advice that fails the exact same way the automated install did.
+ *
  * @param {string} pm
  * @param {string[]} pkgs
+ * @param {string} [repoRoot]
  * @returns {string}
  */
-export function displayAddDev(pm, pkgs) {
+export function displayAddDev(pm, pkgs, repoRoot = null) {
   switch (pm) {
     case 'pnpm':
-      return ['pnpm', 'add', '-D', ...pkgs].join(' ');
+      return ['pnpm', 'add', '-D', ...(repoRoot && isPnpmWorkspaceRoot(repoRoot) ? ['-w'] : []), ...pkgs].join(' ');
     case 'yarn':
       return ['yarn', 'add', '-D', ...pkgs].join(' ');
     case 'bun':
@@ -366,5 +397,5 @@ export function playwrightInstallHint(repoRoot = process.cwd()) {
  */
 export function playwrightBootstrapHint(repoRoot = process.cwd()) {
   const { name } = detectPackageManager(repoRoot);
-  return `${displayAddDev(name, ['playwright'])} && ${displayExec(name, ['playwright', 'install', 'chromium'])}`;
+  return `${displayAddDev(name, ['playwright'], repoRoot)} && ${displayExec(name, ['playwright', 'install', 'chromium'])}`;
 }

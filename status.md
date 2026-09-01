@@ -1,5 +1,25 @@
 # Project Status Log
 
+## 2026-09-01 — `pnpm add -D` had no `-w`, so dep auto-install silently failed at every pnpm-workspace consumer's root
+
+Triaging two open storyline upstream reports surfaced this while confirming a HIGH-severity one's claims against current code (never closed on the worksheet's word alone, per the ship skill's own instruction).
+
+Storyline's report bundled several threads: (1) confirmation that the `finding_embeddings` Azure provenance fix (`3486b145`) works, backfilled 3145 rows; (2) five corrections to a prior verification checklist's accuracy (documentation-only, no single artifact identified to patch — noted in the report reply); (3) a `CREATE EXTENSION vector` failure on Azure Flexible Server — **already fixed** by `e88ab38f`, which landed 13 minutes before the report was filed (storyline's bundle was 13 commits behind); (4) 11 packages (`pg`, `dotenv`, `openai`, `@google/genai`, `zod`, `yaml`, `micromatch`, `minimatch`, `dependency-cruiser`, `@babel/parser`, `@babel/traverse`) imported by the synced bundle but absent from storyline's package.json after a clean `pnpm install` pruned them.
+
+(4) looked at first like a dependency-declaration gap, but this repo's own `package.json` already declares all 11 correctly, and `scripts/lib/install/deps.mjs`'s `ensureAuditDeps` already derives the required set from the real import graph and auto-installs on every sync (built for exactly this failure class per upstream#57). The actual defect: storyline is a genuine pnpm workspace (`pnpm-workspace.yaml`, 10 package.json files) and `pnpm add -D <pkgs>` run at a workspace ROOT refuses without an explicit `-w`/`--workspace-root` flag (`ERR_PNPM_ADDING_TO_ROOT`) — a real, silent, install-time failure that `ensureAuditDeps`'s re-probe-not-exit-code logic correctly reported to stderr as `action:'failed'`, but which a long sync log made easy to miss. Storyline's workaround was hand-adding all 11 packages themselves.
+
+### Changes
+- **[scripts/lib/package-manager.mjs](scripts/lib/package-manager.mjs)** — new `isPnpmWorkspaceRoot(repoRoot)` (presence of `pnpm-workspace.yaml`, the same signal pnpm itself uses — a lockfile can't tell a workspace from a plain pnpm repo). `addDevDepsArgs`/`displayAddDev` take an optional third `repoRoot` param; pnpm's branch now appends `-w` when the target is a workspace root. Omitted `repoRoot` (every pre-existing call site outside `deps.mjs`) stays byte-identical.
+- **[scripts/lib/install/deps.mjs](scripts/lib/install/deps.mjs)** — threaded `repoRoot` through every `addDevDepsArgs`/`displayAddDev` call site (the real install, and all three manual-fallback hint messages).
+- **[tests/package-manager-detection.test.mjs](tests/package-manager-detection.test.mjs)** — new `pnpm workspace-root add (-w)` suite: `isPnpmWorkspaceRoot` true/false, `-w` present only for a workspace root and only when `repoRoot` is passed, never leaks to npm/yarn, and `playwrightBootstrapHint` carries it too.
+
+### Decisions Made
+- Did not add DI for `execFileSync` in `deps.mjs` to test the real `pnpm add` invocation end-to-end — out of scope for this fix, and the unit-level coverage on `addDevDepsArgs`/`displayAddDev` (which `ensureAuditDeps` calls unchanged, verified by inspection) is the correct tier per this repo's testing doctrine.
+- Left `scripts/lib/fit-check/rules.mjs`'s `playwrightSetup` hint unchanged — it only has a `profile` object, no `repoRoot`, and is display-only advice text, not an executed install; lower stakes than the two paths this fix actually touches.
+
+### Verification
+Full suite: 14,505 pass / 0 fail / 39 pre-existing skips.
+
 ## 2026-09-01 — Azure Claude-deployment guess removed; three pre-existing dead-code gates now fire for real
 
 Upstream report (paste in claude-engineering-skills): `config.mjs`'s Azure Foundry Claude-deployment resolution silently fell back to the hardcoded literal `'claude-opus-4-7'` whenever neither `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` nor a concrete `CLAUDE_FINAL_REVIEW_MODEL` was set — unlike `gptDeployment`, which is required and throws. Measured impact: the shared store's `audit_runs.final_review_model` column recorded four real final-review runs against that guessed literal for the `storyline` consumer (2026-08-16 to 2026-08-19), self-corrected only when a human noticed and set the env var by hand.

@@ -212,7 +212,7 @@ export function ensureAuditDeps(repoRoot, { dryRun = false, quiet = false, timeo
     process.stderr.write(
       `  ${Y}⚠${X} ${path.basename(repoRoot)}: package.json "packageManager" field is present but unrecognised — not guessing\n`
       + `  Fix it to "<name>@<version>" (${SUPPORTED_PACKAGE_MANAGERS.join('|')}), or install manually:\n`
-      + `    cd ${repoRoot} && ${displayAddDev(pm.name, all)}\n`,
+      + `    cd ${repoRoot} && ${displayAddDev(pm.name, all, repoRoot)}\n`,
     );
     return {
       action: 'invalid-package-manager-declaration', installed: [], installedOptional: [],
@@ -228,7 +228,7 @@ export function ensureAuditDeps(repoRoot, { dryRun = false, quiet = false, timeo
     process.stderr.write(
       `  ${Y}⚠${X} ${path.basename(repoRoot)}: multiple lockfiles (${pm.candidates.join(', ')}) — not guessing a package manager\n`
       + `  Add a "packageManager" field to package.json, or install manually with the one you use:\n`
-      + `    cd ${repoRoot} && ${displayAddDev(pm.candidates[0], all)}\n`,
+      + `    cd ${repoRoot} && ${displayAddDev(pm.candidates[0], all, repoRoot)}\n`,
     );
     return {
       action: 'ambiguous-package-manager', installed: [], installedOptional: [],
@@ -253,7 +253,7 @@ export function ensureAuditDeps(repoRoot, { dryRun = false, quiet = false, timeo
     process.stderr.write(
       `  ${Y}⚠${X} ${path.basename(repoRoot)}: automated install supports npm/pnpm only — not attempting an unverified ${pm.name} install\n`
       + `  Install manually:\n`
-      + `    cd ${repoRoot} && ${displayAddDev(pm.name, all)}\n`,
+      + `    cd ${repoRoot} && ${displayAddDev(pm.name, all, repoRoot)}\n`,
     );
     return {
       action: 'manual-install-required', installed: [], installedOptional: [],
@@ -301,7 +301,7 @@ export function ensureAuditDeps(repoRoot, { dryRun = false, quiet = false, timeo
     let err = null;
     try {
       const { bin, prefix, shell } = packageManagerInvocation(pm.name);
-      execFileSync(bin, [...prefix, ...addDevDepsArgs(pm.name, pkgs)], {
+      execFileSync(bin, [...prefix, ...addDevDepsArgs(pm.name, pkgs, repoRoot)], {
         cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'], timeout: timeoutMs, shell,
       });
     } catch (e) {
@@ -324,7 +324,7 @@ export function ensureAuditDeps(repoRoot, { dryRun = false, quiet = false, timeo
     if (stillMissing.length > 0) {
       failed.push(...stillMissing);
       process.stderr.write(`  ${Y}⚠${X} ${pm.name} install failed: ${advisory(err) || 'packages absent after install'}\n`);
-      process.stderr.write(`  Run manually: cd ${repoRoot} && ${displayAddDev(pm.name, stillMissing)}\n`);
+      process.stderr.write(`  Run manually: cd ${repoRoot} && ${displayAddDev(pm.name, stillMissing, repoRoot)}\n`);
       return {
         action: 'failed', installed, installedOptional, failed,
         packageManager: pm.name, error: err?.message || `still missing: ${stillMissing.join(', ')}`,

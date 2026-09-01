@@ -355,6 +355,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "c19202b8-2cdd-40a2-b384-3aa6e70e8322",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "exempt",
+        "value": "manual diff against skills/persona-test/references/auth-bootstrap.md — no test oracle exists for prose-content parity"
+      },
+      "recordedAt": "2026-09-01T13:50:29.469Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "d6849e0b-1767-42bc-b4af-b24ed080274b",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",

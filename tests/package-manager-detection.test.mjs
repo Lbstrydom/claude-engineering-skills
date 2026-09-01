@@ -29,6 +29,7 @@ import {
   displayExec,
   playwrightInstallHint,
   playwrightBootstrapHint,
+  isPnpmWorkspaceRoot,
   SUPPORTED_PACKAGE_MANAGERS,
 } from '../scripts/lib/package-manager.mjs';
 
@@ -291,6 +292,59 @@ describe('playwrightInstallHint', () => {
     assert.equal(
       playwrightBootstrapHint(pnpmRepo),
       'pnpm add -D playwright && pnpm exec playwright install chromium',
+    );
+  });
+});
+
+// Upstream report (2026-08-30, storyline — a real pnpm workspace consumer):
+// `pnpm add -D <pkgs>` at a workspace ROOT refuses without an explicit `-w` /
+// `--workspace-root` flag (ERR_PNPM_ADDING_TO_ROOT) — pnpm's guard against an
+// accidental root-level add. ensureAuditDeps had no such flag, so automated
+// dep-install silently failed at the root of every pnpm-workspace consumer;
+// the reporter's workaround was hand-adding all 11 packages themselves.
+describe('pnpm workspace-root add (-w)', () => {
+  it('isPnpmWorkspaceRoot: true only with pnpm-workspace.yaml present', () => {
+    const workspaceRoot = repoWith('ws-root', {
+      'package.json': '{}', 'pnpm-lock.yaml': '', 'pnpm-workspace.yaml': 'packages:\n  - packages/*\n',
+    });
+    const plainPnpm = repoWith('ws-plain', { 'package.json': '{}', 'pnpm-lock.yaml': '' });
+    assert.equal(isPnpmWorkspaceRoot(workspaceRoot), true);
+    assert.equal(isPnpmWorkspaceRoot(plainPnpm), false, 'a plain pnpm repo (no workspace file) must not be flagged');
+  });
+
+  it('addDevDepsArgs adds -w only for a pnpm workspace root, and only when repoRoot is passed', () => {
+    const workspaceRoot = repoWith('ws-args', {
+      'package.json': '{}', 'pnpm-lock.yaml': '', 'pnpm-workspace.yaml': 'packages:\n  - packages/*\n',
+    });
+    assert.deepEqual(addDevDepsArgs('pnpm', ['zod'], workspaceRoot), ['add', '-D', '-w', 'zod']);
+    assert.deepEqual(addDevDepsArgs('pnpm', ['zod']), ['add', '-D', 'zod'], 'omitted repoRoot must stay byte-identical to before this parameter existed');
+    const plainPnpm = repoWith('ws-args-plain', { 'package.json': '{}', 'pnpm-lock.yaml': '' });
+    assert.deepEqual(addDevDepsArgs('pnpm', ['zod'], plainPnpm), ['add', '-D', 'zod'], 'a non-workspace pnpm repo must not get -w');
+  });
+
+  it('never adds -w for a manager other than pnpm, even at a pnpm-workspace-shaped root', () => {
+    const workspaceRoot = repoWith('ws-args-other-pm', {
+      'package.json': '{}', 'pnpm-workspace.yaml': 'packages:\n  - packages/*\n',
+    });
+    assert.ok(!addDevDepsArgs('npm', ['zod'], workspaceRoot).includes('-w'));
+    assert.ok(!addDevDepsArgs('yarn', ['zod'], workspaceRoot).includes('-w'));
+  });
+
+  it('displayAddDev mirrors addDevDepsArgs, so hand-typed advice does not hit the same wall', () => {
+    const workspaceRoot = repoWith('ws-display', {
+      'package.json': '{}', 'pnpm-lock.yaml': '', 'pnpm-workspace.yaml': 'packages:\n  - packages/*\n',
+    });
+    assert.equal(displayAddDev('pnpm', ['zod'], workspaceRoot), 'pnpm add -D -w zod');
+    assert.equal(displayAddDev('pnpm', ['zod']), 'pnpm add -D zod', 'omitted repoRoot must stay byte-identical');
+  });
+
+  it('playwrightBootstrapHint carries -w for a pnpm-workspace consumer', () => {
+    const workspaceRoot = repoWith('ws-bootstrap-hint', {
+      'package.json': '{}', 'pnpm-lock.yaml': '', 'pnpm-workspace.yaml': 'packages:\n  - packages/*\n',
+    });
+    assert.equal(
+      playwrightBootstrapHint(workspaceRoot),
+      'pnpm add -D -w playwright && pnpm exec playwright install chromium',
     );
   });
 });
