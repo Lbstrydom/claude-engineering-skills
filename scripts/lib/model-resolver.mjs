@@ -70,7 +70,15 @@ export const STATIC_POOL = Object.freeze({
     // removed — more than one generation behind 4-8/5, never selectable.
     // Haiku's dated/undated pair is intentional (model-resolver.mjs's
     // `resolveModel` doc: "prefers undated alias"), not staleness — kept.
-    'claude-opus-4-8', 'claude-opus-4-7',
+    //
+    // `claude-opus-5` added (2026-09-01, upstream report): the Opus 5 release
+    // had never been added here, so `latest-opus` capped at `claude-opus-4-8`
+    // whenever a caller fell back to this static pool. major:5 beats major:4
+    // in `compareVersions` regardless of minor, so this new head wins
+    // `pickNewestClaude(pool, 'opus')` the same way `claude-sonnet-5` already
+    // does for the sonnet tier below — not independently live-verified here;
+    // `npm run models:freshness` catches a wrong/retired id.
+    'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7',
     'claude-sonnet-5', 'claude-sonnet-4-6',
     'claude-haiku-4-5', 'claude-haiku-4-5-20251001',
   ]),

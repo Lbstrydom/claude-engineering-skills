@@ -941,8 +941,23 @@ export function buildAzureConfig(env = process.env) {
   // out of the wire path (they'd 404 as Azure deployment names).
   const concrete = (v) => { const s = (v || '').trim(); return s && !isSentinel(s) ? s : null; };
   const gptDeployment = (env.AZURE_OPENAI_GPT_DEPLOYMENT || '').trim() || concrete(env.OPENAI_AUDIT_MODEL);
+  // NO literal-string fallback here (unlike gptDeployment, which is required
+  // below and throws instead). Azure Foundry deployment names are tenant-chosen
+  // and arbitrary — there is no default that could exist in an arbitrary
+  // tenant's resource, so guessing one is worse than leaving this `null`.
+  // `null` here is not merely tolerated: `assertAzureClaudeReady()`
+  // (gemini-review.mjs), `resolveProviderAvailability` (provider-availability.mjs)
+  // and azure-doctor's `configured` check all already branch on this being
+  // falsy to fail loudly or report "not configured" — a hardcoded guess made
+  // every one of those checks permanently dead code. That is exactly what
+  // happened in production (storyline, 2026-08-16 to 2026-08-19): with neither
+  // var set, this used to resolve to the literal 'claude-opus-4-7', four real
+  // final-review runs silently used that guessed deployment name, and nothing
+  // in the pipeline detected it — a human noticed and set
+  // AZURE_FOUNDRY_CLAUDE_DEPLOYMENT manually. See docs/runbooks/azure-work-profile.md
+  // "Provider precedence (final reviewer)".
   const claudeDeployment = (env.AZURE_FOUNDRY_CLAUDE_DEPLOYMENT || '').trim()
-    || concrete(env.CLAUDE_FINAL_REVIEW_MODEL) || 'claude-opus-4-7';
+    || concrete(env.CLAUDE_FINAL_REVIEW_MODEL) || null;
 
   // All-or-nothing (§1.5): endpoint set ⇒ key + a GPT deployment required.
   const missing = [];

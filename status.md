@@ -1,5 +1,26 @@
 # Project Status Log
 
+## 2026-09-01 — Azure Claude-deployment guess removed; three pre-existing dead-code gates now fire for real
+
+Upstream report (paste in claude-engineering-skills): `config.mjs`'s Azure Foundry Claude-deployment resolution silently fell back to the hardcoded literal `'claude-opus-4-7'` whenever neither `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` nor a concrete `CLAUDE_FINAL_REVIEW_MODEL` was set — unlike `gptDeployment`, which is required and throws. Measured impact: the shared store's `audit_runs.final_review_model` column recorded four real final-review runs against that guessed literal for the `storyline` consumer (2026-08-16 to 2026-08-19), self-corrected only when a human noticed and set the env var by hand.
+
+Tracing the consumers of `azureConfig.claudeDeployment` before touching anything: `assertAzureClaudeReady()` (gemini-review.mjs), the `!azure.claudeDeployment` check in `provider-availability.mjs`, and azure-doctor's `configured` probe were all **already written** to fail loudly / report "not configured" on a falsy deployment — the literal fallback made `claudeDeployment` permanently truthy while Azure was active, so all three were dead code from the day they shipped. This is exactly how auto-detect step 4 (Azure active, no `GEMINI_API_KEY`) landed on the guess in storyline. The fix is therefore just removing the guess, not adding new enforcement — confirmed end-to-end with a subprocess test: `gemini-review.mjs ping --provider azure-claude` with Azure active and no deployment var now exits non-zero naming `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT`.
+
+Also fixed while investigating (per the report): the Anthropic `STATIC_POOL` in `model-resolver.mjs` had never been updated for the `claude-opus-5` release — `latest-opus` capped at `claude-opus-4-8` whenever a caller fell back to the static pool.
+
+### Changes
+- **[scripts/lib/config.mjs](scripts/lib/config.mjs)** — removed the `|| 'claude-opus-4-7'` fallback; `claudeDeployment` now resolves to `null` when unset (not added to the all-or-nothing throw — Azure profiles that use GPT auditor + Gemini final review legitimately never set this var).
+- **[scripts/lib/model-resolver.mjs](scripts/lib/model-resolver.mjs)** — added `claude-opus-5` as the new `STATIC_POOL.anthropic` head (major:5 beats major:4 in `compareVersions` regardless of minor, same as `claude-sonnet-5`).
+- **[docs/runbooks/azure-work-profile.md](docs/runbooks/azure-work-profile.md)** + **[defaults/work-profile.env.example](defaults/work-profile.env.example)** — reworded the "Defaults to claude-opus-4-7" claims; added an incident note under "Provider precedence."
+- **[tests/azure-config.test.mjs](tests/azure-config.test.mjs)** — added `buildAzureConfig` unit tests (null, not the guess) + a subprocess regression test on the `gemini-review.mjs ping` failure path.
+- **[tests/check-model-freshness.test.mjs](tests/check-model-freshness.test.mjs)** — bumped a fixture id (`claude-opus-5-0`→`claude-opus-6-0`) that collided with the newly-added real pool entry; this was the one failure a full-suite run surfaced.
+
+### Decisions Made
+- Kept `claudeDeployment` optional at `buildAzureConfig` time (not required like `gptDeployment`) rather than making it all-or-nothing — the deployment is only needed when `azure-claude` is actually selected, and three call sites already encode that as the correct enforcement point.
+
+### Verification
+Full suite: 14,500 pass / 0 fail / 39 pre-existing skips (one pre-existing failure in `check-model-freshness.test.mjs`, caused by my own `STATIC_POOL` addition colliding with a test fixture, found and fixed in the same session).
+
 ## 2026-08-31 — Ported four fixes that had landed only in the `audit-loop` mirror
 
 A prior session had made four fixes directly in the company `audit-loop` mirror instead of here, against the repo's own fork-governance rule (never patch the synced/downstream copy — fix upstream, let it flow down). Replicated the intent of each (not a blind diff-apply — two of the touched files had drifted independently since the mirror last synced).

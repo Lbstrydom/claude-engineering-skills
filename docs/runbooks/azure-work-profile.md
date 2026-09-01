@@ -15,7 +15,7 @@ drifting from the work repo.
 | Role | Public profile | Azure work profile |
 |---|---|---|
 | GPT auditor | `api.openai.com` | Azure OpenAI, deployment-qualified (`AZURE_OPENAI_ENDPOINT/openai/deployments/<deployment>/…`), deployment `AZURE_OPENAI_GPT_DEPLOYMENT` — tenant-chosen name, discover yours with `npm run azure:doctor -- --target gpt --fix` (e.g. `gpt-5.6-terra`) |
-| Final reviewer | Gemini (→ Claude Opus fallback) | **Claude Opus on Azure Foundry** (`AZURE_AI_ENDPOINT`), deployment `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` (`claude-opus-4-7`) — opt in with `set-provider azure-claude` (no longer automatic; see Provider precedence below) |
+| Final reviewer | Gemini (→ Claude Opus fallback) | **Claude Opus on Azure Foundry** (`AZURE_AI_ENDPOINT`), deployment `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` — **your tenant's own deployment name, never a default** (this repo's work tenant happens to name it `claude-opus-4-7`; see the verified-contract note below) — opt in with `set-provider azure-claude` (no longer automatic; see Provider precedence below) |
 | Embeddings | Gemini `gemini-embedding-001` | Azure OpenAI `text-embedding-3-large` (`dimensions: 768`) |
 | Author (coding) | your choice in the IDE | Sonnet 4.6 in VS Code (unchanged; out of the bundle's scope) |
 | `/brainstorm` voices | OpenAI + Gemini | **OpenAI + Foundry Claude** (`--models openai,azure-claude`, the default here) |
@@ -361,6 +361,26 @@ Deterministic, top wins:
 5. `ANTHROPIC_API_KEY` present → public Claude Opus.
 
 The two gateway routes (`openai-compatible`, `openrouter`) are **explicit-selection-only** — they are never chosen by auto-detect (steps 3–5), so a globally-scoped `OPENROUTER_API_KEY` used by other skills can't silently route code egress to a third-party gateway.
+
+> **Step 4 (and an explicit `--provider azure-claude`) fails loudly, never guesses,
+> when `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` isn't set (fixed 2026-09-01).**
+> `config.mjs`'s `buildAzureConfig` used to fall back to the literal string
+> `'claude-opus-4-7'` when neither `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` nor a
+> concrete `CLAUDE_FINAL_REVIEW_MODEL` was set — a guessed Azure deployment
+> name baked into source, silently used as the wire model for real
+> final-review calls. Azure Foundry deployment names are tenant-chosen and
+> arbitrary, so nothing guarantees that literal exists in any given tenant.
+> Measured impact: a consumer repo (storyline) recorded four real
+> final-review runs (2026-08-16 to 2026-08-19) against the guessed
+> deployment before a human noticed and set the var — the code took no part
+> in catching it. `assertAzureClaudeReady()` already existed to refuse this
+> case (naming the missing var and exiting non-zero), but the guess meant
+> `azureConfig.claudeDeployment` was never falsy while Azure was active, so
+> that check — and the equivalent ones in
+> [`provider-availability.mjs`](../../scripts/lib/brainstorm/provider-availability.mjs)
+> and `azure-doctor.mjs`'s "configured" probe — was permanently dead code.
+> The fallback is now gone: an unconfigured deployment resolves to `null`,
+> and those existing checks fire for real.
 
 > **Why Gemini outranks an active Azure profile (changed 2026-06-09).** The
 > per-repo default stack is "GPT auditor + Gemini reviewer". A *configured* Azure

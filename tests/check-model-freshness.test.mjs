@@ -94,11 +94,12 @@ describe('check-model-freshness', () => {
 
   describe('detectMissingFromStatic', () => {
     it('flags relevant live IDs that are genuinely newer than anything already covered', () => {
-      // claude-opus-5-0 (major 5) is strictly newer than the pool's opus
-      // entries (major 4) — genuine drift. claude-sonnet-6-0 (major 6) is
-      // strictly newer than the pool's sonnet-5 — also genuine drift.
+      // claude-opus-6-0 (major 6) is strictly newer than the pool's opus
+      // entries (major 5, since claude-opus-5 landed 2026-09-01) — genuine
+      // drift. claude-sonnet-6-0 (major 6) is strictly newer than the pool's
+      // sonnet-5 — also genuine drift.
       const liveCatalog = {
-        anthropic: [...STATIC_POOL.anthropic, 'claude-opus-5-0', 'claude-sonnet-6-0'],
+        anthropic: [...STATIC_POOL.anthropic, 'claude-opus-6-0', 'claude-sonnet-6-0'],
         openai: [],
         google: [],
       };
@@ -106,7 +107,7 @@ describe('check-model-freshness', () => {
       const anthropic = findings.find(f => f.provider === 'anthropic');
       assert.ok(anthropic);
       assert.equal(anthropic.severity, 'warn');
-      assert.deepEqual(anthropic.missingIds.sort(), ['claude-opus-5-0', 'claude-sonnet-6-0'].sort());
+      assert.deepEqual(anthropic.missingIds.sort(), ['claude-opus-6-0', 'claude-sonnet-6-0'].sort());
     });
 
     it('does NOT flag a live id that version-ties an existing static entry (no functional drift)', () => {

@@ -71,6 +71,76 @@ describe('buildAzureConfig — sentinel vs deployment separation (H4)', () => {
   });
 });
 
+// Upstream report (2026-09-01): AZURE_FOUNDRY_CLAUDE_DEPLOYMENT used to fall
+// back to the hardcoded literal 'claude-opus-4-7' when unset — a guessed
+// Azure deployment name with no reason to exist in an arbitrary tenant. A
+// consumer repo (storyline) recorded four real final-review runs against
+// that guess before a human noticed. Unlike gptDeployment (required — throws
+// in the all-or-nothing gate above), claudeDeployment is legitimately absent
+// on an Azure profile that never uses azure-claude (e.g. GPT auditor + Gemini
+// final review), so buildAzureConfig itself must NOT throw here — it must
+// resolve to `null` and let the per-call-site gates that already exist
+// (gemini-review.mjs's assertAzureClaudeReady, provider-availability.mjs,
+// azure-doctor.mjs's "configured" probe) fail loudly at the point azure-claude
+// is actually selected.
+describe('buildAzureConfig — no guessed Claude deployment (regression)', () => {
+  it('claudeDeployment is null, never a guessed literal, when unset', () => {
+    const c = buildAzureConfig(FULL);
+    assert.equal(c.claudeDeployment, null);
+    assert.notEqual(c.claudeDeployment, 'claude-opus-4-7');
+  });
+
+  it('a concrete CLAUDE_FINAL_REVIEW_MODEL still wins over null (existing forgiving-fallback path)', () => {
+    const c = buildAzureConfig({ ...FULL, CLAUDE_FINAL_REVIEW_MODEL: 'claude-opus-4-8' });
+    assert.equal(c.claudeDeployment, 'claude-opus-4-8');
+  });
+
+  it('a sentinel CLAUDE_FINAL_REVIEW_MODEL (e.g. latest-opus) does not leak onto the wire — still null', () => {
+    const c = buildAzureConfig({ ...FULL, CLAUDE_FINAL_REVIEW_MODEL: 'latest-opus' });
+    assert.equal(c.claudeDeployment, null);
+  });
+});
+
+// End-to-end: with the literal fallback gone, azureConfig.claudeDeployment is
+// genuinely null on an Azure profile with no AZURE_FOUNDRY_CLAUDE_DEPLOYMENT,
+// so gemini-review.mjs's assertAzureClaudeReady() — previously dead code,
+// because the guess made claudeDeployment permanently truthy — now actually
+// fires. Subprocess (not in-process) because azureConfig is a frozen
+// module-level snapshot built at import time (same convention as the
+// "openai-audit.mjs entry gate" probe above).
+describe('gemini-review.mjs azure-claude selection — fails loudly, never guesses (regression)', () => {
+  const runPingProbe = (extraEnv) => {
+    try {
+      execFileSync(process.execPath, ['scripts/gemini-review.mjs', 'ping', '--provider', 'azure-claude'], {
+        encoding: 'utf8', timeout: 60000, stdio: 'pipe',
+        env: {
+          PATH: process.env.PATH, SYSTEMROOT: process.env.SYSTEMROOT,
+          AUDIT_LOOP_DISABLE_SHARED: '1',
+          DOTENV_CONFIG_PATH: 'nonexistent-dotenv-probe.env', // keep the repo .env out
+          ...extraEnv,
+        },
+      });
+      return { ok: true, output: '' };
+    } catch (err) {
+      return { ok: false, output: `${err.stdout || ''}${err.stderr || ''}` };
+    }
+  };
+
+  it('Azure active, no AZURE_FOUNDRY_CLAUDE_DEPLOYMENT → exits non-zero naming the missing var', () => {
+    const r = runPingProbe({
+      AZURE_OPENAI_ENDPOINT: 'https://probe.openai.azure.com',
+      AZURE_OPENAI_API_KEY: 'probe-key',
+      AZURE_OPENAI_GPT_DEPLOYMENT: 'gpt-5-3',
+      // AZURE_FOUNDRY_CLAUDE_DEPLOYMENT deliberately absent.
+    });
+    assert.equal(r.ok, false);
+    assert.match(r.output, /AZURE_FOUNDRY_CLAUDE_DEPLOYMENT/,
+      'must name the missing var, not silently resolve to a guessed deployment');
+    assert.doesNotMatch(r.output, /claude-opus-4-7/,
+      'must never fall back to the guessed literal on the wire');
+  });
+});
+
 // 2026-07-14 fresh-installer audit P0: openai-audit.mjs's OPENAI_API_KEY
 // gate fired unconditionally, blocking the primary audit entry point for an
 // Azure-only corporate install (which authenticates via AZURE_OPENAI_API_KEY
