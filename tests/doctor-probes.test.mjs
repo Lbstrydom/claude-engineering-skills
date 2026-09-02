@@ -251,3 +251,108 @@ describe('no probe detail/fix ever interpolates a raw env value (Security Consid
     }
   });
 });
+
+// ── machine/git-autocrlf ─────────────────────────────────────────────────────
+//
+// The system config decides this key on a stock Git-for-Windows machine
+// (`C:/Program Files/Git/etc/gitconfig` ships `core.autocrlf=true`), so every
+// case here neutralises BOTH the system and global files. Without that scrub
+// the suite would pass or fail by whose machine ran it rather than by what the
+// fixture sets — the same trap AGENTS.md records for AZURE_* in spawned CLIs.
+describe('machine/git-autocrlf: verdict follows the effective value, and names where it came from', () => {
+  let dir, emptyCfg;
+  const probe = () => REGISTRY.find((p) => p.id === 'machine/git-autocrlf');
+
+  function ctxFor(root) {
+    return {
+      bundleRoot: process.cwd(),
+      subjectRoot: root,
+      fs,
+      cloud: false,
+      exec: (cmd, args, opts = {}) => execFileSync(cmd, args, {
+        encoding: 'utf8',
+        cwd: root,
+        env: { ...process.env, GIT_CONFIG_SYSTEM: emptyCfg, GIT_CONFIG_GLOBAL: emptyCfg },
+        ...opts,
+      }),
+    };
+  }
+
+  function setLocal(value) {
+    try { git(dir, ['config', '--local', '--unset', 'core.autocrlf']); } catch { /* already unset (exit 5) */ }
+    if (value !== null) git(dir, ['config', '--local', 'core.autocrlf', value]);
+  }
+
+  before(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-autocrlf-'));
+    git(dir, ['init', '-q']);
+    git(dir, ['config', 'user.email', 'a@b.c']);
+    git(dir, ['config', 'user.name', 'a']);
+    emptyCfg = path.join(dir, 'empty.gitconfig');
+    fs.writeFileSync(emptyCfg, '');
+  });
+
+  after(() => {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+
+  it('registered, class machine — this reads per-developer state, so it must never gate', () => {
+    assert.ok(probe(), 'machine/git-autocrlf is not in the registry');
+    assert.equal(probe().class, 'machine');
+  });
+
+  it('unset anywhere: pass (git\'s built-in default does not rewrite)', async () => {
+    setLocal(null);
+    const r = await runProbe(probe(), ctxFor(dir));
+    assert.equal(r.status, 'pass');
+    assert.match(r.detail, /unset/);
+  });
+
+  it('true: warn, and the detail names the config FILE the value came from', async () => {
+    setLocal('true');
+    const r = await runProbe(probe(), ctxFor(dir));
+    assert.equal(r.status, 'warn');
+    assert.match(r.detail, /gitattributes/, 'the detail must say what escapes the rewrite');
+    assert.match(r.detail, /config/i, 'without the origin, a system-level value reads as a repo setting');
+  });
+
+  it('yes: warn too — git\'s bool parser accepts more spellings than "true"', async () => {
+    setLocal('yes');
+    const r = await runProbe(probe(), ctxFor(dir));
+    assert.equal(r.status, 'warn');
+  });
+
+  // The direction that must NOT fire: a machine already configured correctly
+  // has to read pass, or the probe is noise everyone learns to ignore.
+  for (const good of ['input', 'false']) {
+    it(`${good}: pass`, async () => {
+      setLocal(good);
+      const r = await runProbe(probe(), ctxFor(dir));
+      assert.equal(r.status, 'pass', `${good} must not warn`);
+      assert.match(r.detail, new RegExp(good));
+    });
+  }
+
+  it('an unrecognised value reports unknown, never pass — a probe must not read green on a value it cannot interpret', async () => {
+    setLocal('maybe');
+    const r = await runProbe(probe(), ctxFor(dir));
+    assert.equal(r.status, 'unknown');
+    assert.match(r.detail, /maybe/);
+  });
+
+  it('exit 1 (the key is simply unset) is an answer, but any OTHER exec failure is unknown, not pass', async () => {
+    const base = { bundleRoot: process.cwd(), subjectRoot: dir, fs, cloud: false };
+    const unset = await runProbe(probe(), {
+      ...base,
+      exec: () => { const e = new Error('exit 1'); e.status = 1; throw e; },
+    });
+    assert.equal(unset.status, 'pass');
+
+    const broken = await runProbe(probe(), {
+      ...base,
+      exec: () => { const e = new Error('git: command not found'); e.status = 127; throw e; },
+    });
+    assert.equal(broken.status, 'unknown', 'git being absent must not read as "unset, therefore fine"');
+    assert.match(broken.detail, /command not found/);
+  });
+});

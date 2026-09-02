@@ -301,6 +301,84 @@ const BROWSER_PROBE = {
   },
 };
 
+// ── Machine-state probe: git's checkout EOL filter (never gates — D9) ───────
+
+/**
+ * Values `core.autocrlf` can hold, normalised to the three behaviours that
+ * matter. Git's bool parser accepts more spellings than `true`/`false`, and a
+ * probe that only recognised those two would read `yes` as unrecognised and a
+ * genuinely-converting machine as fine.
+ */
+const AUTOCRLF_ENABLED = new Set(['true', 'yes', 'on', '1']);
+const AUTOCRLF_DISABLED = new Set(['false', 'no', 'off', '0']);
+
+/**
+ * Read one git config key together with the FILE it came from, without
+ * throwing when the key is simply unset.
+ *
+ * `--show-origin` rather than a bare `--get` is the entire point of this
+ * helper. On Windows `git config --get core.autocrlf` answers `true` with exit
+ * 0 in every repo — because Git for Windows writes it into the SYSTEM config
+ * (`C:/Program Files/Git/etc/gitconfig`) at install time. Without the origin
+ * the value reads as a repo-local setting and sends whoever is debugging it
+ * looking for a cause in the repo, which is not where the fix lives.
+ *
+ * @param {object} ctx doctor context (`exec` runs in `subjectRoot`)
+ * @param {string} key config key
+ * @returns {{set: true, value: string, origin: string} | {set: false} | {error: string}}
+ */
+function readGitConfigWithOrigin(ctx, key) {
+  let out;
+  try {
+    out = ctx.exec('git', ['config', '--show-origin', '--get', key]);
+  } catch (err) {
+    // `git config --get` exits 1 for an unset key — an ordinary answer, not a
+    // failure. Anything else (git absent, not a repo) genuinely could not be
+    // measured and must NOT read as "unset, therefore fine".
+    if (err?.status === 1) return { set: false };
+    return { error: err?.message ?? String(err) };
+  }
+  const line = String(out).replace(/\r?\n$/, '');
+  if (!line) return { set: false };
+  const tab = line.indexOf('\t');
+  if (tab < 0) return { set: true, value: line.trim(), origin: '(origin not reported)' };
+  return { set: true, value: line.slice(tab + 1).trim(), origin: line.slice(0, tab) };
+}
+
+const AUTOCRLF_PROBE = {
+  id: 'machine/git-autocrlf',
+  title: 'git core.autocrlf (checkout line-ending filter)',
+  // `class: 'machine'`, deliberately — and this holds even when the value comes
+  // from the repo's own `.git/config`, because that file is NOT committed.
+  // Gate level follows the KIND of state read: nothing here is committed-or-
+  // derivable, so it may advise and must never block a push.
+  class: 'machine',
+  fix: 'git config --global core.autocrlf input — `input` rather than `false`, so working files that are already CRLF do not start reading as modified against an LF index.',
+  run(ctx) {
+    const cfg = readGitConfigWithOrigin(ctx, 'core.autocrlf');
+    if (cfg.error) {
+      return { status: 'unknown', detail: `could not read core.autocrlf: ${cfg.error}` };
+    }
+    if (!cfg.set) {
+      return { status: 'pass', detail: 'unset — git\'s built-in default is false, so checkout does not rewrite line endings' };
+    }
+    const value = cfg.value.toLowerCase();
+    if (value === 'input' || AUTOCRLF_DISABLED.has(value)) {
+      return { status: 'pass', detail: `${cfg.value} (from ${cfg.origin}) — checkout does not rewrite line endings` };
+    }
+    if (AUTOCRLF_ENABLED.has(value)) {
+      return {
+        status: 'warn',
+        detail: `${cfg.value} (from ${cfg.origin}) — git rewrites LF to CRLF at checkout for every path no `
+          + '.gitattributes pins. This bundle\'s own surfaces are immune (the sync writes LF and pins them '
+          + '`text eol=lf`), but any other tool that clones a repo and copies its working-tree bytes will '
+          + 'deliver CRLF — measured 2026-09-02, that is how `npx skills add` put 41 CRLF files into a consumer.',
+      };
+    }
+    return { status: 'unknown', detail: `unrecognised value ${JSON.stringify(cfg.value)} (from ${cfg.origin}) — cannot say what checkout will do` };
+  },
+};
+
 // ── Machine-state probes that name a command rather than importing it ──────
 //
 // `runner:doctor` and `azure:doctor --routes` are their own CLIs, reading
@@ -386,6 +464,7 @@ export const PROBES = [
   ...SYNC_ISOLATION_PROBES,
   ...CHECK_SETUP_PROBES,
   BROWSER_PROBE,
+  AUTOCRLF_PROBE,
   ...NAMED_COMMAND_PROBES,
   PROVENANCE_PROBE,
 ];
