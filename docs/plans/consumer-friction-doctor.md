@@ -847,7 +847,7 @@ neither calls into the deferred work.
 `validateLedgerEntry`, the registry schema validator, and the §2.3 outcome-enum → `--gate`
 exit-code reduction (one case per enum value × `class:'repo'|'machine'` × `--only`
 present/absent — the full matrix H3 asked for). Pure set/parse logic; every §2.4 failure
-mode asserted without a repo, mirroring `tests/gate-honesty-ratchet.test.mjs`.
+mode asserted without a repo, mirroring `tests/gate-contract-ratchet.test.mjs`.
 
 **Tier 2 (invariants + fixtures)** — probe bodies against fixture trees: a hydrated
 consumer, an un-hydrated linked worktree, a consumer missing `skills:hydrate`, a

@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**2 active · 212 terminal · 27 audit summaries · 4 reference docs**
+**2 active · 212 terminal · 28 audit summaries · 4 reference docs**
 
 ---
 
@@ -264,13 +264,14 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 (they carry a free-text convergence sentence by convention).
 
 <details>
-<summary>Show all 27 audit summaries</summary>
+<summary>Show all 28 audit summaries</summary>
 
 | Plan | Notes |
 |---|---|
 | [Audit Summary — Architecture-Intent PR-B (Python & Java Adapters)](./arch-intent-pr-b-audit-summary.md) |  |
 | [Audit Summary — Architecture-Intent PR-C (Postgres Adapter)](./arch-intent-pr-c-audit-summary.md) |  |
 | [Audit Summary — brainstorm-arch-context](./brainstorm-arch-context-audit-summary.md) |  |
+| [`/audit-code` summary — `machine/git-autocrlf` probe (8620cfe8)](./consumer-friction-doctor-audit-summary.md) |  |
 | [Audit Summary — discovery-portfolio-secret-redaction](./discovery-portfolio-secret-redaction-audit-summary.md) |  |
 | [Audit Summary — gemini-gate-scope-fix](./gemini-gate-scope-fix-audit-summary.md) |  |
 | [Audit Summary — git-env-leak-sustainability](./git-env-leak-sustainability-audit-summary.md) |  |
