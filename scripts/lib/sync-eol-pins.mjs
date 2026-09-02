@@ -36,6 +36,7 @@
 
 import { LAYOUT_CONSTANTS } from './sync-path-map.mjs';
 import { RECEIPT_PATH } from './sync-receipt.mjs';
+import { canonicalizeEol } from './file-io.mjs';
 
 /**
  * Destinations the sync writes on EVERY run without them appearing in a
@@ -158,4 +159,87 @@ export function computeEolPins(destRels) {
  */
 export function renderEolPinLines(pins) {
   return (pins || []).map((g) => `${g} text eol=lf`);
+}
+
+/**
+ * Extensions whose destinations genuinely need CRLF, so the outbound fold must
+ * leave them alone.
+ *
+ * Mirrors this repo's own `.gitattributes` (`*.cmd`/`*.bat`/`*.ps1 text
+ * eol=crlf`) — Windows-native launchers that break when handed LF. None are in
+ * today's bundle (a census of a delivered manifest found only `.mjs`, `.sql`,
+ * `.md`, `.json`, `.css`, `.js`, `.sh`), so this is a guard against a future
+ * addition rather than a live case. It is deliberately keyed on the SAME rule
+ * the source `.gitattributes` states, not on a hand-picked list: a launcher
+ * added later inherits the exemption without anyone remembering this file.
+ */
+export const CRLF_PINNED_EXTENSIONS = Object.freeze(['.cmd', '.bat', '.ps1']);
+
+/**
+ * Should this destination be written with LF?
+ *
+ * Every pinned destination is `text eol=lf` (see `renderEolPinLines`), so the
+ * answer is yes for everything except the CRLF-pinned launcher extensions.
+ * Pin-EXEMPT destinations (the gitignored tooling dir) are still folded: they
+ * are never tracked, so EOL is invisible there, and folding keeps the bytes we
+ * write a pure function of committed source either way.
+ *
+ * @param {string} destRel
+ * @returns {boolean}
+ */
+export function shouldEmitLf(destRel) {
+  const p = normalise(destRel).toLowerCase();
+  return !CRLF_PINNED_EXTENSIONS.some((ext) => p.endsWith(ext));
+}
+
+/**
+ * Fold outbound content to LF so the bytes a sync writes are a function of
+ * COMMITTED source, not of which checkout happened to run it.
+ *
+ * ## Why this exists
+ *
+ * The sync copies WORKING-TREE bytes, and two checkouts of one commit do not
+ * agree on them. Measured 2026-09-02: this repo's linked worktree held five
+ * `.claude/hooks/*` files with CRLF (`bash-grep-nudge.mjs` at 2,222 bytes)
+ * while its main checkout held LF (2,155) — same commit, `.gitattributes` pins
+ * `* text=auto eol=lf`, and `git status` calls BOTH clean. So a sync run from
+ * the worktree shipped CRLF into consumers while the very same run wrote a
+ * `.gitattributes` block pinning those exact paths to `text eol=lf`. The sync
+ * was contradicting its own declared contract, and which way it fell depended
+ * on nothing a human chose.
+ *
+ * Folding HERE — at the outbound boundary — rather than at the comparison is
+ * the difference between fixing the cause and papering over it:
+ * `eolInsensitiveEqual` (sync-divergence.mjs) stops a CRLF/LF mismatch being
+ * misread as consumer divergence, but it answers only *"is there anything to
+ * write?"*. It cannot make the bytes right, and by skipping the write it made
+ * an already-CRLF consumer permanent.
+ *
+ * ## What is NOT folded
+ *
+ * Binary content (any NUL byte) — there the exact bytes are the contract, and
+ * `0x0D 0x0A` is ordinary data, not a line ending. Same rule
+ * `eolInsensitiveEqual` applies, and the same one git applies. Note the caller
+ * reads sources as UTF-8 strings, so a binary would already be mangled before
+ * reaching this function; the guard is defence in depth, not the load-bearing
+ * protection for binaries.
+ *
+ * Routed through `file-io.mjs`'s `canonicalizeEol` rather than a local
+ * `.replace(/\r\n/g, '\n')` because AGENTS.md designates that the ONE
+ * byte-level fold in this repo; a second implementation is exactly the
+ * duplicate-oracle drift this module's own header warns about.
+ *
+ * PURE.
+ *
+ * @param {string} destRel - consumer-relative destination
+ * @param {string} content - outbound content
+ * @returns {string} `content` with CRLF folded to LF, or unchanged when the
+ *   destination is CRLF-pinned or the content is binary
+ */
+export function canonicaliseOutboundEol(destRel, content) {
+  if (typeof content !== 'string' || content.length === 0) return content;
+  if (!shouldEmitLf(destRel)) return content;
+  const buf = Buffer.from(content, 'utf-8');
+  if (buf.includes(0)) return content;
+  return canonicalizeEol(buf).toString('utf-8');
 }

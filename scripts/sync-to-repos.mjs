@@ -45,7 +45,7 @@ import {
 import { guardPinDowngrades, assertNoPinDowngrade } from './lib/sync-pin-guard.mjs';
 import { RECEIPT_PATH, buildReceipt, receiptShouldWrite } from './lib/sync-receipt.mjs';
 import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
-import { computeEolPins, renderEolPinLines } from './lib/sync-eol-pins.mjs';
+import { computeEolPins, renderEolPinLines, canonicaliseOutboundEol } from './lib/sync-eol-pins.mjs';
 import { getGitLocalEnvVarNames } from './lib/git-env-sanitize.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { deepMerge } from './lib/json-merge.mjs';
@@ -1663,7 +1663,10 @@ async function main() {
         // is exactly the drift this repo keeps paying for. For `.sql`
         // migrations both steps are no-ops, so this reduces to source bytes;
         // for tooling the banner proof fires first anyway.
-        const srcContent = readSource(srcRel);
+        // Folded exactly as the write path folds it — see the note above: this
+        // comparand must stay byte-identical to what we would write, and the
+        // write path now emits LF regardless of the checkout's line endings.
+        const srcContent = canonicaliseOutboundEol(dstRel, readSource(srcRel));
         let expected = null;
         if (srcContent !== null) {
           expected = injectUpstreamBanner(
@@ -1778,7 +1781,12 @@ async function main() {
         continue;
       }
 
-      let outContent = srcContent;
+      // Fold to LF before ANYTHING hashes, compares or writes it, so the bytes a
+      // consumer receives are a function of committed source rather than of which
+      // checkout ran the sync. Without this the sync shipped CRLF from a Windows
+      // worktree while the same run wrote a `.gitattributes` block pinning
+      // those very paths to `text eol=lf`. See canonicaliseOutboundEol.
+      let outContent = canonicaliseOutboundEol(dstRel, srcContent);
       const isJson = dstRel.endsWith('.json');
       const dstExists = fs.existsSync(dstPath);
 
@@ -1852,7 +1860,9 @@ async function main() {
         continue;
       }
 
-      // Same content, different line endings ⇒ still nothing to do.
+      // Same content, different line endings ⇒ rewrite the line endings, and
+      // nothing else. (This branch used to skip; see the REPAIRED note below
+      // for why skipping made the churn permanent.)
       //
       // The sync copies WORKING-TREE bytes, and two checkouts of one commit do
       // not agree on those: measured 2026-08-30, this repo's linked worktree
@@ -1872,13 +1882,38 @@ async function main() {
       // Placed HERE rather than inside `classifyAgainstBase` deliberately: the
       // manifest must keep hashing exact disk bytes, because there the hash is
       // a transfer-integrity contract (`sync-isolation-verify` gate 2B). This
-      // folds EOL for one question only — is there anything to write? — and a
-      // file that reaches this branch gets its manifest entry refreshed from
-      // disk below, which is what lets a consumer stuck in the refusal loop
-      // settle instead of diverging for ever.
-      if (dstExists && eolInsensitiveEqual(outContent, fs.readFileSync(dstPath))) {
+      // folds EOL for one question only — is this difference the consumer's
+      // doing? — and a file that reaches this branch gets its manifest entry
+      // refreshed from the bytes on disk after the loop, which is what lets a
+      // consumer stuck in the refusal loop settle instead of diverging for ever.
+      //
+      // REPAIRED, not skipped. `outContent` is now folded to LF at the read
+      // site, so the two sides can only differ here when the DESTINATION holds
+      // CRLF — content a pre-fold sync wrote, contradicting the `eol=lf` pin
+      // that same run put in the consumer's `.gitattributes`. Skipping left
+      // that permanent: the bytes never changed again, so the file stayed a
+      // phantom-dirty ` M` with an empty diff, and it was twice mistaken for a
+      // partially-applied sync. Rewriting converges in ONE run and is safe to
+      // take before the divergence gate precisely because the content is
+      // identical modulo line endings — by definition not consumer content, so
+      // there is nothing a rewrite can destroy.
+      const eolOnlyDiff = dstExists
+        && eolInsensitiveEqual(outContent, fs.readFileSync(dstPath));
+      if (eolOnlyDiff && DRY_RUN) {
         repoUnchanged++; totalUnchanged++;
         repoEolOnly++;
+        continue;
+      }
+      if (eolOnlyDiff) {
+        try {
+          const safeDst = assertContainedDestination({ root: repo.path, relPath: dstRel });
+          atomicWriteFileSync(safeDst, outContent);
+          repoEolOnly++;
+          console.log(`  ${D}eol${X}   ${dstRel} ${D}(rewrote CRLF → LF; content unchanged)${X}`);
+        } catch (err) {
+          console.log(`  ${R}ERR${X}  ${dstRel}: ${err.message}`);
+          repoErrors++; totalErrors++;
+        }
         continue;
       }
 

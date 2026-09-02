@@ -168,12 +168,28 @@ describe('content-derived ownership (the manifest is no longer the only proof)',
   });
 
   it('builds the identity comparand with the REAL write pipeline', () => {
-    // Re-deriving "is this file rewritten / banner-injected?" as a second
-    // predicate is the duplicate-definition drift this repo keeps paying for.
-    // The comparand must come from the same two functions the write path uses.
-    const region = between(/const srcContent = readSource\(srcRel\)/, /classifyOwnership\(\{/);
+    // Re-deriving "is this file rewritten / banner-injected / EOL-folded?" as
+    // a second predicate is the duplicate-definition drift this repo keeps
+    // paying for. The comparand must come from the same functions the write
+    // path uses — all THREE of them.
+    const region = between(/const srcContent = .*readSource\(srcRel\)/, /classifyOwnership\(\{/);
     assert.match(region, /injectUpstreamBanner/);
     assert.match(region, /rewriteCommandSurface/);
+
+    // The outbound EOL fold is the third, added 2026-09-02. Assert BOTH sites
+    // rather than just this one: folding here while the write path did not
+    // (or vice versa) is not a cosmetic mismatch — it makes a file we
+    // ourselves wrote compare unequal whenever the two ran from checkouts
+    // that disagree on line endings, demoting a provably-owned orphan to a
+    // collision that aborts the consumer's entire bundle.
+    assert.match(
+      SRC, /const srcContent = canonicaliseOutboundEol\(dstRel, readSource\(srcRel\)\)/,
+      'the ownership comparand must be EOL-folded exactly as the write path folds it',
+    );
+    assert.match(
+      SRC, /let outContent = canonicaliseOutboundEol\(dstRel, srcContent\)/,
+      'the write path must fold outbound content, or the comparand above folds for nothing',
+    );
   });
 
   it('still collides on anything not provably ours — the guard is not weakened', () => {
