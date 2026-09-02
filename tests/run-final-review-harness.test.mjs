@@ -83,10 +83,33 @@ const REJECT_FIXTURE = {
   wrongly_dismissed: [{ original_finding_id: 'H1', reason_claude_was_wrong: 'bad', recommended_severity: 'HIGH' }],
 };
 
+/**
+ * A REAL repo file, not a synthetic path.
+ *
+ * It used to be `src/a.mjs`, which does not exist here — so every run in this
+ * harness rendered ZERO code into the envelope and the fixtures' verdicts were
+ * being asserted against a review that had received nothing. Harmless while
+ * nothing checked coverage; since the coverage gate landed (2026-09-02) it is
+ * the difference between exercising verdict routing and exercising the gate.
+ * Small, stable, non-infra, non-sensitive, and comfortably inside the
+ * changed-file render cap.
+ */
+const REAL_CHANGED_FILE = 'scripts/lib/final-review/envelope.mjs';
+
 const TRANSCRIPT = JSON.stringify({
   audit_mode: 'code',
-  changed_files: ['src/a.mjs'],
-  code_files: ['src/a.mjs'],
+  changed_files: [REAL_CHANGED_FILE],
+  code_files: [REAL_CHANGED_FILE],
+  summary: 'test transcript',
+  rounds: [{ round: 1, findings: [] }],
+  claude_resolutions: [],
+});
+
+/** Same shape, but naming a file that does not exist ⇒ zero code coverage. */
+const TRANSCRIPT_NO_COVERAGE = JSON.stringify({
+  audit_mode: 'code',
+  changed_files: ['src/does-not-exist.mjs'],
+  code_files: ['src/does-not-exist.mjs'],
   summary: 'test transcript',
   rounds: [{ round: 1, findings: [] }],
   claude_resolutions: [],
@@ -98,12 +121,37 @@ describe('runFinalReview — {result,usage,latencyMs} shape + verdict routing', 
       const client = mkStubClient(fixture);
       const { result, usage, latencyMs } = await runFinalReview('claude-opus', client, '# plan', TRANSCRIPT, 'ctx', 'code');
       assert.equal(result.verdict, fixture.verdict);
+      // THE DIRECTION THE COVERAGE GATE MUST NOT FIRE: the changed file was
+      // rendered whole, so the model's verdict must pass through untouched.
+      assert.equal(result._coverageGate, undefined, 'a covered review must not be downgraded');
+      assert.equal(result._envelope.codeCoverage.state, 'full');
       assert.ok(Array.isArray(result.new_findings));
       assert.ok(Array.isArray(result.wrongly_dismissed));
       assert.equal(typeof usage.input_tokens, 'number');
       assert.equal(typeof latencyMs, 'number');
     });
   }
+
+  // End-to-end companion to tests/final-review-code-coverage.test.mjs: proves
+  // the gate is wired into the real `runFinalReview` path, not merely unit-true.
+  it('an APPROVE issued over zero code coverage is downgraded, with the record intact', async () => {
+    const client = mkStubClient(APPROVE_FIXTURE);
+    const { result } = await runFinalReview('claude-opus', client, '# plan', TRANSCRIPT_NO_COVERAGE, 'ctx', 'code');
+    assert.equal(result.verdict, 'CONCERNS');
+    assert.equal(result._coverageGate.reportedVerdict, 'APPROVE');
+    assert.equal(result._envelope.codeCoverage.state, 'none');
+    assert.match(result.overall_reasoning, /COVERAGE GATE/);
+  });
+
+  it('the envelope reports the render it actually performed, never a bare {}', async () => {
+    const client = mkStubClient(APPROVE_FIXTURE);
+    const { result } = await runFinalReview('claude-opus', client, '# plan', TRANSCRIPT, 'ctx', 'code');
+    const t = result._envelope.truncated;
+    assert.equal(t.code, undefined, 'a real render must be MEASURED, not reported as unmeasured');
+    assert.equal(t.codeFilesHeadCut, 0);
+    assert.equal(t.codeFilesBudgetOmitted, 0);
+    assert.ok(result._envelope.codeRender.full.length > 0, 'the rendered-whole set must be recorded');
+  });
 
   it('passes new_findings through unchanged', async () => {
     const client = mkStubClient(CONCERNS_FIXTURE);
@@ -192,7 +240,7 @@ describe('applyScopeFilter/recordNewFindings — called by main(), not runFinalR
   it('applyScopeFilter KEEPS an in-scope new_findings entry regardless of which wrapper produced result', async () => {
     const client = mkStubClient(CONCERNS_FIXTURE);
     const { result, transcriptContent } = await runAdjudicatorOnlyReview('claude-opus', client, '# plan', TRANSCRIPT, 'ctx', 'code');
-    result.new_findings[0].file = 'src/a.mjs'; // matches TRANSCRIPT.changed_files
+    result.new_findings[0].file = REAL_CHANGED_FILE; // matches TRANSCRIPT.changed_files
     await applyScopeFilter(result, transcriptContent);
     assert.equal(result.new_findings.length, 1);
     assert.equal(result._scopeFilteredCount, undefined);

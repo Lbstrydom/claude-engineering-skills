@@ -137,6 +137,41 @@ function dropOldestRound(transcript) {
 }
 
 /**
+ * Normalise an injected `renderCode` result.
+ *
+ * The reader may return a plain string (historical contract, still honoured by
+ * every test fake) or `{text, stats}` where `stats` is a
+ * `readFilesAsContextDetailed` record. A string carries NO measurement, so it
+ * normalises to `stats: null` — which `codeRenderTruncation` below renders as
+ * `unmeasured`, never as "nothing was truncated". That distinction is the whole
+ * point: the previous `truncated: {}` literal on the `full` path was an
+ * unmeasured value wearing a measurement's clothes (AGENTS.md — a hardcoded 0
+ * in telemetry reads as a measurement).
+ */
+function callRenderCode(renderCode, paths) {
+  const out = renderCode(paths);
+  if (out && typeof out === 'object' && typeof out.text === 'string') {
+    return { text: out.text, stats: out.stats ?? null };
+  }
+  return { text: typeof out === 'string' ? out : '', stats: null };
+}
+
+/**
+ * Project a code-render record into the envelope's `truncated` vocabulary.
+ * Returns `{code: 'unmeasured'}` when the reader reported nothing.
+ */
+export function codeRenderTruncation(stats) {
+  if (!stats) return { code: 'unmeasured' };
+  return {
+    codeFilesHeadCut: stats.headTruncated.length,
+    codeFilesBudgetOmitted: stats.budgetOmitted.length,
+    codeFilesUnreadable: stats.unreadable.length,
+    codeFilesSensitiveExcluded: stats.sensitiveExcluded.length,
+    codeCharsDropped: Math.max(0, stats.charsOnDisk - stats.charsRendered),
+  };
+}
+
+/**
  * Build the final-review envelope.
  *
  * @param {object} input
@@ -169,14 +204,26 @@ export function buildReviewEnvelope(input) {
 
   // ── full: no budget, byte-identical, one code render. ──────────────────────
   if (scope === 'full') {
-    const codeContext = renderCode(codePaths);
+    const rendered = callRenderCode(renderCode, codePaths);
     const userPrompt = assembleEnvelope({
       projectContext, planContent, repoContextBlock, scopeBlock,
-      transcript, debtBlock, codeContext, gapBlock: '',
+      transcript, debtBlock, codeContext: rendered.text, gapBlock: '',
     });
+    // `budgeted: false` is still true — this branch applies no ENVELOPE budget.
+    // But the injected reader applies its own per-file and total caps, and for
+    // its whole life this returned `truncated: {}` regardless: an APPROVE could
+    // be issued over code that was head-cut before the reviewer ever saw it,
+    // with the telemetry reporting a clean render. Measured now.
     return {
       userPrompt,
-      accounting: { scope, chars: userPrompt.length, budgeted: false, truncated: {} },
+      accounting: {
+        scope,
+        chars: userPrompt.length,
+        budgeted: false,
+        truncated: codeRenderTruncation(rendered.stats),
+        codeRender: rendered.stats,
+        codeFilesIncluded: codePaths.length,
+      },
     };
   }
 
@@ -195,15 +242,28 @@ export function buildReviewEnvelope(input) {
   let paths = [...codePaths];
 
   const truncated = { debtRows: 0, transcriptRounds: 0, gapFindings: 0, codeFiles: 0 };
-  const render = () => assembleEnvelope({
-    projectContext, planContent, repoContextBlock: repo, scopeBlock,
-    transcript: tx, debtBlock: debt, codeContext: paths.length ? renderCode(paths) : NO_IN_SCOPE_CODE_MARKER,
-    gapBlock: gap,
-  });
+  // The reduced path re-renders on every truncation step, so the record that
+  // reaches `accounting` must be the LAST one — the render that actually
+  // produced the returned envelope, not an earlier discarded attempt.
+  let lastCodeStats = null;
+  const render = () => {
+    let codeContext = NO_IN_SCOPE_CODE_MARKER;
+    lastCodeStats = null;
+    if (paths.length) {
+      const rendered = callRenderCode(renderCode, paths);
+      codeContext = rendered.text;
+      lastCodeStats = rendered.stats;
+    }
+    return assembleEnvelope({
+      projectContext, planContent, repoContextBlock: repo, scopeBlock,
+      transcript: tx, debtBlock: debt, codeContext,
+      gapBlock: gap,
+    });
+  };
 
   let out = render();
   if (out.length <= maxChars) {
-    return { userPrompt: out, accounting: accountingFor(scope, out, truncated, paths, gap) };
+    return { userPrompt: out, accounting: accountingFor(scope, out, truncated, paths, gap, lastCodeStats) };
   }
 
   // Step 1 — debt block. Lowest value, already bounded at 50 rows.
@@ -211,7 +271,7 @@ export function buildReviewEnvelope(input) {
     truncated.debtRows = 1;
     debt = '';
     out = render();
-    if (out.length <= maxChars) return { userPrompt: out, accounting: accountingFor(scope, out, truncated, paths, gap) };
+    if (out.length <= maxChars) return { userPrompt: out, accounting: accountingFor(scope, out, truncated, paths, gap, lastCodeStats) };
   }
 
   // Step 2 — transcript, oldest rounds first. NEVER the last round.
@@ -230,7 +290,7 @@ export function buildReviewEnvelope(input) {
     tx = next;
     truncated.transcriptRounds++;
     out = render();
-    if (out.length <= maxChars) return { userPrompt: out, accounting: accountingFor(scope, out, truncated, paths, gap) };
+    if (out.length <= maxChars) return { userPrompt: out, accounting: accountingFor(scope, out, truncated, paths, gap, lastCodeStats) };
   }
 
   // Step 3 — gap findings, lowest severity first. The projection already
@@ -253,7 +313,7 @@ export function buildReviewEnvelope(input) {
       out = render();
       if (out.length <= maxChars) {
         truncated.gapFindings = next.omitted ?? 0;
-        return { userPrompt: out, accounting: accountingFor(scope, out, truncated, paths, gap) };
+        return { userPrompt: out, accounting: accountingFor(scope, out, truncated, paths, gap, lastCodeStats) };
       }
       gapBudget = Math.floor(gapBudget / 2);
     }
@@ -265,7 +325,7 @@ export function buildReviewEnvelope(input) {
     paths = paths.slice(0, -1);
     truncated.codeFiles++;
     out = render();
-    if (out.length <= maxChars) return { userPrompt: out, accounting: accountingFor(scope, out, truncated, paths, gap) };
+    if (out.length <= maxChars) return { userPrompt: out, accounting: accountingFor(scope, out, truncated, paths, gap, lastCodeStats) };
   }
 
   // Step 5 — the plan is never truncated. If we are here, the mandatory minimum
@@ -281,12 +341,18 @@ export function buildReviewEnvelope(input) {
   );
 }
 
-function accountingFor(scope, out, truncated, paths, gapBlock) {
+function accountingFor(scope, out, truncated, paths, gapBlock, codeStats = null) {
   return {
     scope,
     chars: out.length,
     budgeted: true,
-    truncated,
+    // Envelope-level drops (this module) MERGED with render-level drops (the
+    // injected reader). `codeFiles` counts files this module removed from the
+    // list; the `code*` keys count what the reader dropped from the files it
+    // was still given. Both are truncation, and reporting only the first is how
+    // a fully head-cut render read as clean.
+    truncated: { ...truncated, ...codeRenderTruncation(codeStats) },
+    codeRender: codeStats,
     codeFilesIncluded: paths.length,
     gapBlockChars: gapBlock ? gapBlock.length : 0,
   };

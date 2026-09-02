@@ -32,7 +32,7 @@ import { z } from 'zod';
 import { ProducerFindingSchema, zodToGeminiSchema } from './lib/schemas.mjs';
 import { zodToOpenAiJsonSchema, sanitizeSchemaName, isResponseFormatUnsupported } from './lib/oss-structured-output.mjs';
 import { buildClassificationRubric } from './lib/prompt-seeds.mjs';
-import { readFileOrDie, readFilesAsContext, extractPlanPaths, writeOutput, isAuditInfraFile, atomicWriteFileSync } from './lib/file-io.mjs';
+import { readFileOrDie, extractPlanPaths, writeOutput, isAuditInfraFile, atomicWriteFileSync } from './lib/file-io.mjs';
 import { semanticId, formatFindings, appendOutcome, FalsePositiveTracker } from './lib/findings.mjs';
 import { affectedFilesOf, primaryFileOf, matchFindings } from './lib/finding-match.mjs';
 import { normalizeGeminiUsage } from './lib/gemini-usage.mjs';
@@ -68,10 +68,10 @@ import { redactSecretsWithCount } from './lib/sensitive-egress-gate.mjs';
 import {
   resolveEnvelopeScope, isReducedScope, isNonBlindScope, selectInScopeCodeFiles,
 } from './lib/final-review/scope.mjs';
-import {
-  buildReviewEnvelope, THIN_CODE_MAX_CHARS, THIN_CODE_MAX_PER_FILE,
-} from './lib/final-review/envelope.mjs';
+import { buildReviewEnvelope } from './lib/final-review/envelope.mjs';
 import { serializePrimaryForGap } from './lib/final-review/gap-projection.mjs';
+import { summariseCodeCoverage, applyCoverageGate } from './lib/final-review/code-coverage.mjs';
+import { makeTieredCodeRenderer } from './lib/final-review/code-render.mjs';
 import { classifyLlmError } from './lib/robustness.mjs';
 // NOTE: lib/llm-wrappers.mjs provides shared wrappers for learning/refinement/evolution paths.
 // This module keeps the specialized `callReviewer` seam (thinkingConfig + one
@@ -238,6 +238,7 @@ const AnthropicReviewToolSchema = (() => {
 
 /** Tool name for the Anthropic structured-review call. Exported for tests. */
 export const ANTHROPIC_REVIEW_TOOL_NAME = 'submit_review';
+
 
 /**
  * Anthropic's minimum cacheable prefix for the Opus/Sonnet tiers. A
@@ -1352,11 +1353,12 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
     // Fall back to extracting from plan (already filtered by extractPlanPaths)
     codePaths = extractPlanPaths(planContent).found;
   }
-  const renderCode = (paths) => (paths.length === 0
-    ? ''
-    : readFilesAsContext(paths, reduced
-      ? { maxPerFile: THIN_CODE_MAX_PER_FILE, maxTotal: THIN_CODE_MAX_CHARS }
-      : { maxPerFile: 8000, maxTotal: 100000 }));
+  // The declared diff set drives the render's PRIORITY, not just its selection:
+  // changed files are rendered whole before any budget is spent on ambient
+  // context (code-render.mjs). Returns `{text, stats}` — the stats are what
+  // make `_envelope.truncated` a measurement instead of a claim.
+  const changedFilesDeclared = Array.isArray(transcript.changed_files) ? transcript.changed_files : [];
+  const renderCode = makeTieredCodeRenderer({ changedFiles: changedFilesDeclared, reduced });
 
   // Phase D.4: extract debt-suppression context from transcript envelope.
   // When the upstream audit already filtered debt, tell the reviewer so they
@@ -1467,8 +1469,12 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
   // prose and code snippets (AGENTS.md).
   const scanned = redactSecretsWithCount(userPrompt);
   userPrompt = scanned.text;
+  // How much of the DIFF actually reached the model. Distinct from
+  // `truncated`, which counts drops without knowing which of them mattered.
+  const codeCoverage = summariseCodeCoverage(built.accounting.codeRender, changedFilesDeclared);
   const envelopeAccounting = {
     ...built.accounting,
+    codeCoverage,
     redactions: scanned.redacted,
     codeExcluded,
     gapFindings: gapProjection
@@ -1484,6 +1490,7 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
   process.stderr.write(`\n── ${descriptor.label} Final Review${shadowTag} ──\n`);
   process.stderr.write(`  Model: ${selectedModel}\n`);
   process.stderr.write(`  Context: ~${(userPrompt.length / 4).toFixed(0)} tokens (estimated)\n`);
+  process.stderr.write(`  Code coverage: ${codeCoverage.state.toUpperCase()} — ${codeCoverage.reason}\n`);
 
   // Append classification rubric so new_findings populate the required envelope.
   const classificationBlock = buildClassificationRubric({
@@ -1590,6 +1597,15 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
   // shadow block copies it explicitly. A value only on the return object would
   // be lost at the first hop that rebuilds its own envelope, which is exactly
   // how the shadow's cache-token counts went missing.
+  // A verdict issued over ZERO coverage of the changed code is not a pass, no
+  // matter what the model said. Applied BEFORE the result is stamped and
+  // returned, so every downstream consumer sees the gated verdict.
+  const coverageGate = applyCoverageGate(call.result, codeCoverage);
+  if (coverageGate.downgraded) {
+    process.stderr.write(
+      `  [final-review] COVERAGE GATE: verdict ${coverageGate.from} → ${coverageGate.to} `
+      + `— ${codeCoverage.reason}\n`);
+  }
   call.result._requestFingerprint = requestFingerprint;
   // Stamped alongside, for the same survives-every-downstream-hop reason.
   call.result._requestIdentity = requestIdentity;
@@ -2813,8 +2829,14 @@ function recordGeminiOutcomes(result, modelId = 'gemini') {
     recordNewFindings(result, fpTracker, repoFP, revId, modelId);
     recordWronglyDismissed(result, revId, modelId);
     const VERDICT_REWARDS = { APPROVE: 0.8, CONCERNS: 0.5, CONCERNS_REMAINING: 0.35, REJECT: 0.2 };
-    const verdictReward = VERDICT_REWARDS[result.verdict] ?? 0.5;
-    bandit.update('gemini-review', revId, verdictReward);
+    // A coverage-gated verdict is a mechanical post-condition, not a judgement
+    // about the prompt — feeding it to the bandit would teach the wrong lesson
+    // from a run the reviewer could not perform. Skip the verdict reward; the
+    // finding-level outcomes above are recorded either way.
+    if (!result._coverageGate?.downgraded) {
+      const verdictReward = VERDICT_REWARDS[result.verdict] ?? 0.5;
+      bandit.update('gemini-review', revId, verdictReward);
+    }
     bandit.flush();
     fpTracker.flush?.();
     const newCount = result.new_findings?.length ?? 0;

@@ -142,20 +142,46 @@ export function safeReadFile(relPath, cwdBoundary) {
  */
 const SPAN_COLLAPSE_CHARS = 200;
 
-export function readFilesAsContext(filePaths, { maxPerFile = 10000, maxTotal = 120000, redact = true } = {}) {
+export function readFilesAsContextDetailed(filePaths, { maxPerFile = 10000, maxTotal = 120000, redact = true } = {}) {
   let total = '';
   let omitted = 0;
   let sensitive = 0;
   /** Files where redaction collapsed a SPAN (not just masked a token). */
   const shortened = [];
 
+  /**
+   * What this render DROPPED. Every field is measured here, at the only place
+   * that can see it: a caller holding the returned string cannot distinguish a
+   * complete render from one that head-cut the very code it was asked about.
+   * @see readFilesAsContext (the string-only wrapper, unchanged bytes)
+   */
+  const stats = {
+    requested: filePaths.length,
+    maxPerFile,
+    maxTotal,
+    /** Rendered untruncated — the file, whole. */
+    full: [],
+    /** Rendered but HEAD-CUT at maxPerFile: `{path, charsOnDisk, charsRendered}`. */
+    headTruncated: [],
+    /** Never rendered: the maxTotal budget was already spent. */
+    budgetOmitted: [],
+    /** Never rendered: missing, over MAX_FILE_SIZE, unreadable, or outside the repo. */
+    unreadable: [],
+    /** Never rendered: path-level sensitive classification. */
+    sensitiveExcluded: [],
+    /** Rendered, but redaction collapsed a span: `{path, charsLost}`. */
+    redactionShortened: shortened,
+    charsRendered: 0,
+    charsOnDisk: 0,
+  };
+
   const cwdBoundary = path.resolve('.');
 
   for (const relPath of filePaths) {
-    if (isSensitiveFile(relPath)) { sensitive++; continue; }
+    if (isSensitiveFile(relPath)) { sensitive++; stats.sensitiveExcluded.push(relPath); continue; }
 
     const result = safeReadFile(relPath, cwdBoundary);
-    if (!result) { omitted++; continue; }
+    if (!result) { omitted++; stats.unreadable.push(relPath); continue; }
     // Redact BEFORE truncating: truncation can otherwise cut a secret's
     // match mid-way, leaving an un-matchable (and un-redacted) partial
     // fragment in the retained prefix.
@@ -183,7 +209,8 @@ export function readFilesAsContext(filePaths, { maxPerFile = 10000, maxTotal = 1
 
     const ext = relPath.split('.').pop();
     const lang = { sql: 'sql', css: 'css', html: 'html', md: 'markdown', json: 'json', py: 'python', rs: 'rust', go: 'go', java: 'java', rb: 'ruby', sh: 'bash' }[ext] ?? 'js';
-    const content = raw.length > maxPerFile
+    const headCut = raw.length > maxPerFile;
+    const content = headCut
       ? raw.slice(0, maxPerFile) + `\n... [TRUNCATED — ${raw.length} chars total]`
       : raw;
     const redactionNote = charsLost > SPAN_COLLAPSE_CHARS
@@ -194,8 +221,11 @@ export function readFilesAsContext(filePaths, { maxPerFile = 10000, maxTotal = 1
       : '';
     const block = `### ${relPath}\n\`\`\`${lang}\n${content}\n\`\`\`\n${redactionNote}`;
 
-    if (total.length + block.length > maxTotal) { omitted++; continue; }
+    if (total.length + block.length > maxTotal) { omitted++; stats.budgetOmitted.push(relPath); continue; }
     total += block;
+    stats.charsOnDisk += result.content.length;
+    if (headCut) stats.headTruncated.push({ path: relPath, charsOnDisk: result.content.length, charsRendered: maxPerFile });
+    else stats.full.push(relPath);
   }
 
   if (omitted > 0) total += `\n... [${omitted} file(s) omitted — context budget reached]\n`;
@@ -207,7 +237,40 @@ export function readFilesAsContext(filePaths, { maxPerFile = 10000, maxTotal = 1
     process.stderr.write(`  [audit-scope] WARNING: redaction shortened ${shortened.length} file(s) sent for review: ${detail}\n`);
     total += `\n... [${shortened.length} file(s) SHORTENED by secret-redaction before review: ${detail}]\n`;
   }
-  return total;
+  stats.charsRendered = total.length;
+  return { context: total, stats };
+}
+
+/**
+ * String-only wrapper. Byte-identical to the detailed variant by construction
+ * (one implementation, one render) — every historical caller keeps its bytes.
+ */
+export function readFilesAsContext(filePaths, opts = {}) {
+  return readFilesAsContextDetailed(filePaths, opts).context;
+}
+
+/**
+ * Fold two sequential renders into one stats record, for callers that render in
+ * tiers (changed files first, ambient context second) against a shared budget.
+ * `null` operands pass through, so an unmeasured render never silently becomes
+ * a measured-and-clean one.
+ */
+export function mergeCodeRenderStats(a, b) {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  return {
+    requested: a.requested + b.requested,
+    maxPerFile: Math.max(a.maxPerFile, b.maxPerFile),
+    maxTotal: a.maxTotal,
+    full: [...a.full, ...b.full],
+    headTruncated: [...a.headTruncated, ...b.headTruncated],
+    budgetOmitted: [...a.budgetOmitted, ...b.budgetOmitted],
+    unreadable: [...a.unreadable, ...b.unreadable],
+    sensitiveExcluded: [...a.sensitiveExcluded, ...b.sensitiveExcluded],
+    redactionShortened: [...a.redactionShortened, ...b.redactionShortened],
+    charsRendered: a.charsRendered + b.charsRendered,
+    charsOnDisk: a.charsOnDisk + b.charsOnDisk,
+  };
 }
 
 // ── Egress-scoped context producer (model-A/B/C harness — decision 11) ──────
