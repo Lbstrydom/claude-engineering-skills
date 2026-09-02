@@ -55,6 +55,41 @@ want fine control over a single step, invoke that step's skill directly
 (`/audit-code`, `/audit-plan`, etc.). Use `/cycle` when you want the
 golden-path workflow without thinking about it.
 
+<!-- host-contract: no-dispatch; preserves=step-order,step3-pause,skip-flags,blocked-propagation -->
+
+> **On a host with no skill-to-skill dispatch, delegate INLINE.** Claude Code
+> can invoke `/audit-code` as a command; VS Code Copilot reads the same
+> `.claude/skills/` tree but has no documented mechanism for one skill to
+> invoke another. Where a step below says "invoke `/x`", such a host instead
+> **opens `skills/x/SKILL.md` and follows it in place**, then returns here and
+> continues with the next step.
+>
+> **Pass the delegated skill its arguments explicitly** — the plan path, the
+> sub-command, the flags. `/cycle` already holds those values, so this is
+> orchestrator-supplied input (rule 0 of `references/input-acquisition.md`),
+> not inference. Without it an inlined `/audit-code` has no user message naming
+> a plan, and its own contract would correctly make it ask-and-stop — which
+> would deadlock every inline cycle.
+>
+> **Four invariants survive the fallback, and a run that breaks one is not a
+> `/cycle` run:**
+>
+> 1. **Step order** — the sequence below is unchanged; inlining is a change of
+>    mechanism, never of order.
+> 2. **The Step 3 pause** — a default (non-`--autonomous`) cycle still stops at
+>    the implementation gate. Inlining must not silently turn a paused cycle
+>    into an autonomous one.
+> 3. **Skip flags** — `--no-persona`, `--no-uxlock`, `--no-ship` are honoured
+>    identically.
+> 4. **Blocked propagation** — a `[BLOCKED]`, `AUDIT_NOT_RUN` or non-converged
+>    result from an inlined skill reaches the Step 8 summary. It must not be
+>    swallowed by the skill that ran inline.
+>
+> **What inlining is NOT**: it is not a subagent and gets no fresh context, so
+> a long inlined skill consumes the parent conversation's budget. Say which
+> steps ran inline in the Step 8 summary, so a reader can tell a dispatched run
+> from an inlined one rather than assuming.
+
 ---
 
 ## Step 0 — Parse Input

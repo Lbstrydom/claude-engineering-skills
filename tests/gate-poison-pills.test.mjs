@@ -428,6 +428,14 @@ const MANDATORY = {
   // hole: a ledger entry citing a probe id that has since been renamed or
   // retired parses as valid JSON and would otherwise report clean.
   'upstream:coverage:gate': ['upstream-coverage-gate-detects-an-unresolvable-probe-disposition'],
+  // Added 2026-09-02 with the gate itself. Post-2026-07-31, so a pill is
+  // mandatory. Sibling to worktree:preflight:gate above and the same defect
+  // class one step further out: that one catches a remedy a linked WORKTREE
+  // cannot reach, this one a pointer a CONSUMER REPO cannot reach. The sync
+  // never merges npm scripts and ships one docs/ file, so an `npm run X` or a
+  // `docs/plans/y.md` in synced skill text is unresolvable there — and reads
+  // as perfectly ordinary here, which is why it has shipped four times.
+  'skills:consumer-refs:gate': ['skills-consumer-refs-gate-rejects-an-undeclared-unreachable-pointer'],
 };
 
 test('every gate the plan made mandatory is contracted — not quietly exempted', () => {

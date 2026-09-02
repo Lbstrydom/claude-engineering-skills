@@ -50,6 +50,9 @@ const CORE_ENTRY = [
   // nothing imports, so the walker never finds it). Authoritative list is
   // sync-to-repos.mjs; keep in lock-step.
   'scripts/build-audit-transcript.mjs',
+  // The `.audit/` sweeper two synced shared references promise runs "in every
+  // consumer". See sync-to-repos.mjs for the full note; keep in lock-step.
+  'scripts/audit-clean.mjs',
   'scripts/write-ledger-entries.mjs',
   'scripts/lib/audit/detector.mjs',
   'scripts/build-dashboard.mjs',
@@ -338,6 +341,25 @@ function bundleForRepo() {
  * @param {string} aliasOrName — 'ai' / 'wine' / 'ai-organiser' / 'wine-cellar-app'
  * @returns {{files: string[], unresolved: Array<{from:string,specifier:string}>, external: Array<{from:string,specifier:string,pkg:string}>, name: string, alias: string}}
  */
+/**
+ * The bundle every consumer receives, independent of which consumer.
+ *
+ * `bundleForRepo()` has never varied by repo — `getSyncInventoryForRepo` uses
+ * the alias only to stamp `name`/`alias` onto the result. A gate that must run
+ * in the pre-push sandbox cannot go through the alias path at all: the consumer
+ * registry lives in the gitignored `consumer-repos.local.json`, so asking for
+ * one by name makes the answer depend on whose machine it is. This export is
+ * the same closure as a pure function of committed source.
+ *
+ * Paths are SOURCE-relative (`scripts/foo.mjs`), not destination-relative —
+ * use `sourceRelToDestRel` when you need where it lands in a consumer.
+ *
+ * @returns {{files: string[], unresolved: object[], external: object[]}}
+ */
+export function getSyncClosure() {
+  return bundleForRepo();
+}
+
 export function getSyncInventoryForRepo(aliasOrName) {
   const repo = CONSUMER_REPOS.find((r) => r.alias === aliasOrName || r.name === aliasOrName);
   if (!repo) throw new Error(`getSyncInventoryForRepo: unknown consumer "${aliasOrName}". Known: ${CONSUMER_REPOS.map((r) => r.alias).join(', ')}`);

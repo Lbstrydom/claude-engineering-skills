@@ -7,7 +7,7 @@ description: |
   targets). Complements /persona-test: persona-test catches narrative UX issues
   a real user would hit; click-test catches structural issues that hide in
   JS-rendered surfaces and silently break assistive tech, form submissions, or
-  React reconciliation. Drives a browser via Playwright MCP; optional
+  React reconciliation. Drives a browser via the shared driver contract; optional
   --with-modals opens each modal/dropdown and rescans; device presets and
   matrix mode cover responsive breakpoints.
   Triggers on: "click test", "click-test", "structural audit", "DOM audit",
@@ -67,6 +67,15 @@ Run **both**. Findings from each rarely overlap.
 ## Phase 0 — Parse Arguments
 
 Parse `$ARGUMENTS`:
+
+<!-- host-contract: input-acquisition; grammar=path+flags; empty=ask-and-stop -->
+
+**Where `$ARGUMENTS` comes from** — orchestrator-supplied input first, else
+the host's verbatim invocation suffix, else the span of the user's **current**
+message naming this skill or its subject. Never inferred from surrounding
+conversation. This site is `path+flags`; on empty input, a URL is required — ask for it and stop. Never reuse a URL from earlier in the conversation; scanning the wrong origin is a real action against someone's site.
+Full contract: `references/input-acquisition.md`.
+
 1. **url** — first URL-shaped token (or `PERSONA_TEST_APP_URL` env). Validate
    with `new URL(value)` — reject non-URL with usage error.
 2. **routes** — `--routes "/a,/b,/c"` (comma-separated). When omitted, the
@@ -110,7 +119,7 @@ Parse `$ARGUMENTS`:
    The selected device is applied via a single `browser_resize` call before
    the first `browser_navigate` of each route (matrix mode resizes once per
    device-pass). UA emulation, real touch events, and DPR scaling are NOT
-   provided — Playwright MCP doesn't expose context-level launch options. For
+   provided — MCP browser drivers don't expose context-level launch options. For
    full emulation, use `/persona-test --mode consistency` (code-driven Playwright).
 
 Required: `url`. If missing, output usage and STOP. Unknown flags → fail
@@ -127,7 +136,7 @@ compared:
 | Field | Default | Override |
 |---|---|---|
 | Device | `desktop` (1280×720, touch=false) | `--device <preset>` / `--devices "<list>"` (matrix) / `--viewport WxH` (legacy) |
-| Browser | whatever the MCP tool provides (Playwright MCP = Chromium) | — |
+| Browser | whatever the selected driver provides (Playwright MCP = Chromium) | — |
 | Locale / timezone | tool default (do NOT randomise) | — |
 | Auth | none by default — public surface only | pre-authenticate the shared MCP session; see "Auth-gated routes" below |
 | Network idle | wait for `load` + ready-selector or 8000ms | `--ready-timeout` |
@@ -145,11 +154,11 @@ scan, check:
    first-party login walls.
 
 click-test itself never attempts to log in — credentials are out of scope
-for this skill's own logic. But click-test drives the same Playwright MCP
+for this skill's own logic. But click-test drives the same browser
 connection as persona-test (see `references/dom-scanner.md` and the
 delegated browser-tool detection below), so the same session-level
 pre-authentication applies here: if the target's primary surfaces need a
-login, pre-authenticate the shared MCP connection via `--storage-state`
+login, pre-authenticate the shared driver connection via `--storage-state`
 BEFORE running click-test — see
 [`../persona-test/references/auth-bootstrap.md`](../persona-test/references/auth-bootstrap.md)
 for the sanctioned pattern (a per-repo sign-in script writing a
@@ -162,19 +171,20 @@ becomes at most `Incomplete` (never `Clean`) when any route is
 
 ## Phase 1 — Detect Browser Tool
 
-Same logic as persona-test — see
-[`../persona-test/references/browser-tool-detection.md`](../persona-test/references/browser-tool-detection.md).
+Resolve the driver through the **one detection oracle** —
+[`references/browser-tool-detection.md`](references/browser-tool-detection.md).
+Do not restate its ladder here; click-test declares only what it needs.
 
-Own-app hostnames → Playwright MCP. External anti-bot sites → BrightData
-fallback. Static-only WebFetch is **not enough** for click-test — the DOM
-scanner needs `page.evaluate`. If only WebFetch is available, exit with a
-clear diagnostic.
+**Minimum capability set**: `navigate`, `evaluate`, `click`, `keyboard`
+(Escape press), `wait`, `currentUrl`. Verify each before the first scan and log
+the chosen driver plus the capabilities matched.
 
-**Required capabilities** (verify the selected tool supports each before
-the first scan — log which tool was chosen and which capabilities passed):
-`navigate`, `evaluate`, `click`, `keyboard` (Escape press), `wait`,
-`currentUrl`. If any required capability is missing, abort before scanning
-with `[BLOCKED] Tool <name> missing capability: <cap>`.
+**`evaluate` is non-negotiable and it is what excludes static drivers.** The DOM
+scan *is* a `page.evaluate` call, so a fetch-and-parse driver can never serve
+click-test however well it parses HTML. There is no degraded mode here: an unmet
+set means abort before scanning with
+`[BLOCKED] <driver> missing capability: <cap>` — never a clean empty pass, which
+would report "no findings" from a page nobody scanned.
 
 ---
 
@@ -194,7 +204,7 @@ explicit `--force-cache-bust` flag — and even then, warn loudly on stderr.
 |---|---|
 | Own-app (localhost / `*.railway.app` / `*.vercel.app` / `*.netlify.app` / `*.local`) | Cache-bust runs unconditionally |
 | External | Skip cache-bust. `--force-cache-bust` overrides with stderr warning |
-| WebFetch (no JS context) | Skip; not applicable |
+| Any driver without `evaluate` | Unreachable — click-test aborts `blocked` before this point (Phase 1) |
 
 Cache-bust script (when it runs). Both APIs (`serviceWorker`, `caches`) can
 be undefined globally in non-secure contexts (HTTP-only test URLs) —
@@ -240,6 +250,10 @@ node scripts/lib/device-presets.mjs prep-matrix \
 ```
 
 (Pass the same flag your `$ARGUMENTS` contained — none if neither flag
+
+<!-- host-contract: input-acquisition; grammar=path+flags; empty=default -->
+_This site: `path+flags` — neither device flag present means a single `desktop` pass — do not synthesise a matrix._
+
 was supplied; defaults to a single `desktop` pass.)
 
 The CLI returns:
@@ -769,9 +783,15 @@ that doesn't exist yet (this is a skill spec, not a CLI).
 
 | File | Summary | Read when |
 |---|---|---|
+| `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |
+| `references/browser-tool-detection.md` | The browser-driver contract — capabilities, driver table, selection order, minimum sets, degraded/blocked evidence. | Phase 1 driver selection — resolving which driver to use, or diagnosing a `blocked` result. |
 | `references/dom-scanner.md` | The full browser_evaluate scanner JS — every assertion's implementation, selector-stringifier helpers, severity mapping. | About to run Phase 4 or Phase 4b. |
 
-Phase 1 also delegates to the persona-test browser-tool detection protocol —
-see [`../persona-test/references/browser-tool-detection.md`](../persona-test/references/browser-tool-detection.md)
-(tier priority, fallback rules, Windows caveats). It's a cross-skill reference,
-not a click-test reference file, so it sits outside the index table.
+Phase 1 resolves its driver from `references/browser-tool-detection.md`, listed
+in the table above. That file is a **generated copy** — its own header names the
+canonical it came from (source repo only; the canonical is not synced to
+consumers). Edit the canonical, never a copy. It used to be cited across skill
+boundaries as
+`../persona-test/references/…`, which a packaged click-test would ship without:
+`enumerateSkillFiles` walks a skill's OWN directory only, so the contract this
+skill is told to obey could travel separately from the skill.

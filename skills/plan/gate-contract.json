@@ -47,6 +47,34 @@
     {
       "line": "> Report-only, exit 0 — a small plan may legitimately sit under the threshold.",
       "reason": "Explicitly declares the self-check a NON-gate: a small plan under the threshold is legitimate, so the CLI exits 0 always and the warning is advisory. Contracting this as a gate would assert a refusal the tool deliberately does not make — and \"never invent file references to clear the threshold\" is the reason it must not become one."
+    },
+    {
+      "line": "If the plan contains a ` ```mermaid ` block AND the Mermaid MCP is available",
+      "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
+    },
+    {
+      "line": "this session, validate each block before persisting — a syntax error otherwise",
+      "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
+    },
+    {
+      "line": "server that `.mcp.json` and `.vscode/mcp.json` both register. Pass the block as",
+      "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
+    },
+    {
+      "line": "> This gate named `mcp__claude_ai_Mermaid_Chart__validate_and_render_mermaid_diagram`",
+      "reason": "Incident note explaining a fixed tool-name defect (Phase 6.5's Mermaid MCP bug, corrected 2026-09-02) — historical/descriptive, matches the pre-existing \"Gemini verdict computed... NEVER\" exemption class already in this contract."
+    },
+    {
+      "line": "> expose. Two mismatches, so the availability test could never be true, and",
+      "reason": "Continuation of the same incident note — describes why the OLD (now-fixed) availability check could never pass. Historical/descriptive, not a current enforcement claim."
+    },
+    {
+      "line": "> own deadness: it had never run once, in any host. When a step is written to",
+      "reason": "Continuation of the same incident note. Historical/descriptive."
+    },
+    {
+      "line": "linter never looks for. Two instruments, two blind spots — do not delete either",
+      "reason": "Describes the complementary relationship between the Mermaid MCP and plans:lint (each catches what the other misses) — descriptive, not a claim this skill's own execution enforces deletion prevention."
     }
   ]
 }

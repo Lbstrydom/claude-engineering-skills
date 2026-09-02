@@ -487,6 +487,61 @@ If your consumer's `package.json` has `npm run` scripts that invoke
 `scripts/.claude-skills/X.mjs`. The verifier's gate 5 lists every stale
 reference.
 
+**The sync never writes to your script table — deliberately.** Nothing this
+bundle installs will add, rename or remove an entry in your `package.json`; a
+SKILL step has no business editing a consumer's scripts, and a sync that did it
+would fight whatever your repo already calls those verbs. The consequence is
+the one thing to internalise: **an `npm run <alias>` you see in a skill exists
+in the source repo only.** Skill text names synced tooling by path
+(`node scripts/.claude-skills/X.mjs`) precisely so it works without an alias,
+and `npm run skills:consumer-refs:gate` in the source repo fails on any skill
+that forgets. Adding your own aliases is welcome — the arch/debt/hydrate set
+below is the conventional starting point — but nothing depends on them.
+
+### Step 7b — optional npm aliases
+
+Everything below is reachable by path already; these just save typing. Names
+are a convention, not a contract. Replace `ARCH_DOC_PATH` with wherever your
+repo keeps its rendered architecture doc.
+
+(`skills:hydrate` is deliberately absent here — it has one canonical spelling,
+in § "Linked git worktrees"; copy it from there, never from a paraphrase.)
+
+```json
+{
+  "arch:refresh":    "node scripts/.claude-skills/symbol-index/refresh.mjs",
+  "arch:render":     "node scripts/.claude-skills/symbol-index/render-mermaid.mjs --out ARCH_DOC_PATH",
+  "debt:health":     "node scripts/.claude-skills/debt-health-check.mjs",
+  "dashboard":       "node scripts/.claude-skills/build-dashboard.mjs serve",
+  "dashboard:build": "node scripts/.claude-skills/build-dashboard.mjs all"
+}
+```
+
+### The local dashboard in a consumer
+
+`build-dashboard.mjs` syncs with the bundle, so the dashboard works in a
+consumer — it is opt-in and unwired, not absent. Run it by path:
+
+```bash
+node scripts/.claude-skills/build-dashboard.mjs all        # reference + telemetry
+node scripts/.claude-skills/build-dashboard.mjs serve      # build, then serve
+node scripts/.claude-skills/build-dashboard.mjs telemetry  # just the audit view
+node scripts/.claude-skills/build-dashboard.mjs --help     # every mode and flag
+```
+
+Output lands in your repo's `dashboard/` as `index.html` + `telemetry.html`.
+Both are **Category A** generated artifacts — derived from mutable store state,
+so two builds of one commit can differ. Gitignore them; never commit them.
+
+The Architecture tab wants a populated symbol index, so on a cold repo run
+`symbol-index/refresh.mjs` then `symbol-index/render-mermaid.mjs` before
+`build-dashboard.mjs all`. (In the source repo those three are chained behind
+`npm run dashboard:setup`; that alias is not part of what you receive.)
+
+`/ship` and `/audit-code` each rebuild the dashboard as an advisory step, but
+both gate that step on being in the source repo and skip it silently here —
+your builds are yours to trigger.
+
 ### Step 8 — commit + PR
 
 ```bash

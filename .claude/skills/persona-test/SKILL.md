@@ -8,8 +8,8 @@ description: |
   qualitative persona debrief. Personas are tracked per app URL (list/add
   subcommands); pair mode runs two opposed personas back-to-back; consistency
   mode runs a deterministic code-driven canary. Use for exploratory QA against
-  deployed apps — not scripted regression tests. Works with Playwright MCP
-  (preferred — free, no credentials) or BrightData Scraping Browser (for external/anti-bot sites).
+  deployed apps — not scripted regression tests. Driver is resolved by capability,
+  not vendor: Playwright MCP, host-native browser tools, BrightData, or read-only.
   Triggers on: "persona test", "test as", "explore the app as", "run persona
   test", "test the site as", "browse the app as", "QA as", "list personas",
   "add persona", "who are my personas", "which persona should test".
@@ -55,11 +55,24 @@ Examples:
 Run an exploratory browser test with persona tracking. Check `$ARGUMENTS`
 first to pick the sub-command.
 
+<!-- host-contract: input-acquisition; grammar=subcommand; empty=ask-and-stop -->
+
+**Where `$ARGUMENTS` comes from** — orchestrator-supplied input first, else
+the host's verbatim invocation suffix, else the span of the user's **current**
+message naming this skill or its subject. Never inferred from surrounding
+conversation. This site is `subcommand`; on empty input, print usage and stop — a persona and a URL are both required, and there is no safe default target to browse.
+Full contract: `references/input-acquisition.md`.
+
+
 ---
 
 ## Phase 0 — Route the Command
 
 Read the first word of `$ARGUMENTS`:
+
+<!-- host-contract: input-acquisition; grammar=subcommand; empty=ask-and-stop -->
+_This site: `subcommand` — no first word means no sub-command; fall through to the test-argument parse, which stops with usage if a persona or URL is missing._
+
 
 - `list` → **Sub-command: LIST**
 - `add` → **Sub-command: ADD**
@@ -77,8 +90,14 @@ ask the user.
 
 Fetch personas (graceful no-op when cloud is off):
 
+**Validate the URL before it reaches a shell.** It is user- or env-derived, and
+double quotes do **not** neutralise `$(…)` or backticks — the same defect class
+as the ADD payload below. Parse it with `new URL(value)` and reject it outright
+if the parse fails or the string contains any of `` $ ` ; | & < > ( ) `` or a
+newline. Only a value that survived that check is substituted below:
+
 ```bash
-node scripts/cross-skill.mjs list-personas --url "<url>"
+node scripts/cross-skill.mjs list-personas --url "<validated url>"
 ```
 
 Response shape:
@@ -113,6 +132,10 @@ STOP — do not proceed to the test phases.
 **Usage**: `add "<name>" "<description>" <url> [app name]`
 
 Parse from `$ARGUMENTS` after `add`:
+
+<!-- host-contract: input-acquisition; grammar=subcommand; empty=ask-and-stop -->
+_This site: `subcommand` — name, description and url are required; a missing one prints usage and stops rather than registering a partial persona._
+
 1. **name** — first quoted string
 2. **description** — second quoted string
 3. **url** — URL following the quoted strings
@@ -120,16 +143,30 @@ Parse from `$ARGUMENTS` after `add`:
 
 If name, description, or url is missing, output usage and STOP.
 
-Upsert (idempotent on `name + app_url`):
+Upsert (idempotent on `name + app_url`). **Write the payload to a file with the
+editor, then pass the file — never interpolate the user's strings into a
+single-quoted shell argument:**
 
 ```bash
-node scripts/cross-skill.mjs add-persona --json '{
-  "name": "<name>",
-  "description": "<description>",
-  "appUrl": "<url>",
-  "appName": "<app_name or null>"
-}'
+# 1. Write .audit/add-persona.json with the Write tool (NOT a shell heredoc):
+#    {"name":"…","description":"…","appUrl":"…","appName":null}
+# 2. Feed it on stdin — the redirect passes bytes, never shell-parsed text:
+node scripts/cross-skill.mjs add-persona --stdin < .audit/add-persona.json
 ```
+
+> **Why a file.** `name` and `description` are free text the user typed. An
+> apostrophe — *"Pieter's tasting notes"* — closes the surrounding `'…'` and the
+> rest of the value is handed to the shell as command text; the same input can
+> break the JSON quoting inside it. This is the identical class the ledger
+> writer already documents ("write it with the `Write` tool, never as a shell
+> string"), where the workaround people reached for was stripping apostrophes
+> out of their own prose to satisfy a quoting rule. A file has no shell in the
+> loop, so the value stays the value.
+>
+> `--stdin` is the verified flag (probed 2026-09-02: it parses the payload and
+> reports validation errors, rather than refusing as unknown). Do not reach for
+> `--name`/`--description`/`--url` instead — those put the same free text back
+> on the command line and reintroduce exactly this defect.
 
 Response `{"ok": true, "cloud": ..., "personaId": ..., "existed": bool}`.
 Report success with `personaId`. STOP.
@@ -139,6 +176,10 @@ Report success with `personaId`. STOP.
 ## Phase 0b — Parse Test Arguments (normal test run)
 
 Parse `$ARGUMENTS`:
+
+<!-- host-contract: input-acquisition; grammar=subcommand; empty=ask-and-stop -->
+_This site: `subcommand` — persona and url are required; never substitute a previously-tested URL from earlier in the conversation._
+
 1. **persona_input** — first quoted string or first unparsed token
 2. **url** — URL in the remaining args (or `PERSONA_TEST_APP_URL` env)
 3. **focus** — any remaining text after the URL (strip out flag tokens before assigning)
@@ -204,14 +245,30 @@ Full rules + query shape: `references/audit-correlation.md`.
 
 ## Phase 1 — Detect Browser Tool
 
-Check the URL hostname. Own-app domains (localhost, `*.railway.app`,
-`*.vercel.app`, `*.netlify.app`) → Playwright MCP. External URLs →
-try Playwright first, then BrightData for anti-bot sites.
+Resolve the driver through the **one detection oracle** —
+`references/browser-tool-detection.md`. Do not restate its ladder here; this
+step only declares what persona-test needs from it.
 
-Set `browser_tool = "Playwright MCP" | "BrightData" | "WebFetch (degraded)"`
-and stick with it for the whole session.
+**Minimum capability sets** (§4 of the oracle):
 
-Full tier-fallback protocol + Windows MCP caveats: `references/browser-tool-detection.md`.
+- **Full journey**: `navigate`, `click`, `type`, `evaluate`, `screenshot`,
+  `wait`, `currentUrl`.
+- **Read-only degraded**: `readText` alone (it takes a URL, so it needs no
+  `navigate`). Below that → `blocked`.
+
+Set `browser_driver` to the selected driver id (`playwright-mcp`,
+`copilot-browser`, `brightdata`, `static-fetch`) and `browser_status` to `ok`,
+`degraded` or `blocked`, then keep both for the whole session — never mix
+driver families mid-run.
+
+**A `degraded` run is reported as degraded.** Name the missing capabilities,
+print the `[DEGRADED MODE]` banner at the top of the report, and mark every
+interaction, flow and state-change stage **not-run** rather than passed. A
+partial capture degrades to `unverified`; it never becomes "verified / 0
+findings".
+
+Full contract — capability vocabulary, driver table, selection order, status
+evidence, Windows spawn caveats: `references/browser-tool-detection.md`.
 
 **If the target requires login for its primary surfaces** (not just an
 optional account page), check whether the MCP session is already
@@ -244,7 +301,7 @@ desktop when no cue is present.
 
 ### Step 1a.1 — Get the device contract (MANDATORY; do not skip)
 
-Skip ONLY when `browser_tool = "WebFetch (degraded)"` (no viewport concept).
+Skip ONLY when `browser_status = "degraded"` and the driver has no viewport concept.
 Otherwise, this is non-negotiable — the LLM does not pick the device.
 
 Run from the consumer-repo root:
@@ -254,6 +311,10 @@ node scripts/lib/device-presets.mjs prep "<persona.description or ad-hoc persona
 ```
 
 Pass `--device <preset>` only when `$ARGUMENTS` contained an explicit
+
+<!-- host-contract: input-acquisition; grammar=subcommand; empty=default -->
+_This site: `subcommand` — no explicit `--device` means the device is resolved from the persona description, never guessed from context._
+
 `--device` flag (Phase 0b item 4). The CLI returns a JSON contract:
 
 ```json
@@ -337,7 +398,7 @@ appears to "not be deployed" because the SW handed the persona last week's
 JS. This was a real failure mode in wine-cellar-app — burned ~30min of
 verification before we realised. Always cache-bust before the first action.
 
-Skip when `browser_tool = "WebFetch (degraded)"` (no JS context). Skip when
+Skip when `browser_status = "degraded"` (no `evaluate` capability). Skip when
 the URL is a static-hosted page with no service worker (`*.github.io`, etc.).
 Otherwise, **run this before Phase 2**:
 
@@ -592,7 +653,7 @@ confidence descending:
   URL: <url>
   Focus: <focus or "exploratory">
   Device: <preset_name> <WxH> (touch=<bool>, resolved-from=<description|explicit|fallback>)
-  Tool: <browser_tool> — <N> steps — <duration>
+  Driver: <browser_driver> (<browser_status>) — <N> steps — <duration>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 FINDINGS
@@ -685,7 +746,8 @@ node scripts/cross-skill.mjs record-persona-session --json '{
   "persona": "<persona>",
   "url": "<url>",
   "focus": "<focus or null>",
-  "browserTool": "<browser_tool>",
+  "browserDriver": "<browser_driver>",
+  "browserStatus": "<ok|degraded|blocked>",
   "stepsTaken": <N>,
   "verdict": "<verdict>",
   "p0Count": <n>, "p1Count": <n>, "p2Count": <n>, "p3Count": <n>,
@@ -854,6 +916,10 @@ Full query shapes + output format: `references/session-history.md`.
 ## Phase 7 — Pair Mode (--pair)
 
 Triggered by `--pair "<p1>" "<p2>"` anywhere in `$ARGUMENTS`. Skip Phases
+
+<!-- host-contract: input-acquisition; grammar=subcommand; empty=default -->
+_This site: `subcommand` — absence of `--pair` is a normal single-persona run — do not infer pair mode from two persona names being mentioned._
+
 0b–6c above and follow the flow below.
 
 **Why pair mode exists**: two personas of opposed expertise surface disjoint
@@ -865,6 +931,10 @@ catches. Pair mode formalises that.
 ### Step P1 — Parse pair arguments
 
 Parse from `$ARGUMENTS`:
+
+<!-- host-contract: input-acquisition; grammar=subcommand; empty=ask-and-stop -->
+_This site: `subcommand` — both personas must be quoted after `--pair`; one missing prints usage and stops._
+
 1. **persona_a** — first quoted string after `--pair`
 2. **persona_b** — second quoted string
 3. **url** — URL in remaining args (or `PERSONA_TEST_APP_URL` env)
@@ -991,8 +1061,9 @@ situations — read them only when the trigger applies.
 
 | File | Summary | Read when |
 |---|---|---|
+| `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |
 | `references/audit-correlation.md` | Pre-test audit enrichment + post-test persona↔audit correlation emission — full rules. | `audit_link = true` AND (Phase 0d fetches audit candidates OR Phase 6b's manual-repair path is needed). |
-| `references/browser-tool-detection.md` | Full browser-tool detection algorithm with tier priority, fallback rules, and Windows caveats. | Phase 1 tool selection fails on first try, OR the user is on Windows and Playwright MCP tools aren't appearing. |
+| `references/browser-tool-detection.md` | The browser-driver contract — capabilities, driver table, selection order, minimum sets, degraded/blocked evidence. | Phase 1 tool selection fails on first try, OR the user is on Windows and Playwright MCP tools aren't appearing. |
 | `references/auth-bootstrap.md` | Sanctioned auth-gated exploratory-testing pattern via MCP-server storageState, plus its connect-time-race escape hatch. | Phase 1 detects a login-gated target, OR Phase 3 hits a login wall (bootstrap configured or not). |
 | `references/consistency-mode.md` | Full consistency-mode grammar, manifest schema, canary schema, runner exit codes, contradiction kinds. | Phase 3b runs (i.e., `--mode consistency` was passed) and you need the full grammar reference; OR the user asks how the rig decides severity / coercion / negative-space. |
 | `references/persona-debrief-format.md` | Full persona debrief generation rules, tone guide, and output wrapper. | About to write the Phase 5b debrief. |

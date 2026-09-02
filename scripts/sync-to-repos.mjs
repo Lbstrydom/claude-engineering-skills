@@ -308,6 +308,14 @@ const CORE_ENTRY = [
   // skill literally died on `File not found` for a transcript no step produced,
   // and hand-assembled one instead. Walker pulls in lib/audit/transcript.mjs.
   'scripts/build-audit-transcript.mjs',
+  // The `.audit/` sweeper. Two synced shared references (gemini-gate.md,
+  // ledger-format.md) promised `.audit/` is "gitignored + swept … in this repo
+  // and in every consumer" and named `npm run audit:clean` — an alias no
+  // consumer has, over a script that was not shipped, so the retention window
+  // those references rely on (newest 25 transcripts) held nowhere but here.
+  // Dry-run by default, allowlist-only. Same defect class as the transcript
+  // builder above. Keep in lock-step with lib/sync-inventory.mjs.
+  'scripts/audit-clean.mjs',
   // Writes adjudication-ledger entries from a triage map (/audit-plan and
   // /audit-code Step 3.5). Replaced a heredoc recipe that imported
   // `../../scripts/shared.mjs` — a specifier the command rewriter cannot

@@ -99,8 +99,14 @@ npx playwright install chromium
 
 ## Windows Playwright MCP caveat
 
-If `npx playwright install chromium` ran but Playwright tools still
-don't appear in Claude Code, add this override to `~/.claude/settings.json`:
+If `npx playwright install chromium` ran but Playwright tools still don't
+appear, the server is failing to spawn. Bare `npx` is a `.cmd` script rather
+than an executable, so a non-shell spawn cannot resolve it — measured on
+Windows 11, `spawn('npx')` returns **ENOENT**. Upgrade your editor first
+(reported fixed in VS Code 1.111+); if it persists, override the launch command
+for the host you are actually on:
+
+**Claude Code** — `~/.claude/settings.json`, then restart:
 
 ```json
 "mcpServers": {
@@ -111,5 +117,21 @@ don't appear in Claude Code, add this override to `~/.claude/settings.json`:
 }
 ```
 
-Restart Claude Code. Windows requires the `.cmd` wrapper for process
-spawning — bare `npx` doesn't resolve through Claude Code's spawner.
+**VS Code / GitHub Copilot** — `.vscode/mcp.json`, whose top-level key is
+`servers` (not `mcpServers`), routed through the command processor:
+
+```json
+"servers": {
+  "playwright": {
+    "type": "stdio",
+    "command": "cmd",
+    "args": ["/c", "npx", "-y", "@playwright/mcp@latest", "--headless"]
+  }
+}
+```
+
+Both are community workarounds rather than vendor-endorsed fixes, and both are
+machine-local. (This bundle's own source repo runs an MCP-parity gate that
+compares `command` exactly between the two config files, so a committed
+Windows-only override there needs a declared exception; your repo has no such
+constraint.)

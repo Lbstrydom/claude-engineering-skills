@@ -100,8 +100,9 @@ the default is `plan`, and a real finding's own `_pass` always wins.
 > then throws on a file that genuinely exists. That cost a consumer repo 30 days
 > of silently-lost final-review persistence (101 real runs, traced 2026-07-26).
 > A repo-relative `.audit/…` path has no such split: every reader resolves it
-> against the same cwd, and it is gitignored + swept by `npm run audit:clean` in
-> this repo and in every consumer.
+> against the same cwd, and it is gitignored + swept by
+> `node scripts/audit-clean.mjs` in this repo and in every consumer (the sweeper
+> ships with the bundle; the `npm run audit:clean` alias does not).
 
 The split to remember: **identity fields come from the finding verbatim;
 only `adjudicationOutcome`/`remediationState`/`ruling`/`rulingRationale`

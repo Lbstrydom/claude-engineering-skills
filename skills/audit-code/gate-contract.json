@@ -344,6 +344,38 @@
     {
       "line": "> never on a hand-rolled copy of the rule.",
       "reason": "Instruction to call the exported effectiveSeverity() accessor rather than re-implement the rule inline. The single-oracle discipline it names is a code-review convention (AGENTS.md prose-to-code seam), not something this skill exits on; the duplicate inline lambda it replaced lived in legacy-production-audit.mjs and was removed in the same commit."
+    },
+    {
+      "line": "message naming this skill or its subject. Never inferred from surrounding",
+      "reason": "The \"Where $ARGUMENTS comes from\" template line, synced verbatim from docs/audit/shared-references/input-acquisition.md into every skill that reads the token. It is authoring guidance for the agent reading the skill at parse time (where to look for input, in what priority) — no code in this repo exits or blocks on it; the enforcement, such as it is, is the human/agent following documented instructions, same class as every other prose \"never guess\" line already exempted in this contract."
+    },
+    {
+      "line": "conversation. This site is `path+flags`; on empty input, ask which plan to audit and stop — never guess a plan, and never start an audit that would bill a provider against the wrong spec.",
+      "reason": "A per-site \"_This site: …_\" annotation from the input-acquisition contract (Phase 5, cross-host-parity-v2), describing this ONE $ARGUMENTS occurrence's grammar class and empty-input behaviour for the agent parsing it. Descriptive guidance, not a mechanically enforced claim — no exit code or gate binds to it."
+    },
+    {
+      "line": "#    worktree does not have it — the redirect below fails BEFORE the command",
+      "reason": "A `#`-prefixed shell comment inside a code fence, or a shell/JS snippet itself — the enforcement-verb word is part of the command or its inline explanation, not a claim about this skill's own exit behaviour. Same class as the pre-existing skills:hydrate one-liner exemption in this file (JS `require`/`process.exit` are not English enforcement claims)."
+    },
+    {
+      "line": "#    Read JSON with node, never jq — node is guaranteed by the runtime contract,",
+      "reason": "A `#`-prefixed shell comment inside a code fence, or a shell/JS snippet itself — the enforcement-verb word is part of the command or its inline explanation, not a claim about this skill's own exit behaviour. Same class as the pre-existing skills:hydrate one-liner exemption in this file (JS `require`/`process.exit` are not English enforcement claims)."
+    },
+    {
+      "line": "--repo-uuid \"$(node -p \"require('./.audit/repo-identity.json').repoUuid\")\" \\",
+      "reason": "A `#`-prefixed shell comment inside a code fence, or a shell/JS snippet itself — the enforcement-verb word is part of the command or its inline explanation, not a claim about this skill's own exit behaviour. Same class as the pre-existing skills:hydrate one-liner exemption in this file (JS `require`/`process.exit` are not English enforcement claims)."
+    },
+    {
+      "line": "REFRESH_ID=$(node -p \"require('./.audit/active-refresh.json').refreshId\")",
+      "reason": "A `#`-prefixed shell comment inside a code fence, or a shell/JS snippet itself — the enforcement-verb word is part of the command or its inline explanation, not a claim about this skill's own exit behaviour. Same class as the pre-existing skills:hydrate one-liner exemption in this file (JS `require`/`process.exit` are not English enforcement claims)."
+    },
+    {
+      "line": "but the sync never adds npm scripts, so a consumer runs",
+      "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
+    },
+    {
+      "line": "mode). Never blocks the audit.",
+      "reason": "States that Step 6.5's advisory dashboard-telemetry rebuild is non-blocking — a property of that step's own instruction, already covered in spirit by the ship gate-contract's equivalent \"never blocks\" exemptions; not a claim this skill's own execution exits on anything."
     }
   ]
 }

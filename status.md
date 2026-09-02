@@ -1,5 +1,135 @@
 # Project Status Log
 
+## 2026-09-02 — Cross-host parity v2: skills correct on VS Code Copilot, not just Claude Code
+
+`/cycle --autonomous` end-to-end: `/plan` (3 GPT rounds, 18 findings, 100%
+acceptance) → Gemini APPROVE → clustered `/audit-code` implementation → 2-round
+consolidated Gemini gate → APPROVE, coherence *Strong*. Plan:
+[docs/plans/cross-host-parity-v2.md](docs/plans/cross-host-parity-v2.md).
+
+Preceded by a systematic review of all 16 skills for Claude-Code-only
+assumptions, followed by web research to verify or correct each finding before
+acting (VS Code Agent Skills docs, GitHub Copilot changelog, the upstream
+`microsoft/vscode` ENOENT/EINVAL issue for the Windows `npx` spawn failure).
+Two of my own initial conclusions were wrong and corrected by that research:
+`disable-model-invocation` IS honoured by Copilot (not Claude-only, as first
+claimed — the `/ship` lock is real cross-host); and `/visual-audit`/`/ux-lock`
+already drive Chromium themselves via the `playwright` npm package inside
+synced scripts, so the browser-tier workstream scoped from 4 skills to 2
+(`persona-test`, `click-test`).
+
+### Changes
+
+- **Browser driver contract** — promoted from a private `persona-test`
+  reference to a canonical shared reference
+  ([docs/audit/shared-references/browser-tool-detection.md](docs/audit/shared-references/browser-tool-detection.md)),
+  generated into both consuming skills (a packaged skill contains only its own
+  directory, so the old `../persona-test/references/…` cross-skill citation
+  would have shipped `click-test` without the contract it's told to obey — a
+  real Gemini-caught HIGH). Closed nine-capability vocabulary (`navigate`,
+  `readText`, `evaluate`, `click`, `type`, `keyboard`, `screenshot`, `wait`,
+  `currentUrl`), a declared driver table (Playwright MCP / Copilot browser
+  tools / BrightData / static-fetch) with `pinned` vs `expected` rows, ONE
+  ordered selection rule (credential-free first — no separate tie-breaker), and
+  `ok`/`degraded`/`blocked` statuses each with required evidence. An `expected`
+  row must be **exercised**, not just probed for presence, before the first
+  scan (`evaluate 1+1` must return `2`; a tool returning HTML has not passed) —
+  this closed a real contradiction the consolidated audit found where a
+  responding tool was treated as proof of all nine capabilities.
+- **`$ARGUMENTS` input-acquisition contract** — new shared reference
+  ([docs/audit/shared-references/input-acquisition.md](docs/audit/shared-references/input-acquisition.md)),
+  generated into all 9 skills that read it. Orchestrator-supplied input first
+  (so `/cycle` can delegate without deadlocking on ask-and-stop), then the
+  host's verbatim suffix, then designated text from the user's current message
+  only — never inferred from surrounding conversation. Applied at all 19 sites
+  (`/persona-test` 7, `/ship` 3, `/click-test` 2, `/ux-lock` 3, one each in
+  `/audit-code`, `/audit-plan`, `/brainstorm`, `/ai-context-management`), each
+  declaring its own grammar class and empty-input behaviour via a machine
+  -readable `<!-- host-contract: … -->` marker.
+- **`/cycle` + `/audit-plan` no-dispatch branch** — a host without
+  skill-to-skill dispatch (Copilot) opens the delegated `SKILL.md` and follows
+  it inline, passing arguments explicitly (orchestrator-supplied input) rather
+  than stalling. Four invariants stated as must-survive: step order, the Step-3
+  implementation-gate pause, skip flags, blocked-result propagation.
+  `/audit-plan` had the identical unconditional-dispatch defect one skill over
+  from `/cycle` — caught by the consolidated audit, not the plan.
+- **Host-qualified hook claims** — AGENTS.md's quickfix Layer-1 and `/ship`
+  Step 6.6's friction-closure hook now state rule / portable path / accelerator
+  explicitly, with the cadence gap named rather than implied (hook = every
+  edit or every prompt; portable path = once per audit or once per ship).
+  Neither claim was true outside Claude Code as originally written.
+- **`scripts/check-skill-consumer-refs.mjs`** — the delivery gate from the
+  prior session's work fixed to see **untracked** files
+  (`git ls-files --others --exclude-standard` unioned in), after it passed on
+  the very commit introducing two new unreachable-pointer violations because
+  `git ls-files` alone doesn't list a file until staged. Verified against
+  three GPT findings that restated the union as a tracked-only violation —
+  dismissed all three: the pre-push sandbox has nothing untracked (no-op
+  there), and a stray local `.md` is independently rejected by `skills:check`
+  as an orphan.
+- **Regression contract** — 5 new assertions in
+  [tests/skill-consumer-refs.test.mjs](tests/skill-consumer-refs.test.mjs)
+  (T1–T5), filesystem-discovered (never a hard-coded skill list) and asserting
+  on the structured markers rather than prose. Each verified red-then-green by
+  breaking its marker and watching exactly one test fail.
+- **Two real defects found and fixed along the way, unrelated to the plan's
+  stated scope but touched by it**: a second shell-injection site in
+  `persona-test`'s `LIST` sub-command (sibling of one fixed in the same file —
+  the ADD sub-command's payload now goes through `--stdin`, never
+  shell-interpolated); `/tmp/drift.json` in `/ai-context-management` (resolves
+  to two different directories on Windows depending on whether bash or node
+  reads it — the exact failure class that cost a consumer 30 days of silently
+  -lost persistence previously); an undeclared `jq` dependency in
+  `/audit-code`'s full-scope catalogue recipe (this repo's own reference says
+  "read JSON with node, never jq — node is guaranteed, jq is not").
+- Two regressions I introduced and the audit loop caught: writing to
+  `.audit/repo-identity.json` without `mkdir -p` first (gitignored dir, absent
+  in a fresh checkout — the redirect fails before the command runs); a doubled
+  `> >` blockquote in all 10 generated shared-reference copies from writing the
+  canonical self-description as a blockquote that the renderer then wraps in
+  its own.
+
+### Decisions Made
+
+- **23 findings deferred and captured as debt** (`.audit/tech-debt.json`),
+  each with an INDEPENDENCE clause naming why the audit's own scope doesn't
+  ride on the cited code. Largest classes: the `skills:hydrate` worktree
+  -bootstrap implementation duplicated verbatim across all 16 skills (no
+  single maintained source; `git-common-dir` is metadata storage, not a
+  worktree locator, and breaks for `--separate-git-dir` layouts); and
+  documentation-monolith debt — **AGENTS.md now sits 171 characters under its
+  92,000-char cap**, which this session's own hook-qualification edits
+  contributed to. Splitting it is out of scope here; recorded so the next
+  author hits the number, not the wall.
+- **Plan ships `Status: Complete (cross-host unverified)`** — six acceptance
+  checks (E1–E6) require driving an actual VS Code Copilot session, which this
+  agent cannot do. Recorded as an owned obligation (repo operator) with a
+  results table in the plan itself, not silently passed over. If E6 shows
+  nested `/name` dispatch actually works in Copilot, the no-dispatch branches
+  just added are dead code and the plan should be reopened.
+- **The GPT audit loop stopped on acceptance rate, not finding count** —
+  union round 2 hit 18% acceptance (≤⅓ is this repo's documented
+  rigor-pressure threshold), with 12 of 17 findings restating already
+  -deferred debt in different words. H count went 8→6 while acceptance
+  collapsed — the "manufacturing work" case, not the "plan gaining surface"
+  one.
+- **The consolidated Gemini gate's one finding (G1, plan/implementation
+  drift) survived a near-miss dismissal.** Three checks — the live canonical,
+  both generated copies, the reviewed patch — all showed the corrected text,
+  making the finding look fabricated. A repo-wide grep found the real
+  culprit: the *plan's* own D2a table still had the old, superseded row. The
+  implementation was right; the spec was stale. Fixed in the plan with the
+  reasoning recorded, since the plan is the audit's spec — left stale, the
+  next audit would have flagged working code as wrong.
+
+### Verification
+
+Full suite: 14,538 pass / 1 fail (the manifest-vs-HEAD test, which compares
+against `git show HEAD:` and is red by construction until this commit lands)
+/ 39 pre-existing skips. `npm run check` green throughout except that one
+expected test. Consolidated Gemini gate: **APPROVE**, 0 new findings, 0
+wrongly-dismissed, 0 over-engineering flags, architectural coherence *Strong*.
+
 ## 2026-09-01 — `pnpm add -D` had no `-w`, so dep auto-install silently failed at every pnpm-workspace consumer's root
 
 Triaging two open storyline upstream reports surfaced this while confirming a HIGH-severity one's claims against current code (never closed on the worksheet's word alone, per the ship skill's own instruction).

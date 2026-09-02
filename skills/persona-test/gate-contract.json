@@ -10,7 +10,9 @@
       "statedIn": "skills/persona-test/SKILL.md",
       "stated": "fatal-rig — manifest missing",
       "implementation": "scripts/persona-consistency-run.mjs",
-      "tests": ["tests/gate-honesty.test.mjs"],
+      "tests": [
+        "tests/gate-honesty.test.mjs"
+      ],
       "proof": "process"
     },
     {
@@ -150,6 +152,50 @@
     {
       "line": "**The escape hatch fails after a fresh re-seed** (or the app's",
       "reason": "Added 2026-08-30 (auth-bootstrap connect-time race fix). Phase 3's login-wall special case, branch 3: the model's own judgement that a fresh re-seed plus the documented escape-hatch injection (references/auth-bootstrap.md) still didn't clear the login wall, which is what makes it a genuine setup regression rather than the connect-time race. Exploratory mode has no CLI, so there is no exit code a cli-exit recipe can assert; same disposition class as the other login-wall-branch candidates in this file."
+    },
+    {
+      "line": "message naming this skill or its subject. Never inferred from surrounding",
+      "reason": "The \"Where $ARGUMENTS comes from\" template line, synced verbatim from docs/audit/shared-references/input-acquisition.md into every skill that reads the token. It is authoring guidance for the agent reading the skill at parse time (where to look for input, in what priority) — no code in this repo exits or blocks on it; the enforcement, such as it is, is the human/agent following documented instructions, same class as every other prose \"never guess\" line already exempted in this contract."
+    },
+    {
+      "line": "if the parse fails or the string contains any of `` $ ` ; | & < > ( ) `` or a",
+      "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
+    },
+    {
+      "line": "editor, then pass the file — never interpolate the user's strings into a",
+      "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
+    },
+    {
+      "line": "# 2. Feed it on stdin — the redirect passes bytes, never shell-parsed text:",
+      "reason": "A `#`-prefixed shell comment inside a code fence, or a shell/JS snippet itself — the enforcement-verb word is part of the command or its inline explanation, not a claim about this skill's own exit behaviour. Same class as the pre-existing skills:hydrate one-liner exemption in this file (JS `require`/`process.exit` are not English enforcement claims)."
+    },
+    {
+      "line": "> writer already documents (\"write it with the `Write` tool, never as a shell",
+      "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
+    },
+    {
+      "line": "_This site: `subcommand` — persona and url are required; never substitute a previously-tested URL from earlier in the conversation._",
+      "reason": "A per-site \"_This site: …_\" annotation from the input-acquisition contract (Phase 5, cross-host-parity-v2), describing this ONE $ARGUMENTS occurrence's grammar class and empty-input behaviour for the agent parsing it. Descriptive guidance, not a mechanically enforced claim — no exit code or gate binds to it."
+    },
+    {
+      "line": "`degraded` or `blocked`, then keep both for the whole session — never mix",
+      "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
+    },
+    {
+      "line": "partial capture degrades to `unverified`; it never becomes \"verified / 0",
+      "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
+    },
+    {
+      "line": "_This site: `subcommand` — no explicit `--device` means the device is resolved from the persona description, never guessed from context._",
+      "reason": "A per-site \"_This site: …_\" annotation from the input-acquisition contract (Phase 5, cross-host-parity-v2), describing this ONE $ARGUMENTS occurrence's grammar class and empty-input behaviour for the agent parsing it. Descriptive guidance, not a mechanically enforced claim — no exit code or gate binds to it."
+    },
+    {
+      "line": "_This site: `subcommand` — both personas must be quoted after `--pair`; one missing prints usage and stops._",
+      "reason": "A per-site \"_This site: …_\" annotation from the input-acquisition contract (Phase 5, cross-host-parity-v2), describing this ONE $ARGUMENTS occurrence's grammar class and empty-input behaviour for the agent parsing it. Descriptive guidance, not a mechanically enforced claim — no exit code or gate binds to it."
+    },
+    {
+      "line": "| `references/browser-tool-detection.md` | The browser-driver contract — capabilities, driver table, selection order, minimum sets, degraded/blocked evidence. | Phase 1 tool selection fails on first try, OR the user is on Windows and Playwright MCP tools aren't appearing. |",
+      "reason": "A \"Reference files\" index-table row: the middle column is the shared reference's canonical summary (byte-checked against its frontmatter by skills:check, not an enforcement claim of this skill's own), and the right column is a \"read when\" trigger condition, both descriptive."
     }
   ]
 }

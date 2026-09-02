@@ -61,6 +61,14 @@
     {
       "line": "it is invisible to the `/ship` gate by design (the store correctly excludes",
       "reason": "Continuation of the same Step V6 instruction — explains why the report is the only surface where a skipped P0/P1 can appear. Same disposition."
+    },
+    {
+      "line": "message naming this skill or its subject. Never inferred from surrounding",
+      "reason": "The \"Where $ARGUMENTS comes from\" template line, synced verbatim from docs/audit/shared-references/input-acquisition.md into every skill that reads the token. It is authoring guidance for the agent reading the skill at parse time (where to look for input, in what priority) — no code in this repo exits or blocks on it; the enforcement, such as it is, is the human/agent following documented instructions, same class as every other prose \"never guess\" line already exempted in this contract."
+    },
+    {
+      "line": "_This site: `subcommand` — verify requires a plan path; ask for it and stop rather than grading the app against a guessed plan._",
+      "reason": "A per-site \"_This site: …_\" annotation from the input-acquisition contract (Phase 5, cross-host-parity-v2), describing this ONE $ARGUMENTS occurrence's grammar class and empty-input behaviour for the agent parsing it. Descriptive guidance, not a mechanically enforced claim — no exit code or gate binds to it."
     }
   ]
 }

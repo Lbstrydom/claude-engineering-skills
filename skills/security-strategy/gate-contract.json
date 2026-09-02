@@ -31,6 +31,18 @@
     {
       "line": "stays current. `--if-present` matters here: sync never merges npm scripts",
       "reason": "States a fact about the consumer-sync mechanism (npm scripts are never merged into a consumer's package.json), which is why `--if-present` is needed — not a claim this skill enforces. The flag itself is not a gate: it makes the refresh step a silent no-op when the script is absent, the opposite of enforcement."
+    },
+    {
+      "line": "**Always by path, never via an `npm run` alias.** The sync never merges npm",
+      "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
+    },
+    {
+      "line": "running anything** — so a consumer's index silently never refreshed. The",
+      "reason": "Continuation of the --if-present incident note (fixed this session): describes the historical defect where the old alias silently no-op'd. Descriptive, not current enforcement."
+    },
+    {
+      "line": "refresher is itself synced, so the path always resolves.",
+      "reason": "Continuation of the same note — states why calling by path works. Descriptive."
     }
   ]
 }

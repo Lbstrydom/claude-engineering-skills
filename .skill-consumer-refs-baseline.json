@@ -1,0 +1,251 @@
+{
+  "$comment": "Declared unreachable pointers in synced skill content. Gate: scripts/check-skill-consumer-refs.mjs. Every entry needs a disposition and a reason; the gate fails on an undeclared kind, on site-count growth, and on an entry that no longer matches anything.",
+  "totalSites": 220,
+  "refs": {
+    "doc docs/architecture-map.md": {
+      "disposition": "consumer-authored",
+      "reason": "Generated per repo by arch:render, never synced. A consumer renders its own (storyline writes docs/reference/architecture.md) — the skills read whatever that repo produced.",
+      "sites": 7
+    },
+    "doc docs/audit/shared-references/browser-tool-detection.md": {
+      "disposition": "provenance",
+      "reason": "Canonical-source banner on the two synced copies — edit upstream, never the copy. Same shape as its four shared-reference siblings.",
+      "sites": 4
+    },
+    "doc docs/audit/shared-references/gemini-gate.md": {
+      "disposition": "provenance",
+      "reason": "Canonical-source banner on the synced copy — edit upstream, never the copy.",
+      "sites": 4
+    },
+    "doc docs/audit/shared-references/input-acquisition.md": {
+      "disposition": "provenance",
+      "reason": "Canonical-source banner on the eight synced copies — edit upstream, never the copy. Same shape as its shared-reference siblings.",
+      "sites": 16
+    },
+    "doc docs/audit/shared-references/ledger-format.md": {
+      "disposition": "provenance",
+      "reason": "Canonical-source banner on the synced copy — edit upstream, never the copy.",
+      "sites": 4
+    },
+    "doc docs/audit/shared-references/prerequisite-ladder.md": {
+      "disposition": "provenance",
+      "reason": "Canonical-source banner on the synced copy — edit upstream, never the copy.",
+      "sites": 4
+    },
+    "doc docs/audit/shared-references/verification-discipline.md": {
+      "disposition": "provenance",
+      "reason": "The synced copy names its own canonical upstream path so an editor fixes the source, not the copy. Pointing at the source repo is the intent.",
+      "sites": 16
+    },
+    "doc docs/plans/architectural-memory.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 1
+    },
+    "doc docs/plans/audit-code-duplication-wave.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 1
+    },
+    "doc docs/plans/click-test-v2-persistence.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 1
+    },
+    "doc docs/plans/final-review-shadow-reviewer.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 1
+    },
+    "doc docs/plans/friction-feedback-loop.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 1
+    },
+    "doc docs/plans/gate-contract-expansion.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 1
+    },
+    "doc docs/plans/local-dashboard.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 1
+    },
+    "doc docs/plans/model-tier-observation.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 2
+    },
+    "doc docs/plans/persona-nav-feedback-recovery.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 1
+    },
+    "doc docs/plans/reference-integrity-gate.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 1
+    },
+    "doc docs/plans/remediation-state-verification-reconciler.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 2
+    },
+    "doc docs/plans/requirements-layer.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 1
+    },
+    "doc docs/plans/ship-commit-transaction.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 1
+    },
+    "doc docs/plans/skill-efficacy-census.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 2
+    },
+    "doc docs/plans/verification-discipline-cluster.md": {
+      "disposition": "provenance",
+      "reason": "Provenance header of the canonical verification-discipline reference, same block as the field report above.",
+      "sites": 16
+    },
+    "doc docs/plans/visual-audit-theme-safety-v1.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 1
+    },
+    "doc docs/reference/commit-provenance.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 1
+    },
+    "doc docs/research/runbooks/solo-control-experiment.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 1
+    },
+    "doc docs/runbooks/azure-work-profile.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 2
+    },
+    "doc docs/runbooks/consumer-adoption.md": {
+      "disposition": "provenance",
+      "reason": "The worktree-preflight marker cites it as rationale and already labels it \"source repo only — docs/runbooks/ is not synced\". The remedy beside it is a bare node bootstrap that depends on nothing.",
+      "sites": 16
+    },
+    "doc docs/runbooks/local-maintenance-checks.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 2
+    },
+    "doc docs/runbooks/pre-ship-empirical-verify.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 1
+    },
+    "doc docs/security-strategy.md": {
+      "disposition": "consumer-authored",
+      "reason": "Authored IN the consumer by /security-strategy bootstrap. Its absence is the documented trigger to bootstrap, not a broken pointer.",
+      "sites": 14
+    },
+    "doc docs/upstream-issues/claude-engineering-skills-feedback-2026-08-07.md": {
+      "disposition": "provenance",
+      "reason": "Provenance header of the canonical verification-discipline reference: names the field report the rules came from. Never an instruction to open it.",
+      "sites": 8
+    },
+    "npm arch:refresh": {
+      "disposition": "consumer-wired",
+      "reason": "Adoption runbook Step 7 has the consumer add arch:* aliases; storyline has them. The underlying symbol-index/refresh.mjs is synced, so the path form always works.",
+      "sites": 2
+    },
+    "npm audit:clean": {
+      "disposition": "source-repo-only",
+      "reason": "Alias only; audit-clean.mjs itself is now synced and the references name it by path, so the sweep the text promises actually runs in a consumer.",
+      "sites": 4
+    },
+    "npm build": {
+      "disposition": "source-repo-only",
+      "reason": "Illustrative example of a consumer script name inside a doc snippet, not a command this bundle offers.",
+      "sites": 1
+    },
+    "npm check": {
+      "disposition": "source-repo-only",
+      "reason": "The source repo pre-push aggregate. A consumer has its own test/verify entry point; the skills never depend on the aggregate existing.",
+      "sites": 26
+    },
+    "npm dashboard:setup": {
+      "disposition": "source-repo-only",
+      "reason": "Alias chaining three synced scripts. Named as a source-repo convenience beside the per-path form a consumer runs.",
+      "sites": 1
+    },
+    "npm debt:capture-trail": {
+      "disposition": "source-repo-only",
+      "reason": "Source-repo capture-trail check; debt-capture-trail-check.mjs is not in the sync closure.",
+      "sites": 1
+    },
+    "npm debt:health": {
+      "disposition": "consumer-wired",
+      "reason": "Adoption runbook has the consumer add debt:* aliases; storyline has them. debt-health-check.mjs is synced.",
+      "sites": 1
+    },
+    "npm docs:citations": {
+      "disposition": "source-repo-only",
+      "reason": "Already written as \"source repo: npm run docs:citations -- <doc>\" in the canonical verification-discipline reference.",
+      "sites": 8
+    },
+    "npm fixture:create": {
+      "disposition": "source-repo-only",
+      "reason": "Pinned-revision worktree for spend-bearing runs in this repo.",
+      "sites": 1
+    },
+    "npm gates:check": {
+      "disposition": "source-repo-only",
+      "reason": "Validates gate-contract.json files, which are never packaged or synced.",
+      "sites": 1
+    },
+    "npm security:refresh": {
+      "disposition": "source-repo-only",
+      "reason": "Remaining mentions are prose EXPLAINING why the alias must not be used — the instruction beside them is the synced path.",
+      "sites": 1
+    },
+    "npm skills:check": {
+      "disposition": "source-repo-only",
+      "reason": "Lints skills/** authoring invariants, which exist only in the source repo.",
+      "sites": 2
+    },
+    "npm skills:hydrate": {
+      "disposition": "consumer-wired",
+      "reason": "The worktree-hydration alias. Every site already says \"if this repo defines no such script, add this entry\" and inlines a bare node+git bootstrap, so the text works with or without it.",
+      "sites": 18
+    },
+    "npm skills:regenerate": {
+      "disposition": "source-repo-only",
+      "reason": "Regenerates .claude/skills/** from skills/**. Only the source repo owns skills/**; a consumer receives the generated half.",
+      "sites": 3
+    },
+    "npm stores:drift": {
+      "disposition": "source-repo-only",
+      "reason": "Cross-store migration drift across every consumer — a source-repo operator command.",
+      "sites": 2
+    },
+    "npm sync": {
+      "disposition": "source-repo-only",
+      "reason": "Run FROM the source repo to hydrate a consumer. Naming it inside consumer-facing text is telling the reader where to go, not what to run locally.",
+      "sites": 4
+    },
+    "npm sync:dry": {
+      "disposition": "source-repo-only",
+      "reason": "Source-repo drift probe over every consumer. Meaningless in a consumer, which cannot see the other consumers.",
+      "sites": 9
+    },
+    "npm upstream:queues": {
+      "disposition": "source-repo-only",
+      "reason": "Fans out over every consumer store; only the source repo has that registry.",
+      "sites": 1
+    }
+  }
+}

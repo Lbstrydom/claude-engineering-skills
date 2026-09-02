@@ -72,6 +72,14 @@
     {
       "line": "acceptance rate stays high): cap by",
       "reason": "Continuation of the same sentence; no separate claim."
+    },
+    {
+      "line": "message naming this skill or its subject. Never inferred from surrounding",
+      "reason": "The \"Where $ARGUMENTS comes from\" template line, synced verbatim from docs/audit/shared-references/input-acquisition.md into every skill that reads the token. It is authoring guidance for the agent reading the skill at parse time (where to look for input, in what priority) — no code in this repo exits or blocks on it; the enforcement, such as it is, is the human/agent following documented instructions, same class as every other prose \"never guess\" line already exempted in this contract."
+    },
+    {
+      "line": "> persisted plan path. Same fallback `/cycle` documents; blocked results must",
+      "reason": "Part of the no-dispatch fallback block (cross-host-parity-v2 Phase 3): describes an invariant the fallback preserves, referencing /cycle's own contract. Descriptive cross-reference, not a claim this skill mechanically enforces the propagation."
     }
   ]
 }

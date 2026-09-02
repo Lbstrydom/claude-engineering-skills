@@ -149,6 +149,18 @@
     {
       "line": "`/cycle code <plan-file>` unchanged. This mirrors the Step 3C rule \"never",
       "reason": "Points at the ALREADY-dispositioned Step 3C rule (the audit-envelope ignoredCandidates entry above, 'never default the base to HEAD — empty diff = silent skip') rather than asserting a new one. 'Unchanged' describes the guard's second fork option — implement manually, then re-run the identical command — not a gate."
+    },
+    {
+      "line": ">    mechanism, never of order.",
+      "reason": "Part of the no-dispatch fallback block (cross-host-parity-v2 Phase 3): describes what inlining changes vs. preserves. Descriptive invariant statement for the agent following the skill, not a mechanically enforced claim."
+    },
+    {
+      "line": ">    the implementation gate. Inlining must not silently turn a paused cycle",
+      "reason": "Same no-dispatch block: states the Step-3-pause invariant a fallback must preserve. Descriptive guidance for the agent, not code-level enforcement."
+    },
+    {
+      "line": ">    result from an inlined skill reaches the Step 8 summary. It must not be",
+      "reason": "Same no-dispatch block: states the blocked-propagation invariant. Descriptive guidance, not code-level enforcement."
     }
   ]
 }

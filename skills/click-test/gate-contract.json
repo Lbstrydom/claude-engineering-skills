@@ -63,6 +63,26 @@
     {
       "line": "The perceivability cap above cannot reach this class: these inputs are",
       "reason": "A NEGATIVE claim about a DIFFERENT mechanism — it records why the perceivability cap (the section immediately above) does not cover undersized-but-painted controls, so a future reader does not assume the 2026-07-30 cap already fixed the touch-target false positives. 'cannot reach' describes the scope of the cap, not an enforcement this skill performs. The positive half IS mechanically enforced and tested: activatingRects() measures every label-activated region in rule 9, and tests/click-test-perceivability.test.mjs pins both field fixtures (1x1 inside 74x44, 13x13 inside 75x24) plus the two anti-regression cases (all-regions-undersized still fires; a non-perceivable label does not rescue). Those run the REAL fence in a real browser, which is not one of the closed registry's cli-exit/unit-seam oracles — the same reason every other click-test gate above is document-only (click-test has no CLI entry point)."
+    },
+    {
+      "line": "message naming this skill or its subject. Never inferred from surrounding",
+      "reason": "The \"Where $ARGUMENTS comes from\" template line, synced verbatim from docs/audit/shared-references/input-acquisition.md into every skill that reads the token. It is authoring guidance for the agent reading the skill at parse time (where to look for input, in what priority) — no code in this repo exits or blocks on it; the enforcement, such as it is, is the human/agent following documented instructions, same class as every other prose \"never guess\" line already exempted in this contract."
+    },
+    {
+      "line": "conversation. This site is `path+flags`; on empty input, a URL is required — ask for it and stop. Never reuse a URL from earlier in the conversation; scanning the wrong origin is a real action against someone's site.",
+      "reason": "A per-site \"_This site: …_\" annotation from the input-acquisition contract (Phase 5, cross-host-parity-v2), describing this ONE $ARGUMENTS occurrence's grammar class and empty-input behaviour for the agent parsing it. Descriptive guidance, not a mechanically enforced claim — no exit code or gate binds to it."
+    },
+    {
+      "line": "scan *is* a `page.evaluate` call, so a fetch-and-parse driver can never serve",
+      "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
+    },
+    {
+      "line": "`[BLOCKED] <driver> missing capability: <cap>` — never a clean empty pass, which",
+      "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
+    },
+    {
+      "line": "consumers). Edit the canonical, never a copy. It used to be cited across skill",
+      "reason": "Describes the browser-tool-detection.md shared-reference authoring convention (edit the canonical, not the generated copy) — enforced by sync-shared-audit-refs.mjs drift detection, not by this skill's own execution."
     }
   ]
 }

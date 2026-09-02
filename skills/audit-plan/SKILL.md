@@ -21,6 +21,15 @@ plateau, then gate with the independent reviewer.
 **Input**: `$ARGUMENTS` — either a plan file path (PLAN_AUDIT) or a task
 description with no path (PLAN_CYCLE: generate-then-audit).
 
+<!-- host-contract: input-acquisition; grammar=path+flags; empty=ask-and-stop -->
+
+**Where `$ARGUMENTS` comes from** — orchestrator-supplied input first, else
+the host's verbatim invocation suffix, else the span of the user's **current**
+message naming this skill or its subject. Never inferred from surrounding
+conversation. This site is `path+flags`; on empty input, ask whether to audit an existing plan or generate one, and stop — the two modes cost differently and are not interchangeable.
+Full contract: `references/input-acquisition.md`.
+
+
 > **Worktree preflight** — in a linked git worktree the synced tooling tree
 > `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
 > does not populate it, and every command below that uses it dies on a bare
@@ -70,6 +79,14 @@ Show kickoff card:
 ---
 
 ## Step 1 — Plan Generation (PLAN_CYCLE only)
+
+<!-- host-contract: no-dispatch; preserves=step-order,step3-pause,skip-flags,blocked-propagation -->
+
+> **No skill-to-skill dispatch on this host?** Open `skills/plan/SKILL.md` and
+> follow it inline, passing the task description explicitly (orchestrator-supplied
+> input, rule 0 of `references/input-acquisition.md`), then return here with the
+> persisted plan path. Same fallback `/cycle` documents; blocked results must
+> still reach this skill rather than being swallowed by the inlined planner.
 
 Generate the plan with `/plan` (the unified planner — auto-detects scope
 as backend / frontend / full-stack). Save to `docs/plans/<name>.md`.
@@ -489,6 +506,7 @@ situations — read them only when the trigger applies.
 
 | File | Summary | Read when |
 |---|---|---|
+| `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |
 | `references/ledger-format.md` | Adjudication ledger schema + writer invocation example for each finding outcome. | Step 3.5 — about to write ledger entries, OR diagnosing R2+ suppression misbehaviour. |
 | `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Step 6 starting, OR Gemini returned CONCERNS/REJECT and need deliberation rules. |
 | `references/prerequisite-ladder.md` | Step 0 prerequisite ladder — absent helper bundle or auditor route, and reporting a run that did not happen. | Step 0 — a prerequisite did not resolve (helper scripts missing, no GPT route), OR about to report a run that degraded or did not happen. |

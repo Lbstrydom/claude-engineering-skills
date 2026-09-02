@@ -54,6 +54,15 @@ skill.
 
 **Input**: `$ARGUMENTS` — `[flags] <topic-or-question>`.
 
+<!-- host-contract: input-acquisition; grammar=free-text; empty=ask-and-stop -->
+
+**Where `$ARGUMENTS` comes from** — orchestrator-supplied input first, else
+the host's verbatim invocation suffix, else the span of the user's **current**
+message naming this skill or its subject. Never inferred from surrounding
+conversation. This site is `free-text`; on empty input, ask for the topic and stop — there is no default topic, and a guessed one spends provider budget on the wrong question.
+Full contract: `references/input-acquisition.md`.
+
+
 ---
 
 ## Step 0 — Parse Arguments
@@ -421,3 +430,14 @@ sid and round exist (the helper checks too) then invoke the helper's
   "save this".
 - **Anti-pattern**: do not rank the LLMs ("Gemini gave the best answer").
   Present them as peers; the user judges.
+
+---
+
+## Reference files
+
+This skill's canonical flow is above. The file below covers a specialised
+situation — read it only when the trigger applies.
+
+| File | Summary | Read when |
+|---|---|---|
+| `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |

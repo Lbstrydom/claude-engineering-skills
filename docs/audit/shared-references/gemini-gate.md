@@ -84,7 +84,9 @@ so a transcript can never mix two sessions' rounds), `--ledger`, `--dir`
 > half the runs vanish into a directory nothing scans. A shadow A/B spent $50.90
 > and left zero transcripts to replay. `.audit/` is gitignored (in this repo and,
 > via the managed block, in every consumer) and retains the newest 25 transcripts
-> regardless of age (`npm run audit:clean`).
+> regardless of age. Sweep it with `node scripts/audit-clean.mjs` (dry-run;
+`--apply` deletes) — by path, because the `npm run audit:clean` alias exists in
+the source repo only.
 
 ### The shape it produces (concrete contract)
 

@@ -12,6 +12,10 @@ outcomes keyed by stable `criterion_hash` for time-series tracking.
 ## Step V0 — Parse the plan
 
 Read the plan file at the path in `$ARGUMENTS` (first positional after
+
+<!-- host-contract: input-acquisition; grammar=subcommand; empty=ask-and-stop -->
+_This site: `subcommand` — verify requires a plan path; ask for it and stop rather than grading against a guessed plan._
+
 `verify`). Parse the Acceptance Criteria section via the shared parser. Set the plan path in a
 variable first — never paste free-form values inline into the JS string
 (command-template injection + PowerShell reserves `<`/`>`, so placeholder

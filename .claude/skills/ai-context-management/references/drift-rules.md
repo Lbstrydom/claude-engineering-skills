@@ -94,7 +94,7 @@ Configure via `.claude-context-allowlist.json` at repo root. Schema (Zod-validat
 }
 ```
 
-In `--strict` mode (the default for `npm run context:check`), invalid config
+In `--strict` mode (what this skill always passes), invalid config
 files cause hard failure rather than silent fallback to defaults. Local
 exploration runs without `--strict` and forgive malformed config with a
 warning.

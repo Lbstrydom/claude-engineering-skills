@@ -52,6 +52,17 @@ export const EXPECTED_CONSUMERS = Object.freeze({
   'ledger-format.md': ['audit-plan', 'audit-code'],
   'gemini-gate.md': ['audit-plan', 'audit-code'],
   'prerequisite-ladder.md': ['audit-plan', 'audit-code'],
+  // The browser-driver contract. BOTH host-driven browser skills resolve their
+  // driver from it, and a packaged skill contains only its OWN directory — so a
+  // click-test package citing ../persona-test/references/ would ship without the
+  // contract it is told to use. Canonical + generated copies, same as the rest.
+  'browser-tool-detection.md': ['persona-test', 'click-test'],
+  // The  input-acquisition contract. Every skill that reads the token
+  // needs it, and the token is Claude-Code idiom no other host substitutes.
+  'input-acquisition.md': [
+    'persona-test', 'ship', 'click-test', 'ux-lock', 'audit-code', 'audit-plan',
+    'brainstorm', 'ai-context-management',
+  ],
   'verification-discipline.md': [
     'investigate', 'audit-code', 'ux-lock', 'ship', 'explain', 'plan', 'audit-plan',
     'nav-audit',

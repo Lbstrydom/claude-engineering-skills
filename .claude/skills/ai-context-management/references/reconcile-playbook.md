@@ -4,7 +4,7 @@ summary: 'Step-by-step: bring drifted AGENTS.md and CLAUDE.md back into alignmen
 
 # Reconcile Playbook — Reference
 
-When `npm run context:check` reports findings, follow this playbook to bring
+When `node scripts/check-context-drift.mjs --strict` reports findings, follow this playbook to bring
 the repo back into alignment without losing genuine content.
 
 ## Pre-flight
@@ -15,7 +15,7 @@ the repo back into alignment without losing genuine content.
    wc -l AGENTS.md CLAUDE.md
    diff AGENTS.md CLAUDE.md | head -200
    ```
-3. Capture findings: `npm run context:check:json > /tmp/drift.json`.
+3. Capture findings: `node scripts/check-context-drift.mjs --format json > /tmp/drift.json`.
 
 ## Decision tree per finding
 
@@ -77,14 +77,14 @@ content not in the other**, this is a merge conflict, not drift. Resolve manuall
 1. Open both files in a diff viewer.
 2. Compose the merged section in AGENTS.md (canonical destination).
 3. Delete the heading from CLAUDE.md.
-4. Verify with `npm run context:check`.
+4. Verify with `node scripts/check-context-drift.mjs --strict`.
 
 ## Verification
 
 After applying changes:
 
 ```bash
-npm run context:check
+node scripts/check-context-drift.mjs --strict
 # Expect: "OK  No context drift detected." with exit 0
 ```
 

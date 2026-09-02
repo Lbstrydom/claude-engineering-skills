@@ -117,7 +117,14 @@ function renderCompactMd(skills, root = resolveSkillsRoot()) {
     lines.push(`| \`/${s.name}\`${flag} | ${escapePipe(s.oneLiner)} |`);
   }
   lines.push('');
-  lines.push('🔒 = `disable-model-invocation: true` — skill must be invoked explicitly via `/<name>` (Claude will not auto-trigger it).');
+  // `disable-model-invocation` is honoured by BOTH Claude Code and VS Code
+  // Copilot — it is a documented Copilot frontmatter field, and Copilot
+  // discovers `.claude/skills/` natively (VS Code Agent Skills docs, checked
+  // 2026-09-02). Earlier wording here hedged that other hosts "may not honour
+  // the key", which understated the guarantee on the second-largest host.
+  // Every locked skill still states the rule in its body: a key cannot carry
+  // the reasoning, and hosts beyond these two are unverified.
+  lines.push('🔒 = `disable-model-invocation: true` — Claude Code and VS Code Copilot will not auto-trigger it; invoke explicitly via `/<name>`. Each locked skill also states the rule in its body, for hosts that ignore the key.');
   lines.push('');
   return lines.join('\n');
 }

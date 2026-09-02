@@ -16,6 +16,16 @@ disable-model-invocation: true
 
 # Skill Quick Reference
 
+> **Explicit invocation only — host-neutral.** `disable-model-invocation: true`
+> enforces this in Claude Code and in VS Code Copilot, which reads
+> `.claude/skills/` and honours that key (verified against VS Code Agent Skills
+> docs 2026-09-02). Hosts beyond those two are unverified, and a key cannot
+> carry the reasoning anyway, so the rule is stated here as well.
+>
+> Nothing here is destructive — this is a roster, not a gate — but a full skill
+> listing is a poor answer to a question about the work, so render it when the
+> user asked for it.
+
 A discoverable, always-current reference for every skill in this bundle.
 Reads directly from `skills/*​/SKILL.md` frontmatter so the listing can
 never drift from reality — the same file Claude Code parses to register
@@ -95,8 +105,9 @@ suggestion line as-is and stop.
 | `/brainstorm` 🔒 | Multi-LLM concept-level brainstorming. |
 | ... |
 
-🔒 = `disable-model-invocation: true` — skill must be invoked explicitly via `/<name>`
-(Claude will not auto-trigger it).
+🔒 = `disable-model-invocation: true` — Claude Code and VS Code Copilot will not
+auto-trigger it; invoke explicitly via `/<name>`. Each locked skill also states
+the rule in its body, for hosts that ignore the key.
 ```
 
 ### Detail (e.g. `/skills explain`)

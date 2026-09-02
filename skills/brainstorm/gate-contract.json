@@ -10,7 +10,9 @@
       "statedIn": "skills/brainstorm/SKILL.md",
       "stated": "Only exit 1 means an argv error",
       "implementation": "scripts/brainstorm-round.mjs",
-      "tests": ["tests/gate-honesty.test.mjs"],
+      "tests": [
+        "tests/gate-honesty.test.mjs"
+      ],
       "proof": "process"
     },
     {
@@ -28,6 +30,10 @@
     {
       "line": "> \"skills:hydrate\": \"node -e \\\"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});console.log('[hydrate] copied '+src)\\\"\"",
       "reason": "The worktree-preflight marker block's inlined `skills:hydrate` recipe. Every node one-liner carries `require` and `process.exit`, two ENFORCEMENT_VERBS, and no phrasing of a runnable recipe avoids them — the verbs are JavaScript here, not an enforcement claim about this skill. The recipe is inlined rather than cited because in an unadopted consumer both of the old pointers are dead at once (no `skills:hydrate` script yet, and `docs/runbooks/` is not synced), so a skill file is the only carrier that reaches the reader. Byte-identical across all 16 contracts by construction: it is generated from CONSUMER_HYDRATE_NPM_SCRIPT via MARKER_BLOCK, and `checkSkill` pins the block in every copy."
+    },
+    {
+      "line": "message naming this skill or its subject. Never inferred from surrounding",
+      "reason": "The \"Where $ARGUMENTS comes from\" template line, synced verbatim from docs/audit/shared-references/input-acquisition.md into every skill that reads the token. It is authoring guidance for the agent reading the skill at parse time (where to look for input, in what priority) — no code in this repo exits or blocks on it; the enforcement, such as it is, is the human/agent following documented instructions, same class as every other prose \"never guess\" line already exempted in this contract."
     }
   ]
 }

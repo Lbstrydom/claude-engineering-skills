@@ -21,6 +21,15 @@ findings stabilise or max 6 rounds.
 **Input**: `$ARGUMENTS` — plan file path (the spec the code is being audited
 against). Optional flags: `--scope diff|plan|full`.
 
+<!-- host-contract: input-acquisition; grammar=path+flags; empty=ask-and-stop -->
+
+**Where `$ARGUMENTS` comes from** — orchestrator-supplied input first, else
+the host's verbatim invocation suffix, else the span of the user's **current**
+message naming this skill or its subject. Never inferred from surrounding
+conversation. This site is `path+flags`; on empty input, ask which plan to audit and stop — never guess a plan, and never start an audit that would bill a provider against the wrong spec.
+Full contract: `references/input-acquisition.md`.
+
+
 > **Worktree preflight** — in a linked git worktree the synced tooling tree
 > `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
 > does not populate it, and every command below that uses it dies on a bare
@@ -72,10 +81,23 @@ prompt context. This helps the auditor catch cross-file duplication that
 diff-scope cannot see.
 
 ```bash
-# 1. Resolve repo identity + active snapshot
-node scripts/cross-skill.mjs get-active-refresh-id --repo-uuid "$(node scripts/cross-skill.mjs resolve-repo-identity | jq -r .repoUuid)"
-# 2. Fetch top-N symbols (env-tunable: ARCH_AUDIT_FULL_TOPN, default 200)
-node scripts/cross-skill.mjs list-symbols-for-snapshot --json '{"refreshId":"<from step 1>","limit":200}'
+# 0. `.audit/` is gitignored, so a fresh checkout or a newly created linked
+#    worktree does not have it — the redirect below fails BEFORE the command
+#    runs if it is missing.
+mkdir -p .audit
+# 1. Resolve repo identity + active snapshot.
+#    Read JSON with node, never jq — node is guaranteed by the runtime contract,
+#    jq is not, and is absent from check-deps.
+node scripts/cross-skill.mjs resolve-repo-identity > .audit/repo-identity.json
+node scripts/cross-skill.mjs get-active-refresh-id \
+  --repo-uuid "$(node -p "require('./.audit/repo-identity.json').repoUuid")" \
+  > .audit/active-refresh.json
+# 2. Fetch top-N symbols, CARRYING the refresh id forward (env-tunable:
+#    ARCH_AUDIT_FULL_TOPN, default 200). Capturing it is the point — printing
+#    it for a human to retype is how the two commands drift apart.
+REFRESH_ID=$(node -p "require('./.audit/active-refresh.json').refreshId")
+node scripts/cross-skill.mjs list-symbols-for-snapshot \
+  --json "{\"refreshId\":\"$REFRESH_ID\",\"limit\":200}"
 ```
 
 Format the rows as a `## Symbol catalogue (top N by domain)` section
@@ -652,8 +674,10 @@ Do not close the loop in Step 6 — completion requires Step 7.
 
 **Source-repo-gated** — run ONLY when
 `package.json.name === "claude-engineering-skills"`. Skip silently in
-consumer repos (the dashboard is opt-in there — `docs/plans/local-dashboard.md`
-§7.3). Never blocks the audit.
+consumer repos. The dashboard is opt-in there, not absent: the builder syncs,
+but the sync never adds npm scripts, so a consumer runs
+`node scripts/build-dashboard.mjs telemetry` by path (`--help` lists every
+mode). Never blocks the audit.
 
 ```bash
 node scripts/build-dashboard.mjs telemetry 2>&1 || true
@@ -829,6 +853,7 @@ situations — read them only when the trigger applies.
 
 | File | Summary | Read when |
 |---|---|---|
+| `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |
 | `references/r2-plus-mode.md` | R2+ audit mode — ledger rulings, diff annotations, smart pass selection, suppression. | Round ≥ 2 AND need to choose passes OR troubleshoot suppression. |
 | `references/ledger-format.md` | Adjudication ledger schema + writer invocation example for each finding outcome. | Step 3.5 — about to write ledger entries, OR diagnosing R2+ suppression misbehaviour. |
 | `references/debt-capture.md` | Phase D debt ledger — persist out-of-scope valid findings so they don't re-surface. | Step 3.6 — candidate deferrals present, OR Step 5.1 — debt resolution prompt firing, OR periodically to cluster/resolve the accumulated backlog (see its "Periodic Debt Health" section). |

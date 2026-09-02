@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**2 active · 211 terminal · 27 audit summaries · 4 reference docs**
+**2 active · 212 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -42,7 +42,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 208 completed plans</summary>
+<summary>Show all 209 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -95,6 +95,7 @@ source comments that no docs linter sees — stays valid.
 | [Audit Context Brief Generator](./context-brief.md) | `Complete` | shipped — `scripts/lib/context.mjs` (`readProjectContextForPass`, `readRepoProfile`, `generateBriefViaGemin… |
 | [VS Code GitHub Copilot compatibility audit + fixes](./copilot-compat-audit.md) | `Complete` |  |
 | [Cross-Agent Delivery Parity](./cross-agent-delivery-parity.md) | `Complete` |  |
+| [Cross-Host Parity v2 — Skills Correct on VS Code Copilot](./cross-host-parity-v2.md) | `Complete` | cross-host unverified) — E1–E6 in §9 are NOT yet run; see Copilot acceptance below |
 | [Cross-Model Finding Matching](./cross-model-finding-matching.md) | `Complete` | implemented + audited |
 | [cross-skill.mjs CLI integrity remediation](./cross-skill-cli-integrity.md) | `Complete` | closed 2026-08-17. All 21 fixes landed (`8f582e80`) + Gemini gate APPROVE. It stayed `In Progress` because … |
 | [cross-skill CLI — declarative command registry](./cross-skill-command-registry.md) | `Complete` | shipped 2026-08-12 across six clusters |

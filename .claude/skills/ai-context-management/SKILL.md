@@ -22,6 +22,15 @@ aligned across a repo, so Claude, Copilot (which reads `.claude/skills` +
 **Input**: `$ARGUMENTS` — `audit | reconcile | migrate`
 (plus optional `--repo <path>` for cross-repo invocation).
 
+<!-- host-contract: input-acquisition; grammar=subcommand; empty=default -->
+
+**Where `$ARGUMENTS` comes from** — orchestrator-supplied input first, else
+the host's verbatim invocation suffix, else the span of the user's **current**
+message naming this skill or its subject. Never inferred from surrounding
+conversation. This site is `subcommand`; on empty input, default to `audit` — it is read-only and writes nothing, so it is the safe default. `reconcile` and `migrate` write files and are never defaulted into.
+Full contract: `references/input-acquisition.md`.
+
+
 > **Worktree preflight** — in a linked git worktree the synced tooling tree
 > `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
 > does not populate it, and every command below that uses it dies on a bare
@@ -42,7 +51,7 @@ aligned across a repo, so Claude, Copilot (which reads `.claude/skills` +
 
 | Input | Mode | Effect |
 |---|---|---|
-| `audit` | AUDIT | Run `npm run context:check`; report findings; no writes |
+| `audit` | AUDIT | Run `node scripts/check-context-drift.mjs --strict`; report findings; no writes |
 | `reconcile` | RECONCILE | Detect drift, propose patch, apply after confirmation |
 | `migrate` | MIGRATE | Convert legacy CLAUDE.md-canonical → AGENTS.md-canonical |
 | (no args) | AUDIT | Default to audit |
@@ -57,7 +66,7 @@ present the proposed patch first, ask for `apply` / `cancel`, then act.
 Run the drift detector and summarise findings.
 
 ```bash
-npm run context:check 2>&1
+node scripts/check-context-drift.mjs --strict 2>&1
 ```
 
 Exit codes: `0` = no findings, `1` = HIGH (blocking), `2` = MEDIUM only.
@@ -79,7 +88,7 @@ Claude-only content in CLAUDE.md.
 
 Steps:
 
-1. Run `npm run context:check:json > /tmp/drift.json` to get structured findings.
+1. Run `node scripts/check-context-drift.mjs --format json > .audit/drift.json` to get structured findings.
 2. For each finding:
    - `ctx/missing-import` → propose adding `@./AGENTS.md` near top of CLAUDE.md.
    - `ctx/non-allowlist-heading` → propose moving the section to AGENTS.md and removing from CLAUDE.md.
@@ -88,7 +97,7 @@ Steps:
 3. Show a unified diff of proposed changes.
 4. Wait for `apply` confirmation.
 5. Apply via Edit tool.
-6. Re-run `npm run context:check` to confirm green.
+6. Re-run `node scripts/check-context-drift.mjs --strict` to confirm green.
 
 Full step-by-step playbook with conflict resolution: `references/reconcile-playbook.md`.
 
@@ -109,7 +118,7 @@ Steps:
    - Propose: copy CLAUDE.md → AGENTS.md (rename heading)
    - Propose: replace CLAUDE.md with `@./AGENTS.md` import + Claude-only addendum
 3. Show diff. Wait for confirmation. Apply.
-4. Run `npm run context:check` to verify alignment.
+4. Run `node scripts/check-context-drift.mjs --strict` to verify alignment.
 5. Update brief generators that read CLAUDE.md to also/preferably read AGENTS.md
    (see `scripts/lib/context.mjs` `INSTRUCTION_FILE_CANDIDATES` for the pattern).
 
@@ -126,7 +135,7 @@ After every mode, emit a compact status card:
   AI-CONTEXT-MANAGEMENT — <MODE> — Done
   HIGH: 0  MEDIUM: 0  Files updated: 2
   AGENTS.md: 349 lines  CLAUDE.md: 41 lines
-  Next: npm run context:check (verify) | git diff (review)
+  Next: node scripts/check-context-drift.mjs --strict (verify) | git diff (review)
 ═══════════════════════════════════════
 ```
 
@@ -143,8 +152,9 @@ After every mode, emit a compact status card:
    CLAUDE.md.
 4. **Subdirectory AGENTS.md is fine** — for monorepos. No sibling CLAUDE.md
    required at sub-paths.
-5. **Drift detection runs on every push** — `npm run context:check` runs from the
-   pre-push hook (as part of `npm run check`), not from CI. The
+5. **Drift detection runs on every push** — in the source repo the detector runs
+   from the pre-push hook (as part of its `npm run check`), not from CI. A
+   consumer wires it into its own pre-push if it wants the same gate. The
    `.github/workflows/context-drift.yml` workflow was retired in `c12e2178`
    along with the other push-triggered check workflows.
 
@@ -157,6 +167,7 @@ situations — read them only when the trigger applies.
 
 | File | Summary | Read when |
 |---|---|---|
+| `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |
 | `references/drift-rules.md` | Per-rule severity, fix recipes, and the Claude-only heading allowlist for ctx/* rules. | A finding's rule ID is unfamiliar, OR you need to extend the allowlist for a custom heading. |
 | `references/reconcile-playbook.md` | Step-by-step: bring drifted AGENTS.md and CLAUDE.md back into alignment safely. | RECONCILE mode is firing AND a finding has competing edits in both files. |
 | `references/canonical-flip.md` | Migration guide: switch a repo from CLAUDE.md-canonical to AGENTS.md-canonical. | MIGRATE mode is firing on a legacy single-file repo. |

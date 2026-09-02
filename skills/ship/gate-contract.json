@@ -403,6 +403,74 @@
     {
       "line": "| `references/migration-credentials.md` | Which role applies migrations, why the runtime DSN cannot, and where its credential belongs (never in .env). | Step 0.5g — a store is behind and `--migrate` is refused with `42501` (`must be owner of table …` / `permission denied for schema public`). |",
       "reason": "The reference-index ROW for migration-credentials.md. Its Summary column must byte-match the file's `summary:` frontmatter (skills:check enforces that), so the enforcement verbs 'never'/'must'/'refused' are inherited from the reference's own one-line summary and cannot be reworded away independently. Index rows describe what a document covers; they are not gate claims about /ship's behaviour."
+    },
+    {
+      "line": "> offering `/ship`, never by running it.",
+      "reason": "Part of the explicit-invocation host-neutral rule header (cross-host-parity-v2, the disable-model-invocation body statement) — instructs the agent when to offer vs. run this skill. Descriptive guidance for the agent, not a mechanically enforced claim within this skill's own execution."
+    },
+    {
+      "line": "> was never given — the skill would be citing its own execution as consent.",
+      "reason": "Same explicit-invocation rule header — explains WHY self-invocation is wrong. Descriptive reasoning."
+    },
+    {
+      "line": "Step 3's override handling. Never add one on the skill's own initiative to get",
+      "reason": "Usage-table footnote instructing the agent never to synthesise an override flag on its own. Descriptive guidance for the agent following the skill, not code-level enforcement within this document."
+    },
+    {
+      "line": "past a red gate — that is the gate working.",
+      "reason": "Continuation of the same footnote."
+    },
+    {
+      "line": "message naming this skill or its subject. Never inferred from surrounding",
+      "reason": "The \"Where $ARGUMENTS comes from\" template line, synced verbatim from docs/audit/shared-references/input-acquisition.md into every skill that reads the token. It is authoring guidance for the agent reading the skill at parse time (where to look for input, in what priority) — no code in this repo exits or blocks on it; the enforcement, such as it is, is the human/agent following documented instructions, same class as every other prose \"never guess\" line already exempted in this contract."
+    },
+    {
+      "line": "conversation. This site is `path+flags`; on empty input, ship without updating a plan — that is the documented default. Never adopt a plan path mentioned earlier in the conversation.",
+      "reason": "A per-site \"_This site: …_\" annotation from the input-acquisition contract (Phase 5, cross-host-parity-v2), describing this ONE $ARGUMENTS occurrence's grammar class and empty-input behaviour for the agent parsing it. Descriptive guidance, not a mechanically enforced claim — no exit code or gate binds to it."
+    },
+    {
+      "line": "`upstream:coverage:gate` rejects a non-uuid key. Full ids:",
+      "reason": "Describes an external CLI's (upstream:coverage:gate, a different script) own validation behaviour — not a claim about this skill's execution."
+    },
+    {
+      "line": "_This site: `path+flags` — **no flag means no override.** Each of these disables a gate, so they are read ONLY from the invocation — a conversation that merely mentions skipping tests must never become one._",
+      "reason": "A per-site \"_This site: …_\" annotation from the input-acquisition contract (Phase 5, cross-host-parity-v2), describing this ONE $ARGUMENTS occurrence's grammar class and empty-input behaviour for the agent parsing it. Descriptive guidance, not a mechanically enforced claim — no exit code or gate binds to it."
+    },
+    {
+      "line": "> exists here only, since the sync never adds npm scripts. A consumer runs the",
+      "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
+    },
+    {
+      "line": "opt-in and unwired: the builder syncs, but the sync never adds npm scripts, so",
+      "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
+    },
+    {
+      "line": "Never blocks the ship.",
+      "reason": "States that Step 0.5d's dashboard rebuild is advisory-only — descriptive of that step's own instruction, same class as the pre-existing \"never blocks\" statements already exempted elsewhere in this contract."
+    },
+    {
+      "line": "`git add` a gitignored path, which either fails or force-adds a Category-A",
+      "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
+    },
+    {
+      "line": "**Call the script by path, never `npm run security:refresh`.** The sync never",
+      "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
+    },
+    {
+      "line": "consumer reported — and, because that flag exits **0** having run nothing,",
+      "reason": "Continuation of the --if-present incident note (fixed this session). Historical/descriptive."
+    },
+    {
+      "line": "turned every consumer refresh into a silent no-op with a success exit code.",
+      "reason": "Continuation of the same incident note."
+    },
+    {
+      "line": "path makes the step actually run where it was always meant to. Do not \"fix\" a",
+      "reason": "Continuation of the same incident note."
+    },
+    {
+      "line": "> empty, not a broken one, and this step must not read an empty list as",
+      "reason": "Part of the friction-closure hook-rule block (cross-host-parity-v2 Phase 4): instructs the agent not to misread a correct-but-empty result as evidence. Descriptive guidance, not code-level enforcement."
     }
   ]
 }

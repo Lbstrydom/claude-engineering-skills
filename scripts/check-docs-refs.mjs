@@ -325,6 +325,16 @@ export const BASELINE = new Set([
   // it cannot be rewritten to a `<placeholder>` — the string is an argument the
   // CLI parses, and the fixture pins the exact argv it was captured with.
   'scripts/dev/capture-cross-skill-envelopes.mjs→docs/plans/x.md',
+  // `.skill-consumer-refs-baseline.json` is a REGISTRY OF UNREACHABLE POINTERS
+  // (skills:consumer-refs:gate). Its keys are the `docs/` paths a consumer repo
+  // cannot resolve, so reading them as this repo's own references inverts what
+  // the file means — and two of them are genuinely absent HERE as well, which
+  // is a finding that belongs to the citing SKILL.md, not to the registry that
+  // catalogues it. Marking them `<placeholder>` would be wrong: they are exact
+  // strings the gate matches on.
+  '.skill-consumer-refs-baseline.json→docs/reference/architecture.md',
+  '.skill-consumer-refs-baseline.json→docs/plans/click-test-v2-persistence.md',
+  '.skill-consumer-refs-baseline.json→docs/upstream-issues/claude-engineering-skills-feedback-2026-08-07.md',
   // tool-owned output cited from a runbook
   'docs/research/runbooks/model-ab-experiment.md→docs/arm-eval/worksheets/model-ab-adjudication-worksheet.md',
   // illustrative `// auth (docs/auth.md, …)` comment

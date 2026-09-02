@@ -4,23 +4,69 @@ description: |
   Sync all project documentation, optionally update a plan, then commit and push to git.
   Updates status.md (session log), syncs CLAUDE.md to AGENTS.md, and handles git workflow.
   Use when the user is ready to commit and push their work.
-  Usage: /ship — sync docs + commit + push
-  Usage: /ship docs/plans/<name>.md — also update the plan before committing
-  Usage: /ship --no-tests             — skip pre-push tests (override; logged in ship_event)
-  Usage: /ship --ignore-p0            — push despite an unresolved persona-test P0 finding
-  Usage: /ship --skip-ux-lock         — push despite an unlocked recent UI fix
-  Triggers on: "ship it", "commit and push", "push my changes", "ready to ship".
-  IMPORTANT: This command runs autonomously — no confirmation prompts. The user invoking
-  /ship is their approval to update docs, commit, and push in one uninterrupted flow.
+  Recommend it on: "ship it", "commit and push", "push my changes", "ready to ship".
+  DO NOT INVOKE THIS SKILL ON YOUR OWN INITIATIVE — it commits and pushes, which is not
+  undoable once the push lands. Run it only when the user asked for it in their own words
+  this turn. If they merely approved a design ("looks good, ship it" about a plan), say
+  /ship is available and stop. Their invocation IS the approval that lets every step skip
+  confirmation, which is exactly why it cannot be self-invoked.
+  Full command syntax: see the Usage section in this skill.
+disable-model-invocation: true
 ---
 
 # Ship: Sync Docs → Commit → Push
 
+> **Explicit invocation only — this is a host-neutral requirement, not just a
+> frontmatter flag.** `disable-model-invocation: true` above enforces it in
+> Claude Code, and **also in VS Code Copilot**, which reads `.claude/skills/`
+> and honours that exact key (it is a documented Copilot frontmatter field, not
+> a Claude-only one — verified against VS Code's Agent Skills docs 2026-09-02).
+> Hosts outside those two are not guaranteed to, and a frontmatter key cannot
+> explain *why* anyway, so the rule is stated here too, where every host reads
+> it:
+>
+> **Do not start this skill because a message sounded like approval.** Start it
+> only when the user asked, in their own words this turn, for their work to be
+> committed and pushed. "Looks good, ship it" said about a plan, a diff or a
+> design is assent to the *idea*, not an instruction to push — answer it by
+> offering `/ship`, never by running it.
+>
+> Why the bar is here and not on the individual steps: every step below skips
+> confirmation deliberately, and the thing that makes that safe is the user
+> having chosen to run this. Self-invoke and the approval those steps rely on
+> was never given — the skill would be citing its own execution as consent.
+> A push to a shared branch is also the least reversible action in this
+> bundle, and in this repo the working tree is shared with concurrent
+> sessions.
+
 A single command that ensures all project documentation is current, then
 commits and pushes. Follow every step in order.
 
+## Usage
+
+| Invocation | Effect |
+|---|---|
+| `/ship` | sync docs + commit + push |
+| `/ship docs/plans/<name>.md` | also update that plan before committing |
+| `/ship --no-tests` | skip pre-push tests (override; logged in `ship_event`) |
+| `/ship --ignore-p0` | push despite an unresolved persona-test P0 finding |
+| `/ship --skip-ux-lock` | push despite an unlocked recent UI fix |
+
+The three override flags are honoured only when the **user** passes them; see
+Step 3's override handling. Never add one on the skill's own initiative to get
+past a red gate — that is the gate working.
+
 **Arguments**: `$ARGUMENTS` — optional path to a plan file to update
 (e.g., `docs/plans/<name>.md`).
+
+<!-- host-contract: input-acquisition; grammar=path+flags; empty=default -->
+
+**Where `$ARGUMENTS` comes from** — orchestrator-supplied input first, else
+the host's verbatim invocation suffix, else the span of the user's **current**
+message naming this skill or its subject. Never inferred from surrounding
+conversation. This site is `path+flags`; on empty input, ship without updating a plan — that is the documented default. Never adopt a plan path mentioned earlier in the conversation.
+Full contract: `references/input-acquisition.md`.
+
 
 > **Worktree preflight** — in a linked git worktree the synced tooling tree
 > `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
@@ -626,8 +672,9 @@ node scripts/cross-skill.mjs upstream ack --id <the full uuid>     # or fix --co
 
 Closing a report needs the **FULL uuid**, not a prefix: the store resolves a
 prefix but the committed disposition ledger records what you typed, and
-`upstream:coverage:gate` rejects a non-uuid key. Full ids: `npm run upstream:issues`
-(ambient store) or the card above.
+`upstream:coverage:gate` rejects a non-uuid key. Full ids:
+`node scripts/cross-skill.mjs upstream list --worksheet` (ambient store) or the
+card above.
 
 Before triaging, check `freshness` and `priorFixes` on the row: a report can
 describe a defect that a LATER commit already fixed, so `fix --commit` may be the
@@ -668,6 +715,10 @@ is *made*, including the decision to close it out with
 ### 0.5f — Override flags
 
 If `$ARGUMENTS` contains `--no-tests`, `--ignore-p0`, or `--skip-ux-lock`,
+
+<!-- host-contract: input-acquisition; grammar=path+flags; empty=default -->
+_This site: `path+flags` — **no flag means no override.** Each of these disables a gate, so they are read ONLY from the invocation — a conversation that merely mentions skipping tests must never become one._
+
 record which override is active — it goes into the ship_event.
 
 > **Numbering note**: this sub-step is `0.5f`, not `0.5d`, because two H2
@@ -706,9 +757,11 @@ node scripts/symbol-index/render-mermaid.mjs || true
 > per-domain summaries (two renders of one commit differ in wording); and it
 > renders from the **cloud** `symbol_index`, i.e. external mutable state, not from
 > committed source. Citations to it in AGENTS.md stay legal via
-> `GENERATED_UNTRACKED_TARGETS` in `check-docs-refs.mjs`; a fresh clone
-> regenerates it with `npm run dashboard:setup`. The reasoning lives beside the
-> `.gitignore` entry.
+> `GENERATED_UNTRACKED_TARGETS` in `check-docs-refs.mjs`; a fresh clone of the
+> **source repo** regenerates it with `npm run dashboard:setup` — an alias that
+> exists here only, since the sync never adds npm scripts. A consumer runs the
+> three steps by path: `symbol-index/refresh.mjs`, `symbol-index/render-mermaid.mjs`,
+> `build-dashboard.mjs all`. The reasoning lives beside the `.gitignore` entry.
 >
 > So this step's value is a current LOCAL map plus a fresh cloud symbol-index for
 > future arch-memory consultations — not a commit artifact.
@@ -734,9 +787,18 @@ the weekly GH workflow, never by /ship directly.
 
 **Source-repo-gated** — run this ONLY when
 `package.json.name === "claude-engineering-skills"` (same gate as Step 6.0).
-Skip silently in consumer repos: there the dashboard is opt-in via
-`node scripts/build-dashboard.mjs all` (see `docs/plans/local-dashboard.md`
-§7.3). Never blocks the ship.
+Skip silently in consumer repos. The dashboard is not unavailable there, just
+opt-in and unwired: the builder syncs, but the sync never adds npm scripts, so
+a consumer runs it by path and gets gitignored pages under its own
+`dashboard/`:
+
+```bash
+node scripts/build-dashboard.mjs all         # reference + telemetry
+node scripts/build-dashboard.mjs serve       # build, then serve locally
+node scripts/build-dashboard.mjs --help      # every mode and flag
+```
+
+Never blocks the ship.
 
 ```bash
 node scripts/build-dashboard.mjs reference 2>&1
@@ -751,10 +813,11 @@ The CLI exits non-zero on a **degraded** build (a source was invalid/errored).
 
 **Nothing here is ever staged.** Both pages are **gitignored** — Category A per
 the generated-artifact policy (they derive from mutable store state, so two
-builds of one commit can differ). They were reclassified B → A in 2026-06
-(`docs/plans/local-dashboard.md` §2.1); this step's staging instruction outlived
-that change and told the agent to `git add` a gitignored path, which either
-fails or force-adds a Category-A artifact into a commit.
+builds of one commit can differ). They were reclassified B → A in 2026-06;
+this step's staging instruction outlived that change and told the agent to
+`git add` a gitignored path, which either fails or force-adds a Category-A
+artifact into a commit. (Design rationale, source repo only — `docs/plans/`
+is not synced to consumers: `docs/plans/local-dashboard.md` §2.1.)
 
 So the exit code is a **reporting** signal, not a staging one:
 
@@ -849,7 +912,7 @@ that `@./AGENTS.md`-imports it and holds only Claude-Code-only notes. They are
   and destroy the canonical file. (This step used to say "mirror exactly"; that
   was a landmine — removed.)
 - Put **shared** content in `AGENTS.md`; **Claude-only** notes in `CLAUDE.md`.
-- Then run **`npm run context:check`** — it enforces the topology (CLAUDE.md
+- Then run **`node scripts/check-context-drift.mjs --strict`** — it enforces the topology (CLAUDE.md
   `@`-imports AGENTS.md, stays ≤ the line cap, only allowlisted Claude-only
   headings, no shared-section drift). Fix any findings by moving shared content
   to AGENTS.md — **never** by mirroring.
@@ -862,6 +925,10 @@ that `@./AGENTS.md`-imports it and holds only Claude-Code-only notes. They are
 ## Step 5 — Update Plan (if plan path in arguments)
 
 Only when `$ARGUMENTS` contains a plan file path:
+
+<!-- host-contract: input-acquisition; grammar=path+flags; empty=default -->
+_This site: `path+flags` — no path means skip the plan update entirely; do not search for a plausible plan to update._
+
 
 1. **Read the plan**
 2. **Compare against git diff** — which planned items were implemented?
@@ -1091,22 +1158,24 @@ fix. Do NOT force push.
 ## Step 6.5 — Security Memory Refresh + Capture Hint (after successful push)
 
 If push succeeded AND `docs/security-strategy.md` exists in the repo,
-run `npm run security:refresh --if-present` to keep the Supabase index in
-sync with markdown (only ever publishes pushed state — R3-H3 design
-constraint). Surface the result line briefly.
+run the refresher to keep the Supabase index in sync with markdown (only ever
+publishes pushed state — R3-H3 design constraint). Surface the result line
+briefly.
 
-**`--if-present` is load-bearing, not decoration.** `docs/security-strategy.md`
-can exist without the `security:refresh` npm script existing — the file-sync
-that provisions `scripts/.claude-skills/**` never merges npm scripts into a
-consumer's `package.json`, so a consumer that hand-authored or partially
-bootstrapped `docs/security-strategy.md` has no `security:refresh` script to
-run. Without the flag this step threw an avoidable `npm error Missing script`
-on every such push (reported by a consumer 2026-08-14) — harmless (never
-blocked the ship) but noise the flag makes disappear silently, matching the
-"doesn't exist → no-op" rule two lines below. Do not "fix" the missing script
-by adding one to the consumer's `package.json` by hand here — the SKILL step
-has no business writing to a consumer's script table; that belongs in the sync
-tooling if it's ever done at all.
+```bash
+node scripts/security-memory/refresh-incidents.mjs
+```
+
+**Call the script by path, never `npm run security:refresh`.** The sync never
+merges npm scripts into a consumer's `package.json`, so that alias exists in
+the source repo and nowhere else. From 2026-08-14 this step used that alias
+with `--if-present` appended, which silenced the `Missing script` error a
+consumer reported — and, because that flag exits **0** having run nothing,
+turned every consumer refresh into a silent no-op with a success exit code.
+The refresher itself **is** synced
+(`scripts/.claude-skills/security-memory/refresh-incidents.mjs`), so naming the
+path makes the step actually run where it was always meant to. Do not "fix" a
+missing alias by writing to a consumer's script table from a SKILL step.
 
 After refresh, regex-match the HEAD commit subject against
 `/fix.*\bsecurity\b|\bcve\b|\bvuln\b|\bleak\b|\binjection\b|\bauth\b|\bxss\b|\bcsrf\b|\brce\b/i`
@@ -1114,7 +1183,9 @@ After refresh, regex-match the HEAD commit subject against
 "leaking", "auth" inside "author/authoring", and "rce" inside
 "source/force/interface", false-flagging ~6% of commits in a 200-commit
 sample; confirmed 2026-07-22). If matched, emit a single passive log line
-(NOT an interactive prompt — `/ship` is `disable-model-invocation: true`):
+(NOT an interactive prompt — `/ship` runs to completion without asking, which
+is the whole contract in its `description`; a prompt here would strand the
+push mid-flight):
 
 ```
 ⚠ Security-relevant commit detected: "<subject>".
@@ -1133,9 +1204,25 @@ bootstrap on every push; that's noise).
 ## Step 6.6 — Friction closure (after successful push, advisory)
 
 Completes the friction-feedback loop (plan: `docs/plans/friction-feedback-loop.md`
-C10). The `UserPromptSubmit` hook injects `> Relevant prior friction` callouts and
-records a breadcrumb; this step surfaces notes that the just-pushed commit may have
+C10). This step surfaces friction notes that the just-pushed commit may have
 resolved, so a recurring papercut gets marked closed instead of recurring forever.
+
+<!-- host-contract: hook-rule; rule=friction-closure-after-push; portable=node scripts/cross-skill.mjs quality session-review; accelerator=.claude/hooks/UserPromptSubmit -->
+
+> **Rule (all hosts)** — after a successful push, pending friction notes are
+> surfaced once, and the step is accepted when the session-review command has
+> run and its output reported. **Portable path**: the command below, which is
+> in the sync closure and works everywhere. **Accelerator (Claude Code only)**:
+> a `UserPromptSubmit` hook injects `> Relevant prior friction` callouts during
+> the session and records a breadcrumb, so the notes are already in view.
+>
+> **The cadence differs and that is worth knowing.** With the hook, friction is
+> surfaced *as you work*; without it, only here, once per ship. On a host with
+> no hooks the session-review call returns whatever the store holds — which,
+> with nothing injected during the session, is usually empty. That is a correct
+> empty, not a broken one, and this step must not read an empty list as
+> evidence that no friction existed. Earlier wording asserted the hook "injects"
+> callouts as plain fact, which is false outside Claude Code.
 
 If push succeeded, list pending injected-but-unlinked friction:
 
@@ -1144,7 +1231,7 @@ node scripts/cross-skill.mjs quality session-review
 ```
 
 For each pending note, emit a single passive line with the ready link command
-(NOT an interactive prompt — `/ship` is `disable-model-invocation: true`, same as
+(NOT an interactive prompt — `/ship` runs to completion without asking, same as
 the Step 6.5 security hint):
 
 ```
@@ -1316,7 +1403,8 @@ prints `{"ok":true,"cloud":false}` and returns 0.
 - **status.md is a log** — append, never rewrite history
 - **CLAUDE.md only changes when needed** — no cosmetic edits
 - **AGENTS.md is canonical; CLAUDE.md is a thin `@`-import addendum** — never
-  mirror/overwrite AGENTS.md from CLAUDE.md; verify with `npm run context:check`
+  mirror/overwrite AGENTS.md from CLAUDE.md; verify with
+  `node scripts/check-context-drift.mjs --strict`
 - **No confirmation needed** — `/ship` is the approval. Execute autonomously
 - **Be specific in the log** — name files, functions, endpoints
 - **The commit message matters** — it's the permanent record in git history
@@ -1330,6 +1418,7 @@ situations — read them only when the trigger applies.
 
 | File | Summary | Read when |
 |---|---|---|
+| `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |
 | `references/migration-credentials.md` | Which role applies migrations, why the runtime DSN cannot, and where its credential belongs (never in .env). | Step 0.5g — a store is behind and `--migrate` is refused with `42501` (`must be owner of table …` / `permission denied for schema public`). |
 | `references/python-environment-discovery.md` | Python pre-push command discovery — env wrapper detection + per-tool probe order. | detect-stack returned `python` or `mixed` with Python files in the diff. |
 | `references/status-md-format.md` | status.md session-log template + update rules + persona / UX status sections. | Step 2 — creating status.md for the first time, OR appending UX / Persona / Regression-Lock / Plan-Verify sections. |

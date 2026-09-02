@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "gate": "skills:consumer-refs:gate",
+  "guards": "every `docs/…md` path and `npm run` alias inside synced skill content is either reachable in a consumer repo or declared, with a disposition and a written reason, in .skill-consumer-refs-baseline.json",
+  "gates": [
+    {
+      "id": "skills-consumer-refs-gate-rejects-an-undeclared-unreachable-pointer",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "npm run skills:consumer-refs:gate",
+      "implementation": "scripts/check-skill-consumer-refs.mjs",
+      "tests": ["tests/gate-poison-pills.test.mjs", "tests/skill-consumer-refs.test.mjs"],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "needsGit": true,
+        "argv": ["scripts/check-skill-consumer-refs.mjs"],
+        "overlay": {
+          "skills/explain/SKILL.md": "tests/fixtures/poison/skill-consumer-refs-undeclared.md"
+        },
+        "expectExit": 1,
+        "expectStderr": "UNDECLARED",
+        "why": "A SKILL.md is read in a consumer repo, where the only files that exist are the ones the sync put there — and the sync deliberately never merges npm scripts into a consumer's package.json, nor ships more than a single file under docs/. So an `npm run X` or a `docs/plans/<name>.md` inside synced skill text is a claim about another repo that nothing can make true. This has now shipped four times: 16 skills named `npm run skills:hydrate` plus a runbook the sync delivers neither of; /ai-context-management named `npm run context:check` in every one of its modes while the detector it wraps was synced all along, leaving the skill inert in every consumer; /ship and /security-strategy appended --if-present to a missing alias, which exits 0 having run nothing, so a consumer's security index silently never refreshed; and two shared references promised `.audit/` is swept 'in every consumer' by a script that was not in the bundle. Each site is individually plausible, which is why review keeps passing them. The gate cannot judge intent — a source-repo-gated step naming `npm run check` is correct — so it ratchets the POPULATION instead: an undeclared pointer fails, a declared one that grows a site fails, and a declaration that no longer matches anything fails too. The pill adds one pointer in exactly the shape a future author would write it, and the gate must refuse it rather than absorb it."
+      }
+    }
+  ]
+}

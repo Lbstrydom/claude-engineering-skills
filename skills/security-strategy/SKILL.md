@@ -17,13 +17,28 @@ disable-model-invocation: true
 
 # /security-strategy — proactive security memory maintenance
 
+> **Explicit invocation only — host-neutral.** `disable-model-invocation: true`
+> enforces this in Claude Code and in VS Code Copilot, which reads
+> `.claude/skills/` and honours that key (verified against VS Code Agent Skills
+> docs 2026-09-02). Hosts beyond those two are unverified, and a key cannot
+> carry the reasoning anyway, so the rule is stated here as well.
+>
+> Run this only when the user asked for it. It writes
+> `docs/security-strategy.md` and publishes to the shared index, and an
+> incident drafted from a passing mention is a false record in a security
+> memory other people will later trust.
+
 This skill maintains the **markdown source-of-truth** at
-`docs/security-strategy.md`. After any edit, it triggers
-`npm run security:refresh --if-present` so the Supabase embedding index
-stays current. `--if-present` matters here: sync never merges npm scripts
-into a consumer's `package.json`, so the script can legitimately be absent
-even though the markdown file exists — a bare `npm run security:refresh`
-throws an avoidable `Missing script` error on such a repo.
+`docs/security-strategy.md`. After any edit, it runs
+`node scripts/security-memory/refresh-incidents.mjs` so the Supabase embedding
+index stays current.
+
+**Always by path, never via an `npm run` alias.** The sync never merges npm
+scripts into a consumer's `package.json`, so a `security:refresh` alias exists
+in the source repo only. The earlier workaround appended `--if-present` to that
+alias, which made the `Missing script` error disappear by exiting **0 without
+running anything** — so a consumer's index silently never refreshed. The
+refresher is itself synced, so the path always resolves.
 
 The skill is **on-demand only** — it never blocks `/cycle`, `/plan`, or
 `/ship`. The planner (Phase 0.5b) consults the memory via the cross-skill
@@ -89,7 +104,7 @@ write back via the round-trip parse + atomicWriteFileSync protocol
    parse warnings; if any, fail loudly and don't write.
 4. Call `atomicWriteFileSync('docs/security-strategy.md', content)`.
 
-Then run `npm run security:refresh --if-present` and surface its summary line.
+Then run `node scripts/security-memory/refresh-incidents.mjs` and surface its summary line.
 
 ---
 
@@ -128,7 +143,7 @@ For interactive ADD, prompt the user for each field with examples.
    `incidents[]` with non-null `description` AND no parse warnings
    reference the new ID.
 5. Only on round-trip success → `atomicWriteFileSync()`.
-6. Run `npm run security:refresh --if-present` and surface result summary.
+6. Run `node scripts/security-memory/refresh-incidents.mjs` and surface result summary.
 7. If round-trip fails → output the parsed warnings, do NOT write,
    ask the user to revise.
 

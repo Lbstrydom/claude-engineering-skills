@@ -10,7 +10,9 @@
       "statedIn": "skills/ai-context-management/SKILL.md",
       "stated": "`0` = no findings",
       "implementation": "scripts/check-context-drift.mjs",
-      "tests": ["tests/gate-honesty.test.mjs"],
+      "tests": [
+        "tests/gate-honesty.test.mjs"
+      ],
       "proof": "process"
     },
     {
@@ -21,7 +23,9 @@
       "statedIn": "skills/ai-context-management/SKILL.md",
       "stated": "`1` = HIGH (blocking)",
       "implementation": "scripts/check-context-drift.mjs",
-      "tests": ["tests/gate-honesty.test.mjs"],
+      "tests": [
+        "tests/gate-honesty.test.mjs"
+      ],
       "proof": "process"
     },
     {
@@ -34,6 +38,18 @@
     {
       "line": "> \"skills:hydrate\": \"node -e \\\"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});console.log('[hydrate] copied '+src)\\\"\"",
       "reason": "The worktree-preflight marker block's inlined `skills:hydrate` recipe. Every node one-liner carries `require` and `process.exit`, two ENFORCEMENT_VERBS, and no phrasing of a runnable recipe avoids them — the verbs are JavaScript here, not an enforcement claim about this skill. The recipe is inlined rather than cited because in an unadopted consumer both of the old pointers are dead at once (no `skills:hydrate` script yet, and `docs/runbooks/` is not synced), so a skill file is the only carrier that reaches the reader. Byte-identical across all 16 contracts by construction: it is generated from CONSUMER_HYDRATE_NPM_SCRIPT via MARKER_BLOCK, and `checkSkill` pins the block in every copy."
+    },
+    {
+      "line": "message naming this skill or its subject. Never inferred from surrounding",
+      "reason": "The \"Where $ARGUMENTS comes from\" template line, synced verbatim from docs/audit/shared-references/input-acquisition.md into every skill that reads the token. It is authoring guidance for the agent reading the skill at parse time (where to look for input, in what priority) — no code in this repo exits or blocks on it; the enforcement, such as it is, is the human/agent following documented instructions, same class as every other prose \"never guess\" line already exempted in this contract."
+    },
+    {
+      "line": "conversation. This site is `subcommand`; on empty input, default to `audit` — it is read-only and writes nothing, so it is the safe default. `reconcile` and `migrate` write files and are never defaulted into.",
+      "reason": "A per-site \"_This site: …_\" annotation from the input-acquisition contract (Phase 5, cross-host-parity-v2), describing this ONE $ARGUMENTS occurrence's grammar class and empty-input behaviour for the agent parsing it. Descriptive guidance, not a mechanically enforced claim — no exit code or gate binds to it."
+    },
+    {
+      "line": "consumer wires it into its own pre-push if it wants the same gate. The",
+      "reason": "Design-rationale prose in Key Principle 5 (host-qualifying the pre-push claim per cross-host-parity-v2 Phase 4): describes what a CONSUMER repo may choose to wire up, not a claim this skill enforces anything itself."
     }
   ]
 }

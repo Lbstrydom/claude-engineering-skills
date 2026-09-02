@@ -34,7 +34,7 @@ Three states:
 |---|---|---|---|
 | A | absent | full canonical | Flip needed |
 | B | stale copy | full canonical | Flip + drift fix |
-| C | full canonical | slim addendum | Already flipped — verify with `npm run context:check` |
+| C | full canonical | slim addendum | Already flipped — verify with `node scripts/check-context-drift.mjs --strict` |
 | D | both empty | both empty | Use `/init` instead of this skill |
 
 ## Flip steps
@@ -98,7 +98,7 @@ Order matters: AGENTS.md first, CLAUDE.md as fallback for legacy repos.
 ### Step 4: verify
 
 ```bash
-npm run context:check
+node scripts/check-context-drift.mjs --strict
 # Expect: "OK  No context drift detected."
 
 git diff AGENTS.md CLAUDE.md scripts/lib/context.mjs

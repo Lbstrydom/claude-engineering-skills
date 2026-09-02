@@ -52,6 +52,15 @@ Two modes, one skill. Both drive Playwright against semantic DOM contracts.
 
 Read the first word of `$ARGUMENTS`:
 
+<!-- host-contract: input-acquisition; grammar=subcommand; empty=ask-and-stop -->
+
+**Where `$ARGUMENTS` comes from** — orchestrator-supplied input first, else
+the host's verbatim invocation suffix, else the span of the user's **current**
+message naming this skill or its subject. Never inferred from surrounding
+conversation. This site is `subcommand`; on empty input, ask whether to LOCK a fix or VERIFY a plan and stop — the two modes read different inputs and write different artifacts.
+Full contract: `references/input-acquisition.md`.
+
+
 - `verify` → **Mode: VERIFY**
 - otherwise → **Mode: LOCK**
 
@@ -235,6 +244,10 @@ time-series tracking across verify runs.
 ### Step V0 — Parse the plan
 
 Read the plan at the path in `$ARGUMENTS` (first positional after
+
+<!-- host-contract: input-acquisition; grammar=subcommand; empty=ask-and-stop -->
+_This site: `subcommand` — verify requires a plan path; ask for it and stop rather than grading the app against a guessed plan._
+
 `verify`). Parse the Acceptance Criteria section using `scripts/lib/plan-criteria-parser.mjs`.
 
 If `found = false` → plan has no Acceptance Criteria; offer to add one.
@@ -357,6 +370,7 @@ situations — read them only when the trigger applies.
 
 | File | Summary | Read when |
 |---|---|---|
+| `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |
 | `references/lock-mode-spec-generation.md` | LOCK mode — full Playwright spec template + fix-type assertion map + persistence recipe. | Mode: LOCK, about to write the spec body OR register it. |
 | `references/verify-mode-generation.md` | VERIFY mode — criterion parser wiring, translation rules, per-criterion run+record protocol. | Mode: VERIFY, Steps V0–V6 (parsing, generating, running, recording). |
 | `references/scope-and-limitations.md` | Where /ux-lock works well, where it doesn't (Obsidian/Electron), and fallback strategies. | Target is an Obsidian plugin / Electron app / CLI / anti-bot-protected URL, OR bootstrapping Playwright harness from scratch, OR user is on Windows and Playwright MCP tools aren't appearing. |

@@ -271,6 +271,22 @@ consumer instead of the named one. Verified 2026-07-20.)
 > **only tracked content is guaranteed to reach a linked worktree**, so a remedy
 > must ride on `package.json`, never on a synced script or a `.claude/` hook.
 > Gate: `npm run worktree:preflight:gate`.
+>
+> **(4b) A synced SKILL.md may not name an `npm run` alias, and may cite only
+> `docs/` inside the sync closure.** The sync deliberately never merges scripts
+> into a consumer's `package.json` and ships one `docs/` file, so both pointers
+> are claims about another repo that nothing can make true. **Name synced tooling
+> by path** — `node scripts/<name>.mjs`, which the rewriter turns into
+> `scripts/.claude-skills/<name>.mjs` — and the text works everywhere. Shipped four
+> times: `skills:hydrate` + a runbook across 16 skills; `/ai-context-management`
+> inert in every consumer behind `npm run context:check` while its detector was
+> synced; `/ship` + `/security-strategy` appending `--if-present` to a missing
+> alias, which **exits 0 having run nothing**; and two shared references
+> promising `.audit/` is swept "in every consumer" by an unshipped script. Gate:
+> `npm run skills:consumer-refs:gate` — a ratchet, since only intent can say
+> whether an unreachable pointer is a defect: undeclared kind, a declared kind
+> growing a site, or a declaration matching nothing all fail, and each entry in
+> `.skill-consumer-refs-baseline.json` carries a disposition + a written reason.
 
 > **Upstream bug, but you're blocked?** Patching upstream-owned *source* stays
 > forbidden; a **runtime/env/DB** unblock is OK if you report it, label it
@@ -352,7 +368,7 @@ BrightData Scraping Browser is also supported (handles anti-bot/CAPTCHA) but req
 
 Two surfaces for catching broken Mermaid before it ships:
 
-- **Interactive (during plan generation)** — `.mcp.json` registers `mcp-mermaid`. Claude Code prompts to enable on first open (same flow as Playwright MCP). When enabled, I (Claude) can validate + render Mermaid blocks before persisting a plan — exposes `mcp__claude_ai_Mermaid_*` tools. No API key needed.
+- **Interactive (during plan generation)** — `.mcp.json` registers `mcp-mermaid`. Claude Code prompts to enable on first open (same flow as Playwright MCP). VS Code registers the same server from `.vscode/mcp.json`. The tool is **`mcp__mermaid__generate_mermaid_diagram`** (server name `mermaid` ⇒ that prefix); call it with `outputType: "mermaid"` to validate without rendering — invalid syntax returns an MCP error with the parser's line/column. No API key needed. It complements `plans:lint`, which catches renderer-strictness bugs the parser accepts (measured: the MCP passes `SG1 -.- B`). This bullet said `mcp__claude_ai_Mermaid_*` until 2026-09-02 — a server this repo never registered, so `/plan`'s validation step had never run.
 - **Pre-push (static lint)** — `npm run plans:lint` scans `docs/plans/*.md` for two classes of bugs that GitHub renders leniently but VS Code preview / stricter renderers reject:
   - **ERROR `subgraph-as-edge-endpoint`** — using a `subgraph` ID as an edge endpoint (`SG1 -.- other`). Mermaid graph syntax doesn't allow this; anchor the edge to a node *inside* the subgraph.
   - **WARN `unquoted-special-chars-in-label`** — node label brackets containing `<br/>` or non-ASCII chars (em-dash, etc.) without surrounding quotes. The bracketed-but-unquoted form parses in current Mermaid but breaks in older bundled versions. Always use `ID["..."]` when the label has special chars.
@@ -1134,19 +1150,24 @@ acceptance beats silent shortcut. The system surfaces shortcuts so the
 author can decide whether they're warranted, not so they're automatically
 blocked.
 
-**Layer 1 — prospective hook** (`.claude/hooks/quickfix-scan.mjs`): fires on
-every Edit/Write (PostToolUse), pure-regex scan for ~12 mechanical shortcut
-signatures (empty catch, unjustified `@ts-ignore`, masked errors, hardcoded
-localhost, …). Emits a `<system-reminder>` callout — NEVER blocks. Opt-outs:
-`QUICKFIX_HOOK_DISABLE=1` (session), `// quickfix-hook:ignore` on the line
-(language-correct comment syntax per file type), auto-bail on >80K-char
-diffs, sensitive-path short-circuit. Pattern matrix:
-`scripts/lib/quickfix-patterns.mjs` (one entry per new pattern).
+<!-- host-contract: hook-rule; rule=quickfix-surfaced-before-done; portable=quickfix wave in /audit-code; accelerator=.claude/hooks/quickfix-scan.mjs -->
 
-**Layer 2 — retrospective audit pass** (`quickfix` wave in /audit-code):
-low-reasoning GPT pass for DESIGN-level shortcuts the regex can't see (stub
-returns, tests asserting non-failure, masked root causes). Findings emit
-`is_quick_fix: true`; the `quickFix == 0` convergence threshold gates them.
+**The RULE is host-neutral; the hook is Claude-Code-only ACCELERATION** (same
+shape as arch-memory above). *Rule*: a shortcut signature is surfaced to the
+author before the change is called done — satisfied when EITHER layer ran.
+*Portable path (all hosts)*: **Layer 2**, the `quickfix` wave in /audit-code —
+a low-reasoning GPT pass for DESIGN-level shortcuts regex can't see (stub
+returns, tests asserting non-failure, masked root causes); emits
+`is_quick_fix: true`, gated by the `quickFix == 0` convergence threshold.
+*Accelerator (Claude Code only)*: **Layer 1**, `.claude/hooks/quickfix-scan.mjs`
+— fires on every Edit/Write (PostToolUse), pure-regex over ~12 mechanical
+signatures (empty catch, unjustified `@ts-ignore`, masked errors, hardcoded
+localhost, …), emits a `<system-reminder>`, NEVER blocks. Opt-outs:
+`QUICKFIX_HOOK_DISABLE=1`, `// quickfix-hook:ignore`, >80K-char diff bail,
+sensitive-path short-circuit. Patterns: `scripts/lib/quickfix-patterns.mjs`.
+**Cadence is NOT equivalent** — hook = every edit, wave = once per audit, so on
+Copilot a shortcut is caught later and only in audited changes. Say so rather
+than implying parity.
 
 Two layers because neither covers the other's axis: mechanical-at-edit-time
 vs semantic-at-review-time. Full spec:

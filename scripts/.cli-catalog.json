@@ -547,6 +547,10 @@
       "description": "Create or refresh ~/.audit-loop.env from the source repo's .env so consumer repos auto-inherit shared cloud config (DSN + LLM keys). Idempotent. --yes for CI, --dry-run to preview, --source-repo <path> to override discovery.",
       "category": "diagnostic"
     },
+    "skills:consumer-refs:gate": {
+      "description": "Fail when synced skill content names a pointer a consumer repo cannot resolve — any `npm run` alias (the sync never merges scripts into a consumer package.json) or a `docs/` path outside the sync closure. Ratchets a declared population: an undeclared kind, a declared kind growing a site, or a declaration matching nothing all fail. Baseline: .skill-consumer-refs-baseline.json.",
+      "category": "gate"
+    },
     "skills:check": {
       "description": "Verify skill references are valid + mirrors are in sync.",
       "category": "skills"

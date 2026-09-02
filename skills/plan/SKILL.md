@@ -187,7 +187,7 @@ add the warning ABOVE the table:
 
 ```markdown
 > ⚠ `docs/security-strategy.md` edited since last refresh — run
-> `npm run security:refresh` to bring the security index current.
+> `node scripts/security-memory/refresh-incidents.mjs` to bring the security index current.
 ```
 
 When `docs/security-strategy.md` doesn't exist (response will have
@@ -613,10 +613,23 @@ final`. ≥2 clusters or omit the block entirely.
 
 ## Phase 6.5 — Validate diagrams (optional, graceful)
 
-If the plan contains a ` ```mermaid ` block AND the Mermaid Chart MCP is
-available this session (`mcp__claude_ai_Mermaid_Chart__validate_and_render_mermaid_diagram`),
-validate each block before persisting — a syntax error otherwise renders
-as a red error box in GitHub.
+If the plan contains a ` ```mermaid ` block AND the Mermaid MCP is available
+this session, validate each block before persisting — a syntax error otherwise
+renders as a red error box in GitHub.
+
+**The tool is `mcp__mermaid__generate_mermaid_diagram`**, from the `mermaid`
+server that `.mcp.json` and `.vscode/mcp.json` both register. Pass the block as
+`mermaid` and `outputType: "mermaid"` — that echoes the source back instead of
+rendering an image, so validation costs nothing. Invalid syntax comes back as an
+MCP error carrying the parser's line and column; that error IS the validation.
+
+> This gate named `mcp__claude_ai_Mermaid_Chart__validate_and_render_mermaid_diagram`
+> until 2026-09-02 — a different server, with a verb the registered one does not
+> expose. Two mismatches, so the availability test could never be true, and
+> because the else-branch below skips *silently* the step could not report its
+> own deadness: it had never run once, in any host. When a step is written to
+> skip quietly, its availability check has to be verified by executing it, not
+> by reading it.
 
 - **MCP available** → validate each block; fix any reported syntax error
   in place before Phase 7.
@@ -624,6 +637,13 @@ as a red error box in GitHub.
   is an optional convenience, never an install dependency — Mermaid
   renders natively in GitHub and VS Code preview, so an unvalidated block
   still works for the reader. Do not warn the user about the missing MCP.
+
+**This does not replace `plans:lint`, and neither replaces the other.** Measured
+2026-09-02: the MCP accepts `SG1 -.- B` (a subgraph id used as an edge endpoint)
+without complaint, which `plans:lint` classifies as an ERROR because stricter
+renderers reject it; the MCP in turn catches ordinary parse errors the regex
+linter never looks for. Two instruments, two blind spots — do not delete either
+on the grounds that the other covers it.
 
 ---
 
