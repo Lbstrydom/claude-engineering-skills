@@ -116,8 +116,51 @@ measurement, while `renderCode` truncates underneath it. A field that reads as a
 measurement but is a constant is the "hardcoded 0 in telemetry" class.
 
 This is an upstream (this repo) defect affecting every `/audit-code` final gate
-here and in every consumer, and it is **not** fixed by this commit. Filed as
-follow-up work; the honest reading of §3 today is `unverified`, not `approved`.
+here and in every consumer. It was **not** fixed by 8620cfe8, so the honest
+reading of the gate verdict **for this change** remains `unverified`, not
+`approved` — re-running the gate at 8620cfe8 would reproduce it.
+
+### Closed 2026-09-02 — `fix(final-review): measure what the code render drops`
+
+Fixed upstream in this repo, in three parts, because fixing any one alone leaves
+the others:
+
+1. **The telemetry now measures.** `readFilesAsContextDetailed`
+   ([audit-scope.mjs](../../scripts/lib/audit-scope.mjs)) returns
+   `{context, stats}` — head cuts, budget omissions, unreadable and
+   sensitive-excluded paths, chars-on-disk vs chars-rendered — and both envelope
+   branches report it instead of `{}`. `readFilesAsContext` is a wrapper over
+   the same render, so no existing caller's bytes change. A renderer that
+   returns a bare string reports `{code: 'unmeasured'}`: an absent measurement
+   must not be representable as a clean one.
+2. **The diff is rendered first.**
+   [code-render.mjs](../../scripts/lib/final-review/code-render.mjs) renders
+   changed files at 40K/file into the budget, then ambient context at the
+   historical 8K/file out of what survives. Ordering alone would not have fixed
+   the case measured above — the file was *cut*, not dropped — and a larger cap
+   alone would still have spent the budget on ambient files first.
+3. **A verdict over zero coverage is no longer an approval.**
+   [code-coverage.mjs](../../scripts/lib/final-review/code-coverage.mjs) reports
+   `full`/`partial`/`none`/`unknown` against the declared diff set and downgrades
+   `APPROVE` → `CONCERNS` on `none` only, preserving the model's verdict on
+   `_coverageGate.reportedVerdict`. `partial` and `unknown` are reported but
+   never gate: a head cut may or may not have held the change, and gating on a
+   maybe makes the check cry wolf.
+
+Re-measured on this commit's own file set: the render now carries
+`AUTOCRLF_PROBE`, `readGitConfigWithOrigin`, `machine/git-autocrlf` and
+`core.autocrlf`; coverage reads `full`; `truncated` reads
+`{codeFilesHeadCut: 7, codeFilesBudgetOmitted: 1, codeCharsDropped: 397171}`.
+
+One thing the fix surfaced rather than closed:
+`tests/run-final-review-harness.test.mjs` had declared
+`changed_files: ['src/a.mjs']`, a path that does not exist — so every run in
+that harness had been asserting verdict routing against a review that received
+no code at all. Repointed at a real file.
+
+**This does NOT retroactively certify §3.** The gate verdict recorded above was
+produced by the old renderer and still saw none of 8620cfe8. What changed is
+that the next gate cannot repeat it silently.
 
 ## Census
 
