@@ -114,7 +114,7 @@ async function main() {
   // Extract file_path + new content
   const toolName = payload?.tool_name || '';
   const toolInput = payload?.tool_input || {};
-  let filePath = toolInput.file_path || toolInput.filePath || '';
+  const filePath = toolInput.file_path || toolInput.filePath || '';
   let diffText = '';
 
   if (toolName === 'Edit') {
