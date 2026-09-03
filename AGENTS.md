@@ -165,23 +165,24 @@ skills/<name>/                   ← authoritative; edit ONLY here
 > audit, the retired-tooling table and the migration recipe live in
 > [`docs/reference/skill-surface-ownership.md`](docs/reference/skill-surface-ownership.md).
 >
-> **(1) Never ship the same skill name in two discovered roots.** VS Code Copilot
-> (1.109+) discovers `.github/skills/`, `.claude/skills/` and `.agents/skills/` plus
-> personal dirs, and precedence between them is **undocumented**. The committed
-> `.claude/skills/**` is the single Copilot-native surface; `.github/skills/` and the
-> `.github/prompts/*.prompt.md` shims are **RETIRED** — do not re-introduce a generator
-> for either, and check `.github/skills/` AND `.agents/skills/` when a consumer's
-> Copilot behaves oddly (sync deliberately never deletes them).
+> **(1) Never ship the same skill name in two discovered roots.** Copilot discovers
+> `.github/skills/`, `.claude/skills/` and `.agents/skills/` plus personal dirs, and
+> precedence between them is **undocumented**. The committed `.claude/skills/**` is
+> the single Copilot-native surface; `.github/skills/` and the
+> `.github/prompts/*.prompt.md` shims are **RETIRED** — never re-introduce a
+> generator, and check both retired roots when a consumer's Copilot behaves oddly
+> (sync deliberately never deletes them).
 >
 > **(2) Skills install REPO-SCOPED, never machine-global.** A SKILL.md is only valid
-> alongside the runner layout it cites (`scripts/X.mjs` here, `scripts/.claude-skills/X.mjs`
-> in a consumer), so **no correct content exists** for the layout-agnostic
-> `~/.claude/skills/`. That surface and `.agents/skills/` are retired
-> (`resolveSkillTargets` throws), and `.githooks/post-merge` is **deleted** — don't
-> restore it. Installing anywhere is one command: `npx github:Lbstrydom/claude-engineering-skills <dir>`,
-> or `npm run sync -- --target-path <dir>` from here. Proposing a new install surface?
-> Answer first: *which of the two layouts does its content belong to, and what stops it
-> colliding with `.claude/skills/`?*
+> alongside the runner layout it cites (`scripts/X.mjs` here,
+> `scripts/.claude-skills/X.mjs` in a consumer), so **no correct content exists** for
+> the layout-agnostic `~/.claude/skills/`. It and `.agents/skills/` are retired
+> (`resolveSkillTargets` throws) and `.githooks/post-merge` is **deleted** — don't
+> restore it. Installing is one command:
+> `npx github:Lbstrydom/claude-engineering-skills <dir>`, or
+> `npm run sync -- --target-path <dir>`. Proposing a new surface? Answer first:
+> *which layout does its content belong to, and what stops it colliding with
+> `.claude/skills/`?*
 >
 > **(3) Frontmatter is a contract** (enforced by `skills:check`): `name` must equal the
 > directory name and match `^[a-z0-9-]{1,64}$` (violation = **silent skip**);
@@ -250,26 +251,21 @@ consumer instead of the named one. Verified 2026-07-20.)
 > [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Reporting an upstream bug.
 
 > **Five shapes consumers keep reporting — check for them when adding a gate or
-> nudge.** Incidents, predicates and measured inert windows:
-> [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Five shapes /
-> §Linked git worktrees / §Reporting an upstream bug.
+> nudge.** Write-ups, predicates and measured inert windows:
+> [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Five shapes.
 > *(1)* A read handing back a key its writer rejects — a new close-this-row nudge
 > means a new row in [`view-writer-key-contract.test.mjs`](tests/view-writer-key-contract.test.mjs).
 > *(2)* A gate judging files the repo does not own — the predicate is **ignored AND
 > untracked**, asked of the **candidates**, never of the repo.
 > *(3)* A check verifying one direction only — of any set comparison ask: **which
 > side am I iterating, and what is unrepresentable from it?**
-> *(4)* A documented command whose tooling cannot be present where it runs —
-> **only tracked content is guaranteed to reach a linked worktree**, so a remedy
-> must ride on `package.json`, never on a synced script or a `.claude/` hook.
-> Gate: `npm run worktree:preflight:gate`.
-> *(5)* A synced SKILL.md naming an `npm run` alias, or a `docs/` file outside the
-> sync closure — both are claims about another repo that nothing can make true
-> (`--if-present` on a missing alias **exits 0 having run nothing**). **Name synced
-> tooling by path**: `node scripts/<name>.mjs`, which the rewriter turns into
-> `scripts/.claude-skills/<name>.mjs`. Gate: `npm run skills:consumer-refs:gate`,
-> a ratchet — each `.skill-consumer-refs-baseline.json` entry carries a
-> disposition + a written reason.
+> *(4)* A documented command whose tooling cannot be present where it runs — **only
+> tracked content reaches a linked worktree**, so a remedy must ride on
+> `package.json`. Gate: `npm run worktree:preflight:gate`.
+> *(5)* A synced SKILL.md naming an `npm run` alias or an out-of-closure `docs/`
+> file — claims about another repo that nothing can make true (`--if-present`
+> **exits 0 having run nothing**). **Name synced tooling by path**:
+> `node scripts/<name>.mjs`. Gate: `npm run skills:consumer-refs:gate`, a ratchet.
 
 > **Upstream bug, but you're blocked?** Patching upstream-owned *source* stays
 > forbidden; a **runtime/env/DB** unblock is OK if you report it, label it
@@ -304,12 +300,12 @@ One structural invariant stays here: **the sync layout's single source of truth 
 consumer path.
 
 **A consumer's package manager is [`package-manager.mjs`](scripts/lib/package-manager.mjs)'s
-answer, never a hardcoded `npm`/`npx`** — and the managers are not swappable: npm
-aborts on pnpm's symlinked tree (dep install never once worked in a pnpm consumer,
-measured 2026-08-15), while `pnpm add` in an npm repo leaves a second lockfile. So
-two lockfiles + no `packageManager` field is **ambiguous and left alone**, never
-guessed. Adjudicate an install by RE-PROBING `node_modules`, never the exit code:
-pnpm exits non-zero on `ERR_PNPM_IGNORED_BUILDS` after a successful install.
+answer, never a hardcoded `npm`/`npx`** — the managers are not swappable, so two
+lockfiles + no `packageManager` field is **ambiguous and left alone**, never guessed.
+Adjudicate an install by RE-PROBING `node_modules`, never the exit code (pnpm exits
+non-zero on `ERR_PNPM_IGNORED_BUILDS` after a successful install). Why it matters,
+and the corepack/`.cmd` trap: [consumer-adoption.md](docs/runbooks/consumer-adoption.md)
+§Your package manager.
 
 ### CLI smoke contract (`--selfcheck-relocation`)
 
@@ -412,34 +408,25 @@ path), and **trust the store, not the fixture's local bake-off log**, which read
 near-zero and looks like lost progress.
 [Runbook](docs/runbooks/pinned-revision-fixture.md)
 
-- **A DB suite no runner names has never run.** A suite gated on
-  `AUDIT_DB_TEST_URL` skips itself without a disposable DSN, and node reports a
-  never-run suite as a clean pass — so enrolment in `db-test-container.mjs`'s
-  `*_SUITE_FILES` (**and**, in lockstep, `postgres-parity.yml`) is the only thing
-  that makes it coverage. A 2026-08-11 census found **15 enrolled nowhere**; six
-  failed the moment they ran. `npm run db:enrolment:gate` iterates the FILESYSTEM
-  — the only side that can see a file no list mentions — and requires each hit
-  enrolled or carrying a written `DB_SUITE_ENROLMENT_EXEMPT` reason. **Adding a
-  DB-gated suite is two edits, never one.**
+- **A DB suite no runner names has never run.** Without a disposable DSN it skips
+  itself, and node reports a never-run suite as a clean pass — so enrolment in
+  `db-test-container.mjs`'s `*_SUITE_FILES` (**and**, in lockstep,
+  `postgres-parity.yml`) is the only thing that makes it coverage. A 2026-08-11
+  census found **15 enrolled nowhere**; six failed the moment they ran.
+  `npm run db:enrolment:gate` iterates the FILESYSTEM — the only side that can see
+  a file no list mentions. **Adding a DB-gated suite is two edits, never one.**
 - **Sandbox-honesty rule.** A fresh worktree has no gitignored inputs, so a check
   that *skips* on a missing input passes having read nothing (known skips are
   forced hard: `AUDIT_PUSH_RANGE_REQUIRED`, `ARCH_COVERAGE_REQUIRE_ENVELOPE`).
   **Adding a check? Ask whether it can go green in a clean checkout having
   checked nothing — if so it needs a strictness flag, not a tolerated skip.** A
   sandbox setup failure is a push failure, never a pass.
-- **`npm test` refuses a green it did not earn.** Node reports a suite that
-  throws while being CONSTRUCTED (in the `describe` body — e.g. calling an
-  unimported `test`) as `not ok`, but counts it in neither `# fail` nor the exit
-  code: dd83e1f8 shipped `# pass 15 # fail 0`, exit 0, with **three suites that
-  never ran** and `check` green. The guard ([run-tests.mjs](scripts/run-tests.mjs)
-  `adjudicateRun` + [test-guard-reporter.mjs](scripts/lib/test-guard-reporter.mjs))
-  fails the run on **any non-todo `test:fail` reported alongside exit 0** — keyed
-  on the CONSEQUENCE (a failure the exit code dropped), not on the cause, so
-  future variants are caught without predicting them; a failing `{todo:true}` is
-  the one legitimate exit-0 failure and is exempt. It fails **closed** when its
-  own report is missing. Same class, same file: an ambient `NODE_TEST_CONTEXT`
-  is scrubbed from the child env because it makes `node --test` skip every file
-  and exit 0.
+- **`npm test` refuses a green it did not earn.** Node can report a suite as
+  `not ok` and still exit 0 — `dd83e1f8` shipped `# fail 0` with three suites that
+  never ran. `adjudicateRun` ([run-tests.mjs](scripts/run-tests.mjs)) fails the run
+  on any non-todo `test:fail` alongside exit 0, keyed on the **consequence** rather
+  than the cause, and fails **closed** when its own report is missing.
+  [prepush-sandbox.md](docs/runbooks/prepush-sandbox.md) §2.3.
 - **One range, one resolver** — [`push-range.mjs`](scripts/lib/push-range.mjs).
   Gates must not re-infer a base from working-tree state (`@{u}`, dirty→`HEAD~1`):
   that scoped multi-commit pushes to their tip and collapsed to `HEAD~1` always
@@ -463,33 +450,28 @@ near-zero and looks like lost progress.
 
 #### Testing doctrine — pointer
 
-Three tiers, because blanket TDD is theatre at the LLM boundary but rigor pays
-at deterministic seams: **Tier 1** test-first for deterministic modules
-(`schemas`, `sensitive-paths`, `vcs`, `bandit`, `ledger`, `findings-*`,
-`config`, `file-io`, `sync-*`); **Tier 2** invariants + canned fixtures for
-LLM-orchestration seams — never assertions on model prose, never a
-whole-provider mock (that tests the mock); **Tier 3 (non-negotiable)** two
-seams where a change lands with its test in the **same commit** — *(a)*
-**sensitive-path egress**, because a leak ships credentials to a third-party
-LLM, and *(b)* the **consumer sync / relocation contract**, because a break
-ships silently to repos you cannot observe. Tier list, guarding tests, and the
+Three tiers, because blanket TDD is theatre at the LLM boundary but rigor pays at
+deterministic seams: **Tier 1** test-first for deterministic modules; **Tier 2**
+invariants + canned fixtures for LLM-orchestration seams — never assertions on
+model prose, never a whole-provider mock (that tests the mock); **Tier 3
+(non-negotiable)** two seams where a change lands with its test in the **same
+commit** — *(a)* **sensitive-path egress** (a leak ships credentials to a
+third-party LLM) and *(b)* the **consumer sync / relocation contract** (a break
+ships silently to repos you cannot observe). Tier list, guarding tests and the
 deliberate deferrals: [`docs/reference/testing-doctrine.md`](docs/reference/testing-doctrine.md).
 
 #### Pre-ship empirical verify — for skills that assert on a live runtime
 
 Static review cannot catch what only appears when a real browser renders real
 data — a mid-theme-transition `getComputedStyle` read once *fabricated* a bug
-that survived four review passes. Three load-bearing rules: **(1)** any skill
-driving a browser (visual-audit, nav-audit `--verify`, persona-test,
-persona-consistency, click-test, ux-lock) **must run against ONE real app
-before being called done**, and a field finding with a green repro routes to a
-regression test + ONE focused review, never the adjudication loop (that
-resolves uncertainty the repro already killed); **(2)** two capture bug classes
-to check by name — mid-state-change capture (freeze transitions AFTER the flip
-+ `await document.fonts.ready`) and empty/failed capture, which must degrade to
-`unverified`, never "verified / 0 findings"; **(3)** **audit your success
-paths** — ask of any green-emitting branch *"can this return green without
-having checked anything?"* (six such holes in visual-audit `--gate` alone).
+that survived four review passes. **(1)** Any skill driving a browser must run
+against ONE real app before being called done, and a field finding with a green
+repro routes to a regression test + ONE focused review, never the adjudication
+loop. **(2)** Two capture bug classes by name: mid-state-change capture (freeze
+transitions AFTER the flip + `await document.fonts.ready`), and empty/failed
+capture, which must degrade to `unverified`, never "verified / 0 findings".
+**(3)** **Audit your success paths** — ask of any green-emitting branch *"can this
+return green without having checked anything?"*
 → [`docs/runbooks/pre-ship-empirical-verify.md`](docs/runbooks/pre-ship-empirical-verify.md).
 
 ## Model Resolution
@@ -498,27 +480,17 @@ having checked anything?"* (six such holes in visual-audit `--gate` alone).
 when providers ship new versions. All model-reading env vars in config.mjs pass
 through `resolveModel()`.
 
-**Sentinels** (preferred in `.env`):
-
-| Sentinel            | Picks from                                  |
-|---------------------|---------------------------------------------|
-| `latest-gpt`        | newest non-mini GPT in the pool             |
-| `latest-gpt-mini`   | newest GPT mini variant                     |
-| `latest-opus`       | newest Claude Opus                          |
-| `latest-sonnet`     | newest Claude Sonnet                        |
-| `latest-haiku`      | newest Claude Haiku (prefers undated alias) |
-| `latest-pro`        | `gemini-pro-latest` (alias short-circuit)   |
-| `latest-flash`      | `gemini-flash-latest`                       |
-| `latest-flash-lite` | `gemini-flash-lite-latest`                  |
-
-**Resolution** (`resolveModel`): stale concrete IDs → `DEPRECATED_REMAP` → sentinel
-(one-time warning); a sentinel picks the newest tier match from live-catalog ∪
-`STATIC_POOL` (Google's `gemini-{tier}-latest` alias is authoritative); concrete IDs
-pass through. The heavy LLM entry points (audit / brainstorm / gemini-review) call
-`refreshModelCatalog()` + re-resolve, so new provider models are picked up
-automatically — no manual `STATIC_POOL` edit needed. `MODEL_CATALOG_REFRESH=skip`
-opts out (air-gapped CI); silent fallback to the static pool on network failure.
-Self-check: `node scripts/lib/model-resolver.mjs resolve | catalog`.
+**Sentinels** (preferred in `.env`) — `latest-gpt`, `latest-gpt-mini`,
+`latest-opus`, `latest-sonnet`, `latest-haiku`, and Google's authoritative
+aliases `latest-pro` / `latest-flash` / `latest-flash-lite`. A sentinel picks
+the newest tier match from live-catalog ∪ `STATIC_POOL`; a stale concrete id is
+remapped to one with a one-time warning; concrete ids pass through. The heavy
+entry points refresh the catalog and re-resolve, so new provider models are
+picked up with no `STATIC_POOL` edit (`MODEL_CATALOG_REFRESH=skip` opts out for
+air-gapped CI; a network failure falls back silently). Per-sentinel table,
+resolution order and static-pool maintenance:
+[`model-resolution.md`](docs/reference/model-resolution.md). Self-check:
+`node scripts/lib/model-resolver.mjs resolve | catalog`.
 
 **Anti-patterns (load-bearing):**
 - Do NOT pin concrete model IDs in new code — use a sentinel (`latest-*`).
@@ -551,7 +523,7 @@ recover. Three triggers:
 | Metric | What it measures | Default trigger |
 |---|---|---|
 | Fuzzy re-raise rate | New-fingerprint findings whose text matches a prior finding (trigram sim > 0.6) | `> 15%` |
-| Cluster density | Median per-repo count of open finding pairs that are **semantic same-file cross-run re-raises** (cosine > 0.85 over `finding_embeddings`, migrated off trigram 2026-07-21). Reports embedding **coverage**; a low-coverage reading is `unknown`, not green. Excludes control-state markers. Trigram survives as a fallback when the semantic RPC is absent | `>= 5` |
+| Cluster density | Median per-repo count of open finding pairs that are **semantic same-file cross-run re-raises** (cosine > 0.85). Reports embedding **coverage** — a low-coverage reading is `unknown`, never green — and excludes control-state markers | `>= 5` |
 | Recurrence rate | Fixed findings that reappear in same repo within 30 days under a new fingerprint | `> 10%` |
 
 Runtime is the `memory_health_metrics(window_days)` Postgres RPC added by
@@ -575,18 +547,15 @@ in [`docs/reference/memory-health-gate.md`](docs/reference/memory-health-gate.md
   machine-generated notices are byte-identical, so they pair at similarity 1.00
   (44% of the raw signal on 2026-07-20). Matched on the detail-snapshot **prefix**,
   never the category — a wave emits both control state and real findings.
-- **`SET statement_timeout` inside a function is DECORATIVE** (Postgres arms the
-  timer at statement start) — bound an RPC at the **caller**, as `db/rpc.mjs` does
-  via `withTx` + `SET LOCAL`. And `CREATE OR REPLACE FUNCTION` resets the whole
-  `proconfig` array **and** the ACL, so a redefinition silently reverts a
-  `search_path` pin + EXECUTE revoke unless it re-states both — verify with
-  `pg_proc.proconfig` / `proacl`, not review.
+- **Bound an RPC at the CALLER** — `SET statement_timeout` inside a function is
+  decorative, and `CREATE OR REPLACE FUNCTION` resets `proconfig` **and** the ACL,
+  silently reverting a `search_path` pin + EXECUTE revoke. Both traps, and how to
+  verify them from `pg_proc` rather than by review, are in the reference above.
 
-> **pgvector prototyped + promoted (2026-07-21):** trigram UNDER-counts churn; semantic cosine
-> catches reworded re-raises. `scripts/semantic-suppress.mjs` reconciler (dry-run default) + a
-> record-time hook in `recordFindings` (merged pass) **default-ON**, fail-open, kill switch
-> `AUDIT_SEMANTIC_SUPPRESS_ENABLED=false`. Dedups the store row, NEVER the audit report; core
-> `semantic-suppression.mjs`/`semanticSuppressConfig`. [`docs/research/pgvector-clustering-prototype.md`](docs/research/pgvector-clustering-prototype.md).
+> **pgvector promoted (2026-07-21):** semantic cosine catches reworded re-raises that
+> trigram under-counts. Record-time hook in `recordFindings`, **default-ON**, fail-open,
+> kill switch `AUDIT_SEMANTIC_SUPPRESS_ENABLED=false`. Dedups the store row, NEVER the
+> audit report.
 
 ## Learning System (Phase 1)
 
@@ -647,20 +616,14 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
 - **Never use the dashboard as the routine migration path** — it reintroduces the
   silent-drift the ledger exists to eliminate; make the source migration idempotent
   and retry `--migrate` instead.
-- **jsonb-safe write seam (load-bearing — do NOT hand-`JSON.stringify` jsonb columns).**
-  The db-layer write builders ([`scripts/lib/db/query.mjs`](scripts/lib/db/query.mjs)
-  `serializeWriteParam`) auto-JSON-serialize a plain array bound to ANY column on the
-  INSERT/UPSERT/UPDATE-SET path — because node-postgres binds a raw JS array as a
-  Postgres ARRAY literal, which a `jsonb` column rejects (`22P02`, non-empty) or
-  silently stores as `{}` (empty). This was the M3 supabase-js→pg regression
-  (PostgREST used to JSON-serialize bodies implicitly). So: **pass jsonb values raw**
-  (the seam handles it); a genuine Postgres array column (`text[]`/`int[]`) opts OUT
-  with **`pgArray(value)`** so its array stays a literal. WHERE predicates are NOT
-  serialized (array equality stays raw). A jsonb writer that forgets is safe; a
-  `text[]` writer that forgets `pgArray()` fails LOUDLY. Guard:
-  [`tests/store-jsonb-array-serialization.test.mjs`](tests/store-jsonb-array-serialization.test.mjs);
-  the `/audit-code` backend pass also flags raw-array-to-jsonb + silent DB-write
-  error-swallow + unverified-write-success (RLS/0-row) as HIGH.
+- **jsonb-safe write seam — do NOT hand-`JSON.stringify` a jsonb column.** The
+  db-layer write builders (`serializeWriteParam`) auto-serialize a plain array
+  bound to ANY column on the write path, because node-postgres binds one as a
+  Postgres ARRAY literal that jsonb rejects (`22P02`) or silently stores as `{}`.
+  **Pass jsonb values raw**; a real `text[]`/`int[]` column opts OUT with
+  **`pgArray(value)`**. The asymmetry is the thing to remember: a jsonb writer
+  that forgets is safe, a `text[]` writer that forgets fails LOUDLY.
+  [postgres-parity.md](docs/runbooks/postgres-parity.md) §jsonb write seam.
 - **Migrations stay schema-portable**: `parity:check-coupling` fails on any `<schema>.`
   qualification or non-core reference outside the recorded baseline.
 - **Every audit-store write in `legacy-production-audit.mjs`'s cloud block goes
@@ -668,46 +631,34 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
   registered in [audit-store-writers.mjs](scripts/lib/audit-store-writers.mjs) —
   which is the registry's ONLY bootstrap, so both the orchestrator and
   `cross-skill.mjs write-spill` must import it. Four outcomes, and they are not
-  interchangeable: `written` · `spilled` (queued, a later drain replays it) ·
-  `lost` (evidence in `lost/`, never replayed) · `skipped` (the store declined —
-  cloud off is a supported mode, not a failure). `lost` **or** `spilled` makes a
-  run `incomplete`: at the moment the row is written that data is not in the
-  store. A writer is spill-eligible only by declaring a `rowKey`, and that key
-  needs a real DB constraint — a logical key is not an `ON CONFLICT` target
-  (measured: a PARTIAL unique index answers `42P10`). `npm test` derives the
-  writer set from **every module under `scripts/lib/store/**`** (it named TWO
-  until 2026-08-12 — a writer in a third was neither exempt nor registered but
-  *unrepresentable*, 0 of 5 sampled cross-skill writers visible), so a new
-  write-shaped export must be registered or exempted **with a reason**. The verb
-  set is `record|sync|upsert|save|persist|write|delete|retire|mark` — widening it
-  from `record|sync` alone surfaced five more writers, one of which an audit had
-  independently flagged as swallowing while this oracle read the tree clean.
+  interchangeable: `written` · `spilled` (queued, replayed by a later drain) ·
+  `lost` (evidence kept, never replayed) · `skipped` (the store declined — cloud
+  off is a supported mode, not a failure). `lost` **or** `spilled` makes a run
+  `incomplete`. Spill-eligibility requires a declared `rowKey` backed by a real
+  DB constraint — a logical key is not an `ON CONFLICT` target (a PARTIAL unique
+  index answers `42P10`). `npm test` derives the writer set from **every module
+  under `scripts/lib/store/**`** over the verb set
+  `record|sync|upsert|save|persist|write|delete|retire|mark`, so a new
+  write-shaped export must be registered or exempted **with a reason** — before
+  2026-08-12 it named two modules and a writer in a third was *unrepresentable*,
+  not merely unlisted.
   Plan: [audit-store-write-durability.md](docs/plans/audit-store-write-durability.md).
-- **`emit({ok:false})` sets a non-zero exit code** ([cli-io.mjs](scripts/lib/cli-io.mjs),
-  2026-08-12). It was a bare `stdout.write` with no exit coupling, so a CLI could
-  report a failure in its envelope and exit 0 — which every caller checking `$?`
-  reads as success (13 of 124 captured cross-skill invocations did exactly that).
-  Opt out only with `emit(env, {softFail:true, reason})`; the reason is
-  **required** (a bare boolean throws), and `npm run emit:exit:gate` ratchets the
-  opt-out population — it fails on growth AND on an unrecorded reduction.
+- **`emit({ok:false})` sets a non-zero exit code** ([cli-io.mjs](scripts/lib/cli-io.mjs)).
+  Without the coupling a CLI reports a failure in its envelope and exits 0, which
+  every caller checking `$?` reads as success. Opt out only with
+  `emit(env, {softFail:true, reason})` — the reason is **required** — and
+  `npm run emit:exit:gate` ratchets the opt-out population, failing on growth AND
+  on an unrecorded reduction.
   Design: [cross-skill-command-registry.md](docs/plans/cross-skill-command-registry.md) §2b F4.
 - **"Disposable" is an ALLOWLIST of loopback hosts, and it fails CLOSED.**
   `isDisposableDbHost` / `assertDisposableDbUrl` (`scripts/lib/db/client.mjs`)
-  guard the `db-setup`/`db-withtx` suites (they `DROP SCHEMA public CASCADE`) and
-  the `generate-expected-schema.mjs` fixture — closing the 2026-07-14 wipe
-  incident. Both were a **denylist** of `*.supabase.*` until 2026-08-08, resting
-  on their own docstring's *"this repo has exactly one Supabase project, and it is
-  always production"* — which the NAS cutover falsified the same day, leaving both
-  guards inert against the new production store. It bit within hours: the schema
-  fixture was regenerated from production with no warning (9 wrong
-  `ordinal_position` values — a restored DB renumbers `attnum` past `DROP COLUMN`
-  tombstones, a fresh replay does not). **Never re-express this as "not
-  $VENDOR"** — a denylist of production hosts is only as current as the last infra
-  change; an allowlist is a property of what disposable *means*. Same reason
-  production identity is compared as host+port+database, not as a DSN string
-  (`?sslmode=disable` defeats string equality). No env escape hatch, deliberately.
-  Detail: [postgres-parity-runbook.md](docs/runbooks/postgres-parity.md) §Incident.
-  **Regenerate the fixture only from a fresh replay** — `npm run db:local:regen`.
+  guard the suites that `DROP SCHEMA public CASCADE` and the schema fixture.
+  **Never re-express this as "not $VENDOR"** — the denylist it replaced went
+  inert the day the store moved, and a denylist is only as current as the last
+  infra change. Same reason production identity is compared as host+port+database,
+  never as a DSN string. No env escape hatch, deliberately, and **regenerate the
+  fixture only from a fresh replay** (`npm run db:local:regen`).
+  [postgres-parity.md](docs/runbooks/postgres-parity.md) §Incident + §Correction.
 
 → **Design** (no-adapter `pg`-direct decision, schema scope, privilege model, file plan): [`docs/plans/postgres-parity.md`](docs/plans/postgres-parity.md) + [`postgres-parity-schema-coupling.md`](docs/plans/postgres-parity-schema-coupling.md). **Operations** (setup recipe, migration-drift CLI + exit codes, pre-push snippet, break-glass atomic-apply, shared-cloud-config, prerequisites): [`docs/runbooks/postgres-parity.md`](docs/runbooks/postgres-parity.md).
 
@@ -752,15 +703,12 @@ multiples of the primary Gemini review it exists to sanity-check.
 `FINAL_REVIEW_SHADOW_MODEL`; xai is a native provider, own base URL/credential pair,
 not a gateway; unset ⇒ not entered, byte-identical; no-op under Azure; never gates).
 
-**Envelope scope (2026-08-14, plan: `final-review-scoped-second-reviewer.md`).**
-`FINAL_REVIEW_SHADOW_SCOPE=full|thin|gap` — `full` is the historical
-byte-identical default; **`thin` is the intended default going forward** (the
-shadow's job is a targeted gap-check, not a second full audit); `gap` shows the
-shadow the primary's findings and is **campaign-ineligible**. A manifest's
-`controls.envelopeScope` binds a cohort to ONE scope, and an active campaign
-refuses `gap` or an invalid value **before any provider call**. Mechanics +
-budget cap: [`environment-variables.md`](docs/reference/environment-variables.md)
-§Shadow final review.
+**Envelope scope.** `FINAL_REVIEW_SHADOW_SCOPE=full|thin|gap`; **`thin` is the
+intended default going forward** — the shadow's job is a targeted gap-check, not a
+second full audit. `gap` is **campaign-ineligible**, a manifest binds a cohort to
+ONE scope, and an active campaign refuses `gap` or an invalid value **before any
+provider call**. Semantics + budget cap:
+[`environment-variables.md`](docs/reference/environment-variables.md) §Shadow final review.
 Verdict/method/stopping rule + three dated corrections: [briefing](docs/research/final-review-shadow-adjudication-briefing.md) · [plan](docs/plans/final-review-shadow-reviewer.md).
 Three results that generalise — **read before any reviewer/model comparison**:
 
@@ -823,29 +771,25 @@ worth switching to?" for the **auditor** (currently GPT) or **adjudicator**
   Azure) can never emit `verdict:'switch'` — only `keep`/`inconclusive`/
   `manual_review_required`. Schema-enforced, not a convention.
 - **The oracle-matching recall ceiling**: scoring credits only the ONE curated
-  defect per entry while real models find OTHER genuine bugs in the same diff,
-  so **low recall is not a quality signal** — read the raw per-case output
-  first, and treat recall as a floor, not the deciding metric (FP-rate + cost
-  decide). Applies to promotion-tier's Tier C fallback too; Tier C never
-  substitutes for a Tier A/B comparative result.
-- **Egress-gate prose/diff false-positive classes: fixed 2026-07-12** — historical
-  recall is the contract; don't re-add trailing-punctuation stripping (tried,
-  reverted: re-blocked valid entries). Guarded in `tests/egress-path-scan.test.mjs`
-  + `tests/sensitive-paths.test.mjs`.
-- **Verdict of record (2026-07-13): GLM-5.2 vs GPT-5.6 → `keep` GPT-5.6**
-  (real Tier A, $1.87; FP-rate drove it; the recall column is untrustworthy
-  per the ceiling above).
-- **A model swap is SYNCHRONOUS, never a background window** (2026-07-26): run it
-  when the model ships, adjudicate in the same sitting, verdict → `docs/research/`.
-  Passive collection killed arm-eval and produced five false "window met" reads —
-  epoch drift, dormancy and the wipe all need *elapsed time*. Only
+  defect per entry while real models find OTHER genuine bugs in the same diff, so
+  **low recall is not a quality signal** — read the raw per-case output first and
+  treat recall as a floor; FP-rate + cost decide. Tier C never substitutes for a
+  Tier A/B comparative result.
+- **Egress-gate prose/diff false positives: fixed 2026-07-12** — historical recall
+  is the contract; don't re-add trailing-punctuation stripping (tried, reverted:
+  it re-blocked valid entries).
+- **Verdict of record (2026-07-13): GLM-5.2 vs GPT-5.6 → `keep` GPT-5.6** (real
+  Tier A, $1.87; FP-rate drove it, the recall column being untrustworthy above).
+- **A model swap is SYNCHRONOUS, never a background window**: run it when the model
+  ships, adjudicate in the same sitting, verdict → `docs/research/`. Passive
+  collection killed arm-eval and produced five false "window met" reads. Only
   intervention-over-organic-work earns a shadow; exactly two are open
   (tiered-pipeline, final-review 2nd gate). **Do not add a sixth collector.**
 - **Evidence counts only if produced under the contract the stopping rule
-  validates**: stamp `contractEpoch` **at the collector**, verify by match
-  (`TIERED_SHADOW_CONTRACT_EPOCH`). Unstamped ⇒ ineligible, never "assume
-  current"; bump on a meaning-changing fix and re-collect — **never backfill by
-  date** (the relabelling that let the 5th false green through).
+  validates**: stamp `contractEpoch` **at the collector** and verify by match.
+  Unstamped ⇒ ineligible, never "assume current"; bump on a meaning-changing fix
+  and re-collect — **never backfill by date**, the relabelling that let the fifth
+  false green through.
 
 → **Operational reference**: [`docs/runbooks/model-eval-harness.md`](docs/runbooks/model-eval-harness.md) · **Design + prior-art trace**: [`docs/plans/model-swap-eval-harness.md`](docs/plans/model-swap-eval-harness.md) · **First real verdict write-up**: [`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](docs/research/experiment-3-model-swap-glm-vs-gpt.md).
 
@@ -889,35 +833,30 @@ final-reviewer-precedence, deployment-quota or throttling tables.
 incidents and opt-out lists are in the guide):
 
 - **An availability gate must ask whether a ROUTE exists, not whether a public env
-  var is set** — fourth instance fixed 2026-08-30. An
-  `if (!process.env.OPENAI_API_KEY)` guard upstream of an Azure-aware seam makes
-  the Azure branch unreachable — dead code on exactly the installs it was written
-  for; the envelope tell is a **failure with zero latency**, nothing was called. So
-  **grep the whole path a call site takes for the public key name**, let ONE oracle
-  own the answer (`lib/brainstorm/provider-availability.mjs` — two dispatch sites
-  each held their own copy, so fixing one left the other wrong), and use
-  **`isClaudeAvailable()`, never `ANTHROPIC_API_KEY`** (a tenant sets no such key).
-  An **OMITTED `azureRoute` ADOPTS the tenant's route**, so a bare
-  `createAnthropicClient()` is correct by construction; pass **`azureRoute: null`**
-  only where an id *means* the public service (`claude-opus` vs `azure-claude`).
-  Tests spawning such a CLI must scrub `AZURE_*` explicitly, or they pass — or
-  spend — by whose machine they run on. **A profile-dependent DEFAULT is the other
-  half**: which two voices /brainstorm runs is a property of the profile
-  (`defaultProviders()`), never a constant, and adding one is a multi-table change.
+  var is set** (four instances so far). An `if (!process.env.OPENAI_API_KEY)` guard
+  upstream of an Azure-aware seam makes the Azure branch unreachable — dead code on
+  exactly the installs it was written for, and the tell is a **failure with zero
+  latency**: nothing was called. **Grep the whole path a call site takes for the
+  public key name**, let ONE oracle answer
+  (`lib/brainstorm/provider-availability.mjs`), and use **`isClaudeAvailable()`,
+  never `ANTHROPIC_API_KEY`**. An **omitted `azureRoute` ADOPTS the tenant's
+  route**; pass `azureRoute: null` only where an id *means* the public service.
+  Tests spawning such a CLI must scrub `AZURE_*`, or they pass — or spend — by
+  whose machine they run on. A profile-dependent DEFAULT is the other half: which
+  voices /brainstorm runs is `defaultProviders()`, never a constant.
 - **The deployment is CONSTRUCTOR-level route state, not a body field** (2026-08-12).
   Build `AzureOpenAI({endpoint, deployment, apiVersion})` and let the SDK derive
   `/openai/deployments/{deployment}/…` — **never concatenate an operation path**,
   and never share one client across purposes (the cache key carries purpose +
   deployment). Probing *candidate* deployments needs a client per candidate.
-- **An endpoint and the credential it is addressed with are ONE unit** (2026-08-13).
-  `azureConfig.claudeRoute` resolves `{origin, baseUrl, authMode, apiKey,
-  credentialVar}` together; pass it as `createAnthropicClient({azureRoute})` —
-  **never a bare `baseURL`**. Generalise it: *if a change can make one host receive
-  another's credential, the two were resolved apart and must not be.* Assert these
-  on the **emitted request**, not the client config
-  ([azure-claude-route.test.mjs](tests/azure-claude-route.test.mjs)) — the Anthropic
-  SDK binds its transport at construction, so a post-hoc `globalThis.fetch` patch
-  observes nothing and the request escapes to the network.
+- **An endpoint and the credential it is addressed with are ONE unit.**
+  `azureConfig.claudeRoute` resolves them together; pass it as
+  `createAnthropicClient({azureRoute})`, **never a bare `baseURL`**. Generalise:
+  *if a change can make one host receive another's credential, the two were
+  resolved apart and must not be.* Assert on the **emitted request**, not the
+  client config ([azure-claude-route.test.mjs](tests/azure-claude-route.test.mjs))
+  — the SDK binds transport at construction, so a post-hoc `globalThis.fetch`
+  patch observes nothing and the request escapes to the network.
 - **A deployment or resource switch is a DIFFERENT vector space.** Provenance is the
   single endpoint-qualified `resolveEmbedProfile()` identity, and `arch:refresh`
   auto-promotes to a full re-embed so two spaces can't mix. An unset
@@ -955,33 +894,20 @@ When `--round >= 2`, the audit script enables three-layer defence against findin
 
 1. **Rulings injection** (Layer 1): `buildRulingsBlock()` formats prior rulings as system-prompt exclusions
 2. **R2+ prompts** (Layer 2): `R2_ROUND_MODIFIER` + pass rubric (not "find all issues")
-3. **Post-output suppression** (Layer 3): `suppressReRaises()` fuzzy-matches findings against ledger, then — when cloud is on — `runCloudFpPass()` applies the **cloud FP-pattern policy** (`docs/plans/cloud-fp-suppression-read-loop.md`). Called **unconditionally, outside the ledger branch** (a no-ledger run is exactly the case a pattern learned on another machine serves) and it **exempts `reopened`** so category statistics can never mask a regression. Layer 1 stays local-ledger-only: a pre-generation "do NOT raise X" hint can stop a required reopen from ever reaching the classifier, so the cloud policy deliberately does **not** feed the prompt.
+3. **Post-output suppression** (Layer 3): `suppressReRaises()` against the ledger, then the cloud FP-pattern policy — called **unconditionally** (a no-ledger run is exactly the case a pattern learned elsewhere serves) and **exempting `reopened`** so statistics can never mask a regression. Layer 1 stays local-ledger-only on purpose.
 
-**A rulings group's header may claim only what its ruling ESTABLISHED** (2026-08-14).
-`buildRulingsBlock` renders four groups and their instructions differ in strength on
-purpose: DISMISSED carries a disproof ("you ruled this false"); FIXED keeps the
-reopen-on-material-change clause; ADJUSTED bars only re-escalation; **DEFERRED** bars
-re-arguing scope while *explicitly licensing a different defect in the same code*,
-because a defer is not a disproof — the defect is real and still present. The DEFERRED
-group exists because `ruling` is a **separate axis** from `adjudicationOutcome`
-(`LedgerEntrySchema`), so the sanctioned deferral shape (`accepted` + `pending`) matched
-no group and was invisible to the next round: the auditor re-litigated the same scope
-decision, with the same reasoning, every round. Adding a group? State what its ruling
-proved, and give it the weakest instruction that is *true* — an overstated header
-suppresses true positives.
+Two invariants constrain anyone changing them; the group table, both traps and
+the incidents are in
+[`docs/reference/r2-audit-mode.md`](docs/reference/r2-audit-mode.md):
 
-**The existence gate runs on BOTH reviewer paths, and its classifier is prose-shaped**
-(2026-08-14). `verifyExistenceFindings` ([finding-verification.mjs](scripts/lib/audit/finding-verification.mjs))
-mechanically refutes "file/module X does not exist" against the repo inventory. It ran
-only in the GPT path for its whole life — `gemini-review.mjs` never called it, so a false
-absence claim from the *final* reviewer could only be answered by argument. Now wired via
-`applyExistenceGate` at both post-parse filter chains. Two traps: `wrongly_dismissed`
-shares **no field name** with `FindingBase`, so it needs a projection or the gate runs and
-classifies zero; and the noun→claim bridge must not treat a **filename's dot as a sentence
-boundary** (`CLAIM_GAP`, not `[^.]`) — that hole made the two most natural absence
-phrasings unclassifiable while extension-free prose still matched, so the gate looked
-alive. Widening classification is the safe direction here (unadjudicable ⇒
-`requires_verification`, severity preserved); only `refuted` downgrades.
+- **A rulings group's header may claim only what its ruling ESTABLISHED.** A
+  defer is not a disproof, so DEFERRED bars re-arguing scope while *licensing a
+  different defect in the same code*. Give a new group the weakest instruction
+  that is **true** — an overstated header suppresses true positives silently.
+- **The existence gate runs on BOTH reviewer paths, and its classifier is
+  prose-shaped.** Widening classification is the safe direction (unadjudicable ⇒
+  `requires_verification`, severity preserved; only `refuted` downgrades) — and
+  both of its historical bugs let it report health while classifying zero.
 
 ### R2+ CLI Flags
 
@@ -1036,17 +962,16 @@ numbers — the cutoff is computed per repo** (see "Why no fixed numbers" below)
   This is *absence of evidence*, not a weak match. Never read it as "checked
   and rejected".
 
-**Why no fixed numbers.** The old `reuse ≥0.90 / extend ≥0.85 /
-justify-divergence ≥0.75` bands fired **zero times in 1,763 consultations** —
-this pipeline tops out near 0.83, so they were mathematically unreachable and
-the feature was silently inert for its whole history. The cutoff is now `μ + 3σ`
-over the repo's OWN symbol-embedding background, computed at `arch:refresh`. A
-threshold is a property of *corpus × summary style × embedding model × compose
-template × normalizer*, not of the tool — and this tooling syncs to other repos,
-so shipping a constant would repeat the defect elsewhere. **An uncalibrated repo
-bands `review` only**: honest, not degraded — nothing has established what a
-meaningful score is there; run `npm run arch:refresh`. The three old band names are
-**retired**; seeing them means stale tooling.
+**Why no fixed numbers.** The old `reuse ≥0.90 / extend ≥0.85 / justify-divergence
+≥0.75` bands fired **zero times in 1,763 consultations** — the pipeline tops out near
+0.83, so they were mathematically unreachable and the feature was inert for its whole
+history. The cutoff is now `μ + 3σ` over the repo's OWN symbol-embedding background,
+computed at `arch:refresh`, because a threshold is a property of *corpus × summary
+style × embedding model × compose template × normalizer*, not of the tool — and this
+tooling syncs elsewhere, so a constant would repeat the defect there. **An
+uncalibrated repo bands `review` only**: honest, not degraded; run
+`npm run arch:refresh`. The three old band names are **retired** — seeing them means
+stale tooling.
 
 **When NOT to consult**:
 
@@ -1234,15 +1159,12 @@ elsewhere for **code↔code** seams. Its worst case is the seam where the
 code**. Nothing type-checks that, nothing errors, and the failure is silent in
 both directions.
 
-- **The incident (2026-08-11).** `skills/persona-test/SKILL.md` had specified
-  `finding.severity` since 2026-04-19. Every consumer read `finding.code`, on a
-  docstring claiming that shape was verified against live data one day before
-  the store was wiped. `isP0OrP1` matched **0 findings in all 7 live sessions**;
-  `persona_audit_correlations` was empty store-wide for the correlator's whole
-  life, and the reason string it returned was indistinguishable from a clean
-  run. Fixture factories in its own test suite were all built from the reader's
-  spelling, so a green suite proved the reader against a shape production has
-  never emitted.
+Two incidents produced the rules below and are written up in
+[`testing-doctrine.md`](docs/reference/testing-doctrine.md) §prose↔code seam: a
+reader that matched **0 findings in all 7 live sessions** because the SKILL.md
+said `severity` and every consumer read `code`, and a prompt that asked for a
+field the response schema forbade outright.
+
 - **Before reading a field out of a model-authored payload**, grep the authoring
   SKILL.md for the field name. A docstring about "the real production shape" is
   a claim about mutable state — see verification-discipline §1b.
@@ -1255,17 +1177,12 @@ both directions.
 - **Name the mismatch distinctly.** "No P0/P1 findings" and "P0/P1 declared but
   none parsed" must not share a reason string; the second is a shape bug wearing
   the first's clothes.
-- **The worse variant: the prompt asks for a field the RESPONSE SCHEMA forbids.**
-  Above, the two sides merely spelled it differently. `R2_ROUND_MODIFIER` told
-  the model to set `is_reopened: true` from 2026-04-01 while
-  `ProducerFindingSchema` had no such property and emits
-  `additionalProperties: false` — so the value was *unrepresentable*, not
-  mistyped, and no test could have caught it from either side alone. Ask it of
-  the EMITTED schema (`z.toJSONSchema(...)` → `properties`/`required`), never of
-  the Zod source: **a prompt that names a field is a claim about a contract you
-  have not checked.** Third instance of this class (`causalChain`,
-  `EVIDENCE_CONTRACT_BLOCK`, this) — and a required field also has to be filled
-  by every non-LLM constructor, so adding one is never a one-line change.
+- **The worse variant: the prompt asks for a field the RESPONSE SCHEMA forbids** —
+  unrepresentable, not mistyped, and uncatchable from either side alone. Ask it of
+  the EMITTED schema (`z.toJSONSchema(...)` → `properties`/`required`), never of the
+  Zod source: **a prompt that names a field is a claim about a contract you have not
+  checked.** A required field must also be filled by every non-LLM constructor, so
+  adding one is never a one-line change.
 
 ## Sensitive paths + VCS contract (canonical locations)
 

@@ -130,6 +130,29 @@ tree would decide "unchanged" about something it never read.
 > **Do not "fix" a worktree by hand-linking `node_modules` into it.** That hides
 > the tool bug from the next person, and is the ritual this removes.
 
+## 2.3 `npm test` refuses a green it did not earn
+
+Node reports a suite that throws while being **constructed** — in the `describe`
+body, e.g. calling an unimported `test` — as `not ok`, but counts it in neither
+`# fail` nor the exit code. `dd83e1f8` shipped `# pass 15  # fail 0`, exit 0, with
+**three suites that never ran**, and `check` was green over it.
+
+The guard is [`run-tests.mjs`](../../scripts/run-tests.mjs)'s `adjudicateRun` plus
+[`test-guard-reporter.mjs`](../../scripts/lib/test-guard-reporter.mjs). It fails the
+run on **any non-todo `test:fail` reported alongside exit 0**.
+
+Two properties are deliberate:
+
+- **It is keyed on the CONSEQUENCE** — a failure the exit code dropped — not on the
+  cause. Future variants of "node lost a failure" are caught without anyone having
+  to predict them. A failing `{todo: true}` is the one legitimate exit-0 failure and
+  is exempt.
+- **It fails CLOSED when its own report is missing.** A guard that cannot see the
+  run must not pass it.
+
+Same class, same file: an ambient `NODE_TEST_CONTEXT` is scrubbed from the child
+env, because its presence makes `node --test` skip every file and exit 0.
+
 ## 3. The push range
 
 The hook reads git's stdin (`<local_ref> <local_sha> <remote_ref> <remote_sha>`)

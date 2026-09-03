@@ -448,6 +448,50 @@ to the real production DSN and re-running `db-setup.test.mjs` now fails the
 **A stray `drift_test` table remains in production** (harmless leftover from
 the incident) — not dropped without separate explicit confirmation.
 
+### Correction (2026-08-08): the fix above was a DENYLIST, and it went inert
+
+The same-day fix rejected *Supabase-hosted* hosts. That rested on the guard's
+own docstring — *"this repo has exactly one Supabase project, and it is always
+production"* — which the **NAS cutover falsified the same day**, leaving both
+guards inert against the new production store. It bit within hours: the
+`generate-expected-schema.mjs` fixture was regenerated from production with no
+warning, producing 9 wrong `ordinal_position` values (a restored DB renumbers
+`attnum` past `DROP COLUMN` tombstones; a fresh replay does not).
+
+`isDisposableDbHost` / `assertDisposableDbUrl` are now an **ALLOWLIST of
+loopback hosts**, failing CLOSED. **Never re-express this as "not $VENDOR"** — a
+denylist of production hosts is only as current as the last infra change,
+whereas an allowlist is a property of what *disposable* means. For the same
+reason, production identity is compared as **host + port + database**, not as a
+DSN string: `?sslmode=disable` defeats string equality. There is deliberately no
+env escape hatch.
+
+They guard the `db-setup` / `db-withtx` suites (which `DROP SCHEMA public
+CASCADE`) and the schema fixture. **Regenerate that fixture only from a fresh
+replay** — `npm run db:local:regen`, never from a restored or production DB.
+
+### The jsonb write seam — do NOT hand-`JSON.stringify` a jsonb column
+
+node-postgres binds a raw JS array as a Postgres **ARRAY literal**, which a
+`jsonb` column rejects (`22P02`) when non-empty and silently stores as `{}` when
+empty. That was the M3 supabase-js→pg regression: PostgREST used to JSON-
+serialize bodies implicitly, and nothing replaced it.
+
+The db-layer write builders ([`scripts/lib/db/query.mjs`](../../scripts/lib/db/query.mjs)
+`serializeWriteParam`) now auto-JSON-serialize a plain array bound to ANY column
+on the INSERT / UPSERT / UPDATE-SET path. So:
+
+- **Pass jsonb values raw** — the seam handles them.
+- A genuine Postgres array column (`text[]`, `int[]`) opts **out** with
+  **`pgArray(value)`**, so its array stays a literal.
+- WHERE predicates are **not** serialized; array equality stays raw.
+
+The asymmetry is deliberate and worth knowing: a jsonb writer that forgets is
+safe, while a `text[]` writer that forgets `pgArray()` fails **loudly**. Guard:
+[`tests/store-jsonb-array-serialization.test.mjs`](../../tests/store-jsonb-array-serialization.test.mjs).
+The `/audit-code` backend pass additionally flags raw-array-to-jsonb, silent
+DB-write error-swallow, and unverified write success (RLS / 0-row) as HIGH.
+
 **Follow-on consequence — the architectural-memory symbol index is also
 empty.** `symbol_index`/embeddings live in the same wiped database. An
 incremental `npm run arch:refresh` after the restore only rebuilds files

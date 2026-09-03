@@ -145,3 +145,39 @@ have their own doctrine in
 The reasoning behind Tier 0 — including what to do when a negative control
 genuinely cannot be built — is in
 [`docs/audit/shared-references/verification-discipline.md`](../audit/shared-references/verification-discipline.md) §3a–3b.
+
+---
+
+## The prose↔code seam — two incidents behind the rules in AGENTS.md
+
+AGENTS.md keeps the five rules. These are the runs that produced them.
+
+### A field the producer never emitted (2026-08-11)
+
+`skills/persona-test/SKILL.md` had specified `finding.severity` since 2026-04-19.
+Every consumer read `finding.code`, on the strength of a docstring claiming that
+shape had been verified against live data — one day before the store was wiped.
+
+The measured result: `isP0OrP1` matched **0 findings in all 7 live sessions**, and
+`persona_audit_correlations` was empty store-wide for the correlator's entire
+life. The reason string it returned was indistinguishable from a clean run, so
+nothing about the output said "this is broken".
+
+The test suite could not have caught it. Every fixture factory in it was built
+from the *reader's* spelling, so a green suite proved the reader correct against
+a shape production has never emitted.
+
+### A field the response schema forbade (`is_reopened`)
+
+The worse variant, because the two sides did not merely disagree on spelling.
+`R2_ROUND_MODIFIER` instructed the model to set `is_reopened: true` from
+2026-04-01, while `ProducerFindingSchema` had no such property and emits
+`additionalProperties: false`. The value was **unrepresentable**, not mistyped,
+and no test could have caught it from either side alone.
+
+Ask the question of the **emitted** schema — `z.toJSONSchema(...)` →
+`properties` / `required` — never of the Zod source. This was the third instance
+of the class, after `causalChain` and `EVIDENCE_CONTRACT_BLOCK`.
+
+One consequence worth stating separately: a **required** field also has to be
+filled by every non-LLM constructor, so adding one is never a one-line change.
