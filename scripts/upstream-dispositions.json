@@ -58,6 +58,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "1fb43574-6da6-4301-851b-a2f40b823a88",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/sync-consumer-divergence-e2e.test.mjs"
+      },
+      "recordedAt": "2026-09-03T05:15:53.707Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "23544fca-b629-4f15-83d0-dcbcff76f21c",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
