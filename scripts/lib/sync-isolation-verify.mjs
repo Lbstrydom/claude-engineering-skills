@@ -21,6 +21,11 @@
  *   8   No other discovered root (.github/skills, .agents/skills) shadows a
  *       skill this bundle deploys in .claude/skills/ — ownership derived from
  *       the consumer's OWN manifest, so their own skills are never gated
+ *   9   No SKILL.md under .claude/skills/ carries a known frontmatter key
+ *       (disable-model-invocation, allowed-tools, …) indented under a block
+ *       scalar — YAML parses that as description TEXT and the declaration is
+ *       silently inert. Fails on ANY skill dir, owned or not: unlike gate 8's
+ *       foreign names this is never harmless, and the fix is one local edit.
  *
  * @module scripts/lib/sync-isolation-verify
  */
@@ -36,6 +41,7 @@ import { SyncManifestSchema, hashFile } from './sync-manifest.mjs';
 import { loadOverrides, matchOverride, OVERRIDES_PATH } from './sync-overrides.mjs';
 import { enumerateNpmRunRefs } from './npm-script-enumerator.mjs';
 import { listSurfaceNames, compareSkillSurfaces } from './skill-surface-identity.mjs';
+import { lintSkillTree } from './skill-frontmatter-layout.mjs';
 import { assertKnownFlags, ArgvError } from './cli-io.mjs';
 
 // NOTE: this module intentionally does NOT import sync-inventory.mjs.
@@ -49,7 +55,7 @@ import { assertKnownFlags, ArgvError } from './cli-io.mjs';
 // filters its own exclusion list (gate1 is migration-only, not a health
 // check) from this module's own constant rather than hand-listing gate ids a
 // second time — one more single-oracle application.
-export const ALL_GATES = ['1', '2A', '2B', '2C', '3', '4', '5', '6', '7', '8'];
+export const ALL_GATES = ['1', '2A', '2B', '2C', '3', '4', '5', '6', '7', '8', '9'];
 // Backlog-triage fix — every flag this CLI's own parseArgs recognizes, fed to
 // the shared assertKnownFlags oracle (the same one reconcile-repo-identity.mjs
 // and friends use) so an unrecognized flag alongside a recognized one is a
@@ -131,6 +137,8 @@ const LIB_IMPORT_SET = [
   // same reason as the rest: a synced lib that did not arrive breaks a gate in a
   // repo we cannot observe.
   { rel: 'lib/skill-surface-identity.mjs', mustExport: ['listSurfaceNames', 'compareSkillSurfaces', 'classifyOrphans'] },
+  // Gate 9 lints through this module; same reasoning as the entry above.
+  { rel: 'lib/skill-frontmatter-layout.mjs', mustExport: ['lintSkillTree', 'lintSkillFrontmatterLayout'] },
 ];
 
 const CMD_SCAN_PATHS = [
@@ -713,15 +721,95 @@ function gate7(consumerRoot) {
  * @param {string} consumerRoot
  * @param {{files?: Record<string, unknown>}} manifest
  */
-function gate8(consumerRoot, manifest) {
-  const SHADOWING = ['.github/skills', '.agents/skills'];
-  const LIVE = '.claude/skills';
-
+/**
+ * The `.claude/skills/<name>/` names this bundle deployed here, read off the
+ * consumer's OWN manifest — the authoritative owned set gates 8 and 9 share, so
+ * neither needs a hardcoded list and neither has to know the consumer's skills.
+ * @param {{files?: Record<string, unknown>}|null} manifest
+ * @returns {Set<string>}
+ */
+function ownedSkillNamesFromManifest(manifest) {
   const ours = new Set();
   for (const destRel of Object.keys(manifest?.files || {})) {
     const m = /^\.claude[\\/]skills[\\/]([^\\/]+)[\\/]/.exec(destRel.split('\\').join('/'));
     if (m) ours.add(m[1]);
   }
+  return ours;
+}
+
+/**
+ * Gate 9 — a known frontmatter key indented under a block scalar is inert.
+ *
+ * WHY (measured 2026-09-03 in a consumer): `.claude/skills/audit/SKILL.md`
+ * carried `  disable-model-invocation: true` two spaces deep inside
+ * `description: |`. YAML parsed it as description text, so the skill stayed
+ * model-invocable while declaring it must not be — and the host's listing
+ * showed the literal string as trailing prose, which is the only tell. Nothing
+ * errors. The consumer has no other way to notice a declared restriction
+ * silently stopped applying, which is why this runs HERE, continuously, and
+ * not only in the source repo's push gate.
+ *
+ * Fails on ANY `.claude/skills/<name>/SKILL.md`, owned or not. Gate 8 leaves a
+ * consumer's own names alone because a foreign name in another root is
+ * harmless; an inert declaration never is, the file is theirs to edit, and the
+ * fix is one dedent. Owned vs foreign is still split in `details` so the
+ * remedy can say "re-sync" for ours and "dedent (or delete a retired skill)"
+ * for theirs. A frontmatter-less or unparseable SKILL.md that is NOT ours is
+ * reported as `unverifiable`, never failed — that is content nobody here can
+ * act on and not the inert-declaration class.
+ *
+ * @param {string} consumerRoot
+ * @param {{files?: Record<string, unknown>}|null} manifest
+ */
+function gate9(consumerRoot, manifest) {
+  const LIVE = '.claude/skills';
+  const ours = ownedSkillNamesFromManifest(manifest);
+  const liveAbs = path.join(consumerRoot, ...LIVE.split('/'));
+  if (!fs.existsSync(liveAbs)) {
+    // Absent is a fact gate 2B already adjudicates (every owned file missing).
+    // Say what was checked rather than passing silently.
+    return { gate: '9', pass: true, details: { checked: 0, ownedSkills: ours.size, note: `${LIVE}/ absent` } };
+  }
+  const tree = lintSkillTree(liveAbs);
+  if (tree.reason === 'unreadable') {
+    return { gate: '9', pass: false, error: `cannot inspect ${LIVE}/: ${tree.error} — this gate cannot confirm no declaration is inert` };
+  }
+  if (tree.reason === 'no-skills') {
+    return { gate: '9', pass: true, details: { checked: 0, ownedSkills: ours.size, note: `${LIVE}/ holds no <name>/SKILL.md` } };
+  }
+
+  const INERT_KINDS = new Set(['indented-known-key', 'non-boolean-flag', 'instrument-disagreement']);
+  const owned = [];
+  const foreign = [];
+  const unverifiable = [];
+  for (const f of tree.findings) {
+    const entry = { skill: f.name, kind: f.kind, key: f.key, line: f.line, message: f.message };
+    if (ours.has(f.name)) owned.push(entry);
+    else if (INERT_KINDS.has(f.kind)) foreign.push(entry);
+    else unverifiable.push(entry);
+  }
+  const details = { checked: tree.skills.length, ownedSkills: ours.size, owned, foreign, unverifiable };
+  const failing = [...owned, ...foreign];
+  if (failing.length === 0) return { gate: '9', pass: true, details };
+
+  const describe = (e) => `${LIVE}/${e.skill}/SKILL.md${e.line ? `:${e.line}` : ''} (${e.key ? `\`${e.key}:\` ` : ''}${e.kind})`;
+  return {
+    gate: '9',
+    pass: false,
+    error: `${failing.length} inert frontmatter declaration(s): ${failing.map(describe).join(', ')} — ` +
+      'a known key indented under a block scalar is parsed as description text and silently stops applying; ' +
+      (owned.length ? 're-sync for the bundle-owned file(s)' : 'dedent the key to column 0') +
+      (foreign.length ? (owned.length ? '; dedent the key to column 0 in the consumer-owned file(s)' : '') +
+        ' — or delete the directory if the skill is no longer shipped by any bundle' : ''),
+    details,
+  };
+}
+
+function gate8(consumerRoot, manifest) {
+  const SHADOWING = ['.github/skills', '.agents/skills'];
+  const LIVE = '.claude/skills';
+
+  const ours = ownedSkillNamesFromManifest(manifest);
   if (ours.size === 0) {
     // Nothing to protect — but say so rather than passing silently, so "gate 8
     // OK" can never mean "the manifest listed no skills and I checked nothing".
@@ -803,7 +891,7 @@ export function runGates(opts) {
   const manifestRes = loadConsumerManifest(consumerRoot);
   const results = [];
 
-  const needManifest = gates.some((g) => ['2A', '2B', '2C', '3', '5', '6', '8'].includes(g));
+  const needManifest = gates.some((g) => ['2A', '2B', '2C', '3', '5', '6', '8', '9'].includes(g));
   if (needManifest && !manifestRes.ok) {
     return [{ gate: 'preflight', pass: false, error: manifestRes.error }];
   }
@@ -821,6 +909,7 @@ export function runGates(opts) {
       else if (g === '6') results.push(gate6(manifest));
       else if (g === '7') results.push(gate7(consumerRoot));
       else if (g === '8') results.push(gate8(consumerRoot, manifest));
+      else if (g === '9') results.push(gate9(consumerRoot, manifest));
       else results.push({ gate: g, pass: false, error: `unknown gate: ${g}` });
     } catch (err) {
       results.push({ gate: g, pass: false, error: `gate threw: ${err.message}` });
@@ -906,6 +995,6 @@ if (isCli) {
 
 export const _internals = {
   CLI_SMOKE_SET, LIB_IMPORT_SET, CMD_SCAN_PATHS, COMMAND_REGEX,
-  parseArgs, gate1, gate2A, gate2B, gate2C, gate3, gate4, gate5, gate6, gate7,
-  runGates,
+  parseArgs, gate1, gate2A, gate2B, gate2C, gate3, gate4, gate5, gate6, gate7, gate8, gate9,
+  ownedSkillNamesFromManifest, runGates,
 };

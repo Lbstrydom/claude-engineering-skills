@@ -396,6 +396,9 @@ const MANDATORY = {
     'skills-check-detects-hand-edited-generated-copy',
     'skills-check-detects-shared-reference-drift',
     'skills-check-detects-over-budget-description',
+    // Added 2026-09-03: a known frontmatter key indented under `description: |`
+    // is description text — parsed, valid, inert. Pill is the real consumer file.
+    'skills-check-detects-indented-frontmatter-key',
   ],
   'plans:index:check': ['plans-index-check-compares-rendered-content'],
   'requirements:map:check': ['requirements-map-check-compares-rendered-content'],

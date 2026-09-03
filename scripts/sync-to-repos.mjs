@@ -58,6 +58,7 @@ import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import {
   compareSkillSurfaces, listSurfaceNames, classifyOrphans, LIVE_SURFACE, SHADOWING_SURFACES,
 } from './lib/skill-surface-identity.mjs';
+import { lintSkillTree } from './lib/skill-frontmatter-layout.mjs';
 // Reused rather than re-parsed: env-setting owns .env key resolution (dotenv's
 // last-wins semantics included), and it is pure — the caller supplies the text.
 import { resolveEnvValue } from './lib/env-setting.mjs';
@@ -1298,6 +1299,24 @@ async function main() {
   // dirty on nearly every sync of this shared checkout and degrade every report
   // to `unknown`, which is noise, not honesty.
   const sourceDirtyPaths = listDirtyPaths(SOURCE_ROOT);
+
+  // ── Pre-flight: the bundle about to ship must not carry an inert frontmatter
+  // declaration. `skills:check` blocks this at PUSH, but the sync reads the
+  // working tree, which may be ahead of (or behind) what was pushed — and a
+  // consumer receives the built bundle with no way to notice that a declared
+  // restriction (`disable-model-invocation: true` indented under
+  // `description: |`, measured live 2026-09-03) silently stopped applying. Refuse
+  // before touching any consumer; the same lib backs the consumer-side gate 9.
+  {
+    const liveTree = lintSkillTree(path.join(SOURCE_ROOT, ...LIVE_SURFACE.split('/')));
+    if (!liveTree.ok) {
+      console.error(`${R}✗ refusing to sync: ${LIVE_SURFACE}/ in the source tree has ` +
+        `${liveTree.reason ? liveTree.reason : `${liveTree.findings.length} inert or unverifiable frontmatter declaration(s)`}${X}`);
+      for (const f of liveTree.findings) console.error(`  ${R}✗${X} [${f.kind}] ${f.message}`);
+      console.error(`${D}Fix it in skills/**, run npm run skills:regenerate, then re-run the sync.${X}`);
+      process.exit(1);
+    }
+  }
 
   for (const rawRepo of targetRepos) {
     // Canonicalise + containment-check EVERY target, not just `--target-path`.

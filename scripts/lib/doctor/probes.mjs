@@ -106,6 +106,10 @@ const SYNC_ISOLATION_PROBES = [
     gate: '8', id: 'sync/skill-surface-shadowing', title: 'Skill-surface shadowing (sync gate 8)',
     fix: 'Remove the shadowing skill directory named in the finding detail — see docs/reference/skill-surface-ownership.md.',
   }),
+  syncGateProbe({
+    gate: '9', id: 'sync/skill-frontmatter-layout', title: 'Inert SKILL.md frontmatter declaration (sync gate 9)',
+    fix: 'Dedent the named key to column 0 of the SKILL.md frontmatter (indented under `description: |` it is parsed as text and silently stops applying); re-sync if the file is bundle-owned; delete the directory if the skill is no longer shipped.',
+  }),
 ];
 
 // ── New probe: worktree hydration (§2.3a) ───────────────────────────────────

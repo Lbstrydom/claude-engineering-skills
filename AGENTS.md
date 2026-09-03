@@ -188,7 +188,14 @@ skills/<name>/                   ← authoritative; edit ONLY here
 > directory name and match `^[a-z0-9-]{1,64}$` (violation = **silent skip**);
 > `description` is required, **max 1024 chars** (keep trigger phrases there, move
 > Usage syntax into the body); no two skills may advertise the same **literal**
-> trigger phrase. Semantic overlap has no oracle — declare the discriminator in BOTH
+> trigger phrase; and every optional known key (`disable-model-invocation`,
+> `allowed-tools`, `license`, `model`, `argument-hint`, `user-invocable`) must sit
+> at **column 0** — indented under `description: |` it is description TEXT, parsed,
+> valid and **inert** (a consumer's `/audit` declared it must not be self-invoked
+> while staying model-invocable, measured 2026-09-03; nothing errors, it just stops
+> applying). `check-skill-frontmatter.mjs` cross-checks a lexical scan against a
+> real YAML parse; the same lib refuses the sync and runs consumer-side as
+> `sync-isolation-verify` gate 9. Semantic overlap has no oracle — declare the discriminator in BOTH
 > descriptions (*topic* → `/explain --history`, *claim* → `/investigate`). Copilot also
 > reads `CLAUDE.md` + `AGENTS.md`; this repo ships **no** `.github/copilot-instructions.md`
 > — a third surface to keep in sync, owning nothing. Absence enforced. VS Code reads

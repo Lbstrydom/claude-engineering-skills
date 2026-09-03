@@ -104,6 +104,31 @@
         "expectStderr": "over the 1024-char budget",
         "why": "AGENTS.md claimed skills:check enforced the 1024-char Copilot cap. It did not: on 2026-08-04 investigate (1257), explain (1152) and ux-lock (1062) were all over while skills:check exited 0 — a stated-but-unenforced gate. The pill overlays an over-length description so the gate must reject it; without check-skill-descriptions.mjs in the chain this exits 0 and the pill goes red. A fixture rather than a mutate: the budget is a property of the description TEXT, so an over-length file is the whole tamper and it stays reproducible as the real skills evolve."
       }
+    },
+    {
+      "id": "skills-check-detects-indented-frontmatter-key",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "indented under `description: |` it is description TEXT, parsed,",
+      "implementation": "scripts/check-skill-frontmatter.mjs",
+      "tests": [
+        "tests/gate-poison-pills.test.mjs",
+        "tests/skill-frontmatter-layout.test.mjs"
+      ],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": [
+          "scripts/check-skill-frontmatter.mjs"
+        ],
+        "overlay": {
+          "skills/ship/SKILL.md": "tests/fixtures/poison/skill-frontmatter-indented-key.md"
+        },
+        "expectExit": 1,
+        "expectStderr": "indented under a block scalar",
+        "why": "A `disable-model-invocation: true` indented two spaces inside `description: |` is description TEXT, not a key — parsed, valid, and inert, so the skill stays model-invocable while declaring it must not be. Measured live in a consumer 2026-09-03; the host listing showed the literal string as trailing prose, which was the only tell. The fixture is that consumer file's real frontmatter, not a hand-written probe: the broken and fixed forms differ only by leading whitespace, so a gate for a whitespace defect passes vacuously if the probe is wrong. Overlaid onto ship — the skill whose own header explains why self-invocation would be citing its own execution as consent."
+      }
     }
   ]
 }

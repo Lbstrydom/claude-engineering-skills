@@ -1,5 +1,63 @@
 # Project Status Log
 
+## 2026-09-03 — Inert SKILL.md frontmatter keys: a gate at all three enforcement points
+
+**The report's premise was wrong about location, right about the defect.** It
+named `skills/audit/SKILL.md` line 12 with `disable-model-invocation: true`
+indented under `description: |`. This repo has no `skills/audit/` — `/audit`
+was merged away in `b52e90d3` (2026-04-07). The file was a consumer-side
+orphan: wine-cellar-app's gitignored `.claude/skills/audit/SKILL.md`, from a
+2026-03-06 install, left in place because the sync overwrites and never
+deletes. The defect itself was real and silent: YAML parsed the indented line
+as description TEXT, the skill stayed model-invocable while declaring it must
+not be, and the only tell was the literal string trailing the description in
+the host's skill listing. Measured 2026-09-03 across 23 deployed skills there:
+ship / security-strategy / skills correctly absent (flag working), `audit` the
+one inert declaration.
+
+**Gate, with the parser as the oracle.** New
+[`scripts/lib/skill-frontmatter-layout.mjs`](scripts/lib/skill-frontmatter-layout.mjs)
+cross-checks a lexical scan against a real `yaml` parse over the six known
+optional keys (`disable-model-invocation`, `allowed-tools`, `license`, `model`,
+`argument-hint`, `user-invocable`): an indented key is `indented-known-key`; a
+column-0 key the parser does not surface is `instrument-disagreement` (fail
+closed); a top-level flag whose value is not a YAML boolean (`"true"`, `yes`,
+`1`) is `non-boolean-flag` — the same silent class one step over. Zero skills
+is not clean. Three enforcement points share the one lib:
+
+- **Source, at push** — [`scripts/check-skill-frontmatter.mjs`](scripts/check-skill-frontmatter.mjs)
+  in `skills:check`. Poison pill in `scripts/gate-contracts/skills-check.json`
+  overlays the consumer's REAL frontmatter (`tests/fixtures/poison/skill-frontmatter-indented-key.md`,
+  not a hand-written probe — the broken and fixed forms differ only by leading
+  whitespace, so a wrong probe passes vacuously) onto `skills/ship/SKILL.md`;
+  `gates:poison` verified it fails with the gate's own message.
+- **Sync, before any consumer is touched** — `sync-to-repos.mjs` lints the
+  source `.claude/skills/**` it is about to deploy and refuses. Defence in depth:
+  the sync reads the working tree, which is not what was pushed.
+- **Consumer, continuously** — `sync-isolation-verify` gate 9, surfaced by
+  `doctor` as `sync/skill-frontmatter-layout`. Fails on owned AND consumer-owned
+  skill dirs (unlike gate 8's foreign names, an inert declaration is never
+  harmless; the fix is one dedent), splits `owned`/`foreign` in details so the
+  remedy differs (re-sync vs dedent-or-delete), and reports a frontmatter-less
+  consumer skill as `unverifiable`, never failed. Run live against wine it
+  FAILED on `audit/SKILL.md:12`, PASSED after the orphan was removed.
+
+Tests: [`tests/skill-frontmatter-layout.test.mjs`](tests/skill-frontmatter-layout.test.mjs)
+proves the fixture inert and the dedented form live using `yaml` directly
+(never the lint under test), loops all six keys indented vs column 0, pins the
+must-not-fire direction (mid-line mentions, list values under `allowed-tools`,
+body text, CRLF), and drives the CLI to exits 0/1/2.
+[`tests/sync-isolation-frontmatter-layout.test.mjs`](tests/sync-isolation-frontmatter-layout.test.mjs)
+shows gates 2B and 8 blind to the same file. `gate8`'s owned-name derivation
+became the shared `ownedSkillNamesFromManifest`. Full suite 14,711 / 0 fail.
+
+**Consumer state.** wine's orphan `.claude/skills/audit/` deleted (untracked,
+gitignored; recoverable from wine `69bdbb78`); ai-organiser and storyline
+checked clean. wine's tracked `.claude/skills.json` still lists retired names
+from the old installer (`audit`, `audit-loop`, `plan-backend`, `plan-frontend`) —
+nothing reads it; removal is a wine PR. Until the re-sync lands, wine's doctor
+gate 4 reports the new lib absent — expected, cleared by this push's sync.
+
 ### Consumer Verification (previous ship)
 
 **Commit**: `4ee0721ebb87e28abfb7eea86e20da4f9db8b925` — cross-host parity v2

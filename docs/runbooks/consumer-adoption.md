@@ -1233,7 +1233,7 @@ previews it.
 - `scripts/lib/sync-path-map.mjs` — bidirectional path mapper (`sourceRelToDestRel`/`destRelToSourceRel`), single source of truth for the layout.
 - `scripts/lib/sync-rewriter.mjs` — ownership-aware command rewriter. Only rewrites `node scripts/X.mjs` references when `X` is a file we own (consumer-owned `scripts/foo.js` stays untouched). Exports `COMMAND_REGEX` so the verifier reuses the same parser.
 - `scripts/lib/sync-gitignore.mjs` — managed-block `.gitignore` manager. Validates marker state and aborts on malformed input (no fail-soft).
-- `scripts/lib/sync-isolation-verify.mjs` — CLI verifier consumers run during migration (`--gates 1,2A,2B,3,4,5,6,7`).
+- `scripts/lib/sync-isolation-verify.mjs` — CLI verifier consumers run during migration (`--gates 1,2A,2B,2C,3,4,5,6,7,8,9`). Gate 9 lints every `.claude/skills/*/SKILL.md` for a known frontmatter key indented under a block scalar (parsed as text, silently inert) via `lib/skill-frontmatter-layout.mjs`; surfaced by `doctor` as `sync/skill-frontmatter-layout`.
 - `scripts/lib/remove-legacy-synced.mjs` — migration helper. Reads the legacy manifest, hash-verifies each file (skips on mismatch — won't destroy locally-modified content), preflight-blocks on dirty tracked files unless `--force-dirty`.
 - `scripts/lib/npm-script-enumerator.mjs` — extracts `npm run X` references from synced skill `.md` so the consumer's `package.json` scripts can be reconciled.
 
