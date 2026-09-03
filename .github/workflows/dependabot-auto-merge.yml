@@ -1,0 +1,55 @@
+name: dependabot-auto-merge
+
+# Auto-merges patch/minor Dependabot PRs once their own CI checks pass. Major
+# bumps are always excluded — dependabot.yml's own grouping already guarantees
+# a GROUPED PR can never be major (each group restricts update-types to
+# minor/patch); an ungrouped PR can be, so update-type is still checked
+# per-PR rather than assumed from grouping alone.
+#
+# Uses `pull_request_target`, not `pull_request`: GitHub downscopes the
+# default GITHUB_TOKEN to read-only for PRs authored by Dependabot on the
+# `pull_request` trigger specifically (a supply-chain guard), which would make
+# `gh pr merge` fail. `pull_request_target` runs with base-branch permissions
+# instead — safe here because this job never checks out or executes the PR's
+# code, only reads its metadata and calls the merge API.
+#
+# No GitHub "required status checks" / branch protection involved on purpose:
+# this repo is single-dev direct-push (see AGENTS.md), and imposing a
+# protected-branch ruleset to gate CI would be a workflow change with a real
+# chance of also constraining direct `git push origin HEAD:main` — see
+# scripts/ensure-branch-protection.mjs's own "strengthen-only, never create"
+# stance on exactly this repo shape. `gh pr checks --watch --fail-fast` gates
+# on the same two checks (unit, db-suite) without touching main's protection
+# at all.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Fetch dependency metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Wait for checks, then merge
+        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          gh pr checks "$PR_URL" --watch --fail-fast
+          gh pr merge --merge "$PR_URL"
+
+      - name: Skip (major version bump)
+        if: steps.metadata.outputs.update-type == 'version-update:semver-major'
+        run: echo "Major-version bump — left for manual review."
