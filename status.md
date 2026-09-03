@@ -1,5 +1,51 @@
 # Project Status Log
 
+### Consumer Verification (previous ship)
+
+**Commit**: `4ee0721ebb87e28abfb7eea86e20da4f9db8b925` — cross-host parity v2
+
+| Artifact | Retrieval | Result |
+|---|---|---|
+| pushed commit | fresh clone at `4ee0721e` into `C:\tmp\ship-verify-clone`, `npm install` | **verified** — `node --test` battery not re-run separately (covered by pre-push's own clean-checkout `npm run check`, which passed at push time) |
+| synced consumer bundle | `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run **inside** the storyline consumer (authoritative, not `sync:dry`) | **verified** — all 9 gates pass (1, 2A, 2B, 2C, 3, 4, 5, 6, 7, 8); 4 pre-declared storyline-specific holds (Electron adapter blocks), not failures |
+| skill manifest | `node scripts/build-manifest.mjs --check` re-derived from the pushed sha in the fresh clone | **verified** — `bundle 1eae6ec42341ca2d`, byte-identical, no drift |
+
+## 2026-09-03 — Cross-host parity v2: E1–E6 Copilot acceptance filled, honestly
+
+Verified — against actual file content and the commit diff stat, not the
+commit message — that Clusters A and B (all 5 implementation phases) were
+genuinely shipped in `4ee0721e`, before doing any further work: the canonical
++ generated browser-tool-detection references, the `$ARGUMENTS` contract file
+in all 9 skills, the `no-dispatch` marker in `skills/cycle/SKILL.md:58`, the
+`host-contract: hook-rule` markers in `AGENTS.md:1153` and
+`skills/ship/SKILL.md:1210`, and 22 test cases in
+`tests/skill-consumer-refs.test.mjs`. Nothing left to implement there.
+
+The one genuinely open item — the plan's `## Copilot acceptance (E1–E6)`
+table — was filled from a real VS Code + GitHub Copilot session run by the
+repo operator. Recorded with an honest split rather than a flat PASS row:
+**E3 and E6 executed** (real Playwright DOM scan; real enumeration of its own
+tool list, no dispatch tool found); **E5 partial** (genuinely opened
+`cycle/SKILL.md` then `plan/SKILL.md` — the fallback mechanism itself was
+exercised — but the actual `/plan` generation, and the Step-3 pause under it,
+was not run); **E1, E2, E4 self-report only** — Copilot reasoned from its own
+contract file about what it would do, rather than being observed doing it.
+That distinction matters because self-report is exactly the failure mode this
+section exists to catch (static tracing, which the GPT/Gemini audit already
+did exhaustively, cannot see runtime divergence).
+
+Bonus finding, not one of E1–E6: asked to run a real `/ship`, Copilot refused
+on its own initiative, citing the skill's `DO NOT INVOKE ON YOUR OWN
+INITIATIVE` body text — live behavioural confirmation the
+`disable-model-invocation` lock holds on a real Copilot host.
+
+**`Status` stays `Complete (cross-host unverified)`** — not flipped to plain
+`Complete`. 2 of 6 rows are genuine runtime evidence, one is a real-mechanism
+partial, and three are self-report. Low-cost follow-ups are documented in the
+plan for E1 and E4; E2 (the safety-critical one — does an ambient
+test-skipping remark leak into a real override) can only be closed by a real
+`/ship` allowed to reach the gate step.
+
 ## 2026-09-03 — The sync receipt is append-only: a second sync can no longer erase the first
 
 Upstream report [`1fb43574`](docs/plans/consumer-sync-durability.md) from

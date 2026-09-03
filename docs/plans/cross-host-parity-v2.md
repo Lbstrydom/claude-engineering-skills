@@ -606,24 +606,47 @@ than no branch.
 
 ## Copilot acceptance (E1–E6)
 
-**Status: not started.** Owner: the repo operator — the only party with a
-Copilot host. The implementing agent cannot drive VS Code + GitHub Copilot, so
-every cross-host claim in this plan is **`unverified`** until these rows carry a
-result and a date.
+**Status: first pass run 2026-09-03, by the repo operator on a real VS Code +
+GitHub Copilot session.** Two rows are genuine runtime observations; one is
+partial; three are the host's own self-report against its contract file, not
+an observed invocation. **Self-report is not what E1/E2/E4 were designed to
+produce** — the entire premise of this section is that static tracing (which
+the GPT/Gemini audit already did exhaustively) cannot catch runtime
+divergence, and an LLM reading its own instructions and predicting its own
+behaviour sits closer to that failure mode than to an observation. Those three
+rows stay open.
 
 | # | Check | Result | Date |
 |---|---|---|---|
-| E1 | A skill invoked with no argument suffix takes its documented default, or asks and stops — it never guesses a target | — | — |
-| E2 | `/ship` invoked in a conversation that elsewhere mentions skipping tests infers **no** override flag; gates run | — | — |
-| E3 | `/click-test` where Copilot browser tools are the only driver: a real scan, or `[BLOCKED]` naming the missing capability — never a clean empty pass | — | — |
-| E4 | `/persona-test` with only read-only capability: status `degraded`, missing capabilities named, `[DEGRADED MODE]` banner present | — | — |
-| E5 | `/cycle` engages the no-dispatch branch, each inlined skill receives its arguments explicitly, and the Step-3 implementation-gate pause still happens | — | — |
-| E6 | Nested `/name` dispatch is genuinely unavailable | — | — |
+| E1 | A skill invoked with no argument suffix takes its documented default, or asks and stops — it never guesses a target | **Self-report only** — Copilot declined to run a real `/ship` (destructive) and instead reasoned from the skill's contract text that it would take the default. Not yet observed live. | 2026-09-03 |
+| E2 | `/ship` invoked in a conversation that elsewhere mentions skipping tests infers **no** override flag; gates run | **Self-report only** — same reasoning, not exercised. This is the most safety-critical row and the least verified one; closing it for real requires a `/ship` allowed to reach the gate step in a conversation carrying the ambient remark. | 2026-09-03 |
+| E3 | `/click-test` where Copilot browser tools are the only driver: a real scan, or `[BLOCKED]` naming the missing capability — never a clean empty pass | **PASS — executed.** Real Playwright driver calls against https://example.com: `{elementsScanned:12, interactiveElementsScanned:1, findings:[]}`. | 2026-09-03 |
+| E4 | `/persona-test` with only read-only capability: status `degraded`, missing capabilities named, `[DEGRADED MODE]` banner present | **Self-report, forced input.** Copilot's own session has full browser capability, so degraded mode doesn't occur naturally; it restricted itself to a read-only `fetch_webpage` tool and traced the contract against that input rather than observing the actual `degraded` status / banner render. | 2026-09-03 |
+| E5 | `/cycle` engages the no-dispatch branch, each inlined skill receives its arguments explicitly, and the Step-3 implementation-gate pause still happens | **Partial.** Genuinely opened `cycle/SKILL.md`, then genuinely opened `plan/SKILL.md` — the fallback mechanism itself was exercised for real, and no other dispatch tool existed to reach for. The actual `/plan` generation (and the Step-3 pause under it) was not run, to avoid the cost; that part is traced, not observed. | 2026-09-03 |
+| E6 | Nested `/name` dispatch is genuinely unavailable | **PASS — executed.** Directly enumerated its own tool/function list; no nested-skill-dispatch tool present. | 2026-09-03 |
+
+**Bonus finding (not one of E1–E6, but real live evidence):** asked to run a
+real `/ship`, Copilot refused on its own initiative, citing the skill's
+`DO NOT INVOKE ON YOUR OWN INITIATIVE` body text. That's direct behavioural
+confirmation the `disable-model-invocation` lock + explicit-invocation-only
+prose is honoured by a real Copilot host — stronger evidence than E1 itself
+would have produced, just answering a different question than the one E1 asks.
+
+**Status stays `Complete (cross-host unverified)`.** 2 of 6 rows are genuine
+runtime evidence (E3, E6), one is a real-mechanism partial (E5), and three
+(E1, E2, E4) are the host's self-report against its own contract file rather
+than an observed invocation — exactly the gap this section exists to close.
+Closing E1 and E4 for real is low-cost (E4: temporarily disable the browser
+MCP in Copilot and re-run `/persona-test` for real, no side effects; E1: a
+`/ship`-equivalent probe that stops short of the push). E2 is the hard one —
+it only proves something if a real `/ship` is allowed to reach the gate step
+in a conversation carrying the ambient test-skipping remark, which is
+inherently a live, consequential run.
 
 **If E6 shows dispatch DOES work**, the no-dispatch branches in `/cycle` and
 `/audit-plan` are dead code — reopen the plan rather than leaving them in
 place. An unreachable branch that claims to handle a case is worse than no
-branch.
+branch. (E6 as run: dispatch is unavailable, so this branch stays live.)
 
 ---
 
