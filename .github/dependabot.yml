@@ -6,8 +6,15 @@ updates:
       # Monthly (was weekly): every npm bump touches package-lock.json, which is
       # in postgres-parity's path filter and runs the 2-job DB-container suite
       # (~18 min). Weekly version bumps were ~470 Actions-min/month. SECURITY
-      # updates are unaffected — Dependabot security alerts fire immediately,
-      # independent of this version-update schedule.
+      # updates are unaffected — Dependabot alerts + security updates open PRs
+      # immediately on detection, independent of this version-update schedule.
+      # Both were OFF at the repo-settings level from this file's creation
+      # until 2026-09-03 (dependabot_security_updates: disabled), so this
+      # claim was false in practice for that whole window despite being true
+      # of Dependabot's design — enabled via `gh api -X PUT
+      # repos/{owner}/{repo}/vulnerability-alerts` +
+      # `.../automated-security-fixes`; verify with `gh api
+      # repos/{owner}/{repo} -q .security_and_analysis`.
       interval: "monthly"
     # Lowered from 10 → 5: with grouping below, ~2-3 PRs/week is the steady state.
     open-pull-requests-limit: 5
