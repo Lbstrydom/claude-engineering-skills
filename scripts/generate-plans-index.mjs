@@ -63,17 +63,53 @@ function extractTitle(content, name) {
 }
 
 /**
+ * Strip a `(…)` wrapper, but only when it spans the WHOLE detail.
+ *
+ * Unconditional stripping is right only for a fully-wrapped detail
+ * (`Complete (superseded by X)` → `superseded by X`), and this was previously
+ * done in two independent halves: `(` came off with the leading separators,
+ * `)` came off with a trailing-anchored replace. Each half then fired on
+ * details the other did not, rendering an orphan bracket into the COMMITTED
+ * index that every reader of docs/plans/README.md sees:
+ *
+ *   - closes early — `Complete (cross-host unverified) — E1–E6 not run`
+ *     lost its opener   → `cross-host unverified) — E1–E6 not run`
+ *   - opens late   — `Complete — shipped (partly)`
+ *     lost its closer   → `shipped (partly`
+ *
+ * The pair is now decided together, which is the only way either half can be
+ * right: unwrap when the opener's match is the last character, otherwise leave
+ * the text as authored. Balance-scanned rather than `indexOf(')')` so a nested
+ * pair (`(see (2) below)`) is measured, not mis-split; an UNBALANCED string is
+ * returned untouched, because a malformed status is the author's to fix and
+ * guessing at it is how the orphan reached the index in the first place.
+ */
+function unwrapWholeParenthetical(text) {
+  if (!text.startsWith('(')) return text;
+  let depth = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === '(') depth += 1;
+    else if (text[i] === ')') {
+      depth -= 1;
+      if (depth === 0) return i === text.length - 1 ? text.slice(1, -1).trim() : text;
+    }
+  }
+  return text;
+}
+
+/**
  * The remainder of the Status line after the vocabulary token — the "why" a
  * human wants in the index (e.g. "Cluster B pending"). Trimmed of leading
  * separators and markdown emphasis, clipped so the table stays readable.
  */
-function extractStatusDetail(content, token) {
+export function extractStatusDetail(content, token) {
   const firstH2 = content.search(/^## /m);
   const header = firstH2 >= 0 ? content.slice(0, firstH2) : content;
   const m = header.match(/^- \*\*Status\*\*:\s*(.+)$/m);
   if (!m) return '';
   let rest = m[1].replace(/\*\*|__/g, '').trim().slice(token.length);
-  rest = rest.replace(/^[\s—–(:,.;-]+/, '').replace(/\)\s*$/, '').trim();
+  // `(` is deliberately NOT in this separator class — see unwrapWholeParenthetical.
+  rest = unwrapWholeParenthetical(rest.replace(/^[\s—–:,.;-]+/, '').trim());
   rest = rest.replace(/\s+/g, ' ').replace(/\|/g, '\\|');
   return rest.length > 110 ? `${rest.slice(0, 107)}…` : rest;
 }
