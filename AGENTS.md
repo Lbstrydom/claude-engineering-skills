@@ -307,7 +307,9 @@ consumer instead of the named one. Verified 2026-07-20.)
 > fail-open), and `scripts/.claude-skills/**` may never be claimed (that is an
 > upstream report). **(3)** Every sync writes the committed `.sync-receipt.json`,
 > a deliberate generated-artifact-policy exception: its dirtiness is the only
-> evidence a sync ran. Adding a co-owned config? A merge may never move a launcher
+> evidence a sync ran — and **append-only** (newest-first list), because the
+> sync never commits and a second one used to erase the first.
+> Adding a co-owned config? A merge may never move a launcher
 > from a pinned path to an unpinned fetch — `sync-pin-guard.mjs`, guard **plus**
 > an independent post-condition.
 > [Plan](docs/plans/consumer-sync-durability.md).

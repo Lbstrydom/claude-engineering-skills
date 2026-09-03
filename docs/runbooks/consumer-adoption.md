@@ -1035,11 +1035,31 @@ why the 2026-08-29 reversion left no evidence in the repo at all. Commit it with
 the rest of the sync's output; a no-op sync does not rewrite it, so it does not
 churn.
 
-CI can read it directly — for example, failing when an override has gone stale:
+**It is APPEND-ONLY**: `recentSyncs` is a bounded list, newest first, capped at
+10 entries with `olderSyncsDropped` counting what has aged out. Entry 0 is the
+last sync. Older entries may be runs from **other sessions that nobody has
+committed yet** — the sync writes to the working tree and never commits, so
+until a human commits, the file is the only copy. A single object rewritten each
+run made a second sync in that window destroy the first's record permanently
+(upstream report `1fb43574`); a list makes it additive. You can commit an entry
+you did not produce without vouching for it: each entry carries its own
+`syncedAt` and `source.commitSha`, so committing the file records a log rather
+than attesting to a sync you never observed.
+
+CI can read it directly — for example, failing when an override has gone stale.
+Written to accept **both** shapes, because a consumer that has not re-synced
+since 2026-09-03 still carries a v1 single object, and a reader assuming one
+shape breaks on every repo in the other state:
 
 ```bash
-node -e "const r=require('./.sync-receipt.json');const s=r.overridesHeld.filter(h=>h.upstreamMoved);if(s.length){console.error('stale overrides:',s.map(h=>h.path).join(', '));process.exit(1)}"
+node -e "const r=require('./.sync-receipt.json');const l=(r.recentSyncs&&r.recentSyncs[0])||r;const s=(l.overridesHeld||[]).filter(h=>h.upstreamMoved);if(s.length){console.error('stale overrides:',s.map(h=>h.path).join(', '));process.exit(1)}"
 ```
+
+No migration step is needed: the next sync converts a v1 receipt in place,
+**keeping** the v1 record as the second entry. In the other direction, a sync
+from an older bundle that meets a receipt version it cannot merge prints
+`receipt not written` and leaves the file alone rather than replacing a newer
+record with an older shape.
 
 ---
 

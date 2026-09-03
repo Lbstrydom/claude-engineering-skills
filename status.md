@@ -1,5 +1,56 @@
 # Project Status Log
 
+## 2026-09-03 — The sync receipt is append-only: a second sync can no longer erase the first
+
+Upstream report [`1fb43574`](docs/plans/consumer-sync-durability.md) from
+wine-cellar-app. `.sync-receipt.json` calls itself *"the only in-repo record that
+a sync ran"* and was last-writer-wins. The sync writes it to the working tree and
+never commits, so the record is durable only once a human commits — and any
+second sync inside that window replaced the first's `created`/`updated` lists and
+source commit outright, with nothing recording the loss.
+
+**Confirmed by construction, not by inspection** (two syncs into one consumer
+checkout, no commit between): sync A created 771 files, sync B created 1, and the
+receipt then read `created: 1`. Sync A's 771 paths, timestamp and commit sha were
+unrecoverable — untracked, absent from `HEAD`, absent from every object in the
+repo (`git log --all -- .sync-receipt.json` empty, `git grep --untracked` for A's
+timestamp: no match). The reproduction also falsified the mitigation the design
+cited: [repo-scoped-skill-surfaces-and-installer.md](docs/plans/repo-scoped-skill-surfaces-and-installer.md)
+§3 claimed *"`withFileLock` already guards the receipt"* — **no lock has ever
+guarded this file**, and a lock could not help, because the race is between a
+WRITE and a COMMIT performed by a human at an unbounded later time.
+
+### Changes
+
+- **Receipt v2 — a bounded newest-first list** ([scripts/lib/sync-receipt.mjs](scripts/lib/sync-receipt.mjs)).
+  `recentSyncs`, cap 10, with `olderSyncsDropped` counting what aged out, so the
+  window is never mistaken for the whole history. Entry 0 still answers "what did
+  the last sync do"; another session's sync is now additive. Each entry carries
+  its own `syncedAt` + `source.commitSha`, which dissolves the second-order
+  problem the report named: a session finding a dirty receipt it did not produce
+  can commit a *log* without attesting to a sync it never observed — the state
+  wine-cellar-app's receipt was stuck in.
+- **Self-committing rejected.** The sync deliberately never commits in a
+  consumer; that tree is the human's, and a commit would fire their hooks and
+  could bundle unrelated staged work.
+- **Migration, both directions.** `readSyncReceipt` normalises a v1 single object
+  into ONE entry, so the next sync converts a consumer in place while *keeping*
+  the v1 record as entry 1 — the upgrade must not itself spend a record. The
+  mirror is refused: a receipt whose version exceeds this bundle's reads
+  `unsupported` and the sync declines to write (`receipt not written`), rather
+  than replacing a newer history with an older shape. The one documented reader,
+  the stale-override CI snippet in
+  [consumer-adoption.md](docs/runbooks/consumer-adoption.md), is now
+  shape-tolerant and verified against v1, v2 and a clean positive control.
+- **Guards, red-then-green.** 25 unit assertions
+  ([tests/sync-receipt.test.mjs](tests/sync-receipt.test.mjs)) and a new e2e suite
+  driving the real CLI through the reported sequence in its own consumer
+  ([tests/sync-consumer-divergence-e2e.test.mjs](tests/sync-consumer-divergence-e2e.test.mjs)).
+  Instrument verified: reverting `appendReceiptEntry` to last-writer-wins turns 4
+  unit tests and 3 e2e tests red, and the e2e carries a negative control
+  asserting the receipt is still **untracked** — otherwise git, not the file
+  shape, would be preserving the record and the suite would pass vacuously.
+
 ## 2026-09-02 — Cross-host parity v2: skills correct on VS Code Copilot, not just Claude Code
 
 `/cycle --autonomous` end-to-end: `/plan` (3 GPT rounds, 18 findings, 100%

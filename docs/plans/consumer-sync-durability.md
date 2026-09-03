@@ -118,6 +118,43 @@ dirtiness carry information?* — and here it is the only information there is.
 The receipt is an event record, not a derived view of source. It does not churn:
 `receiptShouldWrite` skips a no-op run whose body would be identical.
 
+**v2 (2026-09-03) — append-only, after upstream report `1fb43574`.** The first
+cut held ONE object and rewrote it wholesale. The sync writes to the working
+tree and never commits, so the record is durable only once a human commits it,
+and a second sync inside that window destroyed the first's `created`/`updated`
+lists and source commit with nothing recording the loss. Reproduced by
+construction: sync A created 771 files, sync B (no commit between) created 1,
+and the receipt then read `created: 1` with A's record absent from the working
+tree, from `HEAD`, and from every object in the repo.
+
+The premise this rested on —
+[repo-scoped-skill-surfaces-and-installer.md](repo-scoped-skill-surfaces-and-installer.md)
+§3, *"Concurrency: none. Single-operator CLI; `withFileLock` already guards the
+receipt"* — was wrong twice: **no lock has ever guarded this file**, and a lock
+could not help if one did. The race is between a WRITE and a COMMIT performed by
+a human at an unbounded later time, and one operator running several agent
+sessions against one checkout is now the ordinary case.
+
+So the file holds a bounded list (`recentSyncs`, newest first, cap 10,
+`olderSyncsDropped` counting what aged out). Entry 0 still answers "what did the
+last sync do"; another session's sync is additive; and because each entry names
+its own `syncedAt` + `source.commitSha`, committing a receipt containing an
+entry you did not produce records a log rather than attesting to a sync you
+never observed — which is what left wine-cellar-app's receipt uncommitted
+indefinitely.
+
+**Rejected: self-committing at write time.** The sync deliberately never commits
+in a consumer; that working tree is the human's, a commit would fire their hooks
+and could bundle unrelated staged work.
+
+**Migration.** `readSyncReceipt` normalises a v1 object into ONE entry, so the
+next sync converts a consumer in place while *keeping* the v1 record as entry 1
+— the upgrade must not itself spend a record. The mirror direction is refused:
+a receipt whose `version` exceeds this bundle's reads `unsupported`, and the
+sync declines to write rather than replace a newer history with an older shape.
+The one documented reader (the stale-override CI snippet in
+[consumer-adoption.md](../runbooks/consumer-adoption.md)) is now shape-tolerant.
+
 ### 2.5 The refusal must survive the manifest write (shipped broken, fixed same day)
 
 The first cut of §2.1 had a defect that made it protect exactly ONCE, and it
@@ -292,6 +329,7 @@ the same place the connection does.
 - [x] An override may not claim `scripts/.claude-skills/**`.
 - [x] A consumer's pinned MCP launcher survives, even under `--overwrite-diverged`.
 - [x] `.sync-receipt.json` is written, committed (not gitignored), and does not churn on a no-op sync.
+- [x] A second sync before the first is committed does not destroy the first's record (v2, 2026-09-03).
 - [x] A refusal SURVIVES: a second and third consecutive sync still refuse, and
       the manifest never adopts the consumer's bytes as our base.
 - [x] `.audit-loop/cache/` is in the managed `.gitignore` block.

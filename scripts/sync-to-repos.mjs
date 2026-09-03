@@ -43,7 +43,10 @@ import {
   OVERRIDES_PATH, loadOverrides, matchOverride, renderGitignoreExtras,
 } from './lib/sync-overrides.mjs';
 import { guardPinDowngrades, assertNoPinDowngrade } from './lib/sync-pin-guard.mjs';
-import { RECEIPT_PATH, buildReceipt, receiptShouldWrite } from './lib/sync-receipt.mjs';
+import {
+  RECEIPT_PATH, RECEIPT_VERSION, buildReceiptEntry, receiptShouldWrite,
+  readSyncReceipt, latestReceiptEntry, appendReceiptEntry,
+} from './lib/sync-receipt.mjs';
 import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
 import { computeEolPins, renderEolPinLines, canonicaliseOutboundEol } from './lib/sync-eol-pins.mjs';
 import { getGitLocalEnvVarNames } from './lib/git-env-sanitize.mjs';
@@ -1481,14 +1484,17 @@ async function main() {
     // "no prior knowledge" — no `upstreamMoved` claim is made from it, because
     // an unknown is not a no.
     const receiptPath = path.join(repo.path, RECEIPT_PATH);
-    let priorReceipt = null;
+    let priorReceiptRaw = null;
     try {
       if (fs.existsSync(receiptPath)) {
-        priorReceipt = JSON.parse(fs.readFileSync(receiptPath, 'utf-8'));
+        priorReceiptRaw = JSON.parse(fs.readFileSync(receiptPath, 'utf-8'));
       }
     } catch { /* unreadable prior receipt — no prior knowledge, never a claim */ }
+    // Normalised here, so v1 (one object) and v2 (a list) answer the same
+    // question the same way, and a FUTURE version is reported rather than read.
+    const priorReceipt = readSyncReceipt(priorReceiptRaw);
     const priorReceiptHeld = new Map();
-    for (const h of priorReceipt?.overridesHeld || []) {
+    for (const h of latestReceiptEntry(priorReceipt)?.overridesHeld || []) {
       if (h && typeof h.path === 'string') priorReceiptHeld.set(h.path, h);
     }
 
@@ -2311,9 +2317,15 @@ async function main() {
     // left no evidence. This receipt is COMMITTED: a reviewer sees a sync in the
     // diff, and CI can read it without any of our machinery (it reaches linked
     // worktrees, which the gitignored manifest never does).
+    //
+    // APPEND-ONLY (v2): the new entry is PREPENDED to whatever is already on
+    // disk. The sync does not commit, so a record is only durable once a human
+    // commits it — and a second sync inside that window used to overwrite the
+    // first's lists outright (upstream report `1fb43574`). Prepending makes a
+    // concurrent session's sync additive instead of destructive.
     if (!DRY_RUN) {
       try {
-        const receipt = buildReceipt({
+        const entry = buildReceiptEntry({
           syncedAt: new Date().toISOString(),
           source: {
             repo: 'Lbstrydom/claude-engineering-skills',
@@ -2331,9 +2343,19 @@ async function main() {
           divergenceRefused: divergenceRefusals,
           unchanged: repoUnchanged,
         });
-        if (receiptShouldWrite(priorReceipt, receipt)) {
+        if (priorReceipt.status === 'unsupported') {
+          // A NEWER bundle wrote this file. Rewriting it in a shape this code
+          // understands would destroy a record it cannot read — the exact loss
+          // the append-only change exists to end. Decline, and say why.
+          console.log(`  ${Y}receipt not written${X} ${D}(${RECEIPT_PATH} is version ${priorReceipt.version}, `
+            + `newer than this bundle's v${RECEIPT_VERSION}; refusing to overwrite a record it cannot merge — `
+            + `sync from a current bundle, or move the file aside)${X}`);
+        } else if (receiptShouldWrite(latestReceiptEntry(priorReceipt), entry)) {
+          const receipt = appendReceiptEntry(priorReceipt, entry);
           atomicWriteFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n');
-          console.log(`  ${D}receipt${X} ${RECEIPT_PATH} updated ${D}(commit it — it is the in-repo record that this sync ran)${X}`);
+          const carried = receipt.recentSyncs.length - 1;
+          console.log(`  ${D}receipt${X} ${RECEIPT_PATH} updated ${D}(commit it — it is the in-repo record that this sync ran`
+            + `${carried > 0 ? `; ${carried} earlier sync${carried === 1 ? '' : 's'} kept` : ''})${X}`);
         }
       } catch (err) {
         // Advisory: the trace failing must not fail a sync that succeeded, but

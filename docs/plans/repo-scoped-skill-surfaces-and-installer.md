@@ -481,8 +481,14 @@ delegate to it. Serial by construction.
 Phase 6 (callers + docs) depends on **both**, because `.githooks/post-merge`, `setup.mjs`
 and `README.md` each reference a command whose contract changes in a different chain.
 
-**Concurrency**: none. Single-operator CLI; `withFileLock` already guards the receipt
-read-modify-write.
+**Concurrency**: ~~none. Single-operator CLI; `withFileLock` already guards the receipt
+read-modify-write.~~ **FALSIFIED 2026-09-03** (upstream report `1fb43574`). Wrong twice:
+no lock has ever guarded `.sync-receipt.json`, and a lock would not have helped. The race
+is not between two writers — it is between a WRITE and a COMMIT performed by a human at
+an unbounded later time, and "single operator" no longer implies "one session": one person
+running several agent sessions against one checkout is the ordinary case. A second sync in
+that window destroyed the first's record. Fixed by making the receipt append-only —
+see [consumer-sync-durability.md](consumer-sync-durability.md) §2.4.
 
 **Idempotency (#13)**: every operation must be re-runnable. `--uninstall-legacy` on an
 already-clean machine is a no-op with exit 0 (not an error — the operator cannot know
