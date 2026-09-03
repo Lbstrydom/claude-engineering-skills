@@ -48,6 +48,43 @@ const STATUS_LINE_RE = /^-?\s*\*\*Status\*\*:\s*(.+)$/gm;
 const SEPARATOR = /[\s—–(:,.;]/;
 
 /**
+ * Join a metadata bullet's INDENTED continuation lines onto the bullet itself.
+ *
+ * `STATUS_LINE_RE` is anchored with `$` and `.` does not cross a newline, so
+ * without this a wrapped status contributes only its FIRST line to `raw` —
+ * every consumer then reads a fragment as if it were the whole value, with no
+ * marker saying otherwise. That is not an edge case in this corpus: of the
+ * plans carrying a Status line, **52 wrap** and only a handful do not.
+ *
+ * Indentation is the whole test, and it is corpus-derived rather than
+ * stylistic. A wrapped status indents its continuations by two spaces; an
+ * UNindented following line is a different metadata field —
+ * `Date: 2026-07-13`, `**Owner**: Louis.`, `**Scope**: …` — which appears
+ * after 7 of the Status lines here and must never be folded in, or the index
+ * would attribute one field's text to another. A nested `- ` sub-bullet is
+ * likewise its own item, and stays one.
+ */
+function foldListContinuations(header) {
+  const lines = header.split('\n');
+  const out = [];
+  for (const line of lines) {
+    const prev = out.length > 0 ? out[out.length - 1] : null;
+    const continues = prev !== null
+      && /^-?\s*\*\*|^\s*[-*]\s/.test(prev)
+      && /^(?: {2,}|\t)\S/.test(line)
+      && !/^\s*[-*]\s/.test(line)
+      // Never swallow a second Status line: folding one into the first would
+      // turn a `duplicate` (which check-plan-status FAILS on) into a silent
+      // pass. Continuations that merely START with `**` are common and stay
+      // foldable — `  **Round 2**: a later audit round…` is real corpus.
+      && !/^\s*\*\*Status\*\*:/.test(line);
+    if (continues) out[out.length - 1] = `${prev} ${line.trim()}`;
+    else out.push(line);
+  }
+  return out.join('\n');
+}
+
+/**
  * Parse a plan document's Status line.
  * @param {string} content
  * @returns {{ok:true, token:string, kind:'terminal'|'active', raw:string}
@@ -67,7 +104,7 @@ export function parsePlanStatus(content) {
   // duplicates. A real duplicate (two Status lines in the header) is still
   // caught because both sit before the first `## `.
   const firstH2 = content.search(/^## /m);
-  const header = firstH2 >= 0 ? content.slice(0, firstH2) : content;
+  const header = foldListContinuations(firstH2 >= 0 ? content.slice(0, firstH2) : content);
   STATUS_LINE_RE.lastIndex = 0;
   const matches = [...header.matchAll(STATUS_LINE_RE)];
   if (matches.length === 0) return { ok: false, reason: 'absent' };

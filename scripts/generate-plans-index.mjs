@@ -101,13 +101,20 @@ function unwrapWholeParenthetical(text) {
  * The remainder of the Status line after the vocabulary token — the "why" a
  * human wants in the index (e.g. "Cluster B pending"). Trimmed of leading
  * separators and markdown emphasis, clipped so the table stays readable.
+ *
+ * Takes `parsePlanStatus`'s own `raw`, deliberately: this used to re-find the
+ * Status line with a second copy of the header slice and the anchored regex,
+ * which is the exact duplication `lib/plan-status.mjs` documents as how the
+ * dashboard once drifted into showing a status it had not bucketed. It also
+ * silently inherited the fragment bug — `$`-anchored, so a WRAPPED status (52
+ * of the plans here) contributed only its first line, rendered with no ellipsis
+ * and therefore indistinguishable from a complete note. Reading `raw` fixes
+ * both at once, and any future widening of what counts as the status value
+ * lands in one place.
  */
-export function extractStatusDetail(content, token) {
-  const firstH2 = content.search(/^## /m);
-  const header = firstH2 >= 0 ? content.slice(0, firstH2) : content;
-  const m = header.match(/^- \*\*Status\*\*:\s*(.+)$/m);
-  if (!m) return '';
-  let rest = m[1].replace(/\*\*|__/g, '').trim().slice(token.length);
+export function extractStatusDetail(raw, token) {
+  if (!raw) return '';
+  let rest = raw.replace(/\*\*|__/g, '').trim().slice(token.length);
   // `(` is deliberately NOT in this separator class — see unwrapWholeParenthetical.
   rest = unwrapWholeParenthetical(rest.replace(/^[\s—–:,.;-]+/, '').trim());
   rest = rest.replace(/\s+/g, ' ').replace(/\|/g, '\\|');
@@ -167,7 +174,7 @@ export function collectPlans(dir) {
     }
     rows.push({
       name, title, token: s.token, bucket: s.kind,
-      detail: extractStatusDetail(content, s.token),
+      detail: extractStatusDetail(s.raw, s.token),
     });
   }
   return rows;
