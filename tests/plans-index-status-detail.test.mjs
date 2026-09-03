@@ -1,5 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { extractStatusDetail } from '../scripts/generate-plans-index.mjs';
 import { parsePlanStatus } from '../scripts/lib/plan-status.mjs';
@@ -134,5 +137,90 @@ describe('extractStatusDetail — wrapped Status lines', () => {
     const parsed = parsePlanStatus(content);
     assert.equal(parsed.ok, true);
     assert.equal(parsed.raw, 'Complete — one **Round 2**: a later audit round');
+  });
+});
+
+describe('extractStatusDetail — clipping', () => {
+  const long = (n) => `Complete — ${'word '.repeat(n).trim()}`;
+
+  it('marks every clip with an ellipsis and stays within budget', () => {
+    const out = detailOf(long(60));
+    assert.ok(out.endsWith('…'), `clip not marked: ${out}`);
+    assert.ok(out.length <= 110, `over budget: ${out.length}`);
+  });
+
+  it('never splits a word', () => {
+    const status = long(60);
+    const out = detailOf(status);
+    const kept = out.slice(0, -1);
+    const source = status.slice('Complete — '.length);
+    assert.ok(source.startsWith(kept), 'clipped text is not a prefix of the source');
+    // The character right after the kept run must be a boundary, not mid-word.
+    const next = source[kept.length];
+    assert.ok(next === undefined || next === ' ', `split mid-word before ${JSON.stringify(next)}`);
+  });
+
+  it('never ends inside an unclosed parenthesis', () => {
+    // The tail parenthetical starts before the budget and closes after it, so a
+    // bare slice would leave the opener orphaned — the same defect
+    // unwrapWholeParenthetical fixes at the front, arriving from the clip.
+    const out = detailOf(`Complete — ${'x '.repeat(30)}and then a (parenthetical that runs well past the budget for certain)`);
+    const opens = (out.match(/\(/g) || []).length;
+    const closes = (out.match(/\)/g) || []).length;
+    assert.ok(opens <= closes, `orphan open bracket: ${out}`);
+    assert.ok(out.endsWith('…'));
+  });
+
+  it('leaves a detail inside the budget untouched', () => {
+    const out = detailOf('Complete — a short reason');
+    assert.equal(out, 'a short reason');
+    assert.ok(!out.includes('…'));
+  });
+
+  it('still bounds a single unbroken run with no space to back off to', () => {
+    const out = detailOf(`Complete — ${'y'.repeat(300)}`);
+    assert.ok(out.length <= 110, `unbounded: ${out.length}`);
+    assert.ok(out.endsWith('…'));
+  });
+});
+
+describe('one Status-line reader (layering contract)', () => {
+  // Both index bugs fixed on 2026-09-03 came from a SECOND reader parsing the
+  // Status line with its own regex: it silently inherited the `$`-anchored
+  // fragment bug that lib/plan-status.mjs had already outgrown. Nothing gated
+  // that — `arch:duplicates` is cloud-snapshot-backed and on-demand, so it can
+  // neither see the commit being pushed nor run in the pre-push sandbox. This
+  // does, from source, in a clean checkout.
+  //
+  // Retire when a real second owner is justified: add it to OWNERS with a
+  // written reason rather than deleting the assertion.
+  const OWNERS = ['scripts/lib/plan-status.mjs'];
+  // The escaped bold only ever occurs inside a regex literal; prose writes
+  // `**Status**` unescaped, so this does not fire on comments or docs.
+  const NEEDLE = `Status${String.fromCharCode(92)}*${String.fromCharCode(92)}*`;
+
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const scan = (dir, out = []) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) { if (e.name !== 'node_modules') scan(abs, out); }
+      else if (e.name.endsWith('.mjs') && fs.readFileSync(abs, 'utf8').includes(NEEDLE)) {
+        out.push(path.relative(repoRoot, abs).split(path.sep).join('/'));
+      }
+    }
+    return out;
+  };
+
+  it('finds the needle in the declared owner (vacuity guard)', () => {
+    // Without this, a typo in NEEDLE makes the census empty and the next
+    // assertion pass having checked nothing.
+    const owner = path.join(repoRoot, OWNERS[0]);
+    assert.ok(fs.readFileSync(owner, 'utf8').includes(NEEDLE), 'NEEDLE no longer matches the owner');
+  });
+
+  it('is the only module parsing the Status line', () => {
+    const found = scan(path.join(repoRoot, 'scripts')).sort();
+    assert.deepEqual(found, OWNERS.slice().sort(),
+      `a second Status-line parser appeared. Read it through parsePlanStatus (which returns \`raw\`) instead of re-deriving the regex, or add it to OWNERS with a reason.`);
   });
 });

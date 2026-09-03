@@ -63,6 +63,45 @@ function extractTitle(content, name) {
 }
 
 /**
+ * The Notes column's character budget.
+ *
+ * Not a quality ceiling on the status itself — the full text is one click away
+ * in the plan, and the dashboard's `.plan-meta` renders it whole (measured
+ * 2026-09-03: longest 2861 chars, `overflow: visible`, wrapping, unclipped).
+ * This bounds ONE cell of a markdown table that is read in diffs and terminals,
+ * where a 2861-char cell is unreadable.
+ */
+const NOTE_BUDGET = 110;
+
+/**
+ * Clip to NOTE_BUDGET without lying about where the text stopped.
+ *
+ * Three rules, each closing a way a bare `slice` misleads the reader:
+ *  1. **Always mark the cut**, so a clipped note cannot be mistaken for a
+ *     complete one. The wrapped-Status bug was exactly this failure: it lost
+ *     the tail before ever reaching the clip, so nothing was marked.
+ *  2. **Never split a word** — back off to the last space. Free, because the
+ *     ellipsis already signals the omission.
+ *  3. **Never end inside an unclosed `(`** — otherwise the orphan-bracket
+ *     defect that unwrapWholeParenthetical fixes at the FRONT of the string
+ *     reappears at the BACK, produced by the clip instead of the parser.
+ *     Balance-counted, and applied only when it leaves text behind.
+ */
+function clipDetail(text) {
+  if (text.length <= NOTE_BUDGET) return text;
+  let cut = text.slice(0, NOTE_BUDGET - 1);
+  const lastSpace = cut.lastIndexOf(' ');
+  if (lastSpace > 0) cut = cut.slice(0, lastSpace);
+  const opens = (cut.match(/\(/g) || []).length;
+  const closes = (cut.match(/\)/g) || []).length;
+  if (opens > closes) {
+    const at = cut.lastIndexOf('(');
+    if (at > 0) cut = cut.slice(0, at);
+  }
+  return `${cut.trimEnd()}…`;
+}
+
+/**
  * Strip a `(…)` wrapper, but only when it spans the WHOLE detail.
  *
  * Unconditional stripping is right only for a fully-wrapped detail
@@ -118,7 +157,7 @@ export function extractStatusDetail(raw, token) {
   // `(` is deliberately NOT in this separator class — see unwrapWholeParenthetical.
   rest = unwrapWholeParenthetical(rest.replace(/^[\s—–:,.;-]+/, '').trim());
   rest = rest.replace(/\s+/g, ' ').replace(/\|/g, '\\|');
-  return rest.length > 110 ? `${rest.slice(0, 107)}…` : rest;
+  return clipDetail(rest);
 }
 
 /**
