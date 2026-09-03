@@ -1341,10 +1341,11 @@ worksheet answers "already fixed?" mechanically. Two reports sat unread on
 every repo sharing the DSN. Plan:
 [`upstream-issue-reports.md`](../plans/upstream-issue-reports.md).
 
-### Three shapes consumers keep reporting (2026-08-08)
+### Five shapes consumers keep reporting (2026-08-08, extended 2026-09-03)
 
 Check for these when adding a gate or a nudge. Each is a general defect class,
-not a one-off.
+not a one-off. AGENTS.md carries the five one-line rules; the incidents and the
+measured inert windows are here.
 
 **(1) A read handing back a key its writer rejects.** `/ship` 0.5e listed
 unclosable rows for weeks because `unremediated_acceptances` projected
@@ -1367,3 +1368,33 @@ manifest→disk, so 100 orphaned executables were invisible *by construction*. G
 directories hold consumer-owned files, and flagging those earns a bypass. Ask of
 any set comparison: **which side am I iterating, and what is unrepresentable from
 it?**
+
+**(4) A documented command whose tooling cannot be present where it runs.** A
+linked git worktree receives only **tracked** content, so a remedy that rides on
+a synced script or a `.claude/` hook is absent in exactly the tree that needs it.
+It must ride on `package.json` instead. Gate: `npm run worktree:preflight:gate`.
+Detail: §Linked git worktrees above.
+
+**(5) A synced SKILL.md naming an `npm run` alias, or a `docs/` file outside the
+sync closure.** The sync deliberately never merges scripts into a consumer's
+`package.json` and ships one `docs/` file, so both pointers are claims about
+another repo that nothing can make true. **Name synced tooling by path** —
+`node scripts/<name>.mjs`, which the rewriter turns into
+`scripts/.claude-skills/<name>.mjs` — and the text works in both layouts.
+
+Shipped four times before the gate existed, which is why it is a class and not a
+typo:
+
+1. `skills:hydrate` plus a runbook pointer, across all 16 skills.
+2. `/ai-context-management` inert in every consumer: its instructions were gated
+   behind `npm run context:check` while only its detector was synced.
+3. `/ship` and `/security-strategy` appended `--if-present` to a missing alias —
+   which **exits 0 having run nothing**, so the skill reported success.
+4. Two shared references promised `.audit/` is swept "in every consumer" by a
+   script the sync does not ship.
+
+Gate: `npm run skills:consumer-refs:gate`. It is a **ratchet**, not a bright
+line, because only intent can say whether an unreachable pointer is a defect:
+an undeclared kind, a declared kind growing a new site, and a declaration
+matching nothing all fail. Each entry in `.skill-consumer-refs-baseline.json`
+carries a disposition and a written reason.

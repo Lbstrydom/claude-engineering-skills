@@ -226,41 +226,33 @@ consumer instead of the named one. Verified 2026-07-20.)
 
 > **Upstream-owned — never patch the synced copy (governance).** A failure in a
 > consumer's `scripts/.claude-skills/**` file is an **UPSTREAM** bug: fix it HERE
-> + re-sync — never edit the synced copy. It's gitignored (invisible to review),
-> overwritten next sync (your fix is lost), and the bug lives on for every other
-> consumer. Each synced tooling file carries a banner saying exactly this
-> (`sync-banner.mjs`). Drift backstops: `npm run sync:dry` here shows any consumer
-> file differing from source; the synced `sync-isolation-verify` hash-checks a
-> consumer's tree against its manifest. Band-aid-vs-root-cause at the
-> consumer/upstream seam — the local edit is the band-aid. Repo-specific **push
-> gates** belong in the committed `.githooks/pre-push.local`
-> ([recipe](docs/runbooks/consumer-adoption.md)), never in the managed hook.
+> + re-sync. The local edit is gitignored (invisible to review), overwritten next
+> sync, and leaves the bug live for every other consumer — the band-aid at the
+> consumer/upstream seam. Each synced file carries a banner saying so
+> (`sync-banner.mjs`); drift backstops and the `.githooks/pre-push.local` recipe
+> for repo-specific push gates (never the managed hook):
+> [consumer-adoption.md](docs/runbooks/consumer-adoption.md).
 >
-> **Consumers are not all on ONE store, and every reader must say which it asked**
-> (third instance, 2026-08-29). A consumer files into whatever store ITS
-> `AUDIT_DB_URL` names; this repo's is a different one. Every single-store read is
-> therefore blind to a consumer and reports that blindness as good news —
-> `/ship` 0.5h printed `0 open` while a consumer had 8 open reports (fixed: `npm
-> run upstream:queues` fans out over every consumer's store, deduped by
-> `storeFingerprint`), and the committed disposition ledger failed the push on
-> entries whose rows live elsewhere (fixed: an optional `storeFingerprint` per
-> entry; foreign ones are reported, never gated). Two rules for the next reader:
-> **an unasked question must never render as an empty result**, and a store is
-> named to operators by **fingerprint + the consumers using it** — never a
-> hostname, because this repo is public and one consumer's store is corporate.
+> **Consumers are not all on ONE store.** A consumer files into whatever store ITS
+> `AUDIT_DB_URL` names — not this repo's — so a single-store read is blind to a
+> consumer and renders that blindness as good news (`/ship` printed `0 open`
+> against 8). Fan out with `npm run upstream:queues`, deduped by
+> `storeFingerprint`. **An unasked question must never render as an empty result**,
+> and a store is named to operators by **fingerprint + the consumers using it**,
+> never a hostname — this repo is public and one consumer's store is corporate.
 >
-> **File the report, don't paste it.** Consumer: `cross-skill.mjs upstream report --title … --affected-path <synced path>`
-> (body on **stdin**) — it auto-captures the repo, the bundle sha, and whether the path is really
-> upstream-owned. Here: `npm run upstream:issues` → `upstream ack|fix|wont-fix|annotate|history`. **Pass every
-> `--note` as `-` (stdin)** — a backtick in an argv note runs as command substitution and silently
-> elides text the append-only log cannot then repair; `annotate` appends a state-neutral event,
-> the only legal repair (never a second `fixed`). Worksheet + why prose
-> reports failed: [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Reporting an upstream bug.
+> **File the report, don't paste it.** Consumer: `cross-skill.mjs upstream report
+> --affected-path <synced path>`; here: `npm run upstream:issues` →
+> `ack|fix|wont-fix|annotate|history`. **Every body and `--note` goes on stdin** —
+> a backtick in an argv note runs as command substitution and silently elides text
+> the append-only log cannot repair; `annotate` is the only legal repair, never a
+> second `fixed`. Recipe + closure flags:
+> [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Reporting an upstream bug.
 
-> **Four shapes consumers keep reporting — check for them when adding a gate or
-> nudge.** General defect classes, one line each; the incidents, the predicates and
-> the measured inert windows are in
-> [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Three shapes / §Linked git worktrees.
+> **Five shapes consumers keep reporting — check for them when adding a gate or
+> nudge.** Incidents, predicates and measured inert windows:
+> [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Five shapes /
+> §Linked git worktrees / §Reporting an upstream bug.
 > *(1)* A read handing back a key its writer rejects — a new close-this-row nudge
 > means a new row in [`view-writer-key-contract.test.mjs`](tests/view-writer-key-contract.test.mjs).
 > *(2)* A gate judging files the repo does not own — the predicate is **ignored AND
@@ -271,22 +263,13 @@ consumer instead of the named one. Verified 2026-07-20.)
 > **only tracked content is guaranteed to reach a linked worktree**, so a remedy
 > must ride on `package.json`, never on a synced script or a `.claude/` hook.
 > Gate: `npm run worktree:preflight:gate`.
->
-> **(4b) A synced SKILL.md may not name an `npm run` alias, and may cite only
-> `docs/` inside the sync closure.** The sync deliberately never merges scripts
-> into a consumer's `package.json` and ships one `docs/` file, so both pointers
-> are claims about another repo that nothing can make true. **Name synced tooling
-> by path** — `node scripts/<name>.mjs`, which the rewriter turns into
-> `scripts/.claude-skills/<name>.mjs` — and the text works everywhere. Shipped four
-> times: `skills:hydrate` + a runbook across 16 skills; `/ai-context-management`
-> inert in every consumer behind `npm run context:check` while its detector was
-> synced; `/ship` + `/security-strategy` appending `--if-present` to a missing
-> alias, which **exits 0 having run nothing**; and two shared references
-> promising `.audit/` is swept "in every consumer" by an unshipped script. Gate:
-> `npm run skills:consumer-refs:gate` — a ratchet, since only intent can say
-> whether an unreachable pointer is a defect: undeclared kind, a declared kind
-> growing a site, or a declaration matching nothing all fail, and each entry in
-> `.skill-consumer-refs-baseline.json` carries a disposition + a written reason.
+> *(5)* A synced SKILL.md naming an `npm run` alias, or a `docs/` file outside the
+> sync closure — both are claims about another repo that nothing can make true
+> (`--if-present` on a missing alias **exits 0 having run nothing**). **Name synced
+> tooling by path**: `node scripts/<name>.mjs`, which the rewriter turns into
+> `scripts/.claude-skills/<name>.mjs`. Gate: `npm run skills:consumer-refs:gate`,
+> a ratchet — each `.skill-consumer-refs-baseline.json` entry carries a
+> disposition + a written reason.
 
 > **Upstream bug, but you're blocked?** Patching upstream-owned *source* stays
 > forbidden; a **runtime/env/DB** unblock is OK if you report it, label it
@@ -295,10 +278,7 @@ consumer instead of the named one. Verified 2026-07-20.)
 > §"Blocked on an upstream bug".
 
 > **Consumer divergence is DECLARED, never inferred — and the sync must never
-> revert it silently** (2026-08-29). Ownership was one-directional: a manifest
-> entry licensed an unconditional overwrite, so a consumer's *merged* work was
-> reverted leaving no in-repo trace (the manifest is gitignored) and `git status`
-> showed an ordinary edit. **(1)** The manifest hash is the three-way BASE —
+> revert it silently.** **(1)** The manifest hash is the three-way BASE —
 > `disk === base` ⇒ overwrite freely, `disk !== base` is consumer content:
 > **tracked ⇒ REFUSE + fail** (`--overwrite-diverged` consents), untracked ⇒
 > overwrite loudly. Basing it on the manifest and not HEAD is what stops it firing
@@ -422,30 +402,25 @@ stash` — that yanks the other session's files mid-edit. Detail + escape hatche
 
 #### A spend-bearing run PINS its revision — it never shares the working tree
 
-Same tree, higher stakes: a bake-off snapshot spawns 6 arms over 15–25 min and
-the store refuses one whose arms disagree, so two snapshots and ~$13 died on
-2026-08-17 — one to a rebase, one to a **concurrent session's commit**. Run ANY
-revision-stamped, spend-bearing job (arm-eval, solo-control, model-eval,
-replays) via `npm run fixture:create`: detached at an explicit sha,
-`node_modules` linked, **every arm's credential verified before spend** — an
-absent key does not error, the arm records SKIPPED and the snapshot dies after
-the others billed. Gitignored inputs are ABSENT: transcripts by absolute path,
-and **trust the store, not the fixture's local bake-off log**, which reads
+Same tree, higher stakes: the store refuses a snapshot whose arms disagree, so
+two died on 2026-08-17 (~$13) — one to a rebase, one to a **concurrent session's
+commit**. Run ANY revision-stamped, spend-bearing job (arm-eval, solo-control,
+model-eval, replays) via `npm run fixture:create`: detached at an explicit sha,
+`node_modules` linked, **every arm's credential verified before spend**. Two
+traps it does not remove: gitignored inputs are ABSENT (transcripts by absolute
+path), and **trust the store, not the fixture's local bake-off log**, which reads
 near-zero and looks like lost progress.
 [Runbook](docs/runbooks/pinned-revision-fixture.md)
 
 - **A DB suite no runner names has never run.** A suite gated on
   `AUDIT_DB_TEST_URL` skips itself without a disposable DSN, and node reports a
-  suite that never ran as a clean pass — so being listed in one of
-  `db-test-container.mjs`'s `*_SUITE_FILES` (**and**, in lockstep,
-  `postgres-parity.yml`) is the only thing that makes it coverage. A census on
-  2026-08-11 found **15 such suites enrolled nowhere**, never executed in any
-  environment since the day they landed; enrolling them added 127 assertions and
-  6 of them failed immediately, against schema constraints years older than the
-  tests. `npm run db:enrolment:gate` now iterates the FILESYSTEM — the only side
-  that can see a file no list mentions — and requires each hit to be enrolled or
-  carry a written `DB_SUITE_ENROLMENT_EXEMPT` reason. **Adding a DB-gated suite
-  is two edits, never one.**
+  never-run suite as a clean pass — so enrolment in `db-test-container.mjs`'s
+  `*_SUITE_FILES` (**and**, in lockstep, `postgres-parity.yml`) is the only thing
+  that makes it coverage. A 2026-08-11 census found **15 enrolled nowhere**; six
+  failed the moment they ran. `npm run db:enrolment:gate` iterates the FILESYSTEM
+  — the only side that can see a file no list mentions — and requires each hit
+  enrolled or carrying a written `DB_SUITE_ENROLMENT_EXEMPT` reason. **Adding a
+  DB-gated suite is two edits, never one.**
 - **Sandbox-honesty rule.** A fresh worktree has no gitignored inputs, so a check
   that *skips* on a missing input passes having read nothing (known skips are
   forced hard: `AUDIT_PUSH_RANGE_REQUIRED`, `ARCH_COVERAGE_REQUIRE_ENVELOPE`).
@@ -471,25 +446,20 @@ near-zero and looks like lost progress.
   in a detached tree. An unresolvable explicit base fails hard, never demotes to
   inference.
 - **Hashing working-tree bytes ≠ hashing committed source.** A generator hashing
-  files for a *committed* artifact must canonicalise CRLF→LF — with
-  `canonicalizeEol` from [`lib/file-io.mjs`](scripts/lib/file-io.mjs), the one
-  byte-level fold. Git calls a CRLF file CLEAN under `.gitattributes eol=lf`, so
-  the tell is a diff where **git says clean and your tool says changed: git is
-  right, the tool is comparing the wrong thing.** Do NOT canonicalise where the
-  exact bytes ARE the contract (transfer-corruption checks). Both generators this
-  bit, and the worktree-`node_modules` resolution rule (a tool hard-coding
-  `<repoRoot>/node_modules` breaks in a worktree and nowhere else; never hand-link
-  one in): [prepush-sandbox.md](docs/runbooks/prepush-sandbox.md) §2.1–2.2.
+  files for a *committed* artifact must canonicalise CRLF→LF, with
+  `canonicalizeEol` from [`lib/file-io.mjs`](scripts/lib/file-io.mjs) — the one
+  byte-level fold. The tell: **git says clean and your tool says changed; git is
+  right.** Do NOT canonicalise where the exact bytes ARE the contract
+  (transfer-corruption checks). That, and the worktree-`node_modules` rule (never
+  hard-code `<repoRoot>/node_modules`, never hand-link one in):
+  [prepush-sandbox.md](docs/runbooks/prepush-sandbox.md) §2.1–2.2.
 - **An mtime freshness oracle is usually wrong in the HEALTHY case, not merely
-  lossy** — the writer's own ordering decides it. `npm install` writes
-  `package-lock.json` LAST and a directory's mtime moves only on a TOP-LEVEL
-  add/remove, so `lock newer than node_modules/` was the normal post-install
-  state and the pre-push gate read STALE on a tree npm had just called *"up to
-  date"* (then FRESH, same tree, once something created `node_modules/.cache`).
-  Before writing one, ask **who writes these two paths, in what order**; then use
-  the tool's own content record instead — npm keeps `node_modules/.package-lock.json`.
-  Compare CONTENT, never key counts (455 declared vs 410 installed here; every
-  absentee `optional`). [prepush-sandbox.md](docs/runbooks/prepush-sandbox.md) §4.
+  lossy** — the writer's own ordering decides it, and `lock newer than
+  node_modules/` was the normal post-install state. Before writing one, ask **who
+  writes these two paths, in what order**; then use the tool's own content record
+  instead — npm keeps `node_modules/.package-lock.json`. Compare CONTENT, never
+  key counts (455 declared vs 410 installed here; every absentee `optional`).
+  [prepush-sandbox.md](docs/runbooks/prepush-sandbox.md) §4.
 
 #### Testing doctrine — pointer
 
