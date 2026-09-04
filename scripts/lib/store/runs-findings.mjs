@@ -1311,10 +1311,16 @@ export async function markRunFindingsAutoDismissed(runId, fingerprints, reason) 
  *
  * Both take `repo_id` as `$1`. `UNION ALL` is safe across them because they
  * partition on `bucket` — a row cannot satisfy both.
+ *
+ * **Deliberately NOT exported.** `scripts/learning-store.mjs` re-exports this
+ * module with `export *`, and its pinned public surface
+ * (`tests/learning-store-exports.test.mjs`) is functions-only — a string
+ * constant escaping there is surface drift, and these are SQL fragments, not
+ * API. The guard test reads them out of this file's source instead.
  */
-export const CREDIT_BRANCH_SHADOW_WHERE =
+const CREDIT_BRANCH_SHADOW_WHERE =
   `r.repo_id = $1 AND f.bucket = 'shadow-only'`;
-export const CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE =
+const CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE =
   `r.repo_id = $1 AND f.bucket IS NULL ` +
   `AND f.remediation_state IN ('fixed', 'verified') ` +
   `AND f.user_action IS NULL`;
