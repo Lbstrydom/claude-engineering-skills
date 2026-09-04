@@ -43,7 +43,11 @@ const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush
 // `ls -t docs/plans/*.md | head -1` to the Status-aware `check-plan-status.mjs
 // --select`, so a Complete plan is never re-audited. A stale v1 body is
 // detectable by the ABSENCE of this line; `hooks:install` rewrites it.
-const HOOK_VERSION    = 2;
+// v3 (2026-09-04): the source-repo sibling scan is anchored on the MAIN
+// checkout instead of cwd. A v2 body run from a linked worktree enumerated
+// sibling WORKTREES, found nothing, and skipped the audit with exit 0 — on
+// every push a Claude Code session makes. Re-install to pick it up.
+const HOOK_VERSION    = 3;
 const HOOK_VERSION_MARKER = `# hook-version: ${HOOK_VERSION}`;
 // Accept the legacy marker too so existing installs (pre-rename) can be
 // upgraded in place by `npm run hooks:install` without manual cleanup.
@@ -107,24 +111,45 @@ PLANS_DIR="docs/plans"
 # precede selection (reference-integrity-gate Cluster C, R1-H2/R3-H5).
 # Search order:
 #   1. \$CLAUDE_AUDIT_LOOP_DIR — explicit env override (manual escape hatch)
-#   2. Sibling-dir scan: any ../<dir>/ that contains scripts/sync-to-repos.mjs.
+#   2. Sibling-dir scan for a dir containing scripts/sync-to-repos.mjs.
 #      sync-to-repos.mjs is source-exclusive (never synced to consumers), so its
 #      mere presence is sufficient proof of source-repo identity.
 #   3. (No fallback) — print warning + skip.  Never aborts the push.
+#
+# ANCHOR THE SCAN ON THE MAIN CHECKOUT, NOT ON CWD. A push from a linked
+# worktree runs with cwd = <repo>/.claude/worktrees/<name>, where \`../*/\`
+# enumerates sibling WORKTREES and can never contain a sibling REPO. Measured
+# 2026-09-04 in a consumer: the scan found nothing, printed a warning and
+# exited 0 — a skip that reads exactly like a clean pass — on every push a
+# Claude Code session makes, which is the majority of them. \`--git-common-dir\`
+# is the main checkout's .git from ANY worktree; \`--show-toplevel\` is not (it
+# is the worktree's own root, which is the value that was already wrong).
+# Both anchors are scanned because outside a worktree they are the same
+# directory, so this cannot change behaviour for a plain checkout.
 AUDIT_LOOP_DIR="$CLAUDE_AUDIT_LOOP_DIR"
 if [ -z "$AUDIT_LOOP_DIR" ]; then
-  for sibling in ../*/; do
-    if [ -f "$sibling/scripts/sync-to-repos.mjs" ]; then
-      AUDIT_LOOP_DIR="\${sibling%/}"
-      break
-    fi
+  MAIN_PARENT=""
+  COMMON_GIT_DIR="$(git rev-parse --git-common-dir 2>/dev/null)"
+  if [ -n "$COMMON_GIT_DIR" ]; then
+    MAIN_PARENT="$(cd "$COMMON_GIT_DIR/../.." 2>/dev/null && pwd)"
+  fi
+  for parent in "$MAIN_PARENT" ".."; do
+    [ -n "$parent" ] || continue
+    [ -d "$parent" ] || continue
+    for sibling in "$parent"/*/; do
+      if [ -f "$sibling/scripts/sync-to-repos.mjs" ]; then
+        AUDIT_LOOP_DIR="\${sibling%/}"
+        break
+      fi
+    done
+    [ -n "$AUDIT_LOOP_DIR" ] && break
   done
 fi
 
 AUDIT_SCRIPT="$AUDIT_LOOP_DIR/scripts/openai-audit.mjs"
 STATUS_CLI="$AUDIT_LOOP_DIR/scripts/check-plan-status.mjs"
 if [ -z "$AUDIT_LOOP_DIR" ] || [ ! -f "$AUDIT_SCRIPT" ]; then
-  echo "[prepush-hook] audit-loop not found in any sibling dir (set CLAUDE_AUDIT_LOOP_DIR to override) — skipping audit" >&2
+  echo "[prepush-hook] claude-engineering-skills not found beside \"\${MAIN_PARENT:-..}\" (set CLAUDE_AUDIT_LOOP_DIR to override) — skipping audit" >&2
   exit 0
 fi
 

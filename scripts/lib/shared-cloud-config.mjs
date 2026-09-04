@@ -336,16 +336,39 @@ export function resolveSourceRepo({ explicitFlag = null, cwd = process.cwd() } =
   if (isSourceRepo(cwd)) {
     return { type: 'resolved', path: cwd, source: 'cwd' };
   }
-  // (4) sibling scan — ambiguous if >1 match
-  const parent = path.dirname(cwd);
-  let entries;
-  try { entries = fs.readdirSync(parent, { withFileTypes: true }); } catch { return { type: 'none' }; }
+  // (4) sibling scan — ambiguous if >1 match.
+  // Scan the parents of BOTH the main checkout and cwd. Outside a worktree the
+  // two are the same directory and this is byte-identical to the previous
+  // single-parent scan. Inside one they differ, and only the main checkout's
+  // parent can see sibling repos: a linked worktree lives at
+  // `<repo>/.claude/worktrees/<name>`, so `dirname(cwd)` enumerates sibling
+  // WORKTREES. Measured 2026-09-04 in a consumer — the managed pre-push hook's
+  // mirror of this scan found nothing and skipped its audit with exit 0 on
+  // every push made from a worktree.
+  // Candidates are unioned before the 0/1/>1 rule so the ambiguity contract
+  // still holds across anchors — two anchors must not turn an ambiguous
+  // result into a first-anchor-wins one.
+  // `gitContext` already resolves `--git-common-dir` against `cwd` and hands
+  // back the MAIN checkout's root — the single oracle for this question in
+  // this file. Do not re-derive it here.
+  const mainRoot = gitContext(cwd)?.mainRoot ?? null;
+  const parents = [];
+  for (const base of [mainRoot, cwd]) {
+    if (!base) continue;
+    const parent = path.dirname(base);
+    if (!parents.includes(parent)) parents.push(parent);
+  }
   const matches = [];
-  for (const e of entries) {
-    if (!e.isDirectory()) continue;
-    const candidate = path.join(parent, e.name);
-    if (candidate === cwd) continue;
-    if (isSourceRepo(candidate)) matches.push(candidate);
+  for (const parent of parents) {
+    let entries;
+    try { entries = fs.readdirSync(parent, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const candidate = path.join(parent, e.name);
+      if (candidate === cwd) continue;
+      if (matches.includes(candidate)) continue;
+      if (isSourceRepo(candidate)) matches.push(candidate);
+    }
   }
   if (matches.length === 0) return { type: 'none' };
   if (matches.length === 1) return { type: 'resolved', path: matches[0], source: 'sibling' };
