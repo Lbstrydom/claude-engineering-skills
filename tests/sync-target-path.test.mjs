@@ -23,12 +23,24 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import {
+  INSTALL_REQUIRED, DEPS_SATISFIED_MARKER, seedInstalledDeps, runSyncCli, whySyncFailed,
+} from './helpers/consumer-fixture.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CLI = path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs');
-const execFileAsync = promisify(execFile);
+
+/**
+ * The sync installs the bundle's deps into the target, over the network — which
+ * is what made the two deploy tests below fail intermittently, with no code
+ * change involved: this file's 240s subprocess bound was TIGHTER than the
+ * install's own caps, so on a slow network the parent killed the child and the
+ * symptom was a bare `null !== 0`.
+ *
+ * Both halves of the fix now live in `helpers/consumer-fixture.mjs`, shared with
+ * the two sibling suites that drive the same CLI — the derived budget, and the
+ * seeding that keeps this file's SUBJECT (the `--target-path` deployment
+ * contract, D5a) off the network entirely. Read that module's header for why.
+ */
 
 let tmp;
 
@@ -41,39 +53,12 @@ function mkRepo(name) {
   fs.mkdirSync(path.join(dir, '.git'));
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name, type: 'module' }, null, 2));
   fs.writeFileSync(path.join(dir, '.gitignore'), '');
+  seedInstalledDeps(dir);
   return dir;
 }
 
-/**
- * The outer budget must EXCEED the sum of the budgets nested inside it.
- *
- * A deploying sync calls `ensureAuditDeps`, which runs TWO sequential installs
- * (required, then optional) each capped at its own 120s `timeoutMs`
- * (scripts/lib/install/deps.mjs). At the previous 240_000 this outer timeout
- * was exactly 2x120s, leaving ZERO time for the sync's own work — so a slow but
- * entirely successful install was killed here and surfaced as `code: null`,
- * indistinguishable from a hang.
- *
- * It reproduces under the FULL suite (where 2,650 suites contend for CPU and
- * IO, stretching both installs) and passes when this file is run alone, which
- * is what made it read as network flakiness — it was misdiagnosed that way at
- * least five times and bypassed with `--no-verify`. The tell that it never was
- * the network: the failing runs lasted 240,051ms and 240,040ms, pinned to this
- * cap, and exited `null` (killed by signal) rather than on an npm error. The
- * install was never the failure; the budget was.
- */
-const INSTALL_BUDGET_MS = 2 * 120_000 + 180_000;
-
-async function run(argv, opts = {}) {
-  try {
-    const { stdout, stderr } = await execFileAsync(process.execPath, [CLI, ...argv], {
-      cwd: REPO_ROOT, timeout: INSTALL_BUDGET_MS, maxBuffer: 32 * 1024 * 1024, ...opts,
-    });
-    return { code: 0, stdout, stderr };
-  } catch (err) {
-    return { code: err.code, stdout: err.stdout ?? '', stderr: err.stderr ?? '' };
-  }
-}
+/** The shared CLI wrapper — see helpers/consumer-fixture.mjs on why it is not local. */
+const run = (argv, opts = {}) => runSyncCli(argv, opts);
 
 /**
  * The sync's own bookkeeping files, which are EXPECTED to differ between runs
@@ -128,7 +113,19 @@ function dropVolatile(snap) {
 /** Content-addressed snapshot of a tree: relPath -> sha256. */
 function snapshot(dir, base = dir, out = new Map()) {
   let entries;
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    // ENOENT only. Any other failure — a permission error, a handle Windows
+    // has not released — must surface: a partial snapshot compares clean
+    // against another partial snapshot, so swallowing it turns an unreadable
+    // subtree into a PASS on the idempotency assertions below (round-1 code
+    // audit M7, 2026-09-04).
+    if (err?.code !== 'ENOENT') {
+      throw new Error(`snapshot(): could not enumerate ${dir}: ${err?.code ?? err?.message}`, { cause: err });
+    }
+    return out;
+  }
   for (const e of entries) {
     const abs = path.join(dir, e.name);
     // Neither is deployed bundle content: `.git` is the consumer's own VCS
@@ -179,10 +176,39 @@ describe('sync --target-path — argument handling', () => {
 });
 
 describe('sync --target-path — it actually deploys', () => {
+  // Round-2 M4: the intentional no-install branch, named. It was previously
+  // asserted only in passing inside the layout test, which made "this suite
+  // deliberately does not provision dependencies" an implicit property — the
+  // kind that gets deleted by someone who cannot see it was load-bearing.
+  // Real provisioning is covered deterministically and offline by
+  // tests/install-deps-contract.test.mjs, and end-to-end on demand by
+  // SYNC_TARGET_PATH_INSTALL_REQUIRED=1.
+  it('by default spawns NO package manager — the fixture is already satisfied', async (t) => {
+    if (INSTALL_REQUIRED) {
+      return t.skip('SYNC_TARGET_PATH_INSTALL_REQUIRED=1 — the real install branch is under test instead');
+    }
+    const target = mkRepo('no-install');
+    const r = await run(['--target-path', target, '--no-prompt']);
+    assert.equal(r.code, 0, whySyncFailed(r));
+    const out = r.stderr + r.stdout;
+    assert.match(out, new RegExp(DEPS_SATISFIED_MARKER), 'the sync must report the deps already present');
+    assert.doesNotMatch(out, /Installing (required|optional) audit-loop deps/,
+      'no install may be attempted against a satisfied consumer');
+    assert.ok(!fs.existsSync(path.join(target, 'package-lock.json')),
+      'a lockfile would prove a package manager ran');
+  });
+
   it('produces the consumer layout in an EMPTY repo (the first-install case)', async () => {
     const target = mkRepo('fresh');
     const r = await run(['--target-path', target, '--no-prompt']);
-    assert.equal(r.code, 0, `sync failed: ${r.stderr.slice(0, 800)}`);
+    assert.equal(r.code, 0, whySyncFailed(r));
+
+    // The seed took, so no package manager was spawned. Without this the file
+    // could go back to installing over the network and nothing would say so.
+    if (!INSTALL_REQUIRED) {
+      assert.match(r.stderr + r.stdout, new RegExp(DEPS_SATISFIED_MARKER),
+        'a seeded fixture must report its deps satisfied, not install them');
+    }
 
     // The three halves that make a consumer functional.
     assert.ok(fs.existsSync(path.join(target, 'scripts', '.claude-skills')),
@@ -256,12 +282,12 @@ describe('sync --target-path — it actually deploys', () => {
   it('is idempotent — a second run reports unchanged and rewrites nothing', async () => {
     const target = mkRepo('idem');
     const first = await run(['--target-path', target, '--no-prompt']);
-    assert.equal(first.code, 0);
+    assert.equal(first.code, 0, whySyncFailed(first));
     const before = dropVolatile(snapshot(target));
     const depsBefore = ownedDeps(target);
 
     const second = await run(['--target-path', target, '--no-prompt']);
-    assert.equal(second.code, 0);
+    assert.equal(second.code, 0, whySyncFailed(second));
     const after = dropVolatile(snapshot(target));
 
     // package.json is excluded from the byte snapshot because it carries the
@@ -269,6 +295,16 @@ describe('sync --target-path — it actually deploys', () => {
     // "idempotent" would be asserted over a file we deliberately stopped looking at.
     assert.deepEqual(ownedDeps(target), depsBefore,
       'the dependency set the sync installs must not churn on re-sync');
+    if (!INSTALL_REQUIRED) {
+      // Under the seed that set is empty, and an empty-vs-empty comparison
+      // proves nothing on its own — so state the stronger property it stands
+      // for here: a sync into an already-satisfied consumer must not touch
+      // package.json at all. A regression that ran `add -D` unconditionally
+      // would fail this even though the two sets still matched each other.
+      assert.deepEqual(depsBefore, {},
+        'nothing may be added to a consumer that already has every dep');
+      assert.match(second.stderr + second.stdout, new RegExp(DEPS_SATISFIED_MARKER));
+    }
     assert.deepEqual([...after.keys()].sort(), [...before.keys()].sort());
     for (const [rel, sha] of before) assert.equal(sha, after.get(rel), `${rel} churned on re-sync`);
 

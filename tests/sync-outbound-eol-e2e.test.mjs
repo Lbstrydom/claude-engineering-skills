@@ -58,6 +58,8 @@ import { fileURLToPath } from 'node:url';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { seedInstalledDeps, runSyncCli, whySyncFailed } from './helpers/consumer-fixture.mjs';
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs');
 const execFileAsync = promisify(execFile);
@@ -72,15 +74,7 @@ function git(args, cwd = consumer) {
 }
 
 async function sync(extra = []) {
-  try {
-    const { stdout, stderr } = await execFileAsync(
-      process.execPath, [CLI, '--target-path', consumer, '--no-prompt', ...extra],
-      { cwd: REPO_ROOT, timeout: 300_000, maxBuffer: 32 * 1024 * 1024 },
-    );
-    return { code: 0, out: stdout + stderr };
-  } catch (err) {
-    return { code: err.code ?? 1, out: (err.stdout ?? '') + (err.stderr ?? '') };
-  }
+  return runSyncCli(['--target-path', consumer, '--no-prompt', ...extra]);
 }
 
 /**
@@ -125,6 +119,12 @@ before(async () => {
     path.join(consumer, 'package.json'),
     JSON.stringify({ name: 'eol-fixture', type: 'module' }, null, 2),
   );
+  // No install: this suite's subject is the sync's behaviour in a real git
+  // repo, not dependency provisioning. See helpers/consumer-fixture.mjs — a
+  // real install buries this fixture's `git add -A` under tens of thousands of
+  // node_modules files, and the derived subprocess budget there (never a
+  // hand-picked number here) is sized around the no-install case by default.
+  seedInstalledDeps(consumer);
   fs.writeFileSync(path.join(consumer, '.gitignore'), '');
   git(['add', '-A']);
   git(['commit', '-m', 'init', '--no-gpg-sign']);
@@ -142,13 +142,25 @@ describe('sync outbound EOL', () => {
 
   it('first sync delivers the bundle, and the committed tree is clean', async () => {
     const first = await sync();
-    assert.equal(first.code, 0, `first sync failed:\n${first.out}`);
+    assert.equal(first.code, 0, whySyncFailed(first));
 
     subject = pickTrackedSubject();
     assert.ok(subject, 'no tracked .claude/ destination was delivered — nothing to assert on');
 
     git(['add', '-A']);
     git(['commit', '-m', 'adopt sync', '--no-gpg-sign']);
+
+    // `pickTrackedSubject` runs BEFORE this commit, so its name states an
+    // intent the filesystem cannot confirm. Ask git whether the add actually
+    // took: a global `core.excludesFile` could leave the subject untracked, and
+    // every EOL assertion after this point — including the clean-tree check
+    // below — is vacuous for a file git is ignoring (round-1 code audit M3,
+    // 2026-09-04). `ls-files` prints the path when tracked and nothing when not.
+    assert.equal(
+      git(['ls-files', '--error-unmatch', '--', subject]).trim().replaceAll(path.sep, '/'),
+      subject.replaceAll(path.sep, '/'),
+      `subject ${subject} is not tracked — the EOL assertions below would be vacuous`,
+    );
 
     const dirty = git(['status', '--porcelain']).trim();
     assert.equal(dirty, '', `tree should be clean after committing the first sync, got:\n${dirty}`);
@@ -170,9 +182,22 @@ describe('sync outbound EOL', () => {
       fs.readFileSync(abs, 'utf-8'), original,
       'seeding failed: subject bytes unchanged, so this test would prove nothing',
     );
+    // The physical-bytes checks above are not sufficient on their own: with
+    // core.autocrlf=true (set in before()), CRLF-on-disk can be a NORMAL,
+    // clean state that git's own conversion produces — the repair this test
+    // exercises only matters if git ALSO sees the file as changed against the
+    // `text eol=lf` attribute the first sync wrote (round-5 code audit M4,
+    // 2026-09-04). Verified empirically before adopting: on this fixture's own
+    // config (autocrlf=true + eol=lf), a raw CRLF rewrite of a tracked file DOES
+    // report `M <path>` — but asserting it here, rather than assuming it, is
+    // what makes this test's precondition provable instead of merely plausible.
+    assert.match(
+      git(['status', '--porcelain', '--', subject]), /^ M /,
+      `seeding failed: git does not see ${subject} as dirty under its eol=lf attribute — the repair below would prove nothing`,
+    );
 
     const second = await sync();
-    assert.equal(second.code, 0, `second sync failed:\n${second.out}`);
+    assert.equal(second.code, 0, whySyncFailed(second));
 
     const after = fs.readFileSync(abs, 'utf-8');
     assert.ok(
@@ -200,7 +225,7 @@ describe('sync outbound EOL', () => {
     git(['commit', '-m', 'adopt receipt', '--no-gpg-sign']);
 
     const third = await sync();
-    assert.equal(third.code, 0, `third sync failed:\n${third.out}`);
+    assert.equal(third.code, 0, whySyncFailed(third));
 
     const dirty = git(['status', '--porcelain'])
       .split('\n')

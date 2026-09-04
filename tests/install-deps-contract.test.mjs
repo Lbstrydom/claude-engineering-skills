@@ -20,8 +20,13 @@ import { fileURLToPath } from 'node:url';
 
 import { execFileSync } from 'node:child_process';
 
-import { bundleDeps, requiredDeps, OPTIONAL_DEPS, findMissingDeps, npmInvocation, ensureAuditDeps } from '../scripts/lib/install/deps.mjs';
+import {
+  bundleDeps, requiredDeps, OPTIONAL_DEPS, findMissingDeps, npmInvocation, ensureAuditDeps,
+  installTimeouts, isInstallTimeout, DEPS_TIMEOUT_MARKER,
+  DEFAULT_REQUIRED_INSTALL_TIMEOUT_MS, DEFAULT_OPTIONAL_INSTALL_TIMEOUT_MS, MAX_TIMEOUT_MS,
+} from '../scripts/lib/install/deps.mjs';
 import { packageNameFromSpecifier, collectImportClosure } from '../scripts/lib/module-graph.mjs';
+import { seedInstalledDeps } from './helpers/consumer-fixture.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -118,7 +123,7 @@ describe('ensureAuditDeps — manager routing (round-1 audit fixes, 2026-08-15)'
   let TMP;
   before(() => { TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'ensure-deps-')); });
   after(() => {
-    try { fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ }
+    if (TMP) fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   /** A repo with no node_modules at all — every required dep reports missing. */
@@ -255,5 +260,199 @@ describe('collectImportClosure external bucket', () => {
   it('excludes node builtins from external', () => {
     const { external } = collectImportClosure({ entryPoints: ['scripts/entry.mjs'], repoFiles, readFile });
     assert.equal(external.some(e => e.specifier === 'node:fs'), false);
+  });
+});
+
+// ── Install bounding + timeout adjudication (2026-09-04) ────────────────────
+//
+// `tests/sync-target-path.test.mjs` failed intermittently with `null !== 0`,
+// independently of any code change. One flat 120s cap covered BOTH install
+// phases, and the optional set contains `playwright`; on a slow network the
+// two phases summed to exactly the 240s that test allowed the whole
+// subprocess, so the parent killed the child. Two defects, both here:
+//
+//   1. the cap was not sized to the work (one number for two very different
+//      phases), and
+//   2. a cap-kill was reported with the same words as a manager-reported
+//      failure — "install failed" for work we never let finish.
+describe('install bounding', () => {
+  it('sizes the optional phase above the required one by default', () => {
+    // Not an arbitrary ordering: the optional set is the one containing
+    // playwright. If these ever equalise, the 2026-09-04 shape is back.
+    const t = installTimeouts({ env: {} });
+    assert.equal(t.requiredMs, DEFAULT_REQUIRED_INSTALL_TIMEOUT_MS);
+    assert.equal(t.optionalMs, DEFAULT_OPTIONAL_INSTALL_TIMEOUT_MS);
+    assert.ok(t.optionalMs > t.requiredMs, 'the phase that downloads playwright needs the longer cap');
+    assert.equal(t.totalMs, t.requiredMs + t.optionalMs);
+  });
+
+  it('env overrides each phase independently', () => {
+    const t = installTimeouts({ env: { AUDIT_DEPS_INSTALL_TIMEOUT_MS: '5000', AUDIT_DEPS_OPTIONAL_INSTALL_TIMEOUT_MS: '9000' } });
+    assert.deepEqual([t.requiredMs, t.optionalMs, t.totalMs], [5000, 9000, 14000]);
+  });
+
+  it('an explicit timeoutMs overrides BOTH phases (the old single-number contract)', () => {
+    const t = installTimeouts({ timeoutMs: 7000, env: { AUDIT_DEPS_INSTALL_TIMEOUT_MS: '5000' } });
+    assert.deepEqual([t.requiredMs, t.optionalMs], [7000, 7000]);
+  });
+
+  it('a junk env value falls back rather than disabling the cap', () => {
+    // The direction that matters: `timeout: 0` / `NaN` in execFileSync means
+    // NO timeout, so a typo'd env var would silently remove the bound
+    // entirely — the opposite of what an operator setting it intends.
+    for (const bad of ['0', '-1', 'abc', '1.5', '']) {
+      const t = installTimeouts({ env: { AUDIT_DEPS_INSTALL_TIMEOUT_MS: bad } });
+      assert.equal(t.requiredMs, DEFAULT_REQUIRED_INSTALL_TIMEOUT_MS, `"${bad}" must not disable the cap`);
+    }
+  });
+});
+
+describe('install timeout adjudication', () => {
+  it('isInstallTimeout separates a cap-kill from an ordinary non-zero exit', () => {
+    // execFileSync reports a kill as the STRING 'ETIMEDOUT' and an ordinary
+    // failure as the numeric exit status (verified 2026-09-04, Node 22).
+    assert.equal(isInstallTimeout({ code: 'ETIMEDOUT', status: null }), true);
+    assert.equal(isInstallTimeout({ killed: true }), true);
+    // The direction that must NOT fire — a real failure misread as a timeout
+    // would tell the operator to raise a cap that was never the problem.
+    assert.equal(isInstallTimeout({ code: 1, status: 1 }), false, 'a non-zero exit is not a timeout');
+    assert.equal(isInstallTimeout({ code: 'ERR_PNPM_IGNORED_BUILDS' }), false);
+    assert.equal(isInstallTimeout(null), false);
+  });
+
+  it('a cap-kill reports `timed-out`, not `failed` — with the cap named', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'deps-timeout-'));
+    fs.writeFileSync(path.join(root, 'package.json'), '{}');
+    fs.writeFileSync(path.join(root, 'package-lock.json'), '{}');
+    const stderr = [];
+    const write = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (s) => { stderr.push(String(s)); return true; };
+    let res;
+    try {
+      // 1ms: npm cannot even start in that, so the kill is deterministic and
+      // this test needs no network.
+      res = ensureAuditDeps(root, { timeoutMs: 1 });
+    } finally {
+      process.stderr.write = write;
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+    const out = stderr.join('');
+    assert.equal(res.action, 'timed-out', `expected a timeout verdict, got ${res.action}: ${out}`);
+    assert.equal(res.timedOut, true);
+    assert.ok(res.failed.length > 0, 'the packages are still absent — that half is unchanged');
+    assert.match(out, new RegExp(DEPS_TIMEOUT_MARKER), 'the operator message must name the timeout');
+    assert.doesNotMatch(out, /install failed/, 'a cap-kill must not be reported as a manager failure');
+    assert.match(out, /AUDIT_DEPS_INSTALL_TIMEOUT_MS/, 'the message must name the lever');
+    assert.match(out, /Run manually:/, 'the manual fallback stays');
+  });
+});
+
+// ── Round-1 code-audit fixes (2026-09-04) ──────────────────────────────────
+describe('timeout validation covers EVERY source', () => {
+  it('an invalid explicit timeoutMs falls back, exactly as an invalid env value does', () => {
+    // Round-1 H5/M2. `positiveIntEnv` guarded the env vars while the public
+    // `timeoutMs` argument reached the caps through a bare `??`. Measured:
+    // `installTimeouts({timeoutMs: 0})` returned `{requiredMs: 0}` — and
+    // execFileSync reads `timeout: 0` as NO timeout, so the "safety" argument
+    // removed the cap it was asked to set.
+    for (const bad of [0, -1, Number.NaN, 1.5, Number.POSITIVE_INFINITY, '', null]) {
+      const t = installTimeouts({ timeoutMs: bad, env: {} });
+      assert.equal(t.requiredMs, DEFAULT_REQUIRED_INSTALL_TIMEOUT_MS, `timeoutMs=${String(bad)} must not reach the cap`);
+      assert.equal(t.optionalMs, DEFAULT_OPTIONAL_INSTALL_TIMEOUT_MS, `timeoutMs=${String(bad)} must not reach the cap`);
+    }
+  });
+
+  it('an invalid timeoutMs falls back PER PHASE, not onto one shared number', () => {
+    // The direction a naive fix gets wrong: collapsing both phases onto the
+    // required default would silently re-create the single-cap bug the whole
+    // change exists to remove.
+    const t = installTimeouts({ timeoutMs: 0, env: {} });
+    assert.notEqual(t.requiredMs, t.optionalMs);
+  });
+
+  it('a VALID explicit timeoutMs still overrides both phases', () => {
+    // Vacuous-pass guard: a validator that rejected everything would pass every
+    // assertion above while breaking the feature.
+    const t = installTimeouts({ timeoutMs: 7000, env: { AUDIT_DEPS_INSTALL_TIMEOUT_MS: '5000' } });
+    assert.deepEqual([t.requiredMs, t.optionalMs], [7000, 7000]);
+    assert.equal(installTimeouts({ timeoutMs: 1, env: {} }).requiredMs, 1, '1ms is valid — no arbitrary floor');
+  });
+});
+
+describe('dependency presence is a PACKAGE, not a directory', () => {
+  let TMP;
+  before(() => { TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'dep-probe-')); });
+  after(() => {
+    if (TMP) fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+
+  const repoWith = (name, build) => {
+    const root = path.join(TMP, name);
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, 'package.json'), '{}');
+    build(path.join(root, 'node_modules'));
+    return root;
+  };
+
+  it('an empty directory named after a dep does NOT count as installed', () => {
+    // Round-1 H1/H4. A partial or interrupted install leaves the directory with
+    // no manifest; reporting it present tells the consumer a package is there
+    // that cannot be loaded.
+    const dep = requiredDeps()[0];
+    const root = repoWith('bare-dir', (nm) => fs.mkdirSync(path.join(nm, dep), { recursive: true }));
+    assert.ok(findMissingDeps(root).missing.includes(dep), `${dep} is a bare directory — it must still read as missing`);
+  });
+
+  it('the same directory WITH a package.json does count', () => {
+    // Negative control for the assertion above: without this, a probe that
+    // returned "missing" unconditionally would pass it.
+    const dep = requiredDeps()[0];
+    const root = repoWith('real-pkg', (nm) => {
+      fs.mkdirSync(path.join(nm, dep), { recursive: true });
+      fs.writeFileSync(path.join(nm, dep, 'package.json'), '{"name":"x","version":"0.0.0"}');
+    });
+    assert.ok(!findMissingDeps(root).missing.includes(dep), `${dep} has a manifest — it must read as present`);
+  });
+
+  it('the test fixture satisfies the SAME probe production uses', () => {
+    // Round-1 M6. The fixture and the production predicate must not be able to
+    // drift: a seed that satisfies a weaker check than the real installer does
+    // is a hole, not a fixture. This binds them — tighten the probe and this
+    // fails here before it fails anywhere a human would have to diagnose it.
+    const root = path.join(TMP, 'seeded');
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, 'package.json'), '{}');
+    seedInstalledDeps(root);
+    const res = findMissingDeps(root);
+    assert.deepEqual(res.missing, [], 'seeded required deps must read as installed');
+    assert.deepEqual(res.missingOptional, [], 'seeded optional deps must read as installed');
+  });
+});
+
+// ── Round-2 code-audit fixes (2026-09-04) ──────────────────────────────────
+describe('timeout bounds', () => {
+  it('rejects a value beyond Node\'s documented timer range', () => {
+    // Round-2 M1/M3. NOT because a failure was reproduced — it was not: with a
+    // verified positive control (a 300ms cap killing a 3s child at 318ms),
+    // execFileSync timeouts of 2**31 and 2**32 let the child run to completion,
+    // no clamp-kill and no TimeoutOverflowWarning. The bound is here because
+    // those values are outside the range setTimeout documents as supported.
+    for (const bad of [MAX_TIMEOUT_MS + 1, 2 ** 32, Number.MAX_SAFE_INTEGER + 2]) {
+      assert.equal(installTimeouts({ timeoutMs: bad, env: {} }).requiredMs,
+        DEFAULT_REQUIRED_INSTALL_TIMEOUT_MS, `${bad} is out of range and must fall back`);
+    }
+  });
+
+  it('accepts the largest in-range value — the boundary, not just the far side', () => {
+    // Vacuous-pass guard: a bound that rejected everything would satisfy the
+    // test above while breaking every legitimate large cap.
+    assert.equal(installTimeouts({ timeoutMs: MAX_TIMEOUT_MS, env: {} }).requiredMs, MAX_TIMEOUT_MS);
+    assert.equal(installTimeouts({ env: { AUDIT_DEPS_INSTALL_TIMEOUT_MS: String(MAX_TIMEOUT_MS) } }).requiredMs,
+      MAX_TIMEOUT_MS, 'the env path must accept the same boundary the argument path does');
+  });
+
+  it('keeps totalMs exact — the reason isSafeInteger and not isInteger', () => {
+    const t = installTimeouts({ env: {} });
+    assert.ok(Number.isSafeInteger(t.totalMs), 'the sum of two caps must stay exact');
   });
 });

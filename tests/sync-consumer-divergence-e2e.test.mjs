@@ -30,6 +30,8 @@ import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 
+import { seedInstalledDeps, runSyncCli, whySyncFailed } from './helpers/consumer-fixture.mjs';
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs');
 const execFileAsync = promisify(execFile);
@@ -46,15 +48,7 @@ function git(args, cwd = consumer) {
 }
 
 async function sync(extra = [], root = consumer) {
-  try {
-    const { stdout, stderr } = await execFileAsync(
-      process.execPath, [CLI, '--target-path', root, '--no-prompt', ...extra],
-      { cwd: REPO_ROOT, timeout: 300_000, maxBuffer: 32 * 1024 * 1024 },
-    );
-    return { code: 0, out: stdout + stderr };
-  } catch (err) {
-    return { code: err.code ?? 1, out: (err.stdout ?? '') + (err.stderr ?? '') };
-  }
+  return runSyncCli(['--target-path', root, '--no-prompt', ...extra]);
 }
 
 // The CLI colours its output; every assertion below is about the WORDS.
@@ -77,6 +71,12 @@ before(async () => {
     path.join(consumer, 'package.json'),
     JSON.stringify({ name: 'divergence-fixture', type: 'module' }, null, 2),
   );
+  // No install: this suite's subject is the sync's behaviour in a real git
+  // repo, not dependency provisioning. See helpers/consumer-fixture.mjs — a
+  // real install buries this fixture's `git add -A` under tens of thousands of
+  // node_modules files, and the derived subprocess budget there (never a
+  // hand-picked number here) is sized around the no-install case by default.
+  seedInstalledDeps(consumer);
   fs.writeFileSync(path.join(consumer, '.gitignore'), '');
   git(['add', '-A']);
   git(['commit', '-m', 'init', '--no-gpg-sign']);
@@ -88,7 +88,7 @@ describe('sync into a fresh consumer', () => {
   let first;
   it('succeeds and writes an in-repo receipt', async () => {
     first = await sync();
-    assert.equal(first.code, 0, first.out.slice(-3000));
+    assert.equal(first.code, 0, whySyncFailed(first));
     assert.ok(fs.existsSync(path.join(consumer, '.sync-receipt.json')), 'no .sync-receipt.json');
   });
 
@@ -221,7 +221,7 @@ describe('the consumer declares the divergence', () => {
     git(['commit', '-m', 'declare the override', '--no-gpg-sign']);
 
     result = await sync();
-    assert.equal(result.code, 0, result.out.slice(-3000));
+    assert.equal(result.code, 0, whySyncFailed(result));
     assert.match(stripAnsi(result.out), /hold\s+\.claude\/skills\/plan\/SKILL\.md/);
   });
 
@@ -241,7 +241,7 @@ describe('the consumer declares the divergence', () => {
     git(['add', '-A']);
     git(['commit', '-m', 'receipt', '--no-gpg-sign']);
     const again = await sync();
-    assert.equal(again.code, 0, again.out.slice(-2000));
+    assert.equal(again.code, 0, whySyncFailed(again));
     assert.equal(git(['status', '--porcelain', '--', '.sync-receipt.json']).trim(), '',
       'a no-op sync re-dirtied the receipt');
   });
@@ -273,7 +273,7 @@ describe('pinned launchers survive the JSON merge', () => {
     git(['commit', '-m', 'pin the mcp servers', '--no-gpg-sign']);
 
     const result = await sync(['--overwrite-diverged']);
-    assert.equal(result.code, 0, result.out.slice(-3000));
+    assert.equal(result.code, 0, whySyncFailed(result));
 
     const after = JSON.parse(read(MCP));
     assert.equal(after.servers.playwright.command, 'node',
@@ -318,14 +318,14 @@ describe('a second sync before the first is COMMITTED (upstream report 1fb43574)
     git(['commit', '-m', 'init', '--no-gpg-sign'], second);
 
     const a = await sync([], second);
-    assert.equal(a.code, 0, a.out.slice(-3000));
+    assert.equal(a.code, 0, whySyncFailed(a));
     firstEntry = lastSync(second);
 
     // NO COMMIT here — that is the window. Deleting a synced file is what makes
     // the next run propagate something, so both runs are real recorded events.
     fs.rmSync(path.join(second, VICTIM_A), { recursive: true, maxRetries: 3, retryDelay: 50 });
     const b = await sync([], second);
-    assert.equal(b.code, 0, b.out.slice(-3000));
+    assert.equal(b.code, 0, whySyncFailed(b));
   });
 
   it("the second sync did NOT erase the first — both are on record", () => {
@@ -389,7 +389,7 @@ describe('a second sync before the first is COMMITTED (upstream report 1fb43574)
     fs.rmSync(path.join(second, VICTIM_B), { recursive: true, maxRetries: 3, retryDelay: 50 });
 
     const out = await sync([], second);
-    assert.equal(out.code, 0, out.out.slice(-3000));
+    assert.equal(out.code, 0, whySyncFailed(out));
 
     const file = receiptFile(second);
     assert.equal(file.version, 2);
@@ -411,7 +411,7 @@ describe('a second sync before the first is COMMITTED (upstream report 1fb43574)
     fs.rmSync(path.join(second, VICTIM_A), { recursive: true, maxRetries: 3, retryDelay: 50 });
 
     const out = await sync([], second);
-    assert.equal(out.code, 0, out.out.slice(-3000));
+    assert.equal(out.code, 0, whySyncFailed(out));
     assert.equal(fs.readFileSync(path.join(second, '.sync-receipt.json'), 'utf-8'), bytes,
       'an older bundle overwrote a newer receipt');
     assert.match(stripAnsi(out.out), /receipt not written/);

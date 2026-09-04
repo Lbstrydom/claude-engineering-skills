@@ -37,7 +37,7 @@ Azure work-profile variables are documented separately in
 
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
-| `FINAL_REVIEW_SHADOW` | No | — | Opt-in **shadow** final reviewer (observation-only A/B): `claude-opus` \| `anthropic` \| `gemini` \| `xai`. Runs a second blind reviewer in parallel with the primary; never gates the build. No-op when unset or under an Azure profile. |
+| `FINAL_REVIEW_SHADOW` | No | — | Opt-in **shadow** final reviewer (observation-only A/B): `claude-opus` \| `anthropic` \| `gemini` \| `openrouter` \| `xai` \| `alibaba` \| `deepseek` — the key set of `SHADOW_PROVIDER_SPECS` (`scripts/lib/final-review/provider-specs.mjs`), verified 2026-09-04. The row previously named four, while the credential rows above documented `=alibaba` and `=deepseek`, so the document contradicted itself. Runs a second blind reviewer in parallel with the primary; never gates the build. No-op when unset or under an Azure profile. |
 | `FINAL_REVIEW_SHADOW_MODEL` | No | per-provider | Concrete model / sentinel for the shadow reviewer. Unset → derived from the provider (`claude-opus`→`latest-opus`, `gemini`→`latest-pro`, `xai`→`latest-grok`). A family mismatch is a logged no-op. |
 | `FINAL_REVIEW_SHADOW_SCOPE` | No | `full` | Envelope scope the shadow reviewer receives: `full` (byte-identical to the primary's own envelope — the historical baseline), `thin` (blind; drops repo-context, narrows code files to the in-scope diff, budget-capped — see `THIN_ENVELOPE_MAX_CHARS` in `scripts/lib/final-review/envelope.mjs`), or `gap` (thin + non-blind — also sees the primary reviewer's findings, projected and capped; campaign-ineligible per KD-5, since a gap shadow is conditioned on its own arm's primary result and isn't comparable across a cohort). An active campaign (`--campaign-digest` passed to `gemini-review.mjs`) requires a valid value and refuses `gap` outright, both before any provider call; outside a campaign an invalid value warns and falls back to `full` (the most expensive envelope, so a typo can't silently buy the cheap one). `--envelope-scope` on the CLI takes precedence over this variable. |
 | `CAMPAIGN_HMAC_KEY_<CAMPAIGN_ID>` | Campaign-only | — | Per-campaign worksheet-integrity secret, name derived by `hmacKeyRefFor()` (`scripts/lib/store/campaign.mjs`) as `CAMPAIGN_HMAC_KEY_` + the campaign id uppercased with non-alphanumerics folded to `_` (e.g. campaign id `final-review-scoped-2026q3` → `CAMPAIGN_HMAC_KEY_FINAL_REVIEW_SCOPED_2026Q3`). Generate fresh per campaign (`crypto.randomBytes(32).toString('hex')`) — never reuse or rotate an existing campaign's key, which would orphan its human dispositions. |
@@ -114,3 +114,23 @@ round lifecycle's reach. [`docs/plans/remediation-state-verification-reconciler.
 |----------|----------|---------|---------|
 | `AUDIT_REMEDIATION_RECONCILE_ENABLED` | No | `true` | Set to `false` to disable the reconciler entirely (both the `/ship` 0.5e capped call and the `remediation-reconcile` weekly-maintenance entry check this before any DB/LLM call). |
 | `AUDIT_REMEDIATION_RECONCILE_MODEL` | No | `latest-sonnet` (sentinel — see [Model Resolution](model-resolution.md)) | The verifier model. A real code-reading judgment call per file batch, not a naming/labelling task — Haiku is too weak, Opus is unnecessary. |
+
+## Consumer dependency install
+
+`scripts/lib/install/deps.mjs` — the per-phase ceilings on the package-manager
+install the sync runs in a consumer repo. They are **ceilings on a network
+operation, not budgets**: on a warm cache both phases finish in seconds, and a
+generous ceiling only changes how long a wedged install takes to give up.
+
+Two numbers, not one, because the optional phase downloads `playwright` and the
+required phase does not. A single 120s cap covering both was measured on
+2026-09-04 killing installs that then turned out to have succeeded, and — since
+a caller had independently chosen a 240s bound for the whole sync — killing the
+caller too. A cap-kill is now reported as `dependency install timed out`, kept
+distinct from a manager-reported failure, and adjudicated by re-probing
+`node_modules` rather than by the exit code.
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `AUDIT_DEPS_INSTALL_TIMEOUT_MS` | No | `300000` | Ceiling on the REQUIRED-dep install phase. A non-integer or non-positive value falls back to the default — it never disables the cap. |
+| `AUDIT_DEPS_OPTIONAL_INSTALL_TIMEOUT_MS` | No | `600000` | Ceiling on the OPTIONAL-dep phase (`codeowners-utils`, `proper-lockfile`, `playwright`). Higher than the required phase by design. |

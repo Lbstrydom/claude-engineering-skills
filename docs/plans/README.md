@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**2 active · 215 terminal · 28 audit summaries · 4 reference docs**
+**2 active · 216 terminal · 28 audit summaries · 4 reference docs**
 
 ---
 
@@ -42,7 +42,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 212 completed plans</summary>
+<summary>Show all 213 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -90,6 +90,7 @@ source comments that no docs linter sees — stays valid.
 | [Wire the Cloud FP-Pattern Read Loop into Audit Suppression](./cloud-fp-suppression-read-loop.md) | `Complete` | implemented + audited. Plan audit: 5 GPT + 2 Gemini rounds. Code audit: 5 GPT rounds + 1 deliberation + 3… |
 | [Comparison-Tooling Consolidation](./comparison-tooling-consolidation.md) | `Complete` | all clusters (A/A′, B, C, D) implemented, individually audited to convergence, and the mandatory… |
 | [Consumer corpus honesty — the index, the round, and the ownership seam](./consumer-corpus-and-honesty-2026-09-04.md) | `Complete` | implemented and audited. GPT `/audit-code` ×5 rounds (H:6→2→3→3→4), 27 findings accepted and fixed, 49… |
+| [Bound and adjudicate the consumer dependency install](./consumer-dep-install-bounding.md) | `Complete` | implemented, verified, and audited 2026-09-04; `/audit-code` 6 rounds + Gemini APPROVE |
 | [Harden consumer deployment — prevent silent local-patching of synced tooling](./consumer-deployment-hardening.md) | `Complete` | all three phases built, tested, and deployed (the "Draft" label was stale). Phase 1 banner:… |
 | [Consumer friction doctor + upstream-report ratchet](./consumer-friction-doctor.md) | `Complete` | audited 3 GPT plan rounds (18/18 findings accepted) + 2 Gemini plan rounds (4/4 addressed); implemented via… |
 | [Degradation Disclosure — Debate Skip + Audit Prerequisite Ladder](./consumer-report-degradation-disclosure.md) | `Complete` | both changes shipped (`c2f9f068` brainstorm, `30445802` audit family) and audited over 6 GPT rounds plus the… |
