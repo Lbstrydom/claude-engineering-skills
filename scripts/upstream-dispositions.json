@@ -47,6 +47,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "15da01b6-d2ac-4c08-a6c3-e5e73d1a18dd",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/synced-doc-links.test.mjs"
+      },
+      "recordedAt": "2026-09-04T17:25:15.620Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "167084b3-97de-4ddc-9526-5da4ef10bfbf",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
@@ -209,6 +220,17 @@
         "value": "tests/symbol-index-corpus-ownership.test.mjs"
       },
       "recordedAt": "2026-09-04T12:13:31.121Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "63552e8b-d2b8-4732-8cd1-437511863015",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/skill-consumer-refs.test.mjs"
+      },
+      "recordedAt": "2026-09-04T19:38:21.924Z"
     },
     {
       "schemaVersion": 1,
@@ -473,17 +495,6 @@
         "value": "tests/sync-owned-sidecar.test.mjs"
       },
       "recordedAt": "2026-09-04T12:14:07.598Z"
-    },
-    {
-      "schemaVersion": 1,
-      "issueId": "15da01b6-d2ac-4c08-a6c3-e5e73d1a18dd",
-      "storeFingerprint": "d5a9d07b91225a93",
-      "state": "fixed",
-      "disposition": {
-        "kind": "test",
-        "value": "tests/synced-doc-links.test.mjs"
-      },
-      "recordedAt": "2026-09-04T17:25:15.620Z"
     }
   ]
 }
