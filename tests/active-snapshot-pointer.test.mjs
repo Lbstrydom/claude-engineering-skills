@@ -11,11 +11,20 @@
  * reintroduced one round after being fixed elsewhere.
  *
  * It survived a round because it was untestable — welded between two `await`s
- * in a store module with no injection seam, and no live-DB harness exists for
- * this file (`learning-store-contract.test.mjs` is structural only). So the
- * DECISION was extracted as `resolveActiveSnapshot`, the same split `drift.mjs`
- * already uses for `resolveStoreGateExit`. The lesson generalises: when a
- * defect hides behind I/O, the fix is a seam, not a bigger fixture.
+ * in a store module with no injection seam. So the DECISION was extracted as
+ * `resolveActiveSnapshot`, the same split `drift.mjs` already uses for
+ * `resolveStoreGateExit`. The lesson generalises: when a defect hides behind
+ * I/O, the fix is a seam, not a bigger fixture.
+ *
+ * **But a seam is not a substitute for touching the database.** An earlier
+ * draft of this file claimed "no live-DB harness exists for this file"; that
+ * was FALSE. `tests/refresh-provenance-promotion.test.mjs` runs against a real
+ * Postgres under `npm run db:local`, and it is what caught the fix below
+ * selecting a `commit_sha` column that does not exist — the query threw, the
+ * surrounding `catch` returned null, and `getActiveSnapshot` answered "no
+ * snapshot" for every healthy repo. The pure tests here all passed throughout:
+ * they exercise the decision, and the defect was in the QUERY. Five audit
+ * rounds and two Gemini gates missed it; the container caught it in 80s.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -41,7 +50,7 @@ describe('resolveActiveSnapshot', () => {
     // The direction that must NOT fire. A healthy repo has to keep working;
     // a guard that rejects the normal case is worse than no guard.
     const { snapshot, corruptPointer } = resolveActiveSnapshot(repoRow, {
-      import_graph_populated: true, commit_sha: 'abc123',
+      import_graph_populated: true, walk_start_commit: 'abc123',
     });
     assert.equal(corruptPointer, false);
     assert.equal(snapshot.refreshId, 'refresh-1');
@@ -88,7 +97,7 @@ describe('resolveActiveSnapshot', () => {
     }
   });
 
-  it('a run row with no commit_sha yields null, not undefined', () => {
+  it('a run row with no walk_start_commit yields null, not undefined', () => {
     const { snapshot } = resolveActiveSnapshot(repoRow, { import_graph_populated: false });
     assert.equal(snapshot.commitSha, null);
   });

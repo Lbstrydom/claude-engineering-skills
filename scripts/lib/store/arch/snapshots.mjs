@@ -38,7 +38,7 @@ import { isCloudEnabled } from '../repo.mjs';
  *
  * @param {{active_refresh_id: string|null, active_embedding_model: string|null,
  *          active_embedding_dim: number|null}|null} repoRow
- * @param {{import_graph_populated?: boolean, commit_sha?: string|null}|null|undefined} runRow
+ * @param {{import_graph_populated?: boolean, walk_start_commit?: string|null}|null|undefined} runRow
  * @returns {{snapshot: object|null, corruptPointer: boolean}}
  */
 export function resolveActiveSnapshot(repoRow, runRow) {
@@ -58,7 +58,7 @@ export function resolveActiveSnapshot(repoRow, runRow) {
     snapshot: {
       ...base,
       importGraphPopulated: runRow.import_graph_populated === true,
-      commitSha: runRow.commit_sha ?? null,
+      commitSha: runRow.walk_start_commit ?? null,
     },
     corruptPointer: false,
   };
@@ -78,12 +78,21 @@ export async function getActiveSnapshot(repoId) {
       [repoId]
     );
     if (!data) return null;
-    // The commit the snapshot was TAKEN at, which is not necessarily the local
-    // HEAD — a reader correlating a drift report with a commit needs the
-    // former, and `git rev-parse HEAD` (what arch:render falls back to)
-    // silently answers the latter. Reported by a consumer 2026-09-04:
-    // `arch:drift` printed `Commit: unknown` for a snapshot `arch:render`
-    // labelled with a real sha.
+    // `walk_start_commit` — the repo HEAD when this refresh ran, i.e. the commit
+    // the snapshot was TAKEN at. Not the local HEAD now, which is what
+    // `arch:render` falls back to and which can have moved since. Reported by a
+    // consumer 2026-09-04: `arch:drift` printed `Commit: unknown` for a
+    // snapshot `arch:render` labelled with a real sha.
+    //
+    // NOT `commit_sha`: that column DOES NOT EXIST on `refresh_runs` (only
+    // `walk_start_commit` and the never-written `walk_end_commit`). The first
+    // version of this fix selected it, the whole query threw, the surrounding
+    // `catch` swallowed it, and `getActiveSnapshot` returned null for every
+    // healthy repo — a total outage of the active-snapshot pointer, invisible
+    // because the catch converts any error into the same "no snapshot" answer
+    // a fresh repo gives. Five audit rounds and two Gemini gates missed it; the
+    // real-Postgres suite caught it in 80 seconds. `imports.mjs:322` still
+    // selects the same phantom column (pre-existing, filed separately).
     //
     // `AND repo_id = $2` (audit R2 H1): the id comes from THIS repo's
     // `active_refresh_id`, so the row is bound by construction today — but
@@ -93,7 +102,7 @@ export async function getActiveSnapshot(repoId) {
     // answer unrepresentable rather than merely unlikely.
     const runRow = data.active_refresh_id
       ? await one(
-        `SELECT import_graph_populated, commit_sha FROM refresh_runs WHERE id = $1 AND repo_id = $2 LIMIT 1`,
+        `SELECT import_graph_populated, walk_start_commit FROM refresh_runs WHERE id = $1 AND repo_id = $2 LIMIT 1`,
         [data.active_refresh_id, repoId],
       )
       : null;
