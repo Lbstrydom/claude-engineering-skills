@@ -55,6 +55,7 @@ import { installedTreeStale } from './lib/installed-tree-identity.mjs';
 import { countTopLevelEntries, findNodeModules } from './lib/node-modules-resolver.mjs';
 import { GIT_LOCK_RETRY_DELAYS_MS, withGitLockRetry } from './lib/git-lock-retry.mjs';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
+import { resolveMainRoot } from './lib/pinned-worktree/paths.mjs';
 import {
   STALE_SANDBOX_AGE_MS,
   removeSandboxDir,
@@ -366,8 +367,8 @@ function reportFailedInstall(sandbox, detail) {
   }
 }
 
-function copyIfPresent(sandbox, repoRoot, rel) {
-  const src = path.join(repoRoot, rel);
+function copyIfPresent(sandbox, sourceRoot, rel) {
+  const src = path.join(sourceRoot, rel);
   if (!fs.existsSync(src)) return false;
   const dest = path.join(sandbox, rel);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
@@ -379,13 +380,56 @@ function copyIfPresent(sandbox, repoRoot, rel) {
  *  artifacts only (the caller throws on those); `carried` is the optional
  *  operator configs that were actually found, reported so the log says which
  *  policy the run used rather than leaving it ambiguous. */
-function provisionArtifacts(sandbox, repoRoot) {
+/**
+ * Copy the gitignored inputs the checks need into the sandbox.
+ *
+ * `sourceRoot` is the MAIN CHECKOUT, deliberately not the worktree this push
+ * came from — see `resolveLocalArtifactRoot`. Every path here is gitignored, so
+ * it exists in exactly one place on disk and a linked worktree never has it.
+ *
+ * @param {string} sandbox
+ * @param {string} sourceRoot main-checkout root, from `resolveLocalArtifactRoot`
+ */
+function provisionArtifacts(sandbox, sourceRoot) {
   const missing = [];
   for (const rel of PROVISIONED_ARTIFACTS) {
-    if (!copyIfPresent(sandbox, repoRoot, rel)) missing.push(rel);
+    if (!copyIfPresent(sandbox, sourceRoot, rel)) missing.push(rel);
   }
-  const carried = OPTIONAL_ARTIFACTS.filter(rel => copyIfPresent(sandbox, repoRoot, rel));
+  const carried = OPTIONAL_ARTIFACTS.filter(rel => copyIfPresent(sandbox, sourceRoot, rel));
   return { missing, carried };
+}
+
+/**
+ * Where this repo's gitignored local artifacts actually live: the MAIN
+ * checkout, which is not the same directory as `repoRoot` whenever the push
+ * comes from a linked worktree.
+ *
+ * Measured 2026-09-04: a push from `<repo>/.claude/worktrees/<name>` failed
+ * with "sandbox is missing required local artifact(s):
+ * .audit-loop/domain-deps-observed.json" while the main checkout held that file
+ * the whole time. `PROVISIONED_ARTIFACTS` is a HARD requirement by design, so
+ * the wrong root does not degrade quietly — it blocks every worktree push until
+ * the operator regenerates a file they already have. The thrown message even
+ * said "must be copied from the main checkout" while the code read the worktree.
+ *
+ * `resolveMainRoot` (`--git-common-dir/..`) is reused rather than re-spelled:
+ * its own docstring warns that a further copy of "find the main checkout" is how
+ * the existing ones drift apart, and `tests/prepush-worktree-anchor.test.mjs`
+ * caps that population.
+ *
+ * Falls back to `repoRoot` only when git cannot answer at all. In a plain
+ * checkout the two ARE the same directory, so the fallback is exact there and
+ * merely restores the previous behaviour anywhere else.
+ *
+ * @param {string} repoRoot the worktree this push came from
+ * @returns {string}
+ */
+function resolveLocalArtifactRoot(repoRoot) {
+  try {
+    return resolveMainRoot(repoRoot);
+  } catch {
+    return repoRoot;
+  }
 }
 
 /**
@@ -440,7 +484,12 @@ function removeWorktree(sandbox, repoRoot) {
 function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
+  // Two DIFFERENT roots, and conflating them is a live defect class.
+  // `repoRoot` is the checkout this push came from — correct for every git
+  // operation below. Gitignored local artifacts live in the MAIN checkout,
+  // which differs whenever that checkout is a linked worktree.
   const repoRoot = git(['rev-parse', '--show-toplevel']);
+  const localArtifactRoot = resolveLocalArtifactRoot(repoRoot);
   const head = argValue('--head') || 'HEAD';
   const base = argValue('--base');
 
@@ -548,14 +597,15 @@ function main() {
     const preRunEntryCount = mainModulesForGuard ? countTopLevelEntries(mainModulesForGuard) : null;
 
     const modules = provisionNodeModules(sandbox, repoRoot, gitEnv);
-    const { missing, carried } = provisionArtifacts(sandbox, repoRoot);
+    const { missing, carried } = provisionArtifacts(sandbox, localArtifactRoot);
     if (missing.length) {
       // Do not proceed into a run whose gates we have just told to be strict —
       // that would fail confusingly. Say exactly what is missing and why.
       throw new Error(
         `sandbox is missing required local artifact(s): ${missing.join(', ')}\n` +
-        `  These are gitignored and must be copied from the main checkout.\n` +
-        `  Run \`npm run arch:render\` (or \`npm run dashboard:setup\`) and retry.`,
+        `  These are gitignored, so they live only in the main checkout — looked in:\n` +
+        `    ${localArtifactRoot}\n` +
+        `  Run \`npm run arch:render\` (or \`npm run dashboard:setup\`) there and retry.`,
       );
     }
     log(`  sandbox ready (node_modules: ${modules})`);

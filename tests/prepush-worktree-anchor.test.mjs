@@ -32,6 +32,7 @@ import { spawnSync } from 'node:child_process';
 
 import { _internals } from '../scripts/install-prepush-hook.mjs';
 import { resolveSourceRepo } from '../scripts/lib/shared-cloud-config.mjs';
+import { resolveMainRoot } from '../scripts/lib/pinned-worktree/paths.mjs';
 import { hasBash } from './lib/hook-test-helpers.mjs';
 
 const { HOOK_BODY } = _internals;
@@ -275,5 +276,121 @@ describe('managed pre-push hook — discovery body, executed', () => {
       assert.equal(got.resolved, '');
       assert.equal(got.sentinel, false);
     });
+  });
+});
+
+/**
+ * The pre-push sandbox provisions gitignored inputs. Those exist in exactly one
+ * place — the MAIN checkout — so the root it copies FROM is a different
+ * question from the root it builds the sandbox from, and answering both with
+ * `--show-toplevel` is the same defect this file's subject had.
+ */
+describe('prepush sandbox — local artifacts come from the main checkout', () => {
+  const runnerSrc = fs.readFileSync(path.join(process.cwd(), 'scripts', 'prepush-check.mjs'), 'utf-8');
+
+  it('provisions from the artifact root, never from the worktree root', () => {
+    assert.match(
+      runnerSrc, /provisionArtifacts\(sandbox, localArtifactRoot\)/,
+      'PROVISIONED_ARTIFACTS are gitignored; a linked worktree never has them, so passing '
+      + 'repoRoot here blocks every worktree push on a file the operator already has',
+    );
+    assert.doesNotMatch(runnerSrc, /provisionArtifacts\(sandbox, repoRoot\)/);
+  });
+
+  it('reuses the shared oracle rather than re-deriving the main checkout', () => {
+    assert.match(runnerSrc, /import \{ resolveMainRoot \} from '\.\/lib\/pinned-worktree\/paths\.mjs'/);
+  });
+
+  it('names the directory it searched when a required artifact is missing', () => {
+    // "must be copied from the main checkout" was already the wording while the
+    // code read the worktree — a message that describes the intent cannot help
+    // an operator debug the behaviour. Print the path actually used.
+    assert.match(runnerSrc, /\$\{localArtifactRoot\}/);
+  });
+
+  it('finds a main-checkout-only artifact from inside a linked worktree', (t) => {
+    if (!HAS_GIT) return t.skip('git is required to build a real linked worktree');
+    withTmp((parent) => {
+      const { main, worktree } = makeRepoWithWorktree(parent);
+      const rel = path.join('.audit-loop', 'domain-deps-observed.json');
+      fs.mkdirSync(path.join(main, '.audit-loop'), { recursive: true });
+      fs.writeFileSync(path.join(main, rel), '{}\n');
+
+      // Red control: the value the pre-fix code used cannot see it.
+      assert.equal(fs.existsSync(path.join(worktree, rel)), false);
+
+      assert.equal(fs.existsSync(path.join(resolveMainRoot(worktree), rel)), true);
+    });
+  });
+});
+
+/**
+ * Population ratchet on "find the main checkout".
+ *
+ * `resolveMainRoot`'s own docstring warns that a further copy is how the
+ * existing ones drift apart, and `transcript-archive.mjs` cites that warning as
+ * its reason for reusing it. Nothing enforced it, and `prepush-check.mjs` then
+ * shipped the bug this file exists for — not by copying the derivation, but by
+ * answering the question with `--show-toplevel` instead.
+ *
+ * A new entry is not forbidden; it is required to be a decision. Add it here
+ * with the reason it cannot reuse `resolveMainRoot`.
+ */
+describe('main-checkout derivation population', () => {
+  const DECLARED = new Map([
+    ['scripts/lib/pinned-worktree/paths.mjs',
+      'THE canonical oracle — `resolveMainRoot`. Everything else should import this.'],
+    ['scripts/lib/shared-cloud-config.mjs',
+      'Runs on every process\'s env load and needs BOTH --show-toplevel and --git-common-dir; '
+      + 'one combined `git rev-parse` is a documented perf decision, and calling resolveMainRoot '
+      + 'would restore the second spawn it removed.'],
+    ['scripts/install-prepush-hook.mjs',
+      'Emits a POSIX sh hook body into a consumer repo. It is bash, not JS — it cannot import a module.'],
+    ['scripts/skills-hydrate.mjs',
+      'Bootstraps the tooling tree; it runs where scripts/lib may not be hydrated yet, so it '
+      + 'cannot depend on a lib module to find the checkout it is about to populate.'],
+    ['scripts/lib/worktree-preflight.mjs',
+      'Not a derivation — canonical RECIPE strings, compared against the one-liners in synced '
+      + 'SKILL.md prose so documented commands cannot drift from the code.'],
+  ]);
+
+  /** Strip comments: a docstring MENTIONING the flag is documentation, not a derivation. */
+  function stripComments(src) {
+    return src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '')
+      .replace(/^\s*[#*].*$/gm, '');
+  }
+
+  function derivationSites() {
+    const found = [];
+    (function walk(dir) {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p); continue; }
+        if (!e.name.endsWith('.mjs')) continue;
+        if (stripComments(fs.readFileSync(p, 'utf-8')).includes('--git-common-dir')) {
+          found.push(path.relative(process.cwd(), p).split(path.sep).join('/'));
+        }
+      }
+    })(path.join(process.cwd(), 'scripts'));
+    return found.sort();
+  }
+
+  it('is exactly the declared set — a new one needs a reason here', () => {
+    const found = derivationSites();
+    // Not vacuous: the canonical oracle must always be among them.
+    assert.ok(found.includes('scripts/lib/pinned-worktree/paths.mjs'), `scan found nothing plausible: ${found.join(', ')}`);
+    assert.deepEqual(
+      found, [...DECLARED.keys()].sort(),
+      'undeclared "find the main checkout" derivation(s). Import `resolveMainRoot` from '
+      + 'scripts/lib/pinned-worktree/paths.mjs, or declare the site above with the reason it cannot.',
+    );
+  });
+
+  it('every declared site carries a non-empty reason', () => {
+    for (const [file, reason] of DECLARED) {
+      assert.ok(reason && reason.length > 40, `${file}: reason is too thin to be a decision`);
+    }
   });
 });
