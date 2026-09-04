@@ -5,10 +5,13 @@ summary: The browser-driver contract — capabilities, driver table, selection o
 # Browser Tool Detection — the driver contract
 
 > **GENERATED COPY — do not edit.** The canonical is
-> [`docs/audit/shared-references/browser-tool-detection.md`](../../../docs/audit/shared-references/browser-tool-detection.md).
+> [`docs/audit/shared-references/browser-tool-detection.md`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/docs/audit/shared-references/browser-tool-detection.md).
 > Regenerate with `node scripts/sync-shared-audit-refs.mjs`; `npm run check`
-> fails on drift. Relative links above were rewritten for this location,
-> so this file is NOT byte-identical to the canonical by design.
+> fails on drift. Links above were re-spelled for this location — a target
+> outside `skills/` becomes an absolute upstream URL, because this copy is
+> copied again into `.claude/skills/` and then into consumer repos, where no
+> relative path reaches it. So this file is NOT byte-identical to the
+> canonical by design.
 
 <!-- host-contract: browser-driver; caps=navigate,readText,evaluate,click,type,keyboard,screenshot,wait,currentUrl -->
 

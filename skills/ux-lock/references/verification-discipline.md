@@ -8,13 +8,16 @@ Seven rules, each led by its measurement, because the measurement is the
 argument. Six outlived the engagement that produced them; §7 was added later,
 from the lens-coverage-honesty work. Field report:
 `wine-cellar-app/docs/upstream-issues/claude-engineering-skills-feedback-2026-08-07.md`; design + audit trail:
-[`docs/plans/verification-discipline-cluster.md`](../../../docs/plans/verification-discipline-cluster.md).
+[`docs/plans/verification-discipline-cluster.md`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/docs/plans/verification-discipline-cluster.md).
 
 > **GENERATED COPY — do not edit.** The canonical is
-> [`docs/audit/shared-references/verification-discipline.md`](../../../docs/audit/shared-references/verification-discipline.md).
+> [`docs/audit/shared-references/verification-discipline.md`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/docs/audit/shared-references/verification-discipline.md).
 > Regenerate with `node scripts/sync-shared-audit-refs.mjs`; `npm run check`
-> fails on drift. Relative links above were rewritten for this location,
-> so this file is NOT byte-identical to the canonical by design.
+> fails on drift. Links above were re-spelled for this location — a target
+> outside `skills/` becomes an absolute upstream URL, because this copy is
+> copied again into `.claude/skills/` and then into consumer repos, where no
+> relative path reaches it. So this file is NOT byte-identical to the
+> canonical by design.
 
 ---
 

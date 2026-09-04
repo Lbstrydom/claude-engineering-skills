@@ -8,10 +8,13 @@ Step 0 of `/audit-plan` and `/audit-code` lists prerequisites. This is what to
 do when one of them is not there.
 
 > **GENERATED COPY — do not edit.** The canonical is
-> [`docs/audit/shared-references/prerequisite-ladder.md`](../../../docs/audit/shared-references/prerequisite-ladder.md).
+> [`docs/audit/shared-references/prerequisite-ladder.md`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/docs/audit/shared-references/prerequisite-ladder.md).
 > Regenerate with `node scripts/sync-shared-audit-refs.mjs`; `npm run check`
-> fails on drift. Relative links above were rewritten for this location,
-> so this file is NOT byte-identical to the canonical by design.
+> fails on drift. Links above were re-spelled for this location — a target
+> outside `skills/` becomes an absolute upstream URL, because this copy is
+> copied again into `.claude/skills/` and then into consumer repos, where no
+> relative path reaches it. So this file is NOT byte-identical to the
+> canonical by design.
 
 **The failure this exists to stop.** The audit family used to state
 prerequisites and stop — *"Validate: plan file exists, `OPENAI_API_KEY` is

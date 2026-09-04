@@ -20,6 +20,23 @@
  * The fix is a per-target render, so these files are deliberately NOT
  * byte-identical any more. `--check` still catches drift because it compares
  * the RENDERED form, not the raw canonical.
+ *
+ * ## The second hop (2026-09-04)
+ *
+ * "Recompute the link for the target" was still half the answer, and the
+ * assertions below encoded the half. `skills/<skill>/references/x.md` is not the
+ * last stop: `skills:regenerate` copies it to
+ * `.claude/skills/<skill>/references/x.md`, one level DEEPER, and that is the
+ * tree a consumer receives. A `../../../docs/…` recomputed to reach the repo
+ * root from the first path lands in `.claude/` from the second — dead in the
+ * generated copy AND in every consumer, while resolving perfectly from the file
+ * an author has open. Measured: 47 links, 35 of them emitted by this renderer.
+ *
+ * So the test is not "is this relative path right where I am writing it" but
+ * "does it stay right after another move". Only a target inside `skills/`
+ * survives, because `.claude/skills/**` mirrors `skills/**` at the same relative
+ * offset; everything else gets an absolute upstream URL. Both branches are
+ * asserted below, and the standing gate is `npm run docs:synced-links:gate`.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,6 +44,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { renderForTarget, findSyncTargets } from '../scripts/sync-shared-audit-refs.mjs';
+import { upstreamUrlFor } from '../scripts/lib/synced-doc-links.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -75,15 +93,37 @@ describe('renderForTarget — the rewrite itself', () => {
   const CANON = path.join(REPO_ROOT, 'docs', 'audit', 'shared-references', 'x.md');
   const TARGET = path.join(REPO_ROOT, 'skills', 'audit-code', 'references', 'x.md');
 
-  it('re-expresses a relative link for the target depth', () => {
+  it('a link OUT of skills/ becomes an absolute upstream URL', () => {
     const out = renderForTarget('See [p](../../plans/foo.md).', CANON, TARGET, REPO_ROOT);
-    assert.match(out, /\]\(\.\.\/\.\.\/\.\.\/docs\/plans\/foo\.md\)/);
-    // The real assertion: it points at the same FILE from the new location.
+    // Same invariant as before — it must denote the same FILE — now expressed
+    // as a repo-relative path inside the URL rather than as a `../` count.
+    assert.equal(
+      out,
+      `See [p](${upstreamUrlFor('docs/plans/foo.md')}).`,
+      'the rewritten link must denote the same file, not merely look different',
+    );
+    assert.equal(relativeLinks(out).length, 0, 'nothing relative may survive for an out-of-skills target');
+  });
+
+  it('a link INTO skills/ stays relative, because .claude/skills mirrors skills', () => {
+    // The one target that survives the SECOND copy: skills:regenerate puts this
+    // file at .claude/skills/audit-code/references/x.md, and `.claude/skills/**`
+    // mirrors `skills/**` at the same relative offset — so the same `../` count
+    // is correct in both. Everything else is why the URL branch exists.
+    const src = 'See [s](../../../skills/ship/examples/e.md).';
+    const out = renderForTarget(src, CANON, TARGET, REPO_ROOT);
     const link = relativeLinks(out)[0];
+    assert.ok(link, 'an intra-skills target must not be URL-ified');
     assert.equal(
       path.resolve(path.dirname(TARGET), link),
-      path.resolve(path.dirname(CANON), '../../plans/foo.md'),
-      'the rewritten link must denote the same file, not merely look different',
+      path.join(REPO_ROOT, 'skills', 'ship', 'examples', 'e.md'),
+    );
+    // And the same string, read one level deeper, still lands on the mirror.
+    const deeper = path.join(REPO_ROOT, '.claude', 'skills', 'audit-code', 'references', 'x.md');
+    assert.equal(
+      path.resolve(path.dirname(deeper), link),
+      path.join(REPO_ROOT, '.claude', 'skills', 'ship', 'examples', 'e.md'),
+      'the whole point of keeping this one relative: it survives the copy into .claude/skills/',
     );
   });
 
@@ -112,22 +152,24 @@ describe('renderForTarget — the rewrite itself', () => {
     assert.equal(renderForTarget(src, CANON, TARGET, REPO_ROOT), src);
   });
 
-  it('rendering FOR THE CANONICAL ITSELF is identity on links (same directory)', () => {
-    const src = 'See [p](../../plans/foo.md).';
-    const out = renderForTarget(src, CANON, CANON, REPO_ROOT);
-    assert.equal(
-      path.resolve(path.dirname(CANON), relativeLinks(out)[0]),
-      path.resolve(path.dirname(CANON), '../../plans/foo.md'),
-    );
+  it('rendering FOR THE CANONICAL ITSELF still denotes the same file', () => {
+    // `docs/` is outside skills/, so even the identity render URL-ifies. The
+    // invariant under test was never "the bytes are unchanged" — it is "the
+    // link still points at docs/plans/foo.md", and that survives.
+    const out = renderForTarget('See [p](../../plans/foo.md).', CANON, CANON, REPO_ROOT);
+    assert.equal(out, `See [p](${upstreamUrlFor('docs/plans/foo.md')}).`);
   });
 
   it('is idempotent — rendering an already-rendered copy does not shift links again', () => {
     const once = renderForTarget('See [p](../../plans/foo.md).', CANON, TARGET, REPO_ROOT);
     const twice = renderForTarget(once, TARGET, TARGET, REPO_ROOT);
     assert.equal(
-      path.resolve(path.dirname(TARGET), relativeLinks(twice)[0]),
-      path.resolve(path.dirname(TARGET), relativeLinks(once)[0]),
+      twice, once,
       'a re-render from the target location must be stable, or repeated syncs would walk the link',
     );
+    // The relative branch has to be idempotent too — it is the one that can walk.
+    const relOnce = renderForTarget('See [s](../../../skills/ship/examples/e.md).', CANON, TARGET, REPO_ROOT);
+    const relTwice = renderForTarget(relOnce, TARGET, TARGET, REPO_ROOT);
+    assert.equal(relTwice, relOnce);
   });
 });

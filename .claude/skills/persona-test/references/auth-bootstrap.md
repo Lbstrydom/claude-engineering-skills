@@ -12,7 +12,7 @@ needs to reach authenticated surfaces (not just the public shell).
 Exploratory mode drives the browser through MCP tool calls
 (`browser_navigate`, `browser_click`, …) — there is no per-call lever
 equivalent to `--mode consistency`'s `authBootstrap` (`CanaryDefinitionSchema`
-in [`scripts/lib/persona-test/schemas.mjs`](../../../scripts/lib/persona-test/schemas.mjs)),
+in [`scripts/lib/persona-test/schemas.mjs`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/scripts/lib/persona-test/schemas.mjs)),
 which owns Playwright directly and can pass `storageState` at
 `context.newContext()` time. Without a documented answer, the natural
 workaround is to reach for `browser_evaluate` and inject a session token
@@ -43,7 +43,7 @@ exactly the scope exploratory mode needs.
      cookies + localStorage.
 
    This mirrors `newAuthedContext`'s `storageState` branch in
-   [`scripts/persona-consistency-run.mjs`](../../../scripts/persona-consistency-run.mjs)
+   [`scripts/persona-consistency-run.mjs`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/scripts/persona-consistency-run.mjs)
    almost line for line — consistency mode already solved this; exploratory
    mode just needs the same artifact handed to a different consumer.
 

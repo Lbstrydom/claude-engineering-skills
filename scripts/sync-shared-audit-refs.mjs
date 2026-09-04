@@ -29,6 +29,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { sha, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { upstreamUrlFor } from './lib/synced-doc-links.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CANONICAL_DIR = path.join(ROOT, 'docs', 'audit', 'shared-references');
@@ -185,6 +186,39 @@ const KNOWN_FLAGS = ['--check', '--dry-run', '--selfcheck-relocation'];
  * @param {string} repoRoot - absolute repo root, for the banner's pointer
  * @returns {string}
  */
+/**
+ * Spell ONE link target for a generated copy: relative when that survives the
+ * rest of the journey, an absolute upstream URL when it cannot.
+ *
+ * **Why "recompute the relative path" is not enough** (found 2026-09-04, via
+ * upstream 15da01b6). The copy this function writes is not the last stop. It
+ * lands in `skills/<skill>/references/`, and `skills:regenerate` then copies it
+ * to `.claude/skills/<skill>/references/` — one level DEEPER — which is the tree
+ * a consumer actually receives. A `../../../docs/…` recomputed to reach the repo
+ * root from the first path lands in `.claude/` from the second. Measured: 47 such
+ * links, dead in the generated copies here and in every consumer, while resolving
+ * perfectly from the `skills/` file an author reads.
+ *
+ * So the test is not "is this relative path right where I am writing it" but
+ * "does it stay right after another move". Only a target inside `skills/`
+ * survives, because `.claude/skills/**` mirrors `skills/**` at the same relative
+ * offset. Everything else gets the absolute upstream URL — the one spelling
+ * correct in this repo and in a consumer at once.
+ *
+ * @param {string} abs absolute path the link resolves to
+ * @param {string} toDir absolute directory the copy is written to
+ * @param {string} repoRoot absolute repo root
+ * @returns {string} a markdown link target
+ */
+function linkForTarget(abs, toDir, repoRoot) {
+  const repoRel = path.relative(repoRoot, abs).replaceAll('\\', '/');
+  if (!repoRel.startsWith('skills/')) return upstreamUrlFor(repoRel);
+  const rel = path.relative(toDir, abs).replaceAll('\\', '/');
+  // path.relative drops the leading `./` for a sibling; markdown is happier
+  // with it present and it keeps the link visibly relative.
+  return rel.startsWith('.') ? rel : `./${rel}`;
+}
+
 export function renderForTarget(srcText, canonicalPath, targetPath, repoRoot) {
   const fromDir = path.dirname(canonicalPath);
   const toDir = path.dirname(targetPath);
@@ -196,11 +230,7 @@ export function renderForTarget(srcText, canonicalPath, targetPath, repoRoot) {
     /\]\((\.\.?\/[^)\s]+)([^)]*)\)/g,
     (whole, link, rest) => {
       const abs = path.resolve(fromDir, link);
-      const rel = path.relative(toDir, abs).replaceAll('\\', '/');
-      // path.relative drops the leading `./` for a sibling; markdown is happier
-      // with it present and it keeps the link visibly relative.
-      const prefixed = rel.startsWith('.') ? rel : `./${rel}`;
-      return `](${prefixed}${rest})`;
+      return `](${linkForTarget(abs, toDir, repoRoot)}${rest})`;
     },
   );
 
@@ -209,10 +239,13 @@ export function renderForTarget(srcText, canonicalPath, targetPath, repoRoot) {
   // does not silently stop the substitution — it would show up as drift.
   const SELF_DESC = /This is the canonical copy\.[\s\S]*?\*\*Edit this file, never a copy\.\*\*/;
   const banner = `> **GENERATED COPY — do not edit.** The canonical is\n`
-    + `> [\`${canonRel}\`](${path.relative(toDir, canonicalPath).replaceAll('\\', '/')}).\n`
+    + `> [\`${canonRel}\`](${linkForTarget(canonicalPath, toDir, repoRoot)}).\n`
     + `> Regenerate with \`node scripts/sync-shared-audit-refs.mjs\`; \`npm run check\`\n`
-    + `> fails on drift. Relative links above were rewritten for this location,\n`
-    + `> so this file is NOT byte-identical to the canonical by design.`;
+    + `> fails on drift. Links above were re-spelled for this location — a target\n`
+    + `> outside \`skills/\` becomes an absolute upstream URL, because this copy is\n`
+    + `> copied again into \`.claude/skills/\` and then into consumer repos, where no\n`
+    + `> relative path reaches it. So this file is NOT byte-identical to the\n`
+    + `> canonical by design.`;
 
   // Pure transform: substitute when the sentence is there, otherwise leave the
   // text alone. It deliberately does NOT refuse a canonical that lacks the

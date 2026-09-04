@@ -298,7 +298,7 @@ block reason. Cloud off → it still runs + prints; Playwright missing → exit 
 **First, a capped auto-reconcile pass (best-effort, never blocks, no override
 flag).** The live-audit-round lifecycle that would otherwise flip
 `remediation_state` to `fixed` is session-scoped, round-diff-scoped, and
-14-day-bounded ([`docs/plans/remediation-state-verification-reconciler.md`](../../docs/plans/remediation-state-verification-reconciler.md))
+14-day-bounded ([`docs/plans/remediation-state-verification-reconciler.md`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/docs/plans/remediation-state-verification-reconciler.md))
 — outside that intersection (the common case for a row that survives to reach
 this step at all) nothing else will ever re-check it. Run this BEFORE the
 query below, so its counts reflect what a machine already closed rather than a
@@ -381,7 +381,7 @@ plan section that was accepted and then not amended:
 Measured 2026-08-11: all 39 plan-mode rows in this repo belonged to seven plans,
 **every one Complete**. Sampling three of them, the under-specification each row
 named had been settled by the implementation — most explicitly by
-[tests/suppression-call-site.test.mjs](../../tests/suppression-call-site.test.mjs),
+[tests/suppression-call-site.test.mjs](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/tests/suppression-call-site.test.mjs),
 whose header cites that plan and those finding IDs. The row that looked most
 dangerous (a data-destroying `alpha = sum(alpha) − (n−1)` recovery procedure) is
 annotated as verified-false *inside the plan document itself*. All 39 were

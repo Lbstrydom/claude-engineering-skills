@@ -31,7 +31,7 @@
     {
       "id": "gate-passed-refused-without-evidence",
       "kind": "document-only",
-      "reason": "'--gate passed is refused unless the run's convergence verdict is verified against the cloud store' is real (ship-commit.mjs enforces it \u2014 observed live this session), but its exit code depends on the git + .audit/last-audit-run.json evidence state (exit 1 vs 2 across setups), so a hermetic cli-exit fixture cannot bind it DETERMINISTICALLY \u2014 the trigger state is subtle and store-dependent. The refusal itself is verified by ship-commit's own provenance tests; document-only here rather than a fragile recipe."
+      "reason": "'--gate passed is refused unless the run's convergence verdict is verified against the cloud store' is real (ship-commit.mjs enforces it — observed live this session), but its exit code depends on the git + .audit/last-audit-run.json evidence state (exit 1 vs 2 across setups), so a hermetic cli-exit fixture cannot bind it DETERMINISTICALLY — the trigger state is subtle and store-dependent. The refusal itself is verified by ship-commit's own provenance tests; document-only here rather than a fragile recipe."
     },
     {
       "id": "gate-converged-requires-verified-divergence",
@@ -50,7 +50,7 @@
     {
       "id": "category-a-never-staged",
       "kind": "document-only",
-      "reason": "'Do NOT git add <Category-A artifact>' (scripts/.sync-manifest.json, dashboard/index.html, dashboard/telemetry.html, docs/architecture-map.md) is an instruction to the AGENT running /ship about what NOT to stage. Still document-only as a GATE \u2014 there is no ship-CLI exit code to assert, because the rule constrains what the model chooses to stage, not what a command returns. REVISED 2026-07-26: the previous reason claimed this was 'enforced downstream by .gitignore, not by a ship CLI' and stopped there, which read as 'not mechanically checkable' and was wrong \u2014 the SKILL TEXT side is now guarded by tests/skill-staging-instructions.test.mjs, which fails when any shell-fenced `git add <literal path>` line in skills/** names a gitignored path. That guard exists because prose alone failed twice: dashboard/index.html (2026-06) got a 'do NOT stage' note, and docs/architecture-map.md then kept its `git add` line for six days sitting two steps above that very note until an agent followed it on 2026-07-26."
+      "reason": "'Do NOT git add <Category-A artifact>' (scripts/.sync-manifest.json, dashboard/index.html, dashboard/telemetry.html, docs/architecture-map.md) is an instruction to the AGENT running /ship about what NOT to stage. Still document-only as a GATE — there is no ship-CLI exit code to assert, because the rule constrains what the model chooses to stage, not what a command returns. REVISED 2026-07-26: the previous reason claimed this was 'enforced downstream by .gitignore, not by a ship CLI' and stopped there, which read as 'not mechanically checkable' and was wrong — the SKILL TEXT side is now guarded by tests/skill-staging-instructions.test.mjs, which fails when any shell-fenced `git add <literal path>` line in skills/** names a gitignored path. That guard exists because prose alone failed twice: dashboard/index.html (2026-06) got a 'do NOT stage' note, and docs/architecture-map.md then kept its `git add` line for six days sitting two steps above that very note until an agent followed it on 2026-07-26."
     },
     {
       "id": "step-0-5-gates-non-blocking",
@@ -61,21 +61,21 @@
       "id": "unremediated-acceptances-never-blocks",
       "kind": "document-only",
       "stated": "never blocks, and there is no override flag for it",
-      "reason": "Step 0.5e's nudge-not-gate guarantee. The READ half is mechanically honest and covered by the reader's own failure contract \u2014 getUnremediatedAcceptances returns [] on both cloud-off and query failure, exactly like getUnlockedFixes \u2014 so the query can never make the step stricter or blind. But 'never BLOCKS the ship' is a claim about what the agent does with a non-empty row set, and there is deliberately no override flag to assert against (the absence of one is the point: an override implies something to override). Same shape and same document-only rationale as step-0-5-gates-non-blocking above; asserting an absence-of-blocking is a judgement about agent flow, not a CLI exit code."
+      "reason": "Step 0.5e's nudge-not-gate guarantee. The READ half is mechanically honest and covered by the reader's own failure contract — getUnremediatedAcceptances returns [] on both cloud-off and query failure, exactly like getUnlockedFixes — so the query can never make the step stricter or blind. But 'never BLOCKS the ship' is a claim about what the agent does with a non-empty row set, and there is deliberately no override flag to assert against (the absence of one is the point: an override implies something to override). Same shape and same document-only rationale as step-0-5-gates-non-blocking above; asserting an absence-of-blocking is a judgement about agent flow, not a CLI exit code."
     },
     {
       "id": "unit-test-lock-refuses-unverifiable-claims",
       "kind": "document-only",
       "statedIn": "skills/ship/SKILL.md",
       "stated": "the writer refuses a missing path or empty rationale",
-      "reason": "Step 0.5b's unit-test lock path. The refusals are REAL and unit-tested (tests/unit-test-lock-kind.test.mjs pins all three: a non-existent test path, a path resolving outside the repo, and a missing --description), so this is not an unbacked claim. It is document-only because the refusal surfaces as a JSON `{ok:false, error}` payload rather than a process exit code \u2014 cross-skill.mjs's uniform contract is JSON-on-stdout with exit 0 \u2014 and `cli-exit` is the only CLI oracle available, against a CLOSED scenario registry. Claiming a cli-exit oracle here would assert an exit code the command deliberately does not produce, which is itself the fake-check class this suite exists to catch. Revisit if cross-skill ever adopts non-zero exits for refusals; the scenario would then be real."
+      "reason": "Step 0.5b's unit-test lock path. The refusals are REAL and unit-tested (tests/unit-test-lock-kind.test.mjs pins all three: a non-existent test path, a path resolving outside the repo, and a missing --description), so this is not an unbacked claim. It is document-only because the refusal surfaces as a JSON `{ok:false, error}` payload rather than a process exit code — cross-skill.mjs's uniform contract is JSON-on-stdout with exit 0 — and `cli-exit` is the only CLI oracle available, against a CLOSED scenario registry. Claiming a cli-exit oracle here would assert an exit code the command deliberately does not produce, which is itself the fake-check class this suite exists to catch. Revisit if cross-skill ever adopts non-zero exits for refusals; the scenario would then be real."
     },
     {
       "id": "final-review-credit-advisory-exit-zero",
       "kind": "document-only",
       "statedIn": "skills/ship/SKILL.md",
       "stated": "the reader always exits 0",
-      "reason": "Step 6.7's nudge-not-gate guarantee for the final-review credit card. The READ half is mechanically honest and unit-covered: cmdFinalReviewPending maps every failure to one of a closed diagnostic enum and returns a discriminated {ready|disabled|unavailable} result rather than throwing, and renderFinalReviewCard returns '' for disabled, for a zero-count ready, and for any unrecognised shape (tests/final-review-card.test.mjs pins all three empty-output paths plus the no-leak case; tests/final-review-pending.test.mjs pins the classifier and counts). Document-only for the same reason as step-0-5-gates-non-blocking and unremediated-acceptances-never-blocks directly above: 'exits 0 and therefore cannot stop the ship' is ultimately a claim about what the AGENT does with the output, and cross-skill.mjs's uniform contract is JSON-on-stdout with exit 0 for every subcommand, so a cli-exit oracle would assert an exit code the command produces unconditionally \u2014 true but vacuous, which is the fake-check class this suite exists to catch."
+      "reason": "Step 6.7's nudge-not-gate guarantee for the final-review credit card. The READ half is mechanically honest and unit-covered: cmdFinalReviewPending maps every failure to one of a closed diagnostic enum and returns a discriminated {ready|disabled|unavailable} result rather than throwing, and renderFinalReviewCard returns '' for disabled, for a zero-count ready, and for any unrecognised shape (tests/final-review-card.test.mjs pins all three empty-output paths plus the no-leak case; tests/final-review-pending.test.mjs pins the classifier and counts). Document-only for the same reason as step-0-5-gates-non-blocking and unremediated-acceptances-never-blocks directly above: 'exits 0 and therefore cannot stop the ship' is ultimately a claim about what the AGENT does with the output, and cross-skill.mjs's uniform contract is JSON-on-stdout with exit 0 for every subcommand, so a cli-exit oracle would assert an exit code the command produces unconditionally — true but vacuous, which is the fake-check class this suite exists to catch."
     },
     {
       "id": "upstream-queue-never-blocks",
@@ -88,23 +88,23 @@
   "ignoredCandidates": [
     {
       "line": "> \"skills:hydrate\": \"node -e \\\"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});console.log('[hydrate] copied '+src)\\\"\"",
-      "reason": "The worktree-preflight marker block's inlined `skills:hydrate` recipe. Every node one-liner carries `require` and `process.exit`, two ENFORCEMENT_VERBS, and no phrasing of a runnable recipe avoids them \u2014 the verbs are JavaScript here, not an enforcement claim about this skill. The recipe is inlined rather than cited because in an unadopted consumer both of the old pointers are dead at once (no `skills:hydrate` script yet, and `docs/runbooks/` is not synced), so a skill file is the only carrier that reaches the reader. Byte-identical across all 16 contracts by construction: it is generated from CONSUMER_HYDRATE_NPM_SCRIPT via MARKER_BLOCK, and `checkSkill` pins the block in every copy."
+      "reason": "The worktree-preflight marker block's inlined `skills:hydrate` recipe. Every node one-liner carries `require` and `process.exit`, two ENFORCEMENT_VERBS, and no phrasing of a runnable recipe avoids them — the verbs are JavaScript here, not an enforcement claim about this skill. The recipe is inlined rather than cited because in an unadopted consumer both of the old pointers are dead at once (no `skills:hydrate` script yet, and `docs/runbooks/` is not synced), so a skill file is the only carrier that reaches the reader. Byte-identical across all 16 contracts by construction: it is generated from CONSUMER_HYDRATE_NPM_SCRIPT via MARKER_BLOCK, and `checkSkill` pins the block in every copy."
     },
     {
-      "line": "gitignored, so `git worktree add` never populates it \u2014 while `.claude/` (this",
-      "reason": "Phase 0a. States what GIT does with an ignored path when creating a linked worktree (it does not populate it) against what the consumer sync layout puts where \u2014 `scripts/.claude-skills/` is gitignored, `.claude/` is tracked. A statement of fact about two external behaviours that together produce the MODULE_NOT_FOUND this step exists to pre-empt, not a gate /ship enforces. The preflight it introduces is a pair of `git rev-parse` reads whose result the AGENT acts on; there is no /ship exit code to assert."
+      "line": "gitignored, so `git worktree add` never populates it — while `.claude/` (this",
+      "reason": "Phase 0a. States what GIT does with an ignored path when creating a linked worktree (it does not populate it) against what the consumer sync layout puts where — `scripts/.claude-skills/` is gitignored, `.claude/` is tracked. A statement of fact about two external behaviours that together produce the MODULE_NOT_FOUND this step exists to pre-empt, not a gate /ship enforces. The preflight it introduces is a pair of `git rev-parse` reads whose result the AGENT acts on; there is no /ship exit code to assert."
     },
     {
       "line": "**Never `cd` to the main checkout to run these.** `ship-commit.mjs` and",
-      "reason": "Phase 0a operator guidance, and deliberately NOT contracted: the failure it warns about is invisible to the guard that looks closest to it. Running from the main checkout makes ship-commit and cross-skill read THAT tree's HEAD, branch and commit_sha \u2014 but `--expect-head`/`--expect-branch` are captured in the same wrong place, so guard-b-identity-is-a-precondition verifies the wrong tree against itself and passes. `context:check` has the same blind spot (it takes its repo root from cwd). Nothing mechanical distinguishes the two checkouts at that point, which is exactly why this is written as a prohibition to the agent rather than claimed as a gate."
+      "reason": "Phase 0a operator guidance, and deliberately NOT contracted: the failure it warns about is invisible to the guard that looks closest to it. Running from the main checkout makes ship-commit and cross-skill read THAT tree's HEAD, branch and commit_sha — but `--expect-head`/`--expect-branch` are captured in the same wrong place, so guard-b-identity-is-a-precondition verifies the wrong tree against itself and passes. `context:check` has the same blind spot (it takes its repo root from cwd). Nothing mechanical distinguishes the two checkouts at that point, which is exactly why this is written as a prohibition to the agent rather than claimed as a gate."
     },
     {
       "line": "**Never `npm run sync -- --target-path <worktree>`.** It aborts on unowned",
-      "reason": "Phase 0a operator guidance. Describes SYNC's behaviour, not /ship's: the ownership manifest is gitignored, so a fresh worktree reads as an unowned repo and the sync aborts on collisions \u2014 and `--adopt-orphans`, the flag that clears the abort, does so by overwriting tracked files. The prohibition is about which recovery an agent reaches for; /ship emits no exit code for a command it is telling you not to run."
+      "reason": "Phase 0a operator guidance. Describes SYNC's behaviour, not /ship's: the ownership manifest is gitignored, so a fresh worktree reads as an unowned repo and the sync aborts on collisions — and `--adopt-orphans`, the flag that clears the abort, does so by overwriting tracked files. The prohibition is about which recovery an agent reaches for; /ship emits no exit code for a command it is telling you not to run."
     },
     {
       "line": "`post-commit-drift` it exits 1 and prints a recovery command: **do not push.**",
-      "reason": "Post-commit verification, and deliberately NOT contracted as executable: it DETECTS drift rather than preventing it, and \"do not push\" is an instruction to the AGENT about what to do with exit 1 \u2014 there is no further exit code for a recipe to assert. The exit-1 path is covered by tests/ship-commit-worktree-identity.test.mjs; the prevention half is docs/plans/ship-commit-transaction.md."
+      "reason": "Post-commit verification, and deliberately NOT contracted as executable: it DETECTS drift rather than preventing it, and \"do not push\" is an instruction to the AGENT about what to do with exit 1 — there is no further exit code for a recipe to assert. The exit-1 path is covered by tests/ship-commit-worktree-identity.test.mjs; the prevention half is docs/plans/ship-commit-transaction.md."
     },
     {
       "line": "(and needs `cat-file -t`, not `-e`, to detect: `-e` exits 0 for a tree).",
@@ -112,7 +112,7 @@
     },
     {
       "line": "never named. Pass each file. A DELETED directory is refused for the same reason",
-      "reason": "Elaboration of guard-a: the directory and deleted-directory refusals are the same declare-your-scope rule applied to a pathspec git would expand. Asserted in tests/ship-commit-worktree-identity.test.mjs \u2014 existing directory, deleted directory, and a deleted FILE still committing normally."
+      "reason": "Elaboration of guard-a: the directory and deleted-directory refusals are the same declare-your-scope rule applied to a pathspec git would expand. Asserted in tests/ship-commit-worktree-identity.test.mjs — existing directory, deleted directory, and a deleted FILE still committing normally."
     },
     {
       "line": "index holds, so it requires you to declare what you are shipping. There is no",
@@ -120,14 +120,14 @@
     },
     {
       "line": "refuses an unscoped commit outright: it cannot know whose staged entries the",
-      "reason": "Restates guard-a-unscoped-commit-refused (bound executably above) \u2014 the WHY behind the refusal, not a second gate. The exit-2 behaviour is asserted by the ship-unscoped-index-refusal recipe."
+      "reason": "Restates guard-a-unscoped-commit-refused (bound executably above) — the WHY behind the refusal, not a second gate. The exit-2 behaviour is asserted by the ship-unscoped-index-refusal recipe."
     },
     {
-      "line": "> `pre-bundle-evidence` and you must pass the flags explicitly \u2014 it can never",
-      "reason": "Elaboration of the same gate for the pre-bundle-evidence path \u2014 a marker written before auditedBranch existed cannot half-match. Asserted in tests/gate-evidence-tree-identity.test.mjs (present / explicit-null / absent are three distinct states) and tests/worktree-identity.test.mjs."
+      "line": "> `pre-bundle-evidence` and you must pass the flags explicitly — it can never",
+      "reason": "Elaboration of the same gate for the pre-bundle-evidence path — a marker written before auditedBranch existed cannot half-match. Asserted in tests/gate-evidence-tree-identity.test.mjs (present / explicit-null / absent are three distinct states) and tests/worktree-identity.test.mjs."
     },
     {
-      "line": "> A head with no ref disposition is `incomplete-expectation` \u2192 exit 2, never a",
+      "line": "> A head with no ref disposition is `incomplete-expectation` → exit 2, never a",
       "reason": "Elaboration of guard-b-identity-is-a-precondition (bound executably above): it names the specific reason code an INCOMPLETE bundle produces. The refusal is asserted by the ship-identity-absent-refusal recipe and by tests/worktree-identity.test.mjs, which pins incomplete-expectation across every illegal flag combination."
     },
     {
@@ -135,7 +135,7 @@
       "reason": "A line INSIDE the fenced example invocation, not a claim of its own. The literal `--gate <value>` placeholder is what trips the verb scan; the gate it illustrates is guard-b-identity-is-a-precondition, bound EXECUTABLY above."
     },
     {
-      "line": "what's about to ship. The map itself is **never committed** \u2014 see below.",
+      "line": "what's about to ship. The map itself is **never committed** — see below.",
       "reason": "Restates the category-a-never-staged gate for docs/architecture-map.md; not a separate claim. Its skill-text side is mechanically guarded by tests/skill-staging-instructions.test.mjs."
     },
     {
@@ -144,31 +144,31 @@
     },
     {
       "line": "> survived two steps away from that note. `git add` on a gitignored path *fails*,",
-      "reason": "Describes GIT's own behaviour (git refuses to stage an ignored path without -f), not a project gate. Included to explain why the removed instruction failed SILENTLY \u2014 it paired that failure with 2>/dev/null || true."
+      "reason": "Describes GIT's own behaviour (git refuses to stage an ignored path without -f), not a project gate. Included to explain why the removed instruction failed SILENTLY — it paired that failure with 2>/dev/null || true."
     },
     {
       "line": "> It fails the byte-identical Category B test three independent ways: the header",
-      "reason": "Explains why docs/architecture-map.md is classified Category A (timestamp+sha+refresh_id header, LLM-written summaries, renders from the cloud symbol_index). A classification rationale, not an enforced gate \u2014 the enforcement is the .gitignore entry plus GENERATED_UNTRACKED_TARGETS in check-docs-refs.mjs."
+      "reason": "Explains why docs/architecture-map.md is classified Category A (timestamp+sha+refresh_id header, LLM-written summaries, renders from the cloud symbol_index). A classification rationale, not an enforced gate — the enforcement is the .gitignore entry plus GENERATED_UNTRACKED_TARGETS in check-docs-refs.mjs."
     },
     {
-      "line": "### 0.5e \u2014 Accepted findings that were never remediated",
+      "line": "### 0.5e — Accepted findings that were never remediated",
       "reason": "Section heading. 'never remediated' names the POPULATION the step reads (findings whose remediation_state never advanced), not a guarantee the step enforces. The step's actual enforcement claim is contracted as unremediated-acceptances-never-blocks."
     },
     {
       "line": "not gate; the same philosophy as quick-fix detection). **Show the first 5 rows",
-      "reason": "'not gate' is the tail of the never-blocks claim contracted above, reflowed onto the next line. 'Show the first 5 rows' is a DISPLAY instruction to the agent about how much of the row set to echo \u2014 it caps output verbosity, not behaviour, and the reader's own page limit is the only mechanical bound (asserting how many rows a model chooses to print is not a gate). Reworded 2026-08-10 from 'Show at most 5 rows' once the reader gained its own ORDER BY: the instruction now says take them AS RETURNED rather than re-sort, which is what makes 'HIGH first' deliverable \u2014 see the two entries below."
+      "reason": "'not gate' is the tail of the never-blocks claim contracted above, reflowed onto the next line. 'Show the first 5 rows' is a DISPLAY instruction to the agent about how much of the row set to echo — it caps output verbosity, not behaviour, and the reader's own page limit is the only mechanical bound (asserting how many rows a model chooses to print is not a gate). Reworded 2026-08-10 from 'Show at most 5 rows' once the reader gained its own ORDER BY: the instruction now says take them AS RETURNED rather than re-sort, which is what makes 'HIGH first' deliverable — see the two entries below."
     },
     {
       "line": "> cap, and all 15 HIGH rows of 44 landed on page 1. That was a property of the",
-      "reason": "Narrative inside the 2026-08-10 blockquote explaining upstream report 96a829f8. It recounts a MEASUREMENT \u2014 EXPLAIN showed the planner keeping the view's inner Sort under the outer LIMIT, so all 15 HIGH rows of 44 really were on page 1 \u2014 in order to explain why the defect looked correct in production. A statement about what was observed before the fix, not a rule /ship enforces. The property it describes is now genuinely asserted; see the entry below."
+      "reason": "Narrative inside the 2026-08-10 blockquote explaining upstream report 96a829f8. It recounts a MEASUREMENT — EXPLAIN showed the planner keeping the view's inner Sort under the outer LIMIT, so all 15 HIGH rows of 44 really were on page 1 — in order to explain why the defect looked correct in production. A statement about what was observed before the fix, not a rule /ship enforces. The property it describes is now genuinely asserted; see the entry below."
     },
     {
       "line": "> signal. The order is now asserted where the cap is applied, so today's output",
-      "reason": "The resolution sentence of the same blockquote. Unlike the narrative above it, this line describes something MECHANICALLY guarded rather than merely claimed, which is why it is dispositioned here instead of contracted as document-only: getUnremediatedAcceptances spells its ORDER BY out at the query that applies the LIMIT (scripts/lib/store/plans-ship.mjs), and tests/cross-skill-unlocked-scope.test.mjs scans every paged nudge-view statement for ORDER BY preceding LIMIT, for a unique final tiebreaker (audit_finding_id), and for OFFSET \u2014 confirmed red against the pre-fix shape. What has no oracle is the half this sentence is really about: whether the AGENT then prints the rows in the order it received them. Same shape as the display-instruction entry above."
+      "reason": "The resolution sentence of the same blockquote. Unlike the narrative above it, this line describes something MECHANICALLY guarded rather than merely claimed, which is why it is dispositioned here instead of contracted as document-only: getUnremediatedAcceptances spells its ORDER BY out at the query that applies the LIMIT (scripts/lib/store/plans-ship.mjs), and tests/cross-skill-unlocked-scope.test.mjs scans every paged nudge-view statement for ORDER BY preceding LIMIT, for a unique final tiebreaker (audit_finding_id), and for OFFSET — confirmed red against the pre-fix shape. What has no oracle is the half this sentence is really about: whether the AGENT then prints the rows in the order it received them. Same shape as the display-instruction entry above."
     },
     {
       "line": "<n> finding(s) you accepted were never marked fixed (showing <=5):",
-      "reason": "Line inside the fenced OUTPUT TEMPLATE the agent prints \u2014 sample text shown to the user, not a rule the skill enforces. 'never marked fixed' restates the view's own predicate (remediation_state NULL/pending/planned)."
+      "reason": "Line inside the fenced OUTPUT TEMPLATE the agent prints — sample text shown to the user, not a rule the skill enforces. 'never marked fixed' restates the view's own predicate (remediation_state NULL/pending/planned)."
     },
     {
       "line": "plan was never amended), but say so rather than printing it as a code path.",
@@ -180,10 +180,10 @@
     },
     {
       "line": "are \"not applicable\", **not** \"no obligations\". Report it as unmeasured; never",
-      "reason": "An instruction to the AGENT about how to render an unmeasured result \u2014 the measured:false vs genuine-zero distinction. The producing side is mechanical and tested (tests/cross-skill-unlocked-scope.test.mjs asserts measured:false carries a reason and never widens to global), but \"how the agent phrases the card\" has no oracle."
+      "reason": "An instruction to the AGENT about how to render an unmeasured result — the measured:false vs genuine-zero distinction. The producing side is mechanical and tested (tests/cross-skill-unlocked-scope.test.mjs asserts measured:false carries a reason and never widens to global), but \"how the agent phrases the card\" has no oracle."
     },
     {
-      "line": "> identity \u2192 `measured:false`. Global access must be asked for explicitly, and",
+      "line": "> identity → `measured:false`. Global access must be asked for explicitly, and",
       "reason": "Documents the scope precedence chain. It IS mechanically enforced: getUnlockedFixes/countUnlockedFixes/getUnremediatedAcceptances throw on an omitted or ambiguous scope (scripts/lib/store/plans-ship.mjs::resolveExplicitRepoScope) and tests/cross-skill-unlocked-scope.test.mjs asserts every implicit-global shape rejects, that --all-repos is evaluated before ambient identity, and that no reader of the /ship-nudge view family carries a repo-unfiltered statement without the fence. This line is the human-readable restatement."
     },
     {
@@ -192,7 +192,7 @@
     },
     {
       "line": "> **Never hand-derive a repo id to pass here.** There are two ids per repo and",
-      "reason": "Operator guidance whose FAILURE MODE is mechanically caught, so it is not a separate gate. audit_repos carries both `id` (v4, the key these views use) and `repo_uuid` (v5, the arch-memory identity); resolveShipNudgeScope in scripts/cross-skill.mjs verifies --repo-id against listRepoIds(), translates a repo_uuid via getRepoIdByUuid, and returns reason:unknown-repo-id + measured:false otherwise \u2014 so a hand-derived id can no longer produce an authoritative zero. tests/cross-skill-unlocked-scope.test.mjs pins all three branches. Whether an operator CHOOSES to hand-derive one is advice, not an oracle."
+      "reason": "Operator guidance whose FAILURE MODE is mechanically caught, so it is not a separate gate. audit_repos carries both `id` (v4, the key these views use) and `repo_uuid` (v5, the arch-memory identity); resolveShipNudgeScope in scripts/cross-skill.mjs verifies --repo-id against listRepoIds(), translates a repo_uuid via getRepoIdByUuid, and returns reason:unknown-repo-id + measured:false otherwise — so a hand-derived id can no longer produce an authoritative zero. tests/cross-skill-unlocked-scope.test.mjs pins all three branches. Whether an operator CHOOSES to hand-derive one is advice, not an oracle."
     },
     {
       "line": "> backlog for a repo that was never queried. That is how the incident above",
@@ -200,75 +200,75 @@
     },
     {
       "line": "the binary performs the check itself (Step 6.3) and exits 2 with an `AGENT FIX:` line naming the unapplied migrations",
-      "reason": "Step 0.5g migration-realization gate. Genuinely executable and enforced in scripts/ship-commit.mjs (exit 2), but deliberately left UNCONTRACTED rather than bound to a wrong oracle. The `cli-exit` oracle drives a CLI against a filesystem fixture (CLI_EXIT_RECIPES in scripts/lib/gate-honesty/oracles.mjs); this gate's trigger is DATABASE state \u2014 a migration ledger missing a bundled filename \u2014 which no current recipe shape can construct. Declaring `cli-exit` anyway would assert a binding that does not hold, which is the exact dishonesty this contract system exists to detect. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs. Contracting it needs a DB-backed oracle \u2014 a separate change with no current requirement."
+      "reason": "Step 0.5g migration-realization gate. Genuinely executable and enforced in scripts/ship-commit.mjs (exit 2), but deliberately left UNCONTRACTED rather than bound to a wrong oracle. The `cli-exit` oracle drives a CLI against a filesystem fixture (CLI_EXIT_RECIPES in scripts/lib/gate-honesty/oracles.mjs); this gate's trigger is DATABASE state — a migration ledger missing a bundled filename — which no current recipe shape can construct. Declaring `cli-exit` anyway would assert a binding that does not hold, which is the exact dishonesty this contract system exists to detect. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs. Contracting it needs a DB-backed oracle — a separate change with no current requirement."
     },
     {
-      "line": "### 0.5g \u2014 Migration realization gate (ENFORCED by the binary, checked HERE too)",
-      "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED \u2014 scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration \u2014 but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle \u2014 a separate change with no current requirement."
+      "line": "### 0.5g — Migration realization gate (ENFORCED by the binary, checked HERE too)",
+      "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED — scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration — but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle — a separate change with no current requirement."
     },
     {
       "line": "itself (Step 6.3) and exits 2 with an `AGENT FIX:` line naming the unapplied migrations and",
-      "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED \u2014 scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration \u2014 but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle \u2014 a separate change with no current requirement."
+      "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED — scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration — but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle — a separate change with no current requirement."
     },
     {
-      "line": "the exact remedy. It is documented here so the block is not a surprise \u2014 the binary",
-      "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED \u2014 scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration \u2014 but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle \u2014 a separate change with no current requirement."
+      "line": "the exact remedy. It is documented here so the block is not a surprise — the binary",
+      "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED — scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration — but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle — a separate change with no current requirement."
     },
     {
-      "line": "**Cloud off / unreachable / no ledger \u21d2 silently skipped**, never a block. Blocking on an",
-      "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED \u2014 scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration \u2014 but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle \u2014 a separate change with no current requirement."
+      "line": "**Cloud off / unreachable / no ledger ⇒ silently skipped**, never a block. Blocking on an",
+      "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED — scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration — but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle — a separate change with no current requirement."
     },
     {
-      "line": "**On a block**: run `node scripts/setup-postgres.mjs --migrate`, then continue \u2014 Step 6.3",
-      "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED \u2014 scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration \u2014 but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle \u2014 a separate change with no current requirement."
+      "line": "**On a block**: run `node scripts/setup-postgres.mjs --migrate`, then continue — Step 6.3",
+      "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED — scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration — but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle — a separate change with no current requirement."
     },
     {
-      "line": "**`unverified` must name a concrete blocked prerequisite** \u2014 \"no network in this",
+      "line": "**`unverified` must name a concrete blocked prerequisite** — \"no network in this",
       "reason": "Step 6.8 instruction about what the `unverified` terminal state must contain. Whether a stated prerequisite is 'concrete' is a judgement call; /ship emits no exit code for the quality of a status line it wrote into status.md."
     },
     {
-      "line": "environment\", \"no consumer checkout on this machine\" \u2014 never a bare \"not",
-      "reason": "Continuation of the same sentence \u2014 the prohibition on an undefined 'not applicable'. Same judgement, same absence of an oracle."
+      "line": "environment\", \"no consumer checkout on this machine\" — never a bare \"not",
+      "reason": "Continuation of the same sentence — the prohibition on an undefined 'not applicable'. Same judgement, same absence of an oracle."
     },
     {
       "line": "excuse. **Never inherit the producer-side green.**",
-      "reason": "The core Step 6.8 discipline, addressed to the agent. Asserting it would mean proving a consumer-side retrieval actually happened and was not skipped \u2014 exactly the thing the three terminal states exist to make an operator declare honestly, because no mechanical check can."
+      "reason": "The core Step 6.8 discipline, addressed to the agent. Asserting it would mean proving a consumer-side retrieval actually happened and was not skipped — exactly the thing the three terminal states exist to make an operator declare honestly, because no mechanical check can."
     },
     {
-      "line": "Advisory by construction: the push already happened, so this cannot block it \u2014",
-      "reason": "A NEGATIVE guarantee about Step 6.8 (it advises, it never blocks) \u2014 the same shape and rationale as this contract's existing step-0-5-gates-non-blocking and unremediated-acceptances-never-blocks entries. Asserting an absence-of-blocking is a judgement about agent flow, not a CLI exit."
+      "line": "Advisory by construction: the push already happened, so this cannot block it —",
+      "reason": "A NEGATIVE guarantee about Step 6.8 (it advises, it never blocks) — the same shape and rationale as this contract's existing step-0-5-gates-non-blocking and unremediated-acceptances-never-blocks entries. Asserting an absence-of-blocking is a judgement about agent flow, not a CLI exit."
     },
     {
       "line": "and per the gate-level rule, machine and remote state may advise where repo",
       "reason": "A restatement of the repo-wide gate-level rule, cited to explain WHY Step 6.8 is advisory. The enforcement verb belongs to that rule as applied elsewhere; /ship asserts nothing new here."
     },
     {
-      "line": "state may block. \u2192 `references/verification-discipline.md` \u00a76.",
+      "line": "state may block. → `references/verification-discipline.md` §6.",
       "reason": "Tail of the same sentence plus the pointer to the shared reference. No claim of its own."
     },
     {
-      "line": "| `references/verification-discipline.md` | Verification discipline \u2014 pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 6.8 \u2014 the push succeeded and the artifact must be verified from the consumer side. |",
+      "line": "| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 6.8 — the push succeeded and the artifact must be verified from the consumer side. |",
       "reason": "A REFERENCE-TABLE row. The 'Read when' cell is a trigger description for opening a reference file, not a gate /ship enforces."
     },
     {
-      "line": "**Use `byMode.total` as `unremediated_count` \u2014 NEVER `rows.length`.** `rows` is",
+      "line": "**Use `byMode.total` as `unremediated_count` — NEVER `rows.length`.** `rows` is",
       "reason": "Instruction to the reading agent about which emitted field to use, not a claim that /ship blocks on anything. It IS mechanically guarded, which is why it is dispositioned here rather than as document-only: tests/cross-skill-unlocked-scope.test.mjs asserts that every capped nudge reader has a count* sibling, that cross-skill.mjs calls the counter wherever it calls the reader, and that this SKILL never reverts to \"Count the rows as unremediated_count\". That prose assertion exists because the tool was fixed for both nudge views on 2026-07-31 while the prose was fixed for only one, and the survivor produced a 20-vs-201 report on 2026-08-09."
     },
     {
       "line": "capped at 20 by the query, and `shown` vs `total` exists to make that cap",
-      "reason": "Describes the query's own LIMIT and the payload fields that surface it \u2014 a statement of fact about the reader, not a project gate. The cap itself is asserted in tests/cross-skill-unlocked-scope.test.mjs (the vacuous-pass guard checks the reader still caps)."
+      "reason": "Describes the query's own LIMIT and the payload fields that surface it — a statement of fact about the reader, not a project gate. The cap itself is asserted in tests/cross-skill-unlocked-scope.test.mjs (the vacuous-pass guard checks the reader still caps)."
     },
     {
       "line": "accepted and never amended, which is real work. Split it out to say which kind",
       "reason": "Explains why byMode.plan must not be discarded here (unlike 0.5b, where a plan finding can never carry a spec). Guidance on interpreting a count, with no enforcement claim and nothing to assert an exit code against."
     },
     {
-      "line": "> 1 still visible** \u2014 a gate whose cheapest clearing strategy was to wait two",
+      "line": "> 1 still visible** — a gate whose cheapest clearing strategy was to wait two",
       "reason": "Describes the DEFECT this step's aged-out reporting closes, not a gate the skill enforces. The measurement (94 aged out vs 1 visible) is history explaining why agedOut is reported at all; the reporting itself is non-blocking, like every other Step 0.5b signal."
     },
     {
       "line": ">   (`practiceStart`, derived from the store, never configured). You cannot lapse",
-      "reason": "States a property of the derived practice boundary (a repo that never locked cannot have lapsed a locking practice), not an enforcement claim. Nothing blocks on practiceStart \u2014 it only decides which bucket an already-expired row is counted in."
+      "reason": "States a property of the derived practice boundary (a repo that never locked cannot have lapsed a locking practice), not an enforcement claim. Nothing blocks on practiceStart — it only decides which bucket an already-expired row is counted in."
     },
     {
       "line": ">   has never locked anything reports `agedOut: 0` rather than indicting itself.",
@@ -284,67 +284,67 @@
     },
     {
       "line": ">   recording remediations (`practiceStart`). A real leak: never shown again.",
-      "reason": "Describes the CONSEQUENCE of a row crossing the 30-day ceiling unremediated \u2014 it stops appearing in this step's read. Not an enforcement claim: the ACCEPTANCES LOST block is explicitly non-blocking with no override flag, exactly like the REGRESSION LOCK GATE and OBLIGATIONS LOST blocks it sits beside."
+      "reason": "Describes the CONSEQUENCE of a row crossing the 30-day ceiling unremediated — it stops appearing in this step's read. Not an enforcement claim: the ACCEPTANCES LOST block is explicitly non-blocking with no override flag, exactly like the REGRESSION LOCK GATE and OBLIGATIONS LOST blocks it sits beside."
     },
     {
       "line": "investigate. `open === total` always; they are one number under two names.",
-      "reason": "States an arithmetic identity of the emitted payload, not a gate: byDisposition.open is total under a second name, so a caller reading either gets the same number. It IS mechanically asserted \u2014 tests/unremediated-acceptance-disposition.test.mjs pins total === byDisposition.open against a seeded fixture matrix on a disposable Postgres \u2014 which is why it is dispositioned here rather than as document-only (that kind would claim it is not checkable when it is). Nothing about it blocks a ship; 0.5e remains non-blocking with no override flag, per the unremediated-acceptances-never-blocks gate above."
+      "reason": "States an arithmetic identity of the emitted payload, not a gate: byDisposition.open is total under a second name, so a caller reading either gets the same number. It IS mechanically asserted — tests/unremediated-acceptance-disposition.test.mjs pins total === byDisposition.open against a seeded fixture matrix on a disposable Postgres — which is why it is dispositioned here rather than as document-only (that kind would claim it is not checkable when it is). Nothing about it blocks a ship; 0.5e remains non-blocking with no override flag, per the unremediated-acceptances-never-blocks gate above."
     },
     {
       "line": "A consumer reported (2026-08-14) discovering this block only at Step 6.3, after already",
-      "reason": "Step 0.5g's migration-realization gate, now with an early advisory preflight (`ship-commit.mjs --check-migrations`) added 2026-08-14. The commit-time enforcement is unchanged and stays uncontracted for the same reason as the sibling entries here: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. The preflight is advisory-only by design \u2014 'A SKILL step is an instruction to an agent and cannot block on its own' is the explicit disclaimer this text makes, not a claim that the preflight itself enforces anything. Logic covered by tests/schema-realization.test.mjs, tests/write-path-fail-closed.test.mjs, and the new --check-migrations CLI path in tests/ship-commit-cli.test.mjs."
+      "reason": "Step 0.5g's migration-realization gate, now with an early advisory preflight (`ship-commit.mjs --check-migrations`) added 2026-08-14. The commit-time enforcement is unchanged and stays uncontracted for the same reason as the sibling entries here: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. The preflight is advisory-only by design — 'A SKILL step is an instruction to an agent and cannot block on its own' is the explicit disclaimer this text makes, not a claim that the preflight itself enforces anything. Logic covered by tests/schema-realization.test.mjs, tests/write-path-fail-closed.test.mjs, and the new --check-migrations CLI path in tests/ship-commit-cli.test.mjs."
     },
     {
-      "line": "running a full local + fresh-clone readiness pass \u2014 the block itself is cheap (one indexed",
-      "reason": "Step 0.5g's migration-realization gate, now with an early advisory preflight (`ship-commit.mjs --check-migrations`) added 2026-08-14. The commit-time enforcement is unchanged and stays uncontracted for the same reason as the sibling entries here: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. The preflight is advisory-only by design \u2014 'A SKILL step is an instruction to an agent and cannot block on its own' is the explicit disclaimer this text makes, not a claim that the preflight itself enforces anything. Logic covered by tests/schema-realization.test.mjs, tests/write-path-fail-closed.test.mjs, and the new --check-migrations CLI path in tests/ship-commit-cli.test.mjs."
+      "line": "running a full local + fresh-clone readiness pass — the block itself is cheap (one indexed",
+      "reason": "Step 0.5g's migration-realization gate, now with an early advisory preflight (`ship-commit.mjs --check-migrations`) added 2026-08-14. The commit-time enforcement is unchanged and stays uncontracted for the same reason as the sibling entries here: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. The preflight is advisory-only by design — 'A SKILL step is an instruction to an agent and cannot block on its own' is the explicit disclaimer this text makes, not a claim that the preflight itself enforces anything. Logic covered by tests/schema-realization.test.mjs, tests/write-path-fail-closed.test.mjs, and the new --check-migrations CLI path in tests/ship-commit-cli.test.mjs."
     },
     {
       "line": "had nothing to do with. Running it here surfaces the same block before that work happens.",
-      "reason": "Step 0.5g's migration-realization gate, now with an early advisory preflight (`ship-commit.mjs --check-migrations`) added 2026-08-14. The commit-time enforcement is unchanged and stays uncontracted for the same reason as the sibling entries here: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. The preflight is advisory-only by design \u2014 'A SKILL step is an instruction to an agent and cannot block on its own' is the explicit disclaimer this text makes, not a claim that the preflight itself enforces anything. Logic covered by tests/schema-realization.test.mjs, tests/write-path-fail-closed.test.mjs, and the new --check-migrations CLI path in tests/ship-commit-cli.test.mjs."
+      "reason": "Step 0.5g's migration-realization gate, now with an early advisory preflight (`ship-commit.mjs --check-migrations`) added 2026-08-14. The commit-time enforcement is unchanged and stays uncontracted for the same reason as the sibling entries here: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. The preflight is advisory-only by design — 'A SKILL step is an instruction to an agent and cannot block on its own' is the explicit disclaimer this text makes, not a claim that the preflight itself enforces anything. Logic covered by tests/schema-realization.test.mjs, tests/write-path-fail-closed.test.mjs, and the new --check-migrations CLI path in tests/ship-commit-cli.test.mjs."
     },
     {
       "line": "inside the commit path and exits 2 there regardless of whether this preflight ran. A SKILL",
-      "reason": "Step 0.5g's migration-realization gate, now with an early advisory preflight (`ship-commit.mjs --check-migrations`) added 2026-08-14. The commit-time enforcement is unchanged and stays uncontracted for the same reason as the sibling entries here: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. The preflight is advisory-only by design \u2014 'A SKILL step is an instruction to an agent and cannot block on its own' is the explicit disclaimer this text makes, not a claim that the preflight itself enforces anything. Logic covered by tests/schema-realization.test.mjs, tests/write-path-fail-closed.test.mjs, and the new --check-migrations CLI path in tests/ship-commit-cli.test.mjs."
+      "reason": "Step 0.5g's migration-realization gate, now with an early advisory preflight (`ship-commit.mjs --check-migrations`) added 2026-08-14. The commit-time enforcement is unchanged and stays uncontracted for the same reason as the sibling entries here: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. The preflight is advisory-only by design — 'A SKILL step is an instruction to an agent and cannot block on its own' is the explicit disclaimer this text makes, not a claim that the preflight itself enforces anything. Logic covered by tests/schema-realization.test.mjs, tests/write-path-fail-closed.test.mjs, and the new --check-migrations CLI path in tests/ship-commit-cli.test.mjs."
     },
     {
       "line": "step is an instruction to an agent and cannot block on its own; this early run is advisory,",
-      "reason": "Step 0.5g's migration-realization gate, now with an early advisory preflight (`ship-commit.mjs --check-migrations`) added 2026-08-14. The commit-time enforcement is unchanged and stays uncontracted for the same reason as the sibling entries here: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. The preflight is advisory-only by design \u2014 'A SKILL step is an instruction to an agent and cannot block on its own' is the explicit disclaimer this text makes, not a claim that the preflight itself enforces anything. Logic covered by tests/schema-realization.test.mjs, tests/write-path-fail-closed.test.mjs, and the new --check-migrations CLI path in tests/ship-commit-cli.test.mjs."
+      "reason": "Step 0.5g's migration-realization gate, now with an early advisory preflight (`ship-commit.mjs --check-migrations`) added 2026-08-14. The commit-time enforcement is unchanged and stays uncontracted for the same reason as the sibling entries here: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. The preflight is advisory-only by design — 'A SKILL step is an instruction to an agent and cannot block on its own' is the explicit disclaimer this text makes, not a claim that the preflight itself enforces anything. Logic covered by tests/schema-realization.test.mjs, tests/write-path-fail-closed.test.mjs, and the new --check-migrations CLI path in tests/ship-commit-cli.test.mjs."
     },
     {
       "line": "not a substitute gate.",
-      "reason": "Step 0.5g's migration-realization gate, now with an early advisory preflight (`ship-commit.mjs --check-migrations`) added 2026-08-14. The commit-time enforcement is unchanged and stays uncontracted for the same reason as the sibling entries here: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. The preflight is advisory-only by design \u2014 'A SKILL step is an instruction to an agent and cannot block on its own' is the explicit disclaimer this text makes, not a claim that the preflight itself enforces anything. Logic covered by tests/schema-realization.test.mjs, tests/write-path-fail-closed.test.mjs, and the new --check-migrations CLI path in tests/ship-commit-cli.test.mjs."
+      "reason": "Step 0.5g's migration-realization gate, now with an early advisory preflight (`ship-commit.mjs --check-migrations`) added 2026-08-14. The commit-time enforcement is unchanged and stays uncontracted for the same reason as the sibling entries here: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. The preflight is advisory-only by design — 'A SKILL step is an instruction to an agent and cannot block on its own' is the explicit disclaimer this text makes, not a claim that the preflight itself enforces anything. Logic covered by tests/schema-realization.test.mjs, tests/write-path-fail-closed.test.mjs, and the new --check-migrations CLI path in tests/ship-commit-cli.test.mjs."
     },
     {
       "line": "it survives a session boundary but never ships as-is.",
-      "reason": "Step 2's pickup of a pending Step 6.8 verification note. Describes properties of the gitignored scratch file (`.claude/tmp/ship-verification-pending.md`) itself \u2014 it persists across a session boundary (unlike in-memory agent state) but is never staged/committed as-is (Step 2 reads and deletes it, folding its content into a proper status.md entry). Not an enforcement claim: nothing blocks on the file's presence or absence, and its own loss is explicitly framed two lines below as 'an acceptable loss for advisory documentation (never a gate)'."
+      "reason": "Step 2's pickup of a pending Step 6.8 verification note. Describes properties of the gitignored scratch file (`.claude/tmp/ship-verification-pending.md`) itself — it persists across a session boundary (unlike in-memory agent state) but is never staged/committed as-is (Step 2 reads and deletes it, folding its content into a proper status.md entry). Not an enforcement claim: nothing blocks on the file's presence or absence, and its own loss is explicitly framed two lines below as 'an acceptable loss for advisory documentation (never a gate)'."
     },
     {
       "line": "that provisions `scripts/.claude-skills/**` never merges npm scripts into a",
-      "reason": "States a fact about the consumer-sync mechanism (added 2026-08-14 alongside `--if-present`): npm scripts are never merged into a consumer's package.json by the file-sync that provisions scripts/.claude-skills/**. Explains WHY `--if-present` is load-bearing; not itself a claim this skill enforces \u2014 the sync mechanism's own behaviour lives in scripts/sync-to-repos.mjs, outside /ship's exit code."
+      "reason": "States a fact about the consumer-sync mechanism (added 2026-08-14 alongside `--if-present`): npm scripts are never merged into a consumer's package.json by the file-sync that provisions scripts/.claude-skills/**. Explains WHY `--if-present` is load-bearing; not itself a claim this skill enforces — the sync mechanism's own behaviour lives in scripts/sync-to-repos.mjs, outside /ship's exit code."
     },
     {
-      "line": "on every such push (reported by a consumer 2026-08-14) \u2014 harmless (never",
-      "reason": "Continuation of the --if-present rationale: describes the field-observed defect (an avoidable npm error) this fix removes, and confirms it never blocked the ship even before the fix \u2014 a NEGATIVE historical observation, not an enforcement claim. Nothing in /ship asserts an exit code over whether a prior bug was blocking; the fix is a UX improvement (silence a harmless error), not a new gate."
+      "line": "on every such push (reported by a consumer 2026-08-14) — harmless (never",
+      "reason": "Continuation of the --if-present rationale: describes the field-observed defect (an avoidable npm error) this fix removes, and confirms it never blocked the ship even before the fix — a NEGATIVE historical observation, not an enforcement claim. Nothing in /ship asserts an exit code over whether a prior bug was blocking; the fix is a UX improvement (silence a harmless error), not a new gate."
     },
     {
-      "line": "**Write the outcome to `.claude/tmp/ship-verification-pending.md` \u2014 never by",
-      "reason": "Step 6.8 instruction to the agent about WHERE to record the consumer-verification outcome (a gitignored scratch file, not the already-pushed status.md entry). Same shape as the existing Step 6.8 entries here ('unverified must name a concrete blocked prerequisite', 'Never inherit the producer-side green'): a discipline addressed to the agent, with no CLI exit code for a cli-exit recipe to assert \u2014 /ship writes nothing that checks whether the agent complied."
+      "line": "**Write the outcome to `.claude/tmp/ship-verification-pending.md` — never by",
+      "reason": "Step 6.8 instruction to the agent about WHERE to record the consumer-verification outcome (a gitignored scratch file, not the already-pushed status.md entry). Same shape as the existing Step 6.8 entries here ('unverified must name a concrete blocked prerequisite', 'Never inherit the producer-side green'): a discipline addressed to the agent, with no CLI exit code for a cli-exit recipe to assert — /ship writes nothing that checks whether the agent complied."
     },
     {
       "line": "(never a gate), not a reason to force a push now.",
-      "reason": "Tail of the sentence explaining WHY the pending-verification file is acceptable to lose (Step 6.8 is advisory, never a gate \u2014 the existing step-0-5-gates-non-blocking rationale applied to this specific note). Not a new claim: restates the advisory-only nature of Step 6.8 already contracted via the 'Advisory by construction' entry here."
+      "reason": "Tail of the sentence explaining WHY the pending-verification file is acceptable to lose (Step 6.8 is advisory, never a gate — the existing step-0-5-gates-non-blocking rationale applied to this specific note). Not a new claim: restates the advisory-only nature of Step 6.8 already contracted via the 'Advisory by construction' entry here."
     },
     {
       "line": "boundary but never ships as-is.",
-      "reason": "Step 2. Describes what the gitignored scratch file DOES (survives a session, is never committed) \u2014 a property of .gitignore, not a rule /ship enforces. There is no exit code to assert: the note is advisory documentation the next ship folds into status.md."
+      "reason": "Step 2. Describes what the gitignored scratch file DOES (survives a session, is never committed) — a property of .gitignore, not a rule /ship enforces. There is no exit code to assert: the note is advisory documentation the next ship folds into status.md."
     },
     {
       "line": "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path');console.log(p.join(p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim()),'.claude','tmp','ship-verification-pending.md'))\"",
       "reason": "Step 2. A path-resolution recipe, not an enforcement claim. `--git-common-dir` is matched only because the verb scanner sees `git`; the command prints a path and asserts nothing. Same literal appears in Step 6.8 (dispositioned separately) because the two steps must resolve the SAME file."
     },
     {
-      "line": "\u2014 never by re-opening the status.md entry you just pushed.** status.md is append-only",
-      "reason": "Step 6.8. Restates the pre-existing append-only convention for status.md and says where NOT to write the verification note. Re-wrapped 2026-08-14 when the target moved to the main checkout, which changed the line boundary; the claim is unchanged and is a documentation convention, not a /ship gate \u2014 nothing exits non-zero if an agent writes it elsewhere."
+      "line": "— never by re-opening the status.md entry you just pushed.** status.md is append-only",
+      "reason": "Step 6.8. Restates the pre-existing append-only convention for status.md and says where NOT to write the verification note. Re-wrapped 2026-08-14 when the target moved to the main checkout, which changed the line boundary; the claim is unchanged and is a documentation convention, not a /ship gate — nothing exits non-zero if an agent writes it elsewhere."
     },
     {
       "line": "> so the handoff silently never happens and the only symptom is a note that",
@@ -352,7 +352,7 @@
     },
     {
       "line": "> never appears. `.claude/tmp/` resolves per-tree, so \"write it to",
-      "reason": "Step 6.8. States a fact about how a relative path resolves inside a linked git worktree \u2014 external git/filesystem behaviour, not a /ship enforcement claim."
+      "reason": "Step 6.8. States a fact about how a relative path resolves inside a linked git worktree — external git/filesystem behaviour, not a /ship enforcement claim."
     },
     {
       "line": "> node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path');console.log(p.join(p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim()),'.claude','tmp','ship-verification-pending.md'))\"",
@@ -363,7 +363,7 @@
       "reason": "Step 6.7 (docs/plans/skill-efficacy-census.md Phase 1, 2026-08-22). Narrates the PRE-FIX bug the widened-bucket change closes -- a primary finding could sit fixed with user_action still null and this step would never show it -- not a guarantee about current or future behaviour. Same shape as the 2026-08-14 migration-realization narrative entries above ('A consumer reported...', 'on every such push...'): a historical description of a defect, matched only because the verb scanner sees 'never'. The actual current-behaviour claim (final-review-pending now reads the merged pendingQueue) is mechanically covered by tests/final-review-card.test.mjs's negative-control assertions (a bucket:null item prints --bucket primary, never --bucket shadow-only)."
     },
     {
-      "line": "**Never blocks, no override flag** \u2014 same reasoning as 0.5h: collection state",
+      "line": "**Never blocks, no override flag** — same reasoning as 0.5h: collection state",
       "reason": "Step 0.5i (2026-08-23). The same nudge-not-gate guarantee as step-0-5-gates-non-blocking, unremediated-acceptances-never-blocks and upstream-queue-never-blocks above, and document-only for the identical reason: 'never blocks' is a claim about what the AGENT does with a non-empty result, and there is deliberately no override flag to assert against (the absence of one is the point). The READ half IS mechanically honest and is the part that could be gotten wrong: `campaign.mjs stale` returns 0 on every path -- no campaigns dir, unreadable config, cloud off, unreachable store, and nothing stalled -- so a query failure can make this step neither stricter nor blind. Same deeper reason as 0.5h: collection state is CLOUD state the commit being pushed cannot change, so blocking on it would be the cried-wolf shape that earns --no-verify."
     },
     {
@@ -371,84 +371,84 @@
       "reason": "Step 0.5i (2026-08-23). Describes the verb's SILENCE conditions, not an enforcement claim -- matched only because the verb scanner sees 'never'. Each named condition is a real branch in verbStale (no .campaigns dir; per-config loadCampaign throw; !ev.ok; !ev.latestArmRunAt; complete >= targetN; days < STALE_AFTER_DAYS), and the never-started case is the load-bearing one: a campaign with no arm runs has latestArmRunAt null, which must read as 'nothing to say' rather than being date-arithmetic'd into infinite staleness. The instruction to pass the tool's card through verbatim is a rendering rule for the agent (one rendering, owned by the tool), the same one-rendering discipline repo-context.mjs's renderCoverage carries."
     },
     {
-      "line": "> names**, never a DSN or hostname \u2014 this output gets pasted into a public",
-      "reason": "0.5h. A disclosure property of `upstream-queues.mjs`'s RENDERING, not a gate /ship enforces: `describeStore` returns a fingerprint plus consumer names and there is no /ship exit code to assert about it. The claim is real and is bound executably where it belongs \u2014 tests/upstream-store-discovery.test.mjs, 'describeStore \u2014 never leaks the DSN', which asserts the rendered string contains none of the credential, user, host or scheme. Dispositioned here rather than reworded because the sentence is the reason the fan-out prints fingerprints at all, and a reader of this step needs it."
+      "line": "> names**, never a DSN or hostname — this output gets pasted into a public",
+      "reason": "0.5h. A disclosure property of `upstream-queues.mjs`'s RENDERING, not a gate /ship enforces: `describeStore` returns a fingerprint plus consumer names and there is no /ship exit code to assert about it. The claim is real and is bound executably where it belongs — tests/upstream-store-discovery.test.mjs, 'describeStore — never leaks the DSN', which asserts the rendered string contains none of the credential, user, host or scheme. Dispositioned here rather than reworded because the sentence is the reason the fan-out prints fingerprints at all, and a reader of this step needs it."
     },
     {
       "line": "cannot change is the cried-wolf shape that earns `--no-verify`. It always exits 0.",
-      "reason": "0.5h. States that `upstream-queues.mjs` is advisory \u2014 it exits 0 whatever the queues hold, because the queue is CLOUD state the commit being shipped cannot change. That is a property of the invoked CLI, asserted in its own module (`main()` ends `process.exit(0)` unconditionally on the non-usage path), not a gate /ship itself runs. `--no-verify` appears as the NAME of the failure mode being avoided, not as an instruction."
+      "reason": "0.5h. States that `upstream-queues.mjs` is advisory — it exits 0 whatever the queues hold, because the queue is CLOUD state the commit being shipped cannot change. That is a property of the invoked CLI, asserted in its own module (`main()` ends `process.exit(0)` unconditionally on the non-usage path), not a gate /ship itself runs. `--no-verify` appears as the NAME of the failure mode being avoided, not as an instruction."
     },
     {
       "line": "`upstream:coverage:gate` rejects a non-uuid key. Full ids: `npm run upstream:issues`",
-      "reason": "0.5h. Names a constraint another gate imposes so the reader does not close a report by prefix and leave `npm run check` red \u2014 the live 2026-08-29 failure this sentence exists to pre-empt. The enforcement is `upstreamTransition`'s boundary check plus check-upstream-probe-coverage.mjs's uuid shape rule, both bound in tests/upstream-disposition-ratchet.test.mjs ('closing by ID PREFIX is refused'). /ship neither performs nor can assert it."
+      "reason": "0.5h. Names a constraint another gate imposes so the reader does not close a report by prefix and leave `npm run check` red — the live 2026-08-29 failure this sentence exists to pre-empt. The enforcement is `upstreamTransition`'s boundary check plus check-upstream-probe-coverage.mjs's uuid shape rule, both bound in tests/upstream-disposition-ratchet.test.mjs ('closing by ID PREFIX is refused'). /ship neither performs nor can assert it."
     },
     {
       "line": "**First, a capped auto-reconcile pass (best-effort, never blocks, no override",
-      "reason": "0.5e's new auto-reconcile sub-step (docs/plans/remediation-state-verification-reconciler.md). Same shape and same disposition as step-0-5-gates-non-blocking / unremediated-acceptances-never-blocks above: 'never blocks, no override flag' is a claim about what the AGENT does after the capped reconciler call returns, not a /ship CLI exit code \u2014 the reconciler itself is `scripts/remediation-reconcile.mjs`, whose own dry-run/apply/kill-switch contract is tested in tests/remediation-verification-selection.test.mjs and tests/mark-findings-remediation.test.mjs, not by this skill's exit behaviour."
+      "reason": "0.5e's new auto-reconcile sub-step (docs/plans/remediation-state-verification-reconciler.md). Same shape and same disposition as step-0-5-gates-non-blocking / unremediated-acceptances-never-blocks above: 'never blocks, no override flag' is a claim about what the AGENT does after the capped reconciler call returns, not a /ship CLI exit code — the reconciler itself is `scripts/remediation-reconcile.mjs`, whose own dry-run/apply/kill-switch contract is tested in tests/remediation-verification-selection.test.mjs and tests/mark-findings-remediation.test.mjs, not by this skill's exit behaviour."
     },
     {
       "line": "node scripts/remediation-reconcile.mjs --apply --cap 5 2>/dev/null",
-      "reason": "0.5e's auto-reconcile invocation line \u2014 a runnable recipe (`node`, `--apply`) the enforcement-verb scanner flags on the tool name alone, same class as the skills:hydrate one-liner above. The CLI's own flag/apply/dry-run behaviour is tested directly; this line is the command an operator runs, not a claim /ship enforces about itself."
+      "reason": "0.5e's auto-reconcile invocation line — a runnable recipe (`node`, `--apply`) the enforcement-verb scanner flags on the tool name alone, same class as the skills:hydrate one-liner above. The CLI's own flag/apply/dry-run behaviour is tested directly; this line is the command an operator runs, not a claim /ship enforces about itself."
     },
     {
       "line": "credential degrades to the free mechanical-resolution path only, never a",
-      "reason": "0.5e. Describes scripts/remediation-reconcile.mjs's own graceful-degradation behaviour (no Claude credential -> mechanical-only, never a crash) \u2014 a property of that CLI, asserted by its own tests, not a /ship gate. Same 'names another component's behaviour, not this skill's' shape as the upstream:coverage:gate entry immediately above."
+      "reason": "0.5e. Describes scripts/remediation-reconcile.mjs's own graceful-degradation behaviour (no Claude credential -> mechanical-only, never a crash) — a property of that CLI, asserted by its own tests, not a /ship gate. Same 'names another component's behaviour, not this skill's' shape as the upstream:coverage:gate entry immediately above."
     },
     {
       "line": "> files had synced to disk and were never applied, so its code and schema disagreed",
-      "reason": "0.5g's new cross-store drift note. Narrates the 2026-08-30 INCIDENT (a consumer store 2 migrations behind while its .sql files sat on disk) \u2014 a past measurement, not a claim about what /ship enforces. The scanner matches on 'never'."
+      "reason": "0.5g's new cross-store drift note. Narrates the 2026-08-30 INCIDENT (a consumer store 2 migrations behind while its .sql files sat on disk) — a past measurement, not a claim about what /ship enforces. The scanner matches on 'never'."
     },
     {
-      "line": "> Print its stdout verbatim \u2014 it renders the finished card. **Never blocks, no override",
+      "line": "> Print its stdout verbatim — it renders the finished card. **Never blocks, no override",
       "reason": "0.5g's cross-store drift sub-step. Identical shape and disposition to step-0-5-gates-non-blocking and the 0.5h upstream-queues entry: 'never blocks, no override flag' describes what the AGENT does with npm run stores:drift's output, not a /ship CLI exit code. store-drift.mjs's own always-exit-0 contract is asserted in tests/store-drift.test.mjs."
     },
     {
       "line": "> database is an operator decision, and a gate firing on something the commit cannot",
-      "reason": "0.5g. States WHY the drift reader is advisory (a gate the pushed commit cannot satisfy earns --no-verify) \u2014 design rationale for another CLI's exit behaviour, not a gate /ship enforces about itself. Same class as the upstream:coverage:gate entry."
+      "reason": "0.5g. States WHY the drift reader is advisory (a gate the pushed commit cannot satisfy earns --no-verify) — design rationale for another CLI's exit behaviour, not a gate /ship enforces about itself. Same class as the upstream:coverage:gate entry."
     },
     {
       "line": "> `must be owner of table audit_findings`, 42501). That is the least-privilege boundary",
-      "reason": "0.5g's cross-store drift note, reworded 2026-08-30 to point at references/migration-credentials.md. Quotes a measured Postgres 42501 to explain that a consumer's RUNTIME DSN cannot apply migrations \u2014 an operator fact about setup-postgres.mjs against a foreign store, not a refusal /ship implements. The scanner matches on 'must'. (Replaces the entry for the pre-reword wording of the same line.)"
+      "reason": "0.5g's cross-store drift note, reworded 2026-08-30 to point at references/migration-credentials.md. Quotes a measured Postgres 42501 to explain that a consumer's RUNTIME DSN cannot apply migrations — an operator fact about setup-postgres.mjs against a foreign store, not a refusal /ship implements. The scanner matches on 'must'. (Replaces the entry for the pre-reword wording of the same line.)"
     },
     {
       "line": "> store, never a file): `references/migration-credentials.md`.",
       "reason": "0.5g. A pointer to the reference that carries the credential-handling procedure; 'never a file' is guidance about where an operator keeps a secret, not a gate /ship enforces. The scanner matches on 'never'."
     },
     {
-      "line": "| `references/migration-credentials.md` | Which role applies migrations, why the runtime DSN cannot, and where its credential belongs (never in .env). | Step 0.5g \u2014 a store is behind and `--migrate` is refused with `42501` (`must be owner of table \u2026` / `permission denied for schema public`). |",
+      "line": "| `references/migration-credentials.md` | Which role applies migrations, why the runtime DSN cannot, and where its credential belongs (never in .env). | Step 0.5g — a store is behind and `--migrate` is refused with `42501` (`must be owner of table …` / `permission denied for schema public`). |",
       "reason": "The reference-index ROW for migration-credentials.md. Its Summary column must byte-match the file's `summary:` frontmatter (skills:check enforces that), so the enforcement verbs 'never'/'must'/'refused' are inherited from the reference's own one-line summary and cannot be reworded away independently. Index rows describe what a document covers; they are not gate claims about /ship's behaviour."
     },
     {
       "line": "> offering `/ship`, never by running it.",
-      "reason": "Part of the explicit-invocation host-neutral rule header (cross-host-parity-v2, the disable-model-invocation body statement) \u2014 instructs the agent when to offer vs. run this skill. Descriptive guidance for the agent, not a mechanically enforced claim within this skill's own execution."
+      "reason": "Part of the explicit-invocation host-neutral rule header (cross-host-parity-v2, the disable-model-invocation body statement) — instructs the agent when to offer vs. run this skill. Descriptive guidance for the agent, not a mechanically enforced claim within this skill's own execution."
     },
     {
-      "line": "> was never given \u2014 the skill would be citing its own execution as consent.",
-      "reason": "Same explicit-invocation rule header \u2014 explains WHY self-invocation is wrong. Descriptive reasoning."
+      "line": "> was never given — the skill would be citing its own execution as consent.",
+      "reason": "Same explicit-invocation rule header — explains WHY self-invocation is wrong. Descriptive reasoning."
     },
     {
       "line": "Step 3's override handling. Never add one on the skill's own initiative to get",
       "reason": "Usage-table footnote instructing the agent never to synthesise an override flag on its own. Descriptive guidance for the agent following the skill, not code-level enforcement within this document."
     },
     {
-      "line": "past a red gate \u2014 that is the gate working.",
+      "line": "past a red gate — that is the gate working.",
       "reason": "Continuation of the same footnote."
     },
     {
       "line": "message naming this skill or its subject. Never inferred from surrounding",
-      "reason": "The \"Where $ARGUMENTS comes from\" template line, synced verbatim from docs/audit/shared-references/input-acquisition.md into every skill that reads the token. It is authoring guidance for the agent reading the skill at parse time (where to look for input, in what priority) \u2014 no code in this repo exits or blocks on it; the enforcement, such as it is, is the human/agent following documented instructions, same class as every other prose \"never guess\" line already exempted in this contract."
+      "reason": "The \"Where $ARGUMENTS comes from\" template line, synced verbatim from docs/audit/shared-references/input-acquisition.md into every skill that reads the token. It is authoring guidance for the agent reading the skill at parse time (where to look for input, in what priority) — no code in this repo exits or blocks on it; the enforcement, such as it is, is the human/agent following documented instructions, same class as every other prose \"never guess\" line already exempted in this contract."
     },
     {
-      "line": "conversation. This site is `path+flags`; on empty input, ship without updating a plan \u2014 that is the documented default. Never adopt a plan path mentioned earlier in the conversation.",
-      "reason": "A per-site \"_This site: \u2026_\" annotation from the input-acquisition contract (Phase 5, cross-host-parity-v2), describing this ONE $ARGUMENTS occurrence's grammar class and empty-input behaviour for the agent parsing it. Descriptive guidance, not a mechanically enforced claim \u2014 no exit code or gate binds to it."
+      "line": "conversation. This site is `path+flags`; on empty input, ship without updating a plan — that is the documented default. Never adopt a plan path mentioned earlier in the conversation.",
+      "reason": "A per-site \"_This site: …_\" annotation from the input-acquisition contract (Phase 5, cross-host-parity-v2), describing this ONE $ARGUMENTS occurrence's grammar class and empty-input behaviour for the agent parsing it. Descriptive guidance, not a mechanically enforced claim — no exit code or gate binds to it."
     },
     {
       "line": "`upstream:coverage:gate` rejects a non-uuid key. Full ids:",
-      "reason": "Describes an external CLI's (upstream:coverage:gate, a different script) own validation behaviour \u2014 not a claim about this skill's execution."
+      "reason": "Describes an external CLI's (upstream:coverage:gate, a different script) own validation behaviour — not a claim about this skill's execution."
     },
     {
-      "line": "_This site: `path+flags` \u2014 **no flag means no override.** Each of these disables a gate, so they are read ONLY from the invocation \u2014 a conversation that merely mentions skipping tests must never become one._",
-      "reason": "A per-site \"_This site: \u2026_\" annotation from the input-acquisition contract (Phase 5, cross-host-parity-v2), describing this ONE $ARGUMENTS occurrence's grammar class and empty-input behaviour for the agent parsing it. Descriptive guidance, not a mechanically enforced claim \u2014 no exit code or gate binds to it."
+      "line": "_This site: `path+flags` — **no flag means no override.** Each of these disables a gate, so they are read ONLY from the invocation — a conversation that merely mentions skipping tests must never become one._",
+      "reason": "A per-site \"_This site: …_\" annotation from the input-acquisition contract (Phase 5, cross-host-parity-v2), describing this ONE $ARGUMENTS occurrence's grammar class and empty-input behaviour for the agent parsing it. Descriptive guidance, not a mechanically enforced claim — no exit code or gate binds to it."
     },
     {
       "line": "> exists here only, since the sync never adds npm scripts. A consumer runs the",
@@ -460,7 +460,7 @@
     },
     {
       "line": "Never blocks the ship.",
-      "reason": "States that Step 0.5d's dashboard rebuild is advisory-only \u2014 descriptive of that step's own instruction, same class as the pre-existing \"never blocks\" statements already exempted elsewhere in this contract."
+      "reason": "States that Step 0.5d's dashboard rebuild is advisory-only — descriptive of that step's own instruction, same class as the pre-existing \"never blocks\" statements already exempted elsewhere in this contract."
     },
     {
       "line": "`git add` a gitignored path, which either fails or force-adds a Category-A",
@@ -471,7 +471,7 @@
       "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
     },
     {
-      "line": "consumer reported \u2014 and, because that flag exits **0** having run nothing,",
+      "line": "consumer reported — and, because that flag exits **0** having run nothing,",
       "reason": "Continuation of the --if-present incident note (fixed this session). Historical/descriptive."
     },
     {
@@ -516,15 +516,19 @@
     },
     {
       "line": "A queue it could not read renders **`unmeasured`**, never `0`. That distinction",
-      "reason": "Step 2b. Describes what scripts/backlog-snapshot.mjs PRINTS, not something /ship enforces \u2014 the skill pastes a line the command produced. The claim is real and mechanically covered where it belongs, at the formatter: tests/backlog-snapshot.test.mjs asserts that an envelope reporting measured:false, cloud:false or a non-repo scope renders , and that no field renders 0 in that case. There is no /ship exit code to assert against, so a cli-exit oracle here would be a fake check."
+      "reason": "Step 2b. Describes what scripts/backlog-snapshot.mjs PRINTS, not something /ship enforces — the skill pastes a line the command produced. The claim is real and mechanically covered where it belongs, at the formatter: tests/backlog-snapshot.test.mjs asserts that an envelope reporting measured:false, cloud:false or a non-repo scope renders , and that no field renders 0 in that case. There is no /ship exit code to assert against, so a cli-exit oracle here would be a fake check."
     },
     {
       "line": "The command always exits 0; it is a nudge, never a gate.",
-      "reason": "Step 2b. A NEGATIVE guarantee about an advisory command, the same shape and the same disposition as step-0-5-gates-non-blocking and final-review-credit-advisory-exit-zero above. backlog-snapshot.mjs exits 0 unconditionally \u2014 including from its own catch \u2014 so a cli-exit oracle would assert an exit code the command always produces: true but vacuous, which is the fake-check class this suite exists to catch. What is NOT vacuous, and is tested, is that an unreadable queue renders unmeasured rather than 0."
+      "reason": "Step 2b. A NEGATIVE guarantee about an advisory command, the same shape and the same disposition as step-0-5-gates-non-blocking and final-review-credit-advisory-exit-zero above. backlog-snapshot.mjs exits 0 unconditionally — including from its own catch — so a cli-exit oracle would assert an exit code the command always produces: true but vacuous, which is the fake-check class this suite exists to catch. What is NOT vacuous, and is tested, is that an unreadable queue renders unmeasured rather than 0."
     },
     {
       "line": "entry you are already authoring. Never let a script write `status.md`: PR #87",
-      "reason": "Step 2b. An instruction to the AGENT about how to place the backlog line, plus the incident that motivates it \u2014 not a gate /ship runs. The property it protects IS enforced, just elsewhere and by a different mechanism: scripts/backlog-snapshot.mjs writes no file at all (it prints one line to stdout), and status:integrity:gate fails the push if any session-log entry is lost or rewritten rather than appended to. So there is nothing for a cli-exit oracle to assert here; asserting one would be the fake-check class this suite catches. The PR #87 reference is the reason the instruction is phrased as a prohibition: a tool rewriting that file destroyed 19,257 lines and reached main through a full check run."
+      "reason": "Step 2b. An instruction to the AGENT about how to place the backlog line, plus the incident that motivates it — not a gate /ship runs. The property it protects IS enforced, just elsewhere and by a different mechanism: scripts/backlog-snapshot.mjs writes no file at all (it prints one line to stdout), and status:integrity:gate fails the push if any session-log entry is lost or rewritten rather than appended to. So there is nothing for a cli-exit oracle to assert here; asserting one would be the fake-check class this suite catches. The PR #87 reference is the reason the instruction is phrased as a prohibition: a tool rewriting that file destroyed 19,257 lines and reached main through a full check run."
+    },
+    {
+      "line": "| the synced consumer bundle | **authoritative**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs`, run *in the consumer's MAIN checkout* — note the `lib/` segment, it is a module rather than a top-level script. A linked worktree cannot answer this: `skills:hydrate` copies the tooling tree, and `scripts/.sync-manifest.json` is gitignored too, so the run stops at `manifest missing at …` with exit 2. Hydrating the manifest as well would not help — the manifest records what the last sync wrote to the MAIN checkout's disk, so a worktree comparison re-reads the files hydrate itself just copied and reports agreement it manufactured. `npm run sync:dry` from here is the pre-check, not the verdict | zero unexpected diffs; no orphans |",
+      "reason": "Step 6.8's consumer-side retrieval table. Describes what sync-isolation-verify.mjs does when its manifest input is absent — an exit code that ANOTHER tool produces about ITS own input, not a gate /ship enforces or an exit code /ship returns. Added 2026-09-04 after wine-cellar-app measured that a successful `skills:hydrate` still leaves that run at 'manifest missing' exit 2, because hydrate copies scripts/.claude-skills/ and the manifest is gitignored too. The row states where the run belongs and why hydrating the manifest would be the wrong fix rather than merely a bigger one; the verbs are a description of that tool's behaviour, and no phrasing that keeps the exit code precise avoids them."
     }
   ]
 }

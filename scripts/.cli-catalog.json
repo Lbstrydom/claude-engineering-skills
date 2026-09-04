@@ -307,6 +307,10 @@
       "description": "The DRIFT-gate form of docs:refs (part of `npm run check`): fails only on a citation that NEWLY breaks — a GONE not in the accepted BASELINE — never on the standing total. A resolved baseline entry is stale and also fails (self-cleaning).",
       "category": "diagnostic"
     },
+    "docs:synced-links:gate": {
+      "description": "Fail when a relative markdown link in SYNCED content does not resolve at the path a consumer reads it from. An href resolves against the directory its file sits in and the sync changes that depth (skills/<s>/references/ becomes .claude/skills/<s>/references/), so a link an author verified by clicking can be dead everywhere it ships. No baseline: the population is zero and the remedy is an absolute upstream URL, unless the target is inside skills/. Fails closed on an empty or unreadable closure.",
+      "category": "gate"
+    },
     "docs:refs:json": {
       "description": "docs:refs as JSON — the citation census by class (RESOLVES/GONE/PLACEHOLDER/PLANNED) plus any scanner failures.",
       "category": "diagnostic"

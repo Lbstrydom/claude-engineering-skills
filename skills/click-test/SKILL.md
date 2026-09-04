@@ -105,7 +105,7 @@ Full contract: `references/input-acquisition.md`.
    with usage:
    - `--device <preset>` — one of `desktop`, `desktop-large`, `tablet`,
      `mobile`, `mobile-small` (canonical registry:
-     [`scripts/lib/device-presets.mjs`](../../scripts/lib/device-presets.mjs)).
+     [`scripts/lib/device-presets.mjs`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/scripts/lib/device-presets.mjs)).
      Sets viewport + `isMobile` + `hasTouch` flags. Unknown name → fail.
    - `--devices "<p1>,<p2>,...">` — **matrix mode**. Each preset runs the full
      route crawl independently; findings are tagged with `device` and merged.
@@ -539,7 +539,7 @@ so the count stays honest — 704 findings with 6 perceivable is a very differen
 report from 704 undifferentiated ones.
 
 The predicate's canonical source is
-[`scripts/lib/browser/perceivable.mjs`](../../scripts/lib/browser/perceivable.mjs);
+[`scripts/lib/browser/perceivable.mjs`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/scripts/lib/browser/perceivable.mjs);
 the copy inside `references/dom-scanner.md` is drift-checked by
 `tests/click-test-perceivability.test.mjs`. `/nav-audit --verify` injects the same
 function to qualify its `authSentinel`, which is why it is a module rather than

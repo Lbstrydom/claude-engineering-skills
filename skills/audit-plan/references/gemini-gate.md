@@ -5,10 +5,13 @@ summary: Step 7 Gemini independent review protocol — transcript, verdict handl
 # Gemini Independent Review — Step 7 Protocol
 
 > **GENERATED COPY — do not edit.** The canonical is
-> [`docs/audit/shared-references/gemini-gate.md`](../../../docs/audit/shared-references/gemini-gate.md).
+> [`docs/audit/shared-references/gemini-gate.md`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/docs/audit/shared-references/gemini-gate.md).
 > Regenerate with `node scripts/sync-shared-audit-refs.mjs`; `npm run check`
-> fails on drift. Relative links above were rewritten for this location,
-> so this file is NOT byte-identical to the canonical by design.
+> fails on drift. Links above were re-spelled for this location — a target
+> outside `skills/` becomes an absolute upstream URL, because this copy is
+> copied again into `.claude/skills/` and then into consumer repos, where no
+> relative path reaches it. So this file is NOT byte-identical to the
+> canonical by design.
 
 After the final GPT audit round (whether converged or not), run
 Gemini 3.1 Pro as an independent third reviewer. This step is MANDATORY —

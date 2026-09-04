@@ -5,7 +5,7 @@ summary: Full consistency-mode grammar, manifest schema, canary schema, runner e
 # Consistency Mode — Full Reference
 
 Loaded on demand when `/persona-test --mode consistency` runs.
-Canonical user-facing contract: [docs/reference/consistency-contract.md](../../../docs/reference/consistency-contract.md).
+Canonical user-facing contract: [docs/reference/consistency-contract.md](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/docs/reference/consistency-contract.md).
 This file is the *operator's* deep dive — the canonical doc is the
 *adopter's* surface contract.
 

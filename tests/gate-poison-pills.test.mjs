@@ -467,6 +467,14 @@ const MANDATORY = {
   // `docs/plans/y.md` in synced skill text is unresolvable there — and reads
   // as perfectly ordinary here, which is why it has shipped four times.
   'skills:consumer-refs:gate': ['skills-consumer-refs-gate-rejects-an-undeclared-unreachable-pointer'],
+  // Added 2026-09-04 with the gate itself. Post-2026-07-31, so a pill is
+  // mandatory. Third in the same family and the one the other two are blind to:
+  // both of them read literal `docs/…md` TOKENS, so a link whose TEXT names a
+  // real path and whose HREF is relative reads as healthy to each. The href is
+  // resolved against the directory a file sits in, and the sync moves files
+  // between depths — 47 links were dead in the generated copies and in every
+  // consumer while resolving perfectly from the file their author had open.
+  'docs:synced-links:gate': ['docs-synced-links-gate-rejects-a-relative-link-that-leaves-the-closure'],
 };
 
 test('every gate the plan made mandatory is contracted — not quietly exempted', () => {

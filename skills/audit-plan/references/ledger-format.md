@@ -5,10 +5,13 @@ summary: Adjudication ledger schema + writer invocation example for each finding
 # Adjudication Ledger — Writing Entries
 
 > **GENERATED COPY — do not edit.** The canonical is
-> [`docs/audit/shared-references/ledger-format.md`](../../../docs/audit/shared-references/ledger-format.md).
+> [`docs/audit/shared-references/ledger-format.md`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/docs/audit/shared-references/ledger-format.md).
 > Regenerate with `node scripts/sync-shared-audit-refs.mjs`; `npm run check`
-> fails on drift. Relative links above were rewritten for this location,
-> so this file is NOT byte-identical to the canonical by design.
+> fails on drift. Links above were re-spelled for this location — a target
+> outside `skills/` becomes an absolute upstream URL, because this copy is
+> copied again into `.claude/skills/` and then into consumer repos, where no
+> relative path reaches it. So this file is NOT byte-identical to the
+> canonical by design.
 
 After each deliberation round, write ledger entries for every finding
 before proceeding to Step 4 (Fix). The ledger is the source of truth for

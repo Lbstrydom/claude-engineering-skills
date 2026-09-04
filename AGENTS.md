@@ -346,6 +346,11 @@ consumer instead of the named one. Verified 2026-07-20.)
 > file — claims about another repo that nothing can make true (`--if-present`
 > **exits 0 having run nothing**). **Name synced tooling by path**:
 > `node scripts/<name>.mjs`. Gate: `npm run skills:consumer-refs:gate`, a ratchet.
+> *(6)* A **relative link** in synced markdown — an href resolves where the file
+> LANDS and the sync changes its depth, so 47 were dead in `.claude/skills/**`
+> and every consumer while resolving from `skills/**`. Both gates above read
+> `docs/…md` TOKENS and see no href at all. Use an absolute upstream URL unless
+> the target is inside `skills/`. Gate: `npm run docs:synced-links:gate`.
 
 > **"Is this file mine to fix?" must be answerable OFFLINE.** Three ownership
 > signals, each with a hole: git-ignore state misses `.claude/hooks/**` and

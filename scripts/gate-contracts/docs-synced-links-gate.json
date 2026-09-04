@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "gate": "docs:synced-links:gate",
+  "guards": "every relative markdown link inside SYNCED content resolves, at that file's consumer path, to another path the sync also ships",
+  "gates": [
+    {
+      "id": "docs-synced-links-gate-rejects-a-relative-link-that-leaves-the-closure",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "npm run docs:synced-links:gate",
+      "implementation": "scripts/check-synced-doc-links.mjs",
+      "tests": ["tests/gate-poison-pills.test.mjs", "tests/synced-doc-links.test.mjs"],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "needsGit": true,
+        "argv": ["scripts/check-synced-doc-links.mjs"],
+        "overlay": {
+          "docs/reference/consistency-contract.md": "tests/fixtures/poison/synced-doc-out-of-closure-link.md"
+        },
+        "expectExit": 1,
+        "expectStderr": "sdl/unfollowable-relative-link",
+        "why": "A relative href is resolved against the directory its file sits in, and the sync moves files between directories at different depths — so a link an author verified by clicking it can be dead in every consumer. Two shapes, both measured 2026-09-04. Arithmetic: skills/<skill>/references/x.md is copied to .claude/skills/<skill>/references/x.md, one level deeper, so a ../../../docs/… written to reach the repo root from the first lands in .claude/ from the second; 47 links were dead this way, in the generated copies here and in every consumer. Structural: the closure ships exactly ONE docs/ file, so a ../plans/… from it cannot resolve there at any depth — that one was reported by wine-cellar-app (upstream 15da01b6) and cost them a permanent .sync-overrides.json entry, because hand-rewriting the line marked the whole document diverged and froze it off every future upstream change. Neither of the two existing gates could see any of it: check-docs-refs.mjs and check-skill-consumer-refs.mjs both extract literal docs/…md TOKENS, so a link whose TEXT says docs/plans/<name>.md and whose HREF says ../completed/x.md reads as healthy to both. The pill restores the reported line verbatim — the shape that already survived one href repair and two gates — and the gate must refuse it. The fixture also carries a fenced sample link, which must stay invisible: /ai-context-management ships three, showing a reader what to write into their own root AGENTS.md where ./AGENTS.md is the correct href, so a gate that rewrote or flagged those would corrupt a template."
+      }
+    }
+  ]
+}

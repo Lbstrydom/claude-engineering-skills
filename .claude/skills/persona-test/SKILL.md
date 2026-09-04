@@ -294,7 +294,7 @@ that tells them apart before reporting anything.
 A persona who describes themselves as "mobile-first" or "tablet user" must
 be tested in that viewport — otherwise responsive bugs, mobile-only CTAs,
 narrow-width overflow, and touch-target sizing are silently invisible.
-The resolver lives at [`scripts/lib/device-presets.mjs`](../../scripts/lib/device-presets.mjs)
+The resolver lives at [`scripts/lib/device-presets.mjs`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/scripts/lib/device-presets.mjs)
 — it keyword-matches the persona's description against five presets
 (desktop, desktop-large, tablet, mobile, mobile-small) and falls back to
 desktop when no cue is present.
@@ -531,7 +531,7 @@ field disagree.
 
 Use this mode to detect cross-step UI/state contradictions (the engine says
 "infeasible" but a CTA says "Reorganise") against a registered canary journey.
-Authoritative spec: [docs/reference/consistency-contract.md](../../docs/reference/consistency-contract.md).
+Authoritative spec: [docs/reference/consistency-contract.md](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/docs/reference/consistency-contract.md).
 
 ### Step C1 — Validate inputs
 

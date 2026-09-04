@@ -156,7 +156,7 @@ maintenance check (`scripts/debt-health-check.mjs`, wired into
 `scripts/maintenance-checks.mjs`) reports stale (>180d by default),
 recurring (>=3 distinct audit runs), and over-budget entries with no LLM
 call and no required env — see
-[`docs/runbooks/local-maintenance-checks.md`](../../../docs/runbooks/local-maintenance-checks.md).
+[`docs/runbooks/local-maintenance-checks.md`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/docs/runbooks/local-maintenance-checks.md).
 It's opt-in (`AUDIT_LOOP_WEEKLY_MAINTENANCE=1`) and never blocks a push;
 `npm run debt:health` runs it on demand.
 

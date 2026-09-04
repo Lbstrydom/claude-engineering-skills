@@ -488,7 +488,7 @@ ALL HIGH must be fixed. MEDIUM until ≤2 remain. LOW if mechanical.
 >   exist" — the claim is partly false; verify the rest before acting.
 >
 > Triage on `effectiveSeverity(finding)` from
-> [`finding-verification.mjs`](../../scripts/lib/audit/finding-verification.mjs),
+> [`finding-verification.mjs`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/scripts/lib/audit/finding-verification.mjs),
 > never on a hand-rolled copy of the rule.
 
 **Track which files you modify** — you'll need this for `--changed` in Step 5.

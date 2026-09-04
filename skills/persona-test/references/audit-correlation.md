@@ -63,7 +63,7 @@ and writes `persona_audit_correlations` rows for every P0/P1 finding — the
 classification rules and finding-hash formula below describe what the
 correlator DOES, for understanding the data and for the manual-repair path;
 you do not execute them by hand during a normal run. Source of truth:
-[`scripts/lib/persona/audit-correlator.mjs`](../../../scripts/lib/persona/audit-correlator.mjs).
+[`scripts/lib/persona/audit-correlator.mjs`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/scripts/lib/persona/audit-correlator.mjs).
 
 ### Classification rules (as implemented by the auto-correlator)
 

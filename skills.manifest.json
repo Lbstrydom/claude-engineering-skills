@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "82bf04036e00466c",
+  "bundleVersion": "edb3396da2adba4d",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -42,8 +42,8 @@
         },
         {
           "relPath": "references/input-acquisition.md",
-          "sha": "0addf39ba936",
-          "size": 4196
+          "sha": "f06498645f4c",
+          "size": 4436
         },
         {
           "relPath": "references/reconcile-playbook.md",
@@ -54,14 +54,14 @@
     },
     "audit-code": {
       "path": "skills/audit-code/SKILL.md",
-      "sha": "90296a51efea",
-      "size": 45447,
+      "sha": "9ca425563684",
+      "size": 45506,
       "summary": "Iteratively audit code against a plan with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "90296a51efea",
-          "size": 45447
+          "sha": "9ca425563684",
+          "size": 45506
         },
         {
           "relPath": "examples/contract-test-scaffold.md",
@@ -70,28 +70,28 @@
         },
         {
           "relPath": "references/debt-capture.md",
-          "sha": "90360c4ef947",
-          "size": 9270
+          "sha": "d034ff149c42",
+          "size": 9326
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "5da6c02dc860",
-          "size": 12758
+          "sha": "e89c50f38719",
+          "size": 12998
         },
         {
           "relPath": "references/input-acquisition.md",
-          "sha": "0addf39ba936",
-          "size": 4196
+          "sha": "f06498645f4c",
+          "size": 4436
         },
         {
           "relPath": "references/ledger-format.md",
-          "sha": "9015d5b57872",
-          "size": 7405
+          "sha": "6c1b1afa2567",
+          "size": 7645
         },
         {
           "relPath": "references/prerequisite-ladder.md",
-          "sha": "312754aa9e41",
-          "size": 5962
+          "sha": "cf253db9f6fa",
+          "size": 6202
         },
         {
           "relPath": "references/r2-plus-mode.md",
@@ -100,8 +100,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "ad210b88afe8",
-          "size": 27631
+          "sha": "96da9ef1a7a1",
+          "size": 27927
         }
       ]
     },
@@ -118,28 +118,28 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "5da6c02dc860",
-          "size": 12758
+          "sha": "e89c50f38719",
+          "size": 12998
         },
         {
           "relPath": "references/input-acquisition.md",
-          "sha": "0addf39ba936",
-          "size": 4196
+          "sha": "f06498645f4c",
+          "size": 4436
         },
         {
           "relPath": "references/ledger-format.md",
-          "sha": "9015d5b57872",
-          "size": 7405
+          "sha": "6c1b1afa2567",
+          "size": 7645
         },
         {
           "relPath": "references/prerequisite-ladder.md",
-          "sha": "312754aa9e41",
-          "size": 5962
+          "sha": "cf253db9f6fa",
+          "size": 6202
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "a176ab72779d",
-          "size": 27645
+          "sha": "8d069413f342",
+          "size": 27941
         }
       ]
     },
@@ -156,26 +156,26 @@
         },
         {
           "relPath": "references/input-acquisition.md",
-          "sha": "0addf39ba936",
-          "size": 4196
+          "sha": "f06498645f4c",
+          "size": 4436
         }
       ]
     },
     "click-test": {
       "path": "skills/click-test/SKILL.md",
-      "sha": "09ad18848b3c",
-      "size": 44243,
+      "sha": "f6a8068a625f",
+      "size": 44361,
       "summary": "Structural DOM audit of a live app — walk every interactive element and",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "09ad18848b3c",
-          "size": 44243
+          "sha": "f6a8068a625f",
+          "size": 44361
         },
         {
           "relPath": "references/browser-tool-detection.md",
-          "sha": "376779102b2f",
-          "size": 15120
+          "sha": "1d8682efb4d8",
+          "size": 15360
         },
         {
           "relPath": "references/dom-scanner.md",
@@ -184,8 +184,8 @@
         },
         {
           "relPath": "references/input-acquisition.md",
-          "sha": "0addf39ba936",
-          "size": 4196
+          "sha": "f06498645f4c",
+          "size": 4436
         }
       ]
     },
@@ -215,8 +215,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "a176ab72779d",
-          "size": 27645
+          "sha": "8d069413f342",
+          "size": 27941
         }
       ]
     },
@@ -238,8 +238,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "a176ab72779d",
-          "size": 27645
+          "sha": "8d069413f342",
+          "size": 27941
         }
       ]
     },
@@ -281,21 +281,21 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "a176ab72779d",
-          "size": 27645
+          "sha": "8d069413f342",
+          "size": 27941
         }
       ]
     },
     "persona-test": {
       "path": "skills/persona-test/SKILL.md",
-      "sha": "ee54969838b0",
-      "size": 52524,
+      "sha": "a431a6f70a4f",
+      "size": 52642,
       "summary": "Persona-driven exploratory browser testing against a live URL.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "ee54969838b0",
-          "size": 52524
+          "sha": "a431a6f70a4f",
+          "size": 52642
         },
         {
           "relPath": "examples/report-and-debrief.md",
@@ -304,28 +304,28 @@
         },
         {
           "relPath": "references/audit-correlation.md",
-          "sha": "96edb36cdd75",
-          "size": 7229
+          "sha": "93eb7426b86d",
+          "size": 7285
         },
         {
           "relPath": "references/auth-bootstrap.md",
-          "sha": "b04fb14fec4a",
-          "size": 7810
+          "sha": "1e8194447e08",
+          "size": 7922
         },
         {
           "relPath": "references/browser-tool-detection.md",
-          "sha": "376779102b2f",
-          "size": 15120
+          "sha": "1d8682efb4d8",
+          "size": 15360
         },
         {
           "relPath": "references/consistency-mode.md",
-          "sha": "3e91780cab15",
-          "size": 10801
+          "sha": "bdd6f9868dd0",
+          "size": 10857
         },
         {
           "relPath": "references/input-acquisition.md",
-          "sha": "0addf39ba936",
-          "size": 4196
+          "sha": "f06498645f4c",
+          "size": 4436
         },
         {
           "relPath": "references/interop.md",
@@ -387,8 +387,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "a176ab72779d",
-          "size": 27645
+          "sha": "8d069413f342",
+          "size": 27941
         }
       ]
     },
@@ -407,19 +407,19 @@
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "21cee9d98912",
-      "size": 77975,
+      "sha": "1bba4595e9d6",
+      "size": 78093,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "21cee9d98912",
-          "size": 77975
+          "sha": "1bba4595e9d6",
+          "size": 78093
         },
         {
           "relPath": "references/input-acquisition.md",
-          "sha": "0addf39ba936",
-          "size": 4196
+          "sha": "f06498645f4c",
+          "size": 4436
         },
         {
           "relPath": "references/migration-credentials.md",
@@ -438,8 +438,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "a176ab72779d",
-          "size": 27645
+          "sha": "8d069413f342",
+          "size": 27941
         }
       ]
     },
@@ -469,8 +469,8 @@
         },
         {
           "relPath": "references/input-acquisition.md",
-          "sha": "0addf39ba936",
-          "size": 4196
+          "sha": "f06498645f4c",
+          "size": 4436
         },
         {
           "relPath": "references/lock-mode-spec-generation.md",
@@ -484,8 +484,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "a176ab72779d",
-          "size": 27645
+          "sha": "8d069413f342",
+          "size": 27941
         },
         {
           "relPath": "references/verify-mode-generation.md",
