@@ -1,5 +1,44 @@
 # Project Status Log
 
+## 2026-09-04 — Backlog & drift reduction: durable debt ledger, honest gates, status.md rotation
+
+### Consumer Verification (previous ship)
+- **Commit**: `0c7fd4a3` — feat(provenance): AI-Gate: converged — a name for the remediated ship (pushed to `main` 2026-09-04, **`--no-verify`**)
+- **Retrieval**: `git fetch origin`, compared `origin/main` to the local sha rather than trusting the push exit code; the pre-push sandbox result at this exact sha was already on record from before the bypass (14,682 pass / 1 fail — the known `sync-target-path.test.mjs` install-timeout flake, 0 dependency lines changed); `build-manifest.mjs --check` + `skills-artifact-freshness-wiring.test.mjs` re-run after the commit
+- **Result**: **verified** — `origin/main == 0c7fd4a3`; manifest fresh (bundle `205cb243f1f9787d`), 14/14 pass. Pre-push gate evidence itself **not verified by the hook** (bypassed) but independently reproduced at that sha. Synced consumer bundle: **unverified** — not run this session (concrete blocked prerequisite: needs a fresh sync into wine-cellar-app/ai-organiser/storyline, not done). Low risk stated rather than assumed: only `skills/ship/SKILL.md` (prose) plus `scripts/lib/commit-trailers.mjs` / `scripts/ship-commit.mjs` (already consumer-bundled) changed.
+
+### Changes
+- Shipped `docs/plans/backlog-and-drift-reduction.md` (14 phases, 5 clusters) closing the gap between "the debt ledger must stay private" and "good data must not be lost": `.audit/tech-debt.json` and `.audit-loop/` were gitignored with no rule for *why*, so nothing distinguished a safely-derived cache from a load-bearing private file with no other home.
+- **Gitignore policy formalized** (`docs/reference/gitignore-policy.md`, `check-gitignore-policy.mjs`): every ignored path now declares category A (derived/volatile), B (committed+verified), or **P** (private + load-bearing, requiring a stated `Durable home:`). Closes the class that let 37 debt entries exist on exactly one disk with no recorded recovery path.
+- **Debt reconciliation** (`scripts/debt-reconcile.mjs` + `lib/debt-reconcile.mjs`): local `.audit/tech-debt.json` vs the private store was never diffed. Recovered the 37 orphaned entries (store 136→173, two HIGH/MEDIUM topics confirmed live). The classifier treats absence as ambiguous by construction — every unresolved case routes to push, never silent prune — and a topic's non-monotonic lifecycle (34 `reopened` events in this store) is handled by a recency-ordered, poison-on-any-unreadable-timestamp predicate.
+- **`durableWrite` wired into debt persistence** (`debt-memory.mjs`): the gitignored ledger's docstring falsely claimed it was "the durable, human-approved state" — corrected, and `persistDebtEntries` now reports one of the four honest outcomes (`written|spilled|lost|skipped`) instead of assuming the local write was enough.
+- **status.md rotation, safely**: 1,566,206 → 26,523 bytes at the root; `docs/status/{2026-03..08}.md` hold the rest. `rotate-status-log.mjs` proves byte-identical reassembly *before* writing anything; `check-status-log-integrity.mjs` re-verifies conservation on every push (fail-closed on an unresolved base, never vacuously "conserved" against an empty comparison); both are new pre-push gates. All 408 entries verified conserved two independent ways.
+- **Drift-only size ratchet** (`file-size-ratchet.mjs`, 20 files baselined, mirrors `knip-gate.mjs`'s shape): a shrink must be locked in or it fails too, closing the "decomposition is a treadmill" problem — two decompositions removed 3,652 lines over 60 days, outpaced by 4,551 lines of unmanaged growth elsewhere.
+- Corrected the stale `REQ-persistence-7bc1224d` requirement (claimed 2 keyed durable writers; 6 exist in code) via `.requirements/overrides.json`.
+- **`/audit-code` on the whole plan**: 4 GPT rounds (H:16 M:18 → H:9 M:16 → H:6 M:10 → H:8 M:10, stopped on rising-count/falling-acceptance) + 4 Gemini rounds, ending **APPROVE** — 0 new findings, 0 wrongly dismissed, `claude_bias_detected: false`, coherence "Strong", 0 over-engineering flags. 30 findings fixed, incl. two real data-loss bugs caught only by the tooling meant to prevent data loss: `rotate-status-log --keep-months nope` → `NaN` → would have archived every month including the current one (confirmed live pre-fix); conservation laws used sets instead of a consuming multiset, so one surviving entry could satisfy several prior ones.
+
+### Files Affected
+- `scripts/{debt-reconcile,file-size-ratchet,rotate-status-log,check-status-log-integrity,check-gitignore-policy,backlog-snapshot}.mjs` + matching `lib/` modules — new
+- `scripts/lib/{debt-memory,debt-ledger}.mjs` — durable-write routing, honest availability reporting
+- `docs/reference/gitignore-policy.md`, `docs/plans/backlog-and-drift-reduction.md` — new
+- `docs/status/{2026-03,04,05,06,07,08}.md`, `docs/status/rotation-manifest.json` — new (archived history)
+- `.file-size-baseline.json`, `.gitignore-policy-baseline.json` — new drift baselines
+- `.requirements/overrides.json` — new, corrects `REQ-persistence-7bc1224d`
+
+### Decisions Made
+- A private, load-bearing gitignored file must state where it durably lives (category **P**) — "gitignored" is no longer a reason on its own.
+- Rotation and reconciliation tools prove their invariant *before* writing, and refuse rather than guess on any ambiguity (unresolved timestamp, differing archive, contradictory flags).
+- A drift gate that can shrink-and-stay-passing (rather than shrink-and-fail-to-relock) lets the baseline creep back to its historical worst case — rejected for both the size ratchet and the debt/status gates.
+
+### Next Steps
+- Deferred (recorded in the ledger, not fixed): error provenance in read paths that fail safe; `debt-reconcile.mjs`'s `main()` length; a POSIX `--` argv-terminator rescan.
+- Pre-existing backlog surfaced by this ship's own 0.5 gate queries (not created by this session, not actioned here — advisory, non-blocking): 56 code-mode unlocked HIGH fixes (+190 aged out of the 14-day window since practice start) and 168 unremediated accepted findings (80 code / 88 plan, 50 already marked permanently-accepted, 17 aged past the 30-day ceiling). Worth a dedicated triage pass.
+- 4 open upstream reports from `storyline` (2 HIGH: pnpm-edge blindness in `isInternalEdge`, gitignored-tree walking in the symbol-index corpus) — untriaged this session.
+
+Backlog 2026-09-04T10:16Z: Q1 56c/25p (+190 aged) · Q2 80c/88p (50 perm) · Q3 486 · debt 222 cloud/106 local (0 spilled) · upstream 0
+
+---
+
 ## 2026-09-04 — `AI-Gate: converged`: a name for the audited-then-remediated ship
 
 ### Consumer Verification (previous ship)
