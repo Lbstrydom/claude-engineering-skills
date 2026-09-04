@@ -188,6 +188,182 @@ Backlog 2026-09-04T17:19Z: Q1 55c/25p (+190 aged) · Q2 142c/88p (50 perm) · Q3
 - `AGENTS.md`, `package.json`, `scripts/.cli-catalog.json`, `tests/gate-poison-pills.test.mjs` — invariant, npm scripts, catalog, pill registry
 - `docs/plans/stdout-flush-drain-gate.md` (new) — plan, written after implementation as the audit spec
 
+## 2026-09-04 — Working the two adjudication queues: the credit card was counting one population and listing another
+
+### Queue measurements (all `Lbstrydom/claude-engineering-skills`, `measured: true`)
+
+| | Before | After | Command |
+|---|---|---|---|
+| Q1 `totalActionable` | **486** → really **2,175** | 2,165 | `cross-skill.mjs final-review-pending --repo Lbstrydom/claude-engineering-skills` |
+| Q1 `fixedUnlabelled` | **3** → really **1,692** | 1,682 | as above |
+| Q2 `byMode.total` | 227 | 230 | `cross-skill.mjs list-unremediated-acceptances` |
+| Q2 `agedOut` | **17** (3 HIGH / 14 MED) | **5** (2 HIGH / 3 MED) | as above |
+| Q2 `acceptedPermanent` | 50 | 50 | as above |
+
+Q2 `total` rising while 12 rows were closed, and Q1 falling by 10 against 17
+adjudications, are both concurrent-session churn — other sessions were writing
+throughout. The 17 were verified individually as landed (17/17 carry a
+`user_action`), rather than inferred from the deltas.
+
+### The credit card's header described a strict subset of its own list
+
+`final-review-pending` printed `486 shadow finding(s) await credit: … 3
+fixed-but-unlabelled` and then listed **ten** rows, every one classified
+`fixed-unlabelled` and every one carrying `bucket: null`. Ten members of a
+class the same card counted as three.
+
+`getFinalReviewStats` builds the LIST (`pendingQueue`) and the exact TOTALS
+(`actionablePairs`) as two separate statements. `skill-efficacy-census.md`
+Phase 1 widened the list from shadow-only to shadow-only ∪
+primary-bucket-label-gap — that gap was the entire point of the phase, and that
+plan names the 1,615-row figure itself — and widened the list's SQL only. The
+counts query kept `bucket = 'shadow-only'`.
+
+Measured: 536 shadow-only (486 actionable) + **1,689** primary-bucket label-gap
+= 2,175, against a reported 486. The `fixed-unlabelled` class — the one this
+queue exists to surface — was under-reported **563-fold**. Fixed by making both
+queries interpolate one shared pair of branch predicates, so widening the
+population is one edit both readers inherit; guarded by a test that fails if
+either query stops referencing either branch (verified red-then-green by
+re-narrowing the counts clause).
+
+This is the "check verifying one direction only" shape already in AGENTS.md,
+and it is why the task's stated 482-row queue was never the real size.
+
+### Q2 — the 17 aged-out acceptances, each resolved
+
+**Nine were already fixed and merely unlabelled**, closed with
+`final-review-record-fix … --state fixed` against the commit that fixed each,
+verified by reading or executing the current code rather than by trusting a
+commit message:
+
+- `76e57599`, `17d5bfc3` (`check-docs-refs.mjs`) → `7a39533a`, `0262bef3`.
+  Executed rather than read: `docs/plans/real.md/.hidden` and `…/-obsolete` now
+  yield no token, `missing.md)(planned)` no longer reads as PLANNED, and the
+  positive control `See docs/plans/real.md.` still extracts. Both fixes landed
+  about 30 minutes *after* the finding was accepted, in the same audit loop —
+  the classic fixed-but-unlabelled shape.
+- `11f0ced8` (`buildShadowCtx` aliasing) → `febb35ed`. The generic claim
+  ("other nested context values remain aliased") is still literally true, but
+  the two values actually mutated in place — `generatorOutcomes` and `bandit` —
+  are both isolated at the construction site now, and a search for in-place
+  mutation of any other nested `ctx` value returns nothing. The finding's harm
+  has no remaining instance; deep-cloning the read-only inputs would be the
+  over-built version.
+- `09571813` (ledger loses malformed entries silently) → `9cbec6d8`. The loss
+  is now a structured `invalidEntryCount` travelling into `_executionMeta`, not
+  a stderr line.
+- `e9d3699e` (the migration's destructive DELETE guidance) → `144be839`. The
+  finding's premise — that the recovery "deletes the only learned arm state" —
+  is false: live bandit state is `.audit/bandit-state.json` (`PromptBandit`'s
+  default path) and `bandit_arms` is a re-syncing telemetry mirror. The
+  migration now says exactly that, and offers an inspect-first query.
+- `83e836de` (HIGH, error-observability) → `cc680030`. Two bare catches remain
+  in a 1,701-line module, both documented; the specifically-named diff-read path
+  now distinguishes absent from unreadable in as many words.
+- `b3d1d091` — **dismissed, and correctly so.** `ADJACENCY_INCOMPLETE` is a
+  registered control marker (`lib/audit/control-markers.mjs`) — a wave's own
+  coverage notice, which this repo auto-dismisses as not-a-real-finding. The row
+  was accepted on 2026-07-26, four days after that machinery landed in
+  `7a933402`, and `markRunFindingsAutoDismissed` only touches rows whose
+  `adjudication_outcome` is null, so it could never have reached this one.
+
+**Two were remediated with code:**
+
+- `8c225409` — `runAdjacencyAnalysis` ran a full Babel traversal *per anchor
+  line*, and `parseHunkTargets` emits every added line as an anchor. Neither
+  guard bounded it: `seenContainers` dedups containers only *after* resolution,
+  and `maxContainers` governs enumeration, which this loop does not break on. A
+  500-line hunk paid 500 walks of one tree at roughly 50ms each.
+  `findEnclosingConditionals` now does one walk. The risk was semantics rather
+  than speed, so the test asserts equivalence against the old per-line behaviour
+  over a strided sample of the real fixture, with a vacuous-pass floor; breaking
+  nearest-wins to first-match fails it.
+- `879932a9` — the pure propagation test excludes the DB round-trip *and says so
+  in its own docstring*, while the defect it was written for was precisely a
+  divergence between `finding_adjudication_events` and the `audit_findings`
+  column `unlocked_fixes` reads. Demonstrated rather than argued: delete the
+  `updateWhere('audit_findings', …)` call and the pure sibling passes **3/3**
+  while the new live suite fails 2/4. Two things only a live schema showed —
+  `ruling` is CHECK-constrained to sustain/overrule/compromise, and
+  `finding_adjudication_events.remediation_state` is NOT NULL, which makes the
+  pure test's second case describe a call shape the store cannot execute at all.
+  Enrolled in both required places.
+
+**Three were written off against measurements.** Recorded as `dismissed`
+because the store has no "real, but no longer worth acting on" state — that is
+a limitation of the schema, not a judgement that these were false. All three
+describe real mechanisms:
+
+- `3c3b9f48` — embedding persistence is still one awaited INSERT per finding in
+  a sequential loop. But the finding's premise is "a merged pass containing
+  **hundreds** of findings"; measured over this repo's own history, findings per
+  run are max **50**, mean **8.6**, p95 **25**. The loop's per-row error
+  isolation and per-row `rowCount` verification are worth more than saving at
+  most 50 round trips on an operation that already spent seconds on LLM calls.
+- `50861bfc` — Stage-0 impact lookup is still one RPC per candidate anchor file.
+  It is bounded by the run's own diff scope, memoised per run, concurrency is
+  now tunable via `STAGE0_IMPACT_CONCURRENCY` (default 8), and the underlying
+  `getFreshImportersOrNull` cache was only just repaired in `0fa73e2f` — so the
+  per-call cost this finding priced has itself changed.
+- `e058e7df` — the extract heartbeat is still one beat per file, so a single
+  expensive file could in principle exceed the idle timeout. That timeout is
+  `COVERAGE_DEFAULTS.hardTimeoutMs` = **300,000ms**. A five-minute budget for
+  one file's parse is not a reachable hazard.
+
+**Five are real, still live, and now have nowhere automated to appear.** They
+are written up with reproductions in
+[`docs/plans/aged-out-acceptance-remainder.md`](docs/plans/aged-out-acceptance-remainder.md)
+rather than closed in either direction: the three debt-ledger contract findings
+(`75981b9b`, `dd651e36`, `92fe5776` — measured: 181 of 222 store entries carry
+no classification, 0 of 222 carry `content_aliases`, 10 of 222 carry any
+lifecycle field), the `find-rmsync-sites` alias blind spot (`b091a8ab` — a live
+instance at `regenerate-skill-copies.mjs:113` is invisible to the retry guard
+while line 246 is found), and the visual-audit schema duplication (`e3da8d42`).
+
+### Q1 — 17 rows adjudicated per-row, and two of them were wrong
+
+The task framing said to treat a fixed-unlabelled row as `accepted` because "a
+shipped fix implies the finding was real". `final-review-credit.mjs` explicitly
+rejects that reasoning in a comment: it collapses the two axes AGENTS.md keeps
+orthogonal, and a recorded remediation only proves somebody *associated* a
+commit with a finding. Followed the code rather than the framing, and it paid:
+
+- **15 accepted** after verifying each against current code — the `--base`
+  validation trio (`f81cb3f7`, `49b91299`, `68c5dba8`: now resolved to an
+  immutable OID, rejected when equal to HEAD, ancestor-checked), the
+  conservation-multiplicity trio (`d152b8c4`, `19f2f7ed`, `478d4365`: multiset
+  counting, each match consuming its counterpart), `df51bd12` (the preamble now
+  has its own conservation law), `3c915c50` / `6a16ad31` / `80ed40b4` (an
+  unparseable or absent timestamp now poisons the whole lookup to
+  `unresolvable` — the comment there records that a first fix attempt
+  reinstated the bug it was fixing), `e6ce5bc7` / `7400128e`, `74398e6d`, and
+  `f6779aca` / `ccb4ffb1`.
+- **2 dismissed as wrong findings.** `4329c5d7` and `f6c83756` both argue that
+  registering `debt.entries` with a `rowKey` violates `REQ-persistence-7bc1224d`.
+  That requirement was itself a stale artifact: the extractor lifted a docstring
+  paragraph naming two writers when six existed, and it sat `active` with
+  `confidence: high`. Both were corrected on 2026-09-04, and
+  `audit-store-writers.mjs` now carries an explicit warning that the next reader
+  may "restore" the requirement by deleting a `rowKey` that is preventing real
+  data loss. Accepting these two would have licensed exactly that.
+
+Two false positives in a 17-row verified sample is the argument against
+bulk-accepting the remaining 1,682.
+
+### Left open, deliberately
+
+- **1,682 `fixed-unlabelled`, 449 `unadjudicated`, 34 `accepted-unfixed`.** The
+  primary-bucket population was never surfaced before today — the read was
+  hard-scoped to shadow-only — so this is not a backlog anyone declined to work.
+  It needs per-row judgement at a rate this session could not reach, and the
+  sample above shows why a bulk pass would be wrong.
+- **`acceptedPermanent` = 50, unchanged.** Not chased, per its being a decision
+  rather than a backlog; worth watching only if it climbs while `open` does not.
+- **`scripts/migrate-v3-run-metadata.mjs`** is absent, which two accepted
+  findings correctly flagged. It was deliberately deleted as the one dead CLI in
+  `backlog-and-drift-reduction.md` Phase 11. `docs/architecture-map.md` still
+  lists it, which is expected of a Category-A regenerated artifact.
 
 ## 2026-09-04 — A schema error is not an empty result: the phantom `commit_sha` column, and the cache that never hit
 
