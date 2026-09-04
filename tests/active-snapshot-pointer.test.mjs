@@ -127,10 +127,14 @@ describe('sampleSnapshotEmbeddings — tenant-bound, fail-closed', () => {
   });
 
   it('the query filters on repo_id, not refresh_id alone', () => {
-    // A source assertion, deliberately: the binding lives entirely in SQL, and
-    // `scripts/lib/store/arch/**` has no live-DB harness (the "contract suite"
-    // is structural only). This is weaker than executing it and is labelled as
-    // such — it catches the clause being dropped, not the database honouring it.
+    // A source assertion, deliberately: the binding lives entirely in SQL and
+    // this suite is hermetic. It is WEAKER than executing the query, and
+    // labelled as such — it catches the clause being dropped, not the database
+    // honouring it. (An earlier draft justified it by claiming
+    // `scripts/lib/store/arch/**` has no live-DB harness. That was false, and
+    // believing it is what let a phantom-column query ship: `npm run db:local`
+    // does cover this module. Prefer adding a case there when the claim is
+    // about what Postgres will actually do.)
     const src = fs.readFileSync(SNAPSHOTS_SRC, 'utf8');
     const query = src.slice(src.indexOf('FROM symbol_index si'), src.indexOf('ORDER BY random()'));
     assert.match(query, /si\.refresh_id = \$1/);
