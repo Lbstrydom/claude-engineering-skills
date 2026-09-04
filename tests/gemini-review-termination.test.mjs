@@ -39,8 +39,28 @@ const transcriptFile = join(dir, 'transcript.json');
 writeFileSync(planFile, '# plan\n');
 writeFileSync(transcriptFile, JSON.stringify({ changed_files: [], code_files: [] }));
 
-/** Spawn the review CLI; resolve with {code, timedOut} — kills after `killMs`. */
-function runCli(args, env, killMs = 12000) {
+/**
+ * Spawn the review CLI; resolve with {code, timedOut} — kills after `killMs`.
+ *
+ * The default is deliberately generous. This killer is a NO-HANG SAFETY NET, not
+ * a latency probe: every assertion here is `timedOut === false` plus an exit
+ * code, so the only thing the budget must do is distinguish "terminated" from
+ * "hung indefinitely" — the original keep-alive-socket bug. Sizing it near the
+ * observed happy-path duration turns CPU contention into a false failure.
+ *
+ * The hang subtest below already learned this and was given an explicit 30000
+ * ("a tight 10s killer flake — observed 10.4s"), but the DEFAULT was left at
+ * 12000, so the other three call sites kept the tight budget. Under the full
+ * ~15,000-test pool that duly flaked: the no---out subtest was SIGKILLed at
+ * 12,071ms against the 12,000ms cap — 71ms over, `code: null`, while passing in
+ * 6.3s standalone. Same partial-fix shape as the sync fixture's nested-timeout
+ * collision fixed earlier the same day: the reasoning was recorded at one call
+ * site and not applied to the default it shared.
+ *
+ * Costs nothing on the normal path — the child exits in ~2-8s and resolves at
+ * once — and a genuine infinite hang still fails loudly.
+ */
+function runCli(args, env, killMs = 30000) {
   return new Promise((resolvePromise) => {
     const child = spawn(process.execPath, [CLI, ...args], {
       cwd: REPO_ROOT,
