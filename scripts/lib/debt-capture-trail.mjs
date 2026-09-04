@@ -45,6 +45,33 @@ const ROUND_LEDGER_SUFFIX = '-ledger.json';
  * @param {string} [dir=DEFAULT_AUDIT_DIR]
  * @returns {string[]} Sorted relative/absolute paths (matches `dir`'s form)
  */
+/**
+ * Whether the audit directory could be enumerated at all.
+ *
+ * The companion to `findRoundLedgers`, which returns `[]` both when the
+ * directory holds no round ledgers and when it does not exist — a distinction
+ * its callers need, because "no deferrals to verify" and "nothing was examined"
+ * are opposite claims. `.audit/` is gitignored, so the second case is the
+ * DEFAULT in a fresh clone, in CI, and in a linked worktree.
+ *
+ * Deliberately a sibling rather than a change to `findRoundLedgers`'s return
+ * type: that function is consumed at four call sites and pinned by an existing
+ * test asserting `[]` for a missing directory. A separate predicate makes
+ * absence representable without a breaking signature change.
+ *
+ * Plan: docs/plans/backlog-and-drift-reduction.md Phase 1 (recorded deviation).
+ *
+ * @param {string} [dir=DEFAULT_AUDIT_DIR]
+ * @returns {boolean}
+ */
+export function auditDirAvailable(dir = DEFAULT_AUDIT_DIR) {
+  try {
+    return fs.statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 export function findRoundLedgers(dir = DEFAULT_AUDIT_DIR) {
   let entries;
   try {

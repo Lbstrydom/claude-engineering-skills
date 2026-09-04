@@ -99,7 +99,7 @@ explicit, and because one of them is in the very file this plan modifies:
 
 1. [`scripts/actions-runner-doctor.mjs:26`](../../scripts/actions-runner-doctor.mjs) —
    a `--repo <employer-org>/some-repo` usage example.
-2. [`status.md:1133`](../../status.md) — a session entry naming the employer as
+2. the session log's 2026-08-14 entry (now `docs/status/2026-08.md`) — naming the employer as
    the "real GHE org".
 
 Cleared as **not** a leak: the `storyline*` hits in

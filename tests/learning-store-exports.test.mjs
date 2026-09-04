@@ -70,6 +70,10 @@ const EXPECTED_EXPORTS = [
   // debt (5)
   'appendDebtEventsCloud',
   'readDebtEntriesCloud',
+  // Single-statement reconciliation snapshot (entry presence + latest lifecycle
+  // event per topic). One statement, not a transaction: under READ COMMITTED two
+  // consecutive SELECTs can observe different committed states.
+  'readReconciliationSnapshot',
   'readDebtEventsCloud',
   'removeDebtEntryCloud',
   'upsertDebtEntries',
@@ -489,6 +493,12 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // (ship-nudges, unbounded-age read side). Closes the gap the existing
     // fixed-lifecycle machinery (session-scoped, round-diff-scoped, 14-day-
     // bounded) cannot reach: upstream report 97d09c1c-8dd0-42d1-bfdb-93963f0c07a0.
-    assert.equal(EXPECTED_EXPORTS.length, 195);
+    // 195 -> 196: readReconciliationSnapshot added 2026-09-04 with the
+    // local-vs-store debt reconcile (docs/plans/backlog-and-drift-reduction.md).
+    // One statement rather than a transaction: under READ COMMITTED two
+    // consecutive SELECTs can observe different committed states, and the
+    // classifier must see entry presence and the latest lifecycle event at
+    // the SAME instant or it can prune an entry that was merely reopened.
+    assert.equal(EXPECTED_EXPORTS.length, 196);
   });
 });

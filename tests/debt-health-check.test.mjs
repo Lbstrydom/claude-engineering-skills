@@ -46,10 +46,27 @@ afterEach(() => {
 });
 
 describe('debt-health-check CLI', () => {
-  test('exit 0 when ledger file missing', () => {
+  test('a MISSING ledger reports unverifiable — never "0 open entries"', () => {
+    // This assertion used to require /0 open entries/ from an absent ledger,
+    // which pinned the false green rather than the contract: `.audit/` is
+    // gitignored, so a fresh clone, CI, or a linked worktree took that path by
+    // default and read as a clean bill of health. Exit stays 0 because this is
+    // an advisory maintenance nudge, not a gate — the fix is honesty in the
+    // report, not a new push blocker.
+    // See docs/plans/backlog-and-drift-reduction.md §2 availability contract.
     const r = runCli(['--ledger', ledgerPath]);
+    assert.equal(r.status, 0, 'advisory: an unverifiable input must not start gating');
+    assert.match(r.stdout, /UNVERIFIABLE/);
+    assert.doesNotMatch(r.stdout, /0 open entries/, 'the count must not be fabricated');
+  });
+
+  test('a missing ledger emits ok:false in JSON — a machine must not read a green', () => {
+    const r = runCli(['--ledger', ledgerPath, '--json']);
     assert.equal(r.status, 0);
-    assert.match(r.stdout, /0 open entries/);
+    const env = JSON.parse(r.stdout);
+    assert.equal(env.ok, false);
+    assert.equal(env.verdict, 'unverifiable');
+    assert.equal(env.totalEntries, null, 'a count is never rendered for an unread ledger');
   });
 
   test('exit 0 when ledger has entries but nothing stale/recurring/over-budget', () => {

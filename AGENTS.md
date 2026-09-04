@@ -75,6 +75,26 @@
 > is in `npm test`, so a retag that breaks the inbound half fails at push.
 > Detail: [god-module-and-layering-debt.md](docs/plans/god-module-and-layering-debt.md) §1.2.
 
+> **An ignored path declares WHY it is ignored, and a private one declares where
+> it durably lives.** The two categories below cover *generated* files. A third,
+> **P — private and load-bearing**, covers what is neither generated nor
+> publishable: it must never be public, cannot be regenerated, and therefore
+> owes a `Durable home:`. Skipping that question cost **37 tech-debt entries
+> living on exactly one disk** until 2026-09-04, while the owning module called
+> the ignored file "the durable, human-approved state". Declared in
+> `.gitignore`'s own comment blocks (`Category: A|B|P`, plus `Durable home:` /
+> `Recoverable:` / `Disposable:` for P), gated drift-only by
+> `npm run gitignore:policy:gate`. Policy + the per-rule table:
+> [`docs/reference/gitignore-policy.md`](docs/reference/gitignore-policy.md).
+>
+> **Oversized files may not grow.** `npm run size:ratchet:gate` ratchets every
+> `scripts/**` file already over 1000 lines against `.file-size-baseline.json`,
+> drift-only in knip-gate's shape. **A shrink fails too** — asking you to
+> re-baseline — because a baseline pinned at the historical high-water mark lets
+> a file grow back unchallenged. Measured over the 60 days to 2026-09-04: two
+> decompositions removed 3,652 lines and were outpaced by 4,551 lines of
+> unmanaged growth across 11 other files.
+>
 > **Generated-artifact policy (invariant — avoid the "messy middle").** Every
 > generated file lands in exactly ONE of two categories; never tracked-but-
 > unverified-and-volatile:
@@ -393,6 +413,9 @@ prevents.
 ### Testing
 
 Run: `npm test` (Node.js built-in test runner — the suite under `tests/`).
+**Measured 2026-09-04: 14,711 tests, 0 fail, 39 skipped, 9m16s** (`npm test`, on
+a linked worktree). Carry the date and the command — the anecdote in
+§verification-discipline is about this very row going 2.3x stale.
 
 #### Pre-push runs against a clean checkout, not the working tree
 

@@ -39,8 +39,10 @@ number for the same claim*.
   ```
 - **Append-newest-first files are cited by section header, never by line.**
   `status.md`, changelogs, session logs: every new entry shifts every earlier
-  line, so a line citation there begins decaying immediately. Use
-  `grep -n '^## 2026-07-04' status.md`.
+  line, so a line citation there begins decaying immediately. Search the current
+  month and the archives together, because such a log is eventually rotated and
+  a header survives the move while a line number does not:
+  `grep -rn '^## 2026-07-04' status.md docs/status/`.
 - **An untracked or off-disk path is not a citable path.** It resolves to
   nothing for every reader but the author. Cite it as `git show <sha>:<path>`.
 - **A paste-slot, appendix number or section label is a citation too**, and

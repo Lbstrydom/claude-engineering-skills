@@ -703,6 +703,34 @@
     "stores:drift": {
       "description": "Migration drift across EVERY consumer store, not just the ambient one (advisory; never blocks).",
       "category": "sync"
+    },
+    "debt:resolve": {
+      "description": "Close a debt entry: remove it from the local cache and emit a resolved event to the private store. The command that CLOSES debt — previously unreachable via npm.",
+      "category": "audit"
+    },
+    "debt:reconcile": {
+      "description": "Compare the machine-local debt cache against the private store (dry run). Reports entries that exist only locally, only in the store, or are provably closed remotely.",
+      "category": "audit"
+    },
+    "debt:reconcile:push": {
+      "description": "Push local-only debt entries into the private store through the durable-write seam. Additive-only: never deletes a store row.",
+      "category": "audit"
+    },
+    "size:ratchet:gate": {
+      "description": "Drift-only ratchet over files already past 1000 lines: they may not grow, and a shrink must be locked in with --update-baseline so the baseline does not stay at the historical high-water mark.",
+      "category": "diagnostic"
+    },
+    "gitignore:policy:gate": {
+      "description": "Every .gitignore rule declares its category (A derived / B committed / P private-and-load-bearing), and a P rule names where its content durably lives.",
+      "category": "diagnostic"
+    },
+    "status:integrity:gate": {
+      "description": "Session-log conservation: no entry vanishes, a retained entry is appended to rather than rewritten, archives and the rotation manifest are frozen. Fails closed when the push base is unresolvable.",
+      "category": "diagnostic"
+    },
+    "status:rotate": {
+      "description": "Archive whole months of status.md into docs/status/, proving byte-identical conservation before writing and recording every entry digest in the manifest.",
+      "category": "other"
     }
   }
 }

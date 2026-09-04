@@ -1,12 +1,19 @@
 # Plan: Standing Queue Burndown — the three gates that fire on every ship
 
-- **Status**: In Progress — two burndown passes landed 2026-08-28. Pass 1: Q1
-  62 code findings locked, Q2 3 code findings closed (§2/§3). Pass 2 (same day,
-  separate session): Q1 4 more code findings locked (33→28), Q2 1 more code
-  finding closed (91→90) — both queues had already re-grown between passes
-  from new audits landing. Both queues are large, actively-growing, shared
-  state — these passes made a dent, not a close-out. Q3 stays rescoped out
-  (§4).
+- **Status**: In Progress — **Q3 RE-ADOPTED 2026-09-04**; its own stated revisit
+  condition (§4) is now met on both halves, so this plan tracks **three** queues
+  again. Two burndown passes landed 2026-08-28. Pass 1: Q1 62 code findings
+  locked, Q2 3 code findings closed (§2/§3). Pass 2 (same day, separate
+  session): Q1 4 more code findings locked (33→28), Q2 1 more code finding
+  closed (91→90) — both queues had already re-grown between passes from new
+  audits landing. Both queues are large, actively-growing, shared state — these
+  passes made a dent, not a close-out.
+- **A fourth queue is now measurable and is NOT tracked here** (see §5): the
+  local-vs-store debt divergence, closed 2026-09-04 by
+  `docs/plans/backlog-and-drift-reduction.md`. It had **37 debt entries existing
+  on one machine and nowhere else**; all 37 were pushed into the private store
+  and the route is now `npm run debt:reconcile`. A clean queue is a measurement,
+  not an obligation — recorded so nobody re-opens it.
 - **Date**: 2026-08-09 (re-measured 2026-08-28, burndown passes 2026-08-28 x2)
 - **Origin**: `/ship` Steps 0.5b, 0.5e and 6.7 have surfaced the same three
   non-blocking queues on every push for weeks. They were reported as prose,
@@ -140,12 +147,23 @@ node scripts/cross-skill.mjs lock-with-test --worksheet
 Read the test before locking. A same-named file is not proof of coverage, and
 the writer refuses a missing path or an empty rationale.
 
+**Re-measured 2026-09-04**: `byMode.total` **51** — **26 code**, 25 plan;
+`agedOut` 190. The code half fell 28→26 since the 2026-08-28 passes without a
+burndown pass in between, so ordinary work is closing a few; the aged-out
+population grew 185→190 over the same window.
+
 **Exit criterion**: `byMode.code` reaches 0, or each remaining row carries a
 recorded lock or an explicit declined-on-the-merits note. Plan rows are
-excluded from the criterion by construction. **Not met** — 28 code rows
-remain open after pass 2 (95→33→28 across the two 2026-08-28 passes); the
-queue also grows between passes as new audits land, so 0 is a moving target,
-not a one-time close-out.
+excluded from the criterion by construction. **Not met** — **26 code rows** at
+the 2026-09-04 re-measure (95→33→28→26); the queue also grows between passes as
+new audits land, so 0 is a moving target, not a one-time close-out.
+
+> **The `declined-on-the-merits` outcome this criterion names has no writer.**
+> `lock-with-test` records a lock; nothing records a reasoned decline, so the
+> ~27 rows pass 1 deliberately left unlocked are indistinguishable from rows
+> nobody looked at. Until that exists, a decline is recorded here in prose or
+> not at all — which is why the criterion says "or ... an explicit
+> declined-on-the-merits note" rather than pointing at a command.
 
 ## 3. Q2 — accepted findings that were never remediated
 
@@ -231,11 +249,13 @@ plan *section* that was never amended — equally real, but do not print it as a
 file path. A row at `remediation_state: 'planned'` with a live plan is
 in-flight, not forgotten; drop it from the list.
 
+**Re-measured 2026-09-04**: `total` **168** open — `byMode` **80 code** / 88
+plan; `byDisposition.acceptedPermanent` **50**; `agedOut` 17 (HIGH 3, MEDIUM
+14); `notYetDue` 75. The code half fell 90→80 since 2026-08-28.
+
 **Exit criterion**: the reader reports a true total, and that total reaches 0
-or every remaining row is `planned` against a live plan. **Not met** — 90
-code rows remain open after pass 2 (94→91→90 across the two 2026-08-28
-passes; 63 `planned`, 27 `pending` with no confirmed fix). Re-measured
-post-pass total: 158 open overall.
+or every remaining row is `planned` against a live plan. **Not met** — **80
+code rows** at the 2026-09-04 re-measure (94→91→90→80).
 
 ## 4. Q3 — final-review shadow-only credit backlog (rescoped 2026-08-28)
 
@@ -268,17 +288,40 @@ gemini-primary, versus a smaller set on 2026-08-09). Bucket census
 bucket-`NULL` 90, across all severities — confirming shadow-only is the
 dominant, not incidental, population here.
 
-**Rescoped out of this plan's active burndown.** Burning down a number that
-tracks another still-active plan's own data-collection rate is bailing water
-with the tap open — the count will keep climbing for as long as the Bake-Off
-keeps collecting, regardless of adjudication effort spent here. This queue's
-route and closing command (below) stay documented for whoever adjudicates it,
-but **Q3 is no longer one of this plan's tracked burndown targets**; ownership
-moves to `docs/plans/final-review-shadow-bakeoff.md`, whose own spot-check
-worksheet (`final-review-stats --repo <name> --worksheet`, `--bucket
-shadow-only` on the closing command) already exists for exactly this queue.
-Revisit inclusion here only once that plan closes and this backlog stops
-growing out from under any burndown effort.
+**Rescoped out on 2026-08-28 — and RE-ADOPTED on 2026-09-04, because the
+condition that sentence set has been met.** The original reasoning stands as
+written: burning down a number that tracks another still-active plan's own
+data-collection rate is bailing water with the tap open. The revisit condition
+was *"once that plan closes and this backlog stops growing out from under any
+burndown effort"*. Both halves now hold, measured 2026-09-04:
+
+- **The owning plan closed.** `docs/plans/final-review-shadow-bakeoff.md` is
+  `Status: Complete` — **VERDICT: KEEP opus**.
+- **The tap is closed.** `FINAL_REVIEW_SHADOW` is **unset** in the resolved
+  environment (commit `f79f6870`, "turn off the shadow").
+- **Collection has actually stopped**, which is the observation that matters
+  rather than the config: `audit_findings` rows with `bucket='shadow-only'`, by
+  week — `2026-07-20` 15 · `07-27` 96 · `08-03` 48 · `08-10` 88 · `08-17` 285 ·
+  `08-24` 39 · **nothing after 2026-08-24**, i.e. ~10 days with zero new rows.
+
+  ```sql
+  select date_trunc('week', created_at)::date wk, count(*)
+  from audit_findings where bucket = 'shadow-only' group by 1 order by 1 desc;
+  ```
+
+So Q3 is now a **fixed, non-growing population of 486** and was ownerless: the
+Bake-Off plan that inherited it is Complete. It returns here.
+
+**Ownership**: this plan. The closing route is unchanged — `accepted`/`dismissed`
+for an unadjudicated finding, `record-fix` for an accepted-but-unfixed one, and
+the Bake-Off's `final-review-stats --repo <name> --worksheet --bucket
+shadow-only` worksheet remains the ergonomic way to work a batch.
+
+**Exit criterion**: `counts.totalActionable` reaches 0, or each remaining row
+carries a recorded adjudication. **Not met** — 486 actionable at re-adoption
+(449 unadjudicated, 34 accepted-unfixed, 3 fixed-unlabelled, 0 regressed).
+Unlike Q1/Q2 this population does **not** re-grow while the shadow stays off, so
+it is the one queue here that a sustained pass can actually finish.
 
 **Why this queue exists at all**: the shadow A/B closed KEEP, but
 `user_action` stayed null because the loop fixes the best catches *before*
@@ -296,7 +339,13 @@ Measured 2026-08-09 and clean — recorded so a future reader does not re-open
 them as if they were outstanding:
 
 - **Upstream consumer queue** — `cross-skill.mjs upstream list` returned
-  `rows: []`.
+  `rows: []`. Re-confirmed empty 2026-09-04.
+- **Local-vs-store debt divergence** — measured and CLOSED 2026-09-04 by
+  `docs/plans/backlog-and-drift-reduction.md`: 37 entries existed only in this
+  machine's gitignored cache and were pushed into the private store (136→173
+  rows), leaving 0 orphans. The standing route is `npm run debt:reconcile`
+  (dry run) and it now reports on every ship via the backlog snapshot. Recorded
+  here so the closed queue is not re-opened as if outstanding.
 - **Friction notes** — `cross-skill.mjs quality session-review` returned
   `pending: []`.
 - **Security memory** — `npm run security:refresh` parsed and upserted 2

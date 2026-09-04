@@ -212,3 +212,68 @@ export async function readDebtEventsCloud(repoId) {
     return [];
   }
 }
+
+/**
+ * Read the reconciliation snapshot in ONE statement.
+ *
+ * **Why one statement and not a transaction.** The classification needs the
+ * `debt_entries` row set and each topic's latest lifecycle event to describe the
+ * SAME instant — otherwise a concurrent resolve can land between two reads and
+ * the classifier decides on a state that never existed. A `withTx` wrapper does
+ * not give that: under Postgres `READ COMMITTED` (the default) two consecutive
+ * `SELECT`s can observe different committed states. A single statement is
+ * atomic under every isolation level, so this needs no isolation negotiation.
+ *
+ * Returns one row per topic known to the store, carrying whether an entry row
+ * currently exists and the topic's most recent lifecycle event. Deliberately
+ * covers topics with events but no entry — that is exactly the "resolved
+ * remotely" case the caller must be able to see.
+ *
+ * @param {string|null} repoId
+ * @returns {Promise<{available: boolean, reason: string|null, rows: Array<{topicId: string, hasEntry: boolean, latestEvent: string|null, latestTs: string|null}>}>}
+ */
+export async function readReconciliationSnapshot(repoId) {
+  if (!repoId) return { available: false, reason: 'repo-identity-unresolved', rows: [] };
+  if (!await isCloudEnabled()) return { available: false, reason: 'cloud-off', rows: [] };
+  try {
+    const rows = await many(
+      `WITH topics AS (
+         SELECT topic_id FROM debt_entries WHERE repo_id = $1 AND topic_id IS NOT NULL
+         UNION
+         SELECT topic_id FROM debt_events  WHERE repo_id = $1 AND topic_id IS NOT NULL
+       ),
+       latest AS (
+         SELECT DISTINCT ON (topic_id) topic_id, event, ts
+         FROM debt_events
+         WHERE repo_id = $1 AND topic_id IS NOT NULL
+         -- reopened wins a same-timestamp tie: it is the safer state, and it
+         -- makes the tie-break a property of the query rather than of row order.
+         ORDER BY topic_id, ts DESC, (event = 'reopened') DESC
+       )
+       SELECT t.topic_id,
+              (e.topic_id IS NOT NULL) AS has_entry,
+              l.event AS latest_event,
+              l.ts    AS latest_ts
+       FROM topics t
+       LEFT JOIN debt_entries e ON e.repo_id = $1 AND e.topic_id = t.topic_id
+       LEFT JOIN latest l       ON l.topic_id = t.topic_id`,
+      [repoId]
+    );
+    return {
+      available: true,
+      reason: null,
+      rows: rows.map((r) => ({
+        topicId: r.topic_id,
+        hasEntry: r.has_entry === true,
+        latestEvent: r.latest_event ?? null,
+        latestTs: r.latest_ts ? new Date(r.latest_ts).toISOString() : null,
+      })),
+    };
+  } catch (err) {
+    // Never degrade to an empty snapshot: an empty result would classify every
+    // local entry as an orphan and push duplicates, or worse, look like "no
+    // debt". Report the failure and let the caller refuse to act.
+    process.stderr.write(`  [learning] readReconciliationSnapshot failed: ${err.message}\n`);
+    return { available: false, reason: `query-failed:${err.code || 'unknown'}`, rows: [] };
+  }
+}

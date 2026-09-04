@@ -30,14 +30,43 @@ const LOCK_STALE_MS = 30_000;
 // ── Read ────────────────────────────────────────────────────────────────────
 
 /**
+ * Closed enum of reasons a ledger read produced no measurement.
+ *
+ * `clean-checkout-sandbox` deliberately matches the vocabulary
+ * `scripts/check-stale-skill-surface.mjs:203-206` already uses for the
+ * identical class, so the two read alike in an operator's terminal.
+ */
+export const LEDGER_UNAVAILABLE_REASONS = Object.freeze([
+  'clean-checkout-sandbox', // the file does not exist (gitignored; fresh clone, CI, linked worktree)
+  'ledger-unreadable',      // exists but cannot be read (EACCES/EPERM/EISDIR)
+]);
+
+/**
  * Read the debt ledger, hydrating entries with event-derived fields.
- * Returns `{ version: 1, entries: [] }` on ENOENT. Throws on corruption (fail-loud).
+ *
+ * **Returns an availability discriminator, and that is the point.** This
+ * function used to return `{ version: 1, entries: [] }` on ENOENT, which made
+ * "the ledger is absent" and "the ledger is present and empty" the same value —
+ * so no caller *could* tell them apart, and five scripts reported clean having
+ * read nothing (`debt-pr-comment.mjs` posted that claim onto pull requests; in
+ * CI, where `.audit/` never exists, it was the default outcome).
+ *
+ * The shape is ADDITIVE: `entries` keeps its meaning, so an existing caller
+ * that destructures only `{ entries }` behaves exactly as before. Callers that
+ * report health MUST read `available` and say `unverifiable` when it is false —
+ * a count is never printed without its source.
+ *
+ * Corruption still THROWS (fail-loud). Unavailable is a weaker statement than
+ * corrupt and must not swallow it: a malformed ledger is a defect to fix, not a
+ * measurement that could not be taken.
+ *
+ * Plan: docs/plans/backlog-and-drift-reduction.md §2 "availability contract".
  *
  * @param {object} [opts]
  * @param {string} [opts.ledgerPath=DEFAULT_DEBT_LEDGER_PATH]
  * @param {object[]|null} [opts.events=null] - Pre-fetched events; if null, reads local log
  * @param {string} [opts.eventsPath=DEFAULT_DEBT_EVENTS_PATH]
- * @returns {{ version: 1, entries: object[] }} Hydrated ledger
+ * @returns {{ version: 1, entries: object[], available: boolean, reason: string|null }}
  */
 export function readDebtLedger({
   ledgerPath = DEFAULT_DEBT_LEDGER_PATH,
@@ -46,12 +75,24 @@ export function readDebtLedger({
 } = {}) {
   const absPath = path.resolve(ledgerPath);
   if (!fs.existsSync(absPath)) {
-    return { version: 1, entries: [] };
+    return { version: 1, entries: [], available: false, reason: 'clean-checkout-sandbox' };
+  }
+
+  let text;
+  try {
+    text = fs.readFileSync(absPath, 'utf-8');
+  } catch (err) {
+    // Exists but unreadable — EACCES/EPERM/EISDIR, or a read that raced an
+    // atomic replace. Never a measurement, so never an empty ledger.
+    if (err && err.code === 'ENOENT') {
+      return { version: 1, entries: [], available: false, reason: 'clean-checkout-sandbox' };
+    }
+    return { version: 1, entries: [], available: false, reason: 'ledger-unreadable' };
   }
 
   let raw;
   try {
-    raw = JSON.parse(fs.readFileSync(absPath, 'utf-8'));
+    raw = JSON.parse(text);
   } catch (err) {
     throw new Error(`Debt ledger corrupted at ${absPath}: ${err.message}`);
   }
@@ -85,7 +126,7 @@ export function readDebtLedger({
     });
   }
 
-  return { version: 1, entries: hydrated };
+  return { version: 1, entries: hydrated, available: true, reason: null };
 }
 
 // ── Write (single-writer, locked) ───────────────────────────────────────────

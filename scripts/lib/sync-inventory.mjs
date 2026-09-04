@@ -113,6 +113,34 @@ const CORE_ENTRY = [
   'scripts/check-model-freshness.mjs',
   'scripts/context-staleness.mjs',
   'scripts/debt-health-check.mjs',
+  // Three checks maintenance-checks.mjs spawns WITHOUT `sourceRepoOnly`, i.e.
+  // they are meant to run in a consumer — but were declared nowhere, so a
+  // consumer's weekly maintenance run died on MODULE_NOT_FOUND for each. That
+  // is the class recorded at sync-to-repos.mjs:430-437 (live wine-cellar-app
+  // incident, 2026-07-22).
+  //
+  // `check-accepted-debt.mjs` is deliberately NOT here, and that is not an
+  // oversight: its check carries `sourceRepoOnly: true`, so the runner skips it
+  // cleanly in a consumer, and its ACCEPTED_DEBT_ROWS registry is hardcoded to
+  // THIS repo's AGENTS.md rows — syncing it would report a consumer's whole
+  // table unregistered forever. Pinned by
+  // tests/cli-smoke-set-sync-parity.test.mjs.
+  //
+  // Closure is asserted mechanically by
+  // tests/sync-inventory-maintenance-closure.test.mjs, which derives the spawn
+  // list from maintenance-checks.mjs rather than trusting this comment.
+  'scripts/debt-ledger-claims-check.mjs',
+  'scripts/debt-capture-trail-check.mjs',
+  'scripts/slice-recurrence-check.mjs',
+  // Local-vs-store debt reconciler. Consumers carry the same divergence this
+  // was built for: a gitignored local cache against the private store.
+  'scripts/debt-reconcile.mjs',
+  // Per-ship backlog snapshot the synced /ship SKILL.md tells the operator to
+  // run. Consumers carry the same standing queues, and a documented command
+  // whose tooling is absent where it runs is defect class (4) in AGENTS.md.
+  // Resolves its sibling readers relative to its OWN directory, so it works
+  // unchanged under the consumer's scripts/.claude-skills/ layout.
+  'scripts/backlog-snapshot.mjs',
   // Remediation-state verification reconciler — spawned by maintenance-checks.mjs's
   // `remediation-reconcile` entry AND by /ship Step 0.5e. Authoritative list is
   // sync-to-repos.mjs; keep in lock-step.

@@ -335,6 +335,24 @@ describe('check-docs-refs / exclusions', () => {
     assert.equal(isExcluded('status.md')?.id, 'HISTORICAL');
   });
 
+  it('excludes the ROTATED session-log archives too — the same prose at a new path', () => {
+    // The exclusion was an exact-string test on `status.md`. Rotating whole
+    // months into docs/status/ would have turned that file's 34 already-dead
+    // references (measured 2026-09-04: 330 sites, 182 unique targets, 31 of the
+    // 34 pointing at the removed docs/completed/) into net-new drift the moment
+    // the content moved — failing `npm run check` on prose that was exempt the
+    // day before. A prefix test is what makes the rotation possible.
+    assert.equal(isExcluded('docs/status/2026-07.md')?.id, 'HISTORICAL');
+    assert.equal(isExcluded('docs/status/2026-08.md')?.id, 'HISTORICAL');
+  });
+
+  it('does NOT over-exclude: a normal docs/ file is still linted', () => {
+    // The direction the exclusion must not fire — a prefix that was too broad
+    // would silently stop checking real documentation.
+    assert.ok(!isExcluded('docs/reference/gitignore-policy.md'), 'ordinary docs stay linted');
+    assert.ok(!isExcluded('docs/statuses/thing.md'), 'a similar-looking sibling path is not excluded');
+  });
+
   it('excludes the test surface (FIXTURE) — tests construct synthetic doc paths as data', () => {
     assert.equal(isExcluded('tests/arch-memory-followups.test.mjs')?.id, 'FIXTURE');
     assert.equal(isExcluded('tests/claudemd/fixtures/clean/CLAUDE.md')?.id, 'FIXTURE');

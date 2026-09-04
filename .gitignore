@@ -25,15 +25,38 @@ test-results/
 
 # Private/corporate consumer registry — names a non-public consumer repo,
 # must never be committed to this public repo (see consumer-repos.local.example.json).
+# Category: P
+# Durable home: the operator's own machine; consumer-repos.local.example.json
+#   documents the shape so it can be re-entered.
+# Recoverable: the file's SHAPE, from the committed example.
+# Disposable: the private repo names themselves — deliberately not stored
+#   anywhere in this public repo.
 scripts/lib/consumer-repos.local.json
 
 # Private/corporate self-hosted-runner host declarations — extra install
 # roots, expected hostname, acknowledged owners; must never be committed to
 # this public repo (see runner-hosts.local.example.json).
+# Category: P
+# Durable home: the operator's own machine; runner-hosts.local.example.json
+#   documents the shape.
+# Recoverable: the file's SHAPE, from the committed example.
+# Disposable: the private hostnames and owners.
 scripts/lib/runner-hosts.local.json
 .claude/scheduled_tasks.lock
 
 # Audit-loop operational state (local to each machine)
+# Category: P
+# Durable home: private Postgres — debt_entries + debt_events (debt), and
+#   audit_findings + audit_runs (findings). Reconcile the local cache against
+#   it with `npm run debt:reconcile`.
+# Recoverable: debt entries and their lifecycle events; audit findings and runs.
+# Disposable: per-run transcripts, *-stderr.log, *-diff.patch, round result
+#   JSONs, the session cache — losing these costs a re-run, not a fact. ALSO
+#   .audit/write-spill/, which is a SOLE LOCAL COPY until the drain succeeds
+#   (the artifact exists because the remote write did not land) — an accepted,
+#   bounded loss window, reported by `npm run debt:reconcile`.
+# See docs/reference/gitignore-policy.md. This directory held 37 debt entries
+# that existed nowhere else until 2026-09-04.
 # ALL of it. `.audit/` is our directory — only audit-loop tooling writes
 # there, and every skill run adds new `--out .audit/<session>-…` artifacts
 # (transcripts, ledgers, patches, stderr logs). This was 50 filename
@@ -109,7 +132,13 @@ docs/arm-eval/worksheets/
 
 # Solo author-model control (scripts/solo-control-audit.mjs) — S findings, the
 # blind adjudication sheet, and its private unblind map. Derived from DB + git +
-# an LLM call (Category A); the private map must never be committed.
+# an LLM call; the private map must never be committed.
+# Category: P
+# Durable home: the private store's arm-eval tables hold the run and its
+#   findings.
+# Recoverable: the run, its findings and their adjudications.
+# Disposable: the local unblind map — deliberately local-only, so that a blind
+#   adjudication cannot be de-blinded from anything committed.
 .audit-loop/solo-control/
 
 # SOURCE-repo sync manifest — regenerated on every `npm run sync` (which the
@@ -206,6 +235,14 @@ dashboard/audit-runs/
 #
 # To publish a new file in either bucket, force-add it AND say why in the
 # commit message: `git add -f docs/upstream-issues/<name>.md`
+# Category: P
+# Durable home: for docs/upstream-issues/, the private store's upstream queue
+#   (`npm run upstream:issues`) — the markdown here is a convenience copy of a
+#   report filed via `cross-skill.mjs upstream report`. For docs/personal/, the
+#   author's own records.
+# Recoverable: upstream reports, from the store's queue.
+# Disposable: docs/personal/ content — not recoverable from this repo, by
+#   design.
 docs/upstream-issues/
 docs/personal/
 

@@ -151,8 +151,16 @@ function main() {
   const unverifiable = unverifiableReason(totals);
 
   if (json) {
+    // `ok` must agree with the human verdict below, which already refuses to
+    // print a clean bill of health for a run that examined nothing. This
+    // emitted a hardcoded `ok: true` alongside a non-null `unverifiable`, so a
+    // machine consumer keying on `ok` got a green the human output explicitly
+    // denies. Exit stays 0 — this is advisory, and an unverifiable run must not
+    // start gating what a clean one never gated.
     process.stdout.write(`${JSON.stringify({
-      ok: true, threshold, scope: agentsOnly ? 'agents-only' : 'agents+docs',
+      ok: !unverifiable,
+      verdict: unverifiable ? 'unverifiable' : 'ok',
+      threshold, scope: agentsOnly ? 'agents-only' : 'agents+docs',
       unverifiable, coverage: totals, flagged, suppressed, rows: showAll ? allRows : undefined,
     }, null, 2)}\n`);
     process.exit(0);

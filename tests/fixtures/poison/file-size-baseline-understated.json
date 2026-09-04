@@ -1,0 +1,27 @@
+{
+  "_description": "POISON FIXTURE — every governed file understated by 500 lines, so the real tree reads as growth. Used by scripts/gate-contracts/size-ratchet-gate.json.",
+  "limitLines": 1000,
+  "toleranceLines": 10,
+  "files": {
+    "scripts/campaign.mjs": 1000,
+    "scripts/cross-skill.mjs": 1000,
+    "scripts/gemini-review.mjs": 2674,
+    "scripts/lib/anthropic-client.mjs": 1000,
+    "scripts/lib/audit/evidence-triage.mjs": 1000,
+    "scripts/lib/audit/legacy-production-audit.mjs": 1202,
+    "scripts/lib/config.mjs": 1000,
+    "scripts/lib/install/transaction.mjs": 1000,
+    "scripts/lib/ledger.mjs": 1000,
+    "scripts/lib/model-resolver.mjs": 1000,
+    "scripts/lib/schemas.mjs": 1116,
+    "scripts/lib/store/campaign.mjs": 1287,
+    "scripts/lib/store/runs-findings.mjs": 1864,
+    "scripts/lib/sync-isolation-verify.mjs": 1000,
+    "scripts/lib/upstream/commands.mjs": 1000,
+    "scripts/openai-audit.mjs": 1000,
+    "scripts/setup-postgres.mjs": 1025,
+    "scripts/solo-control-audit.mjs": 1088,
+    "scripts/symbol-index/extract.mjs": 1000,
+    "scripts/sync-to-repos.mjs": 2129
+  }
+}

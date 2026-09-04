@@ -1,0 +1,27 @@
+{
+  "_description": "Line counts for files already over the size limit. Drift-only ratchet: see scripts/file-size-ratchet.mjs. Regenerate deliberately with --update-baseline.",
+  "limitLines": 1000,
+  "toleranceLines": 10,
+  "files": {
+    "scripts/campaign.mjs": 1011,
+    "scripts/cross-skill.mjs": 1113,
+    "scripts/gemini-review.mjs": 3174,
+    "scripts/lib/anthropic-client.mjs": 1043,
+    "scripts/lib/audit/evidence-triage.mjs": 1245,
+    "scripts/lib/audit/legacy-production-audit.mjs": 1702,
+    "scripts/lib/config.mjs": 1045,
+    "scripts/lib/install/transaction.mjs": 1060,
+    "scripts/lib/ledger.mjs": 1488,
+    "scripts/lib/model-resolver.mjs": 1074,
+    "scripts/lib/schemas.mjs": 1616,
+    "scripts/lib/store/campaign.mjs": 1787,
+    "scripts/lib/store/runs-findings.mjs": 2364,
+    "scripts/lib/sync-isolation-verify.mjs": 1001,
+    "scripts/lib/upstream/commands.mjs": 1138,
+    "scripts/openai-audit.mjs": 1275,
+    "scripts/setup-postgres.mjs": 1525,
+    "scripts/solo-control-audit.mjs": 1588,
+    "scripts/symbol-index/extract.mjs": 1040,
+    "scripts/sync-to-repos.mjs": 2629
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "gate": "size:ratchet:gate",
+  "guards": "files already over 1000 lines may not grow, and an improvement must be locked in rather than left at the old high-water mark",
+  "gates": [
+    {
+      "id": "size-ratchet-rejects-growth-past-the-baseline",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "Oversized files may not grow",
+      "implementation": "scripts/file-size-ratchet.mjs",
+      "tests": [
+        "tests/file-size-ratchet.test.mjs",
+        "tests/gate-poison-pills.test.mjs"
+      ],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": [
+          "scripts/file-size-ratchet.mjs"
+        ],
+        "overlay": {
+          ".file-size-baseline.json": "tests/fixtures/poison/file-size-baseline-understated.json"
+        },
+        "expectExit": 1,
+        "why": "A baseline understating every governed file by 500 lines \u2014 the tree as it would look if all of them had grown. Not hypothetical: measured over the 60 days to 2026-09-04, two decompositions removed 3,652 lines and were outpaced by 4,551 lines of unmanaged growth across 11 other files, one of them AFTER its decomposition was accepted.",
+        "expectStderr": "GREW"
+      }
+    }
+  ]
+}

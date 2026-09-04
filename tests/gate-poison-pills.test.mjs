@@ -114,6 +114,19 @@ test('every check-chain gate in THIS repo is contracted or explicitly exempt', (
  * Same shape as `.gate-contract-baseline.json` for skills.
  */
 const GRANDFATHERED_EXEMPTIONS = [
+  // Added 2026-09-04 (docs/plans/backlog-and-drift-reduction.md Phase 12).
+  // Post-cutoff, so this entry is the deliberate, reviewer-visible decision the
+  // ratchet demands. The gate CANNOT be pilled, structurally: the pill harness
+  // requires a PASSING control run inside a fresh single-commit tmpdir, and a
+  // repo whose only commit IS the current state has no prior state to conserve —
+  // so the gate correctly reports CANNOT VERIFY and exits 2. Making that control
+  // pass would mean returning 'conserved' from an empty baseline, which is the
+  // exact vacuous pass this gate exists to eliminate (and which it briefly had,
+  // during development, before being fixed to fail closed). Its negative evidence
+  // is executable and lives in tests/status-log-integrity.test.mjs — a PR #87
+  // replay, a gutted-body case, a tampered archive, the manifest-deletion bypass,
+  // and both CLI exit codes.
+  'status:integrity:gate',
   'arch:coverage-gate', 'cli:flags:gate', 'db:check-rls:gate', 'db:suites:gate',
   'docs:check', 'docs:refs:gate', 'efficacy:check', 'gates:poison', 'knip:gate',
   'node scripts/check-gate-contracts.mjs', 'node scripts/check-skill-refs.mjs',
@@ -413,6 +426,13 @@ const MANDATORY = {
   // the whole point of this gate is that a check nobody can see fail is
   // indistinguishable from no check at all.
   'db:enrolment:gate': ['db-enrolment-gate-detects-a-suite-no-runner-names'],
+  // Added 2026-09-04 with the three gates themselves (docs/plans/backlog-and-drift-reduction.md).
+  // All post-2026-07-31, so each carries a pill rather than an exemption. Each pill
+  // tampers with a real artifact, because the failure every one of them guards is
+  // SILENT: an oversized file creeping back, a private path ignored with nowhere
+  // durable to live, and a session log that shrank without anyone measuring it.
+  'size:ratchet:gate': ['size-ratchet-rejects-growth-past-the-baseline'],
+  'gitignore:policy:gate': ['gitignore-policy-rejects-undeclared-rules'],
   // Added 2026-08-12 with the emit() exit-code coupling (cross-skill-command-
   // registry §2b F4). Post-2026-07-31, so a pill is mandatory. The gate does not
   // re-check the runtime coupling — that is one seam, owned by

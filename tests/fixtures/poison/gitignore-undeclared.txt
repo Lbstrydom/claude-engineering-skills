@@ -1,0 +1,9 @@
+# A rule with no category declaration at all — the shape the gate exists to stop.
+# Adding a private path this way is how .audit/tech-debt.json came to hold 37
+# entries that existed on one disk and nowhere else.
+some-private-thing/
+
+# Category: P
+# Recoverable: nothing
+# Disposable: none
+another-private-thing/

@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "gate": "gitignore:policy:gate",
+  "guards": "every .gitignore rule declares its category, and a private one names where it durably lives",
+  "gates": [
+    {
+      "id": "gitignore-policy-rejects-undeclared-rules",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "An ignored path declares WHY it is ignored",
+      "implementation": "scripts/check-gitignore-policy.mjs",
+      "tests": [
+        "tests/check-gitignore-policy.test.mjs",
+        "tests/gate-poison-pills.test.mjs"
+      ],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": [
+          "scripts/check-gitignore-policy.mjs"
+        ],
+        "overlay": {
+          ".gitignore-policy-baseline.json": "tests/fixtures/poison/gitignore-policy-empty-baseline.json"
+        },
+        "expectExit": 1,
+        "why": "An emptied accepted-set, so every rule must stand on its own declaration and the undeclared ones must surface. The failure it prevents is silent: a private path is ignored, everyone assumes it lives somewhere durable, nobody checks \u2014 which left 37 debt entries on one disk.",
+        "expectStderr": "Category"
+      }
+    }
+  ]
+}

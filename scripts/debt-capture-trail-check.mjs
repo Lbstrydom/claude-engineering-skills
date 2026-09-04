@@ -34,6 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError, argOption, hasFlag, finishAndExit } from './lib/cli-io.mjs';
 import {
   DEFAULT_AUDIT_DIR, findRoundLedgers, readDeferredEntries, collectDebtIdentities, executeCheck,
+  auditDirAvailable as auditDirAvailableFn,
 } from './lib/debt-capture-trail.mjs';
 import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
 
@@ -76,6 +77,18 @@ function renderHuman(result, ledgerPath) {
   const lines = [];
   lines.push('Debt-capture trail check (scripts/debt-capture-trail-check.mjs)');
   lines.push('');
+
+  // "The audit directory does not exist" is not "there were no deferrals".
+  // `findRoundLedgers` returns [] for both, and `.audit/` is gitignored — so in
+  // a fresh clone, CI, or a linked worktree this printed "nothing to verify —
+  // clean" having enumerated nothing. That is the state this check was created
+  // to expose in OTHER tools (517 uncaptured deferrals found live 2026-08-27),
+  // reproduced in the check itself.
+  if (result.auditDirAvailable === false) {
+    lines.push(`· UNVERIFIABLE — no audit directory at ${result.auditDir ?? '.audit'}.`);
+    lines.push('  No round ledgers were enumerated, so "nothing to verify" cannot be claimed.');
+    return lines.join('\n');
+  }
 
   if (result.deferredTotal === 0 && result.corruptLedgers.length === 0) {
     lines.push('· No round-ledger `ruling: \'defer\'` entries found — nothing to verify.');
@@ -127,6 +140,9 @@ async function main() {
     return;
   }
 
+  // Enumerability is asked separately from emptiness: `findRoundLedgers`
+  // returns [] both for "no round ledgers here" and "no such directory".
+  const auditDirAvailable = auditDirAvailableFn(opts.auditDir);
   const roundLedgerPaths = findRoundLedgers(opts.auditDir);
   const roundLedgers = roundLedgerPaths.map(readDeferredEntries);
 
@@ -147,9 +163,21 @@ async function main() {
     debtIdentities = collectDebtIdentities(ledger.entries);
   }
 
-  const result = executeCheck({ roundLedgers, debtLedgerAvailable, debtIdentities });
+  const result = {
+    ...executeCheck({ roundLedgers, debtLedgerAvailable, debtIdentities }),
+    auditDirAvailable,
+    auditDir: opts.auditDir,
+  };
   const exitCode = result.ok ? 0 : 1;
-  const envelope = { ...result, exitCode };
+  // `ok:false` when the audit directory could not be enumerated: nothing was
+  // examined, so 'clean' is not a claim this run earned. Exit stays 0 —
+  // advisory, per maintenance-checks.mjs `attention` semantics.
+  const envelope = {
+    ...result,
+    ok: auditDirAvailable ? result.ok : false,
+    verdict: !auditDirAvailable ? 'unverifiable' : (result.ok ? 'ok' : 'attention'),
+    exitCode,
+  };
   const outputText = opts.jsonMode ? JSON.stringify(envelope) : renderHuman(result, opts.ledgerPath);
 
   if (opts.outFile) {

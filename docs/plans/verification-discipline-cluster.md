@@ -281,7 +281,7 @@ oracle and explicitly outside this instrument's scope.
 **Why strict same-line comparison, and why an insertion above is not a false
 positive.** A `file:line` citation makes a **location** claim as well as a content
 claim. In the measured case the file is append-newest-first: every new session
-inserts lines above every earlier citation, and `status.md:487,490` had drifted to an
+inserts lines above every earlier citation, and two session-log line pins had drifted to an
 unrelated section within a month. Insertion *is* the mechanism of decay. A checker
 that returned green because the old content still exists somewhere would report clean
 on precisely the case that cost five of nine claims.

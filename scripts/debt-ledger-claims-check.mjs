@@ -167,7 +167,16 @@ async function main() {
 
   const result = executeCheck({ docs, ledgerAvailable, validTopicIds });
   const exitCode = !result.ledgerAvailable ? 0 : (result.ok ? 0 : 1);
-  const envelope = { ...result, exitCode };
+  // Make `ok` agree with renderHuman, which already says UNVERIFIABLE and
+  // "Not reported as clean: nothing was checked" for this state. The envelope
+  // emitted `ok:true` beside `ledgerAvailable:false`, so a machine consumer
+  // read a green the human output explicitly denies. Exit stays 0 — advisory.
+  const envelope = {
+    ...result,
+    ok: result.ledgerAvailable ? result.ok : false,
+    verdict: !result.ledgerAvailable ? 'unverifiable' : (result.ok ? 'ok' : 'attention'),
+    exitCode,
+  };
   const outputText = opts.jsonMode ? JSON.stringify(envelope) : renderHuman(result);
 
   if (opts.outFile) {

@@ -20,12 +20,30 @@
  *
  * **Which writers may be replayed.** Only a writer that declares a `rowKey`,
  * because at-least-once replay against a non-idempotent writer would corrupt the
- * very rows this exists to protect. Today that is `audit.findings` (arbitrated
- * by the `(run_id, finding_fingerprint)` unique index, migration 20260812070000)
- * and `audit.runComplete` (an UPDATE keyed on `run_id`, idempotent by
- * construction). The other three are `lost`-only in v1: they gain a counted,
- * surfaced failure without a replay path nobody has designed. Adding one later
- * is a `rowKey` here plus its constraint — not a change to `durableWrite`.
+ * very rows this exists to protect. **The rule is the CONSTRAINT, not a list**:
+ * a `rowKey` is legitimate exactly when a real database uniqueness constraint
+ * arbitrates it. A writer with no such constraint declares none and is
+ * `lost`-only — it gains a counted, surfaced failure without a replay path
+ * nobody has designed. Adding one later is a `rowKey` here plus its constraint,
+ * never a change to `durableWrite`.
+ *
+ * Keyed writers as of 2026-09-04, each with the constraint that arbitrates it:
+ *   `audit.findings`         — `(run_id, finding_fingerprint)` unique index (20260812070000)
+ *   `audit.runComplete`      — UPDATE keyed on `run_id`, idempotent by construction
+ *   `audit.convergenceState` — keyed on `run_id`
+ *   `audit.diffComplexity`   — keyed on `run_id`
+ *   `learning.outcome`       — keyed on `decision_key`
+ *   `debt.entries`           — `UNIQUE (repo_id, topic_id)` (see its note below)
+ *
+ * This paragraph previously named only the first two and called the rest
+ * `lost`-only. That went stale as writers were promoted, and the staleness
+ * propagated: the requirements extractor lifted it verbatim into
+ * `REQ-persistence-7bc1224d`, where it sat `active` with `confidence: high`
+ * asserting a two-writer invariant against six in code. Corrected here and in
+ * `.requirements/overrides.json` on 2026-09-04. **Keep this list in step with
+ * the registrations below** — a stale docstring here becomes a false invariant
+ * elsewhere, and the next reader may "restore" it by deleting a `rowKey` that
+ * is preventing real data loss.
  *
  * @module scripts/lib/audit-store-writers
  */

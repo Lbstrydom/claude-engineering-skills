@@ -440,6 +440,23 @@ const CORE_ENTRY = [
   'scripts/check-model-freshness.mjs',
   'scripts/context-staleness.mjs',
   'scripts/debt-health-check.mjs',
+  // Three more checks maintenance-checks.mjs spawns WITHOUT `sourceRepoOnly`,
+  // so they are meant to run in a consumer. They were spawned by this synced
+  // runner while declared nowhere — a MODULE_NOT_FOUND per check, the class
+  // this file's comment above already records from the 2026-07-22 incident.
+  // `check-accepted-debt.mjs` stays OUT deliberately (sourceRepoOnly, and its
+  // registry is hardcoded to THIS repo's AGENTS.md rows).
+  'scripts/debt-ledger-claims-check.mjs',
+  'scripts/debt-capture-trail-check.mjs',
+  'scripts/slice-recurrence-check.mjs',
+  // Local-vs-store debt reconciler — consumers carry the same divergence.
+  'scripts/debt-reconcile.mjs',
+  // Per-ship backlog snapshot the synced /ship SKILL.md tells the operator to
+  // run. Consumers carry the same standing queues, and a documented command
+  // whose tooling is absent where it runs is defect class (4) in AGENTS.md.
+  // Resolves its sibling readers relative to its OWN directory, so it works
+  // unchanged under the consumer's scripts/.claude-skills/ layout.
+  'scripts/backlog-snapshot.mjs',
   // Remediation-state verification reconciler
   // (docs/plans/remediation-state-verification-reconciler.md) — a standalone
   // CLI nothing imports, spawned as a subprocess both by

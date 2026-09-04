@@ -18,7 +18,8 @@
  * push (see maintenance-checks.mjs's `attention` semantics).
  *
  * Exit codes:
- *   0 — ledger absent/empty, or all entries within TTL/recurrence/budget
+ *   0 — ledger present and empty, or all entries within TTL/recurrence/budget,
+ *       OR the ledger was UNAVAILABLE (reported `unverifiable`, never clean)
  *   1 — stale and/or recurring and/or budget-violating entries present
  *   2 — op error (corrupt ledger, unknown flag)
  *
@@ -94,6 +95,24 @@ Exit codes: 0=healthy, 1=attention (stale/recurring/over-budget), 2=op-error
 
 function renderHuman(summary) {
   const lines = [];
+  // An UNAVAILABLE ledger is not a healthy one.
+  //
+  // This printed `Tech-debt ledger: 0 open entries (oldest: 0d)` for an ABSENT
+  // ledger, because `readDebtLedger` returned an empty ledger on ENOENT and
+  // this file's exit contract documented "ledger absent/empty" as one state.
+  // `.audit/` is gitignored, so a fresh clone, CI, or a linked worktree took
+  // that path BY DEFAULT and read as a clean bill of health.
+  //
+  // Both sibling checks already distinguished the two and credited THIS file
+  // with the discipline it lacked (debt-ledger-claims-check.mjs:151-154 —
+  // "same as debt-health-check.mjs"). Vocabulary matches
+  // check-stale-skill-surface.mjs:203-206.
+  if (summary.available === false) {
+    lines.push(`Tech-debt ledger: UNVERIFIABLE — ${summary.reason}.`);
+    lines.push('  Not reported as clean: nothing was read. Run where the ledger exists,');
+    lines.push('  or `node scripts/debt-reconcile.mjs` to compare against the private store.');
+    return lines.join('\n');
+  }
   lines.push(`Tech-debt ledger: ${summary.totalEntries} open entries (oldest: ${summary.oldestEntryDays}d)`);
   if (summary.totalEntries === 0) return lines.join('\n');
   const bySeverity = Object.entries(summary.bySeverity).map(([k, v]) => `${k}:${v}`).join(' ');
@@ -149,6 +168,8 @@ function main() {
   }
 
   const summary = {
+    available: ledger.available !== false,
+    reason: ledger.reason ?? null,
     totalEntries: ledger.entries.length,
     oldestEntryDays: oldestEntryDays(ledger.entries, now),
     bySeverity,
@@ -159,7 +180,19 @@ function main() {
   summary.triggered = summary.stale.length > 0 || summary.recurring.length > 0 || summary.violations.length > 0;
 
   if (opts.jsonMode) {
-    const out = JSON.stringify({ ok: !summary.triggered, ...summary }) + '\n';
+    // `ok:false` when nothing was measured — a machine consumer reading `ok`
+    // must not get a green for an unread ledger, which is the human-output
+    // defect restated in JSON. Exit stays 0: this is an advisory maintenance
+    // nudge (maintenance-checks.mjs `attention` semantics), and an
+    // unverifiable input must not start gating what a clean one never gated.
+    const measured = summary.available !== false;
+    const out = JSON.stringify({
+      ok: measured ? !summary.triggered : false,
+      verdict: !measured ? 'unverifiable' : (summary.triggered ? 'attention' : 'ok'),
+      ...summary,
+      totalEntries: measured ? summary.totalEntries : null,
+      oldestEntryDays: measured ? summary.oldestEntryDays : null,
+    }) + '\n';
     if (opts.outFile) fs.writeFileSync(opts.outFile, out, 'utf-8');
     else process.stdout.write(out);
   } else {
@@ -168,7 +201,9 @@ function main() {
     else process.stdout.write(out + '\n');
   }
 
-  process.exit(summary.triggered ? 1 : 0);
+  // Unavailable never escalates: it is not an "attention" state, it is the
+  // absence of a measurement.
+  process.exit(summary.available !== false && summary.triggered ? 1 : 0);
 }
 
 main();

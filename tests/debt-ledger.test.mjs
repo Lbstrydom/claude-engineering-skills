@@ -53,9 +53,18 @@ afterEach(() => {
 // ── readDebtLedger ──────────────────────────────────────────────────────────
 
 describe('readDebtLedger', () => {
-  test('returns empty on ENOENT', () => {
+  test('reports UNAVAILABLE on ENOENT — not an empty ledger', () => {
+    // This assertion used to read `deepEqual(r, {version:1, entries:[]})`, which
+    // pinned the defect rather than the contract: an absent ledger and a real
+    // empty one were the same value, so no caller could tell them apart and
+    // five scripts reported "clean" having read nothing. `entries` still comes
+    // back `[]` so existing destructuring callers are unaffected; the
+    // discriminator is what makes the absence visible.
+    // See docs/plans/backlog-and-drift-reduction.md §2 (availability contract).
     const r = readDebtLedger({ ledgerPath, events: [] });
-    assert.deepEqual(r, { version: 1, entries: [] });
+    assert.deepEqual(r, {
+      version: 1, entries: [], available: false, reason: 'clean-checkout-sandbox',
+    });
   });
 
   test('throws on JSON parse error', () => {

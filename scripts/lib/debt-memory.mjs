@@ -9,13 +9,25 @@
  *   1. Cloud — when isCloudEnabled() && repoId resolved → primary
  *   2. Local — otherwise, or on cloud failure → .audit/local/debt-events.jsonl
  *
- * The committed debt ledger at .audit/tech-debt.json is the durable,
- * human-approved state. It's mirrored to the cloud debt_entries table when
- * cloud is available, but the committed JSON remains the source of truth for
- * "what debt exists" (cloud may be behind after offline work).
+ * **The private cloud store is the source of truth; `.audit/tech-debt.json` is
+ * a machine-local cache.** This docstring used to assert the opposite — that
+ * "the COMMITTED debt ledger at .audit/tech-debt.json is the durable,
+ * human-approved state" and cloud was its mirror. That premise was false and
+ * load-bearing: `.gitignore` ignores all of `.audit/` (`git ls-files .audit/`
+ * is empty), so the declared source of truth was untracked, per-machine, and
+ * survived nothing, while the declared "mirror" was the only durable copy.
+ *
+ * Measured 2026-09-04 on this repo, which is what the inversion cost: local 106
+ * entries, cloud 136, overlap only 69 — 37 entries existed on ONE disk and
+ * nowhere else, and 67 the local reader could not see. Because a resolve
+ * deletes from both stores, a resolve run from another worktree shrank the
+ * cloud and left this disk's copy forever: 0 of the 106 local entries carried a
+ * cloud `resolved` event, against 393 resolved topics in the store.
  *
  * Events are the fast-changing, per-run telemetry. Stored in whichever source
  * the run picked.
+ *
+ * Plan: docs/plans/backlog-and-drift-reduction.md (A1, A7).
  *
  * @module scripts/lib/debt-memory
  */
@@ -30,9 +42,14 @@ import {
   deriveMetricsFromEvents,
 } from './debt-events.mjs';
 import {
-  upsertDebtEntries, removeDebtEntryCloud,
+  removeDebtEntryCloud, readDebtEntriesCloud,
   appendDebtEventsCloud, readDebtEventsCloud,
 } from '../learning-store.mjs';
+import { durableWrite } from './durable-write.mjs';
+// Side-effecting import: populates the durable-write registry. This is the
+// registry's ONLY bootstrap, and a fresh process (the operator drain, a CLI)
+// finds zero handlers without it.
+import './audit-store-writers.mjs';
 
 /**
  * The authoritative source for this run's debt events.
@@ -102,6 +119,76 @@ export async function loadDebtLedger(context, {
   return { ...ledger, eventSource: context.source };
 }
 
+/**
+ * Load the debt entries a reporting caller should believe, and SAY which
+ * source answered.
+ *
+ * The contract every health-reporting consumer keys on, per
+ * docs/plans/backlog-and-drift-reduction.md §2 "availability contract":
+ *
+ *   source 'cloud'       — authoritative; counts may be displayed
+ *   source 'local'       — a cache; counts may be displayed, but LABELLED
+ *   source 'unavailable' — nothing was measured; a count may NOT be displayed
+ *
+ * Two rules bind every caller, and together they are the whole defect this
+ * fixes: **a count is never printed without its source label**, and
+ * **`unavailable` never renders as a number.**
+ *
+ * `unavailable` is returned for every way a read can fail to produce a
+ * measurement — an absent or unreadable local cache, unresolvable repo
+ * identity, or a cloud read that threw. It is never returned as an empty
+ * ledger, because an empty ledger is itself a claim ("there is no debt") and
+ * that claim is exactly what was being fabricated.
+ *
+ * @param {object} context - from selectEventSource()
+ * @param {object} [opts]
+ * @param {string} [opts.ledgerPath=DEFAULT_DEBT_LEDGER_PATH]
+ * @returns {Promise<{entries: object[], source: 'cloud'|'local'|'unavailable',
+ *   reason: string|null, degraded: boolean}>}
+ */
+export async function loadAuthoritativeDebt(context, {
+  ledgerPath = DEFAULT_DEBT_LEDGER_PATH,
+} = {}) {
+  if (context.source === EventSource.DISABLED) {
+    return { entries: [], source: 'unavailable', reason: 'debt-ledger-disabled', degraded: false };
+  }
+
+  if (context.source === EventSource.CLOUD && context.repoId) {
+    try {
+      const rows = await readDebtEntriesCloud(context.repoId);
+      if (Array.isArray(rows)) {
+        return { entries: rows, source: 'cloud', reason: null, degraded: false };
+      }
+      // A non-array is a malformed response. Never parse it as "no debt".
+      return { entries: [], source: 'unavailable', reason: 'cloud-response-malformed', degraded: true };
+    } catch (err) {
+      return {
+        entries: [], source: 'unavailable',
+        reason: `cloud-read-failed:${err?.code || 'unknown'}`, degraded: true,
+      };
+    }
+  }
+
+  // Cloud off (or repo identity unresolved) — fall back to the local cache,
+  // and say so. A cache is a legitimate answer; an unlabelled one is not.
+  if (context.source === EventSource.CLOUD && !context.repoId) {
+    return { entries: [], source: 'unavailable', reason: 'repo-identity-unresolved', degraded: true };
+  }
+
+  let ledger;
+  try {
+    ledger = readDebtLedger({ ledgerPath });
+  } catch (err) {
+    // Corruption is louder than unavailability and must not be softened into
+    // it — but a reporting caller still must not print a count.
+    return { entries: [], source: 'unavailable', reason: 'ledger-corrupt', degraded: true, error: err.message };
+  }
+  if (!ledger.available) {
+    return { entries: [], source: 'unavailable', reason: ledger.reason, degraded: false };
+  }
+  return { entries: ledger.entries, source: 'local', reason: null, degraded: false };
+}
+
 // ── Write: events ───────────────────────────────────────────────────────────
 
 /**
@@ -142,18 +229,40 @@ export async function appendEvents(context, events, { eventsPath = DEFAULT_DEBT_
  */
 export async function persistDebtEntries(context, entries, { ledgerPath = DEFAULT_DEBT_LEDGER_PATH } = {}) {
   if (context.source === EventSource.DISABLED) {
-    return { inserted: 0, updated: 0, total: 0, rejected: [], cloudMirrored: false };
+    return {
+      inserted: 0, updated: 0, total: 0, rejected: [],
+      cloudMirrored: false, cloudOutcome: 'skipped',
+    };
   }
-  // Always write to committed JSON first (operator's source of truth)
+  // Write the local cache first so the entry survives a crash mid-call. The
+  // cache is NOT the source of truth (see the module docstring) — it is a
+  // fast local read and the spill's companion.
   const local = await writeDebtEntries(entries, { ledgerPath });
 
-  // Mirror to cloud when active — failures logged, never block local write
-  let cloudMirrored = false;
+  // Route the store write through the durable seam rather than calling
+  // `upsertDebtEntries` directly.
+  //
+  // This call site was the LAST direct caller of that store function, and its
+  // `.catch(e => ({ok:false}))` was how entries went missing: a transient
+  // failure set `cloudMirrored:false`, which no caller inspected and nothing
+  // retried, so a one-off deferral got exactly one chance to reach the store.
+  // The writer it now uses (`debt.entries`, registered in
+  // audit-store-writers.mjs) already exists and already declares a `rowKey`
+  // backed by the real `UNIQUE (repo_id, topic_id)` constraint, so a failed
+  // write SPILLS and is replayed by the existing drain. `debt-auto-capture.mjs`
+  // adopted it on 2026-08-27 after reproducing this exact loss in a consumer
+  // (local 228 entries against a cloud mirror at 197); this is the other half.
+  //
+  // The four-outcome result is returned rather than collapsed to a boolean,
+  // because `spilled` is NOT `written` — the entry is genuinely still absent
+  // from the store until a drain lands, and a caller that cannot tell them
+  // apart will assert a zero-orphan postcondition that is not yet true.
+  let cloudOutcome = 'skipped';
   if (context.source === EventSource.CLOUD) {
-    const r = await upsertDebtEntries(context.repoId, entries).catch(e => ({ ok: false, error: e.message }));
-    cloudMirrored = r.ok;
+    const r = await durableWrite('debt.entries', { repoId: context.repoId, entries });
+    cloudOutcome = r.outcome;
   }
-  return { ...local, cloudMirrored };
+  return { ...local, cloudOutcome, cloudMirrored: cloudOutcome === 'written' };
 }
 
 /**

@@ -342,6 +342,20 @@ async function main() {
     process.exit(1);
   }
 
+  // "There is no ledger" and "the ledger is empty" are different claims, and
+  // this reported the second when the first was true — `.audit/` is gitignored,
+  // so an absent ledger is the default in a fresh clone, CI, or a linked
+  // worktree. Asserting "no debt to review" from an unread file is the same
+  // false-green as debt-health-check's "0 open entries".
+  if (ledger.available === false) {
+    const output = `# Debt Review\n\n_UNVERIFIABLE — no debt ledger at ${opts.ledgerPath} (${ledger.reason})._\n\n`
+      + '_Nothing was read, so this is not a statement that there is no debt._\n';
+    if (opts.outFile) fs.writeFileSync(opts.outFile, output, 'utf-8');
+    else process.stdout.write(output);
+    process.stderr.write(`  [debt-review] ledger unavailable (${ledger.reason}) — nothing reviewed\n`);
+    process.exit(0);
+  }
+
   if (ledger.entries.length === 0) {
     const output = '# Debt Review\n\n_Ledger is empty — no debt to review._\n';
     if (opts.outFile) fs.writeFileSync(opts.outFile, output, 'utf-8');

@@ -1,8 +1,8 @@
 {
-  "_comment": "Check-chain gates deliberately WITHOUT a poison pill. The meta-gate enforces a DECISION per gate, never a fixture per gate. A GATE IS ONE TERMINAL COMMAND, not one npm script — `skills:check` runs six, and keying by script name let one pill account for all of them. So an aggregate script pills the members that guard a Category-B artifact and exempts the rest by exact command — an unlisted, uncontracted gate fails `gates:poison`, so a 19th gate cannot be added silently. Mandatory-pill scope (docs/plans/green-but-unrealized.md §2 dec. 3): a gate guarding a committed Category-B artifact, or any gate added after 2026-07-31 (ENFORCED since 2026-08-09 by forbiddenNewExemptions(); each entry carries gateAddedAt derived from package.json history, and a post-cutoff gate needs an explicit policyOverride).",
+  "_comment": "Check-chain gates deliberately WITHOUT a poison pill. The meta-gate enforces a DECISION per gate, never a fixture per gate. A GATE IS ONE TERMINAL COMMAND, not one npm script \u2014 `skills:check` runs six, and keying by script name let one pill account for all of them. So an aggregate script pills the members that guard a Category-B artifact and exempts the rest by exact command \u2014 an unlisted, uncontracted gate fails `gates:poison`, so a 19th gate cannot be added silently. Mandatory-pill scope (docs/plans/green-but-unrealized.md \u00a72 dec. 3): a gate guarding a committed Category-B artifact, or any gate added after 2026-07-31 (ENFORCED since 2026-08-09 by forbiddenNewExemptions(); each entry carries gateAddedAt derived from package.json history, and a post-cutoff gate needs an explicit policyOverride).",
   "exempt": {
     "docs:check": {
-      "reason": "Placement/reference linter over docs/**. Certifies no committed artifact's freshness — it asserts properties of prose that are re-derived on every run, so there is no stale-artifact false-green to construct.",
+      "reason": "Placement/reference linter over docs/**. Certifies no committed artifact's freshness \u2014 it asserts properties of prose that are re-derived on every run, so there is no stale-artifact false-green to construct.",
       "gateAddedAt": "2026-07-16",
       "gateAddedAtSource": "git-log-S"
     },
@@ -17,12 +17,12 @@
       "gateAddedAtSource": "git-log-S"
     },
     "plans:lint": {
-      "reason": "Mermaid syntax linter. Pure parse of committed source with no artifact in between — the check IS the derivation, so it cannot be fresh about a stale output.",
+      "reason": "Mermaid syntax linter. Pure parse of committed source with no artifact in between \u2014 the check IS the derivation, so it cannot be fresh about a stale output.",
       "gateAddedAt": "2026-05-23",
       "gateAddedAtSource": "git-log-S"
     },
     "efficacy:check": {
-      "reason": "Reads audit-effectiveness telemetry from the cloud store; advisory and degrades to skip when cloud is off. A pill would need a seeded database, which the tmpdir isolation cannot construct — contracting it properly needs a DB-backed oracle (no current requirement).",
+      "reason": "Reads audit-effectiveness telemetry from the cloud store; advisory and degrades to skip when cloud is off. A pill would need a seeded database, which the tmpdir isolation cannot construct \u2014 contracting it properly needs a DB-backed oracle (no current requirement).",
       "gateAddedAt": "2026-06-28",
       "gateAddedAtSource": "git-log-S"
     },
@@ -32,7 +32,7 @@
       "gateAddedAtSource": "git-log-S"
     },
     "arch:coverage-gate": {
-      "reason": "Owns the exit code for the observed-graph coverage envelope, which is Category A (gitignored, regenerated every render) — not a committed artifact whose staleness this gate alone certifies. Its own fail-closed contract is separately pinned in tests/gate-honesty.test.mjs (D6).",
+      "reason": "Owns the exit code for the observed-graph coverage envelope, which is Category A (gitignored, regenerated every render) \u2014 not a committed artifact whose staleness this gate alone certifies. Its own fail-closed contract is separately pinned in tests/gate-honesty.test.mjs (D6).",
       "gateAddedAt": "2026-07-18",
       "gateAddedAtSource": "git-log-S"
     },
@@ -62,37 +62,43 @@
       "gateAddedAtSource": "git-log-S"
     },
     "test": {
-      "reason": "The suite runner itself. Its negative evidence is every failing assertion in tests/** — a poison pill here would be a test that tests whether tests fail.",
+      "reason": "The suite runner itself. Its negative evidence is every failing assertion in tests/** \u2014 a poison pill here would be a test that tests whether tests fail.",
       "gateAddedAt": "2026-04-01",
       "gateAddedAtSource": "git-log-S"
     },
     "gates:poison": {
-      "reason": "The meta-gate itself. A pill for it would be a tmpdir copy of the repo with a tampered registry — which tests/gate-poison-pills.test.mjs already constructs in-process and far more cheaply, asserting the exact false-green that matters: an EMPTY registry reports every gate as undeclared rather than passing clean. It also produced live negative evidence during its own bring-up by failing on itself the moment it entered the check chain.",
+      "reason": "The meta-gate itself. A pill for it would be a tmpdir copy of the repo with a tampered registry \u2014 which tests/gate-poison-pills.test.mjs already constructs in-process and far more cheaply, asserting the exact false-green that matters: an EMPTY registry reports every gate as undeclared rather than passing clean. It also produced live negative evidence during its own bring-up by failing on itself the moment it entered the check chain.",
       "gateAddedAt": "2026-08-01",
       "gateAddedAtSource": "git-log-S",
-      "policyOverride": "The pill-runner cannot pill itself: a poison pill for gates:poison would have to break check-gate-poison-pills.mjs and then ask it to notice, which is circular. Its own correctness is covered by tests/gate-poison-*.test.mjs instead. Reviewed 2026-08-09 when the ratchet first flagged it — the flag is correct, this is the one legitimate exception."
+      "policyOverride": "The pill-runner cannot pill itself: a poison pill for gates:poison would have to break check-gate-poison-pills.mjs and then ask it to notice, which is circular. Its own correctness is covered by tests/gate-poison-*.test.mjs instead. Reviewed 2026-08-09 when the ratchet first flagged it \u2014 the flag is correct, this is the one legitimate exception."
     },
     "node scripts/check-skill-refs.mjs": {
-      "reason": "skills:check member. Reference-integrity linter over skills/**: it resolves every reference row against disk on each run, so its verdict is re-derived rather than certified about a stored artifact — there is no stale output to construct.",
+      "reason": "skills:check member. Reference-integrity linter over skills/**: it resolves every reference row against disk on each run, so its verdict is re-derived rather than certified about a stored artifact \u2014 there is no stale output to construct.",
       "gateAddedAt": "1970-01-01",
       "gateAddedAtSource": "unknown"
     },
     "node scripts/check-gate-contracts.mjs": {
-      "reason": "skills:check member. The contract validator itself; pilling it would mean contracting the thing that decides what a contract is. Its negative evidence is tests/gate-honesty.test.mjs plus live failures it produced during this session — it rejected a contract naming a non-existent oracle, and rejected all five CLI-gate contracts until their tests genuinely referenced the gate ids they claimed.",
+      "reason": "skills:check member. The contract validator itself; pilling it would mean contracting the thing that decides what a contract is. Its negative evidence is tests/gate-honesty.test.mjs plus live failures it produced during this session \u2014 it rejected a contract naming a non-existent oracle, and rejected all five CLI-gate contracts until their tests genuinely referenced the gate ids they claimed.",
       "gateAddedAt": "1970-01-01",
       "gateAddedAtSource": "unknown"
     },
     "node scripts/check-stale-skill-surface.mjs --gate --source-surfaces": {
-      "reason": "skills:check member. Asserts the ABSENCE of (a) a .github/skills/ or .agents/skills/ tree that would shadow .claude/skills/, and (b) .github/copilot-instructions.md in THIS repo (--source-surfaces; cross-agent-delivery-parity KD-5). The directory tamper cannot be expressed by the overlay contract, whose destination must already exist — so a fixture can never be an orphan the gate never reads. The file-shaped rule in (b) IS pillable and is a candidate contract; today both are covered by tests/stale-skill-surface.test.mjs, including the two boundary cases (consumer-scoped --repo, and a bare relocated-copy invocation) that a rule inferred rather than flag-gated would have failed.",
+      "reason": "skills:check member. Asserts the ABSENCE of (a) a .github/skills/ or .agents/skills/ tree that would shadow .claude/skills/, and (b) .github/copilot-instructions.md in THIS repo (--source-surfaces; cross-agent-delivery-parity KD-5). The directory tamper cannot be expressed by the overlay contract, whose destination must already exist \u2014 so a fixture can never be an orphan the gate never reads. The file-shaped rule in (b) IS pillable and is a candidate contract; today both are covered by tests/stale-skill-surface.test.mjs, including the two boundary cases (consumer-scoped --repo, and a bare relocated-copy invocation) that a rule inferred rather than flag-gated would have failed.",
       "gateAddedAt": "2026-08-13",
       "gateAddedAtSource": "unknown",
-      "policyOverride": "Introduced by this change on 2026-08-13 (gateAddedAtSource is \"unknown\" because the date comes from authoring it, not from a git log -S derivation — the enum has no \"this-change\" value). It is a RE-KEY, not a new gate: the same command gained --source-surfaces, which added a categorical rule that .github/copilot-instructions.md must not exist in this repo. Post-cutoff and deliberately un-pilled. Every rule this command enforces is an ABSENCE (no .github/skills/, no .agents/skills/, no .github/copilot-instructions.md), so the tamper a pill would have to perform is file or directory CREATION — and BOTH tamper mechanisms in check-gate-poison-pills.mjs refuse a destination that does not already exist: overlay returns \"the fixture would be an orphan the gate never reads\" and applyMutation returns \"destination does not exist — nothing to tamper with\". Verified against the runner, not inherited from the prior entry prose. Negative evidence lives in tests/stale-skill-surface.test.mjs instead, which exercises the new rule in all four directions: absent+flag passes, present+flag fails with surface/copilot-instructions-present (tracked or untracked), and the two boundary cases — a consumer-scoped --repo invocation and a bare relocated-copy invocation — PASS with the file present. That last pair is the load-bearing one: an inferred source-repo predicate would have failed it and fired this rule inside consumer repos."
+      "policyOverride": "Introduced by this change on 2026-08-13 (gateAddedAtSource is \"unknown\" because the date comes from authoring it, not from a git log -S derivation \u2014 the enum has no \"this-change\" value). It is a RE-KEY, not a new gate: the same command gained --source-surfaces, which added a categorical rule that .github/copilot-instructions.md must not exist in this repo. Post-cutoff and deliberately un-pilled. Every rule this command enforces is an ABSENCE (no .github/skills/, no .agents/skills/, no .github/copilot-instructions.md), so the tamper a pill would have to perform is file or directory CREATION \u2014 and BOTH tamper mechanisms in check-gate-poison-pills.mjs refuse a destination that does not already exist: overlay returns \"the fixture would be an orphan the gate never reads\" and applyMutation returns \"destination does not exist \u2014 nothing to tamper with\". Verified against the runner, not inherited from the prior entry prose. Negative evidence lives in tests/stale-skill-surface.test.mjs instead, which exercises the new rule in all four directions: absent+flag passes, present+flag fails with surface/copilot-instructions-present (tracked or untracked), and the two boundary cases \u2014 a consumer-scoped --repo invocation and a bare relocated-copy invocation \u2014 PASS with the file present. That last pair is the load-bearing one: an inferred source-repo predicate would have failed it and fired this rule inside consumer repos."
     },
     "node scripts/cross-skill.mjs upstream reconcile --gate --worksheet": {
-      "reason": "Same DB-fixture limitation as efficacy:check/db:check-rls:gate: cross-checks the ledger against the live upstream_issues terminal-row inventory (round-6 audit H7). Advisory-shaped and degrades to a clean no-op when cloud is off (upstreamReconcile returns {ok:true, reconciliation:null}) — the poison-pill tmpdir isolation has no AUDIT_DB_URL, so BOTH the control and a tampered-ledger poison run would identically no-op there, proving nothing about the gate's real divergence-detection logic. A pill would need a seeded, disposable Postgres instance inside the isolation sandbox, which check-gate-poison-pills.mjs does not provide.",
+      "reason": "Same DB-fixture limitation as efficacy:check/db:check-rls:gate: cross-checks the ledger against the live upstream_issues terminal-row inventory (round-6 audit H7). Advisory-shaped and degrades to a clean no-op when cloud is off (upstreamReconcile returns {ok:true, reconciliation:null}) \u2014 the poison-pill tmpdir isolation has no AUDIT_DB_URL, so BOTH the control and a tampered-ledger poison run would identically no-op there, proving nothing about the gate's real divergence-detection logic. A pill would need a seeded, disposable Postgres instance inside the isolation sandbox, which check-gate-poison-pills.mjs does not provide.",
       "gateAddedAt": "2026-08-23",
       "gateAddedAtSource": "unknown",
-      "policyOverride": "Introduced by this change on 2026-08-23 (consumer-friction-doctor plan, round-6 audit H7 — wiring the already-built upstream reconcile --gate mechanism into npm run check, which it had never been). Post-cutoff and deliberately un-pilled for the DB-fixture reason above. Negative evidence instead: tests/upstream-reconcile-gate.test.mjs drives upstreamCmd directly with an injected listTerminalUpstreamIssues (no real DB needed) and asserts --gate throws on all four divergence types (missingFromLedger, ledgerOnly, stateMismatch, dispositionMismatch) plus the migration catch-all sentinel, and does NOT throw on a clean match or without --gate — that is the poison-pill property this contract exists to prove, exercised at the level that can actually construct both a clean and a tampered ledger/db pair."
+      "policyOverride": "Introduced by this change on 2026-08-23 (consumer-friction-doctor plan, round-6 audit H7 \u2014 wiring the already-built upstream reconcile --gate mechanism into npm run check, which it had never been). Post-cutoff and deliberately un-pilled for the DB-fixture reason above. Negative evidence instead: tests/upstream-reconcile-gate.test.mjs drives upstreamCmd directly with an injected listTerminalUpstreamIssues (no real DB needed) and asserts --gate throws on all four divergence types (missingFromLedger, ledgerOnly, stateMismatch, dispositionMismatch) plus the migration catch-all sentinel, and does NOT throw on a clean match or without --gate \u2014 that is the poison-pill property this contract exists to prove, exercised at the level that can actually construct both a clean and a tampered ledger/db pair."
+    },
+    "status:integrity:gate": {
+      "reason": "Session-log conservation gate. A poison pill is structurally impossible here, not merely inconvenient: the harness requires a PASSING control run inside a fresh single-commit tmpdir, and in a repo whose only commit IS the current state there is no prior state to conserve \u2014 so the gate correctly reports CANNOT VERIFY and exits 2. Making the control pass would mean returning 'conserved' from an empty baseline, which is precisely the vacuous pass this gate was written to eliminate (and which it actually exhibited during development before being fixed to fail closed). Negative evidence exists and is executable, just not as a pill: tests/status-log-integrity.test.mjs replays PR #87 (all prior entries vanish -> fail), rejects a body gutted under a retained heading, rejects a tampered archive, rejects the manifest-plus-archive deletion bypass, and asserts the CLI exits 2 on an unresolvable base and 1 on a truncated log. It was also verified against the real 1.57MB log: truncating it reported all 408 entries vanished, exit 1.",
+      "gateAddedAt": "2026-09-04",
+      "gateAddedAtSource": "unknown",
+      "policyOverride": "Post-2026-07-31 gate, so a pill is normally mandatory. Overridden because the pill harness's passing-control precondition contradicts this gate's fail-closed contract; see reason. docs/plans/backlog-and-drift-reduction.md Phase 12."
     }
   }
 }

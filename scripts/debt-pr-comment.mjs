@@ -256,6 +256,25 @@ function main() {
     process.exit(1);
   }
 
+  // An UNAVAILABLE ledger must never become an affirmative public claim.
+  //
+  // This is the highest-stakes instance of the whole availability defect: the
+  // renderer's clean branch posts "## ✓ No tracked debt overlaps this PR" onto
+  // a pull request, and it reached that branch from a ledger it had not read.
+  // `.audit/` is gitignored, so in CI — a fresh clone — that was the DEFAULT
+  // outcome, and the comment asserted an all-clear to every reviewer.
+  //
+  // Emitting nothing is the correct degradation: a missing comment prompts
+  // someone to look, a false all-clear stops them looking.
+  // Plan: docs/plans/backlog-and-drift-reduction.md §2 availability contract.
+  if (!ledger.available) {
+    process.stderr.write(
+      `debt-pr-comment: UNVERIFIABLE — no debt ledger at ${opts.ledgerPath} (${ledger.reason}).\n`
+      + '  No comment emitted. Nothing was checked, so no "no debt" claim can be made.\n',
+    );
+    process.exit(0);
+  }
+
   const touchedDebt = findTouchedDebt(ledger.entries, changedFiles);
   const recurringDebt = findRecurringEntries(ledger.entries, opts.recurringThreshold);
 

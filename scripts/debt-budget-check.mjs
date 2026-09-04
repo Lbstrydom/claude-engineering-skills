@@ -101,6 +101,20 @@ function main() {
     process.exit(1);
   }
 
+  // Separate "no budgets declared" from "no ledger to declare them in".
+  // Both used to collapse into `reason:'no-budgets-configured'` with a ✓, so an
+  // absent gitignored ledger reported a policy pass it had not evaluated.
+  if (ledger.available === false) {
+    if (opts.jsonMode) {
+      process.stdout.write(JSON.stringify({
+        ok: false, verdict: 'unverifiable', violations: [], reason: ledger.reason,
+      }) + '\n');
+    } else {
+      process.stdout.write(`UNVERIFIABLE — no debt ledger (${ledger.reason}); no budgets evaluated.\n`);
+    }
+    process.exit(0);
+  }
+
   const budgetCount = Object.keys(budgets).length;
   if (budgetCount === 0) {
     if (opts.jsonMode) {

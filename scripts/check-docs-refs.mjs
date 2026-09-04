@@ -349,6 +349,11 @@ export const BASELINE = new Set([
   'docs/plans/sast-triage-routing.md→docs/upstream-issues/claude-engineering-skills-feedback-2026-07-19.md',
   'docs/plans/provenance-trailers-and-gate-honesty.md→docs/personal/ibm-fs-breadth-evidence-claude-engineering-skills.md',
   'status.md→docs/personal/ibm-fs-breadth-evidence-claude-engineering-skills.md',
+  // The gitignore policy doc NAMES the private, intentionally-untracked files
+  // it governs — that is its subject matter. Same class as the docs/personal/
+  // entry above: intentionally-unpublished, not broken.
+  'docs/reference/gitignore-policy.md→scripts/lib/consumer-repos.local.json',
+  'docs/reference/gitignore-policy.md→scripts/lib/runner-hosts.local.json',
 
   // ── code-path grammar (2026-07-31), live surfaces only ────────────────────
   // TOMBSTONES. `skill-surface-ownership.md` §"Retired tools" is a table OF
@@ -492,8 +497,12 @@ export const EXCLUSIONS = [
     id: 'HISTORICAL',
     reason:
       'an append-only session log. A past entry was true when it was written; rewriting it to keep ' +
-      'a link green would falsify the record.',
-    test: rel => rel === 'status.md',
+      'a link green would falsify the record. Covers the ROTATED archives under docs/status/ too: ' +
+      'rotation moves the same historical prose to a new path, and an exact-string test on ' +
+      'status.md alone would turn every one of its 34 already-dead references into net-new drift ' +
+      'the moment the file was split (measured 2026-09-04: 330 citation sites, 182 unique targets, ' +
+      '34 unresolved, 31 of them docs/completed/*).',
+    test: rel => rel === 'status.md' || rel.startsWith('docs/status/'),
   },
   {
     id: 'SPEC',

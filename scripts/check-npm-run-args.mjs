@@ -92,6 +92,10 @@ export function isExcludedPath(rel) {
     // historical record (found wiring wine-cellar-app's pre-push.local).
     p.startsWith('docs/completed/') ||
     p === 'status.md' ||
+    // The rotated session-log archives are the same historical record at a
+    // new path; excluding status.md alone would make a rotation fail this
+    // gate on prose that was already exempt.
+    p.startsWith('docs/status/') ||
     // The gate's own source + test quote broken commands as fixtures.
     p === 'scripts/check-npm-run-args.mjs' ||
     p === 'tests/check-npm-run-args.test.mjs'

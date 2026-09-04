@@ -879,9 +879,23 @@ Full template + rules + optional sections (UX Status, Persona Test Status,
 Regression Lock Status, Plan Verify Status, Consumer Verification):
 `references/status-md-format.md`.
 
----
+### Step 2b — Backlog snapshot line (one command, advisory)
 
-## Step 3 — Update CLAUDE.md (if needed)
+Include a **`Backlog:`** line in the entry, so the standing queues are trended
+in the log instead of being rediscovered every few weeks:
+
+```bash
+node scripts/backlog-snapshot.mjs
+```
+
+Paste its single stdout line into the entry. It reads every queue itself, at one
+instant, read-only, and **writes nothing** — you insert the line as part of the
+entry you are already authoring. Never let a script write `status.md`: PR #87
+destroyed 19,257 lines of it that way.
+
+A queue it could not read renders **`unmeasured`**, never `0`. That distinction
+is the point — `0` reads as good news, and an unasked question is not good news.
+The command always exits 0; it is a nudge, never a gate.
 
 Review whether the current session introduced anything that should be
 captured:

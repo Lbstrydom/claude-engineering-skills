@@ -674,12 +674,14 @@ not "78% were provably wrong the instant they fired".
 `wine-cellar-app` has **no `.audit/orphan-metrics.jsonl` at all** — the wave never executed
 there once. Its `status.md` records `/audit-code` aborting across three separate sessions
 because `scripts/lib/audit/orphan-introduced.mjs` and three sibling modules were absent from
-the checkout (`status.md:4651`, `:4680`, `:5547`).
+the checkout (session log, three 2026-06 entries — the log has since been rotated, so
+search `grep -rn '^## 2026-06' status.md docs/status/` rather than the old line pins,
+which decayed with every append and are now in `docs/status/2026-06.md`).
 
 Separately, wine hand-rolled `docs/migration/tools/frontend-inventory-scan.mjs` and used it
 to find two genuine "built but never wired" defects — `cellar:mutation` dispatched with no
 listener, and `wineShop:coldStartAction` CTAs that were console-only no-ops
-(`status.md:1256`). **Both are event-wiring bugs that no import-graph check can see**, which
+(session log, a 2026-07 entry — now in `docs/status/2026-07.md`; cite by header, not line). **Both are event-wiring bugs that no import-graph check can see**, which
 is the direct origin of item 4 above.
 
 ---
