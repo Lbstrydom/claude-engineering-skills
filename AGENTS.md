@@ -109,21 +109,19 @@
 > [`docs/reference/gitignore-policy.md`](docs/reference/gitignore-policy.md).
 >
 > **An exit that stdout can reach must drain first.** On Windows a piped
-> `process.stdout` is asynchronous — and `npm run x`, `x | tee` and every CI
-> capture are pipes — so `process.exit()` **discards whatever has not flushed**.
-> Use **`await finishAndExit(code)`** ([cli-io.mjs](scripts/lib/cli-io.mjs)),
-> never a bare `process.exit`, after writing to stdout. A detector-first census
-> on 2026-09-04 found **190 reachable sites across ~100 files**, 95 of them
-> carrying a **JSON envelope a caller parses** — where the failure is not merely
-> lossy: a truncated envelope is a parse error attributed to the wrong thing, or
-> a silently short result. `npm run stdout:flush:gate` ratchets the population
-> drift-only (growth AND unrecorded shrink fail; `--report` for the triaged
-> census). **Two non-findings, deliberately**: a `stderr` write before an exit
-> (stderr is synchronous enough), and the `--selfcheck-relocation` smoke
-> contract's `console.log('OK'); process.exit(0);` — that literal shape is the
-> contract, so change it and every implementation together or not at all. In a
-> **synchronous** function `finishAndExit` cannot be awaited: hand the decision
-> to the async caller, never fire `void finishAndExit(code)` and fall through.
+> `process.stdout` is asynchronous — `npm run x`, `x | tee` and every CI capture
+> are pipes — so `process.exit()` **discards whatever has not flushed**. Use
+> **`await finishAndExit(code)`** ([cli-io.mjs](scripts/lib/cli-io.mjs)) after
+> writing to stdout. In a **synchronous** function it cannot be awaited: hand
+> the decision to the async caller, and never fire `void finishAndExit(code)`
+> and fall through — that returns immediately and the exit still truncates.
+> `npm run stdout:flush:gate` ratchets the population drift-only (growth AND
+> unrecorded shrink fail); `--report` for the triaged census, 221 sites at
+> 2026-09-04, 105 carrying a **JSON envelope a caller parses** — where a
+> truncation is a parse error blamed on the wrong thing, not merely a lost tail.
+> Deliberate non-findings: a `stderr` write before an exit, and the
+> `--selfcheck-relocation` smoke contract's exact two-statement body.
+> [Plan](docs/plans/stdout-flush-drain-gate.md)
 >
 > **Oversized files may not grow.** `npm run size:ratchet:gate` ratchets every
 > `scripts/**` file already over 1000 lines against `.file-size-baseline.json`,

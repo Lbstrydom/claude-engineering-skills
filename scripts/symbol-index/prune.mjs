@@ -61,7 +61,12 @@ async function main() {
   await initLearningStore();
   if (!await isCloudEnabled()) {
     process.stderr.write('arch:prune: cloud disabled — skipping\n');
-    process.exit(0);
+    // `finishAndExit`, not `process.exit`, even though the write above went to
+    // stderr: the store is already initialised here, so its pg pool holds the
+    // event loop open. That is the SECOND failure mode in finishAndExit's
+    // docstring (a CLI outliving its work), and the reason this is not merely
+    // cosmetic consistency. Round-1 audit M2/L1.
+    await finishAndExit(0);
   }
 
   async function pruneClass({ filterCol, filterVal, retainDays }) {
@@ -120,14 +125,14 @@ const isMain = (() => {
 })();
 
 if (isMain) {
-  main().catch((err) => {
+  main().catch(async (err) => {
     // A usage mistake is not an operational failure: exit 2 with the message
     // alone (a stack trace buries the one line the operator needs to read).
     if (err?.code === 'ARGV_ERROR') {
       process.stderr.write(`arch:prune: ${err.message}\n`);
-      process.exit(2);
+      await finishAndExit(2);
     }
     process.stderr.write(`arch:prune: fatal: ${err.stack || err.message}\n`);
-    process.exit(1);
+    await finishAndExit(1);
   });
 }

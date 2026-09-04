@@ -26,6 +26,24 @@
  *     (`find-rmsync-sites.mjs`, `import-binding.mjs`), so a shadowed identifier
  *     correctly does not match.
  *
+ * **Two known limits, both measured rather than assumed.** A third — aliased
+ * streams (`const out = process.stdout; out.write(x)`) — WAS on this list,
+ * justified by "0 instances in the repo today". Round-2 adjudication rejected
+ * that reasoning and it was right: **a documented limit is not enforcement**,
+ * and this gate's claim is that a new instance cannot appear unnoticed. A zero
+ * measurement says nothing about what an author writes tomorrow. Aliases now
+ * resolve (`resolvesToStdoutAlias`), fail-closed on reassignment.
+ *   - **Cross-module helpers.** Indirect writers resolve through the file's OWN
+ *     call graph only. A helper imported from another module that writes stdout
+ *     is not followed — that needs whole-program resolution, and this stays a
+ *     per-file detector.
+ *   - **An async helper called without `await`.** Its writes have not happened
+ *     when a following `process.exit` runs, so the exit is a different defect
+ *     (output never produced) and `finishAndExit` would not fix it — reporting
+ *     it here would be a false positive. Measured 2026-09-04: **0 of 60**
+ *     indirect sites in this repo have that shape, so nothing is built for it;
+ *     if one appears, this is the note that says it is known and unhandled.
+ *
  * **Soundness over recall.** A recovered (partial) Babel tree is a HARD failure
  * here, not a silently-smaller result — `parseSource`'s own docstring warns that
  * a consumer needing sound structural coverage reads a truncated tree as clean.
@@ -38,7 +56,7 @@
 import nodePath from 'node:path';
 import { parse } from '@babel/parser';
 import _traverse from '@babel/traverse';
-import { resolvesToNamedImport } from './import-binding.mjs';
+import { resolvesToNamedImport, resolvesToModuleBinding } from './import-binding.mjs';
 
 // @babel/traverse ships CJS; under ESM the callable lands on .default (and on
 // .default.default via some interop paths). Same normalisation as
@@ -98,7 +116,80 @@ function staticPropertyName(callee) {
  */
 function isAmbientGlobal(identPath, name) {
   if (identPath.node.type !== 'Identifier' || identPath.node.name !== name) return false;
-  return identPath.scope.getBinding(name) === undefined;
+  const binding = identPath.scope.getBinding(name);
+  if (binding === undefined) return true;   // the ambient global
+  // An EXPLICIT ESM import of the same global counts too:
+  // `import process from 'node:process'` is the identical object, but it
+  // creates a binding — and the first cut read any binding as "shadowed" and
+  // skipped the file wholesale. Measured when the Gemini gate raised it
+  // (2026-09-04): FOUR files under scripts/ import process that way, so every
+  // exit in campaign.mjs, db-suites-gate.mjs, efficacy-lints-check.mjs and
+  // nav-audit.mjs was silently invisible to the census. A blind spot that
+  // swallows whole files is the worst shape this detector can have, because it
+  // reports those files as clean.
+  return resolvesToModuleBinding(identPath, { moduleSources: MODULE_SOURCES_FOR[name] ?? new Set() });
+}
+
+/**
+ * The module specifiers whose default/namespace import IS the ambient global.
+ * `node:console`'s import is the same console object; the bare specifiers are
+ * the legacy spellings Node still resolves.
+ */
+const MODULE_SOURCES_FOR = {
+  process: new Set(['node:process', 'process']),
+  console: new Set(['node:console', 'console']),
+};
+
+/**
+ * Whether an identifier resolves to a local binding holding `process.stdout`.
+ *
+ * **Fail-closed on reassignment.** A binding initialised to `process.stdout` but
+ * written to later (`let out = process.stdout; … out = somethingElse`) still
+ * counts. Reporting a site that turns out to be safe costs one `--update`
+ * decision a human makes with the code in front of them; MISSING one costs a
+ * silently truncated envelope nobody sees. The two errors are not symmetric, so
+ * the tie goes to reporting.
+ *
+ * @param {import('@babel/traverse').NodePath} identPath the member-expression object
+ * @returns {boolean}
+ */
+function resolvesToStdoutAlias(identPath, depth = 0) {
+  // Chains terminate: `const a = process.stdout; const b = a; b.write(x)`.
+  // The cap is a guard against a pathological or cyclic chain, not a design
+  // limit — three hops is already far past anything real.
+  if (depth > 3) return false;
+  const binding = identPath.scope.getBinding(identPath.node.name);
+  if (!binding) return false;
+
+  const isStdoutMember = (n) => (n?.type === 'MemberExpression' || n?.type === 'OptionalMemberExpression')
+    && !n.computed && n.property?.type === 'Identifier' && n.property.name === 'stdout'
+    && n.object?.type === 'Identifier' && n.object.name === 'process';
+
+  /** `const {stdout} = process` / `const {stdout: out} = process` (round-3 H1/M3). */
+  const isStdoutDestructure = (declarator) => {
+    if (declarator?.id?.type !== 'ObjectPattern') return false;
+    if (declarator.init?.type !== 'Identifier' || declarator.init.name !== 'process') return false;
+    return declarator.id.properties.some((prop) => prop.type === 'ObjectProperty'
+      && !prop.computed
+      && prop.key?.type === 'Identifier' && prop.key.name === 'stdout'
+      && prop.value?.type === 'Identifier' && prop.value.name === identPath.node.name);
+  };
+
+  if (binding.path.type === 'VariableDeclarator') {
+    const decl = binding.path.node;
+    if (isStdoutMember(decl.init) || isStdoutDestructure(decl)) return true;
+    // One more hop: this binding may itself hold another alias.
+    if (decl.init?.type === 'Identifier') {
+      const next = binding.path.get('init');
+      if (resolvesToStdoutAlias(next, depth + 1)) return true;
+    }
+  }
+  // …and any later assignment of `process.stdout` (or of another alias) to it.
+  return (binding.constantViolations ?? []).some((v) => {
+    if (v.node?.type !== 'AssignmentExpression') return false;
+    if (isStdoutMember(v.node.right)) return true;
+    return v.node.right?.type === 'Identifier' && resolvesToStdoutAlias(v.get('right'), depth + 1);
+  });
 }
 
 /**
@@ -132,6 +223,20 @@ function classifyCall(path, { cliIoSpec }) {
       && staticPropertyName(obj) === 'stdout'
       && isAmbientGlobal(objectPath.get('object'), 'process')) {
       return { kind: 'stdout', how: `process.stdout.${prop}`, exitCode: null };
+    }
+
+    // An ALIAS: `const out = process.stdout; … out.write(x); process.exit(0)`.
+    //
+    // Round-2 adjudication. This was a documented limit backed by "0 instances
+    // in the repo today", and the adjudicator's correction is the right one:
+    // **a documented limit is not enforcement.** The gate's whole claim is that
+    // a new instance cannot appear unnoticed; a limit measured at zero protects
+    // against nothing an author writes tomorrow, and the census would have gone
+    // quietly wrong rather than loudly incomplete.
+    if ((prop === 'write' || prop === 'end') && obj.type === 'Identifier') {
+      if (resolvesToStdoutAlias(objectPath)) {
+        return { kind: 'stdout', how: `${obj.name}.${prop} (stdout alias)`, exitCode: null };
+      }
     }
 
     // console.log(...) and friends
@@ -193,11 +298,66 @@ function insideSelfcheckGuard(path) {
         StringLiteral(s) { if (s.node.value === SELFCHECK_FLAG) found = true; },
       });
       if (p.node.test.type === 'StringLiteral' && p.node.test.value === SELFCHECK_FLAG) found = true;
-      if (found) return true;
+      if (found) return isExactSmokeContract(p);
     }
     p = p.parentPath;
   }
   return false;
+}
+
+/**
+ * Whether an `if` guarded by the self-check flag contains EXACTLY the documented
+ * smoke contract and nothing else: `console.log(<string>); process.exit(0);`.
+ *
+ * **Why the flag alone is not enough** (round-1 audit H6/M1/M12 — three passes
+ * raised it independently). Matching only the guard's TEST exempted every stdout
+ * write and every exit anywhere beneath it, so
+ *
+ *     if (argv.includes('--selfcheck-relocation')) {
+ *       process.stdout.write(JSON.stringify(hugeReport));   // ← silently exempt
+ *       process.exit(0);
+ *     }
+ *
+ * was waved through. The exemption's whole justification is that AGENTS.md
+ * pins a LITERAL shape asserted across `CLI_SMOKE_SET`; an exemption broader
+ * than the contract it cites is just a hole with a citation on it. Anything
+ * that is not that exact two-statement body is now reported, which is also the
+ * honest signal — a CLI whose smoke handler has grown extra stdout writes has
+ * drifted from the contract and should be fixed there, not excused here.
+ *
+ * @param {import('@babel/traverse').NodePath} ifPath
+ * @returns {boolean}
+ */
+function isExactSmokeContract(ifPath) {
+  if (ifPath.node.alternate) return false;
+  const body = ifPath.node.consequent.type === 'BlockStatement'
+    ? ifPath.node.consequent.body
+    : [ifPath.node.consequent];
+  if (body.length !== 2) return false;
+
+  const [logStmt, exitStmt] = body;
+  // 1. console.log(<string literal>)  — the payload is a constant, so there is
+  //    nothing of variable size to truncate.
+  if (logStmt.type !== 'ExpressionStatement') return false;
+  const logCall = logStmt.expression;
+  if (logCall?.type !== 'CallExpression') return false;
+  const lc = logCall.callee;
+  if (lc?.type !== 'MemberExpression' || lc.computed
+    || lc.object?.type !== 'Identifier' || lc.object.name !== 'console'
+    || lc.property?.type !== 'Identifier' || lc.property.name !== 'log') return false;
+  if (logCall.arguments.length !== 1 || logCall.arguments[0].type !== 'StringLiteral') return false;
+
+  // 2. process.exit(0) — the literal zero, not a computed code.
+  if (exitStmt.type !== 'ExpressionStatement') return false;
+  const exitCall = exitStmt.expression;
+  if (exitCall?.type !== 'CallExpression') return false;
+  const ec = exitCall.callee;
+  if (ec?.type !== 'MemberExpression' || ec.computed
+    || ec.object?.type !== 'Identifier' || ec.object.name !== 'process'
+    || ec.property?.type !== 'Identifier' || ec.property.name !== 'exit') return false;
+  return exitCall.arguments.length === 1
+    && exitCall.arguments[0].type === 'NumericLiteral'
+    && exitCall.arguments[0].value === 0;
 }
 
 /**
@@ -256,28 +416,79 @@ function classifyPayload(writePath, how) {
  * @param {import('@babel/traverse').NodePath} stmtPath
  * @param {object|null} cliIoSpec
  */
-function isTerminatingStatement(stmtPath, cliIoSpec) {
+function isTerminatingStatement(stmtPath, cliIoSpec, { skipTransfers = false, isExiterCall = null } = {}) {
   const stmt = stmtPath?.node;
   if (!stmt) return false;
-  if (stmt.type === 'ReturnStatement' || stmt.type === 'ThrowStatement'
-    || stmt.type === 'BreakStatement' || stmt.type === 'ContinueStatement') return true;
+  // `return` and `throw` end the FUNCTION. `break`/`continue` do NOT — they end
+  // an iteration or a switch case and hand control to the code AFTER the loop,
+  // which is exactly where a later `process.exit` tends to sit:
+  //
+  //     for (const x of xs) { process.stdout.write(x); if (done) break; }
+  //     process.exit(0);                       // ← truncates everything written
+  //
+  // Having them here made that a silent false negative: the walk found a `break`
+  // after the write and severed the path entirely. Raised by the Gemini gate;
+  // it was in the first version of this function. Removing them can only make
+  // the detector report MORE, which is the safe direction — and there is no
+  // case where a break prevents reaching a later exit, since it moves control
+  // toward it.
+  if (stmt.type === 'ReturnStatement' || stmt.type === 'ThrowStatement') return !skipTransfers;
   if (stmt.type !== 'ExpressionStatement') return false;
 
   let exprPath = stmtPath.get('expression');
-  // `void finishAndExit(n)` and `await finishAndExit(n)` both wrap the call.
-  if (exprPath.node.type === 'AwaitExpression') exprPath = exprPath.get('argument');
-  else if (exprPath.node.type === 'UnaryExpression' && exprPath.node.operator === 'void') exprPath = exprPath.get('argument');
+  // Whether the call was actually AWAITED. Load-bearing for `finishAndExit`,
+  // irrelevant for `process.exit`.
+  let awaited = false;
+  // ONLY `await finishAndExit(n)` — never `void finishAndExit(n)`.
+  //
+  // `void` discards the promise and returns IMMEDIATELY, so everything after it
+  // still runs and every later exit stays reachable. Treating it as a
+  // terminator suppressed real findings in exactly the shape AGENTS.md forbids
+  // in the same breath as this gate ("never fire `void finishAndExit(code)` and
+  // fall through") — the detector was excusing the bug its own invariant names.
+  // Round-1 audit H3, raised against a test that asserted the wrong behaviour.
+  //
+  // Consequence, deliberately: a fire-and-forget `void finishAndExit(n)` before
+  // a later exit now REPORTS. That is correct — the write really can still be
+  // buffered when that exit fires.
+  if (exprPath.node.type === 'AwaitExpression') { awaited = true; exprPath = exprPath.get('argument'); }
   if (exprPath.node.type !== 'CallExpression') return false;
   const callee = exprPath.node.callee;
 
-  // `process.exit(...)`
+  // A call to a LOCAL function that exits is itself a terminator. Teaching the
+  // detector that such a call IS an exit (so it pairs with earlier writes) but
+  // not that it ENDS the path left the mirror-image hole: two calls to the same
+  // `finish()` helper paired the first call's write with the second call's
+  // exit, though the first call never returns. The same one-sided-check shape,
+  // one level in — caught by reading the sites rather than the count.
+  if (isExiterCall && isExiterCall(exprPath)) return true;
+
+  // `process.exit(...)` — resolved through the SAME `isAmbientGlobal` oracle the
+  // classifier uses. It was an inline `getBinding('process') === undefined`
+  // here, which is how fixing the explicit-ESM-import blind spot in ONE of the
+  // two spellings produced 16 bogus sites: in a file doing
+  // `import process from 'node:process'`, the classifier started seeing exits
+  // while this predicate stopped seeing terminators, so the `--selfcheck`
+  // block's own exit no longer ended its path and its `console.log('OK')`
+  // reached every later exit. Two spellings of one predicate is the
+  // single-oracle violation AGENTS.md names; there is now one.
   if (callee.type === 'MemberExpression'
     && !callee.computed && callee.property.type === 'Identifier' && callee.property.name === 'exit'
-    && callee.object.type === 'Identifier' && callee.object.name === 'process'
-    && exprPath.get('callee').get('object').scope.getBinding('process') === undefined) return true;
+    && isAmbientGlobal(exprPath.get('callee').get('object'), 'process')) return true;
 
-  // `finishAndExit(...)` from lib/cli-io.mjs — the remedy for this very class.
+  // `await finishAndExit(...)` from lib/cli-io.mjs — the remedy for this class.
+  //
+  // The `await` is REQUIRED. `finishAndExit` is async, so a bare
+  // `finishAndExit(0)` returns a promise and execution falls straight through
+  // to the next statement — behaviourally identical to the `void` form this
+  // function already refuses. The first cut stripped an AwaitExpression when it
+  // happened to be there but never checked that it WAS there, so the bare call
+  // was accepted as a terminator and silently hid every later exit in the
+  // function. That is the round-1 H3 defect surviving in its other spelling:
+  // the fix addressed the instance the audit named and stopped. Raised by the
+  // Gemini gate, which is exactly the reading H3 should have prompted.
   if (callee.type === 'Identifier' && callee.name === 'finishAndExit' && cliIoSpec) {
+    if (!awaited) return false;
     return resolvesToNamedImport(exprPath.get('callee'), { ...cliIoSpec, importedName: 'finishAndExit' });
   }
   return false;
@@ -309,26 +520,163 @@ function isTerminatingStatement(stmtPath, cliIoSpec) {
  * @param {object} stopNode  the nearest common ancestor node; the walk stops there
  * @returns {boolean}
  */
-function pathTerminatesBefore(writePath, stopNode, cliIoSpec) {
+function pathTerminatesBefore(writePath, stopNode, cliIoSpec, exitPath, isExiterCall) {
+  // Every `try` whose CATCH or FINALLY contains the exit. Inside such a try's
+  // block, a `throw` or `return` does NOT end the path — it transfers control
+  // to exactly where the exit is sitting (Gemini gate, 4th pass):
+  //
+  //     try   { process.stdout.write(envelope); throw err; }
+  //     catch { process.exit(1); }            // ← truncates what try wrote
+  //
+  // Measured when raised: 4 live sites across 3 files. This is the
+  // error-handling path, which is the one most likely to be carrying a JSON
+  // envelope, so treating it as dead was the costliest possible place to.
+  const caughtBy = new Set();
+  for (let q = exitPath?.parentPath; q; q = q.parentPath) {
+    const t = q.parentPath?.node;
+    if (t?.type === 'TryStatement' && (q.node === t.handler || q.node === t.finalizer)) caughtBy.add(t);
+  }
+
+  /** Whether `stmtPath` sits inside the `try` block of a try the exit is caught by. */
+  const isInCaughtTry = (stmtPath, caught) => {
+    for (let q = stmtPath; q?.parentPath; q = q.parentPath) {
+      const t = q.parentPath.node;
+      if (t?.type === 'TryStatement' && q.node === t.block && caught.has(t)) return true;
+    }
+    return false;
+  };
+
+  // Which child of a given block sits on the EXIT's ancestor chain — so the
+  // scan can stop there instead of running past it.
+  const exitChain = new Map();
+  for (let q = exitPath; q?.parentPath; q = q.parentPath) exitChain.set(q.parentPath.node, q.node);
+
   let p = writePath;
-  while (p && p.node !== stopNode) {
+  while (p) {
     const parent = p.parentPath;
     if (!parent) return false;
-    if ((parent.node.type === 'BlockStatement' || parent.node.type === 'Program'
-      || parent.node.type === 'SwitchCase' || parent.node.type === 'StaticBlock')
-      && parent.node !== stopNode) {
+    // The write is INSIDE a `return`/`throw` expression — `return helper(x)`,
+    // where `helper` writes. Evaluating it is the last thing the function does,
+    // so nothing after it in this function is reachable. The scan below only
+    // ever looked at statements AFTER the write's statement, so this case —
+    // where the write's own enclosing statement is the terminator — was
+    // invisible, and it is the shape of every `if (a) return f(); return g();`
+    // dispatcher in the repo.
+    if ((p.node.type === 'ReturnStatement' || p.node.type === 'ThrowStatement')
+      && !isInCaughtTry(p, caughtBy)) return true;
+    // The write IS (or is an argument of) a call to a local function that
+    // exits — `finish(shape(...))`, where `finish` writes and then exits. The
+    // path ends inside that call, so no later exit in the caller is reachable.
+    // Sibling-statement scanning cannot see this: the call is nested in an
+    // `if` consequent, and "does a LATER statement unconditionally terminate"
+    // is a different question from "does THIS one".
+    // NOT guarded by `p !== writePath`: for a synthetic call-site write the
+    // write path IS that call, and a helper that both writes and exits ends the
+    // path exactly there. A direct `process.stdout.write` is never an exiter
+    // call, so this cannot self-terminate a real write.
+    if (p.node.type === 'CallExpression' && isExiterCall?.(p)) return true;
+    if (parent.node.type === 'BlockStatement' || parent.node.type === 'Program'
+      || parent.node.type === 'SwitchCase' || parent.node.type === 'StaticBlock') {
+      // `process.exit` / `await finishAndExit` still terminate here — those end
+      // the PROCESS, and no catch or finally saves them. Only the transferring
+      // forms are neutralised.
+      const inCaughtTryBlock = parent.parentPath?.node?.type === 'TryStatement'
+        && parent.node === parent.parentPath.node.block
+        && caughtBy.has(parent.parentPath.node);
       const key = parent.node.type === 'SwitchCase' ? 'consequent' : 'body';
       const listPaths = parent.get(key);
-      const idx = (parent.node[key] ?? []).indexOf(p.node);
+      const list = parent.node[key] ?? [];
+      const idx = list.indexOf(p.node);
       if (idx >= 0) {
-        for (let i = idx + 1; i < listPaths.length; i++) {
-          if (isTerminatingStatement(listPaths[i], cliIoSpec)) return true;
+        // Stop at the exit's own statement when this block contains it — the
+        // COMMON-ANCESTOR level. The first cut skipped that level outright
+        // (`parent.node !== stopNode`), and it is precisely where a sibling
+        // terminator between the two lives:
+        //
+        //     if (save) return runSaveMode(args);   // ← writes
+        //     return runBrainstormMode(args);       // ← exits
+        //
+        // Two mutually exclusive paths that the detector paired, because the
+        // `return` separating them was never examined. Found by spot-checking
+        // the sites the indirect-exit work added rather than trusting the count.
+        const stopChild = exitChain.get(parent.node);
+        const end = stopChild ? list.indexOf(stopChild) : listPaths.length;
+        for (let i = idx + 1; i < (end < 0 ? listPaths.length : end); i++) {
+          if (isTerminatingStatement(listPaths[i], cliIoSpec, { skipTransfers: inCaughtTryBlock, isExiterCall })) return true;
         }
       }
     }
+    if (parent.node === stopNode) return false;
     p = parent;
   }
   return false;
+}
+
+/**
+ * A compact, line-independent description of WHERE inside its function an exit
+ * sits: the chain of enclosing statement kinds from the function body down to
+ * the exit, plus the branch taken at each `if`.
+ *
+ * **Why identity needs this** (round-2 audit H1/M1). `file::fn::shape#ordinal`
+ * still could not tell a REPLACED site from an unchanged one: delete one
+ * `write→exit(2)` in `main()` and add another elsewhere in `main()` with the
+ * same shape, and the identity set does not move — the swap blind spot, one
+ * level down from the one the function name closed. The structural path
+ * distinguishes two sites in different branches, which is the overwhelmingly
+ * common real shape.
+ *
+ * It is deliberately NOT a content hash. Content churns on a reworded message
+ * and would send people to `--update` reflexively, which is the failure mode
+ * the whole line-independent design exists to avoid. Two same-shaped sites in
+ * the SAME block still fall back to the ordinal — a residual, documented limit.
+ *
+ * @param {import('@babel/traverse').NodePath} exitPath
+ * @returns {string} e.g. `if>then/try>block` or `` for a straight-line body
+ */
+function structuralPath(exitPath) {
+  const parts = [];
+  let child = exitPath;
+  let p = exitPath.parentPath;
+  while (p && !FUNCTION_TYPES.has(p.node.type) && p.node.type !== 'Program') {
+    const n = p.node;
+    if (n.type === 'IfStatement') {
+      parts.push(n.alternate === child.node ? 'if>else' : 'if>then');
+    } else if (n.type === 'TryStatement') {
+      parts.push(n.finalizer === child.node ? 'try>finally' : (n.handler === child.node ? 'try>catch' : 'try>block'));
+    } else if (n.type === 'SwitchCase') {
+      parts.push(n.test ? 'case' : 'default');
+    } else if (/^(For|While|DoWhile)/.test(n.type) || n.type === 'ForOfStatement' || n.type === 'ForInStatement') {
+      parts.push('loop');
+    }
+    child = p;
+    p = p.parentPath;
+  }
+  return parts.reverse().join('/');
+}
+
+/**
+ * A readable name for the function enclosing `path` — the declaration's own
+ * name, the variable a function expression is assigned to, or a method's key.
+ * `<module>` for top-level code, `<anonymous>` when nothing names it.
+ * @param {import('@babel/traverse').NodePath} path
+ * @returns {string}
+ */
+function functionNameOf(path) {
+  let p = path.parentPath;
+  while (p) {
+    const n = p.node;
+    if (FUNCTION_TYPES.has(n.type)) {
+      if (n.id?.name) return n.id.name;
+      if ((n.type === 'ObjectMethod' || n.type === 'ClassMethod') && n.key?.name) return n.key.name;
+      const parent = p.parentPath?.node;
+      if (parent?.type === 'VariableDeclarator' && parent.id?.type === 'Identifier') return parent.id.name;
+      if (parent?.type === 'ObjectProperty' && parent.key?.name) return parent.key.name;
+      if (parent?.type === 'AssignmentExpression' && parent.left?.type === 'Identifier') return parent.left.name;
+      return '<anonymous>';
+    }
+    p = p.parentPath;
+  }
+  return '<module>';
 }
 
 /**
@@ -343,7 +691,7 @@ function pathTerminatesBefore(writePath, stopNode, cliIoSpec) {
  * @param {object|null} cliIoSpec
  * @returns {boolean}
  */
-function writeReachesExit(write, exit, cliIoSpec) {
+function writeReachesExit(write, exit, cliIoSpec, isExiterCall) {
   if (write.node.start >= exit.node.start) return false;
   // Nearest common ancestor, walked from the roots of both ancestries.
   const aw = write.path.getAncestry().slice().reverse().map((p) => p.node);
@@ -351,14 +699,25 @@ function writeReachesExit(write, exit, cliIoSpec) {
   let i = 0;
   while (i < aw.length && i < ae.length && aw[i] === ae[i]) i++;
   const common = aw[i - 1];
-  // An `if`'s two arms are mutually exclusive: a write in the consequent can
-  // never precede an exit in the alternate, whatever the source order says.
-  if (common?.type === 'IfStatement' || common?.type === 'ConditionalExpression'
-    || common?.type === 'LogicalExpression') {
+  // Only the genuinely EXCLUSIVE pair is `consequent` vs `alternate`.
+  //
+  // The first cut said "different children of an if/ternary/logical ⇒
+  // exclusive", which also excluded the CONDITION from the body — and the
+  // condition runs FIRST. So `if (writeAndCheck()) { process.exit(0); }` was a
+  // silent false negative, as was `hasOutput() && process.exit(0)`. Raised by
+  // the Gemini gate; the rule now names the two arms explicitly rather than
+  // inferring exclusivity from inequality.
+  if (common?.type === 'IfStatement' || common?.type === 'ConditionalExpression') {
     const cw = aw[i]; const ce = ae[i];
-    if (cw !== ce) return false;
+    const exclusive = (cw === common.consequent && ce === common.alternate)
+      || (cw === common.alternate && ce === common.consequent);
+    if (exclusive) return false;
   }
-  return !pathTerminatesBefore(write.path, common, cliIoSpec);
+  // A LogicalExpression is never exclusive in the direction that matters: its
+  // `left` always evaluates before its `right`, so a write on the left can
+  // reach an exit on the right. (`right` may not run — that only makes this an
+  // over-approximation, which is the safe direction.)
+  return !pathTerminatesBefore(write.path, common, cliIoSpec, exit.path, isExiterCall);
 }
 
 /**
@@ -369,6 +728,8 @@ function writeReachesExit(write, exit, cliIoSpec) {
  * @property {string} writeHow      e.g. `process.stdout.write`, `console.log`, `emit`
  * @property {number} writeCount    how many stdout writes can reach this exit
  * @property {'envelope'|'text'} payload  worst payload reaching it — see `classifyPayload`
+ * @property {string} fnName        enclosing function name, for a line-independent site identity
+ * @property {string} structure     enclosing branch/loop chain inside that function
  */
 
 /**
@@ -417,6 +778,56 @@ export function findStdoutExitSites(sourceText, opts = {}) {
     }
     : null;
 
+  // ── Same-file indirect writers (round-1 audit H4/M13) ────────────────────
+  //
+  // `writeReport(); process.exit(0);` is the same defect as an inline write,
+  // and pairing only DIRECT writes missed it. Measured on this repo at the time
+  // the gap was raised: 51 further sites across 16 files — a ~28% undercount on
+  // a 183-site census whose whole claim is to BE a census.
+  // `check-context-drift.mjs:517` was the clearest, exiting straight after an
+  // `emitOutput()` helper.
+  //
+  // Resolution is a fixed point over the file's OWN call graph: a function
+  // containing a direct stdout write is a writer, and so is any function that
+  // calls one. Callees resolve through `scope.getBinding`, so only a genuine
+  // local function counts — a same-named import or parameter does not.
+  //
+  // **Same-file only, and that bound is deliberate.** Following an IMPORTED
+  // helper needs cross-module resolution and a whole-program pass; this stays a
+  // per-file detector, so a helper imported from another module is still a
+  // known blind spot (§7 of the plan). Bounded under-approximation with the
+  // limit written down beats an unbounded one nobody has measured.
+  /** @type {Map<object, {payload: 'envelope'|'text'}>} */
+  const writerFns = new Map();
+  /**
+   * Local functions that TERMINATE — `function fatal(m){ …; process.exit(1) }`.
+   *
+   * The mirror of `writerFns`, added after the Gemini gate asked the question
+   * AGENTS.md tells you to ask of any one-sided check: *which side am I
+   * iterating, and what is unrepresentable from it?* Writes propagated up the
+   * call graph and exits did not, so `process.stdout.write(err); fatal();` was
+   * invisible — the write recorded in the caller, the exit in the callee, never
+   * paired. Measured when raised: 29 live sites across 14 files.
+   * @type {Map<object, {exitCode: number|string|null}>}
+   */
+  const exiterFns = new Map();
+  /** @type {Array<{callPath: object, targetFn: object, fn: object}>} */
+  const localCalls = [];
+
+  /** The local function node an Identifier callee resolves to, or null. */
+  const resolveLocalFn = (calleePath) => {
+    if (calleePath.node.type !== 'Identifier') return null;
+    const binding = calleePath.scope.getBinding(calleePath.node.name);
+    if (!binding) return null;
+    const bp = binding.path;
+    if (bp.node.type === 'FunctionDeclaration') return bp.node;
+    if (bp.node.type === 'VariableDeclarator'
+      && (bp.node.init?.type === 'FunctionExpression' || bp.node.init?.type === 'ArrowFunctionExpression')) {
+      return bp.node.init;
+    }
+    return null;
+  };
+
   /** @type {Map<object, Array<{path:object,node:object,line:number,how:string}>>} */
   const writesByFn = new Map();
   /** @type {Array<{path:object,node:object,fn:object,line:number,exitCode:number|string|null}>} */
@@ -424,30 +835,130 @@ export function findStdoutExitSites(sourceText, opts = {}) {
 
   traverse(ast, {
     'CallExpression|OptionalCallExpression'(path) {
-      const hit = classifyCall(path, { cliIoSpec });
-      if (!hit) return;
       const fn = enclosingFunctionNode(path, ast.program);
+      const hit = classifyCall(path, { cliIoSpec });
+      if (!hit) {
+        // Not itself a write or an exit — but it may CALL a local writer, which
+        // the fixed point below decides. Record the edge either way; resolving
+        // the callee here reuses this traversal's live scope.
+        const target = resolveLocalFn(path.get('callee'));
+        if (target) localCalls.push({ callPath: path, targetFn: target, fn });
+        return;
+      }
       if (hit.kind === 'stdout') {
+        const payload = classifyPayload(path, hit.how);
         if (!writesByFn.has(fn)) writesByFn.set(fn, []);
         writesByFn.get(fn).push({
-          path, node: path.node, line: path.node.loc.start.line, how: hit.how,
-          payload: classifyPayload(path, hit.how),
+          path, node: path.node, line: path.node.loc.start.line, how: hit.how, payload,
         });
+        // A function containing a direct write is a writer. `envelope` wins,
+        // since the worst payload it can emit is what a caller's exit truncates.
+        if (fn !== ast.program) {
+          const prior = writerFns.get(fn);
+          if (!prior || (prior.payload === 'text' && payload === 'envelope')) writerFns.set(fn, { payload });
+        }
         return;
       }
       if (insideSelfcheckGuard(path)) return;
       exits.push({ path, node: path.node, fn, line: path.node.loc.start.line, exitCode: hit.exitCode });
+      // A function containing an exit is an exiter. Differing codes collapse to
+      // 'dynamic' — the call site cannot know which one fires.
+      if (fn !== ast.program) {
+        const prior = exiterFns.get(fn);
+        if (!prior) exiterFns.set(fn, { exitCode: hit.exitCode });
+        else if (prior.exitCode !== hit.exitCode) exiterFns.set(fn, { exitCode: 'dynamic' });
+      }
     },
   });
 
+  // Fixed point: a function that calls a writer is itself a writer. Bounded by
+  // the number of local functions — each pass must promote at least one to
+  // continue, so it terminates even on a cyclic (mutually recursive) graph.
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const { targetFn, fn } of localCalls) {
+      const target = writerFns.get(targetFn);
+      if (!target || fn === ast.program) continue;
+      const prior = writerFns.get(fn);
+      if (!prior) { writerFns.set(fn, { payload: target.payload }); changed = true; }
+      else if (prior.payload === 'text' && target.payload === 'envelope') {
+        writerFns.set(fn, { payload: 'envelope' }); changed = true;
+      }
+    }
+  }
+
+  // Same fixed point for exiters.
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const { targetFn, fn } of localCalls) {
+      const target = exiterFns.get(targetFn);
+      if (!target || fn === ast.program) continue;
+      const prior = exiterFns.get(fn);
+      if (!prior) { exiterFns.set(fn, { exitCode: target.exitCode }); changed = true; }
+      else if (prior.exitCode !== target.exitCode && prior.exitCode !== 'dynamic') {
+        exiterFns.set(fn, { exitCode: 'dynamic' }); changed = true;
+      }
+    }
+  }
+
+  // A call to an exiter IS an exit at the call site.
+  for (const { callPath, targetFn, fn } of localCalls) {
+    const e = exiterFns.get(targetFn);
+    if (!e) continue;
+    if (insideSelfcheckGuard(callPath)) continue;
+    exits.push({
+      path: callPath, node: callPath.node, fn,
+      line: callPath.node.loc.start.line,
+      exitCode: e.exitCode,
+      via: `${callPath.node.callee.name}()`,
+    });
+  }
+
+  // Every call to a writer counts as a stdout write AT THE CALL SITE, so the
+  // existing reachability and ordering logic applies to it unchanged.
+  for (const { callPath, targetFn, fn } of localCalls) {
+    const w = writerFns.get(targetFn);
+    if (!w) continue;
+    if (!writesByFn.has(fn)) writesByFn.set(fn, []);
+    writesByFn.get(fn).push({
+      path: callPath,
+      node: callPath.node,
+      line: callPath.node.loc.start.line,
+      how: `${callPath.node.callee.name}() → stdout`,
+      payload: w.payload,
+    });
+  }
+  for (const list of writesByFn.values()) list.sort((a, b) => a.node.start - b.node.start);
+
+  // Resolves a CallExpression path to "does this call a local function that
+  // exits?" — closed over the fixed point computed above.
+  const isExiterCall = (callPath) => {
+    const c = callPath.node.callee;
+    if (c?.type !== 'Identifier') return false;
+    const target = resolveLocalFn(callPath.get('callee'));
+    return Boolean(target && exiterFns.has(target));
+  };
+
   const sites = [];
   for (const exit of exits) {
-    const writes = (writesByFn.get(exit.fn) ?? []).filter((w) => writeReachesExit(w, exit, cliIoSpec));
+    const writes = (writesByFn.get(exit.fn) ?? []).filter((w) => writeReachesExit(w, exit, cliIoSpec, isExiterCall));
     if (writes.length === 0) continue;
     const last = writes[writes.length - 1];
     sites.push({
       line: exit.line,
       exitCode: exit.exitCode,
+      // For an exit reached through a local helper, the identity must say so —
+      // otherwise `fatal()` and a bare `process.exit` in the same function
+      // would collide.
+      ...(exit.via ? { exitVia: exit.via } : {}),
+      // The enclosing function's NAME, for the gate's site identity. A
+      // file+shape+ordinal key alone could not tell a removed site from a
+      // different one added elsewhere in the same file (round-1 audit H5/M3);
+      // the function name is stable under edits above it, unlike a line number.
+      fnName: functionNameOf(exit.path),
+      // WHERE in the function, structurally — closes the same-shape swap
+      // the function name alone could not see (round-2 audit H1/M1).
+      structure: structuralPath(exit.path),
       writeLine: last.line,
       writeHow: last.how,
       writeCount: writes.length,

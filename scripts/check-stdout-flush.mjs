@@ -10,17 +10,23 @@
  * report vanishes with no error anywhere.
  *
  * A detector-first census that day found the class was never confined to the one
- * file that prompted it. Repo-wide, **190 reachable sites across ~100 files**,
- * of which 95 carried a JSON envelope a caller parses. Those are the bad half:
+ * file that prompted it. It is repo-wide, and **the live count is whatever
+ * `--report` prints** — this docstring deliberately names no total, because a
+ * number duplicated in prose is a number that goes stale (round-2 audit L1/L2
+ * caught exactly that here: three different counts across the header, the plan
+ * and a comment, after the detector widened). The baseline file is the record.
+ * Roughly half the population carries a JSON envelope a caller parses, and
+ * those are the bad half:
  * a truncated envelope is a `SyntaxError` attributed to whatever the caller
  * happened to be doing, or — when the cut lands on a complete-looking prefix —
  * a silently short result nobody ever sees as an error. `symbol-index/refresh.mjs`
  * was emitting exactly that for its `cloud-disabled` and `unsupported-stack`
  * envelopes.
  *
- * **Drift-only, baselined, in knip-gate's shape.** 183 sites remained after the
- * `scripts/symbol-index/` family was fixed. A check that fails on 183 existing
- * files is a wall, not a ratchet, and a cried-wolf gate gets `--no-verify`'d —
+ * **Drift-only, baselined, in knip-gate's shape.** A three-figure population
+ * remained after the `scripts/symbol-index/` family was fixed. A check that
+ * fails on every one of them is a wall, not a ratchet, and a cried-wolf gate
+ * gets `--no-verify`'d —
  * the lesson `check-cli-flags.mjs` records from its own 24→82 baseline. Only a
  * NET-NEW site fails the run. A SHRINK fails too, asking you to re-baseline,
  * because a baseline pinned at the historical high-water mark lets the count
@@ -88,12 +94,28 @@ function listSources(dir, out = []) {
 }
 
 /**
- * Line-independent identity for one site. The ordinal disambiguates two sites in
- * one file that share a shape; it is stable under edits ABOVE them, which a line
- * number is not.
+ * Line-independent identity for one site: file, enclosing FUNCTION, write shape,
+ * exit code, then an ordinal for the rare true duplicate within one function.
+ *
+ * The function name was added after round-1 audit H5/M3: `file::shape#ordinal`
+ * alone could not distinguish a removed site from a different one added
+ * elsewhere in the same file, so a swap moved neither the count nor the set.
+ * Scoping the ordinal to a function also stops an unrelated edit at the top of a
+ * file from renumbering — and renumbering every id below it — which is the churn
+ * that gets a baseline `--update`d reflexively.
+ *
+ * Round 2 added the STRUCTURAL path (`[if>then/try>catch]`) after H1/M1 showed
+ * the function name alone still could not tell a replaced site from an
+ * unchanged one — same shape, same function, different branch. Two same-shaped
+ * sites in the SAME block remain ordinal-separated; that residual is documented
+ * in `structuralPath` rather than closed with a content hash, which would churn
+ * on a reworded message.
+ *
+ * Still deliberately WITHOUT the line number, for that same reason.
  */
-function siteId(site, seen) {
-  const base = `${site.file}::${site.writeHow}->exit(${site.exitCode})`;
+export function siteId(site, seen) {
+  const via = site.exitVia ? `${site.exitVia}->` : '';
+  const base = `${site.file}::${site.fnName}${site.structure ? `[${site.structure}]` : ''}::${site.writeHow}->${via}exit(${site.exitCode})`;
   const n = (seen.get(base) ?? 0) + 1;
   seen.set(base, n);
   return `${base}#${n}`;
@@ -153,6 +175,20 @@ function readBaseline(repoRoot) {
     process.stderr.write('  [stdout-flush] baseline is malformed (expected {ids:[…], files:{…}}) — treating it as EMPTY\n');
     return { ids: [], files: {}, present: false };
   }
+  // DUPLICATE ids are malformed too (round-3 audit M5). The comparison is
+  // set-based, so `[A, A]` silently has the cardinality of `[A]` — an
+  // edited-down baseline that still LOOKS the right length would under-count
+  // without tripping anything. A gate that advertises failing closed has to
+  // mean it about the shapes that reach it, not just the ones it imagined.
+  const dupes = parsed.ids.filter((id, i) => parsed.ids.indexOf(id) !== i);
+  if (dupes.length > 0) {
+    process.stderr.write(
+      `  [stdout-flush] baseline contains ${dupes.length} duplicate id(s) (e.g. ${dupes[0]}) — treating it as EMPTY.\n`
+      + '  Identities are a SET; duplicates mean the file was hand-edited or merged badly.\n'
+      + '  Re-derive it: node scripts/check-stdout-flush.mjs --update\n',
+    );
+    return { ids: [], files: {}, present: false };
+  }
   return {
     ids: parsed.ids,
     files: parsed.files && typeof parsed.files === 'object' && !Array.isArray(parsed.files) ? parsed.files : {},
@@ -190,8 +226,8 @@ function main() {
     throw err;
   }
 
-  // `--report` writes 183 lines to stdout, so `| head` is the natural way to
-  // read it — and that closes the pipe mid-write. Without this handler Node
+  // `--report` writes one line per site, so `| head` is the natural way to read
+  // it — and that closes the pipe mid-write. Without this handler Node
   // raises an unhandled `EPIPE` error event, printing a stack trace and exiting
   // non-zero, which reads as the gate failing. Found by running
   // `--report | head -1` on this very script: a tool about stdout behaviour

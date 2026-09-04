@@ -213,18 +213,19 @@ async function main() {
   await initLearningStore();
   if (!await isCloudEnabled()) {
     process.stderr.write('arch:summarise-domains: cloud disabled — skipping\n');
-    process.exit(0);
+    // See prune.mjs: the store is initialised, so its pool keeps the loop alive.
+    await finishAndExit(0);
   }
   const identity = resolveRepoIdentity(process.cwd());
   const repo = await getRepoIdByUuid(identity.repoUuid);
   if (!repo) {
     process.stderr.write(`arch:summarise-domains: repo not found in store — run \`npm run arch:refresh\` first\n`);
-    process.exit(2);
+    await finishAndExit(2);
   }
   const snap = await getActiveSnapshot(repo.id);
   if (!snap?.refreshId) {
     process.stderr.write('arch:summarise-domains: no active snapshot for repo\n');
-    process.exit(2);
+    await finishAndExit(2);
   }
   const { summaries, errors, stats } = await summariseDomains({
     repoId: repo.id, refreshId: snap.refreshId,
@@ -244,8 +245,8 @@ async function main() {
 }
 
 if (import.meta.url === `file://${process.argv[1].replace(/\\/g, '/')}`) {
-  main().catch(err => {
+  main().catch(async (err) => {
     process.stderr.write(`arch:summarise-domains: fatal: ${err.stack || err.message}\n`);
-    process.exit(1);
+    await finishAndExit(1);
   });
 }
