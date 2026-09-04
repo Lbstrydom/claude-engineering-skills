@@ -21,6 +21,9 @@ import {
   classifyFinalReviewOutcome, summariseCounts, orderItems, isActionable,
   KNOWN_USER_ACTIONS, ACTIONABLE,
 } from '../scripts/lib/final-review-credit.mjs';
+import {
+  CREDIT_BRANCH_SHADOW_WHERE, CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE,
+} from '../scripts/lib/store/final-review-credit-population.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -242,36 +245,38 @@ describe('the credit card\'s totals and its list describe ONE population', () =>
     return SOURCE.slice(open + 1, close);
   }
 
-  /** Read a `const NAME = ...;` string definition out of the module source. */
-  function branchPredicate(name) {
-    const m = SOURCE.match(new RegExp(String.raw`const ${name} =([\s\S]*?);\n`));
-    assert.ok(m, `could not find the ${name} definition - was it renamed?`);
-    return m[1];
-  }
-
   it('defines the two branch predicates, and they partition on bucket', () => {
-    const shadow = branchPredicate('CREDIT_BRANCH_SHADOW_WHERE');
-    const primary = branchPredicate('CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE');
-    assert.ok(shadow.includes("f.bucket = 'shadow-only'"));
-    assert.ok(primary.includes('f.bucket IS NULL'));
+    assert.ok(CREDIT_BRANCH_SHADOW_WHERE.includes("f.bucket = 'shadow-only'"));
+    assert.ok(CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE.includes('f.bucket IS NULL'));
     // Mutually exclusive by construction - what makes the queue's UNION ALL safe.
-    assert.ok(!shadow.includes('f.bucket IS NULL'));
-    assert.ok(!primary.includes("f.bucket = 'shadow-only'"));
+    assert.ok(!CREDIT_BRANCH_SHADOW_WHERE.includes('f.bucket IS NULL'));
+    assert.ok(!CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE.includes("f.bucket = 'shadow-only'"));
     // Both bind the repo as $1, so either can drop into either query.
-    assert.ok(shadow.includes('r.repo_id = $1'));
-    assert.ok(primary.includes('r.repo_id = $1'));
+    assert.ok(CREDIT_BRANCH_SHADOW_WHERE.includes('r.repo_id = $1'));
+    assert.ok(CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE.includes('r.repo_id = $1'));
   });
 
-  it('keeps both predicates module-PRIVATE - the barrel pins a functions-only surface', () => {
-    // `scripts/learning-store.mjs` re-exports this module with `export *`, and
-    // `tests/learning-store-exports.test.mjs` pins that surface to callable
-    // functions. Exporting these constants - which the first version of this
-    // fix did - fails that pin with `extra: [CREDIT_BRANCH_...]`. Asserted here
-    // so the constraint is visible beside the definition, not only in that suite.
-    assert.ok(
-      !/export\s+const\s+CREDIT_BRANCH_/.test(SOURCE),
-      'the CREDIT_BRANCH_* predicates must stay module-private - they leak through learning-store.mjs',
+  it('never reaches the learning-store barrel, whose surface is pinned functions-only', async () => {
+    // These live in their own module precisely so they can be shared without
+    // this happening: `scripts/learning-store.mjs` does `export *` from
+    // runs-findings.mjs, and `tests/learning-store-exports.test.mjs` pins that
+    // surface to callable functions. An earlier version of this fix declared
+    // them IN runs-findings.mjs and exported them, which failed that pin with
+    // `extra: [CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE, CREDIT_BRANCH_SHADOW_WHERE]`.
+    // Asserted against the barrel itself, not against source text, because the
+    // barrel is what the pin actually reads.
+    // Line-anchored, and NOT a loose `export[^;]*CREDIT_BRANCH_` scan: the
+    // import above is preceded by a comment containing the words `export *`,
+    // with no semicolon between it and the imported names, so the loose form
+    // matched its own explanatory comment.
+    const reExports = SOURCE.split(/\r?\n/).filter(
+      (l) => /^\s*export\b/.test(l) && l.includes('CREDIT_BRANCH_'),
     );
+    assert.deepEqual(reExports, [], 'runs-findings.mjs must IMPORT these, never re-export them');
+    const barrel = await import('../scripts/learning-store.mjs');
+    for (const name of ['CREDIT_BRANCH_SHADOW_WHERE', 'CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE']) {
+      assert.ok(!(name in barrel), `${name} leaked onto the learning-store public surface`);
+    }
   });
 
   for (const q of ['pendingQueue', 'actionablePairs']) {

@@ -25,6 +25,8 @@
 import { many, one, query, insertReturning, updateWhere, deleteWhere, withTx, pgArray } from '../db/query.mjs';
 import { getPool } from '../db/client.mjs';
 import { isCloudEnabled, getRepoIdByName } from './repo.mjs';
+// Imported, never re-exported (learning-store.mjs does `export *` from here).
+import { CREDIT_BRANCH_SHADOW_WHERE, CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE } from './final-review-credit-population.mjs';
 import crypto from 'node:crypto';
 import { semanticSuppressConfig } from '../config.mjs';
 import { partitionRecordTimeReRaises, toVectorLiteral } from '../semantic-suppression.mjs';
@@ -1284,47 +1286,6 @@ export async function markRunFindingsAutoDismissed(runId, fingerprints, reason) 
  * @param {string} repoName
  * @param {{queueLimit?: number}} [opts]
  */
-/**
- * The two mutually-exclusive branches of the final-review credit population.
- *
- * **Why these are constants and not two inline clauses.** `pendingQueue` (the
- * LIST) and `actionablePairs` (the exact TOTALS) must describe the same set of
- * findings: the card prints the totals as a header over the list, so any
- * disagreement makes one of the two lie about the other. They drifted exactly
- * that way. `docs/plans/skill-efficacy-census.md` Phase 1 widened the queue
- * from shadow-only to `shadow-only ∪ primary-bucket-label-gap` — the whole
- * point of that phase, since the primary bucket was where the ~1,615-row gap
- * lived — and widened the queue's SQL ONLY. The counts query kept its
- * `bucket = 'shadow-only'` filter, so it went on summarising the narrower half.
- *
- * Measured on the live store 2026-09-04, before this fix: the card rendered
- * `486 … 3 fixed-but-unlabelled` and then listed ten rows every one of which
- * carried `bucket: null` — i.e. ten members of a class the same card counted
- * as three. The true actionable population was 2,175 (536 shadow-only + 1,689
- * primary label-gap) and the true `fixed-unlabelled` count 1,692, so the class
- * this queue exists to surface was under-reported 563-fold.
- *
- * Sharing the predicate is what makes that drift unrepresentable rather than
- * merely fixed: widening the population is now one edit that both readers
- * inherit. `tests/final-review-pending.test.mjs` asserts both SQL strings still
- * embed both branches, so re-inlining either clause fails.
- *
- * Both take `repo_id` as `$1`. `UNION ALL` is safe across them because they
- * partition on `bucket` — a row cannot satisfy both.
- *
- * **Deliberately NOT exported.** `scripts/learning-store.mjs` re-exports this
- * module with `export *`, and its pinned public surface
- * (`tests/learning-store-exports.test.mjs`) is functions-only — a string
- * constant escaping there is surface drift, and these are SQL fragments, not
- * API. The guard test reads them out of this file's source instead.
- */
-const CREDIT_BRANCH_SHADOW_WHERE =
-  `r.repo_id = $1 AND f.bucket = 'shadow-only'`;
-const CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE =
-  `r.repo_id = $1 AND f.bucket IS NULL ` +
-  `AND f.remediation_state IN ('fixed', 'verified') ` +
-  `AND f.user_action IS NULL`;
-
 export async function getFinalReviewStats(repoName, { queueLimit = 50 } = {}) {
   if (!await isCloudEnabled()) return { ok: true, cloud: false, repoId: null, buckets: [], shadowOnlyQueue: [], pendingQueue: [], actionablePairs: [], runs: [], experimentRuns: [] };
   const repoRow = await one(`SELECT id FROM audit_repos WHERE name = $1 ORDER BY created_at DESC LIMIT 1`, [repoName]);
@@ -1403,25 +1364,18 @@ export async function getFinalReviewStats(repoName, { queueLimit = 50 } = {}) {
     // shadow findings, so that is the live case, not a hypothetical. Grouping by
     // the two axes keeps the result tiny (a handful of rows) and lets the pure
     // classifier own the semantics; SQL never encodes the rules.
-    //
-    // The two branches below are the SAME predicates `pendingQueue` uses, by
-    // construction (see CREDIT_BRANCH_* above). Counting only the shadow branch
-    // — which this query did until 2026-09-04 — makes the card's header
+    // Same two predicates `pendingQueue` uses, by construction. Counting only
+    // the shadow branch (as this did until 2026-09-04) makes the card's header
     // describe a strict subset of its own list.
     const actionablePairs = await many(
-      `SELECT user_action, remediation_state, COUNT(*) AS n
-         FROM (
-           SELECT f.user_action, f.remediation_state
-             FROM audit_findings f
-             JOIN audit_runs r ON r.id = f.run_id
-            WHERE ${CREDIT_BRANCH_SHADOW_WHERE}
-           UNION ALL
-           SELECT f.user_action, f.remediation_state
-             FROM audit_findings f
-             JOIN audit_runs r ON r.id = f.run_id
-            WHERE ${CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE}
-         ) credit_population
-        GROUP BY user_action, remediation_state`,
+      `SELECT user_action, remediation_state, COUNT(*) AS n FROM (
+         SELECT f.user_action, f.remediation_state FROM audit_findings f
+           JOIN audit_runs r ON r.id = f.run_id WHERE ${CREDIT_BRANCH_SHADOW_WHERE}
+         UNION ALL
+         SELECT f.user_action, f.remediation_state FROM audit_findings f
+           JOIN audit_runs r ON r.id = f.run_id WHERE ${CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE}
+       ) credit_population
+       GROUP BY user_action, remediation_state`,
       [repoId]
     );
     // `n` here is the DENOMINATOR of every per-run rate the final-review
