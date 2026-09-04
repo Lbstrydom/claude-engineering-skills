@@ -12,7 +12,7 @@
   byte-for-byte. Three gates added to the pre-push chain; the debt ledger's
   false green is closed in seven scripts through one oracle.
 - **Date**: 2026-09-04
-- **Status**: Approved — GPT plan-audit 4 rounds (27/27 accepted), Gemini final gate APPROVE on round 4 (coherence Strong, 0 over-engineering flags). See §10.
+- **Gate**: GPT plan-audit 4 rounds (27/27 accepted), Gemini final gate APPROVE on round 4 (coherence Strong, 0 over-engineering flags). See §10.
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
 - **Base commit**: all `file:line` citations below are pinned to `88025501`.

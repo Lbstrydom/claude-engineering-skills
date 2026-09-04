@@ -82,6 +82,7 @@ source comments that no docs linter sees — stays valid.
 | [Auditor Controls Execution Wiring](./auditor-controls-execution-wiring.md) | `Complete` | implemented and shipped… |
 | [Azure Embedding-Deployment Discovery + Provenance Truth](./azure-embed-deployment-discovery.md) | `Complete` | (2026-07-17) — all 3 clusters implemented + audited; consolidated Gemini gate APPROVE (0 findings);… |
 | [Azure AI Foundry Work Profile](./azure-work-profile.md) | `Complete` |  |
+| [Backlog and Drift Reduction — make the private ledger durable, the instruments honest, and the queues owned](./backlog-and-drift-reduction.md) | `Complete` | all 14 phases implemented 2026-09-04 in one session. The headline outcome is not a gate: 37 tech-debt… |
 | [/brainstorm Skill + Architecture-Map Discoverability + VS Code Mermaid](./brainstorm-and-arch-discoverability.md) | `Complete` | shipped — `/brainstorm` skill + `scripts/brainstorm-round.mjs` + 7 modules under `scripts/lib/brainstorm/`… |
 | [`/brainstorm --with-arch` — codebase architecture context for external LLMs](./brainstorm-arch-context.md) | `Complete` |  |
 | [Brainstorm-skill upgrades + Quick-fix detection (v1)](./brainstorm-quickfix-v1.md) | `Complete` | shipped — both halves: `/brainstorm` enhancements (see brainstorm-and-arch-discoverability) + quick-fix… |
