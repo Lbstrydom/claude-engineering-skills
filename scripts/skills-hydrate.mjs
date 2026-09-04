@@ -36,8 +36,18 @@
  * It copies, so it goes stale: re-run it in each worktree after a re-sync.
  *
  * Usage:
- *   node scripts/skills-hydrate.mjs           # hydrate (or explain why not)
- *   node scripts/skills-hydrate.mjs --json    # machine-readable result
+ *   node scripts/skills-hydrate.mjs                    # hydrate (or explain why not)
+ *   node scripts/skills-hydrate.mjs --from <repo-path>  # hydrate from a named checkout
+ *   node scripts/skills-hydrate.mjs --json             # machine-readable result
+ *
+ * `--from` (or `SKILLS_SOURCE`) exists because the git-derived source is
+ * undefined in a plain clone: `actions/checkout` produces a checkout whose git
+ * common dir is itself, so it resolves as its own main checkout and there is
+ * nowhere to copy from. See the `no-tooling-here` branch below — in CI the
+ * right answer is usually to INSTALL the bundle rather than to hydrate, and the
+ * message names that command in the reader's OWN package-manager dialect
+ * (`displayDlx`), never a hardcoded `npx` a corepack-managed pnpm image may
+ * not have.
  *
  * Exit codes:
  *   0  hydrated, or a legitimate no-op (main checkout / source repo)
@@ -51,12 +61,21 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { detectPackageManager, displayDlx } from './lib/package-manager.mjs';
 
-const KNOWN_FLAGS = ['--json'];
+const KNOWN_FLAGS = ['--json', '--from'];
+/**
+ * Env fallback for `--from`, so a CI step can set the source once rather than
+ * threading a flag through every invocation.
+ */
+export const SOURCE_ENV_VAR = 'SKILLS_SOURCE';
 /** The one directory this hydrates — the synced consumer tooling tree. */
 export const SYNCED_TOOLING_DIR = 'scripts/.claude-skills';
 /** This bundle's own package name; here the tooling is tracked, not synced. */
 const SOURCE_REPO_NAME = 'claude-engineering-skills';
+/** The argv `displayDlx` renders, and the npm-dialect fallback for a pure caller. */
+export const INSTALL_ARGV = Object.freeze(['github:Lbstrydom/claude-engineering-skills', '.']);
+export const DEFAULT_INSTALL_COMMAND = `npx ${INSTALL_ARGV.join(' ')}`;
 
 /**
  * Resolve the main working tree from the git COMMON dir. In a linked worktree
@@ -94,7 +113,15 @@ export function resolveMainWorktree(run) {
  * @param {boolean} facts.sourceExists - does the tooling tree exist in main?
  * @returns {{action:'copy'|'noop'|'fail', code:string, message:string, from?:string, to?:string}}
  */
-export function planHydration({ cwd, mainWorktree, packageName, sourceExists }) {
+export function planHydration({
+  cwd, mainWorktree, packageName, sourceExists, explicitSource = null,
+  installCommand = null,
+}) {
+  // The remedy must be spelled in the reader's OWN package manager. It was
+  // hardcoded to `npx`, and the consumer it was written for runs pnpm (audit
+  // R1 H3, 2026-09-04). Injected rather than probed so this function stays
+  // pure and every branch remains testable without a real repo.
+  const install = installCommand ?? DEFAULT_INSTALL_COMMAND;
   if (packageName === SOURCE_REPO_NAME) {
     return {
       action: 'noop',
@@ -102,16 +129,42 @@ export function planHydration({ cwd, mainWorktree, packageName, sourceExists }) 
       message: `[hydrate] ${SOURCE_REPO_NAME}: tooling is tracked at scripts/ — nothing to hydrate`,
     };
   }
-  if (!mainWorktree) {
+  // An explicit source overrides git entirely — it is the answer to "hydrate
+  // somewhere git cannot infer a source from", which is every plain clone.
+  const base = explicitSource ?? mainWorktree;
+  if (!base) {
     return {
       action: 'fail',
       code: 'no-git',
-      message: '[hydrate] could not resolve the main worktree (is this a git repo?)',
+      message: `[hydrate] could not resolve the main worktree (is this a git repo?) — pass --from <path> or set ${SOURCE_ENV_VAR} to name the tooling source explicitly`,
     };
   }
   const dest = path.resolve(cwd, SYNCED_TOOLING_DIR);
-  const src = path.resolve(mainWorktree, SYNCED_TOOLING_DIR);
+  // `--from` names the REPO holding the tooling, the same shape as the resolved
+  // main worktree, so the tooling subdirectory is appended either way.
+  const src = path.resolve(base, SYNCED_TOOLING_DIR);
   if (src === dest) {
+    // A plain clone — which is exactly what `actions/checkout` produces — has
+    // its git common dir INSIDE itself, so it resolves as its own main
+    // checkout. When the tooling is present that is a true no-op. When it is
+    // absent, "nothing to do" is a false green: the caller asked to be
+    // hydrated, is not, and the next `arch:*` step dies on a bare
+    // MODULE_NOT_FOUND with nothing connecting it to this command. Reported by
+    // a consumer 2026-09-04, who could only make CI run by welding the job to a
+    // runner-local checkout.
+    if (!sourceExists) {
+      return {
+        action: 'fail',
+        code: 'no-tooling-here',
+        message: `[hydrate] nothing to hydrate FROM: ${src} does not exist, and this tree is its own main checkout `
+          + '(a plain clone, e.g. actions/checkout). `skills:hydrate` copies tooling BETWEEN worktrees of one '
+          + 'checkout; it cannot fetch it. In CI, install the bundle instead: '
+          + `\`${install}\` — or point this at a checkout that has it with `
+          + `--from <path> / ${SOURCE_ENV_VAR}.`,
+        from: src,
+        to: dest,
+      };
+    }
     return {
       action: 'noop',
       code: 'main-checkout',
@@ -128,6 +181,46 @@ export function planHydration({ cwd, mainWorktree, packageName, sourceExists }) 
     };
   }
   return { action: 'copy', code: 'hydrated', message: `[hydrate] copied ${src}`, from: src, to: dest };
+}
+
+/**
+ * The explicitly-named tooling source, if any. Flag beats env; both are
+ * resolved to an absolute path so the plan's `from`/`to` are comparable.
+ *
+ * @param {string[]} argv
+ * @param {Record<string, string|undefined>} env
+ * @param {string} cwd
+ * @returns {string|null}
+ */
+export function resolveExplicitSource(argv, env, cwd) {
+  // Stop at the POSIX `--` terminator (audit R5 M6): everything after it is
+  // positional by convention, and a hand-rolled scanner that keeps reading
+  // finds a `--from` the shell's own conventions say is not a flag.
+  const end = argv.indexOf('--');
+  const flags = end === -1 ? argv : argv.slice(0, end);
+
+  const eq = flags.find((a) => typeof a === 'string' && a.startsWith('--from='));
+  if (eq) {
+    const v = eq.slice('--from='.length);
+    // A PRESENT but empty/invalid value is an error, not an absence (audit
+    // R5 M2). Falling back to SKILLS_SOURCE here would hydrate from a
+    // different place than the operator just named — silently doing something
+    // other than what was asked, which is the same reason `--out` on
+    // arch:drift refuses a flag-shaped value rather than consuming it.
+    if (!v) throw new ArgvError('skills-hydrate: --from requires a non-empty path value');
+    return path.resolve(cwd, v);
+  }
+  const i = flags.indexOf('--from');
+  if (i !== -1) {
+    const value = flags[i + 1];
+    if (typeof value !== 'string' || value.length === 0 || value.startsWith('--')) {
+      throw new ArgvError('skills-hydrate: --from requires a non-empty path value '
+        + `(got ${JSON.stringify(value ?? null)})`);
+    }
+    return path.resolve(cwd, value);
+  }
+  const fromEnv = env?.[SOURCE_ENV_VAR];
+  return fromEnv ? path.resolve(cwd, fromEnv) : null;
 }
 
 function readPackageName(cwd) {
@@ -149,14 +242,27 @@ function main() {
   const asJson = process.argv.includes('--json');
   const cwd = process.cwd();
   const run = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf8', cwd });
+  let explicitSource;
+  try {
+    explicitSource = resolveExplicitSource(process.argv, process.env, cwd);
+  } catch (err) {
+    if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); process.exit(2); }
+    throw err;
+  }
   const mainWorktree = resolveMainWorktree(run);
-  const src = mainWorktree ? path.resolve(mainWorktree, SYNCED_TOOLING_DIR) : null;
+  const base = explicitSource ?? mainWorktree;
+  const src = base ? path.resolve(base, SYNCED_TOOLING_DIR) : null;
 
   const plan = planHydration({
     cwd,
     mainWorktree,
     packageName: readPackageName(cwd),
     sourceExists: src ? fs.existsSync(src) : false,
+    explicitSource,
+    // Resolved HERE, not inside the pure planner: detection reads the
+    // filesystem, and a two-lockfile repo is deliberately left ambiguous by
+    // `detectPackageManager` rather than guessed.
+    installCommand: displayDlx(detectPackageManager(cwd), [...INSTALL_ARGV]),
   });
 
   if (plan.action === 'copy') {

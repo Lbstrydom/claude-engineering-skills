@@ -32,8 +32,21 @@ import { symbolIndexConfig } from '../lib/config.mjs';
 import { renderDriftIssue } from '../lib/arch-render.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 import { atomicWriteFileSync } from '../lib/file-io.mjs';
+import { assertKnownFlags, ArgvError } from '../lib/cli-io.mjs';
+
+/**
+ * Every flag this CLI accepts. Enforced rather than documented: `arch:drift`'s
+ * exit code is read by CI as `0 green / 1 drift / 2 cannot verify`, and the
+ * green branch auto-CLOSES the sticky drift issue — so an ignored `--jsno`
+ * running the command with unintended defaults is a wrong verdict acted on,
+ * not a cosmetic slip. Its sibling `duplicates.mjs` grew the same guard in the
+ * same change (audit R2 H2); leaving one of two sibling CLIs strict is the
+ * inconsistency the finding names.
+ */
+const KNOWN_FLAGS = ['--out', '--json', '--selfcheck-relocation'];
 
 function parseArgs(argv) {
+  assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'arch:drift' });
   const args = { out: null, json: false };
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--out') {
@@ -43,7 +56,12 @@ function parseArgs(argv) {
       // refresh-args.mjs's `--since-commit` guard.
       const value = argv[i + 1];
       if (!value || value.startsWith('--')) {
-        throw new Error(`--out requires a non-empty path value (got ${JSON.stringify(value ?? null)})`);
+        // ArgvError, not a bare Error (audit R4 M1): main() maps ArgvError to a
+        // one-line usage diagnostic, and everything else to the fatal handler's
+        // stack trace. Both already exit 2, so this is not a correctness fix —
+        // it is the difference between telling an operator what they typed
+        // wrong and showing them a stack.
+        throw new ArgvError(`arch:drift: --out requires a non-empty path value (got ${JSON.stringify(value ?? null)})`);
       }
       args.out = value;
       i++;
@@ -109,16 +127,19 @@ function classify(driftScore, threshold) {
 // renderDriftIssue() so all three human surfaces (architecture-map.md,
 // drift sticky issue, neighbourhood callout) share one renderer. Local
 // renderMarkdown() removed.
-function renderMarkdownViaShared(drift, threshold, status, identity, clusters) {
+function renderMarkdownViaShared(drift, threshold, status, identity, clusters, commitSha) {
   const { markdown } = renderDriftIssue({
     drift,
     threshold,
     status,
     generatedAt: drift.generated_at,
-    // No `commitSha` — renderDriftIssue already renders `refreshId`
-    // separately (`Commit: ${commitSha||'unknown'}   refresh_id:
-    // ${refreshId||'unknown'}`); passing the refresh UUID as `commitSha`
-    // too mislabeled it as a git commit (round-1 H5).
+    // The SNAPSHOT's commit, read from its `refresh_runs` row — never the
+    // refresh UUID (passing that mislabeled a UUID as a git commit, round-1
+    // H5) and never the local HEAD, which can have moved since the snapshot
+    // was taken. `null` still renders `unknown`, which now means "the snapshot
+    // carries no commit" rather than "nobody looked" (consumer report,
+    // 2026-09-04).
+    commitSha,
     refreshId: drift.refresh_id,
     repoName: identity.name,
     clusters,
@@ -176,7 +197,15 @@ function resolveStoreGateExit({ repo, snap }) {
 async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   assertRepoRoot(import.meta.url);
-  const args = parseArgs(process.argv);
+  let args;
+  try {
+    args = parseArgs(process.argv);
+  } catch (err) {
+    // Exit 2 ("cannot verify"), never 1 ("drift triggered") — a usage error is
+    // not a drift verdict, and CI's green branch must not see either.
+    if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); process.exit(2); }
+    throw err;
+  }
   await initLearningStore();
   // Deliberately still 0: cloud-disabled is an explicit local opt-out (no
   // AUDIT_DB_URL configured at all), not a failed verification. Both CI paths
@@ -301,7 +330,7 @@ async function main() {
     process.stderr.write(`arch:drift: pragma reconciliation skipped: ${err.message}\n`);
   }
 
-  const md = renderMarkdownViaShared(drift, threshold, status, identity, clusters) + excludedNote + renderStalePragmaSection(stalePragmas) + ambiguousUnresolvedSection;
+  const md = renderMarkdownViaShared(drift, threshold, status, identity, clusters, snap.commitSha ?? null) + excludedNote + renderStalePragmaSection(stalePragmas) + ambiguousUnresolvedSection;
 
   if (args.json) process.stdout.write(JSON.stringify({ drift, threshold, status, stalePragmas }, null, 2) + '\n');
   else process.stdout.write(md);

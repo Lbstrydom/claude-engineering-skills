@@ -59,6 +59,27 @@
 > the graph DROPPED; absent reads `unknown`, never clean. `npm run arch:coverage-gate`
 > owns the exit code — in `check`, NOT `dashboard:setup`. [Design](docs/plans/observed-graph-coverage-honesty.md)
 >
+> **THE CORPUS IS THE REPO, NOT THE DISK — and dep-cruiser's extension list is a
+> QUESTION, not a constant.** Two ways the index measured the wrong thing, both
+> measured in a consumer 2026-09-04 and both invisible here (this repo vendors
+> nothing and is all `.mjs`). *(1)* The walker enumerated the filesystem against a
+> fixed `SKIP_DIRS` list and never asked git: **3,963 of 5,158 walked files (76.8%)
+> were gitignored-and-untracked**, the largest contributor being
+> `scripts/.claude-skills/` — this bundle — indexed as the consumer's code and then
+> counted against them by the duplication score, leaving GREEN unreachable.
+> `enumerateFilesWithOwnership` now filters through the one oracle
+> ([disowned-paths.mjs](scripts/lib/disowned-paths.mjs)) — **ignored AND untracked**,
+> asked of the CANDIDATES, fail-open and loud — and edges touching a disowned path
+> get their own bucket. *(2)* `CRUISABLE_EXTENSIONS` **claimed** `.ts`/`.vue` were
+> parseable; dep-cruiser parses `.ts` only when it can resolve `typescript`, which
+> pnpm's strict layout does not hoist. **522 of 675 eligible files were unreadable**
+> while the graph reported `outcome: 'ok'` and `arch:drift` printed
+> `Layering violations: 0` — a sentence that reads as *no violations* and means
+> *nothing measured*. `assessParserAvailability` asks dep-cruiser's own
+> `allExtensions` instead, and `extraction.parser` names the gap with its remedy.
+> **Generalise both: before a walk or an allowlist decides what a repo contains,
+> ask what already knows — git for ownership, the parser for its own capability.**
+>
 > **RETAGGING A MODULE CHANGES EVERY EDGE *INTO* IT — re-baseline BOTH
 > directions.** Moving a file to another domain changes the `from` domain of
 > everything it imports *and* the `to` domain of everything that imports it. The
@@ -231,6 +252,23 @@ skills:check`/`gates:check` validate it; details: `docs/reference/gate-honesty.m
 Each skill is a sibling — they share env vars and the cloud audit store but have
 distinct scopes.
 
+> **AN UNMEASURED ROUND MUST NOT WEAR A CLEAN ROUND'S CLOTHES.** A consumer's
+> round lost every pass to Azure 429s and timeouts and printed
+> `Verdict: INCOMPLETE | H:0 M:0 L:0`, exit 0 (2026-09-04) — one word from a
+> clean audit, and `audit-loop.mjs`'s convergence test reads only those three
+> numbers, so `/cycle` converges and ships. Three separable fixes, all now
+> pinned: `formatAuditSummaryLine` refuses the counts-first shape for
+> INCOMPLETE and says *how many of how many passes produced output*;
+> `openai-audit.mjs` sets **exit 3** (not 1, which already means "the CLI
+> errored"); and `countFindings` folds INCOMPLETE into its existing `failed`
+> flag, so ONE predicate still answers "is this round evidence". Separately,
+> **429 is budgeted apart from a generic transient** — one retry at an 8s
+> ceiling cannot succeed against a provider saying *high demand* — via
+> `retryAttemptsFor`/`nextRetryDelayMs` (exponential + FULL jitter, `Retry-After`
+> wins, clamped). And `describeLostWrites` names the writer behind a standing
+> `N lost`, flagging a `42P10`-shaped error as **store schema drift** with
+> `setup-postgres.mjs --check-drift`.
+
 **Four imperatives the roster is too late to tell you.** **(1)** A new mechanical
 wave must be declared in `MECHANICAL_WAVES` ([audit-shadow.mjs](scripts/lib/audit-shadow.mjs)),
 or `PASS_PROMPTS` silently enrols it in the model-A/B/C shadow's **paid** comparison.
@@ -293,6 +331,32 @@ consumer instead of the named one. Verified 2026-07-20.)
 > file — claims about another repo that nothing can make true (`--if-present`
 > **exits 0 having run nothing**). **Name synced tooling by path**:
 > `node scripts/<name>.mjs`. Gate: `npm run skills:consumer-refs:gate`, a ratchet.
+
+> **"Is this file mine to fix?" must be answerable OFFLINE.** Three ownership
+> signals, each with a hole: git-ignore state misses `.claude/hooks/**` and
+> `.claude/skills/**` (consumers COMMIT them); the content banner misses both too
+> (a `SKILL.md` cannot carry one — frontmatter must be the first bytes); and
+> `scripts/.sync-manifest.json`, which covers everything, is gitignored on both
+> sides and therefore absent from CI. Measured: a consumer's duplication gate read
+> **32 violations / 1 mixed-owner without the manifest, 31 / 0 with it** — the
+> extra one being this bundle's own `readStdin` across three hooks, reported to
+> them as their code to fix. Every sync now writes the **committed**
+> `scripts/.sync-owned.json` — path SET only, no clock or sha, so it is a
+> category-B artifact — and `createUpstreamOwnershipOracle` unions it with
+> git-ignore state as the one predicate. Compare **case-insensitively**: a
+> ledger citing `skill.md` against a manifest spelling `SKILL.md` misfiled six
+> upstream-owned entries as the consumer's own work. `debt:review` now partitions
+> on it — upstream-owned entries are LISTED but never leverage-ranked, because the
+> only action the CLI offers (`debt-resolve.mjs`) *deletes* the record of a
+> still-open defect.
+>
+> **`skills:hydrate` cannot run in CI, by construction — and now says so.** In a
+> plain clone (what `actions/checkout` produces) the git common dir IS the clone,
+> so it resolved as its own main checkout and returned "nothing to do" with exit 0
+> having copied nothing; the next `arch:*` step died on a bare MODULE_NOT_FOUND.
+> It now FAILS there, naming the real remedy —
+> `npx github:Lbstrydom/claude-engineering-skills .` — and accepts
+> `--from <path>` / `SKILLS_SOURCE` for a runner-local checkout.
 
 > **Upstream bug, but you're blocked?** Patching upstream-owned *source* stays
 > forbidden; a **runtime/env/DB** unblock is OK if you report it, label it

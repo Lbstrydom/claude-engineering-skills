@@ -33,6 +33,7 @@ import { runPersistence } from './run-persistence.mjs';
 import { buildExecutionMeta } from '../schemas.mjs';
 import { loadOutcomes } from '../findings.mjs';
 import { spillSummary } from '../durable-write.mjs';
+import { describeLostWrites } from '../robustness.mjs';
 // Documented allow-list exception (final-review finding, union-diff gate):
 // the plan's literal text says the coordinator "may import finalization-
 // contract.mjs and the 3 stage modules" — nothing else. Needed here because
@@ -84,6 +85,13 @@ export async function finalizeRun(data, writeOutcomes) {
     overall_reasoning: summaryLines.join('\n'),
     _pass_timings: passTimings,
     _failed_passes: assembled.failedPasses.length > 0 ? assembled.failedPasses : undefined,
+    // The DENOMINATOR for `_failed_passes`. Without it a reader can say how
+    // many passes failed but not whether ANY succeeded, and "2 passes failed"
+    // reads very differently from "2 of 2 passes failed". Always present (not
+    // conditional like `_failed_passes`): a count of what was attempted is a
+    // measurement even when nothing went wrong, and its absence is exactly what
+    // let `Verdict: INCOMPLETE | H:0 M:0 L:0` render as a clean audit.
+    _passes_total: passRegistry.length,
     _usage: totalUsage,
     _cacheMetrics: cacheMetrics,
     // Typed shape: ExecutionMetaSchema (schemas.mjs), VALIDATED by the builder
@@ -183,6 +191,12 @@ export async function finalizeRun(data, writeOutcomes) {
       `  [durable-write] ${writeOutcomes.written} written, ${writeOutcomes.spilled} spilled, ${writeOutcomes.lost} lost `
       + `— queue: ${summary.state === 'ok' ? `${summary.spilled} pending (oldest ${age}), ${summary.lost} unreplayable` : summary.reason}\n`,
     );
+    // Name the loser and the reason. A standing `1 lost` on every run with no
+    // writer named is indistinguishable from noise, which is how one consumer
+    // ran four audits shedding the same write each time.
+    for (const line of describeLostWrites(writeOutcomes.byWriter)) {
+      process.stderr.write(`${line}\n`);
+    }
   }
 
   return validateFinalizationResult({ mergedResult });

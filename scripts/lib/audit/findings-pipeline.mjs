@@ -367,6 +367,48 @@ export function computeAuditVerdict(findings, { incomplete = false } = {}) {
   return verdict;
 }
 
+/**
+ * Render the one-line audit summary so an INCOMPLETE round can never be read as
+ * a clean one.
+ *
+ * The line it replaces was `Verdict: INCOMPLETE | H:0 M:0 L:0` — byte-for-byte
+ * what a genuinely clean audit prints apart from one word, emitted by a
+ * consumer's round in which **every** pass 429'd under provider load
+ * (2026-09-04). The three zeros there are the ABSENCE of a measurement, and an
+ * agent chaining rounds reads them as convergence.
+ *
+ * So an incomplete run does not print counts as its headline at all: it states
+ * how many passes produced output and says outright that nothing was measured.
+ * Counts still follow, after the sentence that tells you not to trust them.
+ *
+ * Pure and exported so the wording is testable without provoking a real
+ * provider failure.
+ *
+ * @param {{verdict: string, high: number, medium: number, low: number,
+ *          failedPasses?: string[], passesTotal?: number|null,
+ *          latencyMs?: number}} input
+ * @returns {string}
+ */
+export function formatAuditSummaryLine({
+  verdict, high, medium, low, failedPasses = [], passesTotal = null, latencyMs = 0,
+}) {
+  const secs = `${(Number(latencyMs || 0) / 1000).toFixed(0)}s`;
+  if (verdict !== 'INCOMPLETE') {
+    return `Verdict: ${verdict} | H:${high} M:${medium} L:${low} | ${secs}`;
+  }
+  const failed = failedPasses.length;
+  // `passesTotal` is absent on results persisted before the field existed. Say
+  // "unknown", never guess a denominator — a fabricated one is how the
+  // original line went wrong.
+  const produced = Number.isFinite(passesTotal)
+    ? `${passesTotal - failed} of ${passesTotal} pass(es) produced output`
+    : `${failed} pass(es) failed; total attempted unknown`;
+  const measuredNothing = Number.isFinite(passesTotal) && passesTotal > 0 && failed >= passesTotal;
+  return `Verdict: INCOMPLETE — ${produced}; this round ${measuredNothing
+    ? 'measured NOTHING' : 'did not measure the full change'
+  }. The counts below are not evidence of cleanliness: H:${high} M:${medium} L:${low} | ${secs}`;
+}
+
 export function processFindings(rawFindings, ctx = {}) {
   if (!Array.isArray(rawFindings) || rawFindings.length === 0) {
     return { survivors: [], suppressed: [] };

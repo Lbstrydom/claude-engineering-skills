@@ -31,7 +31,8 @@
 import { zodTextFormat, zodResponseFormat } from 'openai/helpers/zod';
 import {
   LlmError, classifyLlmError, tryRepairJson,
-  RETRY_MAX_ATTEMPTS, RETRY_BASE_DELAY_MS, RETRY_429_MAX_DELAY_MS,
+  RETRY_MAX_ATTEMPTS, RETRY_429_MAX_ATTEMPTS,
+  retryAttemptsFor, retryAfterMs, nextRetryDelayMs,
 } from '../robustness.mjs';
 import { buildAuditPassPrompt } from './prompt-builder.mjs';
 import { readProjectContextForPass, extractPlanForPass } from '../context.mjs';
@@ -376,7 +377,27 @@ export async function _callGPTOnce(openai, opts) {
     // every timed-out pass re-dispatch a full attempt, which is a cost decision
     // that deserves its own change.
     if (isAbort) throw new LlmError(msg, { category: 'timeout', retryable: false });
-    throw new Error(msg);
+    // CARRY THE HTTP FACTS FORWARD (Gemini final gate, 2026-09-04). This threw
+    // a bare `new Error(msg)`, which destroyed `.status`, `.code` and
+    // `.headers` on the way out — the exact same shape as the abort bug two
+    // lines above, which this block's own comment describes. Measured:
+    //
+    //   SDK error   → classifyLlmError → {retryable:true,  category:'http-429'}
+    //   rewrapped   → classifyLlmError → {retryable:false, category:'permanent'}
+    //
+    // So the `http-429` branch was UNREACHABLE from this call path, and every
+    // 429 was treated as permanent and never retried. That is why a consumer's
+    // whole round died to `429 ... high demand` with no retry line in the log
+    // at all — and it means the enlarged 429 budget and `Retry-After` handling
+    // added in this same change were inert until now. AGENTS.md states the rule
+    // this violated: "When rewrapping an LLM error, surface `err.status` + the
+    // real provider `error.message`".
+    const wrapped = new Error(msg);
+    if (err.status !== undefined) wrapped.status = err.status;
+    if (err.code !== undefined) wrapped.code = err.code;
+    if (err.headers !== undefined) wrapped.headers = err.headers;
+    if (err.cause !== undefined) wrapped.cause = err.cause;
+    throw wrapped;
   }
 }
 
@@ -388,9 +409,12 @@ export async function callGPT(openai, opts) {
   let lastErr;
   const startMs = Date.now();
   const accumulatedUsage = { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0 };
-  const maxRetries = opts.maxRetries ?? RETRY_MAX_ATTEMPTS;
+  // The loop CEILING, not the policy: how many retries an attempt is actually
+  // allowed depends on the category of the error it just hit, which is unknown
+  // until it happens. An explicit `opts.maxRetries` overrides both.
+  const ceiling = opts.maxRetries ?? Math.max(RETRY_MAX_ATTEMPTS, RETRY_429_MAX_ATTEMPTS);
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  for (let attempt = 0; attempt <= ceiling; attempt++) {
     try {
       const result = await _callGPTOnce(openai, opts);
       if (attempt > 0) {
@@ -412,11 +436,16 @@ export async function callGPT(openai, opts) {
         accumulatedUsage.reasoning_tokens += err.llmUsage.reasoning_tokens ?? 0;
       }
       const { retryable, category } = classifyLlmError(err);
-      if (attempt < maxRetries && retryable) {
-        const delayMs = category === 'http-429'
-          ? Math.min(RETRY_429_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * (attempt + 1) + Math.random() * 1000)
-          : RETRY_BASE_DELAY_MS * (attempt + 1);
-        process.stderr.write(`  [${opts.passName ?? 'call'}] Retry ${attempt + 1}/${RETRY_MAX_ATTEMPTS} in ${(delayMs / 1000).toFixed(1)}s [${category}]\n`);
+      const allowed = opts.maxRetries ?? retryAttemptsFor(category);
+      if (attempt < allowed && retryable) {
+        const delayMs = nextRetryDelayMs({
+          category, attempt, retryAfter: retryAfterMs(err),
+        });
+        // `allowed`, not the constant: the line used to print the generic
+        // budget regardless of the policy actually in force, so a run that
+        // was about to give up after one try reported "Retry 1/1" while a
+        // caller-overridden budget reported someone else's number.
+        process.stderr.write(`  [${opts.passName ?? 'call'}] Retry ${attempt + 1}/${allowed} in ${(delayMs / 1000).toFixed(1)}s [${category}]\n`);
         await new Promise(r => setTimeout(r, delayMs));
         continue;
       }

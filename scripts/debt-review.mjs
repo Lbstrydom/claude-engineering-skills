@@ -36,7 +36,9 @@ import { DEFAULT_DEBT_EVENTS_PATH } from './lib/debt-events.mjs';
 import {
   rankRefactorsByLeverage, findStaleEntries, oldestEntryDays,
   buildLocalClusters, findBudgetViolations, EFFORT_WEIGHTS,
+  partitionByOwnership,
 } from './lib/debt-review-helpers.mjs';
+import { createUpstreamOwnershipOracle } from './lib/upstream-ownership.mjs';
 import { openaiConfig } from './lib/config.mjs';
 
 // ── CLI Arg Parsing ─────────────────────────────────────────────────────────
@@ -81,7 +83,7 @@ Exit codes: 0=ok, 1=op-error, 3=sensitivity-gate (blocked)
 
 // ── Markdown Rendering ──────────────────────────────────────────────────────
 
-function renderMarkdown({ ledger, review, violations, mode }) {
+function renderMarkdown({ ledger, review, violations, mode, upstreamOwned = [] }) {
   const lines = [];
   const now = new Date().toISOString().slice(0, 10);
   lines.push(`# Debt Review — ${now}`);
@@ -144,6 +146,24 @@ function renderMarkdown({ ledger, review, violations, mode }) {
     lines.push('');
   }
 
+  if (upstreamOwned.length > 0) {
+    lines.push('');
+    lines.push('## Upstream-owned (not refactorable here)');
+    lines.push('');
+    lines.push('Every file these entries cite is maintained upstream, so they are excluded from the');
+    lines.push('leverage ranking above — nobody in this repo can refactor them. They are still open');
+    lines.push('debt: **report them, do not resolve them.** `debt-resolve.mjs` removes the entry from');
+    lines.push('the committed ledger, which for a still-open upstream defect deletes the only record');
+    lines.push('of it. File instead:');
+    lines.push('`node scripts/.claude-skills/cross-skill.mjs upstream report --affected-path <path>`.');
+    lines.push('');
+    for (const e of upstreamOwned) {
+      lines.push(`- \`${e.topicId}\` [${e.severity}] ${(e.detailSnapshot ?? '').slice(0, 120)}`);
+      lines.push(`    ${(e.affectedFiles ?? []).join(', ')}`);
+    }
+  }
+
+  lines.push('');
   lines.push('## Reasoning');
   lines.push(review.reasoning);
 
@@ -374,12 +394,39 @@ async function main() {
   const rawLedger = JSON.parse(fs.readFileSync(path.resolve(opts.ledgerPath), 'utf-8'));
   const violations = findBudgetViolations(ledger.entries, rawLedger.budgets || {});
 
+  // Ownership partition — entries citing only files this repo cannot edit are
+  // real debt, but they are not refactor candidates: nobody here can act on
+  // them, and the only action the CLI offers (`debt-resolve.mjs`) DELETES the
+  // entry, destroying the record of a still-open defect. They are listed
+  // separately, with the upstream-report command, instead. Asked of the
+  // CANDIDATES (the cited files), never of the repo.
+  const citedFiles = ledger.entries.flatMap(e => e.affectedFiles ?? []);
+  const ownership = createUpstreamOwnershipOracle(process.cwd(), citedFiles);
+  const { actionable, upstreamOwned } = partitionByOwnership(ledger.entries, ownership.isUpstreamOwned);
+  if (ownership.degraded) {
+    process.stderr.write('  [debt-review] WARNING: could not determine path ownership (no git, no '
+      + 'scripts/.sync-owned.json) — every entry is ranked as this repo\'s, which may include '
+      + 'upstream-owned files nothing here can fix.\n');
+  } else if (ownership.partial) {
+    // One source answered and the other's surfaces went unexamined. Saying
+    // nothing here would let a confident-looking ranking stand over paths
+    // nothing classified — the failure this whole partition exists to remove.
+    process.stderr.write(`  [debt-review] WARNING: ownership determined from ${ownership.sources.join(' + ')} `
+      + `only — NOT examined: ${ownership.blindTo.join(', ')}. Entries citing those paths are ranked as `
+      + 'this repo\'s without evidence. Commit scripts/.sync-owned.json (written by every sync) to close it.\n');
+  }
+  if (upstreamOwned.length > 0) {
+    process.stderr.write(`  [debt-review] ${upstreamOwned.length} of ${ledger.entries.length} entr`
+      + `${upstreamOwned.length === 1 ? 'y cites' : 'ies cite'} only upstream-owned files `
+      + `(via ${ownership.sources.join(' + ')}) — listed, but excluded from leverage ranking\n`);
+  }
+
   let review;
   let mode;
   if (opts.localOnly) {
     mode = 'local-only';
     process.stderr.write('  [debt-review] local-only mode (no LLM)\n');
-    review = runLocalClustering(ledger.entries, opts.ttlDays);
+    review = runLocalClustering(actionable, opts.ttlDays);
   } else {
     mode = opts.includeSensitive ? 'llm (include-sensitive)' : 'llm';
     if (!process.env.OPENAI_API_KEY) {
@@ -387,11 +434,11 @@ async function main() {
       process.exit(1);
     }
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    review = await runLLMClustering(openai, ledger.entries, opts.ttlDays, opts.includeSensitive);
+    review = await runLLMClustering(openai, actionable, opts.ttlDays, opts.includeSensitive);
   }
 
   // Render markdown
-  const md = renderMarkdown({ ledger, review, violations, mode });
+  const md = renderMarkdown({ ledger, review, violations, mode, upstreamOwned });
   if (opts.outFile) {
     fs.writeFileSync(opts.outFile, md, 'utf-8');
     process.stderr.write(`  [debt-review] wrote ${md.length} chars to ${opts.outFile}\n`);

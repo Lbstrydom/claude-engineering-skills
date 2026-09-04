@@ -22,6 +22,7 @@ import path from 'node:path';
 import { buildAuditTranscript, readRoundResult } from './lib/audit/transcript.mjs';
 import { isClaudeAvailable } from './lib/anthropic-client.mjs';
 import { archiveTranscript, formatArchiveOutcome, isArchiveFailure } from './lib/audit/transcript-archive.mjs';
+import { pathToFileURL } from 'node:url';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
 
@@ -77,7 +78,16 @@ function countFindings(results) {
   const high = findings.filter(f => f.severity === 'HIGH').length;
   const medium = findings.filter(f => f.severity === 'MEDIUM').length;
   const low = findings.filter(f => f.severity === 'LOW').length;
-  return { high, medium, low, total: findings.length, failed: false };
+  // An INCOMPLETE verdict means the round did not measure the code — its
+  // H:0 M:0 L:0 is the ABSENCE of a measurement, not a clean result, and
+  // `isConverged` below reads exactly those three numbers and nothing else.
+  // A consumer hit this for real (2026-09-04): every pass in a round failed
+  // with 429s under provider load, the round printed `H:0 M:0 L:0`, and
+  // nothing between here and "Converged" could tell that apart from a clean
+  // audit. Folding it into the EXISTING `failed` flag rather than adding a
+  // second guard keeps ONE predicate for "this round is not evidence".
+  const failed = results.verdict === 'INCOMPLETE';
+  return { high, medium, low, total: findings.length, failed };
 }
 
 function isConverged(counts) {
@@ -314,6 +324,15 @@ async function main() {
 
     // Show results card
     banner(`ROUND ${round} RESULTS — ${results.verdict || 'UNKNOWN'}\n  H:${counts.high} M:${counts.medium} L:${counts.low} | Total: ${counts.total}`);
+
+    if (counts.failed) {
+      const failedList = results._failed_passes || [];
+      const total = results._passes_total;
+      const denom = Number.isFinite(total) ? `${failedList.length} of ${total}` : `${failedList.length}`;
+      console.log(`  ${R}Round ${round} did not measure the change${X} — ${denom} pass(es) failed. `
+        + 'The counts above are not evidence; this round cannot converge.');
+      if (failedList.length > 0) console.log(`  ${D}${failedList.join('; ').slice(0, 300)}${X}`);
+    }
 
     // Track finding stability via _hash
     const currentHashes = new Set((results.findings || []).map(f => f._hash).filter(Boolean));
@@ -592,7 +611,15 @@ async function main() {
   }
 }
 
-main().catch(err => {
-  console.error(`${R}Audit loop failed${X}: ${err.message}`);
-  process.exit(1);
-});
+// Test seam + CLI entry guard, same idiom as extract.mjs / gemini-review.mjs.
+// `countFindings` and `isConverged` decide whether a round counts as evidence,
+// and until this guard existed importing this module to test that decision
+// would have started a real audit loop.
+export { countFindings, isConverged };
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch(err => {
+    console.error(`${R}Audit loop failed${X}: ${err.message}`);
+    process.exit(1);
+  });
+}

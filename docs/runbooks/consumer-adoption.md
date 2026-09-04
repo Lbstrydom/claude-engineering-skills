@@ -638,6 +638,54 @@ npm run sync -- --target <your-alias>
 That single `sync` command hydrates the tooling tree at the right paths
 and you can start using `/audit-code`, `/persona-test`, etc.
 
+### CI is a fresh clone — install, do not hydrate
+
+`actions/checkout` produces a **plain clone**, and `scripts/.claude-skills/`
+is gitignored, so it is not there. `npm run skills:hydrate` is the *worktree*
+remedy and cannot help: it copies the tooling BETWEEN worktrees of one
+checkout, and in a plain clone the git common dir IS the clone, so it
+resolves as its own main checkout with nothing to copy from. Before
+2026-09-04 that read `[hydrate] main checkout — nothing to do` and exited 0,
+and the next `arch:*` step died on a bare `MODULE_NOT_FOUND` with nothing
+tying it back. It now fails there and names the remedy.
+
+In a CI job, install the bundle:
+
+```bash
+npx github:Lbstrydom/claude-engineering-skills .
+```
+
+Or, if you must hydrate from a runner-local checkout, name it explicitly —
+which also makes the coupling deliberate rather than implicit:
+
+```bash
+node scripts/.claude-skills/skills-hydrate.mjs --from /path/to/consumer-main-checkout
+```
+
+`SKILLS_SOURCE=/path/to/checkout` is the env equivalent, for setting it once
+per job.
+
+### `scripts/.sync-owned.json` — commit it
+
+Every sync writes this file listing the paths it maintains. **Commit it.**
+It is how anything running in a fresh clone answers *"is this file mine to
+fix?"* offline: git-ignore state cannot classify `.claude/hooks/**` or
+`.claude/skills/**` (you commit those), those files cannot carry a sync
+banner, and `scripts/.sync-manifest.json` — which does cover them — is
+gitignored on both sides.
+
+It carries paths only: no timestamp, no commit sha, so it does not churn.
+It changes when the set of managed paths changes, which is a real thing to
+review. Compare against it **case-insensitively** — a consumer's debt ledger
+citing `skill.md` against a manifest spelling `SKILL.md` misfiled six
+upstream-owned entries as their own work.
+
+`npm run debt:review` reads it: entries citing only upstream-owned files are
+listed but excluded from leverage ranking, because nobody in your repo can
+refactor them — and `debt-resolve.mjs` would delete the record of a
+still-open defect. **Report those instead**:
+`node scripts/.claude-skills/cross-skill.mjs upstream report --affected-path <path>`.
+
 ---
 
 ## Linked git worktrees — the tooling tree is not there

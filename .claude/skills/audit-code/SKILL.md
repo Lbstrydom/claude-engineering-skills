@@ -225,6 +225,13 @@ in place with a pragma immediately above the declaration:
 The pragma's own MATCHING logic recognizes any comment syntax (`//`, `#`,
 `/* */`, `<!-- -->`), for when JS/TS-family extraction eventually widens —
 today it only ever fires on the JS/TS files the detector actually scans.
+
+**A pragma under `tests/` is not read.** The repo-wide sweep excludes
+`*.md` and `tests/*`, so put the pragma on the declarations OUTSIDE
+`tests/`. For a cluster that spans both, that is enough: a cluster stops
+being reported once fewer than two of its files remain unjustified, so
+justifying the non-test members clears it. Reported by a consumer
+2026-09-04, who had to derive both facts from the migration SQL.
 A pragma whose `target` doesn't actually match the detected near-duplicate
 surfaces its own `[Duplication] Orphaned suppression pragma` finding
 rather than being silently honoured or ignored.

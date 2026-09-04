@@ -621,7 +621,7 @@ async function main() {
         const { COMPOSE_VERSION } = await import('../lib/symbol-index.mjs');
         const { NORMALIZE_PROMPT_VERSION } = await import('../lib/arch-memory/normalize-intent.mjs');
 
-        const sample = await sampleSnapshotEmbeddings(refreshId, DEFAULT_SAMPLE_SIZE);
+        const sample = await sampleSnapshotEmbeddings(repoId, refreshId, DEFAULT_SAMPLE_SIZE);
         const stats = computeBackgroundStats(sample);
         const floor = floorFromStats(stats, DEFAULT_K);
 

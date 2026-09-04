@@ -22,7 +22,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { Project, ts } from 'ts-morph';
-import { cruise } from 'dependency-cruiser';
+import { cruise, allExtensions } from 'dependency-cruiser';
 import { signatureHash } from '../lib/symbol-index.mjs';
 import {
   // gateSymbolForEgress no longer needed at call sites — file-level
@@ -40,6 +40,7 @@ import {
   assessExtractionCoverage,
   assertExtractionExhaustive,
 } from '../lib/symbol-index/graph-coverage.mjs';
+import { ignoredUntrackedPaths } from '../lib/disowned-paths.mjs';
 import { COVERAGE_DEFAULTS } from '../lib/symbol-index/graph-verdict.mjs';
 import { parseFilesManifest } from '../lib/symbol-index/files-manifest.mjs';
 import { emit, assertKnownFlags } from '../lib/cli-io.mjs';
@@ -627,7 +628,10 @@ export function extractSymbols(filePaths, repoRoot, opts = {}) {
  * disagreement being measured.
  *
  * @param {string} repoRoot
- * @param {{eligible?: string[]|null, sampleCap?: number}} [opts]
+ * @param {{eligible?: string[]|null, sampleCap?: number, disowned?: Set<string>|null}} [opts]
+ *   opts.disowned — repo-relative paths that are gitignored-and-untracked, so
+ *   edges touching them are not this repo's import graph. `null` means
+ *   ownership was not classified; every path is then treated as owned.
  *   opts.eligible — the coverage DENOMINATOR (§2.1.1). `null` on an incremental
  *   run: coverage is a full-run measurement, so a partial run emits no coverage
  *   line at all and `refresh.mjs` copies the prior row forward as stale (§2.1.3
@@ -636,7 +640,9 @@ export function extractSymbols(filePaths, repoRoot, opts = {}) {
  * @returns {{violationCount: number, importCount?: number, coverage?: object}}
  */
 async function extractGraphAndViolations(repoRoot, opts = {}) {
-  const { eligible = null, sampleCap = COVERAGE_DEFAULTS.sampleCap } = opts;
+  const {
+    eligible = null, sampleCap = COVERAGE_DEFAULTS.sampleCap, disowned = null,
+  } = opts;
   const measure = Array.isArray(eligible);
   // R1 audit Gemini-G1: don't hardcode ['scripts', 'src'] — many repos use
   // lib/, app/, components/, pages/, api/, etc. Auto-detect any top-level
@@ -741,18 +747,37 @@ async function extractGraphAndViolations(repoRoot, opts = {}) {
   // these three drops is individually defensible and none was ever counted —
   // that silence is the defect (plan §2.1.2). `cruisedEdges` is the total the
   // exhaustivity assertion holds them to.
-  const edges = { external: 0, selfEdge: 0, escaping: 0, persisted: 0 };
+  const edges = {
+    external: 0, selfEdge: 0, escaping: 0, unresolved: 0, disowned: 0, persisted: 0,
+  };
   let cruisedEdges = 0;
+  // `disowned == null` means ownership was never classified (restricted run, or
+  // git unavailable) — every path is then treated as owned, which is the
+  // pre-2026-09-04 behaviour and the fail-open direction.
+  const isDisowned = (rel) => disowned != null && disowned.has(rel);
   for (const m of modules) {
     if (!m.source) continue;
     const importer = path.relative(repoRoot, m.source).replace(/\\/g, '/');
     for (const d of (m.dependencies || [])) {
       cruisedEdges++;
+      // An unresolved dependency's `resolved` is the raw SPECIFIER, not a path
+      // — `@workbench/core/persistence`, which the lines below would then
+      // persist as though it were a file. It is neither external (it may well
+      // name repo code whose `exports` map does not expose that subpath) nor a
+      // real edge; it is a resolution failure, and counting it as one is what
+      // stops it from resurfacing downstream as an un-attributable endpoint.
+      if (d.couldNotResolve) { edges.unresolved++; continue; }
       if (!isInternalEdge(d)) { edges.external++; continue; }
       const imported = path.relative(repoRoot, d.resolved).replace(/\\/g, '/');
       // Skip self-edges and edges that escape the repo (..)
       if (imported === importer) { edges.selfEdge++; continue; }
       if (imported.startsWith('..')) { edges.escaping++; continue; }
+      // Either endpoint disowned ⇒ not this repo's import graph. Checked on
+      // BOTH ends deliberately: a vendored tree's internal edges are the bulk
+      // of the noise (the importer side), while an edge FROM owned code INTO a
+      // vendored tree is the one that would otherwise fabricate a domain
+      // dependency the repo cannot act on (the target side).
+      if (isDisowned(importer) || isDisowned(imported)) { edges.disowned++; continue; }
       emit({ type: 'import', importer, imported });
       edges.persisted++;
       importCount++;
@@ -773,6 +798,7 @@ async function extractGraphAndViolations(repoRoot, opts = {}) {
     elapsedMs,
     edges,
     sampleCap,
+    availableExtensions: availableCruiserExtensions(),
   });
 
   const exhaustive = assertExtractionExhaustive(coverage, cruisedEdges);
@@ -789,9 +815,66 @@ async function extractGraphAndViolations(repoRoot, opts = {}) {
   const pct = coverage.ratio == null ? 'n/a' : `${(coverage.ratio * 100).toFixed(1)}%`;
   emitProgress(`coverage: ${coverage.cruised}/${coverage.eligible} eligible source files `
     + `cruised (${pct}) in ${elapsedMs}ms — edges: ${edges.persisted} persisted, `
-    + `${edges.external} external, ${edges.selfEdge} self, ${edges.escaping} escaping`);
+    + `${edges.external} external, ${edges.selfEdge} self, ${edges.escaping} escaping, `
+    + `${edges.unresolved} unresolved, ${edges.disowned} disowned`);
+  warnAboutParserGap(coverage.parser);
 
   return { violationCount: violations.length, importCount, coverage };
+}
+
+/**
+ * dep-cruiser's own answer to "which extensions can I parse in THIS install",
+ * as `.ext` strings. `null` when it cannot be asked — the absence of an
+ * observation, never an assumption that everything is available.
+ *
+ * Wrapped rather than read inline so the failure mode is a `null` the coverage
+ * record reports as `known:false`, not a throw that takes the whole refresh
+ * down over a diagnostic.
+ *
+ * @returns {string[]|null}
+ */
+function availableCruiserExtensions() {
+  try {
+    if (!Array.isArray(allExtensions)) return null;
+    return allExtensions.filter((e) => e?.available === true).map((e) => e.extension);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Say — loudly, with the remedy — when the import graph is missing whole
+ * languages because no transpiler is installed for them.
+ *
+ * This is the difference between a number and a diagnosis. Before it, a
+ * consumer whose 522 TypeScript files were unreadable saw only a 22% coverage
+ * ratio and `Layering violations: 0`; the cause was diagnosable only from
+ * outside the tool, by asking dep-cruiser directly.
+ *
+ * @param {{known: boolean, unparseable: number|null, byExtension: Record<string, number>}|null} parser
+ */
+function warnAboutParserGap(parser) {
+  if (!parser) return;
+  if (!parser.known) {
+    // NB: the phrasing below deliberately avoids the literal `from "<word>"`
+    // shape. `module-graph.mjs`'s import scanner is regex-based and reads that
+    // as a bare package specifier, which makes the string look like an
+    // undeclared dependency to `tests/install-deps-contract.test.mjs`.
+    emitProgress('WARNING: could not ask dependency-cruiser which extensions it can parse — '
+      + 'the coverage ratio below cannot distinguish "not reached" and "unreadable".');
+    return;
+  }
+  if (!parser.unparseable) return;
+  const breakdown = Object.entries(parser.byExtension)
+    .sort((a, b) => b[1] - a[1])
+    .map(([ext, n]) => `${ext} (${n})`)
+    .join(', ');
+  emitProgress(`WARNING: ${parser.unparseable} eligible file(s) have no parser available in this `
+    + `dependency-cruiser install — ${breakdown}. Their imports are absent from the graph, so a `
+    + `layering result covering them is UNMEASURED, not clean. Remedy: install the matching `
+    + `transpiler where dependency-cruiser can resolve it (TypeScript files need \`typescript\`; `
+    + `under pnpm's strict layout that means hoisting it, e.g. a root devDependency or `
+    + `\`public-hoist-pattern[]=typescript\` in .npmrc).`);
 }
 
 /**
@@ -857,6 +940,12 @@ const SKIP_DIRS = new Set([
   // duplicate the full source tree N times — found live: wine-cellar had 5
   // worktrees inflating its file count from ~1500 to 7635, OOM'ing ts-morph.
   '.claude',
+  // Python virtualenvs and bytecode caches. Pure WALK-COST pruning, not the
+  // ownership mechanism — `enumerateFilesWithOwnership` below is what actually
+  // decides whether a tree belongs to the repo. Listed because descending a
+  // site-packages tree costs a readdir per directory for an answer git already
+  // knows: one consumer's `.venv` contributed 648 of 3,963 disowned files.
+  '.venv', 'venv', '__pycache__',
 ]);
 
 // Files larger than this are skipped entirely. Found live: wine-cellar-app
@@ -904,17 +993,75 @@ export function isFullRunFromFiles(files) {
  * call; it also meant the gate read `unknown` for 13 days at a time. Walking
  * the universe independently is the honest one.
  *
+ * Generic in what a "walk result" is: it passes `extractionWalk` straight
+ * through, so the caller may hand it a bare file array (the original contract)
+ * or the richer `enumerateFilesWithOwnership` record. The decision this
+ * function owns — *walk again, or reuse?* — does not depend on the shape.
+ *
  * @param {string} repoRoot
  * @param {string[]|null} restrictFiles - null = full run
- * @param {string[]} extractionFiles - the already-enumerated extraction scope
- * @param {(root: string, restrict: string[]|null) => string[]} enumerate
- * @returns {string[]} the coverage universe
+ * @param {T} extractionWalk - the already-enumerated extraction scope
+ * @param {(root: string, restrict: string[]|null) => T} enumerate
+ * @returns {T} the coverage universe
+ * @template T
  */
-export function coverageUniverse(repoRoot, restrictFiles, extractionFiles, enumerate) {
+export function coverageUniverse(repoRoot, restrictFiles, extractionWalk, enumerate) {
   // A full run already enumerated the whole repo — walking twice would be
   // identical work for an identical answer.
-  if (isFullRunFromFiles(restrictFiles)) return extractionFiles;
+  if (isFullRunFromFiles(restrictFiles)) return extractionWalk;
   return enumerate(repoRoot, null);
+}
+
+/**
+ * Enumerate the extraction scope AND say which of the walked paths this repo
+ * does not own.
+ *
+ * **Why git, and not a longer `SKIP_DIRS`.** `SKIP_DIRS` is a fixed list of
+ * directory NAMES, so it can only exclude the vendored trees we happened to
+ * think of. Every repo already publishes the authoritative answer in its
+ * `.gitignore`, and asking git makes a consumer that vendors something new
+ * correct with no change here. Measured in a consumer repo 2026-09-04:
+ * **3,963 of 5,158 walked files (76.8%) were ignored-and-untracked**, the
+ * largest single contributor being `scripts/.claude-skills/` — this very
+ * bundle, 553 files, indexed as if it were the consumer's own code and then
+ * counted against them by the duplication score. The whole `check-ignore`
+ * round trip cost 145ms against a 175ms walk.
+ *
+ * **The predicate is ignored AND UNTRACKED**, delegated to the single oracle in
+ * `lib/disowned-paths.mjs` rather than re-implemented — a repo that
+ * deliberately tracks a path matching one of its own ignore patterns still owns
+ * that path, and `git check-ignore` alone would drop it.
+ *
+ * **Degradation is fail-open and LOUD.** Outside a work tree (a consumer's
+ * duplication detector materialises files under a temp root) nothing is
+ * classified, so nothing is excluded — the pre-2026-09-04 behaviour — and
+ * `degraded` says the corpus was not verified rather than confirmed clean.
+ *
+ * A restricted run (`--files`/`--files-from`) is passed through unfiltered: its
+ * list comes from a git diff or an explicit caller, so it is already scoped,
+ * and classifying it would spend a git round trip per incremental refresh to
+ * re-confirm what the caller already decided.
+ *
+ * @param {string} repoRoot
+ * @param {string[]|null} restrictFiles - null = full walk
+ * @param {(root: string, candidates: string[]) => {paths: Set<string>, degraded: boolean, warning: string|null}} [classify]
+ * @returns {{files: string[], disowned: Set<string>|null, degraded: boolean,
+ *            walked: number, warning: string|null}}
+ *   `files` are absolute; `disowned` holds repo-relative forward-slash paths,
+ *   and is `null` when nothing was classified (restricted run, or degraded).
+ */
+export function enumerateFilesWithOwnership(repoRoot, restrictFiles, classify = ignoredUntrackedPaths) {
+  const walked = enumerateFiles(repoRoot, restrictFiles);
+  if (restrictFiles != null) {
+    return { files: walked, disowned: null, degraded: false, walked: walked.length, warning: null };
+  }
+  const rel = walked.map((f) => path.relative(repoRoot, f).split(path.sep).join('/'));
+  const { paths, degraded, warning } = classify(repoRoot, rel);
+  if (degraded) {
+    return { files: walked, disowned: null, degraded: true, walked: walked.length, warning };
+  }
+  const files = walked.filter((_, i) => !paths.has(rel[i]));
+  return { files, disowned: paths, degraded: false, walked: walked.length, warning: null };
 }
 
 export function enumerateFiles(repoRoot, restrictFiles) {
@@ -948,7 +1095,19 @@ export function enumerateFiles(repoRoot, restrictFiles) {
 async function main() {
   const args = parseArgs(process.argv);
   const repoRoot = path.resolve(args.root);
-  const files = enumerateFiles(repoRoot, args.files);
+  const extractionWalk = enumerateFilesWithOwnership(repoRoot, args.files);
+  const files = extractionWalk.files;
+  if (extractionWalk.disowned != null && extractionWalk.disowned.size > 0) {
+    emitProgress(`ownership: ${extractionWalk.disowned.size} of ${extractionWalk.walked} walked `
+      + `file(s) are gitignored-and-untracked — excluded from the index, the coverage `
+      + `denominator and the import graph.`);
+  } else if (extractionWalk.degraded) {
+    // Fail-open, but never silently: the corpus below is UNVERIFIED, not
+    // confirmed to be the repo's own code.
+    emitProgress('WARNING: could not classify path ownership via git — indexing every walked '
+      + 'file, including any vendored or gitignored tree. Symbol counts and the duplication '
+      + 'score below are unverified.');
+  }
   if (args.includeDelegates) {
     emitProgress('WARNING: --include-delegates is a debug/visibility flag. The resulting index includes thin-facade duplicates and should not be used as a baseline snapshot — re-run without the flag for normal operations.');
   }
@@ -974,7 +1133,11 @@ async function main() {
   // Cost: one unrestricted walk + a statSync per file, against a
   // dependency-cruise of the same tree that has already run. The walk is the
   // cheap half of a measurement that was being thrown away.
-  const universeFiles = coverageUniverse(repoRoot, args.files, files, enumerateFiles);
+  const universeWalk = coverageUniverse(
+    repoRoot, args.files, extractionWalk,
+    (root, restrict) => enumerateFilesWithOwnership(root, restrict),
+  );
+  const universeFiles = universeWalk.files;
   // §2.1.1's third clause: a file this pipeline refuses to read must not count
   // against the denominator. An unreadable file is excluded for the same
   // reason — it is not a coverage failure, and failing closed here would
@@ -1003,7 +1166,9 @@ async function main() {
       + `denominator because their size could not be read — the reported ratio `
       + `is optimistic by that much.`);
   }
-  const graphStats = await extractGraphAndViolations(repoRoot, { eligible });
+  const graphStats = await extractGraphAndViolations(repoRoot, {
+    eligible, disowned: universeWalk.disowned,
+  });
   // `coverage` travels on its own `{type:'coverage'}` line, not inside
   // `counts` — that field is a flat scalar bag and consumers treat it as one.
   const { coverage: _coverage, ...graphCounts } = graphStats;

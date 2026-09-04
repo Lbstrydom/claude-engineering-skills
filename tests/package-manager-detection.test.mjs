@@ -27,6 +27,7 @@ import {
   displayCommand,
   displayAddDev,
   displayExec,
+  displayDlx,
   playwrightInstallHint,
   playwrightBootstrapHint,
   isPnpmWorkspaceRoot,
@@ -346,5 +347,37 @@ describe('pnpm workspace-root add (-w)', () => {
       playwrightBootstrapHint(workspaceRoot),
       'pnpm add -D -w playwright && pnpm exec playwright install chromium',
     );
+  });
+});
+
+describe('displayDlx — the fetch-and-run dialect (audit R1 H3, 2026-09-04)', () => {
+  const ARGV = ['github:Lbstrydom/claude-engineering-skills', '.'];
+
+  it('renders pnpm as dlx, not exec', () => {
+    // `pnpm exec github:owner/repo` does not fetch — it would be a silent
+    // no-op, which is worse than the hardcoded `npx` it replaces.
+    assert.equal(displayDlx('pnpm', ARGV), 'pnpm dlx github:Lbstrydom/claude-engineering-skills .');
+  });
+
+  it('renders npm as npx', () => {
+    assert.equal(displayDlx('npm', ARGV), 'npx github:Lbstrydom/claude-engineering-skills .');
+  });
+
+  it('renders bun as `bun x`, matching displayExec\u2019s verified spelling', () => {
+    assert.equal(displayDlx('bun', ARGV), 'bun x github:Lbstrydom/claude-engineering-skills .');
+  });
+
+  it('falls back to npx for yarn rather than guessing a major version', () => {
+    // `yarn dlx` is Berry-only and this module does not probe the yarn major.
+    // Emitting it for an unknown yarn would be an unverified claim.
+    assert.equal(displayDlx('yarn', ARGV), 'npx github:Lbstrydom/claude-engineering-skills .');
+    assert.equal(displayDlx('unknown-pm', ARGV), 'npx github:Lbstrydom/claude-engineering-skills .');
+  });
+
+  it('is NOT displayExec — the two answer opposite questions', () => {
+    // Confusing them is silent in both directions, so pin that they differ
+    // exactly where it matters.
+    assert.notEqual(displayDlx('pnpm', ARGV), displayExec('pnpm', ARGV));
+    assert.equal(displayExec('pnpm', ARGV), 'pnpm exec github:Lbstrydom/claude-engineering-skills .');
   });
 });

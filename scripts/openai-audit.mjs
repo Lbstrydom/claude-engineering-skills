@@ -67,7 +67,7 @@ import { getRequirementsContext, getPlanRequirementsRubric } from './lib/require
 import { ArchIntentPassSchema } from './lib/schemas.mjs';
 import { detectOrphansIntroduced } from './lib/audit/orphan-introduced.mjs';
 import { resolveDiffScope } from './lib/audit/diff-scope-resolver.mjs';
-import { processFindings } from './lib/audit/findings-pipeline.mjs';
+import { processFindings, formatAuditSummaryLine } from './lib/audit/findings-pipeline.mjs';
 import { emitOrphanRunMetrics } from './lib/audit/orphan-metrics.mjs';
 import { PlanFpTracker } from './lib/plan-fp-tracker.mjs';
 import {
@@ -358,14 +358,20 @@ CRITICAL RULES:
  * @param {{outFile: string|null, jsonMode: boolean}} opts
  */
 function printAuditResult(mergedResult, { outFile, jsonMode }) {
-  const { verdict, findings: allFindings = [], _pass_timings: passTimings = {}, _usage: totalUsage = {}, _failed_passes: failedPasses = [] } = mergedResult;
+  const {
+    verdict, findings: allFindings = [], _pass_timings: passTimings = {},
+    _usage: totalUsage = {}, _failed_passes: failedPasses = [],
+    _passes_total: passesTotal = null,
+  } = mergedResult;
   const high = allFindings.filter(f => f.severity === 'HIGH').length;
   const medium = allFindings.filter(f => f.severity === 'MEDIUM').length;
   const low = allFindings.filter(f => f.severity === 'LOW').length;
   const totalLatencyMs = totalUsage.latency_ms ?? 0;
 
+  const summaryLine = formatAuditSummaryLine({
+    verdict, high, medium, low, failedPasses, passesTotal, latencyMs: totalLatencyMs,
+  });
   if (outFile) {
-    const summaryLine = `Verdict: ${verdict} | H:${high} M:${medium} L:${low} | ${(totalLatencyMs / 1000).toFixed(0)}s`;
     writeOutput(mergedResult, outFile, summaryLine);
   } else if (jsonMode) {
     console.log(JSON.stringify(mergedResult, null, 2));
@@ -379,6 +385,7 @@ function printAuditResult(mergedResult, { outFile, jsonMode }) {
     if (failedPasses.length > 0) console.log(`- **WARNING**: ${failedPasses.length} pass(es) failed — findings may be incomplete`);
     console.log('');
     console.log(`## Verdict: **${verdict}**`);
+    if (verdict === 'INCOMPLETE') console.log(`> ${summaryLine}`);
     console.log(`- **HIGH**: ${high} | **MEDIUM**: ${medium} | **LOW**: ${low}`);
     const qf = mergedResult.quick_fix_warnings.length;
     if (qf > 0) console.log(`- **Quick Fix Warnings**: ${qf}`);
@@ -895,7 +902,16 @@ async function main() {
       openaiConfig.reasoning === 'high' ? codeContextChars * 4 : 0);
     // allowTiered: true — main() is the ONE production CLI entrypoint allowed
     // to execute the tiered pipeline / shadow (see buildAuditRunContext).
-    await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { passFilter, fileFilter: effectiveFileFilter, round, ledgerFile: ledgerPath, diffFile, changedFiles, auditBaseCommit: diffBase, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, allowInfraScope, allowTiered: true, commitSha: ctxCommitSha, workingTreeDirty: ctxWorkingTreeDirty });
+    const codeResult = await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { passFilter, fileFilter: effectiveFileFilter, round, ledgerFile: ledgerPath, diffFile, changedFiles, auditBaseCommit: diffBase, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, allowInfraScope, allowTiered: true, commitSha: ctxCommitSha, workingTreeDirty: ctxWorkingTreeDirty });
+    // An INCOMPLETE run measured less than the change, and exiting 0 made that
+    // indistinguishable from a pass to anything checking `$?` (2026-09-04
+    // consumer report). 3, not 1: 1 already means "the CLI itself errored" on
+    // every other exit path in this file, and to a caller those are different
+    // things. `exitCode`, not `exit()`, so the report is still written and
+    // flushed. Set HERE and not in `printAuditResult`, which the orchestrator
+    // also calls: a test importing `runMultiPassCodeAudit` would otherwise
+    // inherit the exit code and fail its own runner.
+    if (codeResult?.verdict === 'INCOMPLETE') process.exitCode = 3;
     return;
   }
 

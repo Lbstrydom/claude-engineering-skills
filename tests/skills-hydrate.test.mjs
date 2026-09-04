@@ -15,7 +15,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
-import { planHydration, resolveMainWorktree, SYNCED_TOOLING_DIR } from '../scripts/skills-hydrate.mjs';
+import {
+  planHydration, resolveMainWorktree, resolveExplicitSource,
+  SYNCED_TOOLING_DIR, SOURCE_ENV_VAR, INSTALL_ARGV, DEFAULT_INSTALL_COMMAND,
+} from '../scripts/skills-hydrate.mjs';
+import { displayDlx } from '../scripts/lib/package-manager.mjs';
 import {
   markerNamedNpmScripts, checkMarkerRemedies, checkDocumentedRecipes,
   MARKER_BLOCK, MAIN_CHECKOUT_PATH_RECIPE, CONSUMER_HYDRATE_NPM_SCRIPT,
@@ -23,6 +27,7 @@ import {
 
 const MAIN = path.resolve('/repo');
 const WORKTREE = path.resolve('/repo/.claude/worktrees/wt');
+const OTHER = path.resolve('/elsewhere/checkout');
 
 describe('planHydration — every branch, without touching a filesystem', () => {
   it('the SOURCE repo is a no-op, not a failure', () => {
@@ -43,6 +48,91 @@ describe('planHydration — every branch, without touching a filesystem', () => 
     });
     assert.equal(p.action, 'noop');
     assert.equal(p.code, 'main-checkout');
+  });
+
+  it('a PLAIN CLONE with no tooling FAILS instead of reporting "nothing to do"', () => {
+    // `actions/checkout` produces a checkout whose git common dir is itself, so
+    // it resolves as its own main checkout. Before 2026-09-04 that returned the
+    // `main-checkout` no-op with exit 0 while copying nothing, and the next
+    // `arch:*` step died on a bare MODULE_NOT_FOUND with nothing tying it back
+    // here. A consumer could only make CI run by welding the job to a
+    // runner-local checkout named by a repository variable.
+    const p = planHydration({
+      cwd: MAIN, mainWorktree: MAIN, packageName: 'some-consumer', sourceExists: false,
+    });
+    assert.equal(p.action, 'fail');
+    assert.equal(p.code, 'no-tooling-here');
+    assert.match(p.message, /npx github:Lbstrydom\/claude-engineering-skills/);
+    assert.match(p.message, /--from/);
+  });
+
+  it('an explicit --from source overrides the git-derived one', () => {
+    const p = planHydration({
+      cwd: MAIN, mainWorktree: MAIN, packageName: 'some-consumer',
+      sourceExists: true, explicitSource: OTHER,
+    });
+    assert.equal(p.action, 'copy');
+    assert.ok(p.from.startsWith(OTHER), `${p.from} must come from the explicit source`);
+  });
+
+  it('an explicit source works where git can answer nothing at all', () => {
+    const p = planHydration({
+      cwd: MAIN, mainWorktree: null, packageName: 'some-consumer',
+      sourceExists: true, explicitSource: OTHER,
+    });
+    assert.equal(p.action, 'copy');
+  });
+
+  it('names --from and the env var when git cannot resolve a source', () => {
+    const p = planHydration({
+      cwd: MAIN, mainWorktree: null, packageName: 'some-consumer', sourceExists: false,
+    });
+    assert.equal(p.code, 'no-git');
+    assert.match(p.message, /--from/);
+    assert.match(p.message, new RegExp(SOURCE_ENV_VAR));
+  });
+
+  it('resolveExplicitSource: flag beats env, both resolve to absolute', () => {
+    const cwd = MAIN;
+    assert.equal(
+      resolveExplicitSource(['node', 'x', '--from', 'rel/dir'], { [SOURCE_ENV_VAR]: 'env/dir' }, cwd),
+      path.resolve(cwd, 'rel/dir'),
+    );
+    assert.equal(
+      resolveExplicitSource(['node', 'x', '--from=rel/dir'], {}, cwd),
+      path.resolve(cwd, 'rel/dir'),
+    );
+    assert.equal(
+      resolveExplicitSource(['node', 'x'], { [SOURCE_ENV_VAR]: 'env/dir' }, cwd),
+      path.resolve(cwd, 'env/dir'),
+    );
+    assert.equal(resolveExplicitSource(['node', 'x'], {}, cwd), null);
+  });
+
+  it('a PRESENT but valueless --from is an error, not an absence (audit R5 M2)', () => {
+    // Falling back to SKILLS_SOURCE here would hydrate from somewhere other
+    // than the operator just named — doing something else silently.
+    const env = { [SOURCE_ENV_VAR]: 'env/dir' };
+    for (const argv of [
+      ['node', 'x', '--from', '--json'],
+      ['node', 'x', '--from'],
+      ['node', 'x', '--from='],
+    ]) {
+      assert.throws(() => resolveExplicitSource(argv, env, MAIN), /--from requires a non-empty path/);
+    }
+  });
+
+  it('stops at the POSIX `--` terminator (audit R5 M6)', () => {
+    // After `--`, `--from` is a positional argument by convention, not a flag.
+    assert.equal(
+      resolveExplicitSource(['node', 'x', '--', '--from', 'rel/dir'], {}, MAIN),
+      null,
+    );
+    // and still reads one BEFORE the terminator
+    assert.equal(
+      resolveExplicitSource(['node', 'x', '--from', 'rel/dir', '--', 'other'], {}, MAIN),
+      path.resolve(MAIN, 'rel/dir'),
+    );
   });
 
   it('a worktree whose main checkout has no tooling FAILS, naming the path', () => {
@@ -167,5 +257,34 @@ describe('checkDocumentedRecipes — N copies legal, disagreement not', () => {
     });
     assert.equal(r.ok, false);
     assert.equal(r.mismatches.length, 2, 'both subject docs reported');
+  });
+});
+
+describe('the plain-clone remedy speaks the reader\u2019s package manager', () => {
+  it('uses the injected install command verbatim', () => {
+    // Audit R1 H3: the remedy was hardcoded to `npx` and aimed at a pnpm
+    // consumer, where a corepack-managed image need not have npm on PATH.
+    const p = planHydration({
+      cwd: MAIN, mainWorktree: MAIN, packageName: 'some-consumer', sourceExists: false,
+      installCommand: 'pnpm dlx github:Lbstrydom/claude-engineering-skills .',
+    });
+    assert.equal(p.code, 'no-tooling-here');
+    assert.match(p.message, /pnpm dlx github:Lbstrydom\/claude-engineering-skills \./);
+    assert.doesNotMatch(p.message, /npx /);
+  });
+
+  it('falls back to the npm dialect when nothing is injected', () => {
+    const p = planHydration({
+      cwd: MAIN, mainWorktree: MAIN, packageName: 'some-consumer', sourceExists: false,
+    });
+    assert.ok(p.message.includes(DEFAULT_INSTALL_COMMAND),
+      `message must carry the default install command, got: ${p.message}`);
+  });
+
+  it('INSTALL_ARGV is what displayDlx is handed — one spelling, not two', () => {
+    // A second literal here is how the rendered command and the documented one
+    // drift apart.
+    assert.equal(DEFAULT_INSTALL_COMMAND, `npx ${INSTALL_ARGV.join(' ')}`);
+    assert.equal(displayDlx('pnpm', [...INSTALL_ARGV]), `pnpm dlx ${INSTALL_ARGV.join(' ')}`);
   });
 });

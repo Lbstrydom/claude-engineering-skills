@@ -35,6 +35,17 @@ export const FUZZY_DISCOVERY_THRESHOLD = 5;
 export const PLAN_REFERENCE_EXTENSIONS = Object.freeze([
   'js', 'mjs', 'ts', 'tsx', 'jsx', 'sql', 'css', 'html', 'json', 'md',
   'py', 'rs', 'go', 'java', 'rb', 'sh',
+  // YAML, added 2026-09-04. A consumer's plan had a GitHub Actions workflow as
+  // its load-bearing deliverable and `cycle-cluster-scope.mjs` refused it in
+  // BOTH directions — as a declared scope path ("would not be admitted
+  // (extension)") and as an undeclared edit ("out-of-scope edit") — so a
+  // cluster that changes CI could not be audited at all. Given how much of
+  // what this bundle polices IS CI configuration (five weekly maintenance
+  // workflows, the drift workflow, the Postgres-parity matrix), a plan that
+  // cannot name a workflow file is a scope hole, not a safety property. It
+  // sits alongside `sql`/`json` — declarative, non-executing-in-review, and
+  // already the kind of file a plan legitimately names.
+  'yml', 'yaml',
 ]);
 
 /**

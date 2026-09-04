@@ -13,6 +13,49 @@
  * @module scripts/lib/debt-review-helpers
  */
 
+// ── Ownership partition ─────────────────────────────────────────────────────
+
+/**
+ * Split debt entries into the ones this repo can act on and the ones it cannot.
+ *
+ * **Why a partition and not a filter.** A consumer's ledger held 34 entries,
+ * **17 of which cite files the repo cannot edit** (`.audit-loop/
+ * expected-schema.json` ×8, per-skill `SKILL.md` files ×9 — all synced from
+ * upstream). `debt:review --local-only` ranked the eight-entry
+ * `expected-schema.json` cluster **second by leverage**: a refactor target that
+ * is not a refactor target, sitting above real work. The only available action,
+ * `debt-resolve.mjs`, *removes* the entry from the committed ledger — which for
+ * a real, still-open, upstream-owned defect deletes the only record of it.
+ * Measured 2026-09-04.
+ *
+ * So upstream-owned entries stay VISIBLE (they are real debt; someone must file
+ * them upstream) and stay OUT of leverage ranking (nobody here can refactor
+ * them). Dropping them entirely would be the same deletion in a different coat.
+ *
+ * An entry is upstream-owned when EVERY file it cites is; a mixed entry stays
+ * actionable, because part of it can be fixed here — the conservative direction,
+ * since the failure mode being closed is *under*-reporting what the repo owns.
+ *
+ * Pure: ownership is the caller's oracle (git-ignore state ∪ the sync sidecar),
+ * injected rather than probed, so this stays Tier-1 testable.
+ *
+ * @param {object[]} entries - hydrated debt entries
+ * @param {(relPath: string) => boolean} isUpstreamOwned
+ * @returns {{actionable: object[], upstreamOwned: object[]}}
+ */
+export function partitionByOwnership(entries, isUpstreamOwned) {
+  const actionable = [];
+  const upstreamOwned = [];
+  for (const e of Array.isArray(entries) ? entries : []) {
+    const files = Array.isArray(e?.affectedFiles) ? e.affectedFiles : [];
+    // No cited file ⇒ nothing to attribute ⇒ this repo's problem by default.
+    // Absence of evidence must not read as "someone else's".
+    const owned = files.length > 0 && files.every((f) => isUpstreamOwned(f));
+    (owned ? upstreamOwned : actionable).push(e);
+  }
+  return { actionable, upstreamOwned };
+}
+
 // ── Leverage Scoring (deterministic) ────────────────────────────────────────
 
 /** Effort weight → number of "units" required to complete a refactor. */

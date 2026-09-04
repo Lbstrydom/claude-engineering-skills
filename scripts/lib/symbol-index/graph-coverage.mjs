@@ -19,9 +19,21 @@
 import path from 'node:path';
 
 /**
- * Extensions dependency-cruiser can actually resolve. Exported so the cruise
- * targets, the coverage denominator, and the spike all derive from ONE list —
- * three private copies is how the layers drifted apart in the first place.
+ * Extensions dependency-cruiser can resolve **when the matching transpiler is
+ * installed**. Exported so the cruise targets, the coverage denominator, and
+ * the spike all derive from ONE list — three private copies is how the layers
+ * drifted apart in the first place.
+ *
+ * **This list is a CANDIDATE set, not a capability claim** (2026-09-04). Half
+ * of it is conditional: dep-cruiser parses `.ts`/`.tsx`/`.mts`/`.cts` only when
+ * it can resolve `typescript`, `.vue` only with `vue-template-compiler`, and so
+ * on — it reports the truth per install via its own `allExtensions` export.
+ * Read as a claim, this constant fabricated coverage: a consumer whose entire
+ * application is TypeScript, installed under pnpm's strict layout (so
+ * `typescript` is not hoisted to a resolvable location), had **522 of 675**
+ * eligible files silently unparseable while the graph reported `outcome: 'ok'`
+ * and `Layering violations: 0` — measured in a consumer repo 2026-09-04.
+ * `assessParserAvailability` is the half that asks instead of asserting.
  */
 export const CRUISABLE_EXTENSIONS = Object.freeze([
   '.js', '.mjs', '.cjs', '.jsx',
@@ -104,6 +116,56 @@ export function eligibleFiles(files, { repoRoot, isTooLarge } = {}) {
 }
 
 /**
+ * Of the eligible files, how many carry an extension this dep-cruiser install
+ * has **no parser for**?
+ *
+ * The distinction this exists to draw: a file the cruise missed because it sits
+ * outside `COMMON_SOURCE_DIRS` is a *targeting* gap you can close by widening
+ * the allowlist; a file the cruise cannot read at all is a *capability* gap you
+ * close by installing a transpiler. Both used to land in the same `uncruised`
+ * number, so the remedy was unguessable — the consumer report that produced
+ * this function had to be diagnosed from outside the tool.
+ *
+ * Pure, like the rest of this module: availability is the CALLER's observation
+ * (`allExtensions` from dependency-cruiser), injected rather than probed.
+ *
+ * `availableExtensions == null` means the caller could not ask. That is
+ * reported as `known: false` with `unparseable: null` — the absence of a
+ * measurement, never "all extensions are available" (AGENTS.md: unknown is not
+ * a synonym for verified).
+ *
+ * @param {string[]} eligible - repo-relative eligible paths
+ * @param {string[]|null|undefined} availableExtensions - dep-cruiser's
+ *   `allExtensions` filtered to `available === true`, as `.ext` strings
+ * @returns {{known: boolean, unavailableExtensions: string[],
+ *            unparseable: number|null, byExtension: Record<string, number>}}
+ */
+export function assessParserAvailability(eligible, availableExtensions) {
+  if (!Array.isArray(availableExtensions)) {
+    return { known: false, unavailableExtensions: [], unparseable: null, byExtension: {} };
+  }
+  const avail = new Set(availableExtensions.map((e) => String(e).toLowerCase()));
+  const byExtension = {};
+  let unparseable = 0;
+  for (const f of Array.isArray(eligible) ? eligible : []) {
+    if (typeof f !== 'string') continue;
+    const ext = path.extname(f).toLowerCase();
+    if (avail.has(ext)) continue;
+    unparseable++;
+    byExtension[ext] = (byExtension[ext] || 0) + 1;
+  }
+  return {
+    known: true,
+    // Only the candidates this pipeline actually admits — an extension
+    // dep-cruiser knows about but `eligibleFiles` never yields (`.coffee`,
+    // `.csx`) is not a gap in THIS graph and would be noise in the report.
+    unavailableExtensions: CRUISABLE_EXTENSIONS.filter((e) => !avail.has(e)),
+    unparseable,
+    byExtension,
+  };
+}
+
+/**
  * Extraction-layer coverage: of the eligible source files, how many did the
  * cruise actually see?
  *
@@ -123,11 +185,13 @@ export function eligibleFiles(files, { repoRoot, isTooLarge } = {}) {
 export function assessExtractionCoverage({
   outcome = 'ok', eligible = [], cruisedSources = [], repoRoot = '',
   cruisedBase = undefined, elapsedMs = null, edges = {}, sampleCap = 20,
+  availableExtensions = null,
 } = {}) {
   if (outcome !== 'ok') {
     return {
       outcome, eligible: null, cruised: null, ratio: null,
-      elapsedMs: elapsedMs ?? null, edges: null, samples: { uncruised: [] },
+      elapsedMs: elapsedMs ?? null, edges: null, parser: null,
+      samples: { uncruised: [] },
     };
   }
   const eligibleSet = new Set(eligible);
@@ -149,11 +213,28 @@ export function assessExtractionCoverage({
     ratio: eligible.length === 0 ? null : seen.size / eligible.length,
     elapsedMs: elapsedMs ?? null,
     edges: normalizeEdgeBuckets(edges),
+    parser: assessParserAvailability(eligible, availableExtensions),
     samples: { uncruised: uncruised.slice(0, clampCap(sampleCap)) },
   };
 }
 
-/** Extraction-side edge buckets, defaulted so the shape is always complete. */
+/**
+ * The extraction-side edge buckets, named once. `normalizeEdgeBuckets` builds
+ * this shape and `assertExtractionExhaustive` sums exactly it — two lists would
+ * let a bucket be emitted and never summed, which is the silent-loss-site bug
+ * one layer up.
+ */
+export const EXTRACTION_EDGE_BUCKETS = Object.freeze([
+  'external', 'selfEdge', 'escaping', 'unresolved', 'disowned', 'persisted',
+]);
+
+/**
+ * Extraction-side edge buckets, defaulted so the shape is always complete.
+ *
+ * Adding a bucket here is half of adding a filter in `extract.mjs` — the other
+ * half is `assertExtractionExhaustive` below, which is what stops a new filter
+ * from becoming a silent loss site.
+ */
 function normalizeEdgeBuckets(edges) {
   const e = edges || {};
   const n = (v) => (Number.isFinite(v) && v >= 0 ? v : 0);
@@ -161,6 +242,15 @@ function normalizeEdgeBuckets(edges) {
     external: n(e.external),
     selfEdge: n(e.selfEdge),
     escaping: n(e.escaping),
+    // An edge dep-cruiser could not resolve. Its `resolved` is the raw
+    // specifier (`@workbench/core/persistence`), not a path — persisting one
+    // fabricates a file that does not exist and then reports it as an
+    // un-attributable endpoint. Measured live in a consumer 2026-09-04: both
+    // of that repo's `untaggedTo` attribution samples were bare specifiers.
+    unresolved: n(e.unresolved),
+    // An edge whose importer or target is gitignored-and-untracked — the
+    // consumer does not own it, so it is not that repo's import graph.
+    disowned: n(e.disowned),
     persisted: n(e.persisted),
   };
 }
@@ -216,7 +306,8 @@ export function assessAttributionCoverage({
 /**
  * Exhaustivity assertion for the EXTRACTION buckets.
  *
- * `external + selfEdge + escaping + persisted == cruisedEdges`. Trivially true
+ * `external + selfEdge + escaping + unresolved + disowned + persisted ==
+ * cruisedEdges`. Trivially true
  * the day it is written — every dependency in `extract.mjs`'s loop lands in
  * exactly one bucket by construction. It exists for the day after: a fourth
  * filter added without a fourth bucket is a new silent loss site, which is the
@@ -233,7 +324,14 @@ export function assertExtractionExhaustive(extraction, cruisedEdges) {
   // A failed/timedOut extraction has null counts by design — there is no
   // measurement to hold to account, so it cannot fail the assertion.
   if (!e) return { ok: true, expected, actual: expected };
-  const actual = e.external + e.selfEdge + e.escaping + e.persisted;
+  // `?? 0` per bucket, not a bare sum: this function is also handed edge
+  // objects read back from envelopes written before a bucket existed, and
+  // `undefined` in a sum poisons the whole thing to NaN — which compares
+  // unequal to everything and would report a MISSING BUCKET as a failed
+  // exhaustivity check, i.e. the loudest possible false alarm. Absent counts
+  // as 0, which still under-sums and still fails when a real filter has no
+  // bucket — the property this assertion exists for is preserved.
+  const actual = EXTRACTION_EDGE_BUCKETS.reduce((sum, k) => sum + (e[k] ?? 0), 0);
   return { ok: actual === expected, expected, actual };
 }
 

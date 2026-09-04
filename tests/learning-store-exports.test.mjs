@@ -211,6 +211,10 @@ const EXPECTED_EXPORTS = [
   'getActiveEmbeddingModel',
   'getBandCalibration',
   'recordBandCalibration',
+  // Pure decision function (not a store operation) exported so the
+  // unverified-refresh-pointer branch is testable without a database —
+  // audit R3 H1, tests/active-snapshot-pointer.test.mjs.
+  'resolveActiveSnapshot',
   'sampleSnapshotEmbeddings',
   'getActiveSnapshot',
   'getDomainSummaries',
@@ -493,12 +497,26 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // (ship-nudges, unbounded-age read side). Closes the gap the existing
     // fixed-lifecycle machinery (session-scoped, round-diff-scoped, 14-day-
     // bounded) cannot reach: upstream report 97d09c1c-8dd0-42d1-bfdb-93963f0c07a0.
-    // 195 -> 196: readReconciliationSnapshot added 2026-09-04 with the
-    // local-vs-store debt reconcile (docs/plans/backlog-and-drift-reduction.md).
-    // One statement rather than a transaction: under READ COMMITTED two
-    // consecutive SELECTs can observe different committed states, and the
-    // classifier must see entry presence and the latest lifecycle event at
-    // the SAME instant or it can prune an entry that was merely reopened.
-    assert.equal(EXPECTED_EXPORTS.length, 196);
+    // 195 -> 197: TWO exports landed on 2026-09-04, from concurrent sessions,
+    // and each independently wrote "195 -> 196" here. The count is 197; a
+    // conflict resolution that keeps one comment and one increment silently
+    // drops the other export from the pin.
+    //
+    // +1 `readReconciliationSnapshot` — the local-vs-store debt reconcile
+    // (docs/plans/backlog-and-drift-reduction.md). ONE statement rather than a
+    // transaction: under READ COMMITTED two consecutive SELECTs can observe
+    // different committed states, and the classifier must see entry presence
+    // and the latest lifecycle event at the SAME instant or it can prune an
+    // entry that was merely reopened.
+    //
+    // +1 `resolveActiveSnapshot` — the pure decision half of
+    // `getActiveSnapshot` (docs/plans/consumer-corpus-and-honesty-2026-09-04.md).
+    // Extracted because audit R3 H1 (a repo-binding guard whose failure changed
+    // nothing, so an unverified refresh pointer still came back as the repo's
+    // active snapshot) survived a whole round purely by being unreachable from
+    // a test: it sat between two awaits in a store module with no live-DB
+    // harness. Exporting the decision is what made it provable.
+    // tests/active-snapshot-pointer.test.mjs.
+    assert.equal(EXPECTED_EXPORTS.length, 197);
   });
 });

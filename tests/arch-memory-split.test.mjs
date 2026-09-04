@@ -4,7 +4,7 @@
  * Plan: docs/plans/sustainability-cleanup-batch.md (WS1 §6 / §8).
  *
  * Three layers:
- *   1. EXPECTED_EXPORTS manifest — exact 36 public functions, all
+ *   1. EXPECTED_EXPORTS manifest — the exact public-function set, all
  *      resolved through the barrel as `typeof === 'function'`.
  *   2. Per-module behavioral path — cloud-disabled neutral value matrix.
  *   3. Cross-module separation — no sub-module imports a sibling.
@@ -20,7 +20,12 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const ARCH_DIR = path.join(REPO_ROOT, 'scripts/lib/store/arch');
 
 // ── 1. Explicit export manifest (Gemini-r2-G1: GET_REFRESH_RUN_COLUMNS is
-//      file-private, NOT in this list — exactly 31 PUBLIC functions) ────────
+//      file-private and NOT in this list) ─────────────────────────────────────
+//
+// The COUNT lives in the assertion below and nowhere else (audit R4 L2). Two
+// stale prose figures — "36" here and "31" there — disagreed with each other
+// and with the array, because a comment restating a number a test already pins
+// is a second source of truth that nothing updates.
 
 const EXPECTED_EXPORTS = [
   // arch/refresh-runs.mjs — 10 fns
@@ -41,6 +46,10 @@ const EXPECTED_EXPORTS = [
   // Per-repo band calibration (plan §2.1 C4-REVISED) — arch/snapshots.mjs.
   'recordBandCalibration',
   'getBandCalibration',
+  // Pure decision function, not a store operation — exported so the R3 H1
+  // branch (an unverified refresh pointer) is testable without a database.
+  // See tests/active-snapshot-pointer.test.mjs.
+  'resolveActiveSnapshot',
   'sampleSnapshotEmbeddings',
   // arch/symbols.mjs — 9 fns
   'recordSymbolDefinitions',
@@ -80,8 +89,11 @@ const EXPECTED_EXPORTS = [
 ];
 
 describe('arch-memory.mjs barrel — public export contract', () => {
-  test(`exactly 43 public functions in EXPECTED_EXPORTS`, () => {
-    assert.equal(EXPECTED_EXPORTS.length, 43);
+  // Title DERIVED from the array, not a second literal (audit R5 L4): the
+  // previous form wrote the number twice in four lines, which is the same
+  // two-sources-of-truth shape the stale header comments had.
+  test(`exactly ${EXPECTED_EXPORTS.length} public functions in EXPECTED_EXPORTS`, () => {
+    assert.equal(EXPECTED_EXPORTS.length, 44);
   });
 
   // Every public member is a FUNCTION. `SUMMARY_RETRY_CAP` was briefly exported

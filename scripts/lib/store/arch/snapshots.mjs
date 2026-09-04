@@ -18,6 +18,53 @@ import { one, many, updateWhere } from '../../db/query.mjs';
 import { isCloudEnabled } from '../repo.mjs';
 
 /**
+ * PURE decision: given the repo row and the repo-BOUND `refresh_runs` row,
+ * what should `getActiveSnapshot` return?
+ *
+ * Split out for the same reason `drift.mjs` splits `resolveStoreGateExit`: the
+ * decision is the part that can be wrong, and it is unreachable by a test while
+ * it is welded to two awaits. Audit R3 H1 is exactly what that hid — the first
+ * fix added `AND repo_id = $2` to the query and then returned
+ * `refreshId: data.active_refresh_id` regardless of whether the bound lookup
+ * found anything, so a pointer at another repo's run (or a deleted one) still
+ * came back as this repo's active snapshot. A guard whose failure changes
+ * nothing is decorative, and no DB was needed to see that — only a seam.
+ *
+ * `runRow == null` with a non-null pointer means the pointer does not name a
+ * run this repo owns. That is a data-integrity fault, and the honest answer is
+ * the one this function already gives for "no snapshot": null. Every caller
+ * treats null as cannot-verify rather than clean (`resolveStoreGateExit` exits
+ * 2), so the conservative direction is preserved.
+ *
+ * @param {{active_refresh_id: string|null, active_embedding_model: string|null,
+ *          active_embedding_dim: number|null}|null} repoRow
+ * @param {{import_graph_populated?: boolean, commit_sha?: string|null}|null|undefined} runRow
+ * @returns {{snapshot: object|null, corruptPointer: boolean}}
+ */
+export function resolveActiveSnapshot(repoRow, runRow) {
+  if (!repoRow) return { snapshot: null, corruptPointer: false };
+  const base = {
+    refreshId: repoRow.active_refresh_id,
+    activeEmbeddingModel: repoRow.active_embedding_model,
+    activeEmbeddingDim: repoRow.active_embedding_dim,
+    importGraphPopulated: false,
+    commitSha: null,
+  };
+  // No pointer at all is a normal empty state, not corruption — a repo that has
+  // never been indexed. The row is returned unchanged, exactly as before.
+  if (!repoRow.active_refresh_id) return { snapshot: base, corruptPointer: false };
+  if (!runRow) return { snapshot: null, corruptPointer: true };
+  return {
+    snapshot: {
+      ...base,
+      importGraphPopulated: runRow.import_graph_populated === true,
+      commitSha: runRow.commit_sha ?? null,
+    },
+    corruptPointer: false,
+  };
+}
+
+/**
  * Read active snapshot pointers + the import-graph provenance flag.
  * Two-step: read repo pointers, then look up the active refresh's
  * import_graph_populated flag.
@@ -31,20 +78,41 @@ export async function getActiveSnapshot(repoId) {
       [repoId]
     );
     if (!data) return null;
-    let importGraphPopulated = false;
-    if (data.active_refresh_id) {
-      const rr = await one(
-        `SELECT import_graph_populated FROM refresh_runs WHERE id = $1 LIMIT 1`,
-        [data.active_refresh_id]
-      );
-      if (rr && rr.import_graph_populated === true) importGraphPopulated = true;
+    // The commit the snapshot was TAKEN at, which is not necessarily the local
+    // HEAD — a reader correlating a drift report with a commit needs the
+    // former, and `git rev-parse HEAD` (what arch:render falls back to)
+    // silently answers the latter. Reported by a consumer 2026-09-04:
+    // `arch:drift` printed `Commit: unknown` for a snapshot `arch:render`
+    // labelled with a real sha.
+    //
+    // `AND repo_id = $2` (audit R2 H1): the id comes from THIS repo's
+    // `active_refresh_id`, so the row is bound by construction today — but
+    // only transitively, through a column another writer could get wrong.
+    // `refresh_runs.repo_id` is `NOT NULL REFERENCES audit_repos(id)`, so
+    // asking for the binding directly costs nothing and makes a cross-repo
+    // answer unrepresentable rather than merely unlikely.
+    const runRow = data.active_refresh_id
+      ? await one(
+        `SELECT import_graph_populated, commit_sha FROM refresh_runs WHERE id = $1 AND repo_id = $2 LIMIT 1`,
+        [data.active_refresh_id, repoId],
+      )
+      : null;
+    // The decision itself lives in a pure function so it can be tested without
+    // a database — see `resolveActiveSnapshot`, and audit R3 H1 for what being
+    // untestable hid.
+    const { snapshot, corruptPointer } = resolveActiveSnapshot(data, runRow);
+    if (corruptPointer) {
+      // By PATH, not `npm run arch:refresh`: the sync never adds npm aliases to
+      // a consumer (AGENTS.md "Five shapes" #5), so the alias form names a
+      // script that does not exist where this module actually ships. Audit R4
+      // H2/H3 caught this string one round after the same defect was fixed in
+      // skills-hydrate.mjs — the third time in this audit that fixing the named
+      // instance and not its sibling was the finding.
+      process.stderr.write('  [arch] active_refresh_id does not name a refresh_run owned by this '
+        + 'repo (deleted run, or a cross-repo pointer) — reporting NO active snapshot rather than '
+        + 'returning an unverified refresh id. Re-run `node scripts/symbol-index/refresh.mjs`.\n');
     }
-    return {
-      refreshId: data.active_refresh_id,
-      activeEmbeddingModel: data.active_embedding_model,
-      activeEmbeddingDim: data.active_embedding_dim,
-      importGraphPopulated,
-    };
+    return snapshot;
   } catch {
     return null;
   }
@@ -131,9 +199,25 @@ export async function getBandCalibration(repoId) {
  * @param {number} limit
  * @returns {Promise<number[][]>}
  */
-export async function sampleSnapshotEmbeddings(refreshId, limit = 120) {
+export async function sampleSnapshotEmbeddings(repoId, refreshId, limit = 120) {
   if (!await isCloudEnabled()) return [];
-  if (!refreshId) return [];
+  // `repoId` FIRST and required, matching every sibling in this module
+  // (`getActiveSnapshot`, `getBandCalibration`, `recordBandCalibration`). An
+  // appended optional tenant key would be a guard you can forget; a leading
+  // required one makes omission a visible call-site error.
+  //
+  // Bound to the repo (audit R1 H1 → R4 M2 → R5 H1, deferred five times on a
+  // cost I had not measured: it is ONE caller, and `refresh.mjs` already holds
+  // `repoId` on the very next line, where it passes it to
+  // `recordBandCalibration`). `symbol_index.repo_id` is
+  // `NOT NULL REFERENCES audit_repos(id)`, so this is one clause, not a join.
+  //
+  // What it protects: this feeds the per-repo band calibration, whose whole
+  // premise is that the floor is measured from THIS repo's own embedding
+  // background. A foreign or stale `refresh_id` silently calibrated a repo
+  // against another corpus — the same class as borrowing a threshold, which is
+  // the defect the calibration exists to remove.
+  if (!repoId || !refreshId) return [];
   const rows = await many(
     `SELECT se.embedding::text AS emb
        FROM symbol_index si
@@ -141,9 +225,10 @@ export async function sampleSnapshotEmbeddings(refreshId, limit = 120) {
        JOIN symbol_embeddings se ON se.definition_id = sd.id
                                 AND se.signature_hash = si.signature_hash
       WHERE si.refresh_id = $1
+        AND si.repo_id = $2
       ORDER BY random()
-      LIMIT $2`,
-    [refreshId, limit],
+      LIMIT $3`,
+    [refreshId, repoId, limit],
   );
   const out = [];
   for (const r of rows || []) {

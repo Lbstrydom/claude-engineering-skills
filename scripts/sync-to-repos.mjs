@@ -27,6 +27,7 @@ import {
   writeManifest, detectOwnershipRegression, getGitMeta, buildConsumerManifest, listDirtyPaths,
   findUndeliveredEntries,
 } from './lib/sync-manifest.mjs';
+import { buildOwnedSidecar, OWNED_SIDECAR_RELATIVE_PATH } from './lib/sync-owned-sidecar.mjs';
 import { collectImportClosure } from './lib/module-graph.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 import { sourceRelToDestRel, LAYOUT_CONSTANTS } from './lib/sync-path-map.mjs';
@@ -2217,6 +2218,22 @@ async function main() {
         atomicWriteFileSync(priorManifestPath, JSON.stringify(consumerManifest, null, 2) + '\n');
         manifestWritten = true;
         consumerFileMapForCheck = consumerFileMap;
+        // The COMMITTED ownership sidecar, derived from the same destination
+        // set the manifest describes. It exists because the manifest is
+        // gitignored and two synced surfaces (`.claude/hooks/**`,
+        // `.claude/skills/**`) are neither gitignored nor banner-marked in a
+        // consumer, so nothing in a fresh clone could answer "is this file mine
+        // to fix?". Rationale in lib/sync-owned-sidecar.mjs. Best-effort like
+        // the watermark below: it is diagnostic metadata, and a failure here
+        // must not fail a sync whose payload landed.
+        try {
+          atomicWriteFileSync(
+            path.join(repo.path, OWNED_SIDECAR_RELATIVE_PATH),
+            JSON.stringify(buildOwnedSidecar(Object.keys(consumerFileMap)), null, 2) + '\n',
+          );
+        } catch (err) {
+          console.log(`  ${Y}ownership sidecar write failed${X} ${D}(consumers cannot tell upstream-owned files apart offline): ${err.message?.slice(0, 80)}${X}`);
+        }
         // High-water mark for rollback detection (see the check at read time).
         // Written only after the manifest actually landed, so it never claims
         // ownership of a record that does not exist. A failure here degrades

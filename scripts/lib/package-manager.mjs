@@ -335,8 +335,11 @@ export function displayAddDev(pm, pkgs, repoRoot = null) {
  * local invocation into an unpinned registry fetch on every run — more
  * supply-chain exposure, not less, for a package the lockfile already pins.
  *
- * `dlx`/`bunx` are for running something you have NOT installed; that is a
- * different question, and this bundle never needs to ask it.
+ * `dlx`/`bunx` are for running something you have NOT installed — a different
+ * question, asked by exactly one call site (`displayDlx` below, for the
+ * install-the-bundle remedy). Keep the two apart: they are opposites, and
+ * reaching for the wrong one is how a local invocation becomes an unpinned
+ * fetch, or an install command becomes a no-op.
  *
  * @param {string} pm
  * @param {string[]} argv
@@ -363,6 +366,44 @@ export function displayExec(pm, argv) {
     case 'npm':
     default:
       // npx prefers node_modules/.bin before fetching — verified above.
+      return ['npx', ...argv].join(' ');
+  }
+}
+
+/**
+ * Run a package the repo does NOT have installed — the fetch-and-run dialect.
+ *
+ * The exact opposite of {@link displayExec}, and deliberately a separate
+ * function rather than a flag on it: the two answer opposite questions and the
+ * failure of confusing them is silent in both directions (`pnpm exec
+ * github:owner/repo` simply does not fetch, and `pnpm dlx <local-bin>` fetches
+ * something the lockfile already pins).
+ *
+ * Its one caller today is `skills-hydrate.mjs`'s remedy for a plain clone,
+ * which must tell a consumer how to INSTALL this bundle. That string was
+ * hardcoded to `npx` and read by a pnpm consumer (audit R1 H3, 2026-09-04) —
+ * `npx` happens to work wherever npm is on PATH, but a corepack-managed pnpm
+ * CI image need not have it.
+ *
+ * **yarn deliberately falls back to `npx`.** `yarn dlx` is Berry-only; Yarn
+ * Classic has no equivalent, and this module does not probe the yarn major
+ * version. Emitting `yarn dlx` for an unknown yarn would be an unverified
+ * claim — the same reason {@link displayExec} refuses to emit `bunx`. `npx` is
+ * the honest lowest common denominator there, not an oversight.
+ *
+ * @param {string} pm
+ * @param {string[]} argv
+ * @returns {string}
+ */
+export function displayDlx(pm, argv) {
+  switch (pm) {
+    case 'pnpm':
+      return ['pnpm', 'dlx', ...argv].join(' ');
+    case 'bun':
+      return ['bun', 'x', ...argv].join(' ');
+    case 'yarn':
+    case 'npm':
+    default:
       return ['npx', ...argv].join(' ');
   }
 }

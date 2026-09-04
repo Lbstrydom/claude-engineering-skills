@@ -975,6 +975,10 @@ export const AuditRunResultSchema = z.object({
   }).optional(),
   // Conditional / historically-optional fields:
   _failed_passes: z.array(z.string()).optional(),
+  // Total passes attempted — the denominator `_failed_passes` is meaningless
+  // without. `.optional()` only because results persisted before 2026-09-04
+  // lack it; every current producer emits it.
+  _passes_total: z.number().int().nonnegative().optional(),
   // Was `z.record(z.string(), z.any()).optional()` — "any key of any type",
   // which declared the opposite of what ExecutionMetaSchema claimed two hundred
   // lines below it. Surveyed 2026-08-13 before tightening: the only keys any

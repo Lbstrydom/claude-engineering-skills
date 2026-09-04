@@ -75,8 +75,38 @@ export const CoverageSchema = z.object({
       external: z.number().int().nonnegative(),
       selfEdge: z.number().int().nonnegative(),
       escaping: z.number().int().nonnegative(),
+      // Added 2026-09-04 with the filters that produce them. `.optional()`
+      // rather than required: every envelope written before that date lacks
+      // them, and a write-boundary schema that rejects the historical shape
+      // turns a read of old data into a `schema-invalid` error rather than a
+      // read.
+      //
+      // **Deliberately NOT `.default(0)`.** An earlier draft defaulted them,
+      // reasoning that 0 is arithmetically consistent with the old
+      // exhaustivity sum (back then such an edge landed in another bucket).
+      // That is true and beside the point: it makes a claim about history
+      // that a reader cannot tell apart from a measurement, so "this run
+      // never counted disowned edges" would render as "this run found no
+      // disowned edges" — the false zero this whole change exists to remove,
+      // written into its own schema. Absent stays absent; every current
+      // producer emits all six via `normalizeEdgeBuckets`, and
+      // `assertExtractionExhaustive` already sums with `?? 0` so a historical
+      // envelope still reconciles.
+      unresolved: z.number().int().nonnegative().optional(),
+      disowned: z.number().int().nonnegative().optional(),
       persisted: z.number().int().nonnegative(),
     }).nullable(),
+    // Which eligible files this dep-cruiser install has no parser for.
+    // `null` on a failed/timed-out extraction (no measurement at all);
+    // `known:false` when the producer could not ask dep-cruiser — never
+    // absent-meaning-fine. Optional for the same back-compat reason as the
+    // two edge buckets above.
+    parser: z.object({
+      known: z.boolean(),
+      unavailableExtensions: z.array(z.string()),
+      unparseable: z.number().int().nonnegative().nullable(),
+      byExtension: z.record(z.string(), z.number().int().nonnegative()),
+    }).nullable().optional(),
     samples: z.object({ uncruised: z.array(z.string()) }),
   }).nullable(),
   attribution: z.object({
@@ -142,6 +172,17 @@ export const CoverageSchema = z.object({
           message: `extraction.ratio (${ex.ratio}) disagrees with cruised/eligible (${expected}) — a ratio that does not follow from its own counts is not evidence`,
         });
       }
+    }
+    // A file can only be unparseable if it was eligible in the first place —
+    // `assessParserAvailability` counts a SUBSET of the eligible list. A
+    // payload claiming more unparseable files than eligible ones is arithmetic
+    // nonsense, and it is the shape a hand-built or half-migrated record takes.
+    if (ex && ex.parser && ex.parser.unparseable != null && ex.eligible != null
+      && ex.parser.unparseable > ex.eligible) {
+      ctx.addIssue({
+        code: 'custom', path: ['extraction', 'parser', 'unparseable'],
+        message: `extraction.parser.unparseable (${ex.parser.unparseable}) cannot exceed extraction.eligible (${ex.eligible}) — unparseable files are a subset of the eligible universe`,
+      });
     }
     const at = val?.attribution;
     if (at && at.attributed > at.attributable) {

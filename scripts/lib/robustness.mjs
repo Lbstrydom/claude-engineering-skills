@@ -14,7 +14,29 @@ export const MAX_DETAIL_CHARS = 200;
 export const MAP_FAILURE_THRESHOLD = 0.5;
 export const RETRY_MAX_ATTEMPTS = 1;
 export const RETRY_BASE_DELAY_MS = 2000;
-export const RETRY_429_MAX_DELAY_MS = 8000;
+/**
+ * Rate-limit / capacity retries are budgeted SEPARATELY from generic transient
+ * ones, because they mean a different thing.
+ *
+ * A 5xx or a socket reset is "that attempt broke, try again" — one quick retry
+ * is the right shape and a second mostly buys cost. A 429 saying *"the system
+ * is currently experiencing high demand"* is the provider telling you to come
+ * back LATER; retrying once, at most 8 seconds later, is a retry policy that
+ * cannot succeed against the condition it is for.
+ *
+ * Measured in a consumer 2026-09-04: under Azure OpenAI peak load, **every**
+ * pass in a round exhausted its single 8s-capped retry, and the round rendered
+ * `Verdict: INCOMPLETE | H:0 M:0 L:0` — indistinguishable from a clean audit.
+ * (Their contention was partly self-inflicted: a concurrent `arch:refresh` was
+ * saturating the same deployment. The skills' own refresh and audit compete for
+ * one quota, which is a reason to back off further, not less.)
+ *
+ * The ceiling is deliberately in TENS of seconds, and the delay is exponential
+ * with full jitter so N passes retrying together do not re-collide in lockstep.
+ */
+export const RETRY_429_MAX_ATTEMPTS = 4;
+export const RETRY_429_BASE_DELAY_MS = 5000;
+export const RETRY_429_MAX_DELAY_MS = 60_000;
 export const SEV_ORDER = { HIGH: 0, MEDIUM: 1, LOW: 2 };
 
 /** Stable directory for all local audit state. */
@@ -52,6 +74,81 @@ export function classifyLlmError(err) {
   if (err.name === 'AbortError' || err.code === 'ABORT_ERR') return { retryable: true, category: 'timeout' };
   if (err.cause?.code === 'ECONNRESET' || err.cause?.code === 'ENOTFOUND') return { retryable: true, category: 'network' };
   return { retryable: false, category: 'permanent' };
+}
+
+/** Is this a rate-limit / capacity refusal rather than a generic transient? */
+export function isRateLimitCategory(category) {
+  return category === 'http-429';
+}
+
+/** How many retries a category is allowed. */
+export function retryAttemptsFor(category) {
+  return isRateLimitCategory(category) ? RETRY_429_MAX_ATTEMPTS : RETRY_MAX_ATTEMPTS;
+}
+
+/**
+ * The provider's own `Retry-After`, in ms, when it supplied one.
+ *
+ * This is the only authoritative answer to "when should I come back" — every
+ * backoff curve below it is a guess. Both header shapes are accepted: a
+ * `Headers` object (what the OpenAI SDK attaches) and a plain object. Both RFC
+ * forms are accepted too: delta-seconds, and an HTTP-date.
+ *
+ * Returns `null` when absent or unparseable — never 0, which would read as
+ * "retry immediately" and is the opposite of what a missing header means.
+ *
+ * @param {any} err
+ * @returns {number|null}
+ */
+export function retryAfterMs(err) {
+  const headers = err?.headers ?? err?.response?.headers ?? null;
+  if (!headers) return null;
+  let raw = null;
+  try {
+    raw = typeof headers.get === 'function'
+      ? headers.get('retry-after')
+      : (headers['retry-after'] ?? headers['Retry-After'] ?? null);
+  } catch { return null; }
+  if (raw == null || raw === '') return null;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds)) return seconds >= 0 ? Math.round(seconds * 1000) : null;
+  const at = Date.parse(String(raw));
+  if (!Number.isFinite(at)) return null;
+  // A date already in the past means "now", which is a real answer — clamp to
+  // 0 rather than discarding the header.
+  return Math.max(0, at - Date.now());
+}
+
+/**
+ * How long to wait before retry `attempt` (0-based: 0 = before the 1st retry).
+ *
+ * Pure — `random` and `retryAfter` are injected — because the whole point is a
+ * policy that can be asserted without provoking a real 429, and because a
+ * jittered delay is otherwise untestable.
+ *
+ * Precedence: the provider's `Retry-After` wins over any curve we invent, but
+ * is still clamped to the category ceiling so a hostile or mistaken header
+ * cannot wedge a run for an hour.
+ *
+ * @param {{category: string, attempt: number, retryAfter?: number|null,
+ *          random?: () => number}} input
+ * @returns {number} milliseconds
+ */
+export function nextRetryDelayMs({ category, attempt, retryAfter = null, random = Math.random }) {
+  const rateLimited = isRateLimitCategory(category);
+  const ceiling = rateLimited ? RETRY_429_MAX_DELAY_MS : RETRY_BASE_DELAY_MS * (attempt + 1);
+  if (Number.isFinite(retryAfter) && retryAfter >= 0) {
+    return Math.min(ceiling, Math.round(retryAfter));
+  }
+  if (!rateLimited) return RETRY_BASE_DELAY_MS * (attempt + 1);
+  // Exponential with FULL jitter (`random() * window`, not `base + jitter`):
+  // several passes rate-limited by the same deployment at the same instant
+  // would otherwise wake together and re-collide, which is how one saturated
+  // deployment takes out a whole round rather than half of it.
+  const window = Math.min(RETRY_429_MAX_DELAY_MS, RETRY_429_BASE_DELAY_MS * (2 ** attempt));
+  // Never below the base delay: full jitter alone can return ~0, which is a
+  // retry the provider has just told us is too soon.
+  return Math.round(RETRY_429_BASE_DELAY_MS + random() * Math.max(0, window - RETRY_429_BASE_DELAY_MS));
 }
 
 // ── Reduce Payload Builder ──────────────────────────────────────────────────
@@ -246,6 +343,56 @@ export function tallyWriteOutcomes(tally, results) {
     if (bucket !== 'written' && r.error && !w.lastError) w.lastError = String(r.error).slice(0, 300);
   }
   return tally;
+}
+
+/**
+ * Postgres error text that means the STORE'S SCHEMA is behind the code, not
+ * that the write was unlucky.
+ *
+ * Matched on the message rather than `err.code` because `lastError` is already
+ * stringified by the time the summary is rendered — the code is gone. Each
+ * phrase is the fixed part of a PostgreSQL error message, not a paraphrase.
+ */
+const SCHEMA_DRIFT_SIGNS = Object.freeze([
+  'no unique or exclusion constraint matching the on conflict specification', // 42P10
+  'does not exist', // 42P01 relation / 42703 column
+]);
+
+/**
+ * Turn the `byWriter` tally into lines an operator can act on.
+ *
+ * The summary line this supplements read `18 written, 0 spilled, 1 lost` on
+ * EVERY audit in a consumer repo (2026-09-04) — a standing, silent data loss
+ * whose cause (`syncBanditArms`: `no unique or exclusion constraint matching
+ * the ON CONFLICT specification`) was only visible if you happened to scroll
+ * the stderr above it, and whose REMEDY was nowhere. A count of losses that
+ * does not name the loser is a metric, not a diagnosis.
+ *
+ * Pure, so the wording is testable without a database.
+ *
+ * @param {Record<string, {written:number, spilled:number, lost:number, skipped:number, lastError?:string}>} byWriter
+ * @returns {string[]} zero lines when nothing was lost
+ */
+export function describeLostWrites(byWriter) {
+  const lines = [];
+  let schemaDrift = false;
+  for (const [writerId, w] of Object.entries(byWriter || {})) {
+    if (!w || !(w.lost > 0)) continue;
+    const err = w.lastError ? `: ${w.lastError}` : ' (no error recorded)';
+    lines.push(`      ${writerId} — ${w.lost} lost${err}`);
+    const lower = String(w.lastError || '').toLowerCase();
+    if (SCHEMA_DRIFT_SIGNS.some((s) => lower.includes(s))) schemaDrift = true;
+  }
+  if (schemaDrift) {
+    // Named as drift, not as a bug in the writer: the writer is correct against
+    // the migrations in this repo, and the store it is talking to is behind
+    // them. `--check-drift` is the command that says so; `--migrate` is the fix.
+    lines.push('      ^ this reads as STORE SCHEMA DRIFT, not a transient failure — the write '
+      + 'targets a constraint or table this database does not have, so it will be lost again on '
+      + 'every run until the schema catches up. Diagnose: `node scripts/setup-postgres.mjs '
+      + '--check-drift`; fix: `node scripts/setup-postgres.mjs --migrate`.');
+  }
+  return lines;
 }
 
 // ── JSON Repair ──────────────────────────────────────────────────────────────

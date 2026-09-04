@@ -192,6 +192,24 @@ describe('sync --target-path — it actually deploys', () => {
     assert.ok(fs.existsSync(path.join(target, 'scripts', '.sync-manifest.json')),
       'the manifest must be written');
 
+    // The COMMITTED ownership sidecar (2026-09-04). The manifest above is
+    // gitignored on both sides, so it is absent from every fresh clone — this
+    // file is what lets a consumer answer "is this mine to fix?" offline, and
+    // asserting it HERE rather than only in a unit test is the difference
+    // between "the builder works" and "the sync writes it".
+    const sidecarPath = path.join(target, 'scripts', '.sync-owned.json');
+    assert.ok(fs.existsSync(sidecarPath), 'the ownership sidecar must be written');
+    const sidecar = JSON.parse(fs.readFileSync(sidecarPath, 'utf8'));
+    assert.equal(sidecar.version, 1);
+    assert.equal(sidecar.comparison, 'case-insensitive');
+    assert.ok(sidecar.paths.length > 0, 'an empty path set would assert nothing is upstream-owned');
+    assert.ok(sidecar.paths.includes('.claude/skills/ship/SKILL.md'),
+      'it must cover the COMMITTED surfaces, which git-ignore state and the banner cannot classify');
+    assert.ok(sidecar.paths.some((p) => p.startsWith('scripts/.claude-skills/')),
+      'and the gitignored tooling tree too');
+    // Committed artifact: no clock, no sha, or it churns on every push.
+    assert.doesNotMatch(JSON.stringify(sidecar), /\d{4}-\d{2}-\d{2}T/);
+
     // And the whole point of the exercise: the SKILL.md must cite the CONSUMER
     // runner layout, not the source one. This is the bug the plan exists to fix.
     const ship = fs.readFileSync(path.join(target, '.claude', 'skills', 'ship', 'SKILL.md'), 'utf8');
