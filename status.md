@@ -1,5 +1,25 @@
 # Project Status Log
 
+## 2026-09-04 — Drop a dead import a consumer had been carrying a local patch for
+
+### Changes
+- Removed `import os from 'node:os';` from `.claude/hooks/legacy-surface-advisory.mjs`. `os` appeared **exactly once** in the file — in that import; nothing referenced it.
+- **Found from the consumer side, not here.** `sync-to-repos` exited 1 refusing to overwrite two COMMITTED diverged files in wine-cellar-app, one of them this hook: that repo had deleted the same line in its #430 (`refactor(lint): clear the remaining 255 warnings and ratchet the cap to ZERO`) because its `no-unused-vars` cap is 0, and every sync since had tried to put it back. The divergence guard did its job — it surfaced an upstream defect instead of silently reverting the consumer's fix.
+- **Why an override was the wrong instrument here.** Declaring the hook in wine's `.sync-overrides.json` would have frozen it off every future upstream change to preserve one dead line. Fixing it upstream retires the need for the entry entirely, which is the difference between this file and the sibling divergence (`docs/reference/consistency-contract.md`), whose consumer-layout link rewrites upstream genuinely cannot carry.
+- **This repo has no `npm run lint`**, which is why the dead import survived here and only a consumer with a stricter gate ever noticed. Not fixed in this commit — noted as the reason the class exists.
+
+### Files Affected
+- `.claude/hooks/legacy-surface-advisory.mjs` — one line removed
+
+### Verification
+- `tests/hook-legacy-surface-advisory.test.mjs` **15/15 pass** (measured 2026-09-04, `node --test`). `node --check` clean.
+
+### Next Steps
+- Once this is pushed and re-synced, wine-cellar-app's `.sync-overrides.json` entry for this hook can be deleted — the two copies converge and there is nothing left to hold.
+- The sibling divergence stands: upstream's `docs/reference/consistency-contract.md` names its own source paths (`scripts/lib/persona-test/schemas.mjs`, `scripts/persona-consistency-run.mjs`, `scripts/lib/redact.mjs`), all of which are dead in a consumer where the bundle lives under `scripts/.claude-skills/`, and its header links a `docs/plans/persona-test-consistency-mode.md` that exists on neither side. That is the documented out-of-closure-paths shape and wants a real fix, not an override.
+
+---
+
 ## 2026-09-04 — The corpus is the repo, not the disk; and an unmeasured round must not wear a clean round's clothes
 
 ### Changes
