@@ -473,6 +473,17 @@
         "value": "tests/sync-owned-sidecar.test.mjs"
       },
       "recordedAt": "2026-09-04T12:14:07.598Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "15da01b6-d2ac-4c08-a6c3-e5e73d1a18dd",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/synced-doc-links.test.mjs"
+      },
+      "recordedAt": "2026-09-04T17:25:15.620Z"
     }
   ]
 }
