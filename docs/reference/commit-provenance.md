@@ -33,11 +33,55 @@ AI-Audited-Tree: 64e894a145de26eed3c3e006c434a345015257bf
 |---|---|---|
 | `AI-Skill` | lowercase kebab-case, must name a `skills/` (or consumer `.claude/skills/`) directory | which skill workflow produced the commit |
 | `AI-Models` | comma-separated tokens `^[a-z][a-z0-9.-]*$`, deduplicated, sorted alphabetically | **declared** lineup of models that participated. Grammar-validated but not evidence-bound (same honesty tier as a `Co-authored-by` line) — receipt-derived binding is a v2 item |
-| `AI-Gate` | `passed` \| `waived` \| `not-run` | **evidence- and verdict-bound**: `passed`/`waived` require `.audit/last-audit-run.json` fresher than `HEAD` (an audit ran this cycle); `not-run` requires its absence. `passed` additionally requires (a) the **audited-target identity** to match — the marker's `auditedTree` must equal the tree being committed (see below), checked first and locally — and (b) the run's **convergence verdict verified against the cloud store** (`audit_runs` row via `getAuditRunConvergence`) — cloud off, run not found, run not converged, or a tree mismatch all refuse `passed`, fail-closed. Scope of the verified claim: **GPT-loop convergence only** — the Gemini final-review disposition is not yet store-verifiable per run; binding it is part of the V2 ship-evidence receipt. `waived` is the declared, unverified disposition (gate override OR verification unavailable); the accompanying `AI-Run-ID` keeps it forensically resolvable |
+| `AI-Gate` | `passed` \| `converged` \| `waived` \| `not-run` | **evidence- and verdict-bound**: `passed`/`waived` require `.audit/last-audit-run.json` fresher than `HEAD` (an audit ran this cycle); `not-run` requires its absence. `passed` additionally requires (a) the **audited-target identity** to match — the marker's `auditedTree` must equal the tree being committed (see below), checked first and locally — and (b) the run's **convergence verdict verified against the cloud store** (`audit_runs` row via `getAuditRunConvergence`) — cloud off, run not found, run not converged, or a tree mismatch all refuse `passed`, fail-closed. Scope of the verified claim: **GPT-loop convergence only** — the Gemini final-review disposition is not yet store-verifiable per run; binding it is part of the V2 ship-evidence receipt. `waived` is the declared, unverified disposition (gate override OR verification unavailable); the accompanying `AI-Run-ID` keeps it forensically resolvable |
 | `AI-Audited-Tree` | 40-hex git oid, conditional — **`passed` only** | the tree object `ship-commit` actually compared when granting `passed`, i.e. the index tree at ship time, which at that moment equals the marker's `auditedTree`. Written only on the accept branch of `evaluateGateVerification`, and the renderer independently refuses to emit it on any other gate or for a malformed oid. **Added 2026-08-04 to make `passed` re-checkable from the commit alone** — see "Verifying a historical `passed`" below |
 | `AI-Run-ID` | `[A-Za-z0-9-]{8,64}`, conditional | injected by the helper from `.audit/last-audit-run.json` when fresh — never typed by an agent. Since E1 this is **more than a correlation hint on a `passed` commit**: `passed` additionally requires the marker's `auditedTree` to equal the tree being committed, so the id names a run whose *subject* was verified. On `waived` it remains a best-effort hint. `--no-run-id` omits it (declares the audit unrelated) and forces `--gate not-run` |
 
 ### The audited-target identity (E1)
+
+### `converged` — the audited-then-remediated ship (added 2026-09-04)
+
+`converged` is `passed`'s sibling over the **same** evidence and the **same**
+store lookup; the two are the equal/differing halves of one tree comparison, so
+each refusal names the other and neither is obtainable more cheaply. It exists
+because the `!==` half was previously unlabelled: an audit that ran, converged,
+and had its findings **fixed** moves the tree by construction, which made
+`passed` unreachable while fresh evidence made `not-run` illegal — leaving only
+`waived`, i.e. *"shipped past a gate"*, for the workflow's best outcome. A
+`/cycle --autonomous` ship was consequently indistinguishable in git history
+from `/ship --no-tests`.
+
+**Why `passed` is rare, and why that is not a defect.** `/ship`'s own mandatory
+Steps 2–5 write `status.md`, sometimes CLAUDE.md, and the plan's Implementation
+Log *after* the audit and *before* Step 6.3's commit. So even a zero-finding,
+converged, otherwise-untouched audit moves the tree and lands on `converged`.
+Measured over this repo's whole history the day `converged` was added:
+**647 `not-run`, 86 `waived`, 2 `passed`**. Read a low `passed` count as the
+designed consequence of an audit-then-document workflow, not as breakage — and
+never reorder a ship to chase it.
+
+**What `converged` deliberately does NOT claim**, in its own words rather than a
+reader's inference: that the tree delta is findings-derived (nothing checks
+that — which is exactly why it is not called `remediated`); that the audit ran
+in the same operator session (freshness is only `evidence > HEAD`); and that no
+foreign commit intervened (committer timestamps are user-controlled and
+non-monotonic).
+
+**`AI-Audited-Tree` is deliberately NOT emitted on `converged`.** On `passed`
+the audited tree *is* the commit's tree, so it is reachable from a ref and the
+trailer is self-verifying with pure git, forever. On `converged` it is a
+synthetic tree from `gitWorktreeTree`'s throwaway index that equals nothing any
+ref points at — measured: reachable from **0 refs**, listed by
+`git fsck --unreachable`, **destroyed by `git gc --prune=now`**, and **absent
+from a fresh clone**. Emitting it would publish a provenance line that resolves
+for its author until the next gc and for nobody else ever, which is worse than
+omitting it. (Second, independent reason: that identity covers all non-ignored
+worktree content including unrelated untracked files — an audit *subject*, not a
+publishable scope.) The consequence is honest and worth stating: a `converged`
+commit carries **no in-git record of what moved after the audit**; recovery runs
+through `AI-Run-ID` and the store. Making that durable is the deferred V2
+ship-evidence receipt.
+Plan: [`gate-taxonomy-remediated-ships.md`](../plans/gate-taxonomy-remediated-ships.md).
 
 `passed` binds to **what was audited**, not merely to when. The marker carries
 `auditedTree` — the git tree object id of the worktree the audit read — and
@@ -163,6 +207,13 @@ git show -s --format='%(trailers)' <sha>
 
 # Commits shipped on a waiver (gates overridden)
 git log --oneline --grep='^AI-Gate: waived'
+
+# Audited-then-remediated ships (the gate ran, converged, and its findings were
+# applied — the tree moved BECAUSE of the gate, not around it)
+git log --oneline --grep='^AI-Gate: converged'
+
+# Both verified gates together (everything behind a store-verified verdict)
+git log --oneline --grep='^AI-Gate: \(passed\|converged\)'
 ```
 
 ## Failure contract (what agents see)

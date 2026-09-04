@@ -1255,12 +1255,24 @@ byte-checked in `npm run check`. **Edit the canonical, never a copy.**
 
 `/ship` commits carry `AI-Skill`/`AI-Models`/`AI-Gate`/conditional `AI-Run-ID`
 git trailers written ONLY by `scripts/ship-commit.mjs` (`/ship` Step 6.3) —
-never hand-typed; the `AI-*` namespace is reserved. `AI-Gate: passed` is
-verdict-verified against the store's `audit_runs` row (fail-closed — an
-unevidenced or unverified `passed` cannot exist). Applies from tag
+never hand-typed; the `AI-*` namespace is reserved. `AI-Gate` has **four**
+values, two verified against the store's `audit_runs` row and two declared:
+`passed` (converged AND the committed tree IS the audited tree) · **`converged`**
+(converged AND the tree DIFFERS — the audited-then-**remediated** ship, added
+2026-09-04) · `waived` (declared, unverified) · `not-run` (no fresh evidence).
+Both verified values are fail-closed and clear the **same** store bar, so
+neither is cheaper; they are the equal/differing halves of one comparison, and
+each refusal names the other — you may not over- *or* under-claim.
+**`passed` is rare by design**: `/ship`'s own Steps 2–5 move the tree after the
+audit, so even a zero-finding converged audit lands on `converged` (measured at
+that date: 647 `not-run`, 86 `waived`, 2 `passed`). Never hand-write
+`.audit/last-audit-run.json` or reorder a ship to chase it — the value worth
+investigating is a `passed` that should not be there. Applies from tag
 `provenance-v1` forward; absence
 after that = "not mechanically produced". Schema, query cookbook, failure
-contract: [`docs/reference/commit-provenance.md`](docs/reference/commit-provenance.md).
+contract: [`docs/reference/commit-provenance.md`](docs/reference/commit-provenance.md);
+design + the measured reason `converged` carries no audited-tree trailer:
+[`docs/plans/gate-taxonomy-remediated-ships.md`](docs/plans/gate-taxonomy-remediated-ships.md).
 
 ## Code Style
 

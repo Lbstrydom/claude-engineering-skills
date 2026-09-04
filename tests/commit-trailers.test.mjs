@@ -67,7 +67,7 @@ test('gate: enum rejection is the pinned byte format', () => {
   const r = validateTrailerInput(validInput({ gate: 'green' }), { skillNames: SKILLS });
   const lines = renderAgentFixLines(r.errors);
   assert.deepEqual(lines, [
-    'AGENT FIX: --gate: expected one of passed|waived|not-run; got "green". Example: --gate passed',
+    'AGENT FIX: --gate: expected one of passed|converged|waived|not-run; got "green". Example: --gate passed',
   ]);
 });
 
@@ -195,7 +195,7 @@ test('fresh evidence + --gate not-run is rejected with the pinned line', () => {
   const r = validateTrailerInput(validInput({ gate: 'not-run', evidence }), { skillNames: SKILLS });
   const lines = renderAgentFixLines(r.errors);
   assert.deepEqual(lines, [
-    'AGENT FIX: gate-evidence: an audit ran after HEAD (.audit/last-audit-run.json ts 2026-07-14T09:41:00Z) but --gate is "not-run"; pass --gate passed|waived, or --no-run-id --gate not-run if that audit was unrelated. Example: --gate passed',
+    'AGENT FIX: gate-evidence: an audit ran after HEAD (.audit/last-audit-run.json ts 2026-07-14T09:41:00Z) but --gate is "not-run"; pass --gate passed|converged|waived, or --no-run-id --gate not-run if that audit was unrelated. Example: --gate converged',
   ]);
 });
 
@@ -230,10 +230,109 @@ const AUDITED_TREE = 'a'.repeat(40);
 const FRESH = { state: 'fresh', runId: 'ecae388d-c176-4182-9d27-0210b919b844', ts: '2026-07-14T09:41:00Z', auditedTree: AUDITED_TREE, auditedSha: AUDITED_TREE };
 const TREE = { committedTree: AUDITED_TREE };
 
-test('gate verification: only fires for passed + fresh (waived/not-run/stale never verified)', () => {
+test('gate verification: only fires for the VERIFIED gates + fresh (waived/not-run/stale never verified)', () => {
   assert.equal(evaluateGateVerification({ gate: 'waived', evidence: FRESH, cloudEnabled: false, convergence: null }), null);
   assert.equal(evaluateGateVerification({ gate: 'not-run', evidence: { state: 'absent', runId: null }, cloudEnabled: false, convergence: null }), null);
   assert.equal(evaluateGateVerification({ gate: 'passed', evidence: { state: 'stale', runId: 'x'.repeat(10) }, cloudEnabled: true, convergence: null }), null);
+  // `converged` joins the verified set — but is just as inert on stale evidence.
+  assert.equal(evaluateGateVerification({ gate: 'converged', evidence: { state: 'stale', runId: 'x'.repeat(10) }, cloudEnabled: true, convergence: null }), null);
+});
+
+// ── `converged`: the new accept state ──────────────────────────────────────
+// The direction that must FIRE is cheap to get right; the directions that must
+// NOT fire are where a false accept hides silently, so they outnumber it here.
+
+const OTHER_TREE = 'b'.repeat(40);
+const CONVERGED = { roundConvergedAfter: 2, rounds: 3 };
+
+test('converged: fresh + store-converged + DIFFERING tree → accepted', () => {
+  assert.equal(
+    evaluateGateVerification({
+      gate: 'converged', evidence: FRESH, cloudEnabled: true, convergence: CONVERGED, committedTree: OTHER_TREE,
+    }),
+    null,
+    'the audited-then-remediated ship is exactly what this value is for',
+  );
+});
+
+test('converged: EQUAL tree → refused, naming passed (the under-claim direction)', () => {
+  // Without this the weaker label is grantable whenever the stronger one is
+  // earned, and `passed` decays into "whatever the agent happened to type".
+  const e = evaluateGateVerification({
+    gate: 'converged', evidence: FRESH, cloudEnabled: true, convergence: CONVERGED, ...TREE,
+  });
+  assert.ok(e, 'converged must be REFUSED when the trees match');
+  assert.match(e.custom, /IS what run .* audited/);
+  assert.match(e.custom, /--gate passed/, 'the refusal must name the value that is actually earnable');
+});
+
+test('converged: run did NOT converge → refused, naming waived (not the sibling gate)', () => {
+  const e = evaluateGateVerification({
+    gate: 'converged', evidence: FRESH, cloudEnabled: true, convergence: { roundConvergedAfter: null, rounds: 3 }, committedTree: OTHER_TREE,
+  });
+  assert.ok(e, 'a differing tree alone must never buy the gate — the store verdict is the other half');
+  assert.match(e.custom, /"converged" is not available/);
+  assert.match(e.custom, /--gate waived/);
+});
+
+test('converged: cloud off → refused (same store bar as passed; no cheaper path)', () => {
+  const e = evaluateGateVerification({
+    gate: 'converged', evidence: FRESH, cloudEnabled: false, convergence: null, committedTree: OTHER_TREE,
+  });
+  assert.ok(e, 'converged must be exactly as hard to forge as passed');
+  assert.match(e.custom, /"converged" requires a verified verdict/);
+  assert.match(e.custom, /AUDIT_DB_URL unset/);
+});
+
+test('converged: unresolvable comparand → refused (cannot prove difference either)', () => {
+  // A gate predicated on the trees DIFFERING is as unprovable as one predicated
+  // on their matching when there is nothing to compare. Fail-closed both ways.
+  const e = evaluateGateVerification({
+    gate: 'converged', evidence: FRESH, cloudEnabled: true, convergence: CONVERGED, committedTree: null,
+  });
+  assert.ok(e, 'a null comparand must refuse, not default to "well, it differs"');
+  assert.match(e.custom, /cannot resolve the tree being committed/);
+  assert.match(e.custom, /"converged"/, 'the refusal names the gate that was actually requested');
+});
+
+test('converged: no audited-tree identity (pre-E1 marker) → refused', () => {
+  const e = evaluateGateVerification({
+    gate: 'converged',
+    evidence: { ...FRESH, auditedTree: null },
+    cloudEnabled: true,
+    convergence: CONVERGED,
+    committedTree: OTHER_TREE,
+  });
+  assert.ok(e, 'an evidence-less run cannot support converged any more than passed');
+  assert.match(e.custom, /recorded no audited-tree identity/);
+});
+
+test('passed: tree mismatch now names converged (the refusal points at the earnable value)', () => {
+  const e = evaluateGateVerification({
+    gate: 'passed', evidence: FRESH, cloudEnabled: true, convergence: CONVERGED, committedTree: OTHER_TREE,
+  });
+  assert.ok(e, 'passed is still refused on a delta — the E1 contract is unchanged');
+  assert.match(e.custom, /--gate converged/, 'sending the operator to waived here would be telling them to under-claim');
+});
+
+test('formatTrailerBlock: AI-Audited-Tree is emitted on passed and NEVER on converged', () => {
+  // §2.3: on `converged` the audited tree is a synthetic object that is
+  // unreachable from any ref, gc-prunable, and absent from every clone — a
+  // provenance line that looks checkable and is not. Asserted rather than
+  // assumed, because an omission nothing tests for is an omission that returns.
+  const base = { skill: 'ship', models: ['claude'], runId: 'ecae388d-c176-4182-9d27-0210b919b844', auditedTree: AUDITED_TREE };
+  assert.ok(
+    formatTrailerBlock({ ...base, gate: 'passed' }).some((l) => l.startsWith('AI-Audited-Tree: ')),
+    'passed still carries the identity it compared',
+  );
+  const convergedLines = formatTrailerBlock({ ...base, gate: 'converged' });
+  assert.equal(
+    convergedLines.some((l) => l.startsWith('AI-Audited-Tree: ')),
+    false,
+    'converged must never publish an unreachable tree id',
+  );
+  assert.ok(convergedLines.includes('AI-Gate: converged'));
+  assert.ok(convergedLines.includes('AI-Run-ID: ecae388d-c176-4182-9d27-0210b919b844'), 'forensics still resolve via the run id');
 });
 
 test('gate verification: cloud off → passed refused with the pinned unavailable line', () => {

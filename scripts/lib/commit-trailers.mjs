@@ -18,7 +18,32 @@ import path from 'node:path';
 import { resolveAndClassify } from './sensitive-paths.mjs';
 import { GIT_OBJECT_ID_RE } from './worktree-identity.mjs';
 
-export const GATE_VALUES = Object.freeze(['passed', 'waived', 'not-run']);
+export const GATE_VALUES = Object.freeze(['passed', 'converged', 'waived', 'not-run']);
+
+/**
+ * The gates whose claim is VERIFIED rather than declared: both require fresh
+ * evidence, an audited-tree identity, a resolvable comparand, and the store's
+ * convergence verdict. They differ only in the tree comparison — `passed` is
+ * `committedTree === auditedTree`, `converged` is `!==` — which makes them
+ * mutually exclusive halves of one condition rather than two policies.
+ *
+ * `converged` exists because that condition's `!==` half was previously
+ * unlabelled: an audit that ran, converged, and had its findings FIXED moves
+ * the tree by construction, so `passed` was unreachable and `not-run` illegal
+ * (fresh evidence), leaving only `waived` — which means "shipped past a gate".
+ * Measured over this repo's history at the time: 647 not-run, 86 waived, 2
+ * passed. `/ship`'s own mandatory doc steps move the tree too, so even a
+ * zero-finding converged audit lost `passed`.
+ *
+ * What `converged` does NOT claim, deliberately: that the delta is
+ * findings-derived (nothing checks that — hence not `remediated`), that the
+ * audit ran in this operator session (freshness is only `evidence > HEAD`),
+ * and that no foreign commit intervened (committer timestamps are
+ * user-controlled and non-monotonic).
+ *
+ * Plan: docs/plans/gate-taxonomy-remediated-ships.md §2.
+ */
+const VERIFIED_GATES = Object.freeze(['passed', 'converged']);
 export const MODEL_TOKEN_RE = /^[a-z][a-z0-9.-]*$/;
 export const RUN_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 
@@ -231,7 +256,7 @@ export function validateTrailerInput(input, { skillNames }) {
   if (!GATE_VALUES.includes(gate)) {
     errors.push({
       field: '--gate',
-      expected: 'one of passed|waived|not-run',
+      expected: 'one of passed|converged|waived|not-run',
       got: String(input.gate ?? ''),
       example: '--gate passed',
     });
@@ -255,7 +280,7 @@ export function validateTrailerInput(input, { skillNames }) {
     if (ev.state === 'fresh' && gate === 'not-run') {
       errors.push({
         field: 'gate-evidence',
-        custom: `AGENT FIX: gate-evidence: an audit ran after HEAD (.audit/last-audit-run.json ts ${ev.ts}) but --gate is "not-run"; pass --gate passed|waived, or --no-run-id --gate not-run if that audit was unrelated. Example: --gate passed`,
+        custom: `AGENT FIX: gate-evidence: an audit ran after HEAD (.audit/last-audit-run.json ts ${ev.ts}) but --gate is "not-run"; pass --gate passed|converged|waived, or --no-run-id --gate not-run if that audit was unrelated. Example: --gate converged`,
       });
     } else if (ev.state !== 'fresh' && gate !== 'not-run') {
       errors.push({
@@ -284,7 +309,7 @@ export function validateTrailerInput(input, { skillNames }) {
  * @returns {null | {field: string, custom: string}}
  */
 export function evaluateGateVerification({ gate, evidence, cloudEnabled, convergence, committedTree = null }) {
-  if (!evidence || evidence.state !== 'fresh' || gate !== 'passed') return null;
+  if (!evidence || evidence.state !== 'fresh' || !VERIFIED_GATES.includes(gate)) return null;
   const runId = evidence.runId;
 
   // ── E1: content identity, checked BEFORE the store lookups ────────────────
@@ -293,44 +318,66 @@ export function evaluateGateVerification({ gate, evidence, cloudEnabled, converg
   // the audit never saw. This is the only one of the three checks that a
   // post-audit edit cannot satisfy, so it is the primary — and it is local and
   // free, so it runs first and gives the clearest refusal even with cloud off.
+  // Both verified gates need the SAME comparand. Absence refuses either one:
+  // a gate predicated on the trees being equal and one predicated on their
+  // differing are equally unprovable when there is nothing to compare, so the
+  // fail-closed direction is identical and points at `waived` (declared,
+  // unverified) — never at the sibling verified gate, which is just as
+  // unverifiable here.
   if (!evidence.auditedTree) {
     return {
       field: 'gate-evidence',
-      custom: `AGENT FIX: gate-evidence: run ${runId} recorded no audited-tree identity, so "passed" cannot be verified against what you are committing (pre-E1 or evidence-less run); use --gate waived. Example: --gate waived`,
+      custom: `AGENT FIX: gate-evidence: run ${runId} recorded no audited-tree identity, so "${gate}" cannot be verified against what you are committing (pre-E1 or evidence-less run); use --gate waived. Example: --gate waived`,
     };
   }
   if (!committedTree) {
     return {
       field: 'gate-evidence',
-      custom: `AGENT FIX: gate-evidence: cannot resolve the tree being committed, so "passed" cannot be verified against run ${runId}'s audited tree; use --gate waived. Example: --gate waived`,
+      custom: `AGENT FIX: gate-evidence: cannot resolve the tree being committed, so "${gate}" cannot be verified against run ${runId}'s audited tree; use --gate waived. Example: --gate waived`,
     };
   }
-  if (committedTree !== evidence.auditedTree) {
+
+  // The one place the two gates diverge. Each refusal names its SIBLING, not
+  // `waived`: the identity is fully resolved here, so the operator asked for
+  // the wrong half of a condition that has a right half — sending them to
+  // `waived` would be telling them to under-claim a verifiable state.
+  const treesMatch = committedTree === evidence.auditedTree;
+  if (gate === 'passed' && !treesMatch) {
     // The honest reading: what you are committing is not what was audited.
     // Note this also fires for a PARTIAL commit of an audited worktree, and
     // that is correct — a whole-worktree audit does not cover a subset.
     return {
       field: 'gate-evidence',
-      custom: `AGENT FIX: gate-evidence: what you are committing is not what run ${runId} audited (audited tree ${evidence.auditedTree.slice(0, 12)}, committing ${committedTree.slice(0, 12)}) — re-audit, or use --gate waived. Note a partial commit of an audited worktree also differs. Example: --gate waived`,
+      custom: `AGENT FIX: gate-evidence: what you are committing is not what run ${runId} audited (audited tree ${evidence.auditedTree.slice(0, 12)}, committing ${committedTree.slice(0, 12)}) — use --gate converged if that run converged (fixes applied after the audit are exactly this case), or --gate waived. Note a partial commit of an audited worktree also differs. Example: --gate converged`,
+    };
+  }
+  if (gate === 'converged' && treesMatch) {
+    // Refusing the UNDER-claim. Without this the weaker label is grantable
+    // whenever the stronger one is earned, which erodes the distinction the
+    // value exists to create — and `passed` would decay into "whatever the
+    // agent happened to type".
+    return {
+      field: 'gate-evidence',
+      custom: `AGENT FIX: gate-evidence: what you are committing IS what run ${runId} audited (tree ${committedTree.slice(0, 12)}), so "converged" understates it; use --gate passed. Example: --gate passed`,
     };
   }
 
   if (!cloudEnabled) {
     return {
       field: 'gate-evidence',
-      custom: `AGENT FIX: gate-evidence: "passed" requires a verified verdict for run ${runId} but verification is unavailable (AUDIT_DB_URL unset); use --gate waived (declared, unverified) or fix connectivity. Example: --gate waived`,
+      custom: `AGENT FIX: gate-evidence: "${gate}" requires a verified verdict for run ${runId} but verification is unavailable (AUDIT_DB_URL unset); use --gate waived (declared, unverified) or fix connectivity. Example: --gate waived`,
     };
   }
   if (!convergence) {
     return {
       field: 'gate-evidence',
-      custom: `AGENT FIX: gate-evidence: "passed" requires a verified verdict for run ${runId} but verification is unavailable (run not found in the store, or the query failed); use --gate waived (declared, unverified). Example: --gate waived`,
+      custom: `AGENT FIX: gate-evidence: "${gate}" requires a verified verdict for run ${runId} but verification is unavailable (run not found in the store, or the query failed); use --gate waived (declared, unverified). Example: --gate waived`,
     };
   }
   if (convergence.roundConvergedAfter == null) {
     return {
       field: 'gate-evidence',
-      custom: `AGENT FIX: gate-evidence: run ${runId} did not converge (verdict recorded in the store); "passed" is not available — --gate waived declares shipping past the gate. Example: --gate waived`,
+      custom: `AGENT FIX: gate-evidence: run ${runId} did not converge (verdict recorded in the store); "${gate}" is not available — --gate waived declares shipping past the gate. Example: --gate waived`,
     };
   }
   return null;
@@ -405,6 +452,20 @@ export function formatTrailerBlock(v) {
   // Guarded by gate AND shape: a caller that threads a value through on a
   // non-`passed` gate, or a malformed oid, emits nothing rather than a trailer
   // asserting an identity nobody verified.
+  //
+  // DELIBERATELY still `passed`-only after `converged` was added, and this is
+  // the interesting case. On `passed` the audited tree IS the commit's tree, so
+  // it is reachable from a ref and the trailer is self-verifying with pure git,
+  // forever. On `converged` it is a SYNTHETIC tree from `gitWorktreeTree`'s
+  // throwaway index that equals nothing any ref points at — measured: reachable
+  // from 0 refs, listed by `git fsck --unreachable`, destroyed by
+  // `git gc --prune=now`, and absent from a fresh clone. Emitting it there would
+  // publish a provenance line that resolves for its author until the next gc and
+  // for nobody else ever, which is worse than omitting it. (Second, independent
+  // reason: `gitWorktreeTree` is `read-tree HEAD` + `add -A`, so the identity
+  // covers all non-ignored worktree content including unrelated untracked files
+  // — an audit subject, not a publishable scope.)
+  // Plan: docs/plans/gate-taxonomy-remediated-ships.md §2.3.
   if (v.gate === 'passed' && TREE_ID_RE.test(v.auditedTree ?? '')) {
     lines.push(`AI-Audited-Tree: ${v.auditedTree}`);
   }

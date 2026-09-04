@@ -1,5 +1,112 @@
 # Project Status Log
 
+## 2026-09-04 — `AI-Gate: converged`: a name for the audited-then-remediated ship
+
+### Consumer Verification (previous ship)
+
+**Commit**: `88025501` — gate inert SKILL.md frontmatter keys at source, sync and consumer (pushed to `main` 2026-09-03)
+
+| Artifact | Retrieval | Result |
+|---|---|---|
+| pushed commit | `git fetch origin` from the worktree; `origin/main` resolved to `88025501` | **verified** — remote ref equals the local commit; pre-push ran `npm run check` in a clean sandbox at that sha and passed (the push would have been refused otherwise) |
+| synced consumer bundle | `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run **inside** wine-cellar-app, ai-organiser and storyline (each consumer's own synced copy, not `sync:dry`) | **verified** — all 11 gates pass in all three (1, 2A, 2B, 2C, 3, 4, 5, 6, 7, 8, **9**); gate 9 is the new frontmatter-layout gate, executing from the just-synced `lib/skill-frontmatter-layout.mjs`. Sync summary: 3/3 targets, 3 created, 9 updated, 0 errors |
+| consumer defect closure | `node scripts/doctor.mjs --consumer-root C:/GIT/wine-cellar-app --only sync/skill-frontmatter-layout` | **verified** — FAIL on `.claude/skills/audit/SKILL.md:12` before the orphan was removed, PASS after; ai-organiser and storyline clean by `check-skill-frontmatter.mjs --root <consumer>/.claude/skills` |
+| skill manifest | not re-derived from the pushed sha separately | **unverified** — no SKILL.md content changed in this ship, so `skills.manifest.json` was not regenerated; `build-manifest --check` passed as part of the pre-push `skills:check` only |
+
+Follow-up opened in the consumer: wine-cellar-app PR #437 removes the tracked, stale `.claude/skills.json` written by the retired March installer.
+
+---
+
+**The workflow's best outcome had no correct label.** Run `/cycle --autonomous`
+the way the skills prescribe — audit, accept the findings, **fix** them, ship —
+and all three gate values were wrong. `passed` was refused (fixing findings moves
+the tree), `not-run` was refused (fresh evidence), leaving only `waived`, whose
+documented meaning is *shipped past a gate*. Nothing was bypassed; more work was
+done. A `/cycle` ship was indistinguishable in git history from
+`/ship --no-tests`. Measured over this repo's whole history: **647 `not-run`,
+86 `waived`, 2 `passed`** — and `commit-provenance.md` already recorded that an
+audit of *those two* found one whose stored tree did not match.
+
+`AI-Gate` now has a fourth value, **`converged`**: fresh evidence, a
+store-verified converged verdict, and a committed tree that *differs* from the
+audited one. It is `passed`'s sibling over the same evidence and the same store
+lookup — the equal/differing halves of one comparison — so each refusal names the
+other and **neither is cheaper to obtain**. `passed` is untouched and no easier
+to forge. Design + full adjudication:
+[gate-taxonomy-remediated-ships.md](docs/plans/gate-taxonomy-remediated-ships.md).
+
+**Two `passed` unreachability causes, and only one was known.** The plan named
+the first: `/ship`'s own mandatory Steps 2–5 write status.md, CLAUDE.md and the
+plan's Implementation Log *after* the audit, so even a zero-finding converged
+audit moves the tree. The second was found **during implementation** and is
+worse: in a linked worktree `<root>/.git` is a FILE, so the `--path` temp index
+was built at a path that cannot exist, `git read-tree` exited 128, and
+`committedTree` was always `null`. With `--path` mandatory, **`passed` was
+structurally unreachable for every scoped commit in every worktree** — the same
+"no correct value by construction" shape as the bug this plan set out to fix,
+one layer down. Fixed; pinned by `ship-commit-cli` row 5e, which asserts *which*
+refusal appears, because a test asserting merely "exit 2" passes on the bug.
+
+It was found only by **probing the refusal live and noticing it fired for the
+wrong reason** — the run blamed the comparand where the store verdict was
+expected. That mismatch is the whole finding.
+
+**Three claims the audit removed from the plan**, all one failure mode — the
+prose asserting more than the predicate establishes: *"an audit ran this cycle"*
+(freshness is only `evidence > HEAD`, so a marker days old still qualifies);
+*"a foreign commit ages the marker out, so the delta is the author's own work"*
+(committer timestamps are user-controlled and non-monotonic); and *"the `waived`
+population becomes homogeneous"* (the CLI is a validator, so `waived` stays
+requestable in the same state — `converged` is a non-exclusive opt-in label).
+A plan whose thesis is *claim only what the evidence establishes* turned out to
+be the one most likely to be caught overclaiming.
+
+**`AI-Audited-Tree` is deliberately NOT emitted on `converged`**, and the reason
+is measured rather than stylistic: on a `converged` commit the audited tree is a
+synthetic object reachable from **0 refs**, listed by `git fsck --unreachable`,
+**destroyed by `git gc --prune=now`**, and **absent from a fresh clone**. It
+would resolve for its author until the next gc and for nobody else, ever. The
+audit's own remedy — a durable ref-backed snapshot — was rejected as the
+over-engineered extreme and is materially the deferred V2 receipt. Honest
+residual, recorded: a `converged` commit carries no in-git record of what moved
+after the audit; recovery runs through `AI-Run-ID` and the store.
+
+**Why not `--gate-reason`** (the V2 row whose promotion trigger this met): a
+free-text reason is a declaration the binary's closed-grammar design excludes,
+and a *closed* reason vocabulary needs a cross-field rule binding legal reasons
+to legal gates — a two-field contract with illegal pairs, the trap this repo has
+already recorded. One field with four values has none. That row stays open for
+what remains in `waived`.
+
+**Audit trail.** Plan: 3 GPT rounds, **9 findings, 9 accepted, 0 dismissed,
+acceptance 100% every round**, stopped at the cap; Gemini APPROVE. Code: 2
+rounds on the union cluster; the durable-provenance objection was re-raised at
+HIGH and **overruled a third time** — the decisive argument being that it proves
+too much, since `passed` also mints its verdict from the same mutable store row
+and merely happens to carry a tree id as well. The consolidated Gemini gate over
+the union diff returned **APPROVE, 0 new, 0 wrongly dismissed**, so an
+independent arbiter reviewed that dismissal rather than the author grading his
+own work. Four new invariants were mutation-tested; each broke exactly one test,
+and restore returned green.
+
+**This ship's own gate is `waived`, not `converged` — the feature refusing to
+flatter its author.** Run `7263516b` records `roundConvergedAfter: null` because
+its last HIGH was overruled rather than fixed, so the store honestly reports
+non-convergence. Verified live before committing: exit 2, *"run … did not
+converge … `converged` is not available"*. The first commit to legitimately
+carry `AI-Gate: converged` will be a later one that earns it.
+
+**Known-failing at commit time, both unrelated to this change**:
+`skills-artifact-freshness-wiring` (the manifest hashes working-tree bytes while
+the test compares committed source — resolves at this commit) and
+`sync-target-path` (a 120s `ensureAuditDeps` cap exceeded by the playwright
+download; `spawnSync` returns `status: null`; three consecutive failures
+including one in isolation; **0 dependency lines in this diff** — filed as a
+separate task). Two process errors of mine, both self-inflicted: piping
+`npm test` through `tail` destroyed the failure diagnostics and masked the exit
+code, and I twice stated a test-state claim I had not re-verified.
+
+
 ## 2026-09-03 — Inert SKILL.md frontmatter keys: a gate at all three enforcement points
 
 **The report's premise was wrong about location, right about the defect.** It

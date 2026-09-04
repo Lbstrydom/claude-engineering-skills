@@ -1033,35 +1033,58 @@ them (`reserved-trailer`).
 Decide the provenance values (full convention: `docs/reference/commit-provenance.md`):
 - `--models` — comma list of models that participated this session
   (e.g. `claude` alone; `claude,gemini,gpt` when the audit loop ran).
-- `--gate` — `passed` (audit ran this cycle AND its convergence verdict
-  is **verified against the cloud store** — the helper queries the run's
-  `audit_runs` row; unverifiable → `passed` is refused) · `waived`
-  (declared disposition without a verified verdict: shipped past a gate
-  via `--ignore-p0`/`--no-tests`/etc., OR verification unavailable —
-  cloud off / run not found) · `not-run` (no audit this cycle —
-  docs-only ships). The helper also enforces `.audit/last-audit-run.json`
-  freshness; an unevidenced or unverified `passed` is rejected.
+- `--gate` — four values. The first two are **verified** (the helper queries the
+  run's `audit_runs` row); the last two are **declared**.
+  - `passed` — fresh evidence, the store says the run converged, **and the
+    committed tree IS the audited tree**.
+  - `converged` — the same evidence and the same store verdict, but the
+    **committed tree DIFFERS from the audited tree**. This is the
+    audited-then-remediated ship: the audit ran, its findings were accepted and
+    **fixed**, so the tree moved *because of the gate*. Not a bypass, and it must
+    not be labelled as one.
+  - `waived` — a declared disposition with no verified verdict: shipped past a
+    gate via `--ignore-p0`/`--no-tests`/etc., OR verification unavailable (cloud
+    off / run not found / run did not converge).
+  - `not-run` — no fresh evidence at all (docs-only ships).
 
-> **To earn `passed`: converge the audit loop, then commit that tree
-> UNCHANGED.** The helper compares the committed tree against the audited one
-> (`committedTree === evidence.auditedTree`) *before* any store lookup, so
-> hand-fixing findings after the last audit round makes `passed` unavailable —
-> by design, because those fixes are themselves unaudited. That is the
-> 2-stable-rounds convergence rule showing up at the commit boundary, not a
-> tooling limitation. A partial commit of an audited worktree also differs, and
-> is refused for the same reason.
+> **`passed` and `converged` are mutually exclusive halves of ONE comparison**,
+> so each refusal names the other: asking for `passed` on a moved tree points at
+> `converged`, and asking for `converged` on an unchanged tree points at `passed`
+> — you may not under-claim. Both clear the identical store bar, so cloud off or
+> a non-converged run refuses either and leaves `waived`. A partial commit of an
+> audited worktree differs from the audited tree, so it is `converged` territory,
+> never `passed`.
 >
-> **`not-run` on a fix-heavy ship is the honest answer, not a failure.** The
-> value worth investigating is a `passed` that should not be there. Do NOT
-> hand-write `.audit/last-audit-run.json` or re-run a review purely to populate
-> the column — that is forging the receipt rather than earning it.
+> **`passed` is rare BY DESIGN, and its rarity is not a defect to engineer
+> around.** `/ship`'s own Steps 2–5 write `status.md`, sometimes CLAUDE.md, and
+> the plan's Implementation Log *after* the audit and *before* the commit — so
+> even a zero-finding, converged, otherwise-untouched audit moves the tree and
+> lands on `converged`. Measured over this repo's history when `converged` was
+> added: 647 `not-run`, 86 `waived`, 2 `passed`. Do NOT hand-write
+> `.audit/last-audit-run.json`, re-run a review purely to populate the column, or
+> reorder your ship to chase `passed`. **The value worth investigating is a
+> `passed` that should not be there.**
+>
+> **`--no-run-id` exists, and it means "that audit was unrelated to this
+> commit".** Fresh evidence makes `not-run` illegal, so a docs-only follow-up
+> commit after an audited ship inherits the previous commit's marker and must
+> disclaim it: `--no-run-id --gate not-run`. It omits `AI-Run-ID` entirely. Use
+> it **only** when the claim is true — on a fix-heavy ship the audit was very
+> much related, and the honest value there is `converged`, not a disclaimed
+> `not-run`.
 >
 > **Freshness is `evidenceMs > headCommitTs`, so someone ELSE's commit ages out
 > your evidence.** In a repo with a concurrent session, a foreign commit landing
 > between your audit and your ship makes the marker stale — which also removes
 > `waived` (it requires `fresh`) and leaves `not-run` as the only legal value.
 > If you need the trailer to reflect your audit, don't ship across another
-> session's commits.
+> session's commits. Note the converse is NOT guaranteed: committer timestamps
+> are user-controlled and non-monotonic, so freshness does not prove that no
+> commit intervened, and `converged` claims no such thing.
+>
+> **`--no-tests` caps the gate.** With hooks skipped the helper forces `waived`
+> (fresh evidence) or `not-run` (otherwise), loudly, whatever you asked for.
+> Skipping hooks can never buy a stronger verdict.
 
 ### 6.3 Commit and push
 

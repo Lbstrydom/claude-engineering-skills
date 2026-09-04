@@ -34,6 +34,20 @@
       "reason": "'--gate passed is refused unless the run's convergence verdict is verified against the cloud store' is real (ship-commit.mjs enforces it — observed live this session), but its exit code depends on the git + .audit/last-audit-run.json evidence state (exit 1 vs 2 across setups), so a hermetic cli-exit fixture cannot bind it DETERMINISTICALLY — the trigger state is subtle and store-dependent. The refusal itself is verified by ship-commit's own provenance tests; document-only here rather than a fragile recipe."
     },
     {
+      "id": "gate-converged-requires-verified-divergence",
+      "kind": "document-only",
+      "statedIn": "skills/ship/SKILL.md",
+      "stated": "a non-converged run refuses either and leaves `waived`",
+      "reason": "The `stated` is a VERBATIM quote from skills/ship/SKILL.md, which is the contract for this field — a first draft paraphrased the claim instead, so the entry asserted that text appeared in a file where it did not. A DISTINCT entry rather than a widening of gate-passed-refused-without-evidence, because that entry's claim is specifically about passed's evidence requirement and merging the two would blur claims that must stay independently traceable. `converged` (added 2026-09-04, docs/plans/gate-taxonomy-remediated-ships.md) is the equal/differing sibling of passed over the same evidence: it clears the SAME store bar — cloud off, run not found, or roundConvergedAfter == null all refuse it — and additionally requires committedTree !== evidence.auditedTree, refusing the equal-tree case as an under-claim and naming passed. Document-only for exactly the reason its sibling is: the refusal is real and enforced in scripts/lib/commit-trailers.mjs::evaluateGateVerification, but its exit code depends on the git + .audit/last-audit-run.json evidence state, so a hermetic cli-exit fixture cannot bind it deterministically — and the cli-exit oracle's scenario enum is closed, with no member for this state. The refusals themselves ARE mechanically covered: tests/commit-trailers.test.mjs pins the accept plus five refusal directions (equal tree, non-converged run, cloud off, unresolvable comparand, no audited-tree identity) and the AI-Audited-Tree omission, and tests/ship-commit-cli.test.mjs rows 5c/5d pin the end-to-end refusal and the --no-tests cap. Those bindings are not declared as fields here because DocumentOnlyGateSchema is .strict() and permits only {id, kind, reason, statedIn, stated}; claiming an implementation/tests binding this schema cannot validate would itself be the fake-check class this suite exists to catch."
+    },
+    {
+      "id": "gate-no-tests-caps-the-verdict",
+      "kind": "document-only",
+      "statedIn": "skills/ship/SKILL.md",
+      "stated": "**`--no-tests` caps the gate.** With hooks skipped the helper forces `waived`",
+      "reason": "Added 2026-09-04 alongside the `converged` value, because documenting the cap for the first time made it a STATED gate this contract had to disposition. The enforcement is real and pre-existing: scripts/ship-commit.mjs sets `opts.gate = evidence.state === 'fresh' ? 'waived' : 'not-run'` BEFORE validation, printing a loud stderr line when that differs from what was asked, so a stronger verdict can never survive `--no-tests`. This is the one place the CLI rewrites a requested gate rather than refusing it, and it can only ever downgrade. It also satisfies ledger invariant REQ-behavioural-19096e7a, whose recorded gap was `untested` until tests/ship-commit-cli.test.mjs row 5d asserted BOTH halves (the capped trailer value and the `--no-verify` git argument). Document-only rather than executable for the same reason as the two gates above: the resulting exit code depends on the git + .audit/last-audit-run.json evidence state, so a hermetic cli-exit fixture cannot bind it deterministically, and the cli-exit scenario enum is closed with no member for this state."
+    },
+    {
       "id": "category-a-never-staged",
       "kind": "document-only",
       "reason": "'Do NOT git add <Category-A artifact>' (scripts/.sync-manifest.json, dashboard/index.html, dashboard/telemetry.html, docs/architecture-map.md) is an instruction to the AGENT running /ship about what NOT to stage. Still document-only as a GATE — there is no ship-CLI exit code to assert, because the rule constrains what the model chooses to stage, not what a command returns. REVISED 2026-07-26: the previous reason claimed this was 'enforced downstream by .gitignore, not by a ship CLI' and stopped there, which read as 'not mechanically checkable' and was wrong — the SKILL TEXT side is now guarded by tests/skill-staging-instructions.test.mjs, which fails when any shell-fenced `git add <literal path>` line in skills/** names a gitignored path. That guard exists because prose alone failed twice: dashboard/index.html (2026-06) got a 'do NOT stage' note, and docs/architecture-map.md then kept its `git add` line for six days sitting two steps above that very note until an agent followed it on 2026-07-26."
@@ -471,6 +485,34 @@
     {
       "line": "> empty, not a broken one, and this step must not read an empty list as",
       "reason": "Part of the friction-closure hook-rule block (cross-host-parity-v2 Phase 4): instructs the agent not to misread a correct-but-empty result as evidence. Descriptive guidance, not code-level enforcement."
+    },
+    {
+      "line": "`--gate` — four values. The first two are **verified** (the helper queries the",
+      "reason": "Added 2026-09-04 with the `converged` value. This line ENUMERATES the grammar; it makes no enforcement claim of its own. Each value's enforcement is dispositioned by its own gate above — gate-passed-refused-without-evidence and gate-converged-requires-verified-divergence — and the enum itself is mechanically pinned by GATE_VALUES in scripts/lib/commit-trailers.mjs plus the byte-pinned rejection string in tests/commit-trailers.test.mjs."
+    },
+    {
+      "line": "**fixed**, so the tree moved *because of the gate*. Not a bypass, and it must",
+      "reason": "Defines what `converged` MEANS (the tree moved because findings were applied), and asserts how a reader should INTERPRET it — 'not a bypass'. That is semantics for a human, not a condition any exit code can assert; the mechanical half (fresh evidence + store verdict + tree divergence) is gate-converged-requires-verified-divergence."
+    },
+    {
+      "line": "gate via `--ignore-p0`/`--no-tests`/etc., OR verification unavailable (cloud",
+      "reason": "Describes the situations that PRODUCE `waived`. `waived` is by definition the declared, unverified disposition — there is no verification for a gate contract to bind, which is the whole point of the value. Pre-existing semantics, unchanged by the 2026-09-04 addition; the line is new only because the surrounding block was rewritten."
+    },
+    {
+      "line": "> never `passed`.",
+      "reason": "Line-wrap continuation of the preceding sentence ('A partial commit of an audited worktree differs from the audited tree, so it is `converged` territory, never `passed`'), whose enforcement is gate-converged-requires-verified-divergence. A fragment carrying one verb and no independent claim."
+    },
+    {
+      "line": "> commit after an audited ship inherits the previous commit's marker and must",
+      "reason": "Explains WHY `--no-run-id` exists: freshness is `evidenceMs > headCommitTs`, so a follow-up commit inherits the prior marker. The refusal it describes (fresh evidence makes `not-run` illegal) is enforced in validateTrailerInput and byte-pinned by tests/commit-trailers.test.mjs ('fresh evidence + --gate not-run is rejected with the pinned line'); this line is the rationale, not a second gate."
+    },
+    {
+      "line": "> disclaim it: `--no-run-id --gate not-run`. It omits `AI-Run-ID` entirely. Use",
+      "reason": "Documents the `--no-run-id` flag's effect and the honesty condition on using it ('only when the claim is true'). The mechanical half — the flag omits AI-Run-ID and forces not-run — is covered end-to-end by tests/ship-commit-cli.test.mjs row 5b; the 'use it only when true' half is a judgement about the operator's claim, which no exit code can assert."
+    },
+    {
+      "line": "> Skipping hooks can never buy a stronger verdict.",
+      "reason": "Second sentence of the `--no-tests` cap claim, whose enforcement is dispositioned by gate-no-tests-caps-the-verdict in gates[] above. Carries one verb ('never') and restates the preceding sentence's consequence rather than adding a condition."
     }
   ]
 }

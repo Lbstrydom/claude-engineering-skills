@@ -179,6 +179,119 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     assert.match(git(['log', '-1', '--format=%B']), /AI-Gate: waived/);
   });
 
+  it('row 5c: converged — the audited-then-remediated ship, end to end', () => {
+    // The state /cycle --autonomous produces: an audit ran, its findings were
+    // FIXED, so the committed tree is not the audited one. Before `converged`
+    // existed this state had no correct value: passed refused (tree delta),
+    // not-run refused (fresh evidence), leaving only waived — "shipped past a
+    // gate", the opposite of what happened.
+    const mf = arrange();
+    fs.mkdirSync(path.join(repo, '.audit'), { recursive: true });
+    // An audited tree that is deliberately NOT the tree being committed.
+    fs.writeFileSync(path.join(repo, '.audit', 'last-audit-run.json'),
+      JSON.stringify({
+        runId: 'ecae388d-c176-4182-9d27-0210b919b844',
+        ts: new Date(Date.now() + 60_000).toISOString(),
+        auditedTree: 'a'.repeat(40),
+      }));
+
+    // Cloud is off in this harness, so the store leg refuses — which is the
+    // point worth pinning: `converged` clears no cheaper bar than `passed`.
+    const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'converged', ...identityArgs(), ...scopeArgs()]);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /AGENT FIX: gate-evidence: "converged" requires a verified verdict for run ecae388d-c176-4182-9d27-0210b919b844 but verification is unavailable \(AUDIT_DB_URL unset\)/);
+
+    // …and the reverse direction: with the trees EQUAL, converged is refused as
+    // an under-claim and pointed at passed, before the store is consulted.
+    fs.writeFileSync(path.join(repo, '.audit', 'last-audit-run.json'),
+      JSON.stringify({
+        runId: 'ecae388d-c176-4182-9d27-0210b919b844',
+        ts: new Date(Date.now() + 60_000).toISOString(),
+        auditedTree: git(['write-tree']).trim(),
+      }));
+    const r2 = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'converged', ...identityArgs(), ...scopeArgs()]);
+    assert.equal(r2.status, 2);
+    assert.match(r2.stderr, /understates it; use --gate passed/);
+  });
+
+  it('row 5d: --no-tests caps the gate — skipping hooks cannot buy converged (REQ-behavioural-19096e7a)', () => {
+    // Guards a PRE-EXISTING invariant that the new stronger verdict must not
+    // quietly break. The ledger records this requirement's gap as `untested`,
+    // so before this row the cap was trusted rather than verified.
+    const mf = arrange();
+    fs.mkdirSync(path.join(repo, '.audit'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.audit', 'last-audit-run.json'),
+      JSON.stringify({
+        runId: 'ecae388d-c176-4182-9d27-0210b919b844',
+        ts: new Date(Date.now() + 60_000).toISOString(),
+        auditedTree: 'a'.repeat(40),
+      }));
+    const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'converged', '--no-tests', ...identityArgs(), ...scopeArgs()]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /--no-tests caps AI-Gate at "waived" \(was: converged\)/);
+    const msg = git(['log', '-1', '--format=%B']);
+    assert.match(msg, /AI-Gate: waived/, 'the capped value is what lands, never the requested one');
+    assert.doesNotMatch(msg, /AI-Gate: converged/);
+  });
+
+  it('row 5e: in a LINKED WORKTREE, a --path-scoped commit can still resolve the committed tree', () => {
+    // Regression for a defect found 2026-09-04 by probing the refusal live
+    // instead of trusting that it fired for the reason it named.
+    //
+    // In a linked worktree `<root>/.git` is a FILE (a `gitdir:` pointer), not a
+    // directory. The temp index for the --path comparand was built at
+    // path.join(repoRoot, '.git', …), so `git read-tree` exited 128 ("Unable to
+    // create …/.git/<name>.lock: No such file or directory"), committedTree
+    // stayed null, and BOTH verified gates were refused. Because /ship's guard A
+    // makes --path MANDATORY, `passed` was therefore structurally unreachable
+    // for every scoped commit in every worktree — the same shape as the bug the
+    // `converged` value exists to fix, one layer down.
+    //
+    // The assertion is on WHICH refusal appears, because both states refuse and
+    // only the reason distinguishes them: pre-fix it is the comparand ("cannot
+    // resolve the tree being committed"), post-fix it is the store leg
+    // ("verification is unavailable"), since AUDIT_DB_URL is blank in this
+    // harness. A test asserting merely "exit 2" would pass on the bug.
+    const wt = path.join(repo, '..', `wt-${Date.now()}`);
+    git(['worktree', 'add', '--detach', wt]);
+    try {
+      assert.ok(fs.statSync(path.join(wt, '.git')).isFile(), 'precondition: a linked worktree .git is a FILE');
+
+      // The base fixture's skill layout is untracked, so a fresh checkout has
+      // none and resolveSkillNames would abort before reaching the gate logic.
+      fs.mkdirSync(path.join(wt, 'skills', 'ship'), { recursive: true });
+      fs.mkdirSync(path.join(wt, '.claude', 'tmp'), { recursive: true });
+      const mf = path.join('.claude', 'tmp', 'msg.txt');
+      fs.writeFileSync(path.join(wt, mf), 'feat: worktree scoped commit\n\nbody\n');
+      fs.writeFileSync(path.join(wt, 'work.txt'), `payload ${Date.now()}\n`);
+
+      // Fresh evidence carrying an audited-tree identity, so the run gets past
+      // the identity leg and the comparand is the thing under test.
+      fs.mkdirSync(path.join(wt, '.audit'), { recursive: true });
+      fs.writeFileSync(path.join(wt, '.audit', 'last-audit-run.json'),
+        JSON.stringify({
+          runId: 'ecae388d-c176-4182-9d27-0210b919b844',
+          ts: new Date(Date.now() + 60_000).toISOString(),
+          auditedTree: 'a'.repeat(40),
+        }));
+
+      const r = runCli(
+        ['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'converged',
+          ...sharedIdentityArgs(wt), ...sharedScopeArgs(wt, 'work.txt')],
+        wt,
+      );
+      assert.equal(r.status, 2, r.stderr);
+      assert.doesNotMatch(
+        r.stderr,
+        /cannot resolve the tree being committed/,
+        'the comparand must resolve inside a linked worktree — this is the regression',
+      );
+      assert.match(r.stderr, /verification is unavailable/, 'it should now fail on the STORE leg, having got past the comparand');
+    } finally {
+      git(['worktree', 'remove', '--force', wt]);
+    }
+  });
+
   it('row 5b: --no-run-id declares the fresh audit unrelated → not-run legal, no AI-Run-ID trailer', () => {
     const mf = arrange();
     fs.mkdirSync(path.join(repo, '.audit'), { recursive: true });

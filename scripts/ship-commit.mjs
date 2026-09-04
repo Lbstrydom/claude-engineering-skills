@@ -10,7 +10,7 @@
  *
  * Usage:
  *   node scripts/ship-commit.mjs --message-file <path> --skill <name> \
- *     --models <csv> --gate passed|waived|not-run [--no-run-id] \
+ *     --models <csv> --gate passed|converged|waived|not-run [--no-run-id] \
  *     [--path <repo-relative-path> ...]
  *
  * `--message-file -` reads the message from stdin, so a heredoc works and no
@@ -191,7 +191,7 @@ async function main() {
     if (!KNOWN_BOOLEAN_FLAGS.has(a)) {
       inputErrors.push({
         field: a,
-        custom: `AGENT FIX: ${a}: unknown flag; expected one of --message-file|--skill|--models|--gate|--path|--expect-head|--expect-branch|--expect-detached|--no-run-id|--no-tests. Example: --gate passed`,
+        custom: `AGENT FIX: ${a}: unknown flag; expected one of --message-file|--skill|--models|--gate|--path|--expect-head|--expect-branch|--expect-detached|--no-run-id|--no-tests. Example: --gate converged`,
       });
     }
   }
@@ -403,11 +403,18 @@ async function main() {
     err('ship-commit: --no-run-id override — audit evidence ignored for this commit (declared unrelated)');
   }
 
-  // ---- verdict verification for "passed" (fail-closed; R1 H3/H5) ----------
+  // ---- verdict verification for the VERIFIED gates (fail-closed; R1 H3/H5) --
   // Freshness proves an audit ran; only the store's convergence row proves it
-  // passed. Store modules load lazily so the common paths (and --selfcheck-
+  // converged. Store modules load lazily so the common paths (and --selfcheck-
   // relocation) never touch the db closure.
-  if (values.gate === 'passed' && evidence.state === 'fresh') {
+  //
+  // `converged` joins `passed` here rather than getting its own branch: the two
+  // are the equal/differing halves of ONE tree comparison over the SAME
+  // evidence, so every refusal above that comparison is shared verbatim. A
+  // second branch would be a second oracle deciding gate legality — the failure
+  // class this repo names for `classifySelector` and `sensitive-paths.mjs`.
+  // Plan: docs/plans/gate-taxonomy-remediated-ships.md §2.
+  if ((values.gate === 'passed' || values.gate === 'converged') && evidence.state === 'fresh') {
     let cloudEnabled = false;
     let convergence = null;
     try {
@@ -440,11 +447,16 @@ async function main() {
     //     evaluateGateVerification refuse — the honest answer.
     //
     // Adjacency decision (audit R1 HIGH, resolved): this resolution is
-    // deliberately INSIDE the `passed && fresh` branch, not hoisted. The value
-    // is consumed only by evaluateGateVerification, which no-ops unless the
-    // gate is `passed` and the evidence is `fresh` — the very condition above.
-    // Hoisting would spawn a `git write-tree` subprocess on every commit,
-    // including docs-only `not-run` ships, for a value nothing else reads.
+    // deliberately INSIDE the verified-gate branch, not hoisted. The value is
+    // consumed only by evaluateGateVerification, which no-ops unless the gate
+    // is `passed`/`converged` and the evidence is `fresh` — the very condition
+    // above. Hoisting would spawn a `git write-tree` subprocess on every
+    // commit, including docs-only `not-run` ships, for a value nothing reads.
+    //
+    // Widened by exactly one value when `converged` landed: it needs the same
+    // comparand, for the opposite comparison. The case the narrow scope was
+    // protecting — docs-only `not-run` ships — is untouched, because those
+    // never enter this branch at all.
     // The tree this commit will actually carry.
     //
     // Guard A makes `--path` mandatory, so the old "index tree, but only when
@@ -465,7 +477,28 @@ async function main() {
       const treeRes = gitIndexTree(repoRoot);
       committedTree = treeRes.ok ? treeRes.tree : null;
     } else {
-      const tmpIndex = path.join(repoRoot, '.git', `ship-commit-index-${process.pid}-${Date.now()}`);
+      // Resolve the REAL git dir — never `path.join(repoRoot, '.git')`.
+      //
+      // In a LINKED WORKTREE `<root>/.git` is a FILE (a `gitdir:` pointer), not
+      // a directory, so writing a temp index inside it fails: `git read-tree`
+      // exits 128 with "Unable to create …/.git/<name>.lock: No such file or
+      // directory". `committedTree` then stayed null, which refuses BOTH
+      // verified gates — and since /ship's guard A makes `--path` MANDATORY,
+      // that made `passed` structurally unreachable for every scoped commit in
+      // every worktree. This repo's sessions routinely run in worktrees, so the
+      // reachable population was far smaller than the 2-of-735 `passed` count
+      // already suggested. Found 2026-09-04 by probing the refusal live rather
+      // than trusting that it fired for the reason it named: it reported the
+      // comparand as unresolvable where the STORE verdict was the expected
+      // cause, and that mismatch is what exposed it.
+      //
+      // `--git-dir` (not `--git-common-dir`) is correct: the per-worktree gitdir
+      // is where that worktree's own index lives, and it is a real directory in
+      // both layouts. Any failure leaves committedTree null, which still refuses
+      // — fail-closed is unchanged, only the false negative is removed.
+      const gitDirRes = git(['rev-parse', '--path-format=absolute', '--git-dir'], repoRoot);
+      const gitDir = gitDirRes.status === 0 ? gitDirRes.stdout.trim() : path.join(repoRoot, '.git');
+      const tmpIndex = path.join(gitDir, `ship-commit-index-${process.pid}-${Date.now()}`);
       try {
         const withIndex = (args) => spawnSync('git', args, {
           cwd: repoRoot, encoding: 'utf-8', windowsHide: true,
@@ -490,9 +523,18 @@ async function main() {
     // the claim is re-checkable from the commit alone. Deliberately assigned
     // only here — after the refusal branch — so the trailer cannot appear on a
     // commit whose identity check did not run and pass. `committedTree` is the
-    // index tree, which is the tree this commit will carry; at this point it is
-    // equal to evidence.auditedTree, so one value records both halves.
-    values.auditedTree = committedTree;
+    // index tree, which is the tree this commit will carry.
+    //
+    // `passed` ONLY, and the guard is explicit rather than incidental. On
+    // `passed` this value equals evidence.auditedTree, so recording it records
+    // both halves and the object is reachable from the commit itself. On
+    // `converged` the two are BY DEFINITION different, so there is no single
+    // value that records both, and the audited one is an unreachable synthetic
+    // tree that `git gc` deletes and no clone ever receives. formatTrailerBlock
+    // independently refuses to emit on a non-`passed` gate, so this is the
+    // belt to its braces — two guards because the failure is silent.
+    // Plan: docs/plans/gate-taxonomy-remediated-ships.md §2.3.
+    if (values.gate === 'passed') values.auditedTree = committedTree;
   }
 
   // ---- scope check (row 11) -----------------------------------------------

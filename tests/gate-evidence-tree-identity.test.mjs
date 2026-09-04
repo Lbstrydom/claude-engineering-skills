@@ -55,6 +55,11 @@ describe('E1 — the false-pass attack is refused', () => {
     assert.ok(verdict, 'passed must be REFUSED — the committed content was never audited');
     assert.match(verdict.custom, /is not what run .* audited/);
     assert.match(verdict.custom, /--gate waived/, 'the refusal must name the honest alternative');
+    // Since `converged` landed there are TWO honest alternatives, and which one
+    // applies depends on the store verdict this leg has not consulted. The
+    // refusal must offer the earnable one FIRST — routing a converged-and-fixed
+    // ship straight to `waived` is what made every /cycle ship read as a bypass.
+    assert.match(verdict.custom, /--gate converged/, 'the refusal must name the value a remediated ship can actually earn');
   });
 
   it('the matching case still passes — the check is not simply always-refuse', () => {

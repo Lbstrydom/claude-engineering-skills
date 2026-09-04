@@ -298,9 +298,16 @@ The helper itself reads `.audit/last-audit-run.json`; **freshness** = the
 file's `ts` postdates the current `HEAD` commit's committer timestamp (an
 audit ran since the last commit). One rule binds both trailers:
 
+> **SUPERSEDED IN PART (2026-09-04)** — the grammar gained a fourth value,
+> `converged`, for the audited-then-remediated ship. The table below is
+> otherwise unchanged; `converged` sits beside `passed` as the `!==` half of the
+> same tree comparison, clears the same store bar, and requires `fresh` exactly
+> as `passed`/`waived` do. Current contract:
+> [`gate-taxonomy-remediated-ships.md`](gate-taxonomy-remediated-ships.md).
+
 | Evidence state | `AI-Run-ID` | Legal `--gate` values |
 |---|---|---|
-| fresh | injected automatically (`runId` from the file) | `passed` \| `waived` (`not-run` rejected) |
+| fresh | injected automatically (`runId` from the file) | `passed` \| `converged` \| `waived` (`not-run` rejected) |
 | absent / stale | omitted | `not-run` only (`passed`/`waived` rejected — the helper refuses an unevidenced "passed") |
 | fresh + `--no-run-id` override | omitted (override echoed to stderr) | `not-run` only (the override declares the audit unrelated, so no gate claim may ride on it) |
 | file exists but malformed JSON | — | exit 1 (operational) unless `--no-run-id` explicitly opts out of reading it |
@@ -992,7 +999,7 @@ scripts/check-gate-contracts.mjs (create), package.json (modify), docs/reference
 | Contracts for ux-lock / nav-audit / click-test / persona-test / ship gates | v1 suite stable for ≥2 weeks; pick next by the `uncontracted` report |
 | Auto-inject rendered gate table into SKILL.md via `skills:regenerate` | observed contract↔prose drift that byte-containment churn makes painful (evidence, not taste) |
 | Run-ID ↔ `audit_runs` cross-verification tooling (`cross-skill.mjs` query) | first real forensic need for the two-way join |
-| `AI-Gate: waived` reason capture (`--gate-reason`, persisted in trailer) | first real waiver shipped without context |
+| `AI-Gate: waived` reason capture (`--gate-reason`, persisted in trailer) | first real waiver shipped without context. **STILL OPEN, and deliberately not promoted 2026-09-04** although the trigger was met (`8fdcbb0`): `gate-taxonomy-remediated-ships.md` §5.1 adjudicated reason-field-vs-new-enum and chose the enum, because a free-text reason is a declaration this binary's closed-grammar design excludes, and a *closed* reason vocabulary would need a cross-field rule binding legal reasons to legal gates — a two-field contract with illegal pairs. `converged` removes the largest mislabelled population from `waived`; revisit this row for what remains |
 | Durable ship-evidence record binding `AI-Gate` to the actual verdict (run id + repo identity + branch + gemini verdict + waiver record), consumed by the helper | v1's freshness-binding proves insufficient in practice (an evidenced-but-false `passed`/`waived` declaration is observed) |
 | Receipt-derived `AI-Models` (producer-written invocation receipts at the model-call boundary → helper derives the lineup instead of accepting a declaration) | a declared lineup is observed to be wrong in practice, or the ship-evidence record above lands (same producer seam) |
 | CI-service integration of the honesty suite beyond the pre-push hook | repo moves off local-first CI (standing preference says it won't) |

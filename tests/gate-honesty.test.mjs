@@ -155,7 +155,12 @@ const PINNED_DOCUMENT_ONLY = {
   // instance of the same shape, and the one that names WHY the level is fixed:
   // the upstream queue is CLOUD state, so the commit being pushed cannot change
   // it — blocking on it would be cried-wolf by construction, not by choice.
-  ship: ['gate-passed-refused-without-evidence', 'category-a-never-staged', 'step-0-5-gates-non-blocking', 'unremediated-acceptances-never-blocks', 'unit-test-lock-refuses-unverifiable-claims', 'final-review-credit-advisory-exit-zero', 'upstream-queue-never-blocks'],
+  // `gate-converged-requires-verified-divergence` added 2026-09-04 with the
+  // `converged` gate value (docs/plans/gate-taxonomy-remediated-ships.md). A
+  // DISTINCT entry rather than a widening of its `passed` sibling: that entry's
+  // claim is specifically about passed's evidence requirement, and one entry per
+  // declared gate state keeps each claim independently traceable.
+  ship: ['gate-passed-refused-without-evidence', 'gate-converged-requires-verified-divergence', 'gate-no-tests-caps-the-verdict', 'category-a-never-staged', 'step-0-5-gates-non-blocking', 'unremediated-acceptances-never-blocks', 'unit-test-lock-refuses-unverifiable-claims', 'final-review-credit-advisory-exit-zero', 'upstream-queue-never-blocks'],
   // +1 cluster-start-ref-validated-on-use (worktree-identity-guards Phase 5):
   // document-only because /cycle delegates and emits no exit code of its own —
   // the enforcing refusal lives in the audit resolver and IS bound there.
@@ -249,7 +254,17 @@ describe('gate-honesty — real skills/', () => {
     //   ux-lock (status-rubric-precedence). All three are agent-composed report
     //   content over live run state; no CLI exit code, no fit in the closed
     //   oracle registry — see the per-skill comments in PINNED_DOCUMENT_ONLY above.
-    assert.equal(totalDocOnly, 48);   // +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5)
+    // 48 → 49: +1 ship (gate-converged-requires-verified-divergence, 2026-09-04)
+    //   with the `converged` gate value. Document-only for the same reason as
+    //   its `passed` sibling: the refusal is real and enforced in
+    //   evaluateGateVerification, but its exit code depends on the git +
+    //   .audit/last-audit-run.json evidence state, so a hermetic cli-exit
+    //   fixture cannot bind it deterministically — and the cli-exit scenario
+    //   enum is closed, with no member for this state. The refusals themselves
+    //   ARE mechanically covered (tests/commit-trailers.test.mjs pins the accept
+    //   plus five refusal directions; tests/ship-commit-cli.test.mjs rows 5c/5d
+    //   pin the end-to-end refusal and the --no-tests cap).
+    assert.equal(totalDocOnly, 50);   // +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5); +2 ship: converged + no-tests cap (2026-09-04)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));
