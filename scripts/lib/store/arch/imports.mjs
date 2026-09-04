@@ -13,6 +13,7 @@
 
 import { many, one, updateWhere, upsert } from '../../db/query.mjs';
 import { isCloudEnabled } from '../repo.mjs';
+import { describeSchemaFault } from '../../db/errors.mjs';
 import { UPSERT_CHUNK_SIZE, IN_CHUNK, chunk } from './_shared.mjs';
 
 /**
@@ -219,7 +220,13 @@ export async function getImportGraphPopulated(refreshId, repoId) {
       [refreshId, repoId]
     );
     return row?.import_graph_populated === true;
-  } catch {
+  } catch (err) {
+    // `false` remains the correct, safe default for this flag (see the doc
+    // comment above: treating "can't confirm" as "not populated" costs at most
+    // a future full re-embed). But a schema fault is not a measurement, and
+    // the whole point of this change is that the two must not look alike.
+    const note = describeSchemaFault(err, 'getImportGraphPopulated');
+    if (note) process.stderr.write(note);
     return false;
   }
 }
@@ -245,11 +252,60 @@ export async function getImportersForFiles({ refreshId, paths }) {
         out.get(row.imported_path).push(row.importer_path);
       }
     } catch (err) {
-      throw new Error(`getImportersForFiles failed: ${err.message}`);
+      throw new Error(`getImportersForFiles failed: ${err.message}`, { cause: err });
     }
   }
   for (const list of out.values()) list.sort();
   return out;
+}
+
+/**
+ * PURE decision: given the repo-BOUND `refresh_runs` row and the HEAD sha the
+ * caller is asking about, is the published import graph a trustworthy
+ * description of that commit?
+ *
+ * Split out of `getFreshImportersOrNull` for exactly the reason
+ * `snapshots.mjs` split `resolveActiveSnapshot` out of `getActiveSnapshot`
+ * (audit R3 H1): the decision is the part that can be wrong, and while it is
+ * welded between two awaits no test can reach it without a database. That is
+ * what hid this function's own defect for its entire history — the query it
+ * sat behind selected a `commit_sha` column `refresh_runs` does not have, so
+ * every call threw, the catch returned null, and `fresh` was never once
+ * evaluated in production.
+ *
+ * WHY `walk_start_commit` IS THE RIGHT KEY. It is the only commit column on
+ * `refresh_runs` (`walk_end_commit` was declared, never written, and dropped
+ * in migration 20260721150000 — do not reintroduce it), and it records the
+ * repo HEAD at the moment the refresh OPENED. Two independent consumers
+ * already treat it as the snapshot's commit identity:
+ * `resolveActiveSnapshot` publishes it as `commitSha`, and
+ * `refresh-mode.mjs` anchors incremental walks on it. This function is the
+ * third, and agreeing with them is the point.
+ *
+ * The comparison is conservative in the safe direction. If commits land
+ * DURING a refresh, the walk may mix revisions — but those commits also move
+ * HEAD, so a later read at the new HEAD fails the equality and degrades to
+ * `null` (cannot verify) rather than vouching for a mixed graph. The residual
+ * narrow case — checking the old commit back out after such a run — is the
+ * same exposure `refresh-mode.mjs` already documents and accepts, not a new
+ * one introduced here.
+ *
+ * `import_graph_populated` is required ALONGSIDE the sha match, never instead
+ * of it (round-1 code-audit H1/H6): a refresh row can exist for the right
+ * commit while its import-graph population crashed partway through, and an
+ * incomplete graph must degrade to `null`, never read as an authoritative
+ * empty importer set.
+ *
+ * @param {{walk_start_commit?: string|null, import_graph_populated?: boolean}|null|undefined} runRow
+ * @param {string} headSha
+ * @returns {{fresh: boolean, reason: 'ok'|'no-run-row'|'no-walk-commit'|'commit-mismatch'|'graph-incomplete'}}
+ */
+export function resolveImportGraphFreshness(runRow, headSha) {
+  if (!runRow) return { fresh: false, reason: 'no-run-row' };
+  if (!runRow.walk_start_commit) return { fresh: false, reason: 'no-walk-commit' };
+  if (runRow.walk_start_commit !== headSha) return { fresh: false, reason: 'commit-mismatch' };
+  if (runRow.import_graph_populated !== true) return { fresh: false, reason: 'graph-incomplete' };
+  return { fresh: true, reason: 'ok' };
 }
 
 /**
@@ -311,29 +367,46 @@ export async function getFreshImportersOrNull({ repoUuid, headSha, workingTreeDi
   let repoRow;
   try {
     repoRow = await one(`SELECT id, active_refresh_id FROM audit_repos WHERE repo_uuid = $1 LIMIT 1`, [repoUuid]);
-  } catch {
+  } catch (err) {
+    // Degrading to null is correct (this is best-effort context), but a schema
+    // fault must not degrade SILENTLY — see describeSchemaFault's comment for
+    // the three-instance history of this exact shape.
+    const note = describeSchemaFault(err, 'getFreshImportersOrNull/audit_repos');
+    if (note) process.stderr.write(note);
     return null;
   }
   if (!repoRow?.active_refresh_id) return null;
 
   let refreshRow;
   try {
+    // `walk_start_commit`, NOT `commit_sha`: that column DOES NOT EXIST on
+    // `refresh_runs`. This query selected it from the day it was written, so
+    // it threw on every call, the catch below turned the throw into `null`,
+    // and this function's entire freshness cache never hit once — an
+    // always-fallback wearing a working cache's clothes. Same phantom column,
+    // same catch, same invisibility as the `getActiveSnapshot` defect fixed
+    // just before this one; that fix's comment filed this site as the
+    // remaining instance.
+    //
+    // `AND repo_id = $2` matches every sibling reader of this multi-tenant
+    // table (`getRefreshRun`, `getImportGraphPopulated`, `getActiveSnapshot`):
+    // the id reaches us through THIS repo's `active_refresh_id`, so the row is
+    // bound by construction today — but only transitively, through a column
+    // another writer could get wrong. Asking for the binding directly makes a
+    // cross-repo answer unrepresentable rather than merely unlikely.
     refreshRow = await one(
-      `SELECT commit_sha, import_graph_populated FROM refresh_runs WHERE id = $1 LIMIT 1`,
-      [repoRow.active_refresh_id]
+      `SELECT walk_start_commit, import_graph_populated FROM refresh_runs WHERE id = $1 AND repo_id = $2 LIMIT 1`,
+      [repoRow.active_refresh_id, repoRow.id]
     );
-  } catch {
+  } catch (err) {
+    const note = describeSchemaFault(err, 'getFreshImportersOrNull/refresh_runs');
+    if (note) process.stderr.write(note);
     return null;
   }
-  // Freshness requires BOTH the commit sha match AND the graph-population
-  // completion marker — a refresh row can exist for the right commit while
-  // its import-graph population crashed partway through (round-1 code-audit
-  // H1/H6); `import_graph_populated !== true` degrades to the same 'stale'
-  // null result as a commit-sha mismatch, never treated as an empty-but-
-  // authoritative importer set.
-  if (!refreshRow?.commit_sha || refreshRow.commit_sha !== headSha || refreshRow.import_graph_populated !== true) {
-    return null;
-  }
+  // The decision itself lives in a pure function so it can be tested without a
+  // database — see `resolveImportGraphFreshness`, and this function's own
+  // never-executed history for what being untestable hid.
+  if (!resolveImportGraphFreshness(refreshRow, headSha).fresh) return null;
 
   const refreshId = repoRow.active_refresh_id;
   const visited = new Set([filePath]);
@@ -345,7 +418,11 @@ export async function getFreshImportersOrNull({ repoUuid, headSha, workingTreeDi
     let importersMap;
     try {
       importersMap = await getImportersForFiles({ refreshId, paths: frontier });
-    } catch {
+    } catch (err) {
+      // getImportersForFiles rethrows a wrapper, so the SQLSTATE is on
+      // `cause` — describeSchemaFault walks it.
+      const note = describeSchemaFault(err, 'getFreshImportersOrNull/symbol_file_imports');
+      if (note) process.stderr.write(note);
       return null;
     }
     const nextFrontier = [];

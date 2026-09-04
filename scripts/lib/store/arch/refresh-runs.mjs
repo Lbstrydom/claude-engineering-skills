@@ -18,6 +18,7 @@ import { many, one, insertReturning, updateWhere } from '../../db/query.mjs';
 import { getPool } from '../../db/client.mjs';
 import { publishRefreshRun as rpcPublishRefreshRun } from '../../db/rpc.mjs';
 import { isCloudEnabled } from '../repo.mjs';
+import { describeSchemaFault } from '../../db/errors.mjs';
 
 /**
  * Open a new refresh_run row. Holds the (repo_id, status='running')
@@ -139,16 +140,33 @@ export async function heartbeatRefreshRun({ refreshId, repoId }) {
  * into the SELECT — without this gate, a caller string containing `"`
  * could escape the quoting and inject SQL.
  *
- * FILE-PRIVATE — not exported (Gemini-r2-G1).
+ * THIS SET MUST NAME ONLY COLUMNS THAT EXIST. It previously listed eight that
+ * do not — `commit_sha`, `branch`, `plan_id`, `created_at`, `updated_at`,
+ * `parent_run_id`, `rigor_pressure_round`, `round_converged_after` — which
+ * inverted the gate's purpose for those names: instead of a clear
+ * "unknown column" throw naming the caller's mistake, the request sailed
+ * through and Postgres rejected the assembled statement with SQLSTATE 42703,
+ * which `getRefreshRun`'s catch then rendered as `null` — indistinguishable
+ * from "no such run". An allowlist that admits a phantom is worse than no
+ * allowlist, because it converts a loud, local programmer error into a silent,
+ * remote empty result.
+ *
+ * The list is verified mechanically against the committed schema fixture by
+ * tests/refresh-runs-column-allowlist.test.mjs — when a migration adds or
+ * drops a column here, that test is what tells you to update this set.
+ *
+ * FILE-PRIVATE — not exported (Gemini-r2-G1). `export *` in the arch-memory
+ * barrel means any test seam here would widen the public store surface, and
+ * tests/arch-memory-split.test.mjs asserts this name is NOT reachable through
+ * it. The allowlist test therefore reads this literal from the source text
+ * rather than importing it — one spelling of the list, still file-private.
  */
 const GET_REFRESH_RUN_COLUMNS = new Set([
   'id', 'repo_id', 'mode', 'status',
   'walk_start_commit',
-  'started_at', 'completed_at',
-  'retention_class', 'last_heartbeat_at', 'import_graph_populated',
-  'created_at', 'updated_at', 'parent_run_id',
-  'rigor_pressure_round', 'round_converged_after',
-  'commit_sha', 'branch', 'plan_id',
+  'llm_calls', 'embed_calls', 'cancellation_token',
+  'last_heartbeat_at', 'retention_class', 'error',
+  'started_at', 'completed_at', 'import_graph_populated',
 ]);
 
 /**
@@ -191,7 +209,13 @@ export async function getRefreshRun(refreshId, { repoId, select } = {}) {
       `SELECT ${cols} FROM refresh_runs WHERE id = $1 AND repo_id = $2 LIMIT 1`,
       [refreshId, repoId]
     );
-  } catch {
+  } catch (err) {
+    // A schema fault here is NOT "no such run" — it means the assembled
+    // statement can never succeed (a column in GET_REFRESH_RUN_COLUMNS that
+    // the table lacks, exactly the defect the allowlist above documents).
+    // Still degrades to null, but says so.
+    const note = describeSchemaFault(err, 'getRefreshRun');
+    if (note) process.stderr.write(note);
     return null;
   }
 }
@@ -211,7 +235,11 @@ export async function findStaleRunningRefresh(repoId) {
         LIMIT 1`,
       [repoId]
     );
-  } catch {
+  } catch (err) {
+    // null here reads as "no stale running refresh", which is what --force
+    // checks before aborting. A schema fault must not quietly assert that.
+    const note = describeSchemaFault(err, 'findStaleRunningRefresh');
+    if (note) process.stderr.write(note);
     return null;
   }
 }

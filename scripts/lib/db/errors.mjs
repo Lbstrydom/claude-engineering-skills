@@ -193,10 +193,81 @@ export function normalizePostgresError(err, _context) {
   };
 }
 
+/**
+ * Is this SQLSTATE a SCHEMA/QUERY fault — i.e. "the query is broken", as
+ * opposed to "the query ran and the data is absent"?
+ *
+ * SQLSTATE class 42 is "Syntax Error or Access Rule Violation": `42703`
+ * undefined_column, `42P01` undefined_table, `42P10` invalid_column_reference,
+ * `42601` syntax_error, `42501` insufficient_privilege. Every one of them
+ * means the statement can NEVER succeed as written against this database —
+ * no amount of data would change the answer.
+ *
+ * Why this exists as ONE exported predicate rather than an inline `startsWith`
+ * at each catch: this repo has now been bitten three times by the same shape,
+ * a bare `catch { return null }` (or `return false`) that renders a schema
+ * error as an empty result. `getActiveSnapshot` selected a `commit_sha` column
+ * `refresh_runs` does not have and reported "no snapshot" for every healthy
+ * repo; `getFreshImportersOrNull` selected the same phantom column and its
+ * freshness cache therefore never hit once in its entire history. Both were
+ * invisible precisely because "no row" and "this query is broken" arrived at
+ * the caller as the same value. A caller may still DEGRADE on a schema fault
+ * — that is usually the right behaviour for best-effort context — but it must
+ * not do so SILENTLY.
+ *
+ * Deliberately NOT folded into `normalizePostgresError`: that function's
+ * `reason` drives `durableWrite`'s spill/outbox routing, and re-classifying a
+ * whole SQLSTATE class there would change write-path behaviour for every
+ * registered writer. This predicate answers one narrow question for read-path
+ * catches and changes nothing else.
+ *
+ * @param {string} [code] - a SQLSTATE, e.g. `err.code` from node-postgres.
+ * @returns {boolean}
+ */
+export function isSchemaFaultSqlstate(code) {
+  return typeof code === 'string' && /^42/.test(code);
+}
+
+/**
+ * Describe a caught error for a read-path catch that is about to degrade.
+ * Returns `null` when the error is NOT a schema fault (the caller should stay
+ * silent — an ordinary miss or a transient blip is not news); otherwise a
+ * one-line operator string naming the SQLSTATE and the remedy.
+ *
+ * Named by PATH, not an `npm run` alias: this module syncs into consumer repos
+ * under `scripts/.claude-skills/`, where the alias does not exist (AGENTS.md
+ * "Five shapes" #5).
+ *
+ * @param {Error & {code?: string}} err
+ * @param {string} where - the function name, for the operator's benefit.
+ * @returns {string|null}
+ */
+export function describeSchemaFault(err, where) {
+  // Walks `cause`: several store functions rethrow as
+  // `new Error('<fn> failed: ' + err.message, { cause: err })`, which puts the
+  // SQLSTATE one level down. Reading only the top-level `code` would leave this
+  // predicate blind at exactly the seams that wrap — the same "checked the
+  // wrong layer" mistake in miniature. Bounded depth, so a self-referential
+  // cause chain cannot spin.
+  let cur = err;
+  for (let depth = 0; cur && depth < 5; depth += 1) {
+    const code = cur.code || cur._normalized?.nativeCode || '';
+    if (isSchemaFaultSqlstate(code)) {
+      return `  [store] ${where}: query rejected by Postgres (SQLSTATE ${code}: ${cur.message || 'no message'}). `
+        + 'This is a SCHEMA fault, not an empty result — the value returned is a degraded default, not a measurement. '
+        + 'Run: node scripts/setup-postgres.mjs --check-drift\n';
+    }
+    cur = cur.cause;
+  }
+  return null;
+}
+
 // ── Test seam ──────────────────────────────────────────────────────────────
 
 export const _internals = Object.freeze({
   RETRYABLE_NETWORK_CODES,
   RETRYABLE_SQLSTATES,
   isConnectionExceptionSqlstate,
+  isSchemaFaultSqlstate,
+  describeSchemaFault,
 });

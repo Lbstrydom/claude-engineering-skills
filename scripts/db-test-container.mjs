@@ -137,6 +137,14 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   'tests/persona-outcomes-hash-backfill.test.mjs',
   'tests/plans-ship-persona-correlation.test.mjs',
   'tests/refresh-provenance-promotion.test.mjs',
+  // Enrolled 2026-09-04 with the refresh_runs phantom-column fix. Its pure
+  // half runs everywhere; the DB-gated half is the ONLY thing that can prove
+  // getFreshImportersOrNull's freshness cache actually hits — the pure tests
+  // passed throughout the entire period the cache was dead, because the
+  // defect was in the query. Seeds its own repo + snapshot + import edges and
+  // cleans them up, so it needs the schema intact.
+  // Two edits, always — this list AND postgres-parity.yml.
+  'tests/refresh-runs-column-allowlist.test.mjs',
   'tests/refresh-runs-repo-scoping.test.mjs',
   'tests/repo-identity-store.test.mjs',
   'tests/repo-last-audited-at.test.mjs',

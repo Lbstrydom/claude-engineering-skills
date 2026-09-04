@@ -219,6 +219,7 @@ const EXPECTED_EXPORTS = [
   'getActiveSnapshot',
   'getDomainSummaries',
   'getFreshImportersOrNull', // docs/plans/stage0-evidence-relevance-split.md decision #5/#9 — Stage 0 impactAdapter's bounded-BFS import-graph query
+  'resolveImportGraphFreshness', // the PURE freshness decision behind getFreshImportersOrNull — split out so it is testable without a DB (the query defect it hid passed every pure test for the function's whole history)
   'getGraphCoverage',
   'getImportGraphPopulated',
   'getImportersForFiles',
@@ -349,6 +350,10 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
   });
 
   it('pins the total export count (update deliberately when the surface changes)', () => {
+    // 197 → 198: resolveImportGraphFreshness added 2026-09-04 — the PURE freshness
+    // decision split out of getFreshImportersOrNull so it is reachable without a DB.
+    // Same shape as resolveActiveSnapshot: the query it sat behind named a phantom
+    // column, and no pure test could see that because there was no seam.
     // The single authoritative number is this assertion + the EXPECTED_EXPORTS
     // list above; the per-domain section comments are descriptive only and not
     // a second source of truth (their historical sub-counts are not summed here).
@@ -517,6 +522,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // a test: it sat between two awaits in a store module with no live-DB
     // harness. Exporting the decision is what made it provable.
     // tests/active-snapshot-pointer.test.mjs.
-    assert.equal(EXPECTED_EXPORTS.length, 197);
+    assert.equal(EXPECTED_EXPORTS.length, 198);
   });
 });

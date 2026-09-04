@@ -75,6 +75,7 @@ const EXPECTED_EXPORTS = [
   'getImportGraphPopulated',
   'getImportersForFiles',
   'getFreshImportersOrNull',
+  'resolveImportGraphFreshness',
   // arch/coverage.mjs — 3 fns (observed-graph coverage honesty)
   'recordGraphCoverage',
   'getGraphCoverage',
@@ -93,7 +94,7 @@ describe('arch-memory.mjs barrel — public export contract', () => {
   // previous form wrote the number twice in four lines, which is the same
   // two-sources-of-truth shape the stale header comments had.
   test(`exactly ${EXPECTED_EXPORTS.length} public functions in EXPECTED_EXPORTS`, () => {
-    assert.equal(EXPECTED_EXPORTS.length, 44);
+    assert.equal(EXPECTED_EXPORTS.length, 45);
   });
 
   // Every public member is a FUNCTION. `SUMMARY_RETRY_CAP` was briefly exported

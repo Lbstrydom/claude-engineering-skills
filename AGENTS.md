@@ -735,6 +735,25 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
   `npm run emit:exit:gate` ratchets the opt-out population, failing on growth AND
   on an unrecorded reduction.
   Design: [cross-skill-command-registry.md](docs/plans/cross-skill-command-registry.md) §2b F4.
+- **A SCHEMA ERROR IS NOT AN EMPTY RESULT — and a bare `catch { return null }`
+  renders it as one.** Three read paths selected `refresh_runs.commit_sha`, a
+  column the table has never had (it has `walk_start_commit`; `walk_end_commit`
+  was dropped in `20260721150000`). Each threw SQLSTATE 42703 on every call and
+  each catch turned that into the same value a legitimately-empty read returns:
+  `getActiveSnapshot` answered "no snapshot" for every healthy repo, and
+  `getFreshImportersOrNull`'s freshness cache **never hit once in its entire
+  history** — an always-fallback wearing a working cache's clothes. Worse, the
+  `getRefreshRun` allowlist *named eight phantom columns*, inverting the gate:
+  instead of a clear "unknown column" throw it waved the caller through into the
+  silent 42703. Fixes, all three now pinned: `isSchemaFaultSqlstate` /
+  `describeSchemaFault` ([db/errors.mjs](scripts/lib/db/errors.mjs)) make a
+  read-path catch **degrade loudly**, naming the SQLSTATE and the remedy;
+  the allowlist is checked against the committed schema fixture so it cannot rot.
+  **Ask of any catch around a query: can a broken query and an absent row leave
+  here as the same value?** Five audit rounds and two Gemini gates missed this —
+  every unit test exercised the pure decision, never the query, so **split the
+  decision out AND put one assertion on a real Postgres**: the pure tests passed
+  throughout the entire period the cache was dead.
 - **"Disposable" is an ALLOWLIST of loopback hosts, and it fails CLOSED.**
   `isDisposableDbHost` / `assertDisposableDbUrl` (`scripts/lib/db/client.mjs`)
   guard the suites that `DROP SCHEMA public CASCADE` and the schema fixture.

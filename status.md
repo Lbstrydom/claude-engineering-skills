@@ -1,5 +1,50 @@
 # Project Status Log
 
+## 2026-09-04 — A schema error is not an empty result: the phantom `commit_sha` column, and the cache that never hit
+
+### Consumer Verification (previous ship)
+- **Commit**: `9f8674d8` (status log for the consumer-divergence close-out) pushed to `main` 2026-09-04, hook fully armed. Preceded by `1a4dedc2` (dead `node:os` import removed from `.claude/hooks/legacy-surface-advisory.mjs`).
+- **Retrieval**: `git fetch origin`, then `git merge-base --is-ancestor 9f8674d8 origin/main` rather than trusting the push exit code. Consumer side checked in the consumer trees themselves: byte-compared this repo's `.claude/hooks/legacy-surface-advisory.mjs` against wine-cellar-app's copy, and re-ran `node scripts/sync-to-repos.mjs --target wine-cellar-app`.
+- **Result**: **verified** — `origin/main == 9f8674d8`; pre-push gate green; consumer sync `Targets: 3/3 reached, Errors: 0`. The two hook copies are byte-identical, which is what made wine's override for it retirable. wine-cellar-app PR #447 merged (squash `90e5eaf7`); its `.sync-overrides.json` is tracked on that repo's `main` carrying exactly 1 override, and a post-merge sync reads `1 held · Errors: 0 · exit 0`, down from `2 diverged / 1 errors / exit 1`.
+- **Still unverified**: `sync-isolation-verify` run from INSIDE a consumer. Concrete blocked prerequisite: not invoked in any consumer this session — every consumer-side check above was run from this repo, so none of them exercises the consumer's own verifier.
+- **Open upstream (not actioned)**: `docs/reference/consistency-contract.md` ships 7 consumer-dead paths plus a link to a `docs/plans/persona-test-consistency-mode.md` that exists on neither side. Held by wine's override; the fix is upstream. Candidates: bring `docs/reference/**` into the sync path rewriter's closure, write the doc layout-agnostically, or extend `skills:consumer-refs:gate` to `docs/reference/**`. Census the class before sizing it.
+
+### Changes
+- **`getFreshImportersOrNull`'s freshness cache had never hit once, in its entire history.** Its `SELECT` named `refresh_runs.commit_sha`, a column that table has never had, so every call threw SQLSTATE 42703 and the surrounding `catch { return null }` handed back the same `null` a legitimately-absent snapshot gives — an always-fallback wearing a working cache's clothes. Same phantom column, same catch, same invisibility as the `getActiveSnapshot` defect fixed in `c0017b68`, whose own comment filed this site as the remaining instance.
+- **Proved, not inferred.** With the phantom column restored on a seeded real-Postgres snapshot, the new live test asserting a fresh snapshot yields a real verdict FAILS and stderr prints `SQLSTATE 42703: column "commit_sha" does not exist`; restored, it passes. The pure tests pass in **both** states — the defect was in the query, which is exactly why five audit rounds and two Gemini gates missed it.
+- **The `getRefreshRun` allowlist named EIGHT phantom columns, not the reported one** — `commit_sha`, `branch`, `plan_id`, `created_at`, `updated_at`, `parent_run_id`, `rigor_pressure_round`, `round_converged_after`. That **inverts the gate's purpose**: instead of the "unknown column" throw naming the caller's mistake, the request sailed through into a 42703 that the catch rendered as "no such run". An allowlist admitting a phantom is worse than no allowlist — it converts a loud, local programmer error into a silent, remote empty result. Latent only because the one production caller (`refresh-mode.mjs`) selects `walk_start_commit`.
+- **The authoritative column set is 14**, read from the committed real-Postgres fixture. `walk_end_commit` is not merely never-written as reported — it was **dropped** in `20260721150000` along with the five `files_*` columns.
+- **`walk_start_commit` is the right freshness key, and the repo had already decided that twice.** `resolveActiveSnapshot` publishes it as `commitSha`; `refresh-mode.mjs` anchors incremental walks on it with an explicit comment that start-anchoring is deliberate and `walk_end_commit` must not return. This is the third consumer agreeing with the other two, not a new choice. Conservative in the safe direction: commits landing mid-refresh move HEAD, so a later read fails the equality and degrades to `null` rather than vouching for a mixed graph.
+- **`isSchemaFaultSqlstate` / `describeSchemaFault`** (new, `lib/db/errors.mjs`) — SQLSTATE class 42 means the statement can never succeed as written, so a read-path catch still degrades but **says so**, naming the SQLSTATE and the remedy by path. Applied at **six** catches across three modules, including `getActiveSnapshot`, which had its column fixed and its catch left — so the *next* schema drift there would have been equally silent. It walks `err.cause` (bounded to 5), because `getImportersForFiles` rethrows a wrapper; that throw gained a `cause`, matching the R1-M9 precedent already in the same file.
+- **Deliberately NOT folded into `normalizePostgresError`** — its `reason` drives `durableWrite`'s spill/outbox routing, and reclassifying a whole SQLSTATE class there would change write-path behaviour for every registered writer. The predicate answers one narrow read-path question and changes nothing else.
+- **This is a behaviour change, and it was earned rather than assumed.** Enabling a dead cache turns `null` (cannot verify) into `true`/`false`, and `true` routes a finding to `pre_existing_independent` — **out of Stage 1**, a suppression path. Blast radius is bounded: `buildStage0RelevanceContext` is used only by `tiered-pipeline.mjs`, which is default-OFF, so this is the cheap moment to switch it on. The BFS had never executed against real rows, so it is now asserted in both polarities plus the dangerous one — a depth bound shorter than the dependent distance degrades to `null`, never `true`.
+- **`resolveImportGraphFreshness`** — the decision split out of the awaits, mirroring `resolveActiveSnapshot`, so it is reachable without a database. The split is the point: a decision welded between two `await`s is untestable, and that is what hid this.
+
+### Files Affected
+- `scripts/lib/db/errors.mjs` — `isSchemaFaultSqlstate`, `describeSchemaFault` (cause-walking, bounded)
+- `scripts/lib/store/arch/imports.mjs` — real column + repo binding, `resolveImportGraphFreshness`, `cause` preserved on the `getImportersForFiles` rethrow, three catches made loud
+- `scripts/lib/store/arch/refresh-runs.mjs` — allowlist reduced 18 → 14 (eight phantoms removed, four real columns added), two catches made loud
+- `scripts/lib/store/arch/snapshots.mjs` — `getActiveSnapshot` + `getActiveEmbeddingModel` catches made loud
+- `tests/refresh-runs-column-allowlist.test.mjs` (new) — 15 pure + 6 DB-gated; the allowlist is checked against `tests/fixtures/expected-schema.json` so it cannot rot
+- `scripts/db-test-container.mjs` + `.github/workflows/postgres-parity.yml` — enrolment, both lists
+- `AGENTS.md` — the invariant
+
+### Verification
+- **Live Postgres, 6/6** (`npm run db:local`, measured 2026-09-04): fresh snapshot yields a real verdict; transitive `false` (c→b→a); direct `false`; depth-bound → `null`; stale sha → `null`; unknown repo → `null`.
+- **Negative controls, three, each red then green on restore** — phantom re-added to the allowlist (2 fail); resolver reverted to read `commit_sha` (4 fail); phantom column restored in the live query (whole live suite fails, with the new 42703 line printed).
+- Affected suites after the final catch changes: **164/164** (`node --test`, 8 files).
+- `npm run check` steps 1–20 and 22–29 clean. Step 21 (`status:integrity:gate`) fails only on an uncommitted tree — base resolves to HEAD, so it fails closed rather than compare nothing; `--base HEAD~1` reports `conserved`.
+- **`gates:poison` caught a real defect of mine**: both enrolment lists named a test file that was still untracked, so a fresh checkout would have failed on it. Staged; gate clean.
+- A full `npm test` was **not** re-run at this exact tree — the fast-forward onto `edad6090` moved 24 files mid-run, invalidating it. The pre-push hook's clean-worktree `check` at the pushed commit is the authoritative run.
+- `Backlog 2026-09-04T12:58Z: Q1 57c/25p (+190 aged) · Q2 139c/88p (50 perm) · Q3 486 · debt unmeasured · upstream 1`
+
+### Next Steps
+- **`agedOut: 190` on Q1 and `agedOut: 17` on Q2 (3 HIGH)** — obligations already past the window. Unchanged by this ship; still owed a read or a written-off decision.
+- Open upstream `15da01b6` (wine-cellar-app): `docs/reference/consistency-contract.md` dead href + out-of-closure paths. Untouched here; it is the same class the previous ship's note left open.
+- The remaining bare `catch` in these modules is `snapshots.mjs`'s JSON-parse skip, which is deliberate and commented — not a query catch.
+
+---
+
 ## 2026-09-04 — Close the consumer-divergence loop: one fix upstream, one override declared
 
 ### Changes

@@ -16,6 +16,7 @@
 
 import { one, many, updateWhere } from '../../db/query.mjs';
 import { isCloudEnabled } from '../repo.mjs';
+import { describeSchemaFault } from '../../db/errors.mjs';
 
 /**
  * PURE decision: given the repo row and the repo-BOUND `refresh_runs` row,
@@ -122,7 +123,13 @@ export async function getActiveSnapshot(repoId) {
         + 'returning an unverified refresh id. Re-run `node scripts/symbol-index/refresh.mjs`.\n');
     }
     return snapshot;
-  } catch {
+  } catch (err) {
+    // The column defect this function already documents above was invisible
+    // for one reason only: this catch rendered SQLSTATE 42703 as the same
+    // null a never-indexed repo gives. Fixing the column without fixing the
+    // catch would leave the NEXT schema drift equally silent.
+    const note = describeSchemaFault(err, 'getActiveSnapshot');
+    if (note) process.stderr.write(note);
     return null;
   }
 }
@@ -153,7 +160,11 @@ export async function getActiveEmbeddingModel(repoId) {
     );
     if (!data) return null;
     return { model: data.active_embedding_model, dim: data.active_embedding_dim };
-  } catch {
+  } catch (err) {
+    // null here reads as "no embedding profile recorded", which callers use to
+    // decide a full re-embed. A schema fault must not masquerade as that.
+    const note = describeSchemaFault(err, 'getActiveEmbeddingModel');
+    if (note) process.stderr.write(note);
     return null;
   }
 }
