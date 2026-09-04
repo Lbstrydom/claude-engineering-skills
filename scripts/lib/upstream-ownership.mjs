@@ -4,9 +4,11 @@
  *
  * Two independent sources, unioned, because neither covers the other's hole:
  *
- *   1. **Ignored AND untracked** (`disowned-paths.mjs`) — covers
- *      `scripts/.claude-skills/**`, which a consumer gitignores. Says nothing
- *      about surfaces a consumer COMMITS.
+ *   1. **Ignored AND untracked, UNDER THE TOOLING ROOT** (`disowned-paths.mjs`,
+ *      scoped to `scripts/.claude-skills/**`) — the tree a consumer gitignores.
+ *      Says nothing about surfaces a consumer COMMITS, and nothing about
+ *      anything outside that root: a consumer's own gitignored build output is
+ *      theirs, not ours (upstream ad8fcbd3).
  *   2. **The committed sync sidecar** (`sync-owned-sidecar.mjs`) — covers
  *      `.claude/hooks/**` and `.claude/skills/**`, which are committed,
  *      unignored, and cannot carry a content banner.
@@ -32,6 +34,15 @@
  * terms: over-claiming upstream ownership silently excuses a repo's own
  * defects.
  *
+ * **That sentence was true and the code contradicted it** until 2026-09-04
+ * (upstream ad8fcbd3). It is left standing, rather than softened, because it
+ * states the invariant correctly and the defect was that nothing compared the
+ * claim to the returned value — a docstring naming the failure mode it then
+ * commits is precisely the shape review does not catch. The union is now
+ * asymmetric on purpose: the sidecar is an ALLOWLIST and is authoritative
+ * everywhere, while git-ignore state is a heuristic trusted only inside
+ * `scripts/.claude-skills/**`.
+ *
  * @module scripts/lib/upstream-ownership
  */
 import fs from 'node:fs';
@@ -41,6 +52,29 @@ import { ignoredUntrackedPaths } from './disowned-paths.mjs';
 import {
   isUsableSidecar, comparisonKey, OWNED_SIDECAR_RELATIVE_PATH,
 } from './sync-owned-sidecar.mjs';
+import { LAYOUT_CONSTANTS } from './sync-path-map.mjs';
+
+/**
+ * The one prefix the git-ignore half may speak about, derived from the layout
+ * oracle rather than spelled here — `sync-path-map.mjs` is the single source of
+ * truth for where the sync puts things, and a second hand-typed copy of
+ * `scripts/.claude-skills` is exactly the drift that rule exists to prevent.
+ */
+const TOOLING_PREFIX = `${LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR}/`;
+
+/**
+ * Is this path inside the synced tooling tree — the only region where "ignored
+ * and untracked" is evidence of UPSTREAM ownership?
+ *
+ * Compared on the same case-folded reduction the lookups use, because the
+ * consumers of this module run on Windows and macOS.
+ *
+ * @param {string} rel forward-slash repo-relative path
+ * @returns {boolean}
+ */
+function underToolingRoot(rel) {
+  return comparisonKey(rel).startsWith(comparisonKey(TOOLING_PREFIX));
+}
 
 /**
  * The surfaces only the sidecar can classify: a consumer COMMITS these, so
@@ -108,7 +142,26 @@ export function createUpstreamOwnershipOracle(repoRoot, candidates, deps = {}) {
   // instance of one class in this audit, and the last one that was still
   // spelled out by hand instead of delegated: the fix for R4 M12 introduced
   // `comparisonKey` and applied it to the sidecar half only.
-  const ignoredKeys = new Set([...git.paths].map((p) => comparisonKey(p)));
+  //
+  // SCOPED TO THE TOOLING ROOT (upstream ad8fcbd3, wine-cellar-app, 2026-09-04).
+  // Unscoped, this half read "ignored AND untracked" as "upstream-owned", and
+  // those are different claims. `disowned-paths.mjs` answers "is this file part
+  // of this repo's corpus?" — a generated artifact rightly answers no, and that
+  // no was being read as "someone else owns it". Measured in a consumer:
+  // 5 of 5 entries the partition excluded were false positives, four of them
+  // citing a `public/index.html` rendered from a TRACKED template and gitignored
+  // for exactly the reason this repo's own generated-artifact policy prescribes.
+  // It is 100% that repo's code, and the report told them to file it at us.
+  //
+  // The consequence was worse than noise: excluded entries leave the leverage
+  // ranking, so two HIGH findings — one about persisting a generated AES key —
+  // silently stopped being ranked. That is strictly worse than not partitioning
+  // at all, which is why the module docstring's "conservative direction" claim
+  // was false as written: over-claiming upstream ownership is the DANGEROUS
+  // direction, and this half was doing it.
+  const ignoredKeys = new Set(
+    [...git.paths].filter((p) => underToolingRoot(p)).map((p) => comparisonKey(p)),
+  );
   // The sidecar half gets the same O(1) shape (Gemini gate round 2). Delegating
   // to `isUpstreamOwned` per query re-ran `comparisonKey` over every sidecar
   // entry on every call — and a consumer's sidecar lists hundreds of paths
@@ -120,7 +173,7 @@ export function createUpstreamOwnershipOracle(repoRoot, candidates, deps = {}) {
   // never examined; absent git ⇒ every gitignored path was never examined.
   const blindTo = [];
   if (!sidecar) blindTo.push(...SIDECAR_ONLY_SURFACES);
-  if (git.degraded) blindTo.push('every gitignored-and-untracked path');
+  if (git.degraded) blindTo.push(`every gitignored-and-untracked path under ${TOOLING_PREFIX}`);
 
   const degraded = git.degraded && !sidecar;
 

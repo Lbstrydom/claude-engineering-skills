@@ -136,10 +136,13 @@ describe('createUpstreamOwnershipOracle — two sources, unioned', () => {
   });
 
   it('matches case-insensitively on the gitignore half too', () => {
-    const o = createUpstreamOwnershipOracle('/repo', ['A/B.MJS'], {
-      classify: stubIgnored(['A/B.MJS']), sidecar: null,
+    // Under the tooling root, which the gitignore half is now scoped to
+    // (upstream ad8fcbd3). The old fixture used a bare 'A/B.MJS' — a path that
+    // half must no longer claim, so it was asserting the defect.
+    const o = createUpstreamOwnershipOracle('/repo', ['scripts/.claude-skills/A/B.MJS'], {
+      classify: stubIgnored(['scripts/.claude-skills/A/B.MJS']), sidecar: null,
     });
-    assert.equal(o.isUpstreamOwned('a/b.mjs'), true);
+    assert.equal(o.isUpstreamOwned('scripts/.claude-skills/a/b.mjs'), true);
   });
 });
 
@@ -336,24 +339,102 @@ describe('determinism holds for case-equivalent paths too (audit R5 L1)', () => 
 });
 
 describe('BOTH oracle halves reduce through comparisonKey (Gemini final gate)', () => {
+  const stubIgnored = (paths) => () => ({ paths: new Set(paths), degraded: false, warning: null });
+
   it('the gitignore half matches a `./`-prefixed query', () => {
     // Fifth instance of one class, and the last hand-spelled one: the R4 M12
     // fix introduced comparisonKey and applied it to the sidecar half only, so
     // this half still lower-cased without stripping `./`.
-    const o = createUpstreamOwnershipOracle('/repo', ['src/f.js'], {
-      classify: () => ({ paths: new Set(['src/f.js']), degraded: false, warning: null }),
+    const o = createUpstreamOwnershipOracle('/repo', ['scripts/.claude-skills/src/f.js'], {
+      classify: () => ({ paths: new Set(['scripts/.claude-skills/src/f.js']), degraded: false, warning: null }),
       sidecar: null,
     });
-    assert.equal(o.isUpstreamOwned('./src/f.js'), true);
-    assert.equal(o.isUpstreamOwned('src/f.js'), true);
-    assert.equal(o.isUpstreamOwned('SRC/F.JS'), true);
+    assert.equal(o.isUpstreamOwned('./scripts/.claude-skills/src/f.js'), true);
+    assert.equal(o.isUpstreamOwned('scripts/.claude-skills/src/f.js'), true);
+    assert.equal(o.isUpstreamOwned('SCRIPTS/.CLAUDE-SKILLS/SRC/F.JS'), true);
+  });
+
+  // ── The git-ignore half is scoped (upstream ad8fcbd3) ──────────────────
+  //
+  // The report's closing line is the load-bearing one: "a fixture built only
+  // from bundle paths cannot distinguish the two predicates." Every fixture
+  // above IS a bundle path, which is exactly why 35 passing tests never saw
+  // this. The rows below use a consumer-owned generated artifact — ignored and
+  // untracked, and none of our business.
+
+  it('a gitignored CONSUMER-owned artifact is not upstream-owned', () => {
+    // public/index.html, rendered from a TRACKED public/index.html.template and
+    // gitignored per the generated-artifact policy. `disowned-paths.mjs` says
+    // "not part of the corpus" and that is a true answer to a DIFFERENT
+    // question; reading it as ownership told a consumer to file their own
+    // build output as our bug. Four of their five false positives were this.
+    const o = createUpstreamOwnershipOracle('/repo', ['public/index.html'], {
+      classify: stubIgnored(['public/index.html']),
+      sidecar: null,
+    });
+    assert.equal(o.isUpstreamOwned('public/index.html'), false);
+  });
+
+  it('a path that does not exist is not upstream-owned either', () => {
+    // `git check-ignore` does not require existence, so a stale ledger path
+    // was silently classified upstream-owned and left the leverage ranking.
+    const o = createUpstreamOwnershipOracle('/repo', ['src/services/credentials/'], {
+      classify: stubIgnored(['src/services/credentials/']),
+      sidecar: null,
+    });
+    assert.equal(o.isUpstreamOwned('src/services/credentials/'), false);
+  });
+
+  it('the SIDECAR still speaks for paths outside the tooling root', () => {
+    // The scoping applies to the git half ONLY. The sidecar is an allowlist and
+    // stays authoritative everywhere — it is the only thing that can classify
+    // `.claude/hooks/**` and `.claude/skills/**`, which consumers COMMIT.
+    // Narrowing both halves would have re-opened the hole the sidecar exists for.
+    const o = createUpstreamOwnershipOracle('/repo', ['.claude/hooks/h.mjs'], {
+      classify: stubIgnored([]),
+      sidecar: buildOwnedSidecar(['.claude/hooks/h.mjs']),
+    });
+    assert.equal(o.isUpstreamOwned('.claude/hooks/h.mjs'), true);
+  });
+
+  it('still claims the tooling root — the case the git half was added for', () => {
+    // The direction that must NOT regress: scoping is only correct if it keeps
+    // answering true where the heuristic is actually evidence.
+    const o = createUpstreamOwnershipOracle('/repo', ['scripts/.claude-skills/lib/x.mjs'], {
+      classify: stubIgnored(['scripts/.claude-skills/lib/x.mjs']),
+      sidecar: null,
+    });
+    assert.equal(o.isUpstreamOwned('scripts/.claude-skills/lib/x.mjs'), true);
+  });
+
+  it('partitions a consumer artifact into ACTIONABLE, not upstream-owned', () => {
+    // End to end, in the shape debt-review consumes: the entry must stay
+    // rankable. The consequence being pinned is that two HIGH entries — one
+    // about persisting a generated AES key — left the ranking entirely.
+    const o = createUpstreamOwnershipOracle('/repo', ['public/index.html'], {
+      classify: stubIgnored(['public/index.html']),
+      sidecar: null,
+    });
+    const entries = [
+      { id: 'consumer-artifact', affectedFiles: ['public/index.html'] },
+      { id: 'real-upstream', affectedFiles: ['scripts/.claude-skills/lib/x.mjs'] },
+    ];
+    const oUpstream = createUpstreamOwnershipOracle('/repo',
+      ['public/index.html', 'scripts/.claude-skills/lib/x.mjs'], {
+        classify: stubIgnored(['public/index.html', 'scripts/.claude-skills/lib/x.mjs']),
+        sidecar: null,
+      });
+    const { actionable, upstreamOwned } = partitionByOwnership(entries, oUpstream.isUpstreamOwned);
+    assert.deepEqual(actionable.map((e) => e.id), ['consumer-artifact']);
+    assert.deepEqual(upstreamOwned.map((e) => e.id), ['real-upstream']);
+    assert.equal(o.isUpstreamOwned('public/index.html'), false);
   });
 
   it('and still does not match a different path', () => {
-    const o = createUpstreamOwnershipOracle('/repo', ['src/f.js'], {
-      classify: () => ({ paths: new Set(['src/f.js']), degraded: false, warning: null }),
+    const o = createUpstreamOwnershipOracle('/repo', ['scripts/.claude-skills/src/f.js'], {
+      classify: () => ({ paths: new Set(['scripts/.claude-skills/src/f.js']), degraded: false, warning: null }),
       sidecar: null,
     });
-    assert.equal(o.isUpstreamOwned('src/other.js'), false);
+    assert.equal(o.isUpstreamOwned('scripts/.claude-skills/src/other.js'), false);
   });
 });
