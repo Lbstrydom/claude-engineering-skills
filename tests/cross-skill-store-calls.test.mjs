@@ -364,3 +364,86 @@ describe('the dispatcher contract itself', () => {
     assert.equal(e.exitCode, 3);
   });
 });
+
+// ── Snapshot reads resolve their own tenant (2026-09-04) ────────────────────
+//
+// `list-symbols-for-snapshot` and `list-layering-violations-for-snapshot` take
+// a bare refresh id and no tenant key, so the store read they drive used to be
+// scoped by `refresh_id` alone — it would hand back another repo's snapshot to
+// whoever named its id. Both now resolve the repo from cwd, the way
+// `get-callers-for-file` in the same module already did.
+//
+// Resolving internally rather than adding a `--repo-id` flag is what keeps
+// `skills/audit-code/SKILL.md` Step 0.5 working verbatim, and keeps the pinned
+// envelopes in tests/fixtures/cross-skill-envelopes.json byte-identical (the
+// BAD_INPUT and cloud-off cases both short-circuit above the lookup).
+
+describe('snapshot reads bind to the repo the CLI is running in', () => {
+  it('list-symbols-for-snapshot resolves the repo and passes it to the store', async () => {
+    const { deps, calls } = recordingDeps();
+    deps.listSymbolsForSnapshot = (...args) => { calls.push({ fn: 'listSymbolsForSnapshot', args }); return Promise.resolve([]); };
+    const r = await dispatch(argv('list-symbols-for-snapshot', '--json', '{"refreshId":"r1"}'), { deps, cloudGate: 'ready' });
+    assert.equal(r.exitCode, 0, JSON.stringify(r.envelope));
+    assert.equal(r.envelope.repoFound, true);
+    const read = calls.find((c) => c.fn === 'listSymbolsForSnapshot');
+    assert.ok(read, 'the store read never ran');
+    assert.equal(read.args[0].repoId, 'repo-row-1',
+      'the read must carry the RESOLVED repo id — without it the query is scoped by refresh_id alone');
+    assert.equal(read.args[0].refreshId, 'r1');
+  });
+
+  it('a repoId in the PAYLOAD cannot override the resolved one', async () => {
+    // Otherwise the confusion this closes could simply be re-declared as an
+    // argument: a caller naming both a foreign refresh id and its repo id would
+    // read that repo's snapshot from inside this one.
+    const { deps, calls } = recordingDeps();
+    deps.listSymbolsForSnapshot = (...args) => { calls.push({ fn: 'listSymbolsForSnapshot', args }); return Promise.resolve([]); };
+    await dispatch(argv('list-symbols-for-snapshot', '--json', '{"refreshId":"r1","repoId":"someone-elses-repo"}'), { deps, cloudGate: 'ready' });
+    const read = calls.find((c) => c.fn === 'listSymbolsForSnapshot');
+    assert.equal(read.args[0].repoId, 'repo-row-1', 'a payload repoId was allowed to win');
+  });
+
+  it('an unindexed checkout reports repoFound:false and reads NOTHING', async () => {
+    // The behaviour change, made explicit: run from a checkout the store has
+    // never seen and you get a named miss, not another repo's rows. The
+    // "reads nothing" half matters as much as the flag — a degrade that still
+    // issues the unbound query would leak while looking honest.
+    const { deps, calls } = recordingDeps({ getRepoIdByUuid: () => Promise.resolve(null) });
+    deps.listSymbolsForSnapshot = (...args) => { calls.push({ fn: 'listSymbolsForSnapshot', args }); return Promise.resolve([]); };
+    const r = await dispatch(argv('list-symbols-for-snapshot', '--json', '{"refreshId":"r1"}'), { deps, cloudGate: 'ready' });
+    assert.equal(r.exitCode, 0, JSON.stringify(r.envelope));
+    assert.equal(r.envelope.repoFound, false);
+    assert.equal(r.envelope.reason, 'repo-not-indexed');
+    assert.deepEqual(r.envelope.rows, []);
+    assert.equal(calls.find((c) => c.fn === 'listSymbolsForSnapshot'), undefined,
+      'the store read must not run at all when the repo could not be resolved');
+  });
+
+  it('list-layering-violations-for-snapshot passes (refreshId, repoId) positionally', async () => {
+    const { deps, calls } = recordingDeps();
+    deps.listLayeringViolationsForSnapshot = (...args) => { calls.push({ fn: 'listLayeringViolationsForSnapshot', args }); return Promise.resolve([]); };
+    const r = await dispatch(argv('list-layering-violations-for-snapshot', '--refresh-id', 'r1'), { deps, cloudGate: 'ready' });
+    assert.equal(r.exitCode, 0, JSON.stringify(r.envelope));
+    const read = calls.find((c) => c.fn === 'listLayeringViolationsForSnapshot');
+    assert.ok(read, 'the store read never ran');
+    assert.deepEqual(read.args, ['r1', 'repo-row-1'],
+      'argument ORDER is the contract here — a swap silently asks for a snapshot named by a repo id');
+  });
+
+  it('get-callers-for-file threads the repo it already resolved into the importer read', async () => {
+    // This command had resolved the repo since it was written, but handed only
+    // the refreshId to `getImportersForFiles`. Zero importers there is not
+    // inert: it renders as `snapshotProvenance: 'import-graph-populated'` —
+    // "asked and answered" — and Stage 0 reads the same silence as
+    // `pre_existing_independent`, dismissing findings.
+    const { deps, calls } = recordingDeps({
+      getActiveSnapshot: () => Promise.resolve({ refreshId: 'r1', importGraphPopulated: true }),
+    });
+    deps.getImportersForFiles = (...args) => { calls.push({ fn: 'getImportersForFiles', args }); return Promise.resolve(new Map()); };
+    const r = await dispatch(argv('get-callers-for-file', '--json', '{"path":"a.mjs"}'), { deps, cloudGate: 'ready' });
+    assert.equal(r.exitCode, 0, JSON.stringify(r.envelope));
+    const read = calls.find((c) => c.fn === 'getImportersForFiles');
+    assert.ok(read, 'the importer read never ran');
+    assert.equal(read.args[0].repoId, 'repo-row-1');
+  });
+});

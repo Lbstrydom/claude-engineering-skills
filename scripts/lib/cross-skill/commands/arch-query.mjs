@@ -71,25 +71,79 @@ export async function computeTargetDomainsCmd(ctx) {
   return { ok: true, ...result, ruleCount: rules.length };
 }
 
-/** `list-symbols-for-snapshot` — the symbol rows of one refresh. */
+/**
+ * Resolve the repo this invocation is running IN, for the snapshot reads whose
+ * only argument is a bare refresh id.
+ *
+ * These two commands take a `refreshId` and no tenant key, so the store read
+ * used to be scoped by `refresh_id` alone — it would happily return another
+ * repo's snapshot to whoever named its id. The repo is resolved from `cwd`
+ * instead of being added as a flag, the same way `getCallersForFileCmd` below
+ * already does it, so no documented recipe grows a required argument:
+ * `skills/audit-code/SKILL.md` Step 0.5 keeps working verbatim.
+ *
+ * BEHAVIOUR CHANGE, stated deliberately: running one of these from a different
+ * checkout than the repo whose snapshot is named now yields
+ * `repoFound:false` + `rows: []` instead of that other repo's rows. That is the
+ * correct answer — the question a repo-scoped tool answers is "…in the repo I
+ * am in" — but it is NOT reported silently. `repoFound:false` is the same
+ * discriminator `getActiveRefreshIdCmd` already publishes, and the reason
+ * string names the cwd, because an empty result that means "wrong checkout"
+ * and one that means "no violations" are different facts and the caller
+ * branches on them. This mirrors `getActiveSnapshot`'s corrupt-pointer
+ * handling: refuse to answer, loudly, rather than answer unverified.
+ *
+ * Returns `{repo}` on success, or `{miss}` — a ready-to-return envelope.
+ */
+async function resolveOwningRepo(ctx, emptyShape) {
+  const cwd = process.cwd();
+  const repoUuid = resolveRepoIdentity(cwd).repoUuid;
+  const repo = await ctx.deps.getRepoIdByUuid(repoUuid);
+  if (!repo) {
+    process.stderr.write(
+      `  [arch] this checkout (${cwd}) is not indexed in the audit store, so a snapshot `
+      + `read cannot be bound to it — returning no rows rather than rows belonging to `
+      + `whichever repo owns that refresh id. Run \`node scripts/symbol-index/refresh.mjs\` here.\n`,
+    );
+    return {
+      miss: {
+        ok: true, cloud: true, repoFound: false,
+        reason: 'repo-not-indexed', ...emptyShape,
+      },
+    };
+  }
+  return { repo };
+}
+
+/** `list-symbols-for-snapshot` — the symbol rows of one refresh, in THIS repo. */
 export async function listSymbolsForSnapshotCmd(ctx) {
   const p = ctx.payload();
   if (!p.refreshId) throw new CommandError('BAD_INPUT', 'refreshId required');
+  // Ordered so the two pinned envelopes are byte-identical: BAD_INPUT still
+  // precedes everything, and cloud-off still degrades before any repo lookup
+  // (which would need a store). See tests/fixtures/cross-skill-envelopes.json.
   if (!ctx.cloud.enabled) return { ...ctx.degrade(), rows: [] };
+  const owner = await resolveOwningRepo(ctx, { rows: [], count: 0 });
+  if (owner.miss) return owner.miss;
   return passthroughErrors(async () => {
-    const rows = await ctx.deps.listSymbolsForSnapshot(p);
-    return { ok: true, cloud: true, rows, count: rows.length };
+    // `repoId` is set from the resolved repo, never from the payload — a
+    // caller-supplied tenant key would let the very confusion this closes be
+    // re-declared as an argument.
+    const rows = await ctx.deps.listSymbolsForSnapshot({ ...p, repoId: owner.repo.id });
+    return { ok: true, cloud: true, repoFound: true, rows, count: rows.length };
   });
 }
 
-/** `list-layering-violations-for-snapshot` — the violations of one refresh. */
+/** `list-layering-violations-for-snapshot` — the violations of one refresh, in THIS repo. */
 export async function listLayeringViolationsForSnapshotCmd(ctx) {
   const refreshId = ctx.flag('refresh-id');
   if (!refreshId) throw new CommandError('BAD_INPUT', '--refresh-id required');
   if (!ctx.cloud.enabled) return { ...ctx.degrade(), rows: [] };
+  const owner = await resolveOwningRepo(ctx, { rows: [] });
+  if (owner.miss) return owner.miss;
   return passthroughErrors(async () => {
-    const rows = await ctx.deps.listLayeringViolationsForSnapshot(refreshId);
-    return { ok: true, cloud: true, rows };
+    const rows = await ctx.deps.listLayeringViolationsForSnapshot(refreshId, owner.repo.id);
+    return { ok: true, cloud: true, repoFound: true, rows };
   });
 }
 
@@ -138,7 +192,7 @@ export async function getCallersForFileCmd(ctx) {
 
   let importers;
   try {
-    importers = await ctx.deps.getImportersForFiles({ refreshId: snap.refreshId, paths: [p.path] });
+    importers = await ctx.deps.getImportersForFiles({ refreshId: snap.refreshId, repoId: repo.id, paths: [p.path] });
   } catch (err) {
     throw new CommandError('RPC_ERROR', `getImportersForFiles failed: ${err.message}`);
   }

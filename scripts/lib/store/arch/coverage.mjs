@@ -101,15 +101,38 @@ export async function recordGraphCoverage(refreshId, coverage) {
  * deliberately not distinguished in the return value because the correct
  * handling is identical: we do not know, so we must not claim.
  *
+ * BOUND to the asking repo. `symbol_refresh_coverage` has no `repo_id` of its
+ * own, so ownership is asserted through the `refresh_runs` FK every refresh
+ * already carries (`repo_id UUID NOT NULL REFERENCES audit_repos(id)`) — a
+ * join, not a migration.
+ *
+ * This overturns a claim that stood in `copyForwardCoverage` below: that a
+ * single-`refresh_id` read needs no tenant guard because "a UUID PRIMARY KEY
+ * already resolves unambiguously to one row". True, and beside the point — the
+ * risk was never AMBIGUITY, it is OWNERSHIP. One row is returned either way;
+ * the question is whose. A foreign or stale id (a copied-in artifact, a stale
+ * pointer) yielded another repo's coverage verdict, and this module's entire
+ * purpose is refusing to present a measurement as evidence for a corpus it was
+ * not taken from.
+ *
+ * Unlike the symbol reads, a missing `repoId` returns `null` rather than
+ * throwing — `null` here is already the module's documented "we do not know",
+ * mapped by every caller to `unknown`/`not_measured` and never to a clean
+ * verdict, so it is the conservative answer rather than a false zero.
+ *
  * @param {string} refreshId
+ * @param {string} repoId - the repo asserting ownership of that refresh
  * @returns {Promise<object|null>} the §2.1.6b payload, or null
  */
-export async function getGraphCoverage(refreshId) {
-  if (!refreshId || !await isCloudEnabled()) return null;
+export async function getGraphCoverage(refreshId, repoId) {
+  if (!refreshId || !repoId || !await isCloudEnabled()) return null;
   try {
     const row = await one(
-      `SELECT payload FROM symbol_refresh_coverage WHERE refresh_id = $1`,
-      [refreshId]
+      `SELECT c.payload
+         FROM symbol_refresh_coverage c
+         JOIN refresh_runs rr ON rr.id = c.refresh_id AND rr.repo_id = $2
+        WHERE c.refresh_id = $1`,
+      [refreshId, repoId]
     );
     if (!row?.payload) return null;
 
@@ -182,6 +205,16 @@ export async function copyForwardCoverage({ fromRefreshId, toRefreshId } = {}) {
   // subject to the same staleness a read-then-write race would have. Instead,
   // both ids are independently resolved against `refresh_runs.repo_id` — the
   // FK every refresh actually carries — and compared to each other.
+  //
+  // That stays the mechanism here. What did NOT survive is the claim this
+  // comment used to make about its siblings: that `getGraphCoverage` /
+  // `recordGraphCoverage` need no guard because a UUID primary key "resolves
+  // unambiguously to one row". Unambiguous is not the same as owned — the one
+  // row it resolves to may be another repo's. `getGraphCoverage` is now bound
+  // through the same `refresh_runs` FK used below, and this function feeds it
+  // the repo id it has already resolved, so the two agree by construction
+  // instead of by argument.
+  let fromRepoIdResolved = null;
   if (await isCloudEnabled()) {
     const scopes = await many(
       `SELECT id, repo_id FROM refresh_runs WHERE id = ANY($1::uuid[])`,
@@ -197,8 +230,16 @@ export async function copyForwardCoverage({ fromRefreshId, toRefreshId } = {}) {
     if (fromRepoId && toRepoId && fromRepoId !== toRepoId) {
       return { copied: false, reason: 'cross-repo-refresh-mismatch' };
     }
+    // Reuse the id resolved from `refresh_runs` itself, never a caller-supplied
+    // one — the distinction this function has always drawn, now carried into
+    // the read it delegates to.
+    fromRepoIdResolved = fromRepoId ?? null;
   }
-  const prior = await getGraphCoverage(fromRefreshId);
+  const prior = await getGraphCoverage(fromRefreshId, fromRepoIdResolved);
+  // An unresolvable `fromRefreshId` already degrades to `no-prior-coverage`
+  // here (the read returns null on a missing repoId), which is the reason the
+  // mismatch check above deliberately treats "either id not resolving" as this
+  // case rather than a new failure mode.
   if (!prior) return { copied: false, reason: 'no-prior-coverage' };
 
   const priorOutcome = prior.extraction?.outcome;

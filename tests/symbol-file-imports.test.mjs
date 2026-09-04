@@ -266,7 +266,7 @@ describe('recordSymbolFileImports — duplicate edges in one batch', { skip: dbS
     )).rows[0].id;
 
     const { copied } = await copyForwardImports({
-      fromRefreshId, toRefreshId, touchedFileSet: new Set(['touched.js']),
+      repoId, fromRefreshId, toRefreshId, touchedFileSet: new Set(['touched.js']),
     });
     assert.equal(copied, 2, 'only the two untouched importers copy forward');
 

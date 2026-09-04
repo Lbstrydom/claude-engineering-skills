@@ -110,21 +110,21 @@ describe('coverage.mjs — recordGraphCoverage/getGraphCoverage/copyForwardCover
     const res = await recordGraphCoverage(refreshIdA, record);
     assert.equal(res.recorded, true);
 
-    const read = await getGraphCoverage(refreshIdA);
+    const read = await getGraphCoverage(refreshIdA, repoId);
     assert.ok(read, 'a row was persisted, so a read must find it');
     assert.equal(read.verdict.status, 'verified');
     assert.equal(read.extraction.cruised, 10);
   });
 
   it('getGraphCoverage returns null for a refresh with no coverage row', async () => {
-    const read = await getGraphCoverage(refreshIdB);
+    const read = await getGraphCoverage(refreshIdB, repoId);
     assert.equal(read, null, 'no row yet for refreshIdB — must read null, never a fabricated clean result');
   });
 
   it('recordGraphCoverage REFUSES to persist a record that violates CoverageSchema (round-2 audit M2/M4 — the write boundary must enforce the schema, not just declare it)', async () => {
     // Uses its OWN fresh refresh_id (round-3 audit M3) — reusing refreshIdA
     // (already holding a VALID row from the earlier "writes a row" test)
-    // would make `getGraphCoverage(refreshIdA) === null` pass vacuously
+    // would make `getGraphCoverage(refreshIdA, repoId) === null` pass vacuously
     // whether or not the invalid write actually got rejected, since a prior
     // valid row already occupies that key. This test never ran against a
     // real DB before (AUDIT_DB_TEST_URL unset in the implementing session),
@@ -144,7 +144,7 @@ describe('coverage.mjs — recordGraphCoverage/getGraphCoverage/copyForwardCover
       assert.equal(res.recorded, false);
       assert.equal(res.reason, 'schema-invalid');
 
-      const read = await getGraphCoverage(refreshIdInvalid);
+      const read = await getGraphCoverage(refreshIdInvalid, repoId);
       assert.equal(read, null, 'the invalid record must not have reached the table — this key never had a valid write to fall back to');
     } finally {
       await pool.query(`DELETE FROM refresh_runs WHERE id = $1`, [refreshIdInvalid]);
@@ -164,7 +164,7 @@ describe('coverage.mjs — recordGraphCoverage/getGraphCoverage/copyForwardCover
     assert.equal(refused.copied, false);
     assert.equal(refused.reason, 'destination-has-fresh-measurement');
 
-    const dest = await getGraphCoverage(refreshIdB);
+    const dest = await getGraphCoverage(refreshIdB, repoId);
     assert.notEqual(dest.stale, true, 'the fresh destination measurement must survive');
     assert.equal(dest.refreshId, refreshIdB, 'and must still be its OWN measurement');
   });
@@ -187,7 +187,7 @@ describe('coverage.mjs — recordGraphCoverage/getGraphCoverage/copyForwardCover
     const copyRes = await copyForwardCoverage({ fromRefreshId: refreshIdA, toRefreshId: destId });
     assert.equal(copyRes.copied, true);
 
-    const copied = await getGraphCoverage(destId);
+    const copied = await getGraphCoverage(destId, repoId);
     assert.ok(copied, 'copy-forward must persist a row for the destination refresh');
     assert.equal(copied.stale, true, 'a copied-forward record is always marked stale');
     assert.equal(copied.verdict.status, 'unknown', 'a SUCCESSFUL prior measurement going stale forces unknown, never the copied-from verdict');
@@ -210,7 +210,7 @@ describe('coverage.mjs — recordGraphCoverage/getGraphCoverage/copyForwardCover
     const copyRes = await copyForwardCoverage({ fromRefreshId: refreshIdA, toRefreshId: destId });
     assert.equal(copyRes.copied, true);
 
-    const copied = await getGraphCoverage(destId);
+    const copied = await getGraphCoverage(destId, repoId);
     assert.equal(copied.stale, true, 'still marked stale — it IS from an earlier run');
     assert.equal(copied.verdict.status, 'unverified', 'a measurement that never succeeded stays unverified, not unknown');
     assert.equal(copied.verdict.reason, 'extraction_failed');
@@ -249,7 +249,7 @@ describe('coverage.mjs — recordGraphCoverage/getGraphCoverage/copyForwardCover
 
     // The original row must survive completely unchanged — never marked
     // stale, never overwritten by the rejected self-copy attempt.
-    const stillThere = await getGraphCoverage(refreshIdA);
+    const stillThere = await getGraphCoverage(refreshIdA, repoId);
     assert.equal(stillThere.stale, false);
     assert.equal(stillThere.verdict.status, 'verified');
   });
@@ -283,7 +283,7 @@ describe('coverage.mjs — recordGraphCoverage/getGraphCoverage/copyForwardCover
 
       // The real row must survive untouched — the guard must fire BEFORE
       // any read/write, not just report failure after the fact.
-      const stillThere = await getGraphCoverage(refreshIdA);
+      const stillThere = await getGraphCoverage(refreshIdA, repoId);
       assert.equal(stillThere.stale, false);
       assert.equal(stillThere.verdict.status, 'verified');
     } finally {

@@ -364,11 +364,34 @@ export async function recordDuplicateJustifications(refreshId, repoId, justifica
  * Read symbols for a snapshot with paginated filters. Joins through
  * symbol_definitions for the symbol_name + kind fields — hand-written
  * SQL because this is the only JOIN in the audit-loop API surface.
+ *
+ * `repoId` is REQUIRED and THROWS when absent, rather than defaulting to an
+ * unbound read. A `refresh_id` is a globally unique UUID, so scoping by it
+ * alone never returns the *wrong* rows for that snapshot — it returns the
+ * right rows for *somebody's* snapshot, which is not the same question. The
+ * store is single-tenant (one DSN), so the exposure is cross-REPO, not
+ * cross-operator: an attribution and calibration fault, not a security
+ * boundary. It bites hardest where a foreign corpus reads as a local
+ * measurement — band calibration and drift attribution.
+ *
+ * Note the read already SELECTed `si.repo_id` and handed it back to callers;
+ * it simply never filtered on it. Projecting a tenant key while ignoring it is
+ * the tell for this whole class.
+ *
+ * THROWS rather than returning `[]` for the reason `getImportGraphPopulated`
+ * throws: `[]` is also what a genuinely empty snapshot returns, so a forgotten
+ * `repoId` would degrade into a false zero — the exact class this module's
+ * `snapshotProvenance` ladder exists to keep apart. Validated BEFORE the
+ * cloud check, so a cloud-off run cannot mask a bad call site that would
+ * misread the moment cloud is on.
  */
-export async function listSymbolsForSnapshot({ refreshId, kind, domainTag, filePathPrefix, limit = 200, offset = 0 }) {
+export async function listSymbolsForSnapshot({ repoId, refreshId, kind, domainTag, filePathPrefix, limit = 200, offset = 0 }) {
+  if (!repoId || !refreshId) {
+    throw new Error(`listSymbolsForSnapshot: repoId and refreshId are both required (got repoId=${JSON.stringify(repoId)}, refreshId=${JSON.stringify(refreshId)})`);
+  }
   if (!await isCloudEnabled()) return [];
-  const params = [refreshId];
-  const wheres = ['si.refresh_id = $1'];
+  const params = [refreshId, repoId];
+  const wheres = ['si.refresh_id = $1', 'si.repo_id = $2'];
   if (Array.isArray(kind) && kind.length > 0) {
     params.push(kind);
     wheres.push(`sd.kind = ANY($${params.length})`);
@@ -426,10 +449,18 @@ export async function listSymbolsForSnapshot({ refreshId, kind, domainTag, fileP
  * `bigint` by default, which node-postgres returns as a STRING — the
  * explicit `::int` cast is required so this returns a genuine number.
  */
-export async function countSymbolsForSnapshot({ refreshId, kind, domainTag, filePathPrefix }) {
+export async function countSymbolsForSnapshot({ repoId, refreshId, kind, domainTag, filePathPrefix }) {
+  // Same contract as `listSymbolsForSnapshot` — deliberately, because the
+  // whole point of this function is that its number is comparable with that
+  // one's page length. A count bound differently from the list it bounds
+  // would silently answer a different question (0 here reads as "snapshot is
+  // empty", which is how a truncation detector turns into a false all-clear).
+  if (!repoId || !refreshId) {
+    throw new Error(`countSymbolsForSnapshot: repoId and refreshId are both required (got repoId=${JSON.stringify(repoId)}, refreshId=${JSON.stringify(refreshId)})`);
+  }
   if (!await isCloudEnabled()) return 0;
-  const params = [refreshId];
-  const wheres = ['si.refresh_id = $1'];
+  const params = [refreshId, repoId];
+  const wheres = ['si.refresh_id = $1', 'si.repo_id = $2'];
   if (Array.isArray(kind) && kind.length > 0) {
     params.push(kind);
     wheres.push(`sd.kind = ANY($${params.length})`);
@@ -458,15 +489,29 @@ export async function countSymbolsForSnapshot({ refreshId, kind, domainTag, file
   }
 }
 
-export async function listLayeringViolationsForSnapshot(refreshId) {
+/**
+ * Layering violations for a snapshot, bound to the repo that asked.
+ *
+ * Positional `(refreshId, repoId)` matches this module's `markImportGraphPopulated`
+ * / `getImportGraphPopulated` siblings rather than inventing a third ordering
+ * for the same pair of ids.
+ *
+ * `symbol_layering_violations.repo_id` is `NOT NULL REFERENCES audit_repos(id)`,
+ * so this is one clause and no join.
+ */
+export async function listLayeringViolationsForSnapshot(refreshId, repoId) {
+  if (!refreshId || !repoId) {
+    throw new Error(`listLayeringViolationsForSnapshot: refreshId and repoId are both required (got refreshId=${JSON.stringify(refreshId)}, repoId=${JSON.stringify(repoId)})`);
+  }
   if (!await isCloudEnabled()) return [];
   try {
     const rows = await many(
       `SELECT rule_name, from_path, to_path, severity, comment
          FROM symbol_layering_violations
         WHERE refresh_id = $1
+          AND repo_id = $2
         ORDER BY rule_name`,
-      [refreshId]
+      [refreshId, repoId]
     );
     return rows.map((r) => ({
       ruleName: r.rule_name,

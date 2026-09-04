@@ -294,8 +294,8 @@ async function main() {
       // earlier draft read snake_case here, so every candidate silently
       // had undefined fields and this whole reconciliation was a no-op.
       const [symbols, totalCount] = await Promise.all([
-        listSymbolsForSnapshot({ refreshId: snap.refreshId, limit: PRAGMA_CANDIDATE_POOL_CAP }),
-        countSymbolsForSnapshot({ refreshId: snap.refreshId }),
+        listSymbolsForSnapshot({ repoId: repo.id, refreshId: snap.refreshId, limit: PRAGMA_CANDIDATE_POOL_CAP }),
+        countSymbolsForSnapshot({ repoId: repo.id, refreshId: snap.refreshId }),
       ]);
       const capped = isPragmaPoolCapped(totalCount);
       if (capped) {

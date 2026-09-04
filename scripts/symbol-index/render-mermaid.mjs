@@ -291,7 +291,7 @@ async function main() {
     while (allSymbols.length < cap) {
       const remaining = cap - allSymbols.length;
       const pageLimit = Math.min(500, remaining);
-      const page = await listSymbolsForSnapshot({ refreshId: snap.refreshId, limit: pageLimit, offset });
+      const page = await listSymbolsForSnapshot({ repoId: repo.id, refreshId: snap.refreshId, limit: pageLimit, offset });
       if (!page || page.length === 0) break;
       allSymbols.push(...page);
       if (page.length < pageLimit) break;
@@ -299,14 +299,14 @@ async function main() {
     }
     // Probe whether more rows exist beyond our cap so we can warn.
     if (allSymbols.length === cap) {
-      const probe = await listSymbolsForSnapshot({ refreshId: snap.refreshId, limit: 1, offset: cap });
+      const probe = await listSymbolsForSnapshot({ repoId: repo.id, refreshId: snap.refreshId, limit: 1, offset: cap });
       if (probe && probe.length > 0) {
         truncatedAtCap = true;
         process.stderr.write(`arch:render: WARN — symbol cap of ${cap} hit; some symbols not rendered. Raise ARCH_RENDER_MAX_SYMBOLS env var to include more.\n`);
       }
     }
 
-    const violations = await listLayeringViolationsForSnapshot(snap.refreshId);
+    const violations = await listLayeringViolationsForSnapshot(snap.refreshId, repo.id);
     // R1 H8/M8: do NOT silently substitute score=0 on RPC failure — that gives
     // a false GREEN signal in a rendered surface humans trust. Surface the
     // failure as a distinct status so the document tells the truth.
@@ -351,7 +351,7 @@ async function main() {
     try {
       const allFilePaths = Array.from(new Set(allSymbols.map(s => s.filePath)));
       importerMap = await getImportersForFiles({
-        refreshId: snap.refreshId, paths: allFilePaths,
+        refreshId: snap.refreshId, repoId: repo.id, paths: allFilePaths,
       });
     } catch (err) {
       importerMap = null;  // explicit — fail-safe to omit column
@@ -418,7 +418,7 @@ async function main() {
       // cross-domain edges IS current data — the dashboard should consume it,
       // not fall back to manual-only via 'absent'.
       if (snap.importGraphPopulated === true) {
-        const edges = await listFileImportsForSnapshot(snap.refreshId);
+        const edges = await listFileImportsForSnapshot(snap.refreshId, repo.id);
         const rules = loadDomainRules(repoRoot);
         const coverageConfig = loadCoverageConfig(repoRoot);
         // The attribution layer is measured HERE because this is where domain
@@ -443,7 +443,7 @@ async function main() {
         // via refresh.mjs). A missing row means we do not know — which maps to
         // `unknown`/`not_measured`, never to `verified`. Absence is not evidence
         // of cleanliness.
-        const persisted = await getGraphCoverage(snap.refreshId);
+        const persisted = await getGraphCoverage(snap.refreshId, repo.id);
         const extraction = persisted?.extraction ?? null;
         const stale = persisted?.stale === true;
         const verdict = graphVerdict({ extraction, attribution, stale, config: coverageConfig });

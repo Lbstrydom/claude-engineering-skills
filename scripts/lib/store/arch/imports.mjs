@@ -93,18 +93,34 @@ export async function recordSymbolFileImports(refreshId, edges) {
  *   the timed-out-full recovery so a deleted importer's edges are not
  *   resurrected; incremental passes null (deletions are already in touchedFileSet).
  */
-export async function copyForwardImports({ fromRefreshId, toRefreshId, touchedFileSet, fileStillExists = null }) {
-  if (!fromRefreshId || !toRefreshId || !await isCloudEnabled()) return { copied: 0 };
+export async function copyForwardImports({ repoId, fromRefreshId, toRefreshId, touchedFileSet, fileStillExists = null }) {
+  // `repoId` binds the SOURCE read. `symbol_file_imports` has no `repo_id`
+  // column, so ownership comes from the `refresh_runs` FK (`repo_id UUID NOT
+  // NULL REFERENCES audit_repos(id)`) — a join, not a migration.
+  //
+  // This is a copy-FORWARD, which makes an unbound source read worse than a
+  // plain query rather than better: a foreign `fromRefreshId` would not merely
+  // report another repo's edges, it would PERSIST them into this repo's new
+  // snapshot, where every later reader sees them as locally observed. That is
+  // how `.audit-loop/domain-deps-observed.json` — the evidence layer that is
+  // supposed to be "what code actually imports" — would come to describe
+  // another codebase.
+  //
+  // Returns `{copied: 0}` rather than throwing, matching this function's
+  // existing posture for a missing id: a refresh whose copy-forward is skipped
+  // degrades to a full re-walk, never to wrong data.
+  if (!repoId || !fromRefreshId || !toRefreshId || !await isCloudEnabled()) return { copied: 0 };
   let copied = 0;
   const pageSize = 500;
   let offset = 0;
   while (true) {
     const rows = await many(
-      `SELECT importer_path, imported_path FROM symbol_file_imports
-        WHERE refresh_id = $1
-        ORDER BY importer_path, imported_path
+      `SELECT sfi.importer_path, sfi.imported_path FROM symbol_file_imports sfi
+         JOIN refresh_runs rr ON rr.id = sfi.refresh_id AND rr.repo_id = $4
+        WHERE sfi.refresh_id = $1
+        ORDER BY sfi.importer_path, sfi.imported_path
         OFFSET $2 LIMIT $3`,
-      [fromRefreshId, offset, pageSize]
+      [fromRefreshId, offset, pageSize, repoId]
     );
     if (rows.length === 0) break;
     const keep = rows.filter((r) =>
@@ -144,17 +160,33 @@ export async function copyForwardImports({ fromRefreshId, toRefreshId, touchedFi
  * List every file-import edge in a snapshot. Used by render-mermaid to
  * derive observed domain→domain deps. Plan: docs/plans/observed-domain-deps.md
  *
+ * Bound to the asking repo through the `refresh_runs` FK — `symbol_file_imports`
+ * carries no `repo_id` of its own. This read is what `render-mermaid` turns
+ * into the OBSERVED dependency tier, whose documented contract (AGENTS.md,
+ * "Two-layer dependency model") is that it is the evidence layer: "what code
+ * *actually* imports". An unbound read let that sentence be false about a
+ * different repo's code while still rendering as this repo's evidence.
+ *
+ * THROWS on a missing `repoId`: `[]` is indistinguishable from a snapshot
+ * predating the import-graph feature, and the coverage envelope would record
+ * that silence as a measured result.
+ *
  * @param {string} refreshId
+ * @param {string} repoId
  * @returns {Promise<Array<{importer: string, imported: string}>>}
  */
-export async function listFileImportsForSnapshot(refreshId) {
-  if (!refreshId || !await isCloudEnabled()) return [];
+export async function listFileImportsForSnapshot(refreshId, repoId) {
+  if (!refreshId || !repoId) {
+    throw new Error(`listFileImportsForSnapshot: refreshId and repoId are both required (got refreshId=${JSON.stringify(refreshId)}, repoId=${JSON.stringify(repoId)})`);
+  }
+  if (!await isCloudEnabled()) return [];
   try {
     const rows = await many(
-      `SELECT importer_path, imported_path FROM symbol_file_imports
-        WHERE refresh_id = $1
-        ORDER BY importer_path, imported_path`,
-      [refreshId]
+      `SELECT sfi.importer_path, sfi.imported_path FROM symbol_file_imports sfi
+         JOIN refresh_runs rr ON rr.id = sfi.refresh_id AND rr.repo_id = $2
+        WHERE sfi.refresh_id = $1
+        ORDER BY sfi.importer_path, sfi.imported_path`,
+      [refreshId, repoId]
     );
     return rows.map((r) => ({ importer: r.importer_path, imported: r.imported_path }));
   } catch (err) {
@@ -236,16 +268,28 @@ export async function getImportGraphPopulated(refreshId, repoId) {
  * a snapshot. Returns `Map<imported_path, sorted importer_paths[]>`.
  * Chunked at IN_CHUNK to avoid huge `= ANY($1)` parameter arrays.
  */
-export async function getImportersForFiles({ refreshId, paths }) {
+export async function getImportersForFiles({ refreshId, repoId, paths }) {
   const out = new Map();
+  // A missing `repoId` THROWS rather than returning an empty Map. An empty
+  // importer set is not inert here: `getCallersForFileCmd` renders it as
+  // `snapshotProvenance: 'import-graph-populated'` — i.e. "asked and answered,
+  // nothing imports this" — and Stage 0's `impactAdapter` reads the same
+  // silence as `pre_existing_independent`, actively DISMISSING findings. The
+  // provenance ladder in that command exists precisely to keep an unanswerable
+  // question apart from a clean answer; a silent empty here would route round
+  // the ladder rather than down it.
+  if (!repoId) {
+    throw new Error(`getImportersForFiles: repoId is required (got ${JSON.stringify(repoId)})`);
+  }
   if (!refreshId || !Array.isArray(paths) || paths.length === 0) return out;
   if (!await isCloudEnabled()) return out;
   for (const batch of chunk(paths, IN_CHUNK)) {
     try {
       const rows = await many(
-        `SELECT imported_path, importer_path FROM symbol_file_imports
-          WHERE refresh_id = $1 AND imported_path = ANY($2)`,
-        [refreshId, batch]
+        `SELECT sfi.imported_path, sfi.importer_path FROM symbol_file_imports sfi
+           JOIN refresh_runs rr ON rr.id = sfi.refresh_id AND rr.repo_id = $3
+          WHERE sfi.refresh_id = $1 AND sfi.imported_path = ANY($2)`,
+        [refreshId, batch, repoId]
       );
       for (const row of rows) {
         if (!out.has(row.imported_path)) out.set(row.imported_path, []);
@@ -417,7 +461,9 @@ export async function getFreshImportersOrNull({ repoUuid, headSha, workingTreeDi
     if (depth >= maxDepth) return null; // depth-limit hit before resolution
     let importersMap;
     try {
-      importersMap = await getImportersForFiles({ refreshId, paths: frontier });
+      // `repoRow.id` is the repo resolved from `repoUuid` at the top of this
+      // function — the same one the freshness read above is now bound by.
+      importersMap = await getImportersForFiles({ refreshId, repoId: repoRow.id, paths: frontier });
     } catch (err) {
       // getImportersForFiles rethrows a wrapper, so the SQLSTATE is on
       // `cause` — describeSchemaFault walks it.

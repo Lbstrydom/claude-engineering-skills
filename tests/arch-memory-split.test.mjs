@@ -334,13 +334,13 @@ describe('arch-memory cloud-disabled neutral-value contract', () => {
 
   test('copyForwardImports returns {copied: 0} when cloud-off', async () => {
     const { copyForwardImports } = await import('../scripts/lib/store/arch-memory.mjs');
-    const r = await copyForwardImports({ fromRefreshId: 'a', toRefreshId: 'b', touchedFileSet: new Set() });
+    const r = await copyForwardImports({ repoId: 'repo-1', fromRefreshId: 'a', toRefreshId: 'b', touchedFileSet: new Set() });
     assert.deepEqual(r, { copied: 0 });
   });
 
   test('listFileImportsForSnapshot returns [] when cloud-off', async () => {
     const { listFileImportsForSnapshot } = await import('../scripts/lib/store/arch-memory.mjs');
-    assert.deepEqual(await listFileImportsForSnapshot('refresh-x'), []);
+    assert.deepEqual(await listFileImportsForSnapshot('refresh-x', 'repo-1'), []);
   });
 
   test('getImportGraphPopulated returns false when cloud-off (repoId supplied)', async () => {
@@ -356,10 +356,10 @@ describe('arch-memory cloud-disabled neutral-value contract', () => {
 
   test('getImportersForFiles returns empty Map when cloud-off OR empty paths', async () => {
     const { getImportersForFiles } = await import('../scripts/lib/store/arch-memory.mjs');
-    const r1 = await getImportersForFiles({ refreshId: 'r', paths: [] });
+    const r1 = await getImportersForFiles({ refreshId: 'r', repoId: 'repo-1', paths: [] });
     assert.ok(r1 instanceof Map);
     assert.equal(r1.size, 0);
-    const r2 = await getImportersForFiles({ refreshId: 'r', paths: ['x'] });
+    const r2 = await getImportersForFiles({ refreshId: 'r', repoId: 'repo-1', paths: ['x'] });
     assert.ok(r2 instanceof Map);
     assert.equal(r2.size, 0);
   });
@@ -373,17 +373,76 @@ describe('arch-memory cloud-disabled neutral-value contract', () => {
 
   test('listSymbolsForSnapshot returns [] when cloud-off', async () => {
     const { listSymbolsForSnapshot } = await import('../scripts/lib/store/arch-memory.mjs');
-    assert.deepEqual(await listSymbolsForSnapshot({ refreshId: 'r' }), []);
+    assert.deepEqual(await listSymbolsForSnapshot({ repoId: 'repo-1', refreshId: 'r' }), []);
   });
 
   test('countSymbolsForSnapshot returns 0 when cloud-off', async () => {
     const { countSymbolsForSnapshot } = await import('../scripts/lib/store/arch-memory.mjs');
-    assert.equal(await countSymbolsForSnapshot({ refreshId: 'r' }), 0);
+    assert.equal(await countSymbolsForSnapshot({ repoId: 'repo-1', refreshId: 'r' }), 0);
   });
 
   test('listLayeringViolationsForSnapshot returns [] when cloud-off', async () => {
     const { listLayeringViolationsForSnapshot } = await import('../scripts/lib/store/arch-memory.mjs');
-    assert.deepEqual(await listLayeringViolationsForSnapshot('r'), []);
+    assert.deepEqual(await listLayeringViolationsForSnapshot('r', 'repo-1'), []);
+  });
+
+  // ── Repo binding is a CALL-SITE contract, checked before the cloud gate ────
+  //
+  // These five reads were scoped by `refresh_id` alone until 2026-09-04. Each
+  // now REQUIRES a repoId and THROWS without one, for the reason
+  // `getImportGraphPopulated` above already throws: the neutral value they
+  // would otherwise return (`[]`, `0`, an empty Map) is indistinguishable from
+  // a genuinely empty snapshot, so a forgotten argument would degrade into a
+  // false zero instead of an error.
+  //
+  // Asserted BEFORE the cloud gate deliberately. This whole describe block runs
+  // cloud-off, so if the guard sat after `isCloudEnabled()` every assertion
+  // here would pass by never reaching it — and a bad call site would stay
+  // invisible until it ran somewhere the store was on, which is the only place
+  // it can do damage. `assert.rejects` on a cloud-off run is therefore the
+  // strongest available statement of the ordering.
+  //
+  // Class guard over the SQL itself: tests/arch-snapshot-repo-binding.test.mjs.
+
+  test('listSymbolsForSnapshot throws on a missing repoId, ahead of the cloud gate', async () => {
+    const { listSymbolsForSnapshot } = await import('../scripts/lib/store/arch-memory.mjs');
+    await assert.rejects(() => listSymbolsForSnapshot({ refreshId: 'r' }), /repoId and refreshId are both required/);
+    await assert.rejects(() => listSymbolsForSnapshot({ repoId: 'p' }), /repoId and refreshId are both required/);
+  });
+
+  test('countSymbolsForSnapshot throws on a missing repoId, ahead of the cloud gate', async () => {
+    const { countSymbolsForSnapshot } = await import('../scripts/lib/store/arch-memory.mjs');
+    await assert.rejects(() => countSymbolsForSnapshot({ refreshId: 'r' }), /repoId and refreshId are both required/);
+  });
+
+  test('listLayeringViolationsForSnapshot throws on a missing repoId', async () => {
+    const { listLayeringViolationsForSnapshot } = await import('../scripts/lib/store/arch-memory.mjs');
+    await assert.rejects(() => listLayeringViolationsForSnapshot('r'), /refreshId and repoId are both required/);
+  });
+
+  test('listFileImportsForSnapshot throws on a missing repoId', async () => {
+    const { listFileImportsForSnapshot } = await import('../scripts/lib/store/arch-memory.mjs');
+    await assert.rejects(() => listFileImportsForSnapshot('r'), /refreshId and repoId are both required/);
+  });
+
+  test('getImportersForFiles throws on a missing repoId EVEN with an empty paths list', async () => {
+    // The empty-paths short-circuit returns an empty Map without touching the
+    // store, so it would swallow the missing argument on exactly the call that
+    // looks harmless — and the same call site would then leak the moment it had
+    // paths to look up. The repoId check therefore sits above that early return.
+    const { getImportersForFiles } = await import('../scripts/lib/store/arch-memory.mjs');
+    await assert.rejects(() => getImportersForFiles({ refreshId: 'r', paths: [] }), /repoId is required/);
+    await assert.rejects(() => getImportersForFiles({ refreshId: 'r', paths: ['x'] }), /repoId is required/);
+  });
+
+  test('copyForwardImports without a repoId copies NOTHING rather than adopting foreign edges', async () => {
+    // Not a throw, matching this function's existing posture for a missing id:
+    // a skipped copy-forward degrades to a full re-walk. The danger it must not
+    // have is the opposite one — persisting another repo's edges into this
+    // repo's new snapshot, where every later reader sees them as locally
+    // observed evidence.
+    const { copyForwardImports } = await import('../scripts/lib/store/arch-memory.mjs');
+    assert.deepEqual(await copyForwardImports({ fromRefreshId: 'a', toRefreshId: 'b', touchedFileSet: new Set() }), { copied: 0 });
   });
 
   test('copyForwardUntouchedFiles returns 0 when cloud-off', async () => {

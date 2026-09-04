@@ -127,7 +127,7 @@ export async function summariseDomains({ repoId, refreshId, model, concurrency }
   const allSymbols = [];
   let offset = 0;
   while (true) {
-    const page = await listSymbolsForSnapshot({ refreshId, limit: 500, offset });
+    const page = await listSymbolsForSnapshot({ repoId, refreshId, limit: 500, offset });
     if (!page || page.length === 0) break;
     allSymbols.push(...page);
     if (page.length < 500) break;

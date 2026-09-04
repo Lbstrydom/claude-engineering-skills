@@ -1,0 +1,44 @@
+/**
+ * POISON PILL for tests/arch-snapshot-repo-binding.test.mjs.
+ *
+ * Not loaded as a module — read as TEXT and fed to the analyser, so it can
+ * assert the guard goes RED on the shape it exists to catch. `.txt` so no
+ * test runner, linter or the relocation guard picks it up as real source.
+ *
+ * Three functions, deliberately:
+ *   - `readsUnboundSnapshot`     the plain unbound read (must FLAG)
+ *   - `readsUnboundViaProjection` selects `repo_id` but never filters on it —
+ *                                the false-pass a naive "does the body mention
+ *                                repo_id?" check would wave through, and the
+ *                                exact shape `listSymbolsForSnapshot` had
+ *                                before 2026-09-04 (must FLAG)
+ *   - `readsBound`               correctly bound (must NOT flag — a guard that
+ *                                fires on everything is not a guard)
+ */
+import { one, many } from '../../db/query.mjs';
+
+export async function readsUnboundSnapshot(refreshId) {
+  return many(
+    `SELECT rule_name FROM symbol_layering_violations
+      WHERE refresh_id = $1`,
+    [refreshId],
+  );
+}
+
+export async function readsUnboundViaProjection(refreshId) {
+  return many(
+    `SELECT si.id, si.repo_id, si.file_path
+       FROM symbol_index si
+      WHERE si.refresh_id = $1`,
+    [refreshId],
+  );
+}
+
+export async function readsBound(refreshId, repoId) {
+  return one(
+    `SELECT payload FROM symbol_refresh_coverage c
+       JOIN refresh_runs rr ON rr.id = c.refresh_id AND rr.repo_id = $2
+      WHERE c.refresh_id = $1`,
+    [refreshId, repoId],
+  );
+}

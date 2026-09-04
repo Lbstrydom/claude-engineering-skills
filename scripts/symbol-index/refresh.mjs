@@ -512,6 +512,10 @@ async function main() {
           logOk(`copy-forward ${copied} ${timeoutRecovery ? 'un-reached' : 'untouched'}-file symbols from ${prior.refreshId}`);
           // Also carry forward the import edges
           const imp = await copyForwardImports({
+            // Binds the SOURCE snapshot's edges to this repo before they are
+            // persisted into the new one — an unbound copy-forward would not
+            // just read another repo's graph, it would adopt it as ours.
+            repoId,
             fromRefreshId: prior.refreshId,
             toRefreshId: refreshId,
             touchedFileSet: touchedSet,
