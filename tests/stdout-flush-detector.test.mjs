@@ -486,6 +486,52 @@ describe('find-stdout-exit-sites — site identity discriminates a swap', () => 
   });
 });
 
+describe('find-stdout-exit-sites — payload and import resolution (Gemini gate)', () => {
+  it('classifies a stringify held in a VARIABLE as an envelope', () => {
+    // Inspecting only the argument's own AST called this text, understating the
+    // half of the census that the paydown prioritises on. 36 `= JSON.stringify`
+    // assignments exist under scripts/.
+    const src = `function main(){\n  const body = JSON.stringify(x);\n  process.stdout.write(body);\n  process.exit(0);\n}`;
+    const [s] = sites(src);
+    assert.equal(s.payload, 'envelope');
+  });
+
+  it('classifies a stringify reached through a ternary as an envelope', () => {
+    const src = `function main(){\n  const body = pretty ? JSON.stringify(x, null, 2) : JSON.stringify(x);\n  process.stdout.write(body);\n  process.exit(0);\n}`;
+    assert.equal(sites(src)[0].payload, 'envelope');
+  });
+
+  it('still calls a plain string payload text', () => {
+    const src = `function main(){\n  const body = renderReport();\n  process.stdout.write(body);\n  process.exit(0);\n}`;
+    assert.equal(sites(src)[0].payload, 'text');
+  });
+
+  it('resolves an ALIASED emit import', () => {
+    // A hardcoded `callee.name === 'emit'` short-circuited before the resolver
+    // that exists to see through exactly this. Zero aliases exist today, which
+    // is the wrong test for a gate whose claim is about tomorrow's code.
+    const src = `import { emit as say } from './scripts/lib/cli-io.mjs';\nfunction main(){ say({ok:true}); process.exit(0); }`;
+    const [s] = sites(src);
+    assert.equal(s.writeHow, 'emit', 'labelled by the export, so an alias does not churn identity');
+    assert.equal(s.payload, 'envelope');
+  });
+
+  it('treats an aliased AWAITED finishAndExit as a terminator', () => {
+    const src = `import { finishAndExit as done } from './scripts/lib/cli-io.mjs';\nasync function main(){\n  if (s) { process.stdout.write('x'); await done(0); }\n  process.exit(2);\n}`;
+    assert.deepEqual(sites(src), []);
+  });
+
+  it('does NOT treat an aliased UNAWAITED finishAndExit as a terminator', () => {
+    const src = `import { finishAndExit as done } from './scripts/lib/cli-io.mjs';\nasync function main(){\n  if (s) { process.stdout.write('x'); done(0); }\n  process.exit(2);\n}`;
+    assert.equal(sites(src).length, 1);
+  });
+
+  it('does NOT treat an unrelated import of the same local name as emit', () => {
+    const src = `import { emit } from './other.mjs';\nfunction main(){ emit({ok:true}); process.exit(0); }`;
+    assert.deepEqual(sites(src), []);
+  });
+});
+
 describe('find-stdout-exit-sites — soundness', () => {
   it('REFUSES a recovered (partial) parse rather than reporting fewer sites', () => {
     // parseSource's own docstring warns that a consumer needing sound

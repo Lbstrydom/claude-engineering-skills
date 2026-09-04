@@ -117,7 +117,7 @@
 > and fall through — that returns immediately and the exit still truncates.
 > `npm run stdout:flush:gate` ratchets the population drift-only (growth AND
 > unrecorded shrink fail); `--report` for the triaged census, 221 sites at
-> 2026-09-04, 105 carrying a **JSON envelope a caller parses** — where a
+> 2026-09-04, 108 carrying a **JSON envelope a caller parses** — where a
 > truncation is a parse error blamed on the wrong thing, not merely a lost tail.
 > Deliberate non-findings: a `stderr` write before an exit, and the
 > `--selfcheck-relocation` smoke contract's exact two-statement body.

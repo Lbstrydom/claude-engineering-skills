@@ -1,7 +1,7 @@
 # Plan: Census and gate the un-drained-exit class (`process.exit` after a stdout write)
 
 - **Date**: 2026-09-04
-- **Status**: Complete — implemented 2026-09-04; 3 GPT rounds + deliberation (H2 `compromise`) + 4 Gemini gate passes; §8 owns the follow-up
+- **Status**: Complete — implemented 2026-09-04; 3 GPT rounds + deliberation (H2 `compromise`) + 5 Gemini gate passes (final: **APPROVE**); §8 owns the follow-up
 - **Author**: Claude + Louis
 - **Scope**: backend (AST detector + drift gate + CLI fixes + one AGENTS.md invariant; no UI)
 
@@ -96,10 +96,24 @@ process.exit(2);          // ← paired against the help print
 ```
 
 That branch already exited, so nothing it wrote can still be buffered.
-`pathTerminatesBefore` drops a write whose own path provably ends first
-(`return` / `throw` / `process.exit` / `finishAndExit` after it at any block
-level between the write and the nearest common ancestor). Mutually exclusive
-`if` arms are likewise never paired.
+`pathTerminatesBefore` drops a write whose own path provably ends first. What
+counts as "ends", after the Gemini gate corrected four of these:
+
+- **`return` / `throw`** — but NOT when the exit sits in the `catch`/`finally`
+  of a `try` whose block holds the write: those transfer control to exactly
+  where the exit is.
+- **`process.exit`** and **`await finishAndExit`** — the `await` is required;
+  a bare or `void`-ed call returns immediately and falls through.
+- **a call to a local function that exits**, and **a write sitting inside a
+  `return`/`throw` expression or inside such a call** — the path ends there.
+- **NOT `break`/`continue`**: they end a loop, not the function, and hand
+  control toward the later exit.
+
+Terminators are scanned at every block level *including* the common-ancestor
+one, bounded by the exit's own statement — the level where a sibling `return`
+between the two lives. Mutually exclusive `if`/ternary **arms** are never
+paired, but a write in the CONDITION reaches an exit in the body, and a
+`LogicalExpression` is never exclusive (`left` evaluates before `right`).
 
 It remains an over-approximation of "executed before" — a write in an earlier
 `if` that **falls through** counts, because it really can run, and the fix is
@@ -172,7 +186,7 @@ The ratchet makes the population shrink-only instead, and §8 owns the paydown.
 > as if comparable. The round-2 adjudicator required the reconciliation and was
 > right to; the table above is the correct measurement, taken at 242 sites and
 > left as-is because the Gemini-gate fixes that took the census to 249 added
-> only `text` sites. The final census is **221 (105 envelope)** — LOWER than the
+> only `text` sites. The final census is **221 (108 envelope)** — LOWER than the
 > 242 the table was taken at, because the Gemini-gate round also removed three
 > classes of FALSE POSITIVE (a write inside a `return`/`throw` expression, a
 > write inside a call to a local exit-helper, and a sibling terminator at the
@@ -193,11 +207,12 @@ strictly better than the one drafted in this branch and reached the same
 | File | Change |
 |---|---|
 | `scripts/lib/find-stdout-exit-sites.mjs` | new — detector |
+| `scripts/lib/find-stdout-exit-shapes.mjs` | new — payload + smoke-contract shape recognisers (split when the detector crossed the 1000-line cap) |
 | `scripts/check-stdout-flush.mjs` | new — gate CLI (`--json` / `--report` / `--update`) |
 | `.stdout-flush-baseline.json` | new — 221 site identities |
 | `scripts/gate-contracts/stdout-flush-gate.json` | new — poison-pill contract |
 | `tests/fixtures/poison/stdout-flush-baseline-understated.json` | new — pill fixture |
-| `tests/stdout-flush-detector.test.mjs` | new — 61 detector controls |
+| `tests/stdout-flush-detector.test.mjs` | new — 68 detector controls |
 | `scripts/symbol-index/refresh.mjs` | 3 sites → `await finishAndExit` |
 | `scripts/symbol-index/summarise-domains.mjs` | 1 site |
 | `scripts/symbol-index/prune.mjs` | 1 site |
@@ -226,10 +241,10 @@ strictly better than the one drafted in this branch and reached the same
 
 | Figure | Value | Command |
 |---|---|---|
-| Reachable sites | 221 (105 envelope / 116 text) | `npm run stdout:flush:report` |
+| Reachable sites | 221 (108 envelope / 113 text) | `npm run stdout:flush:report` |
 | Naive "same function" count | 401 | detector with `pathTerminatesBefore` disabled |
 | Sites fixed | 7 | `git show a3b3dfe0 -- scripts/symbol-index/` |
-| Detector controls | 61 pass | `node --test tests/stdout-flush-detector.test.mjs` |
+| Detector controls | 68 pass | `node --test tests/stdout-flush-detector.test.mjs` |
 | Poison-pill suite | 41 pass | `node --test tests/gate-poison-pills.test.mjs` |
 | Full suite | 14,998 tests / 0 fail / 39 skipped | `npm test` |
 

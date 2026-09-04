@@ -733,7 +733,7 @@
       "category": "other"
     },
     "stdout:flush:gate": {
-      "description": "Drift gate for un-drained stdout exits (part of `npm run check`). On Windows a piped process.stdout is async — npm run, | tee and every CI capture are pipes — so process.exit() discards whatever has not flushed; the fix is await finishAndExit(code) from lib/cli-io.mjs. A detector-first census on 2026-09-04 found 221 reachable sites across 100 files, 105 carrying a JSON envelope a caller parses, where truncation reads as a parse error in the wrong place. Fails on a NET-NEW site and on an unrecorded shrink. stderr writes and the --selfcheck-relocation smoke contract are deliberately not findings. Baseline: .stdout-flush-baseline.json.",
+      "description": "Drift gate for un-drained stdout exits (part of `npm run check`). On Windows a piped process.stdout is async — npm run, | tee and every CI capture are pipes — so process.exit() discards whatever has not flushed; the fix is await finishAndExit(code) from lib/cli-io.mjs. A detector-first census on 2026-09-04 found 221 reachable sites across 100 files, 108 carrying a JSON envelope a caller parses, where truncation reads as a parse error in the wrong place. Fails on a NET-NEW site and on an unrecorded shrink. stderr writes and the --selfcheck-relocation smoke contract are deliberately not findings. Baseline: .stdout-flush-baseline.json.",
       "category": "diagnostic"
     },
     "stdout:flush:report": {

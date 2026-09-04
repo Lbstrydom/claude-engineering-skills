@@ -1,7 +1,7 @@
 {
   "_description": "POISON PILL for `npm run stdout:flush:gate` (scripts/check-stdout-flush.mjs). The real baseline with its first 12 site identities removed — the tree as it would look if twelve NEW process.exit() calls reachable from a stdout write had just been added. Each is individually invisible in review: a bare process.exit(0) after writing a report is the obvious thing to write, and it works perfectly on Linux and on a terminal. It only truncates on a Windows PIPE, which is what npm run, | tee, and every CI capture are. The gate must notice the identity set grew and exit 1 rather than absorbing them.",
   "total": 209,
-  "envelope": 105,
+  "envelope": 108,
   "files": {
     "scripts/brainstorm-round.mjs": 2,
     "scripts/build-dashboard.mjs": 2,

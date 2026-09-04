@@ -236,7 +236,7 @@ source comments that no docs linter sees — stays valid.
 | [Skill Progressive Disclosure Refactor](./skill-progressive-disclosure-refactor.md) | `Complete` | all phases A, B.1, B.2, C1–C6, D, E shipped and tested |
 | [Global skill-surface shadow detection + capture-honesty and repo-scoping fixes](./skill-shadow-and-capture-honesty.md) | `Complete` | Clusters B, C, E implemented + audited; consolidated Gemini gate APPROVE (0 findings); V1 and V2 both… |
 | [Stage 0 Evidence-Relevance Split (Tiered-Recall Audit Pipeline)](./stage0-evidence-relevance-split.md) | `Complete` | implemented 2026-07-16; all 3 clusters landed via `/cycle --autonomous`. Plan-audit: 3 GPT rounds + 2 Gemini… |
-| [Census and gate the un-drained-exit class (`process.exit` after a stdout write)](./stdout-flush-drain-gate.md) | `Complete` | implemented 2026-09-04; 3 GPT rounds + deliberation (H2 `compromise`) + 4 Gemini gate passes; §8 owns the… |
+| [Census and gate the un-drained-exit class (`process.exit` after a stdout write)](./stdout-flush-drain-gate.md) | `Complete` | implemented 2026-09-04; 3 GPT rounds + deliberation (H2 `compromise`) + 5 Gemini gate passes… |
 | [Sustainability cleanup batch — god-module split + monolithic renderer decomp + refresh.mjs hardening](./sustainability-cleanup-batch.md) | `Complete` | WS1 (efca5ea), WS2 (13a0af9), WS3 (this commit) |
 | [symbol-index bugs — patches for arch:refresh --force + arch:duplicates thin-delegate](./symbol-index-bugs.md) | `Complete` | applied 2026-05-11 |
 | [Symbol-Index / Arch-Memory Pipeline Reliability Hardening](./symbol-index-pipeline-reliability-hardening.md) | `Complete` | all 5 execution clusters (A-E) built and audited via `/cycle --autonomous` on 2026-07-27; consolidated… |

@@ -57,6 +57,7 @@ import nodePath from 'node:path';
 import { parse } from '@babel/parser';
 import _traverse from '@babel/traverse';
 import { resolvesToNamedImport, resolvesToModuleBinding } from './import-binding.mjs';
+import { isExactSmokeContract, classifyPayload } from './find-stdout-exit-shapes.mjs';
 
 // @babel/traverse ships CJS; under ESM the callable lands on .default (and on
 // .default.default via some interop paths). Same normalisation as
@@ -249,7 +250,12 @@ function classifyCall(path, { cliIoSpec }) {
 
   // emit(...) imported from lib/cli-io.mjs — it writes stdout, so
   // `emit(x); process.exit(0)` is the same defect wearing a helper's clothes.
-  if (callee.type === 'Identifier' && callee.name === 'emit' && cliIoSpec) {
+  // The LOCAL spelling is not checked — `import { emit as write }` binds a
+  // different name to the same export, and a hardcoded `callee.name === 'emit'`
+  // short-circuits before the resolver that exists to see through exactly that.
+  // Raised by the Gemini gate. Labelled by the EXPORT so an alias cannot churn
+  // the baseline identity.
+  if (callee.type === 'Identifier' && cliIoSpec) {
     if (resolvesToNamedImport(path.get('callee'), cliIoSpec)) {
       return { kind: 'stdout', how: 'emit', exitCode: null };
     }
@@ -303,98 +309,6 @@ function insideSelfcheckGuard(path) {
     p = p.parentPath;
   }
   return false;
-}
-
-/**
- * Whether an `if` guarded by the self-check flag contains EXACTLY the documented
- * smoke contract and nothing else: `console.log(<string>); process.exit(0);`.
- *
- * **Why the flag alone is not enough** (round-1 audit H6/M1/M12 — three passes
- * raised it independently). Matching only the guard's TEST exempted every stdout
- * write and every exit anywhere beneath it, so
- *
- *     if (argv.includes('--selfcheck-relocation')) {
- *       process.stdout.write(JSON.stringify(hugeReport));   // ← silently exempt
- *       process.exit(0);
- *     }
- *
- * was waved through. The exemption's whole justification is that AGENTS.md
- * pins a LITERAL shape asserted across `CLI_SMOKE_SET`; an exemption broader
- * than the contract it cites is just a hole with a citation on it. Anything
- * that is not that exact two-statement body is now reported, which is also the
- * honest signal — a CLI whose smoke handler has grown extra stdout writes has
- * drifted from the contract and should be fixed there, not excused here.
- *
- * @param {import('@babel/traverse').NodePath} ifPath
- * @returns {boolean}
- */
-function isExactSmokeContract(ifPath) {
-  if (ifPath.node.alternate) return false;
-  const body = ifPath.node.consequent.type === 'BlockStatement'
-    ? ifPath.node.consequent.body
-    : [ifPath.node.consequent];
-  if (body.length !== 2) return false;
-
-  const [logStmt, exitStmt] = body;
-  // 1. console.log(<string literal>)  — the payload is a constant, so there is
-  //    nothing of variable size to truncate.
-  if (logStmt.type !== 'ExpressionStatement') return false;
-  const logCall = logStmt.expression;
-  if (logCall?.type !== 'CallExpression') return false;
-  const lc = logCall.callee;
-  if (lc?.type !== 'MemberExpression' || lc.computed
-    || lc.object?.type !== 'Identifier' || lc.object.name !== 'console'
-    || lc.property?.type !== 'Identifier' || lc.property.name !== 'log') return false;
-  if (logCall.arguments.length !== 1 || logCall.arguments[0].type !== 'StringLiteral') return false;
-
-  // 2. process.exit(0) — the literal zero, not a computed code.
-  if (exitStmt.type !== 'ExpressionStatement') return false;
-  const exitCall = exitStmt.expression;
-  if (exitCall?.type !== 'CallExpression') return false;
-  const ec = exitCall.callee;
-  if (ec?.type !== 'MemberExpression' || ec.computed
-    || ec.object?.type !== 'Identifier' || ec.object.name !== 'process'
-    || ec.property?.type !== 'Identifier' || ec.property.name !== 'exit') return false;
-  return exitCall.arguments.length === 1
-    && exitCall.arguments[0].type === 'NumericLiteral'
-    && exitCall.arguments[0].value === 0;
-}
-
-/**
- * Triage a stdout write by what it is CARRYING, because the two classes fail
- * differently and only one of them fails silently:
- *
- *   - **`envelope`** — a `JSON.stringify(...)` payload or an `emit(...)` call.
- *     The consumer PARSES this. A truncated envelope is a `SyntaxError`
- *     attributed to whatever the caller happened to be doing, or — when the cut
- *     lands on a complete-looking prefix — a silently short result that no one
- *     ever sees as an error. This is the class worth fixing first.
- *   - **`text`** — a human-readable report or summary line. Truncation loses a
- *     tail. Bad, but it is visible as a lost tail rather than misattributed.
- *
- * Same shape as `check-cli-flags.mjs`'s `classifyPolarity`, and for the same
- * reason: a severity-flat census gets worked top-down, which does the low-value
- * entries first. This is REPORT-ONLY ordering — the drift gate stays
- * triage-blind, because a net-new site is drift whichever payload it carries.
- *
- * @param {import('@babel/traverse').NodePath} writePath
- * @param {string} how
- * @returns {'envelope'|'text'}
- */
-function classifyPayload(writePath, how) {
-  if (how === 'emit') return 'envelope';
-  let found = false;
-  for (const argPath of writePath.get('arguments')) {
-    if (found) break;
-    const isStringify = (n) => n?.type === 'CallExpression'
-      && n.callee?.type === 'MemberExpression'
-      && !n.callee.computed
-      && n.callee.property?.type === 'Identifier' && n.callee.property.name === 'stringify'
-      && n.callee.object?.type === 'Identifier' && n.callee.object.name === 'JSON';
-    if (isStringify(argPath.node)) { found = true; break; }
-    argPath.traverse({ CallExpression(c) { if (isStringify(c.node)) found = true; } });
-  }
-  return found ? 'envelope' : 'text';
 }
 
 /**
@@ -487,9 +401,10 @@ function isTerminatingStatement(stmtPath, cliIoSpec, { skipTransfers = false, is
   // function. That is the round-1 H3 defect surviving in its other spelling:
   // the fix addressed the instance the audit named and stopped. Raised by the
   // Gemini gate, which is exactly the reading H3 should have prompted.
-  if (callee.type === 'Identifier' && callee.name === 'finishAndExit' && cliIoSpec) {
-    if (!awaited) return false;
-    return resolvesToNamedImport(exprPath.get('callee'), { ...cliIoSpec, importedName: 'finishAndExit' });
+  if (callee.type === 'Identifier' && cliIoSpec) {
+    // Same reason as `emit`: resolve by EXPORT, never by local spelling.
+    if (!resolvesToNamedImport(exprPath.get('callee'), { ...cliIoSpec, importedName: 'finishAndExit' })) return false;
+    return awaited;
   }
   return false;
 }
