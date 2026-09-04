@@ -7,7 +7,7 @@ with `git log` / `git interpret-trailers`, no database required. The
 authoritative writer is [`scripts/ship-commit.mjs`](../../scripts/ship-commit.mjs)
 (pure logic in [`scripts/lib/commit-trailers.mjs`](../../scripts/lib/commit-trailers.mjs));
 `/ship` Step 6.3 invokes it. Plan + audit trail:
-[`docs/plans/provenance-trailers-and-gate-honesty.md`](../completed/provenance-trailers-and-gate-honesty.md).
+[`docs/plans/provenance-trailers-and-gate-honesty.md`](../plans/provenance-trailers-and-gate-honesty.md).
 
 > **Two arguments became REQUIRED in 2026-08 and the writer refuses without
 > them** ([`worktree-identity-guards.md`](../plans/worktree-identity-guards.md)):

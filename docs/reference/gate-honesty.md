@@ -2,7 +2,7 @@
 
 Executable binding between a skill's STATED gate/convergence rule and the
 code + test that actually enforces it. Plan + full audit trail:
-[`docs/plans/provenance-trailers-and-gate-honesty.md`](../completed/provenance-trailers-and-gate-honesty.md)
+[`docs/plans/provenance-trailers-and-gate-honesty.md`](../plans/provenance-trailers-and-gate-honesty.md)
 §F2. Bug class this closes: a SKILL.md describes a gate that the scripts
 don't enforce, or enforce differently (three documented past instances —
 see the plan's §F2.1 before-state).

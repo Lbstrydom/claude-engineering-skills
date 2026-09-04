@@ -3,7 +3,7 @@
 One markdown file per arm-eval session — the committed, third-party-auditable
 record of the experiment ("can an OSS combination beat the proprietary
 baseline?"). Design + method: [`docs/research/runbooks/arm-eval.md`](../../research/runbooks/arm-eval.md);
-framework plan: [`docs/plans/arm-eval-framework.md`](../../completed/arm-eval-framework.md).
+framework plan: [`docs/plans/arm-eval-framework.md`](../../plans/arm-eval-framework.md).
 
 **The database remains canonical** (sessions / runs / outputs / judgments /
 human rankings, in the shared audit store). These files are an append-style

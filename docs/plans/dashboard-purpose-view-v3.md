@@ -7,7 +7,7 @@
 - **Scope**: full-stack (cloud telemetry extension + a deterministic reference renderer/CSS addition)
 - **Target domain(s)**: `dashboard` (single domain; `ruleCount=47`)
 - **Builds on**: v2 (shipped `5d5bd13`); two dashboard-contained items from
-  [dashboard-purpose-view-v2.md §11](../completed/dashboard-purpose-view-v2.md).
+  [dashboard-purpose-view-v2.md §11](../plans/dashboard-purpose-view-v2.md).
 
 > **Neighbourhood considered**: target domain `dashboard`. Part A extends the v2
 > `purpose-health` store+collector; Part B is a renderer addition to the v1/v2

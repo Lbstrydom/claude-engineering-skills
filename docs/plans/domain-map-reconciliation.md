@@ -49,7 +49,7 @@ change**. Three were false and two are pre-existing:
 ## Origin
 
 The Cluster A code audit of
-[provenance-trailers-and-gate-honesty](../completed/provenance-trailers-and-gate-honesty.md)
+[provenance-trailers-and-gate-honesty](../plans/provenance-trailers-and-gate-honesty.md)
 (run `839c7842`, 2026-07-14) surfaced the same ~9 pre-existing
 architecture-intent findings in every round. All were adjudicated
 out-of-scope for that cluster (deliberation precedent: independent of the

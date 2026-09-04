@@ -1,7 +1,7 @@
 # Persona-Test Consistency Mode — HTML Attribute Contract
 
 > Authoritative spec for consumer-app frontend devs adopting consistency mode.
-> Plan: [docs/plans/persona-test-consistency-mode.md](../completed/persona-test-consistency-mode.md).
+> Plan: [docs/plans/persona-test-consistency-mode.md](../plans/persona-test-consistency-mode.md).
 
 This document defines the HTML `data-*` attribute contract that lets the
 consistency-mode rig detect cross-step UI/state contradictions without

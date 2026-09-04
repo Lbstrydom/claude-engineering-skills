@@ -3,7 +3,7 @@
 Operator guide for the unified **blinded-Claude-judge, human-anchored** framework
 that answers one question across experiments: **can an OSS combination beat the
 proprietary baseline?** Design + audit trail:
-[`docs/plans/arm-eval-framework.md`](../../completed/arm-eval-framework.md).
+[`docs/plans/arm-eval-framework.md`](../../plans/arm-eval-framework.md).
 
 > **What it is**: Claude is the constant JUDGE (never an arm — self-preference
 > guard). Each experiment's arms produce outputs; Claude scores them blinded,

@@ -2,7 +2,7 @@
 
 > Operational detail (CLI, classifier gates, quickfix lifecycle, replay, outbox) for
 > the adaptive-learning system. **Design** lives in the master plan
-> [`docs/plans/adaptive-learning-v1.md`](../completed/adaptive-learning-v1.md) +
+> [`docs/plans/adaptive-learning-v1.md`](../plans/adaptive-learning-v1.md) +
 > per-phase `adaptive-learning-phase-{1,2,3}-*.md`. Env vars are in AGENTS.md's
 > Environment Variables table. Stubbed from AGENTS.md to keep that file lean.
 
