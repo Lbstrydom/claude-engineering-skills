@@ -1,10 +1,23 @@
 # Memory-health gate — how the three metrics are computed, and what they lie about
 
-Moved out of `AGENTS.md` (2026-08-10) under its progressive-disclosure rule.
-AGENTS.md keeps the trigger table, the decision rule, and the two obligations
-that bind anyone changing this subsystem (add a control-state sentinel when a
-wave starts emitting one; bound an RPC at the caller). Everything below is the
-elaboration.
+Moved out of `AGENTS.md` (2026-08-10) under its progressive-disclosure rule,
+and further condensed 2026-09-04: the trigger table and the decision rule moved
+here too. AGENTS.md now keeps only the three obligations that bind anyone
+CHANGING this subsystem (sampled metrics cap the driving set; add a
+control-state sentinel when a wave starts emitting one; bound an RPC at the
+caller). Everything below is the elaboration.
+
+## The three triggers
+
+| Metric | What it measures | Default trigger |
+|---|---|---|
+| Fuzzy re-raise rate | New-fingerprint findings whose text matches a prior finding (trigram sim > 0.6) | `> 15%` |
+| Cluster density | Median per-repo count of open finding pairs that are **semantic same-file cross-run re-raises** (cosine > 0.85). Reports embedding **coverage** — a low-coverage reading is `unknown`, never green — and excludes control-state markers | `>= 5` |
+| Recurrence rate | Fixed findings that reappear in the same repo within 30 days under a new fingerprint | `> 10%` |
+
+**Decision rule**: 0 triggers for 4 weeks → the current design is fine. 1 trigger
+for 2 consecutive weeks → prototype pgvector similarity. 2+ triggers → build the
+full clustering pipeline.
 
 `scripts/memory-health.mjs` runs three trigger metrics against the audit store to
 decide whether our flat `audit_findings` + fingerprint-dedup design is starting to

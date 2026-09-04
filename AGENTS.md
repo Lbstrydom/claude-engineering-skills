@@ -545,24 +545,15 @@ maintenance: [`docs/reference/model-resolution.md`](docs/reference/model-resolut
 
 ## Memory-Health Gate
 
-`scripts/memory-health.mjs` runs three trigger metrics against the audit store to decide
-whether our flat `audit_findings` + fingerprint-dedup design is starting to leak
-signal that a graph-shaped memory (pgvector + community clustering) would
-recover. Three triggers:
-
-| Metric | What it measures | Default trigger |
-|---|---|---|
-| Fuzzy re-raise rate | New-fingerprint findings whose text matches a prior finding (trigram sim > 0.6) | `> 15%` |
-| Cluster density | Median per-repo count of open finding pairs that are **semantic same-file cross-run re-raises** (cosine > 0.85). Reports embedding **coverage** — a low-coverage reading is `unknown`, never green — and excludes control-state markers | `>= 5` |
-| Recurrence rate | Fixed findings that reappear in same repo within 30 days under a new fingerprint | `> 10%` |
-
-Runtime is the `memory_health_metrics(window_days)` Postgres RPC added by
-`supabase/migrations/20260421163525_memory_health.sql` (uses `pg_trgm`).
-
-**Decision rule**: 0 triggers for 4 weeks → current design is fine. 1 trigger
-for 2 consecutive weeks → prototype pgvector similarity. 2+ triggers → build
-the full clustering pipeline. Auto-scheduled weekly by
-`.github/workflows/memory-health.yml`; locally `npm run memory:health`.
+`scripts/memory-health.mjs` runs three trigger metrics against the audit store to
+decide whether our flat `audit_findings` + fingerprint-dedup design is starting to
+leak signal that a graph-shaped memory (pgvector + community clustering) would
+recover. **What it is / when you need it**: reading a weekly AMBER, changing a
+metric, or deciding whether to promote the graph design. The trigger table,
+the thresholds, the `memory_health_metrics(window_days)` RPC and the
+0/1/2-trigger decision rule live in
+[`docs/reference/memory-health-gate.md`](docs/reference/memory-health-gate.md).
+Weekly via `.github/workflows/memory-health.yml`; locally `npm run memory:health`.
 
 Three obligations stay resident; the incidents, query mechanics and thresholds are
 in [`docs/reference/memory-health-gate.md`](docs/reference/memory-health-gate.md):
@@ -727,19 +718,15 @@ call-site list: [`docs/reference/anthropic-backend-routing.md`](docs/reference/a
 ## Shadow Final-Review A/B — CLOSED 2026-07-28, verdict KEEP
 
 Opt-in, observation-only 2nd final reviewer, run blind. **Committed default unset;
-paused locally 2026-08-14 on cost** — an unscoped envelope made a shadow run cost
-multiples of the primary Gemini review it exists to sanity-check.
-`FINAL_REVIEW_SHADOW=claude-opus|gemini|openrouter|xai` (a gateway needs an explicit
-`FINAL_REVIEW_SHADOW_MODEL`; xai is a native provider, own base URL/credential pair,
-not a gateway; unset ⇒ not entered, byte-identical; no-op under Azure; never gates).
+paused locally 2026-08-14 on cost**, and confirmed off 2026-09-04. **When you need
+the dossier**: turning it on, choosing an envelope scope, or reading a campaign
+refusal. `FINAL_REVIEW_SHADOW` / `_MODEL` / `_SCOPE` semantics, the `thin` default
+intent, the campaign-ineligibility of `gap` and the budget cap are all in
+[`environment-variables.md`](docs/reference/environment-variables.md) §Shadow final
+review; verdict, method, stopping rule and three dated corrections in the
+[briefing](docs/research/final-review-shadow-adjudication-briefing.md) ·
+[plan](docs/plans/final-review-shadow-reviewer.md). Unset ⇒ byte-identical; never gates.
 
-**Envelope scope.** `FINAL_REVIEW_SHADOW_SCOPE=full|thin|gap`; **`thin` is the
-intended default going forward** — the shadow's job is a targeted gap-check, not a
-second full audit. `gap` is **campaign-ineligible**, a manifest binds a cohort to
-ONE scope, and an active campaign refuses `gap` or an invalid value **before any
-provider call**. Semantics + budget cap:
-[`environment-variables.md`](docs/reference/environment-variables.md) §Shadow final review.
-Verdict/method/stopping rule + three dated corrections: [briefing](docs/research/final-review-shadow-adjudication-briefing.md) · [plan](docs/plans/final-review-shadow-reviewer.md).
 Three results that generalise — **read before any reviewer/model comparison**:
 
 - **A floor arm and a ratio arm can BOTH fire.** Surface the contradiction; never pick
