@@ -187,11 +187,44 @@ export function parseHunkTargets(diffText) {
  * @returns {{ifPath:object, conditionNode:object, branchPath:object, branchKind:'consequent'|'alternate'}|null}
  */
 export function findEnclosingConditional(ast, line) {
-  let best = null;
+  return findEnclosingConditionals(ast, [line]).get(line) ?? null;
+}
+
+/**
+ * Resolve MANY anchor lines against one AST in a SINGLE traversal.
+ *
+ * Semantically identical to calling {@link findEnclosingConditional} per line —
+ * this is the same nearest-wins rule, with the per-`IfStatement` geometry
+ * (`lo`, `end.line`, `span`, the test span) computed once per branch instead of
+ * once per branch PER LINE.
+ *
+ * **Why it exists.** `parseHunkTargets` emits *every added line* as an anchor,
+ * and the caller looped `findEnclosingConditional(ast, line)` over them — one
+ * complete Babel traversal each. `seenContainers` dedups the containers those
+ * lines resolve to, but it dedups AFTER the traversal, so it never reduced the
+ * traversal count: a 500-line hunk paid 500 full walks of the same tree even
+ * when all 500 lines landed in three containers. Nor did `maxContainers` bound
+ * it — that cap governs enumeration, and this loop does not break on it. So the
+ * cost was quadratic-ish in hunk size with no cap anywhere in the path.
+ *
+ * @param {object} ast
+ * @param {Iterable<number>} lines - 1-indexed anchor lines
+ * @returns {Map<number, {ifPath:object, conditionNode:object, branchPath:object, branchKind:'consequent'|'alternate'}>}
+ *   Only lines that resolve are present; an unresolved line is absent, which is
+ *   the Map-shaped spelling of the single-line function's `null`.
+ */
+export function findEnclosingConditionals(ast, lines) {
+  // Deduped, because repeated anchors on one line would otherwise each redo the
+  // same comparisons — and `parseHunkTargets` can legitimately emit `c`/`c+1`
+  // pairs that collide.
+  const wanted = [...new Set(lines)];
+  /** @type {Map<number, {ifPath, conditionNode, branchPath, branchKind, span}>} */
+  const best = new Map();
+  if (wanted.length === 0) return new Map();
+
   traverse(ast, {
     IfStatement(p) {
       const testLoc = p.node.test?.loc;
-      const inTest = testLoc && line >= testLoc.start.line && line <= testLoc.end.line;
 
       for (const kind of ['consequent', 'alternate']) {
         const branch = p.node[kind];
@@ -222,21 +255,32 @@ export function findEnclosingConditional(ast, line) {
         // the unbraced form, and resolved the same way.
         const isMultiLineBlock = isBlock && end.line > start.line;
         const lo = isMultiLineBlock ? start.line + 1 : start.line;
-        if (line < lo || line > end.line) continue;
-        if (inTest && isMultiLineBlock) continue;
-
         const span = end.line - start.line;
-        // NEAREST wins: the tightest enclosing branch, so a hunk in a nested
-        // `if` resolves to the inner one, not its parent.
-        if (!best || span < best.span) {
-          best = { ifPath: p, conditionNode: p.node.test, branchPath: p.get(kind), branchKind: kind, span };
+        // `p.get(kind)` is deliberately NOT hoisted above the line loop: it
+        // allocates a NodePath, and most branches contain no anchor at all, so
+        // building one per branch would trade the traversals this function
+        // saves for allocations it does not need. Computed on a hit only.
+        for (const line of wanted) {
+          if (line < lo || line > end.line) continue;
+          const inTest = testLoc && line >= testLoc.start.line && line <= testLoc.end.line;
+          if (inTest && isMultiLineBlock) continue;
+
+          // NEAREST wins: the tightest enclosing branch, so a hunk in a nested
+          // `if` resolves to the inner one, not its parent.
+          const prior = best.get(line);
+          if (!prior || span < prior.span) {
+            best.set(line, {
+              ifPath: p, conditionNode: p.node.test, branchPath: p.get(kind), branchKind: kind, span,
+            });
+          }
         }
       }
     },
   });
-  if (!best) return null;
-  const { span, ...rest } = best;
-  return rest;
+
+  const out = new Map();
+  for (const [line, { span, ...rest }] of best) out.set(line, rest);
+  return out;
 }
 
 /**
@@ -597,8 +641,13 @@ export async function runAdjacencyAnalysis({ repoRoot, auditBaseCommit, bounds, 
         continue;
       }
 
+      // ONE traversal for every anchor in this file, not one per anchor line.
+      // `seenContainers` below dedups the CONTAINERS lines resolve to, but it
+      // runs after resolution and so never reduced the number of walks.
+      const resolvedByLine = findEnclosingConditionals(ast, target.anchorLines);
+
       for (const line of target.anchorLines) {
-        const found = findEnclosingConditional(ast, line);
+        const found = resolvedByLine.get(line);
         if (!found) continue; // function-body level, or an unhonoured deletion anchor
 
         const { ifPath, conditionNode, branchPath, branchKind } = found;

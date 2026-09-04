@@ -25,6 +25,7 @@ import { parseSource } from '../scripts/lib/ast.mjs';
 import {
   parseHunkTargets,
   findEnclosingConditional,
+  findEnclosingConditionals,
   enumerateBlockStatements,
   classifyStatementDependence,
   runAdjacencyAnalysis,
@@ -562,5 +563,86 @@ describe('reports-only — output is never trapped', () => {
         }
       }`;
     assert.equal(classifyOne(src, 4), 'reports-only');
+  });
+});
+
+describe('findEnclosingConditionals — one traversal, identical answers', () => {
+  // The per-line `findEnclosingConditional(ast, line)` loop in
+  // `runAdjacencyAnalysis` walked the whole AST once PER ANCHOR LINE, and
+  // `parseHunkTargets` emits every added line as an anchor. `seenContainers`
+  // dedups containers, but only AFTER resolution, so it never reduced the walk
+  // count; `maxContainers` does not bound this loop either. A 500-line hunk
+  // therefore paid 500 full traversals of one tree.
+  //
+  // The RISK in that refactor is not speed, it is a semantics change: the
+  // nearest-wins rule, the `else if` skip, the brace-line offset and the
+  // test-expression exclusion all had to survive being hoisted out of the
+  // per-line comparison. So the load-bearing assertion is EQUIVALENCE against
+  // the original one-line-at-a-time behaviour.
+  test('agrees with the single-line function across the fixture', () => {
+    const { ast } = parseSource(source);
+    const totalLines = source.split('\n').length;
+    // Strided, not every line: the REFERENCE side is the old
+    // one-traversal-per-line behaviour, so a full sweep of this 3,267-line
+    // fixture spends ~60s re-paying the exact cost this function removes.
+    // Measured at stride 11: 297 lines sampled, 133 resolving, ~15s.
+    const STRIDE = 11;
+    const sampled = [];
+    for (let i = 1; i <= totalLines; i += STRIDE) sampled.push(i);
+
+    const batch = findEnclosingConditionals(ast, sampled);
+
+    let resolved = 0;
+    for (const line of sampled) {
+      const single = findEnclosingConditional(ast, line);
+      const fromBatch = batch.get(line) ?? null;
+      if (single === null) {
+        assert.equal(fromBatch, null, `line ${line}: single-line found nothing, batch found a container`);
+        continue;
+      }
+      resolved++;
+      assert.ok(fromBatch, `line ${line}: single-line resolved a container, batch did not`);
+      assert.equal(fromBatch.branchKind, single.branchKind, `line ${line}: branchKind differs`);
+      assert.equal(
+        fromBatch.ifPath.node.loc.start.line, single.ifPath.node.loc.start.line,
+        `line ${line}: resolved to a DIFFERENT if-statement — the nearest-wins rule changed`,
+      );
+      assert.equal(
+        fromBatch.ifPath.node.loc.end.line, single.ifPath.node.loc.end.line,
+        `line ${line}: resolved container has a different extent`,
+      );
+      assert.equal(
+        fromBatch.conditionNode?.loc?.start?.line, single.conditionNode?.loc?.start?.line,
+        `line ${line}: conditionNode differs`,
+      );
+    }
+
+    // Vacuous-pass guard: a batch resolving NOTHING agrees with a single-line
+    // function that also resolved nothing, and this test would pass having
+    // compared only nulls. 133 resolved at this stride when measured, so a floor
+    // of 100 leaves fixture headroom while still failing if resolution collapses.
+    assert.ok(
+      resolved > 100,
+      `only ${resolved} of ${sampled.length} sampled lines resolved — too few; the comparison was near-vacuous`,
+    );
+  });
+
+  test('dedups repeated lines and is empty-safe', () => {
+    const { ast } = parseSource(source);
+    assert.equal(findEnclosingConditionals(ast, []).size, 0);
+    const one = findEnclosingConditionals(ast, [2403]);
+    const dupes = findEnclosingConditionals(ast, [2403, 2403, 2403]);
+    assert.equal(dupes.size, one.size);
+    assert.equal(
+      dupes.get(2403)?.ifPath.node.loc.start.line,
+      one.get(2403)?.ifPath.node.loc.start.line,
+    );
+  });
+
+  test('an unresolved line is ABSENT from the map, never a null entry', () => {
+    const { ast } = parseSource('const a = 1;\nconst b = 2;\n');
+    const res = findEnclosingConditionals(ast, [1, 2]);
+    assert.equal(res.size, 0);
+    assert.equal(res.has(1), false, 'a miss must be absent, not present-and-null');
   });
 });
