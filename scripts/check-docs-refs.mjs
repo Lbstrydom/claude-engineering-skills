@@ -310,6 +310,15 @@ const FINDING_CLASSES = new Set(['GONE', 'traversal', 'stale-planned-marker']);
 // `<file>→<target>`, line-independent. Shrinking this list (a baselined ref that
 // later resolves) is always fine; a GONE NOT in it is drift and fails.
 export const BASELINE = new Set([
+  // `scripts/.sync-owned.json` is a CONSUMER-side write target, and by design it
+  // never exists in this repo: `sync-to-repos.mjs` writes it into each consumer
+  // so that repo can answer "is this file mine to fix?" offline. Citing it here
+  // is correct — the docs describe what a consumer will find — but the path is
+  // unresolvable from the source tree, which is exactly the write-target class
+  // §5 of docs/reference/reference-integrity.md says to baseline rather than
+  // "fix". Marking it `<placeholder>` would be wrong: it is a real, exact path.
+  'AGENTS.md→scripts/.sync-owned.json',
+  'docs/runbooks/consumer-adoption.md→scripts/.sync-owned.json',
   // never-produced audit-summary, cited in an archived plan
   'docs/plans/architecture-intent-framework.md→docs/completed/architecture-intent-framework-audit-summary.md',
   // generated `--out` / never-produced experiment docs
