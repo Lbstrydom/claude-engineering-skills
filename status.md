@@ -1,5 +1,43 @@
 # Project Status Log
 
+## 2026-09-04 — The corpus is the repo, not the disk; and an unmeasured round must not wear a clean round's clothes
+
+### Changes
+- **The symbol-index walker now asks git what the repo contains.** It enumerated the filesystem against a fixed `SKIP_DIRS` name list, so a consumer's index was mostly not their code: **3,963 of 5,158 walked files (76.8%) were gitignored-and-untracked**, the largest single contributor being `scripts/.claude-skills/` — this bundle, 553 files — indexed as the consumer's code and then counted against them by the duplication score. Of the 14 duplicate clusters they had left after removing **all 68 of their own**, all 14 were inside the bundle, so GREEN (`score <= threshold * 0.5`) was unreachable no matter what they did. `enumerateFilesWithOwnership` filters through the one existing oracle (`lib/disowned-paths.mjs`): **ignored AND untracked**, asked of the CANDIDATES, fail-open and loud. Cost 145ms against a 175ms walk.
+- **`CRUISABLE_EXTENSIONS` was a capability CLAIM, and it was false.** dep-cruiser parses `.ts` only when it can resolve `typescript`, which pnpm's strict layout does not hoist. In the reporting consumer **522 of 675 eligible files had no parser**, while the graph reported `outcome: 'ok'` and `arch:drift` printed `Layering violations: 0` — a sentence that reads as *no violations* and means *nothing measured*. `assessParserAvailability` asks dep-cruiser's own `allExtensions` instead; `extraction.parser` names the gap and its remedy.
+- **The reported cause of that second defect was FALSIFIED before it was fixed.** The consumer attributed the empty layering graph to `isInternalEdge` discarding pnpm workspace edges. Measured: **zero of 2,668 cruised dependencies resolve through `node_modules`** — dep-cruiser already canonicalises the link (confirmed with a two-package junction fixture, identical with and without `resolveOptions.symlinks`). Their numbers were treated as a hypothesis, not a spec, which is the only reason the real mechanism was found.
+- **A round that measured nothing no longer renders as a clean one.** A consumer's round lost every pass to Azure 429s and printed `Verdict: INCOMPLETE | H:0 M:0 L:0`, exit 0 — one word from a clean audit, and `audit-loop.mjs`'s convergence test reads only those three numbers, so `/cycle` converges and ships. Three separable fixes: `formatAuditSummaryLine` refuses the counts-first shape and says *how many of how many passes produced output*; `openai-audit.mjs` exits **3** (not 1, which already means "the CLI errored"); and `countFindings` folds INCOMPLETE into its **existing** `failed` flag, so one predicate still answers "is this round evidence".
+- **429 is now budgeted apart from a generic transient** — one retry at an 8s ceiling cannot succeed against a provider saying *high demand*. Exponential with FULL jitter, `Retry-After` honoured and clamped. **This was inert until the Gemini gate caught it**: `_callGPTOnce` rewrapped every non-abort failure as `new Error(msg)`, destroying `.status`/`.headers`, so `classifyLlmError` answered `permanent` and the `http-429` branch was unreachable — the *old* 8s branch too, which is why the consumer's log shows six 429s and no retry line at all.
+- **`scripts/.sync-owned.json`** — a committed, path-set-only sidecar written by every sync, so a consumer can answer *"is this file mine to fix?"* offline. Git-ignore state cannot classify `.claude/hooks/**` or `.claude/skills/**` (consumers commit them), neither can carry a sync banner, and the manifest that does cover them is gitignored on both sides. Measured in their duplication gate: **32 violations / 1 mixed-owner without it, 31 / 0 with it** — the extra one being this bundle's own `readStdin` across three hooks, reported to them as their code to fix.
+- `debt:review` partitions on ownership rather than leverage-ranking files nobody in that repo can edit; `skills:hydrate` FAILS in a plain clone instead of reporting "nothing to do" with exit 0; `arch:duplicates --json` gained `limit`/`returned`/`truncated`/`total`; `arch:drift` reads the snapshot's own `commit_sha`; `.yml`/`.yaml` admitted to `PLAN_REFERENCE_EXTENSIONS`; `sampleSnapshotEmbeddings` and `getActiveSnapshot` are repo-bound and fail closed.
+
+### Files Affected
+- `scripts/symbol-index/extract.mjs` — `enumerateFilesWithOwnership`, `unresolved`/`disowned` edge buckets, parser-availability probe and its remedy line
+- `scripts/lib/symbol-index/graph-coverage.mjs`, `scripts/lib/coverage-schema.mjs` — `assessParserAvailability`, `EXTRACTION_EDGE_BUCKETS`, the `parser` block, arithmetic coherence
+- `scripts/lib/robustness.mjs`, `scripts/lib/audit/llm-helpers.mjs` — 429 budget/backoff/`Retry-After`, `describeLostWrites`, and the rewrap that carries HTTP facts forward
+- `scripts/lib/audit/findings-pipeline.mjs`, `run-finalization.mjs`, `scripts/openai-audit.mjs`, `scripts/audit-loop.mjs`, `scripts/lib/schemas.mjs` — the INCOMPLETE verdict, `_passes_total`, exit 3, the convergence guard
+- `scripts/lib/sync-owned-sidecar.mjs`, `scripts/lib/upstream-ownership.mjs` (new) + `scripts/sync-to-repos.mjs`, `scripts/debt-review.mjs`, `scripts/lib/debt-review-helpers.mjs`
+- `scripts/skills-hydrate.mjs`, `scripts/lib/package-manager.mjs` (`displayDlx`), `scripts/symbol-index/{drift,duplicates,refresh}.mjs`, `scripts/lib/store/arch/snapshots.mjs`, `scripts/lib/plan-paths.mjs`
+- 5 new test suites; `AGENTS.md` + `docs/runbooks/consumer-adoption.md` + `skills/audit-code/SKILL.md`; plan at `docs/plans/consumer-corpus-and-honesty-2026-09-04.md`
+
+### Verification
+- **Every figure was reproduced against the reporting consumer with the PRE-change code**, before anything was written. That is what falsified the reported cause of the layering defect.
+- `/audit-code` **5 rounds** (H:6→2→3→3→4) + **2 Gemini gates** (`CONCERNS_REMAINING` both). 27 findings accepted and fixed, 49 deferred with independence stated, 9 refuted by direct measurement. Stopped at the rigor cap: every remaining HIGH was a deferred-independent re-raise, two at their fifth.
+- Every accepted fix carries a negative control (revert → confirm RED on the right assertion). One of mine was **mis-targeted** — it reverted the set side of a comparison but not the lookup side, so it stayed green; redone against the real defect.
+- `npm test` on the rebased tree: 14,970 tests, 0 real failures (`audit-no-files-cli` and `sync-target-path` were load flakes, both green in isolation; `gate-contract-ratchet` was red from `b0705db7` and is fixed by `b0d864db`). 13 deterministic gates green.
+
+### Decisions Made
+- **Before a walk or an allowlist decides what a repo contains, ask what already knows** — git for ownership, the parser for its own capability. A constant that asserts a capability is a claim nobody checks.
+- **Five instances of ONE class appeared inside the code written to remove that class** (a comparison normalised on one side, or a validity rule spelled twice). Each individual fix was correct and none closed the class, because the class was *two predicates*. Closed by making `isUsableSidecar` and `comparisonKey` the single oracles both halves call.
+- **A deferral's stated cost must be measured, not asserted.** `sampleSnapshotEmbeddings` was deferred five times on "a signature change and every caller changes"; measured, it is ONE caller that already held `repoId` on the next line.
+
+### Next Steps
+- **Not yet synced to consumers** — none of this reaches `storyline` until `npm run sync`, and the 4 open upstream reports (`5f3fa3ec`, `7e6a5492`, `e265d10b`, `aeb96b12`) should close AFTER that, not before. `7e6a5492` needs a correction note rather than a bare `fix`: their diagnosis was reasonable and wrong.
+- Six snapshot reads still scope by `refresh_id` alone; two are reachable from `cross-skill.mjs` commands taking a bare refresh id, one of them from `/audit-code` Step 0.5. No migration needed (`refresh_runs.repo_id` exists) — spun out as its own task.
+- This repo's own graph is still blind to 5 `.ts`/`.tsx` fixture files (0.3%) — now *reported* rather than silent.
+
+---
+
 ## 2026-09-04 — Debt capture: a cap that punished good reasoning, and a partial capture that read as complete
 
 ### Changes
