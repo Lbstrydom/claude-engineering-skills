@@ -202,6 +202,20 @@
       "statedIn": "skills/audit-code/SKILL.md",
       "stated": "A round with any non-`completed` row cannot print a bare `CONVERGED`.",
       "reason": "Added 2026-08-20 (lens-coverage-honesty plan §3.3, §4 Trap 1). The per-pass/wave CENSUS block and the `CONVERGED (<kind counts> — see census)` compound-label suffix are both composed by the agent from the round's own recorded pass/wave outcomes when writing the Step 6 report — no CLI exit code, and no oracle in the closed v1 registry (cli-exit / convergence-threshold / tiered-shadow-window / visual-gate-unverified) binds report-label composition. The underlying convergence BOOLEAN this label wraps is already covered by the executable `convergence-threshold` gate above; this document-only entry covers only the human-readable presentation layer on top of it."
+    },
+    {
+      "id": "debt-capture-partial-refusal",
+      "kind": "executable",
+      "oracle": "cli-exit",
+      "statedIn": "skills/audit-code/SKILL.md",
+      "stated": "An over-cap rationale is rejected and the run exits non-zero: any deferral that fails to land is never suppressed in a future audit",
+      "implementation": "scripts/debt-auto-capture.mjs",
+      "scenario": "debt-capture-partial-refusal",
+      "tests": [
+        "tests/gate-honesty.test.mjs",
+        "tests/debt-auto-capture-partial-capture-cli.test.mjs"
+      ],
+      "proof": "process"
     }
   ],
   "ignoredCandidates": [

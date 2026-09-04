@@ -438,13 +438,8 @@ Persist out-of-scope valid findings to `.audit/tech-debt.json` so future
 audits suppress them automatically. Eligible candidates: Step 3 triage
 findings with `action = defer`.
 
-> **A rejected capture is a lost suppression — and the command now says so.**
-> A partial capture exits **non-zero**: any deferral that fails to land will
-> never be suppressed in a future audit, so `9 of 15 captured` must not read as
-> done. Read the `Rejected entries:` block, fix the cause, re-run (idempotent).
-> **Never shorten a rationale to satisfy the 4000-char cap** — the Step 3
-> honest-deferral requirement above (root cause + rejected minimal fix +
-> residual risk + independence) is the point, and the cap is sized to it.
+> **A rejected capture is a lost suppression.** An over-cap rationale is rejected and the run exits non-zero: any deferral that fails to land is never suppressed in a future audit — so `9 of 15 captured` is a failure, not a ship.
+> Read the `Rejected entries:` listing, fix what it names, then re-run (capture is idempotent). Do not shorten a rationale to fit the 4000-char limit — the Step 3 honest-deferral requirement above (root cause + rejected minimal fix + residual risk + independence) is the point, and the limit is sized to it.
 
 Full per-reason field requirements, capture flow, sensitivity-scan rules,
 and status card format: `references/debt-capture.md`.

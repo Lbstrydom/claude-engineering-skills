@@ -15,6 +15,12 @@
  *       partial capture was indistinguishable from a complete one to any caller
  *       checking `$?`.
  *
+ * The exit-code half is also the unit-level proof behind the `debt-capture-partial-refusal`
+ * gate contracted in skills/audit-code/gate-contract.json; that gate's cli-exit oracle
+ * spawns the real CLI against the same shape, this file pins the surrounding behaviour
+ * (what still lands, what the ledger holds afterwards, and the direction the exit must
+ * NOT fire) that a single exit-code assertion cannot express.
+ *
  * Each test below fails on the pre-fix code. The clean-capture case is the
  * negative control: it pins the direction the new non-zero exit must NOT fire.
  */

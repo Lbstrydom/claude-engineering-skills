@@ -50,6 +50,12 @@ export const CLI_EXIT_SCENARIOS = Object.freeze([
   // binding that does not hold.
   'ship-unscoped-index-refusal',
   'ship-identity-absent-refusal',
+  // debt-auto-capture partial-capture refusal: a ledger whose defer entries
+  // include one over the deferredRationale cap. Constructible from files only
+  // (a JSON ledger in the fixture dir) with no store, network or browser --
+  // buildHermeticEnv deletes AUDIT_DB_* and relocates HOME, so syncToCloud
+  // resolves no repo identity and returns null on the graceful-degradation path.
+  'debt-capture-partial-refusal',
 ]);
 
 const ProofSchema = z.enum(['process', 'unit-seam']);

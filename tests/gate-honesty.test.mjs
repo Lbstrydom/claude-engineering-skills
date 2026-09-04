@@ -58,7 +58,11 @@ function divergenceLine(skill, gate, result) {
 // importable pure predicate exists for that inline check; claiming a
 // unit-seam oracle for it would itself be a fake-check).
 const PINNED_EXECUTABLE = {
-  'audit-code': ['convergence-threshold', 'tiered-shadow-window-honesty'],
+  // `debt-capture-partial-refusal` (2026-09-04): Step 3.6 states that a PARTIAL
+  // capture exits non-zero. Genuinely bindable where the sibling debt gates are
+  // not -- the trigger is a JSON ledger on disk, so the cli-exit fixture builds
+  // it outright with no store, network or browser.
+  'audit-code': ['convergence-threshold', 'tiered-shadow-window-honesty', 'debt-capture-partial-refusal'],
   'visual-audit': ['static-gate-refusal', 'empty-capture-unverified', 'gate-unverified-reasons'],
   // gate-contract-authoring.md Phase B exemplar — the two ai-context-management
   // exit-map scenarios (one per outcome, R3-H1).
@@ -231,7 +235,13 @@ describe('gate-honesty — real skills/', () => {
     // +2 ship guard-a/guard-b (worktree-identity-guards Phase 6) — ship's first
     // executable gates. The count is pinned so coverage cannot drift silently in
     // EITHER direction: a gate quietly downgraded to document-only fails here too.
-    assert.equal(totalExecutable, 14); // +1 ux-lock strict-selectors (Phase C final)
+    // 14 -> 15: +1 audit-code (debt-capture-partial-refusal, /audit-code Step 3.6,
+    //   2026-09-04). Executable rather than document-only because the trigger is a
+    //   JSON ledger on disk: the cli-exit fixture writes one whose defer entries
+    //   include an over-cap rationale, and asserts the real CLI exits 1 with
+    //   PARTIAL CAPTURE on stderr. The stderr match is load-bearing -- exit 1 is
+    //   also this CLI's code for a missing arg or an unreadable ledger.
+    assert.equal(totalExecutable, 15); // +1 ux-lock strict-selectors (Phase C final)
     // 35 → 36: +1 ship (unremediated-acceptances-never-blocks, /ship Step 0.5e, 2026-07-27).
     // 36 → 37: +1 ship (unit-test-lock-refuses-unverifiable-claims, 2026-07-29).
     // 37 → 38: +1 ship (final-review-credit-advisory-exit-zero, 2026-07-29).

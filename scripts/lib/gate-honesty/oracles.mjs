@@ -370,6 +370,41 @@ const CLI_EXIT_RECIPES = {
     expectStderrContains: 'no-expectation',
     envPrereq: null,
   },
+
+  // debt-auto-capture: a PARTIAL capture must not report success. The ledger
+  // below holds two `ruling: defer` entries, one of which carries a rationale
+  // over PersistedDebtEntrySchema's 4000-char cap. The good entry is written
+  // and the over-cap one is rejected, so the run is partial -- the exact shape
+  // that exited 0 until 2026-09-04, because the old predicate only fired when
+  // EVERY entry was rejected. Isolating on the stderr line rather than the exit
+  // code alone is load-bearing here: exit 1 is also this CLI's code for a
+  // missing arg or an unreadable ledger, so a bare exit check could go green
+  // having proven a completely different refusal.
+  'debt-capture-partial-refusal': {
+    args: ['--ledger', '.audit/gate-ledger.json', '--run', 'gate-honesty'],
+    fixture(dir) {
+      fs.mkdirSync(path.join(dir, '.audit'), { recursive: true });
+      const rationale = (n) => 'Root cause R. Minimal in-scope fix rejected: F. Residual risk K. '
+        .repeat(Math.ceil(n / 62)).slice(0, n);
+      const entry = (topicId, chars) => ({
+        topicId,
+        ruling: 'defer',
+        severity: 'HIGH',
+        category: 'god-module',
+        section: 'src/x.js:1',
+        detailSnapshot: 'a sufficiently descriptive detail snapshot',
+        rulingRationale: rationale(chars),
+        affectedFiles: ['src/x.js'],
+      });
+      atomicWriteFileSync(path.join(dir, '.audit', 'gate-ledger.json'), JSON.stringify({
+        version: 1,
+        entries: [entry('lands', 500), entry('over-cap', 4500)],
+      }));
+    },
+    expectExit: 1,
+    expectStderrContains: 'PARTIAL CAPTURE',
+    envPrereq: null, // deterministic: filesystem only, no store/network/browser
+  },
 };
 
 /** @returns {Promise<OracleResult>} */
