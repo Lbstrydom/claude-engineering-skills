@@ -1,6 +1,6 @@
 {
-  "$comment": "Declared unreachable pointers in synced skill content. Gate: scripts/check-skill-consumer-refs.mjs. Every entry needs a disposition and a reason; the gate fails on an undeclared kind, on site-count growth, and on an entry that no longer matches anything.",
-  "totalSites": 220,
+  "$comment": "Declared unreachable pointers in synced skill content. See scripts/check-skill-consumer-refs.mjs. Every entry needs a disposition and a real reason; new entries default to a TODO reason that the gate rejects.",
+  "totalSites": 188,
   "refs": {
     "doc docs/architecture-map.md": {
       "disposition": "consumer-authored",
@@ -10,32 +10,32 @@
     "doc docs/audit/shared-references/browser-tool-detection.md": {
       "disposition": "provenance",
       "reason": "Canonical-source banner on the two synced copies — edit upstream, never the copy. Same shape as its four shared-reference siblings.",
-      "sites": 4
+      "sites": 2
     },
     "doc docs/audit/shared-references/gemini-gate.md": {
       "disposition": "provenance",
       "reason": "Canonical-source banner on the synced copy — edit upstream, never the copy.",
-      "sites": 4
+      "sites": 2
     },
     "doc docs/audit/shared-references/input-acquisition.md": {
       "disposition": "provenance",
       "reason": "Canonical-source banner on the eight synced copies — edit upstream, never the copy. Same shape as its shared-reference siblings.",
-      "sites": 16
+      "sites": 8
     },
     "doc docs/audit/shared-references/ledger-format.md": {
       "disposition": "provenance",
       "reason": "Canonical-source banner on the synced copy — edit upstream, never the copy.",
-      "sites": 4
+      "sites": 2
     },
     "doc docs/audit/shared-references/prerequisite-ladder.md": {
       "disposition": "provenance",
       "reason": "Canonical-source banner on the synced copy — edit upstream, never the copy.",
-      "sites": 4
+      "sites": 2
     },
     "doc docs/audit/shared-references/verification-discipline.md": {
       "disposition": "provenance",
       "reason": "The synced copy names its own canonical upstream path so an editor fixes the source, not the copy. Pointing at the source repo is the intent.",
-      "sites": 16
+      "sites": 8
     },
     "doc docs/plans/architectural-memory.md": {
       "disposition": "provenance",
@@ -82,6 +82,11 @@
       "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
       "sites": 1
     },
+    "doc docs/plans/persona-test-consistency-mode.md": {
+      "disposition": "source-repo-only",
+      "reason": "docs/reference/consistency-contract.md line 5 — the LINK TEXT of a citation whose href is now an absolute upstream URL, and the line directly above it says \"(upstream only — the sync ships no docs/plans/)\". A consumer clicks the URL; the bare path is there so the reader knows what the URL points at. This file entered the gate on 2026-09-04 when the subject set moved from the literal skills/ directory to the sync closure (upstream 63552e8b) — it is the one closure member outside skills/, and it had carried this gate’s own defect class unseen for its whole history.",
+      "sites": 1
+    },
     "doc docs/plans/reference-integrity-gate.md": {
       "disposition": "provenance",
       "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
@@ -90,7 +95,7 @@
     "doc docs/plans/remediation-state-verification-reconciler.md": {
       "disposition": "provenance",
       "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
-      "sites": 2
+      "sites": 1
     },
     "doc docs/plans/requirements-layer.md": {
       "disposition": "provenance",
@@ -110,7 +115,7 @@
     "doc docs/plans/verification-discipline-cluster.md": {
       "disposition": "provenance",
       "reason": "Provenance header of the canonical verification-discipline reference, same block as the field report above.",
-      "sites": 16
+      "sites": 8
     },
     "doc docs/plans/visual-audit-theme-safety-v1.md": {
       "disposition": "provenance",
@@ -140,7 +145,7 @@
     "doc docs/runbooks/local-maintenance-checks.md": {
       "disposition": "provenance",
       "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
-      "sites": 2
+      "sites": 1
     },
     "doc docs/runbooks/pre-ship-empirical-verify.md": {
       "disposition": "provenance",
@@ -190,6 +195,11 @@
     "npm debt:health": {
       "disposition": "consumer-wired",
       "reason": "Adoption runbook has the consumer add debt:* aliases; storyline has them. debt-health-check.mjs is synced.",
+      "sites": 1
+    },
+    "npm dev": {
+      "disposition": "consumer-authored",
+      "reason": "docs/reference/consistency-contract.md line 505 — \"after npm start or npm run dev\", naming the READER’S OWN dev server while explaining how to point the consistency rig at a local URL. Not a claim about this repo’s script table and not something the sync or the adoption runbook installs: it is the consumer’s own package.json, which is exactly why the gate’s unconditional npm rule cannot judge it.",
       "sites": 1
     },
     "npm docs:citations": {

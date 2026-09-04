@@ -147,6 +147,66 @@ function listOwnedSkillMarkdown(repoRoot) {
 }
 
 /**
+ * The files this gate judges: owned markdown under `skills/`, PLUS every other
+ * markdown file the sync actually ships.
+ *
+ * **Why the literal directory was the wrong input** (upstream 63552e8b,
+ * wine-cellar-app, 2026-09-04). This gate exists to catch a pointer a CONSUMER
+ * cannot resolve, and it was reading `skills/` — a proxy for "synced content"
+ * that was true when it was written and is not true now. The closure ships 783
+ * paths, exactly one of which is outside `skills/` and `.claude/skills/`:
+ * `docs/reference/consistency-contract.md`. That one file carried this gate's
+ * own defect class (an out-of-closure `docs/plans/…` pointer) for its whole
+ * history, unseen — 1 of 1 unscanned files, a 100% hit rate on the blind spot.
+ *
+ * Deriving the set from the closure means a NEW synced surface is enrolled the
+ * day it is added, rather than silently widening the hole. Same rule as
+ * `db:enrolment:gate` and `skillsInvokingSyncedTooling`: iterate the side that
+ * can see what no list mentions.
+ *
+ * `.claude/skills/**` is excluded because it is generated FROM `skills/**`,
+ * which is already in the set — scanning both would double every count and make
+ * the ratchet fire on its own duplication.
+ *
+ * @param {string[]} owned repo-owned markdown under `skills/`
+ * @param {Set<string>} closure source-relative paths the sync ships
+ * @returns {string[]} sorted, de-duplicated
+ */
+export function subjectFiles(owned, closure) {
+  const out = new Set(owned);
+  for (const rel of closure) {
+    if (!rel.endsWith('.md')) continue;
+    if (rel.startsWith('skills/') || rel.startsWith('.claude/skills/')) continue;
+    out.add(rel);
+  }
+  return [...out].sort();
+}
+
+/**
+ * Blank the http(s) URLs on a line, preserving length so column maths still holds.
+ *
+ * **Why a URL must not be scanned** (2026-09-04). An absolute upstream URL
+ * EMBEDS the repo-relative path — `…/blob/main/docs/plans/x.md` — so `DOC_RE`
+ * matches inside it and the gate counts the pointer as unreachable. That was
+ * harmless while every such path was also written relatively, and stopped being
+ * harmless when the absolute upstream URL became the prescribed remedy for a
+ * link in synced content (`docs:synced-links:gate`): measured immediately after
+ * that fix landed, 68 of this gate's 220 sites — 31% — were the remedy being
+ * counted as the disease. A gate that flags its own remedy pushes the next
+ * author back to the relative link.
+ *
+ * A URL is reachable from a consumer BY CONSTRUCTION: it does not depend on
+ * what the sync put on their disk, which is the only thing this gate reasons
+ * about.
+ *
+ * @param {string} line
+ * @returns {string}
+ */
+export function blankUrls(line) {
+  return String(line).replace(/https?:\/\/\S+/g, (u) => ' '.repeat(u.length));
+}
+
+/**
  * Scan one markdown file for pointers that a consumer cannot resolve.
  *
  * Fenced code blocks are scanned like any other text: a command inside a
@@ -162,7 +222,10 @@ export function scanFile(rel, content, closure) {
   const out = [];
   const lines = content.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
-    const L = lines[i];
+    // A pointer INSIDE an absolute URL is reachable by construction — see
+    // blankUrls. Blanked rather than skipped so a line carrying both a URL and
+    // a bare unreachable path still reports the bare one.
+    const L = blankUrls(lines[i]);
     let m;
     DOC_RE.lastIndex = 0;
     while ((m = DOC_RE.exec(L)) !== null) {
@@ -243,12 +306,13 @@ function main() {
     process.exit(0);
   }
 
-  const files = listOwnedSkillMarkdown(REPO);
-  if (files === null) {
+  const owned = listOwnedSkillMarkdown(REPO);
+  if (owned === null) {
     emit({ ok: false, error: 'git ls-files failed — refusing to report zero refs from a tree I could not read' });
     return;
   }
   const closure = new Set(getSyncClosure().files.map((f) => f.replace(/\\/g, '/')));
+  const files = subjectFiles(owned, closure);
 
   const sites = [];
   for (const rel of files) {

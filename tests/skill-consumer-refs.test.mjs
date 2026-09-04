@@ -17,7 +17,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { scanFile, tally, adjudicate } from '../scripts/check-skill-consumer-refs.mjs';
+import {
+  scanFile, tally, adjudicate, subjectFiles, blankUrls,
+} from '../scripts/check-skill-consumer-refs.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLOSURE = new Set(['docs/reference/consistency-contract.md', 'scripts/openai-audit.mjs']);
@@ -62,6 +64,61 @@ test('trailing prose punctuation is not captured as part of the script name', ()
 test('line numbers are 1-based and point at the pointer', () => {
   const hits = scanFile('skills/x/SKILL.md', 'a\nb\nSee `docs/plans/z.md`\n', CLOSURE);
   assert.equal(hits[0].line, 3);
+});
+
+// ── The subject set (upstream 63552e8b) ───────────────────────────────────
+// The gate read the literal `skills/` directory — a proxy for "synced content"
+// that was true when written and later was not. The closure's one member
+// outside skills/ carried this gate's own defect class, unseen, for its whole
+// history: 1 of 1 unscanned files, a 100% hit rate on the blind spot.
+
+test('subjectFiles adds a synced doc outside skills/, and excludes the generated copies', () => {
+  const closure = new Set([
+    'skills/a/SKILL.md',
+    '.claude/skills/a/SKILL.md',              // generated FROM skills/a — double-counting
+    'docs/reference/consistency-contract.md', // the one real addition
+    'scripts/x.mjs',                          // not markdown
+  ]);
+  assert.deepEqual(subjectFiles(['skills/a/SKILL.md'], closure), [
+    'docs/reference/consistency-contract.md',
+    'skills/a/SKILL.md',
+  ]);
+});
+
+test('subjectFiles keeps owned skills markdown the closure has not seen yet', () => {
+  // A brand-new, untracked-but-not-ignored skill reference: `listOwnedSkillMarkdown`
+  // sees it before the closure does, and losing it would re-open the hole the
+  // union was built to close.
+  assert.deepEqual(subjectFiles(['skills/new/references/r.md'], new Set()), ['skills/new/references/r.md']);
+});
+
+// ── Absolute URLs are the remedy, not the disease ─────────────────────────
+// An upstream URL embeds the repo-relative path, so DOC_RE matches inside it.
+// Harmless while every such path was also written relatively; not harmless once
+// the absolute URL became the prescribed fix for a link in synced content
+// (docs:synced-links:gate). Measured at that point: 68 of 220 sites, 31%.
+
+test('a pointer inside an absolute URL is not a site — it is reachable by construction', () => {
+  assert.deepEqual(
+    scanFile('f.md', 'see https://github.com/o/r/blob/main/docs/plans/a.md', new Set()),
+    [],
+  );
+});
+
+test('a URL on the line does not blind the gate to a BARE path beside it', () => {
+  // The failure direction that matters: blanking the whole line, or skipping it,
+  // would let a real unreachable pointer hide behind any nearby link.
+  assert.deepEqual(
+    scanFile('f.md', 'see https://github.com/o/r/blob/main/docs/plans/a.md and docs/plans/b.md', new Set()),
+    [{ kind: 'doc', ref: 'docs/plans/b.md', file: 'f.md', line: 1 }],
+  );
+});
+
+test('blankUrls preserves line length, so line/column maths still holds', () => {
+  const line = 'a https://example.test/x/y b';
+  assert.equal(blankUrls(line).length, line.length);
+  // The URL is 24 chars; the two spaces flanking it survive untouched.
+  assert.equal(blankUrls(line), `a ${' '.repeat(24)} b`);
 });
 
 test('FAILS on an undeclared ref kind', () => {
