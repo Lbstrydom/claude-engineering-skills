@@ -42,7 +42,7 @@ import './lib/load-env.mjs';
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, argOption } from './lib/cli-io.mjs';
 import { readDebtLedger, removeDebtEntry, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
 import { classifyReconciliation, evaluatePostcondition } from './lib/debt-reconcile.mjs';
 import { durableWrite, SPILL_DIR } from './lib/durable-write.mjs';
@@ -62,15 +62,19 @@ const KNOWN_FLAGS = [
 
 function parseArgs(argv) {
   const args = argv.slice(2);
-  const get = (flag) => {
-    const i = args.indexOf(flag);
-    return i !== -1 && args[i + 1] ? args[i + 1] : null;
-  };
+  // `argOption` from cli-io is the repo's single option reader: it handles the
+  // `--name=value` form, refuses to swallow a FOLLOWING FLAG as a value
+  // (`--ledger --push` used to consume `--push`), and stops at `--`. A
+  // hand-rolled `get()` here was a fourth copy of that logic, missing all three.
+  const i = args.indexOf('--ledger');
+  if (i !== -1 && (args[i + 1] === undefined || args[i + 1].startsWith('-'))) {
+    throw new ArgvError('debt-reconcile: --ledger requires a path.');
+  }
   return {
     push: args.includes('--push'),
     prune: args.includes('--prune-resolved'),
     jsonMode: args.includes('--json'),
-    ledgerPath: get('--ledger') || DEFAULT_DEBT_LEDGER_PATH,
+    ledgerPath: argOption('ledger', DEFAULT_DEBT_LEDGER_PATH),
     help: args.includes('--help') || args.includes('-h'),
   };
 }
@@ -96,12 +100,22 @@ Exit codes: 0=ok, 1=operational error, 2=bad flag / refused to act
 `);
 }
 
-/** Count spill artifacts awaiting a drain — the open loss window (plan R4-M1). */
+/**
+ * Count spill artifacts awaiting a drain — the open loss window (plan R4-M1).
+ *
+ * Returns `null`, never 0, when the directory cannot be read. An undrained
+ * spill is a SOLE LOCAL COPY, so "I could not look" and "the window is empty"
+ * are opposite claims; collapsing them into 0 reports the most reassuring
+ * possible answer to a question that failed. ENOENT is genuinely zero — the
+ * directory only exists once something has spilled.
+ */
 function countUndrainedSpills() {
   try {
     return fs.readdirSync(SPILL_DIR, { withFileTypes: true })
       .filter((e) => e.isFile() && e.name.endsWith('.json')).length;
-  } catch { return 0; }
+  } catch (err) {
+    return err && err.code === 'ENOENT' ? 0 : null;
+  }
 }
 
 async function main() {
@@ -128,7 +142,11 @@ async function main() {
   if (!ledger.available) {
     // Not an error and not a success — there is simply nothing local to
     // reconcile from. Never reported as "in sync".
-    const out = { ok: true, verdict: 'unverifiable', reason: ledger.reason, action: 'none' };
+    // `ok:false`, exactly as the unavailable-SNAPSHOT branch below does. This
+    // said ok:true, so the two unverifiable paths disagreed and a machine
+    // consumer reading `ok` got a green from one of them — the false-green
+    // this plan exists to remove, reintroduced in its own CLI.
+    const out = { ok: false, verdict: 'unverifiable', reason: ledger.reason, action: 'none' };
     process.stdout.write(opts.jsonMode ? `${JSON.stringify(out)}\n`
       : `debt-reconcile: UNVERIFIABLE — no local ledger at ${opts.ledgerPath} (${ledger.reason}).\n`
         + '  Nothing was compared. This is not a clean bill of health.\n');
@@ -176,6 +194,7 @@ async function main() {
     localOnly: c.localOnly.length,
     cloudOnly: c.cloudOnly.length,
     locallyResolved: c.locallyResolved.length,
+    ambiguous: c.ambiguous.length,
     localTotal: ledger.entries.length,
     cloudTotal: cloudEntries.length,
     undrainedSpills: countUndrainedSpills(),
@@ -202,8 +221,15 @@ async function main() {
     }
   }
 
+  // `skipped` counts as still-local. It means the store DECLINED the write
+  // (cloud off, or a no-op) — the entry is not there, so excluding it would let
+  // a declined push report the orphan as reconciled, which is the same
+  // "unasked question renders as good news" defect this whole plan is about.
+  // `lost` likewise: evidence was kept, but nothing will replay it.
   const post = evaluatePostcondition({
-    localOnly: opts.push ? result.pushed.spilled + result.pushed.lost : c.localOnly.length,
+    localOnly: opts.push
+      ? result.pushed.spilled + result.pushed.lost + result.pushed.skipped
+      : c.localOnly.length,
     spilled: result.pushed.spilled,
   });
   result.postcondition = post;
@@ -217,6 +243,7 @@ async function main() {
       `  local-only:       ${result.localOnly}  ${result.localOnly > 0 ? '← at risk: this machine is the only copy' : ''}`,
       `  store-only:       ${result.cloudOnly}  (invisible to local readers)`,
       `  closed remotely:  ${result.locallyResolved}  (prunable from the local cache)`,
+      `  ambiguous:        ${result.ambiguous}  (a resolve exists but does not clearly postdate the entry — pushed, never pruned)`,
       `  undrained spills: ${result.undrainedSpills}`,
     ];
     if (opts.push) {

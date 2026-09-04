@@ -38,7 +38,7 @@ import {
 } from './lib/debt-capture-trail.mjs';
 import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
 
-const KNOWN_FLAGS = ['--json', '--out', '--audit-dir', '--ledger', '--help', '-h'];
+const KNOWN_FLAGS = ['--json', '--out', '--audit-dir', '--ledger', '--help', '-h', '--selfcheck-relocation'];
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -125,6 +125,10 @@ function renderHuman(result, ledgerPath) {
 }
 
 async function main() {
+  // CLI smoke contract (AGENTS.md): proves the module's imports survive
+  // relocation to a consumer's scripts/.claude-skills/. Required now that
+  // this script is in the sync bundle.
+  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   let opts;
   try {
     assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'debt-capture-trail-check' });

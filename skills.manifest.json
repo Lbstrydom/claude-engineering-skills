@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "205cb243f1f9787d",
+  "bundleVersion": "ab85c2c3e5b33646",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -100,8 +100,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "5c326af57bcc",
-          "size": 27463
+          "sha": "ad210b88afe8",
+          "size": 27631
         }
       ]
     },
@@ -138,8 +138,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "c4763505595c",
-          "size": 27477
+          "sha": "a176ab72779d",
+          "size": 27645
         }
       ]
     },
@@ -215,8 +215,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "c4763505595c",
-          "size": 27477
+          "sha": "a176ab72779d",
+          "size": 27645
         }
       ]
     },
@@ -238,8 +238,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "c4763505595c",
-          "size": 27477
+          "sha": "a176ab72779d",
+          "size": 27645
         }
       ]
     },
@@ -281,8 +281,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "c4763505595c",
-          "size": 27477
+          "sha": "a176ab72779d",
+          "size": 27645
         }
       ]
     },
@@ -387,8 +387,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "c4763505595c",
-          "size": 27477
+          "sha": "a176ab72779d",
+          "size": 27645
         }
       ]
     },
@@ -407,14 +407,14 @@
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "5c3fad8663f8",
-      "size": 76831,
+      "sha": "ea618b710330",
+      "size": 77532,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "5c3fad8663f8",
-          "size": 76831
+          "sha": "ea618b710330",
+          "size": 77532
         },
         {
           "relPath": "references/input-acquisition.md",
@@ -433,13 +433,13 @@
         },
         {
           "relPath": "references/status-md-format.md",
-          "sha": "6c4434eab927",
-          "size": 3212
+          "sha": "6f1cb1d4fc57",
+          "size": 5518
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "c4763505595c",
-          "size": 27477
+          "sha": "a176ab72779d",
+          "size": 27645
         }
       ]
     },
@@ -484,8 +484,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "c4763505595c",
-          "size": 27477
+          "sha": "a176ab72779d",
+          "size": 27645
         },
         {
           "relPath": "references/verify-mode-generation.md",

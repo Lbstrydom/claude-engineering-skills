@@ -103,3 +103,32 @@ describe('isMeasured', () => {
     assert.equal(isMeasured({ ok: true, cloud: true, measured: true, scope: { mode: 'repo' } }), true);
   });
 });
+
+describe('fmtUpstream reads the COUNT, not rows.length (R2 audit M4/M11)', () => {
+  test('a `total` field wins over a capped rows array', () => {
+    const line = renderBacklogSnapshot({
+      upstream: { ok: true, cloud: true, rows: new Array(20).fill({}), total: 137 }, at: AT,
+    });
+    assert.match(line, /upstream 137/);
+    assert.doesNotMatch(line, /upstream 20/, 'this module\'s own rule, on the reader that paginates');
+  });
+
+  test('a paginated response with no total is marked a FLOOR, not a total', () => {
+    const line = renderBacklogSnapshot({
+      upstream: { ok: true, cloud: true, rows: new Array(20).fill({}), nextCursor: 'abc' }, at: AT,
+    });
+    assert.match(line, /upstream 20\+/, 'nextCursor proves the list is partial');
+  });
+
+  test('a complete unpaginated list reports its length plainly', () => {
+    const line = renderBacklogSnapshot({
+      upstream: { ok: true, cloud: true, rows: [], nextCursor: null }, at: AT,
+    });
+    assert.match(line, /upstream 0/);
+  });
+
+  test('neither a count nor rows is unmeasured, never 0', () => {
+    const line = renderBacklogSnapshot({ upstream: { ok: true, cloud: true }, at: AT });
+    assert.match(line, /upstream unmeasured/);
+  });
+});

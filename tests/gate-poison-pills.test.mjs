@@ -123,7 +123,7 @@ const GRANDFATHERED_EXEMPTIONS = [
   // pass would mean returning 'conserved' from an empty baseline, which is the
   // exact vacuous pass this gate exists to eliminate (and which it briefly had,
   // during development, before being fixed to fail closed). Its negative evidence
-  // is executable and lives in tests/status-log-integrity.test.mjs — a PR #87
+  // is executable and lives in tests/check-status-log-integrity.test.mjs — a PR #87
   // replay, a gutted-body case, a tampered archive, the manifest-deletion bypass,
   // and both CLI exit codes.
   'status:integrity:gate',

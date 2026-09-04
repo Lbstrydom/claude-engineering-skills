@@ -47,7 +47,7 @@ import { executeCheck, readPlanDocs, DEFAULT_PLANS_DIR } from './lib/debt-ledger
 import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 
-const KNOWN_FLAGS = ['--json', '--out', '--help', '-h'];
+const KNOWN_FLAGS = ['--json', '--out', '--help', '-h', '--selfcheck-relocation'];
 
 function parseArgs(argv) {
   const args = argv.slice(2);
@@ -119,6 +119,10 @@ function safeErrorClass(err) {
 }
 
 async function main() {
+  // CLI smoke contract (AGENTS.md): proves the module's imports survive
+  // relocation to a consumer's scripts/.claude-skills/. Required now that
+  // this script is in the sync bundle.
+  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   let opts;
   try {
     assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'debt-ledger-claims-check' });

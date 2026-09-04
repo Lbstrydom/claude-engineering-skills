@@ -8,9 +8,12 @@
  * saved four cheap store reads (~2s, no LLM, no spend) and cost an entire
  * artifact protocol: envelope versioning, atomic writes, collision rules, and a
  * prior-session index purely to carry the post-push Q3 value onto the next
- * ship. Reading here instead makes all of that vanish, and every field then
- * shares ONE honest measurement instant rather than a mix of pre- and
- * post-push values with a single misleading date.
+ * ship. Reading here instead makes all of that vanish, and every field is read
+ * by ONE process in a single pass rather than mixing pre- and post-push
+ * values under a single misleading date. The timestamp is that pass's start:
+ * the five reads are sequential child processes, so they are close together,
+ * NOT simultaneous — close enough for a per-ship trend line, and not claimed
+ * as more than that.
  *
  * **It never writes `status.md`.** It prints one line; the agent pastes it into
  * the entry it is already authoring. PR #87 destroyed 19,257 lines of that file
@@ -77,7 +80,7 @@ Print one line summarising the standing queues, for the /ship status entry.
 Reads every queue itself, read-only, at a single instant. Writes no file.
 
 Options:
-  --json     Emit the envelopes plus the rendered line as JSON
+  --json     Emit {ok, line, at} as JSON (the rendered line plus its instant)
   --help     Show this message
 
 Exit code: always 0 (advisory).

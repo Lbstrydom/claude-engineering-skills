@@ -1,24 +1,25 @@
 {
   "$comment": [
     "Hand-curated deltas over the extracted requirements ledger.",
-    "See .requirements/README.md — this file is committed; `reconcile` folds it in.",
+    "See .requirements/README.md \u2014 this file is committed; `reconcile` folds it in.",
     "Each entry names WHY the extracted assertion was wrong, with the measurement,",
     "so a future reader can re-check rather than trust."
   ],
   "overrides": {
     "REQ-persistence-7bc1224d": {
       "action": "edit",
-      "assertion": "A durable-write writer may declare a `rowKey` — and so become eligible for spill replay — only when its idempotency is arbitrated by a real database uniqueness constraint. A writer with no such constraint declares no `rowKey` and is `lost`-only, because at-least-once replay against a non-idempotent writer would corrupt the rows the seam exists to protect.",
+      "assertion": "A durable-write writer may declare a `rowKey` \u2014 and so become eligible for spill replay \u2014 only when its idempotency is arbitrated by a real database uniqueness constraint. A writer with no such constraint declares no `rowKey` and is `lost`-only, because at-least-once replay against a non-idempotent writer would corrupt the rows the seam exists to protect.",
       "reason": [
         "The extracted assertion read: 'Only audit.findings and audit.runComplete durable writers may declare rowKey values and thereby be eligible for replay, while all other registered audit-store writers remain keyless.'",
         "That is false against the code it cites. Measured 2026-09-04 at 88025501, scripts/lib/audit-store-writers.mjs registers SIX keyed writers: audit.findings (:132), audit.runComplete (:147), audit.convergenceState (:167), audit.diffComplexity (:179), learning.outcome (:191) and debt.entries (:271).",
         "It was extracted from that module's own docstring (:21-28), which still described the two-writer state and had itself gone stale as writers were promoted out of lost-only.",
         "Its cited evidence test contradicts it directly: tests/audit-store-durability-call-site.test.mjs:188-192 records 'upsertDebtEntries: now REGISTERED as debt.entries (2026-08-27)'.",
-        "Leaving it active is not harmless: a reader 'restoring' the invariant would strip debt.entries' rowKey and silently reopen the loss it was added to fix — reproduced in a consumer 2026-08-27 at 228 local entries against a 197-row mirror.",
+        "Leaving it active is not harmless: a reader 'restoring' the invariant would strip debt.entries' rowKey and silently reopen the loss it was added to fix \u2014 reproduced in a consumer 2026-08-27 at 228 local entries against a 197-row mirror.",
         "The replacement states the property the code and the test actually share: a key requires a constraint. debt.entries satisfies it via UNIQUE (repo_id, topic_id)."
       ],
       "correctedBy": "docs/plans/backlog-and-drift-reduction.md (round-2 audit finding H1, accepted with its direction inverted)",
-      "correctedAt": "2026-09-04"
+      "correctedAt": "2026-09-04",
+      "applicationStatus": "STAGED, not yet applied to ledger.json as of 2026-09-04. `requirements reconcile` requires .requirements/candidates.json, a gitignored extraction intermediate that a fresh checkout does not have, so this override takes effect at the next full extract -> reconcile maintenance cycle. Recorded rather than glossed: a round-1 code audit correctly re-raised the stale assertion as still live (H2/H16). Self-healing regardless: the assertion was EXTRACTED from audit-store-writers.mjs's docstring, and that docstring is now corrected, so the next extract regenerates the right text with or without this file."
     }
   }
 }

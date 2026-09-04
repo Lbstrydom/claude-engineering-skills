@@ -34,7 +34,7 @@ import './lib/load-env.mjs';
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, argOption } from './lib/cli-io.mjs';
 import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
 import {
   findStaleEntries, oldestEntryDays, findRecurringEntries, findBudgetViolations,
@@ -57,20 +57,46 @@ function numEnv(name, fallback) {
 const TTL_DAYS = numEnv('DEBT_HEALTH_TTL_DAYS', 180);
 const RECURRENCE_THRESHOLD = numEnv('DEBT_HEALTH_RECURRENCE_THRESHOLD', 3);
 
-const KNOWN_FLAGS = ['--ledger', '--json', '--out', '--help', '-h'];
+const KNOWN_FLAGS = ['--ledger', '--json', '--out', '--help', '-h', '--selfcheck-relocation'];
 
 function parseArgs(argv) {
   const args = argv.slice(2);
-  const get = (flag) => {
+  // The shared `argOption` from cli-io, not a hand-rolled reader: it handles
+  // `--name=value`, refuses to swallow a FOLLOWING FLAG as a value, and stops
+  // at `--`. This script kept its own copy while its siblings were migrated in
+  // the same change — an inconsistent partial fix the final gate called out,
+  // and rightly: the utility was already in use two files away.
+  for (const flag of ['--ledger', '--out']) {
     const i = args.indexOf(flag);
-    return i !== -1 && args[i + 1] ? args[i + 1] : null;
-  };
+    if (i !== -1 && (args[i + 1] === undefined || args[i + 1].startsWith('-'))) {
+      throw new ArgvError(`debt-health-check: ${flag} requires a value.`);
+    }
+  }
   return {
-    ledgerPath: get('--ledger') || DEFAULT_DEBT_LEDGER_PATH,
+    ledgerPath: argOption('ledger', DEFAULT_DEBT_LEDGER_PATH),
     jsonMode: args.includes('--json'),
-    outFile: get('--out'),
+    outFile: argOption('out', null),
     help: args.includes('--help') || args.includes('-h'),
   };
+}
+
+/**
+ * Write `--out`, creating the directory and reporting a failure.
+ *
+ * An unguarded `writeFileSync` crashes with a raw stack on a missing directory
+ * or a permissions error. Both sibling checks already handle this identically
+ * (`debt-capture-trail-check.mjs:187-195`); this one did not, which is the
+ * inconsistency the final gate flagged — the same fix, applied in the same
+ * change, to two of three scripts.
+ */
+function writeOut(outFile, text) {
+  try {
+    fs.mkdirSync(path.dirname(path.resolve(outFile)), { recursive: true });
+    fs.writeFileSync(outFile, text, 'utf-8');
+  } catch (err) {
+    process.stderr.write(`debt-health: failed to write --out: ${err.message}\n`);
+    process.exit(2);
+  }
 }
 
 function printUsage() {
@@ -134,6 +160,10 @@ function renderHuman(summary) {
 }
 
 function main() {
+  // CLI smoke contract (AGENTS.md): proves the module's imports survive
+  // relocation to a consumer's scripts/.claude-skills/. Required now that
+  // this script is in the sync bundle.
+  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   let opts;
   try {
     assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'debt-health-check' });
@@ -193,12 +223,12 @@ function main() {
       totalEntries: measured ? summary.totalEntries : null,
       oldestEntryDays: measured ? summary.oldestEntryDays : null,
     }) + '\n';
-    if (opts.outFile) fs.writeFileSync(opts.outFile, out, 'utf-8');
+    if (opts.outFile) writeOut(opts.outFile, out);
     else process.stdout.write(out);
   } else {
     const out = renderHuman(summary);
-    if (opts.outFile) fs.writeFileSync(opts.outFile, out + '\n', 'utf-8');
-    else process.stdout.write(out + '\n');
+    if (opts.outFile) writeOut(opts.outFile, `${out}\n`);
+    else process.stdout.write(`${out}\n`);
   }
 
   // Unavailable never escalates: it is not an "attention" state, it is the

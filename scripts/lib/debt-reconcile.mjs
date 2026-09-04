@@ -86,13 +86,42 @@ export function isProvablyResolvedRemotely(entry, latest) {
  */
 export function latestLifecycleEvent(events) {
   if (!Array.isArray(events) || events.length === 0) return null;
+
+  // An UNPARSEABLE timestamp poisons the whole answer, it is not a row to skip.
+  //
+  // Skipping it meant: latest event has a bad ts, an OLDER resolve parses
+  // cleanly, the resolve wins, and the entry becomes prunable — destructive
+  // reconciliation on evidence we could not read, in the one function whose
+  // stated rule is that ambiguity preserves. Returning an unresolvable marker
+  // makes `isProvablyResolvedRemotely` reject it, which routes the entry to
+  // push. Same principle as the skew tolerance: unreadable ordering is not
+  // ordering.
+  // ANY unreadable timestamp poisons it — including a MISSING one.
+  //
+  // The first version of this guard carried `e.ts !== undefined`, which exempted
+  // exactly the case it was written for: `{ event: 'reopened' }` with no `ts`
+  // slipped past the poison check, then hit `parseTs(...) === null` in the loop
+  // below and was silently skipped, letting an older parseable resolve win and
+  // the entry be pruned. The fix reinstated the bug it was fixing. An absent
+  // timestamp is not evidence of ordering; it is the absence of evidence.
+  if (events.some((e) => e && parseTs(e.ts) === null)) {
+    return { event: 'unresolvable', ts: null };
+  }
+
   let best = null;
   let bestTs = -Infinity;
   for (const e of events) {
     const ts = parseTs(e?.ts);
     if (ts === null) continue;
     if (ts > bestTs) { best = e; bestTs = ts; continue; }
-    if (ts === bestTs && e?.event === REOPENED_EVENT) best = e; // tie → safer state
+    // On a tie, ANY non-resolved event wins — not just `reopened`.
+    //
+    // Promoting only `reopened` left `resolved` beating `deferred`, `surfaced`
+    // and `escalated` at equal timestamps, so a same-instant re-deferral could
+    // still be read as a closure and license a prune. The safe rule is stated
+    // as a property, not an enumeration: a tie never resolves TO the closing
+    // state, whatever the other event happens to be.
+    if (ts === bestTs && best?.event === RESOLVED_EVENT && e?.event !== RESOLVED_EVENT) best = e;
   }
   return best;
 }
@@ -104,7 +133,7 @@ export function latestLifecycleEvent(events) {
  * @param {object[]} input.localEntries - entries from the local cache
  * @param {Array<{topicId: string}>} input.cloudEntries - rows currently in `debt_entries`
  * @param {Map<string, {event: string, ts: string}>} input.latestEventByTopic - per-topic latest lifecycle event
- * @returns {{both: object[], localOnly: object[], cloudOnly: object[], locallyResolved: object[]}}
+ * @returns {{both: object[], localOnly: object[], cloudOnly: object[], locallyResolved: object[], ambiguous: object[]}}
  */
 export function classifyReconciliation({ localEntries, cloudEntries, latestEventByTopic }) {
   const local = Array.isArray(localEntries) ? localEntries : [];
@@ -115,21 +144,31 @@ export function classifyReconciliation({ localEntries, cloudEntries, latestEvent
   const localOnly = [];
   const locallyResolved = [];
 
+  const ambiguous = [];
   for (const entry of local) {
     if (cloudIds.has(entry.topicId)) { both.push(entry); continue; }
     if (isProvablyResolvedRemotely(entry, latest.get(entry.topicId))) {
       locallyResolved.push(entry);
-    } else {
-      // Unmirrored, or ambiguous. Both route to push — the safe direction.
-      localOnly.push(entry);
+      continue;
     }
+    // Unmirrored, or ambiguous. BOTH route to push, deliberately: a push is an
+    // idempotent upsert of an already-recorded deferral, so acting on
+    // uncertainty here costs a redundant row, while the other direction costs
+    // the finding. Prune is the only destructive path and it demands proof.
+    //
+    // Ambiguity is still REPORTED separately, though, so "we could not tell"
+    // never hides inside "never mirrored" — the operator sees that some entries
+    // were pushed because the evidence was unreadable, not because it was clear.
+    const ev = latest.get(entry.topicId);
+    if (ev && ev.event === RESOLVED_EVENT) ambiguous.push(entry);
+    localOnly.push(entry);
   }
 
   const localIds = new Set(local.map((e) => e.topicId));
   const cloudOnly = (Array.isArray(cloudEntries) ? cloudEntries : [])
     .filter((r) => !localIds.has(r.topicId));
 
-  return { both, localOnly, cloudOnly, locallyResolved };
+  return { both, localOnly, cloudOnly, locallyResolved, ambiguous };
 }
 
 /**

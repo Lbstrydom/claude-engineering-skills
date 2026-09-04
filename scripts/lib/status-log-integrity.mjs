@@ -119,36 +119,102 @@ export function checkConservation(prev, curr) {
   for (const [p, text] of Object.entries(curr.archives || {})) {
     for (const e of splitEntries(text).entries) currArchiveEntries.push({ ...e, path: p });
   }
-  const currDigests = new Set([
-    ...currRoot.entries.map((e) => e.digest),
-    ...currArchiveEntries.map((e) => e.digest),
-  ]);
-  const currHeadings = new Map();
+  // MULTISETS, not sets. Duplicate headings are explicitly legal (two entries
+  // may share a date), so a Set of digests plus a first-wins Map of headings
+  // lets ONE surviving entry satisfy SEVERAL prior ones — delete a duplicate
+  // and the check still passes. Conservation has to be one-to-one to mean
+  // anything, so each match consumes its counterpart.
+  const currDigestCounts = new Map();
   for (const e of [...currRoot.entries, ...currArchiveEntries]) {
-    if (!currHeadings.has(e.heading)) currHeadings.set(e.heading, e);
+    currDigestCounts.set(e.digest, (currDigestCounts.get(e.digest) || 0) + 1);
   }
+  // An IMMUTABLE snapshot of what exists now, for the laws that ask "is this
+  // still present anywhere" rather than "does it have its own survivor". Law 1
+  // consumes from `currDigestCounts`; reusing that counter here would make an
+  // archived entry read as mutated merely because a root entry matched it.
+  const allCurrDigests = new Set(currDigestCounts.keys());
+  const currDigests = { has: (d) => allCurrDigests.has(d) };
+  /** Consume one occurrence of a digest; false when none remain unmatched. */
+  const consumeDigest = (d) => {
+    const n = currDigestCounts.get(d) || 0;
+    if (n === 0) return false;
+    currDigestCounts.set(d, n - 1);
+    return true;
+  };
+
+  const currHeadingPool = new Map();
+  for (const e of [...currRoot.entries, ...currArchiveEntries]) {
+    if (!currHeadingPool.has(e.heading)) currHeadingPool.set(e.heading, []);
+    currHeadingPool.get(e.heading).push(e);
+  }
+  /** Take one unmatched entry with this heading, or undefined. */
+  const takeHeading = (h) => {
+    const pool = currHeadingPool.get(h);
+    return pool && pool.length ? pool.shift() : undefined;
+  };
 
   // ── Law 1: root entries are append-only and never vanish ─────────────────
   for (const before of prevRoot.entries) {
-    const after = currHeadings.get(before.heading);
+    // Exact survivor first, consuming it — so N prior duplicates need N
+    // survivors, not one shared between them.
+    if (consumeDigest(before.digest)) {
+      const pool = currHeadingPool.get(before.heading);
+      if (pool) {
+        const i = pool.findIndex((e) => e.digest === before.digest);
+        if (i !== -1) pool.splice(i, 1);
+      }
+      continue;
+    }
+    const after = takeHeading(before.heading);
     if (!after) {
       V('entry-vanished', `entry "${before.heading}" was in the log and is now in neither the root nor any archive`);
       continue;
     }
-    if (after.digest === before.digest) continue;         // untouched
-    if (currDigests.has(before.digest)) continue;         // moved verbatim into an archive
+    // Consume the matched entry's digest too. Taking it from the heading pool
+    // alone left its digest available, so a LATER prior entry could match the
+    // same survivor by digest — one entry satisfying two, which is the very
+    // hole this loop was rewritten to close. Caught by the byte-identical
+    // duplicate case, where consecutive equal entries differ only by a trailing
+    // newline and so carry different digests.
+    consumeDigest(after.digest);
     if (!retainsEveryLine(before.body, after.body)) {
       V('entry-rewritten', `entry "${before.heading}" lost or altered existing content`);
     }
   }
 
   // ── Law 2: archived entries are frozen ───────────────────────────────────
-  const prevArchiveDigests = new Map();
+  // Multiset here too. A `Map<digest, path>` collapses byte-identical archived
+  // entries to one record, so deleting one of two identical entries left the
+  // survivor covering for it — the same multiplicity hole fixed above in Law 1,
+  // missed on the first pass because the two loops keep separate bookkeeping.
+  const prevArchiveCounts = new Map();
+  const prevArchivePath = new Map();
   for (const [p, text] of Object.entries(prev.archives || {})) {
-    for (const e of splitEntries(text).entries) prevArchiveDigests.set(e.digest, p);
+    for (const e of splitEntries(text).entries) {
+      prevArchiveCounts.set(e.digest, (prevArchiveCounts.get(e.digest) || 0) + 1);
+      if (!prevArchivePath.has(e.digest)) prevArchivePath.set(e.digest, p);
+    }
   }
-  for (const [digest, p] of prevArchiveDigests) {
-    if (!currDigests.has(digest)) V('archive-mutated', `an entry archived in ${p} is no longer present anywhere`);
+  const currTotalCounts = new Map();
+  for (const e of [...currRoot.entries, ...currArchiveEntries]) {
+    currTotalCounts.set(e.digest, (currTotalCounts.get(e.digest) || 0) + 1);
+  }
+  for (const [digest, needed] of prevArchiveCounts) {
+    const have = currTotalCounts.get(digest) || 0;
+    if (have < needed) {
+      const p = prevArchivePath.get(digest);
+      V('archive-mutated',
+        `${needed} identical entr(ies) archived in ${p}, only ${have} still present anywhere`);
+    }
+  }
+
+  // ── Law 2b: the root PREAMBLE is conserved ───────────────────────────────
+  // Every law above is keyed on `## ` entries, so the content ABOVE the first
+  // heading — the `# Project Status Log` title and any standing note — was
+  // outside conservation entirely and could be deleted or rewritten freely.
+  // It may GROW (a note added); it may not lose lines.
+  if (!retainsEveryLine(prevRoot.preamble, currRoot.preamble)) {
+    V('preamble-lost', 'content above the first entry heading was removed or rewritten');
   }
 
   // ── Law 3: the manifest itself is monotonic ──────────────────────────────
@@ -176,6 +242,20 @@ export function checkConservation(prev, curr) {
     const expected = rec.entryDigests || [];
     if (actual.length !== expected.length || actual.some((d, i) => d !== expected[i])) {
       V('archive-digest-mismatch', `${p} does not match its manifest record (order or content)`);
+    }
+  }
+
+  // ── Law 5: no archive without a manifest record ──────────────────────────
+  // Law 4 walks manifest → disk. The reverse was unchecked, so an archive file
+  // could be added (or an existing one renamed) with no record vouching for it,
+  // and every other law would pass: the root is unreduced, the recorded
+  // archives all match, and the manifest never shrank. An unvouched archive is
+  // content nothing attests to — exactly what the manifest exists to prevent.
+  const recordedPaths = new Set(Object.values(currRecords).map((r) => r.path).filter(Boolean));
+  for (const p of Object.keys(curr.archives || {})) {
+    if (p.endsWith('README.md')) continue; // the index, not an entry archive
+    if (!recordedPaths.has(p)) {
+      V('archive-unrecorded', `${p} exists but no manifest record vouches for it`);
     }
   }
 

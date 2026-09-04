@@ -224,8 +224,17 @@ describe('the CLI fails closed — a vacuous pass is the bug this guard exists t
     assert.equal(run(['--base', 'no-such-ref-anywhere']), 2);
   });
 
-  test('a resolvable base exits 0 on an unchanged log', () => {
-    assert.equal(run(['--base', 'HEAD']), 0);
+  test('--base HEAD is REFUSED — prev and current would be identical', () => {
+    // A vacuous range: on a clean tree the two states are the same object, so
+    // conservation holds having compared nothing. Same class as the
+    // unresolvable base above, and the reason this test no longer uses HEAD as
+    // its happy path.
+    assert.equal(run(['--base', 'HEAD']), 2);
+  });
+
+  test('a real ancestor exits 0 on a conserved log', () => {
+    const parent = execFileSync('git', ['rev-parse', 'HEAD~1'], { cwd: REPO, encoding: 'utf8' }).trim();
+    assert.equal(run(['--base', parent]), 0);
   });
 });
 
@@ -233,3 +242,110 @@ describe('the CLI fails closed — a vacuous pass is the bug this guard exists t
 // executable gate `status-integrity-rejects-a-truncated-log`, whose poison pill
 // overlays a single-entry status.md — a replay of PR #87 — and requires the gate
 // to report `entry-vanished` rather than exiting 0.
+
+describe('conservation is ONE-TO-ONE (R1 audit H6/H12)', () => {
+  // Duplicate headings are explicitly legal — two entries may share a date. A
+  // Set of digests plus a first-wins Map of headings let ONE survivor satisfy
+  // SEVERAL prior entries, so deleting a duplicate passed. Each match must
+  // consume its counterpart.
+  const dupA = `## 2026-08-02 — work\n\nfirst of the day\n\n---\n`;
+  const dupB = `## 2026-08-02 — work\n\nsecond of the day\n\n---\n`;
+  const twoOnOneDay = HEADER + dupA + dupB;
+
+  test('deleting ONE of two same-heading entries FAILS', () => {
+    const r = checkConservation(
+      { root: twoOnOneDay, archives: {}, manifest: null },
+      { root: HEADER + dupA, archives: {}, manifest: null },
+    );
+    assert.equal(r.ok, false, 'the surviving duplicate must not cover for the deleted one');
+  });
+
+  test('keeping BOTH same-heading entries passes', () => {
+    const r = checkConservation(
+      { root: twoOnOneDay, archives: {}, manifest: null },
+      { root: twoOnOneDay, archives: {}, manifest: null },
+    );
+    assert.equal(r.ok, true, r.violations.map((v) => v.detail).join('; '));
+  });
+
+  test('two BYTE-IDENTICAL entries: deleting one still fails', () => {
+    // The hardest case — identical digests, so a plain Set cannot tell them apart.
+    const identical = HEADER + dupA + dupA;
+    const r = checkConservation(
+      { root: identical, archives: {}, manifest: null },
+      { root: HEADER + dupA, archives: {}, manifest: null },
+    );
+    assert.equal(r.ok, false, 'a digest multiset, not a set — one survivor cannot satisfy two');
+  });
+});
+
+describe('every archive is vouched for (R1 audit M15)', () => {
+  test('an archive file with NO manifest record fails', () => {
+    const july = splitEntries(LOG).entries.find((x) => x.date === '2026-07-01');
+    const rotatedRoot = HEADER + e('2026-09-03', 'newest') + e('2026-08-02', 'middle');
+    const r = checkConservation(
+      { root: LOG, archives: {}, manifest: null },
+      {
+        root: rotatedRoot,
+        archives: { 'docs/status/2026-07.md': july.body, 'docs/status/2026-06.md': '## 2026-06-01 — smuggled\n\nx\n' },
+        manifest: { archives: { '2026-07': { path: 'docs/status/2026-07.md', entryDigests: [july.digest] } } },
+      },
+    );
+    assert.equal(r.ok, false);
+    assert.ok(r.violations.some((v) => v.kind === 'archive-unrecorded'),
+      'Law 4 walks manifest->disk; without the reverse an unvouched archive slips in');
+  });
+
+  test('docs/status/README.md is the index, not an unvouched archive', () => {
+    const july = splitEntries(LOG).entries.find((x) => x.date === '2026-07-01');
+    const rotatedRoot = HEADER + e('2026-09-03', 'newest') + e('2026-08-02', 'middle');
+    const r = checkConservation(
+      { root: LOG, archives: {}, manifest: null },
+      {
+        root: rotatedRoot,
+        archives: { 'docs/status/2026-07.md': july.body, 'docs/status/README.md': '# index\n' },
+        manifest: { archives: { '2026-07': { path: 'docs/status/2026-07.md', entryDigests: [july.digest] } } },
+      },
+    );
+    assert.equal(r.ok, true, r.violations.map((v) => v.detail).join('; '));
+  });
+});
+
+describe('R2 audit — the laws that had gaps', () => {
+  test('H2/H7: duplicate ARCHIVED entries are multiset-conserved too', () => {
+    // Law 1 was made multiplicity-aware first; Law 2 kept a Map<digest,path>,
+    // so two byte-identical archived entries collapsed to one record and
+    // deleting one still passed. The two loops keep separate bookkeeping,
+    // which is why fixing one did not fix the other.
+    const july = `## 2026-07-01 — work\n\noldest\n\n---\n`;
+    const twice = july + july;
+    const manifest = { archives: { '2026-07': { path: 'docs/status/2026-07.md', entryDigests: [] } } };
+    const r = checkConservation(
+      { root: HEADER, archives: { 'docs/status/2026-07.md': twice }, manifest },
+      { root: HEADER, archives: { 'docs/status/2026-07.md': july }, manifest },
+    );
+    assert.equal(r.ok, false);
+    assert.ok(r.violations.some((v) => v.kind === 'archive-mutated'),
+      'one surviving archived entry must not cover for two');
+  });
+
+  test('H3: the root PREAMBLE is conserved — it was outside every law', () => {
+    // Everything else keys on `## ` headings, so the `# Project Status Log`
+    // title and any standing note above the first entry could be deleted freely.
+    const withNote = '# Project Status Log\n\nA standing note nobody may drop.\n\n';
+    const r = checkConservation(
+      { root: withNote + e('2026-09-03', 'x'), archives: {}, manifest: null },
+      { root: HEADER + e('2026-09-03', 'x'), archives: {}, manifest: null },
+    );
+    assert.equal(r.ok, false);
+    assert.ok(r.violations.some((v) => v.kind === 'preamble-lost'));
+  });
+
+  test('H3 the other way: the preamble may GROW', () => {
+    const r = checkConservation(
+      { root: HEADER + e('2026-09-03', 'x'), archives: {}, manifest: null },
+      { root: '# Project Status Log\n\nnew note\n\n' + e('2026-09-03', 'x'), archives: {}, manifest: null },
+    );
+    assert.equal(r.ok, true, r.violations.map((v) => v.detail).join('; '));
+  });
+});

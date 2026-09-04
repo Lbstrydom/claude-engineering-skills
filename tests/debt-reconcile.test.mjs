@@ -137,9 +137,29 @@ describe('latestLifecycleEvent — deterministic tie-break', () => {
     assert.equal(b.event, 'reopened', 'the outcome must not depend on list order');
   });
 
-  test('events with unparseable timestamps are skipped, not crashed on', () => {
+  test('an unparseable timestamp POISONS the answer — it is not a row to skip', () => {
+    // R3 audit H5. Skipping it meant an older, cleanly-parsed resolve could win
+    // and make the entry prunable — destructive reconciliation on evidence we
+    // could not read, in the one function whose rule is that ambiguity
+    // preserves. The marker makes isProvablyResolvedRemotely reject it.
     const r = latestLifecycleEvent([{ event: 'resolved', ts: 'garbage' }, { event: 'reopened', ts: AUG }]);
-    assert.equal(r.event, 'reopened');
+    assert.equal(r.event, 'unresolvable');
+    assert.equal(isProvablyResolvedRemotely(entry('x', JULY), r), false);
+  });
+
+  test('THE DATA-LOSS PATH it closes: newest unreadable, older resolve parses', () => {
+    // Without the poison rule the JULY resolve is the only parseable event, so
+    // it wins and the entry is pruned — despite a later event we could not read.
+    const events = [{ event: 'resolved', ts: JULY }, { event: 'reopened', ts: 'not-a-date' }];
+    const latest = latestLifecycleEvent(events);
+    assert.notEqual(latest.event, 'resolved', 'an unreadable later event must not be ignored');
+    const r = classifyReconciliation({
+      localEntries: [entry('poisoned', '2026-06-01T00:00:00.000Z')],
+      cloudEntries: [],
+      latestEventByTopic: new Map([['poisoned', latest]]),
+    });
+    assert.deepEqual(r.locallyResolved, [], 'nothing may be pruned on unreadable evidence');
+    assert.equal(r.localOnly.length, 1);
   });
 
   test('an empty or non-array input yields null', () => {
@@ -161,5 +181,33 @@ describe('evaluatePostcondition — a spilled push is not a completed one', () =
 
   test('orphans beyond the spilled count is NOT satisfied', () => {
     assert.equal(evaluatePostcondition({ localOnly: 5, spilled: 2 }).satisfied, false);
+  });
+});
+
+describe('a MISSING timestamp poisons it too (Gemini gate G1)', () => {
+  // The first poison guard carried `e.ts !== undefined`, exempting precisely the
+  // case it existed for. `{ event: 'reopened' }` with no ts slipped past, was
+  // skipped in the loop, and an older parseable resolve won — so the fix
+  // reinstated the bug it was fixing. Absence of a timestamp is not evidence of
+  // ordering.
+  test('an event with NO ts field poisons the answer', () => {
+    const r = latestLifecycleEvent([{ event: 'resolved', ts: JULY }, { event: 'reopened' }]);
+    assert.equal(r.event, 'unresolvable');
+  });
+
+  test('THE PATH: no-ts reopen must not let an older resolve prune the entry', () => {
+    const latest = latestLifecycleEvent([{ event: 'resolved', ts: JULY }, { event: 'reopened' }]);
+    const r = classifyReconciliation({
+      localEntries: [entry('nots', '2026-06-01T00:00:00.000Z')],
+      cloudEntries: [],
+      latestEventByTopic: new Map([['nots', latest]]),
+    });
+    assert.deepEqual(r.locallyResolved, [], 'a missing timestamp must never license a prune');
+    assert.equal(r.localOnly.length, 1);
+  });
+
+  test('a null ts poisons it as well', () => {
+    assert.equal(latestLifecycleEvent([{ event: 'resolved', ts: JULY }, { event: 'reopened', ts: null }]).event,
+      'unresolvable');
   });
 });

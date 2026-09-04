@@ -35,7 +35,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, argOption } from './lib/cli-io.mjs';
+import { atomicWriteFileSync } from './lib/file-io.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const DEFAULT_BASELINE = '.file-size-baseline.json';
@@ -56,9 +57,25 @@ const SCAN_EXT = '.mjs';
 /** Every governed file's current line count, as a sorted plain object. */
 export function collectSizes(repoRoot = REPO, dirs = SCAN_DIRS) {
   const out = {};
-  const walk = (dir) => {
+  const walk = (dir, isRoot = false) => {
     let entries;
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      // A directory that cannot be read is a FAILURE, not an empty one.
+      // Swallowing it means the gate reports "no growth" for files it never
+      // inspected — the same fail-open it exists to prevent. The first fix
+      // covered only the governed roots; a nested EACCES or I/O error still
+      // passed silently, which is what the R4 audit caught.
+      //
+      // ENOENT on a NESTED directory is the one benign case: a temp dir or a
+      // concurrent clean can remove one mid-walk, and it genuinely holds no
+      // files. Everything else — including ENOENT on a declared root — throws.
+      if (isRoot || err.code !== 'ENOENT') {
+        throw new Error(`cannot read ${isRoot ? 'governed scan root' : 'directory'} ${dir}: ${err.message}`);
+      }
+      return;
+    }
     for (const e of entries) {
       const full = path.join(dir, e.name);
       if (e.isDirectory()) { walk(full); continue; }
@@ -68,7 +85,7 @@ export function collectSizes(repoRoot = REPO, dirs = SCAN_DIRS) {
       if (lines >= LIMIT_LINES) out[rel] = lines;
     }
   };
-  for (const d of dirs) walk(path.join(repoRoot, d));
+  for (const d of dirs) walk(path.join(repoRoot, d), true);
   return Object.fromEntries(Object.entries(out).sort(([a], [b]) => a.localeCompare(b)));
 }
 
@@ -119,15 +136,49 @@ function main() {
     if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); process.exit(2); }
     throw err;
   }
-  const i = process.argv.indexOf('--baseline');
-  const baselinePath = path.resolve(REPO, i !== -1 && process.argv[i + 1] ? process.argv[i + 1] : DEFAULT_BASELINE);
+  if (process.argv.includes('--help') || process.argv.includes('-h')) {
+    process.stderr.write(`Usage: node scripts/file-size-ratchet.mjs [options]
+
+Drift-only ratchet over files already past ${LIMIT_LINES} lines: they may not grow,
+and an improvement must be locked in so the baseline does not stay at the
+historical high-water mark.
+
+Options:
+  --report              Report findings, always exit 0
+  --update-baseline     Re-baseline deliberately (records an improvement)
+  --baseline <path>     Baseline file (default: ${DEFAULT_BASELINE})
+  --help                Show this message
+
+Exit codes: 0=clean, 1=drift, 2=no baseline / bad flag
+`);
+    process.exit(0);
+  }
+  // `--flag=value` returns -1 from a bare indexOf, so the explicit argument was
+  // SILENTLY IGNORED and the default used instead. Fixed in
+  // rotate-status-log.mjs first and left here — the inconsistent partial fix
+  // the final gate flagged twice. `argOption` handles both forms.
+  const i = process.argv.findIndex((a) => a === '--baseline' || a.startsWith('--baseline='));
+  // A valueless or flag-followed --baseline silently fell back to the default,
+  // so `--baseline --update-baseline` gated against the WRONG file while
+  // looking like it honoured the flag.
+  // Only the BARE form can be valueless; `--baseline=x` carries its own value.
+  if (i !== -1 && process.argv[i] === '--baseline'
+      && (process.argv[i + 1] === undefined || process.argv[i + 1].startsWith('-'))) {
+    process.stderr.write('file-size-ratchet: --baseline requires a path.\n');
+    process.exit(2);
+  }
+  const baselinePath = path.resolve(REPO, argOption('baseline', DEFAULT_BASELINE));
   const reportOnly = process.argv.includes('--report');
   const update = process.argv.includes('--update-baseline');
 
   const current = collectSizes();
 
   if (update) {
-    fs.writeFileSync(baselinePath, `${JSON.stringify({
+    // Atomic: a truncate-then-write interrupted midway would leave an
+    // unparseable baseline, and readBaseline() maps a parse failure to null —
+    // which this gate treats as 'cannot say' and exits 2 on. Recoverable, but
+    // the rename is free.
+    atomicWriteFileSync(baselinePath, `${JSON.stringify({
       _description: 'Line counts for files already over the size limit. Drift-only ratchet: '
         + 'see scripts/file-size-ratchet.mjs. Regenerate deliberately with --update-baseline.',
       limitLines: LIMIT_LINES,

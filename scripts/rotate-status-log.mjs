@@ -38,7 +38,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, argOption } from './lib/cli-io.mjs';
 import { splitEntries, monthOf, canonicalize } from './lib/status-log-integrity.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -54,9 +54,33 @@ function main() {
     if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); process.exit(2); }
     throw err;
   }
+  // `--dry-run` WINS. It was allowlisted but never consulted, so
+  // `--dry-run --apply` performed the real archive-and-truncate despite an
+  // explicit request not to. On a tool that rewrites the session log, an
+  // ignored dry-run is the worst possible flag bug: refuse the contradiction
+  // outright rather than picking a winner the operator did not choose.
+  if (process.argv.includes('--dry-run') && process.argv.includes('--apply')) {
+    process.stderr.write('rotate-status-log: --dry-run and --apply are contradictory. Writing nothing.\n');
+    process.exit(2);
+  }
   const apply = process.argv.includes('--apply');
-  const ki = process.argv.indexOf('--keep-months');
-  const keepMonths = ki !== -1 && process.argv[ki + 1] ? Number(process.argv[ki + 1]) : 1;
+  // `argOption` handles the `--name=value` form; a bare indexOf does not, so
+  // `--keep-months=3` returned -1 and SILENTLY fell back to 1 — archiving the
+  // months the operator explicitly asked to keep. On a destructive tool a
+  // silently-ignored argument is worse than a rejected one.
+  const ki = process.argv.findIndex((a) => a === '--keep-months' || a.startsWith('--keep-months='));
+  let keepMonths = 1;
+  if (ki !== -1) {
+    // `Number('nope')` is NaN, `Math.max(1, NaN)` is NaN, and `slice(0, NaN)`
+    // behaves as `slice(0, 0)` — an EMPTY keep set, so a typo would archive
+    // every month INCLUDING the current one. Confirmed live before this fix.
+    const raw = argOption('keep-months', undefined);
+    keepMonths = Number(raw);
+    if (!Number.isInteger(keepMonths) || keepMonths < 1) {
+      process.stderr.write(`rotate-status-log: --keep-months must be an integer >= 1 (got ${JSON.stringify(raw)}). Writing nothing.\n`);
+      process.exit(2);
+    }
+  }
 
   const original = canonicalize(fs.readFileSync(ROOT_LOG, 'utf-8'));
   const { preamble, entries } = splitEntries(original);
@@ -72,7 +96,7 @@ function main() {
   }
 
   const months = [...new Set(dated.map(monthOf))].sort().reverse(); // newest first
-  const keep = new Set(months.slice(0, Math.max(1, keepMonths)));
+  const keep = new Set(months.slice(0, keepMonths));
   const toArchive = months.filter((m) => !keep.has(m));
 
   if (toArchive.length === 0) {
@@ -123,6 +147,31 @@ function main() {
   }
 
   fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
+
+  // REFUSE to clobber an existing archive whose content differs.
+  //
+  // A backdated or late entry for an already-archived month makes this run
+  // produce a DIFFERENT body for that month; writing it unconditionally would
+  // replace the archive and silently drop what the old one held. The integrity
+  // gate would catch it at the next push, but the content is gone from the
+  // working tree by then — refusing here is the cheaper failure.
+  const collisions = [];
+  for (const p of plan) {
+    const abs = path.join(REPO, p.path);
+    if (!fs.existsSync(abs)) continue;
+    const proposed = byMonth.get(p.month).map((e) => e.body).join('\n');
+    if (canonicalize(fs.readFileSync(abs, 'utf-8')) !== proposed) collisions.push(p.path);
+  }
+  if (collisions.length > 0) {
+    process.stderr.write(
+      'rotate-status-log: REFUSED — these archives already exist with different content:\n'
+      + collisions.map((c) => `  ${c}\n`).join('')
+      + '  A month is archived once. A late entry for an archived month means the root\n'
+      + '  log and the archive disagree — resolve that by hand, never by overwrite.\n',
+    );
+    process.exit(1);
+  }
+
   for (const p of plan) {
     const body = byMonth.get(p.month).map((e) => e.body).join('\n');
     // No trailing newline beyond what the entries carry. Adding one changes the
