@@ -30,8 +30,19 @@
  *   node scripts/debt-auto-capture.mjs --ledger <path> --run <SID>
  *
  * Exit codes:
- *   0 — success (including "0 deferred entries found")
- *   1 — missing required args, ledger not found, or write failure
+ *   0 — COMPLETE capture: every deferred ledger entry landed in the debt
+ *       ledger (including the "0 deferred entries found" case)
+ *   1 — missing required args, ledger not found, write failure, OR a PARTIAL
+ *       capture: one or more deferred entries failed to build or were
+ *       rejected by `PersistedDebtEntrySchema`
+ *
+ * A partial capture exits non-zero deliberately. The entries that DID validate
+ * are still written (the write is idempotent, so re-running after fixing the
+ * cause is safe), but a caller checking `$?` must never read "9 of 15 captured"
+ * as "captured". Measured 2026-09-04: a run rejected 6 of 15 defers on the
+ * `deferredRationale` length cap and exited 0, leaving those six absent from
+ * debt memory and therefore un-suppressed in every future audit — the summary
+ * card said so, but nothing mechanical did.
  */
 
 import './lib/load-env.mjs';
@@ -304,7 +315,7 @@ function printSummary({ built, skipped, result, reason, sid, cloudSync, trail })
   if (result.rejected.length > 0) {
     console.log('\nRejected entries:');
     for (const r of result.rejected) {
-      console.log(`  [${r.entry?.topicId || '?'}] ${r.reason?.slice(0, 120)}`);
+      console.log(`  [${r.entry?.topicId || '?'}] ${r.reason?.slice(0, 300)}`);
     }
   }
 
@@ -321,6 +332,20 @@ function printSummary({ built, skipped, result, reason, sid, cloudSync, trail })
   if (trail && trail.corruptLedgers.length > 0) {
     console.warn(`\nWARN: ${trail.corruptLedgers.length} round ledger(s) could not be parsed — capture status unverifiable:`);
     for (const c of trail.corruptLedgers) console.warn(`  ${c.path} — ${c.error}`);
+  }
+
+  // Name the incompleteness in the operator's own words, right next to the
+  // exit code that now carries it. Re-running after fixing the cause is safe:
+  // writeDebtEntries upserts by topicId, so already-captured entries update in
+  // place rather than duplicating.
+  const missed = result.rejected.length + skipped.length;
+  if (missed > 0) {
+    const noun = missed === 1 ? 'entry' : 'entries';
+    console.error(
+      `\nPARTIAL CAPTURE: ${missed} of ${built.length + skipped.length} deferred ${noun} `
+      + 'did NOT reach the debt ledger, and will therefore NOT be suppressed in future '
+      + 'audits. Fix the cause above and re-run the same command (capture is idempotent).',
+    );
   }
 }
 
@@ -402,8 +427,12 @@ async function main() {
 
   printSummary({ built, skipped, result, reason, sid, cloudSync, trail });
 
-  if (result.rejected.length > 0 && result.rejected.length === built.length) {
-    process.exit(1); // All rejected — something systemic is wrong
+  // ANY entry that failed to land makes this a partial capture, not a success.
+  // Previously only an ALL-rejected run exited non-zero, so a run that dropped
+  // SOME deferrals reported success to `$?` while its own summary card said
+  // otherwise — the card is read by a human, the exit code by everything else.
+  if (result.rejected.length > 0 || skipped.length > 0) {
+    process.exit(1);
   }
 }
 

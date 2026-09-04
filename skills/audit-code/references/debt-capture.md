@@ -43,9 +43,17 @@ node scripts/debt-auto-capture.mjs --ledger .audit/$SID-ledger.json --run $SID
 
 `--dry-run` previews without writing. `--reason` overrides the default
 `out-of-scope`, paired with its required field — e.g.
-`--reason blocked-by --blocked-by "owner/repo#123"`. Exit 0 covers the
-"0 deferred entries found" case; exit 1 is a missing arg, an unreadable
-ledger, or a write failure.
+`--reason blocked-by --blocked-by "owner/repo#123"`.
+
+**Exit code = did EVERY deferral land.** Exit 0 means a COMPLETE capture
+(including the "0 deferred entries found" case). Exit 1 is a missing arg, an
+unreadable ledger, a write failure, **or a PARTIAL capture** — one or more
+deferred entries failed to build or were rejected by the schema. The entries
+that did validate are still written and the command is idempotent (upsert by
+`topicId`), so the fix is: read the `Rejected entries:` block, correct the
+cause, re-run the same command. Before 2026-09-04 only an ALL-rejected run
+exited non-zero, so a run that dropped some deferrals reported success to
+`$?` while its own summary card said otherwise.
 
 > **Do not hand-roll this with `node -e` + `buildDebtEntry`/`writeDebtEntries`.**
 > An earlier revision of this page documented exactly that loop, importing
@@ -58,7 +66,16 @@ ledger, or a write failure.
 
 ## Automatic protections
 
-- `deferredRationale` must be ≥20 chars — schema-enforced, no rubber-stamp defers
+- `deferredRationale` must be ≥20 chars — schema-enforced, no rubber-stamp defers.
+  The **upper** bound is 4000 chars, sized to this page's own producer: Step 3's
+  honest-deferral check requires a defer to name the root cause, the rejected
+  minimal in-scope fix, the residual risk and (out-of-scope) the independence
+  argument. **Never shorten the rationale to fit a cap** — the cap was raised
+  from 400 on 2026-09-04 precisely because it rejected the best-reasoned
+  deferrals first (measured over 2,116 ledger rulings: max 1945 chars; 22.5% of
+  HIGH defers over 400 against 4.3% of LOW), so debt memory kept the
+  least-reasoned ones and the rejected findings were never suppressed in any
+  future audit. A rejection at 4000 is a signal to check the text, not to trim it
 - **Sensitivity scan** (path + content) runs at capture time; secrets in
   `detail` / `category` / `section` / `rationale` are auto-redacted to
   `[REDACTED:pattern-name]` and entry is marked `sensitive: true`

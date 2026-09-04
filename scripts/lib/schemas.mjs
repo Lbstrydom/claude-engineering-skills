@@ -1151,7 +1151,15 @@ const DebtEntryPersistedFields = {
   deferredReason: DeferredReasonEnum,
   deferredAt: z.string().datetime(),
   deferredRun: z.string().max(40),
-  deferredRationale: z.string().min(20).max(400),
+  // Max 4000, not 400. The producer is /audit-code Step 3's honest-deferral
+  // check (root cause + rejected minimal fix + residual risk + independence),
+  // which routinely exceeds 400 chars — so the old cap rejected the
+  // BEST-reasoned deferrals first and debt memory kept the least-reasoned.
+  // Sized from 2,116 measured ledger rulings (max 1945); the DB column is TEXT
+  // with only a >=20 CHECK, so there is no cloud-side max to match. Never fix an
+  // overflow by shortening the requirement or truncating in place — measurement
+  // and rationale: skills/audit-code/references/debt-capture.md.
+  deferredRationale: z.string().min(20).max(4000),
   // Per-reason required fields (enforced via superRefine below):
   blockedBy: z.string().max(200).optional(),
   followupPr: z.string().max(120).optional(),

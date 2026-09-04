@@ -1,5 +1,39 @@
 # Project Status Log
 
+## 2026-09-04 — Debt capture: a cap that punished good reasoning, and a partial capture that read as complete
+
+### Changes
+- **`deferredRationale` cap raised 400 → 4000** (`scripts/lib/schemas.mjs`). The producer of that field is `/audit-code` Step 3's honest-deferral check, which requires a `defer` to name the root cause, the rejected minimal in-scope fix, the residual risk **and** (out-of-scope) the independence argument — four components that routinely exceed 400 chars. The cap therefore rejected the **best-reasoned** deferrals first, so debt memory kept the least-reasoned ones and the rejected findings were never suppressed in any future audit. The incentive was inverted: the more carefully a deferral was justified, the more likely it was to be absent from `.audit/tech-debt.json`.
+- **The inversion is systemic, not a one-run artefact.** Measured 2026-09-04 over **2,116 historical ledger rulings** in `.audit/**-ledger.json` (759 of them `ruling: defer`): max 1945 chars overall, max 1602 among defers, **10.9% of defers over 400** — and skewed hard by severity: **22.5% of HIGH defers over 400 against 7.6% MEDIUM and 4.3% LOW** (means 304 / 189 / 169). The reported one-run observation was 6 of 15 rejected, all six HIGH.
+- **4000 is derived, not picked**: ~2x the measured ceiling, leaving headroom for `[REDACTED:…]` expansion at capture time (the redactor runs after the rationale is assembled), while still bounding one entry's footprint. Checked before raising it: `debt_entries.deferred_rationale` is `TEXT` with only a `char_length >= 20` CHECK — **no cloud-side max to match**, so no migration was needed. The 400 was Zod-only and backed by nothing.
+- **A partial capture now exits non-zero** (`scripts/debt-auto-capture.mjs`). It previously exited 1 only when *every* entry was rejected, so a run that dropped some deferrals reported success to `$?` while its own summary card said otherwise — the card is read by a human, the exit code by everything else. Validated entries are still written (upsert by `topicId`, so re-running after fixing the cause is safe) and a new `PARTIAL CAPTURE: N of M …` stderr line names the incompleteness. This defect **survives** the cap fix: a per-reason field miss has the same shape.
+- Rejected-entry reasons widened 120 → 300 chars — the Zod issue JSON was being cut mid-object, so the operator could not see which field failed.
+- **Rejected option 2 (summarise at the capture boundary).** Truncation-in-place is worse than rejection by the user's own framing, and a preserve-full-text-plus-summary design needs a second field and a link target that no current requirement asks for — the over-engineering cliff, when the storage has no cap at all.
+- **The triage requirement was not touched.** The requirement is the point; the cap was the thing that was wrong.
+
+### Files Affected
+- `scripts/lib/schemas.mjs` — `PersistedDebtEntrySchema.deferredRationale` `.max(400)` → `.max(4000)`, with the measurement and the never-truncate rule in a comment (condensed to stay inside the size-ratchet baseline rather than re-baselining)
+- `scripts/debt-auto-capture.mjs` — exit predicate, `PARTIAL CAPTURE` line, wider rejection reasons, rewritten exit-code docblock
+- `tests/debt-auto-capture-partial-capture-cli.test.mjs` — new, 8 tests
+- `skills/audit-code/SKILL.md` (Step 3.6) + `skills/audit-code/references/debt-capture.md` — the cap and the exit contract documented, pointing *away* from shortening rationales; regenerated into `.claude/skills/**` + `skills.manifest.json`
+
+### Verification
+- **Discrimination checked, not assumed.** On the partial-capture case the CLI reports `built=2, rejected=1`, so the old predicate (`rejected === built`) evaluates **false** → exit 0; the new test asserting exit 1 would have failed pre-fix. The 900-char capture case would have been rejected under the old cap with an empty ledger. A **negative control** pins the direction the new non-zero exit must NOT fire (clean multi-entry capture still exits 0), and the boundary tests keep `>4000` rejected and `<20` rejected.
+- `npm test` scoped to every `*debt*` + `*schema*` suite: **577 pass, 0 fail** (measured 2026-09-04, `node --test tests/*debt*.test.mjs tests/*schema*.test.mjs`). `skills:check` exit 0. `size:ratchet:gate` clean.
+
+### Decisions Made
+- **A cap is sized to its producer's contract, or it silently selects against quality.** The forcing question when writing one: *what writes this field, and what is the longest thing that writer is REQUIRED to say?* A footprint bound answered without asking that is a quality filter pointing the wrong way.
+- **Partial success must not share an exit code with success.** Same coupling as `emit({ok:false})` → non-zero: a summary card is not a machine-readable outcome.
+
+### Next Steps
+- `DebtEventSchema.rationale` / `resolutionRationale` are still `max(400)`. Left alone deliberately — nothing emits a `deferred` event today (the enum member exists, no writer does), and `resolutionRationale` has a different, operator-typed producer. Revisit if a `deferred` event writer is ever added, since it would inherit this same rationale text.
+- Pre-existing backlog surfaced by this ship's 0.5 gates (not created here, not actioned): 57 code-mode unlocked HIGH fixes (+19 code / 171 plan aged out), 195 unremediated accepted findings (107 code / 88 plan, 50 permanently-accepted, 17 past the 30-day ceiling). Still worth a dedicated triage pass.
+- 4 open upstream reports from `storyline`, 2 HIGH — untriaged again this session. Note `backlog-snapshot.mjs` renders `upstream 0` because it reads the **ambient** store only, while `upstream:queues` fans out across consumer stores and finds 4; the snapshot line below understates that queue.
+
+Backlog 2026-09-04T11:05Z: Q1 57c/25p (+190 aged) · Q2 107c/88p (50 perm) · Q3 486 · debt unmeasured · upstream 0
+
+---
+
 ## 2026-09-04 — Backlog & drift reduction: durable debt ledger, honest gates, status.md rotation
 
 ### Consumer Verification (previous ship)
