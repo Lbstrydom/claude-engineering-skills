@@ -71,6 +71,14 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // widened SELECT reaches real column names (Gemini G1 caught exactly that
   // class of bug in this plan's own draft SQL).
   'tests/audit-metrics-findings-contract.test.mjs',
+  // Enrolled 2026-09-04 while working the unremediated-acceptances queue: the
+  // aged-out finding 879932a9 argued that the PURE propagation test can stay
+  // green while `recordAdjudicationEvent`'s real write path is broken, because
+  // the original defect was a divergence between `finding_adjudication_events`
+  // and the `audit_findings` column `unlocked_fixes` reads. Demonstrated rather
+  // than assumed: deleting the `updateWhere('audit_findings', …)` call leaves
+  // the pure sibling at 3/3 PASS and fails this suite 2/4.
+  'tests/adjudication-remediation-propagation-live.test.mjs',
   // campaign-adjudication's LIVE half needs the campaign spine migrated and
   // intact; its pure half runs everywhere and is a no-op here.
   'tests/campaign-adjudication.test.mjs',

@@ -210,6 +210,7 @@ jobs:
         run: |
           node --test --test-concurrency=1 \
             tests/audit-metrics-findings-contract.test.mjs \
+            tests/adjudication-remediation-propagation-live.test.mjs \
             tests/campaign-adjudication.test.mjs \
             tests/campaign-promote.test.mjs \
             tests/campaign-quarantine.test.mjs \
