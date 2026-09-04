@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "gate": "stdout:flush:gate",
+  "guards": "a `process.exit()` that a stdout write can reach must go through `finishAndExit`, which drains stdout first; the population of un-drained sites may not grow",
+  "gates": [
+    {
+      "id": "stdout-flush-gate-detects-a-new-undrained-exit",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "An exit that stdout can reach must drain first",
+      "implementation": "scripts/check-stdout-flush.mjs",
+      "tests": [
+        "tests/stdout-flush-detector.test.mjs",
+        "tests/gate-poison-pills.test.mjs"
+      ],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": [
+          "scripts/check-stdout-flush.mjs"
+        ],
+        "overlay": {
+          ".stdout-flush-baseline.json": "tests/fixtures/poison/stdout-flush-baseline-understated.json"
+        },
+        "expectExit": 1,
+        "expectStderr": "DRIFT",
+        "why": "The real baseline with 12 site identities removed — the tree as it would look if twelve new un-drained exits had just landed. Not hypothetical: a detector-first census on 2026-09-04 found 190 reachable sites across ~100 files, 95 of them carrying a JSON envelope a caller parses. `finishAndExit`'s own docstring names the failure as observed rather than theoretical: on Windows a piped `process.stdout` is asynchronous, so `process.exit()` discards whatever has not flushed. A truncated envelope surfaces as a SyntaxError attributed to whatever the caller was doing, or — when the cut lands on a complete-looking prefix — a silently short result. What makes this worth pilling is that the defect is invisible everywhere it is written: `process.stdout.write(report); process.exit(0)` is the obvious shape, reads as correct, passes review, and works on Linux and on a terminal. Only the pipe truncates. The gate also fails on a REDUCTION, deliberately: a fixed site belongs in the baseline diff, not silently pocketed at the old high-water mark."
+      }
+    }
+  ]
+}

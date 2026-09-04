@@ -440,6 +440,14 @@ const MANDATORY = {
   // opt-outs, which is the part no runtime test can see because each opt-out is
   // individually legitimate API.
   'emit:exit:gate': ['emit-exit-gate-detects-a-new-declared-opt-out'],
+  // Added 2026-09-04 with the gate itself. Post-2026-07-31, so a pill is
+  // mandatory. The pill understates the baseline rather than editing a source
+  // file, because the defect has no textual tell: `process.stdout.write(report);
+  // process.exit(0)` is the obvious shape, reads as correct, and works on Linux
+  // and on a terminal. It truncates only on a Windows PIPE — which npm run,
+  // | tee, and every CI capture are — so the thing a test must be able to see
+  // fail is the RATCHET, not the runtime.
+  'stdout:flush:gate': ['stdout-flush-gate-detects-a-new-undrained-exit'],
   // Added 2026-08-13 with the gate itself. Post-2026-07-31, so a pill is
   // mandatory. The class it closes has now shipped four times — the instruction
   // reaches a consumer and the tool it names does not — and the worktree

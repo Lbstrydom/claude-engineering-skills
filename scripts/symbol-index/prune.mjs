@@ -27,7 +27,7 @@ import {
   demoteRefreshRuns,
 } from '../learning-store.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
-import { assertKnownFlags } from '../lib/cli-io.mjs';
+import { assertKnownFlags, finishAndExit } from '../lib/cli-io.mjs';
 
 /**
  * Every flag this CLI accepts — must list only flags `parseArgs` HANDLES.
@@ -104,7 +104,7 @@ async function main() {
     demoted: { rollback: demotedRollback },
   }) + '\n');
   process.stderr.write(`arch:prune: aborted=${prunedAborted} transient=${prunedTransient} checkpoints=${prunedCheckpoints} demoted=${demotedRollback}\n`);
-  process.exit(0);
+  await finishAndExit(0);
 }
 
 // Run as a CLI only. main() DELETES rows from the cloud store, and this module

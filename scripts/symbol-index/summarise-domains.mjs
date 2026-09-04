@@ -33,6 +33,7 @@ import { redactSecrets } from '../lib/secret-patterns.mjs';
 import { azureConfig } from '../lib/config.mjs';
 import { createAnthropicClient } from '../lib/anthropic-client.mjs';
 import { azureThrottle } from '../lib/azure-throttle.mjs';
+import { finishAndExit } from '../lib/cli-io.mjs';
 
 // Bump on ANY prompt change. Forces cache invalidation across all repos.
 export const PROMPT_TEMPLATE_VERSION = 1;
@@ -239,7 +240,7 @@ async function main() {
     summaries: Object.fromEntries(Array.from(summaries.entries()).map(([d, v]) => [d, v.summary])),
     errors,
   }, null, 2) + '\n');
-  process.exit(0);
+  await finishAndExit(0);
 }
 
 if (import.meta.url === `file://${process.argv[1].replace(/\\/g, '/')}`) {

@@ -731,6 +731,18 @@
     "status:rotate": {
       "description": "Archive whole months of status.md into docs/status/, proving byte-identical conservation before writing and recording every entry digest in the manifest.",
       "category": "other"
+    },
+    "stdout:flush:gate": {
+      "description": "Drift gate for un-drained stdout exits (part of `npm run check`). On Windows a piped process.stdout is async — npm run, | tee and every CI capture are pipes — so process.exit() discards whatever has not flushed; the fix is await finishAndExit(code) from lib/cli-io.mjs. A detector-first census on 2026-09-04 found 190 reachable sites across ~100 files, 95 carrying a JSON envelope a caller parses, where truncation reads as a parse error in the wrong place. Fails on a NET-NEW site and on an unrecorded shrink. stderr writes and the --selfcheck-relocation smoke contract are deliberately not findings. Baseline: .stdout-flush-baseline.json.",
+      "category": "diagnostic"
+    },
+    "stdout:flush:report": {
+      "description": "The full stdout-flush census, triaged by payload: envelope (a JSON.stringify/emit body a caller parses — truncation misattributes the error) before text (a report whose tail is merely lost). Report-only ordering; the gate itself is triage-blind, because a net-new site is drift whichever payload it carries.",
+      "category": "diagnostic"
+    },
+    "stdout:flush:baseline": {
+      "description": "Re-write the stdout:flush:gate baseline deliberately, after fixing a site or accepting a new one. The ratchet fails in BOTH directions, so a reduction is recorded in the baseline diff rather than silently pocketed at the old high-water mark.",
+      "category": "maintenance"
     }
   }
 }

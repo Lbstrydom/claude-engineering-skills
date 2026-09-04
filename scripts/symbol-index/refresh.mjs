@@ -78,6 +78,7 @@ import { assessExtractionCoverage } from '../lib/symbol-index/graph-coverage.mjs
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 import { findRepoPragmas, resolvePragmasToDefinitions, PRAGMA_RESOLUTION_MAX_GAP_LINES } from '../lib/duplicate-justification-pragma.mjs';
 import { SUBPROC_ERROR_CODES } from '../lib/subprocess.mjs';
+import { finishAndExit } from '../lib/cli-io.mjs';
 import { parseArgs } from './refresh-args.mjs';
 import { RepoRegistrationError, RefreshInFlightError, LockAbortError, RefreshAbortedError } from './refresh-errors.mjs';
 import { resolveAndRegisterRepo } from './refresh-repo-setup.mjs';
@@ -238,7 +239,7 @@ async function main() {
   if (!await isCloudEnabled()) {
     process.stderr.write(`architectural-memory: cloud disabled — skipping refresh\n`);
     process.stdout.write(JSON.stringify({ ok: true, cloud: false, skipped: true, reason: 'cloud-disabled' }) + '\n');
-    process.exit(0);
+    await finishAndExit(0);
   }
 
   // Stack short-circuit: JS/TS only in v1
@@ -246,7 +247,7 @@ async function main() {
   if (stack !== 'js-ts' && stack !== 'mixed') {
     process.stderr.write(`architectural-memory: ${stack === 'python' ? 'Python' : stack} extraction not yet supported (stack=${stack} detected)\n`);
     process.stdout.write(JSON.stringify({ ok: true, cloud: true, skipped: true, reason: 'unsupported-stack', stack }) + '\n');
-    process.exit(0);
+    await finishAndExit(0);
   }
 
   let mode = args.full ? 'full' : 'incremental';
@@ -730,7 +731,7 @@ async function main() {
         } : {}),
       },
     }) + '\n');
-    process.exit(exitCode);
+    await finishAndExit(exitCode);
   }
 }
 
