@@ -1,5 +1,35 @@
 # Project Status Log
 
+## 2026-09-04 — Close the consumer-divergence loop: one fix upstream, one override declared
+
+### Changes
+- **wine-cellar-app [#447](https://github.com/Lbstrydom/wine-cellar-app/pull/447) merged** (squash `90e5eaf7`), declaring `docs/reference/consistency-contract.md` in that repo's `.sync-overrides.json`. `sync-to-repos` had been exiting **1** against wine, refusing to overwrite two COMMITTED files — and an unresolved refusal blocks the WHOLE target, so every other bundle update was stalled behind it.
+- **The two divergences needed opposite treatments, and telling them apart was the whole job.**
+  - `docs/reference/consistency-contract.md` — **held.** Upstream names its own source paths (`scripts/lib/persona-test/schemas.mjs`, `scripts/persona-consistency-run.mjs`, `scripts/lib/redact.mjs`); all **7** occurrences are dead in a consumer where the bundle lives under `scripts/.claude-skills/` — 2 markdown links, 3 runnable ```bash invocations, 1 GitHub Actions `- run:` line, 1 prose reference. The header also links a `docs/plans/persona-test-consistency-mode.md` that exists on **neither** side. Upstream cannot express a consumer's layout, so the divergence is permanent and belongs declared.
+  - `.claude/hooks/legacy-surface-advisory.mjs` — **not held; fixed here instead** (`1a4dedc2`). The `import os from 'node:os';` wine deleted for its zero-warning cap was dead upstream too (`os` occurred exactly once in the file, in that import). An override would have frozen wine off every future change to that hook to preserve one dead line.
+- **The deciding fact was mechanical, not a judgement call**: `sync-to-repos.mjs:1901` short-circuits identical content (`srcHash === dstHash` → `unchanged`) **before** `classifyAgainstBase`/`decideAction` ever run. So once upstream and consumer agree byte-for-byte there is nothing left to declare — which is why the merged PR carries **one** override, not the two the sync originally refused. Shipping both would have landed a dead entry on day one.
+
+### Files Affected
+- `.claude/hooks/legacy-surface-advisory.mjs` — one dead import removed (shipped `1a4dedc2`)
+- wine-cellar-app `.sync-overrides.json` (new) + `.sync-receipt.json` — via #447, not in this repo
+
+### Verification
+- Re-synced wine after the merge: **exit 0**, `1 held`, `Errors: 0` (measured 2026-09-04, `node scripts/sync-to-repos.mjs --target wine-cellar-app`) — down from `2 diverged / 1 errors`. The overrides document validates against this repo's own `validateOverrides` with zero errors.
+- Byte-compared the two hook copies after the fix synced: **identical**, confirming the override was retirable rather than assuming it.
+- `tests/hook-legacy-surface-advisory.test.mjs` **15/15 pass**; #447's required checks all green before merge.
+
+### Decisions Made
+- **A consumer divergence is triaged by CAUSE, not by "declare it and move on".** Ask whether upstream's version is *wrong for everyone* (fix upstream, no override) or *inexpressible upstream* (declare it). Declaring the first kind buys silence at the price of freezing a file off future fixes.
+- **This repo has no `npm run lint`**, which is why a dead import survived here and only a consumer with a stricter gate found it. Not fixed in this session — recorded as the reason the class exists.
+
+### Next Steps
+- `docs/reference/consistency-contract.md` still ships consumer-dead paths to every consumer. Upstream fix candidates: bring `docs/reference/**` into the sync path rewriter's closure (it already reports "694 remapped, 126 rewritten" for tooling), write the doc layout-agnostically, or extend `skills:consumer-refs:gate` to `docs/reference/**`. **Census the class first** — other `docs/reference/**` files may carry the same defect.
+- Upstream report queue read **0 open across 2 stores** this session, down from 4 (2 HIGH) earlier the same day — closed by someone else in between; not verified here, and not this session's doing.
+
+Backlog 2026-09-04T12:29Z: Q1 57c/25p (+190 aged) · Q2 139c/88p (50 perm) · Q3 486 · debt unmeasured · upstream 0
+
+---
+
 ## 2026-09-04 — Bound the consumer dependency install; two independent sessions hit the same flake, one fix
 
 ### Consumer Verification (previous ship)
