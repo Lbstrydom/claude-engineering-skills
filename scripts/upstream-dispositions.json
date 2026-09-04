@@ -201,6 +201,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "5f3fa3ec-b485-468b-ad11-b59a1f1f74d1",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/symbol-index-corpus-ownership.test.mjs"
+      },
+      "recordedAt": "2026-09-04T12:13:31.121Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "64223218-e2c4-4b40-afcf-27daff855da6",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
@@ -253,6 +264,17 @@
         "value": "accidental CLI flag-validation probe, not a real finding"
       },
       "recordedAt": "2026-08-29T22:17:09.207Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "7e6a5492-cabd-4a85-ab05-391be7519e24",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/symbol-index-corpus-ownership.test.mjs"
+      },
+      "recordedAt": "2026-09-04T12:13:49.368Z"
     },
     {
       "schemaVersion": 1,
@@ -330,6 +352,17 @@
         "value": "the specific ask (adopt this consumer's condensed preflight form upstream) would regress every fresh consumer; the general defect it names is fixed by the divergence mechanism in f3d9714"
       },
       "recordedAt": "2026-08-29T17:14:10.000Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "aeb96b12-4df0-4d95-98fa-86c536206563",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/arch-duplicates-pagination.test.mjs"
+      },
+      "recordedAt": "2026-09-04T12:14:30.743Z"
     },
     {
       "schemaVersion": 1,
@@ -429,6 +462,17 @@
         "value": "Process issue (report filed from the wrong — synced consumer — copy of a source-repo-only e2e test), not a code defect. wont_fix is the correct terminal state; there is nothing here for a probe or a test to close."
       },
       "recordedAt": "2026-08-22T00:00:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "e265d10b-cff1-444e-a18b-8585743644ee",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/sync-owned-sidecar.test.mjs"
+      },
+      "recordedAt": "2026-09-04T12:14:07.598Z"
     }
   ]
 }
