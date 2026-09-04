@@ -1,5 +1,72 @@
 # Project Status Log
 
+## 2026-09-04 — The un-drained-exit census: a gate whose own detector was wrong eleven times
+
+### Consumer Verification (previous ship)
+- **Commit**: `1a624b22` (`fix(store): read walk_start_commit, not a phantom commit_sha column`) pushed to `main` 2026-09-04. Carried two other sessions' commits with it (`edad6090`, `71cc0c40`) — they were already merged into local `main` and unpushed.
+- **Retrieval**: `git fetch origin` then `git merge-base --is-ancestor 1a624b22 origin/main` — the remote ref checked directly rather than trusting the push exit code. Clean-checkout run: the pre-push hook's own throwaway worktree (`ces-prepush-1a624b22-51376`) ran the full `check` **at the pushed commit**, which is the only full-suite evidence for this tree (the local run was invalidated mid-flight by a fast-forward that moved 24 files).
+- **Result**: **verified**.
+  - `origin/main == 1a624b22`; pre-push `check` green — **15,019 tests, 0 fail, 39 skipped** in the clean worktree.
+  - Consumer sync `Targets: 3/3 reached · Updated: 17 · Errors: 0`.
+  - **Subject check, not a producer-side inheritance**: in `wine-cellar-app/scripts/.claude-skills/`, `errors.mjs` carries `isSchemaFaultSqlstate` (3 refs); `imports.mjs` selects `walk_start_commit` (1) and `SELECT commit_sha` is **0**; the `GET_REFRESH_RUN_COLUMNS` allowlist names `commit_sha` **0** times. Bodies past the 5-line banner are byte-identical for `imports.mjs` and `refresh-runs.mjs`.
+  - `errors.mjs` and `snapshots.mjs` differ from source by exactly the sync's path rewrites (`scripts/setup-postgres.mjs` → `scripts/.claude-skills/setup-postgres.mjs`, same for `symbol-index/refresh.mjs`) — **which is the check passing, not failing**: the new `describeSchemaFault` remedy string was rewritten correctly *because* it names its tool by path rather than an `npm run` alias (AGENTS.md "Five shapes" #5). An alias would have shipped a command that does not exist in a consumer.
+  - **`sync-isolation-verify` run from INSIDE the consumer** — `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in `wine-cellar-app`: **all 9 gates pass, exit 0**, 1 override held (`docs/reference/consistency-contract.md`). This closes the item the previous ship's note recorded as `unverified`; that note's concrete blocked prerequisite — "not invoked in any consumer this session" — no longer holds.
+- **Still unverified**: nothing for this change.
+- **Open upstream (not actioned)**: `15da01b6` (MEDIUM, from wine-cellar-app) — `docs/reference/consistency-contract.md` dead `../completed/` href plus out-of-closure paths. It is the same item wine's one remaining override holds, and it is unrelated to this commit. Unchanged from the previous ship's note.
+- **Not adjudicated, deliberately**: Step 6.7's card listed 482 fixed-but-unlabelled findings (`debt-reconcile.mjs`, `status-log-integrity.mjs`, the audit-code skill). None were fixed by this commit; the card infers no attribution from a file changing, and neither did I.
+
+### Changes
+- **`finishAndExit` existed, was documented as closing an OBSERVED failure, and nothing enforced it.** On Windows a piped `process.stdout` is asynchronous — `npm run x`, `x | tee` and every CI capture are pipes — so `process.exit()` discards whatever has not flushed. An `/audit-code` round raised two instances in `scripts/symbol-index/`; the question this change answers is not whether those two were real but **how large the class is and what stops the next one**.
+- **Detector-first, because an LLM enumerating a class by reading stops early.** `scripts/lib/find-stdout-exit-sites.mjs` is a Babel AST walk with `scope.getBinding` resolution — three distinctions are invisible to text: stderr vs stdout once the write and exit are lines apart, a write in a nested function that never ran, and a shadowed or explicitly-imported `process`.
+- **Final census: 221 sites (108 envelope) across 100 files.** The envelope half is the bad half — a truncated JSON envelope is a `SyntaxError` attributed to the wrong thing, or a complete-looking prefix nobody sees as an error at all. `scripts/symbol-index/` is at zero; 7 sites fixed there.
+- **`npm run stdout:flush:gate`, drift-only against a committed baseline**, in `knip-gate`'s shape and in the pre-push `check`. Identity is `file::fn[structure]::writeHow->exit(code)#ordinal` — deliberately line-independent, because a baseline that churns on unrelated edits is one people `--update` reflexively. Growth AND unrecorded shrink both fail. Poison-pill contracted.
+
+### The audit found eleven defects in the detector, and every one was silent
+3 GPT rounds (H:8 -> 2 -> 2), a GPT deliberation, and 5 Gemini gate passes ending **APPROVE**. A green suite could not have caught any of these; the census would simply have reported a wrong number.
+
+**Recall gaps** — reported clean where it should not have:
+- `void finishAndExit(n)` accepted as a terminator, and later the BARE call too. Both return immediately. AGENTS.md forbids that exact shape in the paragraph introducing this gate — **the detector was excusing the bug its own invariant names, and the test asserted the excuse.**
+- Indirect writers not followed (`writeReport(); process.exit(0)`) — 51 sites, ~28% of the census at the time.
+- Indirect EXITS not followed either, the mirror nobody asked for until the gate did — 29 live sites.
+- The self-check exemption keyed on the guard's TEST, so any stdout write beneath it was exempt. An exemption broader than the contract it cites is a hole with a citation on it.
+- Aliased stdout was a "documented limit" justified by 0 instances. The round-2 adjudication rejected that reasoning and was right: **a documented limit is not enforcement**, and this gate's claim is about tomorrow's code.
+- `isAmbientGlobal` read ANY binding as a shadow, so the four files doing `import process from "node:process"` reported **clean rather than unscanned** — the worst shape a detector can have.
+- Mutual exclusivity inferred from node INEQUALITY, which also excluded an `if`/ternary CONDITION from its body. The condition runs first.
+- `break`/`continue` treated as function terminators. They end a loop and hand control toward the later exit.
+
+**False positives** — found by reading the sites, not the count:
+- A write inside a `return`/`throw` expression; two mutually exclusive dispatcher arms were paired.
+- A write inside a call to a local exit-helper: the path ends in that call.
+- A sibling terminator at the COMMON-ANCESTOR block level, which the walk skipped entirely.
+
+**Net: recall fixes added sites, FP fixes removed ~36.** The census went 249 -> 221. Earlier baselines in this branch carried sites that were never real, and only inspection surfaced that.
+
+### What generalises
+- **The recurring shape was one-sided checks, five times in one file.** Writes propagated but not exits. `void` removed but not the bare call. The predicate fixed in the classifier but not the terminator. Calls-to-exiters counted as exits but not as terminators. AGENTS.md already states the rule ("which side am I iterating, and what is unrepresentable from it?"); it was hit repeatedly in the one file a census cannot check — its own logic.
+- **Fixing one audit finding manufactured another.** Closing the ESM-import blind spot exposed 16 sites, 9 of them bogus, because `isTerminatingStatement` carried a SECOND inline copy of the predicate. One oracle now — a single-oracle violation committed while fixing an audit finding.
+- **The adjudication ledger was invisible to the reviewer for four passes.** `ledgerResolutions` keys on `adjudicationOutcome`/`findingId`/`rulingRationale`/`resolvedRound`; the hand-written ledger used `{id, note}`. All 47 rulings were silently skipped, so Gemini saw findings with no deliberation and said so — correctly. Verified the fix by calling the consumer's own reader: 0 -> 59. Same prose-to-code seam AGENTS.md documents.
+- **The size ratchet caught a deferral coming true.** Round-3 M2 flagged the detector as oversized; it was deferred at 746 lines on the grounds that `size:ratchet:gate` governs it. It did — 1010 lines, blocked at push. A FIRST split attempt copied `FUNCTION_TYPES` into the new module: a single-oracle violation committed to satisfy a size gate, i.e. this change's own subject turned on itself. Reverted; split instead on a boundary needing no duplication (`find-stdout-exit-shapes.mjs`).
+
+### Deliberate non-findings
+A `stderr` write before an exit (stderr is synchronous enough), and the `--selfcheck-relocation` smoke contract's exact two-statement body — that literal shape IS the contract, exempted structurally rather than by a path allowlist, so a new CLI adopting it needs no edit. Both are enforced in the detector so a consumer fork keeps them.
+
+### Owed, not discharged
+Plan section 8 owns the paydown of the 108 envelope sites, envelope-first, with a retirement predicate — **as its own change with its own audit**, so a control-flow regression there is not attributed to the detector. The ratchet makes the population shrink-only in the meantime; it does not empty it.
+
+Backlog 2026-09-04T17:19Z: Q1 55c/25p (+190 aged) · Q2 142c/88p (50 perm) · Q3 486 · debt unmeasured · upstream 4
+
+### Files Affected
+- `scripts/lib/find-stdout-exit-sites.mjs` (new) — the detector
+- `scripts/lib/find-stdout-exit-shapes.mjs` (new) — payload + smoke-contract shape recognisers, split at the 1000-line cap
+- `scripts/check-stdout-flush.mjs` (new) — the gate (`--json` / `--report` / `--update`)
+- `.stdout-flush-baseline.json` (new) — 221 site identities
+- `scripts/gate-contracts/stdout-flush-gate.json` + `tests/fixtures/poison/stdout-flush-baseline-understated.json` (new) — poison-pill contract
+- `tests/stdout-flush-detector.test.mjs` (new) — 68 controls, each one a defect that was found
+- `scripts/symbol-index/` refresh, summarise-domains, prune — bare exits converted; all three now report zero
+- `AGENTS.md`, `package.json`, `scripts/.cli-catalog.json`, `tests/gate-poison-pills.test.mjs` — invariant, npm scripts, catalog, pill registry
+- `docs/plans/stdout-flush-drain-gate.md` (new) — plan, written after implementation as the audit spec
+
+
 ## 2026-09-04 — A schema error is not an empty result: the phantom `commit_sha` column, and the cache that never hit
 
 ### Consumer Verification (previous ship)
