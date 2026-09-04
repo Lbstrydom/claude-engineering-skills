@@ -44,10 +44,30 @@ function mkRepo(name) {
   return dir;
 }
 
+/**
+ * The outer budget must EXCEED the sum of the budgets nested inside it.
+ *
+ * A deploying sync calls `ensureAuditDeps`, which runs TWO sequential installs
+ * (required, then optional) each capped at its own 120s `timeoutMs`
+ * (scripts/lib/install/deps.mjs). At the previous 240_000 this outer timeout
+ * was exactly 2x120s, leaving ZERO time for the sync's own work — so a slow but
+ * entirely successful install was killed here and surfaced as `code: null`,
+ * indistinguishable from a hang.
+ *
+ * It reproduces under the FULL suite (where 2,650 suites contend for CPU and
+ * IO, stretching both installs) and passes when this file is run alone, which
+ * is what made it read as network flakiness — it was misdiagnosed that way at
+ * least five times and bypassed with `--no-verify`. The tell that it never was
+ * the network: the failing runs lasted 240,051ms and 240,040ms, pinned to this
+ * cap, and exited `null` (killed by signal) rather than on an npm error. The
+ * install was never the failure; the budget was.
+ */
+const INSTALL_BUDGET_MS = 2 * 120_000 + 180_000;
+
 async function run(argv, opts = {}) {
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [CLI, ...argv], {
-      cwd: REPO_ROOT, timeout: 240_000, maxBuffer: 32 * 1024 * 1024, ...opts,
+      cwd: REPO_ROOT, timeout: INSTALL_BUDGET_MS, maxBuffer: 32 * 1024 * 1024, ...opts,
     });
     return { code: 0, stdout, stderr };
   } catch (err) {
