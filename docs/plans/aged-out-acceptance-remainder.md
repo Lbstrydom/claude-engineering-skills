@@ -1,7 +1,7 @@
 # Plan: The five aged-out acceptances that are real, still live, and no longer surfaced
 
 - **Date**: 2026-09-04
-- **Status**: Open — evidence gathered, no code written. Each item below was
+- **Status**: Draft — evidence gathered, no code written. Each item below was
   re-verified against the tree at `8178f062` and reproduced; none is a
   hypothesis carried over from its original audit.
 - **Author**: Claude + Louis
