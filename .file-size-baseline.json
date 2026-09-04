@@ -22,6 +22,6 @@
     "scripts/setup-postgres.mjs": 1525,
     "scripts/solo-control-audit.mjs": 1588,
     "scripts/symbol-index/extract.mjs": 1040,
-    "scripts/sync-to-repos.mjs": 2629
+    "scripts/sync-to-repos.mjs": 2646
   }
 }
