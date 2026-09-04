@@ -21,6 +21,9 @@ import {
   classifyFinalReviewOutcome, summariseCounts, orderItems, isActionable,
   KNOWN_USER_ACTIONS, ACTIONABLE,
 } from '../scripts/lib/final-review-credit.mjs';
+import {
+  CREDIT_BRANCH_SHADOW_WHERE, CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE,
+} from '../scripts/lib/store/runs-findings.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -209,4 +212,61 @@ describe('orderItems — a deterministic total order', () => {
     assert.deepEqual(orderItems(input).map((r) => r.finding_fingerprint), ['y', 'x']);
     assert.equal(JSON.stringify(input), snapshot, 'orderItems must not sort in place');
   });
+});
+
+describe('the credit card\'s totals and its list describe ONE population', () => {
+  // The defect this pins (found 2026-09-04 while working the credit queue):
+  // `getFinalReviewStats` builds the LIST (`pendingQueue`) and the exact TOTALS
+  // (`actionablePairs`) as two separate SQL statements. The card prints the
+  // totals as a header over the list, so the two must cover the same findings.
+  // `docs/plans/skill-efficacy-census.md` Phase 1 widened the LIST from
+  // shadow-only to `shadow-only ∪ primary-bucket-label-gap` and left the TOTALS
+  // on the narrow half. Live measurement before the fix: the header read
+  // `486 … 3 fixed-but-unlabelled` above ten listed rows that ALL carried
+  // `bucket: null` — ten members of a class counted as three. True totals:
+  // 2,175 actionable and 1,692 fixed-unlabelled, a 563x under-report of the
+  // exact class the queue exists to surface.
+  //
+  // This is a SOURCE scan, not a behavioural test, and deliberately so: the
+  // behaviour needs a live Postgres, but the failure was never a wrong row — it
+  // was two queries that stopped describing the same set. Binding both to the
+  // shared predicate makes one-sided widening the thing that fails here.
+  const SOURCE = fs.readFileSync(
+    path.join(REPO_ROOT, 'scripts/lib/store/runs-findings.mjs'), 'utf-8',
+  );
+
+  /** Body of a `const <name> = await many(\`…\`, […]);` assignment. */
+  function queryLiteral(name) {
+    const start = SOURCE.indexOf(`const ${name} = await many(`);
+    assert.notEqual(start, -1, `could not find the ${name} query — was it renamed?`);
+    const open = SOURCE.indexOf('`', start);
+    const close = SOURCE.indexOf('`', open + 1);
+    assert.ok(open !== -1 && close !== -1, `could not delimit the ${name} SQL literal`);
+    return SOURCE.slice(open + 1, close);
+  }
+
+  it('exports the two branch predicates, and they partition on bucket', () => {
+    assert.ok(CREDIT_BRANCH_SHADOW_WHERE.includes(`f.bucket = 'shadow-only'`));
+    assert.ok(CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE.includes('f.bucket IS NULL'));
+    // Mutually exclusive by construction — what makes the queue's UNION ALL safe.
+    assert.ok(!CREDIT_BRANCH_SHADOW_WHERE.includes('f.bucket IS NULL'));
+    assert.ok(!CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE.includes(`f.bucket = 'shadow-only'`));
+    // Both bind the repo as $1, so either can be dropped into either query.
+    assert.ok(CREDIT_BRANCH_SHADOW_WHERE.includes('r.repo_id = $1'));
+    assert.ok(CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE.includes('r.repo_id = $1'));
+  });
+
+  for (const q of ['pendingQueue', 'actionablePairs']) {
+    it(`${q} is built from BOTH shared branch predicates, not an inlined clause`, () => {
+      const sql = queryLiteral(q);
+      assert.ok(
+        sql.includes('${CREDIT_BRANCH_SHADOW_WHERE}'),
+        `${q} no longer interpolates CREDIT_BRANCH_SHADOW_WHERE — an inlined clause is how the two queries drifted apart before`,
+      );
+      assert.ok(
+        sql.includes('${CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE}'),
+        `${q} no longer interpolates CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE — this is the exact one-sided narrowing that under-reported the queue 563x`,
+      );
+    });
+  }
 });
