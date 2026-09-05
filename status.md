@@ -1,5 +1,46 @@
 # Project Status Log
 
+## 2026-09-05 — A worktree is not the main checkout: three sites, one question, two ratchets
+
+### Consumer Verification (previous ship)
+- **Commit**: `3c33fa70` (`fix(prepush): anchor source-repo discovery on the main checkout, not cwd`) pushed to `main` 2026-09-04. Six push attempts across the change's lineage (rebased and re-cherry-picked twice); five rejections, none of them caused by this change (see "What generalises").
+- **Retrieval**: `git ls-remote origin refs/heads/main` on every attempt, never the push exit code — **twice the wrapper reported exit 0 while the push was rejected**. Clean-checkout run: the pre-push hook's own worktree (`ces-prepush-3c33fa70-*`) ran the full `check` at the pushed commit.
+- **Result**: **verified**.
+  - `origin/main == 3c33fa70`; pre-push `check` green. Consumer sync `Targets: 3/3 reached · Updated: 3 · Errors: 0`.
+  - **Subject check, both halves, in all three consumers.** JS: `scripts/.claude-skills/lib/shared-cloud-config.mjs` carries the `gitContext(cwd)?.mainRoot` anchor in wine-cellar-app, ai-organiser and storyline. Bash: `npm run hooks:install` moved every managed hook **v2 → v3**.
+  - **Not a source read — the installed hooks were executed.** The discovery block was extracted from each consumer's `.git/hooks/pre-push` and run twice: from the consumer's main checkout, and from one of its real linked worktrees. All six resolved `claude-engineering-skills`. The worktree column is the one that returned nothing before.
+- **Still unverified**: nothing for this change.
+- **Open upstream (not actioned)**: `edc0948e` (MEDIUM, mine, from wine-cellar-app) — incremental refresh does not clear disowned files, so "re-run `refresh.mjs`" understates the corpus-fix remedy; mechanism is code-derived, not measured. `c446e6c1` (MEDIUM, another session) — consistency-contract runnable commands name upstream's `scripts/` layout. Three others filed the same day are closed: `ad8fcbd3`, `e3d4cf7c` (both acknowledged), `63552e8b` (fixed by `7df671ff`).
+
+### Changes
+- **The question "which checkout?" had three wrong answers, and each looked local.** A linked worktree lives at `<repo>/.claude/worktrees/<name>`, so `--show-toplevel` and `dirname(cwd)` both stop there. Every push a Claude Code session makes comes from one.
+  - **The managed pre-push hook** scanned `../*/` for a sibling source repo. From a worktree that enumerates sibling WORKTREES, so it found nothing, printed a warning and **exited 0** — a skip wearing a clean pass's clothes, on the majority of pushes. `HOOK_VERSION` 2 → 3.
+  - **`resolveSourceRepo`**, its JS mirror, returned `{type:'none'}` for the same reason. Both now scan the parents of the main checkout AND cwd, unioned before the 0/1/>1 rule so two anchors cannot degrade `ambiguous` into first-anchor-wins. Outside a worktree the two are one directory, so a plain checkout is unchanged.
+  - **`prepush-check.mjs` used ONE root for two questions**: the checkout to build the sandbox from (correct) and the place gitignored inputs live (wrong). `PROVISIONED_ARTIFACTS` is a hard requirement by design, so every worktree push failed on `.audit-loop/domain-deps-observed.json` while the main checkout held it — and the thrown message already said *"must be copied from the main checkout"* while the code read the worktree.
+- **The JS fix REUSED an oracle rather than adding a fourth.** The architectural-memory consult returned `resolveSourceRepo` itself at `precedent` (similarity 0.776, `above-floor-cluster`) and — three rows down, at `review`, similarity 0.748 — `gitContext` in the same file, summarised as "extracts git repository root and common-dir context from a given working directory". **The band was not the signal; the summary was.** A helper I had already written and tested was deleted on reading it. `prepush-check` imports `resolveMainRoot` from `lib/pinned-worktree/paths.mjs` for the same reason.
+- **`CLI_KILL_BUDGET_MS` (300s), shared by both spawns in `audit-no-files-cli.test.mjs`.** The old cap was 90,000ms while the audit's own passes announce `timeout: 90s` — an outer budget that can never accommodate a subject allowed to spend its whole inner cap. It was SIGKILLed at 90,207ms in a pre-push sandbox and passes in 35.6s standalone.
+
+### Two ratchets, because both classes had already recurred
+- **Main-checkout derivation population.** `resolveMainRoot`'s docstring already warned that "a fifth copy is how the four existing ones would drift apart", and `transcript-archive.mjs` cites that warning as its reason for reusing it. Nothing enforced it, and `prepush-check` then shipped the bug — not by copying the derivation but by answering the question with `--show-toplevel`. A census (comments stripped, so documentation is not a copy) found **5** real sites; all five are declared with the reason each cannot reuse the oracle, and a sixth fails.
+- **Timeout literals.** The kill-budget collision was fixed twice on 2026-09-04 already (`71cc0c40`, and the sync fixture's nested-timeout collision), and both write-ups name the same root cause: the reasoning is recorded at ONE call site while the other sites keep a tight literal. The ratchet is therefore on the literal, not the value — any numeric `timeout:` in that file fails, comments excluded so the measured numbers stay documented.
+
+### What generalises
+- **The wrapper's exit code is not the push's.** Two pushes reported exit 0 with the remote unmoved. Every claim here is from `git ls-remote`.
+- **Five rejections, five different real problems, none of them the change being shipped**: the sandbox artifact root (fixed here); an orphaned terminal upstream row another session left un-reconciled, which blocked *everyone's* pushes; my own test violating the repo's `fs.rmSync` retry-hardening rule; a non-fast-forward after that session recorded the same disposition I had (dropped mine rather than rebasing it into a conflict); and the timing-sensitive test above. A gate chain this deep means "my change is fine" is never the same statement as "the push will land".
+- **Red-then-green per half, not per change.** Reverting only the bash body fails 4 tests; only the JS scan fails 2; only the provisioning root fails the artifact suite; a reintroduced `90000` fails the budget ratchet. A single combined red would not have shown that the two halves are independently pinned.
+- **Every ratchet carries a vacuous-pass guard.** The derivation scan asserts it can still see the canonical oracle; the literal scan asserts its regex matches a literal at all, assembled from fragments so it cannot match itself.
+
+### A near-miss worth recording
+This entry was almost written by prepending a stale, unrelated 2026-07-20 entry. `cat > /tmp/entry.md` from bash writes to `C:/Users/User/AppData/Local/Temp/entry.md`; `io.open('/tmp/entry.md')` **inside** a Python script resolves `C:\\tmp\\entry.md`, where an old file of that name happened to sit. `python /tmp/patch.py` works because bash translates the *argument*; a path written inside the script is not translated. The prepend reported success and `git diff` showed +57 lines of someone else's prose, which is the only reason it was caught. The rule was already in memory and was violated anyway: **on Windows, never let a script resolve `/tmp` itself** — pass an absolute path, or do the file work in the shell that owns the mapping.
+
+### Files Affected
+- `scripts/install-prepush-hook.mjs` — bash discovery block anchored on `--git-common-dir`; `HOOK_VERSION` 2 → 3; failure message names the directory searched
+- `scripts/lib/shared-cloud-config.mjs` — `resolveSourceRepo` step 4 scans both anchors, candidates unioned
+- `scripts/prepush-check.mjs` — `localArtifactRoot` split from `repoRoot`; imports `resolveMainRoot`; error prints the path actually read
+- `tests/prepush-worktree-anchor.test.mjs` (new) — 17 tests: both halves of the discovery rule, the provisioning root, and the derivation-population ratchet
+- `tests/audit-no-files-cli.test.mjs` — shared `CLI_KILL_BUDGET_MS` + the timeout-literal ratchet
+
+
 ## 2026-09-04 — The un-drained-exit census: a gate whose own detector was wrong eleven times
 
 ### Consumer Verification (previous ship)
