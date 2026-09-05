@@ -58,6 +58,151 @@ const MAX_POOL_SIZE = 50;
  *
  * @param {string} url
  */
+/**
+ * WHERE A DSN ACTUALLY CONNECTS — not where its URL appears to point.
+ *
+ * `pg` parses connection strings with `pg-connection-string`, which lets the
+ * **query string override the authority**: `?host=` replaces the URL hostname
+ * and `?port=` replaces the port. Every guard and identity function here used
+ * to read `URL.hostname` / `URL.port` directly, which is the host the string
+ * *displays*, not the host the driver *dials*. Measured 2026-09-04 against the
+ * installed parser:
+ *
+ *   postgresql://localhost:5432/db?host=prod.example.com  → host prod.example.com
+ *   postgresql://x.pooler.supabase.com:5432/db?port=6543  → port 6543
+ *
+ * Both defeat a guard that exists to prevent a specific disaster:
+ *
+ *  - `assertDisposableDbUrl` reads the hostname to decide whether a suite may
+ *    `DROP SCHEMA public CASCADE`. The first DSN above passes as `localhost`
+ *    and drops the schema on `prod.example.com`. The allowlist is documented as
+ *    failing CLOSED; through this door it failed OPEN.
+ *  - `assertSafeDsn` refuses the Supabase **transaction** pooler on port 6543
+ *    because it breaks prepared statements and the `search_path` pin. The
+ *    second DSN above reads as 5432 and connects to 6543.
+ *  - `dbIdentity` / `storeFingerprint` name the store in reports and in the
+ *    committed disposition ledger. A fingerprint keyed on the displayed host is
+ *    a confident label for a database the process never talked to — the exact
+ *    defect the drift-report store line was added to prevent.
+ *
+ * ONE oracle, so the guards and the label cannot disagree about which database
+ * is meant.
+ *
+ * SCOPE, STATED HONESTLY. This resolves the two overrides the shipped parser
+ * applies to a URL-form DSN. It is deliberately NOT a libpq reimplementation:
+ * `PGHOST`/`PGPORT` and other environment defaults, `service=` files, and
+ * comma-separated multi-host DSNs are not resolved here. Those reach a real
+ * connection through `pg`'s own handling; a DSN using them will still be named
+ * by its URL fields. Widening this means adopting libpq's full precedence
+ * order, which is a bigger contract than any current caller needs — and a
+ * half-done version that looked complete would be worse than one that says
+ * where it stops.
+ *
+ * @param {URL} parsed a parsed DSN
+ * @returns {{host: string, port: string, database: string}} effective target;
+ *   `host` keeps its original case (callers normalise), `port` defaults to 5432
+ */
+export function effectiveDbTarget(parsed) {
+  // LAST occurrence, not the first — `searchParams.get()` returns the first,
+  // and the driver keeps the last. Verified against the installed parser:
+  //
+  //   ?host=first.example&host=last.example&port=1111&port=2222
+  //     driver → host last.example, port 2222
+  //     get()  → host first.example, port 1111
+  //
+  // Getting this backwards reopens the exact fail-open this function was added
+  // to close, one layer down: `?host=127.0.0.1&host=prod.example.com` would read
+  // as the disposable loopback host while connecting to prod. Caught by the
+  // verification round on the fix itself — the author-mimicry case, where the
+  // repair reproduces the class it repairs.
+  // THE LAST OCCURRENCE VERBATIM — an empty one is not "skip to the previous",
+  // it is "no override", and the driver then falls back to the URL authority.
+  // Measured, because two rounds of this were settled by guessing at it:
+  //
+  //   ?host=real.example&host=   → driver dials the URL host, NOT real.example
+  //   ?host=                     → driver dials the URL host
+  //   ?port=2222&port=           → driver uses the URL port, NOT 2222
+  //
+  // An earlier version scanned backwards for the last NON-empty value, which
+  // disagreed with the driver in the fail-OPEN direction:
+  // `postgresql://prod.example/db?host=127.0.0.1&host=` resolved to the
+  // disposable loopback host while the connection went to prod. Its regression
+  // test asserted that behaviour, so the test pinned the defect rather than the
+  // contract — which is why each round of this was decided by probing the
+  // parser rather than by reasoning about it.
+  const lastParam = (name) => {
+    const all = parsed.searchParams.getAll(name);
+    if (all.length === 0) return null;
+    return (all[all.length - 1] || '').trim() || null;
+  };
+  const qHost = lastParam('host');
+  const qPort = lastParam('port');
+
+  // CANONICAL DECIMAL PORT. The query form is not normalised by anything —
+  // `new URL` normalises the AUTHORITY (`:06543` → `6543`) but leaves
+  // `?port=06543` exactly as written, and the parser passes it through. The
+  // socket, however, connects by NUMBER. Measured:
+  //
+  //   ?port=06543  → parser '06543', connects to 6543
+  //   ?port=+6543  → parser ' 6543'  (the + decodes to a space), connects to 6543
+  //   ?port=6543␠  → parser '6543 ',  connects to 6543
+  //   :06543       → parser '6543'   (URL already normalised it)
+  //
+  // Two consequences, both closed here rather than at each reader. The
+  // transaction-pooler refusal compares against '6543' and every padded form
+  // slipped past it. And `dbIdentity` gave one store several identities, so the
+  // fingerprint this change publishes would differ between two runs that
+  // reached the same database — the precise failure it exists to prevent.
+  //
+  // A value that is not a valid port is left VERBATIM: it cannot equal 6543, so
+  // the guard still refuses correctly, and inventing a number for garbage would
+  // hide a malformed DSN behind a plausible-looking identity.
+  // `parseInt(v, 10)` — NOT `Number(v)` — because that is literally what the
+  // driver does: `pg/lib/connection-parameters.js` reads
+  // `this.port = parseInt(val('port', config), 10)`. The two disagree on inputs
+  // that reach this code, and the disagreement is exploitable:
+  //
+  //   '6543abc' → Number NaN (left verbatim, guard compares unequal → ACCEPTED)
+  //               parseInt 6543 (connects to the transaction pooler)
+  //   '1e4'     → Number 10000, parseInt 1 — one store, two identities
+  //   '0x1993'  → Number 6547, parseInt 0
+  //
+  // A guard that models the driver must use the driver's own coercion; picking
+  // a "reasonable" one is how the fifth round's fix left a sixth hole. An input
+  // that does not yield a valid port is left VERBATIM — it cannot equal '6543',
+  // so the refusal still holds, and inventing a number for garbage would hide a
+  // malformed DSN behind a plausible identity.
+  const canonicalPort = (value) => {
+    const n = parseInt(String(value), 10);
+    return Number.isInteger(n) && n >= 1 && n <= 65535 ? String(n) : value;
+  };
+
+  return {
+    host: qHost || parsed.hostname,
+    port: canonicalPort(qPort || parsed.port || '5432'),
+    // `?dbname=` is NOT an override. The final gate challenged this, claiming
+    // `pg` falls back to `config.dbname` when `database` is empty; measured
+    // against the real `ConnectionParameters` rather than reasoned about:
+    //
+    //   postgresql://h:5432/real?dbname=other  → database 'real'  (path wins)
+    //   postgresql://h:5432/?dbname=other      → database 'User'  (NOT 'other')
+    //
+    // The empty-path case falls back to the OS USERNAME (`this.database =
+    // this.user`), so `dbname` is genuinely unused and reading it here would
+    // invent a behaviour. The claim stands — but the probe found a real gap it
+    // did not name, recorded rather than mirrored:
+    //
+    // A DSN with no database path connects to a database named after whoever is
+    // running the process. We return '' there, and deliberately DO NOT copy the
+    // fallback: it would make this identity depend on `process.env.USER`, so two
+    // machines would fingerprint one DSN differently — destroying the
+    // cross-machine equality the fingerprint exists for. A pathless DSN is
+    // therefore named as "no database", which is honest about what the string
+    // says, and every DSN this store actually uses names one.
+    database: decodeURIComponent(parsed.pathname.replace(/^\//, '')),
+  };
+}
+
 export function assertSafeDsn(url) {
   let parsed;
   try {
@@ -70,7 +215,10 @@ export function assertSafeDsn(url) {
       `AUDIT_DB_URL must be a postgresql:// connection string; got protocol "${parsed.protocol}".`,
     );
   }
-  if (parsed.port === '6543' && /(^|\.)pooler\.supabase\.com$/i.test(parsed.hostname)) {
+  // EFFECTIVE host/port, not the displayed ones — `?port=6543` on a DSN whose
+  // URL says 5432 reaches the transaction pooler this check exists to refuse.
+  const target = effectiveDbTarget(parsed);
+  if (target.port === '6543' && /(^|\.)pooler\.supabase\.com$/i.test(target.host)) {
     throw new Error(
       'AUDIT_DB_URL points at the Supabase Transaction pooler (port 6543), which does not ' +
       'preserve prepared statements or the search_path startup pin this store requires. ' +
@@ -156,12 +304,14 @@ export function isDisposableDbHost(hostname) {
 export function dbIdentity(dsn) {
   let u;
   try { u = new URL(dsn); } catch { return null; }
-  const host = u.hostname.trim().toLowerCase();
+  // Effective target — a `?host=`/`?port=` override changes which database this
+  // DSN names, so an identity built from the URL authority alone would label
+  // two different stores identically (and one store two different ways).
+  const target = effectiveDbTarget(u);
+  const host = target.host.trim().toLowerCase();
   // localhost and 127.0.0.1 are the same server for this purpose.
   const canonHost = LOOPBACK_DB_HOSTS.has(host) || /^127\./.test(host) ? 'localhost' : host;
-  const port = u.port || '5432';
-  const database = decodeURIComponent(u.pathname.replace(/^\//, ''));
-  return `${canonHost}:${port}/${database}`;
+  return `${canonHost}:${target.port}/${target.database}`;
 }
 
 /**
@@ -177,8 +327,24 @@ export function dbIdentity(dsn) {
  * repo's NAME never lands in this repo) applies to its infrastructure.
  *
  * The only operation the reconciler performs on this value is EQUALITY, so a
- * digest satisfies it exactly. Nothing downstream needs to recover the host,
- * and nothing can.
+ * digest satisfies it exactly. Nothing downstream needs to recover the host.
+ *
+ * WHAT IT DOES AND DOES NOT PROVIDE (corrected 2026-09-04, code-audit M6 —
+ * this used to end "and nothing can", which overstates it). The digest is
+ * unkeyed and deterministic over a LOW-ENTROPY input: `host:port/database`.
+ * It resists nothing against a guessed candidate — anyone holding a list of
+ * plausible hostnames can hash them and check for a match, and confirming a
+ * guess is exactly the capability a published identifier should not hand out
+ * cheaply. What it does provide is that the value carries no plaintext
+ * locator: a reader who does not already have a candidate learns nothing, and
+ * the string cannot be pasted into a connection attempt.
+ *
+ * That is the right trade for its actual job. A keyed HMAC would resist the
+ * guessing attack and destroy the property the value exists for — two
+ * independent processes, on different machines, must derive the SAME
+ * fingerprint for one store, which a per-machine key makes impossible. So the
+ * rule stands on scope, not on strength: publish the fingerprint, never
+ * `dbIdentity`, and do not treat a fingerprint as a secret.
  *
  * 16 hex characters (64 bits): collision-irrelevant for a set of stores that
  * numbers in the single digits, and short enough to read in a report line.
@@ -288,9 +454,18 @@ export function assertDisposableDbUrl(testUrl, { productionUrl = null } = {}) {
   } catch {
     throw new Error('AUDIT_DB_TEST_URL is not a valid URL — expected a postgresql:// connection string.');
   }
-  if (!isDisposableDbHost(parsed.hostname)) {
+  // The host this DSN CONNECTS to, not the one it displays. Without this,
+  // `postgresql://localhost/db?host=prod.example.com` passes the loopback
+  // allowlist and the suite drops the schema on prod — the allowlist failing
+  // OPEN through the one door it does not look at (2026-09-04).
+  if (!isDisposableDbHost(effectiveDbTarget(parsed).host)) {
     throw new Error(
-      `AUDIT_DB_TEST_URL points at host "${parsed.hostname}", which is not a recognised disposable ` +
+      // The host the check REFUSED, not the one the string displays. Reporting
+      // `parsed.hostname` here would print `points at host "localhost"` for a
+      // DSN rejected because `?host=` sends it to prod — a message that
+      // contradicts its own decision and sends the reader hunting the wrong
+      // thing (found by the full-scope census, not by the finding).
+      `AUDIT_DB_TEST_URL points at host "${effectiveDbTarget(parsed).host}", which is not a recognised disposable ` +
       'database host — refusing to run destructive integration tests (they DROP SCHEMA public CASCADE) ' +
       'against it. AUDIT_DB_TEST_URL must be a throwaway local/container Postgres on loopback ' +
       '(127.0.0.0/8, localhost or ::1); `npm run db:local up` provisions one. This check is an ' +
@@ -519,6 +694,9 @@ export function buildPoolConfig(url, pgTypes) {
  */
 /** Latch so the store line is emitted once per process, not per getPool() call. */
 let _announcedStore = null;
+// The DSN `getPool()` opened, or null before any pool exists. Read by
+// `activeStoreDescriptor` so a report names the store its queries reached.
+let _activeDsn = null;
 
 /**
  * Say WHICH store this process connected to, once, on stderr.
@@ -553,12 +731,73 @@ let _announcedStore = null;
  * @param {string} dsn
  */
 function announceStore(dsn) {
-  const fp = storeFingerprint(dsn);
-  if (!fp || _announcedStore === fp) return;
-  _announcedStore = fp;
-  let db = 'unknown';
-  try { db = new URL(dsn).pathname.replace(/^\//, '') || 'unknown'; } catch { /* keep 'unknown' */ }
-  process.stderr.write(`  [db/client] store ${fp} (db=${db})\n`);
+  const desc = storeDescriptor(dsn);
+  if (!desc || _announcedStore === desc.fingerprint) return;
+  _announcedStore = desc.fingerprint;
+  process.stderr.write(`  [db/client] store ${desc.label}\n`);
+}
+
+/**
+ * The publishable identity of the store a DSN addresses, as ONE oracle.
+ *
+ * `announceStore` above prints this into the process log; the drift report and
+ * the architecture-map header print it beside their verdict. There must be only
+ * one formatter, because the whole property being asserted is that two surfaces
+ * naming the same store produce the same string — a second spelling of "store
+ * <fp> (db=<name>)" is a second thing that can drift.
+ *
+ * WHY IT ALSO BELONGS IN THE REPORTS (consumer report, 2026-09-04). `arch:drift`
+ * printed `GREEN`, score 0, 0 duplication pairs for a repo that had measured 14
+ * pairs an hour earlier, because the run had connected to a different database.
+ * Nothing in the report said which one. The only evidence was this log line,
+ * thousands of lines away in a different CI step — so distinguishing the two runs
+ * meant noticing that an eight-hex digest had changed, across an hour and two
+ * separate log files. Having more than one store reachable is a SUPPORTED
+ * configuration (a repo `.env` and `~/.audit-loop.env` may name different
+ * databases), so the ambiguity that creates has to be resolved in the output.
+ *
+ * FINGERPRINT, NEVER A HOSTNAME — the reporter asked for `host:port/database`,
+ * and that is the one form this may not take. AGENTS.md: a store is named to
+ * operators by fingerprint plus the consumers using it, because this repo is
+ * public and one consumer's store is corporate. `dbIdentity` IS that hostname
+ * and stays internal. The database NAME is included because it is the
+ * discriminator that would have caught the incident at a glance (`audit_loop`
+ * vs `postgres`) and is not a locator.
+ *
+ * @param {string|null|undefined} dsn
+ * @returns {{fingerprint: string, database: string, label: string}|null}
+ *   null when there is no DSN or it is unparseable — a caller must render that
+ *   as "unknown", never as an absent line, or a local-mode run looks like a
+ *   cloud run whose store nobody happened to mention.
+ */
+export function storeDescriptor(dsn) {
+  const fingerprint = storeFingerprint(dsn);
+  if (!fingerprint) return null;
+  let database = 'unknown';
+  // Same resolver the fingerprint is built from, so the label's two halves can
+  // never describe different databases.
+  try { database = effectiveDbTarget(new URL(dsn)).database || 'unknown'; } catch { /* keep 'unknown' */ }
+  return { fingerprint, database, label: `${fingerprint} (db=${database})` };
+}
+
+/**
+ * The descriptor for the store this process is actually talking to.
+ *
+ * Prefers the DSN `getPool()` OPENED (`_activeDsn`) over a fresh
+ * `resolveDbUrl()`. Plan-audit R1 H2 named the shape: a descriptor resolved
+ * apart from the client that ran the query is, structurally, a second answer to
+ * a question that must have one — and this whole change exists so that a verdict
+ * names the store it came from. Today the two cannot diverge in a single process
+ * (env is stable; `getPool` caches), so this is not a bug fix; it removes the
+ * possibility rather than relying on an invariant nothing states.
+ *
+ * Falls back to configuration when no pool has been opened — a caller may ask
+ * before connecting, and `null` (no DSN at all) is the honest answer there.
+ *
+ * @returns {{fingerprint: string, database: string, label: string}|null}
+ */
+export function activeStoreDescriptor() {
+  return storeDescriptor(_activeDsn ?? resolveDbUrl());
 }
 
 export async function getPool() {
@@ -574,6 +813,15 @@ export async function getPool() {
     assertPublicSchema();
     const url = resolveDbUrl();
     if (!url) return null;
+    // The DSN this pool was actually OPENED with, kept so a later report names
+    // the store the queries went to rather than re-deriving one from config.
+    // Plan-audit R1 H2: a descriptor resolved apart from the client that ran the
+    // query can, in principle, describe a different store — the same
+    // "resolved apart" shape AGENTS.md names for endpoint/credential pairs. In
+    // one process the two cannot diverge today (env is stable and `getPool`
+    // caches), but nothing asserted that, and the whole point of this change is
+    // that a verdict names the store it came from.
+    _activeDsn = url;
     assertSafeDsn(url); // reject forbidden/invalid DSNs (txn pooler 6543, non-postgres) before connecting
 
     let pg;
@@ -655,4 +903,5 @@ export async function _resetForTest() {
   // DIFFERENT store gets silence — which is the exact blindness the line was
   // added to remove, reproduced inside the suite.
   _announcedStore = null;
+  _activeDsn = null;
 }

@@ -20,7 +20,7 @@
  * @module scripts/lib/store/repo
  */
 
-import { getPool, dbIdentity, classifyDbConnectionError } from '../db/client.mjs';
+import { getPool, dbIdentity, classifyDbConnectionError, activeStoreDescriptor } from '../db/client.mjs';
 import { one, insertReturning, updateWhere, many, pgArray } from '../db/query.mjs';
 import { resolveRepoIdentity } from '../repo-identity.mjs';
 import { _recordInitFailure, _clearInitFailure } from './client-state.mjs';
@@ -117,6 +117,33 @@ export async function isCloudEnabled() {
   } catch {
     return false;
   }
+}
+
+/**
+ * The publishable identity of the store this process would talk to — the
+ * `storeDescriptor` shape (`{fingerprint, database, label}`), or `null` when no
+ * DSN resolves (local mode) or it is unparseable.
+ *
+ * Exposed HERE, and re-exported through `learning-store.mjs`, so the reporting
+ * CLIs can name their store without importing `db/client.mjs` directly.
+ * `arch-memory` may depend on `learning-store` and `shared-lib`, not on
+ * `stores` (`.audit-loop/domain-map.json`), and three CLIs reaching straight for
+ * the client produced three `arch-memory -> stores` layering violations —
+ * `tests/arm-vocabulary-layering.test.mjs` caught them at once. Routing through
+ * the barrel they already import is the refactor half of AGENTS.md's
+ * *refactor > retag > declare* preference order.
+ *
+ * Not async and never opens a pool: it answers "which store is this process
+ * talking to", which a cloud-off run must also be able to answer (as `null`).
+ * `activeStoreDescriptor` prefers the DSN the pool was OPENED with, so on the
+ * reporting path — where `initLearningStore()` has already run — the answer is
+ * bound to the client that ran the queries rather than re-derived from config
+ * (plan-audit R1 H2).
+ *
+ * @returns {{fingerprint: string, database: string, label: string}|null}
+ */
+export function getActiveStoreDescriptor() {
+  return activeStoreDescriptor();
 }
 
 // ── audit_repos CRUD ───────────────────────────────────────────────────────

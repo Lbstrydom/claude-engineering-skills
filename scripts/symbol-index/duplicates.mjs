@@ -24,6 +24,8 @@ import {
   getRepoIdByUuid,
   getActiveSnapshot,
   getTopDuplicateClusters,
+  countSymbolsForSnapshot,
+  getActiveStoreDescriptor,
 } from '../learning-store.mjs';
 import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
@@ -82,15 +84,29 @@ export function paginate(rows, limit) {
   return { clusters, truncated, total: truncated ? null : clusters.length };
 }
 
-function renderText(clusters, repoName, { truncated, limit }) {
+/**
+ * `corpusLine` describes what was measured. The zero-cluster branch below is the
+ * exact sentence the 2026-09-04 consumer incident produced — "no cross-file
+ * exact-duplicate clusters in this snapshot" — for a snapshot in the wrong
+ * database, an hour after the same repo measured 14. A clean result and an empty
+ * corpus were one string. Now they are not.
+ */
+function corpusLine(symbolCount, store) {
+  const corpus = Number.isFinite(symbolCount) ? `${symbolCount} symbols` : 'an UNKNOWN number of symbols';
+  return `  snapshot: ${corpus}   store: ${store?.label || 'unknown'}`;
+}
+
+export function renderText(clusters, repoName, { truncated, limit, symbolCount = null, store = null }) {
   if (clusters.length === 0) {
-    return `arch:duplicates (${repoName}): no cross-file exact-duplicate clusters in this snapshot.\n`;
+    return `arch:duplicates (${repoName}): no cross-file exact-duplicate clusters in this snapshot.\n`
+      + corpusLine(symbolCount, store) + '\n';
   }
   const lines = [];
   const count = truncated
     ? `the top ${clusters.length} of MORE than ${limit} cluster(s)`
     : `${clusters.length} cluster(s)`;
   lines.push(`arch:duplicates (${repoName}): ${count} — files share identical symbol bodies + signatures`);
+  lines.push(corpusLine(symbolCount, store));
   if (truncated) {
     lines.push(`  (truncated at --limit ${limit}; re-run with a larger --limit for the full set)`);
   }
@@ -150,10 +166,27 @@ async function main() {
   }
   const { clusters, truncated, total } = paginate(rows, args.limit);
 
+  // Corpus size + store, for the same reason `truncated`/`total` are here:
+  // `limit`/`truncated`/`total` let a caller assert EXHAUSTIVITY over the page,
+  // and these two let it assert that the page describes a real corpus in the
+  // intended database. A consumer's duplication gate exited 0 over a near-empty
+  // snapshot in the wrong store on 2026-09-04 and could not tell — they had to
+  // thread the count in from the refresh step's own output to build a floor
+  // check. Best-effort: null renders/serialises as unknown, never as 0.
+  let symbolCount = null;
+  try {
+    symbolCount = await countSymbolsForSnapshot({ repoId: repo.id, refreshId: snap.refreshId });
+  } catch (err) {
+    process.stderr.write(`arch:duplicates: symbol count failed (reporting unknown): ${err.message}\n`);
+  }
+  const store = getActiveStoreDescriptor();
+
   if (args.json) {
     process.stdout.write(JSON.stringify({
       repoName: identity.name,
       refreshId: snap.refreshId,
+      symbolCount,
+      store,
       // `limit`/`truncated`/`total` let a caller assert EXHAUSTIVITY. Without
       // them a policy gate over "all clusters" cannot tell a complete result
       // from a full page, and silently enforces over a prefix.
@@ -164,7 +197,7 @@ async function main() {
       clusters,
     }, null, 2) + '\n');
   } else {
-    process.stdout.write(renderText(clusters, identity.name, { truncated, limit: args.limit }));
+    process.stdout.write(renderText(clusters, identity.name, { truncated, limit: args.limit, symbolCount, store }));
   }
   // NOT `process.exit(0)`: on Windows a redirected/piped stdout is async, and
   // exit() discards whatever has not flushed. The `--json` envelope exists to

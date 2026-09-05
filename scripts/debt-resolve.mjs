@@ -2,7 +2,7 @@
 /**
  * @fileoverview Phase D — manual debt-entry resolution CLI.
  *
- * Removes a debt entry from the committed ledger and emits a 'resolved' event
+ * Removes a debt entry from the LOCAL ledger and emits a 'resolved' event
  * to the authoritative event source (cloud or local). Used when an operator
  * confirms the underlying issue has been fixed (typically after a Step 5
  * verification audit surfaces the resolve prompt).

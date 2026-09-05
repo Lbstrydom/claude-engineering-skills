@@ -209,7 +209,7 @@ async function main() {
     process.exit(2);
   }
 
-  const { getPool, closePool, isDisposableDbHost } = await import('../lib/db/client.mjs');
+  const { getPool, closePool, isDisposableDbHost, effectiveDbTarget } = await import('../lib/db/client.mjs');
 
   // Ground-truth guard: this fixture must reflect a FRESH MIGRATION REPLAY on a
   // vanilla self-hosted Postgres — what postgres-parity CI's bare
@@ -234,9 +234,13 @@ async function main() {
     process.stderr.write('AUDIT_DB_URL is not a valid URL — expected a postgresql:// connection string.\n');
     process.exit(2);
   }
-  if (!isDisposableDbHost(parsedDbUrl.hostname)) {
+  // Effective host, not the displayed one: `?host=` overrides the URL authority
+  // in the parser `pg` uses, so reading `.hostname` lets a production DSN pass
+  // this allowlist wearing a loopback URL (2026-09-04, same fix as client.mjs).
+  const effectiveHost = effectiveDbTarget(parsedDbUrl).host;
+  if (!isDisposableDbHost(effectiveHost)) {
     process.stderr.write(
-      `AUDIT_DB_URL points at host "${parsedDbUrl.hostname}", which is not a recognised disposable ` +
+      `AUDIT_DB_URL points at host "${effectiveHost}", which is not a recognised disposable ` +
       'database host — refusing to generate the schema fixture from it.\n' +
       'This fixture is the ground truth for "what a fresh migration replay produces", so it must come ' +
       'from a database that IS one. A long-lived store drifts from that in ways that are invisible in ' +

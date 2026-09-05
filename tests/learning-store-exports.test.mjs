@@ -41,6 +41,14 @@ const EXPECTED_EXPORTS = [
   // 'unresolved'|'error'`) and is now the single implementation; the older name
   // is a thin wrapper over it so existing call sites are untouched.
   'resolveRepoForStoreResult',
+  // Added 2026-09-04 (drift-signal-attribution). The publishable identity of the
+  // configured store — fingerprint + database name, never a hostname. It is a
+  // READ of configuration rather than of the database, so it is sync and answers
+  // for a cloud-off run too (as null). It sits on the barrel because the
+  // reporting CLIs that must name their store are `arch-memory`, which may
+  // depend on `learning-store` but NOT on `stores` — three direct
+  // `db/client.mjs` imports produced three layering violations.
+  'getActiveStoreDescriptor',
 
   // runs-findings (15, incl. _resetClassificationColumnCache + _resetPassStatsRoundColumnCache test seams)
   '_resetClassificationColumnCache',
@@ -350,6 +358,9 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
   });
 
   it('pins the total export count (update deliberately when the surface changes)', () => {
+    // 198 → 199: getActiveStoreDescriptor added 2026-09-04 — the publishable
+    // identity of the configured store, on the barrel because the CLIs that must
+    // name their store are `arch-memory`, which may not depend on `stores`.
     // 197 → 198: resolveImportGraphFreshness added 2026-09-04 — the PURE freshness
     // decision split out of getFreshImportersOrNull so it is reachable without a DB.
     // Same shape as resolveActiveSnapshot: the query it sat behind named a phantom
@@ -522,6 +533,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // a test: it sat between two awaits in a store module with no live-DB
     // harness. Exporting the decision is what made it provable.
     // tests/active-snapshot-pointer.test.mjs.
-    assert.equal(EXPECTED_EXPORTS.length, 198);
+    assert.equal(EXPECTED_EXPORTS.length, 199);
   });
 });

@@ -237,7 +237,16 @@ export async function persistDebtEntries(context, entries, { ledgerPath = DEFAUL
   // Write the local cache first so the entry survives a crash mid-call. The
   // cache is NOT the source of truth (see the module docstring) — it is a
   // fast local read and the spill's companion.
-  const local = await writeDebtEntries(entries, { ledgerPath });
+  // Propagate the mode this facade already decided. `writeDebtEntries` warns
+  // when the ledger is gitignored-and-untracked, and that is only news in LOCAL
+  // mode, where this file is the only copy; in CLOUD mode being gitignored is
+  // the intended state and warning about it every run is a nag on a correct
+  // setup. The ledger module accepts the answer, it does not compute one —
+  // `selectEventSource` above owns it.
+  const local = await writeDebtEntries(entries, {
+    ledgerPath,
+    cloudMirrored: context.source === EventSource.CLOUD,
+  });
 
   // Route the store write through the durable seam rather than calling
   // `upsertDebtEntries` directly.

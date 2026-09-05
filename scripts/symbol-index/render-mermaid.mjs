@@ -31,6 +31,7 @@ import {
   getImportersForFiles,
   listFileImportsForSnapshot,
   getGraphCoverage,
+  getActiveStoreDescriptor,
 } from '../learning-store.mjs';
 import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
 import { renderArchitectureMap } from '../lib/arch-render.mjs';
@@ -402,6 +403,9 @@ async function main() {
       importerMap,
       importGraphPopulated: snap.importGraphPopulated === true,
       unindexedStackKinds,
+      // This document renders from the CLOUD symbol_index and more than one
+      // store is legitimately reachable, so it says which one it read.
+      store: getActiveStoreDescriptor(),
     });
 
     atomicWriteFileSync(outPath, markdown);

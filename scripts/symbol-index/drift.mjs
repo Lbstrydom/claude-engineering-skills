@@ -26,6 +26,7 @@ import {
   getTopDuplicateClusters,
   listSymbolsForSnapshot,
   countSymbolsForSnapshot,
+  getActiveStoreDescriptor,
 } from '../learning-store.mjs';
 import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
@@ -114,6 +115,18 @@ const PRAGMA_CANDIDATE_POOL_CAP = 10000;
  * @returns {boolean}
  */
 function isPragmaPoolCapped(totalCount) {
+  // An UNKNOWN total is capped. The count query is best-effort, so `null`
+  // reaches here whenever it failed — and `null > CAP` is `false` in JavaScript
+  // (null coerces to 0), which would run reconciliation over a possibly-
+  // truncated pool and emit exactly the false "unresolved pragma" warnings the
+  // cap exists to prevent. Fail closed on anything that is not a real number.
+  //
+  // This guard used to sit at the CALL SITE as `totalCount === null || …`,
+  // which behaved correctly but put the `capped` decision in two places — the
+  // very thing this function's docstring says it exists to prevent, and the
+  // shape the Gemini gate flagged (it read the predicate alone and concluded
+  // the tool failed open). One function decides; the call site just asks.
+  if (typeof totalCount !== 'number' || !Number.isFinite(totalCount)) return true;
   return totalCount > PRAGMA_CANDIDATE_POOL_CAP;
 }
 
@@ -127,11 +140,17 @@ function classify(driftScore, threshold) {
 // renderDriftIssue() so all three human surfaces (architecture-map.md,
 // drift sticky issue, neighbourhood callout) share one renderer. Local
 // renderMarkdown() removed.
-function renderMarkdownViaShared(drift, threshold, status, identity, clusters, commitSha) {
+function renderMarkdownViaShared(drift, threshold, status, identity, clusters, commitSha, symbolCount, store) {
   const { markdown } = renderDriftIssue({
     drift,
     threshold,
     status,
+    // The two facts that make the verdict falsifiable: how big the corpus was,
+    // and which store it came from. Both may be null, and renderDriftIssue
+    // renders null as `unknown` rather than as 0 or as a missing line — see the
+    // 2026-09-04 consumer incident written up there.
+    symbolCount,
+    store,
     generatedAt: drift.generated_at,
     // The SNAPSHOT's commit, read from its `refresh_runs` row — never the
     // refresh UUID (passing that mislabeled a UUID as a git commit, round-1
@@ -234,6 +253,22 @@ async function main() {
     process.stderr.write(`arch:drift: RPC failed: ${err.message}\n`);
     process.exit(2);
   }
+  // Corpus size, hoisted OUT of the pragma block below. It was already computed
+  // there — but only when the repo happened to contain `@duplicate-justification`
+  // pragmas, and only to decide a candidate-pool cap, so the number that says
+  // whether the score means anything was conditional on an unrelated feature.
+  // Best-effort: a failure here degrades the report to `unknown`, never aborts
+  // it, and never silently becomes 0 (which reads as an empty snapshot).
+  let symbolCount = null;
+  try {
+    symbolCount = await countSymbolsForSnapshot({ repoId: repo.id, refreshId: snap.refreshId });
+  } catch (err) {
+    process.stderr.write(`arch:drift: symbol count failed (report will say unknown): ${err.message}\n`);
+  }
+  // Read the DSN back through the same resolver the pool used, so the report
+  // names the store the query actually went to rather than a re-derivation.
+  const store = getActiveStoreDescriptor();
+
   const threshold = symbolIndexConfig.driftThreshold;
   // Deliberately stricter than the old `Number(x) || 0` (round-1 H8):
   // drift.score is a genuine JS number here (traced end-to-end through the
@@ -293,13 +328,17 @@ async function main() {
       // filePath, startLine, symbolName, kind) — round-3 M1 fix: an
       // earlier draft read snake_case here, so every candidate silently
       // had undefined fields and this whole reconciliation was a no-op.
-      const [symbols, totalCount] = await Promise.all([
-        listSymbolsForSnapshot({ repoId: repo.id, refreshId: snap.refreshId, limit: PRAGMA_CANDIDATE_POOL_CAP }),
-        countSymbolsForSnapshot({ repoId: repo.id, refreshId: snap.refreshId }),
-      ]);
+      // `totalCount` is the corpus size hoisted above — ONE count query per run,
+      // and the same number the report prints, so the two can never disagree.
+      // A null (the count query failed) is fail-CLOSED here: `null > CAP` is
+      // false, which would run reconciliation over a possibly-truncated pool and
+      // emit exactly the false "unresolved pragma" warnings the cap exists to
+      // prevent, so an unknown total skips reconciliation rather than guessing.
+      const totalCount = symbolCount;
+      const symbols = await listSymbolsForSnapshot({ repoId: repo.id, refreshId: snap.refreshId, limit: PRAGMA_CANDIDATE_POOL_CAP });
       const capped = isPragmaPoolCapped(totalCount);
       if (capped) {
-        process.stderr.write(`arch:drift: showing ${PRAGMA_CANDIDATE_POOL_CAP} of ${totalCount} symbols in this cluster analysis (capped)\n`);
+        process.stderr.write(`arch:drift: showing ${PRAGMA_CANDIDATE_POOL_CAP} of ${totalCount ?? 'an unknown number of'} symbols in this cluster analysis (capped)\n`);
       }
       // Gemini final-gate finding (round 1): this candidate pool feeds
       // pragma reconciliation below, NOT the rendered drift score/cluster
@@ -308,7 +347,9 @@ async function main() {
       // entirely rather than report a misleading partial result.
       if (capped) {
         ambiguousUnresolvedSection = `\n## Unresolved suppression pragmas — skipped (LOW — capped snapshot)\n\n` +
-          `This snapshot has ${totalCount} symbols, over the ${PRAGMA_CANDIDATE_POOL_CAP}-row candidate-pool cap; pragma reconciliation was skipped rather than risk false "unresolved" warnings for symbols outside the capped pool.\n`;
+          (totalCount === null
+            ? `This snapshot's symbol count could not be read, so reconciliation could not establish that the ${PRAGMA_CANDIDATE_POOL_CAP}-row candidate pool is complete; it was skipped rather than risk false "unresolved" warnings for symbols outside the pool.\n`
+            : `This snapshot has ${totalCount} symbols, over the ${PRAGMA_CANDIDATE_POOL_CAP}-row candidate-pool cap; pragma reconciliation was skipped rather than risk false "unresolved" warnings for symbols outside the capped pool.\n`);
       } else {
         const candidates = symbols.map((s) => ({
           filePath: s.filePath, symbolName: s.symbolName, kind: s.kind,
@@ -330,9 +371,13 @@ async function main() {
     process.stderr.write(`arch:drift: pragma reconciliation skipped: ${err.message}\n`);
   }
 
-  const md = renderMarkdownViaShared(drift, threshold, status, identity, clusters, snap.commitSha ?? null) + excludedNote + renderStalePragmaSection(stalePragmas) + ambiguousUnresolvedSection;
+  const md = renderMarkdownViaShared(drift, threshold, status, identity, clusters, snap.commitSha ?? null, symbolCount, store) + excludedNote + renderStalePragmaSection(stalePragmas) + ambiguousUnresolvedSection;
 
-  if (args.json) process.stdout.write(JSON.stringify({ drift, threshold, status, stalePragmas }, null, 2) + '\n');
+  // `symbolCount`/`store` ride in the JSON envelope for the same reason they
+  // ride in the markdown: a policy gate reading this cannot otherwise tell a
+  // clean repo from a near-empty snapshot in the wrong database. `store` is the
+  // publishable descriptor (fingerprint + db name), never a hostname.
+  if (args.json) process.stdout.write(JSON.stringify({ drift, threshold, status, stalePragmas, symbolCount, store }, null, 2) + '\n');
   else process.stdout.write(md);
 
   // round-1 M1: an unwritable --out path (bad dir, full disk, permissions)

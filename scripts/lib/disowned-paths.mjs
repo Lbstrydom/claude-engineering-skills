@@ -61,8 +61,17 @@ import { spawnSync } from 'node:child_process';
  *   empty because NOTHING was checked, not because nothing is disowned. A
  *   caller using this as diagnostic evidence (round-3 audit M20) must branch
  *   on `degraded`, not merely on whether `paths` is empty.
+ *
+ * `warnOnDegraded` (default true) controls only the stderr line; `degraded` and
+ * `warning` are returned either way. Pass `false` when this probe merely decides
+ * whether to print the CALLER's own advisory — `debt-ledger.mjs` asks it whether
+ * to say the ledger is not durable, and outside a git work tree that turned a
+ * quiet "cannot tell, so say nothing" into a loud unrelated ownership warning on
+ * every temp-dir run. Never pass `false` where the probe's RESULT is the
+ * judgement being reported (the file scanner, the doctor): there, silence about
+ * an unverified scan is the defect the warning exists to prevent.
  */
-export function ignoredUntrackedPaths(repoRoot, candidates) {
+export function ignoredUntrackedPaths(repoRoot, candidates, { warnOnDegraded = true } = {}) {
   const paths = [...new Set(candidates.map((p) => p.replaceAll(/\\/g, '/')))];
   if (paths.length === 0) return { paths: new Set(), degraded: false, warning: null };
 
@@ -88,7 +97,7 @@ export function ignoredUntrackedPaths(repoRoot, candidates) {
     const warning = '[disowned-paths] WARN: could not determine gitignore status '
       + `(${ign.error ? ign.error.code || ign.error.message : `git exit ${ign.status}`}) — `
       + 'ownership was NOT verified; treating every candidate as owned by default, but this result is unverified, not a confirmed clean scan.';
-    process.stderr.write(`${warning}\n`);
+    if (warnOnDegraded) process.stderr.write(`${warning}\n`);
     return { paths: new Set(), degraded: true, warning };
   }
   // No further subtraction needed: `check-ignore` WITHOUT `--no-index` (above)

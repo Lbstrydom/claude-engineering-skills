@@ -220,13 +220,22 @@ function renderWhereUsed(filePath, importerMap, importGraphPopulated) {
   return rendered + more;
 }
 
-/** Top-of-file header. */
-export function renderHeader({ repoName, generatedAt, commitSha, refreshId, drift, threshold, status, domainCount, symbolCount, violationCount }) {
+/**
+ * Top-of-file header.
+ *
+ * `store` (from `db/client.mjs::storeDescriptor`) sits beside the refresh id for
+ * the same reason it sits in the drift report: this document renders from the
+ * CLOUD symbol_index, more than one store is legitimately reachable, and nothing
+ * else in the file says which one produced it. Fingerprint + database name,
+ * never a hostname — see `storeDescriptor`. `null` renders `unknown`.
+ */
+export function renderHeader({ repoName, generatedAt, commitSha, refreshId, drift, threshold, status, domainCount, symbolCount, violationCount, store = null }) {
   const lines = [
     '<!-- audit-loop:architectural-map -->',
     `# Architecture Map — ${escapeMarkdown(repoName)}`,
     '',
     `- Generated: ${generatedAt}   commit: ${commitSha || 'unknown'}   refresh_id: ${refreshId || 'none'}`,
+    `- Store: ${store?.label ? `\`${escapeMarkdown(store.label)}\`` : 'unknown'}`,
     `- Drift score: ${drift ?? 0} / threshold ${threshold}   status: \`${status || 'INSUFFICIENT_DATA'}\``,
     // NAME THE MECHANISM. This counter is `symbol_layering_violations` —
     // dependency-cruiser RULE hits — which is a different instrument from the
@@ -268,6 +277,8 @@ export function renderArchitectureMap({
   // and must say so. Sibling of `renderedSymbolCap`: both mean "the document
   // is incomplete", and an incomplete map that reads complete is the failure.
   unindexedStackKinds = [],
+  // Which store this document was rendered FROM — see renderHeader.
+  store = null,
 }) {
   const grouped = groupByDomain(symbols);
   const domainCount = grouped.size;
@@ -276,7 +287,7 @@ export function renderArchitectureMap({
   const out = [renderHeader({
     repoName, generatedAt, commitSha, refreshId,
     drift, threshold, status,
-    domainCount, symbolCount: symbols.length, violationCount,
+    domainCount, symbolCount: symbols.length, violationCount, store,
   })];
 
   if (renderedSymbolCap != null) {
@@ -486,8 +497,29 @@ export function renderNeighbourhoodCallout({ records, targetPaths, totalCandidat
   };
 }
 
-/** Render the drift-sweep sticky-issue body. */
-export function renderDriftIssue({ drift, threshold, status, clusters = [], violations = [], generatedAt, commitSha, refreshId, repoName }) {
+/**
+ * A verdict must describe what it measured.
+ *
+ * `symbolCount` and `store` are not decoration: a drift score of 0 over 1842
+ * symbols and a drift score of 0 over 12 symbols rendered IDENTICALLY until
+ * 2026-09-04, and only the first is a statement about code. A consumer wired
+ * `arch:*` into a scheduled Action, the run connected to a different database
+ * than the hour-earlier local run, and this report said `GREEN`, score 0, 0
+ * duplication pairs — against a repo that had just measured 14 pairs. Every
+ * step passed. Their own duplication gate exited 0 on that snapshot: a policy
+ * gate passing over a near-empty store, which is the false-green class these
+ * skills exist to prevent.
+ *
+ * Both are `null`-able and both render as `unknown` when null — never as 0, and
+ * never as an omitted line. "Nobody looked" and "looked, found nothing" are the
+ * two readings this whole change exists to separate, so a missing count must
+ * not borrow the clothes of a measured one.
+ *
+ * @param {object} args
+ * @param {number|null} [args.symbolCount] symbols in the measured snapshot
+ * @param {{label: string}|null} [args.store] from `db/client.mjs::storeDescriptor`
+ */
+export function renderDriftIssue({ drift, threshold, status, clusters = [], violations = [], generatedAt, commitSha, refreshId, repoName, symbolCount = null, store = null }) {
   const TOP_CLUSTERS = 5;
   const top = clusters.slice(0, TOP_CLUSTERS);
   const tail = clusters.slice(TOP_CLUSTERS);
@@ -499,6 +531,8 @@ export function renderDriftIssue({ drift, threshold, status, clusters = [], viol
     `- **Status:** \`${status}\``,
     `- **Generated:** ${generatedAt}`,
     `- **Commit:** ${commitSha || 'unknown'}   refresh_id: ${refreshId || 'unknown'}`,
+    `- **Store:** ${store?.label ? `\`${escapeMarkdown(store.label)}\`` : 'unknown'}`,
+    `- **Corpus measured:** ${Number.isFinite(symbolCount) ? `${symbolCount} symbols` : 'unknown — the score below describes an unknown number of symbols'}`,
     `- **Drift score:** ${drift?.score ?? 0} / threshold ${threshold}`,
     `- **Duplication pairs:** ${drift?.duplication_pairs ?? drift?.duplicationPairs ?? 0}`,
     `- **Layering violations (dep-cruiser rules):** ${drift?.layering_violations ?? drift?.layeringViolations ?? 0}`,

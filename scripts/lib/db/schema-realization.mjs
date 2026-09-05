@@ -26,6 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { effectiveDbTarget } from './client.mjs';
 
 /** Thrown when the DB is provably missing migrations this bundle ships. */
 export const ERR_SCHEMA_BEHIND = 'ERR_SCHEMA_BEHIND';
@@ -143,9 +144,14 @@ export function describeDatabase(pool) {
   try {
     const dsn = pool?.options?.connectionString;
     if (!dsn) return null;
-    const u = new URL(dsn);
-    const db = u.pathname.replace(/^\//, '');
-    return db ? `${u.hostname}/${db}` : u.hostname || null;
+    // Effective target, not the URL authority. This label exists so a reader
+    // knows which DSN a printed `--migrate` would target — and `?host=`
+    // overrides the hostname in the parser `pg` uses, so the displayed host is
+    // exactly the wrong thing to answer that question with. Found by the
+    // full-scope census behind code-audit R1 H1, in a file the finding never
+    // cited.
+    const { host, database } = effectiveDbTarget(new URL(dsn));
+    return database ? `${host}/${database}` : host || null;
   } catch {
     return null;
   }

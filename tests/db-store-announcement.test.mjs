@@ -97,7 +97,7 @@ describe('the announcement is wired into getPool', () => {
     // and a behavioural test would need a live pool per store to prove that.
     const s = src();
     assert.match(s, /announceStore\(url\);/, 'getPool must announce the store it resolved');
-    assert.match(s, /\[db\/client\] store \$\{fp\} \(db=\$\{db\}\)/, 'the line must carry the fingerprint');
+    assert.match(s, /\[db\/client\] store \$\{desc\.label\}/, 'the line must carry the descriptor label');
     assert.match(s, /process\.stderr\.write/, 'stdout stays clean for JSON');
   });
 
@@ -111,19 +111,35 @@ describe('the announcement is wired into getPool', () => {
     assert.match(s, /export async function _resetForTest\(\)[\s\S]{0,500}_announcedStore = null/);
   });
 
-  test('the emitted line interpolates ONLY the fingerprint and the db name', () => {
+  test('the emitted line interpolates ONLY the descriptor label', () => {
     // Asserted on the emitted template itself rather than a source slice: the
     // property that matters is that no locator can reach stderr, and the
     // template is the only thing that decides that. (An earlier version of this
     // test sliced the file between two markers and over-ran into getPool, which
     // made it fail on unrelated text — a reminder that a source-scanning
     // assertion is only as good as its boundaries.)
+    //
+    // Since 2026-09-04 the label is BUILT by `storeDescriptor`, because the
+    // drift report and the architecture-map header now name the store too and a
+    // second spelling of it would be a second thing that can drift. This test
+    // therefore checks the ONE interpolation reaching stderr; what that label
+    // may contain is asserted behaviourally, against real DSNs, in
+    // tests/drift-signal-attribution.test.mjs.
     const s = src();
     const line = s.match(/process\.stderr\.write\(`\s*\[db\/client\] store [^`]*`\)/);
     assert.ok(line, 'the store-announcement line must exist');
     const interpolations = [...line[0].matchAll(/\$\{([^}]+)\}/g)].map((m) => m[1].trim());
-    assert.deepEqual(interpolations, ['fp', 'db'],
-      'only the digest and the database name may be printed — never a host, port or credential');
-    assert.match(s, /const fp = storeFingerprint\(dsn\)/, 'the identity must come from the one-way digest');
+    assert.deepEqual(interpolations, ['desc.label'],
+      'only the descriptor label may be printed — never a host, port or credential');
+    assert.match(s, /const fingerprint = storeFingerprint\(dsn\)/, 'the identity must come from the one-way digest');
+    assert.match(s, /const desc = storeDescriptor\(dsn\)/, 'announceStore must not build its own label');
+  });
+
+  test('the label is built in exactly ONE place', () => {
+    // The single-oracle property. Two surfaces naming the same store must
+    // produce the same string, so `(db=` may be assembled once and only once.
+    const s = src();
+    assert.equal((s.match(/\(db=\$\{/g) || []).length, 1,
+      'more than one place composes the store label — they can drift apart');
   });
 });

@@ -53,6 +53,7 @@
 | `getRepoIdByUuid` | — | `audit_repos` | `id \| null` | n/a |
 | `upsertRepoByUuid` | `audit_repos` | — | `id` | n/a |
 | `getRepoIdByName` | — | `audit_repos` | `id \| null` | n/a |
+| `getActiveStoreDescriptor` | — | — | `{fingerprint, database, label} \| null` (config, sync) | n/a |
 
 ## runs-findings (audit runs + adjudication)
 

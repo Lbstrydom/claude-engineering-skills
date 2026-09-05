@@ -321,6 +321,10 @@ consumer instead of the named one. Verified 2026-07-20.)
 > `storeFingerprint`. **An unasked question must never render as an empty result**,
 > and a store is named to operators by **fingerprint + the consumers using it**,
 > never a hostname — this repo is public and one consumer's store is corporate.
+> `storeDescriptor` is that one oracle, and it now rides beside a symbol count in
+> the drift report and map header. **An EMPTY DSN env var is the AIR-GAP signal**
+> (`airGapDbUrl`, 20 suites, some `DROP SCHEMA`) — never "fix" it to fall through
+> to `~/.audit-loop.env`; say so loudly.
 >
 > **File the report, don't paste it.** Consumer: `cross-skill.mjs upstream report
 > --affected-path <synced path>`; here: `npm run upstream:issues` →

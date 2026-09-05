@@ -1,7 +1,35 @@
 /**
  * @fileoverview Phase D — debt ledger read/write/merge.
  *
- * The debt ledger (`.audit/tech-debt.json`) is committed, human-approved state.
+ * **`.audit/tech-debt.json` IS NOT COMMITTED STATE — and which copy is
+ * authoritative depends on the run's mode, so this file does not get to say.**
+ *
+ * This header used to assert it "is committed, human-approved state" — the same
+ * false premise `debt-memory.mjs` corrected on 2026-09-04, left standing in the
+ * module a reader actually opens to find out what the file is. It is a claim
+ * about the consumer's git configuration, made by a file that cannot see it:
+ * `.gitignore` ignores all of `.audit/` in this repo and in every consumer
+ * checked, so the declared source of truth was untracked, per-machine, and
+ * survived nothing. Measured here that day: local 106 entries, cloud 136,
+ * overlap 69 — 37 entries on exactly ONE disk. A consumer then repeated the cost
+ * by trusting the sentence, putting its own ownership overlay beside the ledger
+ * on its strength, and finding it silently uncommitted.
+ *
+ * **The correction is not "the cloud store is the source of truth" either.**
+ * That was this header's first repair, and plan-audit R1 (H1) caught it as a
+ * SECOND false universal: `debt-memory.mjs` chooses the authoritative source
+ * PER RUN — cloud when `isCloudEnabled()` and a repo id resolves, local
+ * otherwise — and the very incident that prompted this work logged
+ * `Cloud store not configured — using local mode`. In that mode this file is not
+ * a cache of anything; it is the only copy that exists, and telling an operator
+ * their state is safe elsewhere would be the original defect with the polarity
+ * flipped. Replacing one universal claim with another is not a fix.
+ *
+ * So the only durable fact this module can assert about itself is the one it can
+ * CHECK: `assertLedgerDurability` reports whether this path survives a checkout,
+ * and says nothing about whether a cloud copy exists. For which source a given
+ * run is using, read `debt-memory.mjs`.
+ *
  * Mutations go through a single-writer lock (`proper-lockfile`) with atomic
  * temp-file + rename to protect against concurrent writers (fix H3).
  *
@@ -21,11 +49,107 @@ import lockfile from 'proper-lockfile';
 import { atomicWriteFileSync, normalizePath } from './file-io.mjs';
 import { PersistedDebtEntrySchema, DebtLedgerSchema } from './schemas.mjs';
 import { readDebtEventsLocal, deriveMetricsFromEvents, DEFAULT_DEBT_EVENTS_PATH } from './debt-events.mjs';
+import { ignoredUntrackedPaths } from './disowned-paths.mjs';
 
 export const DEFAULT_DEBT_LEDGER_PATH = '.audit/tech-debt.json';
 
 const LOCK_RETRIES = 5;
 const LOCK_STALE_MS = 30_000;
+
+// Warn-once per process: a run writes the ledger many times, and the same
+// notice repeated is a notice nobody reads.
+let _durabilityWarned = false;
+
+/**
+ * Warn when the ledger's own path is ignored-and-untracked — i.e. when what is
+ * being written here survives only this checkout.
+ *
+ * WHY A CHECK AND NOT A SENTENCE (consumer report, 2026-09-04). The module
+ * header used to simply assert the ledger was committed state. Nothing verified
+ * it, and it was false: a consumer's `.gitignore` carries `.audit/`, so the 8
+ * entries `/audit-code` captured that day existed only in the worktree that
+ * captured them — the main checkout still showed the original 34, and deleting
+ * the worktree would have lost them. Anything placed BESIDE the ledger inherits
+ * the problem, which is how their ownership overlay went there and was silently
+ * never committed. This is a claim about the consumer's git configuration, and
+ * `git check-ignore` is already in this toolchain, so it gets checked.
+ *
+ * WARN, NEVER REFUSE. Ignored + a configured cloud store is a supported setup
+ * (`debt-memory.mjs` picks the authoritative source per run), so failing the
+ * write would break it. What was missing was not permission but VISIBILITY.
+ *
+ * IT REPORTS ONLY WHAT IT PROVES. The probe answers one question — does this
+ * path survive a checkout — and the message says exactly that, then names the
+ * discriminator (`AUDIT_DB_URL`) rather than asserting a cloud copy exists.
+ * An earlier draft told the operator "the cloud store is the durable source of
+ * truth", which is false in local mode — the mode the incident that prompted
+ * this work was actually in (`Cloud store not configured — using local mode`),
+ * and where this file is the only copy there is. Checking one fact and
+ * announcing a different one is how the original defect happened.
+ *
+ * The predicate is the one oracle — `ignoredUntrackedPaths`, asked of this one
+ * candidate: ignored AND untracked, so a ledger that is tracked despite matching
+ * an ignore pattern is correctly left alone. Its `degraded` flag (git absent,
+ * not a work tree) means "could not verify", which is NOT the same as "verified
+ * durable" and therefore stays silent rather than claiming either.
+ *
+ * IT IS SILENT ON THE HAPPY PATH. `cloudMirrored` is the caller's answer to
+ * "does a durable copy of this exist elsewhere", and it is a TRI-STATE:
+ *
+ *  - `true`  — a cloud store is the authoritative source and this file mirrors
+ *    it. Gitignored is then the INTENDED state, and warning about it every run
+ *    is a nag on a correct configuration — which is how operators learn to skip
+ *    warnings, including the ones that matter. Silent.
+ *  - `false` — local mode. This file is the only copy there is, so the warning
+ *    is loud and carries the remedy. This is the state the consumer incident
+ *    was actually in (`Cloud store not configured — using local mode`).
+ *  - `undefined` — the caller does not know. State the fact and the
+ *    discriminator, once, without prescribing an action for a setup that may
+ *    well be correct.
+ *
+ * The mode is PROPAGATED, never owned: `debt-memory.mjs::selectEventSource`
+ * already decides it per run, and a second owner here would recreate the
+ * two-sources-of-truth problem this whole change exists to close. That is the
+ * distinction the Gemini gate drew when it faulted the first version —
+ * declining to own the mode is right; declining to *accept* it was not.
+ *
+ * @param {string} absPath resolved ledger path
+ * @param {boolean} [cloudMirrored] see above; omit when unknown
+ */
+function assertLedgerDurability(absPath, cloudMirrored) {
+  if (_durabilityWarned) return;
+  // A durable copy exists elsewhere — gitignored is the intended state here, so
+  // there is nothing to report. Latch nothing: a later local-mode write in the
+  // same process still deserves its warning.
+  if (cloudMirrored === true) return;
+  try {
+    const repoRoot = process.cwd();
+    const rel = path.relative(repoRoot, absPath).split(path.sep).join('/');
+    // Outside the repo entirely — git ownership is not the right question.
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return;
+    // `warnOnDegraded:false` — this probe only decides whether to print the
+    // advisory below. Outside a work tree the oracle's own stderr warning would
+    // replace a quiet "cannot tell" with a loud, unrelated ownership warning on
+    // every temp-dir write; `degraded` already tells us to stay silent.
+    const { paths, degraded } = ignoredUntrackedPaths(repoRoot, [rel], { warnOnDegraded: false });
+    if (degraded || !paths.has(rel)) return;
+    _durabilityWarned = true;
+    process.stderr.write(
+      cloudMirrored === false
+        // Known local-only: this file IS the state. Loud, and actionable.
+        ? `  [debt] ${rel} is gitignored and untracked, and no cloud store is configured — these entries `
+          + `exist ONLY in this checkout and are lost with it. Set AUDIT_DB_URL, or un-ignore this path to `
+          + `commit them.\n`
+        // Unknown: state the fact and the discriminator. No imperative — the
+        // setup may be entirely correct, and prescribing a fix for it is the nag.
+        : `  [debt] ${rel} is gitignored and untracked, so it does not survive this checkout. With a cloud `
+          + `store configured (AUDIT_DB_URL) that is expected — this file is a local mirror; without one it `
+          + `is the only copy. See debt-memory.mjs for which source a run uses.\n`,
+    );
+  } catch {
+    // Never let a diagnostic break a write.
+  }
+}
 
 // ── Read ────────────────────────────────────────────────────────────────────
 
@@ -145,12 +269,13 @@ export function readDebtLedger({
  * @param {string} [opts.ledgerPath=DEFAULT_DEBT_LEDGER_PATH]
  * @returns {Promise<{ inserted: number, updated: number, total: number, rejected: Array<{entry, reason}> }>}
  */
-export async function writeDebtEntries(entries, { ledgerPath = DEFAULT_DEBT_LEDGER_PATH } = {}) {
+export async function writeDebtEntries(entries, { ledgerPath = DEFAULT_DEBT_LEDGER_PATH, cloudMirrored } = {}) {
   if (!Array.isArray(entries) || entries.length === 0) {
     return { inserted: 0, updated: 0, total: 0, rejected: [] };
   }
 
   const absPath = path.resolve(ledgerPath);
+  assertLedgerDurability(absPath, cloudMirrored);
   fs.mkdirSync(path.dirname(absPath), { recursive: true });
 
   // proper-lockfile requires the locked file to exist.
@@ -319,3 +444,14 @@ export function findDebtByAlias(candidateHash, debtEntries) {
   }
   return null;
 }
+
+/**
+ * Test surface — same underscore-prefix convention as `file-io.mjs` /
+ * `anthropic-client.mjs`. `assertLedgerDurability` is warn-once via a
+ * module-global latch, so a test asserting it fires must be able to clear it;
+ * without the reset, the second test in a file passes having checked nothing.
+ */
+export const _internals = {
+  assertLedgerDurability,
+  _resetDurabilityWarning() { _durabilityWarned = false; },
+};

@@ -121,23 +121,86 @@ export function loadSharedEnv(opts = {}) {
   _loaded = true;
   if (status !== 'loaded') return;
 
-  // DB-group provenance guard: a higher layer's DSN means the shared layer
-  // contributes none of the DB-group keys.
-  // Normalize the DSN-presence check the SAME way resolveDbUrl does — `(x ||
-  // '').trim()` — so an empty/whitespace DSN (a deliberate "disable cloud"
-  // override) counts as ABSENT, not as a higher-layer DSN. Raw truthiness would
-  // disagree with the reader on the empty-string case.
+  // ── DB-group provenance: three states, not two ───────────────────────────
+  //
+  // The shared layer contributes NONE of the DB-group keys when a higher layer
+  // has already decided the question — and there are TWO ways it can have:
+  //
+  //  - `higherHasDsn` — a real DSN. Normalised the same way `resolveDbUrl` reads
+  //    it back, `(x || '').trim()`, so the guard and the reader agree.
+  //  - `dsnExplicitlyEmpty` — a DSN key that is PRESENT and blank. In this
+  //    codebase that is not an accident and not an absence: it is the air-gap
+  //    signal. `tests/helpers/air-gap.mjs::airGapDbUrl()` sets both DSN keys to
+  //    `''` precisely so a suite "must never resolve to a real database", and 20
+  //    test files use that idiom. Letting the shared `~/.audit-loop.env` fill an
+  //    explicitly-blanked DSN would point those suites — including ones that
+  //    `DROP SCHEMA public CASCADE` — at whatever store the developer's machine
+  //    happens to name.
+  //
+  // Both suppress the WHOLE DB group. Suppressing only the DSN was the old
+  // incoherence: with an empty DSN the guard said "no higher-layer DSN, so
+  // contribute the DB group", handed over a shared `AUDIT_DB_SSL_MODE`, and then
+  // declined the DSN itself — half a bundle, from a layer that was supposed to
+  // give all of it or none.
+  //
+  // WHY NOT FLIP THE PRECEDENCE (consumer report, 2026-09-04). The report asked
+  // for the opposite: treat empty as absent so the shared file wins. Its
+  // motivating case is real — `env: AUDIT_DB_URL: ${{ secrets.AUDIT_DB_URL }}`
+  // with a secret that does not exist expands to empty-but-SET, so every
+  // `arch:*` script ran cloud-blind and `arch:drift` printed GREEN, score 0, 0
+  // duplication pairs for a repo that had measured 14 an hour earlier. But the
+  // two requirements are the same literal state and cannot both hold, and the
+  // one that loses here would silently re-point destructive test suites at a
+  // production database. So the state is preserved and made LOUD instead: the
+  // notice below names it and gives the remedy, and the drift report now prints
+  // the store it read, which is what makes the CI case self-diagnosing.
+  const dsnExplicitlyEmpty = DSN_GROUP_KEYS.some(
+    (k) => process.env[k] !== undefined && (process.env[k] || '').trim() === '',
+  );
   const higherHasDsn = DSN_GROUP_KEYS.some((k) => (process.env[k] || '').trim() !== '');
-  const before = new Set(Object.keys(process.env));
+  const skipDbGroup = higherHasDsn || dsnExplicitlyEmpty;
+
+  // What the shared layer actually CONTRIBUTED, not merely which NAMES are new.
+  // This used to be a before/after diff of `Object.keys(process.env)`, which
+  // cannot report a key it filled that was already present — so a notice meant
+  // to tell an operator what the shared file did was blind to one of its cases.
+  const contributed = [];
   for (const [k, v] of Object.entries(parsed)) {
-    if (higherHasDsn && DB_GROUP_KEYS.has(k)) continue;
-    if (process.env[k] === undefined) process.env[k] = v; // override:false semantics
+    if (skipDbGroup && DB_GROUP_KEYS.has(k)) continue;
+    if (process.env[k] === undefined) { process.env[k] = v; contributed.push(k); } // override:false
   }
 
-  const added = Object.keys(process.env).filter((k) => !before.has(k));
-  if (added.length > 0 && process.env._AUDIT_LOOP_SHARED_LOADED !== '1') {
+  // THE STATE THAT COST THREE CI DISPATCHES, SAID OUT LOUD. Two conditions keep
+  // it from becoming noise, and noise is how a real warning gets ignored:
+  // only when the shared file actually had a DSN to offer (otherwise every
+  // air-gapped test run pays for a notice about a decision that changed
+  // nothing), and only once per process TREE — a child inheriting this env made
+  // the same decision for the same reason, so it rides the same sentinel as the
+  // `(sets: …)` line below, which is set after both.
+  if (
+    dsnExplicitlyEmpty && !higherHasDsn
+    && process.env._AUDIT_LOOP_SHARED_LOADED !== '1'
+    && DSN_GROUP_KEYS.some((k) => (parsed[k] || '').trim() !== '')
+  ) {
     process.stderr.write(
-      `  [config] loaded shared cloud config from ~/.audit-loop.env (sets: ${added.join(', ')})\n`,
+      '  [config] a DSN env var is set but EMPTY — reading that as "cloud off", so the DSN in ~/.audit-loop.env '
+      + 'is NOT used. To use the shared one, UNSET the variable rather than setting it to "" (a GitHub Actions '
+      + '`env:` entry for a missing secret expands to empty-but-set). To disable the shared layer outright: '
+      + 'AUDIT_LOOP_DISABLE_SHARED=1.\n',
+    );
+    // SET the sentinel it just READ. Checking a dedup marker without setting it
+    // makes the dedup one-directional: this process suppresses a parent's
+    // notice but never suppresses its own in a child. The `(sets: …)` line
+    // below sets it too, which HID this — in the common case the shared file
+    // also carries non-DB keys, so that branch fires and the marker lands
+    // anyway. A shared file holding ONLY DB-group keys contributes nothing,
+    // leaves the marker unset, and every child in the tree re-warns.
+    process.env._AUDIT_LOOP_SHARED_LOADED = '1';
+  }
+
+  if (contributed.length > 0 && process.env._AUDIT_LOOP_SHARED_LOADED !== '1') {
+    process.stderr.write(
+      `  [config] loaded shared cloud config from ~/.audit-loop.env (sets: ${contributed.sort().join(', ')})\n`,
     );
     // Sentinel propagates to spawned subprocesses (env inherits) so children
     // don't re-log the same notice.

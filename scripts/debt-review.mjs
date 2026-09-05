@@ -153,7 +153,11 @@ function renderMarkdown({ ledger, review, violations, mode, upstreamOwned = [] }
     lines.push('Every file these entries cite is maintained upstream, so they are excluded from the');
     lines.push('leverage ranking above — nobody in this repo can refactor them. They are still open');
     lines.push('debt: **report them, do not resolve them.** `debt-resolve.mjs` removes the entry from');
-    lines.push('the committed ledger, which for a still-open upstream defect deletes the only record');
+    // "the local ledger", not "the committed ledger" — `.audit/` is gitignored
+    // here and in every consumer checked, so calling it committed is the same
+    // false claim `debt-ledger.mjs` and `debt-memory.mjs` were corrected on. A
+    // consumer read that word and put load-bearing state beside the ledger.
+    lines.push('the local ledger, which for a still-open upstream defect deletes the only record');
     lines.push('of it. File instead:');
     lines.push('`node scripts/.claude-skills/cross-skill.mjs upstream report --affected-path <path>`.');
     lines.push('');

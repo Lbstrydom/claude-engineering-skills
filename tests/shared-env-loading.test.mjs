@@ -147,6 +147,132 @@ describe('shared-env reader-fix — resolveDbUrl loads the shared layer (hermeti
     const out = runChild(script, { home, cwd });
     assert.equal(out.dsn, null);
   });
+
+  // ── An empty-but-SET DSN is the AIR-GAP signal, and it is now loud ─────────
+  //
+  // A consumer report (2026-09-04) asked for the opposite of these cases: treat
+  // an empty DSN as absent so the shared file wins. Their motivating incident is
+  // real — `env: AUDIT_DB_URL: ${{ secrets.AUDIT_DB_URL }}` with a secret that
+  // does not exist expands to empty-but-SET, so every `arch:*` script ran
+  // cloud-blind while `arch:drift` printed GREEN, score 0, 0 duplication pairs
+  // against a repo that had measured 14 pairs an hour earlier. Three CI
+  // dispatches died on it.
+  //
+  // It was implemented, and the suite said no: `tests/helpers/air-gap.mjs`
+  // exists to set both DSN keys to `''` so a suite "must never resolve to a real
+  // database", 20 test files use that idiom, and the flip made 20+ suites — some
+  // of which `DROP SCHEMA public CASCADE` — resolve to whatever store the
+  // developer's `~/.audit-loop.env` names. The two requirements are the same
+  // literal state and cannot both hold.
+  //
+  // So the state is PRESERVED and made loud. These cases pin both halves: the
+  // air-gap keeps working, and the operator is told why, with the remedy. What
+  // actually makes the CI case self-diagnosing is the store line now printed in
+  // the drift report — see tests/drift-signal-attribution.test.mjs.
+
+  it('9. higher-layer DSN set to EMPTY (or whitespace) → cloud stays OFF (air-gap)', () => {
+    // Whitespace too, because `resolveDbUrl` trims before testing: if the two
+    // disagreed, `AUDIT_DB_URL=" "` would air-gap the reader while the loader
+    // handed it a shared DSN it then discarded — a state neither side describes.
+    for (const blank of ['', '   ']) {
+      assert.equal(resolveInChild({
+        sharedContent: 'AUDIT_DB_URL=postgres://shared/db\n',
+        extraEnv: { AUDIT_DB_URL: blank },
+      }).dsn, null, `blank=${JSON.stringify(blank)}`);
+    }
+  });
+
+  it('10. the ALIAS set to EMPTY air-gaps the canonical key too (airGapDbUrl blanks both)', () => {
+    // `airGapDbUrl()` sets AUDIT_DB_URL and AUDIT_POSTGRES_URL. Either one being
+    // explicitly blank must suppress the whole DB group, or the helper only
+    // half-works depending on which key the shared file happens to name.
+    assert.equal(resolveInChild({
+      sharedContent: 'AUDIT_DB_URL=postgres://shared/db\n',
+      extraEnv: { AUDIT_POSTGRES_URL: '' },
+    }).dsn, null);
+  });
+
+  it('11. an empty DSN suppresses the WHOLE DB group, not just the DSN', () => {
+    // The old incoherence: `higherHasDsn` was false for an empty DSN, so the
+    // shared AUDIT_DB_SSL_MODE was handed over while the DSN itself was
+    // declined — half a bundle from a layer that gives all of it or none.
+    const out = resolveInChild({
+      sharedContent: 'AUDIT_DB_URL=postgres://shared/db\nAUDIT_DB_SSL_MODE=no-verify\n',
+      extraEnv: { AUDIT_DB_URL: '' },
+    });
+    assert.equal(out.dsn, null);
+    assert.equal(out.ssl, null, 'a shared SSL mode must not attach to a deliberately-absent DSN');
+  });
+
+  it('12. an UNSET DSN still adopts the shared one (the direction that must not regress)', () => {
+    // The negative control for cases 9–11. Without it, "empty air-gaps" and
+    // "the shared layer never contributes a DSN" pass identically — and the
+    // second would silently undo case 1, this module's whole reason to exist.
+    const out = resolveInChild({
+      sharedContent: 'AUDIT_DB_URL=postgres://shared/db\nAUDIT_DB_SSL_MODE=no-verify\n',
+    });
+    assert.equal(out.dsn, 'postgres://shared/db');
+    assert.equal(out.ssl, 'no-verify');
+  });
+
+  it('13. the empty-DSN state is announced WITH its remedy', () => {
+    // The diagnostic that turns the consumer's three-hour debug into one line.
+    // It must name the fix (UNSET, not `""`) and the CI shape that produces it.
+    const home = freshTmp('home-notice');
+    const cwd = freshTmp('cwd-notice');
+    fs.writeFileSync(path.join(home, '.audit-loop.env'), 'AUDIT_DB_URL=postgres://shared/db\n');
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e',
+      `import { resolveDbUrl } from ${JSON.stringify(CLIENT_URL)}; resolveDbUrl();`,
+    ], { cwd, env: hermeticEnv(home, { AUDIT_DB_URL: '' }), encoding: 'utf8' });
+    assert.equal(r.status, 0, `child exited ${r.status}; stderr: ${(r.stderr || '').slice(0, 400)}`);
+    assert.match(r.stderr, /set but EMPTY/);
+    assert.match(r.stderr, /UNSET the variable/);
+    assert.match(r.stderr, /AUDIT_LOOP_DISABLE_SHARED=1/);
+  });
+
+  it('14b. the notice sets the sentinel it reads, so a CHILD does not re-warn', () => {
+    // Code-audit R1 M1/M10. The notice checks `_AUDIT_LOOP_SHARED_LOADED` but
+    // originally never set it — one-directional dedup: suppress a parent's
+    // notice, never suppress your own in a child. The `(sets: …)` line below it
+    // DOES set the marker, which hid the bug: in the common case the shared
+    // file also carries non-DB keys, so that branch fires and the marker lands
+    // anyway. This fixture uses a shared file holding ONLY DB-group keys, so
+    // nothing is contributed, that branch never runs, and the parent is the
+    // only thing that can set it.
+    const home = freshTmp('home-sentinel');
+    const cwd = freshTmp('cwd-sentinel');
+    fs.writeFileSync(path.join(home, '.audit-loop.env'), 'AUDIT_DB_URL=postgres://shared/db\n');
+    const script =
+      `import { resolveDbUrl } from ${JSON.stringify(CLIENT_URL)};`
+      + `import { spawnSync } from 'node:child_process';`
+      + `resolveDbUrl();` // parent: warns, and must set the marker
+      + `const r = spawnSync(process.execPath, ['--input-type=module','-e',`
+      + `  ${JSON.stringify(`import { resolveDbUrl } from ${JSON.stringify(CLIENT_URL)}; resolveDbUrl();`)}`
+      + `], { encoding: 'utf8' });`
+      + `process.stdout.write(JSON.stringify({ child: r.stderr || '' }));`;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', script],
+      { cwd, env: hermeticEnv(home, { AUDIT_DB_URL: '' }), encoding: 'utf8' });
+    assert.equal(r.status, 0, `parent exited ${r.status}: ${(r.stderr || '').slice(0, 400)}`);
+    assert.match(r.stderr, /set but EMPTY/, 'the parent must warn once');
+    const { child } = JSON.parse(r.stdout);
+    assert.ok(!child.includes('set but EMPTY'),
+      `the child re-warned — the sentinel was read but never set:\n${child}`);
+  });
+
+  it('14. the notice stays SILENT when the shared file has no DSN to offer', () => {
+    // The direction that must not fire. Every air-gapped test run in this repo
+    // passes through this path; a notice about a decision that changed nothing
+    // would be 20 suites' worth of noise, and noise is how a real warning gets
+    // ignored.
+    const home = freshTmp('home-quiet');
+    const cwd = freshTmp('cwd-quiet');
+    fs.writeFileSync(path.join(home, '.audit-loop.env'), 'OPENROUTER_API_KEY=k\n');
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e',
+      `import { resolveDbUrl } from ${JSON.stringify(CLIENT_URL)}; resolveDbUrl();`,
+    ], { cwd, env: hermeticEnv(home, { AUDIT_DB_URL: '' }), encoding: 'utf8' });
+    assert.equal(r.status, 0);
+    assert.ok(!r.stderr.includes('set but EMPTY'), `unexpected notice: ${r.stderr}`);
+  });
 });
 
 describe('shared-env loader — config.mjs path (includeCwd:true) layers cwd .env', () => {

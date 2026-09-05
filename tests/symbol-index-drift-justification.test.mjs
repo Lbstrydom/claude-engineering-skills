@@ -29,6 +29,9 @@ const TEST_URL = process.env.AUDIT_DB_TEST_URL;
 const skip = TEST_URL ? false : 'AUDIT_DB_TEST_URL not set';
 
 let savedUrl, repoId;
+// Set at the END of before(). Teardown reads it to tell "setup finished, there
+// are rows to remove" from "setup threw, and AUDIT_DB_URL is still production".
+let setupComplete = false;
 const REPO_UUID = `test-duplicate-justification-${crypto.randomUUID()}`;
 
 async function makeSymbol(refreshId, repoId, { filePath, symbolName, kind, signatureHash }) {
@@ -59,6 +62,20 @@ describe('drift.mjs — PRAGMA_CANDIDATE_POOL_CAP (docs/plans/refactor-symbol-in
     assert.equal(isPragmaPoolCapped(CAP - 1), false);
     assert.equal(isPragmaPoolCapped(CAP), false, 'exactly CAP symbols: capped === false — reconciliation runs');
     assert.equal(isPragmaPoolCapped(CAP + 1), true, 'CAP + 1 symbols: capped === true — reconciliation skipped');
+
+    // An UNKNOWN total is capped (2026-09-04). The count query is best-effort,
+    // so `null` reaches this predicate whenever it failed — and `null > CAP` is
+    // FALSE in JavaScript, because null coerces to 0. Without the type guard the
+    // one input that means "I could not measure the pool" is the one that most
+    // confidently reports the pool is complete, and reconciliation runs over a
+    // possibly-truncated candidate set emitting false "unresolved pragma"
+    // warnings. Each of these fails against a bare `>` comparison.
+    for (const unknown of [null, undefined, NaN, Infinity, '5', {}]) {
+      assert.equal(isPragmaPoolCapped(unknown), true,
+        `${JSON.stringify(unknown) ?? String(unknown)}: an unmeasurable total must fail CLOSED`);
+    }
+    assert.equal(isPragmaPoolCapped(0), false,
+      'zero is a real measured total, not an unknown — it must not be swallowed by the guard');
   });
 
   it('no duplicated literal: exactly one raw "10000" in drift.mjs — the constant\'s own definition (§1c one-sided-edit guard)', () => {
@@ -76,9 +93,34 @@ describe('duplicate-justification exclusion — end-to-end (disposable DB)', { s
     process.env.AUDIT_DB_URL = TEST_URL;
     const repo = await upsertRepoByUuid({ repoUuid: REPO_UUID, name: 'duplicate-justification-test-repo', fingerprint: null });
     repoId = repo.id;
+    setupComplete = true;
   });
 
   after(async () => {
+    // SETUP FAILED ⇒ THERE IS NOTHING OF OURS TO CLEAN UP, AND THE POOL WOULD
+    // NOT BE THE ONE WE MEANT (code-audit R1 M4). `assertDisposableDbUrl` runs
+    // FIRST in `before()`, so when it refuses, `AUDIT_DB_URL` is still the real
+    // one and `repoId` is undefined — and this hook would then open a pool
+    // against PRODUCTION and issue `DELETE FROM symbol_index WHERE repo_id =
+    // undefined`. The guard's whole purpose is to keep destructive statements
+    // off a non-disposable database; running teardown after it fires hands them
+    // straight there.
+    //
+    // Newly reachable as of 2026-09-04: that same guard now resolves `?host=`
+    // overrides, so it refuses DSNs it previously admitted — this path went
+    // from theoretical to on the happy road of a misconfigured DSN.
+    //
+    // The env IS still restored on this path. `before()` mutates
+    // `AUDIT_DB_URL` before its last statement, so a throw in between leaves
+    // TEST_URL in the environment for the rest of the process — returning
+    // without undoing that would trade a destructive bug for a contaminating
+    // one.
+    if (!setupComplete) {
+      if (savedUrl === undefined) delete process.env.AUDIT_DB_URL;
+      else process.env.AUDIT_DB_URL = savedUrl;
+      await closePool();
+      return;
+    }
     // try/finally so a thrown error from a DELETE can never leave
     // process.env.AUDIT_DB_URL pointed at TEST_URL for the rest of the
     // process (round-2 code audit M1). Env restoration happens BEFORE
