@@ -1,5 +1,86 @@
 # Project Status Log
 
+## 2026-09-05 — Verified 15 upstream-reported defects against code; one remedy shipped, one correction, four new items
+
+### Consumer Verification (previous ship)
+- **Commit**: `fc454937` (`chore(upstream): record 15da01b6's disposition, closing the reconcile gate`) and `9c4f39db` (the status log) pushed to `main` 2026-09-04, on top of another session's `b6f9d44e`. These follow the shipped work itself — `19c8568d`, `c29fe11c`, `64c9c07f` (the stdout-flush census + gate), pushed earlier the same day.
+- **Retrieval**: `git fetch origin` then `git merge-base --is-ancestor HEAD origin/main` — the remote ref checked directly, NOT the push exit code. That mattered twice today: the first ship push reported wrapper exit 0 while the captured `EXIT=` line said 1 and `pre-push checks FAILED (exit 2)`, and an earlier direct push reported a 10-minute timeout on a push that had actually succeeded. The exit code was wrong in **both** directions in one session.
+- **Clean-checkout run**: the pre-push hook's own throwaway worktree ran the full `check` **at the pushed commit** — **15,126 tests, 0 fail, 39 skipped**. That is the only full-suite evidence for this tree; the local runs were all taken before the final rebase onto `b6f9d44e`.
+- **Result**: **verified**, with one correction below.
+  - `origin/main == fc454937`.
+  - Consumer sync `Targets: 3/3 reached · Created: 0 · Updated: 3 · Unchanged: 2341 · Errors: 0`.
+- **SUBJECT CHECK — and it falsified a claim I had made to the operator.** I had warned that the new `stdout:flush:gate` would reach the three consumers and fail their first run until each baselined. **It does not sync at all.** Measured against `wine-cellar-app/scripts/.sync-manifest.json` (783 files): zero entries matching `stdout-flush` or `find-stdout`, and `scripts/.claude-skills/check-stdout-flush.mjs`, `lib/find-stdout-exit-sites.mjs`, `lib/find-stdout-exit-shapes.mjs` are all absent on disk. The producer-side `Targets: 3/3 · Errors: 0` was true and told me nothing about my own files — which is exactly the inheritance this step exists to prevent.
+  - **Not a gap**: it matches the prevailing pattern. Of the sibling ratchets, only `check-cli-flags.mjs` is synced (it documents a consumer `--baseline` adoption path); `check-emit-exit-agreement`, `file-size-ratchet`, `knip-gate`, `check-gitignore-policy` and `check-docs-refs` are all source-repo-only, and so is this one.
+  - **Consequence to carry forward**: consumers are neither broken by this nor protected by it. The un-drained-exit class is ungated in `wine-cellar-app`, `ai-organiser` and `storyline`. Whether it should sync is a real question — it needs the `--baseline <file>` treatment `check-cli-flags.mjs` already has, since the upstream baseline would list upstream paths — but it is a separate change, not a silent add.
+- **Still unverified**: `sync-isolation-verify` run from INSIDE a consumer this session. Concrete blocked prerequisite: not invoked in any consumer here — every consumer-side check above was a manifest and filesystem read performed from this repo, so none of them exercises the consumer's own verifier. The previous ship did run it (all 9 gates, exit 0) and nothing in this ship touched the sync path.
+- **Repaired en route, worth knowing**: `upstream:reconcile:gate` blocked the first push with `RECONCILE_NEEDS_REVIEW` — report `15da01b6` was terminal in the store (`fixed`, `test:tests/synced-doc-links.test.mjs`, fixed in `8e3f2f7b`) with no committed ledger entry. Another session's crash window, blocking every push, not just this one. The entry added MIRRORS the store row (state, disposition and fingerprint all read from it; the cited test verified to exist) and adjudicates nothing. `upstream reconcile` has no repair mode, so it was hand-written deliberately.
+- **Open upstream (not actioned)**: 4 reports across 2 stores, all from wine-cellar-app — `e3d4cf7c` (HIGH, `arch:refresh` in-flight guard never reads its own heartbeat), `ad8fcbd3` (HIGH, `debt-review` misclassifies gitignored consumer-owned files as upstream-owned), `edc0948e` and `63552e8b` (MEDIUM). Triage writes to the store that owns the row, which is a separate decision from shipping.
+- **Not adjudicated, deliberately**: Step 6.7's card listed 486 findings awaiting credit (449 unadjudicated, 3 fixed-but-unlabelled, 34 accepted-unfixed). Neither of this ship's commits fixed any of them; the card infers no attribution from a file changing, and neither did I.
+
+### Changes
+- Verified all 15 defects a consumer (`louis-strydom_wartsila/storyline`) reported
+  2026-09-04 against **current code**, not against the changelog — per-item table in
+  [`docs/plans/consumer-corpus-and-honesty-2026-09-04.md`](docs/plans/consumer-corpus-and-honesty-2026-09-04.md)
+  §7–§8. 9 of 15 were already fixed by that same-day plan; 1 (`isInternalEdge`/pnpm)
+  was the consumer's own **wrong diagnosis**, falsified in the plan by direct
+  measurement; 4 (empty-env-var merge bug, missing corpus size, missing store
+  identity in the drift report, unchecked debt-ledger gitignore contract) were
+  never previously documented and remain **open**; 1 (`debt-resolve.mjs` still
+  terminal-only for upstream-owned entries) is partially addressed.
+- **Correction, then a real fix**: the consumer applied §1.4's `--check-drift`
+  remedy and reported it couldn't work — right ownership call (their DB, not
+  this repo's code), wrong remedy (`--check-drift` compares the migration
+  ledger to source files, never the live schema, so it can't see a constraint
+  replaced out-of-band). Shipped `2a6626cd`: `annotateConflictTargetFault`
+  (new, `scripts/lib/db/errors.mjs`) names the table + ON CONFLICT columns a
+  bare 42P10 omits; `upsert()` calls it; `describeLostWrites` now gives two
+  different remedies for two different fault shapes instead of one wrong one
+  for both.
+
+### Files Affected
+- `scripts/lib/db/errors.mjs` — new `annotateConflictTargetFault`.
+- `scripts/lib/db/query.mjs` — `upsert()` calls it in its catch.
+- `scripts/lib/robustness.mjs` — `describeLostWrites` splits missing-object vs
+  conflict-target remedies.
+- `tests/audit-incomplete-round-honesty.test.mjs`, `tests/db-query.test.mjs` —
+  updated/new coverage for the above.
+- `docs/plans/consumer-corpus-and-honesty-2026-09-04.md` — §7 (four new open
+  items) + §8 (the correction and shipped fix), this ship.
+
+### Decisions Made
+- Committed the code fix with `git commit -- <paths>` (native `--only`
+  scoping), not `ship-commit.mjs --skill <name>` — the fix wasn't produced by
+  any of the 16 skills, and the CLI's `--skill` enum only accepts real skill
+  directory names; forcing one would misrepresent provenance.
+- A plain `git rebase origin/main` hit a conflict in `status.md` on an
+  unrelated pre-existing local commit — aborted rather than risk the
+  append-only log, and pushed instead via a throwaway worktree cherry-picking
+  just the one fix commit onto `origin/main`.
+- Extended the existing plan doc rather than opening a new survey file — same
+  consumer, same report batch, already indexed and gate-clean.
+- **This entry itself hit the same status.md collision twice more.** The
+  entry was drafted on top of a "## 2026-09-04 — Working the two adjudication
+  queues" heading that turned out to belong entirely to this session's
+  pre-existing *local-only* commit line (never on `origin/main` at all) — a
+  cherry-pick onto `origin/main` therefore conflicted, and a concurrent
+  session's own same-day ship (`e2b2dfe9`) had already prepended its own new
+  entry in the same spot. Resolved by hand-splicing this entry directly onto
+  `origin/main`'s real content, ahead of theirs, rather than trusting either
+  side's diff.
+
+### Next Steps
+- §7.1 (empty-env-var bug) first — live, silent correctness bug.
+- §7.2 + §7.3 (drift report: corpus size, store identity) — a few lines each
+  in `arch-render.mjs`, high value for the size.
+- §7.4 (debt-ledger gitignore check) — one `doctor.mjs` check.
+- §4.2's `debt-resolve.mjs` still has no `owner` field; low priority — the
+  practical harm (upstream debt ranked as actionable) is already closed via
+  `debt-review`'s partition.
+
+Backlog 2026-09-05T07:52Z: Q1 64c/27p (+190 aged) · Q2 142c/88p (50 perm) · Q3 2187 · debt 227 cloud/106 local (0 spilled) · upstream 2
+
+---
+
 ## 2026-09-05 — A worktree is not the main checkout: three sites, one question, two ratchets
 
 ### Consumer Verification (previous ship)

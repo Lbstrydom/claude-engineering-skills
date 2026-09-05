@@ -467,3 +467,103 @@ exercised (R5 L1).
 - **`skills-artifact-freshness-wiring` fails while the tree is dirty** — it
   compares `skills.manifest.json` against the *committed* `SKILL.md` and both
   are uncommitted. Clears on commit; the pre-push sandbox checks the commit.
+
+## 7. Priority 5 — found later the same day, still OPEN
+
+Four more items from the same consumer, surfaced after this plan's §1–§5 had
+already shipped. Verified against current code 2026-09-05; **none of the four
+are touched by anything above** — this section exists because nothing else
+documents them.
+
+- **7.1 — `loadSharedEnv`'s per-key merge treats an empty-but-present env var as
+  present, not absent.** [`scripts/lib/load-shared-env.mjs:130,134`](../../scripts/lib/load-shared-env.mjs):
+  line 130's `higherHasDsn` check correctly does `(process.env[k] || '').trim() !== ''`
+  (empty counts as absent) — but line 134's actual assignment still reads
+  `if (process.env[k] === undefined)`, so a CI step setting
+  `AUDIT_DB_URL: ${{ secrets.AUDIT_DB_URL }}` against an unset secret injects
+  `''`, which is *defined*, and the real value from `~/.audit-loop.env` is
+  never applied. Smallest fix: change line 134's condition to the same
+  trim-and-check the DSN guard already uses. Verify: a test setting
+  `process.env.AUDIT_DB_URL = ''` before `loadSharedEnv()` and asserting the
+  shared file's value won.
+- **7.2 — the drift report never states the corpus size.** [`scripts/lib/arch-render.mjs:494-506`](../../scripts/lib/arch-render.mjs)
+  `renderDriftIssue` prints Repo/Status/Generated/Commit/Drift score/Duplication
+  pairs/Layering violations — no symbol count. A score of 0 over 12 symbols and
+  over 1,842 symbols render identically. Smallest fix: one line reusing
+  `countSymbolsForSnapshot` (already called in `drift.mjs` for the pragma-pool
+  cap) next to the drift score.
+- **7.3 — the drift report never states which store it read.** The store
+  fingerprint exists (`announceStore` in [`scripts/lib/db/client.mjs:555-562`](../../scripts/lib/db/client.mjs),
+  logged as `[db/client] store <fp> (db=...)`) but only as a generic
+  connection-time stderr line, buried among thousands of others — never
+  surfaced in the report itself. A repo `.env` and a shared `~/.audit-loop.env`
+  naming different databases can produce a confident GREEN from the wrong
+  store with no way to tell from the report alone. Smallest fix: print the
+  same redacted `host:port/database` inside `renderDriftIssue`.
+- **7.4 — the debt ledger's "committed" contract is asserted, not checked.**
+  [`scripts/lib/debt-ledger.mjs:4`](../../scripts/lib/debt-ledger.mjs) states
+  *"The debt ledger (`.audit/tech-debt.json`) is committed, human-approved
+  state"* with nothing verifying it — a consumer whose `.gitignore` contains
+  `.audit/` gets debt that exists only in the checkout that captured it.
+  Smallest fix: a `doctor.mjs` check running `git check-ignore` (already used
+  elsewhere in this codebase, e.g. `disowned-paths.mjs`) against the ledger
+  path and warning when it matches.
+
+Ranked by cost-to-value over §1–§5: 7.1 is a live, silent correctness bug
+(credentials that should work, silently don't) and ships first; 7.2+7.3 are a
+handful of lines each in one file and would each have turned a
+multi-hour field investigation into a first-glance observation; 7.4 is a
+one-line `doctor.mjs` check. None are done as of this writing.
+
+## 8. Post-ship correction (2026-09-05) — §1.4's remedy didn't work
+
+§1.4 above named `syncBanditArms`'s `42P10` as **store schema drift** and
+pointed at `--check-drift`/`--migrate` as the fix. The consumer applied the
+correction and reported back: **the ownership call was right — it is their
+database, not this repo's code — but the remedy could not work**, and both
+halves are worth recording because the second is a defect in code, not in
+diagnosis:
+
+1. **`--migrate` had nothing to apply.** The consumer's migration ledger was
+   fully applied (134/131, three orphaned entries whose source files no longer
+   exist) — the database was not *behind*, it was *divergently ahead*: a later
+   migration had replaced the correct three-column `bandit_arms_unique
+   UNIQUE (pass_name, variant_id, context_bucket)` with a four-column variant
+   under a different name, outside review, because its source file was
+   deleted.
+2. **`--check-drift` cannot see that class of drift by construction** — it
+   compares the applied-migrations ledger to source files, never the live
+   schema. A ledger with zero pending migrations says nothing about whether a
+   constraint's actual *shape* still matches what those migrations declared.
+   It read clean while genuinely wrong.
+3. **The bare Postgres message named neither the table nor the columns** —
+   `"there is no unique or exclusion constraint matching the ON CONFLICT
+   specification"` sends an operator to the ledger (the wrong instrument),
+   never to `pg_constraint` (the right one), even though `upsert()` already
+   knows both at the point it throws.
+
+**Fixed and shipped** (commit [`2a6626cd`](https://github.com/Lbstrydom/claude-engineering-skills/commit/2a6626cdaaaf28755825d8caec33bbb20a46147d)
+on `origin/main`, 2026-09-05):
+
+- [`scripts/lib/db/errors.mjs`](../../scripts/lib/db/errors.mjs) — new
+  `annotateConflictTargetFault(err, table, onConflict)`, the write-path
+  counterpart to `describeSchemaFault`. On a 42P10 it prepends
+  `"<table> has no unique constraint on (<cols>) — "` to the error message.
+- [`scripts/lib/db/query.mjs`](../../scripts/lib/db/query.mjs)'s `upsert()`
+  calls it in a catch — the one call site with both `table` and
+  `opts.onConflict` at hand. Every `upsert()` caller benefits, not just
+  `syncBanditArms`.
+- [`scripts/lib/robustness.mjs`](../../scripts/lib/robustness.mjs)'s
+  `describeLostWrites` now distinguishes the two fault shapes instead of one
+  combined message: "does not exist" (missing table/column) still correctly
+  points at `--check-drift`/`--migrate`; the ON CONFLICT-mismatch shape now
+  says `--check-drift` **cannot** diagnose it and points at `pg_constraint`
+  for the table/columns the `upsert()` error now names.
+
+One stale test (`audit-incomplete-round-honesty.test.mjs`) had encoded the
+disproven claim that `--check-drift` diagnoses a 42P10 — updated, plus 5 new
+unit tests for `annotateConflictTargetFault` in `db-query.test.mjs`. The
+lesson generalises: **naming a remedy in an error message is a claim about
+that remedy's actual coverage, and needs the same verification as any other
+claim** — this one shipped in §2.2 without anyone having checked whether
+`--check-drift` compares the schema or just the ledger.
