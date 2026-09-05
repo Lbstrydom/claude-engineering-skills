@@ -71,7 +71,7 @@ import {
 } from '../learning-store.mjs';
 import { resolveModel } from '../lib/model-resolver.mjs';
 import { resolveEmbedProfile } from '../lib/embed-text.mjs';
-import { ignoredUntrackedPaths } from '../lib/disowned-paths.mjs';
+import { ignoredUntrackedPaths, OWNERSHIP_RULE_EPOCH } from '../lib/disowned-paths.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
 import { detectRepoStack } from '../lib/repo-stack.mjs';
 import { tagDomain, loadDomainRules, loadCoverageConfig } from '../lib/symbol-index/domain-tagger.mjs';
@@ -277,7 +277,7 @@ async function main() {
     const walkStartCommit = resolveWalkStartCommit(repoRoot);
 
     // 4. Acquire the per-repo running lock.
-    ({ refreshId } = await acquireRefreshLock({ repoId, mode, walkStartCommit, force: args.force, logOk }));
+    ({ refreshId } = await acquireRefreshLock({ repoId, mode, walkStartCommit, force: args.force, logOk, ownershipRuleEpoch: OWNERSHIP_RULE_EPOCH }));
     logOk(`opened refresh_run ${refreshId} (requested mode=${mode})`);
 
     // 5. Finalize scope UNDER the running lock (H4). openRefreshRun holds the
@@ -286,7 +286,7 @@ async function main() {
     // superseded by a concurrent refresh mid-decision — closing the stale-read
     // race. Runs BEFORE runWithHeartbeat opens (mode finalization is not
     // itself heartbeat-monitored, only the long-running work after it is).
-    const finalized = await finalizeRefreshMode({ mode, sinceCommit, repoId, embedProfile, logOk });
+    const finalized = await finalizeRefreshMode({ mode, sinceCommit, repoId, embedProfile, logOk, ownershipRuleEpoch: OWNERSHIP_RULE_EPOCH });
     mode = finalized.mode;
     sinceCommit = finalized.sinceCommit;
     const prior = finalized.prior;

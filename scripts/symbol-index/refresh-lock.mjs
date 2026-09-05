@@ -56,12 +56,19 @@ export function classifyLockOpenError(err, { force }) {
  * `logErr(...); process.exit(2)` behavior it does today for both cases. The
  * `rethrow` classification re-throws the original error unchanged.
  *
- * @param {{repoId: string, mode: string, walkStartCommit: string|null, force: boolean, logOk: (s: string) => void}} args
+ * @param {{repoId: string, mode: string, walkStartCommit: string|null, force: boolean,
+ *   logOk: (s: string) => void, ownershipRuleEpoch?: string|null}} args
  * @returns {Promise<{refreshId: string}>}
  */
-export async function acquireRefreshLock({ repoId, mode, walkStartCommit, force, logOk }) {
+export async function acquireRefreshLock({ repoId, mode, walkStartCommit, force, logOk, ownershipRuleEpoch = null }) {
+  // ONE construction of the run row, shared by the first attempt and the
+  // --force retry below.
+  const open = () => openRefreshRun({ repoId, mode, walkStartCommit, ownershipRuleEpoch });
   try {
-    const opened = await openRefreshRun({ repoId, mode, walkStartCommit });
+    // The epoch is stamped at OPEN, so the row records the rule this walk ran
+    // under. Publishing is what makes it the active snapshot's epoch, so an
+    // aborted run never advertises compatibility it did not establish.
+    const opened = await open();
     return { refreshId: opened.refreshId };
   } catch (err) {
     const { action } = classifyLockOpenError(err, { force });
@@ -91,7 +98,12 @@ export async function acquireRefreshLock({ repoId, mode, walkStartCommit, force,
       } catch (abortErr) {
         throw new LockAbortError(`--force: failed to abort prior run: ${abortErr.message}`);
       }
-      const opened = await openRefreshRun({ repoId, mode, walkStartCommit });
+      // The SAME construction as the first attempt. Spelling the arguments out
+      // twice is how `ownershipRuleEpoch` came to be present on the first open
+      // and absent on the retry — so a `--force` refresh wrote a NULL epoch,
+      // and the NEXT run read that as "unverified" and promoted to a full walk
+      // it did not need. Every future field is added once, by construction.
+      const opened = await open();
       return { refreshId: opened.refreshId };
     }
     throw err;

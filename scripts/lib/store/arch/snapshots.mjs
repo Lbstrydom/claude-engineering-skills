@@ -50,6 +50,8 @@ export function resolveActiveSnapshot(repoRow, runRow) {
     activeEmbeddingDim: repoRow.active_embedding_dim,
     importGraphPopulated: false,
     commitSha: null,
+    // NULL is the pre-adoption state and reads as UNVERIFIED, never 'compatible'.
+    ownershipRuleEpoch: null,
   };
   // No pointer at all is a normal empty state, not corruption — a repo that has
   // never been indexed. The row is returned unchanged, exactly as before.
@@ -60,6 +62,7 @@ export function resolveActiveSnapshot(repoRow, runRow) {
       ...base,
       importGraphPopulated: runRow.import_graph_populated === true,
       commitSha: runRow.walk_start_commit ?? null,
+      ownershipRuleEpoch: runRow.ownership_rule_epoch ?? null,
     },
     corruptPointer: false,
   };
@@ -103,7 +106,7 @@ export async function getActiveSnapshot(repoId) {
     // answer unrepresentable rather than merely unlikely.
     const runRow = data.active_refresh_id
       ? await one(
-        `SELECT import_graph_populated, walk_start_commit FROM refresh_runs WHERE id = $1 AND repo_id = $2 LIMIT 1`,
+        `SELECT import_graph_populated, walk_start_commit, ownership_rule_epoch FROM refresh_runs WHERE id = $1 AND repo_id = $2 LIMIT 1`,
         [data.active_refresh_id, repoId],
       )
       : null;
@@ -186,7 +189,12 @@ export async function getActiveEmbeddingModel(repoId) {
 export async function recordBandCalibration(repoId, calibration) {
   if (!await isCloudEnabled()) return { ok: false, cloud: false };
   if (!repoId) return { ok: false, reason: 'no-repo-id' };
-  await updateWhere('audit_repos', { band_calibration: calibration }, { id: repoId });
+  // Adjudicate the write rather than assume it. An unconditional {ok:true} for
+  // an update that matched no row reports success for a repo that does not
+  // exist — the caller then records a calibration nothing is using.
+  const updated = await updateWhere('audit_repos', { band_calibration: calibration }, { id: repoId });
+  const rows = typeof updated === 'number' ? updated : (updated?.rowCount ?? updated?.length ?? null);
+  if (rows === 0) return { ok: false, cloud: true, reason: 'repo-not-found' };
   return { ok: true, cloud: true };
 }
 

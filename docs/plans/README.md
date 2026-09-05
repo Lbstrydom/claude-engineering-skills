@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**4 active · 218 terminal · 28 audit summaries · 4 reference docs**
+**4 active · 218 terminal · 28 audit summaries · 5 reference docs**
 
 ---
 
@@ -313,11 +313,12 @@ Files in `docs/plans/` with no `Status:` line — contract matrices,
 inventories, and notes rather than plans.
 
 <details>
-<summary>Show all 4 reference documents</summary>
+<summary>Show all 5 reference documents</summary>
 
 | Plan | Notes |
 |---|---|
 | [Browser MCP Tooling + Skill Sync Improvements](./browser-mcp-and-tooling.md) |  |
+| [Incremental refresh must propagate an ownership-rule change](./incremental-refresh-ownership-propagation.md) |  |
 | [Postgres-Parity — Contract Matrix (M0 #5)](./postgres-parity-contract-matrix.md) |  |
 | [Postgres-Parity — Non-core Dependency Inventory (M0 #1)](./postgres-parity-non-core-inventory.md) |  |
 | [Postgres-Parity — Migration Schema-Coupling Audit (M0 #2)](./postgres-parity-schema-coupling.md) |  |

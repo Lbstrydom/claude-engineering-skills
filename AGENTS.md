@@ -40,6 +40,11 @@
 > `dashboard:build`). Domain re-tagging happens in `arch:refresh` against
 > the symbol_index table — editing `domain-map.json` alone does not retag
 > existing DB rows; always start with `arch:refresh` after a rename.
+> **Ownership is the same shape and is now automatic**: a plain incremental
+> re-asks the ownership oracle about the rows it CARRIES (not `args.files` — a
+> gitignored-and-untracked file can never appear in a git diff), and a change to
+> `OWNERSHIP_RULE_EPOCH` promotes the next run to a full walk, because dropping
+> a row is expressible from the index and re-admitting one is not.
 >
 > **Two-layer dependency model** (Architecture tab tiers):
 > - **Observed** — DB import graph from `symbol_file_imports`, written

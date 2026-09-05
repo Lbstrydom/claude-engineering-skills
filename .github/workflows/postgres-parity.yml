@@ -39,6 +39,13 @@ on:
     paths:
       - 'scripts/lib/db/**'
       - 'scripts/lib/store/**'
+      # The refresh orchestrator writes and reads refresh_runs, and
+      # tests/refresh-*.test.mjs is its DB-backed regression suite. Without both
+      # patterns a change confined to refresh orchestration never triggers this
+      # workflow, so the suite that exists to guard it would not run on the
+      # commit that breaks it.
+      - 'scripts/symbol-index/**'
+      - 'tests/refresh-*.test.mjs'
       - 'scripts/setup-postgres.mjs'
       - 'scripts/learning-store.mjs'
       - 'supabase/migrations/**'
@@ -57,6 +64,13 @@ on:
     paths:
       - 'scripts/lib/db/**'
       - 'scripts/lib/store/**'
+      # The refresh orchestrator writes and reads refresh_runs, and
+      # tests/refresh-*.test.mjs is its DB-backed regression suite. Without both
+      # patterns a change confined to refresh orchestration never triggers this
+      # workflow, so the suite that exists to guard it would not run on the
+      # commit that breaks it.
+      - 'scripts/symbol-index/**'
+      - 'tests/refresh-*.test.mjs'
       - 'scripts/setup-postgres.mjs'
       - 'scripts/learning-store.mjs'
       - 'supabase/migrations/**'
@@ -225,7 +239,7 @@ jobs:
             tests/persona-outcomes-hash-backfill.test.mjs \
             tests/plans-ship-persona-correlation.test.mjs \
             tests/postgres-parity-identity-columns.test.mjs \
-            tests/refresh-provenance-promotion.test.mjs \
+            tests/refresh-ownership-epoch-db.test.mjs \n            tests/refresh-provenance-promotion.test.mjs \
             tests/refresh-runs-column-allowlist.test.mjs \
             tests/refresh-runs-repo-scoping.test.mjs \
             tests/regression-spec-multi-finding-lock.test.mjs \

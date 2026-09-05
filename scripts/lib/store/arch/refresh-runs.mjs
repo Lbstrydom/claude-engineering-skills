@@ -26,13 +26,14 @@ import { describeSchemaFault } from '../../db/errors.mjs';
  *
  * Throws REFRESH_IN_FLIGHT on unique-constraint conflict (existing lock).
  */
-export async function openRefreshRun({ repoId, mode, walkStartCommit }) {
+export async function openRefreshRun({ repoId, mode, walkStartCommit, ownershipRuleEpoch = null }) {
   const cancellationToken = crypto.randomUUID();
   try {
     const data = await insertReturning('refresh_runs', {
       repo_id: repoId,
       mode,
       walk_start_commit: walkStartCommit || null,
+      ownership_rule_epoch: ownershipRuleEpoch || null,
       cancellation_token: cancellationToken,
       last_heartbeat_at: new Date().toISOString(),
     }, { returning: ['id'] });
@@ -56,7 +57,7 @@ export async function publishRefreshRun({ repoId, refreshId, activeEmbeddingMode
   try {
     return await rpcPublishRefreshRun({ repoId, refreshId, activeEmbeddingModel, activeEmbeddingDim });
   } catch (err) {
-    throw new Error(`publish_refresh_run RPC failed: ${err.message}`);
+    throw new Error(`publish_refresh_run RPC failed: ${err.message}`, { cause: err });
   }
 }
 
@@ -101,7 +102,7 @@ export async function abortRefreshRun({ refreshId, repoId, reason }) {
     );
     return { aborted: rows.length > 0 };
   } catch (err) {
-    throw new Error(`abortRefreshRun failed: ${err.message}`);
+    throw new Error(`abortRefreshRun failed: ${err.message}`, { cause: err });
   }
 }
 
@@ -167,6 +168,10 @@ const GET_REFRESH_RUN_COLUMNS = new Set([
   'llm_calls', 'embed_calls', 'cancellation_token',
   'last_heartbeat_at', 'retention_class', 'error',
   'started_at', 'completed_at', 'import_graph_populated',
+  // The ownership rule in force when this run walked. Checked against the
+  // committed schema by tests/refresh-runs-column-allowlist.test.mjs, so a
+  // migration landing without this entry fails rather than reading as absent.
+  'ownership_rule_epoch',
 ]);
 
 /**

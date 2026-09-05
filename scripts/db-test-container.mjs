@@ -94,6 +94,15 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // Two edits, always — this list AND postgres-parity.yml.
   'tests/memory-health-cluster-space.test.mjs',
   'tests/regression-spec-multi-finding-lock.test.mjs',
+  // Enrolled 2026-09-05 with migration 20260905120000 (refresh_runs.
+  // ownership_rule_epoch). The decision is pure and covered without a DB; what
+  // needs real Postgres is the half a pure test cannot see — an omitted SELECT
+  // field, an epoch read from a run that never published, and the UNION
+  // candidate set, where a file present only in symbol_file_imports must still
+  // be classified. Same shape as the 42703 incident that returned "no snapshot"
+  // for every healthy repo while every unit test passed.
+  // Two edits, always — this list AND postgres-parity.yml.
+  'tests/refresh-ownership-epoch-db.test.mjs',
   // Enrolled 2026-08-12 with the D7 ownership joins (Phase 7). It needs an
   // intact, fully migrated schema: it seeds two repos and two plans, then
   // proves the parent-not-found / parent-not-owned refusals against real

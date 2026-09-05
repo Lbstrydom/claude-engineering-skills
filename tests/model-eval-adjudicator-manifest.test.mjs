@@ -59,9 +59,25 @@ function writeManifest(obj) {
   return p;
 }
 
+/**
+ * Run the CLI with the cloud store ESTABLISHED off, not assumed off.
+ *
+ * The empty-corpus case below documents its premise as "cloud is off in this
+ * test environment" — and on a developer machine that is false: `~/.audit-loop.env`
+ * supplies `AUDIT_DB_URL`, so the corpus is whatever that store happens to hold.
+ * It passed for as long as the store had no adjudicator ground truth and began
+ * failing the moment something wrote some (an ordinary audit run does), with the
+ * CLI proceeding past the refusal and exiting 2 instead of 1. That is a test
+ * asserting an ambient condition it does not control.
+ *
+ * An EMPTY `AUDIT_DB_URL` is this repo's air-gap signal, which is exactly the
+ * state these assertions describe, so the premise is now established per-spawn.
+ */
 function run(args, opts = {}) {
   return spawnSync(process.execPath, [SCRIPT, ...args], {
-    cwd: REPO_ROOT, encoding: 'utf8', timeout: 30000, ...opts,
+    cwd: REPO_ROOT, encoding: 'utf8', timeout: 30000,
+    ...opts,
+    env: { ...process.env, AUDIT_DB_URL: '', ...(opts.env || {}) },
   });
 }
 

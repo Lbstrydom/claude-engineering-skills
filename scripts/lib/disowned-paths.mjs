@@ -51,6 +51,33 @@
 import { spawnSync } from 'node:child_process';
 
 /**
+ * The ownership rule in force, as a DECLARED identity.
+ *
+ * Recorded on each `refresh_runs` row so an incremental refresh can tell that
+ * the rules moved under rows nobody touched. A copy-forward filter can drop a
+ * row that is NOW disowned, but it iterates rows already in the index and so
+ * can never re-admit a file the index does not have — which is what a rule
+ * change in the owning direction produces. That case needs an authoritative
+ * re-walk, and this constant is how one is triggered.
+ *
+ * **Hand-bumped, never hashed.** A digest of this module's source would force a
+ * full re-walk on every consumer for a comment edit — real cost from a cosmetic
+ * change. Only a human knows the RULE moved.
+ *
+ * **Bump it for ANY semantic change to what counts as disowned, in either
+ * direction.** An earlier design advanced it only when ownership widened, to
+ * spare the walk on a narrowing change; that scheme cannot see a ROLLBACK
+ * across a narrowing release (build A owns X at epoch E, build B narrows and
+ * keeps E, rolling back to A also presents E and nothing promotes), because
+ * deliberately sharing one identity across different rules makes the
+ * transition between them undetectable. Direction was removed rather than
+ * patched with a second value.
+ *
+ * @type {string}
+ */
+export const OWNERSHIP_RULE_EPOCH = 'ignored-untracked-v1';
+
+/**
  * Which of `candidates` (repo-relative paths) are ignored AND untracked in
  * `repoRoot`?
  *
