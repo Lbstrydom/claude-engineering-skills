@@ -43,6 +43,16 @@ import { RUN_ID_RE, TREE_ID_RE } from '../commit-trailers.mjs';
 export const GATE_EVIDENCE_RELPATH = path.join('.audit', 'last-audit-run.json');
 
 /**
+ * The refusal reason for "there is no cloud run to bind this marker to".
+ *
+ * A named constant because TWO call sites must agree on it: this module's writer, which
+ * declines, and `classifyGateEvidenceGap` below, which decides whether the decline is
+ * worth telling the operator about. Two string literals is exactly the drift that let the
+ * condition go unreported in the first place.
+ */
+export const GATE_EVIDENCE_NO_RUN_ID = 'no-cloud-run-id';
+
+/**
  * Build the marker payload. Pure, so the schema contract is unit-testable
  * against the real validator without touching a filesystem.
  *
@@ -154,7 +164,7 @@ export function writeGateEvidence({
   // store cannot resolve would let `resolveEvidence` report `fresh` while
   // `evaluateGateVerification` refuses `passed` — a confusing half-state that
   // reads as "an audit ran but something is broken". Silence is honest here.
-  if (!runId) return { written: false, reason: 'no-cloud-run-id' };
+  if (!runId) return { written: false, reason: GATE_EVIDENCE_NO_RUN_ID };
 
   // Plan audits are excluded: the marker gates a COMMIT, and `--gate passed`
   // asserts the shipped CODE was audited. A plan-mode run would make a
@@ -213,4 +223,61 @@ export function writeGateEvidence({
     log(`  [gate-evidence] marker write failed (${err?.code || err?.name || 'Error'}) — commit will read as not-run\n`);
     return { written: false, reason: 'write-failed', payload, filePath };
   }
+}
+
+/**
+ * Why is there no marker for this run — and is that worth saying out loud?
+ *
+ * **The gap this closes (measured 2026-09-05, this repo).** The caller used to run the
+ * whole gate-evidence block under `if (cloudRunId && !noCloudRecording)`, so the ONE
+ * condition that silently costs a converged audit its provenance — the run row could not
+ * be registered, most often because the store is one migration behind this checkout — was
+ * the ONE condition that reported nothing. Two audits converged at `PASS`, exited 0, wrote
+ * no marker, said nothing about it, and the commit that followed read `AI-Gate: not-run`:
+ * one word away from an audit nobody ran. `writeGateEvidence` already HAD the honest
+ * answer (`no-cloud-run-id`); it was simply never reached to give it.
+ *
+ * **Cloud-off is deliberately silent.** A local-only run is a supported mode, not a
+ * failure (`durableWrite`'s `skipped`), and `not-run` is the correct trailer for it. A gate
+ * that also fires there would print the same warning on every offline audit and be tuned
+ * out — which is how the real one gets missed. So the discriminator is not "is there a
+ * marker" but "was cloud recording BOTH intended and available, and the run still did not
+ * register".
+ *
+ * Pure and total: every input combination lands on exactly one branch, so the direction
+ * this must NOT fire is as testable as the direction it must.
+ *
+ * @param {{cloudRunId: string|null, noCloudRecording: boolean, cloudEnabled: boolean}} input
+ * @returns {{report: boolean, reason: string}}
+ */
+export function classifyGateEvidenceGap({ cloudRunId, noCloudRecording, cloudEnabled } = {}) {
+  // Observation-only (the tiered-shadow harness's fallback run): it is forbidden from
+  // touching audit_runs at all, so having no marker is the contract, not a loss.
+  if (noCloudRecording) return { report: false, reason: 'observation-only-run' };
+  if (cloudRunId) return { report: false, reason: 'run-registered' };
+  if (!cloudEnabled) return { report: false, reason: 'cloud-off' };
+  return { report: true, reason: GATE_EVIDENCE_NO_RUN_ID };
+}
+
+/**
+ * The operator-facing text for a reportable gap.
+ *
+ * Says three things a bare "no marker" does not: what was lost (provenance, not findings),
+ * that the audit's own verdict is unaffected (so the reader does not go looking for a
+ * different bug), and that re-running AFTER the remedy is the only repair — the marker
+ * cannot be back-dated, and hand-writing `.audit/last-audit-run.json` is forgery the store
+ * cross-check is designed to catch.
+ *
+ * `command` is passed in rather than derived here so this module stays free of the DB
+ * layer; the caller already knows its layout.
+ *
+ * @param {{command: string}} input the layout-correct `setup-postgres --migrate` invocation
+ * @returns {string} a complete, newline-terminated stderr block
+ */
+export function formatGateEvidenceGap({ command } = {}) {
+  return '  [gate-evidence] cloud recording is ON but this run was never registered — no audit_runs row,\n'
+    + '                  so no marker is written and a commit from this tree will read `AI-Gate: not-run`\n'
+    + '                  however clean this audit was. The verdict above is unaffected; only its provenance is.\n'
+    + `                  If the store is behind this revision (see the [learning] line above), run \`${command}\`\n`
+    + '                  and RE-RUN the audit — the evidence cannot be reconstructed after the fact.\n';
 }

@@ -179,6 +179,54 @@ is a receipt the pipeline emits. Regression pins: [`tests/gate-evidence.test.mjs
 (which validates the writer's output through the *real* validator, never a
 restated copy of its schema).
 
+### A schema-behind store used to forge a `not-run` (fixed 2026-09-05)
+
+`not-run` is documented above as *absence of mechanical production*. Until
+2026-09-05 it was also what a **fully converged, multi-round audit** produced
+whenever the store was one migration behind the working tree — and the two were
+indistinguishable in the trailer, which is the one question it exists to answer.
+
+The chain: a behind store rejects the `audit_runs` INSERT (`assertSchemaRealized`
+throws `ERR_SCHEMA_BEHIND` on the write path) → `recordRunStart` returns null →
+`cloudRunId` is null → the whole gate-evidence block was skipped by its own
+`if (cloudRunId && …)` guard → no marker, no convergence verdict → `ship-commit`
+correctly refuses `converged` *and* `waived`, because it cannot see evidence it
+was never handed. **Every step after the first was behaving as designed.** The
+defect was that the one condition costing a clean audit its provenance was the
+one condition that reported nothing: the run printed `Verdict: PASS`, exited 0,
+and said only `[durable-write] … 2 lost` on the way past.
+
+This is not a rare state. **A store is behind by construction immediately after
+pulling a bundle that ships a migration** — the normal condition of every
+consumer between `sync` and their next `setup-postgres.mjs --migrate`. The
+ordering made it near-unavoidable: `ship-commit` blocks until the migration is
+applied, but by then the audit has already run against the un-migrated store and
+burned its evidence, so the natural sequence (audit → ship → "oh, migrate" →
+ship) *guaranteed* the downgrade.
+
+Three fixes, in the order they now fire:
+
+1. **The audit refuses before spending.** `openai-audit.mjs` asks
+   `checkMigrationRealization` ([`scripts/lib/db/schema-realization.mjs`](../../scripts/lib/db/schema-realization.mjs))
+   — the same oracle `ship-commit --check-migrations` uses, extracted from it so
+   ship time and audit time cannot disagree — and exits before the first LLM
+   call, naming the missing migrations and the remedy. `AUDIT_ALLOW_SCHEMA_BEHIND=1`
+   proceeds anyway. Fail-OPEN on every uncertainty: only a definite set difference
+   blocks.
+2. **A run that could not register says so, at the end.** `classifyGateEvidenceGap`
+   ([`gate-evidence.mjs`](../../scripts/lib/audit/gate-evidence.mjs)) now runs
+   *outside* the `cloudRunId` guard, so cloud-on-but-unregistered prints the
+   consequence and the remedy while the operator can still act. Cloud **off**
+   stays silent — local-only is a supported mode and `not-run` is correct for it;
+   a warning that fires on every offline audit is one nobody reads.
+3. **It is queryable, not just logged.** The same reason lands in the result JSON
+   as `_gateEvidenceUnwritten` (`no-cloud-run-id`), beside the writer's own
+   refusal reasons, rather than living only in scrolled-past stderr.
+
+The evidence still cannot be reconstructed after the fact — a marker cannot be
+back-dated, and hand-writing it is forgery the store cross-check exists to catch.
+**Re-running the audit after `--migrate` is the only repair.**
+
 ## Adoption boundary
 
 The convention applies **from the annotated tag `provenance-v1` forward**

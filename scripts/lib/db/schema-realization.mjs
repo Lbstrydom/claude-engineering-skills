@@ -346,6 +346,60 @@ function defaultWarn(msg) {
   process.stderr.write(`  ${msg}\n`);
 }
 
+/**
+ * Is this database MISSING migrations this checkout bundles? — the read-only, fail-OPEN
+ * sibling of `assertSchemaRealized`.
+ *
+ * Same filename-set comparison, same module, so a caller that asks BEFORE doing work and
+ * the write path that refuses DURING it can never disagree about what "realized" means.
+ * It lived as a private function inside `ship-commit.mjs` until 2026-09-05, which is
+ * precisely why `openai-audit.mjs` — the other caller that must not proceed against a
+ * behind store — had no way to ask, and burned a converged audit's provenance instead.
+ *
+ * **Fail-OPEN by construction.** Every uncertainty (cloud off, no pool, no migrations
+ * directory, unreadable bundle, absent ledger, unreachable database) returns
+ * `{behind:false}` carrying a `reason` that names which one. Only a definite set
+ * difference reports `behind:true`. A gate that fires on an unmeasurable condition gets
+ * bypassed, and then it protects nothing at all.
+ *
+ * `reason` is present on the `behind:false` shape ONLY, and it is not a verdict: a caller
+ * must never read `cloud-off` or `unmeasurable` as "we looked and it was fine".
+ *
+ * @param {string} [repoRoot] root to resolve the migrations directory against.
+ * @param {{getPool?: () => Promise<object|null>}} [adapters] injected for tests.
+ * @returns {Promise<{behind: false, reason: string}
+ *   | {behind: true, missing: string[], dir: string, db: string|null, command: string}>}
+ */
+export async function checkMigrationRealization(repoRoot, adapters = {}) {
+  try {
+    const getPoolFn = adapters.getPool ?? (await import('./client.mjs')).getPool;
+    const pool = await getPoolFn();
+    if (!pool) return { behind: false, reason: 'cloud-off' };
+
+    // No layout argument: the module reads its own install path. Passing `repoRoot` alone
+    // used to leave the directory chosen by first-existing-wins, which in a consumer picked
+    // that repo's OWN `supabase/migrations` and compared an app schema against the
+    // audit-loop ledger — every app migration permanently "missing", every commit refused.
+    const dir = resolveMigrationsDir(repoRoot);
+    if (!dir) return { behind: false, reason: 'no-migrations-dir' };
+    const bundled = listBundledMigrations(dir);
+    // null = unreadable, not empty. Both fail open, but only one of them means "we looked".
+    if (bundled === null) return { behind: false, reason: 'bundle-unreadable' };
+    if (bundled.length === 0) return { behind: false, reason: 'no-migrations-dir' };
+
+    const applied = await readAppliedMigrations(pool);
+    if (applied === null) return { behind: false, reason: 'no-ledger' };
+
+    const missing = findUnappliedMigrations(bundled, applied);
+    return missing.length > 0
+      ? { behind: true, missing, dir, db: describeDatabase(pool), command: setupPostgresCommand() }
+      : { behind: false, reason: 'realized' };
+  } catch {
+    // Unreachable database, missing pg, bad DSN — all unmeasurable, none block.
+    return { behind: false, reason: 'unmeasurable' };
+  }
+}
+
 // ── Migration context ───────────────────────────────────────────────────────
 
 import { AsyncLocalStorage } from 'node:async_hooks';

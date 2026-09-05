@@ -54,6 +54,7 @@ gateway + termination watchdog) are documented in the
 | `AUDIT_DB_URL` | No | — | **Postgres DSN** for the audit-loop store. Supabase users: dashboard → Connect → **Session pooler** (URI, port 5432). Unset → local-only mode (#16 graceful degradation). Replaces the legacy `SUPABASE_AUDIT_*` triplet (postgres-parity M4). |
 | `AUDIT_DB_SSL_MODE` | No | `require` | TLS mode: `require` (default; strict verify), `no-verify` (accept self-signed — needed for Supabase poolers), `disable`. |
 | `AUDIT_DB_POOL_MAX` | No | `4` | Maximum simultaneous pg connections. Increase only when the audit-loop's chunked upserts demand it. |
+| `AUDIT_ALLOW_SCHEMA_BEHIND` | No | — | `1` lets `openai-audit.mjs` proceed when the store is provably behind this checkout (a bundled migration absent from `public.audit_loop_migrations`). Unset, the audit **refuses before spending**: a behind store rejects the `audit_runs` INSERT, so the run cannot be registered, no gate-evidence marker is written, and the commit reads `AI-Gate: not-run` however clean the audit was. The override keeps the findings and accepts that loss — it is announced at start and again at the end. Fail-OPEN either way: only a definite set difference blocks. |
 | ~~`SUPABASE_AUDIT_*`~~ | — | — | **Sunset in M4** (postgres-parity). The audit-loop now uses `AUDIT_DB_URL` exclusively; the legacy URL + anon-key + service-role-key triplet was tied to the old `@supabase/supabase-js` PostgREST path which has been removed. The runtime DSN's password IS the secret — no separate write-role key. |
 
 ## Audit behaviour

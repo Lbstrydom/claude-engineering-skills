@@ -21,6 +21,8 @@ import { atomicWriteFileSync } from '../file-io.mjs';
 import { durableWrite } from '../durable-write.mjs';
 import { writeLearningState, tallyWriteOutcomes, AUDIT_DIR, SESSION_MANIFEST_PREFIX, SESSION_LEDGER_FILE } from '../robustness.mjs';
 import { evaluateConvergenceWithDetectors, resolveDetectorResultForRound } from './convergence.mjs';
+import { classifyGateEvidenceGap, formatGateEvidenceGap } from './gate-evidence.mjs';
+import { setupPostgresCommand } from '../db/schema-realization.mjs';
 import { checkDetectors } from './detector.mjs';
 import { insertLearningDecision, backfillLearningOutcome, isCloudEnabled } from '../../learning-store.mjs';
 import { recordDecision as _learningRecordDecision, flush as _learningFlush, buildDecisionKey as _learningBuildKey } from '../learning/decision-logger.mjs';
@@ -207,6 +209,28 @@ export async function runPersistence(data, assembled, mergedResult, persistenceS
   // `not-run`, while `evaluateGateVerification` still refused `passed` for want
   // of a verdict — leaving `waived` as the only legal value on a genuinely
   // converged audit. The two writers ship together or not at all.
+  //
+  // 2026-09-05 — the `cloudRunId &&` in the guard below was itself a third silent
+  // half. `writeGateEvidence` has always been able to answer `no-cloud-run-id`, but
+  // the guard meant it was never ASKED in the one case that costs a CONVERGED audit
+  // its provenance: cloud on, store one migration behind this checkout,
+  // `recordRunStart` rejected, `cloudRunId` null. Measured in this repo: two
+  // multi-round audits converged at `PASS`, exited 0, wrote no marker, said nothing,
+  // and the commit that followed read `AI-Gate: not-run` — the value that otherwise
+  // means nobody audited this at all. Note that the guard immediately below already
+  // announces the OTHER way the marker goes unwritten (`ctx.auditedBranch` never
+  // captured); this is that line's missing sibling, and its absence is why the loud
+  // case was the well-behaved one.
+  const gateEvidenceGap = classifyGateEvidenceGap({
+    cloudRunId, noCloudRecording, cloudEnabled: await isCloudEnabled(),
+  });
+  if (gateEvidenceGap.report) {
+    // Queryable, not merely logged. A scrolled-past stderr line is not something a
+    // caller can act on, and this is the SAME key the writer's own refusals set —
+    // one field answering "there is no marker, and here is why".
+    mergedResult._gateEvidenceUnwritten = gateEvidenceGap.reason;
+    process.stderr.write(formatGateEvidenceGap({ command: setupPostgresCommand() }));
+  }
   if (cloudRunId && !noCloudRecording) {
     // (a) The local marker — proves an audit RAN after HEAD. Never proves it
     //     passed; that is deliberately the store's job, because a local file

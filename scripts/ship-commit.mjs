@@ -60,6 +60,12 @@ import {
   formatTrailerBlock,
   parseMessageTrailers,
 } from './lib/commit-trailers.mjs';
+// ONE oracle for "is the store behind this checkout", shared with the pre-spend
+// refusal in openai-audit.mjs. It lived here as a private function until 2026-09-05,
+// which is why the audit — the caller whose provenance the answer decides — could not
+// ask it, and discovered the block only after a converged run had already lost its
+// gate evidence. Same measurement, two callers, per-caller prose.
+import { checkMigrationRealization } from './lib/db/schema-realization.mjs';
 
 const KNOWN_FLAGS = new Set([
   '--message-file', '--skill', '--models', '--gate', '--path',
@@ -840,50 +846,4 @@ function formatMigrationBlockLine(realization) {
     + `— compared ${realization.dir} against public.audit_loop_migrations. `
     + 'Shipping now would push code whose schema does not exist yet. '
     + `Run: ${realization.command}`;
-}
-
-/**
- * Is the database missing migrations this checkout bundles?
- *
- * Fail-OPEN by construction: every uncertainty (cloud off, no pool, no migrations
- * directory, unreadable ledger) returns `{behind: false}`. Only a definite set difference
- * blocks the commit. A ship gate that fires on an unmeasurable condition gets
- * `--no-verify`'d, and then it protects nothing at all.
- *
- * Uses the same filename-set comparison the runtime write guard uses, so ship time and
- * runtime cannot disagree about what "realized" means.
- */
-async function checkMigrationRealization(repoRoot) {
-  try {
-    const { getPool } = await import('./lib/db/client.mjs');
-    const pool = await getPool();
-    if (!pool) return { behind: false, reason: 'cloud-off' };
-
-    const {
-      resolveMigrationsDir, listBundledMigrations, readAppliedMigrations, findUnappliedMigrations,
-      setupPostgresCommand, describeDatabase,
-    } = await import('./lib/db/schema-realization.mjs');
-
-    // No layout argument: the module reads its own install path. Passing `repoRoot` alone
-    // used to leave the directory chosen by first-existing-wins, which in a consumer picked
-    // that repo's OWN `supabase/migrations` and compared an app schema against the
-    // audit-loop ledger — every app migration permanently "missing", every commit refused.
-    const dir = resolveMigrationsDir(repoRoot);
-    if (!dir) return { behind: false, reason: 'no-migrations-dir' };
-    const bundled = listBundledMigrations(dir);
-    // null = unreadable, not empty. Both fail open, but only one of them means "we looked".
-    if (bundled === null) return { behind: false, reason: 'bundle-unreadable' };
-    if (bundled.length === 0) return { behind: false, reason: 'no-migrations-dir' };
-
-    const applied = await readAppliedMigrations(pool);
-    if (applied === null) return { behind: false, reason: 'no-ledger' };
-
-    const missing = findUnappliedMigrations(bundled, applied);
-    return missing.length > 0
-      ? { behind: true, missing, dir, db: describeDatabase(pool), command: setupPostgresCommand() }
-      : { behind: false, reason: 'realized' };
-  } catch {
-    // Unreachable database, missing pg, bad DSN — all unmeasurable, none block.
-    return { behind: false, reason: 'unmeasurable' };
-  }
 }

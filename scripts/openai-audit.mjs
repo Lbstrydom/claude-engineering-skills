@@ -152,6 +152,7 @@ import {
 import { getActivePrompt, getActiveRevisionId, bootstrapFromConstants } from './lib/prompt-registry.mjs';
 import micromatch from 'micromatch';
 import { incrementRunCounter } from './lib/llm-auditor.mjs';
+import { assertStoreSchemaRealized } from './lib/audit/schema-precondition.mjs';
 
 // ── Exclude patterns (.auditignore + --exclude-paths) ──────────────────────
 
@@ -737,6 +738,14 @@ async function main() {
     console.error('(Azure users: set AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY instead — see docs/runbooks/azure-work-profile.md)');
     process.exit(1);
   }
+
+  // Refuse BEFORE spending when the store lacks migrations this checkout ships: it
+  // cannot register the run, so the audit would converge and STILL ship
+  // `AI-Gate: not-run`. Mechanism, fail-open contract and the override env var:
+  // scripts/lib/audit/schema-precondition.mjs.
+  const schemaGate = await assertStoreSchemaRealized();
+  if (schemaGate.message) process.stderr.write(schemaGate.message);
+  if (!schemaGate.proceed) process.exit(1);
 
   const planContent = readFileOrDie(planFile);
   // Session cache: reuse brief + profile from prior round in the same session.

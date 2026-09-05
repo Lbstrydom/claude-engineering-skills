@@ -1,5 +1,129 @@
 # Project Status Log
 
+## 2026-09-05 — A schema-behind store forged `AI-Gate: not-run`: refuse before spending, and say so when it does not
+
+### Consumer Verification (previous ship)
+- **Commit**: `b2137772` (`docs(ship): log the storyline defect survey and the 42P10 remedy correction`) pushed to `main` 2026-09-05, hand-spliced onto a concurrent session's `e2b2dfe9` after both a plain rebase and a naive cherry-pick conflicted in `status.md` on unrelated content (see the entry's own "Decisions Made" for why).
+- **Retrieval**: `git ls-remote origin main` (not the push exit code) → `b2137772...` — matches. Byte-for-byte diff of everything after the insertion point (`diff <(tail -n +3 origin-status.md-before-push) <(tail -n +84 spliced-status.md)`) confirmed zero loss of the concurrent session's content before pushing, not after.
+- **Result**: **verified**. No consumer-side check applies — `status.md` and `docs/plans/**` are not part of the synced bundle (confirmed against `sync-path-map.mjs`'s scope), so there is no consumer artifact this change could have broken. Pre-push `check` ran the full suite in its own throwaway worktree at the pushed commit and passed (3 non-blocking `gh` token-scope warnings only); consumer sync `Targets: 3/3 · Updated: 3 · Errors: 0`.
+
+### Changes
+Acting on an upstream report filed against this repo (HIGH, measured here 2026-09-05
+against store `d5a9d07b91225a93`): a **converged, multi-round audit produced
+`AI-Gate: not-run`** — the value that otherwise means *nobody audited this* — whenever the
+store was one migration behind the working tree. Two audits in one session did exactly
+that: `Verdict: PASS`, exit 0, no marker, and the only trace was `[durable-write] … 2 lost`.
+
+The chain was working as designed at every step but one. A behind store rejects the
+`audit_runs` INSERT (`assertSchemaRealized` throws `ERR_SCHEMA_BEHIND`) → `recordRunStart`
+returns null → `cloudRunId` null → **the whole gate-evidence block was skipped by its own
+`if (cloudRunId && …)` guard**. `writeGateEvidence` already had the honest answer for that
+case (`reason: 'no-cloud-run-id'`); the guard simply meant it was never asked. *The one
+condition that costs a converged audit its provenance was the one condition that reported
+nothing.*
+
+This is not a rare state — **a store is behind by construction immediately after pulling a
+bundle that ships a migration** — and the ordering made the loss near-unavoidable:
+`ship-commit` blocks until the migration is applied, but by then the audit has already run
+against the un-migrated store and burned evidence that cannot be reconstructed.
+
+Three fixes, in the order they now fire:
+
+1. **Refuse before spending.** `checkMigrationRealization` was `ship-commit`'s *private*
+   function — which is precisely why `openai-audit.mjs`, the caller whose provenance the
+   answer decides, could not ask it. Extracted to `schema-realization.mjs`; the audit now
+   asks it before the first LLM call and exits 1 naming the missing migrations, the
+   database, the directory compared and the remedy. Fail-OPEN on every uncertainty (the
+   oracle's own contract): only a definite filename set difference blocks.
+2. **A run that could not register says so.** `classifyGateEvidenceGap` runs *outside* the
+   `cloudRunId` guard. Cloud-on-but-unregistered prints the consequence and remedy while
+   the operator can still act; **cloud-off stays silent** — local-only is a supported mode
+   and `not-run` is correct for it, and a warning on every offline audit is one nobody reads.
+3. **Queryable, not just logged.** The reason lands in the result JSON as
+   `_gateEvidenceUnwritten`, beside the writer's own refusal reasons.
+
+### Files Affected
+- `scripts/lib/db/schema-realization.mjs` — `checkMigrationRealization` now exported (pure
+  relocation from ship-commit; one oracle, two callers, per-caller prose)
+- `scripts/lib/audit/schema-precondition.mjs` — **new**; the pre-spend decision
+  (`decideSchemaPrecondition`, pure) plus the refusal/override text
+- `scripts/openai-audit.mjs` — 3-line precondition before the first LLM call
+- `scripts/lib/audit/gate-evidence.mjs` — `GATE_EVIDENCE_NO_RUN_ID`,
+  `classifyGateEvidenceGap`, `formatGateEvidenceGap`
+- `scripts/lib/audit/run-persistence.mjs` — gap report hoisted out of the `cloudRunId` guard
+- `scripts/ship-commit.mjs` — private oracle deleted, imports the shared one
+- `docs/reference/commit-provenance.md` — new section on the forged `not-run`
+- `docs/reference/environment-variables.md` — `AUDIT_ALLOW_SCHEMA_BEHIND`
+- `tests/schema-precondition.test.mjs` (new), `tests/gate-evidence.test.mjs`,
+  `tests/schema-realization.test.mjs`
+- `.file-size-baseline.json` — see Decisions
+
+### Decisions Made
+- **Refuse rather than warn, and refuse EARLY.** The report offered this as a policy call.
+  A warning after the fact costs the operator the whole run; the same question asked before
+  the first LLM call inverts the ordering trap instead of documenting it, and matches the
+  verify-the-precondition-before-spend rule already applied to credentials.
+  `AUDIT_ALLOW_SCHEMA_BEHIND=1` keeps the degraded-but-useful path for an operator who
+  cannot migrate the store — announced at start and again at the end.
+- **Did NOT implement the report's option 3** (exit 3 on a schema-behind run that completed).
+  Option 4 supersedes it for the default path, and under the override the run already
+  carries `runStatus: 'incomplete'` in the result JSON. Failing every degraded-store run is
+  a broader policy change than the reported defect, and the report declined to decide it.
+- **No AGENTS.md edit.** It sits at 91,831 of the 92,000-char cap; the mechanism belongs in
+  `commit-provenance.md`, which AGENTS.md already points to. Condense, do not raise the cap.
+- **Re-baselined `.file-size-baseline.json` for `scripts/openai-audit.mjs` (1291 → 1309).**
+  The substance went into a new 109-line module — the split the ratchet asks for — but nine
+  lines of pre-existing untracked drift plus a nine-line call site exceeded the 10-line
+  tolerance. `--update-baseline` would also have silently absorbed `cross-skill.mjs` (+6)
+  and `runs-findings.mjs` (+6), which this change never touched; both were reverted so the
+  re-baseline is scoped to the one file that was justified.
+
+### Verification
+- **Live subject probe against the real store** (`d5a9d07b91225a93` / `192.168.1.176/audit_loop`,
+  read-only): CONTROL (the real migration set) → `proceed=true reason=realized`; SUBJECT
+  (one migration the ledger has never seen) → `proceed=false reason=schema-behind`, with the
+  full refusal text; OVERRIDE → `proceed=true reason=override`. The direction that must NOT
+  fire is the one that matters here, and it was measured rather than assumed.
+- **Red-then-green on every new pin** — each was watched to fail against deliberately broken
+  source, then reverted. One pin was silently inert first time round: a `\b` written through
+  a `node -e` double-quoted string landed as a literal U+0008, so the regex read
+  `checkMigrationRealization<BS>` and matched nothing — invisible to `grep`, and caught only
+  because the negative control failed to discriminate.
+- **`npm test`: 15,339 tests, 0 fail, 39 skipped, 178s** (2026-09-05, this worktree; `# fail 0`
+  AND zero `not ok` lines, so not the exit-0-with-failed-suites shape).
+- Every `npm run check` gate clean. `status:integrity:gate` needed an explicit `--base HEAD~1`:
+  with nothing committed yet its resolved base *was* HEAD, and it fails closed rather than
+  compare a state against itself.
+
+### Regression Lock Status
+77 code fix(es) have no locked regression coverage (+31 plan findings, which cannot be
+locked — not an obligation). **190 more aged out of the 14-day window unlocked** (19 code /
+171 plan) after this repo started locking (`practiceStart` 2026-07-29) — waiting is not a way
+to clear this gate. Read them with `node scripts/cross-skill.mjs list-unlocked-fixes --all-ages`.
+The new work here is locked: `tests/schema-precondition.test.mjs` covers the refusal in both
+directions, and `tests/gate-evidence.test.mjs` pins the report's placement *outside* the
+`cloudRunId` guard.
+
+### Store / queue state at ship time
+- **`stores:drift`: the `storyline` consumer's store is one migration behind**
+  (`20260905120000_refresh_run_ownership_epoch.sql`) — the exact condition this change is
+  about, live in a consumer right now. Non-blocking, and not fixable from here: applying it
+  needs that store's owner DSN, which this process does not hold.
+- `upstream:queues`: 1 open report across 2 stores — `[MEDIUM] c446e6c1` from
+  `wine-cellar-app`, unrelated to this work and left for triage.
+- `campaign stale`: silent. `remediation-reconcile --apply --cap 5`: 15/15 verdicts projected
+  (1 resolved, 1 still present, 13 uncertain, 129 sensitive-path skipped).
+- Backlog 2026-09-05T18:21Z: Q1 77c/31p (+190 aged) | Q2 142c/88p (50 perm) | Q3 2212 |
+  debt unmeasured | upstream 1
+
+### Next Steps
+- The `storyline` store still needs `20260905120000` applied with an owner DSN. Until then
+  its code and schema disagree, and audits there will now refuse rather than silently lose
+  provenance — the intended behaviour, but somebody still has to run the migration.
+- Q1's 190 aged-out unlocked fixes remain the standing leak; unchanged by this ship.
+
+---
+
 ## 2026-09-05 — Verified 15 upstream-reported defects against code; one remedy shipped, one correction, four new items
 
 ### Consumer Verification (previous ship)

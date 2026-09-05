@@ -18,7 +18,7 @@
     "scripts/lib/store/runs-findings.mjs": 2364,
     "scripts/lib/sync-isolation-verify.mjs": 1001,
     "scripts/lib/upstream/commands.mjs": 1044,
-    "scripts/openai-audit.mjs": 1291,
+    "scripts/openai-audit.mjs": 1309,
     "scripts/setup-postgres.mjs": 1525,
     "scripts/solo-control-audit.mjs": 1588,
     "scripts/symbol-index/extract.mjs": 1205,

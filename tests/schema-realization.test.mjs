@@ -18,7 +18,7 @@ import {
   MIGRATION_DIR_BY_LAYOUT, resolveMigrationsDir, defaultRepoRoot, listBundledMigrations,
   findUnappliedMigrations, bundledDigest, assertSchemaRealized, ERR_SCHEMA_BEHIND,
   withMigrationContext, isMigrationContext, REALIZATION_TTL_MS,
-  detectLayout, setupPostgresCommand, describeDatabase,
+  detectLayout, setupPostgresCommand, describeDatabase,  checkMigrationRealization,
 } from '../scripts/lib/db/schema-realization.mjs';
 import { LAYOUT_CONSTANTS } from '../scripts/lib/sync-path-map.mjs';
 
@@ -356,4 +356,100 @@ test('a verified result expires — the key cannot see DATABASE-side change', as
     await assertSchemaRealized(opts);
     assert.ok(pool.queries.length > before, 'past the TTL it must re-verify');
   });
+});
+
+// ── checkMigrationRealization — the read-only, fail-OPEN sibling ────────────
+//
+// Extracted from `ship-commit.mjs` on 2026-09-05. It was private there, so the OTHER
+// caller that must not proceed against a behind store — `openai-audit.mjs` — had no way
+// to ask, and discovered the block only after a converged multi-round audit had already
+// lost its gate evidence and shipped `AI-Gate: not-run`. One oracle, two callers.
+
+/** A repo root carrying a source-layout migrations dir with the given filenames. */
+function mkRepoWithMigrations(names) {
+  const root = mkTmp('ces-realization-');
+  const dir = path.join(root, ...MIGRATION_DIR_BY_LAYOUT.source.split('/'));
+  fs.mkdirSync(dir, { recursive: true });
+  for (const n of names) fs.writeFileSync(path.join(dir, n), '-- noop\n');
+  return { root, dir };
+}
+
+test('a definite set difference is the ONLY thing that reports behind', async () => {
+  const { root, dir } = mkRepoWithMigrations(['0001_a.sql', '0002_b.sql', '0003_c.sql']);
+  try {
+    const pool = stubPool(LEDGER_PRESENT(['0001_a.sql']));
+    const r = await checkMigrationRealization(root, { getPool: async () => pool });
+    assert.equal(r.behind, true);
+    assert.deepEqual(r.missing, ['0002_b.sql', '0003_c.sql'], 'filenames, not a count — a count cannot establish identity');
+    assert.equal(r.dir, dir, 'the compared directory must be nameable, or the printed --migrate is unfollowable');
+    assert.equal(r.command, setupPostgresCommand());
+    assert.equal(r.reason, undefined, '`reason` belongs to the behind:false shape only');
+  } finally { rmTmp(root); }
+});
+
+test('every applied ⇒ realized, and a database AHEAD of the checkout is NOT behind', async () => {
+  // The direction this must not fire. A consumer on an older bundle legitimately has
+  // ledger rows with no bundled file; reporting that as behind would print a `--migrate`
+  // for migrations that do not exist and refuse every audit in that repo.
+  const { root } = mkRepoWithMigrations(['0001_a.sql']);
+  try {
+    const pool = stubPool(LEDGER_PRESENT(['0001_a.sql', '0002_shipped_later.sql']));
+    assert.deepEqual(
+      await checkMigrationRealization(root, { getPool: async () => pool }),
+      { behind: false, reason: 'realized' },
+    );
+  } finally { rmTmp(root); }
+});
+
+test('every uncertainty fails OPEN, and each one says WHICH uncertainty it was', async () => {
+  // A gate that fires on an unmeasurable condition gets bypassed, and then it protects
+  // nothing. But `reason` must still distinguish "we looked and it was fine" (`realized`)
+  // from "we could not look" — collapsing those is the false green this module exists for.
+  const { root } = mkRepoWithMigrations(['0001_a.sql']);
+  const empty = mkTmp('ces-realization-empty-');
+  try {
+    assert.deepEqual(
+      await checkMigrationRealization(root, { getPool: async () => null }),
+      { behind: false, reason: 'cloud-off' },
+    );
+    assert.deepEqual(
+      await checkMigrationRealization(empty, { getPool: async () => stubPool(LEDGER_PRESENT([])) }),
+      { behind: false, reason: 'no-migrations-dir' },
+    );
+    assert.deepEqual(
+      await checkMigrationRealization(root, { getPool: async () => stubPool(() => ({ rows: [{ t: null }] })) }),
+      { behind: false, reason: 'no-ledger' },
+      'a pre-ledger database is --adopt territory, not a block',
+    );
+    assert.deepEqual(
+      await checkMigrationRealization(root, { getPool: async () => { throw new Error('ECONNREFUSED'); } }),
+      { behind: false, reason: 'unmeasurable' },
+    );
+  } finally { rmTmp(root); rmTmp(empty); }
+});
+
+test('WIRING PIN: both callers reach the SHARED oracle, neither re-derives it', async () => {
+  // ship-commit had the only implementation, and it was private — which is why
+  // openai-audit, the caller whose provenance the answer decides, spent a whole audit
+  // before learning it. A second copy would let ship time and audit time disagree about
+  // what "realized" means, and it is the AUDIT that pays for the disagreement.
+  const read = (rel) => fs.readFileSync(path.join(import.meta.dirname, '..', rel), 'utf-8');
+  const shipCommit = read('scripts/ship-commit.mjs');
+  const precondition = read('scripts/lib/audit/schema-precondition.mjs');
+  const audit = read('scripts/openai-audit.mjs');
+
+  for (const [label, src] of [['ship-commit', shipCommit], ['schema-precondition', precondition]]) {
+    assert.match(src, /checkMigrationRealization\b/, `${label} must consult the oracle`);
+    assert.match(src, /schema-realization\.mjs/, `${label} must import it, not restate it`);
+  }
+  // The audit reaches it one hop away, through the module that owns the refusal prose.
+  assert.match(audit, /assertStoreSchemaRealized\b/, 'openai-audit must run the precondition');
+  assert.match(audit, /schema-precondition\.mjs/, 'openai-audit must import the precondition module');
+
+  for (const [label, src] of [['ship-commit', shipCommit], ['openai-audit', audit]]) {
+    assert.ok(
+      !/async function checkMigrationRealization/.test(src),
+      `${label} must not carry a private second implementation`,
+    );
+  }
 });
