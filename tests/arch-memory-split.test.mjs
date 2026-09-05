@@ -51,7 +51,7 @@ const EXPECTED_EXPORTS = [
   // See tests/active-snapshot-pointer.test.mjs.
   'resolveActiveSnapshot',
   'sampleSnapshotEmbeddings',
-  // arch/symbols.mjs — 9 fns
+  // arch/symbols.mjs — 10 fns
   'recordSymbolDefinitions',
   'recordSymbolIndex',
   'recordSymbolEmbedding',
@@ -62,6 +62,9 @@ const EXPECTED_EXPORTS = [
   // symbol-index-pipeline-reliability-hardening Theme 2 — capped-pool
   // detector for drift.mjs's pragma reconciliation.
   'countSymbolsForSnapshot',
+  // The ownership filter's candidate set — a UNION over symbol_index and
+  // symbol_file_imports, because a pure importer never appears in the former.
+  'listSnapshotFilePaths',
   // Bounded null-summary re-queue (plan §2.1 C9) — arch/symbols.mjs.
   'listFilesNeedingSummaryRetry',
   'recordSummaryOutcomes',
@@ -94,7 +97,7 @@ describe('arch-memory.mjs barrel — public export contract', () => {
   // previous form wrote the number twice in four lines, which is the same
   // two-sources-of-truth shape the stale header comments had.
   test(`exactly ${EXPECTED_EXPORTS.length} public functions in EXPECTED_EXPORTS`, () => {
-    assert.equal(EXPECTED_EXPORTS.length, 45);
+    assert.equal(EXPECTED_EXPORTS.length, 46);
   });
 
   // Every public member is a FUNCTION. `SUMMARY_RETRY_CAP` was briefly exported

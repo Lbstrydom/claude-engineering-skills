@@ -61,6 +61,7 @@ import {
   recordGraphCoverage,
   copyForwardCoverage,
   copyForwardUntouchedFiles,
+  listSnapshotFilePaths,
   getActiveSnapshot,
   recordBandCalibration,
   sampleSnapshotEmbeddings,
@@ -70,6 +71,7 @@ import {
 } from '../learning-store.mjs';
 import { resolveModel } from '../lib/model-resolver.mjs';
 import { resolveEmbedProfile } from '../lib/embed-text.mjs';
+import { ignoredUntrackedPaths } from '../lib/disowned-paths.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
 import { detectRepoStack } from '../lib/repo-stack.mjs';
 import { tagDomain, loadDomainRules, loadCoverageConfig } from '../lib/symbol-index/domain-tagger.mjs';
@@ -500,12 +502,44 @@ async function main() {
           ? (filePath => fs.existsSync(path.join(repoRoot, filePath)))
           : null;
         if (prior?.refreshId) {
+          // Ownership is re-asked of the CARRIED paths, not of `args.files`.
+          // That is the whole fix: `args.files` is the git-diff scope, and a
+          // gitignored-and-untracked file cannot appear in a git diff, so a
+          // disowned row is never a candidate and is carried forever.
+          // ONE batched call per refresh — `ignoredUntrackedPaths` takes its
+          // candidates on stdin precisely so neither output size nor argv
+          // length scales, and a per-row spawn would be thousands of git
+          // invocations.
+          let isDisowned = null;
+          try {
+            const carried = await listSnapshotFilePaths({ repoId, refreshId: prior.refreshId });
+            if (carried.length > 0) {
+              const verdict = ignoredUntrackedPaths(repoRoot, carried);
+              if (verdict.degraded) {
+                // An EMPTY set here means "nothing was CHECKED", never
+                // "nothing is disowned". Deleting index rows on an unanswered
+                // question is worse than the bug, so carry everything and say
+                // so rather than silently reading the empty set as clean.
+                logOk(`ownership check unavailable (${verdict.warning}) — carrying all rows forward unfiltered`);
+              } else {
+                const disowned = verdict.paths;
+                isDisowned = (filePath) => disowned.has(filePath);
+                if (disowned.size > 0) logOk(`ownership: ${disowned.size} carried path(s) are now disowned — dropping their symbols and edges`);
+              }
+            }
+          } catch (err) {
+            // Same posture: an ownership question we could not ask must not
+            // become a deletion. Degrade loudly to the pre-fix carry.
+            logOk(`ownership check failed (${err.message}) — carrying all rows forward unfiltered`);
+          }
+
           const copied = await copyForwardUntouchedFiles({
             repoId,
             fromRefreshId: prior.refreshId,
             toRefreshId: refreshId,
             touchedFileSet: touchedSet,
             fileStillExists,
+            isDisowned,
             // Re-apply current domain rules to copied rows so domain-map.json
             // edits take effect on incremental refresh, not just full rebuild.
             retagDomain: domainRules.length > 0 ? (filePath => tagDomain(filePath, domainRules)) : null,
@@ -521,6 +555,10 @@ async function main() {
             toRefreshId: refreshId,
             touchedFileSet: touchedSet,
             fileStillExists,
+            // The SAME classification: dropping a disowned file's symbols while
+            // carrying its edges leaves `symbol_file_imports` still attributing
+            // another codebase's imports to this repo.
+            isDisowned,
           });
           if (imp.copied > 0) logOk(`copy-forward ${imp.copied} ${timeoutRecovery ? 'un-reached' : 'untouched'}-file import edges`);
           // Coverage is a FULL-RUN measurement (§2.1.3 row 4). An incremental

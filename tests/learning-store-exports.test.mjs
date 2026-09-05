@@ -238,6 +238,7 @@ const EXPECTED_EXPORTS = [
   'listLayeringViolationsForSnapshot',
   'listSymbolsForSnapshot',
   'countSymbolsForSnapshot', // symbol-index-pipeline-reliability-hardening Theme 2 — capped-pool detector for drift.mjs's pragma reconciliation
+  'listSnapshotFilePaths', // incremental-refresh-ownership-propagation Cluster A — the ownership filter's candidate set, UNIONed over symbol_index + symbol_file_imports so a pure importer is not missed
   'markImportGraphPopulated',
   'openRefreshRun',
   'publishRefreshRun',
@@ -358,6 +359,11 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
   });
 
   it('pins the total export count (update deliberately when the surface changes)', () => {
+    // 199 → 200: listSnapshotFilePaths added 2026-09-05 — the ownership filter's
+    // candidate set for incremental copy-forward. UNIONed over symbol_index and
+    // symbol_file_imports because a file that imports but exports no extractable
+    // symbol appears only in the latter, and feeding the oracle symbol_index
+    // alone would leave every pure importer unclassified.
     // 198 → 199: getActiveStoreDescriptor added 2026-09-04 — the publishable
     // identity of the configured store, on the barrel because the CLIs that must
     // name their store are `arch-memory`, which may not depend on `stores`.
@@ -533,6 +539,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // a test: it sat between two awaits in a store module with no live-DB
     // harness. Exporting the decision is what made it provable.
     // tests/active-snapshot-pointer.test.mjs.
-    assert.equal(EXPECTED_EXPORTS.length, 199);
+    assert.equal(EXPECTED_EXPORTS.length, 200);
   });
 });

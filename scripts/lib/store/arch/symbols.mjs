@@ -20,30 +20,8 @@
 import { many, one, upsert, withTx } from '../../db/query.mjs';
 import { getPool } from '../../db/client.mjs';
 import { isCloudEnabled } from '../repo.mjs';
-import { UPSERT_CHUNK_SIZE, chunk } from './_shared.mjs';
+import { UPSERT_CHUNK_SIZE, chunk, retainCarriedRows, vectorLiteral } from './_shared.mjs';
 
-/**
- * Format a JS number[] as a pgvector literal `[0.1,0.2,...]`. The generic
- * `upsert()` helper serialises arrays as Postgres text-arrays `{"0.1",...}`
- * which pgvector rejects (`invalid input syntax for type vector`). Inline
- * formatter keeps recordSymbolEmbedding self-contained without leaking
- * pgvector knowledge into the generic db layer.
- */
-function vectorLiteral(embedding, expectedDim) {
-  if (!Array.isArray(embedding)) {
-    throw new TypeError('recordSymbolEmbedding: vector must be number[]');
-  }
-  if (typeof expectedDim === 'number' && embedding.length !== expectedDim) {
-    throw new RangeError(`recordSymbolEmbedding: vector has ${embedding.length} dims, expected ${expectedDim}`);
-  }
-  for (let i = 0; i < embedding.length; i++) {
-    const v = embedding[i];
-    if (typeof v !== 'number' || !Number.isFinite(v)) {
-      throw new TypeError(`recordSymbolEmbedding: vector[${i}] is not finite (${v})`);
-    }
-  }
-  return `[${embedding.join(',')}]`;
-}
 
 /**
  * Bulk upsert symbol_definitions. Returns `{[canonical_path|name|kind]: id}`
@@ -68,7 +46,7 @@ export async function recordSymbolDefinitions(repoId, defs) {
       });
       for (const r of out) map[`${r.canonical_path}|${r.symbol_name}|${r.kind}`] = r.id;
     } catch (err) {
-      throw new Error(`recordSymbolDefinitions failed: ${err.message}`);
+      throw new Error(`recordSymbolDefinitions failed: ${err.message}`, { cause: err });
     }
   }
   return map;
@@ -106,7 +84,7 @@ export async function recordSymbolIndex(refreshId, repoId, rows) {
       }
       total += result.rowCount;
     } catch (err) {
-      throw new Error(`recordSymbolIndex failed: ${err.message}`);
+      throw new Error(`recordSymbolIndex failed: ${err.message}`, { cause: err });
     }
   }
   return total;
@@ -261,7 +239,7 @@ export async function recordLayeringViolations(refreshId, repoId, violations) {
       }
       total += result.rowCount;
     } catch (err) {
-      throw new Error(`recordLayeringViolations failed: ${err.message}`);
+      throw new Error(`recordLayeringViolations failed: ${err.message}`, { cause: err });
     }
   }
   return total;
@@ -521,7 +499,7 @@ export async function listLayeringViolationsForSnapshot(refreshId, repoId) {
       comment: r.comment,
     }));
   } catch (err) {
-    throw new Error(`listLayeringViolations failed: ${err.message}`);
+    throw new Error(`listLayeringViolations failed: ${err.message}`, { cause: err });
   }
 }
 
@@ -546,27 +524,78 @@ export async function listLayeringViolationsForSnapshot(refreshId, repoId) {
  *   this run's symbols", so it passes an on-disk check here to avoid
  *   resurrecting a file that was genuinely removed since the prior snapshot.
  */
-export async function copyForwardUntouchedFiles({ repoId, fromRefreshId, toRefreshId, touchedFileSet, retagDomain = null, fileStillExists = null }) {
-  if (!await isCloudEnabled()) return 0;
+/**
+ * Every file path a snapshot carries, from BOTH tables, as a flat list.
+ *
+ * The UNION is load-bearing. A file that imports modules but exports no
+ * extractable symbol of its own appears in `symbol_file_imports.importer_path`
+ * and NEVER in `symbol_index` — the two tables are keyed independently. Asking
+ * the ownership oracle about `symbol_index` alone would leave every such pure
+ * importer unclassified, `isDisowned` would answer false by omission, and its
+ * edges would carry forward forever: exactly the `domain-deps-observed.json`
+ * corruption the ownership filter exists to close.
+ *
+ * Paths only, deliberately. `listSymbolsForSnapshot` paginates FULL symbol
+ * records (`limit = 200`), so using it to collect paths would pull the whole
+ * index into memory on every incremental refresh.
+ *
+ * Repo-bound through the `refresh_runs` FK the same way `getActiveSnapshot`
+ * binds its join — `symbol_file_imports` has no `repo_id` column, so the
+ * binding must come from the join rather than a WHERE on a column that does
+ * not exist.
+ *
+ * @param {{repoId: string, refreshId: string}} args
+ * @returns {Promise<string[]>}
+ */
+export async function listSnapshotFilePaths({ repoId, refreshId }) {
+  if (!repoId || !refreshId || !await isCloudEnabled()) return [];
+  const rows = await many(
+    `SELECT si.file_path AS path FROM symbol_index si
+       JOIN refresh_runs rr ON rr.id = si.refresh_id AND rr.repo_id = $2
+      WHERE si.refresh_id = $1
+     UNION
+     SELECT sfi.importer_path AS path FROM symbol_file_imports sfi
+       JOIN refresh_runs rr ON rr.id = sfi.refresh_id AND rr.repo_id = $2
+      WHERE sfi.refresh_id = $1`,
+    [refreshId, repoId],
+  );
+  return rows.map((r) => r.path).filter(Boolean);
+}
+
+
+export async function copyForwardUntouchedFiles({ repoId, fromRefreshId, toRefreshId, touchedFileSet, retagDomain = null, fileStillExists = null, isDisowned = null }) {
+  // Matches `copyForwardImports`' posture: a missing id degrades to a full
+  // re-walk (copy nothing), never to wrong or foreign data.
+  if (!repoId || !fromRefreshId || !toRefreshId || !await isCloudEnabled()) return 0;
   let copied = 0;
   const pageSize = 500;
   let offset = 0;
   while (true) {
     const rows = await many(
-      `SELECT definition_id, file_path, start_line, end_line,
-              signature_hash, purpose_summary, domain_tag,
-              duplicate_justified, duplicate_justification_reason,
-              duplicate_justification_target, duplicate_justification_source
-         FROM symbol_index
-        WHERE refresh_id = $1
-        ORDER BY definition_id
+      // `repoId` binds the SOURCE read through the `refresh_runs` FK, exactly as
+      // `copyForwardImports` does. `symbol_index` rows are reachable by
+      // `refresh_id` alone, so an unbound read here would not merely REPORT
+      // another repo's symbols — copy-forward PERSISTS them into this repo's new
+      // snapshot, where every later reader sees them as locally extracted.
+      //
+      // The ownership filter below makes that strictly worse rather than
+      // incidental: it classifies carried paths against THIS repo's git, so a
+      // foreign source snapshot would have every path answer "disowned" and be
+      // deleted. An unbound read plus a repo-local predicate is a data-loss
+      // combination, not just a correctness one.
+      `SELECT si.definition_id, si.file_path, si.start_line, si.end_line,
+              si.signature_hash, si.purpose_summary, si.domain_tag,
+              si.duplicate_justified, si.duplicate_justification_reason,
+              si.duplicate_justification_target, si.duplicate_justification_source
+         FROM symbol_index si
+         JOIN refresh_runs rr ON rr.id = si.refresh_id AND rr.repo_id = $4
+        WHERE si.refresh_id = $1
+        ORDER BY si.definition_id
         OFFSET $2 LIMIT $3`,
-      [fromRefreshId, offset, pageSize]
+      [fromRefreshId, offset, pageSize, repoId]
     );
     if (rows.length === 0) break;
-    const keep = rows.filter((r) =>
-      !touchedFileSet.has(r.file_path)
-      && (!fileStillExists || fileStillExists(r.file_path)));
+    const keep = retainCarriedRows(rows, { touchedFileSet, fileStillExists, isDisowned });
     if (keep.length > 0) {
       const payload = keep.map((r) => {
         let domainTag = r.domain_tag;

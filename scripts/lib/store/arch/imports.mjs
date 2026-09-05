@@ -14,7 +14,7 @@
 import { many, one, updateWhere, upsert } from '../../db/query.mjs';
 import { isCloudEnabled } from '../repo.mjs';
 import { describeSchemaFault } from '../../db/errors.mjs';
-import { UPSERT_CHUNK_SIZE, IN_CHUNK, chunk } from './_shared.mjs';
+import { UPSERT_CHUNK_SIZE, IN_CHUNK, chunk, retainCarriedRows } from './_shared.mjs';
 
 /**
  * Persist a snapshot's file-import edges.
@@ -78,7 +78,7 @@ export async function recordSymbolFileImports(refreshId, edges) {
       }
       inserted += result.rowCount;
     } catch (err) {
-      throw new Error(`recordSymbolFileImports failed: ${err.message}`);
+      throw new Error(`recordSymbolFileImports failed: ${err.message}`, { cause: err });
     }
   }
   return { inserted };
@@ -93,7 +93,7 @@ export async function recordSymbolFileImports(refreshId, edges) {
  *   the timed-out-full recovery so a deleted importer's edges are not
  *   resurrected; incremental passes null (deletions are already in touchedFileSet).
  */
-export async function copyForwardImports({ repoId, fromRefreshId, toRefreshId, touchedFileSet, fileStillExists = null }) {
+export async function copyForwardImports({ repoId, fromRefreshId, toRefreshId, touchedFileSet, fileStillExists = null, isDisowned = null }) {
   // `repoId` binds the SOURCE read. `symbol_file_imports` has no `repo_id`
   // column, so ownership comes from the `refresh_runs` FK (`repo_id UUID NOT
   // NULL REFERENCES audit_repos(id)`) — a join, not a migration.
@@ -123,9 +123,10 @@ export async function copyForwardImports({ repoId, fromRefreshId, toRefreshId, t
       [fromRefreshId, offset, pageSize, repoId]
     );
     if (rows.length === 0) break;
-    const keep = rows.filter((r) =>
-      !touchedFileSet.has(r.importer_path)
-      && (!fileStillExists || fileStillExists(r.importer_path)));
+    // ONE rule, shared with symbols.mjs — keyed on importer_path here, because
+    // the importer is the file whose ownership decides whether this edge is
+    // ours to record. See `retainCarriedRows` for why `isDisowned` is nullable.
+    const keep = retainCarriedRows(rows, { pathOf: (r) => r.importer_path, touchedFileSet, fileStillExists, isDisowned });
     if (keep.length > 0) {
       const payload = keep.map((r) => ({
         refresh_id: toRefreshId,
@@ -226,7 +227,7 @@ export async function markImportGraphPopulated(refreshId, repoId) {
     // logs based on the returned {populated} — see refresh.mjs.
     return { populated: rows.length > 0 };
   } catch (err) {
-    throw new Error(`markImportGraphPopulated failed: ${err.message}`);
+    throw new Error(`markImportGraphPopulated failed: ${err.message}`, { cause: err });
   }
 }
 
