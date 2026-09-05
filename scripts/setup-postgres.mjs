@@ -37,6 +37,7 @@ import { fileURLToPath } from 'node:url';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 import { canonicalizeEol } from './lib/file-io.mjs';
 import { withMigrationContext } from './lib/db/schema-realization.mjs';
+import { canonicalise, denseRankColumnPositions, diffSchemas } from './lib/db/schema-diff.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -527,47 +528,19 @@ async function captureLiveSchema(pool) {
   return live;
 }
 
-function diffSchemas(expected, live) {
-  const differences = [];
-  const keys = new Set([...Object.keys(expected), ...Object.keys(live)]);
-  keys.delete('schema');       // always 'public' by contract
-  for (const k of keys) {
-    const e = expected[k] || [];
-    const l = live[k] || [];
-    if (JSON.stringify(canonicalise(e)) !== JSON.stringify(canonicalise(l))) {
-      // Compute item-level diff for friendlier output.
-      const eSet = new Set(e.map((row) => JSON.stringify(canonicalise(row))));
-      const lSet = new Set(l.map((row) => JSON.stringify(canonicalise(row))));
-      const missingInLive = [...eSet].filter((s) => !lSet.has(s));
-      const extraInLive = [...lSet].filter((s) => !eSet.has(s));
-      differences.push({
-        category: k,
-        missingInLive: missingInLive.slice(0, 5).map((s) => JSON.parse(s)),
-        extraInLive: extraInLive.slice(0, 5).map((s) => JSON.parse(s)),
-        missingTotal: missingInLive.length,
-        extraTotal: extraInLive.length,
-      });
-    }
-  }
-  return differences;
-}
-
-/** Recursively sort object keys so structural equality is order-independent. */
-function canonicalise(v) {
-  if (v === null || v === undefined) return v;
-  if (Array.isArray(v)) {
-    return v.map(canonicalise).sort((a, b) => JSON.stringify(a) < JSON.stringify(b) ? -1 : 1);
-  }
-  if (typeof v === 'object') {
-    const out = {};
-    for (const k of Object.keys(v).sort()) out[k] = canonicalise(v[k]);
-    return out;
-  }
-  return v;
-}
+// `denseRankColumnPositions` / `canonicalise` / `diffSchemas` moved to
+// lib/db/schema-diff.mjs on 2026-09-05 — pure catalog comparison, no pool, and
+// this CLI sits over the file-size ratchet limit. Re-exported via `_internals`
+// so existing callers (db-test-container.mjs, the suites) are unchanged.
 
 // Catalog queries — kept in lock-step with generate-expected-schema.mjs.
 // (When that script grows new fields, mirror the change here.)
+//
+// `ordinal_position` is captured RAW on both sides — it is pg `attnum`, and the
+// fixture is a faithful record of the reference DB's physical layout, gaps and
+// all. It is normalised to a dense rank at comparison time by
+// `denseRankColumnPositions`; see that function for why the normalisation is
+// not pushed down into this SQL.
 const SHARED_CATALOG_QUERIES = {
   tables: `
     SELECT
@@ -1214,6 +1187,13 @@ async function runAdopt(pool, { adoptOnly = null } = {}) {
 
   // Mismatch → abort with diff summary.
   process.stderr.write(`\n${R}schema drift detected${X} — ${differences.length} categor${differences.length === 1 ? 'y' : 'ies'} differ:\n`);
+  if (differences.some((d) => d.category === 'tables')) {
+    // Say what the number IS, so nobody chases it against pg_attribute.
+    process.stderr.write(
+      `  (\`column_position\` is a dense 1..N rank over each table's columns, not the pg\n` +
+      `   attnum — a differently-provisioned but semantically identical DB matches here.)\n`
+    );
+  }
   for (const d of differences) {
     process.stderr.write(`\n  ## ${d.category} (live missing ${d.missingTotal}, extra ${d.extraTotal})\n`);
     if (d.missingInLive.length) {
@@ -1517,6 +1497,7 @@ export const _internals = Object.freeze({
   listMigrations,
   sha256,
   diffSchemas,
+  denseRankColumnPositions,
   canonicalise,
   runCheckDrift,
   renderHumanDriftReport,

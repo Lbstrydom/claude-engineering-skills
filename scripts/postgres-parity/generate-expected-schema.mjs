@@ -29,6 +29,18 @@
  * The output is JSON sorted deterministically (stable diff). Re-run after
  * every new migration; the produced file is committed.
  *
+ * "Pristine fully-migrated" above is a claim about the MIGRATION LEDGER, not
+ * about physical layout. The captured `ordinal_position` is pg `attnum`, so it
+ * records the reference DB's column history: replaying `20260721150000`'s
+ * six-column drop leaves `refresh_runs` at `1-5, 12-21`, while a DB created
+ * from final-state DDL (a dump restore, a snapshot bootstrap) holds the same
+ * columns at `1..15`. Both are conformant. adopt-mode therefore normalises the
+ * field to a dense 1..N rank on BOTH sides before diffing
+ * (`denseRankColumnPositions` in `setup-postgres.mjs`), which is what makes
+ * this fixture portable across differently-provisioned stores — do not
+ * "fix" an attnum difference by regenerating the fixture against the store
+ * that differs. Upstream report 8174dc51.
+ *
  * @module scripts/postgres-parity/generate-expected-schema
  */
 
@@ -227,6 +239,16 @@ async function main() {
   // host. The check is now an ALLOWLIST of loopback hosts (`isDisposableDbHost`)
   // and fails closed: any host that is not demonstrably a throwaway is refused,
   // whatever brand of Postgres is behind it.
+  //
+  // 2026-09-05: this guard is now the ONLY thing that catches the third
+  // incident's ordinal half. adopt-mode's comparator re-ranks
+  // `ordinal_position` to a dense 1..N on both sides (`denseRankColumnPositions`
+  // in `setup-postgres.mjs`), because attnum is column history and a
+  // legitimately dump-restored store must be adoptable — so a fixture
+  // regenerated from such a store no longer turns any diff red on ordinals
+  // alone. The platform-layer half (extensions, grants) is still caught
+  // downstream, and this guard still refuses the generation outright. Do not
+  // relax it on the strength of the comparator's new tolerance.
   let parsedDbUrl;
   try {
     parsedDbUrl = new URL(process.env.AUDIT_DB_URL);

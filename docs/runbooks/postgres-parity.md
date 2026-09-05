@@ -143,6 +143,21 @@ node scripts/setup-postgres.mjs --migrate
 / triggers / sequences / extensions / grants). Any drift aborts with a per-category
 diff so the operator decides.
 
+**Physical column layout is normalised out of that diff, deliberately.**
+`information_schema.columns.ordinal_position` is pg `attnum` — column *history*,
+not schema: a dropped column leaves a permanent hole in the numbering of every
+column that outlives it. So the fixture (a replay of the migration sequence)
+holds `refresh_runs` at `1-5, 12-21`, while a store created from final-state DDL
+— a dump restore, a snapshot bootstrap, i.e. exactly the population `--adopt`
+exists for — holds the same columns at `1..15`. Both are conformant, and before
+2026-09-05 the second aborted as "drift" (upstream report 8174dc51, measured on
+store `d5a9d07b91225a93`). `denseRankColumnPositions` re-ranks both sides to a
+dense `1..N` before diffing, so what stays asserted is **relative** column order
+(which `SELECT *` and a column-list-less `INSERT` expose) and what is discarded
+is drop history. A `tables` diff therefore prints `column_position`, a rank —
+do not chase it against `pg_attribute`, and never "resolve" an ordinal-only
+difference by regenerating the fixture against the store that differs.
+
 ## Local disposable test container
 
 `scripts/db-test-container.mjs` runs an ephemeral local Docker Postgres

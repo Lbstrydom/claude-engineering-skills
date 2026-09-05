@@ -116,6 +116,170 @@ describe('setup-postgres diffSchemas', () => {
   });
 });
 
+describe('setup-postgres diffSchemas — physical column layout vs schema semantics', () => {
+  const { diffSchemas, denseRankColumnPositions } = setup;
+
+  // Upstream report 8174dc51 (wine-cellar-app, 2026-09-05). `ordinal_position`
+  // in `information_schema.columns` IS pg `attnum`: dropping a column leaves a
+  // permanent hole in the numbering of the columns that outlive it. So a DB
+  // built by REPLAYING the migration sequence and a DB built from final-state
+  // DDL (a dump restore, a snapshot bootstrap) carry different attnums for
+  // byte-identical schemas — and adopt-mode, whose whole purpose is to enrol a
+  // pre-existing, differently-provisioned DB, aborted on exactly that.
+  //
+  // Measured 2026-09-05 against store d5a9d07b91225a93 (db=audit_loop, shared
+  // by this repo, wine-cellar-app and ai-organiser):
+  //   fixture `refresh_runs` ordinals  1-5, 12-21  (the faithful replay: the
+  //     six columns 20260721150000 drops left an INTERIOR gap at 6-11)
+  //   live    `refresh_runs` ordinals  1..15 contiguous, zero attisdropped
+  //   every other field — column_name, data_type, is_nullable, column_default,
+  //   is_identity, identity_generation — identical, in identical order.
+  //
+  // The fixture is CORRECT; the comparator was asserting column *history*,
+  // which is not schema.
+  const committedFixture = JSON.parse(
+    fs.readFileSync(path.join(REPO_ROOT, 'tests', 'fixtures', 'expected-schema.json'), 'utf-8')
+  );
+
+  /** Re-number a catalog's ordinals densely, preserving relative column order. */
+  const asFinalStateDdl = (tables) => tables.map((t) => ({
+    ...t,
+    columns: t.columns.map((c, i) => ({ ...c, ordinal_position: i + 1 })),
+  }));
+
+  it('the committed fixture really does carry a gapped table (vacuous-pass guard)', () => {
+    // Without a gap somewhere `asFinalStateDdl` is the identity function and
+    // every assertion below passes having tested nothing. If a future
+    // migration recreates `refresh_runs` contiguously this fails loudly —
+    // re-point the guard at whichever table is gapped then, don't delete it.
+    const gapped = committedFixture.tables.filter(
+      (t) => t.columns.some((c, i) => c.ordinal_position !== i + 1)
+    );
+    assert.ok(
+      gapped.length > 0,
+      'expected-schema.json has no table with a non-contiguous ordinal sequence — '
+      + 'this suite can no longer distinguish a replayed store from a final-state-DDL one'
+    );
+  });
+
+  it('a semantically-identical store with renumbered attnums does NOT read as drift', () => {
+    const expected = { schema: 'public', tables: committedFixture.tables };
+    const live = { schema: 'public', tables: asFinalStateDdl(committedFixture.tables) };
+    assert.deepEqual(diffSchemas(expected, live), []);
+  });
+
+  it('the report evidence exactly: fixture refresh_runs vs the store measured 2026-09-05', () => {
+    const fixtureRow = committedFixture.tables.find((t) => t.table_name === 'refresh_runs');
+    assert.ok(fixtureRow, 'refresh_runs missing from the committed fixture');
+    assert.deepEqual(
+      fixtureRow.columns.map((c) => c.ordinal_position),
+      [1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
+      'fixture refresh_runs ordinals changed — re-measure the store before editing this test'
+    );
+    const liveRow = {
+      ...fixtureRow,
+      columns: fixtureRow.columns.map((c, i) => ({ ...c, ordinal_position: i + 1 })),
+    };
+    assert.deepEqual(diffSchemas({ tables: [fixtureRow] }, { tables: [liveRow] }), []);
+  });
+
+  // ── The directions the gate must STILL fire in ──────────────────────────
+  // Dropping the field altogether (the report's option 1) would have passed
+  // the three assertions above and silently retired column-order checking:
+  // `canonicalise` SORTS arrays, so array position carries no order
+  // information after canonicalisation, and `ordinal_position` is the only
+  // ordering assertion the comparator has.
+
+  it('still reports drift when relative column ORDER differs', () => {
+    const cols = (names) => names.map((n, i) => ({
+      column_name: n, data_type: 'text', is_nullable: 'YES', column_default: null,
+      is_identity: 'NO', identity_generation: null, ordinal_position: i + 1,
+    }));
+    const expected = { tables: [{ table_name: 't', columns: cols(['a', 'b', 'c']) }] };
+    const live = { tables: [{ table_name: 't', columns: cols(['a', 'c', 'b']) }] };
+    const d = diffSchemas(expected, live);
+    assert.equal(d.length, 1, 'a reordered column set must still read as drift');
+    assert.equal(d[0].category, 'tables');
+  });
+
+  it('still reports drift on a real column difference that happens to be renumbered', () => {
+    const fixtureRow = committedFixture.tables.find((t) => t.table_name === 'refresh_runs');
+    const mutated = {
+      ...fixtureRow,
+      columns: fixtureRow.columns.map((c, i) => ({
+        ...c,
+        ordinal_position: i + 1,
+        data_type: c.column_name === 'ownership_rule_epoch' ? 'integer' : c.data_type,
+      })),
+    };
+    assert.equal(diffSchemas({ tables: [fixtureRow] }, { tables: [mutated] }).length, 1,
+      'a data_type change must not be normalised away');
+  });
+
+  it('still reports drift when live is missing a column, renumbering notwithstanding', () => {
+    const fixtureRow = committedFixture.tables.find((t) => t.table_name === 'refresh_runs');
+    const short = {
+      ...fixtureRow,
+      columns: fixtureRow.columns.slice(0, -1).map((c, i) => ({ ...c, ordinal_position: i + 1 })),
+    };
+    assert.equal(diffSchemas({ tables: [fixtureRow] }, { tables: [short] }).length, 1);
+  });
+
+  describe('denseRankColumnPositions', () => {
+    it('collapses gaps to 1..N in ascending ordinal order and drops the raw attnum', () => {
+      const out = denseRankColumnPositions({
+        tables: [{
+          table_name: 't',
+          columns: [
+            { column_name: 'a', ordinal_position: 1 },
+            { column_name: 'b', ordinal_position: 12 },
+            { column_name: 'c', ordinal_position: 21 },
+          ],
+        }],
+      });
+      assert.deepEqual(
+        out.tables[0].columns,
+        [
+          { column_name: 'a', column_position: 1 },
+          { column_name: 'b', column_position: 2 },
+          { column_name: 'c', column_position: 3 },
+        ],
+        'the normalised value is a rank, not an attnum — it must not keep attnum’s name'
+      );
+    });
+
+    it('ranks by ordinal_position, not by array order', () => {
+      // json_agg(… ORDER BY ordinal_position) already orders the array, but the
+      // rank must not depend on every caller having preserved that.
+      const out = denseRankColumnPositions({
+        tables: [{
+          table_name: 't',
+          columns: [
+            { column_name: 'late', ordinal_position: 21 },
+            { column_name: 'early', ordinal_position: 1 },
+          ],
+        }],
+      });
+      // The RANK is the contract, not the array's own order — `canonicalise`
+      // re-sorts the array before comparison, so position in it says nothing.
+      assert.deepEqual(
+        Object.fromEntries(out.tables[0].columns.map((c) => [c.column_name, c.column_position])),
+        { early: 1, late: 2 }
+      );
+    });
+
+    it('leaves non-table categories untouched', () => {
+      const cat = { functions: [{ function_name: 'f', args: '' }], views: [{ view_name: 'v' }] };
+      assert.deepEqual(denseRankColumnPositions(cat), cat);
+    });
+
+    it('tolerates a tables row with no columns array', () => {
+      const cat = { tables: [{ table_name: 't' }] };
+      assert.deepEqual(denseRankColumnPositions(cat), cat);
+    });
+  });
+});
+
 describe('setup-postgres listMigrations + sha256 (filesystem-only)', () => {
   it('lists `supabase/migrations/*.sql` in lexicographic order', async () => {
     // Gemini-G1 (M3+M4 audit): no hardcoded count. The relevant invariants
