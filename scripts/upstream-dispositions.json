@@ -506,6 +506,17 @@
         "value": "tests/sync-owned-sidecar.test.mjs"
       },
       "recordedAt": "2026-09-04T12:14:07.598Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "edc0948e-b0ae-4561-9704-250912beeab9",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/refresh-ownership-epoch-db.test.mjs"
+      },
+      "recordedAt": "2026-09-05T16:23:08.343Z"
     }
   ]
 }
