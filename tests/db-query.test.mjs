@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 
 import { _builders } from '../scripts/lib/db/query.mjs';
 import { _internals as rpcInternals, PG_VECTOR_DIM } from '../scripts/lib/db/rpc.mjs';
-import { normalizePostgresError, _internals as errorInternals } from '../scripts/lib/db/errors.mjs';
+import { normalizePostgresError, annotateConflictTargetFault, _internals as errorInternals } from '../scripts/lib/db/errors.mjs';
 
 const {
   quoteIdent,
@@ -518,5 +518,40 @@ describe('normalizePostgresError', () => {
     assert.equal(errorInternals.isConnectionExceptionSqlstate('09000'), false);  // wrong class
     assert.equal(errorInternals.isConnectionExceptionSqlstate(undefined), false);
     assert.equal(errorInternals.isConnectionExceptionSqlstate(null), false);
+  });
+});
+
+describe('annotateConflictTargetFault — name the table/columns a bare 42P10 omits', () => {
+  it('prepends the table and ON CONFLICT columns to the message', () => {
+    const err = Object.assign(
+      new Error('there is no unique or exclusion constraint matching the ON CONFLICT specification'),
+      { code: '42P10' },
+    );
+    const out = annotateConflictTargetFault(err, 'bandit_arms', ['pass_name', 'variant_id', 'context_bucket']);
+    assert.equal(out, err, 'mutates and returns the same error object');
+    assert.match(out.message, /^bandit_arms has no unique constraint on \(pass_name, variant_id, context_bucket\) —/);
+    assert.match(out.message, /no unique or exclusion constraint matching the ON CONFLICT specification/);
+  });
+
+  it('accepts a single string onConflict target, not just an array', () => {
+    const err = Object.assign(new Error('boom'), { code: '42P10' });
+    const out = annotateConflictTargetFault(err, 't', 'col_a');
+    assert.match(out.message, /^t has no unique constraint on \(col_a\) —/);
+  });
+
+  it('leaves any other SQLSTATE untouched', () => {
+    const err = Object.assign(new Error('unrelated failure'), { code: '42P01' });
+    annotateConflictTargetFault(err, 'bandit_arms', ['pass_name']);
+    assert.equal(err.message, 'unrelated failure');
+  });
+
+  it('leaves a 42P10 untouched when the caller passed no onConflict target', () => {
+    const err = Object.assign(new Error('there is no unique or exclusion constraint matching the ON CONFLICT specification'), { code: '42P10' });
+    annotateConflictTargetFault(err, 'bandit_arms', undefined);
+    assert.equal(err.message, 'there is no unique or exclusion constraint matching the ON CONFLICT specification');
+  });
+
+  it('is a no-op on a falsy error (safe to call unconditionally)', () => {
+    assert.equal(annotateConflictTargetFault(null, 't', ['c']), null);
   });
 });

@@ -347,16 +347,27 @@ export function tallyWriteOutcomes(tally, results) {
 
 /**
  * Postgres error text that means the STORE'S SCHEMA is behind the code, not
- * that the write was unlucky.
+ * that the write was unlucky. Two shapes, with DIFFERENT remedies — collapsing
+ * them into one message sent an operator down a dead end (consumer report,
+ * 2026-09-04):
+ *
+ *   - A relation/column is missing outright ('does not exist', 42P01/42703) —
+ *     a real migration was never applied. `--check-drift` genuinely answers
+ *     this: it compares the applied-migrations ledger to source files.
+ *   - The ON CONFLICT target has no matching unique constraint (42P10) — this
+ *     can ALSO mean a constraint was replaced out-of-band with no
+ *     corresponding migration, which a LEDGER comparison cannot see: the
+ *     consumer's ledger showed zero pending migrations while the live
+ *     `bandit_arms` constraint had four columns against the three the
+ *     migrations declare. `--check-drift` reported clean having checked
+ *     nothing about the constraint's actual shape.
  *
  * Matched on the message rather than `err.code` because `lastError` is already
  * stringified by the time the summary is rendered — the code is gone. Each
  * phrase is the fixed part of a PostgreSQL error message, not a paraphrase.
  */
-const SCHEMA_DRIFT_SIGNS = Object.freeze([
-  'no unique or exclusion constraint matching the on conflict specification', // 42P10
-  'does not exist', // 42P01 relation / 42703 column
-]);
+const MISSING_OBJECT_SIGNS = Object.freeze(['does not exist']); // 42P01 relation / 42703 column
+const CONFLICT_TARGET_SIGN = 'no unique or exclusion constraint matching the on conflict specification'; // 42P10
 
 /**
  * Turn the `byWriter` tally into lines an operator can act on.
@@ -375,22 +386,37 @@ const SCHEMA_DRIFT_SIGNS = Object.freeze([
  */
 export function describeLostWrites(byWriter) {
   const lines = [];
-  let schemaDrift = false;
+  let missingObject = false;
+  let conflictTarget = false;
   for (const [writerId, w] of Object.entries(byWriter || {})) {
     if (!w || !(w.lost > 0)) continue;
     const err = w.lastError ? `: ${w.lastError}` : ' (no error recorded)';
     lines.push(`      ${writerId} — ${w.lost} lost${err}`);
     const lower = String(w.lastError || '').toLowerCase();
-    if (SCHEMA_DRIFT_SIGNS.some((s) => lower.includes(s))) schemaDrift = true;
+    if (MISSING_OBJECT_SIGNS.some((s) => lower.includes(s))) missingObject = true;
+    if (lower.includes(CONFLICT_TARGET_SIGN)) conflictTarget = true;
   }
-  if (schemaDrift) {
+  if (missingObject) {
     // Named as drift, not as a bug in the writer: the writer is correct against
     // the migrations in this repo, and the store it is talking to is behind
     // them. `--check-drift` is the command that says so; `--migrate` is the fix.
     lines.push('      ^ this reads as STORE SCHEMA DRIFT, not a transient failure — the write '
-      + 'targets a constraint or table this database does not have, so it will be lost again on '
+      + 'targets a table or column this database does not have, so it will be lost again on '
       + 'every run until the schema catches up. Diagnose: `node scripts/setup-postgres.mjs '
       + '--check-drift`; fix: `node scripts/setup-postgres.mjs --migrate`.');
+  }
+  if (conflictTarget) {
+    // `--check-drift` is NOT the diagnosis here — it compares the applied-
+    // migrations ledger to source files, and a ledger with zero pending
+    // migrations says nothing about whether a constraint's actual SHAPE still
+    // matches what those migrations declared. The upsert() error above now
+    // names the table and the expected ON CONFLICT columns directly — check
+    // that table's constraints in `pg_constraint`, not the ledger.
+    lines.push('      ^ the ON CONFLICT target above has no matching unique constraint. '
+      + '`--check-drift` cannot see this — it checks which migrations are applied, not whether a '
+      + 'constraint was later altered or replaced outside a migration. Check `pg_constraint` for '
+      + 'the table/columns named above; if the constraint is simply missing, `--migrate` may still '
+      + 'restore it.');
   }
   return lines;
 }

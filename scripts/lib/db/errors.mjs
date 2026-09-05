@@ -262,6 +262,43 @@ export function describeSchemaFault(err, where) {
   return null;
 }
 
+/**
+ * Enrich a 42P10 (`no unique or exclusion constraint matching the ON
+ * CONFLICT specification`) error with the table and columns the caller
+ * expected a constraint on. Postgres's own message names neither — the
+ * caller (`upsert()`) already knows both, and by the time the failure
+ * reaches an operator (`durableWrite`'s outcome tally stringifies it) that
+ * context is gone.
+ *
+ * Write-path counterpart to `describeSchemaFault` above: same shape (name the
+ * fault Postgres left anonymous), different seam (a thrown write error here,
+ * a caught read error there) — kept separate rather than folded into one
+ * function because the write path has the table/columns as call-site
+ * arguments, not something to walk a `cause` chain for.
+ *
+ * Consumer report, 2026-09-04: the bare message sent the operator to
+ * `--check-drift`, which compares the applied-migrations ledger to source
+ * files, not the live schema — it read clean while the real `bandit_arms`
+ * constraint had four columns against the three the migrations declare.
+ * Naming the table/columns here points at `pg_constraint` instead.
+ *
+ * No-op (returns `err` unchanged) for any other SQLSTATE or when no
+ * `onConflict` target was supplied — safe to call unconditionally from a
+ * generic catch.
+ *
+ * @param {Error & {code?: string}} err
+ * @param {string} table
+ * @param {string|string[]|undefined} onConflict
+ * @returns {Error} the same error object, mutated in place
+ */
+export function annotateConflictTargetFault(err, table, onConflict) {
+  if (err && err.code === '42P10' && onConflict) {
+    const cols = (Array.isArray(onConflict) ? onConflict : [onConflict]).join(', ');
+    err.message = `${table} has no unique constraint on (${cols}) — ${err.message}`;
+  }
+  return err;
+}
+
 // ── Test seam ──────────────────────────────────────────────────────────────
 
 export const _internals = Object.freeze({
@@ -270,4 +307,5 @@ export const _internals = Object.freeze({
   isConnectionExceptionSqlstate,
   isSchemaFaultSqlstate,
   describeSchemaFault,
+  annotateConflictTargetFault,
 });

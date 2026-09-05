@@ -22,7 +22,7 @@
 
 import { _txStore, getActiveTxClient, getPool } from './client.mjs';
 import { assertSchemaRealized, isMigrationContext } from './schema-realization.mjs';
-import { normalizePostgresError } from './errors.mjs';
+import { normalizePostgresError, annotateConflictTargetFault } from './errors.mjs';
 
 // ── jsonb-safe value binding (the seam fix) ────────────────────────────────
 //
@@ -577,9 +577,15 @@ export async function insertReturning(table, row, opts = {}) {
  */
 export async function upsert(table, rows, opts = {}) {
   const { sql, params } = buildUpsert(table, rows, opts);
-  const res = await _exec(sql, params);
-  if (opts.returning !== undefined) return res.rows;
-  return { rowCount: res.rowCount ?? 0 };
+  try {
+    const res = await _exec(sql, params);
+    if (opts.returning !== undefined) return res.rows;
+    return { rowCount: res.rowCount ?? 0 };
+  } catch (err) {
+    // See annotateConflictTargetFault: this is the one call site that knows
+    // both the table and the ON CONFLICT columns a 42P10 needs named.
+    throw annotateConflictTargetFault(err, table, opts.onConflict);
+  }
 }
 
 /**

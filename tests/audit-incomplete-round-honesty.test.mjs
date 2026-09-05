@@ -200,11 +200,11 @@ describe('describeLostWrites — name the loser, not just the count', () => {
     assert.match(lines[0], /boom/);
   });
 
-  it('recognises schema drift and gives the remedy — the reported error verbatim', () => {
+  it('recognises a missing relation/column and gives the ledger remedy', () => {
     const lines = describeLostWrites({
-      'learning.banditArms': {
+      'learning.someWriter': {
         written: 0, spilled: 0, lost: 1, skipped: 0,
-        lastError: 'there is no unique or exclusion constraint matching the ON CONFLICT specification',
+        lastError: 'relation "some_table" does not exist',
       },
     });
     const joined = lines.join('\n');
@@ -212,6 +212,27 @@ describe('describeLostWrites — name the loser, not just the count', () => {
     assert.match(joined, /--check-drift/);
     assert.match(joined, /--migrate/);
     assert.match(joined, /every run/);
+  });
+
+  it('recognises a conflict-target mismatch and does NOT send the operator to --check-drift as a diagnosis (2026-09-04 correction)', () => {
+    // --check-drift compares the applied-migrations LEDGER to source files — a
+    // constraint replaced out-of-band with no corresponding migration is
+    // invisible to it. The old wording claimed --check-drift would "diagnose"
+    // this; a live consumer measured a clean ledger against a genuinely wrong
+    // constraint shape, so that claim was false.
+    const lines = describeLostWrites({
+      'learning.banditArms': {
+        written: 0, spilled: 0, lost: 1, skipped: 0,
+        // Post-annotateConflictTargetFault shape: table + columns are named
+        // ahead of Postgres's own message.
+        lastError: 'bandit_arms has no unique constraint on (pass_name, variant_id, context_bucket) — '
+          + 'there is no unique or exclusion constraint matching the ON CONFLICT specification',
+      },
+    });
+    const joined = lines.join('\n');
+    assert.doesNotMatch(joined, /STORE SCHEMA DRIFT/);
+    assert.match(joined, /--check-drift.* cannot see this|cannot see this.*--check-drift/is);
+    assert.match(joined, /pg_constraint/);
   });
 
   it('says so when a loss carries no error at all', () => {
