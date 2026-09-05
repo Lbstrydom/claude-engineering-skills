@@ -58,11 +58,35 @@ Postgres arms the timer at statement start and a `SET` inside the body never
 re-arms it (negative-controlled). Bound these RPCs **at the caller**, as
 `db/rpc.mjs` now does via `withTx` + `SET LOCAL`.
 
-### Trap 2 — `CREATE OR REPLACE FUNCTION` resets proconfig and the ACL
+### Trap 2 — `CREATE OR REPLACE FUNCTION` resets proconfig; the ACL trap is a DIFFERENT one
 
-It replaces the whole `proconfig` array and resets the ACL, so any redefinition
-silently reverts `20260721130000`'s `search_path` pin + EXECUTE revoke unless it
-re-states both. Verify with `pg_proc.proconfig` / `proacl`, **not** review.
+**Corrected 2026-09-05, measured** on `pgvector/pgvector:pg16`. The claim used to
+read "resets proconfig **and the ACL**". Half of that is wrong, and the wrong
+half pointed away from the real hazard.
+
+| Operation | `proconfig` | `proacl` |
+|---|---|---|
+| `CREATE` + `REVOKE ... FROM PUBLIC, anon, authenticated` | `{search_path=public}` | `{postgres=X/postgres}` |
+| **Same-signature** `CREATE OR REPLACE`, `SET` not restated | **NULL — RESET** | `{postgres=X/postgres}` — **preserved** |
+| **Adding a parameter** (a new overload) | NULL | **NULL — default, i.e. `EXECUTE` to `PUBLIC`** |
+
+So: **a same-signature replacement silently drops the `search_path` pin and must
+restate `SET`, but it does NOT lose the EXECUTE revoke.** The privilege hazard is
+the *other* shape — **changing the argument list creates a DIFFERENT function**,
+and the existing `REVOKE` names the old signature, so it does not cover the new
+one. Confirmed by privilege, not by reading `proacl`:
+
+```
+original(int)        anon can execute: false
+overload(int,text)   anon can execute: true
+overload(int,text)   PUBLIC can execute: true
+```
+
+**Consequence for `20260721130000`'s hardening**: re-run its `REVOKE` for any new
+overload, and restate `SET search_path` on every replacement. Verify from
+`pg_proc.proconfig` and `has_function_privilege(...)`, **not** from review — and
+not from `proacl` alone, where the dangerous case shows up as an unremarkable
+`NULL`.
 
 ## Cluster density counts FINDINGS, never a wave's own control state
 

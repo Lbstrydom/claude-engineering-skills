@@ -642,9 +642,13 @@ in [`docs/reference/memory-health-gate.md`](docs/reference/memory-health-gate.md
   (44% of the raw signal on 2026-07-20). Matched on the detail-snapshot **prefix**,
   never the category — a wave emits both control state and real findings.
 - **Bound an RPC at the CALLER** — `SET statement_timeout` inside a function is
-  decorative, and `CREATE OR REPLACE FUNCTION` resets `proconfig` **and** the ACL,
-  silently reverting a `search_path` pin + EXECUTE revoke. Both traps, and how to
-  verify them from `pg_proc` rather than by review, are in the reference above.
+  decorative. **Corrected 2026-09-05 (measured):** `CREATE OR REPLACE FUNCTION`
+  resets **`proconfig`** — restate `SET search_path` — but PRESERVES the ACL, so
+  a same-signature replacement does *not* drop an EXECUTE revoke. The privilege
+  hazard is the other shape: **changing the argument list makes a DIFFERENT
+  function**, whose default ACL is `EXECUTE` to `PUBLIC` and which the old
+  `REVOKE` does not name. Verify by `has_function_privilege`, never by review or
+  by a `proacl` that reads `NULL`. Both traps: the reference above.
 
 > **pgvector promoted (2026-07-21):** semantic cosine catches reworded re-raises that
 > trigram under-counts. Record-time hook in `recordFindings`, **default-ON**, fail-open,

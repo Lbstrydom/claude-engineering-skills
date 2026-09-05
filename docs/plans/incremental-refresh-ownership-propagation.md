@@ -370,7 +370,7 @@ run, and node reports a never-run suite as a clean pass.
 ## 10. Out of Scope (Future)
 
 - `imports.mjs:322` still selects the phantom `refresh_runs.commit_sha` column (pre-existing, filed separately by the earlier session). Not touched here.
-- **Unresolved disagreement, deliberately not settled here.** AGENTS.md and `docs/reference/memory-health-gate.md` §Trap 2 both state that `CREATE OR REPLACE FUNCTION` resets `proconfig` **and the ACL**. A round-1 reviewer asserted this is false for a *same-signature* replacement (ownership and privileges preserved; `proconfig` still needs restating). This plan does not depend on either reading — §3.2 now rests on the uncontested overload mechanism — and the claim is not "corrected" on a reviewer's word: it is a load-bearing repo invariant and deserves an empirical check against a disposable Postgres, as its own task.
+- ~~Unresolved disagreement about `CREATE OR REPLACE FUNCTION`~~ — **SETTLED 2026-09-05 by measurement** on `pgvector/pgvector:pg16`, and both sides were half right. A same-signature replacement **resets `proconfig`** (the repo's claim, confirmed — restate `SET search_path`) but **preserves the ACL** (the reviewer's claim, confirmed — the EXECUTE revoke survives). The privilege hazard is the shape §3.2 already rested on: adding a parameter creates a different function whose default ACL is `EXECUTE` to `PUBLIC`, confirmed by `has_function_privilege('anon', 'probe_fn(integer,text)', 'EXECUTE') = true` against `false` for the original. AGENTS.md and `docs/reference/memory-health-gate.md` §Trap 2 are corrected.
 - The second open upstream report, `c446e6c1` (consistency-contract.md naming upstream's `scripts/` layout).
 
 ---
