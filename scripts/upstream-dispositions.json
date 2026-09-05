@@ -300,6 +300,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "8174dc51-476c-4378-8b2c-f298e9d78bf3",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/db-setup.test.mjs"
+      },
+      "recordedAt": "2026-09-05T19:57:53.900Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "897aa607-8808-458d-8188-5c1f38caef7f",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
