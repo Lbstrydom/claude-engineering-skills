@@ -223,7 +223,13 @@ export const KNOWN_FLAGS = [
   // `fix`/`wont-fix` — one of probe:<id>, test:<path>, exempt:<reason>.
   // `--gate` (round-3 audit H5 compromise): `reconcile --gate` exits non-zero
   // on any unresolved catch-all-sentinel row.
+  // `--apply` / `--allow-exempt` (reconcile-attribution plan §4.4): `reconcile
+  // --apply` writes the DB's disposition into the committed ratchet ledger for
+  // rows it is missing, refusing unless staleness has been ruled out AND the
+  // disposition RESOLVES. `--allow-exempt` opts in to the one kind no
+  // referential check can validate.
   '--affected-path', '--id', '--note', '--before', '--disposition', '--gate',
+  '--apply', '--allow-exempt',
   // ── write-spill <status|drain> (durable audit-store writes) ───────────────
   '--cap',
   // `--paths` is deliberately NOT here. An older acceptance criterion

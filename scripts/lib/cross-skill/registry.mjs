@@ -776,7 +776,15 @@ export const REGISTRY = Object.freeze([
       // when any terminal db row still carries the migration-generated catch-all
       // sentinel disposition — a post-deploy release-completion check, not just
       // an advisory worksheet.
-      { name: 'gate', kind: 'boolean' }],
+      { name: 'gate', kind: 'boolean' },
+      // `reconcile --apply` writes the DB's disposition into the committed ratchet
+      // ledger for rows it is missing. It refuses unless staleness has been ruled
+      // out, and refuses an unresolvable disposition — the ledger exists so a
+      // closure cannot be a no-op, and a repair that trusted the store would undo
+      // that. `--allow-exempt` opts in to the one kind no referential check can
+      // validate.
+      { name: 'apply', kind: 'boolean' },
+      { name: 'allow-exempt', kind: 'boolean' }],
     positionals: { verbs: ['report', 'list', 'ack', 'fix', 'wont-fix', 'annotate', 'history', 'drain', 'reconcile'] },
     payload: 'none',
     scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop', degradeShape: {},

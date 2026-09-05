@@ -329,3 +329,35 @@ export function readFileAtRef({ ref, filePath, repoRoot = process.cwd() }) {
     reason: `${ref}:${filePath} exists but could not be read (git exit ${r.status})`,
   };
 }
+
+/**
+ * The advisory line a stale audit base earns — ADVISORY, never blocking, and a
+ * PURE formatter so the prose is unit-testable without a git fixture. Returns
+ * `null` for every state that must stay silent; the caller writes it.
+ *
+ * WHY (measured, twice, in one session). A 7-round audit — real provider spend,
+ * ~50 minutes — ran against a base 14 commits behind `origin/main`, and nothing
+ * said so. Worse, the resulting gate evidence was then correctly REFUSED by
+ * `ship-commit`, because the audited tree was not the tree being committed: the
+ * whole run could not certify the thing it had just examined.
+ *
+ * Advisory rather than a gate, deliberately. Auditing an older base on purpose
+ * is legitimate (re-running a historical audit, a pinned-revision fixture), and
+ * a repo with concurrent sessions would trip a blocking check constantly — the
+ * cried-wolf shape that earns `--no-verify`. Only `behind` produces a line;
+ * `current` and `unknown` return null so the common path gains no noise.
+ *
+ * The subject is the caller's RESOLVED audit base, not `HEAD` — those differ
+ * whenever the tree is clean — and the upstream ref is named as resolved rather
+ * than assumed to be `origin/main`.
+ *
+ * @param {{state?: string, subject?: string, upstream?: string, behindBy?: number}|null} freshness
+ * @returns {string|null} the stderr-ready text, or null when nothing to say
+ */
+export function formatStaleBaseAdvisory(freshness) {
+  if (freshness?.state !== 'behind') return null;
+  return `  [scope] base ${freshness.subject} is ${freshness.behindBy} commit(s) behind `
+    + `${freshness.upstream} (as of your last fetch) — findings may cite superseded\n`
+    + '  [scope] code, and this run\'s gate evidence will not certify a commit made\n'
+    + '  [scope] from a newer tree.\n';
+}

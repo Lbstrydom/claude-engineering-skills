@@ -240,11 +240,14 @@ export async function upstreamCmd(ctx) {
     }
 
     if (sub === 'reconcile') {
-      const res = await m.upstreamReconcile({
+      // Named so `--apply` can RE-run it after writing and render the post-write
+      // state — the operator reads what they now have, not what they had.
+      const listAndReconcile = async () => m.upstreamReconcile({
         repoRoot,
         listTerminalFn: () => ctx.deps.listTerminalUpstreamIssues(),
         currentStore: await currentStoreFingerprint(),
       });
+      let res = await listAndReconcile();
       // Round-3 audit M5: `res.reconciliation` is null in TWO distinct cases —
       // cloud genuinely off (benign, expected) and a real DB failure
       // (res.ok === false, res.error set). Collapsing both into the same
@@ -294,6 +297,42 @@ export async function upstreamCmd(ctx) {
           process.stderr.write('  [upstream reconcile --gate] cloud is off — nothing was actually checked; this is NOT a verified-clean result.\n');
         }
       }
+      // `--apply` repairs the gap `reconcile` could only report. It runs BEFORE
+      // rendering, and the report that follows describes the POST-write ledger
+      // — the operator should read the state they now have, not the one they
+      // had. Exit is non-zero if any divergence REMAINS: a refused row, or a
+      // category `--apply` does not touch. Foreign-store entries are excluded
+      // deliberately (they are scope, not divergence, and this repo's ledger
+      // permanently carries 20 — counting them would make the gate
+      // unsatisfiable).
+      let applyResult = null;
+      if (ctx.hasFlag('apply') && res.reconciliation?.missingFromLedger?.length) {
+        const { probeIds } = await import('../../doctor/registry.mjs');
+        const { readTrackedTestFiles } = await import('../../../check-upstream-probe-coverage.mjs');
+        applyResult = await m.applyMissingDispositions({
+          repoRoot,
+          dbRows: res.rows ?? [],
+          missingIds: res.reconciliation.missingFromLedger,
+          missingCause: res.missingCause,
+          allowExempt: ctx.hasFlag('allow-exempt'),
+          probeIdsFn: probeIds,
+          trackedTestFilesFn: () => readTrackedTestFiles().files,
+        });
+        if (applyResult.aborted) {
+          process.stderr.write(`  [upstream reconcile --apply] REFUSED: ${applyResult.aborted}\n`);
+        }
+        for (const r of applyResult.refused) {
+          process.stderr.write(`  [upstream reconcile --apply] refused ${r.issueId} at gate "${r.gate}": ${r.reason}\n`);
+        }
+        if (applyResult.applied.length) {
+          process.stderr.write(`  [upstream reconcile --apply] wrote ${applyResult.applied.length} ledger entr(y/ies)\n`);
+        }
+        // Re-reconcile so what is rendered below is the POST-write state.
+        if (applyResult.wrote) {
+          res = await listAndReconcile();
+        }
+      }
+
       if (ctx.hasFlag('worksheet')) {
         if (!res.reconciliation) {
           process.stdout.write('cloud off — nothing to reconcile against\n');

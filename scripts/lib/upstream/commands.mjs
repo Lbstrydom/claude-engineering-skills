@@ -19,7 +19,6 @@ import path from 'path';
 import crypto from 'crypto';
 import { spawnSync } from 'child_process';
 
-import { atomicWriteFileSync } from '../file-io.mjs';
 import {
   parseEnvelopeFrame, writeEnvelope as writeEnvelopeToDir, drainEnvelopes,
 } from '../outbox-envelope.mjs';
@@ -28,11 +27,21 @@ import {
   parseDisposition, formatDisposition, computeLedgerReconciliation,
   classifyMissingCause, MISSING_CAUSE,
 } from './dispositions.mjs';
-import { resolveBaseFreshness, readFileAtRef } from '../git-freshness.mjs';
+import {
+  DISPOSITION_LEDGER_PATH, mergeLedgerEntry,
+  upsertDispositionLedgerEntry, serialiseDispositionLedger,
+  applyMissingDispositions, captureReconcilePrecondition, readUpstreamLedgerEvidence,
+} from './disposition-ledger.mjs';
+import { resolveBaseFreshness } from '../git-freshness.mjs';
 import { foldEventsToState, NON_LIFECYCLE_EVENTS } from './events.mjs';
 
-/** Where the committed closure-disposition ledger lives (§2.4). */
-export const DISPOSITION_LEDGER_PATH = 'scripts/upstream-dispositions.json';
+// The disposition-ledger surface lives in ./disposition-ledger.mjs; re-exported
+// here so every existing importer of `upstream/commands.mjs` keeps working.
+export {
+  DISPOSITION_LEDGER_PATH, mergeLedgerEntry, serialiseDispositionLedger,
+  applyMissingDispositions, captureReconcilePrecondition, readUpstreamLedgerEvidence,
+};
+export { renderReconciliationReport } from './reconcile-render.mjs';
 
 /** Envelope format version. Bumping it makes older files `rejected/`. */
 export const OUTBOX_ENVELOPE_VERSION = 1;
@@ -492,83 +501,6 @@ export async function upstreamList({
   return { ...res, items };
 }
 
-/**
- * Read + parse the committed disposition ledger. Never throws — an absent
- * file (first-ever transition in a fresh checkout) is `[]`, not an error;
- * a present-but-corrupt file is also `[]` so the write path below can still
- * proceed with a fresh array rather than blocking every future transition on
- * a hand-fixable JSON typo (the GATE, not this write path, is what enforces
- * the ledger's integrity for `npm run check`).
- *
- * @param {string} repoRoot
- * @returns {Array<object>}
- */
-function readDispositionLedger(repoRoot) {
-  const p = path.join(repoRoot, DISPOSITION_LEDGER_PATH);
-  try {
-    const parsed = JSON.parse(fs.readFileSync(p, 'utf-8'));
-    return Array.isArray(parsed?.entries) ? parsed.entries : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Upsert one entry into the committed ledger, keyed by `issueId` (exactly one
- * active disposition per upstream issue — a re-transition on the same issue
- * REPLACES its prior entry rather than appending a second one).
- *
- * Called BEFORE the DB write (§2.4's sequential ledger-then-DB order) — the
- * cheap local write happens first, so a crash between this call and the DB
- * write leaves the ledger AHEAD of the store rather than the reverse; the
- * cloud reconciler (`upstream list --worksheet`) is the advisory backstop for
- * exactly that gap, not this function.
- *
- * `storeFingerprint` records WHICH database this issue lives in (a one-way
- * digest — this file is committed to a PUBLIC repo and one consumer's store is
- * a corporate internal host, so the hostname itself must never land here).
- * Without it, an entry closing a report
- * filed by a consumer on a different store reads as `ledgerOnly` to every
- * reconcile run here and fails the push — the state that forced five real
- * closures to be deleted from this file by hand on 2026-08-29. Written only
- * when the caller could determine it; omitted otherwise, because an INVENTED
- * store value would be worse than none (it would make the entry foreign to
- * every run, and so permanently unreconcilable).
- *
- * @param {string} repoRoot
- * @param {{issueId: string, state: string, disposition: {kind: string, value: string}, storeFingerprint?: string|null}} entry
- */
-function upsertDispositionLedgerEntry(repoRoot, entry) {
-  const p = path.join(repoRoot, DISPOSITION_LEDGER_PATH);
-  const entries = readDispositionLedger(repoRoot);
-  const prior = entries.find((e) => e?.issueId === entry.issueId);
-  const withoutThis = entries.filter((e) => e?.issueId !== entry.issueId);
-  // A re-transition that cannot determine the store must not STRIP one an
-  // earlier write established — a read-modify-write is a constructor, and
-  // silently dropping a field on re-write is how the entry would become
-  // legacy-shaped again without anybody deciding that.
-  const storeFingerprint = (typeof entry.storeFingerprint === 'string' && entry.storeFingerprint.trim())
-    ? entry.storeFingerprint.trim()
-    : (typeof prior?.storeFingerprint === 'string' && prior.storeFingerprint.trim()
-      ? prior.storeFingerprint : null);
-  withoutThis.push({
-    schemaVersion: 1,
-    issueId: entry.issueId,
-    ...(storeFingerprint ? { storeFingerprint } : {}),
-    state: entry.state,
-    disposition: entry.disposition,
-    recordedAt: new Date().toISOString(),
-  });
-  const payload = {
-    _description: 'The upstream-report closure-disposition ledger (consumer-friction-doctor plan §2.4). '
-      + 'One entry per TERMINAL (fixed|wont_fix) upstream_issues row, naming EITHER a doctor probe that now '
-      + 'detects the failure class, a tracked regression test that closes it, or a written exemption. '
-      + 'Validated by `npm run upstream:coverage:gate`. Hand-authored source, same species as '
-      + 'scripts/gate-contracts/_exemptions.json — never generated, never synced to consumers.',
-    entries: withoutThis.sort((a, b) => (a.issueId < b.issueId ? -1 : a.issueId > b.issueId ? 1 : 0)),
-  };
-  atomicWriteFileSync(p, `${JSON.stringify(payload, null, 2)}\n`);
-}
 
 /**
  * Move an issue through its lifecycle.
@@ -666,7 +598,7 @@ export async function upstreamTransition({
   // Sequential ledger-then-DB write (§2.4) — the cheap local write happens
   // FIRST, and only then the DB transition.
   if (parsedDisposition) {
-    upsertDispositionLedgerEntry(repoRoot, {
+    await upsertDispositionLedgerEntry(repoRoot, {
       issueId: normId, state: to, disposition: safeDispositionValue, storeFingerprint,
     });
   }
@@ -1090,151 +1022,22 @@ export async function upstreamReconcile({ repoRoot = process.cwd(), listTerminal
   if (reconciliation.missingFromLedger.length > 0) {
     const freshness = resolveBaseFreshness({ repoRoot });
     const upstreamEvidence = readUpstreamLedgerEvidence({ freshness, repoRoot });
-    missingCause = { ...classifyMissingCause({
-      missingIds: reconciliation.missingFromLedger, freshness, upstreamEvidence,
-    }), freshness, evidenceStatus: upstreamEvidence.status };
+    // ONE SNAPSHOT, TAKEN HERE (code-audit R2 H1). The precondition `--apply`
+    // re-verifies must describe the state this CLASSIFICATION was made from, so
+    // both halves are captured together at classification time. An earlier
+    // version pinned the commit here and hashed the ledger later, inside
+    // `--apply` — two moments, so a change landing between them was invisible
+    // to both checks and the "precondition" described a state that never
+    // existed as a whole.
+    missingCause = {
+      ...classifyMissingCause({
+        missingIds: reconciliation.missingFromLedger, freshness, upstreamEvidence,
+      }),
+      freshness,
+      evidenceStatus: upstreamEvidence.status,
+      precondition: captureReconcilePrecondition(repoRoot),
+    };
   }
 
   return { ok: true, cloud: true, reconciliation, missingCause };
-}
-
-/**
- * The upstream copy of the disposition ledger, as the tri-state
- * `classifyMissingCause` consumes. `no-upstream` is its own status because it is
- * DETERMINATE — there is no upstream that could have held the entries — while
- * `unreadable` means the question could not be asked.
- */
-export function readUpstreamLedgerEvidence({ freshness, repoRoot = process.cwd() }) {
-  if (!freshness?.upstream) {
-    return { status: freshness?.reason === 'no-upstream' ? 'no-upstream' : 'unreadable', issueIds: null };
-  }
-  const read = readFileAtRef({ ref: freshness.upstream, filePath: DISPOSITION_LEDGER_PATH, repoRoot });
-  if (read.status !== 'read') return { status: read.status, issueIds: null };
-  try {
-    const parsed = JSON.parse(read.content);
-    const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
-    return { status: 'read', issueIds: new Set(entries.map((e) => e?.issueId).filter(Boolean)) };
-  } catch {
-    // The file is there but not parseable — we looked and could not tell, which
-    // is `unreadable`, never an empty set masquerading as a clean upstream.
-    return { status: 'unreadable', issueIds: null };
-  }
-}
-
-/** Human-grade reconciliation report — PowerShell-safe, mirrors renderWorksheet. */
-/**
- * The sentence a missing-entry gap gets, keyed on its CLASSIFIED cause.
- *
- * The renderer used to print one explanation for every such row — *"the accepted
- * crash-window gap"* — and the two real causes take opposite remedies. Each
- * branch below names what was ruled out and what remains, rather than asserting
- * a cause from evidence that only eliminates one.
- */
-function renderMissingCauseLines(ids, missingCause) {
-  const head = `Terminal db row(s) with NO ledger entry (${ids.length})`;
-  if (!missingCause) return [`${head}:`];
-  const { cause, presentUpstream, freshness } = missingCause;
-  const up = freshness?.upstream || 'the upstream';
-
-  if (cause === MISSING_CAUSE.STALE) {
-    return [
-      `${head} — YOUR CHECKOUT IS STALE, not a lost write:`,
-      `  This checkout is ${freshness.behindBy} commit(s) behind ${up}, where all ${presentUpstream.length}`,
-      '  of these entries already exist. Run `git pull` — do NOT hand-write them,',
-      '  which would duplicate entries that are already pushed.',
-    ];
-  }
-  if (cause === MISSING_CAUSE.MIXED) {
-    return [
-      `${head} — PARTLY staleness:`,
-      `  ${presentUpstream.length} of ${ids.length} already exist ${freshness.behindBy} commit(s) ahead on ${up}.`,
-      '  Run `git pull` first, then re-run reconcile to see what genuinely remains.',
-    ];
-  }
-  if (cause === MISSING_CAUSE.UNKNOWN) {
-    return [
-      `${head} — CAUSE UNDETERMINED:`,
-      `  Could not establish whether this is staleness (${freshness?.reason || missingCause.evidenceStatus}).`,
-      '  Fetch and re-run, or inspect manually. Repair is refused while the cause is unknown.',
-    ];
-  }
-  // NOT_STALENESS — say what was ruled out, and list what is left. Naming a
-  // single cause here would be the original defect with a different label.
-  return [
-    `${head} — staleness does NOT explain it:`,
-    `  ${freshness?.state === 'current' ? `This checkout is current with ${up}.` : `${up} does not contain them.`}`,
-    '  Remaining causes: the ledger write was lost between the local write and the DB',
-    '  write; the entry was deleted locally; or your remote-tracking ref is itself',
-    '  stale (this never fetches). Inspect before repairing.',
-  ];
-}
-
-export function renderReconciliationReport({
-  missingFromLedger, ledgerOnly, stateMismatch, dispositionMismatch = [], needsReview,
-  otherStore = [], coverage = null, missingCause = null,
-}) {
-  // WHAT THIS RUN CHECKED, in the verdict rather than above it. `clean` was
-  // true of the rows it saw while 20 of 43 entries were never compared — the
-  // same shape as a drift score of 0 that does not say over how many symbols.
-  // When the store identity could not be derived, `checked` is a CEILING, not a
-  // measurement — nothing could be scoped out, so the count says only "at most
-  // this many". Saying "N of N checked" there would be the field's own defect.
-  const coverageLine = coverage
-    ? (coverage.storeScoped === false
-      ? `store identity unknown — at most ${coverage.checked} of ${coverage.total} ledger entries could be scoped`
-      : `${coverage.checked} of ${coverage.total} ledger entries checked`)
-    : null;
-  const clean = missingFromLedger.length === 0 && ledgerOnly.length === 0
-    && stateMismatch.length === 0 && dispositionMismatch.length === 0 && needsReview.length === 0;
-  // `otherStore` is deliberately NOT part of `clean`: it is not divergence, it
-  // is scope. But it is still PRINTED on a clean run, because an entry nothing
-  // in this run can adjudicate should never be invisible — that silence is how
-  // a genuinely stale foreign entry would live forever.
-  const outOfScope = otherStore.length
-    ? [
-      `Not reconciled — ${otherStore.length} ledger entr(y/ies) belong to another store:`,
-      ...otherStore.map((e) => `  - ${e}`),
-      '  These are out of scope for this run, not divergence. To check them, re-run',
-      '  reconcile with the AUDIT_DB_URL of the store named above.',
-      '',
-    ]
-    : [];
-  if (clean) {
-    return [
-      `Reconciliation: clean — ${coverageLine ? `${coverageLine}; ` : ''}every terminal db row matches a ledger entry, and no row needs manual review.`,
-      ...(coverage?.foreign ? [`  ${coverage.foreign} entr(y/ies) belong to another store and were NOT checked — re-run with that AUDIT_DB_URL.`] : []),
-      ...(outOfScope.length ? ['', ...outOfScope] : []),
-    ].join('\n');
-  }
-
-  const lines = [
-    `Reconciliation — divergence found${coverageLine ? ` (${coverageLine})` : ''}:`,
-    '', ...outOfScope,
-  ];
-  if (missingFromLedger.length) {
-    lines.push(...renderMissingCauseLines(missingFromLedger, missingCause));
-    for (const id of missingFromLedger) lines.push(`  - ${id}`);
-    lines.push('');
-  }
-  if (ledgerOnly.length) {
-    lines.push(`Ledger entr(y/ies) with no matching db row (${ledgerOnly.length}) — stale, or the issueId was mistyped:`);
-    for (const id of ledgerOnly) lines.push(`  - ${id}`);
-    lines.push('');
-  }
-  if (stateMismatch.length) {
-    lines.push(`State mismatch between ledger and db (${stateMismatch.length}):`);
-    for (const m of stateMismatch) lines.push(`  - ${m}`);
-    lines.push('');
-  }
-  if (dispositionMismatch.length) {
-    lines.push(`Disposition VALUE mismatch between ledger and db (${dispositionMismatch.length}):`);
-    for (const m of dispositionMismatch) lines.push(`  - ${m}`);
-    lines.push('');
-  }
-  if (needsReview.length) {
-    lines.push(`Row(s) still carrying the generation-time catch-all (${needsReview.length}) — needs a REAL, researched disposition:`);
-    for (const id of needsReview) lines.push(`  - ${id}`);
-    lines.push('');
-  }
-  return lines.join('\n');
 }

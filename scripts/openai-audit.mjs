@@ -30,6 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
+import { resolveBaseFreshness, formatStaleBaseAdvisory } from './lib/git-freshness.mjs';
 import { zodTextFormat } from 'openai/helpers/zod';
 // `LedgerEntrySchema`, `ReduceStatus` and `ExecutionMetaSchema` were imported
 // here and called nowhere (each appeared exactly once in this file — the import
@@ -120,7 +121,13 @@ function printCostPreflight(stage, inputChars, modelId, reasoningTokens = 0) {
     return;
   }
   // input + reasoning at input rate, output at output rate, cost in $/1M tokens
-  const cost = ((inputTokens + reasoningTokens) * px.input + outputTokens * px.output) / 1_000_000;
+  // REASONING TOKENS BILL AS OUTPUT, not input. Pricing them at the input rate
+  // under-reported the dominant term of a high-reasoning run by ~3x: at
+  // gpt-5.6's $2.5/$10 split a 139k-reasoning pass estimated ≈$0.55 against a
+  // true ≈$1.60. This number is what an operator reads before authorising a
+  // multi-round audit, so an estimate that is wrong in the CHEAP direction is
+  // the one that does damage.
+  const cost = (inputTokens * px.input + (reasoningTokens + outputTokens) * px.output) / 1_000_000;
   const reasoningNote = reasoningTokens > 0 ? `, ~${(reasoningTokens / 1000).toFixed(0)}k reasoning` : '';
   process.stderr.write(
     `  [cost] preflight: ${stage} audit ≈ $${cost.toFixed(2)} ` +
@@ -854,6 +861,8 @@ async function main() {
           // Also set changedFiles if caller didn't — enables R2+ impact scoping in R1
           if (changedFiles.length === 0) changedFiles = allChanged;
           process.stderr.write(`  [scope] --scope=diff (vs ${diffBase}): ${allChanged.length} changed files → scoping audit to diff\n`);
+          const staleBase = formatStaleBaseAdvisory(resolveBaseFreshness({ subject: diffBase }));
+          if (staleBase) process.stderr.write(staleBase);
           process.stderr.write(`  [scope] Files: ${allChanged.slice(0, 5).join(', ')}${allChanged.length > 5 ? ` (+${allChanged.length - 5} more)` : ''}\n`);
           process.stderr.write(`  [scope] Use --scope=plan to audit all plan-referenced files, or --scope=full for whole repo\n`);
         } else {

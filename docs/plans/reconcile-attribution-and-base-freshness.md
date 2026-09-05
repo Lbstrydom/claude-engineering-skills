@@ -390,6 +390,25 @@ a stub; move the dossier depth. Target: restore ≥2,000 characters of headroom.
 **This is the file's own prescribed remedy, applied rather than deferred** — and
 the deferral is what produced a 98-character margin.
 
+> **Outcome (measured 2026-09-05, `npm run context:check`): 98 → 1,641 characters
+> left — 1,543 recovered, SHORT of the ≥2,000 target.** Stopping there was a
+> deliberate call, not an oversight. Two dossier blocks moved whole (the six
+> consumer shapes; the offline-ownership question), plus the `skills:hydrate`
+> diagnosis and the divergence rationale. What remains in that section is
+> load-bearing invariant, and `context:check`'s own advisory says shaving words
+> to squeeze under the cap is how a file stays permanently full. The larger
+> remaining sections (`## Architecture` 7,241; `## Skill Chain` 6,437) are
+> outside this plan's declared file scope; condensing them is the next
+> candidate, not this plan's work.
+>
+> **One regression this phase caused and fixed:** the first condensation
+> collapsed three gate names into a compact list, dropping the verbatim
+> `npm run <x>:gate` strings that `scripts/gate-contracts/**` binds to their
+> enforcing tests. `check-gate-contracts` failed with *prose/contract have
+> drifted* for all three. **Generalises: a gate contract makes AGENTS.md prose
+> load-bearing at the token level — condensing it is a code change, and the
+> contract is the thing that says so.**
+
 ---
 
 ## 5. Right-sizing gate
@@ -465,6 +484,66 @@ Files: `scripts/openai-audit.mjs` (modify).
 Files: `AGENTS.md` (modify), `docs/reference/consumer-repo-layout.md` (create).
 
 **Close-out (not a phase)**: `npm run skills:regenerate && npm run check`.
+
+> **Consolidated Gemini gate — two rounds, three findings, all adjudicated
+> against the code.**
+>
+> *R1 — CONCERNS, 1 new.* `upsertDispositionLedgerEntry` duplicated
+> `mergeLedgerEntry` + `serialiseDispositionLedger` instead of composing them,
+> while its own docstring already claimed the composition. **Confirmed.**
+> Behaviourally identical today, so the defect is divergence risk between the
+> path every `upstream fix`/`wont-fix` takes and the path `--apply` takes.
+> Composed, and pinned by `tests/upstream-disposition-ledger-single-writer.test.mjs`
+> — an EQUIVALENCE guard, green whether or not the composition exists, whose
+> entire value is firing on drift. **Negative control run**: mutating the
+> fingerprint-preservation rule in one path only took it to 4 pass / 1 fail.
+>
+> *R2 — CONCERNS, 2 new.* **G1 (HIGH, refuted by execution.)** Claimed
+> `probeIds` from `doctor/registry.mjs` is an array, so `probeIdsFn()` would
+> throw. It is `export function probeIds()` and returns 22 ids — executed, not
+> read. No change. **G2 (MEDIUM, confirmed and fixed.)** `applyMissingDispositions`
+> took the ledger lock; `upsertDispositionLedgerEntry` did the same
+> read-modify-write on the same file WITHOUT it, so a concurrent `upstream fix`
+> and `--apply` could lose a disposition. **In scope by impact, not authorship**
+> — the `--apply` guarantee this plan shipped is exactly what the unlocked
+> writer defeats. Now async and locked; the one production caller awaits it.
+> Red-then-green, and deterministic rather than racy: the test holds the lock,
+> starts the writer without awaiting, and asserts nothing landed.
+>
+> **Generalises: a file lock is only as strong as its least-disciplined
+> participant — when adding one, enumerate every writer of that file, not just
+> the one you are writing.**
+>
+> *The G2 fix then broke three ratchet tests* — `withFileLock` creates a sibling
+> `.lock` file and does NOT mkdir, while `atomicWriteFileSync` does, so taking a
+> lock in a repo with no `scripts/` directory died on ENOENT before any writer
+> ran. Latent in the batch path from the start; the single-entry path only
+> exposed it because that suite builds a repo without the directory. One
+> `ensureLedgerDir` helper, called by both, with a test per writer — and a
+> negative control per test confirming each fails when its call is removed.
+> **The prose "both writers go through here" is the kind of claim that rots, so
+> it is asserted rather than written.**
+
+> **Close-out found a second blocker the phases did not predict**: the size
+> ratchet, on Cluster B's own growth. `upstream/commands.mjs` had grown
+> 1138 → 1443 (+305). Re-baselining would have been the band-aid, so it was
+> split instead, along the two seams the growth revealed —
+> `upstream/disposition-ledger.mjs` (everything about the one committed ledger
+> file and the gates guarding a write to it) and `upstream/reconcile-render.mjs`
+> (prose only; its sole dependency is the `MISSING_CAUSE` vocabulary).
+> `commands.mjs` ends at **1044, below its pre-existing baseline**, and every
+> prior importer keeps working via re-export. `openai-audit.mjs`'s +39 was
+> resolved the same way: `warnIfBaseIsStale` became the PURE
+> `formatStaleBaseAdvisory` in `git-freshness.mjs`, leaving a two-line call
+> site — which also made the advisory prose unit-testable without a git fixture.
+>
+> **A trap worth naming:** `--update-baseline` locks in a shrink, but it also
+> silently absorbs every *sub-tolerance* growth as a new permanent ceiling
+> (here `cross-skill.mjs` +6 and `openai-audit.mjs` +9, both under the 10-line
+> tolerance). Those two entries were reverted by hand so the baseline records
+> only the shrink. **The tolerance is a working allowance, not a budget to bank
+> — re-baselining converts one into the other, which is exactly the
+> high-water-mark failure the ratchet exists to prevent.**
 
 ## 8. Risk & Trade-off Register
 

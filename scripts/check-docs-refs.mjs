@@ -319,6 +319,7 @@ export const BASELINE = new Set([
   // "fix". Marking it `<placeholder>` would be wrong: it is a real, exact path.
   'AGENTS.md→scripts/.sync-owned.json',
   'docs/runbooks/consumer-adoption.md→scripts/.sync-owned.json',
+  'docs/reference/consumer-repo-layout.md→scripts/.sync-owned.json',
   // never-produced audit-summary, cited in an archived plan
   'docs/plans/architecture-intent-framework.md→docs/completed/architecture-intent-framework-audit-summary.md',
   // generated `--out` / never-produced experiment docs

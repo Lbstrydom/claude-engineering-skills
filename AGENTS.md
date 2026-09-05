@@ -296,11 +296,9 @@ is FOR* — signifiers in, affordance judgments out (those are persona-test's).
 
 ## Consumer-repo layout (isolation)
 
-This source repo's tooling deploys to consumer repos under
-**`scripts/.claude-skills/`** rather than the consumer's natural
-`scripts/` directory. The directory is gitignored on the consumer
-side via a managed block in their root `.gitignore`. The directory
-isn't tracked — fresh clones of a consumer repo need to re-run
+This repo's tooling deploys to consumers under **`scripts/.claude-skills/`**,
+not their natural `scripts/`, gitignored via a managed block in their root
+`.gitignore`. Untracked, so a fresh clone of a consumer needs
 `npm run sync -- --target <name>` from THIS repo to hydrate it. (The `--` is
 load-bearing: without it npm swallows `--target` and the sync writes into EVERY
 consumer instead of the named one. Verified 2026-07-20.)
@@ -329,58 +327,41 @@ consumer instead of the named one. Verified 2026-07-20.)
 > **File the report, don't paste it.** Consumer: `cross-skill.mjs upstream report
 > --affected-path <synced path>`; here: `npm run upstream:issues` →
 > `ack|fix|wont-fix|annotate|history`. **Every body and `--note` goes on stdin** —
-> a backtick in an argv note runs as command substitution and silently elides text
-> the append-only log cannot repair; `annotate` is the only legal repair, never a
-> second `fixed`. Recipe + closure flags:
+> a backtick in an argv note runs as command substitution and silently elides
+> text the append-only log cannot repair; `annotate` is the only legal repair,
+> never a second `fixed`. Recipe + closure flags:
 > [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Reporting an upstream bug.
 
-> **Five shapes consumers keep reporting — check for them when adding a gate or
-> nudge.** Write-ups, predicates and measured inert windows:
-> [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Five shapes.
-> *(1)* A read handing back a key its writer rejects — a new close-this-row nudge
-> means a new row in [`view-writer-key-contract.test.mjs`](tests/view-writer-key-contract.test.mjs).
-> *(2)* A gate judging files the repo does not own — the predicate is **ignored AND
-> untracked**, asked of the **candidates**, never of the repo.
-> *(3)* A check verifying one direction only — of any set comparison ask: **which
-> side am I iterating, and what is unrepresentable from it?**
-> *(4)* A documented command whose tooling cannot be present where it runs — **only
-> tracked content reaches a linked worktree**, so a remedy must ride on
-> `package.json`. Gate: `npm run worktree:preflight:gate`.
-> *(5)* A synced SKILL.md naming an `npm run` alias or an out-of-closure `docs/`
-> file — claims about another repo that nothing can make true (`--if-present`
-> **exits 0 having run nothing**). **Name synced tooling by path**:
-> `node scripts/<name>.mjs`. Gate: `npm run skills:consumer-refs:gate`, a ratchet.
-> *(6)* A **relative link** in synced markdown — an href resolves where the file
-> LANDS and the sync changes its depth, so 47 were dead in `.claude/skills/**`
-> and every consumer while resolving from `skills/**`. Both gates above read
-> `docs/…md` TOKENS and see no href at all. Use an absolute upstream URL unless
-> the target is inside `skills/`. Gate: `npm run docs:synced-links:gate`.
+> **SIX shapes consumers keep reporting — check for them when adding a gate or a
+> nudge.** *(1)* a read handing back a key its writer rejects · *(2)* a gate
+> judging files the repo does not own — **ignored AND untracked**, asked of the
+> **candidates** · *(3)* a check verifying one direction only — ask **which side
+> am I iterating, and what is unrepresentable from it?** · *(4)* a documented
+> command whose tooling cannot reach a linked worktree (only TRACKED content
+> does, so a remedy rides on `package.json`; Gate: `npm run worktree:preflight:gate`)
+> · *(5)* a synced SKILL.md naming an `npm run` alias or an out-of-closure
+> `docs/` file — name synced tooling BY PATH (`npm run skills:consumer-refs:gate`)
+> · *(6)* a **relative link** in synced markdown, whose href resolves where the
+> file LANDS (`npm run docs:synced-links:gate`). Each shape, its measurement and
+> its predicate: [consumer-repo-layout.md](docs/reference/consumer-repo-layout.md).
 
-> **"Is this file mine to fix?" must be answerable OFFLINE.** Three ownership
-> signals, each with a hole: git-ignore state misses `.claude/hooks/**` and
-> `.claude/skills/**` (consumers COMMIT them); the content banner misses both too
-> (a `SKILL.md` cannot carry one — frontmatter must be the first bytes); and
-> `scripts/.sync-manifest.json`, which covers everything, is gitignored on both
-> sides and therefore absent from CI. Measured: a consumer's duplication gate read
-> **32 violations / 1 mixed-owner without the manifest, 31 / 0 with it** — the
-> extra one being this bundle's own `readStdin` across three hooks, reported to
-> them as their code to fix. Every sync now writes the **committed**
-> `scripts/.sync-owned.json` — path SET only, no clock or sha, so it is a
-> category-B artifact — and `createUpstreamOwnershipOracle` unions it with
-> git-ignore state as the one predicate. Compare **case-insensitively**: a
-> ledger citing `skill.md` against a manifest spelling `SKILL.md` misfiled six
-> upstream-owned entries as the consumer's own work. `debt:review` now partitions
-> on it — upstream-owned entries are LISTED but never leverage-ranked, because the
-> only action the CLI offers (`debt-resolve.mjs`) *deletes* the record of a
-> still-open defect.
+> **"Is this file mine to fix?" must be answerable OFFLINE**, and no single
+> signal answers it: git-ignore state misses the `.claude/**` trees consumers
+> COMMIT, a `SKILL.md` cannot carry a content banner, and the sync manifest is
+> gitignored on both sides. The one predicate is
+> `createUpstreamOwnershipOracle`, unioning git-ignore state with the
+> **committed** `scripts/.sync-owned.json`; compare **case-insensitively**.
+> `debt:review` partitions on it — upstream-owned entries are LISTED but never
+> leverage-ranked, because `debt-resolve.mjs` *deletes* the record of a
+> still-open defect. Measurements and the three holes:
+> [consumer-repo-layout.md](docs/reference/consumer-repo-layout.md).
 >
-> **`skills:hydrate` cannot run in CI, by construction — and now says so.** In a
-> plain clone (what `actions/checkout` produces) the git common dir IS the clone,
-> so it resolved as its own main checkout and returned "nothing to do" with exit 0
-> having copied nothing; the next `arch:*` step died on a bare MODULE_NOT_FOUND.
-> It now FAILS there, naming the real remedy —
-> `npx github:Lbstrydom/claude-engineering-skills .` — and accepts
+> **`skills:hydrate` cannot run in CI, by construction — and now says so.** A
+> plain clone is neither a main checkout nor a linked worktree, so hydrate used
+> to exit 0 having copied nothing. It now FAILS there, naming the remedy
+> (`npx github:Lbstrydom/claude-engineering-skills .`), and accepts
 > `--from <path>` / `SKILLS_SOURCE` for a runner-local checkout.
+> [Detail](docs/reference/consumer-repo-layout.md).
 
 > **Upstream bug, but you're blocked?** Patching upstream-owned *source* stays
 > forbidden; a **runtime/env/DB** unblock is OK if you report it, label it
@@ -389,20 +370,19 @@ consumer instead of the named one. Verified 2026-07-20.)
 > §"Blocked on an upstream bug".
 
 > **Consumer divergence is DECLARED, never inferred — and the sync must never
-> revert it silently.** **(1)** The manifest hash is the three-way BASE —
-> `disk === base` ⇒ overwrite freely, `disk !== base` is consumer content:
-> **tracked ⇒ REFUSE + fail** (`--overwrite-diverged` consents), untracked ⇒
-> overwrite loudly. Basing it on the manifest and not HEAD is what stops it firing
-> on ordinary updates. **(2)** Standing divergence is declared in the committed
-> `.sync-overrides.json` — `reason` required, malformed ⇒ ABORT (never
-> fail-open), and `scripts/.claude-skills/**` may never be claimed (that is an
-> upstream report). **(3)** Every sync writes the committed `.sync-receipt.json`,
-> a deliberate generated-artifact-policy exception: its dirtiness is the only
-> evidence a sync ran — and **append-only** (newest-first list), because the
-> sync never commits and a second one used to erase the first.
-> Adding a co-owned config? A merge may never move a launcher
-> from a pinned path to an unpinned fetch — `sync-pin-guard.mjs`, guard **plus**
-> an independent post-condition.
+> revert it silently.** **(1)** The **manifest hash** (never HEAD) is the
+> three-way BASE — `disk === base` ⇒ overwrite freely; `disk !== base` is
+> consumer content: **tracked ⇒ REFUSE + fail** (`--overwrite-diverged`
+> consents), untracked ⇒ overwrite loudly. **(2)** Standing divergence is
+> declared in the committed `.sync-overrides.json` — `reason` required,
+> malformed ⇒ ABORT (never fail-open), and `scripts/.claude-skills/**` may never
+> be claimed (that is an upstream report). **(3)** Every sync writes the
+> committed, **append-only** `.sync-receipt.json` — a deliberate
+> generated-artifact-policy exception, because its dirtiness is the only evidence
+> a sync ran. Adding a co-owned config? A merge may never move a launcher from a
+> pinned path to an unpinned fetch — `sync-pin-guard.mjs`, guard **plus** an
+> independent post-condition.
+> [Why each shape](docs/reference/consumer-repo-layout.md) ·
 > [Plan](docs/plans/consumer-sync-durability.md).
 
 ### Sync mechanics — pointer
