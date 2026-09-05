@@ -298,7 +298,11 @@ export async function upstreamCmd(ctx) {
         if (!res.reconciliation) {
           process.stdout.write('cloud off — nothing to reconcile against\n');
         } else {
-          process.stdout.write(`${m.renderReconciliationReport(res.reconciliation)}\n`);
+          // `missingCause` is a SIBLING of `reconciliation` on the result, not
+          // a member of it — passing the reconciliation alone would silently
+          // drop the cause attribution and fall back to the un-attributed
+          // heading, which is the defect this change exists to remove.
+          process.stdout.write(`${m.renderReconciliationReport({ ...res.reconciliation, missingCause: res.missingCause })}\n`);
         }
         return undefined;
       }

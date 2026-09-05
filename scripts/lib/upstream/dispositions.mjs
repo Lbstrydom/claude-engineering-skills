@@ -371,5 +371,128 @@ export function computeLedgerReconciliation({ dbRows, ledgerEntries, currentStor
 
   const ledgerOnly = [...ledgerByIssueId.keys()].filter((id) => !dbByIssueId.has(id));
 
-  return { missingFromLedger, ledgerOnly, stateMismatch, dispositionMismatch, needsReview, otherStore };
+  // WHAT THIS RUN ACTUALLY CHECKED. The verdict was `clean` while 20 of 43
+  // ledger entries belonged to another store and were never compared — a true
+  // statement about the rows it saw, printed above a list the reader had to
+  // count themselves. Same shape as a drift score of 0 that does not say over
+  // how many symbols: honest in what it asserts, silent about its own scope.
+  //
+  // `foreign` is DISCLOSURE, never a gate: those entries are out of scope, not
+  // divergence, and counting them as failure would make this repo's ledger —
+  // which permanently carries 20 — impossible to reconcile clean.
+  //
+  // `storeScoped` is the honesty qualifier (code-audit R1 H6). When the store
+  // identity could not be derived — `currentStoreFingerprint` catches every
+  // failure, warns, and returns null so entries are written UNSTAMPED —
+  // `isForeign` is false for everything, so `checked` would equal `total` and
+  // the verdict would claim it scoped entries it had no way to scope. That is
+  // the same false-completeness this field was added to remove, reproduced by
+  // the field itself. `false` means the count is a ceiling, not a measurement,
+  // and the renderer says so.
+  const coverage = {
+    total: ledgerEntries.length,
+    checked: localEntries.length,
+    foreign: otherStore.length,
+    storeScoped: Boolean(currentStore),
+  };
+
+  return {
+    missingFromLedger, ledgerOnly, stateMismatch, dispositionMismatch, needsReview,
+    otherStore, coverage,
+  };
+}
+
+/**
+ * Closed cause set for a terminal DB row that has no ledger entry.
+ *
+ * WHY THIS EXISTS. The reconciler reported every such row as *"the accepted
+ * crash-window gap, now surfaced"* — its only explanation. Measured 2026-09-05,
+ * the actual cause was a checkout **16 commits behind `origin/main`**, where all
+ * three entries already existed. The two causes take OPPOSITE remedies — write
+ * the ledger, versus `git pull` — so an operator acting on the printed
+ * attribution would hand-write duplicates of entries already pushed.
+ */
+export const MISSING_CAUSE = Object.freeze({
+  STALE: 'stale',
+  MIXED: 'mixed',
+  NOT_STALENESS: 'not-explained-by-staleness',
+  UNKNOWN: 'unknown',
+});
+
+/**
+ * Why do these terminal rows have no ledger entry?
+ *
+ * TOTAL over `freshness × evidence` — every combination returns a cause, and
+ * `classifyMissingCause` never falls off the end. The table:
+ *
+ * | freshness | evidence      | ids upstream | cause |
+ * |-----------|---------------|--------------|-------|
+ * | behind    | read          | all          | `stale` |
+ * | behind    | read          | some         | `mixed` |
+ * | behind    | read          | none         | `not-explained-by-staleness` |
+ * | current   | read          | any          | `not-explained-by-staleness` |
+ * | unknown   | read          | all/some     | `unknown` |
+ * | unknown   | read          | none         | `not-explained-by-staleness` |
+ * | any       | absent        | —            | `not-explained-by-staleness` |
+ * | any       | no-upstream   | —            | `not-explained-by-staleness` |
+ * | any       | unreadable    | —            | `unknown` |
+ *
+ * THE RULE THE TABLE ENCODES: **fail closed when the evidence cannot settle the
+ * question — not whenever an input is unknown.** "There is no remote" is an
+ * answer (nothing to pull from, so pulling cannot be the remedy); "I could not
+ * read the remote" is not. Treating them alike would make `--apply` permanently
+ * refuse in every local-only repository — and the branch this was built on has
+ * no configured upstream, so that is not hypothetical.
+ *
+ * `not-explained-by-staleness` is deliberately NOT called `genuine`. A `current`
+ * result proves only that the local remote-tracking ref holds nothing this
+ * checkout lacks; it does not establish that a crash window caused the gap — a
+ * never-fetched ref, a local deletion, or an entry never written all produce the
+ * same observation. Naming a cause from evidence that merely rules one out is
+ * the exact defect this function exists to fix.
+ *
+ * @param {{missingIds: string[], freshness: {state: string, behindBy: number|null, upstream: string|null},
+ *   upstreamEvidence: {status: 'read'|'absent'|'no-upstream'|'unreadable', issueIds: Set<string>|null}}} args
+ * @returns {{cause: string, presentUpstream: string[], absentUpstream: string[]}}
+ */
+export function classifyMissingCause({ missingIds = [], freshness, upstreamEvidence }) {
+  const ids = [...missingIds];
+  const status = upstreamEvidence?.status ?? 'unreadable';
+
+  if (status === 'unreadable') {
+    return { cause: MISSING_CAUSE.UNKNOWN, presentUpstream: [], absentUpstream: ids };
+  }
+  // `absent` and `no-upstream` are both determinate: there is no upstream copy
+  // that could have held these entries, so staleness cannot be the explanation
+  // and pulling cannot be the remedy.
+  if (status === 'absent' || status === 'no-upstream') {
+    return { cause: MISSING_CAUSE.NOT_STALENESS, presentUpstream: [], absentUpstream: ids };
+  }
+
+  const upstreamIds = upstreamEvidence.issueIds ?? new Set();
+  const presentUpstream = ids.filter((id) => upstreamIds.has(id));
+  const absentUpstream = ids.filter((id) => !upstreamIds.has(id));
+
+  // Nothing we are missing exists upstream: decidable WITHOUT knowing whether
+  // this checkout is behind, so demanding that answer would refuse a repair on
+  // evidence that is already sufficient.
+  if (presentUpstream.length === 0) {
+    return { cause: MISSING_CAUSE.NOT_STALENESS, presentUpstream, absentUpstream };
+  }
+
+  if (freshness?.state === 'behind') {
+    return {
+      cause: absentUpstream.length === 0 ? MISSING_CAUSE.STALE : MISSING_CAUSE.MIXED,
+      presentUpstream,
+      absentUpstream,
+    };
+  }
+  if (freshness?.state === 'current') {
+    // Upstream has them and we are NOT behind — so pulling changes nothing and
+    // the gap is real. (Reached only when the local ref is itself current.)
+    return { cause: MISSING_CAUSE.NOT_STALENESS, presentUpstream, absentUpstream };
+  }
+  // freshness unknown, and the ids DO exist upstream: whether `git pull` is the
+  // remedy cannot be determined. Refuse to repair.
+  return { cause: MISSING_CAUSE.UNKNOWN, presentUpstream, absentUpstream };
 }

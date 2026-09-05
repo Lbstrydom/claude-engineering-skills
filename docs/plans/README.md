@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**3 active · 217 terminal · 28 audit summaries · 4 reference docs**
+**4 active · 218 terminal · 28 audit summaries · 4 reference docs**
 
 ---
 
@@ -22,6 +22,7 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [The five aged-out acceptances that are real, still live, and no longer surfaced](./aged-out-acceptance-remainder.md) | `Draft` | evidence gathered, no code written. Each item below was re-verified against the tree at `8178f062` and… |
+| [Reconcile attribution, coverage honesty, and base freshness](./reconcile-attribution-and-base-freshness.md) | `Approved` | `/audit-plan` 3 GPT rounds (H:3 M:2 → H:1 M:1 → M:1), 8/8 findings accepted, 100% acceptance every round.… |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
 
@@ -43,7 +44,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 214 completed plans</summary>
+<summary>Show all 215 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -119,6 +120,7 @@ source comments that no docs linter sees — stays valid.
 | [Dismissed-FP Reopen Policy (split `dismissed` from `fixed`)](./dismissed-fp-reopen-policy.md) | `Complete` | (closed 2026-07-22) — this plan's committed scope was Phase 1 only, which shipped and cleared the Gemini… |
 | [Dogfooding Ergonomics v1](./dogfooding-ergonomics-v1.md) | `Complete` | shipped 2026-05-09; archive auto-moves this file via `/ship` Step 5.5 |
 | [Domain-Map Reconciliation (architecture-intent backlog)](./domain-map-reconciliation.md) | `Complete` | Phases A/B (`f94371c`) + C (`144be83`, `500f3aa`), 2026-07-17. Gemini final gate: APPROVE. |
+| [The drift signal must be falsifiable from CI](./drift-signal-attribution-2026-09-04.md) | `Complete` | implemented and audited. `/audit-code` ×7 rounds (H:2→2→2→0→1→2→0), 25 findings ruled, 0 unadjudicated: 17… |
 | [Egress secret coverage — the two layers are not independent](./egress-secret-coverage-gap.md) | `Complete` | option B implemented 2026-07-19; §4e records a correction to §1 |
 | [Event-Wiring Symmetry Check](./event-wiring-symmetry.md) | `Complete` |  |
 | [Evidence-Anchor Path Contract — stop Stage 0 discarding valid findings as fabricated](./evidence-anchor-path-contract.md) | `Complete` | both clusters shipped + gate-clear (consolidated Gemini APPROVE). One residual, declared not hidden: §9… |

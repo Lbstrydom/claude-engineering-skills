@@ -24,7 +24,11 @@ import {
   parseEnvelopeFrame, writeEnvelope as writeEnvelopeToDir, drainEnvelopes,
 } from '../outbox-envelope.mjs';
 import { redactSecrets } from '../secret-patterns.mjs';
-import { parseDisposition, formatDisposition, computeLedgerReconciliation } from './dispositions.mjs';
+import {
+  parseDisposition, formatDisposition, computeLedgerReconciliation,
+  classifyMissingCause, MISSING_CAUSE,
+} from './dispositions.mjs';
+import { resolveBaseFreshness, readFileAtRef } from '../git-freshness.mjs';
 import { foldEventsToState, NON_LIFECYCLE_EVENTS } from './events.mjs';
 
 /** Where the committed closure-disposition ledger lives (§2.4). */
@@ -1077,14 +1081,109 @@ export async function upstreamReconcile({ repoRoot = process.cwd(), listTerminal
   }
 
   const reconciliation = computeLedgerReconciliation({ dbRows: res.rows, ledgerEntries, currentStore });
-  return { ok: true, cloud: true, reconciliation };
+
+  // WHY a missing entry is missing — the two causes take OPPOSITE remedies, and
+  // reporting only one of them is what nearly produced a hand-written duplicate
+  // of entries already pushed (plan §1.1). Best-effort: any git failure
+  // degrades to `unknown`, which refuses repair rather than guessing.
+  let missingCause = null;
+  if (reconciliation.missingFromLedger.length > 0) {
+    const freshness = resolveBaseFreshness({ repoRoot });
+    const upstreamEvidence = readUpstreamLedgerEvidence({ freshness, repoRoot });
+    missingCause = { ...classifyMissingCause({
+      missingIds: reconciliation.missingFromLedger, freshness, upstreamEvidence,
+    }), freshness, evidenceStatus: upstreamEvidence.status };
+  }
+
+  return { ok: true, cloud: true, reconciliation, missingCause };
+}
+
+/**
+ * The upstream copy of the disposition ledger, as the tri-state
+ * `classifyMissingCause` consumes. `no-upstream` is its own status because it is
+ * DETERMINATE — there is no upstream that could have held the entries — while
+ * `unreadable` means the question could not be asked.
+ */
+export function readUpstreamLedgerEvidence({ freshness, repoRoot = process.cwd() }) {
+  if (!freshness?.upstream) {
+    return { status: freshness?.reason === 'no-upstream' ? 'no-upstream' : 'unreadable', issueIds: null };
+  }
+  const read = readFileAtRef({ ref: freshness.upstream, filePath: DISPOSITION_LEDGER_PATH, repoRoot });
+  if (read.status !== 'read') return { status: read.status, issueIds: null };
+  try {
+    const parsed = JSON.parse(read.content);
+    const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+    return { status: 'read', issueIds: new Set(entries.map((e) => e?.issueId).filter(Boolean)) };
+  } catch {
+    // The file is there but not parseable — we looked and could not tell, which
+    // is `unreadable`, never an empty set masquerading as a clean upstream.
+    return { status: 'unreadable', issueIds: null };
+  }
 }
 
 /** Human-grade reconciliation report — PowerShell-safe, mirrors renderWorksheet. */
+/**
+ * The sentence a missing-entry gap gets, keyed on its CLASSIFIED cause.
+ *
+ * The renderer used to print one explanation for every such row — *"the accepted
+ * crash-window gap"* — and the two real causes take opposite remedies. Each
+ * branch below names what was ruled out and what remains, rather than asserting
+ * a cause from evidence that only eliminates one.
+ */
+function renderMissingCauseLines(ids, missingCause) {
+  const head = `Terminal db row(s) with NO ledger entry (${ids.length})`;
+  if (!missingCause) return [`${head}:`];
+  const { cause, presentUpstream, freshness } = missingCause;
+  const up = freshness?.upstream || 'the upstream';
+
+  if (cause === MISSING_CAUSE.STALE) {
+    return [
+      `${head} — YOUR CHECKOUT IS STALE, not a lost write:`,
+      `  This checkout is ${freshness.behindBy} commit(s) behind ${up}, where all ${presentUpstream.length}`,
+      '  of these entries already exist. Run `git pull` — do NOT hand-write them,',
+      '  which would duplicate entries that are already pushed.',
+    ];
+  }
+  if (cause === MISSING_CAUSE.MIXED) {
+    return [
+      `${head} — PARTLY staleness:`,
+      `  ${presentUpstream.length} of ${ids.length} already exist ${freshness.behindBy} commit(s) ahead on ${up}.`,
+      '  Run `git pull` first, then re-run reconcile to see what genuinely remains.',
+    ];
+  }
+  if (cause === MISSING_CAUSE.UNKNOWN) {
+    return [
+      `${head} — CAUSE UNDETERMINED:`,
+      `  Could not establish whether this is staleness (${freshness?.reason || missingCause.evidenceStatus}).`,
+      '  Fetch and re-run, or inspect manually. Repair is refused while the cause is unknown.',
+    ];
+  }
+  // NOT_STALENESS — say what was ruled out, and list what is left. Naming a
+  // single cause here would be the original defect with a different label.
+  return [
+    `${head} — staleness does NOT explain it:`,
+    `  ${freshness?.state === 'current' ? `This checkout is current with ${up}.` : `${up} does not contain them.`}`,
+    '  Remaining causes: the ledger write was lost between the local write and the DB',
+    '  write; the entry was deleted locally; or your remote-tracking ref is itself',
+    '  stale (this never fetches). Inspect before repairing.',
+  ];
+}
+
 export function renderReconciliationReport({
   missingFromLedger, ledgerOnly, stateMismatch, dispositionMismatch = [], needsReview,
-  otherStore = [],
+  otherStore = [], coverage = null, missingCause = null,
 }) {
+  // WHAT THIS RUN CHECKED, in the verdict rather than above it. `clean` was
+  // true of the rows it saw while 20 of 43 entries were never compared — the
+  // same shape as a drift score of 0 that does not say over how many symbols.
+  // When the store identity could not be derived, `checked` is a CEILING, not a
+  // measurement — nothing could be scoped out, so the count says only "at most
+  // this many". Saying "N of N checked" there would be the field's own defect.
+  const coverageLine = coverage
+    ? (coverage.storeScoped === false
+      ? `store identity unknown — at most ${coverage.checked} of ${coverage.total} ledger entries could be scoped`
+      : `${coverage.checked} of ${coverage.total} ledger entries checked`)
+    : null;
   const clean = missingFromLedger.length === 0 && ledgerOnly.length === 0
     && stateMismatch.length === 0 && dispositionMismatch.length === 0 && needsReview.length === 0;
   // `otherStore` is deliberately NOT part of `clean`: it is not divergence, it
@@ -1102,14 +1201,18 @@ export function renderReconciliationReport({
     : [];
   if (clean) {
     return [
-      'Reconciliation: clean — every terminal db row matches a ledger entry, and no row needs manual review.',
+      `Reconciliation: clean — ${coverageLine ? `${coverageLine}; ` : ''}every terminal db row matches a ledger entry, and no row needs manual review.`,
+      ...(coverage?.foreign ? [`  ${coverage.foreign} entr(y/ies) belong to another store and were NOT checked — re-run with that AUDIT_DB_URL.`] : []),
       ...(outOfScope.length ? ['', ...outOfScope] : []),
     ].join('\n');
   }
 
-  const lines = ['Reconciliation — divergence found:', '', ...outOfScope];
+  const lines = [
+    `Reconciliation — divergence found${coverageLine ? ` (${coverageLine})` : ''}:`,
+    '', ...outOfScope,
+  ];
   if (missingFromLedger.length) {
-    lines.push(`Terminal db row(s) with NO ledger entry (${missingFromLedger.length}) — the accepted crash-window gap, now surfaced:`);
+    lines.push(...renderMissingCauseLines(missingFromLedger, missingCause));
     for (const id of missingFromLedger) lines.push(`  - ${id}`);
     lines.push('');
   }

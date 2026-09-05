@@ -243,9 +243,18 @@ describe('computeLedgerReconciliation (round-1 audit H2/M13 — the bidirectiona
     // bucket being added without anyone deciding whether the gate should block
     // on it. `otherStore` (2026-08-29, store-scoped reconciliation) is empty
     // here because neither side carries a fingerprint.
+    //
+    // `coverage` (2026-09-05) is the decision this assertion demanded: it is
+    // DISCLOSURE, not a bucket. It records what the run compared — the verdict
+    // read `clean` while 20 of 43 entries belonged to another store and were
+    // never checked — and it must NOT gate. Counting `foreign` as failure would
+    // make this repo's ledger, which permanently carries 20 such entries,
+    // impossible to reconcile clean: a gate unsatisfiable by doing the work
+    // correctly. The `clean` predicate below is deliberately unchanged.
     assert.deepEqual(r, {
       missingFromLedger: [], ledgerOnly: [], stateMismatch: [], dispositionMismatch: [], needsReview: [],
       otherStore: [],
+      coverage: { total: 1, checked: 1, foreign: 0, storeScoped: false },
     });
   });
 
