@@ -33,7 +33,7 @@ import { createAnthropicClient, isClaudeAvailable } from './lib/anthropic-client
 import { resolveModel } from './lib/model-resolver.mjs';
 import { gitCommitSha } from './lib/vcs.mjs';
 import {
-  selectFindingsNeedingCheck, groupByFile, buildFileChangeStateFn, buildSensitivePathPredicate,
+  selectFindingsNeedingCheck, groupByFile, buildFileChangeStateFn, buildPathSkipClassifier,
   readCurrentFileForVerification, readDiffForVerification, callVerifier, planWriteActions, mechanicalResolvedAction,
 } from './lib/remediation-verification.mjs';
 
@@ -93,8 +93,11 @@ async function main() {
   ]);
 
   const fileState = buildFileChangeStateFn(repoRoot);
-  const isSensitivePath = buildSensitivePathPredicate(repoRoot);
-  const { needsLlmCheck, mechanicallyResolved, sensitivePathSkipped, skipped } =
+  // The reason-returning classifier, not the boolean predicate: a plan-mode section
+  // reference and a real credential hit are opposite claims, and printing one number for
+  // both invented a security signal this repo did not have (upstream f8d2730f).
+  const isSensitivePath = buildPathSkipClassifier(repoRoot);
+  const { needsLlmCheck, mechanicallyResolved, sensitivePathSkipped, unresolvablePathSkipped, skipped } =
     selectFindingsNeedingCheck(rows, fileState, isSensitivePath);
 
   const grouped = groupByFile(needsLlmCheck).slice(0, cap);
@@ -102,7 +105,8 @@ async function main() {
 
   log(`${B}remediation-reconcile${X} — ${repo.name}: ${eligible} eligible (fetched ${rows.length}), `
     + `${mechanicallyResolved.length} mechanically resolved, ${grouped.length} file(s) to verify `
-    + `(${sensitivePathSkipped.length} sensitive-path skipped, ${skipped.length} unchanged/unresolvable), `
+    + `(${sensitivePathSkipped.length} sensitive-path skipped, `
+    + `${unresolvablePathSkipped.length} no-file-to-diff, ${skipped.length} unchanged/unresolvable), `
     + `${apply ? Y + 'APPLY' + X : Y + 'DRY-RUN' + X}`);
   if (notExamined > 0) log(`  ${Y}${notExamined} more changed file(s) NOT examined this run${X} — raise --cap or re-run (never-checked-first order makes progress across runs)`);
 
@@ -147,6 +151,7 @@ async function main() {
       ok: true, cloud: true, applied: false, repo: repo.name, eligible, examined: grouped.length, notExamined,
       resolved: resolvedCount, stillPresent: stillPresentCount, uncertain: uncertainCount,
       mechanicallyResolved: mechanicallyResolved.length, sensitivePathSkipped: sensitivePathSkipped.length,
+    unresolvablePathSkipped: unresolvablePathSkipped.length,
       providerFailures, skippedNoCredential,
     });
     console.log(`\n${Y}DRY-RUN${X} — no findings written. Re-run with ${B}--apply${X} to project ${actions.length} verdict(s).`);
@@ -159,6 +164,7 @@ async function main() {
     ok: true, cloud: true, applied: true, repo: repo.name, eligible, examined: grouped.length, notExamined,
     resolved: resolvedCount, stillPresent: stillPresentCount, uncertain: uncertainCount,
     mechanicallyResolved: mechanicallyResolved.length, sensitivePathSkipped: sensitivePathSkipped.length,
+    unresolvablePathSkipped: unresolvablePathSkipped.length,
     providerFailures, skippedNoCredential, updated, attempted,
   });
 }

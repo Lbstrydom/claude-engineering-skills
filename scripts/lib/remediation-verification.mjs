@@ -50,13 +50,25 @@ export function effectiveSinceCommit(row) {
  *   CLI), since a finding's file content and diff are about to be quoted into
  *   an external LLM prompt if this gate does not stop it here.
  * @returns {{needsLlmCheck: object[], mechanicallyResolved: object[],
- *            sensitivePathSkipped: object[], skipped: Array<{row: object, reason: string}>}}
+ *            sensitivePathSkipped: object[], unresolvablePathSkipped: object[],
+ *            skipped: Array<{row: object, reason: string}>}}
  */
 export function selectFindingsNeedingCheck(rows, fileState, isSensitivePath = () => false) {
   const needsLlmCheck = [];
   const mechanicallyResolved = [];
   const sensitivePathSkipped = [];
+  const unresolvablePathSkipped = [];
   const skipped = [];
+  // Accepts EITHER shape, so this stays a drop-in for both the boolean predicate and
+  // the reason-returning classifier. A bare `true` is read as `sensitive`, which is
+  // what the old callers meant — it can only under-split, never mislabel a real hit
+  // as merely unresolvable.
+  const skipReason = (file) => {
+    const verdict = isSensitivePath(file);
+    if (verdict === true) return PATH_SKIP_SENSITIVE;
+    if (verdict === false || verdict == null) return null;
+    return verdict;
+  };
   for (const row of rows || []) {
     const sinceCommit = effectiveSinceCommit(row);
     if (!row.primary_file || !sinceCommit) {
@@ -67,17 +79,16 @@ export function selectFindingsNeedingCheck(rows, fileState, isSensitivePath = ()
     // outright, never diffed or shown to the LLM, and never mechanically
     // "resolved" either (a deleted `.env` is not evidence this reconciler
     // should act on unsupervised). It is left exactly where it was.
-    if (isSensitivePath(row.primary_file)) {
-      sensitivePathSkipped.push(row);
-      continue;
-    }
+    const reason = skipReason(row.primary_file);
+    if (reason === PATH_SKIP_SENSITIVE) { sensitivePathSkipped.push(row); continue; }
+    if (reason === PATH_SKIP_UNRESOLVABLE) { unresolvablePathSkipped.push(row); continue; }
     const state = fileState(row.primary_file, sinceCommit);
     if (state === 'deleted') { mechanicallyResolved.push(row); continue; }
     if (state === 'changed') { needsLlmCheck.push(row); continue; }
     if (state === 'unchanged') { skipped.push({ row, reason: 'unchanged-since-last-check' }); continue; }
     skipped.push({ row, reason: 'commit-unresolvable' });
   }
-  return { needsLlmCheck, mechanicallyResolved, sensitivePathSkipped, skipped };
+  return { needsLlmCheck, mechanicallyResolved, sensitivePathSkipped, unresolvablePathSkipped, skipped };
 }
 
 /**
@@ -147,6 +158,65 @@ export function buildSensitivePathPredicate(repoRoot) {
     const sensitive = category === 'sensitive';
     cache.set(file, sensitive);
     return sensitive;
+  };
+}
+
+/**
+ * The two REASONS a row is refused before any git or LLM work — kept apart because
+ * they are opposite claims, and one of them was being asserted falsely.
+ *
+ * Upstream report f8d2730f (Lbstrydom/wine-cellar-app, 2026-09-06). `resolveAndClassify`
+ * answers `category: 'sensitive'` for FOUR distinct situations, and the boolean predicate
+ * above fuses all four into one bucket the CLI then printed as `N sensitive-path skipped`:
+ *
+ *   1. `lexical` matched a sensitive PATTERN — a real hit (`.env`, keys).
+ *   2. the resolved path ESCAPED the repo — a real hazard (INC-001's symlink class).
+ *   3. the canonical path re-classified sensitive — the innocently-named symlink into
+ *      `~/.ssh/`, also INC-001.
+ *   4. `realpathSync` simply FAILED — and a plan-mode finding's `primary_file` is a
+ *      section reference (`§2 decision 4; phase 0`), so it fails on every single one.
+ *
+ * Only 1-3 are security facts. Measured in the reporting consumer: 44 of 52 eligible
+ * rows were bucket 4, in a repo with ZERO credential-like paths in its queue — the
+ * operator was shown `44 sensitive-path skipped`, which reads as "44 credential-ish
+ * files are under audit here" and had nothing to find. Meanwhile the fact that WAS
+ * true and useful — *these rows have no file to diff, so this tool can never process
+ * them* — appeared nowhere.
+ *
+ * **Both still skip, and the fail-closed behaviour is unchanged.** An unresolvable path
+ * must still be refused: this module reads file CONTENT with `fs.readFileSync` and quotes
+ * it into an external LLM prompt, which is the whole reason realpath resolution is here.
+ * Only the accounting and the operator-facing wording change — a bucket is not a
+ * permission.
+ *
+ * Keyed on `resolutionFailed` rather than on "no lexical match", deliberately: cases 2
+ * and 3 also carry a null `lexical`, and reading them as "just unresolvable" would
+ * downgrade the two REAL hazards this classifier exists to catch. They resolve fine;
+ * that is what distinguishes them.
+ */
+export const PATH_SKIP_SENSITIVE = 'sensitive';
+export const PATH_SKIP_UNRESOLVABLE = 'unresolvable';
+
+/**
+ * Classify why a `primary_file` is refused, or `null` when it is fine to process.
+ *
+ * The reason-returning sibling of `buildSensitivePathPredicate`. Same resolution, same
+ * refusals, same cache shape — it just stops throwing away WHICH of the two it was.
+ *
+ * @param {string} repoRoot
+ * @returns {(file: string) => 'sensitive'|'unresolvable'|null}
+ */
+export function buildPathSkipClassifier(repoRoot) {
+  const cache = new Map();
+  return (file) => {
+    if (cache.has(file)) return cache.get(file);
+    const { category, resolutionFailed } = resolveAndClassify(file, { repoRoot });
+    let reason = null;
+    if (category === 'sensitive') {
+      reason = resolutionFailed ? PATH_SKIP_UNRESOLVABLE : PATH_SKIP_SENSITIVE;
+    }
+    cache.set(file, reason);
+    return reason;
   };
 }
 

@@ -1,5 +1,101 @@
 # Project Status Log
 
+## 2026-09-06 — "129 sensitive-path skipped" was 129 rows with no file: a fused verdict invented a security signal
+
+### Changes
+Fixed upstream report **`f8d2730f`** (MEDIUM, from `Lbstrydom/wine-cellar-app`).
+`remediation-reconcile` reported every plan-mode finding as `sensitive-path skipped`.
+Refusing them is correct; the LABEL was wrong, and wrong in the direction that invents a
+security problem while hiding a structural one.
+
+`resolveAndClassify` answers `category: 'sensitive'` for **four** distinct situations, and
+`buildSensitivePathPredicate` collapsed all four to a boolean:
+
+1. `lexical` matched a sensitive pattern — a real hit (`.env`, keys)
+2. the resolved path **escaped the repo** — a real hazard (INC-001's symlink class)
+3. the **canonical** path re-classified sensitive — the innocently-named symlink into
+   `~/.ssh/`, also INC-001
+4. `realpathSync` simply **failed** — and a plan-mode `primary_file` is a section
+   reference (`§2 decision 4; phase 0`), so it fails on every one
+
+Only 1–3 are security facts. Measured on this repo's live store the day of the fix:
+
+```
+before:  sensitivePathSkipped: 129
+after :  sensitivePathSkipped: 0,  unresolvablePathSkipped: 129
+```
+
+**All 129 were false.** This repo has zero credential-adjacent paths in that queue. The
+reporter measured 44 of 52 in theirs, with the same result. And I had passed the 129 on in
+yesterday's ship log without questioning it — a fabricated number reported as a
+measurement.
+
+`buildPathSkipClassifier` returns the REASON rather than a boolean; the CLI prints both
+counts and both reach the JSON payload. **Fail-closed behaviour is unchanged** — both
+refusals still skip before any git or content read; a bucket is not a permission.
+
+Keyed on `resolutionFailed`, **not** on "no lexical match" — deliberately. Cases 2 and 3
+also carry a null `lexical`, so the report's suggested discriminator would have downgraded
+the two REAL hazards this gate exists to catch. They resolve fine; that is what tells them
+apart.
+
+### Files Affected
+- `scripts/lib/remediation-verification.mjs` — `buildPathSkipClassifier`,
+  `PATH_SKIP_SENSITIVE`/`PATH_SKIP_UNRESOLVABLE`, the new `unresolvablePathSkipped` bucket.
+  `selectFindingsNeedingCheck` accepts BOTH the boolean predicate and the classifier, so
+  the old export stays a drop-in and can only under-split, never mislabel.
+- `scripts/remediation-reconcile.mjs` — summary line + both emit payloads
+- `tests/remediation-verification-selection.test.mjs`
+- `status.md`
+
+### A SECOND defect found while investigating — NOT fixed here
+The sensitive gate runs **before** `fileState`, and an unresolvable path is refused there.
+A file that no longer exists in the working tree fails `realpathSync`, so it never reaches
+`state === 'deleted'` → `mechanicallyResolved`. Proved by driving the real predicate
+through the real partition function:
+
+```
+rows: [deleted-path, plan-section, live-file, .env]
+mechanicallyResolved : (none)          <- would have been the deleted row
+fileState was asked about: scripts/lib/db/client.mjs   <- only the live file
+```
+
+So `mechanicallyResolved` — the free, no-LLM path AGENTS.md describes as *"a file that was
+simply deleted resolves mechanically, no LLM needed"* — is unreachable for exactly the
+population it was built for. Both repos' recent runs reported `0 mechanically resolved`,
+which is consistent.
+
+**Deliberately not fixed in this change, and not a silent defer.** The remedy is to let an
+unresolvable path reach `fileState` and accept only the `deleted` outcome — a change to the
+evaluation order of a gate whose whole purpose is refusing content reads, and a change to
+what the reconciler WRITES (it would start projecting `fixed` verdicts for previously
+skipped rows). The report explicitly asked that fail-closed behaviour not change. The two
+are independent: this labelling fix is correct with or without it. It deserves its own
+decision rather than riding along inside an accounting fix.
+
+### Decisions Made
+- **Did not implement the report's optional follow-on** (report the plan/code split of the
+  eligible set up front). `unresolvablePathSkipped: 129 of 282 eligible` already carries
+  that structural fact, and a second, differently-derived split of the same thing is two
+  numbers that can disagree.
+- **Kept `buildSensitivePathPredicate` exported.** It has no production caller now, but it
+  is the boolean contract other callers may hold; `selectFindingsNeedingCheck` reads a bare
+  `true` as `sensitive`, which is what those callers meant.
+
+### Verification
+- **Discriminating negative control.** The first attempt was weak: reverting the source
+  made the whole test file fail to LOAD (missing exports), which proves the exports are new
+  and nothing about the classification. Re-ran it by re-fusing the reason
+  (`reason = PATH_SKIP_SENSITIVE` for both) with the exports intact — **2 tests fail, 25
+  pass**; restored, 27/0. That is the control that actually discriminates.
+- The classification tests drive the REAL classifier against real section references taken
+  from the live queue, not a fake that begs the question.
+- Live dry-run against the store produced the before/after figures above.
+- Gates: knip, cli:flags, size:ratchet, parity:check-coupling, emit:exit, stdout:flush all
+  clean; 49 tests green across the four related suites.
+
+---
+
 ## 2026-09-06 — `byMode.code` counted plan findings as code: one oracle, six branches, and a row filter that had to move with it
 
 ### Changes
