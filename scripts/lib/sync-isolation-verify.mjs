@@ -92,6 +92,10 @@ const CLI_SMOKE_SET = [
   // Context Summary); its --selfcheck-relocation handler existed but was
   // unverified in consumers until Cluster B (self-hosted-runner-management.md).
   'actions-runner-doctor.mjs',
+  // Scheduled-workflow cadence doctor — declared in sync-to-repos.mjs CORE_ENTRY
+  // (verified before adding: this set asserts CONSUMER PRESENCE, so membership
+  // without that declaration fails gate 4 in every consumer).
+  'workflow-cadence-doctor.mjs',
   // Citation re-resolver. Membership is legitimate ONLY because it is now
   // declared in sync-to-repos.mjs (see the NOTE below): it was deliberately kept
   // OUT while it was source-only, precisely to avoid the gate-4-fails-everywhere

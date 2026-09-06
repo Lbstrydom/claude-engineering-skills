@@ -142,6 +142,8 @@
     "protect:main": "node scripts/ensure-branch-protection.mjs",
     "protect:main:apply": "node scripts/ensure-branch-protection.mjs --apply",
     "runner:doctor": "node scripts/actions-runner-doctor.mjs",
+    "cadence:doctor": "node scripts/workflow-cadence-doctor.mjs",
+    "cadence:doctor:json": "node scripts/workflow-cadence-doctor.mjs --json",
     "runner:doctor:json": "node scripts/actions-runner-doctor.mjs --json",
     "runner:local": "node scripts/actions-runner-doctor.mjs local",
     "runner:local:json": "node scripts/actions-runner-doctor.mjs local --json",

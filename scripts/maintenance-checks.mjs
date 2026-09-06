@@ -301,6 +301,33 @@ export const CHECKS = [
     steps: [{ script: 'actions-runner-doctor.mjs', args: ['local', '--json', '--strict'] }],
   },
   {
+    // The sibling question to runner-health above: that one asks "is the runner
+    // on this machine healthy", this one asks "did the scheduled workflows that
+    // runner is supposed to serve actually run, and pass". A cron that stops
+    // firing produces no run, no failure and no notification — nothing, which
+    // looks exactly like a quiet week — so it is invisible to every check here
+    // except one that goes and asks GitHub.
+    //
+    // `--strict` is load-bearing, not decoration: runCheck() below derives a
+    // check's status from the SPAWNED PROCESS'S EXIT CODE, and the doctor is
+    // advisory (exit 0) by default. Registered without it, this entry would
+    // report `ok` forever — a watcher manufacturing false calm inside the
+    // maintenance registry, which is one level up from the defect the doctor
+    // exists to detect.
+    //
+    // requiredEnv is GITHUB_TOKEN so a machine with no GitHub credential gets a
+    // clean, informative skip rather than a permanent weekly `undetermined`.
+    // The CLI itself also accepts GH_TOKEN; this registry has no way to express
+    // "either of these", and GITHUB_TOKEN is the documented one.
+    //
+    // A repo with no cron-triggered workflows reports `nothing-to-watch` and
+    // exits 0, so this is silent where it has nothing to say.
+    key: 'workflow-cadence',
+    label: 'Scheduled-workflow cadence (did the crons run, and pass?)',
+    requiredEnv: ['GITHUB_TOKEN'],
+    steps: [{ script: 'workflow-cadence-doctor.mjs', args: ['--strict'] }],
+  },
+  {
     // AUDIT_DB_URL only — NOT an LLM credential. remediation-reconcile.mjs
     // degrades gracefully with no Claude credential (it still applies the
     // free mechanical "file deleted" resolutions and reports the rest as

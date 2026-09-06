@@ -747,6 +747,14 @@
     "stdout:flush:baseline": {
       "description": "Re-write the stdout:flush:gate baseline deliberately, after fixing a site or accepting a new one. The ratchet fails in BOTH directions, so a reduction is recorded in the baseline diff rather than silently pocketed at the old high-water mark.",
       "category": "maintenance"
+    },
+    "cadence:doctor": {
+      "description": "Did this repo's SCHEDULED workflows actually run, and pass? Reads the committed .workflow-cadence.json watch list and asks GitHub per (workflow, event). Advisory — never blocks.",
+      "category": "diagnostic"
+    },
+    "cadence:doctor:json": {
+      "description": "cadence:doctor, machine-readable (one envelope on stdout).",
+      "category": "diagnostic"
     }
   }
 }

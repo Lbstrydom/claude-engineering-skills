@@ -1,0 +1,10 @@
+{
+  "watch": [
+    { "workflow": "architectural-drift.yml", "event": "schedule", "maxAgeDays": 10 },
+    { "workflow": "cache-seed-check.yml", "event": "schedule", "maxAgeDays": 10 },
+    { "workflow": "learning-weekly-review.yml", "event": "schedule", "maxAgeDays": 10 },
+    { "workflow": "memory-health.yml", "event": "schedule", "maxAgeDays": 10 },
+    { "workflow": "migration-drift.yml", "event": "schedule", "maxAgeDays": 10 },
+    { "workflow": "model-freshness.yml", "event": "schedule", "maxAgeDays": 10 }
+  ]
+}
