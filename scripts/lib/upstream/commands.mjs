@@ -998,18 +998,11 @@ export function renderWorksheet(items, { state = 'open' } = {}) {
  * @param {{repoRoot?: string, listTerminalFn: () => Promise<{ok:boolean,cloud:boolean,rows:Array}>}} args
  */
 export async function upstreamReconcile({ repoRoot = process.cwd(), listTerminalFn, currentStore = null }) {
-  // THE TOKEN IS TAKEN BEFORE EVERY READ IT MUST DESCRIBE (code-audit R6 H1).
-  // It used to be captured at the END of classification, after the store read,
-  // the ledger read and `resolveBaseFreshness` had all happened — so a commit
-  // or a ledger edit landing DURING those reads produced a token describing the
-  // post-change state while the classification was made from the pre-change
-  // one, and `--apply` then verified the wrong moment and wrote anyway.
-  // Capturing first inverts the failure direction: any movement during the
-  // reads now makes `--apply`'s re-check disagree and REFUSE, which is the
-  // direction a precondition exists for. The store read is the longest of those
-  // windows, which is why the capture sits above it — the cost is one
-  // `rev-parse` and one file hash, paid on the cloud-off degrade path too, and
-  // a precondition that starts after the slowest read is barely a precondition.
+  // TAKEN BEFORE EVERY READ IT MUST DESCRIBE (code-audit R6 H1). Captured at the
+  // END of classification, a commit or ledger edit landing during the reads gave
+  // `--apply` a token describing a state the classification was not made from,
+  // and it wrote anyway; capturing first makes that movement REFUSE instead.
+  // Above the store read because that is the longest window.
   const precondition = captureReconcilePrecondition(repoRoot);
 
   const res = await listTerminalFn();
@@ -1036,12 +1029,8 @@ export async function upstreamReconcile({ repoRoot = process.cwd(), listTerminal
   if (reconciliation.missingFromLedger.length > 0) {
     const freshness = resolveBaseFreshness({ repoRoot });
     const upstreamEvidence = readUpstreamLedgerEvidence({ freshness, repoRoot });
-    // ONE SNAPSHOT (code-audit R2 H1), taken at the top of this function. The
-    // precondition `--apply` re-verifies must describe the state this
-    // CLASSIFICATION was made from — commit AND ledger bytes as one moment. An
-    // earlier version pinned the commit here and hashed the ledger later,
-    // inside `--apply`; a later one captured both together but AFTER the reads
-    // that feed the classification, which is the same gap one step narrower.
+    // ONE SNAPSHOT (code-audit R2 H1) — commit AND ledger bytes as one moment,
+    // taken at the top of this function; see there.
     missingCause = {
       ...classifyMissingCause({
         missingIds: reconciliation.missingFromLedger, freshness, upstreamEvidence,
