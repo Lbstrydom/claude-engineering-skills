@@ -1,5 +1,106 @@
 # Project Status Log
 
+## 2026-09-06 — `byMode.code` counted plan findings as code: one oracle, six branches, and a row filter that had to move with it
+
+### Changes
+Fixed upstream report **`fe1ff38a`** (HIGH, from `Lbstrydom/wine-cellar-app`): every `byMode`
+split in `ship-nudges.mjs` branched on `audit_mode` alone and trusted it to separate
+actionable code work from plan sections. It does not. The write side records
+`primary_file` as `_primaryFile || section` ([runs-findings.mjs](scripts/lib/store/runs-findings.mjs)),
+so a **code**-mode finding that never produced a file path falls back to prose while
+`audit_mode` stays `'code'`.
+
+Measured against the live store at fix time, one query returning both classifications so
+there is no cross-day confound:
+
+| view | `audit_mode='code'` | effective code | reclassified |
+|---|---|---|---|
+| `unlocked_fixes_all` | 233 | 200 | **33 (14.2%)** |
+| `unremediated_acceptances_all` | 227 | 171 | **56 (24.7%)** |
+
+89 rows across the two were being reported as actionable code work while naming plan
+sections. The reporter measured 2.5x in their repo (15 of 25) and lost about an hour to it
+before spotting the pattern.
+
+Two things the report did not have:
+
+- **A FOURTH site.** It cited three (~288, ~365, ~672). `countUnremediatedAcceptances` is a
+  fourth, and it is the one feeding `/ship` Step 0.5e's `unremediated_count` — the more
+  visible of the two backlogs. Found by grepping the module for the defect's SHAPE rather
+  than working the reported line numbers.
+- **The ROW filter had to move with the counts.** `getUnlockedFixes({mode:'code'})` filtered
+  on the raw `audit_mode`. Fixing only the aggregate would have been *worse* than the
+  original defect: the card would say `code: 64` while `mode:'code'` handed back 74 rows,
+  and nothing tells the reader which number is lying. Verified live after the fix —
+  64 rows / `byMode.code` 64 / **0 non-path rows leaking**, and `64 + 19 = 83 = total`.
+
+Six aggregate branches across four readers now count `EFFECTIVE_MODE_SQL`, plus the row
+filter. Rows themselves are unchanged; only the aggregate moved.
+
+### Files Affected
+- `scripts/lib/store/finding-mode.mjs` — **new**; `CODE_PATH_PATTERN` and
+  `EFFECTIVE_MODE_SQL`, the single oracle
+- `scripts/lib/store/ship-nudges.mjs` — six `GROUP BY` branches + the row-mode predicate
+- `skills/ship/SKILL.md` + `.claude/skills/ship/SKILL.md` + `skills.manifest.json` —
+  Step 0.5b now says what `byMode` counts and why
+- `tests/unlocked-fixes-mode.test.mjs` — the real oracle, asserted rather than mirrored
+- `status.md`
+
+### Decisions Made
+- **A SHAPE test, not the report's extension allowlist.** It suggested
+  `\.(js|jsx|css|html|mjs|sql|json)$`. That is a per-repo constant — this repo is `.mjs`,
+  the reporter's `.js`/`.css`, and a consumer on `.ts`/`.svelte`/`.py` would have had every
+  real path silently reclassified as a plan section: the same false negative shipped to
+  every repo that adopts this bundle. Shape (no whitespace, no `§`, a dotted extension)
+  asks the question the caller actually has. Erring toward `plan` is the safe direction —
+  it under-reports actionable work rather than sending someone after an unactionable row.
+- **A READ-side correction**, as the report recommended: existing rows are already
+  mis-stamped, and they ARE the backlog these nudges report. The write side is worth a
+  separate look; it is not what makes today's numbers honest.
+- **`finding-mode.mjs` is its own module, and that was forced by a guard doing its job.**
+  Defining the constants in `ship-nudges.mjs` put two strings onto the public surface —
+  `plans-ship.mjs` re-exports it with `export *`, and that barrel is the contract pinned by
+  `tests/learning-store-exports.test.mjs`, which is a contract about named persistence
+  FUNCTIONS. It failed three ways (extra names, `typeof` string not function, count
+  200→202). Widening that contract to admit constants would have been fixing the guard to
+  fit the change. A separate module keeps all three properties: one oracle, importable by
+  the test that asserts it, and off the consumer-facing barrel.
+
+### Verification
+- **The existing tests could never have caught this.** `tests/unlocked-fixes-mode.test.mjs`
+  MIRRORS the reduce into the test file, justified by a comment saying the store module
+  opens a pg pool on import. It does not — measured 2026-09-06, it imports in ~1.5s and
+  opens nothing. The copy stayed correct while the original was wrong, which is exactly how
+  the defect survived. The new block imports the real oracle.
+- **Negative control**: 4 assertions fail against the pre-fix module, 0 after. The sharpest
+  is the wiring pin — *"a reducer branching on the RAW audit_mode is the defect fe1ff38a
+  reported"*.
+- **Two of my own new assertions were wrong first**, both instrument bugs I would otherwise
+  have shipped as findings. One matched this module's own COMMENTS — two lines that quote
+  the `FROM ${view}` anti-pattern in order to warn against it — and reported the warning as
+  the violation. That is the docstring-reads-as-code false positive, reproduced inside the
+  guard written to prevent it. Caught only because it failed on a change that could not
+  have introduced it.
+- Live smoke against the real store: both rewritten readers execute and return the numbers
+  in the table above.
+
+### Known gap
+There is **no assertion on a real Postgres** for `EFFECTIVE_MODE_SQL`. The pins are
+source-level and pure; the live measurements above are real but manual, not a gate. Given
+this repo's own history — the pure tests passed throughout the entire period the freshness
+cache was dead — that is the weak spot in this change, and it is recorded rather than
+papered over. A DB-gated assertion needs enrolment in BOTH `db-test-container.mjs`'s
+`*_SUITE_FILES` and `postgres-parity.yml`.
+
+### Next Steps
+- Close `fe1ff38a` with `upstream fix --commit <sha>` once this lands, noting the fourth
+  site and the row filter, so the reporter knows the fix is wider than what they filed.
+- The write side (`primary_file: _primaryFile || section`) still stamps prose onto code-mode
+  findings. Worth its own look; it does not affect the counts now that the read side
+  classifies.
+
+---
+
 ## 2026-09-06 — A cadence watcher that could not see its own blind spot, promoted
 
 ### Consumer Verification (previous ship)

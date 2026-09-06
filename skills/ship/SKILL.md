@@ -238,6 +238,18 @@ runs: their `primary_file` is a section reference ("§9 testing strategy"), ther
 is no code artifact, and **no lock of any kind can ever exist for them** — 113 of
 those 232 were plan rows, so a single mixed total makes half the backlog read as
 work that cannot be done.
+
+> **`byMode` counts by what a row IS, not by which run recorded it** (upstream
+> report `fe1ff38a`, fixed 2026-09-06). A plan-mode run is not the only source of
+> a section reference: the write side records `primary_file` as
+> `_primaryFile || section`, so a **code**-mode finding lacking a file path of its
+> own falls back to prose while `audit_mode` stays `'code'`. Counting on
+> `audit_mode` alone therefore reported unlockable rows as actionable work — 2.5x
+> overstated in the reporting consumer, and measured at fix time against the
+> upstream store: **33 of 233** `unlocked_fixes` code rows and **56 of 227**
+> `unremediated_acceptances` code rows were section references. The readers now
+> classify on `primary_file`'s shape as well, so `byMode.code` is the count you can
+> act on. Rows are unchanged — only the aggregate moved.
 `unlocked_fixes` is a generic "HIGH fix, zero `regression_specs` rows in 14
 days" check — it has no UI-relevance filter, so it fires identically for a
 DOM-facing fix and a pure backend/CLI one. `/ux-lock` can only ever cover

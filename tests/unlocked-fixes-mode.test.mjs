@@ -119,3 +119,124 @@ describe('unlocked_fixes view contract', () => {
       'the two nudge views should stay shaped alike; diverging silently is how one of them rots');
   });
 });
+
+// ── audit_mode alone is not the mode (upstream report fe1ff38a) ─────────────
+//
+// Everything above this line asserts a MIRROR of the reduce, copied into the test
+// because the module was believed to open a pg pool on import. It does not — measured
+// 2026-09-06, `await import('.../ship-nudges.mjs')` completes in ~1.5s and opens
+// nothing — and the mirror is exactly why this defect survived: the copy was correct
+// while the original was wrong, so the suite stayed green through the whole period.
+// The block below imports the REAL module and asserts the real exported oracle.
+describe('effective mode — a code-mode row whose primary_file is a plan section', () => {
+  // Imported, never restated. A second spelling of the pattern here would reintroduce
+  // the drift this whole report is about.
+  const load = async () => import('../scripts/lib/store/finding-mode.mjs');
+
+  // Verbatim `primary_file` values, taken from the live store on 2026-09-06 — not
+  // invented. The first group is what the fixture factories always produced (and so
+  // what the mirrored tests above have always exercised); the second is what the store
+  // actually holds and no test had ever seen.
+  const REAL_PATHS = [
+    'scripts/lib/upstream/commands.mjs',
+    'scripts/lib/db/client.mjs',
+    'scripts/lib/cross-skill/commands/quality.mjs',
+    'src/routes/wines.js',
+    'app/components/Cellar.tsx',
+    'data/migrations/177_drop_dead_bottle_count.sql',
+    'docs/reference/gate-honesty.md',
+  ];
+  const REAL_SECTIONS = [
+    '§2 proposed architecture — bootstrap entry point',
+    '§2 entry point `npx github',
+    '§1 measured consumer state; §2 entry points; §5 sustainability notes',
+    'plan file inventory — migration and verification deliverables',
+    'files in scope — durable debt state, consumer-local configuration, and v3 run-metadata migration',
+    'runlegacyproductionaudit — `audit.runcomplete` and `reconcilecompletionrow`',
+    'wave 1.5c production wiring; d12 lifecycle reconciliation',
+    // From the reporter's repo, quoted in fe1ff38a:
+    'plan §7 — service/config additions',
+    'plan §2 / new files — freshness configuration',
+    'plan §7 frontend shared and cellar-analysis components',
+  ];
+
+  it('accepts real repo-relative paths as code', async () => {
+    const { CODE_PATH_PATTERN } = await load();
+    const re = new RegExp(CODE_PATH_PATTERN);
+    for (const p of REAL_PATHS) assert.ok(re.test(p), `${p} must count as code`);
+  });
+
+  it('rejects real plan-section references — the direction that was 2.5x wrong', async () => {
+    const { CODE_PATH_PATTERN } = await load();
+    const re = new RegExp(CODE_PATH_PATTERN);
+    for (const s of REAL_SECTIONS) assert.ok(!re.test(s), `${JSON.stringify(s)} must NOT count as code`);
+  });
+
+  it('a bare extensionless token is not a path either', async () => {
+    // The failure mode a laxer predicate would reintroduce: `README`, `§7`, or a
+    // sentence fragment with no spaces would sail through a "no whitespace" test alone.
+    const { CODE_PATH_PATTERN } = await load();
+    const re = new RegExp(CODE_PATH_PATTERN);
+    for (const s of ['README', '§7', 'runlegacyproductionaudit', '']) {
+      assert.ok(!re.test(s), `${JSON.stringify(s)} must NOT count as code`);
+    }
+  });
+
+  it('the SQL fragment is COMPOSED from the pattern, so the two cannot drift', async () => {
+    const { CODE_PATH_PATTERN, EFFECTIVE_MODE_SQL } = await load();
+    assert.ok(EFFECTIVE_MODE_SQL.includes(CODE_PATH_PATTERN),
+      'EFFECTIVE_MODE_SQL must embed CODE_PATH_PATTERN rather than restate it');
+    // A plan-mode row can never be promoted to code, whatever its primary_file looks
+    // like: the guard is a conjunction. Asserted on the emitted SQL, not on intent.
+    assert.match(EFFECTIVE_MODE_SQL, /audit_mode\s*=\s*'code'\s+AND/,
+      'promotion to code must require audit_mode = code AND a path-shaped primary_file');
+    assert.ok(!/\b[a-z]\.(audit_mode|primary_file)\b/.test(EFFECTIVE_MODE_SQL),
+      'columns stay unqualified so the fragment drops into aliased and unaliased queries alike');
+  });
+});
+
+describe('WIRING PIN: every byMode split counts effective mode, not audit_mode', () => {
+  // The assertion that actually fails against the old code. The mirrored tests above
+  // pass either way — they never touch the module — so without this the fix would be
+  // unguarded and the next refactor could revert it silently.
+  it('no reducer branches on r.audit_mode, and every byMode GROUP BY uses the fragment', () => {
+    const src = fs.readFileSync(
+      path.join(import.meta.dirname, '../scripts/lib/store/ship-nudges.mjs'), 'utf-8');
+
+    assert.ok(!/r\.audit_mode/.test(src),
+      'a reducer branching on the RAW audit_mode is the defect fe1ff38a reported');
+
+    // Six aggregate branches across four readers: countUnlockedFixes (4 literal view
+    // branches), countUnremediatedAcceptances (4), countAgedUnlockedFixes (1) and
+    // countAgedUnremediatedAcceptances (2). Count the fragment's uses rather than
+    // trusting that a grep found them all — the report itself named only three sites.
+    const uses = (src.match(/\$\{EFFECTIVE_MODE_SQL\}/g) || []).length;
+    assert.ok(uses >= 11, `expected every byMode branch to use the fragment, saw ${uses}`);
+
+    // The ROW filter must move with the counts. Fixing only the aggregate would be
+    // worse than the original defect: the card would say `code: 64` while `mode:'code'`
+    // handed back 74 rows, and nothing tells the reader which number is lying.
+    // Measured after the fix: 64 rows / byMode.code 64 / 0 non-path rows leaking.
+    assert.ok(!/preds\.push\(`audit_mode = /.test(src),
+      'the row-level mode filter must use effective mode, not the raw audit_mode');
+
+    // GROUP BY must follow the SELECT. A fragment in the projection with a stale
+    // `GROUP BY audit_mode` would be a Postgres error at runtime, not a silent
+    // miscount — but this catches it at push time instead of in a consumer's ship.
+    assert.ok(!/GROUP BY[^`]*\baudit_mode\b/.test(src),
+      'a GROUP BY on the raw audit_mode contradicts an effective_mode projection');
+
+    // The interpolation must stay out of FROM/ORDER BY, or the static fence scan in
+    // cross-skill-unlocked-scope.test.mjs reads a placeholder and goes green over it.
+    //
+    // Scanned with COMMENT LINES STRIPPED. The first version of this assertion matched
+    // the module's own prose — two comments that quote the `FROM ${view}` anti-pattern
+    // in order to warn against it — and reported the warning as the violation. That is
+    // the docstring-reads-as-code false positive this repo keeps hitting, reproduced
+    // inside the guard written to prevent it. Caught because the assertion failed on a
+    // change that could not have introduced it.
+    const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+    assert.ok(!/FROM\s*\$\{/.test(code), 'view names stay literal — the fence scan reads them');
+    assert.ok(!/ORDER BY\s*\$\{/.test(code), 'ORDER BY stays literal for the same reason');
+  });
+});

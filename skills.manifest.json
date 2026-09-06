@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "edb3396da2adba4d",
+  "bundleVersion": "df2eb10b6e4a55de",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -407,14 +407,14 @@
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "1bba4595e9d6",
-      "size": 78093,
+      "sha": "95cc92399a94",
+      "size": 78936,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "1bba4595e9d6",
-          "size": 78093
+          "sha": "95cc92399a94",
+          "size": 78936
         },
         {
           "relPath": "references/input-acquisition.md",

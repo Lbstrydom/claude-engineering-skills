@@ -38,6 +38,9 @@
 import { isCloudEnabled } from './repo.mjs';
 import { many } from '../db/query.mjs';
 import { findingEmbeddingSpace } from '../embed-text.mjs';
+// The single mode oracle. Its own module so these two constants stay OFF the
+// `export *` barrel that pins the public FUNCTION contract — see finding-mode.mjs.
+import { EFFECTIVE_MODE_SQL } from './finding-mode.mjs';
 
 /**
  * Recent fixes lacking a regression spec (from the `unlocked_fixes` view).
@@ -158,7 +161,12 @@ export async function getUnlockedFixes(scope, opts = {}) {
     const preds = [];
     const params = [];
     if (!allRepos) { params.push(repoId); preds.push(`repo_id = $${params.length}`); }
-    if (mode) { params.push(mode); preds.push(`audit_mode = $${params.length}`); }
+    // The ROW filter uses the same effective mode the COUNTS do. Leaving this on the raw
+    // `audit_mode` while `countUnlockedFixes` moved to `EFFECTIVE_MODE_SQL` would have
+    // been worse than the original defect rather than a partial fix: the card would say
+    // `code: 64` and `--mode code` would hand back 74 rows, and a reader cannot tell
+    // which number is lying. The two must move together or not at all.
+    if (mode) { params.push(mode); preds.push(`${EFFECTIVE_MODE_SQL} = $${params.length}`); }
     const where = preds.length ? ` WHERE ${preds.join(' AND ')}` : '';
     params.push(limit, offset);
     // `opts.allAges` reads the unwindowed base view. The default stays the
@@ -256,6 +264,7 @@ export async function findUnlockedFixInRepo({ repoId, findingId }) {
  * @param {string|null} [repoId]
  * @returns {Promise<{total:number, code:number, plan:number}>}
  */
+
 export async function countUnlockedFixes(scope, opts = {}) {
   const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'countUnlockedFixes');
   const empty = { total: 0, code: 0, plan: 0 };
@@ -272,16 +281,20 @@ export async function countUnlockedFixes(scope, opts = {}) {
     // `FROM <view>` literals, so an interpolated name drops the reader out.
     const rows = opts?.allAges
       ? (!allRepos
-        ? await many(`SELECT audit_mode, count(*)::int AS n FROM unlocked_fixes_all WHERE repo_id = $1 GROUP BY audit_mode`, [repoId])
-        : await many(`SELECT audit_mode, count(*)::int AS n FROM unlocked_fixes_all GROUP BY audit_mode`))
+        ? await many(`SELECT ${EFFECTIVE_MODE_SQL} AS effective_mode, count(*)::int AS n FROM unlocked_fixes_all WHERE repo_id = $1 GROUP BY 1`, [repoId])
+        : await many(`SELECT ${EFFECTIVE_MODE_SQL} AS effective_mode, count(*)::int AS n FROM unlocked_fixes_all GROUP BY 1`))
       : (!allRepos
-        ? await many(`SELECT audit_mode, count(*)::int AS n FROM unlocked_fixes WHERE repo_id = $1 GROUP BY audit_mode`, [repoId])
-        : await many(`SELECT audit_mode, count(*)::int AS n FROM unlocked_fixes GROUP BY audit_mode`));
+        ? await many(`SELECT ${EFFECTIVE_MODE_SQL} AS effective_mode, count(*)::int AS n FROM unlocked_fixes WHERE repo_id = $1 GROUP BY 1`, [repoId])
+        : await many(`SELECT ${EFFECTIVE_MODE_SQL} AS effective_mode, count(*)::int AS n FROM unlocked_fixes GROUP BY 1`));
+    // `effective_mode` is a closed two-value domain, so `else` is exhaustive here where
+    // the old `else if (audit_mode === 'plan')` was not: a row with any third
+    // `audit_mode` value silently landed in NEITHER bucket, so `code + plan < total`
+    // without anything saying so.
     return rows.reduce((acc, r) => {
       const n = Number(r.n) || 0;
       acc.total += n;
-      if (r.audit_mode === 'code') acc.code += n;
-      else if (r.audit_mode === 'plan') acc.plan += n;
+      if (r.effective_mode === 'code') acc.code += n;
+      else acc.plan += n;
       return acc;
     }, { ...empty });
   } catch (err) {
@@ -338,7 +351,7 @@ export async function countAgedUnlockedFixes(scope) {
        )
        SELECT
          (SELECT started_at FROM practice)                                  AS practice_start,
-         a.audit_mode,
+         ${EFFECTIVE_MODE_SQL}                                              AS effective_mode,
          count(*) FILTER (
            WHERE (SELECT started_at FROM practice) IS NOT NULL
              AND a.fixed_at >= (SELECT started_at FROM practice)
@@ -349,7 +362,7 @@ export async function countAgedUnlockedFixes(scope) {
          )::int                                                             AS pre_practice
        FROM unlocked_fixes_all a
        ${repoPred}${repoPred ? ' AND' : 'WHERE'} NOT a.is_recent
-       GROUP BY a.audit_mode`,
+       GROUP BY 2`,
       params
     );
     return rows.reduce((acc, r) => {
@@ -357,8 +370,8 @@ export async function countAgedUnlockedFixes(scope) {
       acc.agedOut += aged;
       acc.prePractice += Number(r.pre_practice) || 0;
       acc.practiceStart = r.practice_start ? String(r.practice_start) : acc.practiceStart;
-      if (r.audit_mode === 'code') acc.byMode.code += aged;
-      else if (r.audit_mode === 'plan') acc.byMode.plan += aged;
+      if (r.effective_mode === 'code') acc.byMode.code += aged;
+      else acc.byMode.plan += aged;
       return acc;
     }, { ...empty, byMode: { ...empty.byMode } });
   } catch (err) {
@@ -546,16 +559,21 @@ export async function countUnremediatedAcceptances(scope, opts = {}) {
     // `countUnlockedFixes`. Literal branches, not an interpolated view name.
     const rows = opts?.allAges
       ? (!allRepos
-        ? await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances_all WHERE repo_id = $1 AND is_open_disposition GROUP BY audit_mode`, [repoId])
-        : await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances_all WHERE is_open_disposition GROUP BY audit_mode`))
+        ? await many(`SELECT ${EFFECTIVE_MODE_SQL} AS effective_mode, count(*)::int AS n FROM unremediated_acceptances_all WHERE repo_id = $1 AND is_open_disposition GROUP BY 1`, [repoId])
+        : await many(`SELECT ${EFFECTIVE_MODE_SQL} AS effective_mode, count(*)::int AS n FROM unremediated_acceptances_all WHERE is_open_disposition GROUP BY 1`))
       : (!allRepos
-        ? await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances WHERE repo_id = $1 GROUP BY audit_mode`, [repoId])
-        : await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances GROUP BY audit_mode`));
+        ? await many(`SELECT ${EFFECTIVE_MODE_SQL} AS effective_mode, count(*)::int AS n FROM unremediated_acceptances WHERE repo_id = $1 GROUP BY 1`, [repoId])
+        : await many(`SELECT ${EFFECTIVE_MODE_SQL} AS effective_mode, count(*)::int AS n FROM unremediated_acceptances GROUP BY 1`));
+    // A FOURTH site, which upstream report fe1ff38a did not name (it cited three). It is
+    // the one feeding /ship Step 0.5e's `unremediated_count`, so leaving it would have
+    // fixed the lock backlog's arithmetic and left the acceptance backlog's wrong — the
+    // more visible of the two. Found by grepping the module for the defect's SHAPE rather
+    // than working the reported line numbers.
     return rows.reduce((acc, r) => {
       const n = Number(r.n) || 0;
       acc.total += n;
-      if (r.audit_mode === 'code') acc.code += n;
-      else if (r.audit_mode === 'plan') acc.plan += n;
+      if (r.effective_mode === 'code') acc.code += n;
+      else acc.plan += n;
       return acc;
     }, { ...empty });
   } catch (err) {
@@ -616,7 +634,7 @@ export async function countAgedUnremediatedAcceptances(scope) {
              JOIN audit_runs r2 ON r2.id = f2.run_id
             WHERE e.remediation_state IN ('fixed','verified') AND r2.repo_id = $1
          )
-         SELECT a.audit_mode, a.severity,
+         SELECT ${EFFECTIVE_MODE_SQL} AS effective_mode, a.severity,
                 count(*) FILTER (WHERE NOT a.is_mature)::int AS not_yet_due,
                 count(*) FILTER (
                   WHERE a.is_mature AND NOT a.is_recent
@@ -631,7 +649,7 @@ export async function countAgedUnremediatedAcceptances(scope) {
                 (SELECT started_at FROM practice) AS practice_start
            FROM unremediated_acceptances_all a
           WHERE a.repo_id = $1 AND a.is_open_disposition AND NOT (a.is_mature AND a.is_recent)
-          GROUP BY a.audit_mode, a.severity`,
+          GROUP BY 1, a.severity`,
         params
       )
       : await many(
@@ -640,7 +658,7 @@ export async function countAgedUnremediatedAcceptances(scope) {
              FROM finding_adjudication_events e
             WHERE e.remediation_state IN ('fixed','verified')
          )
-         SELECT a.audit_mode, a.severity,
+         SELECT ${EFFECTIVE_MODE_SQL} AS effective_mode, a.severity,
                 count(*) FILTER (WHERE NOT a.is_mature)::int AS not_yet_due,
                 count(*) FILTER (
                   WHERE a.is_mature AND NOT a.is_recent
@@ -655,7 +673,7 @@ export async function countAgedUnremediatedAcceptances(scope) {
                 (SELECT started_at FROM practice) AS practice_start
            FROM unremediated_acceptances_all a
           WHERE a.is_open_disposition AND NOT (a.is_mature AND a.is_recent)
-          GROUP BY a.audit_mode, a.severity`,
+          GROUP BY 1, a.severity`,
         params
       );
     return rows.reduce((acc, r) => {
@@ -664,8 +682,8 @@ export async function countAgedUnremediatedAcceptances(scope) {
       acc.prePractice += Number(r.pre_practice) || 0;
       acc.notYetDue += Number(r.not_yet_due) || 0;
       acc.practiceStart = r.practice_start ? String(r.practice_start) : acc.practiceStart;
-      if (r.audit_mode === 'code') acc.byMode.code += aged;
-      else if (r.audit_mode === 'plan') acc.byMode.plan += aged;
+      if (r.effective_mode === 'code') acc.byMode.code += aged;
+      else acc.byMode.plan += aged;
       if (r.severity === 'HIGH') acc.bySeverity.HIGH += aged;
       else if (r.severity === 'MEDIUM') acc.bySeverity.MEDIUM += aged;
       return acc;
