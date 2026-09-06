@@ -465,6 +465,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "c446e6c1-1b1e-4595-8daa-bfe85b35bce5",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/sync-rewriter.test.mjs"
+      },
+      "recordedAt": "2026-09-06T09:39:11.115Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "d6849e0b-1767-42bc-b4af-b24ed080274b",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
