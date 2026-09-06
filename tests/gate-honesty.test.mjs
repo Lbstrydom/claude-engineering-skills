@@ -101,7 +101,13 @@ const PINNED_DOCUMENT_ONLY = {
   // per-pass/wave CENSUS block + the CONVERGED compound-label suffix are
   // agent-composed report content from the round's own recorded outcomes; no
   // CLI exit code, no fit in the closed oracle registry.
-  'audit-code': ['mechanical-vs-architectural-label', 'rigor-pressure-stop', 'detector-blocks-convergence', 'convergence-census-and-label'],
+  // `round-1-passes-the-selected-scope` (2026-09-06): Step 2's Round-1 block
+  // passed the literal `--scope diff` while the frontmatter advertises
+  // `--scope diff|plan|full`, so an explicitly requested full audit ran as a diff
+  // audit. The rule constrains what the AGENT writes into the invocation, so there
+  // is no /audit-code exit code to bind — same shape as ship/category-a-never-staged.
+  // The skill TEXT is guarded by tests/skill-staging-instructions.test.mjs.
+  'audit-code': ['mechanical-vs-architectural-label', 'rigor-pressure-stop', 'detector-blocks-convergence', 'convergence-census-and-label', 'round-1-passes-the-selected-scope'],
   'visual-audit': ['partial-matrix-refusal', 'vlm-advisory-only'],
   'ai-context-management': ['never-write-without-confirmation'],
   explain: [],
@@ -274,7 +280,12 @@ describe('gate-honesty — real skills/', () => {
     //   ARE mechanically covered (tests/commit-trailers.test.mjs pins the accept
     //   plus five refusal directions; tests/ship-commit-cli.test.mjs rows 5c/5d
     //   pin the end-to-end refusal and the --no-tests cap).
-    assert.equal(totalDocOnly, 50);   // +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5); +2 ship: converged + no-tests cap (2026-09-04)
+    // 50 → 51: +1 audit-code (round-1-passes-the-selected-scope, Step 2, 2026-09-06).
+    //   Document-only because the rule constrains what the agent writes into the
+    //   Round-1 invocation, not what a command returns — the ship/category-a-never-staged
+    //   shape. Not unchecked prose: the skill TEXT is guarded by
+    //   tests/skill-staging-instructions.test.mjs, negative-controlled at the fix.
+    assert.equal(totalDocOnly, 51);   // +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5); +2 ship: converged + no-tests cap (2026-09-04)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));
