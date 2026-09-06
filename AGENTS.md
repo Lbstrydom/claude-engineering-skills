@@ -908,15 +908,26 @@ worth switching to?" for the **auditor** (currently GPT) or **adjudicator**
 
 ## Local Weekly Maintenance Checks (opt-in)
 
-Optional, default-OFF local replica of the 5 weekly GH Actions maintenance
-workflows, for orgs that block Actions runners. Opportunistic — triggered
-from the pre-push hook when overdue, **not** an OS scheduler (avoids the
-wrong-PATH/cwd/asleep-at-trigger failure class). Enable via `setup.mjs` Step 4
-or `AUDIT_LOOP_WEEKLY_MAINTENANCE=1`. Detail: [`docs/runbooks/local-maintenance-checks.md`](docs/runbooks/local-maintenance-checks.md).
+Optional, default-OFF local replica of the weekly GH Actions maintenance
+workflows, for orgs that block Actions runners. Opportunistic — from the
+pre-push hook when overdue, **not** an OS scheduler (avoids the
+wrong-PATH/cwd/asleep-at-trigger class). Enable via `setup.mjs` Step 4 or
+`AUDIT_LOOP_WEEKLY_MAINTENANCE=1`. [Detail](docs/runbooks/local-maintenance-checks.md).
 
-**Sibling tool**: `npm run runner:doctor` tests self-hosted-runner viability;
-`local`/`remove` inventory + guide teardown of runners on THIS machine (health
-from GitHub, never the local service manager). Detail: [`docs/runbooks/actions-runner-doctor.md`](docs/runbooks/actions-runner-doctor.md).
+**Sibling tools**, both advisory: `npm run runner:doctor` (self-hosted-runner
+viability; `local`/`remove` inventory + teardown on THIS machine — health from
+GitHub, never the local service manager, [detail](docs/runbooks/actions-runner-doctor.md))
+and `npm run cadence:doctor`. **A cron that stops firing produces no run, no
+failure and no notification — nothing, which looks exactly like a quiet week**,
+so a cadence is OBSERVED, never trusted for having been configured. **The event
+filter is the load-bearing part**: against a consumer whose nightly had been red
+four straight days, unfiltered read `OK` (20 runs/11 successes) while
+`event=schedule` read `NEVER-RAN` (4/0). Watch list: committed
+`.workflow-cadence.json`. **Every non-OK outcome warns — including its own API
+call failing, and its watch list being ABSENT while the repo has crons**; a
+checker that goes quiet when it cannot tell reproduces the defect it detects, so
+`never-ran` carries `vacuous` to separate a finding from a query that matched
+nothing. [Detail](docs/reference/workflow-cadence-doctor.md).
 
 ## Azure AI Foundry Work Profile
 

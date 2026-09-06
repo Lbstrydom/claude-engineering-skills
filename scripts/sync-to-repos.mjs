@@ -356,6 +356,13 @@ const CORE_ENTRY = [
   // standalone CLI nothing imports. Walker pulls in lib/runner-fallback.mjs
   // automatically.
   'scripts/actions-runner-doctor.mjs',
+  // Scheduled-workflow cadence doctor — asks GitHub whether a repo's crons
+  // actually ran and passed, narrowed by triggering event. A standalone CLI
+  // nothing imports, so the walker cannot discover it; consumers need it
+  // because a cron that stops firing is invisible everywhere else. Spawned by
+  // maintenance-checks.mjs's `workflow-cadence` entry, and in CLI_SMOKE_SET.
+  // Authoritative list is sync-to-repos.mjs; keep sync-inventory.mjs in lock-step.
+  'scripts/workflow-cadence-doctor.mjs',
   // One-shot operator reconcile of fragmented audit_repos rows in the shared
   // store. A standalone CLI nothing imports, but it carries --selfcheck-relocation
   // AND is in the relocation guard's CLI_SMOKE_SET (which asserts consumer
