@@ -148,9 +148,17 @@ default to separate audited-from-unaudited across a commit boundary.
 
 ### Round 1
 
+`$SCOPE` is the scope chosen in the table above — `diff` unless the user asked
+for `plan` or `full`. **Pass it; do not hardcode `diff` here.** This block read
+`--scope diff` literally until 2026-09-06, so a run the user had explicitly asked
+to be `--scope full` executed as a diff audit and reported a clean result over a
+fraction of what was requested — the scope flag this skill's own Usage lines
+advertise was accepted and then dropped.
+
 ```bash
+SCOPE=diff   # or plan / full, per the table above and the user's request
 node scripts/openai-audit.mjs code <plan-file> \
-  --scope diff \
+  --scope "$SCOPE" \
   --out .audit/$SID-r1-result.json \
   2>.audit/$SID-r1-stderr.log
 ```

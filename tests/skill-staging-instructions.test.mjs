@@ -125,3 +125,35 @@ describe('no skill instructs an agent to stage a gitignored path', () => {
     );
   });
 });
+
+/**
+ * A SECOND prose→behaviour class, same shape as the one above: a skill that
+ * ADVERTISES a selectable option and then hardcodes one value at the site that
+ * would have used it.
+ *
+ * `/audit-code`'s frontmatter offers `--scope diff|plan|full` and its own table
+ * tells the agent when to pick each; Step 2's Round-1 block passed the literal
+ * `--scope diff`. An explicitly requested `--scope full` therefore ran as a diff
+ * audit and reported a clean result over a fraction of what was asked for —
+ * with real provider spend, and nothing in the output saying the scope had been
+ * dropped. Prose cannot catch this either: the advertisement and the invocation
+ * are 130 lines apart and each is locally correct.
+ */
+describe('a skill must not hardcode a scope it advertises as selectable', () => {
+  const SKILL = path.join(SKILLS_DIR, 'audit-code', 'SKILL.md');
+  // A line-continuation backslash, built rather than escaped: it is the only
+  // thing separating an INVOCATION from the prose table that legitimately
+  // names `--scope diff` as the default.
+  const CONT = String.fromCharCode(92);
+
+  test('the Round 1 invocation passes the SELECTED scope, not a literal', () => {
+    const src = fs.readFileSync(SKILL, 'utf-8');
+    // Vacuous-pass guard: the invocation this asserts about must still exist.
+    assert.ok(src.includes('node scripts/openai-audit.mjs code <plan-file>'),
+      'the Round 1 invocation is gone — re-point this guard rather than deleting it');
+    assert.ok(src.includes('--scope "$SCOPE"'),
+      'Round 1 must pass the resolved scope');
+    assert.ok(!src.includes(`--scope diff ${CONT}`),
+      'a literal --scope diff in an invocation discards an explicit --scope full/plan');
+  });
+});

@@ -27,7 +27,7 @@ import { spawnSync } from 'node:child_process';
 
 import {
   applyMissingDispositions, mergeLedgerEntry, serialiseDispositionLedger,
-  DISPOSITION_LEDGER_PATH,
+  upstreamReconcile, readUpstreamLedgerEvidence, DISPOSITION_LEDGER_PATH,
 } from '../scripts/lib/upstream/commands.mjs';
 import { MISSING_CAUSE } from '../scripts/lib/upstream/dispositions.mjs';
 import { captureReconcilePrecondition } from '../scripts/lib/upstream/commands.mjs';
@@ -359,4 +359,131 @@ describe('the ledger directory need not exist yet', () => {
     assert.equal(res.wrote, true, JSON.stringify(res.refused));
     assert.ok(fs.existsSync(path.join(dir, DISPOSITION_LEDGER_PATH)), 'the ledger must have been created');
     });
+});
+
+describe('the precondition token precedes every read it describes', () => {
+  it('a ledger edit DURING the store read is caught, not blessed', async () => {
+    // Code-audit R6 H1. The token used to be captured at the END of
+    // classification — after the store read, the ledger read and
+    // `resolveBaseFreshness`. A ledger edit landing inside that window produced
+    // a token describing the state AFTER the change while the classification
+    // had been made from the state before it, so `--apply` re-verified the
+    // wrong moment and wrote anyway. `listTerminalFn` is the injectable seam,
+    // and it is awaited inside the window, so mutating there reproduces the
+    // race deterministically instead of hoping to hit it.
+    const dir = makeRepo([]);
+    const before = fs.readFileSync(path.join(dir, DISPOSITION_LEDGER_PATH), 'utf-8');
+
+    const res = await upstreamReconcile({
+      repoRoot: dir,
+      listTerminalFn: async () => {
+        // A concurrent session amending the ledger mid-run. Not hypothetical:
+        // this repo's own worktrees move HEAD and this file while a reconcile
+        // is in flight.
+        fs.writeFileSync(path.join(dir, DISPOSITION_LEDGER_PATH),
+          serialiseDispositionLedger([{
+            issueId: uuid(9), state: 'fixed', disposition: { kind: 'test', value: 'tests/real.test.mjs' },
+          }]));
+        return { ok: true, cloud: true, rows: [row(uuid(1), 'test:tests/real.test.mjs')] };
+      },
+    });
+
+    const after = fs.readFileSync(path.join(dir, DISPOSITION_LEDGER_PATH), 'utf-8');
+    assert.notEqual(after, before, 'the fixture must actually have mutated, or this asserts nothing');
+    assert.ok(res.missingCause, 'a missing entry must have been classified');
+
+    // The token describes the PRE-mutation ledger, so the repair it guards
+    // refuses. A token captured after the read would match `after` and write.
+    const applied = await applyMissingDispositions({
+      repoRoot: dir, dbRows: [row(uuid(1), 'test:tests/real.test.mjs')], missingIds: [uuid(1)],
+      missingCause: { ...causeFor(dir), ...res.missingCause, cause: MISSING_CAUSE.NOT_STALENESS },
+      ...deps,
+    });
+    assert.match(String(applied.aborted), /ledger changed on disk after classification/);
+    assert.equal(applied.wrote, false, 'nothing may be written against a moved precondition');
+  });
+});
+
+describe('the upstream evidence is read from the ref that was VERIFIED', () => {
+  it('a local branch named origin/main cannot supply the evidence', () => {
+    // The evidence read decides `cause`, and `cause` is gate 1 of `--apply` —
+    // so reading the wrong tree's ledger is how a repair gets authorised
+    // against a state that was never checked.
+    //
+    // `resolveBaseFreshness` returns TWO names for one upstream: `upstream` is
+    // the readable short form for messages (`origin/main`) and `upstreamRef` is
+    // the fully qualified name it verified (`refs/remotes/origin/main`). git
+    // resolves `refs/heads/` BEFORE `refs/remotes/`, so passing the short form
+    // to `git show` silently reads a local branch when one shares the name.
+    // The split exists precisely because that ambiguity was found in
+    // `resolveUpstreamRef`; this consumer had dropped back to the short form.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evref-'));
+    _dirs.push(root);
+    const origin = path.join(root, 'origin');
+    fs.mkdirSync(origin);
+    g(origin, ['init', '-q', '-b', 'main']);
+    g(origin, ['config', 'user.email', 't@example.com']);
+    g(origin, ['config', 'user.name', 'T']);
+    fs.mkdirSync(path.join(origin, 'scripts'), { recursive: true });
+    const writeLedger = (dir, id) => {
+      fs.writeFileSync(path.join(dir, DISPOSITION_LEDGER_PATH), serialiseDispositionLedger([{
+        issueId: id, state: 'fixed', disposition: { kind: 'test', value: 'tests/real.test.mjs' },
+      }]));
+    };
+    writeLedger(origin, uuid(1));                       // what the REMOTE holds
+    g(origin, ['add', '.']);
+    g(origin, ['commit', '-q', '-m', 'seed']);
+
+    g(root, ['clone', '-q', origin, 'work']);
+    const work = path.join(root, 'work');
+    g(work, ['config', 'user.email', 't@example.com']);
+    g(work, ['config', 'user.name', 'T']);
+    g(work, ['checkout', '-q', '-b', 'topic']);
+    writeLedger(work, uuid(2));                          // what the DECOY holds
+    g(work, ['add', '.']);
+    g(work, ['commit', '-q', '-m', 'decoy']);
+    g(work, ['branch', 'origin/main', 'HEAD']);          // refs/heads/origin/main
+
+    // Vacuous-pass guard: the two names must genuinely disagree here, or the
+    // assertion below would hold under the defect too.
+    const viaShort = g(work, ['show', `origin/main:${DISPOSITION_LEDGER_PATH}`]).stdout;
+    const viaQualified = g(work, ['show', `refs/remotes/origin/main:${DISPOSITION_LEDGER_PATH}`]).stdout;
+    assert.notEqual(viaShort, viaQualified, 'the fixture must make the two refs disagree');
+
+    const ev = readUpstreamLedgerEvidence({
+      freshness: { upstream: 'origin/main', upstreamRef: 'refs/remotes/origin/main' },
+      repoRoot: work,
+    });
+    assert.equal(ev.status, 'read', JSON.stringify(ev));
+    assert.ok(ev.issueIds.has(uuid(1)), 'evidence must come from the remote-tracking ref');
+    assert.ok(!ev.issueIds.has(uuid(2)), 'the local decoy branch must not supply the evidence');
+  });
+
+  it('falls back to the display name only when no qualified ref was resolved', () => {
+    // An EXPLICIT upstream has no separate qualified form — `resolveUpstreamRef`
+    // returns the caller's string as both — so the fallback must stay live
+    // rather than turning every explicit comparison into an unreadable one.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evref2-'));
+    _dirs.push(root);
+    const origin = path.join(root, 'origin');
+    fs.mkdirSync(origin);
+    g(origin, ['init', '-q', '-b', 'main']);
+    g(origin, ['config', 'user.email', 't@example.com']);
+    g(origin, ['config', 'user.name', 'T']);
+    fs.mkdirSync(path.join(origin, 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(origin, DISPOSITION_LEDGER_PATH), serialiseDispositionLedger([{
+      issueId: uuid(1), state: 'fixed', disposition: { kind: 'test', value: 'tests/real.test.mjs' },
+    }]));
+    g(origin, ['add', '.']);
+    g(origin, ['commit', '-q', '-m', 'seed']);
+    g(root, ['clone', '-q', origin, 'work']);
+    const work = path.join(root, 'work');
+
+    const ev = readUpstreamLedgerEvidence({
+      freshness: { upstream: 'origin/main' },   // no upstreamRef, as `explicit` yields
+      repoRoot: work,
+    });
+    assert.equal(ev.status, 'read', JSON.stringify(ev));
+    assert.ok(ev.issueIds.has(uuid(1)));
+  });
 });

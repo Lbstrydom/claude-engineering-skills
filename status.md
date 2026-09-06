@@ -1,5 +1,169 @@
 # Project Status Log
 
+## 2026-09-06 — the "obligations lost" banner counted rows no lock can ever exist for; and 26 of them were locked
+
+### Changes
+
+**Piece 1 — /ship Step 0.5b and 0.5e: the mode split reached the visible backlog and not
+the aged-out banner.** Step 0.5b already stated, for the VISIBLE backlog, that a plan-mode
+row carries a section reference rather than a file and that *no lock of any kind can ever
+exist for it*. The `OBLIGATIONS LOST TO THE WINDOW` block one paragraph below still printed
+one mixed total under a leak headline. `agedOutByMode` was already in the reader's payload,
+so nothing but the prose was wrong.
+
+Measured here at fix time:
+
+```
+list-unlocked-fixes --all-ages : agedOut 218 = code 24 / plan 194
+```
+
+The headline overstated the leak by **9x**. This is the third instance of one defect on a
+third axis — `shown`/`total` fixed it on the page axis, `rows.length`/`byMode` on the row
+axis — and each time the data was already in the payload. The banner now leads with
+`agedOutByMode.code`, reports the plan count as explicitly not an obligation, and does not
+print at all when `agedOutByMode.code` is 0: a banner reading `0 code fix(es)` under
+OBLIGATIONS LOST is a false alarm, not a conservative one.
+
+**Step 0.5e had the same shape and needed different words.** Its reader returns the same
+`agedOutByMode` and its `ACCEPTANCES LOST TO THE CEILING` banner also printed one mixed
+total (measured: `agedOut` 18 = 5 code / 13 plan, of which 9 HIGH). Copying 0.5b's wording
+would have been wrong: a plan row there is an **unamended plan section**, which is real work
+while the plan is in flight and near-worthless once it is Complete — so the banner names
+that test rather than declaring a verdict. `agedOutBySeverity.HIGH` spans both modes and now
+says so; reading it as a code-only figure over-counts exactly the way the mixed total did.
+
+**Piece 2 — 26 code rows locked, two real defects fixed on the way.** Code backlog
+198 → 172 all-ages (windowed 64 → 38). Every lock was preceded by reading the test; every
+NEW test was preceded by a negative control that made it fail.
+
+| cluster | rows | disposition |
+|---|---|---|
+| `scripts/lib/git-freshness.mjs` | 10 | 4 covered by existing tests; 6 needed new ones |
+| `scripts/lib/db/client.mjs` | 8 | all covered by an existing differential test the filename heuristic could not find |
+| `scripts/lib/cross-skill/commands/quality.mjs` | 2 | covered one layer down, by `coverage.storeScoped` |
+| `scripts/lib/upstream/commands.mjs` | 1 | **still open — fixed here** |
+| `.claude/skills/audit-code/skill.md` | 1 | **still open — fixed here** |
+| `skills/audit-code/skill.md` | 1 | gate-covered |
+| `tests/helpers/consumer-fixture.mjs` | 1 | already fixed; covered |
+| `scripts/lib/status-log-integrity.mjs` | 2 | already fixed; covered by tests named after the findings |
+
+**The two that were genuinely still open.**
+
+*(1) The reconcile precondition token described a state the classification was not made
+from.* `upstreamReconcile` captured it AFTER the store read, the ledger read and
+`resolveBaseFreshness`. A commit or ledger edit landing during those reads produced a token
+describing the post-change state, so `--apply` re-verified the wrong moment and wrote
+anyway. Capturing it before every read it must describe inverts the failure direction: any
+movement during the window now makes `--apply` refuse. `listTerminalFn` is an injectable
+seam inside that window, so the race is now reproduced deterministically in a test rather
+than hoped for.
+
+*(2) `/audit-code` advertised a scope it then discarded.* Step 2's Round-1 block passed the
+literal `--scope diff` while the frontmatter offers `--scope diff|plan|full` and the skill's
+own table tells the agent when to pick each. An explicitly requested `--scope full` ran as a
+diff audit — real provider spend, a clean-looking result over a fraction of what was asked
+for, and nothing in the output saying the scope had been dropped. The advertisement and the
+invocation sit 130 lines apart and each is locally correct, which is why the guard is
+mechanical and lives beside the sibling prose-to-behaviour class it matches.
+
+**A third defect found while verifying, fixed here, that no row had named.**
+`readUpstreamLedgerEvidence` read the upstream ledger through `freshness.upstream` — the
+readable short form (`origin/main`) — rather than `freshness.upstreamRef`, the fully
+qualified name (`refs/remotes/origin/main`) that `resolveBaseFreshness` actually verified.
+git resolves `refs/heads/` before `refs/remotes/`, so a local branch sharing the name feeds
+a DIFFERENT tree's ledger into the classification that gates `--apply`. The two fields exist
+precisely because that ambiguity was found in `resolveUpstreamRef`; this consumer had
+dropped back to the short form. In scope by impact, not authorship: locking the identity
+findings while a consumer discards the identity would have been the band-aid this repo's own
+scope rule names.
+
+Backlog 2026-09-06T16:10Z: Q1 38c/16p (+218 aged) · Q2 115c/102p (50 perm) · Q3 2212 · debt unmeasured · upstream 1
+
+### Gate readings
+- **Q1 (unlocked fixes)**: 38 code / 16 plan visible, down from 64/16 this morning —
+  26 rows locked in this session. `agedOut` **218** = **24 code** / 194 plan, and the
+  banner now leads with the 24. `prePractice` 232 stays bookkeeping.
+- **Q2 (unremediated acceptances)**: 115 code / 102 plan open, 50 permanently accepted,
+  `agedOut` 18 (5 code / 13 plan, 9 HIGH), `notYetDue` 47. Untouched here.
+- **debt: `unmeasured`** — not zero. The snapshot could not read that queue from this
+  linked worktree; the distinction is the whole reason the field renders that word.
+- **upstream: 1 open** — `b2c9a63f` (MEDIUM, from `Lbstrydom/wine-cellar-app`):
+  *lock-with-test records a lock without checking the cited spec_path exists*. Directly
+  about the command this session ran 26 times, so it was checked here: `lockWithTestCmd`
+  routes every `--test` through `classifyTestPath`, whose `test-file-not-found` /
+  `not-a-file` / `path-escapes-repo` refusals are live (a refusal was observed this
+  session, on a mistyped finding id). I read that as "already fixed" and left it.
+  **That was half an answer.** A concurrent session fixed it properly the same day
+  (`2c032112`, entry below): the report's named caller *was* the one already guarded, and
+  the real holes were its two SIBLING writers of `regression_specs` plus the read side —
+  a citation that was true when written and is invalidated later by a legitimate refactor,
+  which no write-time check can ever catch (measured: 3 of 235 rows, all three written by
+  the guarded path). Checking the caller a report names and stopping there is how a real
+  defect reads as a stale report. The 26 locks recorded above all cite tests that exist
+  today, and the new read-side instrument is what will say so tomorrow.
+
+### Files Affected
+- `skills/ship/SKILL.md` — Step 0.5b + 0.5e aged-out banners and their rationale blocks
+- `skills/audit-code/SKILL.md` — Round 1 resolves `$SCOPE`
+- `.claude/skills/**` — regenerated (`skills:regenerate`)
+- `scripts/lib/upstream/commands.mjs` — precondition captured before every read it describes
+- `scripts/lib/upstream/disposition-ledger.mjs` — evidence read through the qualified ref
+- `tests/git-freshness.test.mjs` — 6 new cases (ref identity + the local-branch hijack,
+  shallow clone + the direction it must not fire, and the three declared contracts)
+- `tests/upstream-reconcile-apply.test.mjs` — 3 new cases (precondition ordering, qualified
+  ref, explicit-upstream fallback)
+- `tests/skill-staging-instructions.test.mjs` — the advertised-but-hardcoded-option guard
+- `status.md`
+
+### Classes written off — the reasoning, because the store cannot carry it
+`unlocked_fixes` has no "declined on the merits" state: a row leaves only by acquiring a
+regression spec. An unrecorded write-off is therefore indistinguishable from a leak, so each
+one is named here.
+
+- **`87773072` — loopback reachability treated as evidence a database is disposable.** True,
+  and a **deliberate accepted design**, documented in AGENTS.md: `isDisposableDbHost` is an
+  ALLOWLIST that fails closed, chosen over the denylist that went inert the day the store
+  moved off Supabase. A persistent local Postgres or an SSH tunnel to production does satisfy
+  it; the residual is narrowed by `assertDisposableDbUrl` also refusing any DSN naming the
+  same database as `AUDIT_DB_URL`, aliases included, and both refusals are tested. Locking it
+  to those tests would over-claim — they do not refuse a tunnel to a *different* production
+  database on loopback, because nothing does. Accepted risk, not an open obligation.
+- **`bb3cb2f5` — the status-log gate reads current state from mutable disk.** Structurally
+  true. In the way it actually runs it is not exploitable: the pre-push hook executes `check`
+  inside a throwaway worktree at the commit being pushed, so "disk" there IS the immutable
+  commit. A hand-run invocation against a live tree can race, and the consequence is a false
+  verdict on an advisory gate, not data loss. Left open deliberately rather than redesigned.
+- **`21edc569` — `rotate-status-log --apply` writes archives, then the manifest, then the
+  remaining log as independent writes.** Real, and a genuine partial-commit risk on a crash.
+  The remedy is a staged write plus a single rename or a journal — its own change with its
+  own tests, not something to bundle into a lock sweep. Named here so it is not lost.
+- **Not worked at all, and not written off:** the `debt-reconcile` cluster (`04746b56`,
+  `1fb5132a`, `2dc786f0`, `60f13c80` — SYSTEMIC error-swallowing, a CLI parser contract that
+  accepts a following flag as an option's value, and destructive reconciliation on ambiguous
+  lifecycle evidence), plus `a2bddcee` and `bc7ce764`. Each is engineering work rather than a
+  lock-or-close decision, and calling them done here would be exactly the accounting move
+  this whole entry is about.
+
+### Decisions Made
+- **Three new tests assert against the SOURCE of `git-freshness.mjs`, narrowly and by
+  design.** Each names a property whose failing scenario cannot be built inside `npm run
+  check`: a partial clone needs a server honouring `uploadpack.allowFilter`, a translated git
+  diagnostic needs a locale that may not be installed, and the OID race needs a concurrent
+  writer between two synchronous calls. The alternative was leaving three stated guarantees
+  unenforced, which is the fake-check shape this repo already refuses. Each still failed
+  under its own negative control.
+- **The precondition capture moved above the store read, not merely above the ledger read.**
+  The store read is the longest window in the function, and a precondition that starts after
+  the slowest read is barely a precondition. It costs one `rev-parse` and one file hash,
+  paid on the cloud-off degrade path too.
+- **Did not chase the 194 aged-out plan rows or the 232 pre-practice rows.** Neither is work
+  owed, and the window stays at 14 days: an unbounded ship-time nudge becomes noise and earns
+  `--no-verify`.
+- **Did not reach for `/ux-lock`.** This repo has no frontend; for backend and CLI findings a
+  unit or integration test IS the lock.
+
+---
+
 ## 2026-09-06 — A lock citing a deleted test reads as coverage forever; and the report named the one caller that was already guarded
 
 ### Changes
@@ -97,6 +261,9 @@ property of the moment it was written.*
 ### Next
 The `primary_file` write-side defect recorded two entries below is still open, and is the
 larger of the two: unlike `spec_path`, those values are often not paths at all.
+
+---
+
 
 ---
 

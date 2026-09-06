@@ -290,19 +290,39 @@ If > 0, judge each row by `primary_file` before suggesting a fix:
   contract genuinely needs a live DOM.
 ```
 
-If `agedOut > 0`, print it too — it is a distinct and worse signal than the
-backlog size, because those obligations are already past the point where the
-nudge will ever mention them again:
+If `agedOutByMode.code > 0`, print it too — it is a distinct and worse signal
+than the backlog size, because those obligations are already past the point
+where the nudge will ever mention them again:
 
 ```
 ⚠ OBLIGATIONS LOST TO THE WINDOW (non-blocking)
-  <agedOut> fix(es) (<agedOutByMode.code> code / <agedOutByMode.plan> plan) aged out
-  of the 14-day window UNLOCKED, after this repo started locking (<practiceStart>).
+  <agedOutByMode.code> code fix(es) aged out of the 14-day window UNLOCKED,
+  after this repo started locking (<practiceStart>)
+  (+ <agedOutByMode.plan> plan finding(s), which cannot be locked — not an obligation).
   Waiting is not a way to clear this gate. Read them:
     node scripts/cross-skill.mjs list-unlocked-fixes --all-ages
   Then either lock them, or write them off in status.md so the decision is on
   the record — an obligation discharged by silence is the thing this counts.
 ```
+
+> **Lead with `agedOutByMode.code`, not `agedOut` — the same split the visible
+> backlog already applies** (fixed 2026-09-06). This banner used to trigger on
+> `agedOut` and lead with the mixed total, while the paragraph one screen up had
+> already established that a plan-mode row has a section reference for a
+> `primary_file` and **no lock of any kind can ever exist for it**. So the
+> loudest line in the step — the one that says obligations are being discharged
+> by delay — was the one still counting unlockable rows as lost obligations.
+> Measured here the day it was fixed: `agedOut` **218**, of which
+> `agedOutByMode.code` **24** and `agedOutByMode.plan` **194**. The headline
+> overstated the leak by **9x**, and a nudge that inflates its own number by an
+> order of magnitude is the one that earns `--no-verify`. Third instance of one
+> defect: `shown`/`total` fixed it on the page axis, `rows.length`/`byMode` on
+> the row axis, this one on the window axis — the data (`agedOutByMode`) was
+> already in the payload each time, and only the prose had to change.
+>
+> **A plan-only `agedOut` prints nothing.** With `agedOutByMode.code == 0` there
+> is no obligation to report, and a banner reading `0 code fix(es)` under
+> OBLIGATIONS LOST TO THE WINDOW is a false alarm, not a conservative one.
 
 Do **not** print the `prePractice` figure as a backlog. It is bookkeeping for
 findings that predate the practice, not work anybody owes.
@@ -534,17 +554,34 @@ investigate. `open === total` always; they are one number under two names.
 
 If `agedOut > 0`, print it separately. It is a worse signal than the backlog
 size, because those rows are already past the point where this step will ever
-mention them again:
+mention them again — and **split it by mode, because the two halves are closed
+by different acts**:
 
 ```
 ⚠ ACCEPTANCES LOST TO THE CEILING (non-blocking)
-  <agedOut> accepted finding(s) (<agedOutBySeverity.HIGH> HIGH) passed the 30-day
-  ceiling still unremediated, after this repo started recording remediations
-  (<practiceStart>). They will not appear above again. Read them:
+  <agedOutByMode.code> code finding(s) passed the 30-day ceiling still unremediated,
+  after this repo started recording remediations (<practiceStart>)
+  (+ <agedOutByMode.plan> plan section(s) — an obligation only while that plan is
+  still in flight; on a Complete plan it is a shipped design doc, write it off).
+  <agedOutBySeverity.HIGH> of the <agedOut> are HIGH, across both modes.
+  They will not appear above again. Read them:
     node scripts/cross-skill.mjs list-unremediated-acceptances --all-ages
   Then remediate, or close the loop with final-review-record-fix, or write them
   off in status.md — an obligation discharged by silence is what this counts.
 ```
+
+> **Why the mode split here is NOT 0.5b's** (both fixed 2026-09-06, from the same
+> census). This reader returns the same `agedOutByMode:{code,plan}` and this
+> banner had the same defect — one mixed total under a leak headline — but the
+> correct wording is different, and copying 0.5b's would be wrong. A plan row is
+> unlockable *by construction* in 0.5b, so it is never an obligation. Here it is
+> an **unamended plan section**, which is real work while the plan is in flight
+> and near-worthless once the plan is Complete: the disposition is the plan's
+> status, not the row's mode, so this step names the test instead of the verdict.
+> `agedOutBySeverity.HIGH` spans both modes and is reported as such — it is not a
+> code-only figure, and reading it as one over-counts the same way the mixed
+> total did. Measured here at fix time: `agedOut` **18** = **5** code / **13**
+> plan, of which **9** HIGH.
 
 **Do not print `notYetDue` as a backlog** — those rows are under the 7-day floor
 and will surface here on their own. Mention it only if `total` is 0 and

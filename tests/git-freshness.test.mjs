@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 
 import {
   resolveBaseFreshness, resolveUpstreamRef, readFileAtRef, FRESHNESS_STATE,
@@ -198,6 +199,100 @@ describe('resolveBaseFreshness — unknown is never collapsed into current', () 
     assert.equal(r.state, FRESHNESS_STATE.UNKNOWN);
     assert.equal(r.reason, 'upstream-unresolvable');
   });
+
+  it('a SHALLOW clone reports unknown, not a plausible-looking count', () => {
+    // Code-audit R1 H3. `rev-list --count` still returns an integer in a
+    // truncated history, and a confidently wrong distance is the same
+    // false-`current` direction as a collapsed unknown, wearing a number.
+    const { origin } = makeClonePair();
+    commit(origin, 'a.txt');
+    commit(origin, 'b.txt');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gf-shallow-'));
+    _dirs.push(root);
+    // `--depth` is IGNORED for a plain local path (git clones in full and says
+    // so), which would make this pass vacuously. A file:// URL forces the real
+    // shallow transfer.
+    const cloned = spawnSync('git', ['clone', '-q', '--depth', '1', pathToFileURL(origin).href, 'shallow'],
+      { cwd: root, encoding: 'utf8' });
+    assert.equal(cloned.status, 0, cloned.stderr);
+    const shallow = path.join(root, 'shallow');
+    assert.equal(String(g(shallow, ['rev-parse', '--is-shallow-repository']).stdout).trim(), 'true',
+      'the fixture must actually be shallow, or this test asserts nothing');
+
+    const r = resolveBaseFreshness({ repoRoot: shallow });
+    assert.equal(r.state, FRESHNESS_STATE.UNKNOWN);
+    assert.equal(r.reason, 'shallow-repository');
+    assert.equal(r.behindBy, null, 'no distance may be reported from truncated history');
+  });
+
+  it('a COMPLETE repository is not mistaken for a shallow one', () => {
+    // The direction the gate must NOT fire in. The probe demands a positive
+    // `false`, so a regression that answered "unverified" for every healthy
+    // repo would make the primitive permanently silent — a check that never
+    // fires is indistinguishable from one that is not wired up.
+    const { work } = makeClonePair();
+    const r = resolveBaseFreshness({ repoRoot: work });
+    assert.equal(r.state, FRESHNESS_STATE.CURRENT, r.reason || '');
+  });
+});
+
+describe('git-freshness — the contracts the module DECLARES', () => {
+  // These three are asserted against the SOURCE, deliberately and narrowly.
+  // Each names a property whose failing scenario cannot be built inside
+  // `npm run check`: a partial clone needs a server honouring
+  // `uploadpack.allowFilter`, a translated diagnostic needs a locale that may
+  // not be installed, and the OID race needs a concurrent writer between two
+  // synchronous calls. Leaving them unasserted was the alternative, and the
+  // module's own docstring already states all three as guarantees — an
+  // unenforced guarantee is the shape this repo calls a fake check.
+  const SRC = fs.readFileSync(new URL('../scripts/lib/git-freshness.mjs', import.meta.url), 'utf8');
+  const CODE = SRC.replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').filter((line) => !line.trim().startsWith('//')).join('\n');
+
+  it('every git invocation pins the environment the NEVER-FETCHES contract needs', () => {
+    // Code-audit R1 H4/M4: avoiding the word `fetch` does not keep the promise.
+    // In a partial clone git lazily fetches a missing blob on demand, so
+    // `git show <ref>:<path>` reaches the network with nobody writing "fetch".
+    assert.match(CODE, /GIT_NO_LAZY_FETCH: '1'/,
+      'without this a partial clone silently stalls on the network mid-gate');
+    assert.match(CODE, /GIT_TERMINAL_PROMPT: '0'/,
+      'a credential prompt in a gate hangs the push forever');
+    assert.match(CODE, /LC_ALL: 'C'/,
+      'any diagnostic this module surfaces must be greppable by an operator');
+  });
+
+  it('no decision reads git PROSE — only documented exit codes and stdout values', () => {
+    // Code-audit R3 H1/M1. Two earlier versions classified by matching git's
+    // stderr, and `git()` inherits the caller's locale, so a translated message
+    // silently stops matching and a broken upstream reads as a determinate
+    // absence — fail-open in the one direction this module exists to prevent.
+    // A diagnostic is not an API; stdout values git documents (a config value,
+    // a ref name, a count) are.
+    assert.equal(/\.stderr/.test(CODE), false,
+      'a classification branch reading .stderr is locale-dependent by construction');
+  });
+
+  it('the distance is counted between the PINNED OIDs, not the mutable ref names', () => {
+    // Code-audit R1 H1/M3. The result NAMES subjectOid/upstreamOid so a caller
+    // can bind a later mutation to them; a count that re-resolved `HEAD` and
+    // `origin/main` would describe commits the result does not name. HEAD moved
+    // 16 times in one sitting in this repo, so the window is not theoretical.
+    assert.ok(CODE.includes('${subjectOid}..${upstreamOid}'),
+      'rev-list must be given the resolved OIDs');
+    assert.ok(!CODE.includes('${subject}..${upstreamRef}'),
+      'counting between ref names re-resolves them after the snapshot was taken');
+
+    // The behavioural half: the reported count describes the reported OIDs.
+    const { origin, work } = makeClonePair();
+    commit(origin, 'a.txt');
+    commit(origin, 'b.txt');
+    g(work, ['fetch', '-q', 'origin']);
+    const f = resolveBaseFreshness({ repoRoot: work });
+    const independent = Number(String(
+      g(work, ['rev-list', '--count', `${f.subjectOid}..${f.upstreamOid}`]).stdout).trim());
+    assert.equal(f.behindBy, independent,
+      'the count must be the distance between the commits the result names');
+  });
 });
 
 describe('resolveUpstreamRef — resolution order', () => {
@@ -219,6 +314,37 @@ describe('resolveUpstreamRef — resolution order', () => {
     g(work, ['checkout', '-q', '-b', 'topic']);   // a local branch, no upstream
     const r = resolveUpstreamRef({ repoRoot: work });
     assert.equal(r.source, 'origin-head', `got ${JSON.stringify(r)}`);
+    // Code-audit R5 H1/H2: the fallback VERIFIES `refs/remotes/origin/<branch>`
+    // and must RETURN that same name. Stripping the namespace hands back a
+    // different, ambiguous identity than the one just checked. `source` alone
+    // cannot see that, which is why the two fields are asserted by value.
+    assert.equal(r.ref, 'refs/remotes/origin/main',
+      'ref must be the fully qualified name rev-parse --verify was given');
+    assert.equal(r.display, 'origin/main', 'display carries the readable short form');
+  });
+
+  it('a local branch literally named origin/main cannot hijack the fallback', () => {
+    // The failing scenario behind R5 H1/H2, built rather than argued. git's ref
+    // precedence puts refs/heads/ ABOVE refs/remotes/, so the short name
+    // `origin/main` resolves to the local branch. Measured on this fixture: the
+    // stripped name resolves to HEAD and the qualified one to the remote tip, so
+    // a regression here reports `current` for a checkout that is genuinely behind
+    // — the false-negative direction this whole module exists to close.
+    const { origin, work } = makeClonePair();
+    commit(origin, 'ahead.txt');
+    g(work, ['fetch', '-q', 'origin']);
+    g(work, ['checkout', '-q', '-b', 'topic']);
+    g(work, ['branch', 'origin/main', 'HEAD']);
+    const shortName = String(g(work, ['rev-parse', 'origin/main^{commit}']).stdout).trim();
+    const qualified = String(g(work, ['rev-parse', 'refs/remotes/origin/main^{commit}']).stdout).trim();
+    assert.notEqual(shortName, qualified,
+      'the fixture must make the two names disagree, or this test asserts nothing');
+
+    assert.equal(resolveUpstreamRef({ repoRoot: work }).ref, 'refs/remotes/origin/main');
+    const f = resolveBaseFreshness({ repoRoot: work });
+    assert.equal(f.state, FRESHNESS_STATE.BEHIND, f.reason || '');
+    assert.equal(f.behindBy, 1, 'measured against the remote-tracking ref, not the local branch');
+    assert.equal(f.upstreamOid, qualified);
   });
 
   it('a SLASHED branch name resolves its config key exactly', () => {

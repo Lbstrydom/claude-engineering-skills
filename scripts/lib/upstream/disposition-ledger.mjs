@@ -323,7 +323,17 @@ export function readUpstreamLedgerEvidence({ freshness, repoRoot = process.cwd()
   if (!freshness?.upstream) {
     return { status: freshness?.reason === 'no-upstream' ? 'no-upstream' : 'unreadable', issueIds: null };
   }
-  const read = readFileAtRef({ ref: freshness.upstream, filePath: DISPOSITION_LEDGER_PATH, repoRoot });
+  // ASK FOR THE QUALIFIED REF, NOT THE DISPLAY NAME. `freshness.upstream` is
+  // the readable short form (`origin/main`) that `resolveUpstreamRef` renders
+  // for messages; `upstreamRef` is the fully qualified name it VERIFIED
+  // (`refs/remotes/origin/main`). git resolves `refs/heads/` before
+  // `refs/remotes/`, so a local branch literally named `origin/main` makes the
+  // short form read a DIFFERENT commit's ledger — evidence about the wrong
+  // tree, fed straight into a classification that decides whether to write.
+  // The two fields are separate for exactly this reason; dropping back to the
+  // display name here discards the identity that was checked.
+  const upstreamRef = freshness.upstreamRef || freshness.upstream;
+  const read = readFileAtRef({ ref: upstreamRef, filePath: DISPOSITION_LEDGER_PATH, repoRoot });
   if (read.status !== 'read') return { status: read.status, issueIds: null };
   try {
     const parsed = JSON.parse(read.content);
