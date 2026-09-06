@@ -1,5 +1,115 @@
 # Project Status Log
 
+## 2026-09-06 — The sync rewrites COMMANDS, not prose: a false report that found a real bug
+
+### Consumer Verification (previous ship)
+- **Commit**: `fdfb2475fc412e28eeaa42ff7208935fc1489f3b` (`fix(provenance): a schema-behind store no longer forges AI-Gate: not-run`) pushed to `main` 2026-09-05 from the linked worktree `bundle-update-engineering-skills-f369e8`, a clean fast-forward over `95d5489d`.
+- **Retrieval**: `git ls-remote origin main` → `fdfb2475...`, checked directly rather than trusting the push exit code (both were 0 this time; the ref is still the only authority). Clean-checkout evidence came from the pre-push hook's own throwaway worktree **at the pushed commit**: full `check`, **15,339 tests / 15,300 pass / 0 fail / 39 skipped**, identical to the local run.
+- **SUBJECT CHECK — the bundle at a CONSUMER's layout, not upstream's.** This ship adds a new synced module (`lib/audit/schema-precondition.mjs`) whose behaviour is layout-dependent, so the producer-side green says nothing about it. Verified by importing it from `C:\GIT\wine-cellar-app\scripts\.claude-skills\`: `detectLayout()` → `consumer`; `resolveMigrationsDir()` → `.audit-loop\migrations` (the audit-loop schema, **not** the app's own `supabase/migrations`, which is the coin-flip this module exists to prevent); `setupPostgresCommand()` → `node scripts/.claude-skills/setup-postgres.mjs --migrate`; and the refusal text `decideSchemaPrecondition` emits quotes that consumer path rather than upstream's `scripts/`. All 7 files (`+1 new ~6 updated`) reached all three consumers.
+- **Result**: **verified** for this ship's artifacts, with one **pre-existing, unrelated** consumer failure named rather than inherited:
+  - `sync-isolation-verify.mjs` in `wine-cellar-app`'s MAIN checkout exits **1** on **gate 2B only** — a single hash mismatch on `.audit-loop/expected-schema.json`. Gates 1, 2A, 2C, 3–9 pass. That file was committed in wine-cellar-app by `bc7d0d7f` (PR #413) before this ship, and the sync correctly **REFUSED** to overwrite it (`1 diverged`, `Errors: 1`) — the divergence-durability guard working, not a regression. It is a consumer-side decision: declare it in `.sync-overrides.json`, adopt upstream, or file an upstream report. Not forced from here.
+  - `ai-organiser` and `storyline` synced clean (`+1 new ~6 updated`, 0 errors; storyline holds 4 skill files under its own declared overrides).
+- **Open, not caused by this ship**: `storyline`'s store is one migration behind (`20260905120000_refresh_run_ownership_epoch.sql`) — the exact condition this commit is about. Applying it needs that store's owner DSN, which this process does not hold.
+
+### Changes
+Two upstream reports from wine-cellar-app triaged and closed. The second is the
+interesting one, because **the reported claim was false and measuring it is what
+found the real defect**.
+
+**`c446e6c1` (MEDIUM) — "consistency-contract.md runnable-command examples still
+name upstream's `scripts/` layout".** The report arrived with an EMPTY body
+(`-`), so there was no measurement chain to inherit and every claim had to be
+derived. It does not survive contact: `rewriteCommandSurface`
+(`scripts/lib/sync-rewriter.mjs`) rewrites all three `node
+scripts/persona-consistency-run.mjs` examples at sync time. Measured 2026-09-06
+by running the real rewriter over the real file with the real closure-derived
+`ownedSourceTails`: `changed: true, hits: 3`, all landing on
+`scripts/.claude-skills/persona-consistency-run.mjs`. **The reporter's own disk
+agrees** — wine's copy already reads the corrected path at all three sites. They
+hand-corrected what the sync corrects for them.
+
+What IS real is the fourth item in wine's `.sync-overrides.json` reason, which
+the report's title does not mention: `COMMAND_REGEX` requires a literal `node `
+prefix, so a path written as **prose** is invisible to it. This doc carried
+exactly one — `` `scripts/lib/redact.mjs` `` at line 694, in the security
+section describing the egress redactor. Fixed in `285a1f55` with the remedy this
+same file already uses at its `schemas.mjs` reference: an absolute upstream URL
+plus the `scripts/.claude-skills/…` path named in prose, correct in both repos
+and inert to the rewriter.
+
+The accurate statement of the class: **the sync rewrites commands, not prose.**
+
+That single site matters more than its count suggests. `sourceRelToDestRel`
+leaves this file at `docs/reference/consistency-contract.md` — it is the **only**
+member of the 791-path sync closure landing at a real, tracked, human-read
+consumer path. The other 80 synced markdown files become `.claude/skills/**`,
+read by an agent that has the tooling dir. `CORE_ASSETS` says why it ships at
+all: "consumer-app frontend devs read it to author their `data-engine-*`
+annotations."
+
+**`8174dc51` (LOW→understated) — adopt-mode `diffSchemas` compared
+`ordinal_position`.** Already fixed and pushed by the prior session in `0d1ef29e`
+(dense-rank both sides via `denseRankColumnPositions`; the fixture is the
+faithful replay and was untouched), dispositioned in `eb69e9cd`. **It never got a
+status entry** — recorded here so the log is not missing a shipped fix.
+
+### Decisions Made
+- **Did NOT widen `COMMAND_REGEX` to rewrite bare paths.** The same scan over
+  `skills/**` finds **71 sites across 30 files**, dominated by provenance and
+  link text where the upstream path is *correct as written* — "In the source repo
+  the path is `scripts/setup-postgres.mjs`", and `/plan`'s own instruction to
+  write paths repo-relative. A blanket rewrite would corrupt true sentences.
+- **Did NOT add a 71-entry disposition ratchet** to `check-skill-consumer-refs.mjs`
+  as a third ref kind. ~1 genuine defect per 71 judgement calls does not earn that
+  machinery — the over-built arm of the right-sizing fork. Scoped to the closure's
+  non-skills docs the population is **zero**, so the guard is a plain assertion
+  with no baseline: the shape `check-synced-doc-links.mjs` records for shipping at
+  zero.
+- **Told the reporter to re-examine their override, not just accepted the report.**
+  wine holds a permanent `.sync-overrides.json` entry freezing this whole document
+  off every future upstream change. Its stated reason (2) is now falsified for
+  three of its four cited sites and fixed for the fourth; only reason (1) — their
+  local header link, which upstream cannot express — still stands. That freeze is
+  the actual cost of the misdiagnosis, and it was the most useful thing to say
+  back.
+
+### Verification
+- **Red-then-green on the subject scan, not just the detector.** Reverted the doc
+  line → the guard names `consistency-contract.md:694` and its remedy; restored →
+  23/23 green. Line 10's `schemas.mjs` link is correctly NOT flagged.
+- **The negative controls caught a real defect in the guard before it shipped.**
+  Blanking URLs with `\S+` swallows the `)` closing a markdown link, so the href
+  never collapses to `(   )` and the link **LABEL** gets flagged — a false
+  positive on the very remedy being prescribed. That is the same trap
+  `check-skill-consumer-refs.mjs` measured at **31% of its 220 sites** on
+  2026-09-04, reappearing in a new place. Fixed to `[^\s)]+`.
+- Gates: `docs:check`, `docs:refs:gate`, `docs:synced-links:gate`,
+  `skills:consumer-refs:gate`, `skills:check` all pass. `sync-rewriter` 23/23;
+  `synced-doc-links` + `skill-consumer-refs` 38/38.
+  `upstream:coverage:gate` — 49 dispositions, all resolving.
+- **Upstream queue now 0 open across 2 stores** (`upstream:queues`), down from the
+  1 open this session started with.
+
+### Open / Not Caused By This Ship
+- `storyline`'s store (`c7177057dcafa55d`) is **1 migration behind**
+  (`20260905120000_refresh_run_ownership_epoch.sql`). Applying it needs that
+  store's owner DSN, which this process does not hold — an operator decision,
+  reported not forced.
+- Q1 `agedOut` is **215** and Q2 has **230 open** acceptances (50 permanent, 5 aged
+  out). Untouched by this ship; both queues are trending in the Backlog line below.
+
+### Files
+- `docs/reference/consistency-contract.md` — line 694 prose path made
+  consumer-resolvable (absolute upstream URL + the `.claude-skills/` path).
+- `tests/sync-rewriter.test.mjs` — `+127`: the zero-baseline guard over the
+  closure's non-skills markdown, with a positive control, four negative controls
+  and a vacuous-pass guard. Subjects derived from the closure, so a second synced
+  `docs/` file enrols itself.
+- `scripts/upstream-dispositions.json` — `c446e6c1` closure disposition.
+
+Backlog 2026-09-06T09:45Z: Q1 66c/17p (+215 aged) · Q2 142c/88p (50 perm) · Q3 2212 · debt 234 cloud/51 local (0 spilled) · upstream 0
+
+
 ## 2026-09-05 — A schema-behind store forged `AI-Gate: not-run`: refuse before spending, and say so when it does not
 
 ### Consumer Verification (previous ship)
