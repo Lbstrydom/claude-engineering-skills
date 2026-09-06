@@ -81,8 +81,41 @@ export function selectFindingsNeedingCheck(rows, fileState, isSensitivePath = ()
     // should act on unsupervised). It is left exactly where it was.
     const reason = skipReason(row.primary_file);
     if (reason === PATH_SKIP_SENSITIVE) { sensitivePathSkipped.push(row); continue; }
-    if (reason === PATH_SKIP_UNRESOLVABLE) { unresolvablePathSkipped.push(row); continue; }
+
     const state = fileState(row.primary_file, sinceCommit);
+
+    // An UNRESOLVABLE path may still be MECHANICALLY resolved — and only that.
+    //
+    // Found while fixing f8d2730f, and it is the more consequential half. The skip
+    // above used to `continue` before `fileState` ran, so a file that no longer
+    // exists in the working tree failed `realpathSync`, was bucketed as sensitive,
+    // and never reached `state === 'deleted'`. That made `mechanicallyResolved`
+    // unreachable for EXACTLY the population it was built for — AGENTS.md describes
+    // it as "a file that was simply deleted resolves mechanically, no LLM needed",
+    // and both this repo and the reporting consumer measured `0 mechanically
+    // resolved` on queues of 282 and 52. A documented capability, dead on arrival.
+    //
+    // Why reaching `fileState` from here is SAFE, and why only this outcome is:
+    //   - `fileState` is `git diff --name-status` (buildFileChangeStateFn). It reads
+    //     no file CONTENT and cannot be redirected by a working-tree symlink, which
+    //     is the hazard `resolveAndClassify` is here to catch.
+    //   - `mechanicalResolvedAction` is pure: it writes a store verdict keyed on the
+    //     finding id and never opens the path.
+    //   - Every other outcome keeps the row refused. `changed` in particular must
+    //     NOT fall through to `needsLlmCheck`, which reads content and quotes it into
+    //     an external prompt. That is the whole gate, and it is intact.
+    // A plan-mode section reference is simply never listed by `git diff`, so it stays
+    // in `unresolvablePathSkipped` where it belongs.
+    //
+    // A genuinely SENSITIVE path is deliberately NOT given this route: a deleted
+    // `.env` is not evidence this reconciler should act on unsupervised (the
+    // pre-existing policy, unchanged).
+    if (reason === PATH_SKIP_UNRESOLVABLE) {
+      if (state === 'deleted') { mechanicallyResolved.push(row); continue; }
+      unresolvablePathSkipped.push(row);
+      continue;
+    }
+
     if (state === 'deleted') { mechanicallyResolved.push(row); continue; }
     if (state === 'changed') { needsLlmCheck.push(row); continue; }
     if (state === 'unchanged') { skipped.push({ row, reason: 'unchanged-since-last-check' }); continue; }

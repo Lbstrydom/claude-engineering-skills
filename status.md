@@ -1,5 +1,68 @@
 # Project Status Log
 
+## 2026-09-06 — `mechanicallyResolved` was unreachable for its own population; restored, and inert on today's data
+
+### Changes
+Fixed the second defect recorded in the entry below (found while fixing upstream
+`f8d2730f`, deliberately left out of that commit because it changes a gate's evaluation
+order and what the tool WRITES).
+
+The sensitive-path gate `continue`d before `fileState` ran. A file absent from the working
+tree fails `realpathSync`, so it was bucketed as a path refusal and never reached
+`state === 'deleted'` → `mechanicallyResolved`. That made the free, no-LLM resolution path
+— which AGENTS.md describes as *"a file that was simply deleted resolves mechanically, no
+LLM needed"* — unreachable for exactly the population it was built for.
+
+`selectFindingsNeedingCheck` now routes an **unresolvable** row to `fileState` and accepts
+**only** `deleted`. Every other outcome keeps it refused.
+
+**Why that is safe, and why only that outcome:**
+- `fileState` is `git diff --name-status`. It reads no file CONTENT and cannot be
+  redirected by a working-tree symlink — the hazard `resolveAndClassify` exists to catch.
+- `mechanicalResolvedAction` is pure: a store verdict keyed on the finding id, and it never
+  opens the path.
+- `changed` must NOT fall through to `needsLlmCheck`, which reads content and quotes it
+  into an external prompt. That is the whole gate, and it is intact — there is a test whose
+  only job is to fail if it ever leaks.
+- A genuinely **sensitive** path is deliberately NOT given this route: a deleted `.env` is
+  not evidence this reconciler should act on unsupervised. Pre-existing policy, unchanged.
+
+### Measured — and the honest result is that it changes nothing here yet
+Live dry-run after the fix: `mechanicallyResolved: 0`, unchanged. Breaking down why:
+
+| of the 129 `unresolvable` rows | count |
+|---|---|
+| plan sections (no file by construction) | 102 |
+| path-shaped | **27** |
+
+…and git reports `unchanged` for all 27, not `deleted`. They are not deleted files. They
+are **wrong-path records**: bare basenames instead of repo-relative paths
+(`config.mjs`, `contract-test-scaffold.md`), gitignored artifacts (`.audit/tech-debt.json`),
+and a CONSUMER-layout path recorded in the upstream store
+(`scripts/.claude-skills/ship-commit.mjs`).
+
+So the capability is restored and provably reachable in tests, but **no row on this store is
+eligible for it today**. Recording that rather than implying a measured improvement: the
+before/after figures are identical, and the reason is a third defect, not a limit of this fix.
+
+### A THIRD defect, not fixed: `primary_file` is often not a repo-relative path
+Those 27 are the tell. A finding's `primary_file` is recorded as whatever the model emitted
+— sometimes a bare basename, sometimes a path from another repo's layout. Nothing
+normalises or validates it against the repo at write time. Consequences beyond this
+reconciler: any reader that resolves `primary_file` against the repo root silently
+mis-resolves those rows, and this is the same write-side seam behind `fe1ff38a`
+(`primary_file: _primaryFile || section`). Worth its own look; not touched here.
+
+### Verification
+- **Two negative controls, both discriminating.** Removing the deleted route → 1 test
+  fails (the restored capability). Removing the refusal entirely, i.e. letting `changed`
+  through → **2 fail**, including the leak guard. The second is the one that matters: it
+  proves the security assertion is load-bearing rather than decorative.
+- 30 tests green in the selection suite; 48 across the three related suites.
+- Gates: knip, cli:flags, size:ratchet, parity:check-coupling clean.
+
+---
+
 ## 2026-09-06 — "129 sensitive-path skipped" was 129 rows with no file: a fused verdict invented a security signal
 
 ### Changes

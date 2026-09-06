@@ -264,16 +264,59 @@ test('BOTH refusals still skip — a bucket is not a permission', () => {
     { primary_file: '.env', accepted_at_commit: 'c1', finding_fingerprint: 'fp1' },
     { primary_file: '§2 decision 4', accepted_at_commit: 'c1', finding_fingerprint: 'fp2' },
   ];
-  let fileStateCalled = false;
-  const fileState = () => { fileStateCalled = true; return 'changed'; };
+  const asked = [];
+  const fileState = (f) => { asked.push(f); return 'changed'; };
   const { needsLlmCheck, mechanicallyResolved, sensitivePathSkipped, unresolvablePathSkipped, skipped } =
     selectFindingsNeedingCheck(rows, fileState, buildPathSkipClassifier(REPO_ROOT));
-  assert.equal(fileStateCalled, false, 'neither refusal may reach the git adapter — fail-closed is unchanged');
-  assert.deepEqual(needsLlmCheck, []);
-  assert.deepEqual(mechanicallyResolved, []);
+  // THE security property, stated as what it protects rather than as call counts:
+  // neither refusal may reach content-reading, LLM-quoting work. `changed` is the
+  // adversarial answer here — it is the one outcome that would route a row into
+  // needsLlmCheck if the gate leaked.
+  assert.deepEqual(needsLlmCheck, [], 'no refused row may reach the LLM path, whatever git says about it');
+  assert.deepEqual(mechanicallyResolved, [], 'nothing resolves mechanically on a "changed" answer');
   assert.deepEqual(skipped, []);
   assert.equal(sensitivePathSkipped.length, 1, 'only the real credential path');
   assert.equal(unresolvablePathSkipped.length, 1, 'the section reference, named honestly');
+  // A sensitive path is still refused BEFORE the git adapter is consulted at all.
+  // An unresolvable one now reaches it — a `git diff --name-status` read that opens
+  // no file — because that is the only way the deleted-file case is reachable.
+  assert.ok(!asked.includes('.env'), 'a sensitive path must never even be looked up');
+  assert.deepEqual(asked, ['§2 decision 4']);
+});
+
+test('an UNRESOLVABLE path that git says was DELETED resolves mechanically', () => {
+  // The defect this restores: the skip used to `continue` before fileState ran, so a
+  // file absent from the working tree failed realpathSync, was bucketed as sensitive,
+  // and never reached `state === 'deleted'`. `mechanicallyResolved` was therefore
+  // unreachable for exactly its own population — measured `0` on live queues of 282
+  // (upstream) and 52 (the reporting consumer).
+  const rows = [{ primary_file: 'scripts/lib/audit/gone.mjs', accepted_at_commit: 'c1', finding_fingerprint: 'fp1' }];
+  const { mechanicallyResolved, unresolvablePathSkipped, needsLlmCheck } =
+    selectFindingsNeedingCheck(rows, () => 'deleted', buildPathSkipClassifier(REPO_ROOT));
+  assert.equal(mechanicallyResolved.length, 1, 'a deleted file resolves with no LLM call — the documented free path');
+  assert.deepEqual(unresolvablePathSkipped, []);
+  assert.deepEqual(needsLlmCheck, []);
+});
+
+test('a SENSITIVE path is NOT given the mechanical route, even when deleted', () => {
+  // Deliberate and pre-existing: a deleted `.env` is not evidence this reconciler
+  // should act on unsupervised. Only the unresolvable bucket gained the route.
+  const rows = [{ primary_file: '.env', accepted_at_commit: 'c1', finding_fingerprint: 'fp1' }];
+  const { mechanicallyResolved, sensitivePathSkipped } =
+    selectFindingsNeedingCheck(rows, () => 'deleted', buildPathSkipClassifier(REPO_ROOT));
+  assert.deepEqual(mechanicallyResolved, [], 'a deleted credential file must not be auto-resolved');
+  assert.equal(sensitivePathSkipped.length, 1);
+});
+
+test('an UNRESOLVABLE path that git calls CHANGED stays refused — never the LLM path', () => {
+  // The leak this would be. `changed` is the outcome that routes a normal row into
+  // needsLlmCheck, where content is read and quoted into an external prompt.
+  const rows = [{ primary_file: 'scripts/lib/audit/gone.mjs', accepted_at_commit: 'c1', finding_fingerprint: 'fp1' }];
+  const { needsLlmCheck, unresolvablePathSkipped, mechanicallyResolved } =
+    selectFindingsNeedingCheck(rows, () => 'changed', buildPathSkipClassifier(REPO_ROOT));
+  assert.deepEqual(needsLlmCheck, [], 'an unresolvable path may never reach content-reading work');
+  assert.deepEqual(mechanicallyResolved, []);
+  assert.equal(unresolvablePathSkipped.length, 1);
 });
 
 test('the BOOLEAN predicate still works and is read as sensitive — old callers unchanged', () => {

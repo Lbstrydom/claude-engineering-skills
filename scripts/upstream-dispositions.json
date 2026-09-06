@@ -542,6 +542,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "f8d2730f-e746-4c38-bb7c-730dfda59591",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/remediation-verification-selection.test.mjs"
+      },
+      "recordedAt": "2026-09-06T14:00:46.554Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "fe1ff38a-5aa0-42fe-b964-f46d557ff463",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
