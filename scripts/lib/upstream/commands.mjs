@@ -1041,5 +1041,8 @@ export async function upstreamReconcile({ repoRoot = process.cwd(), listTerminal
     };
   }
 
-  return { ok: true, cloud: true, reconciliation, missingCause };
+  // `rows` is propagated because `--apply` needs the store rows this call already
+  // fetched: dropping them made `dbRows` always `[]`, so every id refused at gate
+  // "db-row" while `upstream history` showed it terminal. The repair was dead.
+  return { ok: true, cloud: true, rows: res.rows, reconciliation, missingCause };
 }

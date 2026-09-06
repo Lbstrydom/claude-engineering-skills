@@ -1,5 +1,59 @@
 # Project Status Log
 
+## 2026-09-06 — `reconcile --apply` refused every row against a lookup of nothing
+
+### Changes
+Found by the push the entry below was trying to make, which is the only reason it was
+found at all.
+
+`upstream:reconcile:gate` blocked on one terminal DB row with no ledger entry — a real
+gap, left by a concurrent session that closed `b2c9a63f` in the store before committing
+its ledger entry. The documented repair, `upstream reconcile --apply`, refused it at gate
+`db-row` with *"no terminal db row for this id"*, while `upstream history` reported that
+same id `state: fixed` with a disposition naming a tracked test. **Two commands, opposite
+answers about one row.**
+
+`upstreamReconcile` returned `{ok, cloud, reconciliation, missingCause}` and **dropped the
+store rows it had just fetched**. The call site reads `dbRows: res.rows ?? []`, so `dbRows`
+was always `[]`, `byId` was always empty, and every missing id refused at `db-row`. The
+repair path has been dead by construction since `b0cc72e7` — and it failed in the shape
+that hides best: a lookup against nothing, wearing a considered safety gate's words. The
+`?? []` is what made it silent; without it this would have been a TypeError on the first
+run.
+
+Pre-existing and not introduced by the change it blocked. In scope anyway, by **impact
+rather than authorship**: the precondition fix in the entry below is in that same
+function, and the push rode on this path.
+
+One line propagates `rows`. The test asserts both halves — the result carries them, and
+the same rows handed to the repair *exactly as the call site hands them* no longer refuse.
+Asserting only the first half would pin the field while leaving the consequence untested,
+which is how the field could be propagated and still not reach the gate.
+
+With the fix, the blocking ledger entry was written by the tool rather than by hand. That
+distinction is the point: the entry records `state: fixed` and
+`test:tests/dangling-regression-lock.test.mjs` because the store row says so and the
+freshness check says this checkout is current — not because a human decided it was
+probably fine.
+
+### Files Affected
+- `scripts/lib/upstream/commands.mjs` — `rows` propagated
+- `tests/upstream-reconcile-apply.test.mjs` — the field AND its consequence
+- `scripts/upstream-dispositions.json` — the entry `--apply` wrote
+- `status.md`
+
+### Decisions Made
+- **Did not hand-write the ledger entry**, which was the faster unblock and would have
+  recorded a disposition on the strength of reading another session's status entry. The
+  refusal was evidence the repair was broken, not evidence the entry should be authored
+  manually — and a hand-written entry would have left the dead repair in place for the
+  next person to hit.
+- **Did not reach for `git push --no-verify`.** The gate was right: there WAS an
+  unreconciled terminal row. Bypassing would have shipped past a correct block and left
+  both defects live.
+
+---
+
 ## 2026-09-06 — the "obligations lost" banner counted rows no lock can ever exist for; and 26 of them were locked
 
 ### Changes

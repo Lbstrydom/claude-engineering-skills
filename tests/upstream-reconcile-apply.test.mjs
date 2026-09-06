@@ -487,3 +487,42 @@ describe('the upstream evidence is read from the ref that was VERIFIED', () => {
     assert.ok(ev.issueIds.has(uuid(1)));
   });
 });
+
+describe('the reconcile result carries what --apply needs, not just the verdict', () => {
+  it('dbRows reach the repair path — otherwise every id refuses at gate "db-row"', async () => {
+    // The repair was dead by construction. `upstreamReconcile` returned
+    // `{ok, cloud, reconciliation, missingCause}` and dropped the store rows it
+    // had just fetched, so the call site's `dbRows: res.rows ?? []` was ALWAYS
+    // `[]`, `byId` was always empty, and every missing id refused at gate
+    // "db-row" with "no terminal db row for this id" — while `upstream history`
+    // showed that same id `state: fixed`. Two commands, opposite answers about
+    // one row, and the refusal reads like a considered safety gate rather than
+    // a lookup against nothing.
+    //
+    // Found 2026-09-06 when `upstream:reconcile:gate` blocked a push on a real
+    // missing entry and the documented repair could not close it.
+    const dir = makeRepo([]);
+    const dbRow = row(uuid(1), 'test:tests/real.test.mjs');
+
+    const res = await upstreamReconcile({
+      repoRoot: dir,
+      listTerminalFn: async () => ({ ok: true, cloud: true, rows: [dbRow] }),
+    });
+
+    assert.deepEqual(res.reconciliation.missingFromLedger, [uuid(1)],
+      'fixture guard: the row must be missing from the ledger, or nothing is being repaired');
+    assert.ok(Array.isArray(res.rows), 'the result must carry the rows it fetched');
+    assert.deepEqual(res.rows, [dbRow]);
+
+    // The consequence, asserted rather than argued: the same rows, handed to the
+    // repair exactly as the call site hands them, must not refuse at "db-row".
+    const applied = await applyMissingDispositions({
+      repoRoot: dir, dbRows: res.rows ?? [], missingIds: res.reconciliation.missingFromLedger,
+      missingCause: { ...res.missingCause, cause: MISSING_CAUSE.NOT_STALENESS, precondition: captureReconcilePrecondition(dir) },
+      ...deps,
+    });
+    assert.equal(applied.refused.filter((r) => r.gate === 'db-row').length, 0,
+      `refused at db-row: ${JSON.stringify(applied.refused)}`);
+    assert.deepEqual(applied.applied, [uuid(1)], JSON.stringify(applied));
+  });
+});

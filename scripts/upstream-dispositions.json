@@ -410,6 +410,16 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "b2c9a63f-f841-463b-80ef-87f6cd6a6e01",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/dangling-regression-lock.test.mjs"
+      },
+      "recordedAt": "2026-09-06T16:38:01.893Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "b3b4ac36-4bd5-48f0-8a55-3b4104718f52",
       "storeFingerprint": "c7177057dcafa55d",
       "state": "fixed",
