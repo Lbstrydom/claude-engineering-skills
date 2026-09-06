@@ -53,7 +53,21 @@ const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush
 // argv on the way in. (b) The gate probes whether the checker can RUN before
 // interpreting its exit code, so a crash is reported as a crash rather than as
 // a Status violation. Re-install to pick both up.
-const HOOK_VERSION    = 4;
+// v5 (2026-09-06): the CONSUMER'S OWN extension point now runs on every push.
+// `.githooks/pre-push.local` was invoked on the last line, below three
+// unconditional `exit 0`s — no docs/plans, no source repo beside the checkout,
+// and (the ordinary case) no plan SELECTED. Measured in wine-cellar-app: with
+// every plan Complete, `check-plan-status.mjs --select` returns empty, so the
+// third fired on a real push and the local hook — that repo's full unit suite,
+// its npm-args gate and its knip gate — never ran, while its AGENTS.md said it
+// did. A skipped gate reads exactly like a pass. Same defect the round-4 fix
+// repaired for the weekly-maintenance block by hoisting it above the early
+// exits; the consumer extension point was not hoisted with it, and hoisting is
+// the wrong remedy here anyway (see the `finish` comment in the body).
+// Re-install to pick it up. NOTE for operators: on a repo whose local hook runs
+// a test suite, pushes get slower by exactly that suite — which is the gate
+// working. Bypass per-push with PREPUSH_LOCAL_DISABLE=1 or `git push --no-verify`.
+const HOOK_VERSION    = 5;
 const HOOK_VERSION_MARKER = `# hook-version: ${HOOK_VERSION}`;
 // Accept the legacy marker too so existing installs (pre-rename) can be
 // upgraded in place by `npm run hooks:install` without manual cleanup.
@@ -76,7 +90,44 @@ ${HOOK_VERSION_MARKER}
 # Bypass per-push: \`git push --no-verify\`.
 # Disable session: \`AUDIT_PREPUSH_DISABLE=1 git push\`.
 
+# AUDIT_PREPUSH_DISABLE is the WHOLE-hook kill switch and stays one, deliberately:
+# it is the documented "turn this thing off" escape, and \`finish\`-ing through it
+# would take that away. The consumer half has its own switch
+# (PREPUSH_LOCAL_DISABLE=1), and \`git push --no-verify\` still skips everything.
 [ "$AUDIT_PREPUSH_DISABLE" = "1" ] && exit 0
+
+# ── Consumer extension point, reached from EVERY exit path (v5) ─────────────
+# UNMANAGED — the consumer owns .githooks/pre-push.local. This installer rewrites
+# the whole hook body on every run, so repo-specific push gates appended to THIS
+# file would be silently wiped on the next sync; the consumer's file is committed,
+# reviewable, and never touched by the installer. Its exit code is authoritative,
+# so a repo can express a genuinely blocking gate (its own test suite) without
+# forking upstream tooling.
+#
+# WHY A FUNCTION AND NOT A TRAILING BLOCK. It used to be the last lines of this
+# file, below three unconditional \`exit 0\`s — no docs/plans, no source repo
+# beside the checkout, and (the ordinary case) no plan SELECTED. So on a repo
+# where every plan is Complete, the consumer's own gates never ran and the push
+# just succeeded: a skipped gate reads exactly like a pass. Same defect the
+# round-4 fix repaired for the maintenance block above by hoisting it; hoisting
+# is wrong here, because the local hook is typically the EXPENSIVE gate and
+# should run last, after the cheap upstream ones have had their chance to fail.
+# A trailer gives both: last in order, unconditional in reach.
+#
+# Every \`exit 0\` below is therefore \`finish\`. A non-zero exit is NOT — those are
+# gates refusing the push, and running a test suite after deciding to refuse
+# would only make the refusal slower. So \`finish\` takes no argument and always
+# exits 0 on its own; the only non-zero it can produce is the local hook's,
+# which is authoritative and propagated unchanged.
+#
+# Bypass: PREPUSH_LOCAL_DISABLE=1 or \`git push --no-verify\`.
+LOCAL_HOOK=".githooks/pre-push.local"
+finish() {
+  if [ "$PREPUSH_LOCAL_DISABLE" != "1" ] && [ -f "$LOCAL_HOOK" ]; then
+    sh "$LOCAL_HOOK" || exit $?
+  fi
+  exit 0
+}
 
 # ── Opportunistic weekly local maintenance (opt-in, backgrounded) ───────────
 # Local replica of the 5 GH Actions cron workflows (architectural-drift,
@@ -110,7 +161,7 @@ if [ -f "$MAINT_SCRIPT" ]; then
 fi
 
 PLANS_DIR="docs/plans"
-[ ! -d "$PLANS_DIR" ] && exit 0
+[ ! -d "$PLANS_DIR" ] && finish
 
 # Locate the audit-loop install FIRST — plan selection now runs through the
 # SOURCE repo's Status-aware CLI (check-plan-status.mjs), so discovery must
@@ -168,7 +219,7 @@ AUDIT_SCRIPT="$AUDIT_LOOP_DIR/scripts/openai-audit.mjs"
 STATUS_CLI="$AUDIT_LOOP_DIR/scripts/check-plan-status.mjs"
 if [ -z "$AUDIT_LOOP_DIR" ] || [ ! -f "$AUDIT_SCRIPT" ]; then
   echo "[prepush-hook] claude-engineering-skills not found beside \"\${MAIN_PARENT:-..}\" (set CLAUDE_AUDIT_LOOP_DIR to override) — skipping audit" >&2
-  exit 0
+  finish
 fi
 
 # Select the ONE in-flight plan to audit via the Status-aware CLI — NOT
@@ -226,7 +277,7 @@ if [ "$PLAN_STATUS_DISABLE" != "1" ]; then
 fi
 
 PLAN_FILE=$(node "$STATUS_CLI" --select "$PLANS_DIR" 2>/dev/null || true)
-[ -z "$PLAN_FILE" ] && exit 0
+[ -z "$PLAN_FILE" ] && finish
 
 echo "[prepush-hook] auditing $PLAN_FILE via $AUDIT_LOOP_DIR (--scope diff)..." >&2
 # AUDIT_ALLOW_FOREIGN_CWD=1: this runs the SOURCE repo's openai-audit.mjs against
@@ -264,22 +315,10 @@ if [ "$SURFACES_DRIFT_DISABLE" != "1" ] && [ -f "$SURFACES_BUILDER" ] && [ -d ".
   fi
 fi
 
-# ── Repo-local extension (UNMANAGED — the consumer owns this file) ──────────
-# This installer rewrites the whole hook body on every run, so repo-specific
-# push gates appended HERE would be silently wiped on the next sync. Put them
-# in .githooks/pre-push.local instead: it is committed, reviewable, owned by
-# the consumer repo, and this installer never touches it.
-#
-# Its exit code is authoritative — a non-zero exit aborts the push, so a repo
-# can express a genuinely blocking gate (e.g. its own test suite) without
-# forking upstream tooling.
-#
-# Bypass: PREPUSH_LOCAL_DISABLE=1 or \`git push --no-verify\`.
-LOCAL_HOOK=".githooks/pre-push.local"
-if [ "$PREPUSH_LOCAL_DISABLE" != "1" ] && [ -f "$LOCAL_HOOK" ]; then
-  sh "$LOCAL_HOOK" || exit $?
-fi
-exit 0
+# The repo-local extension runs HERE, exactly as it always did — but via
+# \`finish\`, which every success path above also goes through. See its definition
+# near the top for why it is a function rather than these trailing lines.
+finish
 `;
 
 // ── CLI args ───────────────────────────────────────────────────────────────
