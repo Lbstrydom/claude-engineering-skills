@@ -101,6 +101,53 @@ export function extractFileRefs(section, { dedupe = true } = {}) {
 }
 
 /**
+ * The REPORTING spelling of the first file a `section` cites — the prose's own case.
+ *
+ * This module's header states the split it exists to keep: *"`_primaryFile` is for
+ * REPORTING; `affectedFilesOf` is for MATCHING."* `extractFileRefs` serves the second
+ * half, and it must keep folding case — a grouping key that distinguishes `SKILL.md`
+ * from `skill.md` on a case-insensitive filesystem would split one file into two keys.
+ * But `populateFindingMetadata` filled the reporting key from that same folded list, so
+ * the value written to `audit_findings.primary_file` — the one a reader OPENS — arrived
+ * lowercased.
+ *
+ * Measured against store `d5a9d07b91225a93` scoped to this repo (2026-09-06): 138 of
+ * 5,022 code-mode rows differed from a tracked file by case alone, concentrated on this
+ * bundle's own convention — a skill's `skill.md`, an `agents.md`, a plans `readme.md`.
+ * (Those spellings are STORED VALUES quoted as evidence, not references: the real files
+ * are uppercase, which is the entire point, and `docs:refs:gate` rightly said so.)
+ * Invisible on Windows, where `existsSync` is case-insensitive; a silent skip on Linux
+ * for `remediation-verification.mjs` and `campaign/cited-source.mjs`, which open it.
+ *
+ * **It is not a second path normaliser, and the guard is structural rather than a
+ * promise.** The prose spelling is returned ONLY when normalising it changes nothing
+ * but case; any other difference (a `../` escape, a different drive, cwd-relativisation)
+ * means the value needed real normalisation, and the normalised key is returned instead.
+ * So `normalizePath(displayPathOf(s)) === extractFileRefs(s)[0]` holds for every input —
+ * asserted over a repo-derived corpus in `tests/primary-file-display-case.test.mjs`.
+ *
+ * Returns `null` — never a prose fragment — on the same terms as `extractFileRefs`.
+ * `_primaryFile`'s legacy heading fallback stays where it is, in the caller.
+ *
+ * @param {string} section
+ * @returns {string|null}
+ */
+export function displayPathOf(section) {
+  if (typeof section !== 'string' || section === '') return null;
+  const re = buildFileReferenceRegex();
+  let m;
+  while ((m = re.exec(section)) !== null) {
+    const key = normalizePath(m[1]);
+    // Same skip as extractFileRefs, so this returns the display form of ITS first
+    // element and not of some earlier match that normalised away to nothing.
+    if (!key) continue;
+    const candidate = m[1].replace(/^\.\//, '');
+    return normalizePath(candidate) === candidate.toLowerCase() ? candidate : key;
+  }
+  return null;
+}
+
+/**
  * Coerce ONE value that may already be a resolved path into path form.
  *
  * `normalizePath` FIRST, then the extractor. That ordering is the whole trick

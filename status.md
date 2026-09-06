@@ -1,5 +1,111 @@
 # Project Status Log
 
+## 2026-09-06 — the stored `primary_file` was a matching key wearing a reporting key's clothes
+
+### Changes
+The last of the four defects from the wine-cellar upstream thread, and the only one whose
+symptoms could not be reached from the read side.
+
+`finding-match.mjs`'s module header already states the split: *"`_primaryFile` is for
+REPORTING; `affectedFilesOf` is for MATCHING."* It was not true in the code.
+`populateFindingMetadata` set `_primaryFile = extractFileRefs(section)[0]`, and that
+extractor ends every match with `normalizePath`, whose last operation is `.toLowerCase()`.
+So the reporting key **was** the matching key, folded — and that is the value
+`runs-findings.mjs` writes to `audit_findings.primary_file`, the column two readers later
+open a file from.
+
+**Measured before designing anything** (store `d5a9d07b91225a93`, scoped to
+`Lbstrydom/claude-engineering-skills`, 2026-09-06 — the query is in the commit):
+
+| code-mode rows | 5,022 |
+|---|---|
+| resolve exactly against `git ls-files` | 4,766 (94.9%) |
+| **differ from a tracked file by CASE ALONE** | **138** (17 distinct) |
+| genuinely absent | 118 (51 distinct) |
+
+The case class is not scattered noise — it lands on this bundle's own naming convention:
+`skills/audit-code/skill.md` (22 rows), `skills/click-test/skill.md` (21), `agents.md`
+(17), `skills/persona-test/skill.md` (17), `docs/plans/readme.md` (3). In the live nudge
+views: 10 of 172 open `unlocked_fixes_all` code rows and 6 of 163
+`unremediated_acceptances_all`.
+
+**Why it was invisible here and live everywhere else.** Windows' filesystem is
+case-insensitive, so `existsSync('skills/ship/skill.md')` is TRUE on the machine that
+wrote the row. On Linux — CI, and every consumer — it is false, and two readers degrade
+quietly rather than failing: `remediation-verification.mjs` routes the row to the
+`unresolvablePathSkipped` bucket added three commits ago, and `campaign/cited-source.mjs`
+cannot centre its evidence window on a file it cannot open.
+
+The fix is a strictly narrower claim than "stop lowercasing": `displayPathOf` returns the
+prose's own spelling **only when normalising it changes nothing but case**, and returns
+the normalised key otherwise. So `normalizePath(displayPathOf(s)) === extractFileRefs(s)[0]`
+holds for every input — that is the invariant, asserted over a repo-derived corpus of every
+mixed-case tracked path rather than a hand-picked list, because a hand-picked list is what
+I would write if I had misunderstood the rule.
+
+### Files Affected
+- `scripts/lib/finding-match.mjs` — `displayPathOf`, the reporting half of the one extractor
+- `scripts/lib/ledger.mjs` — `populateFindingMetadata` splits the two key spaces
+- `tests/primary-file-display-case.test.mjs` — the invariant, the corpus, the fingerprint guard
+- `AGENTS.md` — the `normalizePath()` accepted-debt row is now SCOPED, not blanket
+- `status.md`
+
+### Decisions Made
+- **No write-time validation or refusal**, though that is what "fix it at the write side"
+  first suggests. Measured: the 118 genuinely-absent values are deleted files, gitignored
+  `.audit/*` artifacts, consumer-layout `scripts/.claude-skills/*` paths and a handful the
+  model invented. A writer that refused them would DROP audit findings — losing the model's
+  actual claim to protect a column's shape. The same reversal as the regression-lock commit
+  two ago, reached from the opposite direction, and for the same reason: the write side is
+  not where a citation's truth is decided.
+- **No backfill of the 138 historical rows.** They are a representation defect, and the
+  repair predicate is tight (differs by case alone from a tracked path ⇒ provably the same
+  file), so it was tempting. Against it: resolving requires a repo checkout, so it cannot be
+  a migration and every consumer would have to run a new command — new surface to document,
+  sync and remember. And it self-clears: both nudge views are windowed (14 and 30 days), so
+  every affected LIVE row ages out within a month of this landing, while the rows outside
+  the window are read only by analytics that never open the path.
+- **`affectedFiles` deliberately still folded.** It is the grouping key; distinguishing
+  `SKILL.md` from `skill.md` there would split one file into two dedup keys on a
+  case-insensitive filesystem — the defect this module exists to fix, re-created one field
+  over.
+- **Did not touch `normalizePath`.** Un-fusing representation from comparison repo-wide is
+  the structurally pure answer and the over-built one for a 2.7% reporting defect; every
+  matching consumer re-normalizes, so the narrow change is sufficient and provably so.
+- **The ~102 plan-mode section references stay as they are.** They record what the model
+  actually said, `EFFECTIVE_MODE_SQL` already classifies them read-side, and rewriting a
+  historical audit row to a shape a later reader prefers falsifies the record.
+
+### Verification
+- Negative control ran twice. The first was worthless — the test file failed to LOAD on the
+  missing export, which does not discriminate. Re-run with a stub returning today's folded
+  value: **5 fail / 3 pass**, each failure naming the exact case defect. After the fix,
+  **8/8**. The invariant test passes in BOTH states, which is correct: it guards the fix
+  from over-reaching, it does not detect the defect.
+- The fingerprint is asserted not to move. `semanticId` digests `category|section|detail`
+  and never `_primaryFile` — but if that ever changed, every historical finding would
+  re-raise as new and the suppression ledger would stop matching silently, so it is pinned
+  rather than reasoned about.
+- Targeted suites for every consumer of `_primaryFile` (finding-match, ledger,
+  ledger-decompose, adjacency ×2, bakeoff-relatedness, campaign-cited-source, debt-capture,
+  suppress-rereais-golden): **263/263**.
+- **Two full-suite failures that were mine but not my code's.** `sync-target-path` and
+  `sync-consumer-divergence-e2e` failed with `scripts/.claude-skills/lib/ledger.mjs churned
+  on re-sync` and `a no-op sync re-dirtied the receipt`. Both sync from the LIVE working
+  tree twice and assert the bytes match — and I had edited `ledger.mjs` while the run was
+  in flight, so the second sync legitimately read different bytes. The failure named the
+  exact file I was editing, which is the tell. Confirmed rather than assumed: both suites
+  pass in isolation (32/32), and a control full run in a throwaway worktree at clean `HEAD`
+  is **15,427 tests / 0 fail**. The lesson is procedural — *do not edit the source tree
+  while a suite containing e2e sync tests is running*; the authoritative run is the pre-push
+  sandbox, which is static by construction.
+- My first probe was wrong and said so: its `D path-shaped, resolves nowhere` bucket held
+  2,769 rows, dominated by wine-cellar-app paths — correct data for another repo, which I
+  had failed to scope out. Re-run scoped by `repo_id` and using the real `EFFECTIVE_MODE_SQL`
+  rather than a JS re-derivation. The numbers above are from the second instrument.
+
+---
+
 ## 2026-09-06 — `reconcile --apply` refused every row against a lookup of nothing
 
 ### Changes

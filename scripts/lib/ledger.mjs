@@ -19,7 +19,7 @@ import { semanticId } from './findings.mjs';
 // pulls only sensitive-paths/secret-patterns/redact).
 import { redactSecrets } from './sensitive-egress-gate.mjs';
 import { jaccardSimilarity } from './text-similarity.mjs';
-import { extractFileRefs } from './finding-match.mjs';
+import { extractFileRefs, displayPathOf } from './finding-match.mjs';
 
 // Re-exported for backward compatibility — existing consumers import
 // jaccardSimilarity from here (and via shared.mjs's barrel). The
@@ -486,12 +486,14 @@ export function populateFindingMetadata(finding, passName) {
   // The prose fallback below stays HERE and is deliberately NOT in the shared
   // extractor: `_primaryFile` is a reporting/topicId key, where "§0.3" is an
   // acceptable last resort, whereas a matching key must be null rather than a
-  // heading — grouping two unrelated §-referenced findings would be the very
-  // defect the matcher exists to fix. Two representations, one extractor.
+  // heading — grouping two unrelated §-referenced findings would be the very defect the
+  // matcher exists to fix. Two representations, one extractor, and now two VALUES:
+  // `displayPathOf` keeps the prose's case (this reaches `primary_file`, and a reader
+  // OPENS it); `affectedFiles` stays folded, being a key. Why: displayPathOf's docstring.
   const section = finding.section || '';
   const files = extractFileRefs(section, { dedupe: false });
 
-  finding._primaryFile = files[0] || normalizePath(section.split(':')[0].split('(')[0].trim());
+  finding._primaryFile = displayPathOf(section) || normalizePath(section.split(':')[0].split('(')[0].trim());
   finding.affectedFiles = files.length > 0 ? files : [finding._primaryFile];
   finding._pass = passName || finding._pass || 'unknown';
   if (!finding.principle) finding.principle = 'unknown';

@@ -104,10 +104,16 @@ export const ACCEPTED_DEBT_ROWS = [
   {
     id: 'normalize-path-lowercasing',
     agentsTableAnchor: '`normalizePath()` lowercasing',
-    rowFingerprint: 'e3855de2a8c10d63',
+    rowFingerprint: 'b4447d2e267f1fdc',
     verification: {
       mode: 'unverifiable',
-      reason: 'external — deployment platform (Linux CI) is not repo state',
+      reason: 'external — but SCOPED 2026-09-06, because the old trigger had quietly '
+        + 'fired: the acceptance read as blanket, and the data travels even when the '
+        + 'process does not. 138 stored primary_file rows named a real file in the '
+        + 'wrong case, unresolvable to any Linux reader. The fold is now a MATCHING '
+        + 'key only; a path stored to be opened takes displayPathOf. What remains '
+        + 'accepted has no predicate — re-fusing the two key spaces is a code shape, '
+        + 'not repo state — so it is pinned by tests/primary-file-display-case.test.mjs',
     },
   },
   {
