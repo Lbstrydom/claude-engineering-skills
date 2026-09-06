@@ -47,7 +47,13 @@ const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush
 // checkout instead of cwd. A v2 body run from a linked worktree enumerated
 // sibling WORKTREES, found nothing, and skipped the audit with exit 0 — on
 // every push a Claude Code session makes. Re-install to pick it up.
-const HOOK_VERSION    = 3;
+// v4 (2026-09-06): two fixes to the plan-status gate, measured in a consumer.
+// (a) MAIN_PARENT is derived with `pwd -W` where that exists, so the path
+// handed to node.exe is already NATIVE and does not depend on MSYS rewriting
+// argv on the way in. (b) The gate probes whether the checker can RUN before
+// interpreting its exit code, so a crash is reported as a crash rather than as
+// a Status violation. Re-install to pick both up.
+const HOOK_VERSION    = 4;
 const HOOK_VERSION_MARKER = `# hook-version: ${HOOK_VERSION}`;
 // Accept the legacy marker too so existing installs (pre-rename) can be
 // upgraded in place by `npm run hooks:install` without manual cleanup.
@@ -131,7 +137,19 @@ if [ -z "$AUDIT_LOOP_DIR" ]; then
   MAIN_PARENT=""
   COMMON_GIT_DIR="$(git rev-parse --git-common-dir 2>/dev/null)"
   if [ -n "$COMMON_GIT_DIR" ]; then
-    MAIN_PARENT="$(cd "$COMMON_GIT_DIR/../.." 2>/dev/null && pwd)"
+    # RESOLVE TO A NATIVE PATH, DO NOT RELY ON MSYS ARGV REWRITING. On
+    # git-bash plain \`pwd\` prints the MSYS form (/c/GIT), which reaches
+    # node.exe intact ONLY while the MSYS runtime is rewriting arguments.
+    # MSYS_NO_PATHCONV=1 and MSYS2_ARG_CONV_EXCL=* both switch that off — and
+    # plenty of tooling sets them — after which node resolves /c/GIT/... against
+    # the CURRENT DRIVE root and dies with
+    # \`Cannot find module 'C:\\c\\GIT\\...'\` (measured 2026-09-06 in a consumer;
+    # it aborted a push whose diff touched no plan at all). \`pwd -W\` is the
+    # MSYS/Cygwin builtin that prints C:/GIT directly, which every consumer of
+    # the value here — sh's glob, \`test -f\`, and node — accepts unconverted.
+    # Elsewhere \`pwd -W\` is an unknown option, so the \`||\` falls back to plain
+    # \`pwd\` and Linux/macOS behaviour is byte-identical.
+    MAIN_PARENT="$(cd "$COMMON_GIT_DIR/../.." 2>/dev/null && { pwd -W 2>/dev/null || pwd; })"
   fi
   for parent in "$MAIN_PARENT" ".."; do
     [ -n "$parent" ] || continue
@@ -169,8 +187,40 @@ fi
 # printed as advisory context.
 # Bypass: PLAN_STATUS_DISABLE=1 or \`git push --no-verify\`.
 if [ "$PLAN_STATUS_DISABLE" != "1" ]; then
+  # DID THE CHECKER RUN? Ask before interpreting its exit code. \`--drift\`
+  # exits 0=clean / 1=violations, and every way node can fail to start (a path
+  # the runtime cannot resolve, a syntax error, a missing dependency) also
+  # exits 1 — so the exit code ALONE cannot separate "read the Status lines and
+  # found a violation" from "never read a Status line". This gate used to
+  # render the second as the first, printing a specific factual claim ("a plan
+  # changed in this push has a non-conforming Status") on a push whose diff
+  # contained no plan at all. A gate whose failure message misidentifies the
+  # cause teaches the operator to reach for PLAN_STATUS_DISABLE=1 reflexively,
+  # which retires the gate without anyone deciding to.
+  # \`--selfcheck-relocation\` prints OK and exits 0 before the CLI parses
+  # anything, so it answers exactly the runnability question and nothing else.
+  PLAN_STATUS_PROBE="$(node "$STATUS_CLI" --selfcheck-relocation 2>&1)"
+  if [ "$PLAN_STATUS_PROBE" != "OK" ]; then
+    # Node's stack puts the useful line ("Error: Cannot find module '…'") several
+    # lines in, under a loader frame and a bare \`throw err;\` — so quote the
+    # Error line when there is one, and only fall back to the head of the output
+    # when the failure has some other shape.
+    PLAN_STATUS_REASON="$(printf '%s\\n' "$PLAN_STATUS_PROBE" | grep -m1 -E '^[A-Za-z]*Error[]: []' || true)"
+    [ -z "$PLAN_STATUS_REASON" ] && PLAN_STATUS_REASON="$(printf '%s\\n' "$PLAN_STATUS_PROBE" | grep -v '^[[:space:]]*$' | head -n 3)"
+    echo "" >&2
+    echo "❌ [prepush-hook] plan-status gate CANNOT RUN — the checker did not start:" >&2
+    echo "     $STATUS_CLI" >&2
+    printf '%s\\n' "$PLAN_STATUS_REASON" | sed 's/^/     | /' >&2
+    echo "   NO plan Status was read. This is NOT a finding about your plans —" >&2
+    echo "   it says nothing about whether they conform." >&2
+    echo "   Fix the path above (set CLAUDE_AUDIT_LOOP_DIR to override discovery)," >&2
+    echo "   or bypass with PLAN_STATUS_DISABLE=1 / git push --no-verify." >&2
+    echo "   Refusing rather than pushing ungated — a skipped gate reads as a pass." >&2
+    echo "" >&2
+    exit 1
+  fi
   if ! node "$STATUS_CLI" --drift >&2; then
-    echo "[prepush-hook] a plan changed in this push has a non-conforming Status — fix it or set PLAN_STATUS_DISABLE=1" >&2
+    echo "[prepush-hook] plan-status gate FAILED — the checker ran and a plan changed in this push has a non-conforming Status (listed above) — fix it or set PLAN_STATUS_DISABLE=1" >&2
     exit 1
   fi
 fi
