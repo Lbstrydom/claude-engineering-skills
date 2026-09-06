@@ -70,6 +70,48 @@ const storeScopeFor = (scope) => (scope.kind === 'global' ? { allRepos: true } :
 const pageArgs = (ctx) => ({ limit: ctx.flag('limit'), offset: ctx.flag('offset') });
 
 /**
+ * Locks whose cited `spec_path` no longer resolves — a hole in exactly the coverage this
+ * nudge reports, and invisible from the view itself.
+ *
+ * Upstream report `b2c9a63f`. A lock REMOVES a finding from `unlocked_fixes` (that view's
+ * only lock predicate is `EXISTS (SELECT 1 FROM regression_specs …)`), so a citation
+ * naming a file nobody can open reads as coverage forever and nothing re-raises it.
+ *
+ * **Reported here rather than as a new command, deliberately.** This is the nudge an
+ * operator already reads when asking "is my regression coverage real", and a separate CLI
+ * would be a second surface to remember, document and sync. One fewer thing to keep alive
+ * is the sustainable shape.
+ *
+ * **`count: null` means UNMEASURED, never zero.** Cloud off, an unresolved repo, or a
+ * failed read all leave the question unasked, and an unasked question must not render as
+ * a clean result — the house rule this repo keeps re-learning.
+ *
+ * Existence is resolved through `classifyTestPath`, the SAME oracle `lock-with-test`
+ * refuses on (realpath + containment + regular-file), not a second spelling of it. So a
+ * lock that would be refused today is exactly a lock reported dangling now.
+ */
+async function danglingLocksFor(ctx, repoId) {
+  if (!repoId) return { count: null, reason: 'unresolved-repo', rows: [] };
+  try {
+    const recorded = await ctx.deps.getRecordedSpecPaths(repoId);
+    const { classifyTestPath } = await import('../../path-validation.mjs');
+    const { realpathSync } = await import('node:fs');
+    const repoRoot = realpathSync(process.cwd());
+    const dangling = recorded.filter((r) => !classifyTestPath({ repoRoot, testPath: r.specPath }).ok);
+    return {
+      count: dangling.length,
+      reason: null,
+      checked: recorded.length,
+      // Bounded like every other nudge payload: the count conveys scale, the rows are a
+      // sample to act on.
+      rows: dangling.slice(0, 5),
+    };
+  } catch (err) {
+    return { count: null, reason: `unreadable: ${err.message}`, rows: [] };
+  }
+}
+
+/**
  * `list-unlocked-fixes` — HIGH/P0 fixes with no regression spec.
  *
  * `rows` is ONE PAGE, so its length is NOT the obligation count — reporting it
@@ -79,11 +121,13 @@ const pageArgs = (ctx) => ({ limit: ctx.flag('limit'), offset: ctx.flag('offset'
  * what the 14-day window DROPPED, so "not shown" and "not owed" stay distinct
  * and an obligation cannot be discharged by waiting.
  */
+
 export async function listUnlockedFixesCmd(ctx) {
   if (!ctx.cloud.enabled) {
     return {
       ok: true, cloud: false, scope: { mode: 'unresolved', repoId: null, slug: null },
       measured: false, reason: 'cloud-off', rows: [], shown: 0, total: 0, byMode: { total: 0, code: 0, plan: 0 },
+      danglingLocks: { count: null, reason: 'cloud-off', rows: [] },
     };
   }
   const scope = await ctx.resolveScope();
@@ -97,6 +141,7 @@ export async function listUnlockedFixesCmd(ctx) {
   const rows = await ctx.deps.getUnlockedFixes(storeScope, page);
   const byMode = await ctx.deps.countUnlockedFixes(storeScope, { allAges });
   const aged = await ctx.deps.countAgedUnlockedFixes(storeScope);
+  const danglingLocks = await danglingLocksFor(ctx, scope.repoId ?? null);
   const { limit, offset } = ctx.deps.resolveNudgePage(page);
   return {
     ok: true, cloud: true,
@@ -106,6 +151,7 @@ export async function listUnlockedFixesCmd(ctx) {
     allAges,
     agedOut: aged.agedOut, agedOutByMode: aged.byMode,
     prePractice: aged.prePractice, practiceStart: aged.practiceStart,
+    danglingLocks,
     // Echo the RESOLVED page, not the raw flags: the store clamps, so a caller
     // that asked for 10_000 and one that asked for nothing must be able to tell
     // what they actually received before concluding the tail is empty.
@@ -510,6 +556,22 @@ export async function recordRegressionSpecCmd(ctx) {
   }
   if (!p.specPath) throw new CommandError('BAD_INPUT', 'specPath is required');
   if (!ctx.cloud.enabled) return { ...ctx.degrade(), specId: null };
+  // NO existence check here, and that is a REVERSAL of my own first attempt — recorded
+  // because the reasoning is the useful part. I added one as a "cheap second line" and
+  // it broke two existing contracts: the golden-envelope capture (a cloud-off call began
+  // REFUSING on a filesystem probe where it used to degrade) and the write-outcome
+  // contract fixture (a synthetic `tests/x.spec.ts`, testing exit codes, not paths).
+  //
+  // Fixing those two guards to accommodate the check would have been fitting the tests to
+  // the change. And the check earns little: upstream b2c9a63f measured 3 of 3 dangling
+  // citations that were TRUE when written and were invalidated later by a refactor, so a
+  // write-time probe catches none of the real population — only a typo, which the
+  // read-side report in listUnlockedFixesCmd surfaces one ship later anyway.
+  //
+  // lock-with-test keeps ITS check: it is the interactive verb a human aims at one
+  // finding, where refusing a typo immediately is worth the friction. This is the
+  // programmatic recorder, called by tooling that may legitimately write the spec after
+  // recording the intent to.
   const scope = await ctx.resolveScope();
   const repoId = scope.kind === 'scoped' ? scope.repoId : null;
   if (!repoId) {

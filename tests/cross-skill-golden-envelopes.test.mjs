@@ -28,7 +28,22 @@ import { CASES, runCase, FIXTURE_PATH } from '../scripts/dev/capture-cross-skill
 
 /** field-path → why it was added. Empty = byte-identical everywhere. */
 const ADDITIVE_FIELDS = new Map([
-  // (none yet — the trio migrated byte-identically)
+  // Added 2026-09-06 for upstream report b2c9a63f. `list-unlocked-fixes` now reports
+  // locks whose cited `spec_path` no longer resolves — a hole in exactly the coverage
+  // this nudge exists to describe, and invisible from the view itself (a lock REMOVES
+  // its finding from `unlocked_fixes` permanently, so a citation naming a file nobody
+  // can open reads as coverage and nothing surfaces it again).
+  //
+  // Declared here rather than regenerated into the fixture, deliberately: this capture's
+  // whole job is to make an envelope change a decision instead of a diff, and it did
+  // that — it also caught a REAL regression in the same change, where a write-side
+  // existence check placed before the cloud-off degrade turned a graceful
+  // `{ok:true, cloud:false}` into a refusal. That check was removed; this field stays.
+  //
+  // The cloud-off shape is `{count: null, reason: 'cloud-off', rows: []}` — present and
+  // explicitly UNMEASURED rather than absent, matching how `byMode` is carried on the
+  // same branch under the `measured:false` guard.
+  ['list-unlocked-cloud-off:danglingLocks', 'b2c9a63f — dangling regression-lock citations'],
 ]);
 
 const fixtures = JSON.parse(fs.readFileSync(FIXTURE_PATH, 'utf8'));

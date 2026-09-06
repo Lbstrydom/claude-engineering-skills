@@ -252,3 +252,59 @@ export async function getRegressionSpecWindowCounts(repoId, { currentStart, prio
     errorLabel: 'getRegressionSpecWindowCounts',
   });
 }
+
+/**
+ * Every recorded lock's cited `spec_path` for a repo — the raw material for the
+ * dangling-citation check the /ship lock nudge reports.
+ *
+ * **Why the check cannot live in SQL.** Postgres cannot stat a file. Existence is a
+ * property of the CALLER's working tree, so the query returns citations and the caller
+ * resolves them through `classifyTestPath` — the same oracle `lock-with-test` already
+ * refuses on, rather than a second spelling of "does this path exist".
+ *
+ * **Why a READ-side check is the primary instrument** (upstream report `b2c9a63f`, and
+ * the upstream evidence contradicts the report's first option). A citation's truth is not
+ * a property of the moment it was written. Measured here 2026-09-06: 3 of 235 rows cite a
+ * path that no longer resolves, all three `source_kind: 'unit-test'` — i.e. written BY
+ * `lock-with-test`, which DOES validate existence — and all three deleted by one commit,
+ * `e833b2aa` ("retire the consistency candidate promotion path"). They were true when
+ * recorded and were invalidated afterwards by a legitimate refactor, so a write-time check
+ * would have caught **zero** of them. The reporter's three were the opposite case (tests
+ * on unmerged branches, true-soon). Only a read-time check catches both.
+ *
+ * It matters because a lock REMOVES a finding from `unlocked_fixes` — that view's only
+ * lock predicate is `EXISTS (SELECT 1 FROM regression_specs …)`. A dangling citation
+ * therefore reads as coverage forever, and the view whose entire job is surfacing
+ * unlocked fixes will never mention it again. An obligation discharged by silence, which
+ * is the exact failure `agedOut` was added for one axis over.
+ *
+ * Cloud-off and query failure both return `[]` — this feeds a non-blocking nudge and must
+ * never break a push. The CALLER distinguishes "no dangling locks" from "not measured";
+ * an empty array here is not a clean bill of health on its own.
+ *
+ * @param {string} repoId
+ * @returns {Promise<Array<{specPath: string, sourceKind: string|null, sourceFindingId: string|null, createdAt: string|null}>>}
+ */
+export async function getRecordedSpecPaths(repoId) {
+  if (!repoId) return [];
+  if (!await isCloudEnabled()) return [];
+  try {
+    const { many } = await import('../db/query.mjs');
+    const rows = await many(
+      `SELECT spec_path, source_kind, source_finding_id, created_at
+         FROM regression_specs
+        WHERE repo_id = $1 AND spec_path IS NOT NULL
+        ORDER BY created_at DESC`,
+      [repoId],
+    );
+    return rows.map((r) => ({
+      specPath: r.spec_path,
+      sourceKind: r.source_kind ?? null,
+      sourceFindingId: r.source_finding_id ?? null,
+      createdAt: r.created_at ? String(r.created_at) : null,
+    }));
+  } catch (err) {
+    process.stderr.write(`  [learning] getRecordedSpecPaths failed: ${err.message}\n`);
+    return [];
+  }
+}

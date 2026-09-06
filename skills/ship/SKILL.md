@@ -250,6 +250,21 @@ work that cannot be done.
 > `unremediated_acceptances` code rows were section references. The readers now
 > classify on `primary_file`'s shape as well, so `byMode.code` is the count you can
 > act on. Rows are unchanged — only the aggregate moved.
+
+> **`danglingLocks` — a recorded lock whose test file is no longer there** (upstream
+> `b2c9a63f`, 2026-09-06). Recording a spec removes its finding from `unlocked_fixes`
+> permanently: that view's only lock predicate is
+> `EXISTS (SELECT 1 FROM regression_specs …)`. So a citation naming a file nobody can
+> open reads as coverage, and nothing surfaces it again — an obligation discharged by
+> silence, one axis over from `agedOut`. Measured upstream the day this shipped: **3 of
+> 235** rows, all three tests deleted by a later refactor, i.e. TRUE when recorded.
+> That is why this is checked on the READ side: a citation's truth is not a property of
+> the moment it was written.
+>
+> `count: null` means the question went unasked (cloud off, unresolved repo, a read that
+> threw) — distinct from `0`, and not a clean result. When `count > 0`, print the sampled
+> rows and either restore the test or clear the lock, so the finding rejoins the backlog
+> it left.
 `unlocked_fixes` is a generic "HIGH fix, zero `regression_specs` rows in 14
 days" check — it has no UI-relevance filter, so it fires identically for a
 DOM-facing fix and a pure backend/CLI one. `/ux-lock` can only ever cover

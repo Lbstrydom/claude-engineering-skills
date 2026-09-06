@@ -1,5 +1,105 @@
 # Project Status Log
 
+## 2026-09-06 — A lock citing a deleted test reads as coverage forever; and the report named the one caller that was already guarded
+
+### Changes
+Fixed upstream report **`b2c9a63f`** (MEDIUM, from `Lbstrydom/wine-cellar-app`) — after
+correcting its attribution, which was sent to the reporter *before* fixing because acting
+on the filed target would have produced a no-op.
+
+**The correction.** The report says `lock-with-test` writes a `regression_specs` row with
+no check that `spec_path` exists. It does check: `classifyTestPath` (realpath +
+repo-containment + regular-file + not-sensitive), refusing `test-file-not-found` with
+*"a lock naming a missing file is a fake check"*. The one caller it names is the one caller
+already guarded. The real holes were its siblings:
+
+| writer of `regression_specs` | validated `spec_path`? |
+|---|---|
+| `lock-with-test` | already did — `classifyTestPath` |
+| `record-regression-spec` | presence only — and deliberately left that way, see Decisions |
+| `ux-lock-run.mjs` | no — but see below |
+
+**Why it matters.** A lock REMOVES its finding from `unlocked_fixes` — that view's only
+lock predicate is `EXISTS (SELECT 1 FROM regression_specs …)`. A citation naming a file
+nobody can open therefore reads as coverage permanently, and the view whose entire job is
+surfacing unlocked fixes never mentions it again. An obligation discharged by silence, one
+axis over from what `agedOut` was added for.
+
+### The upstream evidence adjudicated between the report's two options
+Measured here: **3 of 235 rows (1.3%)** cite a path that no longer resolves. All three
+carry `source_kind: 'unit-test'` — written *by the guarded path* — and all three were
+deleted by one commit, `e833b2aa` ("retire the consistency candidate promotion path").
+**They were true when recorded** and were invalidated afterwards by a legitimate refactor.
+
+That splits the population:
+- **(a) false at write time** — the reporter's three, naming tests on unmerged branches
+- **(b) true at write, invalidated later** — all three of ours
+
+A write-time check catches (b) never, and would have caught **0 of our 3**. So the read
+side is the primary instrument, and the reporter's own preference for their option (2) is
+correct — with evidence neither of us had when they filed it. *A citation's truth is not a
+property of the moment it was written.*
+
+### Files Affected
+- `scripts/lib/store/regression-specs.mjs` — `getRecordedSpecPaths`, the citation reader.
+  Existence is deliberately NOT asked in SQL: Postgres cannot stat a file, so the query
+  returns citations and the caller resolves them.
+- `scripts/lib/cross-skill/commands/ship.mjs` — `danglingLocksFor` (the read side; the
+  ONLY behaviour change)
+- `tests/cross-skill-golden-envelopes.test.mjs` — `danglingLocks` declared in
+  `ADDITIVE_FIELDS` rather than regenerated into the fixture
+- `skills/ship/SKILL.md` + generated copy + manifest — Step 0.5b `danglingLocks`
+- `tests/dangling-regression-lock.test.mjs` (new), `tests/learning-store-exports.test.mjs`
+- `status.md`
+
+### Decisions Made
+- **Reported inside the existing nudge, not as a new command.** `list-unlocked-fixes` is
+  already the thing an operator reads when asking "is my regression coverage real". A
+  separate CLI would be another surface to document, sync and remember. One fewer thing to
+  keep alive is the sustainable shape; the count rides in the payload operators already see.
+- **The same oracle, not a second one.** `danglingLocksFor` resolves through
+  `classifyTestPath` — what `lock-with-test` already refuses on — so a lock that would be
+  refused today is exactly a lock reported dangling now. Two spellings of "does this path
+  exist" is how the two writers diverged in the first place.
+- **`ux-lock-run.mjs` deliberately left alone.** It records only specs Playwright has
+  just EXECUTED, so the file exists by construction. A check there could not fire, and a
+  gate that cannot fire is one more thing to maintain for nothing.
+- **`count: null` is unmeasured, never zero.** Cloud off, unresolved repo, or a read that
+  threw all leave the question unasked, and the read failing degrades the field without
+  breaking the nudge it rides on.
+- **Write-time validation TRIED, then REMOVED — and the removal is the more useful
+  record.** I added an existence check to `record-regression-spec` as a "cheap second
+  line". It broke two existing contracts: the golden-envelope capture (a cloud-off call
+  began REFUSING on a filesystem probe where it used to degrade — a real regression in a
+  supported mode, #16) and the write-outcome fixture (a synthetic `tests/x.spec.ts` that
+  tests exit codes, not paths). Repairing those two guards to accommodate my check would
+  have been fitting the tests to the change — the thing I pushed back on earlier the same
+  day when the export-surface pin refused two string constants. And the check earns little:
+  3 of 3 dangling citations were TRUE when written, so a write-time probe catches none of
+  the real population, only a typo the read side reports one ship later.
+  `lock-with-test` KEEPS its check — it is the interactive verb a human aims at one
+  finding, where immediate refusal is worth the friction. The asymmetry is now asserted so
+  it reads as deliberate.
+
+### Verification
+- Live: `list-unlocked-fixes` reports `danglingLocks: {count: 3, checked: 240}` with the
+  three rows named — the same 3 the standalone query found, through the real command.
+- **Negative control**: disabling the read check fails 2 tests. The write-side control
+  was what exposed the contract breakage, and the check is gone as a result.
+- The test's control and subject are both REAL files — the test asserts its own existence
+  premises before relying on them, so it cannot pass by testing nothing.
+- A `spec_path` naming a DIRECTORY is covered: `existsSync` alone would accept it, and
+  `classifyTestPath` does not (the INC-001 class).
+- 243 tests green across the affected suites, including `gate-honesty` (the SKILL.md prose
+  gate — the new text avoids the enforcement verbs that tripped it earlier) and the golden
+  envelopes.
+
+### Next
+The `primary_file` write-side defect recorded two entries below is still open, and is the
+larger of the two: unlike `spec_path`, those values are often not paths at all.
+
+---
+
 ## 2026-09-06 — `mechanicallyResolved` was unreachable for its own population; restored, and inert on today's data
 
 ### Changes

@@ -126,6 +126,12 @@ const EXPECTED_EXPORTS = [
   'countAgedUnremediatedAcceptances', // same, for the 30d ceiling + 7d floor (2026-08-11)
   'countAcceptedPermanent', // the DISPOSITION axis — decided, not forgotten (2026-08-11)
   'countUnremediatedAcceptances', // same denominator, sibling view (2026-07-31)
+  // The raw material for the dangling-lock check (upstream b2c9a63f, 2026-09-06). A lock
+  // REMOVES a finding from `unlocked_fixes`, so a citation naming a file nobody can open
+  // reads as coverage forever. Existence cannot be asked in SQL — Postgres cannot stat a
+  // file — so the reader returns citations and the caller resolves them through
+  // `classifyTestPath`, the same oracle `lock-with-test` already refuses on.
+  'getRecordedSpecPaths',
   'getUnlockedFixes',
   // Repo-scoped single-finding lookup. Exists because the LIMIT-20 sampler
   // above must never be used to find ONE finding: unscoped it returned an
@@ -539,6 +545,11 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // a test: it sat between two awaits in a store module with no live-DB
     // harness. Exporting the decision is what made it provable.
     // tests/active-snapshot-pointer.test.mjs.
-    assert.equal(EXPECTED_EXPORTS.length, 200);
+    // 200 → 201: `getRecordedSpecPaths` (upstream b2c9a63f, 2026-09-06). A lock removes
+    // its finding from `unlocked_fixes` permanently, so a `spec_path` naming a file that
+    // no longer resolves reads as coverage and is never re-raised — measured here at 3 of
+    // 235 rows. Existence is not answerable in SQL, so the reader hands citations to the
+    // caller and `classifyTestPath` resolves them.
+    assert.equal(EXPECTED_EXPORTS.length, 201);
   });
 });
