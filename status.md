@@ -1,5 +1,150 @@
 # Project Status Log
 
+## 2026-09-06 — A cadence watcher that could not see its own blind spot, promoted
+
+### Consumer Verification (previous ship)
+- **Commit**: `7495776b71dbf49b6f6b106d2fd912f3a79286d1` (`docs(status): log the c446e6c1 triage and the unlogged adopt-mode fix`), tip of a 3-commit fast-forward `eb69e9cd..7495776b` pushed to `main` 2026-09-06 from the linked worktree `symbol-index-corpus-fix-196b90`.
+- **Retrieval**: `git ls-remote origin main` → `7495776b71dbf...`, checked directly rather than trusting the push exit code (both 0; the ref is the only authority). Clean-checkout evidence from the pre-push hook's own throwaway worktree **at the pushed commit**: full `check`, **15,312 pass / 0 fail**. Consumer sync `Targets: 3/3 reached · Updated: 5 · Unchanged: 2363 · Errors: 0`.
+- **SUBJECT CHECK — the one line this ship changed, read at each consumer's own layout.** The change is a prose path inside `docs/reference/consistency-contract.md`, the only closure member landing at a real tracked consumer `docs/` path, so the producer-side green says nothing about it. Grepped each consumer's on-disk copy for the new absolute-URL form:
+  - `ai-organiser` — **RECEIVED**; line 695 carries the upstream URL and line 697 the `scripts/.claude-skills/lib/redact.mjs` path.
+  - `storyline` — **RECEIVED**.
+  - `wine-cellar-app` — **NOT updated**, and this is the expected, correct outcome rather than a sync failure: their committed `.sync-overrides.json` freezes this whole document, so the sync must not overwrite it. Their copy still shows their own hand-edit (`scripts/.claude-skills/lib/redact.mjs` at line 692).
+- **Result**: **verified**. Two of three consumers received the fix and the third is frozen by its own declared override — which is precisely the cost this ship's upstream note asked them to reconsider. **The freeze was confirmed empirically here, not merely predicted**: the reporter is the one consumer that cannot receive the fix to the defect they reported.
+- **Open, not caused by this ship**: `storyline`'s store (`c7177057dcafa55d`) remains 1 migration behind (`20260905120000_refresh_run_ownership_epoch.sql`); applying it needs that store's owner DSN, which this process does not hold.
+
+### Changes
+
+Promoted `storyline`'s repo-local `check-drift-cadence.mjs` into the bundle as
+`scripts/workflow-cadence-doctor.mjs`, so every consumer inherits a watcher for
+the defect class it was built for: **a cron that stops firing produces no run,
+no failure and no notification — nothing, which looks exactly like a quiet
+week.** Merged as `4853d544` via PR #106.
+
+**The measurement that justified it, reproduced before writing any code.**
+`storyline`'s `Phase gates` runs on push, PR, dispatch and a nightly cron, the
+nightly being — in that workflow's own comment — *"the standing early-warning
+signal for the RUNNER HOST"*. Every scheduled run failed for four consecutive
+days (`6c4e8dc`, `098402d`, `081c365`, `3ccae57`) and nothing said so. Run
+against its live history on 2026-09-06:
+
+```
+ALL events      | runs:20  successes:11  | OK         | last successful run 0.1 days ago
+event=schedule  | runs:4   successes:0   | NEVER-RAN
+```
+
+The source instrument queried `?per_page=20&status=completed` with **no event
+filter**, so eleven green push runs drowned four red scheduled ones and it
+reported healthy for the entire outage. (20/11 rather than the 30/16 in the
+brief: `per_page=20` caps the page; the verdict split is identical.) The outage
+surfaced only because one commit happened to pass on `push` and fail on
+`schedule`. **A watcher that cannot distinguish "the scheduled run is failing"
+from "pushes are fine" cannot see that class of defect at all.**
+
+Generalised on three axes: `event` per watch entry; verdict prose that names
+whatever workflow is watched (the source's messages were hardcoded to
+architectural drift); and a committed `.workflow-cadence.json` watch list of
+`(workflow, event, maxAgeDays)` entries instead of one hardcoded workflow.
+
+**Two properties preserved, with the reasoning moved into the code so a
+refactor cannot quietly drop them.** *Advisory, never blocking* — the default
+exit is 0 on every verdict, because a gate that red-lights an unrelated push
+when a cron slipped on a workstation is the cried-wolf shape that earns
+`--no-verify`. *Silence means exactly one thing* — every non-OK outcome warns,
+**including its own API call failing** (`undetermined`) and its own watch list
+being ABSENT while the repo has crons (`unconfigured`, which prints the JSON to
+paste). Only a repo with genuinely no scheduled workflows is quiet.
+
+**`--strict` is the one deliberate addition, and it exists for exactly one
+caller.** `maintenance-checks.mjs`'s `runCheck` derives a check's status from
+the SPAWNED PROCESS'S EXIT CODE. Registering an always-exit-0 doctor in that
+registry would have reported `ok` forever — a watcher manufacturing false calm
+inside the maintenance registry, one level up from the defect it detects. It
+changes no verdict and no push-time caller uses it.
+
+**Added: the vacuity guard.** `never-ran` has causes that read identically to a
+human — the workflow genuinely never succeeded, versus a query that matched
+nothing (wrong filename, an `event` that workflow never fires on), versus a 404.
+The second is a broken instrument wearing a real finding's clothes. Verdicts now
+carry `runsExamined` and a boolean `vacuous`, and the three causes get distinct
+prose, so neither a reader nor a test can mistake one for another.
+
+**A second defect, found during the promotion itself.** The inherited direct-run
+guard was `process.argv[1].replace(/\\/g,'/').endsWith('scripts/<name>.mjs')` —
+true in the source repo, **false** at the consumer path
+`scripts/.claude-skills/<name>.mjs`. The promoted copy ran nothing, printed
+nothing and **exited 0** in a real consumer layout: a watcher shipped as a
+silent no-op. `--selfcheck-relocation` passes throughout, because its handler
+sits at module top level and returns *before* the direct-run guard is ever
+evaluated — it proves the import graph survives relocation and nothing below it.
+Now `import.meta.url === pathToFileURL(process.argv[1]).href`, comparing the
+resolved file rather than a path suffix. **The generalisation worth keeping: a
+smoke test that returns before the code under test is not a smoke test for that
+code.**
+
+**Verification.** Positive control — `phase-gates.yml@schedule` → `NEVER-RAN`, 4
+runs examined, `vacuous: false`. Negative control — this repo's six weekly crons
+→ **6/6 `OK`**, exit 0 even under `--strict`, no false alarm. Vacuity checked
+live: a bogus `event` → `vacuous: true`; a missing workflow → 404 with its own
+named cause. The regression fixture pins **both halves** of the measurement,
+including the assertion that the *unfiltered* query still reads `OK` on the same
+data — a fixture that does not reproduce the blindness proves nothing about the
+fix. Five mutants, each caught by the intended test and, for the faithful
+relocation mutant, only that one. `npm test` **15,350 pass / 0 fail / 39
+skipped**.
+
+**Two invariants `npm run check` cannot see, tripped and fixed.** Both live in
+`npm test`, the last item in the chain: a new npm script needs a
+`scripts/.cli-catalog.json` entry, and every `fs.rmSync` needs
+`{recursive, force, maxRetries: 3, retryDelay: 50}`. Worth knowing because each
+costs a ~6.5-minute re-run to discover.
+
+**Process note — a task notification reported exit 0 while the run was really
+`EXIT=1`.** That was the wrapper's exit code, not `npm test`'s; the two failures
+above were hiding behind it. Read the captured `EXIT=` line, never the
+notification.
+
+**The first push was blocked by `upstream:reconcile:gate`, and it was branch
+staleness rather than a finding** — `origin/main` already carried `33d96d07`
+recording the `c446e6c1` disposition. Rebased onto it rather than editing shared
+store state. Merged with `--rebase` specifically because the branch sat directly
+on main, so the tree hash is unchanged (`c5125dcf`) and history stays linear;
+GitHub still rewrote the sha (`1e719d63` → `4853d544`), which is why the sync
+was re-run from the main checkout afterwards so the consumers' manifests pin a
+live commit rather than an orphaned one.
+
+**Registration** (a script not in the list is not synced — which would have been
+a fitting failure for this particular tool): `sync-to-repos.mjs` +
+`sync-inventory.mjs` in lock-step, `CLI_SMOKE_SET`, `maintenance-checks` key
+`workflow-cadence` (requiredEnv `GITHUB_TOKEN`, so an uncredentialed machine
+skips cleanly rather than warning weekly), `npm run cadence:doctor`,
+`.cli-catalog.json`, and `docs/reference/workflow-cadence-doctor.md`.
+`.github/**` deliberately untouched — workflows are genuinely repo-specific,
+which is exactly why a *script* is the shareable half.
+
+**Not built, deliberately: this is not a notification.** It tells whoever reads
+CI output. That gap is what actually let four red nightlies pass unnoticed — the
+doctor would have warned on every push from 3 September, and somebody still has
+to read it. Adoption here is **preventive, not curative**: this repo is green
+everywhere (6/6). The value is that the next repo to add a cron inherits the
+watcher.
+
+Backlog 2026-09-06T10:51Z: Q1 66c/17p (+215 aged) · Q2 142c/88p (50 perm) · Q3 2212 · debt 234 cloud/106 local (0 spilled) · upstream 1
+
+### Gate readings
+- **Q1 (unlocked fixes)**: 66 code / 17 plan, **`agedOut` 215** — obligations that
+  expired unlocked *after* `practiceStart`. That is a real leak and it is the
+  number to watch, not the visible backlog; `prePractice` 232 is bookkeeping, not
+  work owed.
+- **Q2 (unremediated acceptances)**: 230 open (142 code / 88 plan), 50
+  `accepted-permanent` (decided, not backlog), `agedOut` 5 (2 HIGH), `notYetDue`
+  47. The capped auto-reconcile examined 1 and confirmed it still present.
+- **Migrations**: realized; `stores:drift` **all current across 2 stores** —
+  `storyline`'s one-migration lag noted in the previous ship is now closed.
+- **Upstream queue**: 1 open (MEDIUM `f8d2730f`, from `wine-cellar-app`, about
+  `remediation-reconcile` mislabelling plan-mode rows). Untouched by this ship.
+- **Campaigns**: none stalled. **Persona P0s**: `PERSONA_TEST_REPO_NAME` unset —
+  this repo has no frontend.
+
 ## 2026-09-06 — The sync rewrites COMMANDS, not prose: a false report that found a real bug
 
 ### Consumer Verification (previous ship)
