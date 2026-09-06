@@ -30,7 +30,10 @@ describe('prepush hook — Status-aware selection', () => {
 
   it('never lets selection abort the push (|| true + empty-check)', () => {
     assert.match(HOOK_BODY, /--select "\$PLANS_DIR" 2>\/dev\/null \|\| true/);
-    assert.match(HOOK_BODY, /\[ -z "\$PLAN_FILE" \] && exit 0/);
+    // `finish 0` since v5 — still an unconditional success exit, but routed
+    // through the trailer so the consumer's own gates are not skipped with the
+    // audit. See prepush-local-hook-trailer.test.mjs.
+    assert.match(HOOK_BODY, /\[ -z "\$PLAN_FILE" ] && finish/);
   });
 
   it('carries the version marker', () => {

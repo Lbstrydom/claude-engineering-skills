@@ -47,7 +47,27 @@ const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush
 // checkout instead of cwd. A v2 body run from a linked worktree enumerated
 // sibling WORKTREES, found nothing, and skipped the audit with exit 0 — on
 // every push a Claude Code session makes. Re-install to pick it up.
-const HOOK_VERSION    = 3;
+// v4 (2026-09-06): two fixes to the plan-status gate, measured in a consumer.
+// (a) MAIN_PARENT is derived with `pwd -W` where that exists, so the path
+// handed to node.exe is already NATIVE and does not depend on MSYS rewriting
+// argv on the way in. (b) The gate probes whether the checker can RUN before
+// interpreting its exit code, so a crash is reported as a crash rather than as
+// a Status violation. Re-install to pick both up.
+// v5 (2026-09-06): the CONSUMER'S OWN extension point now runs on every push.
+// `.githooks/pre-push.local` was invoked on the last line, below three
+// unconditional `exit 0`s — no docs/plans, no source repo beside the checkout,
+// and (the ordinary case) no plan SELECTED. Measured in wine-cellar-app: with
+// every plan Complete, `check-plan-status.mjs --select` returns empty, so the
+// third fired on a real push and the local hook — that repo's full unit suite,
+// its npm-args gate and its knip gate — never ran, while its AGENTS.md said it
+// did. A skipped gate reads exactly like a pass. Same defect the round-4 fix
+// repaired for the weekly-maintenance block by hoisting it above the early
+// exits; the consumer extension point was not hoisted with it, and hoisting is
+// the wrong remedy here anyway (see the `finish` comment in the body).
+// Re-install to pick it up. NOTE for operators: on a repo whose local hook runs
+// a test suite, pushes get slower by exactly that suite — which is the gate
+// working. Bypass per-push with PREPUSH_LOCAL_DISABLE=1 or `git push --no-verify`.
+const HOOK_VERSION    = 5;
 const HOOK_VERSION_MARKER = `# hook-version: ${HOOK_VERSION}`;
 // Accept the legacy marker too so existing installs (pre-rename) can be
 // upgraded in place by `npm run hooks:install` without manual cleanup.
@@ -70,7 +90,44 @@ ${HOOK_VERSION_MARKER}
 # Bypass per-push: \`git push --no-verify\`.
 # Disable session: \`AUDIT_PREPUSH_DISABLE=1 git push\`.
 
+# AUDIT_PREPUSH_DISABLE is the WHOLE-hook kill switch and stays one, deliberately:
+# it is the documented "turn this thing off" escape, and \`finish\`-ing through it
+# would take that away. The consumer half has its own switch
+# (PREPUSH_LOCAL_DISABLE=1), and \`git push --no-verify\` still skips everything.
 [ "$AUDIT_PREPUSH_DISABLE" = "1" ] && exit 0
+
+# ── Consumer extension point, reached from EVERY exit path (v5) ─────────────
+# UNMANAGED — the consumer owns .githooks/pre-push.local. This installer rewrites
+# the whole hook body on every run, so repo-specific push gates appended to THIS
+# file would be silently wiped on the next sync; the consumer's file is committed,
+# reviewable, and never touched by the installer. Its exit code is authoritative,
+# so a repo can express a genuinely blocking gate (its own test suite) without
+# forking upstream tooling.
+#
+# WHY A FUNCTION AND NOT A TRAILING BLOCK. It used to be the last lines of this
+# file, below three unconditional \`exit 0\`s — no docs/plans, no source repo
+# beside the checkout, and (the ordinary case) no plan SELECTED. So on a repo
+# where every plan is Complete, the consumer's own gates never ran and the push
+# just succeeded: a skipped gate reads exactly like a pass. Same defect the
+# round-4 fix repaired for the maintenance block above by hoisting it; hoisting
+# is wrong here, because the local hook is typically the EXPENSIVE gate and
+# should run last, after the cheap upstream ones have had their chance to fail.
+# A trailer gives both: last in order, unconditional in reach.
+#
+# Every \`exit 0\` below is therefore \`finish\`. A non-zero exit is NOT — those are
+# gates refusing the push, and running a test suite after deciding to refuse
+# would only make the refusal slower. So \`finish\` takes no argument and always
+# exits 0 on its own; the only non-zero it can produce is the local hook's,
+# which is authoritative and propagated unchanged.
+#
+# Bypass: PREPUSH_LOCAL_DISABLE=1 or \`git push --no-verify\`.
+LOCAL_HOOK=".githooks/pre-push.local"
+finish() {
+  if [ "$PREPUSH_LOCAL_DISABLE" != "1" ] && [ -f "$LOCAL_HOOK" ]; then
+    sh "$LOCAL_HOOK" || exit $?
+  fi
+  exit 0
+}
 
 # ── Opportunistic weekly local maintenance (opt-in, backgrounded) ───────────
 # Local replica of the 5 GH Actions cron workflows (architectural-drift,
@@ -104,7 +161,7 @@ if [ -f "$MAINT_SCRIPT" ]; then
 fi
 
 PLANS_DIR="docs/plans"
-[ ! -d "$PLANS_DIR" ] && exit 0
+[ ! -d "$PLANS_DIR" ] && finish
 
 # Locate the audit-loop install FIRST — plan selection now runs through the
 # SOURCE repo's Status-aware CLI (check-plan-status.mjs), so discovery must
@@ -131,7 +188,19 @@ if [ -z "$AUDIT_LOOP_DIR" ]; then
   MAIN_PARENT=""
   COMMON_GIT_DIR="$(git rev-parse --git-common-dir 2>/dev/null)"
   if [ -n "$COMMON_GIT_DIR" ]; then
-    MAIN_PARENT="$(cd "$COMMON_GIT_DIR/../.." 2>/dev/null && pwd)"
+    # RESOLVE TO A NATIVE PATH, DO NOT RELY ON MSYS ARGV REWRITING. On
+    # git-bash plain \`pwd\` prints the MSYS form (/c/GIT), which reaches
+    # node.exe intact ONLY while the MSYS runtime is rewriting arguments.
+    # MSYS_NO_PATHCONV=1 and MSYS2_ARG_CONV_EXCL=* both switch that off — and
+    # plenty of tooling sets them — after which node resolves /c/GIT/... against
+    # the CURRENT DRIVE root and dies with
+    # \`Cannot find module 'C:\\c\\GIT\\...'\` (measured 2026-09-06 in a consumer;
+    # it aborted a push whose diff touched no plan at all). \`pwd -W\` is the
+    # MSYS/Cygwin builtin that prints C:/GIT directly, which every consumer of
+    # the value here — sh's glob, \`test -f\`, and node — accepts unconverted.
+    # Elsewhere \`pwd -W\` is an unknown option, so the \`||\` falls back to plain
+    # \`pwd\` and Linux/macOS behaviour is byte-identical.
+    MAIN_PARENT="$(cd "$COMMON_GIT_DIR/../.." 2>/dev/null && { pwd -W 2>/dev/null || pwd; })"
   fi
   for parent in "$MAIN_PARENT" ".."; do
     [ -n "$parent" ] || continue
@@ -150,7 +219,7 @@ AUDIT_SCRIPT="$AUDIT_LOOP_DIR/scripts/openai-audit.mjs"
 STATUS_CLI="$AUDIT_LOOP_DIR/scripts/check-plan-status.mjs"
 if [ -z "$AUDIT_LOOP_DIR" ] || [ ! -f "$AUDIT_SCRIPT" ]; then
   echo "[prepush-hook] claude-engineering-skills not found beside \"\${MAIN_PARENT:-..}\" (set CLAUDE_AUDIT_LOOP_DIR to override) — skipping audit" >&2
-  exit 0
+  finish
 fi
 
 # Select the ONE in-flight plan to audit via the Status-aware CLI — NOT
@@ -169,14 +238,46 @@ fi
 # printed as advisory context.
 # Bypass: PLAN_STATUS_DISABLE=1 or \`git push --no-verify\`.
 if [ "$PLAN_STATUS_DISABLE" != "1" ]; then
+  # DID THE CHECKER RUN? Ask before interpreting its exit code. \`--drift\`
+  # exits 0=clean / 1=violations, and every way node can fail to start (a path
+  # the runtime cannot resolve, a syntax error, a missing dependency) also
+  # exits 1 — so the exit code ALONE cannot separate "read the Status lines and
+  # found a violation" from "never read a Status line". This gate used to
+  # render the second as the first, printing a specific factual claim ("a plan
+  # changed in this push has a non-conforming Status") on a push whose diff
+  # contained no plan at all. A gate whose failure message misidentifies the
+  # cause teaches the operator to reach for PLAN_STATUS_DISABLE=1 reflexively,
+  # which retires the gate without anyone deciding to.
+  # \`--selfcheck-relocation\` prints OK and exits 0 before the CLI parses
+  # anything, so it answers exactly the runnability question and nothing else.
+  PLAN_STATUS_PROBE="$(node "$STATUS_CLI" --selfcheck-relocation 2>&1)"
+  if [ "$PLAN_STATUS_PROBE" != "OK" ]; then
+    # Node's stack puts the useful line ("Error: Cannot find module '…'") several
+    # lines in, under a loader frame and a bare \`throw err;\` — so quote the
+    # Error line when there is one, and only fall back to the head of the output
+    # when the failure has some other shape.
+    PLAN_STATUS_REASON="$(printf '%s\\n' "$PLAN_STATUS_PROBE" | grep -m1 -E '^[A-Za-z]*Error[]: []' || true)"
+    [ -z "$PLAN_STATUS_REASON" ] && PLAN_STATUS_REASON="$(printf '%s\\n' "$PLAN_STATUS_PROBE" | grep -v '^[[:space:]]*$' | head -n 3)"
+    echo "" >&2
+    echo "❌ [prepush-hook] plan-status gate CANNOT RUN — the checker did not start:" >&2
+    echo "     $STATUS_CLI" >&2
+    printf '%s\\n' "$PLAN_STATUS_REASON" | sed 's/^/     | /' >&2
+    echo "   NO plan Status was read. This is NOT a finding about your plans —" >&2
+    echo "   it says nothing about whether they conform." >&2
+    echo "   Fix the path above (set CLAUDE_AUDIT_LOOP_DIR to override discovery)," >&2
+    echo "   or bypass with PLAN_STATUS_DISABLE=1 / git push --no-verify." >&2
+    echo "   Refusing rather than pushing ungated — a skipped gate reads as a pass." >&2
+    echo "" >&2
+    exit 1
+  fi
   if ! node "$STATUS_CLI" --drift >&2; then
-    echo "[prepush-hook] a plan changed in this push has a non-conforming Status — fix it or set PLAN_STATUS_DISABLE=1" >&2
+    echo "[prepush-hook] plan-status gate FAILED — the checker ran and a plan changed in this push has a non-conforming Status (listed above) — fix it or set PLAN_STATUS_DISABLE=1" >&2
     exit 1
   fi
 fi
 
 PLAN_FILE=$(node "$STATUS_CLI" --select "$PLANS_DIR" 2>/dev/null || true)
-[ -z "$PLAN_FILE" ] && exit 0
+[ -z "$PLAN_FILE" ] && finish
 
 echo "[prepush-hook] auditing $PLAN_FILE via $AUDIT_LOOP_DIR (--scope diff)..." >&2
 # AUDIT_ALLOW_FOREIGN_CWD=1: this runs the SOURCE repo's openai-audit.mjs against
@@ -214,22 +315,10 @@ if [ "$SURFACES_DRIFT_DISABLE" != "1" ] && [ -f "$SURFACES_BUILDER" ] && [ -d ".
   fi
 fi
 
-# ── Repo-local extension (UNMANAGED — the consumer owns this file) ──────────
-# This installer rewrites the whole hook body on every run, so repo-specific
-# push gates appended HERE would be silently wiped on the next sync. Put them
-# in .githooks/pre-push.local instead: it is committed, reviewable, owned by
-# the consumer repo, and this installer never touches it.
-#
-# Its exit code is authoritative — a non-zero exit aborts the push, so a repo
-# can express a genuinely blocking gate (e.g. its own test suite) without
-# forking upstream tooling.
-#
-# Bypass: PREPUSH_LOCAL_DISABLE=1 or \`git push --no-verify\`.
-LOCAL_HOOK=".githooks/pre-push.local"
-if [ "$PREPUSH_LOCAL_DISABLE" != "1" ] && [ -f "$LOCAL_HOOK" ]; then
-  sh "$LOCAL_HOOK" || exit $?
-fi
-exit 0
+# The repo-local extension runs HERE, exactly as it always did — but via
+# \`finish\`, which every success path above also goes through. See its definition
+# near the top for why it is a function rather than these trailing lines.
+finish
 `;
 
 // ── CLI args ───────────────────────────────────────────────────────────────
