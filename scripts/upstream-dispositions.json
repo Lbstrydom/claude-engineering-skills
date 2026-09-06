@@ -539,6 +539,17 @@
         "value": "tests/refresh-ownership-epoch-db.test.mjs"
       },
       "recordedAt": "2026-09-05T16:23:08.343Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "fe1ff38a-5aa0-42fe-b964-f46d557ff463",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/unlocked-fixes-mode.test.mjs"
+      },
+      "recordedAt": "2026-09-06T11:13:31.233Z"
     }
   ]
 }
