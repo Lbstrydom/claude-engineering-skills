@@ -216,6 +216,13 @@
         "tests/debt-auto-capture-partial-capture-cli.test.mjs"
       ],
       "proof": "process"
+    },
+    {
+      "id": "round-1-passes-the-selected-scope",
+      "kind": "document-only",
+      "statedIn": "skills/audit-code/SKILL.md",
+      "stated": "for `plan` or `full`. **Pass it; do not hardcode `diff` here.** This block read",
+      "reason": "An instruction to the AGENT composing Step 2's Round-1 invocation, so there is no /audit-code exit code to assert — the same disposition and the same shape as ship/category-a-never-staged. It is NOT unchecked prose: the SKILL TEXT side is guarded by tests/skill-staging-instructions.test.mjs ('the Round 1 invocation passes the SELECTED scope, not a literal'), which fails if the fenced invocation carries a literal --scope diff followed by a line continuation, or stops passing the resolved scope variable, and which refuses to pass vacuously if the invocation is renamed away. Added 2026-09-06 with the fix it guards: the block passed the literal --scope diff while the frontmatter advertises --scope diff|plan|full, so an explicitly requested full or plan audit ran as a diff audit — real provider spend, a clean-looking result over a fraction of what was asked for, and nothing in the output saying the scope had been dropped. The advertisement and the invocation sit 130 lines apart and each is locally correct, which is why the guard is mechanical rather than a note next to the mistake."
     }
   ],
   "ignoredCandidates": [
