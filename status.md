@@ -1,5 +1,53 @@
 # Project Status Log
 
+## 2026-09-06 — a lock directory vanishing mid-walk killed a whole suite at describe-time
+
+### Changes
+Found by the push the entry below was trying to make — the second time today that a gate
+blocking a push turned out to be reporting a real defect in something else.
+
+`tests/env-loading-single-oracle.test.mjs` walks the entire repo for source files at
+**describe-time**, outside any `it`. In the pre-push sandbox it died with
+`ENOENT ... .audit/session-ledger.json.lock`: `withFileLock` creates that lock as a
+DIRECTORY and removes it, and a concurrent suite did exactly that between this walker's
+`readdirSync` of `.audit/` and its recursion into the entry. Because the throw happens at
+describe-time, the failure is not "one assertion failed" — **the entire structural half of
+the env-loading gate never ran**, and the suite reported as a hard error rather than as a
+missing check.
+
+The vanished entry was gitignored scratch that `withoutIgnored` would have subtracted a
+moment later, so nothing was even lost by skipping it.
+
+`ENOENT`/`ENOTDIR` on a directory now yields nothing instead of throwing; every other
+error still propagates, because a walk failing for a reason that is not "it went away" is
+a real problem and must stay loud.
+
+### Files Affected
+- `tests/env-loading-single-oracle.test.mjs` — transient-tolerant walk + both directions pinned
+- `status.md`
+
+### Decisions Made
+- **Fixed rather than deferred, though it is neither mine nor related to the change it
+  blocked.** Scope by impact, not authorship: my push rode on this path, and the only
+  alternative was `--no-verify` past a gate that was correctly reporting a fault.
+- **Did not add `.audit` to `SKIP_DIRS`**, which would have fixed today's instance and left
+  the class open. The walker's own docstring warns against hardcoded root lists for exactly
+  this reason — any other directory racing with a temp fixture would reproduce it.
+- **Fail-open is only defensible here because something else counts.** Swallowing an ENOENT
+  could in principle make a scan vacuous; it cannot here, because a tracked source file does
+  not disappear mid-run and the existing `files.length > 100` guard fails an under-collecting
+  walk for any other reason. Stated rather than assumed, since fail-open is normally the
+  wrong direction in this repo.
+
+### Verification
+- Red-then-green by construction: the pre-fix walker throws on a non-existent directory, so
+  the new test's `collectMjsFiles(<absent>)` assertion could not have passed against it.
+- The direction that must NOT be swallowed is pinned too — `collectMjsFiles(null)` must still
+  throw, so a future "just catch everything" edit fails.
+- Suite green: 8/8.
+
+---
+
 ## 2026-09-06 — the stored `primary_file` was a matching key wearing a reporting key's clothes
 
 ### Changes

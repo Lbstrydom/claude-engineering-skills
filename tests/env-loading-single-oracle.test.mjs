@@ -45,8 +45,32 @@ const DOTENV_CHAIN = new Set([
 // bug class at length, and a rule that fired on prose would be turned off.
 const DOTENV_IMPORT = /(?:^|\n)\s*(?:import\s[^\n;]*from\s*['"]dotenv(?:\/[^'"]*)?['"]|import\s*['"]dotenv(?:\/[^'"]*)?['"]|(?:const|let|var)\s[^\n;]*=\s*require\(\s*['"]dotenv(?:\/[^'"]*)?['"]\s*\))/;
 
+/**
+ * Walk for source files, tolerating a directory that vanishes mid-walk.
+ *
+ * This blocked a push on 2026-09-06: the suite died at describe-time with
+ * `ENOENT ... .audit/session-ledger.json.lock`. `withFileLock` creates that lock as a
+ * DIRECTORY and removes it, and a concurrent suite did exactly that between this
+ * walker's `readdirSync` of `.audit/` and its recursion into the entry — so the walk
+ * threw before a single assertion ran. The entry was gitignored scratch that
+ * `withoutIgnored` would have subtracted anyway.
+ *
+ * Skipping the ENOENT cannot make this gate vacuous: a TRACKED source file does not
+ * disappear mid-run, and the `files.length > 100` guard below fails a walk that
+ * under-collects for any other reason. Fail-open is the right direction only because
+ * something else is watching the total.
+ */
 function collectMjsFiles(dir, acc = []) {
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    // A transient (a lock dir, a temp fixture being torn down) is not a finding.
+    // Anything else is a real problem with the walk and must still be loud.
+    if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') return acc;
+    throw err;
+  }
+  for (const e of entries) {
     if (SKIP_DIRS.has(e.name)) continue;
     const p = path.join(dir, e.name);
     if (e.isDirectory()) collectMjsFiles(p, acc);
@@ -101,6 +125,15 @@ after(() => {
 
 describe('env loading — single oracle (structural)', () => {
   const files = withoutIgnored(collectMjsFiles(REPO_ROOT));
+
+  it('a directory that vanishes mid-walk is skipped, not thrown (2026-09-06)', () => {
+    // The predicate directly, since the race itself cannot be injected reliably.
+    const gone = path.join(REPO_ROOT, '.audit', 'never-existed.json.lock');
+    assert.ok(!fs.existsSync(gone), 'guard: the subject must really be absent');
+    assert.deepEqual(collectMjsFiles(gone), [], 'an absent directory contributes nothing');
+    // And the direction that must STILL be loud: a non-ENOENT failure is a real one.
+    assert.throws(() => collectMjsFiles(null), /path/i);
+  });
 
   it('scans a non-trivial number of files (vacuous-pass guard)', () => {
     // Without this, a bad root or a broken walker reports "0 violations" and
