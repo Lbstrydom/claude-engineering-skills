@@ -179,6 +179,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "52126241-c152-4e5c-ab09-0516d01209f0",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/skill-command-blocks-parse-under-powershell.test.mjs"
+      },
+      "recordedAt": "2026-09-12T21:27:22.361Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "575256de-a3ce-48f6-b77a-de061feccf37",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
@@ -363,6 +374,17 @@
         "value": "tests/persona-consistency-run-args.test.mjs"
       },
       "recordedAt": "2026-08-22T00:00:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "91f90fec-f142-4406-8e23-6080cabd94b8",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/skill-consumer-refs.test.mjs"
+      },
+      "recordedAt": "2026-09-12T21:27:34.314Z"
     },
     {
       "schemaVersion": 1,
@@ -572,6 +594,28 @@
         "value": "tests/view-writer-key-contract.test.mjs"
       },
       "recordedAt": "2026-08-22T00:00:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "dcf380f0-3b4d-4906-a105-af0b97fb9042",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "exempt",
+        "value": "doc-only README fix, no executable contract to test"
+      },
+      "recordedAt": "2026-09-12T21:27:35.203Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "dd539400-e36e-4786-a4fb-d51c0e547435",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "wont_fix",
+      "disposition": {
+        "kind": "exempt",
+        "value": "filed with placeholder content while probing the CLI's required flags -- real report is ef229b6d-96ed-4792-98b7-e90276da00cd"
+      },
+      "recordedAt": "2026-09-12T21:27:47.407Z"
     },
     {
       "schemaVersion": 1,
