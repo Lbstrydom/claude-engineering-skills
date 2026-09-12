@@ -10,6 +10,44 @@
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in storyline's and wine-cellar-app's MAIN checkouts (exit 0, gates 1..9 green both); subject check `cross-skill.mjs persona-outcomes summary` run bare in storyline (no `--repo`)
 - **Result**: verified — the exact 2026-08-25 storyline session and its 2 P0/2 P1 the upstream report cited as unreachable now read `openP0: 0 / openP1: 1`, `pendingVerificationP0: 2` (claimed-fixed, untested — not "gone"); `openP1: 1` is genuinely open and unlabeled
 
+### Consumer Verification (previous ship)
+- **Commit**: dfe57eae on `main` (pushed 2026-09-12, range `534d7550..dfe57eae`)
+- **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `scripts/.claude-skills/lib/debt-ledger-claim-check.mjs` in wine-cellar-app's synced tree contains `mergeTopicIdEvidence` — present. The push's own sync summary confirmed 9 files updated across all 3/3 registered consumers.
+- **Result**: verified — the debt-ledger-claims-check cloud-evidence fix reached the consumer bundle intact.
+
+## 2026-09-12 — ship Step 0.5c doc fix: correct env var name + failure-mode description
+
+### Changes
+- **Upstream report `cbd8b539` (from wine-cellar-app, MEDIUM)**: Step 0.5c's
+  failure matrix in `skills/ship/SKILL.md` said cloud-off is detected by the
+  absence of `SUPABASE_AUDIT_URL` and always fails silently. Both were wrong —
+  `scripts/lib/db/client.mjs`'s `resolveDbUrl()` (v1 contract) only reads
+  `AUDIT_DB_URL`; `SUPABASE_AUDIT_URL`/`_ANON_KEY`/`_SERVICE_ROLE_KEY` are
+  legacy-only and, when present without `AUDIT_DB_URL`, make `resolveDbUrl()`
+  **throw** an actionable error rather than degrade silently (swallowed by this
+  step's own `|| true`, so the ship still continues — but the refresh never
+  runs). Silent skip only happens when neither is set. Re-verified against
+  current `client.mjs` source before editing.
+- Reworded the two failure-matrix bullets to describe both branches correctly
+  and regenerated `.claude/skills/ship/SKILL.md` via `npm run skills:regenerate`
+  (byte-identical copy, so hand-editing both was unnecessary but the generator
+  is now the source of truth for the sync).
+
+### Files Affected
+- `skills/ship/SKILL.md` — Step 0.5c failure matrix, two bullets
+- `.claude/skills/ship/SKILL.md` — regenerated
+- `skills.manifest.json` — regenerated
+
+### Out of scope (flagged, not acted on)
+- Ship's advisory refresh step never touches drift *reporting* (that's the
+  weekly GH workflow's job), and there's no upstream mechanism confirming a
+  consumer's scheduled drift workflow actually reaches the shared store rather
+  than silently fail-open. wine-cellar-app's own
+  `check-arch-drift-scoped.mjs` gap is consumer-owned, already documented
+  local debt there — not an upstream bug, so not chased here.
+
+Backlog 2026-09-12T20:41Z: Q1 46c/10p (+230 aged) · Q2 86c/120p (50 perm) · Q3 2230 · debt unmeasured · upstream 1
+
 ## 2026-09-12 — Debt-ledger backlog triage: 5 stale entries closed, ledger-claims gate fixed to check cloud too
 
 ### Changes

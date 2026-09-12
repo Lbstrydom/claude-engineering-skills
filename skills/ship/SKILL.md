@@ -882,7 +882,11 @@ node scripts/symbol-index/render-mermaid.mjs || true
 **This step is ALWAYS advisory — it never blocks a ship.** Per the
 plan's failure matrix:
 
-- Cloud off (no `SUPABASE_AUDIT_URL`) → skip silently, ship continues.
+- Cloud off (no `AUDIT_DB_URL`, and no legacy `SUPABASE_AUDIT_*` set) →
+  skip silently, ship continues.
+- Legacy-only `SUPABASE_AUDIT_*` present without `AUDIT_DB_URL` → `resolveDbUrl()`
+  throws (swallowed by this step's `|| true`), ship continues but the refresh
+  does not run.
 - `SERVICE_ROLE_REQUIRED` → print warning explaining how to enable
   refresh, ship continues.
 - RPC error / embedding error → print warning, ship continues.
