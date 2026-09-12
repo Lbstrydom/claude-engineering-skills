@@ -608,6 +608,26 @@
     {
       "line": "node scripts/ship-commit.mjs --message-file \".claude/tmp/ship-commit-msg-$EPOCH.txt\" --skill ship --models \"$MODELS\" --gate \"$GATE\" --expect-head \"$SHIP_HEAD\" --expect-branch \"$SHIP_BRANCH\" --path scripts/foo.mjs --path tests/foo.test.mjs",
       "reason": "Command-example text touching a technical identifier (\"require(\", \"-gate\"/\"GATE=\" as a flag/value name) that the enforcement-verb scanner matches as a whole word; not an enforcement claim about this skill's own behaviour. Introduced by the 2026-09-10 PowerShell-portability pass (cross-host-parity follow-up)."
+    },
+    {
+      "line": "**This step is ALWAYS advisory — it never blocks a ship.** Verified against",
+      "reason": "Upstream report cbd8b539 (wine-cellar-app) fix, reconciled with a concurrent session's independent fix to the same paragraph (83467058): Step 0.5c's failure-matrix intro. Restates the pre-existing step-0-5-gates-non-blocking disposition ('Step 0.5 pre-ship gates are non-blocking by default') for this specific step — a negative guarantee about agent orchestration, not a CLI exit code. 'Verified against' introduces the correction itself (the SUPABASE_AUDIT_URL/SERVICE_ROLE_REQUIRED/RPC vocabulary was stale relative to the postgres-parity migration), which is a documentation accuracy claim, not an enforcement claim."
+    },
+    {
+      "line": "Non-JS/TS stack → skips silently (`reason: 'unsupported-stack'`), exit 0,",
+      "reason": "Describes scripts/symbol-index/refresh.mjs's own early-return behaviour (verified against the source at fix time) for a non-JS/TS repo — a property of that CLI, not a claim /ship's own execution enforces. Same disposition class as the pre-existing 'exits 0'/'always exits 0' entries elsewhere in this file describing another script's contract."
+    },
+    {
+      "line": "or refresh-lock conflict) → `refresh.mjs` exits 1 or 2 and writes a message",
+      "reason": "Describes scripts/symbol-index/refresh.mjs's own error-exit behaviour (RepoRegistrationError/RefreshInFlightError/LockAbortError -> exit 1 or 2, verified against refresh-errors.mjs) — a property of that CLI, not a claim about /ship's own execution. The exit code belongs to a script this step invokes with `|| true`, so it is swallowed before /ship sees it."
+    },
+    {
+      "line": "to stderr; this step's own `|| true` swallows the non-zero exit so the ship",
+      "reason": "Continuation of the same sentence describing refresh.mjs's exit behaviour and this step's own `|| true` swallow — a design fact about how a non-blocking advisory step is composed (shell-level, not a /ship CLI branch), not a new enforcement claim."
+    },
+    {
+      "line": "is never blocked, but the stderr line still prints — read it if the local",
+      "reason": "Tail of the same sentence spanning the three entries above it: confirms this step remains non-blocking (restates step-0-5-gates-non-blocking) even on a swallowed non-zero exit, and that the printed stderr line is the operator's only signal. Not a new claim — the same design fact continued across a line wrap."
     }
   ]
 }

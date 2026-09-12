@@ -531,6 +531,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "cbd8b539-a6c7-4102-a434-48eed6a6fb10",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "exempt",
+        "value": "doc-only SKILL.md prose fix, no executable contract to test"
+      },
+      "recordedAt": "2026-09-12T21:11:20.907Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "d6849e0b-1767-42bc-b4af-b24ed080274b",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",

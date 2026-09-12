@@ -34,6 +34,10 @@
     {
       "line": "message naming this skill or its subject. Never inferred from surrounding",
       "reason": "The \"Where $ARGUMENTS comes from\" template line, synced verbatim from docs/audit/shared-references/input-acquisition.md into every skill that reads the token. It is authoring guidance for the agent reading the skill at parse time (where to look for input, in what priority) — no code in this repo exits or blocks on it; the enforcement, such as it is, is the human/agent following documented instructions, same class as every other prose \"never guess\" line already exempted in this contract."
+    },
+    {
+      "line": "/ `--no-arch` when the user explicitly asked. Always pass `--sid $SID`",
+      "reason": "Upstream report 52126241 (storyline, 2026-09-09) fix: the invocation this line follows moved from a multi-line backslash-continued command with `<SID>` placeholders to a single-line form with `$SID`, which brought this now-adjacent wrapped sentence back into the diff scope. 'Always pass --sid $SID so the helper writes to a session ledger you can resume from' is authoring guidance to the AGENT calling brainstorm-round.mjs about which flag to include, not a claim the helper itself enforces — the CLI accepts a call with no --sid (it simply has no session ledger to resume from), so there is no exit code or refusal for a cli-exit recipe to assert. Same class as the pre-existing 'Never inferred from surrounding' entry above."
     }
   ]
 }
