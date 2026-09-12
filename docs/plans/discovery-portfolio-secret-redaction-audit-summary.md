@@ -44,7 +44,7 @@ were correctly evidenced, not rubber-stamped.
   stale remnant from before round-1's design flip to safe-by-default.
   Fixed directly to match the rest of the plan.
 
-## Deferred (pre-existing, out-of-scope debt — captured to `.audit/tech-debt.json`)
+## Deferred (pre-existing, out-of-scope debt)
 
 12 Architecture-pass findings (repo-wide domain-map coupling: `learning-store`,
 `shared-lib`, `dashboard`, `cross-skill-bridge`, `persona-test`,
@@ -52,7 +52,12 @@ were correctly evidenced, not rubber-stamped.
 test-domain rule) — none cite a file this plan touches; none of the new
 code calls/depends on the cited paths. One pre-existing test-quality nit
 (`tests/tiered-pipeline-wiring.test.mjs`'s existing `elapsedMs`-only
-assertion, untouched by this plan's diff) deferred as independent.
+assertion, untouched by this plan's diff) deferred as independent. Logged as
+deferred debt at the time (2026-07-15); no topicId was recorded in this
+summary, and neither the local ledger nor the cloud store carries a
+matching entry today (checked 2026-09-12) — most likely already resolved by
+the domain-map/architecture-intent cleanup work since, but not independently
+re-verifiable from this doc alone.
 
 ## Gemini final gate
 

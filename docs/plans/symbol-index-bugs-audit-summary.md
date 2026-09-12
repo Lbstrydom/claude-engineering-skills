@@ -26,7 +26,9 @@ HIGH plateau at 0 for all rounds. R3 findings have new fingerprint hashes but ar
 
 ### Deferred as out-of-scope debt
 
-(captured in `.audit/tech-debt.json`)
+Logged as deferred debt at the time; no matching entry survives in either
+the local ledger or the cloud store today (checked 2026-09-12) — not
+independently re-verifiable from this doc alone.
 
 - **M5 (R1)** — Missing IO error handling in extractSymbols — pre-existing.
 - **M6 (R1)** — Hardcoded TS enum literals (`99, 99, 100`) — pre-existing.

@@ -6,6 +6,7 @@ import {
   extractCitedIds,
   checkDocument,
   executeCheck,
+  mergeTopicIdEvidence,
 } from '../scripts/lib/debt-ledger-claim-check.mjs';
 
 // Design: this check exists because docs/plans/cross-skill-command-registry.md
@@ -145,6 +146,83 @@ describe('executeCheck', () => {
     const r = executeCheck({ docs, ledgerAvailable: true, validTopicIds: new Set() });
     assert.equal(r.ok, true);
     assert.equal(r.claimingDocs, 0);
+  });
+});
+
+// Regression: a claim citing a topicId that exists ONLY in the cloud store
+// (never mirrored to this machine's local .audit/tech-debt.json) used to read
+// as unresolvable — a false positive in the exact direction this check must
+// not produce, since "unresolvable" is read as "the author overclaimed."
+// Fixtures below are drawn from the real 2026-09-12 incident: three real
+// topicIds (`vcs-parsing-and-rmsync-scope-hardening-audit-summary.md`) that
+// existed in the cloud store but not on the machine running the check.
+describe('mergeTopicIdEvidence', () => {
+  it('unions local and cloud ids when both sources are available', () => {
+    const r = mergeTopicIdEvidence({
+      localAvailable: true, localIds: new Set(['aaaa1111']),
+      cloudAvailable: true, cloudIds: new Set(['bbbb2222']),
+    });
+    assert.deepEqual([...r.validTopicIds].sort(), ['aaaa1111', 'bbbb2222']);
+    assert.equal(r.evidenceAvailable, true);
+    assert.deepEqual(r.sources, { local: true, cloud: true });
+  });
+
+  it('a cloud-only id resolves even when the local ledger is absent', () => {
+    const r = mergeTopicIdEvidence({
+      localAvailable: false, localIds: new Set(),
+      cloudAvailable: true, cloudIds: new Set(['def2b640fe5d']),
+    });
+    assert.ok(r.validTopicIds.has('def2b640fe5d'));
+    assert.equal(r.evidenceAvailable, true);
+    assert.deepEqual(r.sources, { local: false, cloud: true });
+  });
+
+  it('local-only evidence still works when cloud was not reached', () => {
+    const r = mergeTopicIdEvidence({
+      localAvailable: true, localIds: new Set(['aaaa1111']),
+      cloudAvailable: false, cloudIds: new Set(),
+    });
+    assert.deepEqual([...r.validTopicIds], ['aaaa1111']);
+    assert.equal(r.evidenceAvailable, true);
+    assert.deepEqual(r.sources, { local: true, cloud: false });
+  });
+
+  it('neither source available: evidenceAvailable is false, never silently "checked"', () => {
+    const r = mergeTopicIdEvidence({ localAvailable: false, cloudAvailable: false });
+    assert.equal(r.validTopicIds.size, 0);
+    assert.equal(r.evidenceAvailable, false);
+    assert.deepEqual(r.sources, { local: false, cloud: false });
+  });
+
+  it('a cloud store that was reached and returned zero entries still counts as available evidence', () => {
+    // Distinguishes "checked, and the store genuinely has nothing" from "never
+    // checked" — the same distinction readDebtLedger's `available` flag makes
+    // for an empty-but-present local ledger.
+    const r = mergeTopicIdEvidence({
+      localAvailable: false, cloudAvailable: true, cloudIds: new Set(),
+    });
+    assert.equal(r.evidenceAvailable, true);
+    assert.deepEqual(r.sources, { local: false, cloud: true });
+  });
+});
+
+// executeCheck itself needs no change to consume the union — it already
+// takes a plain Set. This end-to-end case pins that a claim citing a
+// cloud-only id (the real failure mode above) resolves through the same
+// executeCheck path the CLI calls.
+describe('executeCheck — resolves via cloud-sourced evidence', () => {
+  it('a claim citing a cloud-only topicId resolves once merged in', () => {
+    const { validTopicIds } = mergeTopicIdEvidence({
+      localAvailable: true, localIds: new Set(['unrelated0001']),
+      cloudAvailable: true, cloudIds: new Set(['def2b640fe5d']),
+    });
+    const docs = [{
+      relPath: 'vcs-parsing-and-rmsync-scope-hardening-audit-summary.md',
+      text: '## Debt captured (`.audit/tech-debt.json`)\n\n| `def2b640fe5d` | out-of-scope |',
+    }];
+    const r = executeCheck({ docs, ledgerAvailable: true, validTopicIds });
+    assert.equal(r.ok, true);
+    assert.equal(r.violations.length, 0);
   });
 });
 

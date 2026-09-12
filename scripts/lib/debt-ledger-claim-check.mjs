@@ -39,6 +39,23 @@
  *     check whose real job is catching a WRONG claim, not policing every
  *     RIGHT one's precision.
  *
+ * **Validity evidence is local ∪ cloud, not local alone (2026-09-12).** A
+ * `topicId` this check can't resolve is not necessarily a bad claim — the
+ * cloud store is documented elsewhere as authoritative and
+ * `.audit/tech-debt.json` as "a machine-local cache" (`debt-memory.mjs`
+ * header), and captures do not always mirror down: measured on this repo,
+ * the local ledger on one machine was missing 128 of 229 real cloud entries.
+ * A true, correctly-cited claim (`vcs-parsing-and-rmsync-scope-hardening-
+ * audit-summary.md`'s `def2b640fe5d`, `95dea9eea964`, `004c27af817f`) failed
+ * this check on that machine for that reason alone — a false positive in the
+ * exact direction this check must not produce, since "unresolvable" is read
+ * as "author overclaimed." `mergeTopicIdEvidence` below unions whichever
+ * sources the caller actually reached; a Set union is safe for an EXISTENCE
+ * question in a way it would not be for a debt COUNT (`loadAuthoritativeDebt`
+ * in `debt-memory.mjs` picks exactly one source per run for that reason) —
+ * two sources agreeing "this id exists" cannot double-count or misrepresent
+ * a citation the way summing two counts could.
+ *
  * Deliberately NOT wired into the blocking `npm run check` pipeline.
  * `.audit/tech-debt.json` is gitignored, machine-local state (see AGENTS.md
  * "Generated-artifact policy" category A) — the pre-push hook runs `check`
@@ -118,6 +135,30 @@ export function extractCitedIds(text) {
   const ids = new Set();
   for (const m of text.matchAll(TOPIC_ID_IN_BACKTICKS)) ids.add(m[1].toLowerCase());
   return [...ids];
+}
+
+/**
+ * Merge topicId evidence from the local ledger and the cloud store into one
+ * validity set. Pure — the caller decides how (or whether) each side was
+ * read; this function only combines the results. See the module header for
+ * why a union is the right operation here.
+ *
+ * @param {object} evidence
+ * @param {boolean} [evidence.localAvailable=false] - a local ledger was actually read
+ * @param {Set<string>} [evidence.localIds] - lower-cased topicIds from the local ledger
+ * @param {boolean} [evidence.cloudAvailable=false] - the cloud store was actually reached
+ * @param {Set<string>} [evidence.cloudIds] - lower-cased topicIds from the cloud store
+ * @returns {{validTopicIds: Set<string>, evidenceAvailable: boolean, sources: {local: boolean, cloud: boolean}}}
+ */
+export function mergeTopicIdEvidence({
+  localAvailable = false, localIds = new Set(),
+  cloudAvailable = false, cloudIds = new Set(),
+} = {}) {
+  return {
+    validTopicIds: new Set([...localIds, ...cloudIds]),
+    evidenceAvailable: Boolean(localAvailable || cloudAvailable),
+    sources: { local: Boolean(localAvailable), cloud: Boolean(cloudAvailable) },
+  };
 }
 
 /**

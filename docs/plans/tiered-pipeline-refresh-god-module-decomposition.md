@@ -1169,8 +1169,12 @@ gate, so no additional rounds were run). 5 of the most substantive findings
 retry-queue sensitive-path re-check gap, the `restrictFiles: []` vs `null`
 empty-scope conflation, the predictable-temp-file-path + non-exclusive-write
 security concern, and the `--flag=value` CLI parsing gap between
-`assertKnownFlags` and `parseArgs`) captured to `.audit/tech-debt.json` for
-a dedicated future fix. Outcomes finalized (21/21 labelled, 0 needs_triage).
+`assertKnownFlags` and `parseArgs`) logged as deferred debt at the time (SID
+`audit-code-1784898076`) for a dedicated future fix — no topicId was
+recorded in this summary, and no matching entry survives in either the
+local ledger or the cloud store today (checked 2026-09-12), not
+independently re-verifiable from this doc alone. Outcomes finalized (21/21
+labelled, 0 needs_triage).
 
 **Close-out**: two-pass export-migration verification (static-import grep +
 bare-path-segment grep, both passes over the whole `scripts/`+`tests/`

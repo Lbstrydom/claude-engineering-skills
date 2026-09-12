@@ -1151,4 +1151,7 @@ load-bearing for pruning pre-existing copilot-scope receipt entries).
 loop and the Gemini gate are either fixed or deferred as documented,
 evidenced debt (13 entries captured to the shared debt ledger, all
 pre-existing/independent of this diff, several explicitly re-confirmed
-across multiple rounds).
+across multiple rounds — e.g. `567867a6`, `72be9c56`, `6aec2aa8`, `3627c83a`,
+`c054015e` under `deferred_run: audit-code-skillgov-1785247511864` and its
+`-r2`/`-r3` continuations; cloud store only, not mirrored to every machine's
+local ledger).

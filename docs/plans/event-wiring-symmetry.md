@@ -1566,7 +1566,9 @@ predicts and this session reproduces).
   mismatch, nested-schema strictness gap, `.jsx` corpus-extension gap, the orphaned-pragma
   finding's dead producer path, several plan-doc inconsistencies), rounds 4-5 produced zero
   further genuine findings (verified false/stale re-raises, or pre-existing/independent debt
-  captured to `tech-debt.json`). The consolidated Gemini gate over the full 11-round union
+  captured to `tech-debt.json` — e.g. `70b71f93b2f2`, `d0db1f5a3a50`, `deaca43fef46`
+  under `deferred_run: cluster-b-r5`; cloud store only, not mirrored to every
+  machine's local ledger). The consolidated Gemini gate over the full 11-round union
   transcript returned **APPROVE**, zero new findings, zero wrongly-dismissed, explicitly
   confirming the round-4/5 dismissals were correct (GPT was hallucinating in later rounds).
 - **Remaining**: none — the plan's own scope is fully delivered. 213 fixed findings across

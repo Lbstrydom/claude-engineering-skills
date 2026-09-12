@@ -322,7 +322,10 @@ Both patches were running as local overrides in wine-cellar-app on 2026-05-04. B
   - Test file at `tests/thin-delegate.test.mjs` (repo ESM `.mjs` convention) instead of the plan's `tests/unit/scripts/isThinDelegate.test.js` (wine-cellar override path that doesn't exist in this repo).
   - Argument-passthrough rule is stricter than the original plan (which accepted `x ?? defaultVal` as a facade) — tightened per GPT R1 M4 compromise.
   - Added prefix-strip steps for `name = (...)` arrow-init and `[async ]function [name](...)` FunctionExpression-init forms — `v.getText()` on a VariableDeclaration returns the full declarator, not just the body (caught by Gemini final review).
-- **Deferred** (captured in `.audit/tech-debt.json`):
+- **Deferred** (logged as deferred debt at the time, under this era's
+  slug-style names, not the later hex `topicId` scheme; no matching entry
+  survives in either the local ledger or the cloud store today — checked
+  2026-09-12, not independently re-verifiable from this doc alone):
   - `debt-extract-io-errors` — pre-existing IO error swallowing in `extractSymbols`.
   - `debt-extract-ts-magic-numbers` — pre-existing hardcoded `target: 99, module: 99, moduleResolution: 100` literals at `extract.mjs:70-77`.
   - `debt-extract-symbols-complexity` — pre-existing cognitive complexity 47 on `extractSymbols`.

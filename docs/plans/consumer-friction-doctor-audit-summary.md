@@ -33,8 +33,10 @@ touching a repo" — exactly what that sentence describes, and the sibling of
 
 ## 2. Round 2 — `PASS` (H:0 M:2), both deferred as independent debt
 
-Captured to the debt ledger (2 inserted, cloud synced). Full reasoning here
-because the ledger's `deferredRationale` is capped at 400 chars
+Captured to the debt ledger as `2c6a79e31efe` (M1) and `b53fd10fed0d` (M2) —
+cloud store only; this machine's local `.audit/tech-debt.json` never mirrored
+this run's inserts down. Full reasoning here because the ledger's
+`deferredRationale` is capped at 400 chars
 ([schemas.mjs:1154 (8620cfe8)](../../scripts/lib/schemas.mjs)).
 
 ### [M1] Fail-open diagnostic gate — corrupt `package.json` → `unknown`

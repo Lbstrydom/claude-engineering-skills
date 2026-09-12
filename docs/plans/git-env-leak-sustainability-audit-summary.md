@@ -78,8 +78,11 @@ polish.
 - **1 false-positive claim rebutted** with cited evidence rather than
   reflexively fixed or reflexively dismissed.
 - **~7 findings correctly deferred** as independent, pre-existing, out-of-scope
-  debt — each with a specific, verified (not asserted) independence rationale,
-  captured in `.audit/tech-debt.json`.
+  debt — each with a specific, verified (not asserted) independence rationale.
+  Logged as deferred debt at the time (SID `audit-code-1784844293`); no
+  topicId was recorded in this summary, and no matching entry survives in
+  either the local ledger or the cloud store today (checked 2026-09-12) —
+  not independently re-verifiable from this doc alone.
 - Full test suite green throughout: final state **8516 pass / 0 fail / 22
   skipped**.
 

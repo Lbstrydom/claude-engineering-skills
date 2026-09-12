@@ -81,7 +81,11 @@ producer while the caller's stack is live.
   bookkeeping. `git diff` confirms this diff never touched it; the manifest
   transport decides *which files are handed to extract*, this is *post-extraction
   bookkeeping* — no call path between them. Fixing it properly needs verification
-  against a real timed-out full refresh. Captured to `.audit/tech-debt.json`.
+  against a real timed-out full refresh. Logged as deferred debt at the time
+  (SID `audit-code-manifest-1786282081`); no topicId was recorded in this
+  summary, and no matching entry survives in either the local ledger or the
+  cloud store today (checked 2026-09-12) — not independently re-verifiable
+  from this doc alone.
 - **Audit-coverage gap (shadow, accepted, 3 rounds running).**
   `duplication-detector.mjs` was in `--changed`/`--files` every round and never
   appeared in any round's `code_files` — the auditor never read the second

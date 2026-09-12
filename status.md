@@ -10,6 +10,74 @@
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in storyline's and wine-cellar-app's MAIN checkouts (exit 0, gates 1..9 green both); subject check `cross-skill.mjs persona-outcomes summary` run bare in storyline (no `--repo`)
 - **Result**: verified — the exact 2026-08-25 storyline session and its 2 P0/2 P1 the upstream report cited as unreachable now read `openP0: 0 / openP1: 1`, `pendingVerificationP0: 2` (claimed-fixed, untested — not "gone"); `openP1: 1` is genuinely open and unlabeled
 
+## 2026-09-12 — Debt-ledger backlog triage: 5 stale entries closed, ledger-claims gate fixed to check cloud too
+
+### Changes
+- **Backlog triage on `.audit/tech-debt.json`** (106 open entries): 5 entries
+  tagged `effort: EASY` turned out to be already fixed in code — the fixes
+  even cite their own topicIds in comments (`39a73f09` NUL-byte drive parsing
+  in `architecture-pass.mjs`, `39e8847b4a6c` collision-safe `debtRunId`,
+  `6ae952bf` duplicated pass-reasoning metadata, `cd77d84e`/`d96b1e86`
+  MAP+REDUCE `cached_tokens` omission) — just never closed out of the ledger.
+  Resolved all 5 via `debt-resolve.mjs` (local + cloud).
+- **`npm run debt:ledger-claims` was failing on 11 `docs/plans/*.md` docs**
+  claiming "captured to the debt ledger" with no topicId this machine could
+  resolve. Investigated each by querying the cloud `debt_entries`/`debt_events`
+  tables directly: 4 of the 11 cited REAL topicIds that exist only in the
+  cloud store (never mirrored to this machine's local ledger — measured 128 of
+  229 real cloud entries invisible locally), so the check's local-only
+  validation was producing false positives on true claims — exactly the
+  failure mode it exists to catch, in the wrong direction. The other 6 (May–
+  August, no receipt findable in either store) got their claim reworded to an
+  honest historical statement instead of an unfalsifiable "captured" assertion.
+- **Structural fix, not a workaround**: `debt-ledger-claims-check.mjs` now
+  validates against local ∪ cloud evidence (new `mergeTopicIdEvidence()` in
+  `debt-ledger-claim-check.mjs`), reusing the `initLearningStore` /
+  `isCloudEnabled` / `resolveRepoForStoreResult` pattern `debt-resolve.mjs`
+  already uses. New `--local-only` flag for an offline check; a failed cloud
+  read degrades to local-only evidence and says so (never silently "clean").
+  Both `--json` and human output now name which source(s) actually answered.
+  Re-verified end-to-end: all 11 originally-failing docs now resolve — 0
+  unresolved, with or without a local ledger present on disk.
+
+### Files Affected
+- `scripts/lib/debt-ledger-claim-check.mjs` — new `mergeTopicIdEvidence()`
+- `scripts/debt-ledger-claims-check.mjs` — cloud-read integration, `--local-only`
+- `tests/debt-ledger-claim-check.test.mjs` — 6 new tests (20 → 26)
+- 9 `docs/plans/*.md` — 3 got a real topicId citation added
+  (`consumer-friction-doctor-audit-summary.md`, `event-wiring-symmetry.md`,
+  `refactor-skill-governance.md`); 6 got their unverifiable "captured" claim
+  reworded (`discovery-portfolio-secret-redaction-audit-summary.md`,
+  `git-env-leak-sustainability-audit-summary.md`,
+  `refactor-arch-memory-symbol-index-2026-07-audit-summary.md`,
+  `symbol-index-bugs-audit-summary.md`, `symbol-index-bugs.md`,
+  `tiered-pipeline-refresh-god-module-decomposition.md`)
+
+### Decisions Made
+- A Set union of local ∪ cloud topicIds is safe for an EXISTENCE question in a
+  way it is not for a debt COUNT — `debt-memory.mjs`'s `loadAuthoritativeDebt`
+  deliberately picks exactly one source per run for counting; this check only
+  ever asks "does this id exist anywhere reachable", so two sources agreeing
+  cannot double-count or misrepresent a citation.
+- Did not try to reconstruct topicIds for the 6 old (May–August) claims by
+  hand-inserting cloud rows into the local ledger — that would have been
+  scope creep on a doc-wording task, and a genuine cloud→local backfill
+  mechanism (this repo currently only pushes local→cloud) deserves its own
+  design, not a one-off script inside a ship.
+
+### Verification
+- `node --test tests/debt-ledger-claim-check.test.mjs` — 26/26 pass.
+- Red-then-green: temporarily reverted the union to local-only, confirmed 3
+  new tests failed as expected, restored, re-confirmed green.
+- `node --test tests/debt-*.test.mjs` — 355/355 pass (full debt-* subsystem).
+- `node scripts/debt-ledger-claims-check.mjs` run for real against this
+  machine's local ledger + live cloud store: 8 claiming docs, 0 unresolved.
+
+Backlog: `node scripts/backlog-snapshot.mjs` (unrelated pre-existing backlog,
+not touched this session): Q1 46 code/10 plan unlocked fixes (+230 aged out),
+Q2 86 code/120 plan unremediated acceptances (50 accepted-permanent), 5
+upstream reports open across 2 stores.
+
 ## 2026-09-10 — Copilot/Windows cross-host shell portability pass
 
 ### Changes
