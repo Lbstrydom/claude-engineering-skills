@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "d3f742acd5d3fed5",
+  "bundleVersion": "a719b0c29a3ceddd",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -145,14 +145,14 @@
     },
     "brainstorm": {
       "path": "skills/brainstorm/SKILL.md",
-      "sha": "00c06f5448a9",
-      "size": 22979,
+      "sha": "dbb3449633b5",
+      "size": 23057,
       "summary": "Multi-LLM concept-level brainstorming. Sends the user's topic to OpenAI",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "00c06f5448a9",
-          "size": 22979
+          "sha": "dbb3449633b5",
+          "size": 23057
         },
         {
           "relPath": "references/input-acquisition.md",
@@ -191,14 +191,14 @@
     },
     "cycle": {
       "path": "skills/cycle/SKILL.md",
-      "sha": "45bd7ac4a0ef",
-      "size": 38288,
+      "sha": "2c9fa0e460af",
+      "size": 38464,
       "summary": "End-to-end feature cycle orchestrator. Runs the full skill chain in",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "45bd7ac4a0ef",
-          "size": 38288
+          "sha": "2c9fa0e460af",
+          "size": 38464
         }
       ]
     },
@@ -407,14 +407,14 @@
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "c52f800d1e5e",
-      "size": 90331,
+      "sha": "c34babcad719",
+      "size": 90835,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "c52f800d1e5e",
-          "size": 90331
+          "sha": "c34babcad719",
+          "size": 90835
         },
         {
           "relPath": "references/input-acquisition.md",
@@ -458,14 +458,14 @@
     },
     "ux-lock": {
       "path": "skills/ux-lock/SKILL.md",
-      "sha": "e220c904076b",
-      "size": 19187,
+      "sha": "7d629794d988",
+      "size": 19227,
       "summary": "Generate Playwright e2e specs. Two modes:",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "e220c904076b",
-          "size": 19187
+          "sha": "7d629794d988",
+          "size": 19227
         },
         {
           "relPath": "references/input-acquisition.md",

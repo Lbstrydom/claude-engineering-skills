@@ -398,3 +398,57 @@ test('T5 — every hook claim states rule, portable path and accelerator', () =>
     }
   }
 });
+
+// ── No-dispatch fallback paths must resolve in the CONSUMER's tree ─────────
+//
+// Upstream report 91f90fec (storyline, 2026-09-09): the no-dispatch fallback
+// told a host with no skill-to-skill dispatch to open `skills/x/SKILL.md` —
+// the AUTHORING tree, present only in this source checkout. A synced
+// consumer receives `.claude/skills/**` only (getSyncClosure() /
+// sourceRelToDestRel()), so the fallback pointed at a path absent in the
+// exact environment it exists to support. `skills-consumer-refs-gate` and
+// the focused parity suite (T4 above) both passed throughout, because
+// neither scans for a literal `skills/...` path inside prose — the source
+// checkout creates a false-positive reachability environment the report's
+// own "why existing checks miss it" section names directly.
+test('T6 — a no-dispatch fallback opens the CONSUMER path, not the authoring path', () => {
+  const SKILL_MD_RE = /(\.claude\/)?skills\/([A-Za-z0-9_-]+)\/SKILL\.md/g;
+  for (const [rel, body] of contractSurfaces()) {
+    const markers = [];
+    MARKER_RE.lastIndex = 0;
+    let m;
+    while ((m = MARKER_RE.exec(body)) !== null) {
+      if (m[1] !== 'no-dispatch') continue;
+      // The fallback instruction is the prose immediately after the marker,
+      // past the blank line that always separates the HTML comment from the
+      // blockquote callout that follows it (see skills/cycle/SKILL.md,
+      // skills/audit-plan/SKILL.md) — skip leading newlines BEFORE looking
+      // for the paragraph's end, or the window collapses to zero chars and
+      // this test would pass having scanned nothing.
+      const afterMarker = body.slice(m.index + m[0].length);
+      const contentStart = afterMarker.search(/[^\n]/);
+      const rest = contentStart === -1 ? '' : afterMarker.slice(contentStart);
+      const end = rest.indexOf('\n\n');
+      const block = rest.slice(0, end === -1 ? 800 : end);
+      markers.push(block);
+    }
+    for (const block of markers) {
+      SKILL_MD_RE.lastIndex = 0;
+      let p;
+      while ((p = SKILL_MD_RE.exec(block)) !== null) {
+        const [full, prefix, name] = p;
+        assert.ok(prefix, `${rel}: no-dispatch fallback opens "${full}" — the AUTHORING path, ` +
+          `absent from a synced consumer's tree; it must open ".claude/${full}"`);
+        // `x` is this repo's own documented stand-in for "whichever skill the
+        // step names" (see skills/cycle/SKILL.md: "Where a step below says
+        // 'invoke /x'") — not a real skill, so it has no consumer path to
+        // check. Every OTHER name is a concrete skill and must actually exist
+        // in the tree a synced consumer receives.
+        if (name === 'x') continue;
+        const consumerPath = path.join(REPO, '.claude', 'skills', name, 'SKILL.md');
+        assert.ok(fs.existsSync(consumerPath),
+          `${rel}: no-dispatch fallback opens "${full}", but ${path.relative(REPO, consumerPath)} does not exist on disk`);
+      }
+    }
+  }
+});

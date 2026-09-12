@@ -107,10 +107,11 @@ ships all the brittleness — the rule constrains both halves:
 
 ### Step 0 — Understand the fix
 
-1. If a commit hash is provided, read the commit message and diff:
+1. If a commit hash is provided, read the commit message and diff
+   (substitute the real hash for `$HASH`):
    ```bash
-   git show <hash> --stat
-   git show <hash>
+   git show $HASH --stat
+   git show $HASH
    ```
 2. Extract: what was broken, what was fixed, which files changed, which
    DOM elements are involved.

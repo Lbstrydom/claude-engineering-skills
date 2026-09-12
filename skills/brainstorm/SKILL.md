@@ -194,37 +194,29 @@ risks (Plan v6 §2.1, Gemini-G1 v1+v2).
 
 1. Compute a session ID: `SID=$(date +%s%3N)` (epoch ms) — run via Bash.
 2. Use `Write` (Claude tool) to create the file:
-   - Path: `.claude/tmp/brainstorm-<SID>.txt`
+   - Path: `.claude/tmp/brainstorm-$SID.txt`
    - Content: the topic verbatim (no escaping, no transformation)
 3. Run the helper with stdin redirected from the file. Both topic and
    output JSON live in repo-local `.claude/tmp/` (gitignored, 0o600 — not
    the world-readable OS `/tmp`):
    ```bash
-   node scripts/brainstorm-round.mjs \
-     --topic-stdin \
-     --sid <SID> \
-     [--models openai,gemini]        # omit to get the profile default (two voices) \
-     [--no-gemini]                   # OpenAI only \
-     [--openai-model <id>] [--gemini-model <id>] \
-     [--depth shallow|standard|deep] \
-     [--debate] \
-     [--continue-from <prev-sid>] \
-     [--with-context "<text>"]   # repeatable \
-     [--with-arch | --no-arch] \
-     [--with-artifact <path>]    # repeatable; the focal object \
-     [--no-policy] \
-     --out .claude/tmp/brainstorm-<SID>.json \
-     < .claude/tmp/brainstorm-<SID>.txt
+   cat .claude/tmp/brainstorm-$SID.txt | node scripts/brainstorm-round.mjs --topic-stdin --sid $SID --out .claude/tmp/brainstorm-$SID.json
    ```
+   Optional flags, appended to the same command as needed: `--models
+   openai,gemini` (omit for the profile default, two voices), `--no-gemini`
+   (OpenAI only), `--openai-model` / `--gemini-model` (a model id), `--depth
+   shallow|standard|deep`, `--debate`, `--continue-from` (a prior SID),
+   `--with-context "..."` (repeatable), `--with-arch` / `--no-arch`,
+   `--with-artifact` (a path, repeatable — the focal object), `--no-policy`.
    Pass through user-supplied `--debate` / `--depth` / `--continue-from` /
    `--with-context` / `--with-arch` / `--no-arch` flags; the helper
    validates them. The helper auto-attaches architecture context on
    architecture-intent topics without any flag — only forward `--with-arch`
-   / `--no-arch` when the user explicitly asked. Always pass `--sid <SID>`
+   / `--no-arch` when the user explicitly asked. Always pass `--sid $SID`
    so the helper writes to a session ledger you can resume from.
 4. Always clean up after rendering (Step 3) finishes — both files:
    ```bash
-   rm -f .claude/tmp/brainstorm-<SID>.txt .claude/tmp/brainstorm-<SID>.json
+   rm -f .claude/tmp/brainstorm-$SID.txt .claude/tmp/brainstorm-$SID.json
    ```
 
 The helper exits 0 even when providers fail or are misconfigured — read the
@@ -396,23 +388,21 @@ sid and round exist (the helper checks too) then invoke the helper's
 
 1. `SID=$(date +%s%3N)` — fresh tmp ID for the save invocation files
 2. Use `Write` to create three files in `.claude/tmp/`:
-   - `save-<SID>-topic.txt` — the original topic from the round you're saving from (look it up in the rendered-history or pass through verbatim)
-   - `save-<SID>-insight.txt` — the user's insight text verbatim
+   - `save-$SID-topic.txt` — the original topic from the round you're saving from (look it up in the rendered-history or pass through verbatim)
+   - `save-$SID-insight.txt` — the user's insight text verbatim
 3. Build the combined stdin file with the `---END-TOPIC---` delimiter:
    ```bash
-   cat .claude/tmp/save-<SID>-topic.txt > .claude/tmp/save-<SID>-combined.txt
-   echo "---END-TOPIC---" >> .claude/tmp/save-<SID>-combined.txt
-   cat .claude/tmp/save-<SID>-insight.txt >> .claude/tmp/save-<SID>-combined.txt
+   cat .claude/tmp/save-$SID-topic.txt > .claude/tmp/save-$SID-combined.txt
+   echo "---END-TOPIC---" >> .claude/tmp/save-$SID-combined.txt
+   cat .claude/tmp/save-$SID-insight.txt >> .claude/tmp/save-$SID-combined.txt
    ```
-4. Invoke the helper:
+4. Invoke the helper — `$ROUND_SID`/`$ROUND_NUM` are the sid/round of the
+   *existing* brainstorm round you're saving from, not the fresh tmp `$SID`
+   above; `--tags` is optional, a comma-separated list:
    ```bash
-   node scripts/brainstorm-round.mjs save \
-     --sid <user-provided-sid> --round <user-provided-round> \
-     --topic-stdin --insight-stdin \
-     [--tags <csv>] \
-     < .claude/tmp/save-<SID>-combined.txt
+   cat .claude/tmp/save-$SID-combined.txt | node scripts/brainstorm-round.mjs save --sid $ROUND_SID --round $ROUND_NUM --topic-stdin --insight-stdin
    ```
-5. Clean up: `rm -f .claude/tmp/save-<SID>-*`
+5. Clean up: `rm -f .claude/tmp/save-$SID-*`
 6. Report the result path to the user (`{ok:true, path, slugUsed}` JSON
    from the helper) — include the slug so they know where the file lives.
 

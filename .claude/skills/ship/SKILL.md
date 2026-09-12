@@ -879,17 +879,24 @@ node scripts/symbol-index/render-mermaid.mjs || true
 > So this step's value is a current LOCAL map plus a fresh cloud symbol-index for
 > future arch-memory consultations — not a commit artifact.
 
-**This step is ALWAYS advisory — it never blocks a ship.** Per the
-plan's failure matrix:
+**This step is ALWAYS advisory — it never blocks a ship.** Verified against
+the current `pg`-direct implementation (`scripts/lib/db/client.mjs`'s
+`resolveDbUrl()` and `scripts/symbol-index/refresh.mjs`) — the
+`SERVICE_ROLE_REQUIRED` / RPC vocabulary below predates the postgres-parity
+migration and no longer matches the code:
 
 - Cloud off (no `AUDIT_DB_URL`, and no legacy `SUPABASE_AUDIT_*` set) →
   skip silently, ship continues.
 - Legacy-only `SUPABASE_AUDIT_*` present without `AUDIT_DB_URL` → `resolveDbUrl()`
   throws (swallowed by this step's `|| true`), ship continues but the refresh
   does not run.
-- `SERVICE_ROLE_REQUIRED` → print warning explaining how to enable
-  refresh, ship continues.
-- RPC error / embedding error → print warning, ship continues.
+- Non-JS/TS stack → skips silently (`reason: 'unsupported-stack'`), exit 0,
+  ship continues.
+- Any other failure (DB error, embedding-provider error, repo-registration
+  or refresh-lock conflict) → `refresh.mjs` exits 1 or 2 and writes a message
+  to stderr; this step's own `|| true` swallows the non-zero exit so the ship
+  is never blocked, but the stderr line still prints — read it if the local
+  map looks stale.
 - Incremental refresh uses `git diff --name-status <since>`
   (NO `..HEAD`) UNION `git ls-files --others --exclude-standard` so
   the working-tree edits about to be committed are visible
