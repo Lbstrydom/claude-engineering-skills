@@ -15,6 +15,96 @@
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `scripts/.claude-skills/lib/debt-ledger-claim-check.mjs` in wine-cellar-app's synced tree contains `mergeTopicIdEvidence` — present. The push's own sync summary confirmed 9 files updated across all 3/3 registered consumers.
 - **Result**: verified — the debt-ledger-claims-check cloud-evidence fix reached the consumer bundle intact.
 
+## 2026-09-12 — closed 4 of 5 open upstream reports (storyline + wine-cellar-app)
+
+### Changes
+Triaged all 5 open `npm run upstream:queues` rows across the 2 stores that
+owned them (storyline's corporate Azure store, filed under
+`louis-strydom_wartsila/audit-loop`; wine-cellar-app's store). Verified each
+against current source before acting — none were taken on the report title
+alone.
+
+- **`52126241` (HIGH, storyline)** — "Copilot Windows skills contain
+  Bash-only executable contracts". The prior fix (534d7550) resolved 46/47
+  of the reported PowerShell-parse failures; re-ran the same
+  `System.Management.Automation.Language.Parser` measurement rather than
+  trusting the fix count, and found 5 more: two multi-line commands in
+  `brainstorm/SKILL.md` (backslash continuation, and a bash `< file` stdin
+  redirect — PowerShell has no `<` input redirection at all, not even as a
+  reserved-but-working operator; rewritten as `cat file | cmd`, which both
+  shells support), a `<hash>` placeholder in `ux-lock/SKILL.md`, and a
+  backslash-continued `finalize-outcomes` call in `cycle/SKILL.md`. One block
+  stays genuinely POSIX (`[ -n ... ]` test syntax in cycle's dirty-aware
+  `BASE=$(...)` recipe) and is now explicitly labeled "POSIX shell only" —
+  the report's actual complaint was silent mistranslation risk, and a labeled
+  exception a Copilot agent can see and route around is not that. Added
+  `tests/skill-command-blocks-parse-under-powershell.test.mjs`: local-only
+  (skips without `pwsh`; this repo's CI is `ubuntu-latest` only), parses
+  every `skills/**` bash fence, and fails on any unlabeled failure — a real
+  ratchet instead of a one-time count. Verified it actually catches a
+  regression (reintroduced the `<hash>` placeholder, confirmed red, restored,
+  confirmed green) and confirmed it does not cost the ~41s naive per-fence
+  spawn would have (batched into one `pwsh` invocation, ~3.5s).
+- **`91f90fec` (HIGH, storyline)** — "Copilot no-dispatch fallback opens
+  source-only skill paths". Already fixed at 534d7550 (`cycle`/`audit-plan`'s
+  no-dispatch fallbacks now open `.claude/skills/x/SKILL.md`, the tree a
+  synced consumer actually has, not the authoring-only `skills/x/SKILL.md`) —
+  confirmed against current source rather than trusted from the commit
+  message. The report's own "why existing checks miss it" named the exact
+  gap (nothing scanned for a literal `skills/...` path inside no-dispatch
+  prose), so added `tests/skill-consumer-refs.test.mjs` T6 to close it —
+  verified red on the pre-fix text, green on the fix, for both `cycle` and
+  `audit-plan`. (A first draft of T6 had a bug — it sliced an empty window
+  right after the marker comment and would have passed having scanned
+  nothing; caught by deliberately reintroducing the regression and watching
+  T6 stay green. Fixed before trusting it.)
+- **`dcf380f0` (LOW, storyline)** — "Windows Copilot MCP support range
+  conflicts with bare npx config". Already fixed at 534d7550 (README's
+  Browser Tools section now links the Copilot-Windows `cmd /c` MCP fallback
+  in `docs/audit/shared-references/browser-tool-detection.md`). Verified the
+  line is present; no further action.
+- **`403436cf` (MEDIUM, storyline)** — "Copilot inline orchestration exceeds
+  the skill context budget" (ship 89,125 chars, well over the ≤3K-token
+  target). Valid and already tracked —
+  `docs/plans/backlog-and-drift-reduction.md` records this exact debt as
+  "Noted, not touched." A real decomposition is a multi-file redesign, out of
+  scope for a report-triage pass; acknowledged rather than fixed or
+  dismissed.
+- **`cbd8b539` (MEDIUM, wine-cellar-app)** — landed independently by a
+  concurrent session (83467058, this same date) while this session was
+  mid-investigation of the same report. Rebased on top rather than
+  duplicating: kept their more accurate finding (`resolveDbUrl()` throws on a
+  legacy-only `SUPABASE_AUDIT_*` var without `AUDIT_DB_URL`, verified against
+  `scripts/lib/db/client.mjs` before merging it in) and combined it with this
+  session's independent finding that the SAME failure-matrix also still named
+  the retired `SERVICE_ROLE_REQUIRED` / "RPC error" vocabulary from before the
+  postgres-parity migration — neither concept exists in the current
+  `scripts/symbol-index/refresh.mjs`, which uses typed `Error` subclasses and
+  exits 1/2 to stderr instead.
+
+### Files Affected
+- `skills/brainstorm/SKILL.md`, `skills/cycle/SKILL.md`,
+  `skills/ux-lock/SKILL.md`, `skills/ship/SKILL.md` (merged with 83467058)
+  + their `.claude/skills/**` copies + `skills.manifest.json`
+- `tests/skill-command-blocks-parse-under-powershell.test.mjs` (new)
+- `tests/skill-consumer-refs.test.mjs` — new T6
+
+### Verification
+- `node --test tests/skill-command-blocks-parse-under-powershell.test.mjs
+  tests/skill-consumer-refs.test.mjs tests/skill-staging-instructions.test.mjs
+  tests/rmsync-retry-guard.test.mjs` — all green.
+- `npm run skills:check` / `npm run docs:refs:gate` — exit 0.
+- `npm test` (full suite, run before the concurrent-session rebase) —
+  15,628/15,630 pass; the 2 failures were both artifacts of comparing an
+  uncommitted working tree against `HEAD` (`status-integrity`'s vacuous-range
+  refusal and the skill-manifest-vs-committed-sha check) and resolved once
+  committed — not real defects.
+
+Backlog: `node scripts/backlog-snapshot.mjs`: Q1 46 code/10 plan unlocked
+fixes (+230 aged out), Q2 86 code/120 plan unremediated acceptances (50
+accepted-permanent), 5→1 upstream reports open (`403436cf` remains, tracked
+debt, see above).
+
 ## 2026-09-12 — ship Step 0.5c doc fix: correct env var name + failure-mode description
 
 ### Changes
