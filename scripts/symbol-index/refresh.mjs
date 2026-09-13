@@ -84,7 +84,7 @@ import { finishAndExit } from '../lib/cli-io.mjs';
 import { parseArgs } from './refresh-args.mjs';
 import { RepoRegistrationError, RefreshInFlightError, LockAbortError, RefreshAbortedError } from './refresh-errors.mjs';
 import { resolveAndRegisterRepo } from './refresh-repo-setup.mjs';
-import { resolveWalkStartCommit, acquireRefreshLock } from './refresh-lock.mjs';
+import { resolveWalkStartCommit, acquireRefreshLock, HEARTBEAT_INTERVAL_MS } from './refresh-lock.mjs';
 import { finalizeRefreshMode } from './refresh-mode.mjs';
 import { resolveIncrementalFileScope } from './refresh-file-scope.mjs';
 import { runExtractSummariseEmbed } from './refresh-subprocess.mjs';
@@ -291,7 +291,7 @@ async function main() {
     sinceCommit = finalized.sinceCommit;
     const prior = finalized.prior;
 
-    await runWithHeartbeat(refreshId, repoId, 15_000, async (heartbeatStatus, signal) => {
+    await runWithHeartbeat(refreshId, repoId, HEARTBEAT_INTERVAL_MS, async (heartbeatStatus, signal) => {
       // 6. Enumerate files.
       const { restrictFiles, touchedSet: scopeTouchedSet, diffStats } = await resolveIncrementalFileScope({
         mode, repoRoot, sinceCommit, repoId, prior, logOk,
