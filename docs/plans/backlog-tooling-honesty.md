@@ -274,6 +274,8 @@ graph LR
 | `scripts/lib/store/runs-findings.mjs` | modify | `getFinalReviewStats(repoName, { queueLimit = 50, after = null })`; `pendingQueue` UNION wrapped as a subquery projecting `f.id AS audit_finding_id` and `created_at::text AS created_at_cursor`; unique `ORDER BY severity_rank DESC, created_at DESC, run_id DESC, finding_fingerprint DESC`; `WHERE (severity_rank, created_at, run_id, finding_fingerprint) < ($3, $4::timestamptz, $5, $6)` when `after`; `LIMIT $2`. |
 | `scripts/lib/cross-skill/commands/final-review.mjs` | modify | `export encodeQueueCursor/decodeQueueCursor`; `limit` via `ctx.deps.resolveNudgePage({ limit: page-size ?? limit })`; `--after` decoded and passed to the store; drop the client `.slice`; envelope adds `limit`, `after`, `nextCursor` (from the last RAW row; null when raw rows < limit), `pageFilteredOut`; `--group-by work-unit` / `--work-unit` / `--no-llm-labels` via the shared grouper with `dateKey: 'created_at'`. |
 | `scripts/lib/cross-skill/registry.mjs` | modify | `final-review-pending.flags` += `limit`, `after`, `group-by`, `work-unit`, `no-llm-labels` (boolean); `list-unlocked-fixes.flags` += `group-by`, `work-unit`, `no-llm-labels` (boolean). |
+| `scripts/cross-skill.mjs` | modify | `KNOWN_FLAGS` += `--after` — the legacy GLOBAL gate runs before the registry's, so a registry-only flag is refused before its command runs (found by the Cluster B live smoke: 6 green unit tests, `unknown flag "--after"` on first real use). |
+| `tests/cross-skill-registry-conformance.test.mjs` | modify | Every registry flag must also be in `KNOWN_FLAGS` (negative control: dropping `--after` fails it). |
 | `scripts/lib/cross-skill/work-unit-grouping.mjs` | create | `export async function groupIntoWorkUnits(ctx, rows, { total, wantUnit, dateKey })` — the body moved verbatim from `ship.mjs:226-289`, `createdAt: r[dateKey]`. |
 | `scripts/lib/cross-skill/commands/ship.mjs` | modify | Remove the private grouper; import from `work-unit-grouping.mjs`; `listUnlockedFixesCmd` gains the same `--group-by`/`--work-unit` tail with `dateKey: 'fixed_at'`; `listUnremediatedAcceptancesCmd` passes `dateKey: 'accepted_at'`; five `process.cwd()` anchors → `findRepoRootFromCwd()`. |
 | `tests/backlog-work-unit-grouping.test.mjs` | create | Fake `ctx.deps.getFindingEmbeddings`; three readers, three `dateKey`s; asserts `partial`/`unclustered` honesty carries over and `--work-unit` filters on `audit_finding_id`; **egress**: members handed to `labelWorkUnits` carry no `detail`/`detail_snapshot` key even when the input rows do (canned sensitive `detail_snapshot`), and `--no-llm-labels` results in zero calls on a spied provider. |
@@ -310,7 +312,8 @@ grouper, wire `list-unlocked-fixes`, fix the five repo-root anchors. Files:
 `scripts/lib/cross-skill/commands/ship.mjs` (modify),
 `scripts/lib/cross-skill/registry.mjs` (modify),
 `tests/backlog-work-unit-grouping.test.mjs` (create),
-`tests/dangling-regression-lock.test.mjs` (modify).
+`tests/dangling-regression-lock.test.mjs` (modify),
+`scripts/cross-skill.mjs` (modify), `tests/cross-skill-registry-conformance.test.mjs` (modify).
 
 **Phase 4 — Reachable credit queue**: unique order + keyset cursor in the
 store; CLI `--after`/`nextCursor` via `resolveNudgePage`; grouping via the

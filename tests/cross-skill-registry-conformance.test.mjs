@@ -312,3 +312,27 @@ describe('import-graph bans — the port is the only way into the store (D5b)', 
       `${threaded} handler(s) thread { repoId } but ${REGISTRY.filter((e) => e.parent).length} commands declare a parent`);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// The registry's per-command flags and the legacy global KNOWN_FLAGS must
+// agree, because BOTH gates run: `cross-skill.mjs` asserts argv against the
+// global list first, then the registry path asserts the command's own. A flag
+// declared only in the registry is refused before its command ever runs — and
+// every unit test that calls the command function directly is blind to it.
+// Measured 2026-09-13: `final-review-pending --after <cursor>` passed 6 unit
+// tests and died at the CLI with `unknown flag "--after"` on its first live
+// use (docs/plans/backlog-tooling-honesty.md, Cluster B smoke).
+// ═══════════════════════════════════════════════════════════════════════
+describe('every registry flag is also in the legacy global KNOWN_FLAGS (both gates run)', () => {
+  it('no registry-declared flag is missing from cross-skill.mjs KNOWN_FLAGS', async () => {
+    const { KNOWN_FLAGS } = await import('../scripts/cross-skill.mjs');
+    const global = new Set(KNOWN_FLAGS.map((f) => f.replace(/^--/, '')));
+    const missing = [];
+    for (const cmd of REGISTRY) {
+      for (const f of (cmd.flags || []).map(normalizeFlag)) {
+        if (!global.has(f.name)) missing.push(`${cmd.name}: --${f.name}`);
+      }
+    }
+    assert.deepEqual(missing, [], 'registry flags absent from the global KNOWN_FLAGS list — the CLI refuses them before the command runs');
+  });
+});

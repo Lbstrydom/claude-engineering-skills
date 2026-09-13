@@ -174,8 +174,9 @@ export const KNOWN_FLAGS = [
   '--plan-id',
   // ── final-review-stats / final-review-adjudicate / final-review-record-fix ─
   '--queue-limit', '--worksheet', '--run-id', '--fingerprint', '--action', '--bucket',
-  // final-review-pending: --render emits the card text instead of JSON
-  '--render', '--page-size',
+  // final-review-pending: --render emits the card text instead of JSON; --after
+  // is the keyset cursor (docs/plans/backlog-tooling-honesty.md §2)
+  '--render', '--page-size', '--after',
   // skill-census: docs/plans/skill-efficacy-census.md Phase 2
   '--window-days',
   // lock-with-test: record a unit/integration test as a finding's regression lock
