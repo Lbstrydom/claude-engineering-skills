@@ -42,7 +42,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertKnownFlags, ArgvError, argOption, hasFlag, finishAndExit } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, argOption, hasFlag, finishAndExit, safeErrorClass } from './lib/cli-io.mjs';
 import { checkAll } from './lib/accepted-debt-check.mjs';
 import { loadRegistry } from './lib/accepted-debt-registry.mjs';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
@@ -52,10 +52,6 @@ import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 // the CLI smoke contract doesn't apply here.
 const AGENTS_MD_PATH = 'AGENTS.md';
 const KNOWN_FLAGS = ['--json', '--out', '--help', '-h'];
-
-function safeErrorClass(err) {
-  return err?.constructor?.name || 'Error';
-}
 
 /**
  * @returns {{jsonMode: boolean, outFile: string|null, help: boolean, outFlagWithoutValue: boolean}}

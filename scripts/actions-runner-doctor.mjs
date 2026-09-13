@@ -53,7 +53,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
-import { assertKnownFlags, ArgvError, emit, argOption, hasFlag } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, emit, argOption, hasFlag, log as err } from './lib/cli-io.mjs';
 import { parseOriginRepo } from './lib/branch-protection.mjs';
 import {
   assessRunnerFallback, runnerAssetTokens, isValidRepoSlug, readRepoArg, resolveRepoSlugFromArg,
@@ -127,8 +127,6 @@ const SUBCOMMAND = (_firstPositional === 'local' || _firstPositional === 'remove
 // caller now reads `JSON_OUT`.
 const JSON_OUT = hasFlag('json');
 const repoArg = readRepoArg(process.argv);
-
-const err = (m) => process.stderr.write(m + '\n');
 
 /** Run `gh` and return stdout, or throw with a legible message. */
 function gh(args, { input } = {}) {

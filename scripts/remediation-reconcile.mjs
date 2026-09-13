@@ -25,7 +25,7 @@
  * @module scripts/remediation-reconcile
  */
 import './lib/load-env.mjs';
-import { assertKnownFlags, emit } from './lib/cli-io.mjs';
+import { assertKnownFlags, emit, arg } from './lib/cli-io.mjs';
 import { isCloudEnabled, resolveRepoForStore } from './lib/store/repo.mjs';
 import { getStaleAcceptedFindingsForVerification, countStaleAcceptedFindingsForVerification } from './lib/store/plans-ship.mjs';
 import { applyRemediationVerificationResults, initLearningStore } from './learning-store.mjs';
@@ -40,7 +40,6 @@ import {
 export const KNOWN_FLAGS = Object.freeze(['--selfcheck-relocation', '--apply', '--cap', '--model']);
 
 const G = '\x1b[32m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
-const arg = (argv, n, d) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : d; };
 
 // No `--cap` means UNCAPPED (bounded only by ROW_FETCH_LIMIT below), not some
 // hidden default — the two call sites make opposite choices on purpose: /ship

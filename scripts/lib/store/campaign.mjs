@@ -32,6 +32,7 @@ export { withTx };
 import { isCloudEnabled } from './repo.mjs';
 import { STATIC_POOL, OSS_POOL, parseClaudeModel, parseGeminiModel, parseOpenAIModel, modelFamily } from '../model-resolver.mjs';
 import { OSS_PRICING } from '../model-pricing.mjs';
+import { escapeRegExp as escapeRegex } from '../cli-io.mjs';
 import { FINDING_MATCH_SCHEMA_VERSION } from '../config.mjs';
 import { terminalEvent } from '../campaign/verdict.mjs';
 import { hmacKeyRefFor } from '../campaign/config.mjs';
@@ -183,8 +184,6 @@ function flattenPool(pool) {
   }
   return out;
 }
-
-function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 /**
  * Build the redaction pass applied to `detail` + `evidenceExcerpt`.

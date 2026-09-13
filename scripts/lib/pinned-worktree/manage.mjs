@@ -15,23 +15,18 @@ import { findNodeModules } from '../node-modules-resolver.mjs';
 import { dependencySetChanged } from '../dependency-identity.mjs';
 import { canonicalizeEol } from '../file-io.mjs';
 import { fixturePath, resolveMainRoot, defaultFixtureRoot } from './paths.mjs';
+import { execGit as git } from '../cli-io.mjs';
 
 const IS_WIN = process.platform === 'win32';
 const NPM = IS_WIN ? 'npm.cmd' : 'npm';
 
-/**
- * @param {string[]} args @param {string} [cwd]
- *
- * stderr is CAPTURED, not inherited. `removeFixture` deliberately tolerates a
- * failing `git worktree remove` and reports it in its own words, so letting
- * git's raw `fatal: … is not a working tree` reach the terminal on a
- * *successful* idempotent removal trains the reader to ignore output — the
- * opposite of what a spend-bearing tool needs. Captured text is still available
- * on `err.stderr` for the messages that quote it.
- */
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-}
+// `git` (from cli-io.mjs) captures stderr rather than inheriting it.
+// `removeFixture` deliberately tolerates a failing `git worktree remove` and
+// reports it in its own words, so letting git's raw `fatal: … is not a
+// working tree` reach the terminal on a *successful* idempotent removal
+// trains the reader to ignore output — the opposite of what a spend-bearing
+// tool needs. Captured text is still available on `err.stderr` for the
+// messages that quote it.
 
 /**
  * Run one git command with ALL hooks suppressed.

@@ -483,10 +483,18 @@ describe('F4/F5 — a flag that is accepted must decide something', () => {
     assert.ok(/ABORT_NOT_APPLIED/.test(src),
       'a wrong-repo or already-terminal abort must not report ok:true');
     assert.ok(/if \(!aborted\)/.test(src));
+    // arch-refresh.mjs must use the shared wrapper, not a local reimplementation
+    // (arch:drift duplication cleanup — passthroughErrors moved to dispatch.mjs,
+    // shared with commands/arch-query.mjs).
+    assert.ok(/import \{ CommandError, passthroughErrors \} from '\.\.\/dispatch\.mjs';/.test(src),
+      'arch-refresh.mjs must import the shared passthroughErrors, not redefine it');
     // The wrapper must not swallow that refusal: passthroughErrors re-throws a
     // CommandError untouched, or ABORT_NOT_APPLIED would lose its exit-1 and
     // its payload on the way out (caught while writing it).
-    assert.ok(/if \(err instanceof CommandError\) throw err;/.test(src),
+    const dispatchSrc = stripComments(fs.readFileSync(
+      fileURLToPath(new URL('../scripts/lib/cross-skill/dispatch.mjs', import.meta.url)), 'utf8',
+    ));
+    assert.ok(/if \(err instanceof CommandError\) throw err;/.test(dispatchSrc),
       'passthroughErrors must re-throw a handler CommandError, not re-wrap it');
   });
 

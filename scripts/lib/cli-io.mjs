@@ -10,6 +10,7 @@
 
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 
 /**
  * Write a JSON object to stdout followed by a newline. The standard
@@ -99,6 +100,33 @@ export function sha(buf, len = 12) {
 }
 
 /**
+ * True for a plain `{}`-shaped object — not `null`, not an array. Consolidated
+ * here (arch:drift duplication cleanup) — `dependency-identity.mjs` and
+ * `installed-tree-identity.mjs` each had their own identical copy; neither
+ * module already depended on the other, so this lands beside the rest of
+ * this file's small, dependency-free cross-cutting helpers instead of
+ * inventing a one-off shared file for two equally-weighted siblings.
+ */
+export function isPlainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+/**
+ * Run `git` and return trimmed stdout, or THROW with `git`'s own stderr.
+ * Consolidated here (arch:drift duplication cleanup) — `install.mjs` and
+ * `pinned-worktree/manage.mjs` each had their own identical copy.
+ * Deliberately throw-based, unlike `vcs.mjs`'s structured `{ok, ...}`
+ * contract: both callers are one-shot CLI flows where a git failure should
+ * just abort the run, not a library seam another module recovers from.
+ * @param {string[]} args
+ * @param {string} [cwd]
+ * @returns {string}
+ */
+export function execGit(args, cwd) {
+  return execFileSync('git', args, { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+}
+
+/**
  * Value of a `--flag` from `process.argv`, or `dflt` when absent.
  *
  * Guards against swallowing a FOLLOWING flag as this option's value (e.g.
@@ -146,6 +174,25 @@ export function argOption(name, dflt = null) {
     }
   }
   return found !== undefined ? found : dflt;
+}
+
+/**
+ * Read a `--flag value` pair out of an explicit `argv` array (not
+ * `process.argv` ambiently — that's `argOption`). Consolidated here
+ * (arch:drift duplication cleanup) — `remediation-reconcile.mjs` and
+ * `semantic-suppress.mjs` each had their own identical copy. Deliberately
+ * NOT merged into `argOption`: callers here pass `name` WITH its `--`
+ * prefix already included (`arg(argv, '--cap', ...)`), and neither caller
+ * needs `argOption`'s `--name=value` / `--` terminator handling — this is
+ * a pure extraction, not a behavior change for either existing call site.
+ * @param {string[]} argv
+ * @param {string} name flag including its leading `--`
+ * @param {string|null} [dflt=null]
+ * @returns {string|null}
+ */
+export function arg(argv, name, dflt = null) {
+  const i = argv.indexOf(name);
+  return i >= 0 ? argv[i + 1] : dflt;
 }
 
 /**
@@ -214,6 +261,16 @@ export function fmtMs(ms) {
  */
 export function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Best-effort error class name for a caught value. Consolidated here
+ * (arch:drift duplication cleanup) — `check-accepted-debt.mjs`,
+ * `debt-ledger-claims-check.mjs` and `accepted-debt-check.mjs` each had
+ * their own copy of this exact one-liner.
+ */
+export function safeErrorClass(err) {
+  return err?.constructor?.name || 'Error';
 }
 
 export function log(msg) {

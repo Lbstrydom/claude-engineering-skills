@@ -239,6 +239,19 @@ export function sanitizeTokens(v) {
 }
 
 /**
+ * Round to 6 decimal places — cents-of-a-cent precision, enough for
+ * per-token pricing, short of float noise. Consolidated here (arch:drift
+ * duplication cleanup) — `campaign/verdict.mjs`, `comparison/cost.mjs` and
+ * `comparison/spend.mjs` each had their own copy; neither `campaign` nor
+ * `comparison` declares `allowedDeps` for the other, so this money-domain
+ * helper lives beside the rest of this repo's pricing/rounding logic
+ * instead, which both already depend on.
+ */
+export function round6(n) {
+  return Math.round(n * 1e6) / 1e6;
+}
+
+/**
  * Look up the {input, output} per-1M-token price for a resolved model id.
  * Tries the OSS table (full id) first, then the family-keyed config table via
  * `pricingKey()`, then a bare-id lookup. Returns null when the model is unpriced.

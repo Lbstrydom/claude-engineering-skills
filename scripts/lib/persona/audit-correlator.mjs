@@ -226,6 +226,18 @@ export function isMalformedFinding(finding) {
     || !finding?.observed || !String(finding.observed).trim();
 }
 
+/**
+ * `isP0OrP1` AND not malformed — the combined predicate every hasher must
+ * filter on before computing `personaFindingHash` (see `isMalformedFinding`
+ * above). Consolidated here (arch:drift duplication cleanup) —
+ * `persona-outcomes.mjs` and `persona-outcomes-hash-backfill.mjs` each had
+ * their own identical copy, both already importing `isP0OrP1`/
+ * `isMalformedFinding` from this exact module.
+ */
+export function isIdentifiableP0OrP1(finding) {
+  return isP0OrP1(finding) && !isMalformedFinding(finding);
+}
+
 // ── Tokenization + Overlap Coefficient (Gemini gate round-2 fix — NOT
 // Jaccard, which is mathematically wrong when comparing a short
 // UI-vocabulary token set against a long code-path token set: the larger

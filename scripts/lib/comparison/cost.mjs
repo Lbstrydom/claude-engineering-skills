@@ -27,7 +27,7 @@
  * @module scripts/lib/comparison/cost
  */
 
-function round6(n) { return Math.round(n * 1e6) / 1e6; }
+import { round6 } from '../model-pricing.mjs';
 
 /**
  * Cost per accepted unit, over the arms their own floor already cleared.

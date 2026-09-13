@@ -34,6 +34,7 @@
 import { MIN_TARGET_N, isScoredArm } from './config.mjs';
 import { armSpend as armSpendCore } from '../comparison/spend.mjs';
 import { evaluateCost as evaluateCostCore } from '../comparison/cost.mjs';
+import { round6 } from '../model-pricing.mjs';
 
 /**
  * Re-export, not a wrapper — `armSpend`'s summation moved to
@@ -232,8 +233,6 @@ export function completionMatrix(snapshots, requiredArmIds) {
     incomplete: rows.filter((r) => !r.complete),
   };
 }
-
-function round6(n) { return Math.round(n * 1e6) / 1e6; }
 
 /**
  * Stage 1 — the effectiveness floor (D5).

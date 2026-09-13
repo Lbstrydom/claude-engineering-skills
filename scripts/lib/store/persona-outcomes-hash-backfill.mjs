@@ -33,8 +33,8 @@ import crypto from 'node:crypto';
 import { query, many, one, withTx } from '../db/query.mjs';
 import { retrySync } from '../retry-transient-fs.mjs';
 import {
-  personaFindingHash, personaFindingHashV1, buildStepUrlLookup, isP0OrP1,
-  isMalformedFinding, PERSONA_FINDING_HASH_VERSION,
+  personaFindingHash, personaFindingHashV1, buildStepUrlLookup,
+  isIdentifiableP0OrP1, PERSONA_FINDING_HASH_VERSION,
 } from '../persona/audit-correlator.mjs';
 
 // Gemini gate finding G1: a malformed finding (missing element/observed)
@@ -42,7 +42,7 @@ import {
 // malformed finding in the repo — must be excluded here too, or staging
 // would compute a colliding old_hash/new_hash pair for every malformed
 // finding across every session, corrupting the mapping.
-const isIdentifiableP0OrP1 = (f) => isP0OrP1(f) && !isMalformedFinding(f);
+// `isIdentifiableP0OrP1` (imported above) is that combined predicate.
 
 const SOURCE_HASH_VERSION = 1;
 const TARGET_HASH_VERSION = 2;

@@ -31,7 +31,7 @@
  * @module scripts/semantic-suppress
  */
 import crypto from 'node:crypto';
-import { assertKnownFlags } from './lib/cli-io.mjs';
+import { assertKnownFlags, arg } from './lib/cli-io.mjs';
 import { getPool } from './lib/db/client.mjs';
 import { isCloudEnabled } from './lib/store/repo.mjs';
 import { initLearningStore, recordAdjudicationEvent } from './learning-store.mjs';
@@ -49,7 +49,6 @@ export const KNOWN_FLAGS = Object.freeze([
 // with `buildOpenFindingsQuery` in lib/semantic-suppression.mjs.
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
-const arg = (argv, n, d) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : d; };
 
 async function embedMissing(pool, rows, { space, concurrency, log }) {
   // FRESHNESS IS (snapshot_hash, model, dim), NOT snapshot_hash ALONE.

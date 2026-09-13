@@ -74,6 +74,7 @@ export function ageDivergences(findings, { firstSeenLookup, headCommitDate }) {
  * @param {string} firstSeen
  * @returns {number|null}
  */
+// @duplicate-justification: target=scripts/lib/nav/drift.mjs:computeAgeDays reason=nav-audit and visual-audit are a deliberately independent "sister lens" pair (AGENTS.md skill-naming-convention note) -- zero existing nav<->visual imports today, not accidental duplication
 function computeAgeDays(head, firstSeen) {
   const seen = Date.parse(firstSeen);
   if (!Number.isFinite(head) || !Number.isFinite(seen)) return null;

@@ -20,8 +20,7 @@
  * @module scripts/lib/comparison/spend
  */
 
-/** Cents-of-a-cent precision: enough for per-token pricing, short of float noise. */
-function round6(n) { return Math.round(n * 1e6) / 1e6; }
+import { round6 } from '../model-pricing.mjs';
 
 /**
  * Per-arm spend over **every** attempt, on **every** snapshot — complete,

@@ -12,18 +12,8 @@
  * `snapshotProvenance`, `degraded:'no-embed-provider'`), and collapsing any of
  * them would re-create the false-zero class the whole plan is about.
  */
-import { CommandError } from '../dispatch.mjs';
+import { CommandError, passthroughErrors } from '../dispatch.mjs';
 import { resolveRepoIdentity, persistRepoIdentity } from '../../repo-identity.mjs';
-
-/** Legacy `try { … } catch { emitError(err.code || 'EXCEPTION', …) }` shape. */
-async function passthroughErrors(fn) {
-  try {
-    return await fn();
-  } catch (err) {
-    if (err instanceof CommandError) throw err;
-    throw new CommandError(err.code || 'EXCEPTION', err.message);
-  }
-}
 
 /** `resolve-repo-identity` — the stable repo_uuid for this checkout. */
 export async function resolveRepoIdentityCmd(ctx) {

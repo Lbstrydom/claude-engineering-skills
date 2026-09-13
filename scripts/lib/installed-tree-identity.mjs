@@ -46,7 +46,7 @@
  * @module scripts/lib/installed-tree-identity
  */
 
-const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+import { isPlainObject } from './cli-io.mjs';
 
 /**
  * Pull the `packages` map out of a lockfile text, or explain why we cannot.

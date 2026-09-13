@@ -15,7 +15,7 @@ import _traverse from '@babel/traverse';
 import { parseSource } from './ast.mjs';
 import { resolvesToNamedImport, resolvesToModuleBinding } from './import-binding.mjs';
 import { globMatch } from './glob-match.mjs';
-import { sha, escapeRegExp } from './cli-io.mjs';
+import { sha, escapeRegExp, safeErrorClass } from './cli-io.mjs';
 
 // @babel/traverse ships CJS; under ESM the callable lands on .default (and on
 // .default.default via some interop paths). Same normalisation as
@@ -27,10 +27,6 @@ const ANALYZED_EXTENSIONS = new Set(['.mjs', '.js', '.ts', '.tsx', '.jsx', '.mts
 const UNSUPPORTED_FORMAT_EXTENSIONS = new Set(['.cjs', '.cts']);
 const JS_TS_FAMILY_PATTERNS = ['*.mjs', '*.js', '*.ts', '*.tsx', '*.jsx', '*.mts', '*.cjs', '*.cts'];
 const DEFAULT_EXCLUDE_GLOBS = ['tests/fixtures/**'];
-
-function safeErrorClass(err) {
-  return err?.constructor?.name || 'Error';
-}
 
 /**
  * Does `trimmed` open a fenced code block? Returns the fence character and

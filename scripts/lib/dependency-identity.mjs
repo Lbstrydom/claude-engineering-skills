@@ -38,6 +38,8 @@
  * @module scripts/lib/dependency-identity
  */
 
+import { isPlainObject } from './cli-io.mjs';
+
 /**
  * The `package.json` fields that can change what `npm ci` would install.
  *
@@ -56,8 +58,6 @@ export const DEPENDENCY_FIELDS = Object.freeze([
   'overrides',
   'engines',
 ]);
-
-const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 /** Recursively key-sorted clone, so `{a,b}` and `{b,a}` fingerprint identically. */
 function canonical(value) {

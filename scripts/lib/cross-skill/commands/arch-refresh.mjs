@@ -12,27 +12,7 @@
  * `scope: 'none'` and take `repoId` from the payload. Behaviour-preserving
  * moves — every one keeps its legacy envelope, refusal codes and exit codes.
  */
-import { CommandError } from '../dispatch.mjs';
-
-/**
- * Wrap the legacy `try { … } catch (err) { emitError(err.code || 'EXCEPTION', err.message) }`
- * shape shared by every handler in this module. The store functions throw
- * typed errors; the legacy code surfaced `err.code` when present and fell back
- * to EXCEPTION, at exit 2 (emitError's default) — preserved exactly.
- */
-async function passthroughErrors(fn) {
-  try {
-    return await fn();
-  } catch (err) {
-    // A CommandError raised INSIDE fn is this handler's own deliberate
-    // refusal — re-throw it untouched. Re-wrapping would silently drop its
-    // `extra` and `exitCode` (PUBLISH_NOT_CONFIRMED and ABORT_NOT_APPLIED are
-    // exit 1 with payload; the wrapper would demote them to a bare exit 2),
-    // which is a byte-compat break invisible to a reader of the catch.
-    if (err instanceof CommandError) throw err;
-    throw new CommandError(err.code || 'EXCEPTION', err.message);
-  }
-}
+import { CommandError, passthroughErrors } from '../dispatch.mjs';
 
 /**
  * Both batch writers use ON CONFLICT DO UPDATE, so a successful chunk's

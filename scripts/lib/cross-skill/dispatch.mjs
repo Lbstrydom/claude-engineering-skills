@@ -46,6 +46,23 @@ export class CommandError extends Error {
   }
 }
 
+/**
+ * Legacy `try { … } catch { emitError(err.code || 'EXCEPTION', …) }` shape.
+ * A `CommandError` raised INSIDE `fn` is a command's own deliberate refusal
+ * — re-thrown untouched, never re-wrapped (that would silently drop its
+ * `extra`/`exitCode`). Consolidated here (arch:drift duplication cleanup) —
+ * `commands/arch-query.mjs` and `commands/arch-refresh.mjs` each had their
+ * own identical copy, both already importing `CommandError` from here.
+ */
+export async function passthroughErrors(fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof CommandError) throw err;
+    throw new CommandError(err.code || 'EXCEPTION', err.message);
+  }
+}
+
 // @duplicate-justification: target=scripts/lib/repo-context.mjs:commitSha reason=byte-compat verbatim move of cross-skill.mjs's git helpers; three copies exist only during migration and consolidate when the legacy pair retires in Phase 5 (consolidating now would change repo-context's baseDir contract mid-cluster)
 function currentCommitSha() {
   try {

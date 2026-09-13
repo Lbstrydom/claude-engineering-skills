@@ -47,7 +47,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import './lib/load-env.mjs';
-import { assertKnownFlags, ArgvError, argOption, hasFlag, finishAndExit } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, argOption, hasFlag, finishAndExit, safeErrorClass } from './lib/cli-io.mjs';
 import {
   executeCheck, readPlanDocs, DEFAULT_PLANS_DIR, mergeTopicIdEvidence,
 } from './lib/debt-ledger-claim-check.mjs';
@@ -135,10 +135,6 @@ function renderHuman(result, sources) {
     ? '✓ Clean — every ledger-capture claim resolves (advisory, not wired into pre-push).'
     : '✗ Attention needed — see above (advisory, not wired into pre-push).');
   return lines.join('\n');
-}
-
-function safeErrorClass(err) {
-  return err?.constructor?.name || 'Error';
 }
 
 async function main() {

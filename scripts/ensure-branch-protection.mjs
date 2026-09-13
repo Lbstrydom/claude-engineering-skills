@@ -30,7 +30,7 @@
  *   1 — could not determine the repo, `gh` missing/unauthed, or an API call failed
  */
 import { execFileSync } from 'node:child_process';
-import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, log as err } from './lib/cli-io.mjs';
 import { parseOriginRepo, strengthenRuleset, hasStatusCheckRatchet } from './lib/branch-protection.mjs';
 
 // CLI relocation smoke contract (AGENTS.md CLI_SMOKE_SET) — proves imports
@@ -45,8 +45,6 @@ const repoArg = (() => {
   const i = process.argv.indexOf('--repo');
   return i === -1 ? null : process.argv[i + 1];
 })();
-
-const err = (m) => process.stderr.write(m + '\n');
 
 /** Run `gh` and return stdout, or throw with a legible message. */
 function gh(args, { input } = {}) {

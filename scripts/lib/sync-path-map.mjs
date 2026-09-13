@@ -61,7 +61,7 @@ const STAYS_AT_CANONICAL_PATH_EXACT = new Set([
   LAYOUT_CONSTANTS.MANIFEST_PATH,
 ]);
 
-function normalise(p) {
+export function normalise(p) {
   return String(p).replace(/\\/g, '/');
 }
 

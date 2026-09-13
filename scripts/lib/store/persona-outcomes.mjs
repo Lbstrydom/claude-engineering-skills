@@ -19,7 +19,7 @@ import { z } from 'zod';
 import { many, one, upsert, withTx } from '../db/query.mjs';
 import { isCloudEnabled } from './repo.mjs';
 import {
-  personaFindingHash, isP0OrP1, isMalformedFinding, buildStepUrlLookup,
+  personaFindingHash, isIdentifiableP0OrP1, buildStepUrlLookup,
   personaSeverityCode,
   PERSONA_FINDING_HASH_VERSION, PERSONA_FINDING_HASH_SHAPE,
 } from '../persona/audit-correlator.mjs';
@@ -74,8 +74,8 @@ export function classifyPersonaFindingState(ledgerRow, latestSessionId) {
 // these before hashing; every read/write path here that filters P0/P1
 // findings before hashing must ALSO exclude malformed ones, or a human
 // dismissing one malformed finding silently wildcard-dismisses all others
-// sharing that empty-fields hash.
-const isIdentifiableP0OrP1 = (f) => isP0OrP1(f) && !isMalformedFinding(f);
+// sharing that empty-fields hash. `isIdentifiableP0OrP1` (imported above)
+// is that combined predicate.
 
 /**
  * Resolve a `label` command's `--session <id> --hash <h>` pair into a

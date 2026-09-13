@@ -17,6 +17,7 @@
  */
 
 import { seededDraw } from '../rng.mjs';
+import { escapeRegExp as escapeRegex } from '../cli-io.mjs';
 
 /**
  * Keyword groups that deterministically justify a GPT sentinel fire —
@@ -38,10 +39,6 @@ export const KEYWORD_GROUPS = Object.freeze({
   dataIntegrity: ['migration', 'schema', 'foreign key', 'cascade', 'rollback', 'idempotent', 'dedup'],
   payment: ['payment', 'billing', 'invoice', 'charge', 'refund', 'stripe', 'checkout'],
 });
-
-function escapeRegex(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 // Word-boundary regex per keyword, built once and cached (audit fix L3 — raw
 // `.includes()` substring matching let e.g. "auth" match inside "author",

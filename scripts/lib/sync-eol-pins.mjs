@@ -34,7 +34,7 @@
  * @module scripts/lib/sync-eol-pins
  */
 
-import { LAYOUT_CONSTANTS } from './sync-path-map.mjs';
+import { LAYOUT_CONSTANTS, normalise } from './sync-path-map.mjs';
 import { RECEIPT_PATH } from './sync-receipt.mjs';
 import { canonicalizeEol } from './file-io.mjs';
 
@@ -74,10 +74,6 @@ export const EOL_PIN_GLOBS = Object.freeze([
 /** Sentinel standing in for `**` between the two wildcard passes. NUL cannot
  *  occur in a path, so no glob can smuggle it past the single-segment rule. */
 const DOUBLESTAR = '\u0000';
-
-function normalise(p) {
-  return String(p).replace(/\\/g, '/');
-}
 
 /**
  * Compile a gitattributes path glob to an anchored RegExp.

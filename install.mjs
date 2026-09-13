@@ -54,6 +54,7 @@ import { execFileSync } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 
 import { createPrompter } from './scripts/lib/install/prompt.mjs';
+import { execGit as git } from './scripts/lib/cli-io.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', B = '\x1b[1m', D = '\x1b[2m', X = '\x1b[0m';
 
@@ -310,10 +311,6 @@ function cacheRoot() {
 /** The lock lives BESIDE the cache, so relocating the cache relocates the lock. */
 function lockPath(cache) {
   return path.join(path.dirname(cache), '.lock');
-}
-
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
 }
 
 /**

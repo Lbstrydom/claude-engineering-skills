@@ -22,6 +22,7 @@
 // Single source of truth for the vector width the runtime requests. The probe
 // must ask the same question embedText asks, or "verified" is not "usable".
 import { symbolIndexConfig } from '../config.mjs';
+import { dedupeOrdered } from './deployment-ladder.mjs';
 
 /** @enum {string} */
 export const ProbeOutcome = Object.freeze({
@@ -41,19 +42,6 @@ export const STATIC_EMBED_CANDIDATES = Object.freeze([
 ]);
 
 const PREFERENCE_INDEX = new Map(STATIC_EMBED_CANDIDATES.map((n, i) => [n, i]));
-
-/** Trim + drop empties, preserving first-seen order (case-sensitive: Azure names are). */
-function dedupeOrdered(names) {
-  const seen = new Set();
-  const out = [];
-  for (const raw of names) {
-    const n = typeof raw === 'string' ? raw.trim() : '';
-    if (!n || seen.has(n)) continue;
-    seen.add(n);
-    out.push(n);
-  }
-  return out;
-}
 
 /**
  * Classify one probe error into a typed outcome. Only a genuine
