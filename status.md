@@ -1,6 +1,11 @@
 # Project Status Log
 
 ### Consumer Verification (previous ship)
+- **Commit**: 625650d6 on `main` (pushed 2026-09-13, range `5f3bfcf2..625650d6`; the arch:drift duplication-cleanup ships, `94304e44..625650d6`)
+- **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `scripts/.claude-skills/lib/symbol-index/drift-path-exemptions.mjs` present in the synced tree (`DRIFT_PATH_EXEMPT_PREFIXES` x3); `scripts/.claude-skills/symbol-index/refresh.mjs` imports/calls `isDriftPathExempt` (x2). The push's own sync summary confirmed 3/3 consumers updated.
+- **Result**: verified — the path-based duplication-exemption mechanism (the bucket-1 fix for the arch:drift RED-80 cleanup) reached the consumer bundle intact.
+
+### Consumer Verification (previous ship)
 - **Commit**: 79919ff747b7fedd5ffd40ce95aa67579a4c4b9f on `main` (pushed 2026-09-13, range `988c4b67..79919ff7`; preceded by cf4c75f3 + 988c4b67 the same morning)
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `scripts/.claude-skills/lib/measurement-marker.mjs` present and importable (`formatNoMeasurementCommand('x')` renders the marker); the synced `workflow-cadence-doctor.mjs` carries the `unmeasured` verdict (25 occurrences). Wine's own PR #559 (merged 47bf6d37) consumes it: `checks: read` + `requireMeasurement: true` on arch-drift-scoped.yml, all 6 checks green.
 - **Result**: verified — the no-measurement marker + `unmeasured` verdict (upstream report 7e413fe2, closed) reached the consumer bundle intact and is already wired into a consumer workflow.
@@ -24,6 +29,28 @@
 - **Commit**: dfe57eae on `main` (pushed 2026-09-12, range `534d7550..dfe57eae`)
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `scripts/.claude-skills/lib/debt-ledger-claim-check.mjs` in wine-cellar-app's synced tree contains `mergeTopicIdEvidence` — present. The push's own sync summary confirmed 9 files updated across all 3/3 registered consumers.
 - **Result**: verified — the debt-ledger-claims-check cloud-evidence fix reached the consumer bundle intact.
+
+## 2026-09-13 — verified + closed the sync-status.mjs cluster: 13 unlocked-fixes, 13 final-review-credit rows
+
+Follow-on to the arch:drift entry below, at the user's request to work the two backlogs it flagged (56-row unlocked-fixes, 2,230-row final-review-credit). Investigated first (Explore agent, read-only): no bulk/mechanical tool exists for either — the write-side commands validate only structural shape (flags present, path exists), never "was this actually fixed"; a bulk-dismiss approach was tried once for the final-review queue and rejected (`docs/plans/final-review-shadow-bakeoff.md`) for breaking comparability. Also corrected the backlog sizes: unlocked-fixes is 519 unwindowed, not 56 (56 was the last-14-days slice). Given that, scoped to one concentrated cluster instead of a fake bulk sweep: `scripts/lib/sync-status.mjs`/`scripts/sync-status.mjs`, 13 of the 519 unlocked-fixes rows and, verified separately, the exact same 13 final-review-pending rows (same `run_id`+category, different fingerprint scheme).
+
+### Verification (not a rubber stamp)
+Read both source files in full. Every one of the 13 findings' categories traces to a specific, already-fixed guard with its own `/audit-code` round citation in the source comments (reoccupied-rename-origin, staged-state MM guard, both-sides-of-rename-in-commit, `--literal-pathspecs`, scoped-not-bare commit, `git -C` repo pinning, ownership-is-not-provenance, safe pathspec quoting). 12 of the 13 already had a matching test in `tests/sync-status.test.mjs` (confirmed by reading each `it()` block, not by filename match — the worksheet's own filename-heuristic warning is real: several categories are re-statements of the same underlying fix from different audit rounds). The 13th ("Repository Context Mismatch") was a genuine gap: the CLI's own `--repo-root` wiring had no test at all, only the pure `buildCommitSuggestion` helper it calls did.
+
+### Changes
+- **[tests/sync-status-cli.test.mjs](tests/sync-status-cli.test.mjs)** (new) — 3 cases closing the one real gap: the printed "safe to commit" suggestion is pinned to `--repo-root`, not `process.cwd()`; defaults to cwd when omitted; a `--repo-root` pointing at a different repo doesn't mix `git status` output between the two. Red/green-verified against a reintroduced bug (hardcoding `repoRoot = process.cwd()` broke 2 of 3 cases).
+- 13 `lock-with-test` calls recording each finding against its specific test (not a generic category restatement — each description names the exact guard and line).
+- 13 `final-review-adjudicate --action accepted` calls for the matching shadow findings (same `run_id`+category as the 13 above). Omitted `--bucket` deliberately after checking `resolveFindingBucket`'s auto-resolve path (exactly one bucket candidate per fingerprint here) — verified with one call first, then applied to the rest.
+
+### Correction on the record
+Mid-session I told the user the worksheet's suggested `--bucket primary` command was buggy, based on reading only `resolveFindingBucket`'s raw `===` comparison. That was wrong — `finalReviewAdjudicateCmd`'s `bucketOpt()` (`scripts/lib/cross-skill/commands/final-review.mjs:26-28`) translates `'primary'`/`'none'` → `null` before the comparison runs, and `tests/final-review-card.test.mjs` locks that exact contract. No tooling bug; corrected in the same turn once traced further.
+
+### Verification
+`npm test`: 15,682/15,682 pass, 0 fail (40 skipped) — includes the 3 new cases.
+Backlog counts, before → after: unlocked-fixes 519 → 506 (13 fewer code-mode rows); final-review-credit 2230 → 2217 (fixedUnlabelled 1747 → 1734).
+
+### Next Steps
+- 506 + 2217 rows remain, genuinely requiring the same per-row verification — not attempted further this session (out of scope for a single pass). `legacy-production-audit.mjs` is the next-largest concentrated cluster (24 unlocked-fixes rows) if this is picked up again.
 
 ## 2026-09-13 — arch:drift duplication cleanup: 80 → 15 (RED → AMBER)
 
