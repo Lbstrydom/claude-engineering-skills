@@ -50,9 +50,16 @@ const REPO_ROOT = path.resolve(import.meta.dirname, '..');
  * A scan that knows only the first spelling looked at run-persistence.mjs and
  * saw nothing to check — which is not the same as seeing every call awaited.
  */
+//
+// Patterns are REGEXES so a call is recognised in either quote style and with
+// any spacing inside the parentheses. Known limit, stated rather than hidden:
+// a call whose writer-id literal sits on a LATER line than `durableWrite(` is
+// not seen — this is a line scanner, not a parser, and this repo's static
+// guards all accept that trade (an AST guard for two call sites is the
+// over-engineered cliff). The instrument test below pins both quote styles.
 const FINALISATION_WRITERS = [
-  { name: 'recordRunComplete', patterns: ['recordRunComplete(', "durableWrite('audit.runComplete'"] },
-  { name: 'recordConvergenceState', patterns: ['recordConvergenceState(', "durableWrite('audit.convergenceState'"] },
+  { name: 'recordRunComplete', patterns: [/\brecordRunComplete\s*\(/g, /\bdurableWrite\s*\(\s*['"]audit\.runComplete['"]/g] },
+  { name: 'recordConvergenceState', patterns: [/\brecordConvergenceState\s*\(/g, /\bdurableWrite\s*\(\s*['"]audit\.convergenceState['"]/g] },
 ];
 
 /**
@@ -108,7 +115,9 @@ function scanCallSites(src, writer) {
     for (const pattern of writer.patterns) {
       // EVERY occurrence on the line — a second call after the first would
       // otherwise be invisible (audit-code cluster A R1 H2).
-      for (let callIdx = line.indexOf(pattern); callIdx !== -1; callIdx = line.indexOf(pattern, callIdx + pattern.length)) {
+      pattern.lastIndex = 0;
+      for (let m = pattern.exec(line); m !== null; m = pattern.exec(line)) {
+        const callIdx = m.index;
         const before = line.slice(0, callIdx);
         // `const x = await import(...)` destructuring mentions the name.
         if (/\bconst\s*\{[^}]*$/.test(before)) continue;
@@ -138,7 +147,7 @@ describe('run-finalisation writes are awaited', () => {
         if (expectation === 'present') {
           assert.ok(sites.length > 0,
             `${rel} declares ${writer.name} PRESENT but the scan found no call site in either\n`
-            + `spelling (${writer.patterns.join(' | ')}). Either the write moved — update ORCHESTRATORS —\n`
+            + `spelling (${writer.patterns.map(String).join(' | ')}). Either the write moved — update ORCHESTRATORS —\n`
             + `or the spelling changed — update FINALISATION_WRITERS. A pass with nothing scanned is not a pass.`);
         } else {
           assert.deepEqual(sites.map((s) => `${rel}:${s.line}: ${s.text}`), [],
@@ -169,10 +178,14 @@ describe('run-finalisation writes are awaited', () => {
       "  // recordRunComplete( in a comment is not a call",
       "import { recordRunComplete } from './x.mjs';",
       "  await recordRunComplete(a); recordRunComplete(b);",
+      '  durableWrite( "audit.runComplete", { runId });',
+      '  await durableWrite("audit.runComplete", { runId });',
+      "  myRecordRunComplete(x);",
     ].join('\n');
     const sites = scanCallSites(src, writer);
-    assert.deepEqual(sites.map((s) => [s.line, s.awaited]), [[1, false], [2, true], [3, false], [4, true], [7, true], [7, false]],
-      'the second call on a line must be seen, and seen as un-awaited');
+    assert.deepEqual(sites.map((s) => [s.line, s.awaited]),
+      [[1, false], [2, true], [3, false], [4, true], [7, true], [7, false], [8, false], [9, true]],
+      'the second call on a line must be seen and seen as un-awaited; both quote styles and inner spacing must match; a different identifier with the same suffix must not');
   });
 
   it('the pool still exits on idle (the premise of this guard)', () => {

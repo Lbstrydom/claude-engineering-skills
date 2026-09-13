@@ -101,11 +101,14 @@ describe('Phase 1 — atomic artifact writes', () => {
   const auditSources = () => fs.readdirSync(AUDIT_DIR).filter((f) => f.endsWith('.mjs'))
     .map((f) => ({ name: f, src: fs.readFileSync(path.join(AUDIT_DIR, f), 'utf-8') }));
   const codeLines = (src) => src.split('\n').filter((l) => { const t = l.trim(); return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')); });
+  // Occurrences, not lines: two writes on one line are two operations, and the
+  // allowlist below is per operation (audit-code cluster A R2 M2).
+  const countCalls = (src, needle) => codeLines(src).reduce((n, l) => n + l.split(needle).length - 1, 0);
 
   it('no module under scripts/lib/audit/ writes a durable artifact with fs.writeFileSync (static regression guard)', () => {
     const offenders = [];
     for (const { name, src } of auditSources()) {
-      const hits = codeLines(src).filter((l) => l.includes('fs.writeFileSync(')).length;
+      const hits = countCalls(src, 'fs.writeFileSync(');
       if (hits === 0) continue;
       const allowed = NON_ARTIFACT_WRITES[name];
       if (allowed && allowed.count === hits) continue;
@@ -121,9 +124,13 @@ describe('Phase 1 — atomic artifact writes', () => {
     for (const name of Object.keys(NON_ARTIFACT_WRITES)) {
       const entry = auditSources().find((s) => s.name === name);
       assert.ok(entry, `NON_ARTIFACT_WRITES names ${name}, which no longer exists`);
-      assert.ok(codeLines(entry.src).some((l) => l.includes('fs.writeFileSync(')),
+      assert.ok(countCalls(entry.src, 'fs.writeFileSync(') > 0,
         `NON_ARTIFACT_WRITES names ${name} but it has no fs.writeFileSync( left — drop the entry`);
     }
+  });
+
+  it('the counter counts operations, not lines (instrument check)', () => {
+    assert.equal(countCalls("fs.writeFileSync(a); fs.writeFileSync(b);\n// fs.writeFileSync(c) in a comment\nfs.writeFileSync(d);", 'fs.writeFileSync('), 3);
   });
 
   it('the subject exists: at least one module in the directory uses atomicWriteFileSync (vacuous-pass guard)', () => {

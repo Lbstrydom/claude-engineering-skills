@@ -22,7 +22,7 @@ process.env.AUDIT_DB_URL = '';
 
 const { finalizeRun } = await import('../scripts/lib/audit/run-finalization.mjs');
 
-const { minimalFinalizationData, EMPTY_STRUCTURE } = await import('./helpers/multi-pass-audit-fixtures.mjs');
+const { minimalFinalizationData } = await import('./helpers/multi-pass-audit-fixtures.mjs');
 
 function emptyWriteOutcomes() {
   return { written: 0, spilled: 0, lost: 0, skipped: 0, byWriter: {} };
