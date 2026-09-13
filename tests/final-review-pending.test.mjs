@@ -319,7 +319,7 @@ describe('the credit card\'s totals and its list describe ONE population', () =>
 // cursor from the last RAW row, never an offset.
 // ═══════════════════════════════════════════════════════════════════════
 
-const CURSOR = { severityRank: 3, createdAt: '2026-09-13 10:00:00.123456+00', fingerprint: 'abcd1234', runId: '00000000-0000-4000-8000-000000000001' };
+const CURSOR = { severityRank: 3, createdAt: '2026-09-13 10:00:00.123456+00', fingerprint: 'abcd1234', runId: '00000000-0000-4000-8000-000000000001', findingId: '00000000-0000-4000-8000-0000000000f1' };
 
 describe('encodeQueueCursor / decodeQueueCursor', () => {
   it('round-trips, and carries createdAt as TEXT (microsecond-exact), never a Date', () => {
@@ -337,6 +337,9 @@ describe('encodeQueueCursor / decodeQueueCursor', () => {
       enc({ ...CURSOR, runId: 'not-a-uuid' }),
       enc({ ...CURSOR, severityRank: 9 }),
       enc({ ...CURSOR, fingerprint: 'has spaces; DROP' }),
+      enc({ ...CURSOR, createdAt: '2026-13-01 10:00:00.000001+00' }),
+      enc({ ...CURSOR, findingId: 'not-a-uuid' }),
+      enc({ ...CURSOR, v: 1 }),
     ]) {
       assert.throws(() => decodeQueueCursor(bad), (e) => e instanceof CommandError && e.code === 'BAD_INPUT', `must refuse ${JSON.stringify(bad)}`);
     }
@@ -346,7 +349,7 @@ describe('encodeQueueCursor / decodeQueueCursor', () => {
 /** A raw pendingQueue row in the store's total order. */
 function queueRow(i, { severity = 'HIGH', actionable = true } = {}) {
   return {
-    audit_finding_id: `id-${i}`, run_id: '00000000-0000-4000-8000-000000000001', finding_fingerprint: `ab${String(i).padStart(6, '0')}`,
+    audit_finding_id: `00000000-0000-4000-8000-0000000000${String(i).padStart(2, '0')}`, run_id: '00000000-0000-4000-8000-000000000001', finding_fingerprint: `ab${String(i).padStart(6, '0')}`,
     severity, category: 'test', primary_file: `src/${i}.mjs`, detail_snapshot: 'prose',
     source_model: 'm', bucket: 'shadow-only',
     // a shadow-only row already labelled dismissed is NOT actionable
@@ -388,7 +391,7 @@ describe('final-review-pending — cursor paging', () => {
     assert.equal(out.pageFilteredOut, 2);
     assert.ok(out.nextCursor, 'the walk must continue past a fully filtered page');
     assert.deepEqual(decodeQueueCursor(out.nextCursor), {
-      severityRank: 3, createdAt: queue[1].created_at_cursor, fingerprint: 'ab000002', runId: queue[1].run_id,
+      severityRank: 3, createdAt: queue[1].created_at_cursor, fingerprint: 'ab000002', runId: queue[1].run_id, findingId: queue[1].audit_finding_id,
     });
   });
 
@@ -412,9 +415,17 @@ describe('final-review-pending — cursor paging', () => {
       (e) => e instanceof CommandError && e.code === 'BAD_INPUT');
   });
 
+  it('the cursor is the STORE order\'s last row, even when the display re-sort would put a different row last', async () => {
+    // Two rows the store orders [1, 2] but whose display sort (fingerprint ASC within a tie) would flip.
+    const a = { ...queueRow(1), finding_fingerprint: 'ab000009' };
+    const b = { ...queueRow(2), finding_fingerprint: 'ab000001', created_at_cursor: a.created_at_cursor };
+    const out = await finalReviewPendingCmd(pendingCtx({ flags: { repo: 'owner/repo', limit: '2' }, queue: [a, b] }));
+    assert.equal(decodeQueueCursor(out.nextCursor).findingId, b.audit_finding_id, 'cursor = store-last (b), not display-last');
+  });
+
   it('items carry audit_finding_id (the grouper key) and still drop detail_snapshot', async () => {
     const out = await finalReviewPendingCmd(pendingCtx({ flags: { repo: 'owner/repo' }, queue: [queueRow(1)] }));
-    assert.equal(out.items[0].audit_finding_id, 'id-1');
+    assert.equal(out.items[0].audit_finding_id, '00000000-0000-4000-8000-000000000001');
     assert.equal('detail_snapshot' in out.items[0], false);
   });
 });

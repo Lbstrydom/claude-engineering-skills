@@ -1282,7 +1282,7 @@ export async function markRunFindingsAutoDismissed(runId, fingerprints, reason) 
  *     aggregate shadow token/latency cost (the operator's cost overlay).
  *
  * @param {string} repoName
- * @param {{queueLimit?: number, after?: {severityRank:number, createdAt:string, fingerprint:string, runId:string}|null}} [opts]
+ * @param {{queueLimit?: number, after?: {severityRank:number, createdAt:string, fingerprint:string, runId:string, findingId:string}|null}} [opts]
  *   `after` is the keyset cursor for `pendingQueue` — the LAST raw row of the
  *   previous page, in the queue's own total order. `createdAt` is the row's
  *   `created_at_cursor` (`created_at::text`, microsecond-exact), never a JS Date.
@@ -1343,7 +1343,7 @@ export async function getFinalReviewStats(repoName, { queueLimit = 50, after = n
     // Keyset-paged since 2026-09-13; the SQL lives beside its predicates in
     // final-review-credit-population.mjs (`pendingQueueSql`) — see there for
     // the total order, the cursor predicate and the bind positions.
-    const cursorParams = after ? [after.severityRank, after.createdAt, after.fingerprint, after.runId] : [];
+    const cursorParams = after ? [after.severityRank, after.createdAt, after.fingerprint, after.runId, after.findingId] : [];
     const pendingQueue = await many(pendingQueueSql({ cursor: !!after }), [repoId, queueLimit, ...cursorParams]);
     // Exact totals, INDEPENDENT of queueLimit. `shadowOnlyQueue` above is a
     // bounded page (default 50), so counting it would under-report the moment the

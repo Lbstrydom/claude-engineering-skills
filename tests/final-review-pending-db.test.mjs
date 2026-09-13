@@ -84,6 +84,11 @@ describe('getFinalReviewStats — keyset cursor walk (integration)', { skip }, (
     // primary label-gap branch (bucket NULL, fixed, unadjudicated):
     await ins(runB, 'fp-p1', 'LOW', T0, { bucket: null, remediation: 'fixed' });
     await ins(runB, 'fp-p2', 'LOW', T1, { bucket: null, remediation: 'verified' });
+    // The cross-branch sibling (audit-code cluster B R2 H1): ONE (run, fingerprint)
+    // present as a shadow-only row AND as its primary-bucket counterpart, same
+    // severity, same instant — identical on every key but audit_finding_id.
+    await ins(runB, 'fp-both', 'MEDIUM', T0);
+    await ins(runB, 'fp-both', 'MEDIUM', T0, { bucket: null, remediation: 'fixed' });
   });
 
   after(async () => {
@@ -95,13 +100,20 @@ describe('getFinalReviewStats — keyset cursor walk (integration)', { skip }, (
     await closePool();
   });
 
-  const key = (r) => `${r.finding_fingerprint}@${r.run_id === runA ? 'a' : 'b'}`;
-  const cursorOf = (r) => ({ severityRank: Number(r.severity_rank), createdAt: r.created_at_cursor, fingerprint: r.finding_fingerprint, runId: r.run_id });
+  const key = (r) => `${r.finding_fingerprint}@${r.run_id === runA ? 'a' : 'b'}${r.bucket === null ? '/primary' : ''}`;
+  const cursorOf = (r) => ({ severityRank: Number(r.severity_rank), createdAt: r.created_at_cursor, fingerprint: r.finding_fingerprint, runId: r.run_id, findingId: r.audit_finding_id });
+  // The full population in the documented total order. fp-both's two rows tie on
+  // every ranking key; audit_finding_id ASC decides, so their relative order is
+  // whatever the ids drew — the walk asserts the SET and no duplicates for them.
+  const EXPECTED = ['fp-h2@a', 'fp-h1@a', 'fp-tie@a', 'fp-tie@b', 'fp-both@b', 'fp-both@b/primary', 'fp-m1@a', 'fp-p1@b/primary', 'fp-p2@b/primary'];
+  const normalise = (keys) => keys.map((k) => (k.startsWith('fp-both@b') ? 'fp-both@b*' : k));
+  const EXPECTED_N = normalise(EXPECTED);
 
   it('both UNION branches project audit_finding_id and created_at_cursor, in the documented total order', async () => {
     const res = await mod.getFinalReviewStats(repoName, { queueLimit: 50 });
     assert.equal(res.ok, true);
-    assert.deepEqual(res.pendingQueue.map(key), ['fp-h2@a', 'fp-h1@a', 'fp-tie@a', 'fp-tie@b', 'fp-m1@a', 'fp-p1@b', 'fp-p2@b']);
+    assert.deepEqual(normalise(res.pendingQueue.map(key)), EXPECTED_N);
+    assert.equal(new Set(res.pendingQueue.map(key)).size, EXPECTED.length, 'both fp-both rows are distinct entries');
     for (const r of res.pendingQueue) {
       assert.match(String(r.audit_finding_id), /^[0-9a-f-]{36}$/, 'every row carries the audit_findings.id the grouper keys on');
       assert.equal(typeof r.created_at_cursor, 'string');
@@ -110,20 +122,32 @@ describe('getFinalReviewStats — keyset cursor walk (integration)', { skip }, (
     assert.match(res.pendingQueue[0].created_at_cursor, /\.000001/);
   });
 
-  it('walking by cursor with queueLimit 2 sees every row exactly once, including the µs-tied and same-fingerprint pairs', async () => {
+  /** Walk the whole queue at `queueLimit` and return every key in order. */
+  async function walk(queueLimit) {
     const seen = [];
     let after = null;
-    for (let page = 0; page < 10; page += 1) {
-      const res = await mod.getFinalReviewStats(repoName, { queueLimit: 2, after });
+    for (let page = 0; page < 20; page += 1) {
+      const res = await mod.getFinalReviewStats(repoName, { queueLimit, after });
       assert.equal(res.ok, true);
       if (res.pendingQueue.length === 0) break;
       seen.push(...res.pendingQueue.map(key));
-      if (res.pendingQueue.length < 2) break;
+      if (res.pendingQueue.length < queueLimit) break;
       after = cursorOf(res.pendingQueue[res.pendingQueue.length - 1]);
     }
-    assert.deepEqual(seen, ['fp-h2@a', 'fp-h1@a', 'fp-tie@a', 'fp-tie@b', 'fp-m1@a', 'fp-p1@b', 'fp-p2@b']);
-    assert.equal(new Set(seen).size, seen.length, 'no row twice');
-  });
+    return seen;
+  }
+
+  // Every page size from 1 up: with limit 1 EVERY boundary falls inside every
+  // tie group (the µs pair, the same-fingerprint pair, the cross-branch pair);
+  // the others put a boundary inside a different group each (audit-code
+  // cluster B R2 M2). Each walk must return the population exactly once.
+  for (const limit of [1, 2, 3, 4, 5]) {
+    it(`walking by cursor with queueLimit ${limit} sees every row exactly once, in order`, async () => {
+      const seen = await walk(limit);
+      assert.deepEqual(normalise(seen), EXPECTED_N);
+      assert.equal(new Set(seen).size, EXPECTED.length, 'no row twice, none missing');
+    });
+  }
 
   it('actionablePairs is page-independent, and a cursor past the end returns an empty page', async () => {
     const first = await mod.getFinalReviewStats(repoName, { queueLimit: 2 });

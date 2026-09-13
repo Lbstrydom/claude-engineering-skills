@@ -24,11 +24,14 @@ import {
  * caller (base64url JSON); `createdAt` is the store's `created_at_cursor`
  * text, never a Date, so a microsecond tie neither repeats nor skips a row.
  */
-export function encodeQueueCursor({ severityRank, createdAt, fingerprint, runId }) {
-  return Buffer.from(JSON.stringify({ v: 1, severityRank, createdAt, fingerprint, runId }), 'utf8').toString('base64url');
+export function encodeQueueCursor({ severityRank, createdAt, fingerprint, runId, findingId }) {
+  return Buffer.from(JSON.stringify({ v: 2, severityRank, createdAt, fingerprint, runId, findingId }), 'utf8').toString('base64url');
 }
 
 const PG_TIMESTAMPTZ_TEXT = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}(:?\d{2})?)?$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Shape AND semantics: `2026-13-01 …` matches the shape and is not a date (audit-code cluster B R2 M1). */
+const isPgTimestamptzText = (s) => PG_TIMESTAMPTZ_TEXT.test(s) && Number.isFinite(Date.parse(s.replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00')));
 
 /** Inverse of `encodeQueueCursor`; a malformed cursor is BAD_INPUT, never a silent first page. */
 export function decodeQueueCursor(raw) {
@@ -43,17 +46,17 @@ export function decodeQueueCursor(raw) {
   // a Postgres cast error — or, worse, compare as something. severity_rank is
   // the query's own CASE (0..3); createdAt must parse as a timestamp; runId is
   // a uuid; the fingerprint is the store's hex id.
-  const ok = parsed && parsed.v === 1
+  const ok = parsed && parsed.v === 2
     && Number.isInteger(parsed.severityRank) && parsed.severityRank >= 0 && parsed.severityRank <= 3
     // Postgres' own `timestamptz::text` shape (`2026-09-13 10:00:00.000001+00`),
-    // pinned explicitly rather than through Date.parse, whose acceptance of this
-    // shape is engine leniency, not a contract.
-    && typeof parsed.createdAt === 'string' && PG_TIMESTAMPTZ_TEXT.test(parsed.createdAt)
+    // pinned explicitly, AND a real instant.
+    && typeof parsed.createdAt === 'string' && isPgTimestamptzText(parsed.createdAt)
     && typeof parsed.fingerprint === 'string' && /^[0-9a-f-]{1,64}$/i.test(parsed.fingerprint)
-    && typeof parsed.runId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(parsed.runId);
+    && typeof parsed.runId === 'string' && UUID.test(parsed.runId)
+    && typeof parsed.findingId === 'string' && UUID.test(parsed.findingId);
   if (!ok) throw new CommandError('BAD_INPUT', '--after is not a cursor this command issued (field out of domain)');
-  const { severityRank, createdAt, fingerprint, runId } = parsed;
-  return { severityRank, createdAt, fingerprint, runId };
+  const { severityRank, createdAt, fingerprint, runId, findingId } = parsed;
+  return { severityRank, createdAt, fingerprint, runId, findingId };
 }
 
 /** Shared bucket parsing: `--bucket primary|none` names the NULL bucket. */
@@ -292,14 +295,17 @@ export async function finalReviewPendingCmd(ctx) {
   // No client-side slice: the page boundary is the store's, and the cursor is
   // derived from the last RAW row so a page whose every row was filtered out
   // still continues.
-  const raw = orderItems(res.pendingQueue);
-  const last = raw.length > 0 ? raw[raw.length - 1] : null;
-  const nextCursor = last && raw.length >= limit
+  // The cursor is the STORE's last row — its order is the paging order.
+  // `orderItems` below is display-only; a JS re-sort of an in-page tie must
+  // never pick the cursor (audit-code cluster B R2 H1).
+  const storeLast = res.pendingQueue.length > 0 ? res.pendingQueue[res.pendingQueue.length - 1] : null;
+  const nextCursor = storeLast && res.pendingQueue.length >= limit
     ? encodeQueueCursor({
-      severityRank: Number(last.severity_rank), createdAt: String(last.created_at_cursor ?? last.created_at),
-      fingerprint: last.finding_fingerprint, runId: last.run_id,
+      severityRank: Number(storeLast.severity_rank), createdAt: String(storeLast.created_at_cursor ?? storeLast.created_at),
+      fingerprint: storeLast.finding_fingerprint, runId: storeLast.run_id, findingId: storeLast.audit_finding_id,
     })
     : null;
+  const raw = orderItems(res.pendingQueue);
   const classified = raw.map((r) => ({ ...r, classification: classifyFinalReviewOutcome(r) }));
   const actionable = classified.filter((r) => isActionable(r.classification));
   const pageFilteredOut = classified.length - actionable.length;
