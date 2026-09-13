@@ -5,23 +5,23 @@
   "files": {
     "scripts/campaign.mjs": 1011,
     "scripts/cross-skill.mjs": 1123,
-    "scripts/gemini-review.mjs": 3174,
+    "scripts/gemini-review.mjs": 3178,
     "scripts/lib/anthropic-client.mjs": 1043,
     "scripts/lib/audit/evidence-triage.mjs": 1245,
     "scripts/lib/audit/legacy-production-audit.mjs": 1702,
-    "scripts/lib/config.mjs": 1045,
+    "scripts/lib/config.mjs": 1055,
     "scripts/lib/install/transaction.mjs": 1060,
     "scripts/lib/ledger.mjs": 1490,
     "scripts/lib/model-resolver.mjs": 1074,
     "scripts/lib/schemas.mjs": 1628,
-    "scripts/lib/store/campaign.mjs": 1787,
-    "scripts/lib/store/runs-findings.mjs": 2370,
-    "scripts/lib/sync-isolation-verify.mjs": 1028,
-    "scripts/lib/upstream/commands.mjs": 1062,
+    "scripts/lib/store/campaign.mjs": 1786,
+    "scripts/lib/store/runs-findings.mjs": 2357,
+    "scripts/lib/sync-isolation-verify.mjs": 1032,
+    "scripts/lib/upstream/commands.mjs": 1067,
     "scripts/openai-audit.mjs": 1309,
     "scripts/setup-postgres.mjs": 1506,
     "scripts/solo-control-audit.mjs": 1588,
     "scripts/symbol-index/extract.mjs": 1205,
-    "scripts/sync-to-repos.mjs": 2693
+    "scripts/sync-to-repos.mjs": 2703
   }
 }

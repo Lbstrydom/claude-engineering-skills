@@ -7,6 +7,21 @@
  * operations. Persistence goes through `ctx.deps` only.
  */
 import { CommandError } from '../dispatch.mjs';
+import { groupIntoWorkUnits, wantsWorkUnits } from '../work-unit-grouping.mjs';
+import { findRepoRootFromCwd } from '../../assert-repo-root.mjs';
+
+/**
+ * The repo root every lock-related path check is anchored to. Resolved through
+ * git (`findRepoRootFromCwd`), never `process.cwd()`: run from
+ * `scripts/lib/audit/` the dangling-lock report read 269 against a true 3,
+ * because every recorded `tests/…` path was being resolved under the
+ * subdirectory (docs/plans/backlog-tooling-honesty.md §1 item 5). Realpath'd so
+ * `classifyTestPath`'s containment check compares like with like.
+ */
+async function lockRepoRoot() {
+  const { realpathSync } = await import('node:fs');
+  return realpathSync(findRepoRootFromCwd());
+}
 
 /**
  * `record-ship-event` — /ship writes its outcome. Moved from
@@ -95,8 +110,7 @@ async function danglingLocksFor(ctx, repoId) {
   try {
     const recorded = await ctx.deps.getRecordedSpecPaths(repoId);
     const { classifyTestPath } = await import('../../path-validation.mjs');
-    const { realpathSync } = await import('node:fs');
-    const repoRoot = realpathSync(process.cwd());
+    const repoRoot = await lockRepoRoot();
     const dangling = recorded.filter((r) => !classifyTestPath({ repoRoot, testPath: r.specPath }).ok);
     return {
       count: dangling.length,
@@ -143,7 +157,7 @@ export async function listUnlockedFixesCmd(ctx) {
   const aged = await ctx.deps.countAgedUnlockedFixes(storeScope);
   const danglingLocks = await danglingLocksFor(ctx, scope.repoId ?? null);
   const { limit, offset } = ctx.deps.resolveNudgePage(page);
-  return {
+  const base = {
     ok: true, cloud: true,
     scope: { mode: scope.kind === 'global' ? 'all-repos' : 'repo', repoId: scope.repoId ?? null, slug: scope.slug ?? null },
     measured: true, reason: null,
@@ -157,6 +171,12 @@ export async function listUnlockedFixesCmd(ctx) {
     // what they actually received before concluding the tail is empty.
     limit, offset,
   };
+
+  // Same grouper as list-unremediated-acceptances; this reader's recency column
+  // is `fixed_at` (the view's own name for it).
+  const grouping = wantsWorkUnits(ctx);
+  if (!grouping) return base;
+  return { ...base, ...(await groupIntoWorkUnits(ctx, rows, { total: byMode.total, wantUnit: grouping.wantUnit, dateKey: 'fixed_at' })) };
 }
 
 /**
@@ -199,92 +219,9 @@ export async function listUnremediatedAcceptancesCmd(ctx) {
     limit, offset,
   };
 
-  const groupBy = ctx.flag ? ctx.flag('group-by') : null;
-  const wantUnit = ctx.flag ? ctx.flag('work-unit') : null;
-  if (groupBy !== 'work-unit' && !wantUnit) return base;
-
-  return { ...base, ...(await groupIntoWorkUnits(ctx, rows, { total: byMode.total, wantUnit })) };
-}
-
-/**
- * Group the fetched rows into work units — refactor-sized batches, so a backlog
- * can be worked a THEME at a time instead of a row at a time.
- *
- * Membership is deterministic (embeddings + a cutoff derived from this repo's
- * own similarity distribution). Nothing here calls a model: the unit key is what
- * a caller filters and counts on, so it must be reproducible. Labels default to
- * the canonical row's category and are marked `labelSource` so a model-written
- * label can replace them later without changing what the key means.
- *
- * Two honesty properties, both load-bearing:
- *  - `partial` is true when the page is smaller than `total`. Clustering a page
- *    and presenting it as the grouping would understate every unit's size, and
- *    a short page reads exactly like an exhausted one.
- *  - `unclustered` counts rows with NO embedding. They were never compared, so
- *    they are neither merged into a unit nor dropped from the tally.
- */
-async function groupIntoWorkUnits(ctx, rows, { total, wantUnit }) {
-  const { clusterWorkUnits } = await import('../../work-units.mjs');
-  const { labelWorkUnits } = await import('../../work-unit-labels.mjs');
-  const ids = rows.map((r) => r.audit_finding_id).filter(Boolean);
-  const vecOf = await ctx.deps.getFindingEmbeddings(ids);
-
-  const findings = rows.map((r) => ({
-    id: r.audit_finding_id,
-    primaryFile: r.primary_file,
-    category: String(r.category || '').replace(/^\[[^\]]*\]\s*/, ''),
-    createdAt: r.accepted_at,
-    severity: r.severity,
-    embedding: vecOf.get(r.audit_finding_id),
-  }));
-
-  const { units: rawUnits, unclustered, cutoff } = clusterWorkUnits(findings);
-
-  // Labels only — membership above is already fixed. Advisory by construction:
-  // `labelWorkUnits` never throws and reports `labelSource` per unit, so an
-  // unavailable model degrades to the category fallback instead of failing a
-  // backlog listing. `--no-llm-labels` forces it off.
-  const labelling = await labelWorkUnits(rawUnits, { enabled: !ctx.hasFlag('no-llm-labels') });
-  const units = labelling.units;
-
-  const shaped = units.map((u) => ({
-    key: u.key, label: u.label, labelSource: u.labelSource, size: u.size,
-    files: u.files, canonicalId: u.canonicalId,
-    severities: u.members.reduce((a, m) => { a[m.severity] = (a[m.severity] || 0) + 1; return a; }, {}),
-    memberIds: u.members.map((m) => m.id),
-  }));
-
-  const grouping = {
-    basis: 'work-unit',
-    cutoff: cutoff.cutoff, cutoffSource: cutoff.source, cutoffSamples: cutoff.samples,
-    population: rows.length,
-    clustered: rows.length - unclustered.length,
-    unclustered: unclustered.length,
-    unclusteredIds: unclustered.map((u) => u.id),
-    units: shaped.length,
-    multiRowUnits: shaped.filter((u) => u.size > 1).length,
-    partial: rows.length < total,
-    // Label provenance, so a caller can tell a model-written name from the
-    // deterministic category fallback rather than assuming every label is good.
-    labels: {
-      llm: labelling.labelled, cached: labelling.cached,
-      fallback: labelling.failed, reason: labelling.reason,
-    },
-  };
-
-  if (!wantUnit) return { workUnits: shaped, grouping };
-
-  // `--work-unit <key>` pulls one unit's rows for a focused refactor.
-  const unit = shaped.find((u) => u.key === wantUnit);
-  if (!unit) {
-    return { workUnits: shaped, grouping, rows: [], shown: 0, workUnitFilter: { key: wantUnit, found: false } };
-  }
-  const member = new Set(unit.memberIds);
-  const filtered = rows.filter((r) => member.has(r.audit_finding_id));
-  return {
-    workUnits: [unit], grouping, rows: filtered, shown: filtered.length,
-    workUnitFilter: { key: wantUnit, found: true, label: unit.label },
-  };
+  const grouping = wantsWorkUnits(ctx);
+  if (!grouping) return base;
+  return { ...base, ...(await groupIntoWorkUnits(ctx, rows, { total: byMode.total, wantUnit: grouping.wantUnit, dateKey: 'accepted_at' })) };
 }
 
 /**
@@ -397,9 +334,8 @@ export async function lockWithTestCmd(ctx) {
       + 'Run --worksheet for the reviewed queue.' };
   }
 
-  const { realpathSync } = await import('node:fs');
   const { classifyTestPath } = await import('../../path-validation.mjs');
-  const repoRoot = realpathSync(process.cwd());
+  const repoRoot = await lockRepoRoot();
   // Delegate to the one canonical realpath+containment oracle: the previous
   // check never RESOLVED the target, so an in-repo symlink pointing outside was
   // accepted, and `existsSync` accepts a DIRECTORY, so a lock could name a
@@ -506,7 +442,7 @@ async function lockWithTestWorksheet(ctx) {
     'repeats of the same path.', ''];
 
   for (const r of rows) {
-    const matches = findTestFilesFor(r.primary_file, process.cwd());
+    const matches = findTestFilesFor(r.primary_file, findRepoRootFromCwd());
     const guess = matches[0] ?? null;
     // A rendered command is READ AS EVIDENCE that the lock is sound — that is
     // the whole reason it saves typing. So it is withheld when the only
@@ -610,9 +546,8 @@ export async function repointRegressionSpecCmd(ctx) {
   }
 
   if (!wantsDelete) {
-    const { realpathSync } = await import('node:fs');
     const { classifyTestPath } = await import('../../path-validation.mjs');
-    const verdict = classifyTestPath({ repoRoot: realpathSync(process.cwd()), testPath: specPath });
+    const verdict = classifyTestPath({ repoRoot: await lockRepoRoot(), testPath: specPath });
     if (!verdict.ok) {
       // Same vocabulary as lock-with-test: a re-point that lands on a missing
       // file has replaced one dangling citation with another.
@@ -736,11 +671,10 @@ export async function recordRegressionSpecCmd(ctx) {
   //     every legitimate call. Near-constant where it is cheap, redundant where it would
   //     have meant something.
   if (p.sourceKind === 'unit-test') {
-    const { realpathSync } = await import('node:fs');
     const { classifyTestPath } = await import('../../path-validation.mjs');
     // The SAME oracle lock-with-test refuses on and the danglingLocks report measures
     // with — a second spelling would let a row be writable and dangling at once.
-    const verdict = classifyTestPath({ repoRoot: realpathSync(process.cwd()), testPath: p.specPath });
+    const verdict = classifyTestPath({ repoRoot: await lockRepoRoot(), testPath: p.specPath });
     if (!verdict.ok) {
       const why = {
         'path-escapes-repo': `"${p.specPath}" resolves outside the repo`,

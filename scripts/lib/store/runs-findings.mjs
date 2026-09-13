@@ -26,7 +26,7 @@ import { many, one, query, insertReturning, updateWhere, deleteWhere, withTx, pg
 import { getPool } from '../db/client.mjs';
 import { isCloudEnabled, getRepoIdByName } from './repo.mjs';
 // Imported, never re-exported (learning-store.mjs does `export *` from here).
-import { CREDIT_BRANCH_SHADOW_WHERE, CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE } from './final-review-credit-population.mjs';
+import { CREDIT_BRANCH_SHADOW_WHERE, CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE, pendingQueueSql } from './final-review-credit-population.mjs';
 import crypto from 'node:crypto';
 import { semanticSuppressConfig } from '../config.mjs';
 import { partitionRecordTimeReRaises, toVectorLiteral } from '../semantic-suppression.mjs';
@@ -1282,9 +1282,12 @@ export async function markRunFindingsAutoDismissed(runId, fingerprints, reason) 
  *     aggregate shadow token/latency cost (the operator's cost overlay).
  *
  * @param {string} repoName
- * @param {{queueLimit?: number}} [opts]
+ * @param {{queueLimit?: number, after?: {severityRank:number, createdAt:string, fingerprint:string, runId:string}|null}} [opts]
+ *   `after` is the keyset cursor for `pendingQueue` — the LAST raw row of the
+ *   previous page, in the queue's own total order. `createdAt` is the row's
+ *   `created_at_cursor` (`created_at::text`, microsecond-exact), never a JS Date.
  */
-export async function getFinalReviewStats(repoName, { queueLimit = 50 } = {}) {
+export async function getFinalReviewStats(repoName, { queueLimit = 50, after = null } = {}) {
   if (!await isCloudEnabled()) return { ok: true, cloud: false, repoId: null, buckets: [], shadowOnlyQueue: [], pendingQueue: [], actionablePairs: [], runs: [], experimentRuns: [] };
   const repoRow = await one(`SELECT id FROM audit_repos WHERE name = $1 ORDER BY created_at DESC LIMIT 1`, [repoName]);
   const repoId = repoRow?.id || null;
@@ -1336,26 +1339,12 @@ export async function getFinalReviewStats(repoName, { queueLimit = 50 } = {}) {
     // arbitrary expression in a UNION's trailing ORDER BY ("invalid
     // UNION/INTERSECT/EXCEPT ORDER BY clause") — only an output column name
     // or ordinal position is legal there, unlike a plain single SELECT.
-    const pendingQueue = await many(
-      `SELECT f.run_id, f.finding_fingerprint, f.severity, f.category,
-              f.primary_file, f.detail_snapshot, f.source_model,
-              f.user_action, f.remediation_state, f.created_at, f.bucket,
-              (CASE f.severity WHEN 'HIGH' THEN 3 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 1 ELSE 0 END) AS severity_rank
-         FROM audit_findings f
-         JOIN audit_runs r ON r.id = f.run_id
-        WHERE ${CREDIT_BRANCH_SHADOW_WHERE}
-       UNION ALL
-       SELECT f.run_id, f.finding_fingerprint, f.severity, f.category,
-              f.primary_file, f.detail_snapshot, f.source_model,
-              f.user_action, f.remediation_state, f.created_at, f.bucket,
-              (CASE f.severity WHEN 'HIGH' THEN 3 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 1 ELSE 0 END) AS severity_rank
-         FROM audit_findings f
-         JOIN audit_runs r ON r.id = f.run_id
-        WHERE ${CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE}
-        ORDER BY severity_rank DESC, created_at DESC
-        LIMIT $2`,
-      [repoId, queueLimit]
-    );
+    //
+    // Keyset-paged since 2026-09-13; the SQL lives beside its predicates in
+    // final-review-credit-population.mjs (`pendingQueueSql`) — see there for
+    // the total order, the cursor predicate and the bind positions.
+    const cursorParams = after ? [after.severityRank, after.createdAt, after.fingerprint, after.runId] : [];
+    const pendingQueue = await many(pendingQueueSql({ cursor: !!after }), [repoId, queueLimit, ...cursorParams]);
     // Exact totals, INDEPENDENT of queueLimit. `shadowOnlyQueue` above is a
     // bounded page (default 50), so counting it would under-report the moment the
     // backlog exceeds the limit — and this repo already has ~63 unadjudicated

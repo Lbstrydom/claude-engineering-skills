@@ -492,7 +492,12 @@ export const REGISTRY = Object.freeze([
   },
   {
     name: 'final-review-pending',
-    flags: ['repo', 'commit', 'page-size', { name: 'render', kind: 'boolean' }],
+    // `--after` is a keyset cursor (docs/plans/backlog-tooling-honesty.md §2):
+    // the queue is drained by the adjudication that walks it, so an offset
+    // would skip a row per adjudication. `--page-size` is the documented alias
+    // of `--limit`; both resolve through `resolveNudgePage`.
+    flags: ['repo', 'commit', 'page-size', 'limit', 'after', 'group-by', 'work-unit',
+      { name: 'render', kind: 'boolean' }, { name: 'no-llm-labels', kind: 'boolean' }],
     positionals: 'none', payload: 'none',
     scope: 'none', kind: 'read', cloud: 'degrade-noop',
     // Three states, exit 0 for ALL of them — /ship must continue through every
@@ -530,8 +535,9 @@ export const REGISTRY = Object.freeze([
   // ── Cohort: nudge readers, learning, durability, friction (Cluster D) ────
   {
     name: 'list-unlocked-fixes',
-    flags: ['repo', 'repo-id', 'limit', 'offset',
-      { name: 'all-repos', kind: 'boolean' }, { name: 'all-ages', kind: 'boolean' }],
+    flags: ['repo', 'repo-id', 'limit', 'offset', 'group-by', 'work-unit',
+      { name: 'all-repos', kind: 'boolean' }, { name: 'all-ages', kind: 'boolean' },
+      { name: 'no-llm-labels', kind: 'boolean' }],
     positionals: 'none', payload: 'none',
     scope: 'global-optin', kind: 'read', cloud: 'degrade-noop',
     degradeShape: {

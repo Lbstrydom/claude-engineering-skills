@@ -153,6 +153,10 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // (scripts/check-db-suite-enrolment.mjs), which iterates the FILESYSTEM —
   // the only side of the comparison that can see a file no list mentions.
   'tests/final-review-adjudicate.test.mjs',
+  // Enrolled 2026-09-13 (docs/plans/backlog-tooling-honesty.md §7): the
+  // keyset-paged credit queue — UNION projection, µs-exact cursor, mid-walk
+  // deletion — against a real schema; a fake store cannot prove any of it.
+  'tests/final-review-pending-db.test.mjs',
   'tests/graph-coverage-db.test.mjs',
   'tests/mark-findings-remediation.test.mjs',
   'tests/on-conflict-scope-identity.test.mjs',

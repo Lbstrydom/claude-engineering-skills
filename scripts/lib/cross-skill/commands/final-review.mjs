@@ -10,6 +10,35 @@
  */
 import { readFileSync } from 'node:fs';
 import { CommandError } from '../dispatch.mjs';
+import { groupIntoWorkUnits, wantsWorkUnits } from '../work-unit-grouping.mjs';
+
+/**
+ * Keyset cursor for `final-review-pending` — the LAST RAW row of a page, in the
+ * queue's total order (docs/plans/backlog-tooling-honesty.md §2). Opaque to the
+ * caller (base64url JSON); `createdAt` is the store's `created_at_cursor`
+ * text, never a Date, so a microsecond tie neither repeats nor skips a row.
+ */
+export function encodeQueueCursor({ severityRank, createdAt, fingerprint, runId }) {
+  return Buffer.from(JSON.stringify({ v: 1, severityRank, createdAt, fingerprint, runId }), 'utf8').toString('base64url');
+}
+
+/** Inverse of `encodeQueueCursor`; a malformed cursor is BAD_INPUT, never a silent first page. */
+export function decodeQueueCursor(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(Buffer.from(String(raw), 'base64url').toString('utf8'));
+  } catch {
+    throw new CommandError('BAD_INPUT', '--after is not a cursor this command issued (undecodable)');
+  }
+  const ok = parsed && parsed.v === 1
+    && Number.isInteger(parsed.severityRank)
+    && typeof parsed.createdAt === 'string' && parsed.createdAt.length > 0
+    && typeof parsed.fingerprint === 'string' && parsed.fingerprint.length > 0
+    && typeof parsed.runId === 'string' && parsed.runId.length > 0;
+  if (!ok) throw new CommandError('BAD_INPUT', '--after is not a cursor this command issued (missing fields)');
+  const { severityRank, createdAt, fingerprint, runId } = parsed;
+  return { severityRank, createdAt, fingerprint, runId };
+}
 import { classifyReadPath } from '../../path-validation.mjs';
 import { checkFindingGrounding, formatGroundingNote } from '../../audit/finding-grounding.mjs';
 import {
@@ -213,7 +242,13 @@ export async function finalReviewPendingCmd(ctx) {
   if (!repoName) throw new CommandError('BAD_INPUT', '--repo <name> is required');
   const wantRender = ctx.hasFlag('render');
   const commitSha = ctx.flag('commit') || null;
-  const pageSize = Math.min(Math.max(Number(ctx.flag('page-size') || 10) || 10, 1), 50);
+  // ONE paging resolver for every backlog reader (`resolveNudgePage`: default
+  // 20, cap 200). `--page-size` is the documented alias of `--limit`; the
+  // former 50-row clamp with no way past it left ~2,167 of 2,217 credit rows
+  // unreachable through this CLI (backlog-tooling-honesty.md §1 item 2).
+  const { limit } = ctx.deps.resolveNudgePage({ limit: ctx.flag('page-size') ?? ctx.flag('limit') ?? 10 });
+  const afterRaw = ctx.flag('after');
+  const after = afterRaw ? decodeQueueCursor(afterRaw) : null;
 
   const done = (result) => {
     if (!wantRender) return result;
@@ -225,7 +260,7 @@ export async function finalReviewPendingCmd(ctx) {
   let res;
   try {
     if (!ctx.cloud.enabled) return done({ schemaVersion: 1, state: 'disabled' });
-    res = await ctx.deps.getFinalReviewStats(repoName, { queueLimit: 50 });
+    res = await ctx.deps.getFinalReviewStats(repoName, { queueLimit: limit, after });
   } catch {
     // Boundary classifier: any thrown failure becomes ONE literal.
     return done({ schemaVersion: 1, state: 'unavailable', diagnostic: 'CLOUD_UNREACHABLE' });
@@ -239,10 +274,23 @@ export async function finalReviewPendingCmd(ctx) {
   }
 
   const counts = summariseCounts(res.actionablePairs);
-  const items = orderItems(res.pendingQueue)
-    .map((r) => ({ ...r, classification: classifyFinalReviewOutcome(r) }))
-    .filter((r) => isActionable(r.classification))
-    .slice(0, pageSize)
+  // The store already returned ONE page in the queue's total order; `orderItems`
+  // agrees with that order, so re-sorting is a no-op safety net, not paging.
+  // No client-side slice: the page boundary is the store's, and the cursor is
+  // derived from the last RAW row so a page whose every row was filtered out
+  // still continues.
+  const raw = orderItems(res.pendingQueue);
+  const last = raw.length > 0 ? raw[raw.length - 1] : null;
+  const nextCursor = last && raw.length >= limit
+    ? encodeQueueCursor({
+      severityRank: Number(last.severity_rank), createdAt: String(last.created_at_cursor ?? last.created_at),
+      fingerprint: last.finding_fingerprint, runId: last.run_id,
+    })
+    : null;
+  const classified = raw.map((r) => ({ ...r, classification: classifyFinalReviewOutcome(r) }));
+  const actionable = classified.filter((r) => isActionable(r.classification));
+  const pageFilteredOut = classified.length - actionable.length;
+  const items = actionable
     // Display-safe projection ONLY — `detail_snapshot` is deliberately dropped:
     // it is free-form model prose and has no place in a ship card. `bucket`
     // is the row's REAL bucket (docs/plans/skill-efficacy-census.md Phase 1
@@ -250,13 +298,29 @@ export async function finalReviewPendingCmd(ctx) {
     // every primary-bucket row's printed action resolve to the wrong bucket
     // even after the read side was widened.
     .map((r) => ({
+      audit_finding_id: r.audit_finding_id ?? null,
       run_id: r.run_id, finding_fingerprint: r.finding_fingerprint, bucket: r.bucket ?? null,
       classification: r.classification, severity: r.severity, category: r.category,
       user_action: r.user_action ?? null, remediation_state: r.remediation_state ?? null,
       primary_file: r.primary_file ?? null, created_at: r.created_at ?? null,
     }));
 
-  return done({ schemaVersion: 1, state: 'ready', cloud: true, repo: repoName, counts, shownCount: items.length, items });
+  const base = {
+    schemaVersion: 1, state: 'ready', cloud: true, repo: repoName, counts,
+    shownCount: items.length, items,
+    // Paging contract: loop on `nextCursor` (null = the store returned a short
+    // page = exhausted), never on `shownCount` — `pageFilteredOut` says how many
+    // raw rows this page fetched that were not actionable.
+    limit, after: afterRaw ?? null, nextCursor, pageFilteredOut,
+  };
+
+  // Same grouper as the other two backlog readers; this reader's recency
+  // column is `created_at`. Groups the ACTIONABLE rows of this page.
+  const grouping = wantsWorkUnits(ctx);
+  if (!grouping) return done(base);
+  const grouped = await groupIntoWorkUnits(ctx, items, { total: counts.totalActionable, wantUnit: grouping.wantUnit, dateKey: 'created_at' });
+  if (grouped.rows) grouped.items = grouped.rows;
+  return done({ ...base, ...grouped });
 }
 
 /**

@@ -24,6 +24,8 @@ import {
 import {
   CREDIT_BRANCH_SHADOW_WHERE, CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE,
 } from '../scripts/lib/store/final-review-credit-population.mjs';
+import { finalReviewPendingCmd, encodeQueueCursor, decodeQueueCursor } from '../scripts/lib/cross-skill/commands/final-review.mjs';
+import { CommandError } from '../scripts/lib/cross-skill/dispatch.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -234,15 +236,31 @@ describe('the credit card\'s totals and its list describe ONE population', () =>
   const SOURCE = fs.readFileSync(
     path.join(REPO_ROOT, 'scripts/lib/store/runs-findings.mjs'), 'utf-8',
   );
+  const POPULATION_SOURCE = fs.readFileSync(
+    path.join(REPO_ROOT, 'scripts/lib/store/final-review-credit-population.mjs'), 'utf-8',
+  );
 
-  /** Body of a `const <name> = await many(\`…\`, […]);` assignment. */
+  // Where each query's SQL literal lives. `pendingQueue` moved beside its
+  // predicates (`pendingQueueSql`) when it became keyset-paged (2026-09-13);
+  // `actionablePairs` stays inline in runs-findings.mjs.
+  const LITERALS = {
+    pendingQueue: { source: POPULATION_SOURCE, anchor: 'export function pendingQueueSql(' , skipLiterals: 1 },
+    actionablePairs: { source: SOURCE, anchor: 'const actionablePairs = await many(', skipLiterals: 0 },
+  };
+
+  /** The FINAL template literal after `anchor` (skipping `skipLiterals` earlier ones, e.g. the cursor WHERE). */
   function queryLiteral(name) {
-    const start = SOURCE.indexOf(`const ${name} = await many(`);
+    const { source, anchor, skipLiterals } = LITERALS[name];
+    const start = source.indexOf(anchor);
     assert.notEqual(start, -1, `could not find the ${name} query — was it renamed?`);
-    const open = SOURCE.indexOf('`', start);
-    const close = SOURCE.indexOf('`', open + 1);
+    let open = source.indexOf('`', start);
+    let close = source.indexOf('`', open + 1);
+    for (let i = 0; i < skipLiterals; i += 1) {
+      open = source.indexOf('`', close + 1);
+      close = source.indexOf('`', open + 1);
+    }
     assert.ok(open !== -1 && close !== -1, `could not delimit the ${name} SQL literal`);
-    return SOURCE.slice(open + 1, close);
+    return source.slice(open + 1, close);
   }
 
   it('defines the two branch predicates, and they partition on bucket', () => {
@@ -292,4 +310,104 @@ describe('the credit card\'s totals and its list describe ONE population', () =>
       );
     });
   }
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// Keyset paging (docs/plans/backlog-tooling-honesty.md §2, audit-plan R1 H2).
+// The queue is drained by the adjudication that walks it, so the contract is a
+// cursor from the last RAW row, never an offset.
+// ═══════════════════════════════════════════════════════════════════════
+
+const CURSOR = { severityRank: 3, createdAt: '2026-09-13 10:00:00.123456+00', fingerprint: 'abcd1234', runId: '00000000-0000-4000-8000-000000000001' };
+
+describe('encodeQueueCursor / decodeQueueCursor', () => {
+  it('round-trips, and carries createdAt as TEXT (microsecond-exact), never a Date', () => {
+    const c = encodeQueueCursor(CURSOR);
+    assert.match(c, /^[A-Za-z0-9_-]+$/, 'base64url — safe on a command line');
+    assert.deepEqual(decodeQueueCursor(c), CURSOR);
+    assert.equal(typeof decodeQueueCursor(c).createdAt, 'string');
+  });
+
+  it('refuses a malformed cursor as BAD_INPUT rather than silently starting over', () => {
+    for (const bad of ['not-a-cursor', Buffer.from('{"v":1}').toString('base64url'), Buffer.from('[]').toString('base64url'), '']) {
+      assert.throws(() => decodeQueueCursor(bad), (e) => e instanceof CommandError && e.code === 'BAD_INPUT', `must refuse ${JSON.stringify(bad)}`);
+    }
+  });
+});
+
+/** A raw pendingQueue row in the store's total order. */
+function queueRow(i, { severity = 'HIGH', actionable = true } = {}) {
+  return {
+    audit_finding_id: `id-${i}`, run_id: '00000000-0000-4000-8000-000000000001', finding_fingerprint: `fp${String(i).padStart(2, '0')}`,
+    severity, category: 'test', primary_file: `src/${i}.mjs`, detail_snapshot: 'prose',
+    source_model: 'm', bucket: 'shadow-only',
+    // a shadow-only row already labelled dismissed is NOT actionable
+    user_action: actionable ? null : 'dismissed', remediation_state: null,
+    created_at: new Date(Date.UTC(2026, 8, 13, 10, 0, 0, 0)), created_at_cursor: `2026-09-13 10:00:00.0000${String(9 - i).padStart(2, '0')}+00`,
+    severity_rank: severity === 'HIGH' ? 3 : 2,
+  };
+}
+
+function pendingCtx({ flags = {}, queue = [], pairs = [], onCall = () => {} } = {}) {
+  return {
+    cloud: { enabled: true },
+    flag: (name) => flags[name] ?? null,
+    hasFlag: (name) => flags[name] === true,
+    payload: () => ({}),
+    deps: {
+      getFinalReviewStats: async (repo, opts) => { onCall(repo, opts); return { ok: true, pendingQueue: queue, actionablePairs: pairs }; },
+      resolveNudgePage: (o) => ({ limit: Math.min(Math.max(Number(o.limit) || 20, 1), 200), offset: 0 }),
+      getFindingEmbeddings: async () => new Map(),
+    },
+  };
+}
+
+describe('final-review-pending — cursor paging', () => {
+  it('passes the resolved limit and the DECODED cursor to the store; --page-size is the alias of --limit', async () => {
+    const calls = [];
+    const ctx = pendingCtx({ flags: { repo: 'owner/repo', 'page-size': '10', after: encodeQueueCursor(CURSOR) }, onCall: (r, o) => calls.push([r, o]) });
+    const out = await finalReviewPendingCmd(ctx);
+    assert.deepEqual(calls, [['owner/repo', { queueLimit: 10, after: CURSOR }]]);
+    assert.equal(out.limit, 10);
+    assert.equal(out.after, encodeQueueCursor(CURSOR));
+  });
+
+  it('nextCursor comes from the last RAW row and is present even when every row on the page was filtered out', async () => {
+    const queue = [queueRow(1, { actionable: false }), queueRow(2, { actionable: false })];
+    const out = await finalReviewPendingCmd(pendingCtx({ flags: { repo: 'owner/repo', limit: '2' }, queue }));
+    assert.equal(out.state, 'ready');
+    assert.deepEqual(out.items, [], 'nothing actionable on this page');
+    assert.equal(out.pageFilteredOut, 2);
+    assert.ok(out.nextCursor, 'the walk must continue past a fully filtered page');
+    assert.deepEqual(decodeQueueCursor(out.nextCursor), {
+      severityRank: 3, createdAt: queue[1].created_at_cursor, fingerprint: 'fp02', runId: queue[1].run_id,
+    });
+  });
+
+  it('nextCursor is null when the store returned a SHORT page (fewer raw rows than limit) — that is exhaustion', async () => {
+    const out = await finalReviewPendingCmd(pendingCtx({ flags: { repo: 'owner/repo', limit: '5' }, queue: [queueRow(1), queueRow(2)] }));
+    assert.equal(out.shownCount, 2);
+    assert.equal(out.pageFilteredOut, 0);
+    assert.equal(out.nextCursor, null);
+  });
+
+  it('a cursor past the end yields an empty page, null nextCursor, and totals untouched', async () => {
+    const pairs = [{ user_action: null, remediation_state: null, n: 7 }];
+    const out = await finalReviewPendingCmd(pendingCtx({ flags: { repo: 'owner/repo', after: encodeQueueCursor(CURSOR) }, queue: [], pairs }));
+    assert.deepEqual(out.items, []);
+    assert.equal(out.nextCursor, null);
+    assert.equal(out.counts.totalActionable, 7, 'counts are page-independent');
+  });
+
+  it('a malformed --after is BAD_INPUT', async () => {
+    await assert.rejects(() => finalReviewPendingCmd(pendingCtx({ flags: { repo: 'owner/repo', after: 'garbage' } })),
+      (e) => e instanceof CommandError && e.code === 'BAD_INPUT');
+  });
+
+  it('items carry audit_finding_id (the grouper key) and still drop detail_snapshot', async () => {
+    const out = await finalReviewPendingCmd(pendingCtx({ flags: { repo: 'owner/repo' }, queue: [queueRow(1)] }));
+    assert.equal(out.items[0].audit_finding_id, 'id-1');
+    assert.equal('detail_snapshot' in out.items[0], false);
+  });
 });

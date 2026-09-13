@@ -51,6 +51,7 @@ import path from 'node:path';
 import {
   listUnlockedFixesCmd, recordRegressionSpecCmd, repointRegressionSpecCmd,
 } from '../scripts/lib/cross-skill/commands/ship.mjs';
+import { mkdtemp, sh, commitAll, rmrfBestEffort } from './helpers/fixtures.mjs';
 import { CommandError } from '../scripts/lib/cross-skill/dispatch.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
@@ -119,6 +120,37 @@ describe('the /ship lock nudge reports locks whose spec_path no longer resolves'
     // and it must not have broken the nudge it rides on
     assert.equal(out.ok, true);
     assert.equal(out.measured, true);
+  });
+
+  it('is anchored to the REPO ROOT, not process.cwd(): the same lock reads the same from a subdirectory', async () => {
+    // Measured 2026-09-13 (docs/plans/backlog-tooling-honesty.md §1 item 5): run
+    // from scripts/lib/audit/ the live CLI reported 269 dangling locks against a
+    // true 3, because every recorded `tests/…` path was resolved under the
+    // subdirectory. A fixture repo with one real test file, read from its root
+    // and from a nested directory, must agree.
+    const repo = mkdtemp('ces-lock-root-');
+    const prevCwd = process.cwd();
+    try {
+      sh(repo, 'init', '-q');
+      fs.mkdirSync(path.join(repo, 'tests'), { recursive: true });
+      fs.mkdirSync(path.join(repo, 'scripts', 'lib', 'audit'), { recursive: true });
+      fs.writeFileSync(path.join(repo, 'tests', 'x.test.mjs'), 'export const ok = true;\n');
+      fs.writeFileSync(path.join(repo, 'scripts', 'lib', 'audit', 'keep.mjs'), '// keep\n');
+      commitAll(repo, 'fixture');
+      const recorded = [{ specPath: 'tests/x.test.mjs', sourceKind: 'unit-test', sourceFindingId: 'f1', createdAt: null }];
+
+      process.chdir(repo);
+      const fromRoot = await listUnlockedFixesCmd(makeCtx({ recorded }));
+      process.chdir(path.join(repo, 'scripts', 'lib', 'audit'));
+      const fromSubdir = await listUnlockedFixesCmd(makeCtx({ recorded }));
+
+      assert.equal(fromRoot.danglingLocks.count, 0, 'the lock names a file that exists at the repo root');
+      assert.equal(fromSubdir.danglingLocks.count, fromRoot.danglingLocks.count,
+        'a subdirectory cwd must not change the answer — this is the 269-vs-3 defect in miniature');
+    } finally {
+      process.chdir(prevCwd);
+      rmrfBestEffort(repo);
+    }
   });
 
   it('a spec_path naming a DIRECTORY is dangling — existsSync alone would accept it', async () => {

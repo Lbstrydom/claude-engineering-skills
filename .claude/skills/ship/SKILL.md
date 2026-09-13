@@ -1504,6 +1504,29 @@ the finished card, so there is nothing to parse and no formatting decision here.
 Omit `--render` to get the versioned JSON instead (`schemaVersion`, `state`,
 `counts`, `items`) if you need it programmatically.
 
+**Walking the whole queue (since 2026-09-13).** The card shows one page. The
+JSON form pages by a **keyset cursor**, never an offset — the queue is drained
+by the very adjudication that walks it, so an offset would skip one row per
+adjudication (measured before the change: a 50-row cap with no way past it
+left ~2,167 of 2,217 credit rows unreachable through this CLI). Loop on
+`nextCursor`, **not** on `shownCount`, and keep going through pages whose
+`items` is empty (`pageFilteredOut` says how many raw rows were fetched but
+not actionable); `nextCursor: null` is the end:
+
+```bash
+node scripts/cross-skill.mjs final-review-pending --repo owner/repo --page-size 50
+```
+
+```bash
+node scripts/cross-skill.mjs final-review-pending --repo owner/repo --page-size 50 --after eyJ2IjoxLC4uLn0
+```
+
+`--page-size` is the alias of `--limit` (default 20, cap 200 — the same
+resolver the other backlog readers use); `--offset` is **not supported**, by
+design. `--group-by work-unit` (and `--work-unit <key>`, `--no-llm-labels`)
+groups a page's actionable rows into refactor-sized units through the same
+grouper `list-unlocked-fixes` and `list-unremediated-acceptances` share.
+
 **Advisory only — the reader always exits 0** across its three result states
 (`ready` / `disabled` / `unavailable`), emitting empty output when cloud is off
 or nothing is pending, and a single line carrying just a diagnostic CODE when

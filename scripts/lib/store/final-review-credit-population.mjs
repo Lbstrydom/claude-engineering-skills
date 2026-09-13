@@ -55,3 +55,57 @@ export const CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE =
   `r.repo_id = $1 AND f.bucket IS NULL ` +
   `AND f.remediation_state IN ('fixed', 'verified') ` +
   `AND f.user_action IS NULL`;
+
+/**
+ * The `pendingQueue` SQL — the LIST half of the credit queue, built from BOTH
+ * branch predicates above, keyset-paged (docs/plans/backlog-tooling-honesty.md
+ * §2, audit-plan R1 H2). Lives here rather than in `runs-findings.mjs` for the
+ * same reason the predicates do: that module is ratcheted, and the query is
+ * the predicates' only consumer on the list side.
+ *
+ * The queue is drained by the adjudication that walks it, so an OFFSET skips
+ * one row per adjudication. The UNION is wrapped as a subquery so a WHERE can
+ * continue from the previous page's last row in the queue's own total order —
+ * `severity_rank DESC, created_at DESC, finding_fingerprint ASC, run_id ASC`
+ * (the first two are the ranking; the last two are the row identity that makes
+ * it TOTAL, and they mirror `orderItems`'s tie-break). Mixed directions rule
+ * out a single row-value comparison, hence the expanded predicate.
+ * `created_at_cursor` carries the timestamp as TEXT (microsecond-exact) so a
+ * µs-tied pair is neither repeated nor skipped when it is bound back as
+ * `$4::timestamptz`; `audit_finding_id` is the embedding key the work-unit
+ * grouper joins on.
+ *
+ * Binds: `$1` repo_id, `$2` limit; with `cursor`, `$3` severity_rank,
+ * `$4` created_at (text → timestamptz), `$5` finding_fingerprint, `$6` run_id.
+ *
+ * @param {{cursor: boolean}} opts
+ * @returns {string}
+ */
+export function pendingQueueSql({ cursor }) {
+  const cursorWhere = cursor
+    ? `WHERE (q.severity_rank < $3)
+           OR (q.severity_rank = $3 AND q.created_at < $4::timestamptz)
+           OR (q.severity_rank = $3 AND q.created_at = $4::timestamptz AND q.finding_fingerprint > $5)
+           OR (q.severity_rank = $3 AND q.created_at = $4::timestamptz AND q.finding_fingerprint = $5 AND q.run_id > $6::uuid)`
+    : '';
+  return `SELECT q.*, q.created_at::text AS created_at_cursor FROM (
+       SELECT f.id AS audit_finding_id, f.run_id, f.finding_fingerprint, f.severity, f.category,
+              f.primary_file, f.detail_snapshot, f.source_model,
+              f.user_action, f.remediation_state, f.created_at, f.bucket,
+              (CASE f.severity WHEN 'HIGH' THEN 3 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 1 ELSE 0 END) AS severity_rank
+         FROM audit_findings f
+         JOIN audit_runs r ON r.id = f.run_id
+        WHERE ${CREDIT_BRANCH_SHADOW_WHERE}
+       UNION ALL
+       SELECT f.id AS audit_finding_id, f.run_id, f.finding_fingerprint, f.severity, f.category,
+              f.primary_file, f.detail_snapshot, f.source_model,
+              f.user_action, f.remediation_state, f.created_at, f.bucket,
+              (CASE f.severity WHEN 'HIGH' THEN 3 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 1 ELSE 0 END) AS severity_rank
+         FROM audit_findings f
+         JOIN audit_runs r ON r.id = f.run_id
+        WHERE ${CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE}
+     ) q
+     ${cursorWhere}
+     ORDER BY q.severity_rank DESC, q.created_at DESC, q.finding_fingerprint ASC, q.run_id ASC
+     LIMIT $2`;
+}
