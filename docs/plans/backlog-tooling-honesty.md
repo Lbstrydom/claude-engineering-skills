@@ -268,6 +268,7 @@ graph LR
 | `scripts/lib/audit/run-persistence.mjs` | modify | Delete the inline `evaluateConvergenceWithDetectors(...)` block; `const detectorVerdict = assembled.convergence`; stderr reason line and `audit.convergenceState` payload unchanged. |
 | `scripts/lib/audit/run-telemetry.mjs` | modify | Delete both local `gatingFindings/highCount/mediumCount` recounts (`:268-270`, `:313-315`), the local `quickFix` and the `evaluateConvergence` import; destructure `high, medium, quickFix, convergence` from `assembled`; `converged = convergence.converged`. |
 | `tests/run-telemetry.test.mjs` | modify | New describe: parity — (a) one `refuted` HIGH + one `LINTER` HIGH, real verdict `PASS`, telemetry `converged: true` (red today); (b) zero counts but `resolveDetectorResultForRound` yields `detector-not-run` (R2+ with `suppressionUnavailable: true`), telemetry `converged: false` with the same `reason` persistence records (red today); `dismissed` still counts from `allFindings`. |
+| `tests/audit-detector.test.mjs` | modify | The verdict-site call-shape guard follows the call into `finding-assembly.mjs` and additionally pins that `run-persistence.mjs` READS `assembled.convergence` and no longer evaluates (found by the full suite before ship: 1 of 15,766). |
 | `tests/helpers/multi-pass-audit-fixtures.mjs` | modify | `minimalFinalizationData(overrides)` — the ONE contract-valid FinalizationData builder; `run-finalization`, `run-telemetry` and `finding-assembly` tests import it (audit-code A/R1 M6: three drifted copies). |
 | `tests/finalization-contract.test.mjs` | modify | `minimalAssembled` fixture gains `quickFix` + `convergence` (the §8 "required field" consequence, landed in the same commit). |
 | `tests/finding-assembly.test.mjs` | modify | Assert `assembled.quickFix` counts ALL `is_quick_fix` findings (including refuted — matches the gate today) and `assembled.convergence` carries `{converged, reason}`. |
@@ -300,7 +301,7 @@ parity test red→green. Files: `scripts/lib/audit/finding-assembly.mjs`
 `scripts/lib/audit/run-telemetry.mjs` (modify), `tests/run-telemetry.test.mjs`
 (modify), `tests/finding-assembly.test.mjs` (modify),
 `tests/finalization-contract.test.mjs` (modify),
-`tests/helpers/multi-pass-audit-fixtures.mjs` (modify).
+`tests/helpers/multi-pass-audit-fixtures.mjs` (modify), `tests/audit-detector.test.mjs` (modify).
 
 **Phase 2 — Non-vacuous static scans**: retarget both tests and add the
 zero-hit guards. Files: `tests/run-finalisation-awaited.test.mjs` (modify),

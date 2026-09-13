@@ -342,9 +342,17 @@ test('the production verdict site calls the oracle with the resolver, not the co
   // shape, not the runtime flow; the runtime half is verified empirically by
   // running /audit-code with the ledger withheld (plan §9, D1).
   const { readFile } = await import('node:fs/promises');
-  // legacy-production-audit-decomposition Phase 4: this call site moved to
-  // run-persistence.mjs (4c) as part of the commit-provenance gate evidence.
-  const src = await readFile(new URL('../scripts/lib/audit/run-persistence.mjs', import.meta.url), 'utf8');
+  // legacy-production-audit-decomposition Phase 4 moved this call site to
+  // run-persistence.mjs (4c); docs/plans/backlog-tooling-honesty.md (2026-09-13)
+  // moved it one stage earlier, into assembleFindings, so telemetry and
+  // persistence read ONE verdict. The persistence stage must now consume
+  // `assembled.convergence` rather than re-evaluating — pinned below.
+  const src = await readFile(new URL('../scripts/lib/audit/finding-assembly.mjs', import.meta.url), 'utf8');
+  const persistence = await readFile(new URL('../scripts/lib/audit/run-persistence.mjs', import.meta.url), 'utf8');
+  assert.match(persistence, /const detectorVerdict = assembled\.convergence;/,
+    'run-persistence must read the verdict assembleFindings computed, never re-evaluate it');
+  assert.doesNotMatch(persistence, /evaluateConvergenceWithDetectors\(/,
+    'a second evaluation in the persistence stage is the two-verdicts defect this plan closed');
 
   assert.match(src, /evaluateConvergenceWithDetectors\(/,
     'the verdict site must call the detector-aware oracle');
