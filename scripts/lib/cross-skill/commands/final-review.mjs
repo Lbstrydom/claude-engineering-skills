@@ -30,8 +30,25 @@ export function encodeQueueCursor({ severityRank, createdAt, fingerprint, runId,
 
 const PG_TIMESTAMPTZ_TEXT = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}(:?\d{2})?)?$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** Shape AND semantics: `2026-13-01 …` matches the shape and is not a date (audit-code cluster B R2 M1). */
-const isPgTimestamptzText = (s) => PG_TIMESTAMPTZ_TEXT.test(s) && Number.isFinite(Date.parse(s.replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00')));
+/**
+ * Shape AND semantics (audit-code cluster B R2 M1 / R3 M1): `2026-13-01 …`
+ * matches the shape and is not a date; `2026-02-30 …` is NORMALISED by
+ * Date.parse to March 2nd rather than rejected, so the calendar date is
+ * checked by round-trip — the parsed instant must report the same Y-M-D.
+ */
+const isPgTimestamptzText = (s) => {
+  if (!PG_TIMESTAMPTZ_TEXT.test(s)) return false;
+  const iso = s.replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00');
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return false;
+  // Compare the date part in the string's own offset: shift by the offset so
+  // the UTC getters read the local calendar day the string named.
+  const off = /(?:Z|([+-])(\d{2}):?(\d{2})?)$/.exec(iso);
+  const offMin = off && off[1] ? (off[1] === '-' ? -1 : 1) * (Number(off[2]) * 60 + Number(off[3] || 0)) : 0;
+  const d = new Date(ms + offMin * 60_000);
+  const ymd = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  return s.startsWith(ymd);
+};
 
 /** Inverse of `encodeQueueCursor`; a malformed cursor is BAD_INPUT, never a silent first page. */
 export function decodeQueueCursor(raw) {

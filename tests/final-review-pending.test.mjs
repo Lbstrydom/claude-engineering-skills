@@ -329,6 +329,12 @@ describe('encodeQueueCursor / decodeQueueCursor', () => {
     assert.equal(typeof decodeQueueCursor(c).createdAt, 'string');
   });
 
+  it('accepts real calendar boundaries in the store shape (leap day, end of month, negative offset late at night)', () => {
+    for (const good of ['2028-02-29 10:00:00.000001+00', '2026-04-30 23:59:59.999999+00', '2026-09-13 23:30:00-05', '2026-09-13T00:00:00Z']) {
+      assert.deepEqual(decodeQueueCursor(encodeQueueCursor({ ...CURSOR, createdAt: good })).createdAt, good, `must accept ${good}`);
+    }
+  });
+
   it('refuses a malformed cursor as BAD_INPUT rather than silently starting over', () => {
     const enc = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
     for (const bad of [
@@ -338,6 +344,8 @@ describe('encodeQueueCursor / decodeQueueCursor', () => {
       enc({ ...CURSOR, severityRank: 9 }),
       enc({ ...CURSOR, fingerprint: 'has spaces; DROP' }),
       enc({ ...CURSOR, createdAt: '2026-13-01 10:00:00.000001+00' }),
+      enc({ ...CURSOR, createdAt: '2026-02-30 10:00:00.000001+00' }),
+      enc({ ...CURSOR, createdAt: '2026-04-31 23:59:59+02' }),
       enc({ ...CURSOR, findingId: 'not-a-uuid' }),
       enc({ ...CURSOR, v: 1 }),
     ]) {
