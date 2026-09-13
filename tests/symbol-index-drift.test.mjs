@@ -76,8 +76,8 @@ describe('symbol-index/drift.mjs — parseArgs (symbol-index-pipeline-reliabilit
 describe('symbol-index/drift.mjs — resolveStoreGateExit (false-green regression)', () => {
   const { resolveStoreGateExit } = _internals;
 
-  // The callers (.github/workflows/architectural-drift.yml, here and in every
-  // consumer) map this process's exit code as 0=green / 1=triggered / 2=infra
+  // The callers (maintenance-checks.mjs's `arch-maintenance` here; a consumer's
+  // architectural-drift workflow where one still exists) map this exit code as 0=green / 1=triggered / 2=infra
   // error, and the green branch auto-CLOSES the sticky drift issue. So a 0 for
   // either "cannot verify" state is not a cosmetic wrong number — it silently
   // certifies a clean sweep that never ran. Observed live 2026-08-08 in run

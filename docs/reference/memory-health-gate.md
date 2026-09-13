@@ -110,10 +110,19 @@ of vanishing from it via an INNER JOIN.
 
 ## Scheduling
 
-Auto-scheduled via `.github/workflows/memory-health.yml` — runs every Monday
-09:00 UTC, silent when all metrics green, opens/updates a sticky GH issue (label
-`memory-health`) when any trigger fires. Auto-closes when metrics return to green.
-Run locally: `npm run memory:health` or `npm run memory:health:json`.
+Weekly via the local maintenance replica — `maintenance-checks.mjs`'s
+`memory-health` entry, fired opportunistically from the pre-push hook when
+overdue ([local-maintenance-checks.md](../runbooks/local-maintenance-checks.md)).
+Run ad hoc: `npm run memory:health` or `npm run memory:health:json`.
+
+The Actions cron (`memory-health.yml`, Mondays 09:00 UTC, sticky issue labelled
+`memory-health`) was **deleted 2026-09-13**. GitHub-hosted runners have no route
+to the NAS store, so every scheduled run since at least 2026-06-22 had skipped on
+`AUDIT_DB_URL not set` and exited 0 — green for three months while measuring
+nothing, which is how the cadence doctor's `unmeasured` verdict came to exist
+([workflow-cadence-doctor.md](workflow-cadence-doctor.md)). Sticky issue #58
+(2026-07-22) was opened by a run that still had a store and can no longer be
+auto-closed; close it by hand once the replica reads green.
 
 ## pgvector prototyped + promoted (2026-07-21)
 

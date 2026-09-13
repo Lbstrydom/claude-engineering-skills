@@ -3,6 +3,11 @@
  * @fileoverview Local replica of the 5 weekly GitHub Actions maintenance
  * workflows (architectural-drift, migration-drift, model-freshness,
  * memory-health, learning-weekly-review) plus cache-hitrate-check,
+ * -- and, since 2026-09-13, the ONLY runner of the four store-backed ones in
+ * the source repo: their Actions crons were deleted after the cadence doctor
+ * measured them green-and-skipping for months (GitHub-hosted runners cannot
+ * reach the NAS store, so every run hit `AUDIT_DB_URL not set` and exited 0).
+ * `model-freshness.yml` survives; it needs provider keys, not the store.
  * debt-health, debt-ledger-claims, debt-capture-trail, context-staleness,
  * and accepted-debt (ad hoc — no dedicated workflow file; accepted-debt is additionally
  * sourceRepoOnly, see its CHECKS entry), and one DISPOSABLE one-shot
@@ -152,7 +157,7 @@ const DEFAULT_INTERVAL_DAYS = 7;
  */
 export const CHECKS = [
   {
-    key: 'arch-maintenance', // .github/workflows/architectural-drift.yml
+    key: 'arch-maintenance', // formerly architectural-drift.yml -- Actions cron deleted 2026-09-13; this is its only runner here
     label: 'Architectural memory refresh + drift sweep + retention prune',
     requiredEnv: ['AUDIT_DB_URL'],
     steps: [
@@ -162,7 +167,7 @@ export const CHECKS = [
     ],
   },
   {
-    key: 'migration-drift', // .github/workflows/migration-drift.yml
+    key: 'migration-drift', // formerly migration-drift.yml -- Actions cron deleted 2026-09-13; this is its only runner here
     label: 'Postgres migration drift',
     requiredEnv: ['AUDIT_DB_URL'],
     steps: [{ script: 'setup-postgres.mjs', args: ['--check-drift'] }],
@@ -174,13 +179,13 @@ export const CHECKS = [
     steps: [{ script: 'check-model-freshness.mjs', args: [] }],
   },
   {
-    key: 'memory-health', // .github/workflows/memory-health.yml
+    key: 'memory-health', // formerly memory-health.yml -- Actions cron deleted 2026-09-13; this is its only runner here
     label: 'Findings-memory health gate',
     requiredEnv: ['AUDIT_DB_URL'],
     steps: [{ script: 'memory-health.mjs', args: [] }],
   },
   {
-    key: 'learning-weekly-review', // .github/workflows/learning-weekly-review.yml
+    key: 'learning-weekly-review', // formerly learning-weekly-review.yml -- Actions cron deleted 2026-09-13; this is its only runner here
     label: 'Learning-system weekly review',
     requiredEnv: ['AUDIT_DB_URL', 'LEARNING_REPO_NAME'],
     // Mirrors the workflow's TWO steps, in its order: backfill drains

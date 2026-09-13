@@ -15,6 +15,25 @@
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `scripts/.claude-skills/lib/debt-ledger-claim-check.mjs` in wine-cellar-app's synced tree contains `mergeTopicIdEvidence` — present. The push's own sync summary confirmed 9 files updated across all 3/3 registered consumers.
 - **Result**: verified — the debt-ledger-claims-check cloud-evidence fix reached the consumer bundle intact.
 
+## 2026-09-13 — deleted the five decorative Actions crons; the local replica is now their only runner
+
+Follow-on to the entry below. Once the doctor could see it, the honest state of this repo's `.github/workflows/` was: five store-backed crons (`architectural-drift`, `cache-seed-check`, `learning-weekly-review`, `memory-health`, `migration-drift`) that had exited 0 on `AUDIT_DB_URL not set` for months, because a GitHub-hosted `ubuntu-latest` runner has no route to the NAS store. Same remedy wine chose in #507: a monitor for a store it cannot reach is not fixed by marking it.
+
+Before deleting, checked what actually runs them: `npm run maintenance:status` — heartbeat `2026-09-13T09:27:50Z (opportunistic)`, fired by this morning's push, with `arch-maintenance`, `migration-drift`, `memory-health`, `learning-weekly-review` and `cache-hitrate` all present (`AUDIT_LOOP_WEEKLY_MAINTENANCE=1` is set in the main checkout's `.env`). Nothing is lost that was ever measured on GitHub.
+
+### Changes
+- **Deleted** `.github/workflows/{architectural-drift,cache-seed-check,learning-weekly-review,memory-health,migration-drift}.yml`. `model-freshness.yml` survives (it needs provider keys, not the store — its last scheduled run carried no skip annotation), now emits `title=audit-loop-no-measurement` on its own no-keys skip branch, and is the sole `.workflow-cadence.json` entry, with `requireMeasurement: true`.
+- **[tests/workflow-cadence-doctor.test.mjs](tests/workflow-cadence-doctor.test.mjs)** — the positive control no longer hardcodes five filenames: it walks `.github/workflows/` for any `skip=true` branch and requires the marker on each, fails if that set is empty (so it cannot pass having checked nothing), and asserts every watch names a workflow that exists — the #500-vs-#507 cross-PR trap wine hit. Scanner control now expects `model-freshness.yml`. **[tests/setup-postgres-check-drift.test.mjs](tests/setup-postgres-check-drift.test.mjs)** — dropped the `migration-drift workflow exists with three triggers` case.
+- Comments that named the workflows as callers ([maintenance-checks.mjs](scripts/maintenance-checks.mjs), [symbol-index/drift.mjs](scripts/symbol-index/drift.mjs), its test) now name the replica; [AGENTS.md](AGENTS.md) (memory-health + local-maintenance sections), [memory-health-gate.md](docs/reference/memory-health-gate.md), [postgres-parity.md](docs/runbooks/postgres-parity.md) and the [cadence-doctor reference](docs/reference/workflow-cadence-doctor.md) say where each check runs now and why.
+
+### Decisions Made
+- **Sticky issues #58 (memory-health, 2026-07-22), #61 (migration-drift, 2026-07-24), #59 (learning-weekly-review) were opened by these crons while they still had a store and can no longer be auto-closed.** Left for a human to close (noted in the two docs); not closed by the tooling.
+- `migration-drift.yml`'s push-on-`supabase/migrations/**` trigger went with it. It skipped without the secret too, so it never gated a migration push on GitHub; the operator-side pre-push snippet in postgres-parity.md and `--check-drift` in the replica are the live paths.
+- Did not touch consumers' copies of these workflows (storyline may still carry them). Their doctor + `requireMeasurement` will say whether theirs measure anything; deleting is theirs to decide.
+
+### Verification
+Full suite (`npm test`): first run 15,691 tests / 1 fail — `maintenance CHECKS — workflow citations resolve` caught my own `// replaces .github/workflows/X.yml` comments as stale citations (correctly: that test exists so a deleted workflow cannot leave a comment claiming CI coverage). Reworded to `formerly X.yml` and lowered its floor from 5 citations to 1 with the reason inline; touched suites 105 pass / 0 fail, and the final full run is on the commit line. Doc gates (`context:check`, `docs:check`, `docs:refs:gate`, `docs:synced-links:gate`) green.
+
 ## 2026-09-13 — cadence doctor: a green run can now say it measured nothing (`unmeasured`)
 
 Upstream report `7e413fe2` (wine-cellar-app, bundle `979e497a`): `workflow-cadence-doctor.mjs`'s `vacuous` flag covers "zero runs to examine" and nothing else, so a job that ran on schedule, hit a fail-open branch, exited 0 and concluded `success` is indistinguishable from healthy. Their instance (#507): a wrapper returning 0 on `no active snapshot` kept a workflow reading a dead Supabase credential green four times a day for ~26 days, and the PR body said outright *"a cadence doctor cannot catch this"*.

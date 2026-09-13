@@ -555,18 +555,30 @@ test('isNoMeasurementAnnotation is title-exact and level-agnostic', () => {
   assert.equal(isNoMeasurementAnnotation('audit-loop-no-measurement'), false);
 });
 
-test('this repo\'s own DB-dependent crons emit the marker on their skip branch -- a positive control on the convention', () => {
-  // Five workflows were green-and-skipping when this landed. If a later edit
-  // drops the title from one of them, the doctor silently reads it as measured
-  // again, which is the exact regression.
+test('every cron in this repo with a skip branch emits the marker, and every watch names a workflow that exists', () => {
+  // Positive control on the convention: a `skip=true` branch that exits 0 is
+  // exactly the green-and-skipping shape, so it must carry the title -- drop
+  // it and the doctor silently reads the run as measured again. Five such
+  // crons were deleted 2026-09-13 (as wine did in #507); the survivors are
+  // held to the same contract, and the test fails if the set goes empty, so
+  // it cannot pass by having checked nothing.
   const wf = path.join(REPO_ROOT, '.github', 'workflows');
-  for (const f of ['architectural-drift.yml', 'cache-seed-check.yml', 'learning-weekly-review.yml', 'memory-health.yml', 'migration-drift.yml']) {
+  const withSkip = fs.readdirSync(wf).filter((f) => /\.ya?ml$/.test(f)
+    && /skip=true/.test(fs.readFileSync(path.join(wf, f), 'utf-8')));
+  assert.ok(withSkip.length >= 1, 'no workflow with a skip branch -- the control has nothing to check');
+  for (const f of withSkip) {
     const text = fs.readFileSync(path.join(wf, f), 'utf-8');
-    assert.match(text, new RegExp(`title=${NO_MEASUREMENT_TITLE}::`), `${f} skip branch does not emit the marker`);
+    assert.match(text, new RegExp(`title=${NO_MEASUREMENT_TITLE}::`), `${f} has a skip branch that does not emit the marker`);
   }
+  // The cross-PR trap wine hit (#500 vs #507): a watch list naming a workflow
+  // that a sibling change deleted reads never-ran/404 forever.
   const watch = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, WATCH_CONFIG_BASENAME), 'utf-8')).watch;
-  for (const w of watch.filter((x) => x.workflow !== 'model-freshness.yml')) {
-    assert.equal(w.requireMeasurement, true, `${w.workflow} is watched without requireMeasurement`);
+  assert.ok(watch.length >= 1);
+  for (const w of watch) {
+    assert.ok(fs.existsSync(path.join(wf, w.workflow)), `${WATCH_CONFIG_BASENAME} watches ${w.workflow}, which does not exist`);
+    if (withSkip.includes(w.workflow)) {
+      assert.equal(w.requireMeasurement, true, `${w.workflow} has a skip branch but is watched without requireMeasurement`);
+    }
   }
 });
 
@@ -651,9 +663,12 @@ test('a repo with no .github/workflows discovers nothing rather than throwing', 
 test('this repo\'s own scheduled workflows are discoverable -- a positive control on the scanner', () => {
   // Without this, the discovery test above passes against synthetic files while
   // the scanner could be blind to every real workflow in the repo it ships in.
+  // Five DB-dependent crons were deleted 2026-09-13 (GitHub-hosted runners
+  // cannot reach the store; the local maintenance replica runs them), so the
+  // set is small -- but it must not be EMPTY, or the scanner could be blind.
   const found = discoverScheduledWorkflows(REPO_ROOT);
-  assert.ok(found.length >= 5, `expected this repo's cron workflows, got ${JSON.stringify(found)}`);
-  assert.ok(found.includes('memory-health.yml'));
+  assert.ok(found.length >= 1, `expected this repo's cron workflows, got ${JSON.stringify(found)}`);
+  assert.ok(found.includes('model-freshness.yml'));
 });
 
 test('unconfigured warns and carries the pasteable remedy', () => {

@@ -385,20 +385,6 @@ describe('production wiring — behavioural contracts', () => {
     assert.ok(driftIdx > refreshIdx, 'drift check must run after arch:refresh');
   });
 
-  it('migration-drift workflow exists with three triggers + label', () => {
-    const wf = fs.readFileSync(path.join(REPO_ROOT, '.github/workflows/migration-drift.yml'), 'utf-8');
-    // Behavioural — three triggers (schedule/push/workflow_dispatch) and
-    // the sticky-issue label. The exact cron expression or YAML formatting
-    // can change without breaking the contract.
-    assert.match(wf, /^on:/m);
-    assert.match(wf, /schedule:/);
-    assert.match(wf, /push:/);
-    assert.match(wf, /workflow_dispatch:/);
-    assert.match(wf, /supabase\/migrations/);
-    assert.match(wf, /migration-drift/);
-    assert.match(wf, /--check-drift/);
-  });
-
   it('the runbook documents the operator self-service snippet with the contract markers', () => {
     // Snippet moved from AGENTS.md to the Postgres operations runbook (AGENTS.md
     // kept lean); the contract assertions follow it there.

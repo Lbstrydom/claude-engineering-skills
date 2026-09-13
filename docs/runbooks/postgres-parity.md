@@ -257,10 +257,12 @@ A true `shaMismatch` is never touched.
 
 Surfaced two ways:
 
-- **Weekly CI + push-on-migration** (`.github/workflows/migration-drift.yml`): cron
-  Mondays 09:45 UTC + immediately on any commit landing `supabase/migrations/**`.
-  Opens a sticky GitHub issue with label `migration-drift` on drift; auto-closes when
-  clean.
+- **Weekly, via the local maintenance replica** (`maintenance-checks.mjs`
+  `migration-drift`): the Actions workflow (`migration-drift.yml`, cron Mondays
+  09:45 UTC + push-on-migration, sticky issue labelled `migration-drift`) was
+  **deleted 2026-09-13** — GitHub-hosted runners cannot reach the NAS store, so
+  every run had skipped on `AUDIT_DB_URL not set` and exited 0. Sticky issue #61
+  (2026-07-24) predates that and cannot auto-close; close it by hand.
 - **Pre-push (operator self-service)**: optional, requires you to paste the snippet
   below into your source-repo `.git/hooks/pre-push`. CI is the primary gate; this is
   just a faster local-feedback loop.

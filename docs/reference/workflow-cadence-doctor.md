@@ -211,8 +211,11 @@ Three properties worth knowing:
 - **Opt-in, and byte-identical when not taken.** A watch without
   `requireMeasurement` makes no annotation calls and reads exactly as before.
   A workflow that never emits the marker reads as measured — which is what `ok`
-  always meant, now stated. The five workflows above opt in; `model-freshness.yml`
-  has no skip branch and does not.
+  always meant, now stated. The five workflows above were **deleted the same
+  day** (the remedy wine chose in #507: a monitor for a store it cannot reach is
+  not fixed by marking it) — the local maintenance replica already ran all of
+  them. `model-freshness.yml` survives, emits the marker on its own skip branch
+  (no provider keys), and is the one watch with `requireMeasurement` here.
 - **An unread run is never a clean run.** If the annotations of an in-budget
   success cannot be read (network, a 403), the verdict is `undetermined`, not
   `ok`. The 403 message names the remedy: a workflow that pins `permissions:`
@@ -226,7 +229,10 @@ Three properties worth knowing:
 Both halves of the memory-health history above are pinned in
 `tests/workflow-cadence-doctor.test.mjs`: as emitted before the convention
 (untitled), the fixture reads `ok`; with the title, `unmeasured`. A positive
-control asserts the five workflows still emit the title and are still opted in.
+control asserts that every workflow in this repo with a `skip=true` branch emits
+the title, that the set is non-empty, and that every watch names a workflow that
+exists (the #500-vs-#507 cross-PR trap: watching a deleted workflow reads
+never-ran forever).
 
 **What it still cannot see**: a run that measured the *wrong* thing and said
 nothing — a stale snapshot compared against itself, a credential that connects

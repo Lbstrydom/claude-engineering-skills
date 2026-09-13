@@ -171,8 +171,9 @@ function renderMarkdownViaShared(drift, threshold, status, identity, clusters, c
  * Decide the exit code for the two "the store did not give us anything to
  * compare against" states.
  *
- * These MUST NOT be 0. The callers (.github/workflows/architectural-drift.yml
- * here and in every consumer) map this process's exit code as
+ * These MUST NOT be 0. The callers (maintenance-checks.mjs's `arch-maintenance`
+ * here since the Actions cron was deleted 2026-09-13; a consumer's
+ * architectural-drift workflow where one still exists) map this process's exit code as
  * `0 = green, 1 = drift triggered, 2 = infra error`, and the green branch
  * auto-CLOSES the sticky drift issue. Returning 0 here therefore made
  * "I could not check" indistinguishable from "I checked and it is clean" —

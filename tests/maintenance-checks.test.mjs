@@ -555,7 +555,12 @@ describe('maintenance CHECKS — workflow citations resolve', () => {
 
   it('every cited .github/workflows file exists', () => {
     const cited = [...SRC.matchAll(/\.github\/workflows\/([\w.-]+\.yml)/g)].map((m) => m[1]);
-    assert.ok(cited.length >= 5, `expected the workflow citations to still be present, found ${cited.length}`);
+    // Was >= 5 until 2026-09-13, when four of the five cited crons were DELETED
+    // (green-and-skipping for months -- no store reachable from a GitHub-hosted
+    // runner) and their entries reworded to "formerly X.yml", which this regex
+    // deliberately does not match. The floor stays > 0 so the check cannot pass
+    // by having found no citations at all.
+    assert.ok(cited.length >= 1, `expected the workflow citations to still be present, found ${cited.length}`);
     const repoRoot = path.resolve(import.meta.dirname, '..');
     for (const wf of new Set(cited)) {
       assert.ok(fs.existsSync(path.join(repoRoot, '.github', 'workflows', wf)),

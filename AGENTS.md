@@ -598,7 +598,10 @@ metric, or deciding whether to promote the graph design. The trigger table,
 the thresholds, the `memory_health_metrics(window_days)` RPC and the
 0/1/2-trigger decision rule live in
 [`docs/reference/memory-health-gate.md`](docs/reference/memory-health-gate.md).
-Weekly via `.github/workflows/memory-health.yml`; locally `npm run memory:health`.
+Weekly via the local maintenance replica (`maintenance-checks.mjs` `memory-health`);
+ad hoc `npm run memory:health`. The Actions cron was **deleted 2026-09-13**: it
+had been green-and-skipping since at least June (no store reachable from a
+GitHub-hosted runner).
 
 Three obligations stay resident; the incidents, query mechanics and thresholds are
 in [`docs/reference/memory-health-gate.md`](docs/reference/memory-health-gate.md):
@@ -865,11 +868,16 @@ worth switching to?" for the **auditor** (currently GPT) or **adjudicator**
 
 ## Local Weekly Maintenance Checks (opt-in)
 
-Optional, default-OFF local replica of the weekly GH Actions maintenance
-workflows, for orgs that block Actions runners. Opportunistic — from the
+Optional, default-OFF local replica of the weekly maintenance checks, for orgs
+that block Actions runners — **and, in THIS repo, the only runner of the four
+store-backed ones** (arch-maintenance, migration-drift, memory-health,
+learning-weekly-review) since their Actions crons were deleted 2026-09-13: a
+GitHub-hosted runner cannot reach the NAS store, so every scheduled run had
+skipped on `AUDIT_DB_URL not set` and exited 0. Opportunistic — from the
 pre-push hook when overdue, **not** an OS scheduler (avoids the
 wrong-PATH/cwd/asleep-at-trigger class). Enable via `setup.mjs` Step 4 or
-`AUDIT_LOOP_WEEKLY_MAINTENANCE=1`. [Detail](docs/runbooks/local-maintenance-checks.md).
+`AUDIT_LOOP_WEEKLY_MAINTENANCE=1` (set on the maintainer's machine;
+`npm run maintenance:status` shows the heartbeat). [Detail](docs/runbooks/local-maintenance-checks.md).
 
 **Sibling tools**, both advisory: `npm run runner:doctor` (self-hosted-runner
 viability; `local`/`remove` inventory + teardown on THIS machine — health from

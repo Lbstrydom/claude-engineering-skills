@@ -46,7 +46,10 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           if [ -z "$OPENAI_API_KEY" ] && [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$GEMINI_API_KEY" ]; then
-            echo "::warning::No provider keys set — skipping freshness check"
+            # `title=audit-loop-no-measurement` is the contract workflow-cadence-doctor.mjs
+            # reads back: this run exits 0 but MEASURED NOTHING, so it must not
+            # count as a green cadence. Drop the title and the doctor reads it as ok.
+            echo "::warning title=audit-loop-no-measurement::No provider keys set — skipping freshness check"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"

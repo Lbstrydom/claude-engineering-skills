@@ -1,10 +1,5 @@
 {
   "watch": [
-    { "workflow": "architectural-drift.yml", "event": "schedule", "maxAgeDays": 10, "requireMeasurement": true },
-    { "workflow": "cache-seed-check.yml", "event": "schedule", "maxAgeDays": 10, "requireMeasurement": true },
-    { "workflow": "learning-weekly-review.yml", "event": "schedule", "maxAgeDays": 10, "requireMeasurement": true },
-    { "workflow": "memory-health.yml", "event": "schedule", "maxAgeDays": 10, "requireMeasurement": true },
-    { "workflow": "migration-drift.yml", "event": "schedule", "maxAgeDays": 10, "requireMeasurement": true },
-    { "workflow": "model-freshness.yml", "event": "schedule", "maxAgeDays": 10 }
+    { "workflow": "model-freshness.yml", "event": "schedule", "maxAgeDays": 10, "requireMeasurement": true }
   ]
 }
