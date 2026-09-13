@@ -79,6 +79,7 @@ import { graphVerdict } from '../lib/symbol-index/graph-verdict.mjs';
 import { assessExtractionCoverage } from '../lib/symbol-index/graph-coverage.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 import { findRepoPragmas, resolvePragmasToDefinitions, PRAGMA_RESOLUTION_MAX_GAP_LINES } from '../lib/duplicate-justification-pragma.mjs';
+import { isDriftPathExempt } from '../lib/symbol-index/drift-path-exemptions.mjs';
 import { SUBPROC_ERROR_CODES } from '../lib/subprocess.mjs';
 import { finishAndExit } from '../lib/cli-io.mjs';
 import { parseArgs } from './refresh-args.mjs';
@@ -447,7 +448,22 @@ async function main() {
           }))
           .filter((c) => c.definitionId);
         const { resolved, ambiguous, unresolved } = resolvePragmasToDefinitions(scopedPragmas, pragmaCandidates);
-        await recordDuplicateJustifications(refreshId, repoId, resolved);
+        // Path-based exemptions (drift-path-exemptions.mjs) — the structural
+        // counterpart to a pragma, for directories a pragma can never reach
+        // (tests/*). Computed from the SAME in-memory finalSymbols/defMap as
+        // pragmaCandidates above, no extra DB round-trip. Independent of the
+        // pragma sweep by construction (tests/* is never pragma-scanned), so
+        // there is no definitionId overlap with `resolved` to reconcile.
+        const pathExemptJustifications = finalSymbols
+          .map((s) => ({ ...s, definitionId: defMap[`${s.filePath}|${s.symbolName}|${s.kind}`] }))
+          .filter((s) => s.definitionId && isDriftPathExempt(s.filePath))
+          .map((s) => ({
+            definitionId: s.definitionId,
+            target: 'DRIFT_PATH_EXEMPT_PREFIXES',
+            source: `path-exempt:${s.filePath}`,
+            reason: 'deliberate test-fixture mirror corpus, not accidental duplication -- see scripts/lib/symbol-index/drift-path-exemptions.mjs',
+          }));
+        await recordDuplicateJustifications(refreshId, repoId, resolved.concat(pathExemptJustifications));
         if (ambiguous.length > 0) {
           logOk(`WARNING: ${ambiguous.length} @duplicate-justification pragma(s) target a declaration already claimed by another pragma — NEITHER is applied (round-5 M5: an ambiguous declaration is never excluded on an unreliable signal) — see stderr detail below.`);
           for (const a of ambiguous) logErr(`  ambiguous pragma: ${a.pragmaFile}:${a.pragmaLine} (definition claimed by multiple pragmas — none applied)`);

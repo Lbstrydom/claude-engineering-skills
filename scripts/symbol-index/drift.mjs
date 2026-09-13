@@ -320,7 +320,7 @@ async function main() {
   let ambiguousUnresolvedSection = '';
   const excludedCount = Number(drift.duplication_excluded_count) || 0;
   if (excludedCount > 0) {
-    excludedNote = `\n_Excludes ${excludedCount} \`@duplicate-justification\`-marked declaration(s) this refresh._\n`;
+    excludedNote = `\n_Excludes ${excludedCount} justified declaration(s) this refresh (\`@duplicate-justification\` pragma or a path exemption in drift-path-exemptions.mjs)._\n`;
   }
   try {
     const repoPragmas = findRepoPragmas(process.cwd());
