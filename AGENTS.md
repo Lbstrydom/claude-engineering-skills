@@ -884,7 +884,15 @@ four straight days, unfiltered read `OK` (20 runs/11 successes) while
 call failing, and its watch list being ABSENT while the repo has crons**; a
 checker that goes quiet when it cannot tell reproduces the defect it detects, so
 `never-ran` carries `vacuous` to separate a finding from a query that matched
-nothing. [Detail](docs/reference/workflow-cadence-doctor.md).
+nothing. **`ok` means "the run did not fail", not "the thing it measures is
+current"** — a fail-open branch exiting 0 is `success`, and 5 of THIS repo's 6
+watched crons were green-and-skipping (`AUDIT_DB_URL not set`) for months
+(2026-09-13). A skip branch therefore emits
+`::notice title=audit-loop-no-measurement::<reason>` (`lib/measurement-marker.mjs`),
+and a watch with `requireMeasurement: true` reads it back from the run's
+check-run annotations (needs `checks: read`) → verdict `unmeasured`. Never grep
+the job log for it: Actions echoes the script body BEFORE running it, so the
+branch that did not fire still matches. [Detail](docs/reference/workflow-cadence-doctor.md).
 
 ## Azure AI Foundry Work Profile
 

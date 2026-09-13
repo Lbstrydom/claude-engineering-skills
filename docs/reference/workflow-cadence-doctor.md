@@ -106,6 +106,7 @@ not a smoke test for that code.**
 | `event` | no | *(all events)* | A GitHub trigger name. **Set this to `schedule` for anything cron-driven** — that is the whole point of the tool. Omitting it reproduces the defect above. |
 | `maxAgeDays` | no | `10` | Staleness budget. `10` suits a weekly cron (~1.5 cycles before complaining); a nightly should say `2`. |
 | `label` | no | `<workflow>@<event>` | Overrides the name used in messages. |
+| `requireMeasurement` | no | `false` | A success counts only if the run did not declare [no-measurement](#a-third-defect-green-runs-that-measured-nothing). Boolean only — `"yes"` aborts. Costs ~2 API calls per in-budget success and needs `checks: read`. |
 
 A malformed file **aborts** with exit 2 rather than being skipped. A watch list
 the tool silently drops half of is a watch list whose author believes it is in
@@ -115,8 +116,9 @@ force — silence, from the file that exists to prevent silence.
 
 | Status | Meaning | Warns? |
 |---|---|---|
-| `ok` | A successful run inside the budget. | no |
-| `stale` | Last success is older than `maxAgeDays`. | yes |
+| `ok` | A successful run inside the budget. **Means "the run did not fail"** — not "the thing it measures is current". With `requireMeasurement`, additionally: that run did not declare no-measurement. | no |
+| `unmeasured` | `requireMeasurement` only. Every success inside the budget carried the [no-measurement marker](#a-third-defect-green-runs-that-measured-nothing): the cron fires and exits green, and has measured nothing for the whole window. | yes |
+| `stale` | Last success is older than `maxAgeDays`. Wins over `unmeasured` — a cron that is not firing is the louder fact. | yes |
 | `never-ran` | No successful run in the examined window. | yes |
 | `undetermined` | The tool could not tell — API error, no token, unresolvable repo. | yes |
 | `unconfigured` | The repo has cron workflows and no watch list, so nothing was checked. | yes |
@@ -124,6 +126,7 @@ force — silence, from the file that exists to prevent silence.
 
 The rollup takes the worst across watches, with `undetermined` outranking a real
 finding: not knowing is worse than a known-bad, because a known-bad is measured.
+Order: `undetermined` > `never-ran` > `unmeasured` > `stale` > `unconfigured` > `ok`.
 
 ### Silence means exactly one thing
 
@@ -149,6 +152,87 @@ Every verdict therefore carries `runsExamined` and a boolean `vacuous`, and the
 three cases get different prose. A cadence checker that silently fetches zero
 runs and reports `never-ran` is indistinguishable from a real finding, which is
 how a watcher stops being trustworthy.
+
+**`vacuous` covers exactly one shape: zero runs to examine.** It says nothing
+about a run that exists, exited 0, and did nothing. That is the next section.
+
+## A third defect: green runs that measured nothing
+
+The run conclusion is all GitHub offers, and it has no third value. A job that
+hits a fail-open branch — no credential, no snapshot, nothing to compare — and
+exits 0 concludes `success`, byte-identical to a job that did its work. So
+**`ok` means "the run did not fail"**, and has never meant more.
+
+Measured 2026-09-13, in this repo, via the workflow-runs and check-run
+annotations APIs:
+
+```
+architectural-drift.yml@schedule    success 2026-09-07  AUDIT_DB_URL not set — skipping architectural-drift
+cache-seed-check.yml@schedule       success 2026-09-10  AUDIT_DB_URL not set — cannot query audit_runs; skipping check
+learning-weekly-review.yml@schedule success 2026-09-07  AUDIT_DB_URL not set — skipping review
+memory-health.yml@schedule          success 2026-09-07  AUDIT_DB_URL not set — skipping health check
+migration-drift.yml@schedule        success 2026-09-07  AUDIT_DB_URL not set — skipping migration-drift check
+model-freshness.yml@schedule        success 2026-09-07  (no annotation — it ran)
+```
+
+Five of the six watched crons were green-and-skipping — the store moved off
+Supabase and GitHub-hosted runners have no `AUDIT_DB_URL` — and `memory-health.yml`
+had carried that annotation on **every** scheduled run since at least 2026-06-22
+(the oldest of twelve runs read). `npm run cadence:doctor` reported `ok` on all
+six. A consumer found the same shape by hand ([wine-cellar-app #507](https://github.com/Lbstrydom/wine-cellar-app/pull/507)):
+a wrapper returning 0 on `no active snapshot` kept a workflow reading a dead
+credential green four times a day for ~26 days, and its PR body said outright
+that *"a cadence doctor cannot catch this"*. It could not; now it can, if told.
+
+### The convention
+
+The step that **decides** not to measure emits a check-run annotation with a
+fixed title:
+
+```bash
+echo "::notice title=audit-loop-no-measurement::AUDIT_DB_URL not set — skipping health check"
+```
+
+The title is the contract; the level (`notice` / `warning`) is the emitter's
+choice and the reader ignores it. From Node, `scripts/lib/measurement-marker.mjs`
+(shipped in the bundle) exports `emitNoMeasurement(reason)` — the workflow
+command on stdout under `GITHUB_ACTIONS`, a plain `[no-measurement]` line on
+stderr elsewhere — plus `NO_MEASUREMENT_TITLE` and the predicate the doctor
+uses, so writer and reader cannot drift apart.
+
+A watch entry with `"requireMeasurement": true` then has the doctor walk the
+successful runs inside the budget, newest first, reading each run's jobs and
+each job's annotations, and stopping at the first run **without** the marker:
+that is the run the verdict rests on, and its age is the reported age. If every
+success inside the budget carries the marker, the verdict is `unmeasured`.
+
+Three properties worth knowing:
+
+- **Opt-in, and byte-identical when not taken.** A watch without
+  `requireMeasurement` makes no annotation calls and reads exactly as before.
+  A workflow that never emits the marker reads as measured — which is what `ok`
+  always meant, now stated. The five workflows above opt in; `model-freshness.yml`
+  has no skip branch and does not.
+- **An unread run is never a clean run.** If the annotations of an in-budget
+  success cannot be read (network, a 403), the verdict is `undetermined`, not
+  `ok`. The 403 message names the remedy: a workflow that pins `permissions:`
+  needs **`checks: read`** in addition to `actions: read` (a fine-grained PAT
+  needs "Checks: read"). The local `gh` keyring token has it.
+- **Annotations, not the job log, deliberately.** The log was the obvious
+  instrument and it is a trap: Actions prints the full `run:` script body before
+  executing it, so a grep for the marker matches the echoed source of the branch
+  that did **not** fire. Annotations exist only for commands that ran.
+
+Both halves of the memory-health history above are pinned in
+`tests/workflow-cadence-doctor.test.mjs`: as emitted before the convention
+(untitled), the fixture reads `ok`; with the title, `unmeasured`. A positive
+control asserts the five workflows still emit the title and are still opted in.
+
+**What it still cannot see**: a run that measured the *wrong* thing and said
+nothing — a stale snapshot compared against itself, a credential that connects
+to a store nobody writes to. The marker only carries what the emitting step
+knew. The honest check for any workflow remains its own output; this closes the
+case where the workflow *knew* it had none.
 
 ## Advisory, and the one exception
 
@@ -176,16 +260,19 @@ node scripts/workflow-cadence-doctor.mjs --repo owner/name --workflow ci.yml --e
 |---|---|
 | `--repo owner/name` | Defaults to `GITHUB_REPOSITORY`, then the `origin` remote. |
 | `--config <path>` | Defaults to `.workflow-cadence.json` at the repo root. |
-| `--workflow` / `--event` / `--max-age-days` | A one-off probe. **Replaces** the watch list rather than merging into it. |
+| `--workflow` / `--event` / `--max-age-days` / `--require-measurement` | A one-off probe. **Replaces** the watch list rather than merging into it. |
 | `--json` | One envelope on stdout. `ok` reports whether the *doctor ran*, not repo health — the verdict is `status`. |
 | `--strict` | Exit 1 when the rollup is not `ok`. See above. |
 
 Exit codes: `0` reported · `1` `--strict` and not `ok` · `2` usage error
 (unknown flag, malformed watch list).
 
-**Credentials**: `GITHUB_TOKEN` or `GH_TOKEN`, needing only workflow-run read
-access. A `GITHUB_TOKEN` in `.env` reads this API fine; a bare `gh` keyring token
-may not. Inside Actions, the job's own `GITHUB_TOKEN` is enough.
+**Credentials**: `GITHUB_TOKEN` or `GH_TOKEN`, needing workflow-run read access
+(`actions: read`), plus `checks: read` for any watch with `requireMeasurement`.
+Inside Actions, the job's own `GITHUB_TOKEN` is enough **only if the workflow's
+`permissions:` block grants both** — a block naming `actions: read` alone makes
+every `requireMeasurement` watch `undetermined`, with the message saying which
+scope to add. Locally, `gh auth token` reads both APIs (verified 2026-09-13).
 
 ## Where to run it
 
@@ -206,4 +293,6 @@ incident above — the tool would have printed a warning on every push from
 given workflow is its own output — a snapshot's age, a smoke test's last green.
 That is per-workflow, needs that workflow's credentials, and does not generalise.
 The workflow-run timestamp is the available proxy, and it answers the question
-actually being asked: did the thing run, and did it pass.
+actually being asked: did the thing run, and did it pass. `requireMeasurement`
+narrows the gap by one named case — the run *itself* declaring it measured
+nothing — and no further.

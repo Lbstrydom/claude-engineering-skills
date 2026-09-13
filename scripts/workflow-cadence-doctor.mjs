@@ -82,11 +82,43 @@
  * which case it is -- so neither a reader nor a test can mistake one for the
  * other.
  *
+ * `vacuous` covers ONE shape: zero runs to examine. It says nothing about a run
+ * that exists, exited 0, and did nothing -- see the next section.
+ *
+ * # `ok` means "the run did not fail", not "the thing it measures is current"
+ *
+ * The run conclusion is all GitHub offers, and it has no third value: a job
+ * that hits a fail-open branch (no credential, no snapshot, nothing to compare)
+ * and exits 0 is `success`, byte-identical to a job that did its work. Measured
+ * 2026-09-13 in THIS repo: five of the six watched crons had been
+ * green-and-skipping (`AUDIT_DB_URL not set -- skipping ...`) since the store
+ * moved off Supabase, `memory-health.yml` on every scheduled run since at least
+ * 2026-06-22, and the doctor read `ok` on all six. A consumer hit the same shape
+ * (wine-cellar-app #507): a wrapper returning 0 on `no active snapshot` kept a
+ * dead credential green for ~26 days.
+ *
+ * So there is a third bucket, `unmeasured`, driven by an OPT-IN convention: a
+ * step that decides not to measure emits
+ *
+ *   ::notice title=audit-loop-no-measurement::<reason>
+ *
+ * (`lib/measurement-marker.mjs` owns the title and an emitter), and a watch
+ * entry with `requireMeasurement: true` makes the doctor read each in-budget
+ * successful run's check-run annotations back. A success carrying the marker is
+ * not counted; if every success inside the budget carries it, the verdict is
+ * `unmeasured` and warns. Opt-in because it costs API calls per run and needs
+ * `checks: read`, and because a workflow that never emits the marker reads
+ * exactly as it did before: absence of the marker is "measured, as far as the
+ * run said" -- which is what `ok` always meant. Annotations rather than the job
+ * log because the log prints the `run:` script body before executing it, so a
+ * log grep matches the echoed source of the branch that did NOT fire.
+ *
  * Usage:
  *   node scripts/workflow-cadence-doctor.mjs
  *   node scripts/workflow-cadence-doctor.mjs --repo owner/name
  *   node scripts/workflow-cadence-doctor.mjs --config .workflow-cadence.json
  *   node scripts/workflow-cadence-doctor.mjs --workflow ci.yml --event schedule --max-age-days 2
+ *   node scripts/workflow-cadence-doctor.mjs --workflow ci.yml --event schedule --require-measurement
  *   node scripts/workflow-cadence-doctor.mjs --json
  *   node scripts/workflow-cadence-doctor.mjs --strict     # exit 1 when the rollup is not ok
  *
@@ -94,7 +126,8 @@
  *   {
  *     "watch": [
  *       { "workflow": "phase-gates.yml", "event": "schedule", "maxAgeDays": 2 },
- *       { "workflow": "live-smoke.yml",  "event": "schedule", "maxAgeDays": 2 }
+ *       { "workflow": "live-smoke.yml",  "event": "schedule", "maxAgeDays": 2,
+ *         "requireMeasurement": true }
  *     ]
  *   }
  *
@@ -114,11 +147,12 @@ import {
 } from './lib/cli-io.mjs';
 import { parseOriginRepo } from './lib/branch-protection.mjs';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
+import { NO_MEASUREMENT_TITLE, isNoMeasurementAnnotation } from './lib/measurement-marker.mjs';
 
 if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
 const KNOWN_FLAGS = [
-  '--repo', '--config', '--workflow', '--event', '--max-age-days',
+  '--repo', '--config', '--workflow', '--event', '--max-age-days', '--require-measurement',
   '--json', '--strict', '--selfcheck-relocation',
 ];
 
@@ -129,15 +163,34 @@ export const DEFAULT_MAX_AGE_DAYS = 10;
 /** Where a repo declares what it wants watched. Committed, not generated. */
 export const WATCH_CONFIG_BASENAME = '.workflow-cadence.json';
 
-/** @typedef {'ok'|'stale'|'never-ran'|'undetermined'} CadenceStatus */
-/** @typedef {'ok'|'stale'|'never-ran'|'undetermined'|'unconfigured'|'nothing-to-watch'} RollupStatus */
+/** @typedef {'ok'|'unmeasured'|'stale'|'never-ran'|'undetermined'} CadenceStatus */
+/** @typedef {'ok'|'unmeasured'|'stale'|'never-ran'|'undetermined'|'unconfigured'|'nothing-to-watch'} RollupStatus */
 
 /**
  * Worst-first. `rollupStatus` picks the max, and `render` warns on anything but
  * the two tail entries. `undetermined` outranks a real finding deliberately: not
  * knowing is worse than a known-bad, because a known-bad is at least measured.
+ * `unmeasured` sits above `stale`: a slipped cron is an absence, while a green
+ * run that declared it measured nothing is a run that TOLD us the effect is not
+ * current.
  */
-const SEVERITY = ['undetermined', 'never-ran', 'stale', 'unconfigured', 'ok', 'nothing-to-watch'];
+const SEVERITY = ['undetermined', 'never-ran', 'unmeasured', 'stale', 'unconfigured', 'ok', 'nothing-to-watch'];
+
+/**
+ * The successful runs of a workflow, newest first, each paired with its parsed
+ * timestamp. Shared by the verdict and by the measurement walk in
+ * `assessWatchList`, so both agree on which runs are "the successes".
+ *
+ * @param {Array<{conclusion: string, updated_at: string}>} runs
+ * @returns {Array<{at: Date, run: object}>}
+ */
+function successfulRuns(runs) {
+  return runs
+    .filter((r) => r && r.conclusion === 'success' && r.updated_at)
+    .map((run) => ({ at: new Date(run.updated_at), run }))
+    .filter(({ at }) => Number.isFinite(at.getTime()))
+    .sort((a, b) => b.at - a.at);
+}
 
 /** Human name for one watch entry, used in every message it produces. */
 export function watchLabel(watch) {
@@ -149,22 +202,28 @@ export function watchLabel(watch) {
  * Decide the cadence verdict for ONE watch from the runs GitHub reported.
  *
  * Pure, so the interesting cases are testable without a network: the API call is
- * the caller's job.
+ * the caller's job -- including, under `requireMeasurement`, reading each
+ * in-budget success's annotations and stamping `run.noMeasurement` before the
+ * runs arrive here (`{reason}` = carried the marker, `null` = read and clean,
+ * `undefined` = never read).
  *
  * @param {{
- *   runs: Array<{conclusion: string, updated_at: string}>|null,
+ *   runs: Array<{conclusion: string, updated_at: string, id?: number,
+ *                noMeasurement?: {reason: string}|null}>|null,
  *   now: Date,
  *   maxAgeDays?: number,
  *   error?: string|null,
+ *   measurementError?: string|null,
  *   notFound?: boolean,
+ *   requireMeasurement?: boolean,
  *   label?: string,
  * }} input
  * @returns {{status: CadenceStatus, ageDays: number|null, runsExamined: number,
- *            vacuous: boolean, message: string}}
+ *            vacuous: boolean, unmeasuredRuns: number, message: string}}
  */
 export function assessCadence({
-  runs, now, maxAgeDays = DEFAULT_MAX_AGE_DAYS, error = null, notFound = false,
-  label = 'the watched workflow',
+  runs, now, maxAgeDays = DEFAULT_MAX_AGE_DAYS, error = null, measurementError = null,
+  notFound = false, requireMeasurement = false, label = 'the watched workflow',
 }) {
   if (error || runs === null) {
     return {
@@ -172,6 +231,7 @@ export function assessCadence({
       ageDays: null,
       runsExamined: 0,
       vacuous: false,
+      unmeasuredRuns: 0,
       message: `could not determine when ${label} last ran (${error || 'no data'}). `
         + 'This is NOT a pass -- the cadence is unverified until this resolves.',
     };
@@ -188,17 +248,14 @@ export function assessCadence({
       ageDays: null,
       runsExamined: 0,
       vacuous: false,
+      unmeasuredRuns: 0,
       message: `${label} is not registered on the default branch (GitHub returned 404 for the `
         + 'workflow). It has never run because it does not exist there yet -- merge it, then '
         + 'dispatch it once to establish the baseline.',
     };
   }
 
-  const successes = runs
-    .filter((r) => r && r.conclusion === 'success' && r.updated_at)
-    .map((r) => new Date(r.updated_at))
-    .filter((d) => Number.isFinite(d.getTime()))
-    .sort((a, b) => b - a);
+  const successes = successfulRuns(runs);
 
   if (successes.length === 0) {
     // THE VACUITY GUARD. Zero examined runs and zero successful runs are the
@@ -211,6 +268,7 @@ export function assessCadence({
         ageDays: null,
         runsExamined: 0,
         vacuous: true,
+        unmeasuredRuns: 0,
         message: `GitHub returned NO completed runs at all for ${label}, so nothing was actually `
           + 'examined. That is either a workflow which has genuinely never run, or a query that '
           + 'matches nothing -- check the workflow filename and the `event` in the watch entry '
@@ -222,31 +280,104 @@ export function assessCadence({
       ageDays: null,
       runsExamined,
       vacuous: false,
+      unmeasuredRuns: 0,
       message: `${label} has NEVER completed successfully: ${runsExamined} completed run(s) were `
         + 'examined and not one succeeded. Whatever this workflow is the early-warning signal '
         + 'for, it is not warning about anything.',
     };
   }
 
-  const ageDays = (now.getTime() - successes[0].getTime()) / 86_400_000;
-  if (ageDays > maxAgeDays) {
+  const ageOf = ({ at }) => (now.getTime() - at.getTime()) / 86_400_000;
+  const newestAge = ageOf(successes[0]);
+  if (newestAge > maxAgeDays) {
+    // A slipped cron is the louder fact even when that last run was also
+    // unmeasured: the remedy is "why is it not firing", not "what did it skip".
     return {
       status: 'stale',
-      ageDays,
+      ageDays: newestAge,
       runsExamined,
       vacuous: false,
-      message: `the last successful run of ${label} was ${ageDays.toFixed(1)} days ago, over the `
+      unmeasuredRuns: 0,
+      message: `the last successful run of ${label} was ${newestAge.toFixed(1)} days ago, over the `
         + `${maxAgeDays}-day budget. The schedule may not be firing -- check whether the runner `
         + 'was offline (a run queued for an absent self-hosted runner is cancelled after 24h).',
     };
   }
 
+  if (!requireMeasurement) {
+    return {
+      status: 'ok',
+      ageDays: newestAge,
+      runsExamined,
+      vacuous: false,
+      unmeasuredRuns: 0,
+      message: `last successful run of ${label} ${newestAge.toFixed(1)} days ago`,
+    };
+  }
+
+  // THE MEASUREMENT WALK. `success` is all GitHub can say, and a run that hit a
+  // fail-open branch and exited 0 says it too. Walk the in-budget successes
+  // newest-first: the first one that did NOT declare no-measurement is the one
+  // the verdict rests on. A run whose annotations were never read is an unasked
+  // question, and an unasked question must not render as a clean answer.
+  if (measurementError) {
+    return {
+      status: 'undetermined',
+      ageDays: newestAge,
+      runsExamined,
+      vacuous: false,
+      unmeasuredRuns: 0,
+      message: `${label} has a successful run ${newestAge.toFixed(1)} days ago, but whether it MEASURED `
+        + `anything could not be read (${measurementError}). This is NOT a pass -- with `
+        + '`requireMeasurement`, a success counts only once its annotations have been checked.',
+    };
+  }
+  const inBudget = successes.filter((s) => ageOf(s) <= maxAgeDays);
+  let unmeasuredRuns = 0;
+  let latestReason = null;
+  for (const s of inBudget) {
+    if (s.run.noMeasurement === undefined) {
+      return {
+        status: 'undetermined',
+        ageDays: newestAge,
+        runsExamined,
+        vacuous: false,
+        unmeasuredRuns,
+        message: `${label} has a successful run inside the budget whose annotations were never read `
+          + `(run ${s.run.id ?? '?'}). This is NOT a pass -- the caller did not ask whether it measured anything.`,
+      };
+    }
+    if (s.run.noMeasurement) {
+      unmeasuredRuns += 1;
+      if (latestReason === null) latestReason = s.run.noMeasurement.reason;
+      continue;
+    }
+    const age = ageOf(s);
+    const skipped = unmeasuredRuns > 0
+      ? ` (${unmeasuredRuns} newer run(s) declared no measurement and were not counted)`
+      : '';
+    return {
+      status: 'ok',
+      ageDays: age,
+      runsExamined,
+      vacuous: false,
+      unmeasuredRuns,
+      message: `last successful MEASURED run of ${label} ${age.toFixed(1)} days ago${skipped}`,
+    };
+  }
+
+  const oldestUnmeasuredAge = ageOf(inBudget[inBudget.length - 1]);
   return {
-    status: 'ok',
-    ageDays,
+    status: 'unmeasured',
+    ageDays: newestAge,
     runsExamined,
     vacuous: false,
-    message: `last successful run of ${label} ${ageDays.toFixed(1)} days ago`,
+    unmeasuredRuns,
+    message: `${label} exited green ${unmeasuredRuns} time(s) inside the ${maxAgeDays}-day budget and `
+      + `EVERY one of those runs declared it measured nothing (latest: "${latestReason}"). GitHub `
+      + 'reads these as success; this is NOT a pass -- whatever this workflow measures has gone '
+      + `unmeasured for at least ${oldestUnmeasuredAge.toFixed(1)} days. Check the input it skipped `
+      + 'on: a credential, a snapshot, a secret that moved.',
   };
 }
 
@@ -274,13 +405,7 @@ export async function fetchWorkflowRuns({
   const url = `https://api.github.com/repos/${repo}/actions/workflows/`
     + `${encodeURIComponent(workflow)}/runs?${params}`;
   try {
-    const res = await fetchImpl(url, {
-      headers: {
-        accept: 'application/vnd.github+json',
-        authorization: `Bearer ${token}`,
-        'x-github-api-version': '2022-11-28',
-      },
-    });
+    const res = await fetchImpl(url, { headers: githubHeaders(token) });
     if (res.status === 404) return { runs: [], error: null, notFound: true };
     if (!res.ok) return { runs: null, error: `GitHub API returned ${res.status}`, notFound: false };
     const body = await res.json();
@@ -291,6 +416,66 @@ export async function fetchWorkflowRuns({
     };
   } catch (err) {
     return { runs: null, error: err instanceof Error ? err.message : String(err), notFound: false };
+  }
+}
+
+function githubHeaders(token) {
+  return {
+    accept: 'application/vnd.github+json',
+    authorization: `Bearer ${token}`,
+    'x-github-api-version': '2022-11-28',
+  };
+}
+
+/**
+ * Did ONE run declare that it measured nothing?
+ *
+ * Lists the run's jobs, then each job's check-run annotations (a job IS a check
+ * run; the ids coincide), and looks for the marker title from
+ * `lib/measurement-marker.mjs`. Structured on purpose: the job LOG was the
+ * obvious instrument and it is a trap -- Actions prints the whole `run:` script
+ * body before executing it, so a grep for the marker matches the echoed source
+ * of the branch that did NOT fire. Annotations exist only for commands that ran.
+ *
+ * Never throws. A 403 is the permission the convention costs, named so the
+ * remedy rides with the complaint: a workflow that pins `permissions:` must add
+ * `checks: read` (the runs endpoint needs only `actions: read`).
+ *
+ * @param {{repo: string, runId: number|string, token: string, fetchImpl?: typeof fetch}} opts
+ * @returns {Promise<{noMeasurement: {reason: string, job: string}|null, error: string|null}>}
+ */
+export async function fetchRunMeasurement({ repo, runId, token, fetchImpl = fetch }) {
+  const base = `https://api.github.com/repos/${repo}`;
+  const headers = githubHeaders(token);
+  try {
+    const jobsRes = await fetchImpl(`${base}/actions/runs/${runId}/jobs?per_page=100`, { headers });
+    if (!jobsRes.ok) {
+      return { noMeasurement: null, error: `GitHub API returned ${jobsRes.status} listing the jobs of run ${runId}` };
+    }
+    const jobsBody = await jobsRes.json();
+    const jobs = Array.isArray(jobsBody.jobs) ? jobsBody.jobs : [];
+    for (const job of jobs) {
+      const res = await fetchImpl(`${base}/check-runs/${job.id}/annotations?per_page=100`, { headers });
+      if (res.status === 403) {
+        return {
+          noMeasurement: null,
+          error: `GitHub API returned 403 reading the annotations of run ${runId} -- reading the `
+            + `\`${NO_MEASUREMENT_TITLE}\` marker needs \`checks: read\` on the token (add it under `
+            + 'the workflow\'s `permissions:`; a fine-grained PAT needs "Checks: read")',
+        };
+      }
+      if (!res.ok) {
+        return { noMeasurement: null, error: `GitHub API returned ${res.status} reading the annotations of run ${runId}` };
+      }
+      const annotations = await res.json();
+      const hit = (Array.isArray(annotations) ? annotations : []).find(isNoMeasurementAnnotation);
+      if (hit) {
+        return { noMeasurement: { reason: String(hit.message ?? '').trim(), job: job.name ?? String(job.id) }, error: null };
+      }
+    }
+    return { noMeasurement: null, error: null };
+  } catch (err) {
+    return { noMeasurement: null, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -311,7 +496,9 @@ function normaliseWatch(raw, index) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new ArgvError(`${where} must be an object, got ${JSON.stringify(raw)}.`);
   }
-  const { workflow, event = null, maxAgeDays = DEFAULT_MAX_AGE_DAYS, label = null } = raw;
+  const {
+    workflow, event = null, maxAgeDays = DEFAULT_MAX_AGE_DAYS, label = null, requireMeasurement = false,
+  } = raw;
   if (typeof workflow !== 'string' || workflow.trim() === '') {
     throw new ArgvError(`${where}.workflow is required and must be a non-empty filename `
       + '(e.g. "phase-gates.yml").');
@@ -325,7 +512,12 @@ function normaliseWatch(raw, index) {
   if (label !== null && typeof label !== 'string') {
     throw new ArgvError(`${where}.label must be a string or be omitted.`);
   }
-  return { workflow: workflow.trim(), event: event && event.trim(), maxAgeDays, label };
+  // A boolean only. `"requireMeasurement": "yes"` is truthy and would silently
+  // opt in; `"false"` is truthy and would silently opt in too.
+  if (typeof requireMeasurement !== 'boolean') {
+    throw new ArgvError(`${where}.requireMeasurement must be true or false, got ${JSON.stringify(requireMeasurement)}.`);
+  }
+  return { workflow: workflow.trim(), event: event && event.trim(), maxAgeDays, label, requireMeasurement };
 }
 
 /**
@@ -480,18 +672,57 @@ export async function assessWatchList({ watches, repo, token, now, fetchImpl = f
   const results = [];
   for (const watch of watches) {
     const label = watchLabel(watch);
-    const { runs, error, notFound } = await fetchWorkflowRuns({
+    const fetched = await fetchWorkflowRuns({
       repo, workflow: watch.workflow, event: watch.event, token, fetchImpl,
     });
+    let { runs } = fetched;
+    let measurementError = null;
+    if (watch.requireMeasurement && runs && !fetched.error && !fetched.notFound) {
+      ({ runs, measurementError } = await stampMeasurements({
+        runs, repo, token, now, maxAgeDays: watch.maxAgeDays, fetchImpl,
+      }));
+    }
     results.push({
       label,
       workflow: watch.workflow,
       event: watch.event ?? null,
       maxAgeDays: watch.maxAgeDays,
-      verdict: assessCadence({ runs, now, maxAgeDays: watch.maxAgeDays, error, notFound, label }),
+      requireMeasurement: Boolean(watch.requireMeasurement),
+      verdict: assessCadence({
+        runs, now, maxAgeDays: watch.maxAgeDays, error: fetched.error, measurementError,
+        notFound: fetched.notFound, requireMeasurement: watch.requireMeasurement, label,
+      }),
     });
   }
   return { status: rollupStatus(results.map((r) => r.verdict.status)), watches: results };
+}
+
+/**
+ * Read the no-measurement marker for each in-budget success, newest first, and
+ * stamp it onto a COPY of the run. Stops at the first run that did measure --
+ * the verdict rests on that one and nothing older can change it -- so the API
+ * cost is bounded by the successes inside the budget (a nightly with a 2-day
+ * budget: two runs). The first read error stops the walk and is returned, so
+ * the verdict becomes `undetermined` rather than resting on an unread run.
+ *
+ * @returns {Promise<{runs: Array<object>, measurementError: string|null}>}
+ */
+async function stampMeasurements({ runs, repo, token, now, maxAgeDays, fetchImpl }) {
+  // Keyed by the run OBJECT, not `id`: fixtures without ids would otherwise
+  // all collapse onto one key and every run would inherit one run's answer.
+  const stamped = new Map();
+  let measurementError = null;
+  for (const { at, run } of successfulRuns(runs)) {
+    if ((now.getTime() - at.getTime()) / 86_400_000 > maxAgeDays) break;
+    const { noMeasurement, error } = await fetchRunMeasurement({ repo, runId: run.id, token, fetchImpl });
+    if (error) { measurementError = error; break; }
+    stamped.set(run, noMeasurement);
+    if (!noMeasurement) break;
+  }
+  return {
+    runs: runs.map((run) => (stamped.has(run) ? { ...run, noMeasurement: stamped.get(run) } : run)),
+    measurementError,
+  };
 }
 
 export async function main(argv = process.argv, env = process.env, out = process.stdout) {
@@ -515,6 +746,7 @@ export async function main(argv = process.argv, env = process.env, out = process
       maxAgeDays: argOption('max-age-days')
         ? Number(argOption('max-age-days'))
         : DEFAULT_MAX_AGE_DAYS,
+      requireMeasurement: hasFlag('require-measurement'),
     }, 0)];
     source = 'argv';
   } else {
