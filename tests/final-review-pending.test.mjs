@@ -365,7 +365,7 @@ function queueRow(i, { severity = 'HIGH', actionable = true } = {}) {
     source_model: 'm', bucket: 'shadow-only',
     // a shadow-only row already labelled dismissed is NOT actionable
     user_action: actionable ? null : 'dismissed', remediation_state: null,
-    created_at: new Date(Date.UTC(2026, 8, 13, 10, 0, 0, 0)), created_at_cursor: `2026-09-13 10:00:00.0000${String(9 - i).padStart(2, '0')}+00`.replace(/.(d{6})d+/, '.$1'),
+    created_at: new Date(Date.UTC(2026, 8, 13, 10, 0, 0, 0)), created_at_cursor: `2026-09-13 10:00:00.0000${String(9 - i).padStart(2, '0')}+00`, // six fraction digits — Postgres' timestamptz::text
     severity_rank: severity === 'HIGH' ? 3 : 2,
   };
 }
