@@ -27,8 +27,7 @@ import {
   personaSeverityCode, isP0OrP1, isSeverityUnderstated, personaFindingHash,
   decideCorrelations,
 } from '../scripts/lib/persona/audit-correlator.mjs';
-
-const noRoute = () => new Map();
+import { noRoute, auditFinding } from './helpers/persona-audit-fixtures.mjs';
 
 /**
  * Byte-for-byte the shape `skills/persona-test/SKILL.md` Phase 3 specifies
@@ -49,14 +48,6 @@ const contractFinding = (over = {}) => ({
 const legacyFinding = (over = {}) => ({
   code: 'P0', step: 1, element: 'Checkout button',
   observed: 'Checkout page crashes on click.', ...over,
-});
-
-const auditFinding = (over = {}) => ({
-  id: 'audit-1', run_id: 'run-1', finding_fingerprint: 'ffffffff',
-  severity: 'HIGH', category: 'crash', primary_file: 'src/pages/checkout.tsx',
-  detail_snapshot: 'Checkout page throws on click event.',
-  run_created_at: '2026-07-13T00:00:00Z',
-  ...over,
 });
 
 describe('personaSeverityCode — the single oracle for a persona finding severity', () => {

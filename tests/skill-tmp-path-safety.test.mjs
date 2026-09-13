@@ -29,18 +29,9 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { markdownFiles } from './helpers/fixtures.mjs';
 
 const SKILLS_DIR = 'skills';
-
-function markdownFiles(dir) {
-  const out = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...markdownFiles(full));
-    else if (entry.name.endsWith('.md')) out.push(full);
-  }
-  return out;
-}
 
 /**
  * The dangerous shape: a call to `require(`/`readFileSync(`/`existsSync(`

@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execSync, spawnSync } from 'node:child_process';
+import { execSync, execFileSync, spawnSync } from 'node:child_process';
 import { Writable } from 'node:stream';
 import { GIT_LOCAL_ENV_VARS } from '../../scripts/lib/git-env-sanitize.mjs';
 
@@ -197,6 +197,26 @@ export function commit(dir, filePath, content, message) {
 }
 
 /**
+ * Run a git subcommand for its side effect only (no stdout capture needed).
+ * Consolidated here (arch:drift duplication cleanup) — `diff-scope-resolver.test.mjs`
+ * and `event-wiring-corpus.test.mjs` each had their own identical copy.
+ */
+export function sh(cwd, ...args) {
+  execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'ignore'], env: gitFixtureEnv() });
+}
+
+/**
+ * Stage EVERY change (`-A`, so deletions/renames are captured too, not just
+ * `git add .`) and commit. Consolidated here (arch:drift duplication cleanup)
+ * — the same two files' own `commit(repo, msg)`, distinct from this module's
+ * `commit(dir, filePath, content, message)` above (single-file vs whole-tree).
+ */
+export function commitAll(repo, msg) {
+  sh(repo, 'add', '-A');
+  sh(repo, 'commit', '-q', '-m', msg);
+}
+
+/**
  * A minimal fake OpenAI-shaped client stub for `responses.parse()` calls,
  * keyed by the requested `text.format.name` (the structured-output schema
  * name). Throws on any unstubbed schema — a deliberate "no silent no-op"
@@ -278,8 +298,78 @@ export function collectMjs(dir, acc = []) {
   return acc;
 }
 
+/** Recursively collect every `.md` file under `dir`. */
+export function markdownFiles(dir) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...markdownFiles(full));
+    else if (entry.name.endsWith('.md')) out.push(full);
+  }
+  return out;
+}
+
+/**
+ * Write a `{version, entries, budgets?}` debt ledger to `ledgerPath`.
+ * Consolidated here (arch:drift duplication cleanup) —
+ * `debt-budget-check-cli.test.mjs` and `debt-health-check.test.mjs` each had
+ * their own identical copy.
+ */
+export function seedLedger(ledgerPath, entries, budgets = {}) {
+  const ledger = { version: 1, entries, ...(Object.keys(budgets).length ? { budgets } : {}) };
+  fs.writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2));
+}
+
+/**
+ * Write a `{version, entries}` round ledger named `name` under `auditDir`.
+ * Consolidated here (arch:drift duplication cleanup) —
+ * `debt-auto-capture-partial-capture-cli.test.mjs` and
+ * `debt-auto-capture-trail-warn-cli.test.mjs` each had their own identical
+ * copy.
+ * @returns {string} the written file's absolute path
+ */
+export function writeRoundLedger(auditDir, name, entries) {
+  const p = path.join(auditDir, name);
+  fs.writeFileSync(p, JSON.stringify({ version: 1, entries }));
+  return p;
+}
+
+/** Retry-hardened rm — a concurrent AV/indexer can hold a handle briefly on Windows. */
+export function rmrf(p) {
+  fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+}
+
+/**
+ * Same retry-hardening as {@link rmrf}, but best-effort: a cleanup that still
+ * fails after the retries is swallowed rather than thrown, for callers doing
+ * end-of-test teardown where a leftover temp dir is a nuisance, not a defect.
+ */
+export function rmrfBestEffort(p) {
+  try { fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best-effort cleanup */ }
+}
+
 /** A fixed, deterministic clock for tests that need a stable `createdAt`. */
 export const CLOCK = () => '2026-01-01T00:00:00.000Z';
+
+/**
+ * A fake provider-shaped HTTP error (`status`/`code` fields), for stubbing a
+ * client call that throws. Consolidated here (arch:drift duplication
+ * cleanup) — `azure-embed-discovery.test.mjs` and
+ * `azure-gpt-claude-discovery.test.mjs` each had their own identical copy.
+ */
+export function fakeHttpError(status, code, message) {
+  return Object.assign(new Error(message || code), { status, code });
+}
+
+/**
+ * A fake successful `spawnSync` result, for a stubbed git-runner map.
+ * Consolidated here (arch:drift duplication cleanup) —
+ * `diff-base-resolver.test.mjs` and `worktree-identity.test.mjs` each had
+ * their own identical copy (there named `ok`).
+ */
+export function spawnOk(stdout = '') {
+  return { status: 0, stdout, stderr: '' };
+}
 
 /**
  * A disposable repo root under the OS tmpdir, realpath'd (macOS /tmp is a

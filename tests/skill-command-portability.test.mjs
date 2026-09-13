@@ -31,18 +31,9 @@ import path from 'node:path';
 import { COMMAND_REGEX } from '../scripts/lib/sync-rewriter.mjs';
 import { getSyncInventoryForRepo } from '../scripts/lib/sync-inventory.mjs';
 import { CONSUMER_REPOS } from '../scripts/lib/consumer-repos.mjs';
+import { markdownFiles } from './helpers/fixtures.mjs';
 
 const SKILLS_DIR = 'skills';
-
-function markdownFiles(dir) {
-  const out = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...markdownFiles(full));
-    else if (entry.name.endsWith('.md')) out.push(full);
-  }
-  return out;
-}
 
 /**
  * A module specifier pointing into the bundle's `scripts/` tree from inside

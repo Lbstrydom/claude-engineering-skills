@@ -23,17 +23,13 @@ import path from 'node:path';
 import { _internals } from '../scripts/lib/sync-isolation-verify.mjs';
 import { LAYOUT_CONSTANTS } from '../scripts/lib/sync-path-map.mjs';
 import { hashFile } from '../scripts/lib/sync-manifest.mjs';
+import { writeFile } from './helpers/fixtures.mjs';
 
 const { gate2B, gate2C } = _internals;
 const TOOL_DIR = LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR;
 
 let root;
-const write = (rel, body) => {
-  const abs = path.join(root, rel);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, body);
-  return abs;
-};
+const write = (rel, body) => writeFile(root, rel, body);
 
 beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'iso-orphan-')); });
 afterEach(() => { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });

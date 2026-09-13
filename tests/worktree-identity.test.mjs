@@ -18,6 +18,7 @@ import {
   classifyStagedScope,
   resolveRangeSnapshot,
 } from '../scripts/lib/worktree-identity.mjs';
+import { spawnOk as ok } from './helpers/fixtures.mjs';
 
 const SHA_A = 'a'.repeat(40);
 const SHA_B = 'b'.repeat(40);
@@ -35,8 +36,6 @@ function runner(map, { onMiss = 'throw' } = {}) {
   fn.calls = calls;
   return fn;
 }
-
-const ok = (stdout = '') => ({ status: 0, stdout, stderr: '' });
 
 describe('resolveExpectedIdentity — the bundle is atomic', () => {
   test('complete attached flags resolve, source=flag', () => {

@@ -30,15 +30,13 @@ import {
   parseEnvelopeFrame, writeEnvelope, drainEnvelopes, listEnvelopesOldestFirst,
   REJECTED_SUBDIR, _internals,
 } from '../scripts/lib/outbox-envelope.mjs';
+// `mkTmp`/`rmTmp` (imported below): `maxRetries`/`retryDelay` are required by
+// tests/rmsync-retry-guard.test.mjs, not decoration — on Windows an antivirus
+// or a lingering handle turns a tmpdir teardown into EPERM/EBUSY, and a bare
+// rmSync makes that a flaky failure.
+import { mkdtemp as mkTmp, rmrfBestEffort as rmTmp } from './helpers/fixtures.mjs';
 
 const V = 1;
-const mkTmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
-// `maxRetries`/`retryDelay` are required by tests/rmsync-retry-guard.test.mjs,
-// not decoration: on Windows an antivirus or a lingering handle turns a tmpdir
-// teardown into EPERM/EBUSY, and a bare rmSync makes that a flaky failure.
-const rmTmp = (d) => {
-  try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ }
-};
 const env = (fingerprint, payload = { a: 1 }) => ({ v: V, fingerprint, payload });
 const parse = (t) => parseEnvelopeFrame(t, { version: V });
 

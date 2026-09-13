@@ -30,7 +30,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 
-import { seedInstalledDeps, runSyncCli, whySyncFailed } from './helpers/consumer-fixture.mjs';
+import { seedInstalledDeps, runSyncCli, whySyncFailed, git as sharedGit } from './helpers/consumer-fixture.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs');
@@ -44,7 +44,7 @@ let tmp;
 let consumer;
 
 function git(args, cwd = consumer) {
-  return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8', windowsHide: true });
+  return sharedGit(args, cwd);
 }
 
 async function sync(extra = [], root = consumer) {

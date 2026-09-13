@@ -21,19 +21,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { initTempRepo, cleanupTempRepo } from './helpers/worktree-guard-args.mjs';
+import { writeFile } from './helpers/fixtures.mjs';
+import { git as sharedGit } from './helpers/git.mjs';
 
 const CLI = fileURLToPath(new URL('../scripts/ship-commit.mjs', import.meta.url));
 const SKILLS_DIR = fileURLToPath(new URL('../skills', import.meta.url));
 
 let repo;
-const git = (args, cwd = repo) => execFileSync('git', args, { cwd, encoding: 'utf-8' }).trim();
-const write = (rel, body) => {
-  const abs = path.join(repo, rel);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, body);
-};
+const git = (args, cwd = repo) => sharedGit(args, cwd);
+const write = (rel, body) => writeFile(repo, rel, body);
 
 /** Run the real CLI in the fixture repo. Returns {status, stderr}. */
 function ship(args) {

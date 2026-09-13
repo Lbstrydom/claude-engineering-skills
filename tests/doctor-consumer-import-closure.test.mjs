@@ -20,6 +20,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { collectImportClosure } from '../scripts/lib/module-graph.mjs';
 import { findNodeModules } from '../scripts/lib/node-modules-resolver.mjs';
+import { readSource } from '../scripts/lib/sync-inventory.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -38,11 +39,6 @@ function buildScriptsFileUniverse() {
   };
   walk(path.join(REPO_ROOT, 'scripts'));
   return out;
-}
-
-function readSource(rel) {
-  try { return fs.readFileSync(path.join(REPO_ROOT, rel), 'utf-8'); }
-  catch { return null; }
 }
 
 describe('scripts/doctor.mjs import closure', () => {

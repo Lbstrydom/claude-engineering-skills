@@ -41,7 +41,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { _internals } from '../scripts/install-prepush-hook.mjs';
-import { hasBash } from './lib/hook-test-helpers.mjs';
+import { hasBash, git } from './lib/hook-test-helpers.mjs';
 
 const { HOOK_BODY } = _internals;
 const __filename = fileURLToPath(import.meta.url);
@@ -50,12 +50,6 @@ const CHECK_PLAN_STATUS = path.join(REPO_ROOT, 'scripts', 'check-plan-status.mjs
 
 const HAS_BASH = hasBash();
 const HAS_GIT = spawnSync('git', ['--version'], { stdio: 'ignore' }).status === 0;
-
-function git(args, cwd) {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf-8' });
-  assert.equal(r.status, 0, `git ${args.join(' ')} failed:\n${r.stderr}`);
-  return r.stdout.trim();
-}
 
 function withWorkspace(fn) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'push-range-stale-'));

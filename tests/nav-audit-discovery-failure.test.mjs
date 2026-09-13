@@ -15,14 +15,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { makeRunCli } from './helpers/run-cli.mjs';
 
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/nav-audit.mjs');
 let dir;
 
-function run(args) {
-  return spawnSync(process.execPath, [CLI, ...args], { cwd: dir, encoding: 'utf-8' });
-}
+const run = makeRunCli(CLI, { cwd: () => dir, command: process.execPath });
 
 beforeEach(() => {
   // Deliberately NOT a git repo — `git -C dir ls-files ...` fails, reproducing

@@ -25,9 +25,7 @@ import { loadCorpusCase } from '../scripts/lib/model-eval/known-defect-corpus.mj
 import { findRepoPragmas } from '../scripts/lib/duplicate-justification-pragma.mjs';
 import { findStalePragmas } from '../scripts/lib/symbol-index/stale-pragma-sweep.mjs';
 import { untrackNewlyIgnored } from '../scripts/lib/sync-untrack.mjs';
-import { gitFixtureEnv } from './helpers/fixtures.mjs';
-
-const rmrf = (p) => fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+import { gitFixtureEnv, rmrf } from './helpers/fixtures.mjs';
 
 // Round-4 audit fix: every call site in this file targets a repo that
 // ALWAYS has a baseline commit (victim/fixture are both seeded with one in

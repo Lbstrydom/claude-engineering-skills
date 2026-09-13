@@ -21,6 +21,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { dispatch, CommandError } from '../scripts/lib/cross-skill/dispatch.mjs';
+import { argv } from './helpers/cross-skill-argv.mjs';
 
 function recordingDeps(overrides = {}) {
   const calls = [];
@@ -43,8 +44,6 @@ function recordingDeps(overrides = {}) {
   };
   return { deps, calls };
 }
-
-const argv = (...a) => ['node', 'cross-skill.mjs', ...a];
 
 describe('record-ship-event — the write template', () => {
   it('happy path: scope resolved ambiently, ONE ship-event write, ok envelope', async () => {

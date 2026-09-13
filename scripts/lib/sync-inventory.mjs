@@ -352,7 +352,7 @@ function getFileUniverse() {
   return _fileUniverseCache;
 }
 
-function readSource(rel) {
+export function readSource(rel) {
   try { return fs.readFileSync(path.join(REPO_ROOT, rel), 'utf-8'); }
   catch { return null; }
 }

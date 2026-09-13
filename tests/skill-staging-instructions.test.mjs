@@ -24,19 +24,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { markdownFiles } from './helpers/fixtures.mjs';
 
 const SKILLS_DIR = 'skills';
-
-/** Recursively collect every markdown file under the authoritative skills tree. */
-function markdownFiles(dir) {
-  const out = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...markdownFiles(full));
-    else if (entry.name.endsWith('.md')) out.push(full);
-  }
-  return out;
-}
 
 /**
  * A token is lint-resolvable only if it looks like a concrete repo path.

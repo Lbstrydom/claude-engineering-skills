@@ -18,23 +18,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { resolveDiffScope, computeEntryPoints } from '../scripts/lib/audit/diff-scope-resolver.mjs';
-import { gitFixtureEnv } from './helpers/fixtures.mjs';
+import { sh, writeFile, commitAll as commit, gitFixtureEnv } from './helpers/fixtures.mjs';
 
-// 2026-07-23: this was the exact helper that fired live — six real HEAD
-// corruptions in one session traced to a leaked GIT_DIR making git ignore
-// `cwd` entirely and redirect these fixture commits onto the real repo. See
-// tests/helpers/fixtures.mjs's GIT_LOCAL_ENV_VARS docblock for the full story.
-function sh(cwd, ...args) {
-  execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'ignore'], env: gitFixtureEnv() });
-}
-
-function writeFile(repo, rel, content) {
-  const abs = path.join(repo, rel);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, content);
-}
+// 2026-07-23: `sh` (imported above) was the exact helper that fired live —
+// six real HEAD corruptions in one session traced to a leaked GIT_DIR making
+// git ignore `cwd` entirely and redirect these fixture commits onto the real
+// repo. See tests/helpers/fixtures.mjs's GIT_LOCAL_ENV_VARS docblock for the
+// full story.
 
 /** Create a fresh disposable git repo with a single initial commit. */
 function newRepo() {
@@ -48,12 +39,6 @@ function newRepo() {
   sh(repo, 'add', '.');
   sh(repo, 'commit', '-q', '-m', 'init');
   return repo;
-}
-
-function commit(repo, msg) {
-  // -A so we capture deletions + renames in addition to mods (not just `git add .`)
-  sh(repo, 'add', '-A');
-  sh(repo, 'commit', '-q', '-m', msg);
 }
 
 describe('resolveDiffScope — failure modes', () => {

@@ -26,14 +26,13 @@ import { computeRatchetDivergences } from '../scripts/lib/gate-honesty/ratchet.m
 import { checkRatchet, BASELINE_FILENAME } from '../scripts/check-gate-contracts.mjs';
 import { GateContractBaselineSchema } from '../scripts/lib/gate-honesty/schema.mjs';
 import { sanitizeGitEnv } from '../scripts/lib/git-env-sanitize.mjs';
+import { rmrf } from './helpers/fixtures.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const IS_WIN = process.platform === 'win32';
 const NPM = IS_WIN ? 'npm.cmd' : 'npm';
 
-/** Retry-hardened rm — a concurrent AV/indexer can hold a handle briefly on Windows. */
-const rmrf = (p) => fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 
 /**
  * Find the nearest ancestor (starting at `startDir` itself) that has a

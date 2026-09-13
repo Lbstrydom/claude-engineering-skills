@@ -42,7 +42,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -276,4 +276,17 @@ export function whySyncFailed(r) {
     ? `sync was KILLED after ${budget}ms (signal ${r.signal ?? 'SIGTERM'}) — `
       + `not a CLI exit code. Tail:\n${tail}`
     : `sync failed (exit ${r.code}): ${tail}`;
+}
+
+/**
+ * Run git via `-C cwd`, synchronously. Consolidated here (arch:drift
+ * duplication cleanup) — `sync-consumer-divergence-e2e.test.mjs` and
+ * `sync-outbound-eol-e2e.test.mjs` each had their own identical copy,
+ * both already importing from this module. `cwd` has no default here
+ * (unlike the two original copies' `cwd = consumer`) since `consumer` is
+ * each test file's own mutable module-scoped fixture variable — callers
+ * wrap this with their own default.
+ */
+export function git(args, cwd) {
+  return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8', windowsHide: true });
 }

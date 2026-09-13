@@ -23,7 +23,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 
 import {
   applyMissingDispositions, mergeLedgerEntry, serialiseDispositionLedger,
@@ -32,6 +31,7 @@ import {
 import { MISSING_CAUSE } from '../scripts/lib/upstream/dispositions.mjs';
 import { captureReconcilePrecondition } from '../scripts/lib/upstream/commands.mjs';
 import { LEGACY_UNTRACKED_TRANSITION } from '../scripts/lib/upstream/dispositions.mjs';
+import { g, uuid, readLedger } from './helpers/upstream-ledger-test-utils.mjs';
 
 const _dirs = [];
 after(() => {
@@ -39,20 +39,6 @@ after(() => {
     try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best-effort */ }
   }
 });
-
-/**
- * Every setup command is CHECKED (code-audit R1 L2). An ignored `spawnSync`
- * result means a failed `git init` or a failed seed commit produces a fixture
- * that is not what the test claims to be testing, and the assertions then pass
- * or fail for a reason no one can see — the instrument failing quietly, which
- * is the thing this whole change is about.
- */
-const g = (cwd, args) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
-  if (r.error) assert.fail(`git ${args.join(' ')} could not run: ${r.error.message}`);
-  assert.equal(r.status, 0, `git ${args.join(' ')} failed (${r.status}): ${r.stderr}`);
-  return r;
-};
 
 /** A throwaway repo carrying a disposition ledger with `entries`. */
 function makeRepo(entries = []) {
@@ -69,7 +55,6 @@ function makeRepo(entries = []) {
   return dir;
 }
 
-const uuid = (n) => `aaaaaaaa-1111-2222-3333-4444444444${String(n).padStart(2, '0')}`;
 const row = (id, disposition, extra = {}) => ({ issueId: id, state: 'fixed', disposition, ...extra });
 
 const freshness = { state: 'current', behindBy: 0, upstream: 'origin/main', subjectOid: null, reason: null };
@@ -97,8 +82,6 @@ const deps = {
   // tests/upstream-ledger-store-stamp.test.mjs.
   storeFingerprint: null,
 };
-
-const readLedger = (dir) => JSON.parse(fs.readFileSync(path.join(dir, DISPOSITION_LEDGER_PATH), 'utf-8')).entries;
 
 describe('--apply refuses unless staleness has been ruled out', () => {
   for (const cause of [MISSING_CAUSE.STALE, MISSING_CAUSE.MIXED, MISSING_CAUSE.UNKNOWN]) {

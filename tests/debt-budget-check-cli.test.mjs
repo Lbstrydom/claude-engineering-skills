@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { seedLedger as seedLedgerAt } from './helpers/fixtures.mjs';
 
 let tmpDir;
 let ledgerPath;
@@ -28,8 +29,7 @@ function makeEntry(topicId, file) {
 }
 
 function seedLedger(entries, budgets = {}) {
-  const ledger = { version: 1, entries, ...(Object.keys(budgets).length ? { budgets } : {}) };
-  fs.writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2));
+  seedLedgerAt(ledgerPath, entries, budgets);
 }
 
 function runCli(args) {

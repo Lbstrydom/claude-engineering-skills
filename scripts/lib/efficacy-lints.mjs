@@ -32,6 +32,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { pricingKey } from './model-resolver.mjs';
 import { globMatch } from './audit/glob-match.mjs';
+import { escapeRegExp as escapeRe } from './cli-io.mjs';
 import { classifyPath } from './sensitive-paths.mjs';
 import { semanticId } from './findings.mjs';
 import { parseSource, walk } from './ast.mjs';
@@ -269,8 +270,6 @@ function regexExtract(src, rel, { canaryPattern, canaryTestPattern }) {
   }
   return { cacheBlocks, gates, trueKeys, mode: 'regex' };
 }
-
-const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Regex-fallback cached-block text: the nearest `text:`/`content:` string property preceding the
  *  marker within the same object (bounded to the enclosing `{`). Measured on the ORIGINAL source. */

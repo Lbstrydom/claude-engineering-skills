@@ -23,13 +23,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { initTempRepo, cleanupTempRepo } from './helpers/worktree-guard-args.mjs';
+import { git as sharedGit } from './helpers/git.mjs';
 
 import { resolveRangeSnapshot, makeGitRunner } from '../scripts/lib/worktree-identity.mjs';
 
 let repo;
-const git = (args, cwd = repo) => execFileSync('git', args, { cwd, encoding: 'utf-8' }).trim();
+const git = (args, cwd = repo) => sharedGit(args, cwd);
 
 before(() => {
   repo = initTempRepo('wt-ancestry-');

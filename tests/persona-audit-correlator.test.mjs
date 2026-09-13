@@ -15,17 +15,10 @@ import {
   isSeverityUnderstated, buildStepUrlLookup, isMalformedFinding, MATCHER_VERSION,
   PERSONA_FINDING_HASH_VERSION, FUZZY_THRESHOLD,
 } from '../scripts/lib/persona/audit-correlator.mjs';
+import { noRoute, auditFinding } from './helpers/persona-audit-fixtures.mjs';
 
-const noRoute = () => new Map();
 const p0 = (over = {}) => ({ code: 'P0', step: 1, element: 'Checkout button', observed: 'Checkout page crashes on click.', ...over });
 const p1 = (over = {}) => ({ code: 'P1', step: 1, element: 'Checkout button', observed: 'Checkout page crashes on click.', ...over });
-const auditFinding = (over = {}) => ({
-  id: 'audit-1', run_id: 'run-1', finding_fingerprint: 'ffffffff',
-  severity: 'HIGH', category: 'crash', primary_file: 'src/pages/checkout.tsx',
-  detail_snapshot: 'Checkout page throws on click event.',
-  run_created_at: '2026-07-13T00:00:00Z',
-  ...over,
-});
 
 describe('personaFindingHash (v2 identity — docs/plans/persona-finding-hash-versioning.md)', () => {
   it('is stable for identical findings', () => {

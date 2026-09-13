@@ -28,19 +28,12 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { readDebtLedger, LEDGER_UNAVAILABLE_REASONS } from '../scripts/lib/debt-ledger.mjs';
+import { rmrfBestEffort as rmrf } from './helpers/fixtures.mjs';
 
 function tmpdir(label) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `debt-avail-${label}-`));
 }
 
-function rmrf(dir) {
-  // `maxRetries`/`retryDelay` rather than a hand-rolled loop: Windows holds
-  // EPERM/EBUSY briefly after a write, and the repo pins this shape so the
-  // hardening is greppable (tests/rmsync-retry-guard.test.mjs).
-  try {
-    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-  } catch { /* best-effort cleanup */ }
-}
 
 describe('readDebtLedger — absence is representable', () => {
   test('ABSENT ledger reports available:false with a reason, not an empty ledger', () => {

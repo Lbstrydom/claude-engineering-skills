@@ -43,16 +43,13 @@ import {
   CRUISABLE_EXTENSIONS,
 } from '../scripts/lib/symbol-index/graph-coverage.mjs';
 import { CoverageSchema } from '../scripts/lib/coverage-schema.mjs';
+import { writeFile } from './helpers/fixtures.mjs';
 
 const EXTRACT = path.resolve(import.meta.dirname, '..', 'scripts', 'symbol-index', 'extract.mjs');
 
 let repo;
 const git = (args) => execFileSync('git', args, { cwd: repo, encoding: 'utf-8' }).trim();
-const write = (rel, body) => {
-  const abs = path.join(repo, rel);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, body);
-};
+const write = (rel, body) => writeFile(repo, rel, body);
 const rel = (abs) => path.relative(repo, abs).split(path.sep).join('/');
 
 before(() => {

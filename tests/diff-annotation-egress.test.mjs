@@ -17,9 +17,7 @@ import path from 'node:path';
 import { readFilesAsAnnotatedContext, _annotationMarkers } from '../scripts/lib/diff-annotation.mjs';
 import { assertEgressSafe } from '../scripts/lib/sensitive-egress-gate.mjs';
 import { mkdtemp } from './helpers/fixtures.mjs';
-
-/** Escape a literal string for safe interpolation into a RegExp. */
-const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+import { escapeRegExp as escapeRe } from '../scripts/lib/cli-io.mjs';
 
 const DSN = 'postgresql://user:hunter2@host.example.com/db';
 

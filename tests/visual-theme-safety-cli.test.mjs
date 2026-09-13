@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { makeRunCli } from './helpers/run-cli.mjs';
 
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/visual-audit.mjs');
 let dir;
@@ -22,9 +22,7 @@ const CONTRACT = JSON.stringify({
   themes: [],
 });
 
-function run(args) {
-  return spawnSync(process.execPath, [CLI, ...args], { cwd: dir, encoding: 'utf-8' });
-}
+const run = makeRunCli(CLI, { cwd: () => dir, command: process.execPath });
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts-cli-'));

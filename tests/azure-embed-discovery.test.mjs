@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import {
   probeDeployment, listEmbeddingCandidates, selectEmbedDeployment, ProbeOutcome, STATIC_EMBED_CANDIDATES,
 } from '../scripts/lib/azure/embed-discovery.mjs';
+import { fakeHttpError as err } from './helpers/fixtures.mjs';
 
 /** Build a fake client whose embeddings.create succeeds for `deployed`, 400s otherwise. */
 function fakeClient({ deployed = [], catalog = null, failWith = null } = {}) {
@@ -28,8 +29,6 @@ function fakeClient({ deployed = [], catalog = null, failWith = null } = {}) {
     models: { list: async () => (catalog === null ? { data: [] } : { data: catalog }) },
   };
 }
-
-const err = (status, code, message) => Object.assign(new Error(message || code), { status, code });
 
 describe('probe ladder — per-candidate client (deployment-qualified Azure surface)', () => {
   // On that surface the deployment is CONSTRUCTOR-level route state, so probing a

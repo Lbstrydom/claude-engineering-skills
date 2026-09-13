@@ -20,8 +20,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { dispatch } from '../scripts/lib/cross-skill/dispatch.mjs';
-
-const argv = (...a) => ['node', 'cross-skill.mjs', ...a];
+import { argv } from './helpers/cross-skill-argv.mjs';
 
 /** The minimum store surface these five commands touch. */
 function stubDeps(overrides = {}) {

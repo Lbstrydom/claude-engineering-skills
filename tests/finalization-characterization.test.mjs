@@ -37,6 +37,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  FIXTURE_DIR, BACKEND_FILE, CLASSIFICATION, mkFinding,
+  EMPTY_STRUCTURE, EMPTY_WIRING, EMPTY_BACKEND, EMPTY_FRONTEND, EMPTY_SUSTAIN, EMPTY_QUICKFIX,
+  defaultResponses,
+} from './helpers/multi-pass-audit-fixtures.mjs';
 
 process.env.AUDIT_EXPORTS_FOR_TESTS = '1';
 const _priorEnv = {
@@ -60,8 +65,6 @@ const audit = await import('../scripts/openai-audit.mjs');
 const { LlmError } = await import('../scripts/lib/robustness.mjs');
 const { buildAuditRunContext, runLegacyProductionAudit } = audit.__testExports;
 
-const FIXTURE_DIR = 'tests/fixtures/harness-plan';
-const BACKEND_FILE = `${FIXTURE_DIR}/src/service.mjs`;
 const FRONTEND_FILE = `${FIXTURE_DIR}/src/components/Widget.jsx`;
 const PLAN_CONTENT = `# Harness Fixture Plan\n\nImplement \`${BACKEND_FILE}\` and \`${FRONTEND_FILE}\`.\n`;
 
@@ -71,31 +74,6 @@ const BASE_OPTS = {
   noDebtLedger: true,
   scopeMode: 'plan',
 };
-
-const CLASSIFICATION = { sonarType: 'CODE_SMELL', effort: 'EASY', sourceKind: 'MODEL', sourceName: 'test-stub' };
-function mkFinding(overrides = {}) {
-  return {
-    id: 'H1', severity: 'HIGH', category: 'Test Category', section: `${BACKEND_FILE}:1`,
-    detail: 'canned test finding detail', risk: 'canned risk', recommendation: 'canned recommendation',
-    is_quick_fix: false, is_mechanical: false, principle: 'Test Principle',
-    classification: CLASSIFICATION,
-    ...overrides,
-  };
-}
-const EMPTY_STRUCTURE = { pass_name: 'structure', files_planned: 2, files_found: 2, files_missing: 0, missing_files: [], export_mismatches: [], findings: [], summary: 'structure ok' };
-const EMPTY_WIRING = { pass_name: 'wiring', wiring_issues: [], findings: [], summary: 'wiring ok' };
-const EMPTY_BACKEND = { pass_name: 'backend', findings: [], quick_fix_warnings: [], summary: 'backend ok' };
-const EMPTY_FRONTEND = { pass_name: 'frontend', findings: [], quick_fix_warnings: [], summary: 'frontend ok' };
-const EMPTY_SUSTAIN = { pass_name: 'sustainability', findings: [], dead_code: [], quick_fix_warnings: [], summary: 'sustainability ok' };
-const EMPTY_QUICKFIX = { pass_name: 'quickfix', findings: [], summary: 'quickfix ok' };
-
-function defaultResponses(overrides = {}) {
-  return {
-    structure_pass: EMPTY_STRUCTURE, wiring_pass: EMPTY_WIRING, backend_pass: EMPTY_BACKEND,
-    frontend_pass: EMPTY_FRONTEND, sustainability_pass: EMPTY_SUSTAIN, quickfix_pass: EMPTY_QUICKFIX,
-    ...overrides,
-  };
-}
 
 function makeStubClient(responses) {
   return {

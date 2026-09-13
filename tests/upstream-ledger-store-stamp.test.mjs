@@ -38,13 +38,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 
 import {
   applyMissingDispositions, mergeLedgerEntry, serialiseDispositionLedger,
   captureReconcilePrecondition, DISPOSITION_LEDGER_PATH,
 } from '../scripts/lib/upstream/commands.mjs';
 import { MISSING_CAUSE } from '../scripts/lib/upstream/dispositions.mjs';
+import { g, uuid, readLedger } from './helpers/upstream-ledger-test-utils.mjs';
 
 const STORE = 'd5a9d07b91225a93';
 const _dirs = [];
@@ -53,13 +53,6 @@ after(() => {
     try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best-effort */ }
   }
 });
-
-const g = (cwd, args) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
-  if (r.error) assert.fail(`git ${args.join(' ')} could not run: ${r.error.message}`);
-  assert.equal(r.status, 0, `git ${args.join(' ')} failed (${r.status}): ${r.stderr}`);
-  return r;
-};
 
 function makeRepo(entries = []) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stamp-'));
@@ -75,10 +68,8 @@ function makeRepo(entries = []) {
   return dir;
 }
 
-const uuid = (n) => `aaaaaaaa-1111-2222-3333-4444444444${String(n).padStart(2, '0')}`;
 /** The row shape `listTerminalUpstreamIssues` really returns — three fields, no more. */
 const row = (id, disposition) => ({ issueId: id, state: 'fixed', disposition });
-const readLedger = (dir) => JSON.parse(fs.readFileSync(path.join(dir, DISPOSITION_LEDGER_PATH), 'utf-8')).entries;
 
 const causeFor = (dir) => ({
   cause: MISSING_CAUSE.NOT_STALENESS,

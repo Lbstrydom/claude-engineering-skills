@@ -22,6 +22,7 @@ import {
   OUTBOX_ENVELOPE_VERSION, VALID_SEVERITIES,
 } from '../scripts/lib/upstream/commands.mjs';
 import { LEGAL_TRANSITIONS, listUpstreamIssues } from '../scripts/lib/store/upstream-issues.mjs';
+import { rmrf as rmTmp } from './helpers/fixtures.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 const SHA = 'a'.repeat(40);
@@ -33,10 +34,6 @@ const SHA = 'a'.repeat(40);
 function mkTmp(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
-function rmTmp(dir) {
-  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-}
-
 // ── classifyReportFreshness: one case per precedence row (the table is total) ──
 
 test('freshness: no stamp → unknown, never current', () => {

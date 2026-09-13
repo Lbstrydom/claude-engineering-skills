@@ -30,14 +30,11 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { EventSource } from '../scripts/lib/debt-memory.mjs';
+import { rmrfBestEffort as rmrf } from './helpers/fixtures.mjs';
 
 function tmpdir(label) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `debt-durable-${label}-`));
 }
-function rmrf(dir) {
-  try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ }
-}
-
 describe('persistDebtEntries — the store write goes through the durable seam', () => {
   test('it does NOT call upsertDebtEntries directly any more', async () => {
     // The regression this whole plan exists to prevent, asserted at the seam

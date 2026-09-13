@@ -27,11 +27,7 @@ import {
   registeredWriters, _resetRegistry, isConnectionScoped, checkAdmission, SPILL_DIR, LOST_SUBDIR,
 } from '../scripts/lib/durable-write.mjs';
 import { REJECTED_SUBDIR } from '../scripts/lib/outbox-envelope.mjs';
-
-const mkTmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
-const rmTmp = (d) => {
-  try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ }
-};
+import { mkdtemp as mkTmp, rmrfBestEffort as rmTmp } from './helpers/fixtures.mjs';
 const spill = (root) => path.join(root, SPILL_DIR);
 const lost = (root) => path.join(spill(root), LOST_SUBDIR);
 const queued = (root) => {

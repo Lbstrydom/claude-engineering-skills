@@ -23,6 +23,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { resolveRangeSnapshot } from '../scripts/lib/worktree-identity.mjs';
+import { spawnOk as ok } from './helpers/fixtures.mjs';
 
 const HEAD_SHA = 'h'.repeat(40);
 const PARENT_SHA = 'p'.repeat(40);
@@ -32,7 +33,6 @@ const BASE_SHA = 'b'.repeat(40);
 function runner(map) {
   return (args) => map[args.join(' ')] ?? { status: 1, stdout: '', stderr: '' };
 }
-const ok = (stdout = '') => ({ status: 0, stdout, stderr: '' });
 
 const BASE_RUNNER = {
   'rev-parse --verify --quiet HEAD^{commit}': ok(`${HEAD_SHA}\n`),

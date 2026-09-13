@@ -8,19 +8,18 @@
 
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { writeRoundLedger as writeRoundLedgerAt } from './helpers/fixtures.mjs';
+import { makeRunCli } from './helpers/run-cli.mjs';
 
 let tmpDir;
 let auditDir;
 const scriptPath = path.resolve('scripts/debt-auto-capture.mjs');
 
 function writeRoundLedger(name, entries) {
-  const p = path.join(auditDir, name);
-  fs.writeFileSync(p, JSON.stringify({ version: 1, entries }));
-  return p;
+  return writeRoundLedgerAt(auditDir, name, entries);
 }
 
 function makeDeferEntry(topicId, extra = {}) {
@@ -37,16 +36,10 @@ function makeDeferEntry(topicId, extra = {}) {
   };
 }
 
-function runCli(args) {
-  return spawnSync('node', [scriptPath, ...args], {
-    encoding: 'utf-8',
-    cwd: tmpDir,
-    // Cloud disabled deliberately (no AUDIT_DB_URL) — syncToCloud() is
-    // non-blocking on failure, matching the CLI's own graceful-degradation
-    // contract; this test only cares about the local capture-trail WARN.
-    env: { ...process.env, AUDIT_DB_URL: '' },
-  });
-}
+// Cloud disabled deliberately (no AUDIT_DB_URL) — syncToCloud() is
+// non-blocking on failure, matching the CLI's own graceful-degradation
+// contract; this test only cares about the local capture-trail WARN.
+const runCli = makeRunCli(scriptPath, { cwd: () => tmpDir, buildEnv: () => ({ ...process.env, AUDIT_DB_URL: '' }) });
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'debt-auto-capture-trail-'));

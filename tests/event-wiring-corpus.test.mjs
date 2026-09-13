@@ -24,22 +24,13 @@ import {
 } from '../scripts/lib/ledger.mjs';
 import { findingFingerprint, computeAuditVerdict } from '../scripts/lib/audit/findings-pipeline.mjs';
 import { countsTowardVerdict } from '../scripts/lib/audit/finding-verification.mjs';
-import { gitFixtureEnv } from './helpers/fixtures.mjs';
+import { gitFixtureEnv, sh, writeFile, commitAll as commit } from './helpers/fixtures.mjs';
 import { trySymlink } from './helpers/fs-symlink-test-utils.mjs';
 
 // Same isolation discipline as tests/diff-scope-resolver.test.mjs — a scratch
 // git repo spawned without an explicit sanitized env risks a leaked GIT_DIR
 // redirecting `git init`/`git commit` onto the REAL repo (six live
 // incidents, 2026-07-23; see scripts/lib/git-env-sanitize.mjs).
-function sh(cwd, ...args) {
-  execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'ignore'], env: gitFixtureEnv() });
-}
-
-function writeFile(repo, rel, content) {
-  const abs = path.join(repo, rel);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, content);
-}
 
 function newRepo() {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'event-wiring-corpus-test-'));
@@ -51,11 +42,6 @@ function newRepo() {
   sh(repo, 'add', '.');
   sh(repo, 'commit', '-q', '-m', 'init');
   return repo;
-}
-
-function commit(repo, msg) {
-  sh(repo, 'add', '-A');
-  sh(repo, 'commit', '-q', '-m', msg);
 }
 
 // ---------------------------------------------------------------------------

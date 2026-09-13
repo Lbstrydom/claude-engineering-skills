@@ -18,16 +18,13 @@ import path from 'node:path';
 import { isPathContained, classifyTestPath, classifyReadPath } from '../scripts/lib/path-validation.mjs';
 import { validateCriteriaCount, validateCountFields } from '../scripts/lib/command-input.mjs';
 import { resolveRepoScope } from '../scripts/lib/repo-scope.mjs';
+import { rmrf as rmTmp } from './helpers/fixtures.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 
 function mkTmp(prefix) {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
-function rmTmp(dir) {
-  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-}
-
 // ── C2: containment ─────────────────────────────────────────────────────────
 
 test('C2: a sibling directory sharing the root prefix is NOT contained', () => {

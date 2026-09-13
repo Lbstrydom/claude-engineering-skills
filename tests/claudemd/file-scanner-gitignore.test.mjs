@@ -25,14 +25,11 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { scanInstructionFiles } from '../../scripts/lib/claudemd/file-scanner.mjs';
+import { writeFile } from '../helpers/fixtures.mjs';
 
 let repo;
 const git = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf-8', windowsHide: true });
-const write = (rel, body) => {
-  const abs = path.join(repo, rel);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, body);
-};
+const write = (rel, body) => writeFile(repo, rel, body);
 
 beforeEach(() => {
   repo = fs.mkdtempSync(path.join(os.tmpdir(), 'scanner-gi-'));

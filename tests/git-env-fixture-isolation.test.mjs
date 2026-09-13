@@ -21,9 +21,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { gitInit, gitInitWithEmptyCommit, commit, makeGitRunner, gitFixtureEnv, makeRepoTemplate } from './helpers/fixtures.mjs';
-
-const rmrf = (p) => fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+import { gitInit, gitInitWithEmptyCommit, commit, makeGitRunner, gitFixtureEnv, makeRepoTemplate, rmrf } from './helpers/fixtures.mjs';
 
 function headOf(dir, env) {
   try {

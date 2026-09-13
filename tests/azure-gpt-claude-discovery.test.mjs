@@ -16,8 +16,7 @@ import {
   probeClaudeDeployment, selectClaudeDeployment, STATIC_CLAUDE_CANDIDATES,
 } from '../scripts/lib/azure/claude-discovery.mjs';
 import { ProbeOutcome, dedupeOrdered, walkLadder } from '../scripts/lib/azure/deployment-ladder.mjs';
-
-const err = (status, code, message) => Object.assign(new Error(message || code), { status, code });
+import { fakeHttpError as err } from './helpers/fixtures.mjs';
 
 describe('deployment-ladder — shared walk', () => {
   test('dedupeOrdered trims, drops empties, preserves first-seen order', () => {

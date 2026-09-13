@@ -27,12 +27,13 @@
 
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
 import { PersistedDebtEntrySchema } from '../scripts/lib/schemas.mjs';
+import { writeRoundLedger as writeRoundLedgerAt } from './helpers/fixtures.mjs';
+import { makeRunCli } from './helpers/run-cli.mjs';
 
 let tmpDir;
 let auditDir;
@@ -54,9 +55,7 @@ function realisticRationale(len) {
 }
 
 function writeRoundLedger(name, entries) {
-  const p = path.join(auditDir, name);
-  fs.writeFileSync(p, JSON.stringify({ version: 1, entries }));
-  return p;
+  return writeRoundLedgerAt(auditDir, name, entries);
 }
 
 function makeDeferEntry(topicId, rulingRationale, extra = {}) {
@@ -73,15 +72,9 @@ function makeDeferEntry(topicId, rulingRationale, extra = {}) {
   };
 }
 
-function runCli(args) {
-  return spawnSync('node', [scriptPath, ...args], {
-    encoding: 'utf-8',
-    cwd: tmpDir,
-    // Cloud deliberately disabled — syncToCloud() is non-blocking either way and
-    // these assertions are about the LOCAL ledger and the exit code.
-    env: { ...process.env, AUDIT_DB_URL: '' },
-  });
-}
+// Cloud deliberately disabled — syncToCloud() is non-blocking either way and
+// these assertions are about the LOCAL ledger and the exit code.
+const runCli = makeRunCli(scriptPath, { cwd: () => tmpDir, buildEnv: () => ({ ...process.env, AUDIT_DB_URL: '' }) });
 
 function readCapturedTopicIds() {
   const p = path.join(auditDir, 'tech-debt.json');

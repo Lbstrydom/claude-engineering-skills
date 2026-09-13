@@ -39,12 +39,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { shouldAttemptTimeoutRecovery, buildTimeoutRecovery, writeFilesManifestIfRestricted, removeFilesManifest } from '../scripts/symbol-index/refresh-subprocess.mjs';
-
-const SYMLINK_UNSUPPORTED = new Set(['EPERM', 'EACCES']);
-function trySymlink(target, linkPath, type = 'file') {
-  try { fs.symlinkSync(target, linkPath, type); return true; }
-  catch (err) { if (SYMLINK_UNSUPPORTED.has(err.code)) return false; throw err; }
-}
+import { trySymlink } from './helpers/fs-symlink-test-utils.mjs';
 
 describe('writeFilesManifestIfRestricted (b021576b/e86a9cbb)', () => {
   const written = [];

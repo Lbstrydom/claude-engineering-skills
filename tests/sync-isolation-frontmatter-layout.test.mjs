@@ -23,6 +23,7 @@ import path from 'node:path';
 import { _internals, ALL_GATES, runGates } from '../scripts/lib/sync-isolation-verify.mjs';
 import { hashFile } from '../scripts/lib/sync-manifest.mjs';
 import { REGISTRY } from '../scripts/lib/doctor/registry.mjs';
+import { writeFile } from './helpers/fixtures.mjs';
 
 const { gate9, gate2B, gate8, ownedSkillNamesFromManifest } = _internals;
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
@@ -30,12 +31,7 @@ const poison = fs.readFileSync(path.join(REPO_ROOT, 'tests', 'fixtures', 'poison
 const dedented = poison.replace(/^ {2}disable-model-invocation: true$/m, 'disable-model-invocation: true');
 
 let root;
-const write = (rel, body) => {
-  const abs = path.join(root, rel);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, body);
-  return abs;
-};
+const write = (rel, body) => writeFile(root, rel, body);
 const manifestFor = (rels) => {
   const files = {};
   for (const rel of rels) files[rel] = hashFile(path.join(root, rel));

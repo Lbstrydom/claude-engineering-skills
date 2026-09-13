@@ -30,16 +30,12 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 import { _internals } from '../scripts/lib/sync-isolation-verify.mjs';
+import { writeFile } from './helpers/fixtures.mjs';
 
 const { gate2B } = _internals;
 
 let root;
-const write = (rel, body) => {
-  const abs = path.join(root, rel);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, body);
-  return abs;
-};
+const write = (rel, body) => writeFile(root, rel, body);
 const sha = (s) => `sha256:${crypto.createHash('sha256').update(Buffer.from(s)).digest('hex')}`;
 
 beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'iso-held-')); });
