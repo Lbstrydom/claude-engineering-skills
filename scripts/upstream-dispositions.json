@@ -333,6 +333,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "7e413fe2-af6f-4bd3-bb36-045462198a5e",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/workflow-cadence-doctor.test.mjs"
+      },
+      "recordedAt": "2026-09-13T09:32:25.883Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "7e6a5492-cabd-4a85-ab05-391be7519e24",
       "storeFingerprint": "c7177057dcafa55d",
       "state": "fixed",
