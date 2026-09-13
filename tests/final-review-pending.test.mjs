@@ -330,7 +330,14 @@ describe('encodeQueueCursor / decodeQueueCursor', () => {
   });
 
   it('refuses a malformed cursor as BAD_INPUT rather than silently starting over', () => {
-    for (const bad of ['not-a-cursor', Buffer.from('{"v":1}').toString('base64url'), Buffer.from('[]').toString('base64url'), '']) {
+    const enc = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    for (const bad of [
+      'not-a-cursor', enc({ v: 1 }), enc([]), '',
+      enc({ ...CURSOR, createdAt: 'not-a-timestamp' }),
+      enc({ ...CURSOR, runId: 'not-a-uuid' }),
+      enc({ ...CURSOR, severityRank: 9 }),
+      enc({ ...CURSOR, fingerprint: 'has spaces; DROP' }),
+    ]) {
       assert.throws(() => decodeQueueCursor(bad), (e) => e instanceof CommandError && e.code === 'BAD_INPUT', `must refuse ${JSON.stringify(bad)}`);
     }
   });
@@ -339,12 +346,12 @@ describe('encodeQueueCursor / decodeQueueCursor', () => {
 /** A raw pendingQueue row in the store's total order. */
 function queueRow(i, { severity = 'HIGH', actionable = true } = {}) {
   return {
-    audit_finding_id: `id-${i}`, run_id: '00000000-0000-4000-8000-000000000001', finding_fingerprint: `fp${String(i).padStart(2, '0')}`,
+    audit_finding_id: `id-${i}`, run_id: '00000000-0000-4000-8000-000000000001', finding_fingerprint: `ab${String(i).padStart(6, '0')}`,
     severity, category: 'test', primary_file: `src/${i}.mjs`, detail_snapshot: 'prose',
     source_model: 'm', bucket: 'shadow-only',
     // a shadow-only row already labelled dismissed is NOT actionable
     user_action: actionable ? null : 'dismissed', remediation_state: null,
-    created_at: new Date(Date.UTC(2026, 8, 13, 10, 0, 0, 0)), created_at_cursor: `2026-09-13 10:00:00.0000${String(9 - i).padStart(2, '0')}+00`,
+    created_at: new Date(Date.UTC(2026, 8, 13, 10, 0, 0, 0)), created_at_cursor: `2026-09-13 10:00:00.0000${String(9 - i).padStart(2, '0')}+00`.replace(/.(d{6})d+/, '.$1'),
     severity_rank: severity === 'HIGH' ? 3 : 2,
   };
 }
@@ -381,7 +388,7 @@ describe('final-review-pending — cursor paging', () => {
     assert.equal(out.pageFilteredOut, 2);
     assert.ok(out.nextCursor, 'the walk must continue past a fully filtered page');
     assert.deepEqual(decodeQueueCursor(out.nextCursor), {
-      severityRank: 3, createdAt: queue[1].created_at_cursor, fingerprint: 'fp02', runId: queue[1].run_id,
+      severityRank: 3, createdAt: queue[1].created_at_cursor, fingerprint: 'ab000002', runId: queue[1].run_id,
     });
   });
 

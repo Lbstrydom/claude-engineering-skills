@@ -51,6 +51,10 @@ on:
       - 'supabase/migrations/**'
       - 'tests/db-*.test.mjs'
       - 'tests/learning-store-*.test.mjs'
+      # Enrolled suites whose names match no pattern above (audit-code cluster B
+      # R1 M11): a change confined to the suite must still run the job it is in.
+      - 'tests/final-review-adjudicate.test.mjs'
+      - 'tests/final-review-pending-db.test.mjs'
       - 'tests/sync-packaging.test.mjs'
       - 'tests/fixtures/expected-schema.json'
       - 'package.json'
@@ -76,6 +80,10 @@ on:
       - 'supabase/migrations/**'
       - 'tests/db-*.test.mjs'
       - 'tests/learning-store-*.test.mjs'
+      # Enrolled suites whose names match no pattern above (audit-code cluster B
+      # R1 M11): a change confined to the suite must still run the job it is in.
+      - 'tests/final-review-adjudicate.test.mjs'
+      - 'tests/final-review-pending-db.test.mjs'
       - 'tests/sync-packaging.test.mjs'
       - 'tests/fixtures/expected-schema.json'
       - 'package.json'

@@ -437,3 +437,34 @@ node "$CLI" list-unlocked-fixes` from the root and again from
   propagation, not design.
 - **Gemini gate** (`--mode plan`, run `d11e5dcf`): **APPROVE** — 0 new, 0 wrongly
   dismissed. Plan approved for `/cycle --autonomous`.
+
+## Out of Scope (Future) — debt surfaced by the Cluster B code audit
+
+The Cluster B audit read all of `scripts/lib/store/runs-findings.mjs` (2,357
+lines) because `getFinalReviewStats` lives there, and raised 18 HIGH findings
+against its **writers** — none on the cursor read path this plan changes, all
+pre-existing. Independence: `getFinalReviewStats` is a read; it calls none of
+the functions below. Recorded here so the deferral is visible, not a dismissal:
+
+- **Repository scope not enforced in writers** — `applyRemediationVerificationResults`,
+  `projectRemediationState`, run/finding mutations trust `runId` alone (R1 H1/H13).
+- **Unverified write success** — `recordAdjudicationEvent`, `updateRunMeta`,
+  `updatePassStatsPostDeliberation` discard affected-row counts (H2).
+- **Destructive replay** — `recordFinalReviewFindings` deletes-then-inserts,
+  losing adjudication state on retained rows; primary/shadow transactions are
+  uncoordinated; shadow metadata cannot be cleared (H3/H4/H14/M8).
+- **Reconciliation identity loss** — `selectReconcileTargets` keeps fingerprints,
+  `markFindingsRemediation` re-resolves to the newest row (H5/H15).
+- **Intra-batch dedup key narrower than the SQL conflict key** in `recordFindings` (H6/H16).
+- **`pass_name` not restricted** in `resolveFindingBucket` / adjudicate / record-fix (H7).
+- **Omission semantics differ** between the findings patch and the adjudication event (H8).
+- **SELECT-then-UPDATE race** in `recordFinalReviewFix` (H9/M6).
+- **Transactional error swallowed** in `persistKeptEmbeddings`; capability probes
+  use the pool while a tx client is held (H10/H11/H17/H18).
+- **Failure-to-success degradations** — adjudication fulfil-with-undefined, probe
+  false-on-failure, SKILL.md count fallback prose (H12).
+- **Offset paging** on `list-unlocked-fixes` / `list-unremediated-acceptances` (M7)
+  — deliberately not built here (§6); these are windowed nudges, not drained queues.
+- **`skills:hydrate` one-liner** overlays without pruning (M5) — repo-wide preflight boilerplate.
+
+These belong to a store-writer hardening plan, not to a backlog-reader plan.

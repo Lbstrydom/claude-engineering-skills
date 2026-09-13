@@ -61,13 +61,16 @@ describe('getFinalReviewStats — keyset cursor walk (integration)', { skip }, (
 
     repoId = crypto.randomUUID();
     repoName = `test-pending-${repoId.slice(0, 8)}`;
-    runA = '00000000-0000-4000-8000-00000000000a';
-    runB = '00000000-0000-4000-8000-00000000000b';
-    await q.query(`INSERT INTO audit_repos (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`, [repoId, repoName]);
+    // Fresh ids per invocation (audit-code cluster B R1 M9): a fixed id with
+    // ON CONFLICT DO NOTHING would silently adopt a pre-existing run of another
+    // owner. Sorted so run_id ASC tie-breaking below is deterministic.
+    [runA, runB] = [crypto.randomUUID(), crypto.randomUUID()].sort();
+    await q.query(`INSERT INTO audit_repos (id, name) VALUES ($1, $2)`, [repoId, repoName]);
     for (const runId of [runA, runB]) {
-      await q.query(`INSERT INTO audit_runs (id, repo_id, plan_file, mode) VALUES ($1, $2, 'docs/plans/test-fixture.md', 'code')
-                     ON CONFLICT (id) DO NOTHING`, [runId, repoId]);
+      await q.query(`INSERT INTO audit_runs (id, repo_id, plan_file, mode) VALUES ($1, $2, 'docs/plans/test-fixture.md', 'code')`, [runId, repoId]);
     }
+    const owned = await q.many(`SELECT id FROM audit_runs WHERE repo_id = $1`, [repoId]);
+    assert.deepEqual(owned.map((r) => r.id).sort(), [runA, runB], 'the fixture owns exactly its two runs');
     const ins = (runId, fp, severity, createdAt, { bucket = 'shadow-only', remediation = null } = {}) => q.query(
       `INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category, bucket, remediation_state, created_at)
        VALUES ($1, $2, 'final-review', $3, 'test', $4, $5, $6::timestamptz)`,
@@ -92,7 +95,7 @@ describe('getFinalReviewStats — keyset cursor walk (integration)', { skip }, (
     await closePool();
   });
 
-  const key = (r) => `${r.finding_fingerprint}@${r.run_id.slice(-1)}`;
+  const key = (r) => `${r.finding_fingerprint}@${r.run_id === runA ? 'a' : 'b'}`;
   const cursorOf = (r) => ({ severityRank: Number(r.severity_rank), createdAt: r.created_at_cursor, fingerprint: r.finding_fingerprint, runId: r.run_id });
 
   it('both UNION branches project audit_finding_id and created_at_cursor, in the documented total order', async () => {

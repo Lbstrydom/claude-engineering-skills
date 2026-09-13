@@ -11,6 +11,12 @@
 import { readFileSync } from 'node:fs';
 import { CommandError } from '../dispatch.mjs';
 import { groupIntoWorkUnits, wantsWorkUnits } from '../work-unit-grouping.mjs';
+import { findRepoRootFromCwd } from '../../assert-repo-root.mjs';
+import { classifyReadPath } from '../../path-validation.mjs';
+import { checkFindingGrounding, formatGroundingNote } from '../../audit/finding-grounding.mjs';
+import {
+  classifyFinalReviewOutcome, summariseCounts, orderItems, isActionable, renderFinalReviewCard,
+} from '../../final-review-credit.mjs';
 
 /**
  * Keyset cursor for `final-review-pending` — the LAST RAW row of a page, in the
@@ -22,6 +28,8 @@ export function encodeQueueCursor({ severityRank, createdAt, fingerprint, runId 
   return Buffer.from(JSON.stringify({ v: 1, severityRank, createdAt, fingerprint, runId }), 'utf8').toString('base64url');
 }
 
+const PG_TIMESTAMPTZ_TEXT = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}(:?\d{2})?)?$/;
+
 /** Inverse of `encodeQueueCursor`; a malformed cursor is BAD_INPUT, never a silent first page. */
 export function decodeQueueCursor(raw) {
   let parsed;
@@ -30,20 +38,23 @@ export function decodeQueueCursor(raw) {
   } catch {
     throw new CommandError('BAD_INPUT', '--after is not a cursor this command issued (undecodable)');
   }
+  // Value DOMAINS, not just types (audit-code cluster B R1 M2): each member is
+  // bound into the ordering query, so an out-of-domain value would surface as
+  // a Postgres cast error — or, worse, compare as something. severity_rank is
+  // the query's own CASE (0..3); createdAt must parse as a timestamp; runId is
+  // a uuid; the fingerprint is the store's hex id.
   const ok = parsed && parsed.v === 1
-    && Number.isInteger(parsed.severityRank)
-    && typeof parsed.createdAt === 'string' && parsed.createdAt.length > 0
-    && typeof parsed.fingerprint === 'string' && parsed.fingerprint.length > 0
-    && typeof parsed.runId === 'string' && parsed.runId.length > 0;
-  if (!ok) throw new CommandError('BAD_INPUT', '--after is not a cursor this command issued (missing fields)');
+    && Number.isInteger(parsed.severityRank) && parsed.severityRank >= 0 && parsed.severityRank <= 3
+    // Postgres' own `timestamptz::text` shape (`2026-09-13 10:00:00.000001+00`),
+    // pinned explicitly rather than through Date.parse, whose acceptance of this
+    // shape is engine leniency, not a contract.
+    && typeof parsed.createdAt === 'string' && PG_TIMESTAMPTZ_TEXT.test(parsed.createdAt)
+    && typeof parsed.fingerprint === 'string' && /^[0-9a-f-]{1,64}$/i.test(parsed.fingerprint)
+    && typeof parsed.runId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(parsed.runId);
+  if (!ok) throw new CommandError('BAD_INPUT', '--after is not a cursor this command issued (field out of domain)');
   const { severityRank, createdAt, fingerprint, runId } = parsed;
   return { severityRank, createdAt, fingerprint, runId };
 }
-import { classifyReadPath } from '../../path-validation.mjs';
-import { checkFindingGrounding, formatGroundingNote } from '../../audit/finding-grounding.mjs';
-import {
-  classifyFinalReviewOutcome, summariseCounts, orderItems, isActionable, renderFinalReviewCard,
-} from '../../final-review-credit.mjs';
 
 /** Shared bucket parsing: `--bucket primary|none` names the NULL bucket. */
 function bucketOpt(ctx) {
@@ -148,7 +159,9 @@ export async function finalReviewRecordFixCmd(ctx) {
  */
 function groundingNoteFor(f) {
   try {
-    const root = process.cwd();
+    // The repo ROOT, not the cwd (audit-code cluster B R1 M1): `primary_file` is
+    // repo-relative, and from a subdirectory every grounding read missed.
+    const root = findRepoRootFromCwd();
     const res = checkFindingGrounding({
       detail: f.detail_snapshot || '',
       primaryFile: f.primary_file || '',
@@ -185,7 +198,7 @@ export async function finalReviewStatsCmd(ctx) {
     // doctrine warns against ("compare full identity, never a
     // substring/basename").
     const { resolveRepoIdentity } = await import('../../repo-identity.mjs');
-    const ambientName = resolveRepoIdentity(process.cwd())?.name ?? null;
+    const ambientName = resolveRepoIdentity(findRepoRootFromCwd())?.name ?? null;
     const groundingIsAmbient = Boolean(ambientName && ambientName === repoName);
     const md = renderAdjudicationWorksheet({
       title: `Final-review shadow-only spot-check — repo ${repoName}`,
