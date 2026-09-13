@@ -542,6 +542,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "c048c9dc-9786-4b6b-a176-dfa4ef7a9d60",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/refresh-lock.test.mjs"
+      },
+      "recordedAt": "2026-09-13T11:31:01.539Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "c19202b8-2cdd-40a2-b384-3aa6e70e8322",
       "storeFingerprint": "c7177057dcafa55d",
       "state": "fixed",
