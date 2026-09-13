@@ -30,6 +30,111 @@
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `scripts/.claude-skills/lib/debt-ledger-claim-check.mjs` in wine-cellar-app's synced tree contains `mergeTopicIdEvidence` — present. The push's own sync summary confirmed 9 files updated across all 3/3 registered consumers.
 - **Result**: verified — the debt-ledger-claims-check cloud-evidence fix reached the consumer bundle intact.
 
+## 2026-09-13 — backlog-tooling honesty: one convergence verdict, a reachable credit queue, one grouper for three backlogs, non-vacuous scans, cwd-independent locks
+
+### Changes
+
+`/cycle --autonomous` over [docs/plans/backlog-tooling-honesty.md](docs/plans/backlog-tooling-honesty.md)
+— five defects surfaced while clearing the backlogs earlier today, consolidated
+into one plan (audit-plan R1 H:2 M:3 → R2 M:1 → Gemini APPROVE) and executed as
+two §11 clusters. 14 commits, 33 files.
+
+- **Telemetry recorded a different convergence than the gate** (backlog row
+  `723b5dc5`). `run-telemetry.mjs` recounted HIGH/MEDIUM from raw `f.severity`
+  with only the advisory exclusion and called the count-only evaluator; the real
+  verdict also drops LINTER findings, refuted findings, and runs the detector
+  gate. `assembleFindings` now returns `quickFix` + the detector-aware
+  `convergence {converged, reason}` (both required by the contract);
+  `run-persistence.mjs` reads it instead of re-evaluating, `run-telemetry.mjs`
+  records it instead of recounting. Red-then-green: a refuted HIGH + a LINTER
+  HIGH (verdict PASS, telemetry said not-converged), and a zero-count R2 with
+  suppression unavailable (gate says `detector-not-run`, telemetry said
+  converged). Side finding fixed: a scheduled pass with a null result now reads
+  `failed`/INCOMPLETE, never a clean zero-finding success.
+- **`final-review-pending` capped at 50 with no way past it** — ~2,167 of the
+  2,217 credit rows were unreachable through the CLI. Now pages by a **keyset
+  cursor** (`--after <nextCursor>`), not an offset: the queue is drained by the
+  adjudication that walks it, so an offset skips one row per adjudication. The
+  order is total across BOTH UNION branches (a `(run, fingerprint)` can exist as a
+  shadow-only row and its primary sibling — `audit_finding_id` is the final key;
+  found by the cluster audit, not by me), `created_at` travels as
+  `timestamptz::text` (µs-exact), and the SQL lives beside its predicates in
+  `final-review-credit-population.mjs` (`runs-findings.mjs` shrank 2370 → 2357,
+  re-baselined). New real-Postgres suite `tests/final-review-pending-db.test.mjs`
+  enrolled in `db-test-container.mjs` AND `postgres-parity.yml` (plus both
+  trigger path filters), ran green in the local container: cursor walks at page
+  sizes 1..5, a µs-tied pair, a cross-branch sibling, a mid-walk deletion.
+  Live: page 1 → `--after` → page 2, 10 rows, 0 overlap, against 2,223 rows.
+- **One work-unit grouper** — `groupIntoWorkUnits` moved out of `ship.mjs` into
+  `scripts/lib/cross-skill/work-unit-grouping.mjs` with a caller-named `dateKey`;
+  `list-unlocked-fixes` and `final-review-pending` now take `--group-by
+  work-unit` / `--work-unit` / `--no-llm-labels` like `list-unremediated-acceptances`.
+  Egress pinned: members handed to the LLM labeller carry no `detail_snapshot`.
+- **Dangling-lock detection was anchored to `process.cwd()`** — from
+  `scripts/lib/audit/` the CLI reported **269** against a true **3**. Every
+  lock-related path check in `ship.mjs` (and the grounding reads in
+  `final-review.mjs`) now anchors to `findRepoRootFromCwd()`. Verified from the
+  root and from the subdirectory with the same absolute entry point: 3 and 3.
+- **Two static scans had gone vacuous** with the orchestrator decomposition:
+  `run-finalisation-awaited.test.mjs` scanned files with zero call sites (the
+  writes are `durableWrite('audit.runComplete', …)` in `run-persistence.mjs` —
+  a spelling it could not see) and the hardening test asserted no
+  `fs.writeFileSync(` in a file that no longer writes anything. Both now declare
+  what they expect to find and fail when they find nothing; the write guard
+  covers `scripts/lib/audit/*` with a per-operation (count-bound) allowlist.
+  Negative controls run for each.
+
+Also fixed on the way, each with a test: a registry-declared flag that the
+legacy global `KNOWN_FLAGS` gate refused (`--after` passed six unit tests and
+died on first live use — the conformance suite now pins registry ↔ global
+parity); an inert `.replace(/.(d{6})d+/)` in a fixture (heredoc-eaten
+backslashes, caught by the consolidated gate); a test helper that encoded no
+`v` so every malformed-cursor case was refused on version alone (caught by a
+negative control). The 9 unused learning-store imports on the spine were
+dropped first (`d9778f70`).
+
+### Audit trail
+
+- Cluster A: R1 H:2 M:6 → R2 H:0 M:3 → R3 **PASS** (H:0 M:0). Two MEDIUMs
+  deferred with independence stated (passRegistry entry schema; assembly/
+  persistence coupling) — documented debt in the plan.
+- Cluster B: R1 H:18 M:11 → R2 H:1 M:2 → R3 PASS (H:0 M:1, fixed same sitting).
+  **18 of the R1 HIGHs are pre-existing writer/transaction defects in
+  `runs-findings.mjs`** (destructive replay, unverified write success,
+  reconciliation identity loss, SELECT-then-UPDATE race, swallowed transactional
+  errors, …) that the cursor READ path never calls. Recorded in the plan's
+  "Out of Scope (Future)" section with the independence named — they belong to a
+  store-writer hardening plan. Not dismissed.
+- Consolidated Gemini gate over the union diff (`gemini-flash-latest`, the
+  configured reviewer): **APPROVE ×7** (the 100K-char envelope renders ~3 of 31
+  changed files whole, so the gate ran as 7 subset passes until every changed
+  file had been rendered whole except three >40K files, each head-cut past its
+  changed region). 1 new LOW (the inert regex), fixed; 0 wrongly dismissed.
+- `npm test` (measured 2026-09-13, this tree): **15,766 tests, 15,725 pass, 1
+  fail → fixed** (`audit-detector.test.mjs`'s call-shape guard followed the
+  verdict call into assembly), **40 skipped** (39 + the new DB-gated block).
+
+### Backlog
+
+- Unlocked-fixes: the run's own three new HIGH obligations locked with their
+  red-then-green tests (Q1 code 36 → 33 in-window; 160 → 157 all-ages).
+- **Written off, on the record: the 333 plan-mode `unlocked_fixes` rows**
+  (`byMode.plan`, all ages). A plan-audit finding's `primary_file` is a section
+  reference; no lock of any kind can exist for it — the ship skill already
+  classifies them as "not an obligation". Same precedent as the 2026-08-11
+  write-off of the 190 pre-practice rows: classified, not hidden.
+- **Correction on the record**: backlog row `a2c3744e` (spine over the 1000-line
+  limit) is marked `fixed` in the store but `legacy-production-audit.mjs` is
+  1,701 lines. The dead-import half is done; the decomposition half belongs to
+  `docs/plans/god-module-and-layering-debt.md` and stays open.
+- Verified not-defects, closed without code: `0c1aa868` (`ctx.diffText` feeds
+  only local parsers, never a model), `dccb50e1`/`f31c900d` (`upsertPlan`/
+  `recordRunStart` are deliberately exempted from `durableWrite`, reasons in the
+  durability test), `1689f815` (`writeGateEvidence` already runs inside the
+  persistence stage), the 3 dangling locks (adjudicated 2026-09-08 — retired feature).
+
+Backlog 2026-09-13T18:29Z: Q1 33c/10p (+229 aged) · Q2 85c/68p (50 perm) · Q3 2232 · debt unmeasured · upstream 0
+
 ## 2026-09-13 — verified + closed the sync-status.mjs cluster: 13 unlocked-fixes, 13 final-review-credit rows
 
 Follow-on to the arch:drift entry below, at the user's request to work the two backlogs it flagged (56-row unlocked-fixes, 2,230-row final-review-credit). Investigated first (Explore agent, read-only): no bulk/mechanical tool exists for either — the write-side commands validate only structural shape (flags present, path exists), never "was this actually fixed"; a bulk-dismiss approach was tried once for the final-review queue and rejected (`docs/plans/final-review-shadow-bakeoff.md`) for breaking comparability. Also corrected the backlog sizes: unlocked-fixes is 519 unwindowed, not 56 (56 was the last-14-days slice). Given that, scoped to one concentrated cluster instead of a fake bulk sweep: `scripts/lib/sync-status.mjs`/`scripts/sync-status.mjs`, 13 of the 519 unlocked-fixes rows and, verified separately, the exact same 13 final-review-pending rows (same `run_id`+category, different fingerprint scheme).

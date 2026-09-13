@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**4 active · 219 terminal · 29 audit summaries · 1 parked · 5 reference docs**
+**4 active · 220 terminal · 29 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -55,7 +55,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 216 completed plans</summary>
+<summary>Show all 217 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -96,6 +96,7 @@ source comments that no docs linter sees — stays valid.
 | [Azure Embedding-Deployment Discovery + Provenance Truth](./azure-embed-deployment-discovery.md) | `Complete` | (2026-07-17) — all 3 clusters implemented + audited; consolidated Gemini gate APPROVE (0 findings);… |
 | [Azure AI Foundry Work Profile](./azure-work-profile.md) | `Complete` |  |
 | [Backlog and Drift Reduction — make the private ledger durable, the instruments honest, and the queues owned](./backlog-and-drift-reduction.md) | `Complete` | all 14 phases implemented 2026-09-04 in one session. The headline outcome is not a gate: 37 tech-debt… |
+| [Backlog-tooling honesty — telemetry parity, reachable credit queue, shared work-unit grouping, non-vacuous scans, cwd-independent locks](./backlog-tooling-honesty.md) | `Complete` |  |
 | [/brainstorm Skill + Architecture-Map Discoverability + VS Code Mermaid](./brainstorm-and-arch-discoverability.md) | `Complete` | shipped — `/brainstorm` skill + `scripts/brainstorm-round.mjs` + 7 modules under `scripts/lib/brainstorm/`… |
 | [`/brainstorm --with-arch` — codebase architecture context for external LLMs](./brainstorm-arch-context.md) | `Complete` |  |
 | [Brainstorm-skill upgrades + Quick-fix detection (v1)](./brainstorm-quickfix-v1.md) | `Complete` | shipped — both halves: `/brainstorm` enhancements (see brainstorm-and-arch-discoverability) + quick-fix… |

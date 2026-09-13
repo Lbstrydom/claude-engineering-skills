@@ -1,6 +1,6 @@
 # Plan: Backlog-tooling honesty — telemetry parity, reachable credit queue, shared work-unit grouping, non-vacuous scans, cwd-independent locks
 - **Date**: 2026-09-13
-- **Status**: Approved
+- **Status**: Complete
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
 - **Target domain(s)**: `audit-orchestration`, `cross-skill-bridge`, `stores`, `tests`
@@ -469,3 +469,17 @@ the functions below. Recorded here so the deferral is visible, not a dismissal:
 - **`skills:hydrate` one-liner** overlays without pruning (M5) — repo-wide preflight boilerplate.
 
 These belong to a store-writer hardening plan, not to a backlog-reader plan.
+
+## Implementation Log
+
+### 2026-09-13
+
+Implemented by `/cycle --autonomous` as two clusters; per-cluster `/audit-code`
+to convergence (A: R3 PASS H:0 M:0; B: R3 PASS H:0 M:1), consolidated Gemini
+gate APPROVE (7 subset passes for full-file coverage), `npm test` 15,766 / 1
+fail fixed / 40 skipped. Scope amendments during execution, all recorded in §7:
+`tests/finalization-contract.test.mjs`, `tests/helpers/multi-pass-audit-fixtures.mjs`,
+`tests/audit-detector.test.mjs` (Cluster A); `scripts/cross-skill.mjs`,
+`tests/cross-skill-registry-conformance.test.mjs` (Cluster B — the global
+`KNOWN_FLAGS` gate). Shipped to `main` 2026-09-13; `status.md` carries the
+audit trail and the backlog write-offs.
