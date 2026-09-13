@@ -3,15 +3,17 @@
  * score — the structural counterpart to the `@duplicate-justification`
  * pragma, for the one case a pragma can never reach.
  *
- * `findRepoPragmas` (`duplicate-justification-pragma.mjs`) excludes
- * `tests/*` from its sweep entirely and deliberately — a test file must not
- * be able to author its own drift-score suppression. That is correct for
- * ordinary test duplication, but it also means a directory that is a
- * DECLARED, deliberate byte-for-byte mirror of real source — built to test
- * something else entirely — has no way to tell the drift score "this is not
- * accidental duplication" from inside the file itself. Measured
- * 2026-09-13: `tests/fixtures/anchor-contract/files/**` (the evidence-anchor
- * -path-contract fixture corpus — see `docs/plans/evidence-anchor-path-
+ * `findRepoPragmas` (`duplicate-justification-pragma.mjs`) DOES scan
+ * `tests/*` (a prior `tests/*` git-pathspec exclusion there was a bug, not a
+ * policy — fixed 2026-09-13, see that module's own doc comment). But a
+ * pragma is still unusable for a directory that is a DECLARED, deliberate
+ * byte-for-byte mirror of real source — built to test something else
+ * entirely — because inserting a pragma comment into a mirrored file would
+ * break the very byte-for-byte match the fixture exists to test. Such a
+ * directory has no way to tell the drift score "this is not accidental
+ * duplication" from inside the file itself. Measured 2026-09-13:
+ * `tests/fixtures/anchor-contract/files/**` (the evidence-anchor-path-
+ * contract fixture corpus — see `docs/plans/evidence-anchor-path-
  * contract.md`) accounted for 18 of `arch:drift`'s 63 duplication clusters
  * for exactly this reason, none of them fixable by pragma.
  *

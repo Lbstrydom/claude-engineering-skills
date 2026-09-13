@@ -362,6 +362,64 @@ describe('findRepoPragmas — untracked files + strict mode (round-2 M7 / H8)', 
     const pragmas = findRepoPragmas(tmp, { strict: true, env: gitFixtureEnv() });
     assert.deepEqual(pragmas, []);
   });
+
+  // Regression guard: git's default (non-glob) pathspec matching treats `*`
+  // as matching `/` too, so a `:(exclude)tests/*` pathspec (removed from
+  // findRepoPragmas — see its own doc comment) silently excluded the ENTIRE
+  // tests/ tree, not just its direct children.
+  it('finds a pragma nested under tests/unit/** in an UNTRACKED file — the exact case a tests/* pathspec exclusion silently hid', () => {
+    fs.mkdirSync(path.join(tmp, 'tests', 'unit'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, 'tests', 'unit', 'nested.mjs'),
+      '// @duplicate-justification: target=a.mjs:foo reason=nested untracked test\nfunction foo() {}\n',
+    );
+    // Deliberately NOT `git add`-ed.
+    const pragmas = findRepoPragmas(tmp, { env: gitFixtureEnv() });
+    assert.equal(pragmas.length, 1);
+    assert.equal(pragmas[0].pragmaFile, 'tests/unit/nested.mjs');
+  });
+
+  it('finds a pragma nested under tests/unit/** in a TRACKED (committed) file', () => {
+    fs.mkdirSync(path.join(tmp, 'tests', 'unit'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, 'tests', 'unit', 'nested.mjs'),
+      '// @duplicate-justification: target=a.mjs:bar reason=nested tracked test\nfunction bar() {}\n',
+    );
+    execSync('git add tests/unit/nested.mjs', { cwd: tmp, env: gitFixtureEnv() });
+    execSync('git commit -q -m init', { cwd: tmp, env: gitFixtureEnv() });
+    const pragmas = findRepoPragmas(tmp, { env: gitFixtureEnv() });
+    assert.equal(pragmas.length, 1);
+    assert.equal(pragmas[0].pragmaFile, 'tests/unit/nested.mjs');
+  });
+
+  it('a DIRECT child of tests/ (not nested) is also found — the exclusion is gone, not just narrowed', () => {
+    fs.mkdirSync(path.join(tmp, 'tests'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, 'tests', 'direct.mjs'),
+      '// @duplicate-justification: target=a.mjs:baz reason=direct child test\nfunction baz() {}\n',
+    );
+    const pragmas = findRepoPragmas(tmp, { env: gitFixtureEnv() });
+    assert.equal(pragmas.length, 1);
+    assert.equal(pragmas[0].pragmaFile, 'tests/direct.mjs');
+  });
+});
+
+describe('findRepoPragmas — this repo\'s own tests/** pragmas are no longer hidden', () => {
+  it('finds real pragmas nested under tests/install/** — a live regression guard for the removed tests/* exclusion', () => {
+    const repoRoot = process.cwd();
+    const pragmas = findRepoPragmas(repoRoot);
+    const nested = pragmas.find((p) => p.pragmaFile === 'tests/install/legacy-uninstall.test.mjs');
+    assert.ok(nested, 'expected a real pragma nested under tests/install/ to be found');
+    assert.equal(nested.targetFile, 'tests/install/lifecycle.test.mjs');
+    assert.equal(nested.targetSymbol, 'sha12');
+  });
+
+  it('does not false-positive on this repo\'s own pragma-shaped test fixture STRINGS (protected by PRAGMA_RE\'s ^\\s* anchor, not by a directory exclusion)', () => {
+    const repoRoot = process.cwd();
+    const pragmas = findRepoPragmas(repoRoot);
+    const falsePositives = pragmas.filter((p) => p.pragmaFile === 'tests/duplicate-justification-pragma.test.mjs' || p.pragmaFile === 'tests/duplication-detector.test.mjs');
+    assert.deepEqual(falsePositives, [], 'embedded pragma-shaped fixture strings in these files must not parse as real pragmas');
+  });
 });
 
 describe('splitGitGrepRecords — a filename containing a newline', () => {

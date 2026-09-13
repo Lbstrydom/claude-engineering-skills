@@ -449,14 +449,26 @@ async function main() {
           .filter((c) => c.definitionId);
         const { resolved, ambiguous, unresolved } = resolvePragmasToDefinitions(scopedPragmas, pragmaCandidates);
         // Path-based exemptions (drift-path-exemptions.mjs) — the structural
-        // counterpart to a pragma, for directories a pragma can never reach
-        // (tests/*). Computed from the SAME in-memory finalSymbols/defMap as
-        // pragmaCandidates above, no extra DB round-trip. Independent of the
-        // pragma sweep by construction (tests/* is never pragma-scanned), so
-        // there is no definitionId overlap with `resolved` to reconcile.
+        // counterpart to a pragma, for directories where a pragma comment
+        // would corrupt the thing being tested (a byte-for-byte mirror
+        // corpus — see that module's own docblock). Computed from the SAME
+        // in-memory finalSymbols/defMap as pragmaCandidates above, no extra
+        // DB round-trip.
+        //
+        // findRepoPragmas no longer excludes tests/* (that exclusion was a
+        // git-pathspec bug, not a policy — see its own doc comment), so a
+        // definitionId COULD now appear in both `resolved` and this list if
+        // someone ever adds a real pragma inside a path-exempt directory.
+        // `recordDuplicateJustifications`' UPDATE...FROM(VALUES) join would
+        // not error on that (Postgres just picks one nondeterministically),
+        // but silently swapping which reason/target/source string lands is
+        // still worth avoiding — so drop a path exemption wherever a real
+        // pragma already resolved the same definitionId, giving the more
+        // specific, human-authored pragma priority.
+        const resolvedDefinitionIds = new Set(resolved.map((r) => r.definitionId));
         const pathExemptJustifications = finalSymbols
           .map((s) => ({ ...s, definitionId: defMap[`${s.filePath}|${s.symbolName}|${s.kind}`] }))
-          .filter((s) => s.definitionId && isDriftPathExempt(s.filePath))
+          .filter((s) => s.definitionId && isDriftPathExempt(s.filePath) && !resolvedDefinitionIds.has(s.definitionId))
           .map((s) => ({
             definitionId: s.definitionId,
             target: 'DRIFT_PATH_EXEMPT_PREFIXES',

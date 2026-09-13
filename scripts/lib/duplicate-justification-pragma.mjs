@@ -59,8 +59,35 @@ export const PRAGMA_RE = /^\s*(?:\/\/|#|\/\*|<!--)\s*@duplicate-justification:\s
 /**
  * Full-repo `git grep` sweep for `@duplicate-justification` pragmas,
  * capturing target file/symbol/reason AND the pragma's own line number.
- * Same exclusions as `findStalePragmas` (`*.md`, `tests/*`) and the same
- * best-effort degrade-to-empty-array on `git grep` failure.
+ * Excludes `*.md` (docs quoting the pragma syntax as prose) and shares the
+ * same best-effort degrade-to-empty-array on `git grep` failure that
+ * `findStalePragmas` relies on (it delegates its own sweep here).
+ *
+ * Deliberately does NOT exclude `tests/*`: a prior version did, to skip
+ * self-testing fixtures that embed pragma-shaped strings as test DATA
+ * rather than real pragmas. That exclusion was both unnecessary and,
+ * on `--untracked` files, broken. Unnecessary: `PRAGMA_RE`'s own `^\s*`
+ * anchor (see its own docstring) already rejects a pragma-shaped string
+ * that isn't at the very start of its line — which is exactly the shape
+ * every such fixture takes (`fs.writeFileSync(..., '// @duplicate-…')`,
+ * `rec('file', 1, '// @duplicate-…')`) — so no real false positive exists to
+ * guard against; verified empirically against this repo's own fixtures
+ * (`tests/duplicate-justification-pragma.test.mjs`, `tests/drift-stale-
+ * pragma.test.mjs`, `tests/duplication-detector.test.mjs`,
+ * `tests/vcs-env-override.test.mjs`) — zero of their embedded pragma-shaped
+ * strings parse as pragmas. Broken: git's default (non-`glob`-magic)
+ * pathspec matching treats `*` as matching `/` too, so `:(exclude)tests/*`
+ * excluded the ENTIRE `tests/` tree recursively, not just its direct
+ * children — silently hiding every real pragma under e.g. `tests/unit/**`
+ * or `tests/install/**` (this repo has several, e.g.
+ * `tests/install/legacy-uninstall.test.mjs`). Adding `:(exclude,glob)` magic
+ * to scope the exclusion to direct children only was tried and rejected: it
+ * fixes tracked-file matching but is a no-op for `--untracked` files on git
+ * 2.54 (verified empirically) — `git grep --untracked`'s directory-pruning
+ * for untracked paths does not honor glob-pathspec magic the way its
+ * tracked-file pathspec matcher does, so it would have silently continued
+ * mis-excluding the exact untracked-nested-file case this function exists
+ * to catch (see its own `--untracked` doc comment below).
  *
  * @param {string} repoRoot
  * @param {{strict?: boolean, env?: NodeJS.ProcessEnv}} [opts] - `strict: true`
@@ -103,7 +130,7 @@ export function findRepoPragmas(repoRoot, { strict = false, env } = {}) {
     // `"caf\303\251.mjs"`). NUL cannot appear in a POSIX filename or in
     // ordinary source-line content, so splitting on it is unambiguous by
     // construction — no heuristic needed at all.
-    output = execFileSync('git', ['grep', '--untracked', '-z', '-n', '-F', '@duplicate-justification:', '--', '.', ':(exclude)*.md', ':(exclude)tests/*'], {
+    output = execFileSync('git', ['grep', '--untracked', '-z', '-n', '-F', '@duplicate-justification:', '--', '.', ':(exclude)*.md'], {
       // Explicit maxBuffer (matches the 64 MiB convention this repo already
       // uses for other whole-repo `git grep`/`git ls-files` scans —
       // check-docs-refs.mjs, cycle-cluster-scope.mjs, diff-scope-resolver.mjs):
