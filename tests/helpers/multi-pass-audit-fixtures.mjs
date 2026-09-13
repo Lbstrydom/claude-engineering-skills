@@ -41,3 +41,44 @@ export function defaultResponses(overrides = {}) {
     ...overrides,
   };
 }
+
+/**
+ * A minimal, contract-valid FinalizationData (scripts/lib/audit/finalization-contract.mjs)
+ * — the envelope `finalizeRun`/`assembleFindings`/`runTelemetry` consume. ONE
+ * builder, because three suites each carried their own copy and they had
+ * already drifted (audit-code cluster A R1 M6). Cloud is off, learning writes
+ * are off, every pass is empty; override what a test is about.
+ */
+export function minimalFinalizationData(overrides = {}) {
+  const structure = { ...EMPTY_STRUCTURE, files_planned: 1, files_found: 1, findings: [], summary: 'ok' };
+  const skipped = (name) => ({ pass_name: name, findings: [], summary: 'skipped' });
+  return {
+    ctx: {}, round: 1, planFile: null, planContent: null, strictLint: false,
+    changedFiles: null, impactSet: null, totalLatency: 100,
+    diffLinesChanged: null, diffFilesChanged: null, sessionCacheHit: null,
+    mapReducePasses: [],
+    ledgerFile: null, noLedger: true, ledger: null, ledgerStats: null,
+    ledgerInvalidEntryCount: 0, suppressionUnavailable: false,
+    fpTracker: null, cloudFpPolicy: null,
+    cloudRunId: null, cloudRepoId: null, noCloudRecording: true,
+    learningWritesAllowed: false, bandit: null,
+    debtLedger: { entries: [] }, debtContext: { source: 'local', canWrite: false },
+    debtEventsPath: null, newlyEscalated: [], debtRunId: 'test-run-1',
+    toolFindings: [], toolCapability: { enabled: false },
+    allPaths: new Set(['a.mjs']), found: ['a.mjs'], missing: [],
+    subjectFiles: new Set(['a.mjs']),
+    runStructure: true, structureResult: { result: structure, usage: {}, latencyMs: 10 },
+    runWiring: true, wiringResult: { result: { ...EMPTY_WIRING, summary: 'ok' }, usage: {}, latencyMs: 10 },
+    backendPassNames: [], backendResults: [],
+    frontendWillRun: false, frontendResult: { result: { ...skipped('frontend'), quick_fix_warnings: [] }, usage: {}, latencyMs: 0 },
+    runSustainability: false, sustainResult: { result: { ...skipped('sustainability'), dead_code: [], quick_fix_warnings: [] }, usage: {}, latencyMs: 0 },
+    runQuickfix: false, quickfixResult: { result: skipped('quickfix'), usage: {}, latencyMs: 0 },
+    runDuplication: false, duplicationResult: { result: skipped('duplication'), usage: {}, latencyMs: 0 },
+    runAdjacency: false, adjacencyResult: { result: skipped('adjacency'), usage: {}, latencyMs: 0 },
+    archState: 'SKIPPED_NO_INTENT', archResult: { result: {}, usage: {}, latencyMs: 0 },
+    orphanState: 'SKIPPED_NO_GRAPH', orphanResult: { result: {}, usage: {}, latencyMs: 0 },
+    eventWiringState: 'ANALYZED_CLEAN', eventWiringResult: { result: {}, usage: {}, latencyMs: 0 },
+    isR2Plus: false,
+    ...overrides,
+  };
+}

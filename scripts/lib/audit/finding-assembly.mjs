@@ -126,7 +126,13 @@ export async function assembleFindings(data) {
     { name: 'event-wiring-symmetry', ran: !eventWiringState.startsWith('SKIPPED_'), result: eventWiringResult, displayPrefix: 'EventWiring' },
   ].map(({ name, ran, result, displayPrefix }) => {
     const mrReason = mapReduceFailureReason(result);
-    const status = !ran ? 'skipped' : (result?.failed || mrReason) ? 'failed' : 'succeeded';
+    // A pass that RAN but has no result object is a failure, never a clean
+    // success with zero findings — "checked nothing" must not wear a clean
+    // pass's clothes (audit-code cluster A R1 H1). The wave runner always
+    // returns an object today, so this is fail-closed against a future
+    // runner, not a live path.
+    const noResult = ran && (result === null || result === undefined);
+    const status = !ran ? 'skipped' : (noResult || result?.failed || mrReason) ? 'failed' : 'succeeded';
     return {
       name,
       status,
@@ -135,7 +141,7 @@ export async function assembleFindings(data) {
       usage: result?.usage ?? { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0 },
       latencyMs: result?.latencyMs ?? 0,
       summary: result?.result?.summary ?? '',
-      failureReason: status === 'failed' ? (result?.error ?? mrReason ?? null) : null,
+      failureReason: status === 'failed' ? (noResult ? 'scheduled pass produced no result' : (result?.error ?? mrReason ?? null)) : null,
       // Internal bookkeeping fields (not part of the plan's documented
       // registry-entry shape) — kept underscore-prefixed, matching this
       // file's `_hash`/`_pass`/`_mapUnit` convention for internal-only data.

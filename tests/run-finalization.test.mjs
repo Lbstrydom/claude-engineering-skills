@@ -22,41 +22,7 @@ process.env.AUDIT_DB_URL = '';
 
 const { finalizeRun } = await import('../scripts/lib/audit/run-finalization.mjs');
 
-const EMPTY_STRUCTURE = { pass_name: 'structure', files_planned: 1, files_found: 1, files_missing: 0, missing_files: [], export_mismatches: [], findings: [], summary: 'ok' };
-const EMPTY_WIRING = { pass_name: 'wiring', wiring_issues: [], findings: [], summary: 'ok' };
-const EMPTY_PASS = (name) => ({ pass_name: name, findings: [], summary: 'skipped' });
-
-function minimalFinalizationData(overrides = {}) {
-  return {
-    ctx: {}, round: 1, planFile: null, planContent: null, strictLint: false,
-    changedFiles: null, impactSet: null, totalLatency: 100,
-    diffLinesChanged: null, diffFilesChanged: null, sessionCacheHit: null,
-    mapReducePasses: [],
-    ledgerFile: null, noLedger: true, ledger: null, ledgerStats: null,
-    ledgerInvalidEntryCount: 0, suppressionUnavailable: false,
-    fpTracker: null, cloudFpPolicy: null,
-    cloudRunId: null, cloudRepoId: null, noCloudRecording: true,
-    learningWritesAllowed: false, bandit: null,
-    debtLedger: { entries: [] }, debtContext: { source: 'local', canWrite: false },
-    debtEventsPath: null, newlyEscalated: [], debtRunId: 'test-run-1',
-    toolFindings: [], toolCapability: { enabled: false },
-    allPaths: new Set(['a.mjs']), found: ['a.mjs'], missing: [],
-    subjectFiles: new Set(['a.mjs']),
-    runStructure: true, structureResult: { result: EMPTY_STRUCTURE, usage: {}, latencyMs: 10 },
-    runWiring: true, wiringResult: { result: EMPTY_WIRING, usage: {}, latencyMs: 10 },
-    backendPassNames: [], backendResults: [],
-    frontendWillRun: false, frontendResult: { result: { ...EMPTY_PASS('frontend'), quick_fix_warnings: [] }, usage: {}, latencyMs: 0 },
-    runSustainability: false, sustainResult: { result: { ...EMPTY_PASS('sustainability'), dead_code: [], quick_fix_warnings: [] }, usage: {}, latencyMs: 0 },
-    runQuickfix: false, quickfixResult: { result: EMPTY_PASS('quickfix'), usage: {}, latencyMs: 0 },
-    runDuplication: false, duplicationResult: { result: EMPTY_PASS('duplication'), usage: {}, latencyMs: 0 },
-    runAdjacency: false, adjacencyResult: { result: EMPTY_PASS('adjacency'), usage: {}, latencyMs: 0 },
-    archState: 'SKIPPED_NO_INTENT', archResult: { result: {}, usage: {}, latencyMs: 0 },
-    orphanState: 'SKIPPED_NO_GRAPH', orphanResult: { result: {}, usage: {}, latencyMs: 0 },
-    eventWiringState: 'ANALYZED_CLEAN', eventWiringResult: { result: {}, usage: {}, latencyMs: 0 },
-    isR2Plus: false,
-    ...overrides,
-  };
-}
+const { minimalFinalizationData, EMPTY_STRUCTURE } = await import('./helpers/multi-pass-audit-fixtures.mjs');
 
 function emptyWriteOutcomes() {
   return { written: 0, spilled: 0, lost: 0, skipped: 0, byWriter: {} };

@@ -268,6 +268,8 @@ graph LR
 | `scripts/lib/audit/run-persistence.mjs` | modify | Delete the inline `evaluateConvergenceWithDetectors(...)` block; `const detectorVerdict = assembled.convergence`; stderr reason line and `audit.convergenceState` payload unchanged. |
 | `scripts/lib/audit/run-telemetry.mjs` | modify | Delete both local `gatingFindings/highCount/mediumCount` recounts (`:268-270`, `:313-315`), the local `quickFix` and the `evaluateConvergence` import; destructure `high, medium, quickFix, convergence` from `assembled`; `converged = convergence.converged`. |
 | `tests/run-telemetry.test.mjs` | modify | New describe: parity — (a) one `refuted` HIGH + one `LINTER` HIGH, real verdict `PASS`, telemetry `converged: true` (red today); (b) zero counts but `resolveDetectorResultForRound` yields `detector-not-run` (R2+ with `suppressionUnavailable: true`), telemetry `converged: false` with the same `reason` persistence records (red today); `dismissed` still counts from `allFindings`. |
+| `tests/helpers/multi-pass-audit-fixtures.mjs` | modify | `minimalFinalizationData(overrides)` — the ONE contract-valid FinalizationData builder; `run-finalization`, `run-telemetry` and `finding-assembly` tests import it (audit-code A/R1 M6: three drifted copies). |
+| `tests/finalization-contract.test.mjs` | modify | `minimalAssembled` fixture gains `quickFix` + `convergence` (the §8 "required field" consequence, landed in the same commit). |
 | `tests/finding-assembly.test.mjs` | modify | Assert `assembled.quickFix` counts ALL `is_quick_fix` findings (including refuted — matches the gate today) and `assembled.convergence` carries `{converged, reason}`. |
 | `scripts/lib/store/runs-findings.mjs` | modify | `getFinalReviewStats(repoName, { queueLimit = 50, after = null })`; `pendingQueue` UNION wrapped as a subquery projecting `f.id AS audit_finding_id` and `created_at::text AS created_at_cursor`; unique `ORDER BY severity_rank DESC, created_at DESC, run_id DESC, finding_fingerprint DESC`; `WHERE (severity_rank, created_at, run_id, finding_fingerprint) < ($3, $4::timestamptz, $5, $6)` when `after`; `LIMIT $2`. |
 | `scripts/lib/cross-skill/commands/final-review.mjs` | modify | `export encodeQueueCursor/decodeQueueCursor`; `limit` via `ctx.deps.resolveNudgePage({ limit: page-size ?? limit })`; `--after` decoded and passed to the store; drop the client `.slice`; envelope adds `limit`, `after`, `nextCursor` (from the last RAW row; null when raw rows < limit), `pageFilteredOut`; `--group-by work-unit` / `--work-unit` / `--no-llm-labels` via the shared grouper with `dateKey: 'created_at'`. |
@@ -294,7 +296,9 @@ parity test red→green. Files: `scripts/lib/audit/finding-assembly.mjs`
 (modify), `scripts/lib/audit/finalization-contract.mjs` (modify),
 `scripts/lib/audit/run-persistence.mjs` (modify),
 `scripts/lib/audit/run-telemetry.mjs` (modify), `tests/run-telemetry.test.mjs`
-(modify), `tests/finding-assembly.test.mjs` (modify).
+(modify), `tests/finding-assembly.test.mjs` (modify),
+`tests/finalization-contract.test.mjs` (modify),
+`tests/helpers/multi-pass-audit-fixtures.mjs` (modify).
 
 **Phase 2 — Non-vacuous static scans**: retarget both tests and add the
 zero-hit guards. Files: `tests/run-finalisation-awaited.test.mjs` (modify),

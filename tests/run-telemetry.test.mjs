@@ -58,41 +58,14 @@ describe('classifyShadowFailureSafe — guards its own recovery import', () => {
 // never a local recount from raw f.severity.
 // ═══════════════════════════════════════════════════════════════════════
 
-const EMPTY_STRUCTURE = { pass_name: 'structure', files_planned: 0, files_found: 0, files_missing: 0, missing_files: [], export_mismatches: [], findings: [], summary: 'ok' };
-const EMPTY_WIRING = { pass_name: 'wiring', wiring_issues: [], findings: [], summary: 'ok' };
-const EMPTY_PASS = (name) => ({ pass_name: name, findings: [], summary: 'skipped' });
+const { minimalFinalizationData } = await import('./helpers/multi-pass-audit-fixtures.mjs');
 
-function telemetryData(overrides = {}) {
-  return {
-    ctx: {}, round: 1, planFile: null, planContent: null, strictLint: false,
-    changedFiles: ['a.mjs'], impactSet: null, totalLatency: 100,
-    diffLinesChanged: 3, diffFilesChanged: 1, sessionCacheHit: null,
-    mapReducePasses: [],
-    ledgerFile: null, noLedger: true, ledger: null, ledgerStats: null,
-    ledgerInvalidEntryCount: 0, suppressionUnavailable: false,
-    fpTracker: null, cloudFpPolicy: null,
-    cloudRunId: '00000000-0000-4000-8000-000000000001', cloudRepoId: null, noCloudRecording: true,
-    learningWritesAllowed: false, bandit: null,
-    debtLedger: { entries: [] }, debtContext: { source: 'local', canWrite: false },
-    debtEventsPath: null, newlyEscalated: [], debtRunId: 'test-run-1',
-    toolFindings: [], toolCapability: { enabled: false },
-    allPaths: new Set(['a.mjs']), found: ['a.mjs'], missing: [],
-    subjectFiles: new Set(['a.mjs']),
-    runStructure: true, structureResult: { result: EMPTY_STRUCTURE, usage: {}, latencyMs: 10 },
-    runWiring: true, wiringResult: { result: EMPTY_WIRING, usage: {}, latencyMs: 10 },
-    backendPassNames: [], backendResults: [],
-    frontendWillRun: false, frontendResult: { result: { ...EMPTY_PASS('frontend'), quick_fix_warnings: [] }, usage: {}, latencyMs: 0 },
-    runSustainability: false, sustainResult: { result: { ...EMPTY_PASS('sustainability'), dead_code: [], quick_fix_warnings: [] }, usage: {}, latencyMs: 0 },
-    runQuickfix: false, quickfixResult: { result: EMPTY_PASS('quickfix'), usage: {}, latencyMs: 0 },
-    runDuplication: false, duplicationResult: { result: EMPTY_PASS('duplication'), usage: {}, latencyMs: 0 },
-    runAdjacency: false, adjacencyResult: { result: EMPTY_PASS('adjacency'), usage: {}, latencyMs: 0 },
-    archState: 'SKIPPED_NO_INTENT', archResult: { result: {}, usage: {}, latencyMs: 0 },
-    orphanState: 'SKIPPED_NO_GRAPH', orphanResult: { result: {}, usage: {}, latencyMs: 0 },
-    eventWiringState: 'ANALYZED_CLEAN', eventWiringResult: { result: {}, usage: {}, latencyMs: 0 },
-    isR2Plus: false,
-    ...overrides,
-  };
-}
+/** The shared envelope, with a cloud run id + changed files so both telemetry blocks fire. */
+const telemetryData = (overrides = {}) => minimalFinalizationData({
+  changedFiles: ['a.mjs'], diffLinesChanged: 3, diffFilesChanged: 1,
+  cloudRunId: '00000000-0000-4000-8000-000000000001',
+  ...overrides,
+});
 
 // Two UNRELATED details: near-identical text is folded by the fuzzy dedup pass.
 const DETAILS = { H1: 'unbounded retry loop on a 4xx response', H2: 'no-unused-vars: `tmp` is assigned but never read' };

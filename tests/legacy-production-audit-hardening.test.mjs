@@ -89,10 +89,13 @@ describe('Phase 1 — atomic artifact writes', () => {
   // torn file cannot matter. A new `fs.writeFileSync(` anywhere else under
   // scripts/lib/audit/ must either move to atomicWriteFileSync or be added
   // here WITH a reason.
+  // `count` pins the NUMBER of such calls, so the exemption covers the
+  // documented operations and not the module: a new fs.writeFileSync( added
+  // to an allowlisted file changes the count and fails here.
   const NON_ARTIFACT_WRITES = {
-    'duplication-detector.mjs': 'writes tool INPUT into a fresh temp root that is deleted after the run',
-    'final-adjudication.mjs': "writes subprocess INPUT into a fresh temp dir with flag 'wx' (create-exclusive)",
-    'orphan-metrics.mjs': "creates an EMPTY marker file with flag 'wx' — atomic at the filesystem level by construction",
+    'duplication-detector.mjs': { count: 1, reason: 'writes tool INPUT into a fresh temp root that is deleted after the run' },
+    'final-adjudication.mjs': { count: 2, reason: "writes subprocess INPUT into a fresh temp dir with flag 'wx' (create-exclusive)" },
+    'orphan-metrics.mjs': { count: 1, reason: "creates an EMPTY marker file with flag 'wx' — atomic at the filesystem level by construction" },
   };
   const AUDIT_DIR = path.resolve('scripts/lib/audit');
   const auditSources = () => fs.readdirSync(AUDIT_DIR).filter((f) => f.endsWith('.mjs'))
@@ -104,11 +107,14 @@ describe('Phase 1 — atomic artifact writes', () => {
     for (const { name, src } of auditSources()) {
       const hits = codeLines(src).filter((l) => l.includes('fs.writeFileSync(')).length;
       if (hits === 0) continue;
-      if (NON_ARTIFACT_WRITES[name]) continue;
-      offenders.push(`${name} (${hits})`);
+      const allowed = NON_ARTIFACT_WRITES[name];
+      if (allowed && allowed.count === hits) continue;
+      offenders.push(allowed
+        ? `${name} (${hits} calls, ${allowed.count} allowlisted)`
+        : `${name} (${hits})`);
     }
     assert.deepEqual(offenders, [],
-      'artifact writes must go through atomicWriteFileSync (temp + rename) — or be allowlisted in NON_ARTIFACT_WRITES with the reason a torn file cannot matter');
+      'artifact writes must go through atomicWriteFileSync (temp + rename) — or be allowlisted in NON_ARTIFACT_WRITES, per operation (count) and with the reason a torn file cannot matter');
   });
 
   it('the allowlist names only files that still carry the write (an entry for a file that stopped writing is stale)', () => {

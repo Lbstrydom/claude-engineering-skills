@@ -13,6 +13,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 const { dedupReplacementId, assembleFindings } = await import('../scripts/lib/audit/finding-assembly.mjs');
+const { minimalFinalizationData } = await import('./helpers/multi-pass-audit-fixtures.mjs');
 
 describe('dedupReplacementId — a dedup replacement\'s id must match its severity', () => {
   it('keeps the existing id when severity is unchanged', () => {
@@ -39,33 +40,7 @@ describe('dedupReplacementId — a dedup replacement\'s id must match its severi
 });
 
 describe('assembleFindings — pure computation over a minimal FinalizationData', () => {
-  const EMPTY_STRUCTURE = { pass_name: 'structure', files_planned: 0, files_found: 0, files_missing: 0, missing_files: [], export_mismatches: [], findings: [], summary: 'ok' };
-  const EMPTY_WIRING = { pass_name: 'wiring', wiring_issues: [], findings: [], summary: 'ok' };
-
-  function minimalData(overrides = {}) {
-    return {
-      ctx: {}, round: 1, planFile: null, planContent: null, strictLint: false,
-      changedFiles: null, impactSet: null, totalLatency: 0,
-      ledgerFile: null, noLedger: true, ledger: null, round0: undefined,
-      cloudRepoId: null, cloudFpPolicy: null, fpTracker: null,
-      debtLedger: { entries: [] }, debtContext: { source: 'local', canWrite: false },
-      debtEventsPath: null, newlyEscalated: [], debtRunId: 'test-1',
-      toolFindings: [],
-      runStructure: true, structureResult: { result: EMPTY_STRUCTURE, usage: {}, latencyMs: 0 },
-      runWiring: true, wiringResult: { result: EMPTY_WIRING, usage: {}, latencyMs: 0 },
-      backendPassNames: [], backendResults: [],
-      frontendWillRun: false, frontendResult: { result: { pass_name: 'frontend', findings: [], quick_fix_warnings: [], summary: 'ok' }, usage: {}, latencyMs: 0 },
-      runSustainability: false, sustainResult: { result: { pass_name: 'sustainability', findings: [], dead_code: [], quick_fix_warnings: [], summary: 'skipped' }, usage: {}, latencyMs: 0 },
-      runQuickfix: false, quickfixResult: { result: { pass_name: 'quickfix', findings: [], summary: 'skipped' }, usage: {}, latencyMs: 0 },
-      runDuplication: false, duplicationResult: { result: { pass_name: 'duplication', findings: [], summary: 'skipped' }, usage: {}, latencyMs: 0 },
-      runAdjacency: false, adjacencyResult: { result: { pass_name: 'adjacency', findings: [], summary: 'skipped' }, usage: {}, latencyMs: 0 },
-      archState: 'SKIPPED_NO_INTENT', archResult: { result: {}, usage: {}, latencyMs: 0 },
-      orphanState: 'SKIPPED_NO_GRAPH', orphanResult: { result: {}, usage: {}, latencyMs: 0 },
-      eventWiringState: 'ANALYZED_CLEAN', eventWiringResult: { result: {}, usage: {}, latencyMs: 0 },
-      strictLint: false,
-      ...overrides,
-    };
-  }
+  const minimalData = minimalFinalizationData;
 
   it('an all-empty pass set produces a PASS verdict with zero findings', async () => {
     const result = await assembleFindings(minimalData());
@@ -125,6 +100,15 @@ describe('assembleFindings — pure computation over a minimal FinalizationData'
 
     const r2 = await assembleFindings(minimalData({ round: 2, suppressionUnavailable: true }));
     assert.deepEqual(r2.convergence, { converged: false, reason: 'detector-not-run' });
+  });
+
+  it('a pass that ran but produced no result is FAILED (verdict INCOMPLETE), never a clean zero-finding success', async () => {
+    const result = await assembleFindings(minimalData({ runStructure: true, structureResult: null }));
+    const structure = result.passRegistry.find((p) => p.name === 'structure');
+    assert.equal(structure.status, 'failed');
+    assert.equal(structure.failureReason, 'scheduled pass produced no result');
+    assert.deepEqual(result.failedPasses, ['scheduled pass produced no result']);
+    assert.equal(result.verdict, 'INCOMPLETE');
   });
 
   it('totalUsage/cacheMetrics/passTimings/summaryLines are always present on the return value', async () => {

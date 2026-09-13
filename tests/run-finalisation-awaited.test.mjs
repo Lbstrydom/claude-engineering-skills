@@ -106,15 +106,17 @@ function scanCallSites(src, writer) {
     if (/^\s*(import|export)\b/.test(trimmed)) return;
 
     for (const pattern of writer.patterns) {
-      const callIdx = line.indexOf(pattern);
-      if (callIdx === -1) continue;
-      const before = line.slice(0, callIdx);
-      // `const x = await import(...)` destructuring mentions the name.
-      if (/\bconst\s*\{[^}]*$/.test(before)) continue;
-      // The call is fine if `await` (or a `return`, which propagates to
-      // the caller's await) immediately precedes it on the same line.
-      const awaited = /\b(await|return)\s+$/.test(before);
-      sites.push({ line: i + 1, text: trimmed, awaited });
+      // EVERY occurrence on the line — a second call after the first would
+      // otherwise be invisible (audit-code cluster A R1 H2).
+      for (let callIdx = line.indexOf(pattern); callIdx !== -1; callIdx = line.indexOf(pattern, callIdx + pattern.length)) {
+        const before = line.slice(0, callIdx);
+        // `const x = await import(...)` destructuring mentions the name.
+        if (/\bconst\s*\{[^}]*$/.test(before)) continue;
+        // The call is fine if `await` (or a `return`, which propagates to
+        // the caller's await) immediately precedes it on the same line.
+        const awaited = /\b(await|return)\s+$/.test(before);
+        sites.push({ line: i + 1, col: callIdx + 1, text: trimmed, awaited });
+      }
     }
   });
   return sites;
@@ -166,9 +168,11 @@ describe('run-finalisation writes are awaited', () => {
       "  tallyWriteOutcomes(w, [await durableWrite('audit.runComplete', { runId })]);",
       "  // recordRunComplete( in a comment is not a call",
       "import { recordRunComplete } from './x.mjs';",
+      "  await recordRunComplete(a); recordRunComplete(b);",
     ].join('\n');
     const sites = scanCallSites(src, writer);
-    assert.deepEqual(sites.map((s) => [s.line, s.awaited]), [[1, false], [2, true], [3, false], [4, true]]);
+    assert.deepEqual(sites.map((s) => [s.line, s.awaited]), [[1, false], [2, true], [3, false], [4, true], [7, true], [7, false]],
+      'the second call on a line must be seen, and seen as un-awaited');
   });
 
   it('the pool still exits on idle (the premise of this guard)', () => {
