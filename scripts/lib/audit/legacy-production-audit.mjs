@@ -77,7 +77,7 @@ import { executeTools, normalizeToolResults, formatLintSummary } from '../linter
 import {
   selectEventSource, loadDebtLedger, appendEvents, reconcileLocalToCloud, mergeLedgers as mergeLedgersForSuppression
 } from '../debt-memory.mjs';
-import { initLearningStore, isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, syncBanditArms, syncFalsePositivePatterns, loadFalsePositivePatterns, backfillLearningOutcome, insertLearningDecision, markFindingsRemediation, reconcileRemediationProjection } from '../../learning-store.mjs';
+import { isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, loadFalsePositivePatterns, backfillLearningOutcome, insertLearningDecision } from '../../learning-store.mjs';
 // Durable audit-store writes (docs/plans/audit-store-write-durability.md).
 // `audit-store-writers.mjs` is imported for its REGISTRATIONS — importing it is
 // the registry's bootstrap, and `durableWrite` throws for an unregistered id, so
@@ -272,9 +272,9 @@ export async function runLegacyProductionAudit(ctx) {
 
 async function runLegacyProductionAuditImpl(ctx) {
   // `let`, not `const` (plan deviation, noted): the observation-mode view swap
-  // below reassigns `bandit`, and a const destructure would throw. The local
-  // binding is the function's complete use surface for it (verified: addArm,
-  // flush, syncBanditArms — no helper receives `bandit`, no ctx.bandit re-read).
+  // below reassigns `bandit`, and a const destructure would throw. This file
+  // touches it only via addArm; the (possibly swapped) binding is handed to the
+  // persistence stage, which owns flush/syncBanditArms. No ctx.bandit re-read.
   let {
     planContent, projectContext, historyContext = '',
     passFilter = null, fileFilter = null, round = 1, ledgerFile = null, diffFile = null,
