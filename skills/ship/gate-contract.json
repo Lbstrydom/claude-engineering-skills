@@ -628,6 +628,18 @@
     {
       "line": "is never blocked, but the stderr line still prints — read it if the local",
       "reason": "Tail of the same sentence spanning the three entries above it: confirms this step remains non-blocking (restates step-0-5-gates-non-blocking) even on a swallowed non-zero exit, and that the printed stderr line is the operator's only signal. Not a new claim — the same design fact continued across a line wrap."
+    },
+    {
+      "line": "JSON form pages by a **keyset cursor**, never an offset — the queue is drained",
+      "reason": "Descriptive prose about the final-review-pending CLI's paging contract (keyset cursor, --page-size alias, cap 200), which is enforced by resolveNudgePage + decodeQueueCursor and pinned by tests/final-review-pending.test.mjs and tests/final-review-pending-db.test.mjs — not a claim that this skill's own execution enforces anything. Same class as the existing design-rationale entries."
+    },
+    {
+      "line": "adjudication (measured before the change: a 50-row cap with no way past it",
+      "reason": "Descriptive prose about the final-review-pending CLI's paging contract (keyset cursor, --page-size alias, cap 200), which is enforced by resolveNudgePage + decodeQueueCursor and pinned by tests/final-review-pending.test.mjs and tests/final-review-pending-db.test.mjs — not a claim that this skill's own execution enforces anything. Same class as the existing design-rationale entries."
+    },
+    {
+      "line": "`--page-size` is the alias of `--limit` (default 20, cap 200 — the same",
+      "reason": "Descriptive prose about the final-review-pending CLI's paging contract (keyset cursor, --page-size alias, cap 200), which is enforced by resolveNudgePage + decodeQueueCursor and pinned by tests/final-review-pending.test.mjs and tests/final-review-pending-db.test.mjs — not a claim that this skill's own execution enforces anything. Same class as the existing design-rationale entries."
     }
   ]
 }
