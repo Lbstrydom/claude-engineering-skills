@@ -10,10 +10,19 @@
  * so its own recovery-failure path can be exercised without touching the
  * real audit-shadow.mjs module.
  */
-import { describe, it } from 'node:test';
+import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { classifyShadowFailureSafe } = await import('../scripts/lib/audit/run-telemetry.mjs');
+// Air-gap the store (empty DSN = deliberate no-cloud; see AGENTS.md) and keep
+// learning ENABLED so recordDecision actually enqueues — the parity tests
+// below read the enqueued decisions back through flush() into a fake store.
+process.env.AUDIT_DB_URL = '';
+delete process.env.LEARNING_DISABLE;
+
+const { classifyShadowFailureSafe, runTelemetry } = await import('../scripts/lib/audit/run-telemetry.mjs');
+const { assembleFindings } = await import('../scripts/lib/audit/finding-assembly.mjs');
+const logger = await import('../scripts/lib/learning/decision-logger.mjs');
+const emptyWriteOutcomes = () => ({ written: 0, spilled: 0, lost: 0, skipped: 0, byWriter: {} });
 
 describe('classifyShadowFailureSafe — guards its own recovery import', () => {
   it('falls back to a safe classification when the recovery import itself fails, instead of throwing', async () => {
@@ -38,5 +47,113 @@ describe('classifyShadowFailureSafe — guards its own recovery import', () => {
     const { log, marker } = await classifyShadowFailureSafe(new Error('x'), badImporter);
     assert.equal(marker, null);
     assert.equal(typeof log, 'string');
+  });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// Telemetry / verdict parity (docs/plans/backlog-tooling-honesty.md §7,
+// backlog row 723b5dc5). The convergence the telemetry records must be the
+// SAME convergence the gate records — computed once in assembleFindings —
+// never a local recount from raw f.severity.
+// ═══════════════════════════════════════════════════════════════════════
+
+const EMPTY_STRUCTURE = { pass_name: 'structure', files_planned: 0, files_found: 0, files_missing: 0, missing_files: [], export_mismatches: [], findings: [], summary: 'ok' };
+const EMPTY_WIRING = { pass_name: 'wiring', wiring_issues: [], findings: [], summary: 'ok' };
+const EMPTY_PASS = (name) => ({ pass_name: name, findings: [], summary: 'skipped' });
+
+function telemetryData(overrides = {}) {
+  return {
+    ctx: {}, round: 1, planFile: null, planContent: null, strictLint: false,
+    changedFiles: ['a.mjs'], impactSet: null, totalLatency: 100,
+    diffLinesChanged: 3, diffFilesChanged: 1, sessionCacheHit: null,
+    mapReducePasses: [],
+    ledgerFile: null, noLedger: true, ledger: null, ledgerStats: null,
+    ledgerInvalidEntryCount: 0, suppressionUnavailable: false,
+    fpTracker: null, cloudFpPolicy: null,
+    cloudRunId: '00000000-0000-4000-8000-000000000001', cloudRepoId: null, noCloudRecording: true,
+    learningWritesAllowed: false, bandit: null,
+    debtLedger: { entries: [] }, debtContext: { source: 'local', canWrite: false },
+    debtEventsPath: null, newlyEscalated: [], debtRunId: 'test-run-1',
+    toolFindings: [], toolCapability: { enabled: false },
+    allPaths: new Set(['a.mjs']), found: ['a.mjs'], missing: [],
+    subjectFiles: new Set(['a.mjs']),
+    runStructure: true, structureResult: { result: EMPTY_STRUCTURE, usage: {}, latencyMs: 10 },
+    runWiring: true, wiringResult: { result: EMPTY_WIRING, usage: {}, latencyMs: 10 },
+    backendPassNames: [], backendResults: [],
+    frontendWillRun: false, frontendResult: { result: { ...EMPTY_PASS('frontend'), quick_fix_warnings: [] }, usage: {}, latencyMs: 0 },
+    runSustainability: false, sustainResult: { result: { ...EMPTY_PASS('sustainability'), dead_code: [], quick_fix_warnings: [] }, usage: {}, latencyMs: 0 },
+    runQuickfix: false, quickfixResult: { result: EMPTY_PASS('quickfix'), usage: {}, latencyMs: 0 },
+    runDuplication: false, duplicationResult: { result: EMPTY_PASS('duplication'), usage: {}, latencyMs: 0 },
+    runAdjacency: false, adjacencyResult: { result: EMPTY_PASS('adjacency'), usage: {}, latencyMs: 0 },
+    archState: 'SKIPPED_NO_INTENT', archResult: { result: {}, usage: {}, latencyMs: 0 },
+    orphanState: 'SKIPPED_NO_GRAPH', orphanResult: { result: {}, usage: {}, latencyMs: 0 },
+    eventWiringState: 'ANALYZED_CLEAN', eventWiringResult: { result: {}, usage: {}, latencyMs: 0 },
+    isR2Plus: false,
+    ...overrides,
+  };
+}
+
+// Two UNRELATED details: near-identical text is folded by the fuzzy dedup pass.
+const DETAILS = { H1: 'unbounded retry loop on a 4xx response', H2: 'no-unused-vars: `tmp` is assigned but never read' };
+function highFinding(id, extra = {}) {
+  return {
+    id, severity: 'HIGH', category: 'Test', section: 'a.mjs:1',
+    detail: DETAILS[id], risk: 'r', recommendation: 'x',
+    is_quick_fix: false, is_mechanical: false, principle: 'Test',
+    classification: { sonarType: 'BUG', effort: 'MEDIUM', sourceKind: 'MODEL', sourceName: 'test' },
+    ...extra,
+  };
+}
+
+/** Run assembly + telemetry, then flush the logger into a capturing store. */
+async function recordedDecisions(data) {
+  logger._resetForTest();
+  const assembled = await assembleFindings(data);
+  const mergedResult = { findings: assembled.allFindings };
+  await runTelemetry(data, assembled, mergedResult, { writeOutcomes: emptyWriteOutcomes() });
+  const rows = [];
+  await logger.flush({ store: { isCloudEnabled: async () => true, insertLearningDecision: async (e) => { rows.push(e); return true; } } });
+  return { assembled, rows };
+}
+
+describe('runTelemetry — convergence parity with the verdict (723b5dc5)', () => {
+  beforeEach(() => logger._resetForTest());
+
+  it('a refuted HIGH and a LINTER HIGH do not count: verdict PASS, telemetry converged=true, highCount 0', async () => {
+    const refuted = highFinding('H1', {
+      verification: { verification: 'refuted', reason: 'test', verdictSeverity: 'LOW', countsTowardVerdict: false },
+    });
+    const linter = highFinding('H2', {
+      classification: { sonarType: 'BUG', effort: 'LOW', sourceKind: 'LINTER', sourceName: 'eslint' },
+    });
+    const data = telemetryData({
+      backendPassNames: ['backend'],
+      backendResults: [{ result: { pass_name: 'backend', findings: [refuted, linter], quick_fix_warnings: [] }, usage: {}, latencyMs: 0 }],
+    });
+    const { assembled, rows } = await recordedDecisions(data);
+    assert.equal(assembled.verdict, 'PASS', 'precondition: the real verdict excludes both findings');
+    assert.equal(assembled.high, 0);
+
+    const tier = rows.find((r) => r.decisionType === 'author_tier');
+    assert.ok(tier, 'author_tier decision must be recorded when changedFiles is non-empty');
+    assert.equal(tier.outcome.converged, true, 'telemetry must report the SAME convergence the verdict reached');
+
+    const predict = rows.find((r) => r.decisionType === 'convergence_predict');
+    assert.ok(predict, 'convergence_predict decision must be recorded');
+    assert.equal(predict.context.highCount, 0, 'highCount must be the verdict count, not a raw f.severity recount');
+    assert.equal(predict.context.totalFindings, 2, 'totalFindings still describes every finding');
+  });
+
+  it('zero counts but detectors unknown (R2+, suppression unavailable): telemetry converged=false, same reason as the gate', async () => {
+    const data = telemetryData({ round: 2, isR2Plus: true, suppressionUnavailable: true });
+    const { assembled, rows } = await recordedDecisions(data);
+    assert.equal(assembled.high, 0);
+    assert.equal(assembled.convergence.converged, false);
+    assert.equal(assembled.convergence.reason, 'detector-not-run');
+
+    const tier = rows.find((r) => r.decisionType === 'author_tier');
+    assert.ok(tier);
+    assert.equal(tier.outcome.converged, false, 'a count-only evaluator would say true here; the gate says detector-not-run');
   });
 });

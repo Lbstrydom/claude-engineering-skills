@@ -79,12 +79,51 @@ const { FindingSchema, LedgerEntrySchema, ReduceStatus, REDUCE_STATUS_VALUES, re
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('Phase 1 — atomic artifact writes', () => {
-  it('legacy-production-audit.mjs no longer calls fs.writeFileSync directly (static regression guard)', () => {
-    const src = fs.readFileSync(
-      path.resolve('scripts/lib/audit/legacy-production-audit.mjs'), 'utf-8',
-    );
-    assert.equal(src.includes('fs.writeFileSync('), false,
-      'all 3 known fs.writeFileSync call sites must be migrated to atomicWriteFileSync');
+  // Widened 2026-09-13 from the spine alone to the whole orchestrator directory
+  // (docs/plans/backlog-tooling-honesty.md §1 item 4b): the artifact writes this
+  // guarded moved into sibling modules with the decomposition, so a scan of
+  // legacy-production-audit.mjs alone was reading a file that no longer writes
+  // anything — green, having checked nothing.
+  //
+  // Allowlist = writes that are NOT durable artifacts, each with the reason a
+  // torn file cannot matter. A new `fs.writeFileSync(` anywhere else under
+  // scripts/lib/audit/ must either move to atomicWriteFileSync or be added
+  // here WITH a reason.
+  const NON_ARTIFACT_WRITES = {
+    'duplication-detector.mjs': 'writes tool INPUT into a fresh temp root that is deleted after the run',
+    'final-adjudication.mjs': "writes subprocess INPUT into a fresh temp dir with flag 'wx' (create-exclusive)",
+    'orphan-metrics.mjs': "creates an EMPTY marker file with flag 'wx' — atomic at the filesystem level by construction",
+  };
+  const AUDIT_DIR = path.resolve('scripts/lib/audit');
+  const auditSources = () => fs.readdirSync(AUDIT_DIR).filter((f) => f.endsWith('.mjs'))
+    .map((f) => ({ name: f, src: fs.readFileSync(path.join(AUDIT_DIR, f), 'utf-8') }));
+  const codeLines = (src) => src.split('\n').filter((l) => { const t = l.trim(); return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')); });
+
+  it('no module under scripts/lib/audit/ writes a durable artifact with fs.writeFileSync (static regression guard)', () => {
+    const offenders = [];
+    for (const { name, src } of auditSources()) {
+      const hits = codeLines(src).filter((l) => l.includes('fs.writeFileSync(')).length;
+      if (hits === 0) continue;
+      if (NON_ARTIFACT_WRITES[name]) continue;
+      offenders.push(`${name} (${hits})`);
+    }
+    assert.deepEqual(offenders, [],
+      'artifact writes must go through atomicWriteFileSync (temp + rename) — or be allowlisted in NON_ARTIFACT_WRITES with the reason a torn file cannot matter');
+  });
+
+  it('the allowlist names only files that still carry the write (an entry for a file that stopped writing is stale)', () => {
+    for (const name of Object.keys(NON_ARTIFACT_WRITES)) {
+      const entry = auditSources().find((s) => s.name === name);
+      assert.ok(entry, `NON_ARTIFACT_WRITES names ${name}, which no longer exists`);
+      assert.ok(codeLines(entry.src).some((l) => l.includes('fs.writeFileSync(')),
+        `NON_ARTIFACT_WRITES names ${name} but it has no fs.writeFileSync( left — drop the entry`);
+    }
+  });
+
+  it('the subject exists: at least one module in the directory uses atomicWriteFileSync (vacuous-pass guard)', () => {
+    const users = auditSources().filter(({ src }) => codeLines(src).some((l) => l.includes('atomicWriteFileSync('))).map((s) => s.name);
+    assert.ok(users.length >= 1,
+      'no module under scripts/lib/audit/ calls atomicWriteFileSync — the absence of fs.writeFileSync then proves nothing about how artifacts are written');
   });
 
   it('cachePassResult never leaves a torn/partial target file when the atomic rename fails mid-write', async (t) => {

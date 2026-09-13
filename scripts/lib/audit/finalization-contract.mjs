@@ -135,6 +135,13 @@ export const AssembledFindingsSchema = z.object({
   high: z.number().int(),
   medium: z.number().int(),
   low: z.number().int(),
+  // The gate's quick-fix population (ALL findings) and the detector-aware
+  // convergence verdict, both computed once in assembleFindings so persistence
+  // and telemetry cannot disagree (docs/plans/backlog-tooling-honesty.md). Both
+  // REQUIRED: a hand-built `assembled` that omits them would otherwise let a
+  // consumer fall back to a local recount — the defect this closes.
+  quickFix: z.number().int(),
+  convergence: z.object({ converged: z.boolean(), reason: z.string() }).strict(),
   suppressionData: z.unknown().optional(),
   // The local+cloud FP-pass suppression total — DELIBERATELY separate from
   // `suppressionData.suppressedCount` (ledger-reraise-suppression only,

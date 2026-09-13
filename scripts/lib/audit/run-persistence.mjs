@@ -20,10 +20,8 @@ import { classifyLedgerEntry, batchWriteLedger } from '../ledger.mjs';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import { durableWrite } from '../durable-write.mjs';
 import { writeLearningState, tallyWriteOutcomes, AUDIT_DIR, SESSION_MANIFEST_PREFIX, SESSION_LEDGER_FILE } from '../robustness.mjs';
-import { evaluateConvergenceWithDetectors, resolveDetectorResultForRound } from './convergence.mjs';
 import { classifyGateEvidenceGap, formatGateEvidenceGap } from './gate-evidence.mjs';
 import { setupPostgresCommand } from '../db/schema-realization.mjs';
-import { checkDetectors } from './detector.mjs';
 import { insertLearningDecision, backfillLearningOutcome, isCloudEnabled } from '../../learning-store.mjs';
 import { recordDecision as _learningRecordDecision, flush as _learningFlush, buildDecisionKey as _learningBuildKey } from '../learning/decision-logger.mjs';
 import { validateFinalizationData, validateAssembledFindings, validatePersistenceServices } from './finalization-contract.mjs';
@@ -299,27 +297,12 @@ export async function runPersistence(data, assembled, mergedResult, persistenceS
       // "ledger present" can never be mistaken for "detectors absent": an R2+ round
       // whose ledger is missing or corrupt yields `undefined` here, which the oracle
       // reads as `detector-not-run` — NOT converged. That is the point of the fix.
-      const detectorVerdict = evaluateConvergenceWithDetectors(
-        {
-          high,
-          medium,
-          quickFix: allFindings.filter((f) => f.is_quick_fix).length,
-        },
-        // `suppressionUnavailable` (function-scoped, :1644) is the signal, NOT
-        // `ledgerValidation` — that one is `const` inside `if (isR2Plus)` and is
-        // not in scope here. Same fact, correct binding.
-        resolveDetectorResultForRound({
-          // Normalised HERE, not in the resolver: the orchestrator knows an absent
-          // round means the first one (the same `round || 1` this file uses
-          // throughout), while the resolver must treat an unknown round as unknown
-          // detectors. Both halves fail closed on their own terms.
-          round: round || 1,
-          suppressionUnavailable,
-          ledger,
-          cwd: process.cwd(),
-          checkDetectorsFn: checkDetectors,
-        }),
-      );
+      // Computed once in assembleFindings (backlog-tooling-honesty.md §2) —
+      // the same object run-telemetry.mjs already recorded from, so the store's
+      // convergence state and the learning telemetry cannot disagree. The
+      // detector-aware evaluation, its `round || 1` normalisation and the
+      // `suppressionUnavailable` → `detector-not-run` mapping all live there now.
+      const detectorVerdict = assembled.convergence;
       const convergedNow = detectorVerdict.converged;
       if (!convergedNow && detectorVerdict.reason !== 'finding-thresholds') {
         // Say WHY, or a round that passed the counts and failed the detector gate

@@ -95,6 +95,38 @@ describe('assembleFindings — pure computation over a minimal FinalizationData'
     assert.equal(result.allFindings[0].detail, 'test finding');
   });
 
+  it('quickFix counts EVERY is_quick_fix finding, refuted included — the gate population, not the verdict population', async () => {
+    // Two UNRELATED details: near-identical text would be folded by the fuzzy
+    // dedup pass and the count would read 1 for a reason unrelated to the gate.
+    const DETAILS = { Q1: 'empty catch block swallows the parse error', Q2: 'hardcoded localhost URL left in the fetch call' };
+    const qf = (id, extra = {}) => ({
+      id, severity: 'LOW', category: 'Test', section: 'a.mjs:1', detail: DETAILS[id], risk: 'r', recommendation: 'x',
+      is_quick_fix: true, is_mechanical: false, principle: 'Test',
+      classification: { sonarType: 'CODE_SMELL', effort: 'LOW', sourceKind: 'MODEL', sourceName: 'test' },
+      ...extra,
+    });
+    const data = minimalData({
+      backendPassNames: ['backend'],
+      backendResults: [{ result: { pass_name: 'backend', findings: [
+        qf('Q1'),
+        qf('Q2', { verification: { verification: 'refuted', reason: 't', verdictSeverity: 'LOW', countsTowardVerdict: false } }),
+      ], quick_fix_warnings: [] }, usage: {}, latencyMs: 0 }],
+    });
+    const result = await assembleFindings(data);
+    assert.equal(result.quickFix, 2);
+    assert.equal(result.convergence.converged, false, 'two quick fixes block the gate');
+    assert.equal(result.convergence.reason, 'finding-thresholds');
+  });
+
+  it('convergence is the detector-aware verdict: R1 zero counts converge; R2 with suppression unavailable does not', async () => {
+    const r1 = await assembleFindings(minimalData());
+    assert.deepEqual(r1.convergence, { converged: true, reason: 'converged' });
+    assert.equal(r1.quickFix, 0);
+
+    const r2 = await assembleFindings(minimalData({ round: 2, suppressionUnavailable: true }));
+    assert.deepEqual(r2.convergence, { converged: false, reason: 'detector-not-run' });
+  });
+
   it('totalUsage/cacheMetrics/passTimings/summaryLines are always present on the return value', async () => {
     const result = await assembleFindings(minimalData());
     assert.equal(typeof result.totalUsage, 'object');

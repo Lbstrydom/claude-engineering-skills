@@ -113,6 +113,8 @@ describe('AssembledFindingsSchema', () => {
       high: 0,
       medium: 0,
       low: 0,
+      quickFix: 0,
+      convergence: { converged: true, reason: 'converged' },
       reopenedSet: new Set(),
       totalUsage: {},
       cacheMetrics: null,

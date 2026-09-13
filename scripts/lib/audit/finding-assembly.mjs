@@ -36,6 +36,8 @@ import {
 import { normalizePath } from '../file-io.mjs';
 import { listRepoFiles } from '../repo-inventory.mjs';
 import { verifyExistenceFindings, effectiveSeverity, countsTowardVerdict, isRefuted } from './finding-verification.mjs';
+import { evaluateConvergenceWithDetectors, resolveDetectorResultForRound } from './convergence.mjs';
+import { checkDetectors } from './detector.mjs';
 import { runSuppressionPasses } from '../suppression-policy.mjs';
 import { reconcileRemediationProjection, markFindingsRemediation } from '../../learning-store.mjs';
 import { appendEvents, mergeLedgers as mergeLedgersForSuppression } from '../debt-memory.mjs';
@@ -102,7 +104,7 @@ export async function assembleFindings(data) {
     archState, archResult, orphanState, orphanResult, eventWiringState, eventWiringResult,
     toolFindings, ledger, debtLedger, changedFiles, impactSet, cloudRepoId, cloudFpPolicy, fpTracker,
     ledgerFile, noLedger, round, strictLint, debtRunId, debtContext, debtEventsPath, newlyEscalated,
-    totalLatency,
+    totalLatency, suppressionUnavailable,
   } = data;
 
   const passRegistry = [
@@ -739,6 +741,35 @@ export async function assembleFindings(data) {
   const medium = countFor.filter(f => effSeverity(f) === 'MEDIUM').length;
   const low = countFor.filter(f => effSeverity(f) === 'LOW').length;
 
+  // The convergence verdict, computed ONCE here and consumed by both the
+  // persistence stage (the gate that licenses `AI-Gate: passed`) and the
+  // telemetry stage (docs/plans/backlog-tooling-honesty.md §2; backlog row
+  // 723b5dc5). Until 2026-09-13 run-telemetry.mjs recounted HIGH/MEDIUM from
+  // raw `f.severity` with only the advisory exclusion, and called the
+  // count-only `evaluateConvergence` — so a refuted or LINTER HIGH, or a
+  // detector-blocked R2+ round, made convergence_predict/author_tier record
+  // the opposite of what the gate recorded. finalizeRun runs telemetry BEFORE
+  // persistence, so the only place both can read the same answer is here.
+  //
+  // `quickFix` deliberately counts ALL findings (the gate's population, as
+  // run-persistence.mjs has always counted it), not `countFor`. Changing the
+  // gate's population is a different decision from making telemetry equal it.
+  const quickFix = allFindings.filter((f) => f.is_quick_fix).length;
+  // `resolveDetectorResultForRound` is where "ledger present" is kept apart
+  // from "detectors absent": an R2+ round whose ledger is missing/corrupt
+  // (`suppressionUnavailable`) resolves to `detector-not-run`, never to a
+  // count-only pass. `round || 1` normalised here, matching the orchestrator.
+  const convergence = evaluateConvergenceWithDetectors(
+    { high, medium, quickFix },
+    resolveDetectorResultForRound({
+      round: round || 1,
+      suppressionUnavailable: !!suppressionUnavailable,
+      ledger,
+      cwd: process.cwd(),
+      checkDetectorsFn: checkDetectors,
+    }),
+  );
+
   // Phase 11 (tiered-recall pipeline): shared verdict function — pre-normalise
   // severity to the verification-gate-effective value (`effSeverity`) since
   // `computeAuditVerdict` itself only reads `.severity` verbatim.
@@ -841,7 +872,7 @@ export async function assembleFindings(data) {
   }
 
   return {
-    allFindings, passRegistry, allResults, failedPasses, verdict, high, medium, low, reopenedSet,
+    allFindings, passRegistry, allResults, failedPasses, verdict, high, medium, low, quickFix, convergence, reopenedSet,
     linterOverlapData, totalUsage, cacheMetrics, passTimings, summaryLines, fpPassSuppressedCount,
     ...(suppressionData !== undefined ? { suppressionData } : {}),
     ...(debtMemoryData !== undefined ? { debtMemoryData } : {}),

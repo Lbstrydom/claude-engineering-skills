@@ -25,7 +25,6 @@ import { getActiveRevisionId } from '../prompt-registry.mjs';
 import { durableWrite } from '../durable-write.mjs';
 import { costFromUsage } from '../model-pricing.mjs';
 import { writeLearningState, tallyWriteOutcomes, AUDIT_DIR } from '../robustness.mjs';
-import { evaluateConvergence } from './convergence.mjs';
 import { recordDecision as _learningRecordDecision } from '../learning/decision-logger.mjs';
 import { deriveSignals as _deriveTierSignals, buildAuthorTierObservation as _buildAuthorTierObservation } from '../learning/author-tier-observation.mjs';
 import { loadDomainRules as _loadDomainRules, computeTargetDomains as _computeTargetDomains } from '../symbol-index/domain-tagger.mjs';
@@ -53,7 +52,7 @@ export async function runTelemetry(data, assembled, mergedResult, telemetryServi
     bandit, fpTracker, changedFiles, diffLinesChanged, planContent,
     subjectFiles, isR2Plus,
   } = data;
-  const { allFindings, passRegistry } = assembled;
+  const { allFindings, passRegistry, high, medium, quickFix, convergence } = assembled;
   const { writeOutcomes } = telemetryServices;
 
   // Phase 3-4: Record initial findings for learning (pre-triage — accepted is null).
@@ -259,15 +258,12 @@ export async function runTelemetry(data, assembled, mergedResult, telemetryServi
   // stop signal) is known.  Best-effort; never throws into audit pipeline.
   if (cloudRunId) {
     try {
-      // Cluster-B audit-code R2/M7 fix: D10 (docs/plans/event-wiring-symmetry.md)
-      // excludes `enforcement: 'advisory'` findings from the real verdict's
-      // high/medium counts (findings-pipeline.mjs's computeAuditVerdict) — this
-      // telemetry computed its own count from raw allFindings with no such
-      // exclusion, so an advisory HIGH/MEDIUM inflated convergence_predict's
-      // signal even though it never affects the actual gate. Same filter here.
-      const gatingFindings = allFindings.filter(f => f?.enforcement !== 'advisory');
-      const highCount   = gatingFindings.filter(f => f.severity === 'HIGH').length;
-      const mediumCount = gatingFindings.filter(f => f.severity === 'MEDIUM').length;
+      // The VERDICT's counts (assembleFindings), not a local recount. The
+      // recount this replaced applied only the advisory exclusion and so
+      // diverged from the gate on any refuted or LINTER HIGH (backlog row
+      // 723b5dc5; docs/plans/backlog-tooling-honesty.md).
+      const highCount   = high;
+      const mediumCount = medium;
       const dismissed   = allFindings.filter(f => f.adjudicationOutcome === 'dismissed').length;
       _learningRecordDecision({
         decisionType: 'convergence_predict',
@@ -304,20 +300,12 @@ export async function runTelemetry(data, assembled, mergedResult, telemetryServi
         domains = _computeTargetDomains(changedFiles, _loadDomainRules(process.cwd())).domains || [];
       } catch { /* domain-map absent or invalid — proceed without domain signal */ }
       const signals = _deriveTierSignals({ changedFiles, domains, diffLines: diffLinesChanged ?? 0 });
-      // Cluster-B audit-code R2/M7 fix: same D10 exclusion as the
-      // convergence_predict block above — this comment's own claim ("the
-      // SAME quality threshold /audit-code gates on") was false without it,
-      // since computeAuditVerdict (the real gate) already excludes advisory
-      // findings and this telemetry didn't.
-      const gatingFindings = allFindings.filter(f => f?.enforcement !== 'advisory');
-      const highCount   = gatingFindings.filter(f => f.severity === 'HIGH').length;
-      const mediumCount = gatingFindings.filter(f => f.severity === 'MEDIUM').length;
-      const quickFix    = allFindings.filter(f => f.is_quick_fix).length;
-      // converged = the same quality threshold /audit-code gates on, this round
-      // (scripts/lib/audit/convergence.mjs — plan §F2.5, the single canonical
-      // definition; SKILL.md prose and gate-contract.json params are pinned
-      // copies asserted against this, never independent sources)
-      const converged   = evaluateConvergence({ high: highCount, medium: mediumCount, quickFix });
+      // converged = the gate's own detector-aware verdict, computed once in
+      // assembleFindings and shared with run-persistence.mjs — never a local
+      // count-only evaluation, which said `true` on rounds the gate blocked
+      // (`detector-not-run` / `detector-undispositioned`) and `false` on rounds
+      // the verdict had already passed (refuted / LINTER HIGHs).
+      const converged   = convergence.converged;
       _learningRecordDecision(_buildAuthorTierObservation({
         runId: cloudRunId,
         round: round || 1,
