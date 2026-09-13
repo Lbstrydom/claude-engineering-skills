@@ -1,6 +1,16 @@
 # Project Status Log
 
 ### Consumer Verification (previous ship)
+- **Commit**: 79919ff747b7fedd5ffd40ce95aa67579a4c4b9f on `main` (pushed 2026-09-13, range `988c4b67..79919ff7`; preceded by cf4c75f3 + 988c4b67 the same morning)
+- **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `scripts/.claude-skills/lib/measurement-marker.mjs` present and importable (`formatNoMeasurementCommand('x')` renders the marker); the synced `workflow-cadence-doctor.mjs` carries the `unmeasured` verdict (25 occurrences). Wine's own PR #559 (merged 47bf6d37) consumes it: `checks: read` + `requireMeasurement: true` on arch-drift-scoped.yml, all 6 checks green.
+- **Result**: verified — the no-measurement marker + `unmeasured` verdict (upstream report 7e413fe2, closed) reached the consumer bundle intact and is already wired into a consumer workflow.
+
+### Consumer Verification (previous ship)
+- **Commit**: ac3283bf on `main` (pushed 2026-09-13, range `79919ff7..ac3283bf`; ledger follow-up ba931683)
+- **Retrieval**: the stale-holder direction the status entry left as *not yet exercised* was run once the store went idle, ~20 min after the push: inserted a synthetic `running` refresh_run for this repo (`3a5e4637`, `last_heartbeat_at = now() - 30 min`), then a plain `node scripts/symbol-index/refresh.mjs` (no `--force`).
+- **Result**: verified — logged `reclaiming the per-repo lock: refresh_run 3a5e4637-… last heartbeat 30min ago (budget 300s) -- the worker crashed without aborting`, aborted it (row now `status=aborted`, `error=heartbeat stale (last heartbeat 30min ago) -- worker presumed crashed; lock reclaimed by a later refresh`), opened `f281b447` and published it (45 symbols, 0 heartbeat failures, exit 0). Both directions of the reclaim are now store-verified; the synced copy reached wine-cellar-app with the push (sync 3/3).
+
+### Consumer Verification (previous ship)
 - **Commit**: 1250f8cc78f0cb0f84d88fd5bfd31bb06987bb61 on `main` (pushed 2026-09-08, range `0d72d185..1250f8cc`)
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: grepped `resolveTimeoutMs`/`TIMEOUT_FLOOR_MS` in wine-cellar-app's synced `scripts/.claude-skills/lib/brainstorm/depth-config.mjs` — present. The push's own sync summary additionally confirmed `brainstorm-round.mjs` + `depth-config.mjs` updated in all 3/3 targets (storyline, wine-cellar-app, and the third registered consumer).
 - **Result**: verified — the brainstorm --timeout-ms scaling fix (docs/plans: none; ad-hoc fix, AI-Gate not-run) reached the consumer bundle intact.
@@ -14,6 +24,82 @@
 - **Commit**: dfe57eae on `main` (pushed 2026-09-12, range `534d7550..dfe57eae`)
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `scripts/.claude-skills/lib/debt-ledger-claim-check.mjs` in wine-cellar-app's synced tree contains `mergeTopicIdEvidence` — present. The push's own sync summary confirmed 9 files updated across all 3/3 registered consumers.
 - **Result**: verified — the debt-ledger-claims-check cloud-evidence fix reached the consumer bundle intact.
+
+## 2026-09-13 — arch:drift duplication cleanup: 80 → 15 (RED → AMBER)
+
+`npm run arch:drift` was RED at 80/20 — almost entirely new duplication
+accumulated since the July `arch-drift-duplication-cleanup` plan shipped its
+own pragma/consolidation mechanism. Triaged the full cluster list (63
+clusters) into three buckets and closed all three.
+
+### Changes
+- **12 real production-code duplicates** consolidated to their one canonical
+  location: `safeErrorClass`/`escapeRegExp`-alias/`arg`/`isPlainObject`/
+  `execGit` into [scripts/lib/cli-io.mjs](scripts/lib/cli-io.mjs) (the file's
+  own stated home for this class of helper); `round6` into
+  [scripts/lib/model-pricing.mjs](scripts/lib/model-pricing.mjs);
+  `dedupeOrdered` (azure/embed-discovery.mjs now imports azure/deployment-
+  ladder.mjs's copy); `isIdentifiableP0OrP1` into
+  [persona/audit-correlator.mjs](scripts/lib/persona/audit-correlator.mjs);
+  `normalise` exported from sync-path-map.mjs; `passthroughErrors` moved to
+  [cross-skill/dispatch.mjs](scripts/lib/cross-skill/dispatch.mjs) next to
+  the `CommandError` it wraps. `computeAgeDays` (nav/drift.mjs vs
+  visual/drift.mjs) pragma'd, not merged — same "sister lens" precedent the
+  original plan used for `firstSeenFromHistory` between the same two files.
+- **31 test-only duplicate clusters**: consolidated into existing shared test
+  helpers where one already had the exact behaviour
+  (`tests/helpers/{fixtures,run-cli,git,consumer-fixture}.mjs`), or into 4 new
+  small cohesive fixture modules (`cross-skill-argv.mjs`,
+  `upstream-ledger-test-utils.mjs`, `persona-audit-fixtures.mjs`,
+  `multi-pass-audit-fixtures.mjs`) where none existed. 2 clusters (`sha12`,
+  `withCwd`) left untouched — both already carry a human-authored
+  `@duplicate-justification` pragma explaining the divergence is deliberate.
+- **18 fixture-mirror clusters** (`tests/fixtures/anchor-contract/files/**`,
+  none fixable by pragma — the sweep excludes `tests/*` by design):
+  [scripts/lib/symbol-index/drift-path-exemptions.mjs](scripts/lib/symbol-index/drift-path-exemptions.mjs)
+  (new) adds a path-based exemption channel, reusing the SAME
+  `duplicate_justified` column and SQL exclusion the pragma mechanism already
+  has — no schema change, no new SQL. `refresh.mjs` feeds path-matched
+  symbols into the same `recordDuplicateJustifications` call.
+
+### Decisions Made
+- **Thin pass-through wrappers accepted, not chased further.** Where a
+  duplicate symbol closes over a per-file mutable variable or a default-
+  parameter convenience (`const git = (args, cwd = repo) => sharedGit(args,
+  cwd)`), kept the one-line local wrapper rather than forcing an awkward
+  explicit-parameter call at every site. 6 such wrapper pairs are now their
+  own (much smaller) duplicate cluster; judged not worth the churn.
+- **Path exemption is directory-scoped and explicit**, not a blanket
+  `tests/fixtures/**` carve-out — `DRIFT_PATH_EXEMPT_PREFIXES` names only the
+  one verified mirror corpus, so a future genuine test-fixture duplication
+  bug in a *different* fixtures directory still surfaces normally.
+- **An incremental refresh does not retroactively re-evaluate already-
+  indexed, untouched files against a newly-added exemption.** Matches the
+  original plan's own documented close-out step (`arch:refresh:full` once) —
+  not a new limitation.
+
+### Verification
+- `npm test`: 15,678/15,678 pass, 0 fail (40 skipped), after rebasing onto
+  4 concurrent commits (2 touching `drift.mjs`/`refresh.mjs` — auto-merged
+  cleanly, re-verified by a full test run afterward).
+- `npm run check`: every gate 0 net-new; clean exit.
+- Live, not just unit-tested: a real `arch:refresh:full` moved
+  `duplication_excluded_count` from 8 (pragma-only) to 26 (8 pragma + 18
+  path-exempt) and the 18 fixture-mirror clusters disappeared from the
+  report. Final score 15/20 (AMBER, exit 0 — clears the weekly CI gate that
+  was previously opening a sticky issue every week).
+- 7 new unit tests ([tests/drift-path-exemptions.test.mjs](tests/drift-path-exemptions.test.mjs)),
+  red/green-verified against a reintroduced bug.
+
+### Next Steps
+- The 8 remaining clusters (2 pragma'd, 6 thin-wrapper residue) are fully
+  accounted for and not further pursued this session.
+- Pre-existing backlog noticed but out of scope for this ship (not touched
+  or introduced by this session): `list-unlocked-fixes` reports 46 code / 10
+  plan rows (230 aged out); `list-unremediated-acceptances` reports 85 code /
+  92 plan rows (50 already `accepted-permanent`).
+
+Backlog 2026-09-13T13:02Z: Q1 46c/10p (+231 aged) · Q2 85c/92p (50 perm) · Q3 2230 · debt unmeasured · upstream 0
 
 ## 2026-09-13 — arch:refresh lock: a crashed worker's `running` row is reclaimed by heartbeat age, not by a human
 
