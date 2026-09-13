@@ -336,7 +336,10 @@ describe('encodeQueueCursor / decodeQueueCursor', () => {
   });
 
   it('refuses a malformed cursor as BAD_INPUT rather than silently starting over', () => {
-    const enc = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    // `v: 2` by default — without it every case below is refused on the version
+    // alone and the domain checks are never reached (instrument defect caught by
+    // the negative control for R3 M1).
+    const enc = (o) => Buffer.from(JSON.stringify({ v: 2, ...o })).toString('base64url');
     for (const bad of [
       'not-a-cursor', enc({ v: 1 }), enc([]), '',
       enc({ ...CURSOR, createdAt: 'not-a-timestamp' }),
