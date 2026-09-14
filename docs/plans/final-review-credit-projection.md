@@ -343,3 +343,43 @@ byte-identical before and after.
   (identity holds). One confirmation round follows because R3 reviewed a
   document that did not carry R2's fixes.
 - **Gemini gate R4 (confirmation)**: **APPROVE** — 0 new, 0 wrongly dismissed.
+
+## Out of Scope (Future) — debt surfaced by the Cluster A code audit
+
+The Cluster A audit (R1, 23 HIGH / 6 MEDIUM) read the whole of
+`scripts/lib/store/runs-findings.mjs` and `scripts/gemini-review.mjs`
+because this plan's changes live in both. Two findings were real and directly
+tied to this plan's own two-axis model (H8: `recordFinalReviewFix`'s dismissal
+guard now checks `adjudication_outcome` too; H17: a producer defect that
+drops findings from a batch no longer silently authorizes a prune) and were
+fixed in the same round. One (M6) was a real test-quality gap in this plan's
+OWN new test file, fixed by extracting `buildFinalReviewPersistPayload` as a
+pure, fully-testable function.
+
+The remaining 20 HIGH / 5 MEDIUM are pre-existing, independent debt — several
+overlap what `docs/plans/backlog-tooling-honesty.md`'s Cluster B audit already
+recorded yesterday in `runs-findings.mjs` (repository scope not enforced,
+intra-batch dedup narrower than the DB conflict key, transactional errors
+swallowed in `persistKeptEmbeddings`, capability probes bypassing a held
+transaction client, reconciliation identity loss) — this audit re-found the
+same class from a different diff base. New to this session, confined to
+`scripts/gemini-review.mjs` (untouched by either plan's edits):
+
+- **Fail-open schema validation** — `callReviewer` logs a Zod warning but still
+  returns the invalid payload as a success.
+- **Provider termination status ignored** — a truncated (`finish_reason:
+  'length'`) response is accepted the same as a complete one.
+- **Gemini adapter cancellation signal** — passed as a second argument;
+  `@google/genai` expects `request.config.abortSignal`.
+- **Provider/model attribution fallback** — any provider other than
+  Gemini/Azure-Claude is attributed as `CLAUDE_OPUS_MODEL` (e.g. an
+  OpenRouter request is mis-attributed).
+- **`requestIdentity` dropped** between `runShadowReview`'s return and its
+  caller, which reads it anyway (always `null` on that path).
+- **Campaign-scope validation runs after client construction**, not before.
+- **Diagnostic payloads carry raw provider error text/response excerpts**
+  into stderr and the rethrown error.
+
+These belong to a `gemini-review.mjs` hardening plan, not to a credit-queue
+labelling plan. Not dismissed — recorded so the audit's cost was not wasted.
+

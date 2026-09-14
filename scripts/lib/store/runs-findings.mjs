@@ -657,7 +657,7 @@ export function buildFindingRow(f, { runId, passName, round, columns = {} }) {
  * classifies on `err.code` (SQLSTATE / errno), and a string cannot be
  * classified.
  *
- * @returns {Promise<{applied: boolean, rows: number, keptKeys?: {fingerprint:string, bucket:string|null}[], reason?: string, error?: unknown}>}
+ * @returns {Promise<{applied: boolean, rows: number, keptKeys?: {fingerprint:string, bucket:string|null}[], droppedCount?: number, reason?: string, error?: unknown}>}
  */
 export async function recordFindings(runId, findings, passName, round, opts = {}) {
   if (!runId) return { applied: false, rows: 0, reason: 'no-run-id' };
@@ -764,7 +764,13 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   // Terminal, not pending: this payload will map to zero rows however often it
   // is replayed (the drops above are deterministic in the payload), so a spilled
   // artifact that lands here must be retired rather than retried forever.
-  if (rows.length === 0) return { applied: true, rows: 0, reason: 'no-persistable-rows', keptKeys: [] };
+  // `droppedCount` is deliberately reported even on the terminal early-return
+  // below (final-review-credit-projection.md Seam 3 / audit-code cluster A R1
+  // H17): a caller doing replace-by-snapshot (recordFinalReviewFindings) must
+  // be able to tell "the round genuinely raised nothing" from "a producer
+  // defect silently rejected part of the batch" — pruning on the latter would
+  // treat rows the round never actually re-examined as absent and erase them.
+  if (rows.length === 0) return { applied: true, rows: 0, reason: 'no-persistable-rows', keptKeys: [], droppedCount: droppedFingerprints.length };
   // Bulk INSERT — homogeneous rows by construction. Use the caller's tx client
   // when provided (atomic delete+insert); otherwise grab a pool connection.
   try {
@@ -847,7 +853,7 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
     // snapshot, scoped to the SAME pass_name/bucket space the upsert wrote —
     // deriving it from the upserted rows themselves, never re-guessed.
     const keptKeys = rows.map((row) => ({ fingerprint: row.finding_fingerprint, bucket: row.bucket ?? null }));
-    return { applied: true, rows: rows.length, keptKeys };
+    return { applied: true, rows: rows.length, keptKeys, droppedCount: droppedFingerprints.length };
   } catch (err) {
     process.stderr.write(`  [learning] recordFindings failed: ${err.message}\n`);
     // RETHROW when running inside a caller-supplied transaction (2026-07-26).
@@ -947,7 +953,17 @@ export async function recordFinalReviewFindings(runId, { primary = [], shadow = 
     await withTx(async (client) => {
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${runId}:final-review`]);
       const res = await recordFindings(runId, primary, 'final-review', 0, { client });
-      await pruneUnrecordedUnruled(client, { runId, passName: 'final-review', keptKeys: res.keptKeys || [] });
+      // Prune ONLY on a complete batch (audit-code cluster A R1 H17): a
+      // producer defect (e.g. every finding missing `severity`) silently
+      // drops rows via `recordFindings`' own defensive filter, and a dropped
+      // finding is not the same fact as "this round genuinely did not raise
+      // it" — pruning on a degraded batch would erase history for findings
+      // the round never actually re-examined.
+      if (res.droppedCount > 0) {
+        process.stderr.write(`  [learning] recordFinalReviewFindings: skipping prune for final-review — ${res.droppedCount} finding(s) were dropped from this batch (producer defect), so it is not a complete replacement snapshot\n`);
+      } else {
+        await pruneUnrecordedUnruled(client, { runId, passName: 'final-review', keptKeys: res.keptKeys || [] });
+      }
     });
   } catch (err) {
     process.stderr.write(`  [learning] recordFinalReviewFindings failed (primary): ${err.message}\n`);
@@ -978,7 +994,12 @@ export async function recordFinalReviewFindings(runId, { primary = [], shadow = 
       await withTx(async (client) => {
         await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${runId}:final-review-shadow`]);
         const res = await recordFindings(runId, shadow, 'final-review-shadow', 0, { client });
-        await pruneUnrecordedUnruled(client, { runId, passName: 'final-review-shadow', keptKeys: res.keptKeys || [] });
+        // Same "complete batch only" gate as the primary tx above (H17).
+        if (res.droppedCount > 0) {
+          process.stderr.write(`  [learning] recordFinalReviewFindings: skipping prune for final-review-shadow — ${res.droppedCount} finding(s) were dropped from this batch (producer defect), so it is not a complete replacement snapshot\n`);
+        } else {
+          await pruneUnrecordedUnruled(client, { runId, passName: 'final-review-shadow', keptKeys: res.keptKeys || [] });
+        }
       });
     } catch (err) {
       process.stderr.write(
@@ -1196,12 +1217,17 @@ export async function recordFinalReviewFix(runId, fingerprint, opts = {}) {
     const bucket = resolved.bucket;
 
     const existing = await one(
-      `SELECT user_action FROM audit_findings
+      `SELECT user_action, adjudication_outcome FROM audit_findings
         WHERE run_id = $1 AND finding_fingerprint = $2 AND bucket IS NOT DISTINCT FROM $3
         LIMIT 1`,
       [runId, fingerprint, bucket]
     );
-    if (existing?.user_action === 'dismissed') {
+    // A completed dismissal on EITHER axis (final-review-credit-projection.md
+    // Seam 1) closes this off — a finding the audit loop's own triage already
+    // ruled `dismissed` (adjudication_outcome) is exactly as non-issue as one a
+    // human dismissed via `user_action`, and recording a "fix" for a dismissed
+    // finding is the same incoherent write either way.
+    if (existing?.user_action === 'dismissed' || existing?.adjudication_outcome === 'dismissed') {
       return { ok: false, updated: 0, cloud: true, reason: 'dismissed-cannot-be-fixed', bucket };
     }
 

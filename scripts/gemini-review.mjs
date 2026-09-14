@@ -2024,6 +2024,53 @@ function shadowSkipBlock(shadow) {
 }
 
 /**
+ * Build the `recordFinalReviewFindings` payload from an already-completed
+ * review round. PURE — no I/O, no provider call — extracted 2026-09-14
+ * (audit-code cluster A R1 M6) specifically so the three shapes this produces
+ * (shadow executed non-empty, executed empty, did-not-run) are testable with
+ * hand-built fixtures instead of only as a call-shape assertion on the
+ * source: the network boundary this repo's testing doctrine forbids mocking
+ * (Tier 2, no whole-provider mock) sits entirely in `runShadowAndPersist`
+ * BEFORE this function ever runs, not inside it.
+ *
+ * @param {{result: object, diff: {primary: object[], shadow: object[]}|null, primaryModel: string, shadow: {model?: string}}} args
+ *   `result._shadow` must already be populated (`shadowSkipBlock` /
+ *   the 'ran' block / `shadowErrorBlock`) — this function only reads it.
+ * @returns {{primary: object[], shadow: object[], shadowRan: boolean, models: object, verdict: string|null}}
+ */
+function buildFinalReviewPersistPayload({ result, diff, primaryModel, shadow }) {
+  const ran = result._shadow.state === 'ran';
+  const primaryFindings = (diff?.primary) || dedupByHash(result.new_findings);
+  for (const f of primaryFindings) {
+    f._sourceModel = primaryModel;
+    if (!ran) f._bucket = null; // bucket only meaningful when both reviewers ran
+  }
+  const shadowFindings = ran ? diff.shadow : [];
+  return {
+    primary: primaryFindings,
+    shadow: shadowFindings,
+    // `ran` already means exactly this: did the shadow reviewer actually
+    // execute this round (final-review-credit-projection.md Seam 3). Forwarded
+    // verbatim so the store can tell "shadow did not run" (leave prior shadow
+    // rows untouched) from "shadow ran and found nothing" (prune the unruled
+    // ones) — a distinction `shadow: []` alone cannot make.
+    shadowRan: ran,
+    models: {
+      primaryModel,
+      shadowModel: ran ? shadow.model : null,
+      shadowInputTokens: result._shadow.usage?.input_tokens ?? null,
+      shadowOutputTokens: result._shadow.usage?.output_tokens ?? null,
+      shadowLatencyMs: result._shadow.usage?.latency_ms ?? null,
+    },
+    // The PRIMARY reviewer's verdict — the thing Step 7 exists to produce, and
+    // until 2026-07-18 the one part of it that was never persisted. Explicitly
+    // NOT `result._shadow.verdict`: the shadow is observation-only and must
+    // never reach a column anything gates on.
+    verdict: result.verdict ?? null,
+  };
+}
+
+/**
  * Run the shadow reviewer (when enabled) and persist both reviewers' findings.
  * Mutates `result` to add `result._shadow`. Returns nothing — observation only.
  *
@@ -2187,35 +2234,8 @@ async function runShadowAndPersist(result, primaryModel, runId, { planContent, t
 
   // Cloud persistence — primary always (when cloud+runId); shadow only when ran.
   if (!runId) return;
-  const ran = result._shadow.state === 'ran';
-  const primaryFindings = (diff?.primary) || dedupByHash(result.new_findings);
-  for (const f of primaryFindings) {
-    f._sourceModel = primaryModel;
-    if (!ran) f._bucket = null; // bucket only meaningful when both reviewers ran
-  }
-  const shadowFindings = ran ? diff.shadow : [];
-  await persistFn(runId, {
-    primary: primaryFindings,
-    shadow: shadowFindings,
-    // `ran` already means exactly this: did the shadow reviewer actually
-    // execute this round (final-review-credit-projection.md Seam 3). Forwarded
-    // verbatim so the store can tell "shadow did not run" (leave prior shadow
-    // rows untouched) from "shadow ran and found nothing" (prune the unruled
-    // ones) — a distinction `shadow: []` alone cannot make.
-    shadowRan: ran,
-    models: {
-      primaryModel,
-      shadowModel: ran ? shadow.model : null,
-      shadowInputTokens: result._shadow.usage?.input_tokens ?? null,
-      shadowOutputTokens: result._shadow.usage?.output_tokens ?? null,
-      shadowLatencyMs: result._shadow.usage?.latency_ms ?? null,
-    },
-    // The PRIMARY reviewer's verdict — the thing Step 7 exists to produce, and
-    // until 2026-07-18 the one part of it that was never persisted. Explicitly
-    // NOT `result._shadow.verdict`: the shadow is observation-only and must
-    // never reach a column anything gates on.
-    verdict: result.verdict ?? null,
-  });
+  const persistPayload = buildFinalReviewPersistPayload({ result, diff, primaryModel, shadow });
+  await persistFn(runId, persistPayload);
 
   // Phase 4 — append a model_eval_shadow_observations row when a Tier A/B
   // eval run is actively collecting AND the shadow actually ran this time
@@ -2225,10 +2245,13 @@ async function runShadowAndPersist(result, primaryModel, runId, { planContent, t
   // only unique WITHIN one audit run. idempotencyKey = the audit run's own
   // id: runShadowAndPersist runs at most once per audit run, so a repeated
   // write for the same run upserts rather than duplicating.
-  if (modelEvalOverride && ran) {
+  //
+  // Reuses `persistPayload.primary`/`.shadow`/`.shadowRan` — the SAME
+  // findings/flag just handed to the store, never a second derivation.
+  if (modelEvalOverride && persistPayload.shadowRan) {
     const findingRefs = [
-      ...primaryFindings.map((f) => ({ auditRunId: runId, findingFingerprint: f._hash, passName: 'final-review', bucket: f._bucket })),
-      ...shadowFindings.map((f) => ({ auditRunId: runId, findingFingerprint: f._hash, passName: 'final-review-shadow', bucket: f._bucket })),
+      ...persistPayload.primary.map((f) => ({ auditRunId: runId, findingFingerprint: f._hash, passName: 'final-review', bucket: f._bucket })),
+      ...persistPayload.shadow.map((f) => ({ auditRunId: runId, findingFingerprint: f._hash, passName: 'final-review-shadow', bucket: f._bucket })),
     ];
     try {
       await appendModelEvalShadowObservation({
@@ -3171,6 +3194,7 @@ export const _internals = {
   buildShadowClient,
   GEMINI_THINKING_BUDGET_BY_EFFORT,
   runShadowAndPersist,
+  buildFinalReviewPersistPayload,
   callReviewer,
   REVIEW_TRANSPORTS,
   PING_TRANSPORTS,
