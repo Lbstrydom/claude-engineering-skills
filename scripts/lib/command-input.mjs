@@ -76,6 +76,15 @@ export function validateCountFields(payload, fields = {}) {
     if (sum > total) {
       return { ok: false, reason: `criteria counts sum to ${sum}, exceeding ${required[0]}=${total}` };
     }
+    // When EVERY optional field is supplied, the schema's implied relationship
+    // (final-review-credit-queue fp c603ee32) is equality, not merely a ceiling:
+    // {total:100, passed:1, failed:0, skipped:0} must not pass as "1% measured
+    // out of 100" when nothing accounts for the other 99. A partial subset (some
+    // but not all optionals present) keeps the looser `sum > total` ceiling —
+    // the caller may legitimately report only the parts it has.
+    if (parts.length === optional.length && sum !== total) {
+      return { ok: false, reason: `criteria counts sum to ${sum}, not equal to ${required[0]}=${total} (all of ${optional.join(', ')} were supplied)` };
+    }
   }
   return { ok: true };
 }

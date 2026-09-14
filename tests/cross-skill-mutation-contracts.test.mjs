@@ -132,6 +132,18 @@ test('C5: absent optional fields do not synthesise a failure', () => {
   assert.equal(validateCountFields({ totalCriteria: 5 }).ok, true);
 });
 
+test('C5: when EVERY part is supplied, the sum must equal the total, not merely stay under it (final-review-credit-queue fp c603ee32)', () => {
+  const r = validateCountFields({ totalCriteria: 100, passedCriteria: 1, failedCriteria: 0, skippedCriteria: 0 });
+  assert.equal(r.ok, false, 'a payload measuring 1 of 100 must not silently pass as satisfied');
+  assert.match(r.reason, /not equal to totalCriteria=100/);
+});
+
+test('C5: a PARTIAL subset of parts keeps the looser sum-may-not-exceed-total rule', () => {
+  // Only passed+failed supplied (skipped omitted) — the caller may legitimately
+  // not have that figure yet, so equality is not demanded.
+  assert.equal(validateCountFields({ totalCriteria: 10, passedCriteria: 2, failedCriteria: 2 }).ok, true);
+});
+
 // ── C1: the four repo-scope variants, against a stub (no DB) ────────────────
 
 test('C1 scoped: a resolvable uuid translates to the v4 repoId', async () => {
