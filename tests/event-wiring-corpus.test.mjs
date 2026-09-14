@@ -20,8 +20,8 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { buildCorpus, buildEventWiringDiffScope, detectEventWiringAsymmetry } from '../scripts/lib/audit/event-wiring-corpus.mjs';
 import {
-  readLifecycle, listOpenLifecycle, upsertLifecycle, reconcileLifecycle,
-} from '../scripts/lib/ledger.mjs';
+  readLifecycle, listOpenLifecycle, upsertLifecycle, reconcileLifecycle, dismissLifecycle,
+} from '../scripts/lib/audit/event-wiring-lifecycle-store.mjs';
 import { findingFingerprint, computeAuditVerdict } from '../scripts/lib/audit/findings-pipeline.mjs';
 import { countsTowardVerdict } from '../scripts/lib/audit/finding-verification.mjs';
 import { gitFixtureEnv, sh, writeFile, commitAll as commit } from './helpers/fixtures.mjs';
@@ -464,6 +464,34 @@ describe('D12 — lifecycle transitions (reconcileLifecycle)', () => {
     }
   });
 
+  it('a diff-scoped observation does NOT reopen a `dismissed` record — dismissal is a human judgment call, not a live-checked state like pragma-suppressed (found in final-review credit triage, 2026-09-14)', () => {
+    const ledgerPath = scratchLedgerPath();
+    try {
+      upsertLifecycle(ledgerPath, {
+        kind: 'event-wiring-symmetry', fingerprint: 'event-wiring-symmetry|cart:updated', eventName: 'cart:updated',
+        triggers: [], firstSeen: 1000, lastSeen: 1000, occurrences: 1,
+        disposition: 'dismissed', dispositionAt: 1500, resolvedObservedAt: null, deletionObservedAt: null,
+        reopenHistory: [], lastObservedRef: 'sha1',
+      });
+      reconcileLifecycle(ledgerPath, {
+        kind: 'event-wiring-symmetry',
+        // Still dispatch-only — every subsequent run will observe exactly
+        // this, since a dismissal does not change the underlying code. A
+        // dismissed record must not bounce back open on the very next run.
+        observations: [{ eventName: 'cart:updated', ref: 'sha2', coverage: { totalDispatchSites: 1, pragmaSuppressedSites: 0 } }],
+        now: 3000,
+        ancestryDecisions: new Map([['sha1', true]]),
+      });
+      const rec = readLifecycle(ledgerPath, 'event-wiring-symmetry|cart:updated');
+      assert.equal(rec.disposition, 'dismissed', 'must stay dismissed, not silently reopened');
+      assert.equal(rec.dispositionAt, 1500, 'must not be re-stamped');
+      assert.equal(rec.reopenHistory.length, 0, 'no reopen event — dismissal was never disturbed');
+      assert.equal(rec.occurrences, 2, 'bookkeeping still advances — dismissal suppresses the disposition transition only');
+    } finally {
+      fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
   it('a stale observation (non-ancestor ref) is dropped, fail-closed — the existing record is untouched', () => {
     const ledgerPath = scratchLedgerPath();
     try {
@@ -506,6 +534,107 @@ describe('D12 — lifecycle transitions (reconcileLifecycle)', () => {
       const open = listOpenLifecycle(ledgerPath, { kind: 'event-wiring-symmetry' });
       assert.equal(open.length, 1);
       assert.equal(open[0].eventName, 'a');
+    } finally {
+      fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D12 — dismissLifecycle: the one producer of `disposition: 'dismissed'`
+// (found missing entirely in final-review credit triage, 2026-09-14 — the
+// value was declared in applyLifecycleObservation's transition table and
+// read by its reopen guard, but nothing ever wrote it).
+// ---------------------------------------------------------------------------
+describe('D12 — dismissLifecycle', () => {
+  function scratchLedgerPath() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'event-wiring-dismiss-'));
+    return path.join(dir, 'ledger.json');
+  }
+
+  it('dismisses an open record', () => {
+    const ledgerPath = scratchLedgerPath();
+    try {
+      upsertLifecycle(ledgerPath, {
+        kind: 'event-wiring-symmetry', fingerprint: 'event-wiring-symmetry|cart:updated', eventName: 'cart:updated',
+        triggers: [], firstSeen: 1000, lastSeen: 1000, occurrences: 1,
+        disposition: null, dispositionAt: null, resolvedObservedAt: null, deletionObservedAt: null,
+        reopenHistory: [], lastObservedRef: 'sha1',
+      });
+      const result = dismissLifecycle(ledgerPath, 'event-wiring-symmetry|cart:updated', { reason: 'legitimately test-only forever', now: 2000 });
+      assert.equal(result.ok, true);
+      assert.equal(result.record.disposition, 'dismissed');
+      assert.equal(result.record.dismissReason, 'legitimately test-only forever');
+      const rec = readLifecycle(ledgerPath, 'event-wiring-symmetry|cart:updated');
+      assert.equal(rec.disposition, 'dismissed');
+      assert.equal(rec.dispositionAt, 2000);
+    } finally {
+      fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('refuses a fingerprint with no lifecycle record — never silently no-ops', () => {
+    const ledgerPath = scratchLedgerPath();
+    try {
+      upsertLifecycle(ledgerPath, {
+        kind: 'event-wiring-symmetry', fingerprint: 'event-wiring-symmetry|other', eventName: 'other',
+        triggers: [], firstSeen: 1000, lastSeen: 1000, occurrences: 1,
+        disposition: null, dispositionAt: null, resolvedObservedAt: null, deletionObservedAt: null,
+        reopenHistory: [], lastObservedRef: 'sha1',
+      });
+      const result = dismissLifecycle(ledgerPath, 'event-wiring-symmetry|no-such-event');
+      assert.equal(result.ok, false);
+      assert.equal(result.error, 'not-found');
+    } finally {
+      fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('refuses a record that is not open — dismissal is an override of "still flagged", not a relabel of evidence', () => {
+    const ledgerPath = scratchLedgerPath();
+    try {
+      upsertLifecycle(ledgerPath, {
+        kind: 'event-wiring-symmetry', fingerprint: 'event-wiring-symmetry|cart:updated', eventName: 'cart:updated',
+        triggers: [], firstSeen: 1000, lastSeen: 1000, occurrences: 1,
+        disposition: 'fixed', dispositionAt: 1500, resolvedObservedAt: 1500, deletionObservedAt: null,
+        reopenHistory: [], lastObservedRef: 'sha1',
+      });
+      const result = dismissLifecycle(ledgerPath, 'event-wiring-symmetry|cart:updated');
+      assert.equal(result.ok, false);
+      assert.equal(result.error, 'not-open');
+      assert.equal(result.disposition, 'fixed');
+      const rec = readLifecycle(ledgerPath, 'event-wiring-symmetry|cart:updated');
+      assert.equal(rec.disposition, 'fixed', 'must be untouched by the refused call');
+    } finally {
+      fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('refuses against a missing ledger file rather than creating one', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'event-wiring-dismiss-'));
+    const ledgerPath = path.join(dir, 'never-created.json');
+    try {
+      const result = dismissLifecycle(ledgerPath, 'event-wiring-symmetry|cart:updated');
+      assert.equal(result.ok, false);
+      assert.equal(result.error, 'not-found');
+      assert.equal(fs.existsSync(ledgerPath), false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('a dismissed record is excluded from listOpenLifecycle', () => {
+    const ledgerPath = scratchLedgerPath();
+    try {
+      upsertLifecycle(ledgerPath, {
+        kind: 'event-wiring-symmetry', fingerprint: 'event-wiring-symmetry|cart:updated', eventName: 'cart:updated',
+        triggers: [], firstSeen: 1000, lastSeen: 1000, occurrences: 1,
+        disposition: null, dispositionAt: null, resolvedObservedAt: null, deletionObservedAt: null,
+        reopenHistory: [], lastObservedRef: 'sha1',
+      });
+      dismissLifecycle(ledgerPath, 'event-wiring-symmetry|cart:updated');
+      const open = listOpenLifecycle(ledgerPath, { kind: 'event-wiring-symmetry' });
+      assert.equal(open.length, 0);
     } finally {
       fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }

@@ -18,16 +18,18 @@ import {
 } from './event-wiring.mjs';
 import { isTestFile, isDocExampleFile, PATH_CLASSIFIER_VERSION } from './path-classifiers.mjs';
 import { resolveAndClassify } from '../sensitive-paths.mjs';
-import { listOpenLifecycle, readLifecycle, reconcileLifecycle } from '../ledger.mjs';
+import { listOpenLifecycle, readLifecycle, reconcileLifecycle } from './event-wiring-lifecycle-store.mjs';
 // Cluster-B audit-code R1/M15 fix (GPT deliberation, "compromise" ruling):
 // listOpenLifecycle/reconcileLifecycle were imported LAZILY (inside
 // detectEventWiringAsymmetry) while this file was Cluster A/Phase 0 and the
-// D12 lifecycle host in ledger.mjs didn't exist yet — deferred import timing
-// standing in for a real dependency-cycle boundary that was never actually
-// at risk (ledger.mjs has no audit/ import of its own; verified no cycle).
-// Both clusters now ship in the same commit, so the sequencing rationale has
-// expired — a static import describes the real dependency and fails at
-// module load if the export is ever missing, instead of mid-run.
+// D12 lifecycle host (originally in lib/ledger.mjs, extracted 2026-09-14 to
+// event-wiring-lifecycle-store.mjs beside this file) didn't exist yet —
+// deferred import timing standing in for a real dependency-cycle boundary
+// that was never actually at risk (the D12 host has no audit/ import of its
+// own; verified no cycle). Both clusters now ship in the same commit, so the
+// sequencing rationale has expired — a static import describes the real
+// dependency and fails at module load if the export is ever missing, instead
+// of mid-run.
 
 // Cluster-B audit-code R2/M2 fix: `.jsx` was missing — a React app's JSX
 // components (exactly the shape of the wine-oracle fixture's own source

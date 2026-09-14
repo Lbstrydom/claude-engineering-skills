@@ -113,6 +113,7 @@
       "name": "proper-lockfile",
       "required": false,
       "importers": [
+        "scripts/.claude-skills/lib/audit/event-wiring-lifecycle-store.mjs",
         "scripts/.claude-skills/lib/audit/orphan-metrics.mjs",
         "scripts/.claude-skills/lib/debt-ledger.mjs",
         "scripts/.claude-skills/lib/ledger.mjs",
