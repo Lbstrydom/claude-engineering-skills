@@ -51,10 +51,19 @@ const VSCODE_CONFIG = '.vscode/mcp.json';
 // `.strict()` and owned by the gate-honesty subsystem — it rejects any key
 // outside {version, gate, guards, gates, ignoredCandidates}. Widening a
 // deliberately-closed contract for one gate's convenience is worse than a
-// sibling file, so exceptions live here instead. Absent file ⇒ no exceptions
-// declared, which is the current state; the file becomes necessary only when a
-// real asymmetry appears. `lib/mcp-parity.mjs` validates entries either way.
-const EXCEPTIONS = 'scripts/gate-contracts/mcp-parity-exceptions.json';
+// sibling file — but `scripts/gate-contracts/` itself is a SECOND enumerated
+// contract: `check-gate-poison-pills.mjs`'s `loadCliGateContracts` walks every
+// `*.json` in that directory and validates each as a CLI gate contract,
+// skipping only the one literal name `_exemptions.json`. A file placed inside
+// it under any other name is not exempted with a reason, it is simply the
+// wrong shape for that loader and hard-fails `gates:poison` the day an
+// operator declares a real exception (final-review-credit-queue fp 97c3bd29).
+// Repo-root dotfile instead, matching `.emit-exit-baseline.json` /
+// `.knip-baseline.json` / `.gate-contract-baseline.json` — declarative state
+// that is not itself a gate contract. Absent file ⇒ no exceptions declared,
+// which is the current state; the file becomes necessary only when a real
+// asymmetry appears. `lib/mcp-parity.mjs` validates entries either way.
+const EXCEPTIONS = '.mcp-parity-exceptions.json';
 
 /** Read + parse one JSON file. Returns `{ok:false}` rather than throwing. */
 function readJsonFile(rel) {

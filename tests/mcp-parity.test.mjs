@@ -322,7 +322,7 @@ describe('check-mcp-parity CLI — one JSON value on stdout for every outcome', 
   it('unreadable contract → mcp/unreadable-contract, NOT a silent "no exceptions"', () => {
     write('.mcp.json', { mcpServers: { a: stdio() } });
     write('.vscode/mcp.json', { servers: { a: stdio() } });
-    const contract = path.join(sandbox, 'scripts', 'gate-contracts', 'mcp-parity-exceptions.json');
+    const contract = path.join(sandbox, '.mcp-parity-exceptions.json');
     try {
       fs.writeFileSync(contract, '{ broken');
       const r = runAllowFail(['--json']);
@@ -334,7 +334,7 @@ describe('check-mcp-parity CLI — one JSON value on stdout for every outcome', 
   it('invalid exception outranks the drift it tried to excuse', () => {
     write('.mcp.json', { mcpServers: { a: stdio({ args: ['-y', 'x'] }) } });
     write('.vscode/mcp.json', { servers: { a: stdio({ args: ['x'] }) } });
-    const contract = path.join(sandbox, 'scripts', 'gate-contracts', 'mcp-parity-exceptions.json');
+    const contract = path.join(sandbox, '.mcp-parity-exceptions.json');
     try {
       fs.writeFileSync(contract, JSON.stringify({
         exceptions: [{ kind: 'presence', server: 'ghost', presentIn: 'claude', reason: 'names nothing' }],
@@ -350,7 +350,7 @@ describe('check-mcp-parity CLI — one JSON value on stdout for every outcome', 
     // the very drift the operator was trying to excuse.
     write('.mcp.json', { mcpServers: { a: stdio() } });
     write('.vscode/mcp.json', { servers: { a: stdio() } });
-    fs.rmSync(path.join(sandbox, 'scripts', 'gate-contracts', 'mcp-parity-exceptions.json'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    fs.rmSync(path.join(sandbox, '.mcp-parity-exceptions.json'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const r = runAllowFail(['--json']);
     assert.equal(r.status, 0);
     assert.deepEqual(parseSoleJson(r.stdout).exceptionsUsed, []);
@@ -359,7 +359,7 @@ describe('check-mcp-parity CLI — one JSON value on stdout for every outcome', 
   it('an exceptions file present but declaring no array is an error, not empty', () => {
     write('.mcp.json', { mcpServers: { a: stdio() } });
     write('.vscode/mcp.json', { servers: { a: stdio() } });
-    const contract = path.join(sandbox, 'scripts', 'gate-contracts', 'mcp-parity-exceptions.json');
+    const contract = path.join(sandbox, '.mcp-parity-exceptions.json');
     try {
       fs.writeFileSync(contract, JSON.stringify({ note: 'oops, wrong key' }, null, 2));
       const r = runAllowFail(['--json']);
@@ -372,6 +372,48 @@ describe('check-mcp-parity CLI — one JSON value on stdout for every outcome', 
     fs.rmSync(path.join(sandbox, '.mcp.json'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     fs.rmSync(path.join(sandbox, '.vscode', 'mcp.json'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     assert.match(runAllowFail(['--selfcheck-relocation']).stdout, /^OK/);
+  });
+
+  it('declaring a real exception does not break gates:poison (final-review-credit-queue fp 97c3bd29)', async () => {
+    // The exceptions registry used to live INSIDE scripts/gate-contracts/, the
+    // same directory check-gate-poison-pills.mjs's loadContracts() enumerates
+    // and validates every *.json entry as a CLI gate contract (skipping only
+    // the one literal name _exemptions.json). A real exceptions file there was
+    // the wrong shape for that loader and would hard-fail `gates:poison` the
+    // first time an operator declared one — never exercised because the file
+    // was absent throughout this finding's life.
+    //
+    // Proven directly, against a TEMP COPY of just gate-contracts/ (repoRoot
+    // stays the real repo, so the contracts' own `tests[]`/`statedIn`
+    // cross-references still resolve — a sandbox copying only scripts/, as the
+    // suite above does, is genuinely incomplete for this loader and throws for
+    // unrelated missing-AGENTS.md/tests/ reasons regardless of this fix).
+    const { loadContracts } = await import('../scripts/check-gate-poison-pills.mjs');
+    const tmpContracts = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-contracts-exceptions-'));
+    try {
+      fs.cpSync(path.join(REPO_ROOT, 'scripts', 'gate-contracts'), tmpContracts, { recursive: true });
+
+      // Baseline: the real gate-contracts dir alone, untouched, must load clean.
+      assert.doesNotThrow(() => loadContracts(tmpContracts, REPO_ROOT), 'gate-contracts baseline must load clean');
+
+      // The regression this finding describes: a real exceptions file dropped
+      // INSIDE that same directory (the pre-fix location) breaks the loader.
+      fs.writeFileSync(path.join(tmpContracts, 'mcp-parity-exceptions.json'), JSON.stringify({
+        exceptions: [{ kind: 'presence', server: 'ghost', presentIn: 'claude', reason: 'legitimate one-off' }],
+      }, null, 2));
+      assert.throws(
+        () => loadContracts(tmpContracts, REPO_ROOT),
+        /invalid CLI gate contract/,
+        'sanity: an exceptions file INSIDE gate-contracts/ is exactly the collision this fix moves the file out of',
+      );
+    } finally { fs.rmSync(tmpContracts, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+
+    // The fix: with the exceptions file at its NEW location (repo-root dotfile,
+    // never inside gate-contracts/), the real check-mcp-parity.mjs CLI itself
+    // must load it successfully AND the poison-pill loader must never see it.
+    const exceptionsPath = path.join(REPO_ROOT, '.mcp-parity-exceptions.json');
+    assert.ok(!fs.existsSync(exceptionsPath), 'sanity: no real exceptions file should exist in this repo today');
+    assert.doesNotThrow(() => loadContracts(path.join(REPO_ROOT, 'scripts', 'gate-contracts'), REPO_ROOT));
   });
 });
 
@@ -518,7 +560,7 @@ describe('mcp-parity CLI — a non-object exceptions file is reported, not a cra
       fs.mkdirSync(path.join(tmp, '.vscode'), { recursive: true });
       fs.writeFileSync(path.join(tmp, '.mcp.json'), JSON.stringify({ mcpServers: { a: { command: 'npx' } } }));
       fs.writeFileSync(path.join(tmp, '.vscode', 'mcp.json'), JSON.stringify({ servers: { a: { command: 'npx' } } }));
-      fs.writeFileSync(path.join(tmp, 'scripts', 'gate-contracts', 'mcp-parity-exceptions.json'), 'null');
+      fs.writeFileSync(path.join(tmp, '.mcp-parity-exceptions.json'), 'null');
       let out = '', err = '', status = 0;
       try {
         out = execFileSync(process.execPath, [path.join(tmp, 'scripts', 'check-mcp-parity.mjs'), '--json'],
