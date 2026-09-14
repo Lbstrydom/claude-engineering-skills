@@ -4,6 +4,7 @@ import {
   _internals, shouldWarnMissingRunId, recoverRunIdFromMarker, RUN_ID_MARKER_MAX_AGE_MS,
   canAttemptRunIdRecovery,
 } from '../scripts/gemini-review.mjs';
+import { semanticId } from '../scripts/lib/findings.mjs';
 
 const {
   resolveShadow, shadowErrorBlock, diffFindingBuckets, dedupByHash, shadowModelMatchesFamily,
@@ -241,6 +242,27 @@ describe('dedupByHash — no count inflation (R3 M2)', () => {
     // semanticId so it still reaches the diff + persistence.
     const out = dedupByHash([{ severity: 'HIGH', category: 'x', section: 's', detail: 'd' }]);
     assert.equal(out.length, 1);
+  });
+
+  it('writes the semanticId fallback BACK onto _hash (audit-code cluster A R3 M1)', () => {
+    // diffFindingBuckets reads f._hash directly to build its Set-membership
+    // classification — a fallback that lived only as the internal Map key,
+    // never written to the returned finding, would leave f._hash undefined
+    // and make every hash-less finding collide with every OTHER hash-less
+    // finding in that Set (all mapping to the same `undefined` element).
+    const f = { severity: 'HIGH', category: 'x', section: 's', detail: 'd' };
+    const [out] = dedupByHash([f]);
+    assert.ok(out._hash, '_hash must be populated after dedup, not left falsy');
+    assert.equal(out._hash, semanticId(f));
+  });
+
+  it('two DISTINCT hash-less findings each get their OWN identity, not undefined for both', () => {
+    const a = { severity: 'HIGH', category: 'x', section: 'a.mjs', detail: 'first' };
+    const b = { severity: 'HIGH', category: 'x', section: 'b.mjs', detail: 'second' };
+    const out = dedupByHash([a, b]);
+    assert.equal(out.length, 2, 'distinct findings must not collapse');
+    assert.notEqual(out[0]._hash, out[1]._hash);
+    assert.ok(out.every((f) => f._hash), 'every returned finding must carry a real _hash');
   });
 });
 

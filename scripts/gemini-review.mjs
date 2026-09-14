@@ -1920,6 +1920,13 @@ function dedupByHash(findings) {
   for (const f of (findings || [])) {
     if (!f) continue;
     const key = f._hash || semanticId(f);
+    // The fallback must be written BACK onto the finding, not just used as the
+    // Map key (audit-code cluster A R3 M1): diffFindingBuckets reads `f._hash`
+    // directly to build its both/primary-only/shadow-only Sets, so a
+    // hash-less finding that survived dedup via its semantic-id fallback would
+    // otherwise contribute `undefined` to that Set — colliding with every
+    // OTHER hash-less finding rather than being classified on its own identity.
+    if (!f._hash) f._hash = key;
     if (!seen.has(key)) seen.set(key, f);
   }
   return [...seen.values()];
