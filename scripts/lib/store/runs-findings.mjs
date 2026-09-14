@@ -881,6 +881,17 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
  * UPSERTs the snapshot and prunes only the rows the new snapshot dropped that
  * carry no ruling and no recorded remediation — never a blanket DELETE.
  *
+ * REQUIRES a migrated store (the `bucket` column, migration 20260610120000).
+ * `pruneUnrecordedUnruled` references `bucket` unconditionally, and so does
+ * every other final-review-credit query in this codebase (the two
+ * `CREDIT_BRANCH_*_WHERE` predicates, `pendingQueueSql`) — the credit queue
+ * this function's callers exist to serve is DEFINED in terms of that column,
+ * so an un-migrated store cannot meaningfully run any part of this feature.
+ * `recordFindings`' own `hasBucket` capability degrade is for ITS OTHER
+ * callers (the primary GPT-audit pass has no bucket concept), not this one
+ * (audit-code cluster A R5 H1, dismissed by GPT deliberation — this is a
+ * pre-existing precondition, not a regression).
+ *
  * Primary/shadow decoupling (Gemini G2): the CALLER decides what to pass —
  * `primary` is populated whenever the primary review ran; `shadow` is `[]`
  * unless the shadow actually ran, gated by `shadowRan` (see below).
