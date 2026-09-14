@@ -1,6 +1,6 @@
 # Plan: Final-review credit — a ruling is a ruling on either axis, and a re-run must not erase it
 - **Date**: 2026-09-14
-- **Status**: Approved
+- **Status**: Complete
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
 - **Target domain(s)**: `stores`, `cross-skill-bridge`, `tests`
@@ -382,4 +382,45 @@ same class from a different diff base. New to this session, confined to
 
 These belong to a `gemini-review.mjs` hardening plan, not to a credit-queue
 labelling plan. Not dismissed — recorded so the audit's cost was not wasted.
+
+## Cluster A — code audit trail
+
+GPT rounds against the cluster's own diff (`ee345930..HEAD` at each round),
+R2+ ledger-suppressed: **R1** H:23 M:6 (see Out of Scope above for the 20/5
+deferred as pre-existing debt) → **R2** H:1 M:0 L:1 (L1 fixed: dead duplicate
+object key) → **R3** H:1 M:1 (M1 fixed: `dedupByHash` now writes its
+`semanticId` fallback back onto the finding) → **R4** H:1 M:2 L:1 (L1 fixed:
+stale JSDoc) → **R5** one map unit timed out (INCOMPLETE, discarded per this
+repo's own instrumentation — `H:0 M:0 L:0` there was never evidence) → **R5b**
+(re-run) H:2 — H1 rebutted and **dismissed by GPT deliberation** (the
+unconditional `bucket` reference is consistent with every other
+final-review-credit query in the file, none touched by this diff; the whole
+feature already requires a migrated store), H2 deferred as the same debt
+verified independent three times already. **Genuine fixes across all rounds**:
+H8 (`recordFinalReviewFix`'s dismissal guard reads `adjudication_outcome`
+too), H17 (a degraded batch no longer authorizes a prune), M6
+(`buildFinalReviewPersistPayload` extracted for real tests), R2 L1, R3 M1, R4
+L1. Stopped at R5b (acceptance rate 0% that round, 4th consecutive re-raise
+of the one substantive re-raised finding, now dismissed).
+
+## Consolidated Gemini gate
+
+Union diff `ee345930..HEAD` (20 files), run as **4 subset passes** so every
+file is rendered whole at least once under the reviewer's per-file budget:
+P1 (gemini-review.mjs + its tests), P2 (runs-findings.mjs +
+final-review-credit-population.mjs + final-review-credit.mjs +
+commands/final-review.mjs), P3 (final-review test files), P4 (docs/infra).
+
+**Round 1**: P1/P3/P4 **APPROVE**; P2 **CONCERNS**, 1 new MEDIUM —
+`decodeQueueCursor`'s fingerprint regex (from `backlog-tooling-honesty.md`,
+yesterday) rejected `fingerprintOf()`'s `missing-hash-<24 hex>` fallback
+shape for a finding with no producer-supplied `_hash`; if such a finding ever
+lands as a page's last row, pagination would break at exactly that boundary.
+Accepted and fixed: the regex now accepts both shapes explicitly; two
+regression tests added, negative-controlled; verified against the real
+Postgres container and the full `npm test` suite (15,785 tests, 0 fail).
+
+**Round 2 (P2 only)**: **APPROVE** — 0 new, 0 wrongly dismissed.
+
+**Result: APPROVE across all four subsets.** Plan complete.
 
