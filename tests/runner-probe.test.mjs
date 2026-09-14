@@ -13,6 +13,7 @@ import {
   readCurrentRepoOwners,
   loadLocalRunnerConfig,
   discoverInstalls,
+  testRootsOverrideActive,
   _internals,
 } from '../scripts/lib/runner-probe.mjs';
 
@@ -159,6 +160,61 @@ test('resolveBuiltInRoots: RUNNER_PROBE_TEST_MODE=1 + a valid override is honour
     process.env.RUNNER_PROBE_ROOTS_OVERRIDE = JSON.stringify([{ kind: 'local', path: '/fake/only-root' }]);
     const roots = resolveBuiltInRoots('linux');
     assert.deepEqual(roots, [{ kind: 'local', path: '/fake/only-root' }]);
+  } finally {
+    if (saved.override === undefined) delete process.env.RUNNER_PROBE_ROOTS_OVERRIDE; else process.env.RUNNER_PROBE_ROOTS_OVERRIDE = saved.override;
+    if (saved.testMode === undefined) delete process.env.RUNNER_PROBE_TEST_MODE; else process.env.RUNNER_PROBE_TEST_MODE = saved.testMode;
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// testRootsOverrideActive / discoverInstalls.testRootsOverridden — the seam
+// stays reachable in production (final-review-credit-queue fp 4de271d1); this
+// makes it VISIBLE instead of removing it, so a caller can warn rather than
+// silently present a scan of the override's roots as a real inventory.
+// ─────────────────────────────────────────────────────────────────────────
+
+test('testRootsOverrideActive: false unless BOTH env vars are set', () => {
+  const saved = { override: process.env.RUNNER_PROBE_ROOTS_OVERRIDE, testMode: process.env.RUNNER_PROBE_TEST_MODE };
+  try {
+    delete process.env.RUNNER_PROBE_ROOTS_OVERRIDE;
+    delete process.env.RUNNER_PROBE_TEST_MODE;
+    assert.equal(testRootsOverrideActive(), false, 'neither var set');
+
+    process.env.RUNNER_PROBE_TEST_MODE = '1';
+    assert.equal(testRootsOverrideActive(), false, 'test mode alone, no override, must not report active');
+
+    delete process.env.RUNNER_PROBE_TEST_MODE;
+    process.env.RUNNER_PROBE_ROOTS_OVERRIDE = JSON.stringify([{ kind: 'local', path: '/fake/only-root' }]);
+    assert.equal(testRootsOverrideActive(), false, 'override alone, no test mode, must not report active');
+
+    process.env.RUNNER_PROBE_TEST_MODE = '1';
+    assert.equal(testRootsOverrideActive(), true, 'both set — the override is genuinely engaged');
+  } finally {
+    if (saved.override === undefined) delete process.env.RUNNER_PROBE_ROOTS_OVERRIDE; else process.env.RUNNER_PROBE_ROOTS_OVERRIDE = saved.override;
+    if (saved.testMode === undefined) delete process.env.RUNNER_PROBE_TEST_MODE; else process.env.RUNNER_PROBE_TEST_MODE = saved.testMode;
+  }
+});
+
+test('discoverInstalls: testRootsOverridden is false on an ordinary (non-override) call', () => {
+  const saved = { override: process.env.RUNNER_PROBE_ROOTS_OVERRIDE, testMode: process.env.RUNNER_PROBE_TEST_MODE };
+  try {
+    delete process.env.RUNNER_PROBE_ROOTS_OVERRIDE;
+    delete process.env.RUNNER_PROBE_TEST_MODE;
+    const result = discoverInstalls({ platform: 'win32', fs: makeFakeFs({}), config: {} });
+    assert.equal(result.testRootsOverridden, false);
+  } finally {
+    if (saved.override === undefined) delete process.env.RUNNER_PROBE_ROOTS_OVERRIDE; else process.env.RUNNER_PROBE_ROOTS_OVERRIDE = saved.override;
+    if (saved.testMode === undefined) delete process.env.RUNNER_PROBE_TEST_MODE; else process.env.RUNNER_PROBE_TEST_MODE = saved.testMode;
+  }
+});
+
+test('discoverInstalls: testRootsOverridden is true when the two-variable seam is engaged (NEGATIVE CONTROL target)', () => {
+  const saved = { override: process.env.RUNNER_PROBE_ROOTS_OVERRIDE, testMode: process.env.RUNNER_PROBE_TEST_MODE };
+  try {
+    process.env.RUNNER_PROBE_TEST_MODE = '1';
+    process.env.RUNNER_PROBE_ROOTS_OVERRIDE = JSON.stringify([{ kind: 'local', path: '/fake/only-root' }]);
+    const result = discoverInstalls({ platform: 'linux', fs: makeFakeFs({}), config: {} });
+    assert.equal(result.testRootsOverridden, true, 'the flag must report the override as active so a caller can warn');
   } finally {
     if (saved.override === undefined) delete process.env.RUNNER_PROBE_ROOTS_OVERRIDE; else process.env.RUNNER_PROBE_ROOTS_OVERRIDE = saved.override;
     if (saved.testMode === undefined) delete process.env.RUNNER_PROBE_TEST_MODE; else process.env.RUNNER_PROBE_TEST_MODE = saved.testMode;

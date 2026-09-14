@@ -353,14 +353,24 @@ function runLocal() {
   }
   const config = configRes.value || {};
 
-  const { installs: rawInstalls, candidates, notProbed } = discoverInstalls({
+  const { installs: rawInstalls, candidates, notProbed, testRootsOverridden } = discoverInstalls({
     config, platform: process.platform, includeWsl,
   });
   const installs = rawInstalls.map((inst) => ({ ...inst, remoteStatus: resolveRemoteStatus(inst, config) }));
 
   const envelope = summariseInventory({
-    installs, candidates, notProbed, identityContext: buildIdentityContext(config),
+    installs, candidates, notProbed, identityContext: buildIdentityContext(config), testRootsOverridden,
   });
+
+  // final-review-credit-queue fp 4de271d1 — stderr, unconditionally of
+  // --json/human mode, so this diagnostic never silently reports a scan of
+  // RUNNER_PROBE_ROOTS_OVERRIDE's roots as a real inventory of the machine's
+  // actual default install locations.
+  if (testRootsOverridden) {
+    err('warning: RUNNER_PROBE_ROOTS_OVERRIDE + RUNNER_PROBE_TEST_MODE are BOTH set — '
+      + 'this scan used the override roots, not the real defaults. Any rollup below '
+      + '(including "clean") describes the override, not this machine.');
+  }
 
   // `--strict` exit mapping (§3): advisory NEVER gates, even under --strict.
   if (strict && ['unhealthy', 'unknown', 'partial-error'].includes(envelope.rollup)) {

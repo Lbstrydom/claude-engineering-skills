@@ -76,12 +76,26 @@ export function defaultInstallRoots(platform = process.platform) {
  * exists to prevent. `config.extraRoots` is still appended as normal by the
  * caller either way.
  *
+ * `testRootsOverrideActive()` is the SAME two-variable condition, exported so
+ * a caller can tell a real inventory apart from one that silently skipped the
+ * real default roots (final-review-credit-queue fp 4de271d1): "the seam is
+ * read-only, worst case is misleading output" undersold the actual risk — a
+ * read-only diagnostic that lies about what it probed reports an incomplete
+ * scan as `clean`. This does not remove the two-variable gate (still the
+ * right defence against ONE accidentally-set var); it makes the fallback
+ * visible when it fires instead of leaving it indistinguishable from a real
+ * scan of nothing.
+ *
  * @param {string} platform
  * @returns {Array<{kind:'local', path:string}>|Array<object>}
  */
+export function testRootsOverrideActive() {
+  return Boolean(process.env.RUNNER_PROBE_ROOTS_OVERRIDE) && process.env.RUNNER_PROBE_TEST_MODE === '1';
+}
+
 function resolveBuiltInRoots(platform) {
   const override = process.env.RUNNER_PROBE_ROOTS_OVERRIDE;
-  if (!override || process.env.RUNNER_PROBE_TEST_MODE !== '1') return defaultInstallRoots(platform);
+  if (!testRootsOverrideActive()) return defaultInstallRoots(platform);
 
   let parsed;
   try {
@@ -584,6 +598,10 @@ export function discoverInstalls(opts = {}) {
         ? 'WSL install roots are not probed by default (reaching into a distro can start it) — pass the WSL opt-in to include them.'
         : null,
     },
+    // final-review-credit-queue fp 4de271d1: surfaced so a caller can warn
+    // rather than silently present a scan of the test override's roots (which
+    // may be empty) as a real inventory of the real default locations.
+    testRootsOverridden: testRootsOverrideActive(),
   };
 }
 

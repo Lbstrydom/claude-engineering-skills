@@ -481,6 +481,7 @@ const UNHEALTHY_VERDICTS = new Set(['wedged', 'offline', 'not-registered']);
  *   candidates?: Array<{root:string, source:string, state:'absent'|'discovered'|'error', error:object|null}>,
  *   notProbed?: {wsl:boolean, reason:string|null},
  *   identityContext?: {hostname?:string|null, config?:object, currentRepoOwners?:object|null},
+ *   testRootsOverridden?: boolean,
  * }} [input]
  */
 export function summariseInventory(input = {}) {
@@ -489,6 +490,7 @@ export function summariseInventory(input = {}) {
     candidates = [],
     notProbed = { wsl: false, reason: null },
     identityContext = {},
+    testRootsOverridden = false,
   } = input;
 
   const enriched = installs.map((inst) => ({
@@ -525,6 +527,12 @@ export function summariseInventory(input = {}) {
     installs: enriched,
     candidates,
     notProbed,
+    // final-review-credit-queue fp 4de271d1: when true, `installs`/`candidates`
+    // above reflect RUNNER_PROBE_ROOTS_OVERRIDE, not the real default install
+    // roots — a `clean` rollup here means "nothing found at the override's
+    // roots", never "this machine has no runner install". A caller must not
+    // present this rollup as a real-inventory result without saying so.
+    testRootsOverridden,
     rollup,
     summary: {
       totalInstalls: enriched.length,
