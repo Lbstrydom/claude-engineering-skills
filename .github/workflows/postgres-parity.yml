@@ -55,6 +55,7 @@ on:
       # R1 M11): a change confined to the suite must still run the job it is in.
       - 'tests/final-review-adjudicate.test.mjs'
       - 'tests/final-review-pending-db.test.mjs'
+      - 'tests/final-review-replay-db.test.mjs'
       - 'tests/sync-packaging.test.mjs'
       - 'tests/fixtures/expected-schema.json'
       - 'package.json'
@@ -84,6 +85,7 @@ on:
       # R1 M11): a change confined to the suite must still run the job it is in.
       - 'tests/final-review-adjudicate.test.mjs'
       - 'tests/final-review-pending-db.test.mjs'
+      - 'tests/final-review-replay-db.test.mjs'
       - 'tests/sync-packaging.test.mjs'
       - 'tests/fixtures/expected-schema.json'
       - 'package.json'
@@ -240,6 +242,7 @@ jobs:
             tests/db-schema-realization-live.test.mjs \
             tests/final-review-adjudicate.test.mjs \
             tests/final-review-pending-db.test.mjs \
+            tests/final-review-replay-db.test.mjs \
             tests/graph-coverage-db.test.mjs \
             tests/mark-findings-remediation.test.mjs \
             tests/memory-health-cluster-space.test.mjs \

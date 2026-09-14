@@ -48,13 +48,50 @@ export const CREDIT_BRANCH_SHADOW_WHERE =
   `r.repo_id = $1 AND f.bucket = 'shadow-only'`;
 
 /**
- * Primary-bucket findings carrying a remediation but no adjudication — the
- * "label gap" Phase 1 exists to surface, and the larger half of the queue.
+ * The adjudication outcomes that ARE a ruling. `needs_triage` is a legal column
+ * value and is not one — a `needs_triage` row is as open as a NULL one.
+ * Named once so the SQL clauses below and `classifyFinalReviewOutcome`'s JS
+ * cannot drift apart (tests/final-review-pending.test.mjs pins both).
+ */
+export const COMPLETED_RULINGS = Object.freeze(['accepted', 'dismissed', 'severity_adjusted']);
+
+/**
+ * "No completed ruling on EITHER axis" — the two-axis model AGENTS.md
+ * describes (`adjudicationOutcome` is the triage ruling, `user_action` the
+ * ship-time disposition), read together.
+ *
+ * Until 2026-09-14 the primary branch below asked only `user_action IS NULL`,
+ * and the audit loop's own triage writes its ruling to `adjudication_outcome`
+ * (`recordAdjudicationEvent` → `buildFindingAdjudicationPatch`) and never to
+ * `user_action`. Measured against the live store that day: 1,649 of the 2,280
+ * rows in the credit population carried `adjudication_outcome IN ('accepted',
+ * 'dismissed', 'severity_adjusted')` and were being reported as
+ * "fixed-but-unlabelled" — rows adjudicated weeks earlier, on the other axis.
+ * Reading both axes moved the population 2,280 → 631 with no write
+ * (docs/plans/final-review-credit-projection.md).
+ */
+export const NO_RULING_EITHER_AXIS_WHERE =
+  `(f.user_action IS NULL OR f.user_action = 'needs_triage') ` +
+  `AND (f.adjudication_outcome IS NULL OR f.adjudication_outcome = 'needs_triage')`;
+
+/**
+ * Primary-bucket findings carrying a remediation but no ruling on either axis —
+ * the "label gap" Phase 1 exists to surface, and the larger half of the queue.
  */
 export const CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE =
   `r.repo_id = $1 AND f.bucket IS NULL ` +
   `AND f.remediation_state IN ('fixed', 'verified') ` +
-  `AND f.user_action IS NULL`;
+  `AND ${NO_RULING_EITHER_AXIS_WHERE}`;
+
+/**
+ * Rows a final-review re-run may PRUNE when the new snapshot no longer raises
+ * them: no ruling on either axis AND no recorded remediation. A recorded
+ * remediation (`fixed`/`verified`/`regressed`, or a `planned`/`pending`
+ * someone wrote) is evidence exactly like a ruling — a re-run must never erase
+ * it (final-review-credit-projection.md Seam 3).
+ */
+export const UNRULED_WHERE =
+  `${NO_RULING_EITHER_AXIS_WHERE} AND f.remediation_state IS NULL`;
 
 /**
  * The `pendingQueue` SQL — the LIST half of the credit queue, built from BOTH
@@ -96,7 +133,7 @@ export function pendingQueueSql({ cursor }) {
   return `SELECT q.*, q.created_at::text AS created_at_cursor FROM (
        SELECT f.id AS audit_finding_id, f.run_id, f.finding_fingerprint, f.severity, f.category,
               f.primary_file, f.detail_snapshot, f.source_model,
-              f.user_action, f.remediation_state, f.created_at, f.bucket,
+              f.user_action, f.adjudication_outcome, f.remediation_state, f.created_at, f.bucket,
               (CASE f.severity WHEN 'HIGH' THEN 3 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 1 ELSE 0 END) AS severity_rank
          FROM audit_findings f
          JOIN audit_runs r ON r.id = f.run_id
@@ -104,7 +141,7 @@ export function pendingQueueSql({ cursor }) {
        UNION ALL
        SELECT f.id AS audit_finding_id, f.run_id, f.finding_fingerprint, f.severity, f.category,
               f.primary_file, f.detail_snapshot, f.source_model,
-              f.user_action, f.remediation_state, f.created_at, f.bucket,
+              f.user_action, f.adjudication_outcome, f.remediation_state, f.created_at, f.bucket,
               (CASE f.severity WHEN 'HIGH' THEN 3 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 1 ELSE 0 END) AS severity_rank
          FROM audit_findings f
          JOIN audit_runs r ON r.id = f.run_id

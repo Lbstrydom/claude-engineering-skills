@@ -99,13 +99,22 @@ describe('recordFinalReviewFindings — the shadow cannot damage the primary', (
     );
   });
 
-  it('writes the primary FIRST, keeping the atomic delete+insert replace contract', () => {
-    const deleteAt = body.indexOf('DELETE FROM audit_findings');
+  it('writes the primary FIRST, keeping the atomic upsert+prune replace contract', () => {
+    // Retargeted 2026-09-14 (docs/plans/final-review-credit-projection.md
+    // Seam 3): the replace mechanism changed from DELETE-then-INSERT to
+    // UPSERT-then-prune-unruled-absentees, so a re-run no longer erases a
+    // human/agent's ruling on a row that drops out of the new snapshot. The
+    // invariant this test guards is unchanged — primary persists in its own
+    // tx BEFORE the shadow's tx even starts, so a shadow failure cannot touch
+    // it — only the literal statement this checks for moved.
+    const pruneAt = body.indexOf('pruneUnrecordedUnruled(client, { runId, passName: \'final-review\'');
     const primaryAt = body.indexOf("'final-review', 0");
+    const shadowPruneAt = body.indexOf('pruneUnrecordedUnruled(client, { runId, passName: \'final-review-shadow\'');
     const shadowAt = body.indexOf("'final-review-shadow', 0");
-    assert.ok(deleteAt !== -1 && primaryAt !== -1 && shadowAt !== -1, 'precondition: all three statements present');
-    assert.ok(deleteAt < primaryAt, 'the DELETE must stay in the same tx as the primary INSERT (idempotent replace)');
-    assert.ok(primaryAt < shadowAt, 'the shadow write must come after the primary is committed');
+    assert.ok(pruneAt !== -1 && primaryAt !== -1 && shadowPruneAt !== -1 && shadowAt !== -1, 'precondition: all four statements present');
+    assert.ok(primaryAt < pruneAt, 'the primary UPSERT must be followed by ITS OWN prune, in the same tx (atomic replace)');
+    assert.ok(pruneAt < shadowAt, 'the shadow write must come after the primary transaction (upsert + prune) has fully committed');
+    assert.ok(shadowAt < shadowPruneAt, 'the shadow UPSERT must be followed by ITS OWN prune, in the same (second) tx');
   });
 
   it('treats a shadow persistence failure as non-fatal and says so', () => {

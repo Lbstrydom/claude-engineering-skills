@@ -337,12 +337,13 @@ export async function finalReviewPendingCmd(ctx) {
       audit_finding_id: r.audit_finding_id ?? null,
       run_id: r.run_id, finding_fingerprint: r.finding_fingerprint, bucket: r.bucket ?? null,
       classification: r.classification, severity: r.severity, category: r.category,
-      user_action: r.user_action ?? null, remediation_state: r.remediation_state ?? null,
+      user_action: r.user_action ?? null, adjudication_outcome: r.adjudication_outcome ?? null, remediation_state: r.remediation_state ?? null,
       primary_file: r.primary_file ?? null, created_at: r.created_at ?? null,
     }));
 
   const base = {
     schemaVersion: 1, state: 'ready', cloud: true, repo: repoName, counts,
+    axisConflicts: Number(res.axisConflicts ?? 0),
     shownCount: items.length, items,
     // Paging contract: loop on `nextCursor` (null = the store returned a short
     // page = exhausted), never on `shownCount` — `pageFilteredOut` says how many

@@ -69,10 +69,12 @@ export const ACTIONABLE = Object.freeze([
  * `tests/final-review-pending.test.mjs` enumerates that whole product.
  *
  * @param {{user_action?: string|null, remediation_state?: string|null}} row
+ * @param {{user_action?: string|null, adjudication_outcome?: string|null, remediation_state?: string|null}} row
  * @returns {'unknown'|'integrity-warning'|'regressed'|'closed'|'deferred'|'fixed-unlabelled'|'unadjudicated'|'accepted-unfixed'}
  */
 export function classifyFinalReviewOutcome(row = {}) {
   const ua = row.user_action ?? null;
+  const ao = row.adjudication_outcome ?? null;
   const rs = row.remediation_state ?? null;
 
   // 1 — an action outside the CHECK set must degrade LOUDLY. The constraint has
@@ -80,7 +82,17 @@ export function classifyFinalReviewOutcome(row = {}) {
   if (ua !== null && !KNOWN_USER_ACTIONS.includes(ua)) return 'unknown';
 
   const isFixed = FIXED_STATES.includes(rs);
-  const closedByAction = ua === 'dismissed' || ua === 'auto_dismissed';
+  // Two axes, one label (docs/plans/final-review-credit-projection.md Seam 1).
+  // `user_action` is the ship-time disposition and a DURABLE OVERRIDE: when it
+  // is set to anything but `needs_triage` it decides alone. When it is open
+  // (NULL / needs_triage) the triage ruling in `adjudication_outcome` — written
+  // by the audit loop's own deliberation — is the label. `needs_triage` is open
+  // on that axis too. The effective closing signal is resolved HERE, before the
+  // `regressed` rules, so an adjudication-only dismissal on a regressed row is
+  // the same contradiction a user_action dismissal is.
+  const uaOpen = ua === null || ua === 'needs_triage';
+  const closedByAction = ua === 'dismissed' || ua === 'auto_dismissed' || (uaOpen && ao === 'dismissed');
+  const acceptedByRuling = uaOpen && (ao === 'accepted' || ao === 'severity_adjusted');
 
   // 2 — contradiction: something judged a non-issue, or deliberately deferred,
   // cannot have regressed. Surfaced for manual reconciliation, never resolved
@@ -91,10 +103,12 @@ export function classifyFinalReviewOutcome(row = {}) {
   // 4/5 — terminal by decision.
   if (closedByAction) return 'closed';
   if (ua === 'deferred') return 'deferred';
-  // 6/7 — not yet decided. `needs_triage` is treated as undecided; paired with a
-  // shipped fix the fix is the stronger signal, so it lands on fixed-unlabelled.
-  if (ua === null || ua === 'needs_triage') return isFixed ? 'fixed-unlabelled' : 'unadjudicated';
-  // 8/9 — accepted (`fix-now` or `accepted-permanent`).
+  // 6/7 — not yet decided on EITHER axis. `needs_triage` is treated as
+  // undecided; paired with a shipped fix the fix is the stronger signal, so it
+  // lands on fixed-unlabelled.
+  if (uaOpen && !acceptedByRuling) return isFixed ? 'fixed-unlabelled' : 'unadjudicated';
+  // 8/9 — accepted: `fix-now` / `accepted-permanent` on the ship axis, or
+  // `accepted` / `severity_adjusted` on the triage axis.
   return isFixed ? 'closed' : 'accepted-unfixed';
 }
 
@@ -237,8 +251,11 @@ export function renderFinalReviewCard(result, { commitSha = null } = {}) {
   const sha = commitSha || null;
   const out = [
     '⚠ FINAL-REVIEW CREDIT (non-blocking)',
-    `  ${total} shadow finding(s) await credit: ${counts.unadjudicated || 0} unadjudicated · ${counts.fixedUnlabelled || 0} fixed-but-unlabelled · ${counts.acceptedUnfixed || 0} accepted-unfixed · ${counts.regressed || 0} regressed`,
-    '  Recording these is what makes the second gate measurable — an unlabelled fix reads as noise.',
+    `  ${total} finding(s) await credit: ${counts.unadjudicated || 0} unadjudicated · ${counts.fixedUnlabelled || 0} fixed with no ruling on either axis · ${counts.acceptedUnfixed || 0} accepted-unfixed · ${counts.regressed || 0} regressed`,
+    '  Recording these is what makes the second gate measurable — a fix with no ruling reads as noise.',
+    ...(Number(result.axisConflicts) > 0
+      ? [`  ⚠ ${result.axisConflicts} finding(s) where the ship-time disposition and the triage ruling disagree in direction — user_action wins; reconcile by hand.`]
+      : []),
     '',
   ];
 

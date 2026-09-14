@@ -2036,7 +2036,12 @@ function shadowSkipBlock(shadow) {
  * @param {string|null} runId      audit_runs.id (null → local-only, no cloud)
  * @param {{modelEvalOverride?: {repoId:string, modelEvalRunId:string, shadow:object}|null, envelopeScopeCli?: string|null, campaignDigest?: string|null}} [opts]
  */
-async function runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent, projectContext, auditMode }, { modelEvalOverride = null, envelopeScopeCli = null, campaignDigest = null } = {}) {
+async function runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent, projectContext, auditMode }, { modelEvalOverride = null, envelopeScopeCli = null, campaignDigest = null, persistFn = recordFinalReviewFindings } = {}) {
+  // `persistFn` is a test seam ONLY, same shape as `modelEvalOverride` above —
+  // production always takes the default (the real store writer). Lets the
+  // producer→store contract test capture the payload this function builds
+  // (final-review-credit-projection.md Seam 3) without a whole-provider mock
+  // or a real database.
   // modelEvalOverride (Phase 4) takes priority over the ordinary
   // FINAL_REVIEW_SHADOW-derived resolution — resolveModelEvalShadowOverride()
   // itself only returns non-null when an adjudicator Tier A/B eval run is
@@ -2189,9 +2194,15 @@ async function runShadowAndPersist(result, primaryModel, runId, { planContent, t
     if (!ran) f._bucket = null; // bucket only meaningful when both reviewers ran
   }
   const shadowFindings = ran ? diff.shadow : [];
-  await recordFinalReviewFindings(runId, {
+  await persistFn(runId, {
     primary: primaryFindings,
     shadow: shadowFindings,
+    // `ran` already means exactly this: did the shadow reviewer actually
+    // execute this round (final-review-credit-projection.md Seam 3). Forwarded
+    // verbatim so the store can tell "shadow did not run" (leave prior shadow
+    // rows untouched) from "shadow ran and found nothing" (prune the unruled
+    // ones) — a distinction `shadow: []` alone cannot make.
+    shadowRan: ran,
     models: {
       primaryModel,
       shadowModel: ran ? shadow.model : null,

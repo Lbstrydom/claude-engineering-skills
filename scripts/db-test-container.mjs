@@ -157,6 +157,10 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // keyset-paged credit queue — UNION projection, µs-exact cursor, mid-walk
   // deletion — against a real schema; a fake store cannot prove any of it.
   'tests/final-review-pending-db.test.mjs',
+  // Enrolled 2026-09-14 (docs/plans/final-review-credit-projection.md §7):
+  // recordFinalReviewFindings replay semantics — upsert+prune identity,
+  // shadowRan gating, advisory-lock concurrency — against a real schema.
+  'tests/final-review-replay-db.test.mjs',
   'tests/graph-coverage-db.test.mjs',
   'tests/mark-findings-remediation.test.mjs',
   'tests/on-conflict-scope-identity.test.mjs',

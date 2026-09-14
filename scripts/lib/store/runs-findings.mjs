@@ -26,7 +26,7 @@ import { many, one, query, insertReturning, updateWhere, deleteWhere, withTx, pg
 import { getPool } from '../db/client.mjs';
 import { isCloudEnabled, getRepoIdByName } from './repo.mjs';
 // Imported, never re-exported (learning-store.mjs does `export *` from here).
-import { CREDIT_BRANCH_SHADOW_WHERE, CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE, pendingQueueSql } from './final-review-credit-population.mjs';
+import { CREDIT_BRANCH_SHADOW_WHERE, CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE, pendingQueueSql, UNRULED_WHERE } from './final-review-credit-population.mjs';
 import crypto from 'node:crypto';
 import { semanticSuppressConfig } from '../config.mjs';
 import { partitionRecordTimeReRaises, toVectorLiteral } from '../semantic-suppression.mjs';
@@ -657,7 +657,7 @@ export function buildFindingRow(f, { runId, passName, round, columns = {} }) {
  * classifies on `err.code` (SQLSTATE / errno), and a string cannot be
  * classified.
  *
- * @returns {Promise<{applied: boolean, rows: number, reason?: string, error?: unknown}>}
+ * @returns {Promise<{applied: boolean, rows: number, keptKeys?: {fingerprint:string, bucket:string|null}[], reason?: string, error?: unknown}>}
  */
 export async function recordFindings(runId, findings, passName, round, opts = {}) {
   if (!runId) return { applied: false, rows: 0, reason: 'no-run-id' };
@@ -764,7 +764,7 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   // Terminal, not pending: this payload will map to zero rows however often it
   // is replayed (the drops above are deterministic in the payload), so a spilled
   // artifact that lands here must be retired rather than retried forever.
-  if (rows.length === 0) return { applied: true, rows: 0, reason: 'no-persistable-rows' };
+  if (rows.length === 0) return { applied: true, rows: 0, reason: 'no-persistable-rows', keptKeys: [] };
   // Bulk INSERT — homogeneous rows by construction. Use the caller's tx client
   // when provided (atomic delete+insert); otherwise grab a pool connection.
   try {
@@ -840,7 +840,14 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
         process.stderr.write(`  [semantic-suppress] embedding persistence: ${embedResult.persisted} ok, ${embedResult.failed} failed this batch\n`);
       }
     }
-    return { applied: true, rows: rows.length };
+    // The complete identity of every row this batch wrote (final-review-credit-
+    // projection.md Seam 3 / R1 H2) — (finding_fingerprint, bucket), bucket
+    // preserved as NULL, not coalesced. A caller doing a replace-by-snapshot
+    // (recordFinalReviewFindings) needs this to prune exactly what left the
+    // snapshot, scoped to the SAME pass_name/bucket space the upsert wrote —
+    // deriving it from the upserted rows themselves, never re-guessed.
+    const keptKeys = rows.map((row) => ({ fingerprint: row.finding_fingerprint, bucket: row.bucket ?? null }));
+    return { applied: true, rows: rows.length, keptKeys };
   } catch (err) {
     process.stderr.write(`  [learning] recordFindings failed: ${err.message}\n`);
     // RETHROW when running inside a caller-supplied transaction (2026-07-26).
@@ -862,21 +869,26 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
 
 /**
  * Idempotent replace-persistence for the final review's findings (plan
- * docs/plans/final-review-shadow-reviewer.md). A retry or manual rerun with
- * the same runId must NOT double-count, so this DELETEs the prior final-review
- * rows for the run and re-INSERTs — all inside ONE transaction so the
- * delete+insert is atomic (Gemini G1: recordFindings alone would grab its own
- * pool connection).
+ * docs/plans/final-review-shadow-reviewer.md; the replace mechanics rewritten
+ * by docs/plans/final-review-credit-projection.md Seam 3 — see below). A
+ * retry or manual rerun with the same runId must NOT double-count, so this
+ * UPSERTs the snapshot and prunes only the rows the new snapshot dropped that
+ * carry no ruling and no recorded remediation — never a blanket DELETE.
  *
  * Primary/shadow decoupling (Gemini G2): the CALLER decides what to pass —
  * `primary` is populated whenever the primary review ran; `shadow` is `[]`
- * (and `models.shadow*` null) unless the shadow actually ran. A skipped/failed
- * shadow therefore clears any stale shadow rows and leaves primary intact.
+ * unless the shadow actually ran, gated by `shadowRan` (see below).
  *
  * @param {string} runId
  * @param {{
  *   primary?: object[],   // primary reviewer findings, each stamped _sourceModel/_bucket
- *   shadow?: object[],    // shadow reviewer findings (empty unless shadow ran)
+ *   shadow?: object[],    // shadow reviewer findings (empty unless shadowRan)
+ *   shadowRan?: boolean,  // did the shadow reviewer actually run this round?
+ *                         // (final-review-credit-projection.md Seam 3 / R1 H3)
+ *                         // Absent/false is treated as false — NEVER prune what
+ *                         // was not measured. `shadow.length > 0` with
+ *                         // `shadowRan` not exactly `true` is a caller
+ *                         // contradiction: logged, shadow treated as not-run.
  *   models?: {
  *     primaryModel?: string, shadowModel?: string|null,
  *     shadowInputTokens?: number|null, shadowOutputTokens?: number|null,
@@ -889,7 +901,7 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
  *                           // observation-only and must never gate a build.
  * }} payload
  */
-export async function recordFinalReviewFindings(runId, { primary = [], shadow = [], models = {}, verdict = null } = {}) {
+export async function recordFinalReviewFindings(runId, { primary = [], shadow = [], shadowRan = false, models = {}, verdict = null } = {}) {
   if (!runId || !await isCloudEnabled()) return;
   // (a) Run metadata — overwrite-idempotent, so it's fine outside the findings
   // tx. Null shadow fields are simply not written (updateRunMeta guards on
@@ -909,29 +921,33 @@ export async function recordFinalReviewFindings(runId, { primary = [], shadow = 
     finalReviewShadowOutputTokens: models.shadowOutputTokens,
     finalReviewShadowLatencyMs: models.shadowLatencyMs,
   });
-  // (b) Replace the findings. TWO transactions, deliberately — the shadow is
-  // observation-only and must never be able to damage the primary's record.
+  // (b) Replace the findings — UPSERT + prune-unruled-absentees, never DELETE
+  // (final-review-credit-projection.md Seam 3). Until 2026-09-14 this function
+  // unconditionally DELETEd every 'final-review'/'final-review-shadow' row for
+  // the run before re-inserting, so a re-run (round 2 of a Gemini gate, or a
+  // consolidated union-diff pass over the same --run-id) erased every
+  // `user_action`/`adjudication_outcome` a human or agent had written on that
+  // run's rows. `recordFindings` already upserts on the finding's complete
+  // identity and never writes the adjudication columns (`DO UPDATE` therefore
+  // preserves them); the only thing that lost state was the DELETE.
   //
-  // This function's own header promises "primary final-review rows persist
-  // whenever cloud+runId, INDEPENDENT of the shadow". Until 2026-07-26 that was
-  // only true of the *decision* to write, not of the write itself: both inserts
-  // shared one tx, so a malformed shadow finding (null `category`, NOT NULL)
-  // aborted the tx and the COMMIT silently degraded to ROLLBACK — taking the
-  // DELETE and the primary's findings with it, with no error surfaced. The run
-  // kept STALE findings from an earlier review and nobody could tell. Splitting
-  // the transactions makes the documented invariant actually true.
+  // TWO transactions, deliberately — the shadow is observation-only and must
+  // never be able to damage the primary's record (Gemini G1/G2, unchanged).
+  // Each transaction OWNS exactly one pass_name (Gemini plan-gate R1 H3):
+  // tx1 = 'final-review', tx2 = 'final-review-shadow', so a prune scoped by
+  // pass_name can never touch the other's rows. Each starts with an advisory
+  // transaction lock on `(runId, passName)` (Gemini plan-gate R1 M1): two
+  // concurrent replacements of the SAME population would otherwise each upsert
+  // and prune against a view of the table that does not yet see the other's
+  // rows, leaving the union of both snapshots rather than the latest one — no
+  // existing lock covers this (`withTx` is a bare BEGIN/COMMIT).
   //
-  // tx1 keeps the atomic delete+insert the idempotent-replace contract needs.
+  // tx1 keeps the atomic upsert+prune the idempotent-replace contract needs.
   try {
     await withTx(async (client) => {
-      // Scoped to final-review pass_names so the GPT audit's own rows are
-      // untouched. Raw parameterized DELETE on the tx client (no dependency on
-      // buildDelete IN-clause support).
-      await client.query(
-        `DELETE FROM audit_findings WHERE run_id = $1 AND pass_name IN ('final-review', 'final-review-shadow')`,
-        [runId]
-      );
-      await recordFindings(runId, primary, 'final-review', 0, { client });
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${runId}:final-review`]);
+      const res = await recordFindings(runId, primary, 'final-review', 0, { client });
+      await pruneUnrecordedUnruled(client, { runId, passName: 'final-review', keptKeys: res.keptKeys || [] });
     });
   } catch (err) {
     process.stderr.write(`  [learning] recordFinalReviewFindings failed (primary): ${err.message}\n`);
@@ -943,10 +959,26 @@ export async function recordFinalReviewFindings(runId, { primary = [], shadow = 
   // tx2 — shadow. Its own transaction so a provider-shaped defect here cannot
   // roll back tx1. A failure is loud but non-fatal: the A/B loses one
   // observation, the audit record stays intact.
-  if (shadow.length > 0) {
+  //
+  // Runs ONLY when `shadowRan === true` — a shadow that did not run must leave
+  // PRIOR shadow rows untouched (no upsert, no prune); a shadow that ran and
+  // found nothing (`shadow: []`) prunes the unruled ones, same as any other
+  // empty replacement snapshot. `shadow.length > 0` with `shadowRan` anything
+  // but `true` is a caller contradiction — no permissive default here, the
+  // shadow is treated as not-run and the contradiction is logged naming the
+  // caller, so a producer bug reads as a message, not a silent stale set.
+  if (shadow.length > 0 && shadowRan !== true) {
+    process.stderr.write(
+      `  [learning] recordFinalReviewFindings: ${shadow.length} shadow finding(s) supplied but shadowRan is not true — ` +
+      'treating the shadow as not-run (no write, no prune). This is a producer contract violation in the caller.\n'
+    );
+  }
+  if (shadowRan === true) {
     try {
       await withTx(async (client) => {
-        await recordFindings(runId, shadow, 'final-review-shadow', 0, { client });
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${runId}:final-review-shadow`]);
+        const res = await recordFindings(runId, shadow, 'final-review-shadow', 0, { client });
+        await pruneUnrecordedUnruled(client, { runId, passName: 'final-review-shadow', keptKeys: res.keptKeys || [] });
       });
     } catch (err) {
       process.stderr.write(
@@ -954,6 +986,45 @@ export async function recordFinalReviewFindings(runId, { primary = [], shadow = 
       );
     }
   }
+}
+
+/**
+ * Delete the rows of ONE (run, pass_name) population that the new snapshot no
+ * longer raises AND that carry no completed ruling on either axis and no
+ * recorded remediation (`UNRULED_WHERE`) — the prune half of Seam 3. Compares
+ * the COMPLETE identity `(finding_fingerprint, bucket)`, bucket compared
+ * null-safely (`IS NOT DISTINCT FROM`), against `keptKeys` — the exact rows
+ * `recordFindings` just wrote for this pass, never re-derived (Gemini
+ * plan-gate R1 H2): the same fingerprint legitimately recurs across buckets
+ * within one pass_name, so a fingerprint-only comparison could prune a row in
+ * one bucket while a same-fingerprint row survives in another, or vice versa.
+ *
+ * A labelled or remediated absentee is evidence and is kept — its
+ * `finding_fingerprint` no longer appearing in the new snapshot is itself
+ * information, not grounds to erase what a human or agent recorded about it.
+ *
+ * @param {import('../db/query.mjs').TxClient} client
+ * @param {{runId: string, passName: string, keptKeys: {fingerprint:string, bucket:string|null}[]}} args
+ * @returns {Promise<number>} rows pruned
+ */
+async function pruneUnrecordedUnruled(client, { runId, passName, keptKeys }) {
+  const fingerprints = keptKeys.map((k) => k.fingerprint);
+  const buckets = keptKeys.map((k) => k.bucket ?? null);
+  const res = await client.query(
+    `DELETE FROM audit_findings AS f
+      WHERE f.run_id = $1 AND f.pass_name = $2
+        AND ${UNRULED_WHERE}
+        AND NOT EXISTS (
+          SELECT 1 FROM unnest($3::text[], $4::text[]) AS k(fp, b)
+          WHERE k.fp = f.finding_fingerprint AND k.b IS NOT DISTINCT FROM f.bucket
+        )`,
+    [runId, passName, fingerprints, buckets]
+  );
+  const pruned = res.rowCount ?? 0;
+  if (pruned > 0) {
+    process.stderr.write(`  [learning] recordFinalReviewFindings: pruned ${pruned} unruled absentee(s) from ${passName}\n`);
+  }
+  return pruned;
 }
 
 /**
@@ -1354,17 +1425,35 @@ export async function getFinalReviewStats(repoName, { queueLimit = 50, after = n
     // Same two predicates `pendingQueue` uses, by construction. Counting only
     // the shadow branch (as this did until 2026-09-04) makes the card's header
     // describe a strict subset of its own list.
+    // Grouped by BOTH axes since 2026-09-14: the classifier reads
+    // `adjudication_outcome` too (final-review-credit-projection.md Seam 1), so a
+    // group that omitted it would sum rows the classifier would place in
+    // different classes.
     const actionablePairs = await many(
-      `SELECT user_action, remediation_state, COUNT(*) AS n FROM (
-         SELECT f.user_action, f.remediation_state FROM audit_findings f
+      `SELECT user_action, adjudication_outcome, remediation_state, COUNT(*) AS n FROM (
+         SELECT f.user_action, f.adjudication_outcome, f.remediation_state FROM audit_findings f
            JOIN audit_runs r ON r.id = f.run_id WHERE ${CREDIT_BRANCH_SHADOW_WHERE}
          UNION ALL
-         SELECT f.user_action, f.remediation_state FROM audit_findings f
+         SELECT f.user_action, f.adjudication_outcome, f.remediation_state FROM audit_findings f
            JOIN audit_runs r ON r.id = f.run_id WHERE ${CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE}
        ) credit_population
-       GROUP BY user_action, remediation_state`,
+       GROUP BY user_action, adjudication_outcome, remediation_state`,
       [repoId]
     );
+    // The two axes disagreeing in DIRECTION — a ship-time disposition that
+    // closes against a triage ruling that accepts, or the reverse. Counted over
+    // ALL of the repo's findings with both axes set (the credit population
+    // filters `user_action` open and so could never contain one), independent
+    // of the page, so the card can say it. `user_action` is the durable
+    // override (the classifier reads it first); this makes the override visible
+    // rather than silent. Measured 0 on 2026-09-14.
+    const axisConflicts = Number((await one(
+      `SELECT COUNT(*) AS n FROM audit_findings f JOIN audit_runs r ON r.id = f.run_id
+        WHERE r.repo_id = $1
+          AND ((f.user_action IN ('dismissed', 'auto_dismissed') AND f.adjudication_outcome IN ('accepted', 'severity_adjusted'))
+            OR (f.user_action IN ('accepted-permanent', 'fix-now') AND f.adjudication_outcome = 'dismissed'))`,
+      [repoId]
+    ))?.n ?? 0);
     // `n` here is the DENOMINATOR of every per-run rate the final-review
     // experiment quotes ("~1.1 accepted HIGH/MED per run"). Replay runs — a
     // saved transcript pushed back through a reviewer to compare models — are
@@ -1400,7 +1489,7 @@ export async function getFinalReviewStats(repoName, { queueLimit = 50, after = n
           [repoId]
         ))
       : [];
-    return { ok: true, cloud: true, repoId, buckets, shadowOnlyQueue, pendingQueue, actionablePairs, runs, experimentRuns };
+    return { ok: true, cloud: true, repoId, buckets, shadowOnlyQueue, pendingQueue, actionablePairs, axisConflicts, runs, experimentRuns };
   } catch (err) {
     process.stderr.write(`  [final-review-stats] query failed: ${err.message}\n`);
     return { ok: false, cloud: true, repoId, buckets: [], shadowOnlyQueue: [], pendingQueue: [], actionablePairs: [], runs: [], experimentRuns: [], error: err.message };

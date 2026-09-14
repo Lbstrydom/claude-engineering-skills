@@ -84,6 +84,18 @@ describe('getFinalReviewStats — keyset cursor walk (integration)', { skip }, (
     // primary label-gap branch (bucket NULL, fixed, unadjudicated):
     await ins(runB, 'fp-p1', 'LOW', T0, { bucket: null, remediation: 'fixed' });
     await ins(runB, 'fp-p2', 'LOW', T1, { bucket: null, remediation: 'verified' });
+    // Two axes (final-review-credit-projection.md Seam 1): a primary row whose
+    // ruling sits in adjudication_outcome is NOT in the queue; NULL/needs_triage
+    // on both axes IS. One axis-conflict row is counted by axisConflicts only.
+    const insP = (fp, ao, ua, rs) => q.query(
+      `INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category, bucket, adjudication_outcome, user_action, remediation_state, created_at)
+       VALUES ($1, $2, 'merged', 'LOW', 'test', NULL, $3, $4, $5, $6::timestamptz)`, [runA, fp, ao, ua, rs, T1]);
+    await insP('fp-ax-acc', 'accepted', null, 'fixed');
+    await insP('fp-ax-dis', 'dismissed', null, 'fixed');
+    await insP('fp-ax-sev', 'severity_adjusted', null, 'verified');
+    await insP('fp-ax-nt', 'needs_triage', null, 'fixed');
+    await insP('fp-ax-nt2', null, 'needs_triage', 'fixed');
+    await insP('fp-ax-conf', 'accepted', 'dismissed', 'fixed');
     // The cross-branch sibling (audit-code cluster B R2 H1): ONE (run, fingerprint)
     // present as a shadow-only row AND as its primary-bucket counterpart, same
     // severity, same instant — identical on every key but audit_finding_id.
@@ -105,7 +117,10 @@ describe('getFinalReviewStats — keyset cursor walk (integration)', { skip }, (
   // The full population in the documented total order. fp-both's two rows tie on
   // every ranking key; audit_finding_id ASC decides, so their relative order is
   // whatever the ids drew — the walk asserts the SET and no duplicates for them.
-  const EXPECTED = ['fp-h2@a', 'fp-h1@a', 'fp-tie@a', 'fp-tie@b', 'fp-both@b', 'fp-both@b/primary', 'fp-m1@a', 'fp-p1@b/primary', 'fp-p2@b/primary'];
+  // T0 (10:00) is chronologically NEWER than T1 (09:00) despite the naming —
+  // created_at DESC puts fp-p1 (T0) ahead of the T1 group (fp-ax-nt/nt2/fp-p2),
+  // which then order by finding_fingerprint ASC among themselves.
+  const EXPECTED = ['fp-h2@a', 'fp-h1@a', 'fp-tie@a', 'fp-tie@b', 'fp-both@b', 'fp-both@b/primary', 'fp-m1@a', 'fp-p1@b/primary', 'fp-ax-nt@a/primary', 'fp-ax-nt2@a/primary', 'fp-p2@b/primary'];
   const normalise = (keys) => keys.map((k) => (k.startsWith('fp-both@b') ? 'fp-both@b*' : k));
   const EXPECTED_N = normalise(EXPECTED);
 
@@ -148,6 +163,17 @@ describe('getFinalReviewStats — keyset cursor walk (integration)', { skip }, (
       assert.equal(new Set(seen).size, EXPECTED.length, 'no row twice, none missing');
     });
   }
+
+  it('a completed ruling on the adjudication axis keeps a primary row out of the queue AND out of the totals; needs_triage on either axis does not', async () => {
+    const res = await mod.getFinalReviewStats(repoName, { queueLimit: 50 });
+    const keys = res.pendingQueue.map(key);
+    for (const gone of ['fp-ax-acc@a/primary', 'fp-ax-dis@a/primary', 'fp-ax-sev@a/primary', 'fp-ax-conf@a/primary']) assert.ok(!keys.includes(gone), `${gone} must not be queued`);
+    for (const open of ['fp-ax-nt@a/primary', 'fp-ax-nt2@a/primary']) assert.ok(keys.includes(open), `${open} must be queued`);
+    const total = res.actionablePairs.reduce((n, g) => n + Number(g.n), 0);
+    assert.equal(total, res.pendingQueue.length, 'totals and list describe ONE population');
+    assert.ok(res.actionablePairs.every((g) => 'adjudication_outcome' in g), 'the aggregate groups by the adjudication axis too');
+    assert.equal(res.axisConflicts, 1, 'the dismissed-by-ship / accepted-by-triage row is counted as a conflict');
+  });
 
   it('actionablePairs is page-independent, and a cursor past the end returns an empty page', async () => {
     const first = await mod.getFinalReviewStats(repoName, { queueLimit: 2 });

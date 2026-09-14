@@ -244,8 +244,8 @@ tests. Files: `scripts/lib/store/final-review-credit-population.mjs` (modify),
 Files: `scripts/lib/store/runs-findings.mjs` (modify — `recordFinalReviewFindings`),
 `scripts/gemini-review.mjs` (modify), `tests/gemini-review-shadow-persist.test.mjs` (create),
 `tests/final-review-replay-db.test.mjs` (create),
-`tests/final-review-adjudicate.test.mjs` (modify),
-`scripts/db-test-container.mjs` (modify), `.github/workflows/postgres-parity.yml` (modify).
+`scripts/db-test-container.mjs` (modify), `.github/workflows/postgres-parity.yml` (modify),
+`tests/final-review-adjudicate.test.mjs` (a comment only — see §Audit trail).
 
 **Phase 3 — Operator surface**: SKILL.md + gate contract. Files:
 `skills/ship/SKILL.md` (modify), `skills/ship/gate-contract.json` (modify).

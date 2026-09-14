@@ -22,7 +22,7 @@ import {
   KNOWN_USER_ACTIONS, ACTIONABLE,
 } from '../scripts/lib/final-review-credit.mjs';
 import {
-  CREDIT_BRANCH_SHADOW_WHERE, CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE,
+  CREDIT_BRANCH_SHADOW_WHERE, CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE, COMPLETED_RULINGS, UNRULED_WHERE,
 } from '../scripts/lib/store/final-review-credit-population.mjs';
 import { finalReviewPendingCmd, encodeQueueCursor, decodeQueueCursor } from '../scripts/lib/cross-skill/commands/final-review.mjs';
 import { CommandError } from '../scripts/lib/cross-skill/dispatch.mjs';
@@ -438,5 +438,76 @@ describe('final-review-pending — cursor paging', () => {
     const out = await finalReviewPendingCmd(pendingCtx({ flags: { repo: 'owner/repo' }, queue: [queueRow(1)] }));
     assert.equal(out.items[0].audit_finding_id, '00000000-0000-4000-8000-000000000001');
     assert.equal('detail_snapshot' in out.items[0], false);
+  });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// Two axes, one label (docs/plans/final-review-credit-projection.md Seam 1).
+// A completed ruling in `adjudication_outcome` — written by the audit loop's
+// own triage — is a label; the classifier used to read only `user_action`, so
+// 1,649 rows the loop had ruled `accepted` and then fixed read as
+// "fixed-but-unlabelled" (measured 2026-09-14, repo 6461a693).
+// ═══════════════════════════════════════════════════════════════════════
+
+const OUTCOME_DOMAIN = [null, 'accepted', 'dismissed', 'severity_adjusted', 'needs_triage'];
+
+describe('classifyFinalReviewOutcome — the adjudication axis', () => {
+  it('a fixture derived from a real stored row (merged / accepted / user_action NULL / fixed) is closed, not fixed-unlabelled', () => {
+    // The shape of 1,092 live rows on 2026-09-14 (§1 of the plan).
+    const row = { pass_name: 'merged', bucket: null, adjudication_outcome: 'accepted', user_action: null, remediation_state: 'fixed' };
+    assert.equal(classifyFinalReviewOutcome(row), 'closed');
+  });
+
+  it('completed rulings label; NULL and needs_triage do not — on EITHER axis', () => {
+    for (const ua of [null, 'needs_triage']) {
+      assert.equal(classifyFinalReviewOutcome({ user_action: ua, adjudication_outcome: 'accepted', remediation_state: 'fixed' }), 'closed');
+      assert.equal(classifyFinalReviewOutcome({ user_action: ua, adjudication_outcome: 'severity_adjusted', remediation_state: 'verified' }), 'closed');
+      assert.equal(classifyFinalReviewOutcome({ user_action: ua, adjudication_outcome: 'accepted', remediation_state: null }), 'accepted-unfixed');
+      assert.equal(classifyFinalReviewOutcome({ user_action: ua, adjudication_outcome: 'dismissed', remediation_state: 'fixed' }), 'closed');
+      assert.equal(classifyFinalReviewOutcome({ user_action: ua, adjudication_outcome: 'dismissed', remediation_state: null }), 'closed');
+      assert.equal(classifyFinalReviewOutcome({ user_action: ua, adjudication_outcome: 'needs_triage', remediation_state: 'fixed' }), 'fixed-unlabelled');
+      assert.equal(classifyFinalReviewOutcome({ user_action: ua, adjudication_outcome: null, remediation_state: 'fixed' }), 'fixed-unlabelled');
+      assert.equal(classifyFinalReviewOutcome({ user_action: ua, adjudication_outcome: null, remediation_state: null }), 'unadjudicated');
+    }
+  });
+
+  it('user_action is a durable override — a set disposition wins over the adjudication axis', () => {
+    assert.equal(classifyFinalReviewOutcome({ user_action: 'dismissed', adjudication_outcome: 'accepted', remediation_state: 'fixed' }), 'closed');
+    assert.equal(classifyFinalReviewOutcome({ user_action: 'deferred', adjudication_outcome: 'accepted', remediation_state: null }), 'deferred');
+    assert.equal(classifyFinalReviewOutcome({ user_action: 'accepted-permanent', adjudication_outcome: 'dismissed', remediation_state: null }), 'accepted-unfixed');
+  });
+
+  it('the regressed precedence still wins: an adjudication-only dismissal on a regressed row is an integrity-warning', () => {
+    assert.equal(classifyFinalReviewOutcome({ user_action: null, adjudication_outcome: 'dismissed', remediation_state: 'regressed' }), 'integrity-warning');
+    assert.equal(classifyFinalReviewOutcome({ user_action: null, adjudication_outcome: 'accepted', remediation_state: 'regressed' }), 'regressed');
+  });
+
+  it('the mapping is total over user_action × adjudication_outcome × remediation_state', () => {
+    const known = new Set([...ACTIONABLE, 'closed', 'deferred']);
+    let n = 0;
+    for (const ua of ACTION_DOMAIN) for (const ao of OUTCOME_DOMAIN) for (const rs of REMEDIATION_DOMAIN) {
+      const cls = classifyFinalReviewOutcome({ user_action: ua, adjudication_outcome: ao, remediation_state: rs });
+      assert.ok(known.has(cls), `${ua}/${ao}/${rs} → "${cls}"`);
+      n++;
+    }
+    assert.equal(n, ACTION_DOMAIN.length * OUTCOME_DOMAIN.length * REMEDIATION_DOMAIN.length);
+  });
+});
+
+describe('the SQL predicates carry the same two-axis rule', () => {
+  it('COMPLETED_RULINGS names exactly the three closing outcomes, and the primary branch excludes them', () => {
+    assert.deepEqual([...COMPLETED_RULINGS].sort(), ['accepted', 'dismissed', 'severity_adjusted']);
+    assert.ok(CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE.includes("(f.adjudication_outcome IS NULL OR f.adjudication_outcome = 'needs_triage')"),
+      'the primary label-gap branch must treat only NULL / needs_triage as unlabelled on the adjudication axis');
+    assert.ok(CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE.includes("(f.user_action IS NULL OR f.user_action = 'needs_triage')"),
+      'user_action = needs_triage is open, as the classifier already says');
+    assert.ok(!CREDIT_BRANCH_SHADOW_WHERE.includes('adjudication_outcome'), 'the shadow branch is unchanged');
+  });
+
+  it('UNRULED_WHERE (the prune predicate) spares a recorded remediation as well as a ruling', () => {
+    assert.ok(UNRULED_WHERE.includes("(f.adjudication_outcome IS NULL OR f.adjudication_outcome = 'needs_triage')"));
+    assert.ok(UNRULED_WHERE.includes("(f.user_action IS NULL OR f.user_action = 'needs_triage')"));
+    assert.ok(UNRULED_WHERE.includes('f.remediation_state IS NULL'), 'a recorded remediation is evidence like a ruling — never pruned');
   });
 });

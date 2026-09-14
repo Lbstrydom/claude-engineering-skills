@@ -211,4 +211,14 @@ describe('adjudicateFinalReviewFinding — bucket resolution (integration)', { s
     assert.equal(res.reason, 'no-match-in-bucket');
     assert.deepEqual(res.buckets, ['shadow-only']);
   });
+
+  // Deliberately NOT adding an "adjudicate then replay" case here (plan
+  // deviation, noted): this suite's fixture hardcodes pass_name='final-review'
+  // for every row regardless of bucket (see `ins()` above), which is not the
+  // pass_name recordFinalReviewFindings actually uses for shadow rows
+  // ('final-review-shadow') — a replay test built on it would pass without
+  // ever exercising the prune it claims to guard. The real, correctly-scoped
+  // coverage (both 'final-review' and 'final-review-shadow', a genuinely
+  // at-risk unruled absentee alongside a survivor) lives in
+  // tests/final-review-replay-db.test.mjs.
 });
