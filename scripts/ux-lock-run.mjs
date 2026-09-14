@@ -63,6 +63,22 @@ const KNOWN_FLAGS = [
 ];
 
 /**
+ * The value for a single validated flag occurrence at index `i` in `argv`, or
+ * `null`. Pure and exported for direct testing — `opt()` itself closes over
+ * module-scope `rest` and calls `fail()` (which exits the process), so the
+ * value-selection logic that actually varies is isolated here.
+ *
+ * A flag-shaped next token is not this flag's value (final-review-credit-queue
+ * fp 174b3e43) — `--test-root --strict-selectors` must not silently bind
+ * `--strict-selectors` as the test-root path, matching cli-io.mjs's `argOption`.
+ */
+export function valueAfterFlagAt(argv, i) {
+  if (i === undefined) return null;
+  const next = argv[i + 1];
+  return next !== undefined && !next.startsWith('--') ? next : null;
+}
+
+/**
  * Read a scalar (single-value) option. `rest.indexOf` alone silently selects
  * the FIRST occurrence and never enforces cardinality — `--commit old --commit
  * new` used to resolve to `old` with no diagnostic (finding f38a0a34), which is
@@ -78,8 +94,7 @@ function opt(name) {
   if (indices.length > 1) {
     fail('BAD_INPUT', `--${name} was supplied ${indices.length} times — the effective value would depend on argument order. Pass it exactly once.`);
   }
-  const i = indices[0];
-  return i !== undefined ? (rest[i + 1] ?? null) : null;
+  return valueAfterFlagAt(rest, indices[0]);
 }
 function optAll(name) {
   const out = [];
@@ -530,4 +545,9 @@ async function main() {
   process.exit(2);
 }
 
-main().catch((err) => { process.stderr.write(`${err.stack || err.message}\n`); process.exit(3); });
+// `process.argv[1]` is undefined under `node --input-type=module -e`, which is
+// how a test imports this module for its `valueAfterFlagAt` export — guard it,
+// or importing the module for that export would run the whole CLI.
+if (process.argv[1]?.endsWith('ux-lock-run.mjs')) {
+  main().catch((err) => { process.stderr.write(`${err.stack || err.message}\n`); process.exit(3); });
+}

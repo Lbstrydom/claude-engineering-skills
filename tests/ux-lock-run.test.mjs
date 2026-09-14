@@ -20,6 +20,7 @@ import {
   runPlaywrightJson, flattenReport, statusToPassed, normalizeSpecPath,
   exitCodeForStatus, RUN_STATUS, mapCriteriaToItems, resolvePlaywrightCli,
 } from '../scripts/lib/playwright-runner.mjs';
+import { valueAfterFlagAt } from '../scripts/ux-lock-run.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -487,5 +488,26 @@ describe('mapCriteriaToItems — skipped is distinct from failed', () => {
       [{ criterionHash: 'h1', status: 'passed', durationMs: 2, errorMessage: null, title: 't' }]);
     assert.equal(items[0].skipped, false);
     assert.equal(items[0].passed, true);
+  });
+});
+
+describe('valueAfterFlagAt (final-review-credit-queue fp 174b3e43)', () => {
+  it('a flag-shaped next token is NOT bound as the value', () => {
+    const argv = ['--test-root', '--strict-selectors'];
+    assert.equal(valueAfterFlagAt(argv, 0), null,
+      '--test-root --strict-selectors must not silently bind --strict-selectors as the path');
+  });
+
+  it('a real value is still bound normally', () => {
+    const argv = ['--test-root', 'tests/e2e'];
+    assert.equal(valueAfterFlagAt(argv, 0), 'tests/e2e');
+  });
+
+  it('an absent index (flag not supplied) is null', () => {
+    assert.equal(valueAfterFlagAt(['--other'], undefined), null);
+  });
+
+  it('a trailing flag with nothing after it is null, not undefined leaking through', () => {
+    assert.equal(valueAfterFlagAt(['--test-root'], 0), null);
   });
 });
