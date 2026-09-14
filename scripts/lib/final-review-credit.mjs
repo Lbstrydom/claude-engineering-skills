@@ -68,7 +68,6 @@ export const ACTIONABLE = Object.freeze([
  * `remediation_state ∈ {null, fixed, verified, regressed, unrecognised}`;
  * `tests/final-review-pending.test.mjs` enumerates that whole product.
  *
- * @param {{user_action?: string|null, remediation_state?: string|null}} row
  * @param {{user_action?: string|null, adjudication_outcome?: string|null, remediation_state?: string|null}} row
  * @returns {'unknown'|'integrity-warning'|'regressed'|'closed'|'deferred'|'fixed-unlabelled'|'unadjudicated'|'accepted-unfixed'}
  */
@@ -122,7 +121,7 @@ export function isActionable(classification) {
  * `(user_action, remediation_state, n)` groups — never the bounded page — so the
  * totals are exact regardless of `pageSize`.
  *
- * @param {Array<{user_action?: string|null, remediation_state?: string|null, n?: number|string}>} groups
+ * @param {Array<{user_action?: string|null, adjudication_outcome?: string|null, remediation_state?: string|null, n?: number|string}>} groups
  * @returns {{unadjudicated: number, fixedUnlabelled: number, acceptedUnfixed: number, regressed: number, integrityWarning: number, unknown: number, totalActionable: number}}
  */
 export function summariseCounts(groups) {
