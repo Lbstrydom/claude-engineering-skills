@@ -62,6 +62,10 @@
       "domain": "visual-audit"
     },
     {
+      "pattern": "scripts/check-visual-contract-doc-drift.mjs",
+      "domain": "visual-audit"
+    },
+    {
       "pattern": "scripts/arch-coverage-gate.mjs",
       "domain": "arch-memory"
     },
