@@ -35,6 +35,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
+import { withFileLockSync } from './lib/file-lock.mjs';
 import { UnresolvedScopeError, ScopeMismatchError } from './lib/bakeoff/scope.mjs';
 import { LOG_PATH, CONTRACT_EPOCH, snapshotId, planContentHash, readLog } from './lib/bakeoff/log.mjs';
 import { resolveArms, scopeForEntry, armDidRun } from './lib/bakeoff/arms.mjs';
@@ -683,10 +684,30 @@ async function main() {
     arms,
   };
   // Append-only + atomic: a crash mid-write can lose the newest line but never
-  // corrupt earlier snapshots, and readLog tolerates a torn tail.
+  // corrupt earlier snapshots, and readLog tolerates a torn tail. That
+  // protects against a CRASH, not against a CONCURRENT collector (audit
+  // finding aa5a919c, HIGH): two processes racing this read-modify-write can
+  // both read the same `prior` and then both call atomicWriteFileSync, and
+  // the second rename wins outright — not byte-interleaved corruption
+  // (atomicWriteFileSync already rules that out), but a silently LOST update:
+  // the first process's whole new line vanishes even though its write
+  // "succeeded". The lock below closes that window for the file-level append.
+  // It does NOT re-derive `entry`/`arms` from a fresh read, so two collectors
+  // racing a retry of the SAME snapshot's SAME arm can still each merge
+  // against the `existing` this function read back at its own start — a
+  // narrower, same-snapshot-concurrent-retry case left as a known gap rather
+  // than silently claimed solved.
   fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
-  const prior = fs.existsSync(LOG_PATH) ? fs.readFileSync(LOG_PATH, 'utf-8') : '';
-  atomicWriteFileSync(LOG_PATH, `${prior}${JSON.stringify(entry)}\n`);
+  const appended = withFileLockSync(`${LOG_PATH}.lock`, {}, () => {
+    const prior = fs.existsSync(LOG_PATH) ? fs.readFileSync(LOG_PATH, 'utf-8') : '';
+    atomicWriteFileSync(LOG_PATH, `${prior}${JSON.stringify(entry)}\n`);
+  });
+  if (!appended.ok) {
+    throw new Error(
+      `bakeoff-collect: could not acquire ${LOG_PATH}.lock to record this snapshot's entry `
+      + `(${appended.reason}) — another collector is mid-write; re-run to retry`
+    );
+  }
 
   for (const [k, v] of Object.entries(arms)) {
     // The retry count rides on the SAME line as the result, not a separate one:
