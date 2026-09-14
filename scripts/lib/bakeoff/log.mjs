@@ -125,7 +125,15 @@ export function readLog(logPath = LOG_PATH) {
     if (!t) continue;
     try {
       const e = JSON.parse(t);
-      if (e?.snapshotId) byId.set(e.snapshotId, e);
+      if (e?.snapshotId) {
+        byId.set(e.snapshotId, e);
+      } else {
+        // A line that parses successfully but carries no snapshotId is the
+        // SAME silent-drop defect class the corrupt-line warning above was
+        // added for — a well-formed record this reader cannot key on is
+        // discarded with zero signal (final-review-credit-queue fp 4e2ab394).
+        process.stderr.write(`  [bakeoff/log] readLog: line ${i + 1} of ${logPath} parsed but has no snapshotId — discarded: ${t.slice(0, 200)}\n`);
+      }
     } catch (err) {
       if (i === lastNonEmptyIndex) continue; // a torn final line must not lose every prior snapshot
       process.stderr.write(`  [bakeoff/log] readLog: corrupt line ${i + 1} of ${logPath} (not the final line — a real corruption, not a torn append): ${err.message}\n`);

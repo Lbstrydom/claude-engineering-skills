@@ -101,4 +101,27 @@ describe('readLog — torn-final-line tolerance vs. mid-file corruption', () => 
     assert.deepEqual(entries, []);
     assert.equal(wroteWarning, false, 'a torn final line must never warn — it is the documented, expected shape');
   });
+
+  it('a well-formed line with NO snapshotId is surfaced on stderr, not silently discarded (final-review-credit-queue fp 4e2ab394)', () => {
+    // Same defect CLASS as the mid-file-corruption fix above: a record this
+    // reader cannot key on used to vanish with zero signal, the same silent
+    // shrinkage the corrupt-line warning was added to eliminate for parse
+    // failures specifically.
+    const p = writeLog([
+      JSON.stringify({ snapshotId: 'a', x: 1 }),
+      JSON.stringify({ type: 'adoption-receipt', entryId: 'e1', campaignId: 'c1', adoptedAt: 't' }), // parses fine, no snapshotId
+      JSON.stringify({ snapshotId: 'c', x: 3 }),
+    ]);
+    const originalWrite = process.stderr.write;
+    const captured = [];
+    process.stderr.write = (chunk) => { captured.push(String(chunk)); return true; };
+    let entries;
+    try {
+      entries = readLog(p);
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+    assert.deepEqual(entries.map((e) => e.snapshotId).sort(), ['a', 'c']);
+    assert.ok(captured.some((line) => /no snapshotId/.test(line)), 'a parsed-but-unkeyable line must write a visible warning');
+  });
 });
