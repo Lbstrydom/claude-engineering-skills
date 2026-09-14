@@ -80,13 +80,14 @@ if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); proces
 const REPO_ROOT = findRepoRootFromScript(import.meta.url);
 const SCRIPTS_DIR = import.meta.dirname;
 
-// isSourceRepo() now lives in scripts/lib/is-source-repo.mjs (round-6
-// code-audit Sustainability M5): a zero-side-effect module, so a caller that
-// only wants the source-repo predicate doesn't also evaluate this file's
-// config.mjs import (env loading) and scheduler machinery. Re-exported here
-// so existing importers of this module (including this file's own tests)
-// don't need to change their import path.
-export { isSourceRepo };
+// isSourceRepo() lives in scripts/lib/is-source-repo.mjs (round-6 code-audit
+// Sustainability M5): a zero-side-effect module, so a caller that only wants
+// the source-repo predicate doesn't also evaluate this file's config.mjs
+// import (env loading) and scheduler machinery. NOT re-exported here — in
+// ESM, importing a re-export still evaluates this module's entire top-level
+// scope, so a re-export would defeat the exact isolation the extraction was
+// for (final-review-credit-queue fp 9341e368). Import it directly from
+// './lib/is-source-repo.mjs'.
 
 /**
  * Where the heartbeat + lock live. Overridable so a test driving the real CLI

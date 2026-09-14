@@ -29,8 +29,13 @@ import {
   loadHeartbeat,
   runCheck,
   runExclusive,
-  isSourceRepo,
 } from '../scripts/maintenance-checks.mjs';
+// Direct import, not a re-export of maintenance-checks.mjs (final-review-
+// credit-queue fp 9341e368): in ESM, importing a re-export still evaluates
+// the WHOLE re-exporting module's top-level scope, which is exactly the
+// config.mjs-import + scheduler-machinery cost the extraction to
+// lib/is-source-repo.mjs exists to avoid.
+import { isSourceRepo } from '../scripts/lib/is-source-repo.mjs';
 
 describe('maintenance-checks — CHECKS manifest', () => {
   // An explicit inventory, so a check cannot be added silently. Note the set is
@@ -124,6 +129,16 @@ describe('isSourceRepo / runCheck sourceRepoOnly gating', () => {
     } finally {
       fs.readFileSync = real;
     }
+  });
+
+  it('maintenance-checks.mjs no longer re-exports isSourceRepo (final-review-credit-queue fp 9341e368)', async () => {
+    // The re-export defeated its own purpose: in ESM, importing a re-export
+    // still evaluates the WHOLE re-exporting module's top-level scope (this
+    // file's config.mjs import + scheduler machinery), which is exactly what
+    // extracting isSourceRepo to a zero-side-effect module was meant to avoid.
+    const mod = await import('../scripts/maintenance-checks.mjs');
+    assert.equal(mod.isSourceRepo, undefined,
+      'isSourceRepo must be imported directly from lib/is-source-repo.mjs, not re-exported here');
   });
 
   it('runCheck() skips a sourceRepoOnly check with a named reason when not the source repo (mocked)', () => {
