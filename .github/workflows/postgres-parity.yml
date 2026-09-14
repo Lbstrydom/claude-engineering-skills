@@ -48,6 +48,14 @@ on:
       - 'tests/refresh-*.test.mjs'
       - 'scripts/setup-postgres.mjs'
       - 'scripts/learning-store.mjs'
+      # generate-expected-schema.mjs's catalog SQL, and the identity-columns
+      # regression suite it feeds — final-review-credit-queue fp 7fcf5886.
+      - 'scripts/postgres-parity/**'
+      - 'tests/postgres-parity-identity-columns.test.mjs'
+      # The campaign store + its enrolled DB suites — fp 5ee5cab3.
+      - 'scripts/campaign.mjs'
+      - 'scripts/lib/campaign/**'
+      - 'tests/campaign-*.test.mjs'
       - 'supabase/migrations/**'
       - 'tests/db-*.test.mjs'
       - 'tests/learning-store-*.test.mjs'
@@ -78,6 +86,14 @@ on:
       - 'tests/refresh-*.test.mjs'
       - 'scripts/setup-postgres.mjs'
       - 'scripts/learning-store.mjs'
+      # generate-expected-schema.mjs's catalog SQL, and the identity-columns
+      # regression suite it feeds — final-review-credit-queue fp 7fcf5886.
+      - 'scripts/postgres-parity/**'
+      - 'tests/postgres-parity-identity-columns.test.mjs'
+      # The campaign store + its enrolled DB suites — fp 5ee5cab3.
+      - 'scripts/campaign.mjs'
+      - 'scripts/lib/campaign/**'
+      - 'tests/campaign-*.test.mjs'
       - 'supabase/migrations/**'
       - 'tests/db-*.test.mjs'
       - 'tests/learning-store-*.test.mjs'
