@@ -46,6 +46,16 @@ const ALLOWLISTED_FILES = new Set([
 
 const RUNNER_SHAPE_KEYS = ['agentId', 'agentName', 'gitHubUrl', 'poolId'];
 const RSA_PARAM_KEYS = ['n', 'e', 'd', 'p', 'q'];
+// The real GitHub Actions runner is a .NET binary, and its RSA credential
+// store is a JSON-serialized `RSAParameters` struct — whose FIELD NAMES are
+// `Modulus`/`Exponent`/`D`/`P`/`Q`, not the JWK-style `n`/`e`/`d`/`p`/`q` this
+// guard's own synthetic fixture uses (final-review-credit-queue fp ce84a55e:
+// "the omitted leak-guard source prevents final verification" — this repo has
+// no live runner install to confirm the exact serializer casing against).
+// ADDITIVE, not a replacement: covering both shapes is strictly safer than
+// picking one, and neither classification narrows what the other already
+// catches.
+const RSA_PARAM_KEYS_DOTNET = ['Modulus', 'Exponent', 'D', 'P', 'Q'];
 const CREDENTIALS_REQUIRED_KEYS = ['scheme', 'clientId'];
 const CREDENTIALS_ANY_OF_KEYS = ['authorizationUrl', 'oAuthEndpoint'];
 
@@ -85,6 +95,7 @@ function hasAnyKey(span, keys) {
 function classifySpan(span) {
   if (hasAllKeys(span, RUNNER_SHAPE_KEYS)) return 'runner-config';
   if (hasAllKeys(span, RSA_PARAM_KEYS)) return 'credentials-rsaparams';
+  if (hasAllKeys(span, RSA_PARAM_KEYS_DOTNET)) return 'credentials-rsaparams';
   return null;
 }
 
@@ -178,6 +189,22 @@ describe('findLeakyShape — the structural shape detector', () => {
 
   it('NEGATIVE CONTROL: an RSA-param object missing one key does not trip it', () => {
     const blob = JSON.stringify({ n: 'a', e: 'b', d: 'c', p: 'd' }); // no q
+    assert.equal(findLeakyShape(blob), null);
+  });
+
+  it('POSITIVE CONTROL: the .NET RSAParameters-cased shape (Modulus/Exponent/...) also trips the scanner (final-review-credit-queue fp ce84a55e)', () => {
+    // The real runner is a .NET binary; its RSA credential store is a
+    // JSON-serialized RSAParameters struct, whose field names are PascalCase
+    // (Modulus/Exponent/D/P/Q) — a different shape from this guard's own
+    // synthetic fixture's JWK-style n/e/d/p/q. Both must trip the guard.
+    const blob = JSON.stringify({ Modulus: 'modulus', Exponent: 'exponent', D: 'private-exponent', P: 'prime1', Q: 'prime2' });
+    const hit = findLeakyShape(blob);
+    assert.ok(hit, 'the .NET RSAParameters-cased shape must also be recognised');
+    assert.equal(hit.kind, 'credentials-rsaparams');
+  });
+
+  it('NEGATIVE CONTROL: the .NET-cased RSA-param object missing one key does not trip it', () => {
+    const blob = JSON.stringify({ Modulus: 'a', Exponent: 'b', D: 'c', P: 'd' }); // no Q
     assert.equal(findLeakyShape(blob), null);
   });
 
