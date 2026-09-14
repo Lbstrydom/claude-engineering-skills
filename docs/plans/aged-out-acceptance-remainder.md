@@ -1,9 +1,15 @@
 # Plan: The five aged-out acceptances that are real, still live, and no longer surfaced
 
 - **Date**: 2026-09-04
-- **Status**: Draft — evidence gathered, no code written. Each item below was
-  re-verified against the tree at `8178f062` and reproduced; none is a
-  hypothesis carried over from its original audit.
+- **Status**: In Progress — §3 (`b091a8ab`) and §4 (`e3da8d42`) shipped
+  2026-09-14, each had a concrete fix shape already and went straight to
+  implementation without a separate `/plan` pass. §2's three findings
+  (`75981b9b`, `dd651e36`, `92fe5776`) remain: re-verified against the live
+  store on 2026-09-14 (still fully real — `content_aliases` 0/229,
+  unclassified 193/229, deferred-link fields 10/229), and still explicitly
+  out of scope for a queue-clearing session — a classification backfill
+  across ~190 rows is a per-entry judgement, and `content_aliases`
+  load-bearing-or-dead is a real design decision. §2 needs a `/plan` pass.
 - **Author**: Claude + Louis
 - **Scope**: backend + one skill reference
 
@@ -127,7 +133,13 @@ instead of a prompt.
       uses, not a second one. If it is not, the field is removed.
 - [ ] §2: deferred entries carry a revalidation trigger, or the concept is
       dropped and the doc says so.
-- [ ] §3: the two alias shapes in the table resolve to 1; the shadowing control
+- [x] §3: the two alias shapes in the table resolve to 1; the shadowing control
       still resolves to 0; `regenerate-skill-copies.mjs` reports 2 sites.
-- [ ] §4: a gate fails when a key exists in the doc example but not the emitted
+      Verified 2026-09-14 (`tests/import-binding.test.mjs`,
+      `tests/find-rmsync-sites.test.mjs`).
+- [x] §4: a gate fails when a key exists in the doc example but not the emitted
       schema, and when one exists in the schema but not the doc.
+      `scripts/check-visual-contract-doc-drift.mjs`, gate-contracted with a
+      poison pill overlaying the doc's actual pre-fix state
+      (`_note`/`_comment`/`label`/`families` all missing) — verified 2026-09-14
+      (`tests/visual-contract-doc-drift.test.mjs`).

@@ -13,10 +13,13 @@ meaningful key fails loudly (`scripts/lib/visual/schema.mjs`).
 ```jsonc
 {
   "version": 1,
+  "_note": "REVIEW QUEUE marker `--bootstrap` writes on a draft contract; remove once reviewed",
+  "_comment": "free-text operator note; no tooling meaning",
   "appRoots": ["apps/web"],                 // optional monorepo namespacing
   "exclude": ["**/*.stories.*"],            // optional
   "surfaces": [{
     "id": "pricing-cards",                  // stable; the attribution + drift key root
+    "label": "Pricing cards",               // optional; human-readable, defaults to the selector on --bootstrap
     "selector": ".pricing-grid",            // contracted root; audited subtree
     "sourceGlobs": ["apps/web/src/pricing/**"], // surface → owner files for the gate
     "component": "PlanCard",                // optional; enables intra-component checks
@@ -25,7 +28,10 @@ meaningful key fails loudly (`scripts/lib/visual/schema.mjs`).
     "nodeBudget": 400,                      // cap; exceeding → unverified_due_to_budget
     "interactiveBudget": 120                // cap on CDP-per-node pseudo-state probing
   }],
-  "tokenSources": [{ "type": "css-vars", "path": "src/tokens.css", "theme": null }],
+  "tokenSources": [{
+    "type": "css-vars", "path": "src/tokens.css", "theme": null,
+    "families": ["colors","spacing"]        // optional; defaults to every token family
+  }],
   "themes": [
     { "name": "light", "apply": { "mode": "class", "target": "html", "value": "light" } },
     { "name": "dark",  "apply": { "mode": "class", "target": "html", "value": "dark" } }
@@ -38,6 +44,10 @@ meaningful key fails loudly (`scripts/lib/visual/schema.mjs`).
   }
 }
 ```
+
+`themes[].apply`'s shape is a discriminated union on `mode` — the example above shows only
+`class`; every mode's own fields are in the Theme-apply protocol section below, not
+repeated here.
 
 ## Theme-apply protocol (discriminated union on `mode`)
 

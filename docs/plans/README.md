@@ -21,7 +21,7 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
-| [The five aged-out acceptances that are real, still live, and no longer surfaced](./aged-out-acceptance-remainder.md) | `Draft` | evidence gathered, no code written. Each item below was re-verified against the tree at `8178f062` and… |
+| [The five aged-out acceptances that are real, still live, and no longer surfaced](./aged-out-acceptance-remainder.md) | `In Progress` | §3 (`b091a8ab`) and §4 (`e3da8d42`) shipped 2026-09-14, each had a concrete fix shape already and went… |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
 

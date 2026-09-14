@@ -696,6 +696,10 @@
       "description": "Asserts .mcp.json (Claude Code, root `mcpServers`) and .vscode/mcp.json (VS Code/Copilot, root `servers`) stay semantically equivalent across their two deliberately-different schemas. Validates strictly rather than projecting: an unknown field or a non-stdio descriptor is a hard failure, so servers added later are covered too. Origin: .vscode/mcp.json omitted `-y` from @playwright/mcp, so on a cold machine npx prompted for install and the MCP server never started — and both consumer repos were already shipping the broken form.",
       "category": "diagnostic"
     },
+    "visual-contract-doc:gate": {
+      "description": "Asserts skills/visual-audit/references/contract-and-bootstrap.md's annotated `## Schema (v1)` JSONC example and the emitted VisualContractSchema (scripts/lib/visual/schema.mjs, via z.toJSONSchema) agree on their key set, both directions — a doc-only key is a typo or a removed field, a schema-only key is a real field the doc never shows. Deliberately excludes `themes[].apply`'s own discriminated-union variants, which the doc documents separately in prose. Origin: aged-out-acceptance-remainder.md §4 (`e3da8d42`) — the doc had silently drifted (`_note`, `_comment`, `label`, `families` all missing from the example).",
+      "category": "diagnostic"
+    },
     "worktree:preflight:gate": {
       "description": "Fail when a skill documents a command into the synced tooling tree without warning that the tree is absent in a linked git worktree.",
       "category": "gate"

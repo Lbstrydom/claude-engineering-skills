@@ -1265,6 +1265,11 @@ field the response schema forbade outright.
   Zod source: **a prompt that names a field is a claim about a contract you have not
   checked.** A required field must also be filled by every non-LLM constructor, so
   adding one is never a one-line change.
+- **A hand-written annotated example in a reference doc is the same seam, one hop
+  over.** `contract-and-bootstrap.md`'s JSONC example drifted from
+  `VisualContractSchema` silently until `npm run visual-contract-doc:gate` compared
+  both sides' `z.toJSONSchema(...)` key sets, in both directions — never the doc
+  against the Zod source.
 
 ## Sensitive paths + VCS contract (canonical locations)
 

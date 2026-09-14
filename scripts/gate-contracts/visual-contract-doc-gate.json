@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "gate": "visual-contract-doc:gate",
+  "guards": "skills/visual-audit/references/contract-and-bootstrap.md's annotated JSONC example stays in sync with the real VisualContractSchema, both directions",
+  "gates": [
+    {
+      "id": "visual-contract-doc-drift-detected",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "silently until `npm run visual-contract-doc:gate` compared",
+      "implementation": "scripts/check-visual-contract-doc-drift.mjs",
+      "tests": [
+        "tests/visual-contract-doc-drift.test.mjs"
+      ],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": [
+          "scripts/check-visual-contract-doc-drift.mjs"
+        ],
+        "overlay": {
+          "skills/visual-audit/references/contract-and-bootstrap.md": "tests/fixtures/poison/visual-contract-doc-drifted.md"
+        },
+        "expectExit": 1,
+        "expectStderr": "check-visual-contract-doc-drift: drift found",
+        "why": "The overlay is the doc's actual pre-fix state, live until 2026-09-14: `_note`, `_comment`, `surfaces[].label`, and `tokenSources[].families` all exist on VisualContractSchema but were never shown in the doc's example. Found while auditing aged-out-acceptance-remainder.md §4, which reproduces this exact drift and gives the gate its fix shape. The overlay is kept in step with the live schema (not frozen) for the same reason mcp-parity-gate's own poison pill is — a frozen fixture would eventually stop proving the gate finds THIS class of drift as the schema legitimately grows."
+      }
+    }
+  ]
+}
