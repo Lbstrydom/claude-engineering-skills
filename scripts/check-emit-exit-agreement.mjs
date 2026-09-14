@@ -202,6 +202,17 @@ export function compareToBaseline(hits, base) {
 }
 
 /**
+ * Is this comparison clean — no growth AND no shrinkage? Human mode already
+ * exits 1 on either (a shrink demands a deliberate `--update` re-baseline,
+ * same as growth); `--json` mode used to report only `!grew`, so a shrunk
+ * baseline read `ok:true` there while the identical tree exited 1 in human
+ * mode — the verdict depended on which flag was passed, not on the tree.
+ */
+export function isCleanComparison({ grew, shrank }) {
+  return !grew && !shrank;
+}
+
+/**
  * Read the baseline, FAILING CLOSED on anything that is not a well-formed one.
  *
  * It was a bare `JSON.parse`, and the consequence was measured: a baseline of
@@ -289,7 +300,7 @@ function main() {
 
   if (hasFlag('json')) {
     emit({
-      ok: !grew, count: hits.length, baseline: base.count, grew, shrank, swapped, files: byFile,
+      ok: isCleanComparison({ grew, shrank }), count: hits.length, baseline: base.count, grew, shrank, swapped, files: byFile,
       identityTracked: base.ids !== null,
     });
     return;

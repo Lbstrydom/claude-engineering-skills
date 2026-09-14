@@ -13,7 +13,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { compareToBaseline } from '../scripts/check-emit-exit-agreement.mjs';
+import { compareToBaseline, isCleanComparison } from '../scripts/check-emit-exit-agreement.mjs';
 
 describe('compareToBaseline (identity-based ratchet)', () => {
   it('detects a same-count SWAP: opt-out removed from file A, a different one added in file B', () => {
@@ -70,5 +70,22 @@ describe('compareToBaseline (identity-based ratchet)', () => {
     const result = compareToBaseline(afterSwap, base);
     assert.equal(result.grew, false, 'legacy (no-ids) baselines keep the original, weaker count-only behaviour');
     assert.equal(result.shrank, false);
+  });
+});
+
+describe('isCleanComparison (final-review-credit-queue fp 99cb77fb)', () => {
+  // `--json` mode used to report `ok: !grew` only, so a SHRUNK baseline read
+  // `ok:true` there while human mode exits 1 on the identical tree — the
+  // gate's verdict depended on which flag was passed, not on the tree.
+  it('growth alone is not clean', () => {
+    assert.equal(isCleanComparison({ grew: true, shrank: false }), false);
+  });
+
+  it('shrinkage alone is not clean either — a ratchet-down still needs a deliberate --update', () => {
+    assert.equal(isCleanComparison({ grew: false, shrank: true }), false);
+  });
+
+  it('neither grown nor shrunk is clean', () => {
+    assert.equal(isCleanComparison({ grew: false, shrank: false }), true);
   });
 });
