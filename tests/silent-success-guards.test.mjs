@@ -115,12 +115,66 @@ describe('KD-3 — the recovered touched-set is what extraction REACHED', () => 
     // The producer half. `progress{file}` is the parse-START marker — it fires
     // before loadAndParseFile, and a parse failure `continue`s having emitted
     // it. Deriving "reached" from that marks parse-FAILED files as reached.
+    //
+    // AST, not indexOf (final-review-credit-queue fp 62176891 — follows the
+    // KD-4 precedent below): a textual offset says nothing about CONTROL
+    // FLOW — it can't tell "after, in the same branch" from "after, inside an
+    // unrelated catch" or "after, but a second call site earlier still wins".
+    // It is also formatting-fragile: reordering the object literal's keys,
+    // requoting, or renaming `rel` all change the matched substring for no
+    // semantic reason. This instead confirms both calls are SIBLING
+    // statements in the very same block (so neither can be gated by a
+    // conditional/catch the other isn't) and that each shape occurs exactly
+    // once (so a future second call site can't silently win).
     const src = read('scripts/symbol-index/extract.mjs');
-    const emitIdx = src.indexOf("emit({ type: 'processed', file: rel })");
-    const classifyIdx = src.indexOf('redactAndEmit(candidates');
-    assert.ok(emitIdx > 0, 'the processed record is not emitted');
-    assert.ok(classifyIdx > 0 && emitIdx > classifyIdx,
-      'the processed record must come AFTER classification, not before the parse');
+    const ast = parse(src, { sourceType: 'module', plugins: [] });
+
+    const stringPropValue = (objExpr, key) => {
+      const prop = objExpr.properties.find((p) => p.type === 'ObjectProperty' && !p.computed
+        && ((p.key.type === 'Identifier' && p.key.name === key) || (p.key.type === 'StringLiteral' && p.key.value === key)));
+      return prop?.value?.type === 'StringLiteral' ? prop.value.value : null;
+    };
+    // Walk up from the call to the nearest ancestor that is itself a direct
+    // member of some block's `.body` array — i.e. the enclosing STATEMENT,
+    // not merely the enclosing function.
+    const enclosingStatement = (callPath) => {
+      let p = callPath;
+      while (p.parentPath && !p.parentPath.isBlockStatement()) p = p.parentPath;
+      return p.parentPath ? p : null;
+    };
+
+    let processedEmitStmt = null;
+    let redactAndEmitStmt = null;
+    let processedEmitCount = 0;
+    let redactAndEmitCount = 0;
+
+    traverse(ast, {
+      CallExpression(p) {
+        const name = p.node.callee.type === 'Identifier' ? p.node.callee.name : null;
+        if (name === 'emit' && p.node.arguments[0]?.type === 'ObjectExpression'
+          && stringPropValue(p.node.arguments[0], 'type') === 'processed') {
+          processedEmitCount += 1;
+          processedEmitStmt = enclosingStatement(p);
+        }
+        if (name === 'redactAndEmit') {
+          redactAndEmitCount += 1;
+          redactAndEmitStmt = enclosingStatement(p);
+        }
+      },
+    });
+
+    assert.equal(processedEmitCount, 1, `expected exactly one emit({type:'processed'}) call site, found ${processedEmitCount}`);
+    assert.equal(redactAndEmitCount, 1, `expected exactly one redactAndEmit(...) call site, found ${redactAndEmitCount}`);
+    assert.ok(processedEmitStmt && redactAndEmitStmt, 'both call sites must sit inside a block whose statement order is inspectable');
+    assert.equal(
+      processedEmitStmt.parentPath.node, redactAndEmitStmt.parentPath.node,
+      'the processed emit and the redactAndEmit call must be SIBLING statements in the same block — otherwise one could be reachable without the other (a nested conditional/catch the other is not inside)',
+    );
+    const body = processedEmitStmt.parentPath.node.body;
+    const emitIdx = body.indexOf(processedEmitStmt.node);
+    const classifyIdx = body.indexOf(redactAndEmitStmt.node);
+    assert.ok(emitIdx > classifyIdx,
+      'the processed record must come AFTER classification (redactAndEmit), not before it, in real statement order — not merely textual offset');
   });
 });
 
