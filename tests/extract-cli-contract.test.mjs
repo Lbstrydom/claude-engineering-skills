@@ -172,6 +172,17 @@ describe('extract.mjs parseArgs — value handling (M4/M5)', () => {
     assert.throws(() => parseArgs(argv('--', 'stray.mjs')), /no positional operands/);
   });
 
+  it('refuses a bare positional BEFORE -- too — the switch has no default that silently drops it (final-review-credit-queue fp 74ffa01a)', () => {
+    // Distinct code path from the `--`-terminator test above: this is the
+    // ordinary `switch (a) { case '--root': ... }` loop with no `default:`,
+    // reached on EVERY token regardless of whether `--` ever appears. Before
+    // the fix this matched no case, was silently dropped, and left
+    // `files === null` — an unrestricted full-repo walk promoted from what
+    // looked like a scoped invocation.
+    assert.throws(() => parseArgs(argv('src/changed.js')), /no positional operands are accepted/);
+    assert.throws(() => parseArgs(argv('--root', '.', 'manifest.txt')), /no positional operands are accepted/);
+  });
+
   it('a bare trailing -- is still accepted (it discards nothing)', () => {
     // Vacuous-pass guard for the rejection above: proves it fires on there
     // being operands, not on the terminator itself.

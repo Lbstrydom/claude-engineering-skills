@@ -224,6 +224,20 @@ function parseArgs(argv) {
         if (inlineValue !== null) throw new Error(`--include-delegates does not take a value; got --include-delegates=${inlineValue}`);
         args.includeDelegates = true;
         break;
+      // A bare positional BEFORE `--` reaches here unvalidated: assertKnownFlags
+      // "stops validating" at non-`--`-prefixed tokens by design (it inspects
+      // only flags), so `extract.mjs src/changed.js` or `extract.mjs --root .
+      // manifest.txt` matched no case above and, with no default, was silently
+      // dropped — leaving `files === null`, an unrestricted full-repo walk
+      // promoted from what looked like a scoped invocation, exiting 0. The `--`
+      // terminator already refuses this same shape for tokens AFTER it (see
+      // above); this closes the identical gap for tokens before it
+      // (final-review-credit-queue fp 74ffa01a).
+      default:
+        throw new Error(
+          `extract: no positional operands are accepted, but got ${JSON.stringify(argv[i])} `
+          + `(argument ${i - 1}). Pass files via --files or --files-from.`,
+        );
     }
   }
 
