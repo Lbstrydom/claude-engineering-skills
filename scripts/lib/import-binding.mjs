@@ -141,6 +141,116 @@ export function resolvesToModuleBinding(identifierPath, spec) {
 }
 
 /**
+ * Find the `ObjectProperty` inside `objectPatternPath.properties` whose LOCAL
+ * binding is `localName` — matching on the value side (`value.name` for a
+ * bare `{ x }`, or `value.left.name` for a defaulted `{ x = … }`), never the
+ * key, so a rename (`{ rmSync: rm }`) is found by its local name `rm`.
+ * @param {import('@babel/traverse').NodePath} objectPatternPath
+ * @param {string} localName
+ * @returns {import('@babel/traverse').NodePath|null} the matching ObjectProperty path, or null
+ */
+function findObjectPatternProperty(objectPatternPath, localName) {
+  for (const propPath of objectPatternPath.get('properties')) {
+    if (!propPath.isObjectProperty()) continue; // skips RestElement
+    const { value } = propPath.node;
+    const boundName = value.type === 'Identifier' ? value.name
+      : (value.type === 'AssignmentPattern' && value.left.type === 'Identifier' ? value.left.name : null);
+    if (boundName === localName) return propPath;
+  }
+  return null;
+}
+
+/**
+ * Does `identifierPath` resolve, via real lexical scope, to a local alias of
+ * one specific property on a resolved module-namespace binding? Three shapes,
+ * all found missing entirely — `find-rmsync-sites.mjs` (the one caller today)
+ * only ever recognised a DIRECT named import — in aged-out-acceptance-
+ * remainder.md §3 (`b091a8ab`):
+ *
+ * 1. **Member-expression alias**: `const rm = fs.rmSync;`.
+ * 2. **Destructured from the namespace**: `const { rmSync } = fs;`, including
+ *    a rename (`const { rmSync: rm } = fs;`).
+ * 3. **A destructured parameter's OWN per-property default is the member
+ *    expression**: `function f({ rmSyncFn = fs.rmSync } = {}) {…}` — the
+ *    live instance (`scripts/regenerate-skill-copies.mjs`). Note this is
+ *    NOT shape 2: the property key (`rmSyncFn`) need not be `rmSync` at
+ *    all — nothing is destructured FROM `fs` here, since a function
+ *    parameter's object comes from the CALLER's argument. What matters is
+ *    that the property's own default value, used when the caller omits it,
+ *    is `fs.rmSync`. Babel's `scope.getBinding().path` for this shape is the
+ *    ENCLOSING pattern (bare `ObjectPattern`, or the `AssignmentPattern`
+ *    wrapping it when the whole parameter also has a `= {}` default) — never
+ *    the inner per-property `AssignmentPattern` directly, which is why the
+ *    object pattern has to be located and searched rather than read straight
+ *    off `declPath`.
+ *
+ * A shadowing local (a parameter or variable that merely happens to be named
+ * `fs`) is excluded the same way `resolvesToModuleBinding` excludes it — by
+ * requiring the object identifier to resolve there via real scope, not by
+ * name.
+ *
+ * @param {import('@babel/traverse').NodePath} identifierPath - the Identifier reference to check
+ * @param {{propertyName: string, moduleSources?: Set<string>, moduleAbsPath?: string, fromFileAbsPath?: string}} spec
+ * @returns {boolean}
+ */
+export function resolvesToAliasedModuleProperty(identifierPath, spec) {
+  validateModuleSourceSpec(spec);
+  const localName = identifierPath.node.name;
+  const binding = identifierPath.scope.getBinding(localName);
+  if (!binding || !binding.path) return false;
+  const declPath = binding.path;
+
+  const memberMatchesProperty = (memberExprPath) => {
+    // `.get('init')` on a `VariableDeclarator` with NO initializer (`let x;`)
+    // returns a real, truthy NodePath wrapping a null node — `!memberExprPath`
+    // alone does not catch that; `.node` itself must be checked first.
+    if (!memberExprPath?.node || memberExprPath.node.type !== 'MemberExpression') return false;
+    const { computed, property } = memberExprPath.node;
+    const matchesName = computed
+      ? property.type === 'StringLiteral' && property.value === spec.propertyName
+      : property.type === 'Identifier' && property.name === spec.propertyName;
+    if (!matchesName) return false;
+    const objectPath = memberExprPath.get('object');
+    return objectPath.isIdentifier() && resolvesToModuleBinding(objectPath, spec);
+  };
+
+  // Shape 1: `const rm = fs.rmSync;`
+  if (declPath.isVariableDeclarator() && declPath.node.id.type === 'Identifier') {
+    return memberMatchesProperty(declPath.get('init'));
+  }
+  // Shape 1, bare default parameter (no destructuring): `function f(rm = fs.rmSync) {…}`
+  if (declPath.isAssignmentPattern() && declPath.node.left.type === 'Identifier') {
+    return memberMatchesProperty(declPath.get('right'));
+  }
+  // Shape 2: `const { rmSync } = fs;` / `const { rmSync: rm } = fs;`
+  if (declPath.isVariableDeclarator() && declPath.node.id.type === 'ObjectPattern') {
+    const initPath = declPath.get('init');
+    if (initPath.isIdentifier() && resolvesToModuleBinding(initPath, spec)) {
+      const propPath = findObjectPatternProperty(declPath.get('id'), localName);
+      const keyNode = propPath?.node.key;
+      const keyName = propPath && !propPath.node.computed && keyNode.type === 'Identifier' ? keyNode.name
+        : (propPath?.node.computed && keyNode.type === 'StringLiteral' ? keyNode.value : null);
+      if (keyName === spec.propertyName) return true;
+    }
+    // Fall through: the pattern itself might ALSO carry a per-property
+    // default (shape 3) if `init` didn't resolve to the namespace directly.
+  }
+  // Shape 3: a destructured parameter whose property default is the member
+  // expression — `objectPatternPath` is `declPath` itself when the whole
+  // parameter has no `= {}` default, or `declPath.left` when it does.
+  const objectPatternPath = declPath.isObjectPattern() ? declPath
+    : (declPath.isAssignmentPattern() && declPath.node.left.type === 'ObjectPattern' ? declPath.get('left') : null);
+  if (objectPatternPath) {
+    const propPath = findObjectPatternProperty(objectPatternPath, localName);
+    if (propPath?.node.value.type === 'AssignmentPattern') {
+      return memberMatchesProperty(propPath.get('value.right'));
+    }
+  }
+
+  return false;
+}
+
+/**
  * Classify the `wrapper(() => site)` / `wrapper(() => { return site; })`
  * shape from a call site's ancestor chain (root-to-immediate-parent raw-node
  * order) — the single authoritative implementation of this ancestor-chain

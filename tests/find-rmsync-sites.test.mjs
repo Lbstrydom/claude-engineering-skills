@@ -279,3 +279,64 @@ describe('findRmSyncCallSites — enclosingCall wrapper shape (audit R2 M2)', ()
     assert.equal(sites[0].enclosingCall?.callee.name, 'retrySync');
   });
 });
+
+// ---------------------------------------------------------------------------
+// fs-namespace-alias resolution — aged-out-acceptance-remainder.md §3
+// (`b091a8ab`): a call through a local alias of the namespace's `rmSync`
+// property (destructured, or a member-expression default) is a genuine
+// reference to the same import and must be found, end to end through
+// findRmSyncCallSites, not just at the resolvesToAliasedModuleProperty unit.
+// ---------------------------------------------------------------------------
+describe('findRmSyncCallSites — fs-namespace-alias resolution', () => {
+  it('destructured from the namespace: const { rmSync } = fs', () => {
+    const src = `
+      import * as fs from 'node:fs';
+      const { rmSync } = fs;
+      rmSync('/tmp/x');
+    `;
+    assert.equal(findRmSyncCallSites(src).length, 1);
+  });
+
+  it('member-expression alias: const rm = fs.rmSync', () => {
+    const src = `
+      import * as fs from 'node:fs';
+      const rm = fs.rmSync;
+      rm('/tmp/x');
+    `;
+    assert.equal(findRmSyncCallSites(src).length, 1);
+  });
+
+  it('the shadowing negative control still resolves to 0 (not simply broken, one shape was missing)', () => {
+    const src = `
+      function f(fs) {
+        fs.rmSync('/tmp/x');
+      }
+    `;
+    assert.equal(findRmSyncCallSites(src).length, 0);
+  });
+
+  it('the live instance shape: a destructured default-parameter member-alias, with an outer default (regenerate-skill-copies.mjs)', () => {
+    const src = `
+      import * as fs from 'node:fs';
+      function removeStale(opts, { rmSyncFn = fs.rmSync, ghSkillsDir = '/x' } = {}) {
+        rmSyncFn(ghSkillsDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      }
+    `;
+    const sites = findRmSyncCallSites(src);
+    assert.equal(sites.length, 1);
+    assert.deepEqual(sites[0].properties, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+
+  it('a destructured default-parameter member-alias with a DIRECT, unaliased call in the same file — both are found (regression for the real file, which has one of each)', () => {
+    const src = `
+      import * as fs from 'node:fs';
+      function removeStale(opts, { rmSyncFn = fs.rmSync } = {}) {
+        rmSyncFn('/x', { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      }
+      function removeDirect() {
+        fs.rmSync('/y', { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      }
+    `;
+    assert.equal(findRmSyncCallSites(src).length, 2);
+  });
+});

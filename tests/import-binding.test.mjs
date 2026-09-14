@@ -7,6 +7,7 @@ import {
   resolvesToNamedImport,
   resolveNamedImportBinding,
   resolvesToModuleBinding,
+  resolvesToAliasedModuleProperty,
   findSyncCallbackWrapper,
   classifyCallbackWrapper,
 } from '../scripts/lib/import-binding.mjs';
@@ -377,5 +378,122 @@ describe('import-binding — spec contract', () => {
     for (const fn of [resolvesToNamedImport, resolvesToModuleBinding]) {
       assert.throws(() => fn(null, badSpec));
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolvesToAliasedModuleProperty — aged-out-acceptance-remainder.md §3
+// (`b091a8ab`). `resolvesToModuleBinding`/`resolvesToNamedImport` only see a
+// binding whose OWN declaration is an import specifier; this covers a binding
+// one hop further away, initialised FROM an already-resolved namespace
+// binding.
+// ---------------------------------------------------------------------------
+const RM_SYNC_SPEC = { propertyName: 'rmSync', moduleSources: FS_SOURCES };
+
+describe('import-binding — resolvesToAliasedModuleProperty', () => {
+  it('member-alias: const rm = fs.rmSync — true', () => {
+    const src = `
+      import * as fs from 'node:fs';
+      const rm = fs.rmSync;
+      function apply() { rm(x); }
+    `;
+    const idPath = findCalleeIdentifierPath(src, 'rm');
+    assert.equal(resolvesToAliasedModuleProperty(idPath, RM_SYNC_SPEC), true);
+  });
+
+  it('destructure-from-namespace: const { rmSync } = fs — true', () => {
+    const src = `
+      import * as fs from 'node:fs';
+      const { rmSync } = fs;
+      function apply() { rmSync(x); }
+    `;
+    const idPath = findCalleeIdentifierPath(src, 'rmSync');
+    assert.equal(resolvesToAliasedModuleProperty(idPath, RM_SYNC_SPEC), true);
+  });
+
+  it('destructure-renamed: const { rmSync: rm } = fs — true, matched by local name not key', () => {
+    const src = `
+      import * as fs from 'node:fs';
+      const { rmSync: rm } = fs;
+      function apply() { rm(x); }
+    `;
+    const idPath = findCalleeIdentifierPath(src, 'rm');
+    assert.equal(resolvesToAliasedModuleProperty(idPath, RM_SYNC_SPEC), true);
+  });
+
+  it('bare-default-param: function f(rm = fs.rmSync) — true', () => {
+    const src = `
+      import * as fs from 'node:fs';
+      function apply(rm = fs.rmSync) { rm(x); }
+    `;
+    const idPath = findCalleeIdentifierPath(src, 'rm');
+    assert.equal(resolvesToAliasedModuleProperty(idPath, RM_SYNC_SPEC), true);
+  });
+
+  it('destructured-param-default, no outer default: function f({ rmSyncFn = fs.rmSync }) — true', () => {
+    const src = `
+      import * as fs from 'node:fs';
+      function apply({ rmSyncFn = fs.rmSync }) { rmSyncFn(x); }
+    `;
+    const idPath = findCalleeIdentifierPath(src, 'rmSyncFn');
+    assert.equal(resolvesToAliasedModuleProperty(idPath, RM_SYNC_SPEC), true);
+  });
+
+  it('destructured-param-default, WITH outer default: function f(opts, { rmSyncFn = fs.rmSync } = {}) — true (the live instance shape, regenerate-skill-copies.mjs)', () => {
+    const src = `
+      import * as fs from 'node:fs';
+      function apply(opts, { rmSyncFn = fs.rmSync } = {}) { rmSyncFn(x); }
+    `;
+    const idPath = findCalleeIdentifierPath(src, 'rmSyncFn');
+    assert.equal(resolvesToAliasedModuleProperty(idPath, RM_SYNC_SPEC), true);
+  });
+
+  it('shadowed-fs-parameter: function f(fs) { const rm = fs.rmSync; rm(x); } — false, negative control', () => {
+    const src = `
+      function apply(fs) {
+        const rm = fs.rmSync;
+        rm(x);
+      }
+    `;
+    const idPath = findCalleeIdentifierPath(src, 'rm');
+    assert.equal(resolvesToAliasedModuleProperty(idPath, RM_SYNC_SPEC), false);
+  });
+
+  it('shadowed-fs-local-object: a locally-built object named fs is not the real import — false', () => {
+    const src = `
+      const fs = { rmSync: () => {} };
+      const { rmSync } = fs;
+      function apply() { rmSync(x); }
+    `;
+    const idPath = findCalleeIdentifierPath(src, 'rmSync');
+    assert.equal(resolvesToAliasedModuleProperty(idPath, RM_SYNC_SPEC), false);
+  });
+
+  it('destructured-param-no-default: function f({ rmSyncFn } = {}) — false, nothing to trace to fs', () => {
+    const src = `
+      function apply({ rmSyncFn } = {}) { rmSyncFn(x); }
+    `;
+    const idPath = findCalleeIdentifierPath(src, 'rmSyncFn');
+    assert.equal(resolvesToAliasedModuleProperty(idPath, RM_SYNC_SPEC), false);
+  });
+
+  it('uninitialised-declarator: let x; (no init) does not throw and returns false', () => {
+    const src = `
+      let x;
+      function apply() { compute(); x = compute; x(y); }
+    `;
+    const idPath = findCalleeIdentifierPath(src, 'x');
+    assert.doesNotThrow(() => resolvesToAliasedModuleProperty(idPath, RM_SYNC_SPEC));
+    assert.equal(resolvesToAliasedModuleProperty(idPath, RM_SYNC_SPEC), false);
+  });
+
+  it('unrelated-property-name: const other = fs.readFileSync; is not an rmSync alias — false', () => {
+    const src = `
+      import * as fs from 'node:fs';
+      const other = fs.readFileSync;
+      function apply() { other(x); }
+    `;
+    const idPath = findCalleeIdentifierPath(src, 'other');
+    assert.equal(resolvesToAliasedModuleProperty(idPath, RM_SYNC_SPEC), false);
   });
 });

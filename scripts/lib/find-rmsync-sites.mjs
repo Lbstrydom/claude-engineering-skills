@@ -21,7 +21,8 @@
 import { parse } from '@babel/parser';
 import _traverse from '@babel/traverse';
 import {
-  resolvesToModuleBinding, resolvesToNamedImport, resolveNamedImportBinding, findSyncCallbackWrapper,
+  resolvesToModuleBinding, resolvesToNamedImport, resolveNamedImportBinding, resolvesToAliasedModuleProperty,
+  findSyncCallbackWrapper,
 } from './import-binding.mjs';
 
 // @babel/traverse ships CJS; under ESM the callable lands on .default (and on
@@ -41,12 +42,22 @@ const FS_IMPORT_SOURCES = new Set(['node:fs', 'fs']);
  * import from a source other than `node:fs`/`fs` — this is what makes a
  * shadowing parameter or local variable correctly NOT match, unlike
  * name-only checks.
+ *
+ * `'named-rmsync'` also covers a LOCAL ALIAS of the namespace's `rmSync`
+ * property — `const { rmSync } = fs;` or `const rm = fs.rmSync;`, including
+ * as a default-parameter initializer — via `resolvesToAliasedModuleProperty`
+ * (aged-out-acceptance-remainder.md §3, `b091a8ab`). The call-site shape
+ * (`rmSync(...)` / `rm(...)`) is identical to a direct named import, so it
+ * gets the same classification here.
  * @param {import('@babel/traverse').NodePath} identifierPath - the Identifier reference to resolve
  * @returns {'namespace' | 'named-rmsync' | null}
  */
 function resolveFsImportKind(identifierPath) {
   if (resolvesToModuleBinding(identifierPath, { moduleSources: FS_IMPORT_SOURCES })) return 'namespace';
   if (resolvesToNamedImport(identifierPath, { importedName: 'rmSync', moduleSources: FS_IMPORT_SOURCES })) {
+    return 'named-rmsync';
+  }
+  if (resolvesToAliasedModuleProperty(identifierPath, { propertyName: 'rmSync', moduleSources: FS_IMPORT_SOURCES })) {
     return 'named-rmsync';
   }
   return null;
