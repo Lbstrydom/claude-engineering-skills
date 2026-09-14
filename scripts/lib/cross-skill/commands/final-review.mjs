@@ -68,7 +68,14 @@ export function decodeQueueCursor(raw) {
     // Postgres' own `timestamptz::text` shape (`2026-09-13 10:00:00.000001+00`),
     // pinned explicitly, AND a real instant.
     && typeof parsed.createdAt === 'string' && isPgTimestamptzText(parsed.createdAt)
-    && typeof parsed.fingerprint === 'string' && /^[0-9a-f-]{1,64}$/i.test(parsed.fingerprint)
+    // Two legal shapes (audit-code cluster A consolidated gate P2, found in
+    // final-review-credit-projection.md's own file scope): a normal semantic
+    // hash, OR fingerprintOf()'s `missing-hash-<24 hex>` fallback for a
+    // producer finding with no _hash (runs-findings.mjs). Without the second
+    // branch, a page whose LAST row happened to be such a finding produced a
+    // cursor decodeQueueCursor then refused as BAD_INPUT — breaking
+    // pagination at exactly that boundary.
+    && typeof parsed.fingerprint === 'string' && /^(missing-hash-[0-9a-f]{24}|[0-9a-f-]{1,64})$/i.test(parsed.fingerprint)
     && typeof parsed.runId === 'string' && UUID.test(parsed.runId)
     && typeof parsed.findingId === 'string' && UUID.test(parsed.findingId);
   if (!ok) throw new CommandError('BAD_INPUT', '--after is not a cursor this command issued (field out of domain)');

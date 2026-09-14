@@ -355,6 +355,23 @@ describe('encodeQueueCursor / decodeQueueCursor', () => {
       assert.throws(() => decodeQueueCursor(bad), (e) => e instanceof CommandError && e.code === 'BAD_INPUT', `must refuse ${JSON.stringify(bad)}`);
     }
   });
+
+  it('accepts a fingerprint in the fingerprintOf() missing-hash fallback shape (audit-code cluster A consolidated gate P2)', () => {
+    // A producer finding with no _hash gets `missing-hash-<24 hex>` from
+    // runs-findings.mjs's fingerprintOf(). If that finding lands as the last
+    // row of a page, encodeQueueCursor serialises it — and decodeQueueCursor
+    // must accept it back, or pagination breaks at exactly that boundary.
+    const fallback = 'missing-hash-abc123def4567890abcdef12';
+    const cursor = encodeQueueCursor({ ...CURSOR, fingerprint: fallback });
+    assert.deepEqual(decodeQueueCursor(cursor).fingerprint, fallback);
+  });
+
+  it('still refuses a fingerprint that merely LOOKS like the fallback prefix but has the wrong digest shape', () => {
+    for (const bad of ['missing-hash-tooshort', 'missing-hash-' + 'a'.repeat(25), 'missing-hash-' + 'z'.repeat(24)]) {
+      assert.throws(() => decodeQueueCursor(encodeQueueCursor({ ...CURSOR, fingerprint: bad })),
+        (e) => e instanceof CommandError && e.code === 'BAD_INPUT', `must refuse ${bad}`);
+    }
+  });
 });
 
 /** A raw pendingQueue row in the store's total order. */
