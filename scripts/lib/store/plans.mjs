@@ -15,6 +15,7 @@
 
 import path from 'node:path';
 import { findRepoRootFromCwd } from '../assert-repo-root.mjs';
+import { isPathContained } from '../path-validation.mjs';
 import { isCloudEnabled } from './repo.mjs';
 import { one, upsert, updateWhere } from '../db/query.mjs';
 import { runWindowCountQuery } from './window-count-query.mjs';
@@ -93,19 +94,15 @@ export function validatePlanPath(rawPath, opts = {}) {
   // consumers, which is where the two spellings diverged.
   const normalised = raw.replace(/\\/g, '/');
   const abs = path.resolve(root, normalised);
-  // Windows drive-letter and path casing vary between callers (`C:/GIT/...`
-  // vs `c:/git/...`), so containment compares case-insensitively there. The
-  // RETURNED path is still derived from the real resolve, never the lowered
-  // copy — we normalise the comparison, not the data.
-  // darwin included since 2026-08-12: macOS filesystems are case-INSENSITIVE by
-  // default, so a win32-only test rejected a valid in-repo plan whenever the
-  // caller's spelling of the root differed in case from the resolved one
-  // (`/Users/Foo/repo/docs/x.md` under a root read as `/Users/foo/repo`), and
-  // conversely let two spellings of one file produce two distinct `rel` keys —
-  // two `plans` rows for the same document. Same reasoning that put win32 here.
+  // The containment DECISION is the shared primitive (final-review-credit-queue
+  // fp a97445a6) — this file used to hand-roll the identical win32/darwin
+  // case-fold-then-prefix-check `isPathContained` already does, which is how
+  // the two drifted long enough for `isPathContained` to still be win32-only
+  // after this file's own 2026-08-12 darwin fix (ported back above, same
+  // commit as this change). `ci` survives below: it is still needed for the
+  // IDENTIFIER slicing, a separate question from whether the path is contained.
   const ci = process.platform === 'win32' || process.platform === 'darwin';
-  const cmp = (s) => (ci ? s.toLowerCase() : s);
-  if (cmp(abs) !== cmp(root) && !cmp(abs).startsWith(cmp(root) + path.sep)) {
+  if (!isPathContained(root, abs)) {
     return {
       ok: false, reason: 'escapes-repo',
       message: `refusing a plan path outside the repo root (scratchpad or temp file?): ${raw}`,

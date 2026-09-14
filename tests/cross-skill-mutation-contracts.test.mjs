@@ -251,3 +251,17 @@ test('C2: drive-letter case does not falsely reject on Windows', () => {
   assert.equal(isPathContained('C:/repo', 'C:/repo-evil/a.mjs'), false,
     'case-folding must not weaken the boundary check');
 });
+
+test('C2: differently-cased root does not falsely reject on macOS (final-review-credit-queue fp a97445a6)', () => {
+  // `validatePlanPath` (scripts/lib/store/plans.mjs) found this independently in
+  // its own hand-rolled containment check on 2026-08-12 and fixed it there —
+  // this primitive stayed win32-only until that fix was ported back here, which
+  // is what closed the duplication the finding flagged. Only a macOS concern —
+  // darwin's default filesystem is case-insensitive; a case-sensitive one would
+  // correctly treat these as different directories.
+  if (process.platform !== 'darwin') return;
+  assert.equal(isPathContained('/Users/foo/repo', '/Users/Foo/repo/sub/a.mjs'), true);
+  assert.equal(isPathContained('/Users/Foo/repo', '/Users/foo/repo/sub/a.mjs'), true);
+  assert.equal(isPathContained('/Users/Foo/repo', '/Users/Foo/repo-evil/a.mjs'), false,
+    'case-folding must not weaken the boundary check');
+});

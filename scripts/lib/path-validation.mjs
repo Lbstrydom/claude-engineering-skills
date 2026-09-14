@@ -42,13 +42,19 @@ import { resolveAndClassify } from './sensitive-paths.mjs';
  */
 export function isPathContained(root, candidate) {
   if (typeof root !== 'string' || typeof candidate !== 'string') return false;
-  // Case-fold on Windows only. `path.resolve` PRESERVES the drive-letter case it was
-  // given, so `c:\repo` vs `C:\repo` compares unequal and the check FALSELY REJECTS a
-  // contained path on a case-insensitive filesystem — verified on win32 2026-07-31.
-  // Same rationale as `normalizePath()`'s lowercasing (AGENTS.md accepted-debt table):
-  // correct for Windows, and deliberately NOT applied on case-sensitive filesystems
-  // where two paths differing only in case are genuinely different files.
-  const fold = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
+  // Case-fold on Windows AND macOS — both case-insensitive filesystems by
+  // default. `path.resolve` PRESERVES the drive-letter case it was given, so
+  // `c:\repo` vs `C:\repo` compares unequal and the check FALSELY REJECTS a
+  // contained path on a case-insensitive filesystem — verified on win32
+  // 2026-07-31. darwin joined 2026-08-12 (`validatePlanPath`'s own incident,
+  // final-review-credit-queue fp a97445a6): a caller's differently-cased
+  // spelling of the repo root (`/Users/Foo/repo` vs `/Users/foo/repo`) is the
+  // SAME directory on a default macOS filesystem, and this check must agree.
+  // Same rationale as `normalizePath()`'s lowercasing (AGENTS.md accepted-debt
+  // table): correct for case-insensitive platforms, and deliberately NOT
+  // applied on genuinely case-sensitive filesystems, where two paths differing
+  // only in case are different files.
+  const fold = (p) => (process.platform === 'win32' || process.platform === 'darwin' ? p.toLowerCase() : p);
   const r = fold(path.resolve(root));
   const c = fold(path.resolve(candidate));
   return c === r || c.startsWith(r + path.sep);
