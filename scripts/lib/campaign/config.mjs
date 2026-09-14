@@ -191,6 +191,14 @@ export function parseCampaignConfig(raw) {
 export const CAMPAIGNS_DIR = '.campaigns';
 
 /**
+ * A hand-authored campaign config is a handful of KB. 256 KiB is generous
+ * headroom over every config this repo has ever committed, while still
+ * ruling out the multi-megabyte nested object a malicious or corrupted
+ * commit could carry (final-review-credit-queue fp f342d8a0).
+ */
+export const MAX_CAMPAIGN_CONFIG_BYTES = 256 * 1024;
+
+/**
  * Enumerate campaign configs. Selection semantics are §807's, and the two
  * refusals are the point: an absent directory is NOT an error (a repo may
  * never run campaigns), while ambiguity is never resolved by picking the first.
@@ -206,6 +214,24 @@ export function selectCampaignConfig({ dir = CAMPAIGNS_DIR, campaignId = null } 
   const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')).sort();
   if (files.length === 0) {
     return { ok: false, code: 'none', message: `no campaign configs in ${dir}/`, available: [] };
+  }
+
+  for (const f of files) {
+    const filePath = path.join(dir, f);
+    const size = fs.statSync(filePath).size;
+    // A hand-authored campaign config is a handful of KB. Nothing in this repo's
+    // own config bundle approaches this — the cap exists for a committed file
+    // an operator did not author (final-review-credit-queue fp f342d8a0): an
+    // unbounded readFileSync + JSON.parse over a multi-megabyte nested object
+    // is real memory pressure paid on every campaign-config read, of which
+    // there are several per campaign.mjs invocation.
+    if (size > MAX_CAMPAIGN_CONFIG_BYTES) {
+      return {
+        ok: false, code: 'too-large',
+        message: `${filePath} is ${size} bytes, over the ${MAX_CAMPAIGN_CONFIG_BYTES}-byte cap for a campaign config — refusing to parse it`,
+        available: [],
+      };
+    }
   }
 
   const loaded = files.map((f) => {

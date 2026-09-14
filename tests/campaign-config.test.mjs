@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   CampaignConfigSchema, parseCampaignConfig, configDigest, canonicalJson,
   selectCampaignConfig, MIN_TARGET_N, ANALYSIS_TIME_FIELDS, isScoredArm,
+  MAX_CAMPAIGN_CONFIG_BYTES,
 } from '../scripts/lib/campaign/config.mjs';
 
 /** The committed dogfood campaign, used as the known-good base for mutations. */
@@ -317,6 +318,24 @@ describe('campaign config — selection (§807)', () => {
     assert.equal(r.ok, false);
     assert.equal(r.code, 'unknown-id');
     assert.deepEqual(r.available, ['final-review-2026q3']);
+  });
+
+  it('REFUSES a config over the size cap rather than parsing it (final-review-credit-queue fp f342d8a0)', () => {
+    const dir = mkdir();
+    // Oversized but still VALID JSON (a large `notes` field), so a failure here
+    // is specifically the size guard, not a JSON.parse or schema error.
+    const huge = { ...base(), notes: 'x'.repeat(MAX_CAMPAIGN_CONFIG_BYTES + 1) };
+    fs.writeFileSync(path.join(dir, 'huge.json'), JSON.stringify(huge));
+    const r = selectCampaignConfig({ dir });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'too-large');
+  });
+
+  it('a config comfortably under the cap is unaffected', () => {
+    const dir = mkdir();
+    fs.writeFileSync(path.join(dir, 'c.json'), JSON.stringify(base()));
+    const r = selectCampaignConfig({ dir });
+    assert.equal(r.ok, true);
   });
 });
 
