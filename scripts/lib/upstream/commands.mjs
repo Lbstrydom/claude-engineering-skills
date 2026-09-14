@@ -298,6 +298,32 @@ export function resolveGitFacts({ reportedSha, fixCommits = [], repoRoot = proce
 export function outboxDir(repoRoot) { return path.join(repoRoot, OUTBOX_DIR); }
 function rejectedDir(repoRoot) { return path.join(outboxDir(repoRoot), 'rejected'); }
 
+function countFiles(dir) {
+  try { return fs.readdirSync(dir).length; } catch { return 0; }
+}
+
+/**
+ * Cumulative counts of envelopes sitting in each outbox's `rejected/`
+ * directory — never deleted, never retried, by design (drainEnvelopes'
+ * `{quarantined: true}` disposition). Nothing else in this module bounds that
+ * directory or reports its size, so a systematically-malformed writer, or a
+ * `v` bump making every existing envelope unsupported, could accumulate
+ * quarantined files indefinitely with no operator-visible signal
+ * (final-review-credit-queue fp 9dcb036a). This does not fix the
+ * accumulation — there is no correct auto-remediation for evidence the
+ * design deliberately keeps forever — it makes the total visible so a caller
+ * can warn.
+ *
+ * @param {string} repoRoot
+ * @returns {{reports: number, annotations: number}}
+ */
+export function rejectedCounts(repoRoot) {
+  return {
+    reports: countFiles(rejectedDir(repoRoot)),
+    annotations: countFiles(path.join(annotationOutboxDir(repoRoot), 'rejected')),
+  };
+}
+
 /**
  * Validate an envelope read back off disk. Returns `null` when unusable — the
  * caller quarantines rather than deleting or retrying forever.

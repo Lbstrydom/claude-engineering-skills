@@ -189,7 +189,22 @@ export async function upstreamCmd(ctx) {
         repoRoot,
         annotateFn: (a) => ctx.deps.recordUpstreamIssueAnnotation(a),
       });
-      return merge(reports, annotations);
+      // final-review-credit-queue fp 9dcb036a — quarantined envelopes are
+      // never deleted and never retried (by design: they are evidence), but
+      // nothing else reports how many have piled up. Printed here, on the
+      // shared piggyback path every verb runs, so an accumulating pile is
+      // visible wherever the operator next touches `upstream`, not only on an
+      // explicit `drain`; silent when there is nothing to report.
+      const rejected = m.rejectedCounts(repoRoot);
+      const rejectedTotal = rejected.reports + rejected.annotations;
+      if (rejectedTotal > 0) {
+        process.stderr.write(
+          `  [upstream] ${rejectedTotal} envelope(s) sitting in rejected/ (never retried automatically: `
+          + `${rejected.reports} report(s), ${rejected.annotations} annotation(s)) — `
+          + 'inspect .audit/upstream-outbox/rejected/ and .audit/upstream-annotation-outbox/rejected/.\n',
+        );
+      }
+      return { ...merge(reports, annotations), rejectedPending: rejected };
     } catch (err) {
       // Returned rather than swallowed: an explicit `upstream drain` must never
       // report a success shape when the drain actually failed. On the

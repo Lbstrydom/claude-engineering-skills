@@ -19,7 +19,7 @@ import {
   classifyReportFreshness, annotatePriorFix, computeFingerprint,
   validateAffectedPath, readBundleStamp, validateReportInput,
   parseEnvelope, writeEnvelope, drainOutbox, upstreamTransition,
-  OUTBOX_ENVELOPE_VERSION, VALID_SEVERITIES,
+  OUTBOX_ENVELOPE_VERSION, VALID_SEVERITIES, rejectedCounts,
 } from '../scripts/lib/upstream/commands.mjs';
 import { LEGAL_TRANSITIONS, listUpstreamIssues } from '../scripts/lib/store/upstream-issues.mjs';
 import { rmrf as rmTmp } from './helpers/fixtures.mjs';
@@ -334,6 +334,27 @@ test('drain: a poison envelope is quarantined, never deleted and never retried f
     assert.equal(res.drained, 0);
     assert.ok(fs.existsSync(path.join(od, 'rejected', 'bad.json')), 'quarantined, not deleted');
     assert.ok(!fs.existsSync(path.join(od, 'bad.json')), 'removed from the active queue');
+  } finally { rmTmp(dir); }
+});
+
+test('rejectedCounts: reports the cumulative pile in rejected/, not just one drain\'s own count (final-review-credit-queue fp 9dcb036a)', async () => {
+  const dir = mkTmp('ces-outbox-rejcount-');
+  try {
+    assert.deepEqual(rejectedCounts(dir), { reports: 0, annotations: 0 }, 'no outbox yet — zero, not a throw');
+
+    const od = path.join(dir, '.audit', 'upstream-outbox');
+    fs.mkdirSync(od, { recursive: true });
+    fs.writeFileSync(path.join(od, 'bad1.json'), '{corrupt');
+    await drainOutbox({ repoRoot: dir, recordFn: async () => ({ ok: true, cloud: true }) });
+    assert.deepEqual(rejectedCounts(dir), { reports: 1, annotations: 0 });
+
+    // A SECOND poison file, drained in a SEPARATE call — this is the cumulative
+    // count across invocations, not "how many this one drain rejected" (which
+    // `drainOutbox`'s own `.rejected` field already reports, per-call).
+    fs.writeFileSync(path.join(od, 'bad2.json'), '{also corrupt');
+    await drainOutbox({ repoRoot: dir, recordFn: async () => ({ ok: true, cloud: true }) });
+    assert.deepEqual(rejectedCounts(dir), { reports: 2, annotations: 0 },
+      'the pile accumulates across separate drain calls — this is what "unbounded growth, never reported" means');
   } finally { rmTmp(dir); }
 });
 
