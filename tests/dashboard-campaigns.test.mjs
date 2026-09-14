@@ -420,6 +420,52 @@ describe('collector root + provenance honesty (audit round)', () => {
     assert.ok(!/reconcile --campaign/.test(failed), 'and must NOT advise collecting more, which would not help');
     assert.match(empty, /reconcile --campaign/, 'an empty cohort DOES mean collect/promote more');
   });
+
+  it('a REAL readFailed row (collect-campaigns.mjs shape — no overhead/adjudication/nComplete at all) never renders a confident zero (final-review-credit-queue fp 4e77d9be)', () => {
+    // The actual shape collect-campaigns.mjs pushes when loadCohortEvidence
+    // throws: only the fields it can name without having read anything.
+    // campaignFixture()'s spread-based override cannot simulate this — it
+    // would still carry every OTHER field's default — so this fixture is
+    // built directly, matching the real producer.
+    const html = sectionCampaigns({
+      src: OK,
+      campaigns: envelope({
+        campaigns: [{
+          id: 'final-review-2026q3', targetN: 12, replicates: ['solo-opus'],
+          analysisTimeFields: { targetN: 12 }, lockDigest: null,
+          collected: false, readFailed: true,
+          collectedReason: 'store read failed: connection reset',
+        }],
+      }),
+    }, ui);
+    assert.match(html, /Could not read this campaign/);
+    assert.ok(!/N complete/.test(html), 'a failed read must not render the N-complete row at all');
+    assert.ok(!/0 of \d+ target/.test(html), 'must not render a confident "0 of N target"');
+    assert.ok(!/finding\(s\) unadjudicated/.test(html), 'must not render adjudication coverage as a measured zero');
+    assert.ok(!/no agent verdicts yet/.test(html), 'must not render calibration as measured-and-empty');
+  });
+});
+
+describe('money() — fails closed on "not affirmatively known" (final-review-credit-queue fp 48429d12)', () => {
+  it('an absent (undefined) cost-evidence flag renders "unknown", not the numeric figure', () => {
+    const html = sectionCampaigns({
+      src: OK,
+      campaigns: envelope({ campaigns: [campaignFixture({
+        spend: { opus: { spendUsd: 17.82 /* costEvidence intentionally omitted */ } },
+      })] }),
+    }, ui);
+    assert.match(html, /"campaign-spend-opus">unknown/, 'a numeric spend with no evidence marker must read as unknown, not $17.8200');
+  });
+
+  it('an explicit "known" evidence flag still renders the figure', () => {
+    const html = sectionCampaigns({
+      src: OK,
+      campaigns: envelope({ campaigns: [campaignFixture({
+        spend: { opus: { spendUsd: 17.82, costEvidence: 'known' } },
+      })] }),
+    }, ui);
+    assert.match(html, /"campaign-spend-opus">\$17\.8200/);
+  });
 });
 
 describe('campaigns section — escaping (§4)', () => {

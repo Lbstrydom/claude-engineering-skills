@@ -31,7 +31,12 @@ const SECTION = 'campaigns';
  *  pixels. A blank or an em-dash reads as zero at a glance, and a zero here
  *  would be a claim that the call was measured and cost nothing. */
 function money(usd, evidence) {
-  if (evidence && evidence !== 'known') return 'unknown';
+  // Fail CLOSED on "not affirmatively known" — an absent evidence flag
+  // (null/undefined/'') used to skip this guard entirely (`evidence &&
+  // evidence !== 'known'` is false for every falsy value), so a numeric `usd`
+  // paired with no evidence marker still rendered as a confident dollar
+  // figure (final-review-credit-queue fp 48429d12).
+  if (evidence !== 'known') return 'unknown';
   if (usd == null || !Number.isFinite(usd)) return 'unknown';
   return `$${Number(usd).toFixed(4)}`;
 }
@@ -108,6 +113,21 @@ function renderCampaign(c, ui) {
 
 /** Pane 1 — always shown, always first. */
 function evidencePane(c, ui) {
+  // A store-read FAILURE is unmeasured, not a routine zero (final-review-
+  // credit-queue fp 4e77d9be). Every row below (`N complete`, adjudication
+  // overhead/coverage, calibration) reads absent sub-fields through `?? 0`
+  // fallbacks or a "no agent verdicts yet" default — correct for a cohort
+  // that genuinely has not been collected yet, but this cohort's evidence
+  // FAILED TO LOAD (collect-campaigns.mjs's `loadEvidence` threw), so none of
+  // those numbers were read at all. Rendering them anyway is confident zeros
+  // above the caveat line that announces exactly the opposite. Short-circuit
+  // before building any row.
+  if (c.readFailed) {
+    return `<section data-testid="campaign-evidence" role="region" aria-label="Campaign evidence quality">`
+      + `<h4>Evidence quality — <code>${ui.escapeHtml(c.id)}</code></h4>`
+      + `<p class="summary">⚠ <strong>Could not read this campaign's evidence.</strong> ${ui.escapeHtml(c.collectedReason || '')}</p>`
+      + `</section>`;
+  }
   const rows = [];
   rows.push(`<tr><th scope="row">Lock digest</th><td><code>${ui.escapeHtml(c.lockDigest || 'not yet collected')}</code>`
     + `${c.cohortSuperseded ? ' <strong>SUPERSEDED</strong> — this cohort was orphaned by a contract change' : ''}</td></tr>`);
@@ -171,11 +191,11 @@ function evidencePane(c, ui) {
     ? `${c.replicates.map((r) => `<code>${ui.escapeHtml(r)}</code>`).join(', ')} — collected, excluded from model-level evidence`
     : 'none declared'}</td></tr>`);
 
+  // `c.readFailed` returns early above, before any row is built — this branch
+  // is reachable only for the OTHER `collected: false` case: no cohort
+  // recorded yet, a routine (not a failure) zero.
   const notCollected = c.collected === false
-    ? (c.readFailed
-        // Different fact, different action: fix the store, do not collect more.
-        ? `<p class="summary">⚠ <strong>Could not read this campaign's evidence.</strong> ${ui.escapeHtml(c.collectedReason || '')}</p>`
-        : `<p class="summary">⚪ ${ui.escapeHtml(c.collectedReason || 'no cohort recorded yet')} — run <code>node scripts/campaign.mjs reconcile --campaign ${ui.escapeHtml(c.id)}</code>.</p>`)
+    ? `<p class="summary">⚪ ${ui.escapeHtml(c.collectedReason || 'no cohort recorded yet')} — run <code>node scripts/campaign.mjs reconcile --campaign ${ui.escapeHtml(c.id)}</code>.</p>`
     : '';
 
   return `<section data-testid="campaign-evidence" role="region" aria-label="Campaign evidence quality">`
