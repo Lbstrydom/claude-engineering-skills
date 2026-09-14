@@ -231,6 +231,18 @@ describe('campaigns section — review rows', () => {
     assert.match(html, /data-testid="campaign-override-cmd">node scripts\/campaign\.mjs override --finding /);
   });
 
+  it('does NOT prefill a concrete --verdict, regardless of what the agent ruled (final-review-credit-queue fp 102d8211)', () => {
+    // The per-arm override rate is this campaign's published calibration
+    // figure — measuring whether a human agrees with the agent. A hardcoded
+    // `--verdict dismissed` made the cheapest action (paste-and-run) always
+    // record a disagreement, inflating the override rate independent of what
+    // anyone actually decided. Regardless of the row's own agent outcome
+    // ('accepted' here), the rendered command must never carry a real verdict.
+    const cmd = overrideCommandFor('11111111-2222-3333-4444-555555555555');
+    assert.ok(!/--verdict (accepted|dismissed|severity_adjusted)\b/.test(cmd),
+      `command must not prefill a concrete verdict: ${cmd}`);
+  });
+
   it('carries the command in a data- attribute, never an inline onclick built from a finding id', () => {
     const html = sectionCampaigns({ src: OK, campaigns: withFindings() }, ui);
     assert.ok(!/onclick=/i.test(html), 'an inline handler built from model-authored content is the injection sink');

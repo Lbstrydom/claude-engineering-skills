@@ -39,9 +39,27 @@ import { loadCohortEvidence } from '../store/campaign.mjs';
 import { isCloudEnabled } from '../store/repo.mjs';
 import { findingMatchConfig, FINDING_MATCH_SCHEMA_VERSION } from '../config.mjs';
 
-/** The override command the page renders per finding, prefilled and copyable. */
+/**
+ * The override command the page renders per finding, prefilled and copyable.
+ *
+ * `--verdict` is deliberately a PLACEHOLDER, never a concrete value. The
+ * per-arm override rate is this campaign's published calibration figure
+ * (§2.5c.4/§2.5c.5) — it exists to measure whether a human agrees with the
+ * agent's verdict. Hardcoding `dismissed` here made the cheapest human
+ * action (paste-and-run without editing) *always* record a disagreement,
+ * regardless of what the agent actually ruled or what the reviewer actually
+ * thinks — a directional thumb on the very instrument the campaign is
+ * measuring (final-review-credit-queue fp 102d8211). A placeholder forces a
+ * deliberate choice either way. Not `<accepted|dismissed|severity_adjusted>`
+ * (this repo's operator-doc convention forbids angle brackets — PowerShell
+ * reserves `<`, making the line unpasteable in a way that reads as broken
+ * rather than "edit me"): `CHOOSE_ONE` is an ordinary token that pastes
+ * cleanly and then fails loudly at `assertOutcome`'s own validation
+ * (`--verdict must be one of: accepted, dismissed, severity_adjusted`) if run
+ * unedited, which is the forcing function this fix needs.
+ */
 export function overrideCommandFor(findingId) {
-  return `node scripts/campaign.mjs override --finding ${findingId} --verdict dismissed --note ""`;
+  return `node scripts/campaign.mjs override --finding ${findingId} --verdict CHOOSE_ONE --note ""`;
 }
 
 /**
