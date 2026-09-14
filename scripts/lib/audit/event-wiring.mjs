@@ -723,12 +723,22 @@ function matchStaticLiteral(tok) {
 // Cancellation signature (D2 rule 4, widened by R4/H2, narrowed by Gemini
 // round-2 G1): {eventName, dispatchForm, runtime, pragmaSuppressed} —
 // deliberately NOT enclosingSymbol, NOT line number.
+//
+// `listenSignature` MUST apply the same exclusion, for the same reason (found
+// in final-review credit triage, 2026-09-14): the Gemini round-2 G1 fix was
+// applied only to `dispatchSignature`, leaving `listenSignature` keyed on
+// `enclosingSymbol`. Renaming or relocating the function that wraps an
+// UNCHANGED production listener changed its `enclosingSymbol`, so the
+// before/after keys failed to match and the diff reported both a false
+// "removed listener" (before-side, old symbol) and a false "new listener"
+// (after-side, new symbol) for a listener that never moved. Same mirror-image
+// false positive as H2's, on the other half of `diffSites`.
 // ---------------------------------------------------------------------------
 function dispatchSignature(s) {
   return [s.eventName, s.dispatchForm, s.runtime, s.pragmaSuppressed].join(String.fromCharCode(31));
 }
 function listenSignature(s) {
-  return [s.eventName, s.runtime, s.enclosingSymbol].join(String.fromCharCode(31));
+  return [s.eventName, s.runtime].join(String.fromCharCode(31));
 }
 
 function multisetDiff(beforeSigs, afterSigs) {

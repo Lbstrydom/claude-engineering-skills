@@ -206,6 +206,18 @@ test('diffSites — a removed TEST listener is never a candidate (removedListene
   assert.equal(removedListeners[0].runtime, 'test');
 });
 
+test('diffSites — renaming the enclosing function of an UNCHANGED listener is not a removed listener (mirror-image of R2/G1\'s dispatch fix)', () => {
+  // Gemini round-2 G1 dropped `enclosingSymbol` from the dispatch cancellation
+  // signature for exactly this reason (found in final-review credit triage,
+  // 2026-09-14, that `listenSignature` never got the same fix): a rename or
+  // relocation of the wrapping function must not manufacture a false
+  // removed+added pair for a listener whose event/runtime never changed.
+  const before = extractEventSites(`function oldName() { el.addEventListener('a:b', h); }`, { path: 'x.js' });
+  const after = extractEventSites(`function newName() { el.addEventListener('a:b', h); }`, { path: 'x.js' });
+  const { removedListeners } = diffSites(before, after);
+  assert.equal(removedListeners.length, 0, 'renaming the enclosing symbol alone must not cancel out to a removed listener');
+});
+
 // ---------------------------------------------------------------------------
 // resolveSymmetry — D8/D9/D10/D2b/R3-M2/R4-H1
 // ---------------------------------------------------------------------------
