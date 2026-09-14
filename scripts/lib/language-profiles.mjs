@@ -316,13 +316,33 @@ export function toExtensionAlternation(extensions) {
 export const ALL_EXTENSIONS_PATTERN = toExtensionAlternation(ALL_SUPPORTED_EXTENSIONS);
 
 /**
+ * Well-known filenames that carry no extension. Without this branch the
+ * dotted-extension requirement below made `Dockerfile`/`Makefile` invisible to
+ * every caller of `buildFileReferenceRegex` — found as a HIGH in
+ * `scripts/lib/finding-match.mjs` (a candidate mentioning `Dockerfile`
+ * resolved to zero file refs while the literal same string on a stored row's
+ * `primary_file` resolved fine via `normalizePath`, defeating same-file
+ * suppression checks both there and in `semantic-suppression.mjs`) and
+ * independently as a MEDIUM on the suppression side. Case-sensitive and
+ * exact-match (no trailing extension of their own), matching the ecosystem
+ * convention for each.
+ */
+const KNOWN_EXTENSIONLESS_FILENAMES = Object.freeze([
+  'Dockerfile', 'Makefile', 'Rakefile', 'Gemfile', 'Vagrantfile', 'Procfile', 'Jenkinsfile',
+]);
+
+/** Pipe-joined, longest-first alternation of the filenames above. */
+const EXTENSIONLESS_FILENAME_PATTERN = toExtensionAlternation(KNOWN_EXTENSIONLESS_FILENAMES);
+
+/**
  * Build a file-reference regex for path extraction from free text.
- * Handles: 'foo.py', './foo.py', '../foo.py', '/abs/foo.py', backticked, quoted.
+ * Handles: 'foo.py', './foo.py', '../foo.py', '/abs/foo.py', backticked, quoted,
+ * and a well-known extensionless filename (optionally path-prefixed, e.g. 'docker/Dockerfile').
  */
 export function buildFileReferenceRegex() {
   return new RegExp(
     `(?:^|[\\s\`('"])` +
-    `((?:\\.{1,2}\\/|\\/)?(?:[\\w.-]+\\/)*[\\w.-]+\\.(?:${ALL_EXTENSIONS_PATTERN}))`,
+    `((?:\\.{1,2}\\/|\\/)?(?:[\\w.-]+\\/)*(?:[\\w.-]+\\.(?:${ALL_EXTENSIONS_PATTERN})|(?:${EXTENSIONLESS_FILENAME_PATTERN})))`,
     'g'
   );
 }

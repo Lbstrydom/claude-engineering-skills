@@ -541,6 +541,30 @@ describe('buildFileReferenceRegex', () => {
     const m = [...' .claude/skills/foo.md '.matchAll(re)];
     assert.equal(m[0][1], '.claude/skills/foo.md');
   });
+
+  // final-review-credit-queue fp e3fcdc47 (HIGH) / fp 3a58f1d8 (MEDIUM): a
+  // known extensionless filename used to be structurally unmatchable — the
+  // extension alternation was mandatory — so a candidate mentioning
+  // `Dockerfile` extracted zero file refs while the identical string on a
+  // stored row's `primary_file` resolved fine via `normalizePath`, defeating
+  // same-file matching/suppression checks.
+  it("matches a well-known extensionless filename (Dockerfile)", () => {
+    const re = buildFileReferenceRegex();
+    const m = [...'see `Dockerfile` now'.matchAll(re)];
+    assert.equal(m[0][1], 'Dockerfile');
+  });
+
+  it("matches a path-prefixed extensionless filename (docker/Dockerfile)", () => {
+    const re = buildFileReferenceRegex();
+    const m = [...' docker/Dockerfile '.matchAll(re)];
+    assert.equal(m[0][1], 'docker/Dockerfile');
+  });
+
+  it("matches Makefile too", () => {
+    const re = buildFileReferenceRegex();
+    const m = [...' Makefile '.matchAll(re)];
+    assert.equal(m[0][1], 'Makefile');
+  });
 });
 
 describe('toExtensionAlternation — the ordering is a correctness property', () => {
