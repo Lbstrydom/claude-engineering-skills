@@ -34,7 +34,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { assertKnownFlags, ArgvError, hasFlag } from './lib/cli-io.mjs';
 import { compareMcpSurfaces } from './lib/mcp-parity.mjs';
 
@@ -154,10 +154,16 @@ function main() {
   });
 }
 
+// Repo idiom (e.g. arch-coverage-gate.mjs, audit-loop.mjs, gemini-review.mjs):
+// `pathToFileURL` produces the same percent-encoding `import.meta.url` uses,
+// so this compares two properly-encoded URLs instead of one encoded and one
+// not — the hand-rolled backslash-replace this replaced broke on any repo or
+// tmpdir path containing a space or non-ASCII character (audit finding
+// 0add0755, HIGH), because `import.meta.url` percent-encodes those and the
+// raw `process.argv[1]` string never did.
 const isMain = (() => {
   try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
+    return !!process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
   } catch { return false; }
 })();
 
