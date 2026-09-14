@@ -65,13 +65,24 @@ const OPT_OUT_RE = /\bemit\s*\([^;]{0,400}?softFail\s*:\s*true/g;
  * inflating a different gate's count). Returns `null` on a `git` failure —
  * the caller must treat that as a hard error, never as "zero hits".
  */
+/**
+ * The population this scan CAN see. Until 2026-09-14 this was `scripts/**`
+ * `.mjs`-only, so a `softFail` opt-out added to a root-level CLI (`install.mjs`,
+ * `setup.mjs`), a `.claude/hooks/*.mjs` executable, or any `.js`/`.cjs` entry
+ * point was structurally invisible to the gate — not exempted with a reason,
+ * simply unrepresentable, contradicting this module's own docstring claim to
+ * count opt-outs "across the repo's CLIs" (final-review-credit-queue fp
+ * a36bc428 / fp 6fd5e0c2 / fp 088dc200). Widened to root-level entry points and
+ * `.claude/hooks/`, and to `.js`/`.cjs` alongside `.mjs`.
+ */
 function listTrackedMjs(repoRoot) {
   const r = spawnSync('git', ['ls-files', '-z'],
     { cwd: repoRoot, encoding: 'utf-8', windowsHide: true, env: sanitizeGitEnv(repoRoot) });
   if (r.status !== 0) return null;
   return String(r.stdout || '').split('\0').filter(Boolean)
     .map((f) => f.replace(/\\/g, '/'))
-    .filter((f) => f.startsWith('scripts/') && f.endsWith('.mjs'));
+    .filter((f) => /\.(?:mjs|cjs|js)$/.test(f)
+      && (f.startsWith('scripts/') || f.startsWith('.claude/hooks/') || !f.includes('/')));
 }
 
 /**
