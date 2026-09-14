@@ -43,7 +43,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError, argOption, hasFlag, finishAndExit, safeErrorClass } from './lib/cli-io.mjs';
-import { checkAll } from './lib/accepted-debt-check.mjs';
+import { checkAll, parseAgentsDebtTable } from './lib/accepted-debt-check.mjs';
 import { loadRegistry } from './lib/accepted-debt-registry.mjs';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 
@@ -51,7 +51,7 @@ import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 // deliberately excluded from the sync manifest — see the module header), so
 // the CLI smoke contract doesn't apply here.
 const AGENTS_MD_PATH = 'AGENTS.md';
-const KNOWN_FLAGS = ['--json', '--out', '--help', '-h'];
+const KNOWN_FLAGS = ['--json', '--out', '--print-fingerprints', '--help', '-h'];
 
 /**
  * @returns {{jsonMode: boolean, outFile: string|null, help: boolean, outFlagWithoutValue: boolean}}
@@ -77,6 +77,7 @@ function parseArgs(argv) {
     outFile,
     help: hasFlag('help') || argv.includes('-h'),
     outFlagWithoutValue: outFlagPresent && !outFile,
+    printFingerprints: hasFlag('print-fingerprints'),
   };
 }
 
@@ -90,12 +91,54 @@ context" claim) gets real verification; the other five are reported as
 explicitly unverifiable, never silently trusted.
 
 Options:
-  --json         Machine-readable JSON envelope to stdout
-  --out <file>   Write the selected rendering to file instead of stdout
-  --help         Show this message
+  --json               Machine-readable JSON envelope to stdout
+  --out <file>         Write the selected rendering to file instead of stdout
+  --print-fingerprints Print each live AGENTS.md row's anchor + current
+                        rowFingerprint, marked against the registry
+                        (scripts/lib/accepted-debt-registry.mjs) so a wording
+                        edit that drifted the fingerprint can be re-pasted in
+                        without hand-running the parser (never blocks a
+                        push itself; this only regenerates what the
+                        registered ACCEPTED_DEBT_ROWS entries must match).
+  --help               Show this message
 
 Exit codes: 0=clean, 1=attention, 2=op-error
 `);
+}
+
+/**
+ * `--print-fingerprints`: the live AGENTS.md table's current anchor +
+ * rowFingerprint per row, so a fingerprint mismatch caught by
+ * tests/accepted-debt-check.test.mjs can be re-pasted into
+ * ACCEPTED_DEBT_ROWS without hand-running parseAgentsDebtTable (the
+ * registry's own header comment: "never hand-typed" — this is the affordance
+ * that makes that true in practice rather than only in prose).
+ * @param {{ok:true, markdown:string}|{ok:false}} agentsLoadResult
+ * @param {{ok:true, rows:object[]}|{ok:false}} [registryLoadResult] - injectable,
+ *   mirroring `executeCheck`'s pattern, so a test can assert against a fixture
+ *   registry rather than always reading this repo's real ACCEPTED_DEBT_ROWS.
+ *   Defaults to the real registry — `main()` never needs to pass this.
+ * @returns {{ok:boolean, exitCode:0|2, lines:string[]}}
+ */
+export function renderFingerprintDump(agentsLoadResult, registryLoadResult = loadRegistry()) {
+  if (!agentsLoadResult?.ok) {
+    return { ok: false, exitCode: 2, lines: [renderError(`AGENTS.md unreadable: ${agentsLoadResult?.message ?? agentsLoadResult?.errorClass ?? 'unknown error'}`)] };
+  }
+  const parsed = parseAgentsDebtTable(agentsLoadResult.markdown);
+  if (!parsed.ok) {
+    return { ok: false, exitCode: 2, lines: [renderError(`AGENTS.md "Accepted Technical Debt" table malformed: ${parsed.error}`)] };
+  }
+  const registryResult = registryLoadResult;
+  const byAnchor = new Map(
+    (registryResult.ok ? registryResult.rows : []).map((r) => [r.agentsTableAnchor, r.rowFingerprint]),
+  );
+  const lines = [`${parsed.rows.length} row(s) in the live AGENTS.md table (· unchanged, ~ drifted, + not yet registered):`];
+  for (const row of parsed.rows) {
+    const prior = byAnchor.get(row.anchor);
+    const marker = prior === undefined ? '+' : (prior === row.fingerprint ? '·' : '~');
+    lines.push(`  ${marker} ${row.fingerprint}  ${row.anchor}`);
+  }
+  return { ok: true, exitCode: 0, lines };
 }
 
 /**
@@ -263,6 +306,14 @@ async function main() {
   }
 
   const agentsLoadResult = loadAgentsMd(AGENTS_MD_PATH);
+
+  if (opts.printFingerprints) {
+    const dump = renderFingerprintDump(agentsLoadResult);
+    process.stdout.write(`${dump.lines.join('\n')}\n`);
+    await finishAndExit(dump.exitCode);
+    return;
+  }
+
   const registryLoadResult = loadRegistry();
   const result = executeCheck({ agentsLoadResult, registryLoadResult });
 

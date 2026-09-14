@@ -12,7 +12,7 @@ import {
   checkAll,
 } from '../scripts/lib/accepted-debt-check.mjs';
 import { ACCEPTED_DEBT_ROWS, loadRegistry } from '../scripts/lib/accepted-debt-registry.mjs';
-import { executeCheck } from '../scripts/check-accepted-debt.mjs';
+import { executeCheck, renderFingerprintDump } from '../scripts/check-accepted-debt.mjs';
 
 // Design + contract: docs/plans/accepted-debt-table-verification.md §4/§6.
 
@@ -627,6 +627,69 @@ describe('executeCheck — envelope', () => {
   });
 });
 
+// ── (f2) renderFingerprintDump — the --print-fingerprints affordance ────────
+// (final-review-credit-queue fp 5aab198a: tests/accepted-debt-check.test.mjs's
+// own 6-row parity assertion hard-fails the ordinary Tier-1 suite on any
+// AGENTS.md wording edit, with no fast way to regenerate the fingerprints it
+// expects. This does not make the parity check non-blocking — it makes fixing
+// a real drift a one-command affair instead of hand-running the parser.)
+
+describe('renderFingerprintDump', () => {
+  it('agents-unreadable input surfaces as exitCode 2, never a thrown exception', () => {
+    const dump = renderFingerprintDump({ ok: false, message: 'ENOENT' });
+    assert.equal(dump.ok, false);
+    assert.equal(dump.exitCode, 2);
+    assert.match(dump.lines.join('\n'), /AGENTS\.md unreadable/);
+  });
+
+  it('a malformed table surfaces as exitCode 2', () => {
+    const dump = renderFingerprintDump({ ok: true, markdown: 'no table here' });
+    assert.equal(dump.ok, false);
+    assert.equal(dump.exitCode, 2);
+    assert.match(dump.lines.join('\n'), /table malformed/);
+  });
+
+  it('a row matching the registry is marked unchanged (·); one that does not is marked drifted (~); one absent from the registry is marked new (+)', () => {
+    const markdown = FIXTURE_TABLE.replace('`bazQux` weird thing', '`newRow` thing');
+    // `fooBar` matches the real fingerprint below; `bazQux`→`newRow` was
+    // renamed (so it has no registry entry at all — a NEW anchor, not a
+    // drifted one); the registry's OWN `bazQux` entry with a wrong
+    // fingerprint proves the "drifted" marker separately.
+    const registry = loadRegistry([
+      { id: 'a', agentsTableAnchor: '`fooBar` no cache', rowFingerprint: computeRowFingerprint({ item: '`fooBar` no cache', rationale: 'Rationale one.', trigger: 'Trigger one' }), verification: { mode: 'unverifiable', reason: 'r1' } },
+      { id: 'b', agentsTableAnchor: '`bazQux` weird thing', rowFingerprint: 'aaaaaaaaaaaaaaaa', verification: { mode: 'unverifiable', reason: 'stale-on-purpose' } },
+    ]);
+    const dump = renderFingerprintDump({ ok: true, markdown }, registry);
+    assert.equal(dump.ok, true);
+    assert.equal(dump.exitCode, 0);
+    const byAnchor = Object.fromEntries(
+      dump.lines.slice(1).map((l) => {
+        const m = l.match(/^\s*(\S)\s+\S+\s+(.+)$/);
+        return [m[2], m[1]];
+      }),
+    );
+    assert.equal(byAnchor['`fooBar` no cache'], '·', 'matching fingerprint reads unchanged');
+    assert.equal(byAnchor['`newRow` thing'], '+', 'no registry entry at all reads new, not drifted');
+    // `bazQux` is gone from the live table in this fixture (renamed to
+    // newRow), so it never appears in `dump.lines` — proving `+`/`·` above
+    // are read off the LIVE table, not leaked from the registry's own stale
+    // `bazQux` row (which this test's registry still parameter carries, to
+    // make sure it's silently ignored rather than echoed).
+    assert.ok(!dump.lines.some((l) => l.includes('bazQux')), 'a registry row with no live counterpart must not appear in the dump');
+  });
+
+  it('against the real repo, every live row reads unchanged (·) — the registry is genuinely in sync', () => {
+    const realAgents = { ok: true, markdown: fs.readFileSync(path.join(REPO_ROOT, 'AGENTS.md'), 'utf-8') };
+    const dump = renderFingerprintDump(realAgents);
+    assert.equal(dump.exitCode, 0);
+    const markerLines = dump.lines.slice(1);
+    assert.equal(markerLines.length, ACCEPTED_DEBT_ROWS.length);
+    for (const line of markerLines) {
+      assert.match(line, /^\s*·\s/, `expected an unchanged (·) marker, got: ${line}`);
+    }
+  });
+});
+
 // ── (g) small spawnSync CLI suite — the true process-boundary contract ──
 
 describe('check-accepted-debt.mjs — CLI process boundary', () => {
@@ -675,5 +738,12 @@ describe('check-accepted-debt.mjs — CLI process boundary', () => {
     assert.equal(parsed.code, 'clean');
     assert.ok(parsed.summary);
     assert.ok(typeof parsed.rendering === 'string');
+  });
+
+  it('--print-fingerprints exits 0 against the real repo and prints one line per registered row', () => {
+    const r = spawnSync('node', [CLI, '--print-fingerprints'], { cwd: REPO_ROOT, encoding: 'utf-8' });
+    assert.equal(r.status, 0);
+    const lines = r.stdout.trim().split('\n');
+    assert.equal(lines.length - 1, ACCEPTED_DEBT_ROWS.length, 'a header line plus one row per registered anchor');
   });
 });
