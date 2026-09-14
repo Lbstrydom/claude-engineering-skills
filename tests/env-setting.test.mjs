@@ -82,6 +82,42 @@ describe('applyEnvSetting — R4 safety invariants', () => {
     assert.match(text, /^K=new$/m);
     assert.match(text, /^B=2$/m);
   });
+
+  test('a newline in value cannot inject an arbitrary assignment (audit d48b8d8a, HIGH)', () => {
+    // Without the guard, `A=1\n` + key K + value `v\nINJECTED=owned` would land
+    // in the file as TWO lines: `K=v` and `INJECTED=owned` — an attacker who
+    // controls the value controls the file.
+    assert.throws(
+      () => applyEnvSetting('A=1\n', 'K', 'v\nINJECTED=owned'),
+      /must not contain a line break/,
+    );
+  });
+
+  test('a CRLF in value is caught too — not just bare LF', () => {
+    assert.throws(
+      () => applyEnvSetting('A=1\n', 'K', 'v\r\nINJECTED=owned'),
+      /must not contain a line break/,
+    );
+  });
+
+  test('a newline in key is refused the same way', () => {
+    assert.throws(
+      () => applyEnvSetting('A=1\n', 'K\nINJECTED=owned', 'v'),
+      /must not contain a line break/,
+    );
+  });
+
+  test('a newline in comment is refused the same way', () => {
+    assert.throws(
+      () => applyEnvSetting('A=1\n', 'K', 'v', { comment: '# c\nINJECTED=owned' }),
+      /must not contain a line break/,
+    );
+  });
+
+  test('an ordinary single-line value is unaffected by the guard', () => {
+    const { text } = applyEnvSetting('A=1\n', 'K', 'plain-value');
+    assert.match(text, /^K=plain-value$/m);
+  });
 });
 
 describe('resolveEnvValue — observable value, not unrecoverable origin (H6/H10)', () => {

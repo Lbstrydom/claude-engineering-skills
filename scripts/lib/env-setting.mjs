@@ -31,6 +31,23 @@ function detectEol(text) {
 }
 
 /**
+ * A `\r` or `\n` inside `key`/`value`/`comment` lets it break out of the single
+ * line it is meant to occupy and inject one or more arbitrary `KEY=VALUE`
+ * assignments into the target `.env` on the next write (audit finding
+ * d48b8d8a, HIGH). Neither call site today has a legitimate multi-line value
+ * — a newline here is either a caller bug or a crafted/corrupted input — so
+ * this fails loud rather than silently stripping it, matching
+ * `assertSafeFingerprint`'s posture in outbox-envelope.mjs.
+ * @param {string} label - which argument, for the error message
+ * @param {unknown} v
+ */
+function assertSingleLine(label, v) {
+  if (typeof v === 'string' && /[\r\n]/.test(v)) {
+    throw new TypeError(`applyEnvSetting: ${label} must not contain a line break (got ${JSON.stringify(v)})`);
+  }
+}
+
+/**
  * Compute new `.env` contents after inserting / replacing / removing one key.
  *
  * @param {string} existingText - current file contents ('' when the file is absent)
@@ -45,6 +62,9 @@ function detectEol(text) {
  */
 export function applyEnvSetting(existingText, key, value, opts = {}) {
   const { comment = null, reformat = false } = opts;
+  assertSingleLine('key', key);
+  assertSingleLine('value', value);
+  assertSingleLine('comment', comment);
   const eol = detectEol(existingText || '');
   const eolEsc = escapeRegExp(eol);
   const keyRe = new RegExp(`^\\s*${escapeRegExp(key)}\\s*=`);
