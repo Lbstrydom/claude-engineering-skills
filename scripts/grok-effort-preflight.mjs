@@ -52,6 +52,8 @@ import { buildReviewEnvelope } from './lib/final-review/envelope.mjs';
 import { redactSecretsWithCount } from './lib/sensitive-egress-gate.mjs';
 import { resolveModel, resolveXaiCreds } from './lib/model-resolver.mjs';
 import { priceFor } from './lib/model-pricing.mjs';
+import { classifyReadPath } from './lib/path-validation.mjs';
+import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 
 const KNOWN_FLAGS = Object.freeze(['--build-fixture', '--run', '--selfcheck-relocation', '--help', '-h']);
 
@@ -165,6 +167,24 @@ export function computeWorstCaseSpendUsd(fixtureChars, rates = {}) {
  * input to what it is meant to represent.
  */
 export function buildFixture({ transcriptPath, planPath, maxChars = PREFLIGHT_FIXTURE_MAX_CHARS, outPath = FIXTURE_PATH }) {
+  // Repo-root and sensitive-path admission BEFORE any read (final-review-
+  // credit-queue fp 05a0393a). Unlike gemini-review.mjs's own transcript read
+  // (readFileOrDie parity was the original, incomplete justification here),
+  // buildFixture writes a DURABLE artifact containing the assembled content —
+  // if an operator points either flag at, say, `.env` or an `~/.ssh/`-adjacent
+  // path, its bytes would be persisted to `.audit/grok-preflight-fixture.json`
+  // and sent to xAI, with redaction covering only what KD-8's content scanner
+  // recognises as secret-SHAPED, not path-classified as sensitive.
+  const repoRoot = findRepoRootFromScript(import.meta.url) || process.cwd();
+  for (const [flag, candidate] of [['--build-fixture <transcript>', transcriptPath], ['--build-fixture <plan>', planPath]]) {
+    const verdict = classifyReadPath({ repoRoot, candidate });
+    if (!verdict.ok) {
+      throw new Error(
+        `[grok-preflight] ${flag} refused (${verdict.reason}): ${candidate}. `
+        + 'Pass a path inside this repo that is not sensitive-shaped.',
+      );
+    }
+  }
   const transcriptContent = readFileOrDie(transcriptPath);
   const planContent = readFileOrDie(planPath);
   let transcript;

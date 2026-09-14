@@ -8,19 +8,27 @@
  *
  * Plan: docs/plans/final-review-scoped-second-reviewer.md §8.
  */
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { mkdtempSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { scratchDir } from '../scripts/lib/temp-paths.mjs';
 
 import {
   computeDisposition, computeWorstCaseSpendUsd, TRIALS_PER_EFFORT,
   MAX_OUTPUT_TOKENS, SPEND_CAP_USD, PREFLIGHT_FIXTURE_MAX_CHARS, CALL_TIMEOUT_MS,
   buildFixture,
 } from '../scripts/grok-effort-preflight.mjs';
+
+/**
+ * Repo-anchored, not `os.tmpdir()`: `buildFixture()` now enforces repo-root
+ * containment on its two path args (final-review-credit-queue fp 05a0393a),
+ * so a fixture built for these tests must itself live inside the repo.
+ */
+const mkFixtureDir = () => mkdtempSync(join(scratchDir(), 'grok-preflight-fixture-test-'));
 
 const trial = (effort, reasoningTokens, ok = true) => ({ effort, ok, reasoningTokens });
 
@@ -165,13 +173,22 @@ describe('buildFixture — the KD-8 redaction scan actually runs (audit-found ga
   // `.audit/grok-preflight-fixture.json` — shared, production-facing scratch
   // state a real --run invocation depends on — with test data.
   const isolatedOutPath = (dir) => join(dir, 'fixture-under-test.json');
+  const dirs = [];
+  after(() => {
+    for (const d of dirs) { try { rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ } }
+  });
+  function newFixtureDir() {
+    const dir = mkFixtureDir();
+    dirs.push(dir);
+    return dir;
+  }
 
   it('a secret-shaped string in the source plan does NOT reach the written fixture', () => {
     // Reproduces the exact gap the cluster audit caught: buildFixture() called
     // buildReviewEnvelope() but never applied redactSecretsWithCount() before
     // writing the fixture to disk (which is then sent to xAI six times per
     // pre-flight run). Real detected shape (sk-ant-...), not a made-up marker.
-    const dir = mkdtempSync(join(tmpdir(), 'grok-preflight-fixture-test-'));
+    const dir = newFixtureDir();
     const secret = 'sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
     const planPath = join(dir, 'plan.md');
     const transcriptPath = join(dir, 'transcript.json');
@@ -184,7 +201,7 @@ describe('buildFixture — the KD-8 redaction scan actually runs (audit-found ga
   });
 
   it('clean content (no secrets) reports zero redactions and is byte-unchanged', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'grok-preflight-fixture-test-'));
+    const dir = newFixtureDir();
     const planPath = join(dir, 'plan.md');
     const transcriptPath = join(dir, 'transcript.json');
     writeFileSync(planPath, '# Plan\n\nnothing sensitive here.\n');
@@ -195,7 +212,7 @@ describe('buildFixture — the KD-8 redaction scan actually runs (audit-found ga
   });
 
   it('writes to the caller-supplied outPath, not the shared default FIXTURE_PATH', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'grok-preflight-fixture-test-'));
+    const dir = newFixtureDir();
     const planPath = join(dir, 'plan.md');
     const transcriptPath = join(dir, 'transcript.json');
     writeFileSync(planPath, '# Plan\n');
@@ -204,6 +221,49 @@ describe('buildFixture — the KD-8 redaction scan actually runs (audit-found ga
 
     buildFixture({ transcriptPath, planPath, outPath: out });
     assert.ok(existsSync(out), 'must write to the supplied outPath');
+  });
+});
+
+describe('buildFixture — repo-root + sensitive-path admission before read (final-review-credit-queue fp 05a0393a)', () => {
+  const dirs = [];
+  after(() => {
+    for (const d of dirs) { try { rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ } }
+  });
+  function newFixtureDir() {
+    const dir = mkFixtureDir();
+    dirs.push(dir);
+    return dir;
+  }
+
+  it('a transcript path OUTSIDE the repo is refused before any read (would otherwise persist arbitrary bytes into the durable fixture)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'grok-preflight-outside-repo-'));
+    dirs.push(dir);
+    const planPath = join(scratchDir(), `plan-${Date.now()}.md`);
+    writeFileSync(planPath, '# Plan\n');
+    const outsideTranscript = join(dir, 'transcript.json');
+    writeFileSync(outsideTranscript, JSON.stringify({ rounds: [{ findings: [] }] }));
+
+    assert.throws(
+      () => buildFixture({ transcriptPath: outsideTranscript, planPath, outPath: join(dir, 'out.json') }),
+      /--build-fixture <transcript> refused \(path-escapes-repo\)/,
+      'a path outside the repo root must be refused, never read',
+    );
+  });
+
+  it('a sensitive-shaped path (e.g. inside .ssh) is refused even when it happens to sit under the repo', () => {
+    const dir = newFixtureDir();
+    const planPath = join(dir, 'plan.md');
+    writeFileSync(planPath, '# Plan\n');
+    const sensitiveDir = join(dir, '.ssh');
+    mkdirSync(sensitiveDir);
+    const sensitiveTranscript = join(sensitiveDir, 'id_rsa');
+    writeFileSync(sensitiveTranscript, 'not a real key, but sensitive-shaped by path');
+
+    assert.throws(
+      () => buildFixture({ transcriptPath: sensitiveTranscript, planPath, outPath: join(dir, 'out.json') }),
+      /refused \((?:sensitive-path|path-escapes-repo)\)/,
+      'a sensitive-shaped path must be refused before its content is read',
+    );
   });
 });
 
