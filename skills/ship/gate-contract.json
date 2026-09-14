@@ -640,6 +640,14 @@
     {
       "line": "`--page-size` is the alias of `--limit` (default 20, cap 200 — the same",
       "reason": "Descriptive prose about the final-review-pending CLI's paging contract (keyset cursor, --page-size alias, cap 200), which is enforced by resolveNudgePage + decodeQueueCursor and pinned by tests/final-review-pending.test.mjs and tests/final-review-pending-db.test.mjs — not a claim that this skill's own execution enforces anything. Same class as the existing design-rationale entries."
+    },
+    {
+      "line": "here is never undone by a later triage pass. The card now surfaces a",
+      "reason": "Descriptive prose about the credit-card's two-axis labelling and the replay-preserves-rulings behavior (recordFinalReviewFindings upsert+prune), enforced by scripts/lib/store/runs-findings.mjs and pinned by tests/final-review-replay-db.test.mjs and tests/final-review-persistence-isolation.test.mjs -- not a claim that this skill's own execution enforces anything. Same class as the existing design-rationale entries."
+    },
+    {
+      "line": "consolidated union-diff gate) silently wiped every `user_action` /",
+      "reason": "Descriptive prose about the credit-card's two-axis labelling and the replay-preserves-rulings behavior (recordFinalReviewFindings upsert+prune), enforced by scripts/lib/store/runs-findings.mjs and pinned by tests/final-review-replay-db.test.mjs and tests/final-review-persistence-isolation.test.mjs -- not a claim that this skill's own execution enforces anything. Same class as the existing design-rationale entries."
     }
   ]
 }
