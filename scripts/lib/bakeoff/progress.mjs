@@ -88,7 +88,14 @@ export function printProgress(logPath, target, scopeResult) {
     const known = costed.filter(([, v]) => typeof v === 'number');
     const total = known.reduce((a, [, v]) => a + v, 0);
     const parts = costed.map(([id, v]) => `${id}=${v == null ? 'unpriced' : `$${v.toFixed(2)}`}`);
+    // D6 "no silent zero" applied to money: with one arm unpriced, $2.00 must
+    // not read as the total spend when it is really "total of the priced arms
+    // only" (final-review-credit-queue fp d207d40a) — the per-arm parts already
+    // label an unpriced arm, but the aggregate total silently dropped it from
+    // the sum with no qualifier of its own.
+    const unpriced = costed.length - known.length;
     process.stdout.write(`  spend: ${parts.join(' ')} | total $${total.toFixed(2)}`
+      + (unpriced > 0 ? ` (${unpriced} arm(s) unpriced, excluded)` : '')
       + (s.complete ? ` ($${(total / s.complete).toFixed(2)}/snapshot)` : '') + '\n');
     // Cost per unique finding is a FLOOR on cost-effectiveness, not the verdict:
     // §6.3 scores ACCEPTED HIGH/MED clusters, which only exist after blind
