@@ -160,11 +160,9 @@ export async function computeDriftScoreCmd(ctx) {
 export async function getCallersForFileCmd(ctx) {
   const p = ctx.payload();
   if (typeof p.path !== 'string' || p.path.length === 0) {
-    throw new CommandError('BAD_INPUT', 'path required', {}, 1);
+    throw new CommandError('BAD_INPUT', 'path required');
   }
-  if (!ctx.cloud.enabled) {
-    return { ok: true, cloud: false, callers: [], callerDomains: [], snapshotProvenance: 'cloud-disabled' };
-  }
+  if (!ctx.cloud.enabled) return { ...ctx.degrade() };
   const repoUuid = resolveRepoIdentity(process.cwd()).repoUuid;
   const repo = await ctx.deps.getRepoIdByUuid(repoUuid);
   if (!repo) {
@@ -202,12 +200,7 @@ export async function getCallersForFileCmd(ctx) {
  */
 export async function getNeighbourhoodCmd(ctx) {
   const p = ctx.payload();
-  if (!ctx.cloud.enabled) {
-    return {
-      ok: true, cloud: false, refreshId: null, records: [], totalCandidatesConsidered: 0,
-      truncated: false, hint: 'cloud disabled — run `npm run arch:refresh` to enable',
-    };
-  }
+  if (!ctx.cloud.enabled) return { ...ctx.degrade() };
   const { isEmbedProviderAvailable } = await import('../../embed-text.mjs');
   if (!await isEmbedProviderAvailable()) {
     return {

@@ -445,6 +445,32 @@ describe('snapshot reads bind to the repo the CLI is running in', () => {
     assert.ok(read, 'the importer read never ran');
     assert.equal(read.args[0].repoId, 'repo-row-1');
   });
+
+  it('get-callers-for-file: a missing --path is BAD_INPUT at the frozen exit 2, not a hand-picked exit 1 (final-review-credit-queue fp 09e7a18c)', async () => {
+    const { deps } = recordingDeps();
+    const r = await dispatch(argv('get-callers-for-file', '--json', '{}'), { deps, cloudGate: 'ready' });
+    assert.equal(r.exitCode, 2, JSON.stringify(r.envelope));
+    assert.equal(r.envelope.error.code, 'BAD_INPUT');
+  });
+
+  it('get-callers-for-file: cloud-off envelope is the registry degradeShape, not a hand-built duplicate (fp 33e2358e)', async () => {
+    const { deps } = recordingDeps();
+    const r = await dispatch(argv('get-callers-for-file', '--json', '{"path":"a.mjs"}'), { deps, cloudGate: 'off' });
+    assert.equal(r.exitCode, 0, JSON.stringify(r.envelope));
+    assert.deepEqual(r.envelope, {
+      ok: true, cloud: false, callers: [], callerDomains: [], snapshotProvenance: 'cloud-disabled',
+    });
+  });
+
+  it('get-neighbourhood: cloud-off envelope is the registry degradeShape, not a hand-built duplicate (fp 33e2358e)', async () => {
+    const { deps } = recordingDeps();
+    const r = await dispatch(argv('get-neighbourhood', '--json', '{"intentDescription":"x"}'), { deps, cloudGate: 'off' });
+    assert.equal(r.exitCode, 0, JSON.stringify(r.envelope));
+    assert.deepEqual(r.envelope, {
+      ok: true, cloud: false, refreshId: null, records: [], totalCandidatesConsidered: 0,
+      truncated: false, hint: 'cloud disabled — run `npm run arch:refresh` to enable',
+    });
+  });
 });
 
 describe('persona-outcomes — the ambient READ fallback (/ship gate blindness, 2026-09-07)', () => {
