@@ -1527,6 +1527,31 @@ design. `--group-by work-unit` (and `--work-unit <key>`, `--no-llm-labels`)
 groups a page's actionable rows into refactor-sized units through the same
 grouper `list-unlocked-fixes` and `list-unremediated-acceptances` share.
 
+**A ruling on EITHER axis is a label (since 2026-09-14,
+docs/plans/final-review-credit-projection.md).** A finding's adjudication
+lives on two columns: `adjudication_outcome` (the triage ruling — written
+automatically by the audit loop's own deliberation) and `user_action` (the
+ship-time disposition this step's `final-review-adjudicate` writes). Until
+this date the card read only `user_action`, so a primary-bucket finding the
+loop had already ruled `accepted` weeks earlier — 1,649 of 2,280 rows in one
+live measurement — still printed as "fixed-but-unlabelled" and this step
+asked you to re-adjudicate it. `user_action` is a **durable override**: once
+set to anything but `needs_triage` it wins outright, so recording a ruling
+here is never undone by a later triage pass. The card now surfaces a
+`⚠ N finding(s) where the ship-time disposition and the triage ruling
+disagree in direction` line (`axisConflicts`) when the two axes point opposite
+ways — reconcile those by hand; everything else needs no special handling.
+
+**Re-running the final reviewer no longer erases prior rulings.** Before this
+date, `recordFinalReviewFindings` replaced a run's findings by DELETE-then-
+INSERT, so a second Gemini pass over the same `--run-id` (a re-run round, or a
+consolidated union-diff gate) silently wiped every `user_action` /
+`adjudication_outcome` a human or agent had already written on that run's
+rows. It now upserts the new snapshot and prunes only the rows the snapshot
+dropped that carry **no** ruling and **no** recorded remediation on either
+axis — a labelled or remediated finding that drops out of a later snapshot is
+kept, not erased.
+
 **Advisory only — the reader always exits 0** across its three result states
 (`ready` / `disabled` / `unavailable`), emitting empty output when cloud is off
 or nothing is pending, and a single line carrying just a diagnostic CODE when
