@@ -12,15 +12,30 @@
  * helper, rather than the production module under test) — see
  * docs/plans/refactor-misc-small-items-2026-07.md, topicId a5f8c94f.
  */
+// Module-level, captured on the FIRST call only (final-review-credit-queue fp
+// c8be2a96). A second call used to re-read `process.env` — already blanked by
+// the first call — as its own "prior" value, and register a SECOND `exit`
+// listener that re-blanked whatever the first listener had just correctly
+// restored ('exit' listeners fire in registration order, so the second one
+// always ran last). Capturing once means every subsequent call just re-blanks
+// (harmless — the vars are already blank) instead of capturing a stale
+// snapshot and stacking another restorer.
+let captured = false;
+let priorDbUrl;
+let priorPostgresUrl;
+
 export function airGapDbUrl() {
-  const priorDbUrl = process.env.AUDIT_DB_URL;
-  const priorPostgresUrl = process.env.AUDIT_POSTGRES_URL;
+  if (!captured) {
+    captured = true;
+    priorDbUrl = process.env.AUDIT_DB_URL;
+    priorPostgresUrl = process.env.AUDIT_POSTGRES_URL;
+    process.on('exit', () => {
+      if (priorDbUrl === undefined) delete process.env.AUDIT_DB_URL;
+      else process.env.AUDIT_DB_URL = priorDbUrl;
+      if (priorPostgresUrl === undefined) delete process.env.AUDIT_POSTGRES_URL;
+      else process.env.AUDIT_POSTGRES_URL = priorPostgresUrl;
+    });
+  }
   process.env.AUDIT_DB_URL = '';
   process.env.AUDIT_POSTGRES_URL = '';
-  process.on('exit', () => {
-    if (priorDbUrl === undefined) delete process.env.AUDIT_DB_URL;
-    else process.env.AUDIT_DB_URL = priorDbUrl;
-    if (priorPostgresUrl === undefined) delete process.env.AUDIT_POSTGRES_URL;
-    else process.env.AUDIT_POSTGRES_URL = priorPostgresUrl;
-  });
 }

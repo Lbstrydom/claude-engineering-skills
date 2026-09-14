@@ -14,6 +14,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 test('the air-gap helper clears AUDIT_DB_URL and AUDIT_POSTGRES_URL regardless of ambient env', () => {
@@ -29,4 +31,30 @@ test('the air-gap helper clears AUDIT_DB_URL and AUDIT_POSTGRES_URL regardless o
   const { auditDbUrl, auditPostgresUrl } = JSON.parse(stdout);
   assert.equal(auditDbUrl, '', 'AUDIT_DB_URL must be cleared even though the ambient env set it');
   assert.equal(auditPostgresUrl, '', 'AUDIT_POSTGRES_URL (the alias) must be cleared too — this is the a5f8c94f gap');
+});
+
+test('calling airGapDbUrl() twice still restores the ORIGINAL values at exit, not the already-blanked ones (final-review-credit-queue fp c8be2a96)', () => {
+  // Two calls in one process register two `process.on('exit', ...)` closures
+  // if the helper captures "prior" on every call. The second call's capture
+  // happens AFTER the first call already blanked the vars, so its "prior" is
+  // '' — and since 'exit' listeners fire in registration order, that second
+  // handler runs SECOND and re-blanks whatever the first handler just
+  // correctly restored. The real original value must survive both calls.
+  const probe = path.join(import.meta.dirname, 'fixtures', 'tiered-shadow-airgap-double-call-probe.mjs');
+  const outPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'airgap-double-')), 'result.json');
+  try {
+    execFileSync(process.execPath, [probe, outPath], {
+      encoding: 'utf-8',
+      env: {
+        ...process.env,
+        AUDIT_DB_URL: 'postgresql://original/db',
+        AUDIT_POSTGRES_URL: 'postgresql://original-alias/db',
+      },
+    });
+    const { auditDbUrl, auditPostgresUrl } = JSON.parse(fs.readFileSync(outPath, 'utf-8'));
+    assert.equal(auditDbUrl, 'postgresql://original/db', 'the real original value must survive a second airGapDbUrl() call');
+    assert.equal(auditPostgresUrl, 'postgresql://original-alias/db', 'same for the alias');
+  } finally {
+    fs.rmSync(path.dirname(outPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
 });
