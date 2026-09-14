@@ -1,14 +1,24 @@
 # Plan: Reconcile attribution, coverage honesty, and base freshness
 
 - **Date**: 2026-09-05
-- **Status**: Approved — `/audit-plan` 3 GPT rounds (H:3 M:2 → H:1 M:1 → M:1),
-  **8/8 findings accepted, 100% acceptance every round**. Gemini gate 3 rounds
-  (`CONCERNS` ×3, 0 false positives, no bias, coherence "Strong"), stopped at
-  R3 per the cap: severity decayed to one narrow edge case and one test-infra
-  nit, both folded in rather than deferred. Two findings were confirmed
-  **empirically** rather than accepted on assertion — `HEAD~1@{u}` is a git
-  error, and this very branch has no configured upstream, which would have made
-  `--apply` unusable here on day one.
+- **Status**: **Complete** — shipped across `b0cc72e7` (attribution + coverage)
+  and `5bf80dea` (`--apply` repair path); the §7b close-out split
+  (`upstream/disposition-ledger.mjs`, `upstream/reconcile-render.mjs`) and the
+  AGENTS.md condensation (`docs/reference/consumer-repo-layout.md`) both landed
+  in the same close-out. Verified directly against the tree (2026-09-14, not
+  from recollection): every File-Level Plan target exists and is committed on
+  `origin/main`, `openai-audit.mjs` wires `resolveBaseFreshness`/
+  `formatStaleBaseAdvisory`, and `AGENTS.md` sits under its 92,000-char cap.
+  This line was previously left at `Approved` after implementation had already
+  shipped — corrected here, not from the audit-plan history below, which still
+  accurately describes the pre-implementation gate: `/audit-plan` 3 GPT rounds
+  (H:3 M:2 → H:1 M:1 → M:1), **8/8 findings accepted, 100% acceptance every
+  round**. Gemini gate 3 rounds (`CONCERNS` ×3, 0 false positives, no bias,
+  coherence "Strong"), stopped at R3 per the cap: severity decayed to one
+  narrow edge case and one test-infra nit, both folded in rather than deferred.
+  Two findings were confirmed **empirically** rather than accepted on assertion
+  — `HEAD~1@{u}` is a git error, and this very branch has no configured
+  upstream, which would have made `--apply` unusable here on day one.
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
 - **Target domain(s)**: `shared-lib`, `scripts`, `audit-orchestration`

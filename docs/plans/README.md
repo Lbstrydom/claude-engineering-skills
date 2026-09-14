@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**4 active · 221 terminal · 29 audit summaries · 1 parked · 5 reference docs**
+**3 active · 222 terminal · 29 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -22,7 +22,6 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [The five aged-out acceptances that are real, still live, and no longer surfaced](./aged-out-acceptance-remainder.md) | `Draft` | evidence gathered, no code written. Each item below was re-verified against the tree at `8178f062` and… |
-| [Reconcile attribution, coverage honesty, and base freshness](./reconcile-attribution-and-base-freshness.md) | `Approved` | `/audit-plan` 3 GPT rounds (H:3 M:2 → H:1 M:1 → M:1), 8/8 findings accepted, 100% acceptance every round.… |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
 
@@ -55,7 +54,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 218 completed plans</summary>
+<summary>Show all 219 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -211,6 +210,7 @@ source comments that no docs linter sees — stays valid.
 | [Git-Native Provenance Trailers (F1) + Executable Gate-Honesty Suite (F2)](./provenance-trailers-and-gate-honesty.md) | `Complete` | implemented via `/cycle --autonomous`… |
 | [Quickfix Mechanical Blind-Spot Patterns](./quickfix-blindspot-patterns.md) | `Complete` | plan-audit (3 GPT rounds + 4 Gemini rounds) converged as documented below; implemented… |
 | [Adaptive Audit Intelligence — Efficiency, Learning, and Continuous Improvement](./r2-efficiency.md) | `Complete` | shipped — R2+ mode is the canonical audit re-run path: `R2_ROUND_MODIFIER` + `buildRulingsBlock` in… |
+| [Reconcile attribution, coverage honesty, and base freshness](./reconcile-attribution-and-base-freshness.md) | `Complete` | shipped across `b0cc72e7` (attribution + coverage) and `5bf80dea` (`--apply` repair path); the §7b close-out… |
 | [Fix `redactSecrets` Positional-Collision Bug](./redact-secrets-positional-collision-fix.md) | `Complete` |  |
 | [Arch-Memory / Symbol-Index Pipeline Debt (2026-07-26 triage)](./refactor-arch-memory-symbol-index-2026-07.md) | `Complete` | (closed 2026-08-09) — 22 items fixed, 1 closed by measurement, 2 duplicate ids folded into their originals,… |
 | [Architecture-Debt Backlog Remainder (2026-07-26 triage)](./refactor-architecture-debt-remainder-2026-07.md) | `Complete` | all 3 items shipped. §2 via a sibling plan; §1 via… |
