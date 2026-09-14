@@ -37,7 +37,16 @@ it made this ladder disagree with the auto-selection order documented below.
    an independent final reviewer — find what the author and GPT missed; default to
    skepticism."* Record its verdict in the same `APPROVE`/`CONCERNS`/`REJECT` shape
    and run the same closed loop. This preserves the cross-perspective gate when no
-   provider key is available (it is the documented substitute, not a bypass).
+   provider key is available (it is the documented substitute, not a bypass). This
+   substitute stands on its own and carries **no `--gate` downgrade of its own** —
+   the GPT audit already ran and produced a real transcript; only the SECOND
+   opinion was substituted. Contrast `references/prerequisite-ladder.md` Rung 1,
+   whose substitute stands in for the audit itself (no transcript exists at all)
+   and is therefore disclosed as `AUDIT_DEGRADED` with a forced `--gate not-run` —
+   a strictly worse degradation than this rung's. The two ladders cover different
+   prerequisites (the auditor route vs. this one, the final-reviewer route) and
+   can fire independently or together; only rung 5 below (no agent available for
+   THIS rung either) produces a machine-visible signal of its own.
 5. **only** when neither a route nor an independent agent is available → output
    `FINAL_GATE_SKIPPED` and do not claim full final-gate validation.
 

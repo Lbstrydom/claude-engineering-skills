@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "0b1fff27c3672ad5",
+  "bundleVersion": "930d84d1985c9157",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -75,8 +75,8 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "3fe39dadfbab",
-          "size": 13261
+          "sha": "62dbc01f66b0",
+          "size": 13985
         },
         {
           "relPath": "references/input-acquisition.md",
@@ -118,8 +118,8 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "3fe39dadfbab",
-          "size": 13261
+          "sha": "62dbc01f66b0",
+          "size": 13985
         },
         {
           "relPath": "references/input-acquisition.md",
