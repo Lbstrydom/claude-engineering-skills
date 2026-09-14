@@ -189,6 +189,11 @@ export async function durableWrite(writerId, payload, { repoRoot = process.cwd()
     try {
       const res = await spec.replay(payload);
       if (res?.applied === true) return { outcome: 'written', writerId };
+      // Same rule as the two branches below (final-review shadow, LOW): a
+      // declined write is `skipped` regardless of WHY the envelope could
+      // never be written — an unserialisable payload is no more evidence of
+      // loss than a full admission queue is.
+      if (res?.declined === true) return { outcome: 'skipped', writerId, error: res.reason };
     } catch { /* fall through to lost */ }
     return { outcome: 'lost', writerId, error: `payload not serialisable: ${err?.message || err}` };
   }

@@ -210,6 +210,32 @@ test('a DECLINED write is `skipped` even when the queue is full', async () => {
   } finally { rmTmp(root); }
 });
 
+test('a DECLINED write is `skipped` even when the payload cannot be fingerprinted', async () => {
+  // Third instance of the same rule (final-review shadow, accepted-unfixed
+  // 6ecb6473/5e55dae9), and the one branch the two tests above never covered:
+  // `fingerprintFor` serialises the payload BEFORE any store attempt, so a
+  // circular payload throws there, before the admission check or the envelope
+  // write ever run. That early throw still calls `spec.replay` — and the
+  // declined check was missing on exactly this path, so a cloud-off write with
+  // an unserialisable payload read `lost` instead of `skipped` no matter how
+  // much queue headroom was left.
+  const root = mkTmp('ces-dw-nofp-');
+  try {
+    let replayed = null;
+    registerWriter('w', {
+      schemaVersion: 1,
+      replay: async (payload) => { replayed = payload; return { applied: false, declined: true, reason: 'cloud-off' }; },
+    });
+    const circular = { id: 1 };
+    circular.self = circular;
+    const res = await durableWrite('w', circular, { repoRoot: root });
+    assert.equal(res.outcome, 'skipped',
+      'an unserialisable payload is no more evidence of loss than a full queue is');
+    assert.equal(replayed, circular, 'replay still receives the real payload, not a stringified stand-in');
+    assert.equal(queued(root).length, 0, 'a declined write leaves no envelope — nothing was ever written to spill');
+  } finally { rmTmp(root); }
+});
+
 test('drain refuses a git-TRACKED artifact — provenance, not just shape', async () => {
   // .gitignore does not stop `git add -f`, so a valid-shaped artifact can be
   // committed into the repo. A real spill artifact is written at runtime into a
