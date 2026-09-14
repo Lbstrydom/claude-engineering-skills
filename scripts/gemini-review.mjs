@@ -781,7 +781,6 @@ const REVIEW_TRANSPORTS = {
         thinking_tokens: r.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
       },
       finishReason: finish,
-      finishReason: r.choices?.[0]?.finish_reason ?? null,
     };
   },
 };
