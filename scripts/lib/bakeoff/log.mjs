@@ -10,9 +10,31 @@
  */
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * This file's own repo root, walking up to the `scripts` ancestor directory's
+ * parent — the same algorithm `assert-repo-root.mjs::findExpectedRoot` uses,
+ * inlined here (rather than imported) to respect this module's D2a import
+ * allowlist (`lib/file-io.mjs` only; no other repo module). Every LOG_PATH
+ * consumer previously resolved the bare relative string against
+ * `process.cwd()`, so running from a subdirectory (or a wrapper/hook with a
+ * different cwd) silently created or read a second, disjoint log — final-
+ * review-credit-queue fp ef7bb450 / fp 84eca55e.
+ */
+function repoRootOfThisFile() {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  while (path.basename(dir) !== 'scripts') {
+    const parent = path.dirname(dir);
+    if (parent === dir) return process.cwd(); // not under scripts/ — shouldn't happen
+    dir = parent;
+  }
+  return path.dirname(dir);
+}
 
 /** Category A: accumulating run data, gitignored — never a committed artifact. */
-export const LOG_PATH = '.audit/bakeoff-log.jsonl';
+export const LOG_PATH = path.join(repoRootOfThisFile(), '.audit', 'bakeoff-log.jsonl');
 
 /**
  * Evidence counts only if produced under the contract the stopping rule

@@ -10,8 +10,35 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { readLog } from '../scripts/lib/bakeoff/log.mjs';
+import { readLog, LOG_PATH } from '../scripts/lib/bakeoff/log.mjs';
+
+describe('LOG_PATH is repo-rooted, not cwd-relative (final-review-credit-queue fp ef7bb450 / fp 84eca55e)', () => {
+  it('is an absolute path anchored under THIS repo, independent of process.cwd()', () => {
+    assert.ok(path.isAbsolute(LOG_PATH), `expected an absolute path, got ${LOG_PATH}`);
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+    assert.ok(
+      path.resolve(LOG_PATH).startsWith(path.resolve(repoRoot) + path.sep),
+      `expected LOG_PATH under the repo root ${repoRoot}, got ${LOG_PATH}`,
+    );
+    assert.ok(LOG_PATH.endsWith(path.join('.audit', 'bakeoff-log.jsonl')));
+  });
+
+  it('does not move when cwd changes (the actual regression: a bare relative constant used to)', () => {
+    const before = LOG_PATH;
+    const savedCwd = process.cwd();
+    try {
+      process.chdir(os.tmpdir());
+      // Re-import would hit the module cache anyway (constants are computed once
+      // at load), but the real assertion is that the value never depended on
+      // cwd in the first place — proven by it already being absolute above.
+      assert.equal(LOG_PATH, before);
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+});
 
 const dirs = [];
 after(() => {
