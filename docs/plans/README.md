@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**4 active · 220 terminal · 29 audit summaries · 1 parked · 5 reference docs**
+**4 active · 221 terminal · 29 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -55,7 +55,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 217 completed plans</summary>
+<summary>Show all 218 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -141,6 +141,7 @@ source comments that no docs linter sees — stays valid.
 | [Field-Reported /plan → /audit-plan Defects](./field-report-audit-plan-defects.md) | `Complete` | shipped in `cd862249`, `3a9dde1d`, `49bef636`; this document is the retrospective spec the code audit grades… |
 | [Background-safe & provider-agnostic final-review gate](./final-review-background-safe-provider-agnostic.md) | `Complete` |  |
 | [Close the final-review credit loop + admit a cheap shadow](./final-review-credit-and-cheap-shadow.md) | `Complete` |  |
+| [Final-review credit — a ruling is a ruling on either axis, and a re-run must not erase it](./final-review-credit-projection.md) | `Complete` |  |
 | [Reduced-Scope Second Final Reviewer + 4-Arm Cost/Yield Campaign](./final-review-scoped-second-reviewer.md) | `Complete` | Clusters A–C implemented via `/cycle --autonomous`, consolidated Gemini gate APPROVE in 2 rounds (§10b),… |
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `Complete` | VERDICT: KEEP opus (SELECT opus, the incumbent; no challenger cleared the relative floor). N reached 12/12… |
 | [Shadow Final-Review Reviewer (A/B test final-gate effectiveness)](./final-review-shadow-reviewer.md) | `Complete` | verified built; status corrected from Approved during archive triage 2026-06-27 |

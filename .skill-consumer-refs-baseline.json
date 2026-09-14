@@ -1,6 +1,6 @@
 {
   "$comment": "Declared unreachable pointers in synced skill content. See scripts/check-skill-consumer-refs.mjs. Every entry needs a disposition and a real reason; new entries default to a TODO reason that the gate rejects.",
-  "totalSites": 188,
+  "totalSites": 189,
   "refs": {
     "doc docs/architecture-map.md": {
       "disposition": "consumer-authored",
@@ -48,6 +48,11 @@
       "sites": 1
     },
     "doc docs/plans/click-test-v2-persistence.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
+      "sites": 1
+    },
+    "doc docs/plans/final-review-credit-projection.md": {
       "disposition": "provenance",
       "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
       "sites": 1

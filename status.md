@@ -30,6 +30,80 @@
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `scripts/.claude-skills/lib/debt-ledger-claim-check.mjs` in wine-cellar-app's synced tree contains `mergeTopicIdEvidence` — present. The push's own sync summary confirmed 9 files updated across all 3/3 registered consumers.
 - **Result**: verified — the debt-ledger-claims-check cloud-evidence fix reached the consumer bundle intact.
 
+## 2026-09-14 — final-review credit: a ruling on either axis is a label, and replay no longer erases prior rulings
+
+### Changes
+
+`/cycle --autonomous` over [docs/plans/final-review-credit-projection.md](docs/plans/final-review-credit-projection.md)
+— targeted after measuring that ~81% of the final-review credit queue already
+carried a ruling on the wrong axis (`adjudication_outcome`, the audit loop's own
+triage) while the queue only ever read `user_action` (the ship-time
+disposition), so a genuinely-adjudicated finding still read as unadjudicated.
+audit-plan R1 H:3 M:2 → R2 M:1 → Gemini R1-R3 CONCERNS folded → R4 APPROVE.
+Executed as two §11 clusters (A: Phases 1-2 read-side + replay-preserves-
+rulings, fix-gate:yes; B: Phase 3 SKILL.md docs, fix-gate:final). 12 commits,
+20 files, +1333/-100.
+
+- **Seam 1/2 — a ruling on EITHER axis is a completed label.**
+  `COMPLETED_RULINGS = ['accepted','dismissed','severity_adjusted']` now
+  applies to `adjudication_outcome` the same way it already applied to
+  `user_action`; `needs_triage` stays open on both axes.
+  `classifyFinalReviewOutcome` (scripts/lib/final-review-credit.mjs) reads
+  `adjudication_outcome` alongside `user_action`, and `pendingQueueSql`
+  (scripts/lib/store/final-review-credit-population.mjs) projects it in both
+  UNION arms — a finding the audit loop already ruled on stops appearing as
+  "awaiting credit."
+- **Seam 3 — upsert + prune replacement, not delete-then-insert.**
+  `recordFinalReviewFindings` (scripts/lib/store/runs-findings.mjs) used to
+  DELETE every prior row for a pass before inserting the new snapshot,
+  silently erasing any ruling recorded between final-review runs. It now
+  upserts the new snapshot (`primary`/`shadow`, each in its own
+  `pg_advisory_xact_lock`-guarded transaction, shadow only when `shadowRan`)
+  and prunes only the rows the new snapshot actually dropped that carry no
+  ruling on either axis and no recorded remediation (`pruneUnrecordedUnruled`,
+  matched on the complete `(finding_fingerprint, bucket)` identity via
+  `IS NOT DISTINCT FROM`). A batch a producer defect shrank (missing
+  `severity`, reported via the new `droppedCount`) skips pruning rather than
+  being read as an authoritative empty replacement.
+- **Cluster A code-audit fixes** (5 genuine, ~20 HIGH / ~6 MEDIUM deferred as
+  pre-existing debt in the same two files, several overlapping the prior
+  cycle's Cluster B): `recordFinalReviewFix`'s dismissal guard now checks
+  `adjudication_outcome` too, not just `user_action` (H8); `recordFindings`
+  reports `droppedCount` so the prune step can tell a degraded batch from a
+  complete one (H17); `buildFinalReviewPersistPayload` extracted as a pure
+  function out of `runShadowAndPersist` (scripts/gemini-review.mjs) so all
+  three shadow states — ran-with-findings, ran-empty, did-not-run — get real
+  functional tests instead of call-shape assertions (M6, a negative control
+  caught a genuine gap in the first draft, fixed); `dedupByHash` now writes
+  its `semanticId` fallback back onto the finding (pre-existing bug, but this
+  diff's pruning consumes the output so correctness now rides on it); a
+  literal duplicate `finishReason` object key removed. One HIGH (an
+  "unconditional bucket reference" claim) was DISMISSED via GPT rebuttal
+  deliberation — consistent with every other query in the file, none touched
+  by this diff.
+- **Consolidated Gemini gate** (4 subset passes for full-file coverage over
+  the union diff) caught one real bug neither this plan's own audit rounds nor
+  yesterday's `backlog-tooling-honesty.md` audit had caught on its own — only
+  visible with both diffs reviewed together: `decodeQueueCursor`'s fingerprint
+  regex (from yesterday's cycle) rejected `fingerprintOf()`'s
+  `missing-hash-<24 hex>` fallback shape for a finding with no producer
+  `_hash`, which would have broken pagination if such a finding ever landed as
+  a page's last row. Fixed (regex now accepts both shapes) and regression-
+  tested.
+- **Verified**: full suite green (15,785 tests, 0 fail); the real-Postgres
+  suite (`tests/final-review-replay-db.test.mjs`, 6 cases including a
+  cross-branch identity case and a two-connection advisory-lock concurrency
+  case) green in the local Docker container; `skills:check`, `size:ratchet`,
+  `db:enrolment`, `cli:flags`, `emit:exit` gates clean. Live acceptance
+  measurement (read-only, against the production store):
+  `{"oldPop":2292,"newPop":631,"removed":1661,"identity":true}` — the
+  new-population identity `newPop === oldPop − removed` held exactly, matching
+  the value predicted at plan-writing time even as the surrounding population
+  moved from ongoing store activity during the session.
+
+**AI-Gate**: `not-run` (the tree moved past any single audited commit across
+the fix rounds — same situation as the prior cycle).
+
 ## 2026-09-13 — backlog-tooling honesty: one convergence verdict, a reachable credit queue, one grouper for three backlogs, non-vacuous scans, cwd-independent locks
 
 ### Changes
