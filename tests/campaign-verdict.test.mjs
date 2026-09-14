@@ -251,6 +251,28 @@ test('LOW severity does not count toward the pre-registered metric', () => {
   assert.deepEqual(perArm, {});
 });
 
+test('a severity_adjusted terminal outcome credits the arm — it confirms the defect (final-review-credit-queue fp 40eadb37)', () => {
+  const { perArm } = creditAccepted([{
+    clusterId: 'c1', snapshotId: 's1',
+    members: [{
+      findingId: 'f1', armId: 'a', severity: 'HIGH',
+      events: [{ id: '1', adjudicatorKind: 'human', adjudicationOutcome: 'severity_adjusted', severity: 'MEDIUM', createdAt: 't', supersededAt: null }],
+    }],
+  }]);
+  assert.equal(perArm.a, 1, 'severity_adjusted confirms the defect and must credit like accepted');
+});
+
+test('a severity_adjusted outcome that regrades DOWN to LOW still withholds credit', () => {
+  const { perArm } = creditAccepted([{
+    clusterId: 'c1', snapshotId: 's1',
+    members: [{
+      findingId: 'f1', armId: 'a', severity: 'HIGH',
+      events: [{ id: '1', adjudicatorKind: 'human', adjudicationOutcome: 'severity_adjusted', severity: 'LOW', createdAt: 't', supersededAt: null }],
+    }],
+  }]);
+  assert.deepEqual(perArm, {}, 'the severity gate still applies after the outcome gate widens');
+});
+
 test('an adjudicator downgrade is honoured — severity comes from the terminal event', () => {
   const { perArm } = creditAccepted([{
     clusterId: 'c1', snapshotId: 's1',

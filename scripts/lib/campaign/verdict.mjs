@@ -57,6 +57,15 @@ export const CAMPAIGN_STATES = Object.freeze([
 export const COUNTED_SEVERITIES = Object.freeze(['HIGH', 'MEDIUM']);
 
 /**
+ * Terminal adjudication outcomes that confirm a defect is real, for credit
+ * purposes. `severity_adjusted` is a human/agent CONFIRMING the finding while
+ * regrading it — the repo-wide convention (every `*_severity_adjusted*`
+ * migration view) already treats it as equivalent to `accepted`; only
+ * `dismissed` (and, upstream, `needs_triage`) withhold credit.
+ */
+export const CREDITABLE_ADJUDICATION_OUTCOMES = Object.freeze(['accepted', 'severity_adjusted']);
+
+/**
  * `adjudicator_kind` rank for the terminal-event total order. A direct human
  * disposition and a human override rank IDENTICALLY — both are human verdicts,
  * and the later one wins on the timestamp/id tiebreak below.
@@ -171,7 +180,7 @@ export function creditAccepted(clusters) {
     const armsCreditedHere = new Set();
     for (const member of cluster.members || []) {
       const term = terminalEvent(member.events);
-      if (!term || term.adjudicationOutcome !== 'accepted') continue;
+      if (!term || !CREDITABLE_ADJUDICATION_OUTCOMES.includes(term.adjudicationOutcome)) continue;
       // Severity comes from the TERMINAL event when it carries one — an
       // adjudicator may downgrade, and the pre-registered metric counts what the
       // adjudication concluded, not what the arm claimed.
