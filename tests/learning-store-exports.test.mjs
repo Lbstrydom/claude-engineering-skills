@@ -94,6 +94,14 @@ const EXPECTED_EXPORTS = [
   'readDebtEventsCloud',
   'removeDebtEntryCloud',
   'upsertDebtEntries',
+  // docs/plans/debt-ledger-persisted-record-contract.md §2 Fix D — links a
+  // superseded debt topic to its replacement, verifying both exist first.
+  'markSupersededCloud',
+  // §2 Fix C — content-aliasing for a tech-debt-domain caller with no pool
+  // of its own; keeps pool lifecycle inside the stores domain rather than
+  // exposing a raw accessor (the getReadClient/getWriteClient class R3/M2
+  // removed).
+  'enrichDebtEntriesWithAliases',
   // friction (7)
   'appendMitigationRef',
   'buildFrictionUpsertPayload',
@@ -582,6 +590,14 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // sites had the bug, so the fix is a guard INSIDE the store function
     // rather than three corrected arguments: a per-call-site fix leaves the
     // fourth caller free to reintroduce the same false zero.
-    assert.equal(EXPECTED_EXPORTS.length, 206);
+    // 206 → 207: +markSupersededCloud (2026-09-15, docs/plans/
+    // debt-ledger-persisted-record-contract.md §2 Fix D) — links a
+    // superseded debt topic to its replacement, verifying both topicIds
+    // exist via a real read (never a write receipt) before writing the link.
+    // 207 → 208: +enrichDebtEntriesWithAliases (2026-09-15, same plan §2 Fix
+    // C) — debt-memory.mjs (tech-debt domain) has no pool of its own and may
+    // not import db/client.mjs directly; this keeps pool lifecycle private
+    // to the stores domain instead of exposing a raw accessor.
+    assert.equal(EXPECTED_EXPORTS.length, 208);
   });
 });

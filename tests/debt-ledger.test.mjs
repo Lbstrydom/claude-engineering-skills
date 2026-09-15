@@ -15,6 +15,7 @@ import {
   removeDebtEntry,
   mergeLedgers,
   findDebtByAlias,
+  markSuperseded,
 } from '../scripts/lib/debt-ledger.mjs';
 
 let tmpDir;
@@ -296,5 +297,60 @@ describe('writeDebtEntries — concurrent writes', () => {
     assert.equal(read.entries.length, 6);
     const ids = read.entries.map(e => e.topicId).sort();
     assert.deepEqual(ids, ['seed', 't0', 't1', 't2', 't3', 't4']);
+  });
+});
+
+// ── markSuperseded (§2 Fix D) ────────────────────────────────────────────────
+
+describe('markSuperseded', () => {
+  test('links the old entry to the new one when both exist', async () => {
+    await writeDebtEntries([makeEntry({ topicId: 'old1' }), makeEntry({ topicId: 'new1' })], { ledgerPath });
+    const r = await markSuperseded('old1', 'new1', { ledgerPath });
+    assert.equal(r.ok, true, r.error);
+    const read = readDebtLedger({ ledgerPath, events: [] });
+    assert.equal(read.entries.find(e => e.topicId === 'old1').supersededBy, 'new1');
+  });
+
+  test('refuses when the old topicId does not exist', async () => {
+    await writeDebtEntries([makeEntry({ topicId: 'new1' })], { ledgerPath });
+    const r = await markSuperseded('missing', 'new1', { ledgerPath });
+    assert.equal(r.ok, false);
+    assert.equal(r.error, 'old-topic-not-found');
+  });
+
+  test('refuses when the new topicId does not exist', async () => {
+    await writeDebtEntries([makeEntry({ topicId: 'old1' })], { ledgerPath });
+    const r = await markSuperseded('old1', 'missing', { ledgerPath });
+    assert.equal(r.ok, false);
+    assert.equal(r.error, 'new-topic-not-found');
+  });
+
+  test('refuses self-reference', async () => {
+    await writeDebtEntries([makeEntry({ topicId: 'old1' })], { ledgerPath });
+    const r = await markSuperseded('old1', 'old1', { ledgerPath });
+    assert.equal(r.ok, false);
+    assert.equal(r.error, 'self-reference');
+  });
+
+  test('refuses when the ledger does not exist yet', async () => {
+    const r = await markSuperseded('old1', 'new1', { ledgerPath });
+    assert.equal(r.ok, false);
+    assert.equal(r.error, 'ledger-not-found');
+  });
+
+  test('normalizes a historical entry with no classification field before writing it back (Gemini gate round-2 G4)', async () => {
+    // A "historical" entry has neither classification nor
+    // classificationUnavailableReason — writeDebtEntries would normally
+    // backfill this at write time, so construct the raw JSON directly to
+    // simulate a genuinely old, un-normalized row already on disk.
+    const oldRaw = makeEntry({ topicId: 'old1' });
+    delete oldRaw.classificationUnavailableReason;
+    fs.writeFileSync(ledgerPath, JSON.stringify({ version: 1, entries: [oldRaw, makeEntry({ topicId: 'new1' })] }, null, 2));
+    const r = await markSuperseded('old1', 'new1', { ledgerPath });
+    assert.equal(r.ok, true, r.error);
+    const read = readDebtLedger({ ledgerPath, events: [] });
+    const updated = read.entries.find(e => e.topicId === 'old1');
+    assert.equal(updated.supersededBy, 'new1');
+    assert.equal(updated.classificationUnavailableReason, 'not-provided-by-capture-source');
   });
 });

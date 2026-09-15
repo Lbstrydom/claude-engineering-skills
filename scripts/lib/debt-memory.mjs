@@ -35,7 +35,7 @@
 import fs from 'node:fs';
 import {
   DEFAULT_DEBT_LEDGER_PATH, readDebtLedger, writeDebtEntries, removeDebtEntry,
-  mergeLedgers,
+  mergeLedgers, markSuperseded as markSupersededLocal,
 } from './debt-ledger.mjs';
 import {
   DEFAULT_DEBT_EVENTS_PATH, appendDebtEventsLocal, readDebtEventsLocal,
@@ -43,8 +43,10 @@ import {
 } from './debt-events.mjs';
 import {
   removeDebtEntryCloud, readDebtEntriesCloud,
-  appendDebtEventsCloud, readDebtEventsCloud,
+  appendDebtEventsCloud, readDebtEventsCloud, markSupersededCloud,
+  enrichDebtEntriesWithAliases,
 } from '../learning-store.mjs';
+import { embedText, findingEmbeddingSpace } from './embed-text.mjs';
 import { durableWrite } from './durable-write.mjs';
 // Side-effecting import: populates the durable-write registry. This is the
 // registry's ONLY bootstrap, and a fresh process (the operator drain, a CLI)
@@ -234,6 +236,42 @@ export async function persistDebtEntries(context, entries, { ledgerPath = DEFAUL
       cloudMirrored: false, cloudOutcome: 'skipped',
     };
   }
+
+  // §2 Fix A — every entry either carries a classification or an explicit
+  // reason it doesn't. Normalization itself lives at the actual write
+  // boundaries (`writeDebtEntries`, `upsertDebtEntries`), not here: this
+  // facade is not the only caller of either — `debt-auto-capture.mjs` and
+  // `debt-backfill.mjs --promote` both call `writeDebtEntries` directly — so
+  // normalizing only here would leave those callers unprotected.
+
+  // §2 Fix C — best-effort content aliasing, cloud-only (local mode has no
+  // embedding infra to query, so `contentAliases` stays `[]`, unchanged from
+  // today). Runs BEFORE the local write so both copies agree. Pool lifecycle
+  // stays inside `store/debt.mjs`'s `enrichDebtEntriesWithAliases` — this
+  // module (tech-debt domain) never touches `db/client.mjs` directly
+  // (`.audit-loop/domain-map.json`'s `allowedDeps` — tech-debt may not
+  // depend on stores; routing through the learning-store barrel keeps this
+  // an already-declared edge).
+  let embeddingsByTopicId = {};
+  let embeddingSpace;
+  if (context.source === EventSource.CLOUD && context.repoId) {
+    try {
+      embeddingSpace = findingEmbeddingSpace();
+      const embed = async (text) => {
+        const { result } = await embedText(text, { dim: embeddingSpace.dim, model: embeddingSpace.requestModel });
+        return result;
+      };
+      const aliasResult = await enrichDebtEntriesWithAliases(entries, {
+        repoId: context.repoId, embed, embeddingSpace,
+        log: (m) => process.stderr.write(m + '\n'),
+      });
+      entries = aliasResult.entries;
+      embeddingsByTopicId = aliasResult.embeddingsByTopicId;
+    } catch (err) {
+      process.stderr.write(`  [debt] content-aliasing skipped: ${err.message?.slice(0, 150)}\n`);
+    }
+  }
+
   // Write the local cache first so the entry survives a crash mid-call. The
   // cache is NOT the source of truth (see the module docstring) — it is a
   // fast local read and the spill's companion.
@@ -267,11 +305,24 @@ export async function persistDebtEntries(context, entries, { ledgerPath = DEFAUL
   // from the store until a drain lands, and a caller that cannot tell them
   // apart will assert a zero-orphan postcondition that is not yet true.
   let cloudOutcome = 'skipped';
+  let cloudOutcomeError;
   if (context.source === EventSource.CLOUD) {
-    const r = await durableWrite('debt.entries', { repoId: context.repoId, entries });
+    // `embeddingsByTopicId` is ALREADY a plain object (never a Map — see
+    // populateContentAliases), so it survives durableWrite's JSON spill
+    // serialization untouched (§2 Fix C, Gemini gate round-2 G2).
+    //
+    // A partial-batch schema rejection is NOT surfaced through this outcome
+    // (durableWrite's `{outcome, writerId, error}` shape has no field for
+    // per-row detail, and is not being widened for one caller) — it is
+    // logged directly to stderr by `upsertDebtEntries` the moment it
+    // detects rejections (§2 Fix B, round-1 GPT audit H3).
+    const r = await durableWrite('debt.entries', {
+      repoId: context.repoId, entries, embeddingsByTopicId, embeddingSpace,
+    });
     cloudOutcome = r.outcome;
+    cloudOutcomeError = r.error;
   }
-  return { ...local, cloudOutcome, cloudMirrored: cloudOutcome === 'written' };
+  return { ...local, cloudOutcome, cloudOutcomeError, cloudMirrored: cloudOutcome === 'written' };
 }
 
 /**
@@ -286,6 +337,38 @@ export async function removeDebt(context, topicId, { ledgerPath = DEFAULT_DEBT_L
     removedCloud = r.ok;
   }
   return { removedLocal, removedCloud };
+}
+
+/**
+ * Link `oldTopicId` to its replacement `newTopicId`, local + cloud.
+ * Mirrors `removeDebt`'s `{removedLocal, removedCloud}` shape — two
+ * independent mutations, no transaction spanning them (docs/plans/
+ * debt-ledger-persisted-record-contract.md §2 Fix D, Gemini gate round-2
+ * M7). Local runs first (authoritative, per this module's own established
+ * precedence); a cloud failure is reported but never rolls back the local
+ * write. Each side verifies BOTH topicIds exist against its OWN store
+ * immediately before writing (round-3 GPT audit H7), so a "local yes, cloud
+ * not-yet-visible" outcome is reported accurately rather than either side
+ * guessing from the other's write receipt.
+ *
+ * @param {object} context - from selectEventSource()
+ * @param {string} oldTopicId
+ * @param {string} newTopicId
+ * @param {object} [opts]
+ * @returns {Promise<{local: {applied: boolean, error?: string}, cloud: {applied: boolean, error?: string}}>}
+ */
+export async function markDebtSuperseded(context, oldTopicId, newTopicId, { ledgerPath = DEFAULT_DEBT_LEDGER_PATH } = {}) {
+  if (context.source === EventSource.DISABLED) {
+    return { local: { applied: false, error: 'debt-ledger-disabled' }, cloud: { applied: false, error: 'debt-ledger-disabled' } };
+  }
+  const localResult = await markSupersededLocal(oldTopicId, newTopicId, { ledgerPath });
+  const local = { applied: localResult.ok, error: localResult.error };
+  let cloud = { applied: false, error: 'skipped' };
+  if (context.source === EventSource.CLOUD) {
+    const r = await markSupersededCloud(context.repoId, oldTopicId, newTopicId).catch((err) => ({ ok: false, error: err.message }));
+    cloud = { applied: r.ok, error: r.error };
+  }
+  return { local, cloud };
 }
 
 // ── Offline → Cloud reconciliation (fix R3-H3) ──────────────────────────────

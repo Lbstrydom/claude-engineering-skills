@@ -12,6 +12,7 @@ import {
   computeLeverage,
   rankRefactorsByLeverage,
   findStaleEntries,
+  findOverdueForReview,
   oldestEntryDays,
   groupByFile,
   groupByPrinciple,
@@ -138,6 +139,42 @@ describe('findStaleEntries', () => {
   test('invalid deferredAt safely skipped', () => {
     const entries = [makeEntry({ topicId: 'bad', deferredAt: 'not-a-date' })];
     assert.deepEqual(findStaleEntries(entries, 90, now), []);
+  });
+});
+
+// ── §2 Fix D — findOverdueForReview ─────────────────────────────────────────
+// docs/plans/debt-ledger-persisted-record-contract.md
+
+describe('findOverdueForReview', () => {
+  const now = new Date('2026-04-05T12:00:00.000Z');
+
+  test('flags an entry whose reviewDeadline has passed', () => {
+    const entries = [
+      makeEntry({ topicId: 'overdue', reviewDeadline: '2026-04-01T00:00:00.000Z' }),
+      makeEntry({ topicId: 'future', reviewDeadline: '2026-05-01T00:00:00.000Z' }),
+    ];
+    assert.deepEqual(findOverdueForReview(entries, now), ['overdue']);
+  });
+
+  test('an entry with no reviewDeadline is never flagged — silence is not a deadline', () => {
+    const entries = [makeEntry({ topicId: 'no-deadline' })];
+    assert.deepEqual(findOverdueForReview(entries, now), []);
+  });
+
+  test('excludes a superseded entry even with a past reviewDeadline (Gemini gate round-1 G3)', () => {
+    const entries = [makeEntry({
+      topicId: 'superseded', reviewDeadline: '2026-04-01T00:00:00.000Z', supersededBy: 'newer-topic',
+    })];
+    assert.deepEqual(findOverdueForReview(entries, now), []);
+  });
+
+  test('distinct from findStaleEntries — an entry can be flagged by one and not the other', () => {
+    // Deferred recently (not stale by age) but with an explicit past deadline.
+    const entries = [makeEntry({
+      topicId: 'recent-but-overdue', deferredAt: '2026-04-04T00:00:00.000Z', reviewDeadline: '2026-04-01T00:00:00.000Z',
+    })];
+    assert.deepEqual(findStaleEntries(entries, 90, now), []);
+    assert.deepEqual(findOverdueForReview(entries, now), ['recent-but-overdue']);
   });
 });
 

@@ -317,6 +317,13 @@ describe('D2 regression: the production call sites actually use the shared resol
       // stored identity, which neighbourhood-query already does via its own guard.
       ['scripts/lib/audit/duplication-detector.mjs', 'query-side; persists no provenance'],
       ['scripts/lib/neighbourhood-query.mjs', 'query-side; persists no provenance'],
+      // docs/plans/debt-ledger-persisted-record-contract.md §2 Fix C:
+      // resolves embeddingSpace via the SAME shared findingEmbeddingSpace()
+      // this whole file protects, then hands it straight to
+      // store/debt.mjs's upsertDebtEntries (the actual embedding_model/
+      // dimension writer) — never a separate, potentially-diverging
+      // resolution. debt-memory.mjs itself persists nothing.
+      ['scripts/lib/debt-memory.mjs', 'query-side; resolves via the shared resolver and hands off to store/debt.mjs for persistence'],
     ]);
     const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
       const abs = path.join(dir, e.name);

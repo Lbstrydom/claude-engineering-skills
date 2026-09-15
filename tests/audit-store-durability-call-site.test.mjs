@@ -112,6 +112,7 @@ const WRITER_NAME = /^(record|sync|upsert|save|persist|write|delete|retire|mark|
  * apply rather than saying "not needed".
  */
 const NOT_A_DURABLE_WRITE = {
+  markSupersededCloud: 'docs/plans/debt-ledger-persisted-record-contract.md §2 Fix D — an explicit, operator-invoked link between two debt topics, never part of the orchestrator\'s automatic cloud-write block and never awaited from a fire-and-forget context. Its caller (`markDebtSuperseded` in debt-memory.mjs, invoked from debt-auto-capture.mjs\'s `--supersedes` flag) already checks `{applied, error}` and prints a WARN naming the exact reason on failure — the failure is already representable and the local ledger (written first, authoritative) is unaffected by a cloud-side miss.',
   recordRunStart: 'Creates the run row the other writers key on. It is already awaited and its failure is already representable — a null runId disables the whole cloud block, so it cannot fail silently.',
   recordDiffComplexity: 'Already returns {ok, error} and its caller already checks and logs it — the failure is representable, which is the contract. Not on the fire-and-forget list.',
   recordFinalReviewFindings: 'Written by gemini-review.mjs in a separate process, not by the orchestrator cloud block. Its own replace-persistence transaction owns atomicity; folding it in would need a second design.',

@@ -192,6 +192,15 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // untouched (whole-row equality — a stubbed store cannot show that at all).
   // Two edits, always — this list AND postgres-parity.yml.
   'tests/upstream-issue-annotation-db.test.mjs',
+  // Enrolled 2026-09-15 with migration 20260915120000 (debt_embeddings +
+  // the new debt_entries columns, docs/plans/debt-ledger-persisted-record-contract.md).
+  // Proves the real ivfflat cosine query and the schema-validation write path
+  // — a mock pool cannot show the vector index actually ranks correctly or
+  // that Postgres's per-column CHECKs are no longer the only backstop for
+  // the classification-or-reason disjunction.
+  // Two edits, always — this list AND postgres-parity.yml.
+  'tests/store-debt-cloud-validation.test.mjs',
+  'tests/debt-alias-integration.test.mjs',
 ]);
 
 /**

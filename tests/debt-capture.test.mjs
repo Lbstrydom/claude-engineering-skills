@@ -145,6 +145,43 @@ describe('buildDebtEntry', () => {
     assert.deepEqual(entry.classification, benignFinding.classification);
   });
 
+  // ── §2 Fix D — reviewDeadline auto-compute ──────────────────────────────
+  // docs/plans/debt-ledger-persisted-record-contract.md
+
+  test('reviewDeadline auto-computed 90 days out for blocked-by', () => {
+    const { entry } = buildDebtEntry(benignFinding, {
+      ...baseCaptureArgs, deferredReason: 'blocked-by', blockedBy: 'owner/repo#42',
+    });
+    assert.ok(entry.reviewDeadline);
+    const days = (Date.parse(entry.reviewDeadline) - Date.parse(entry.deferredAt)) / (24 * 60 * 60 * 1000);
+    assert.ok(Math.abs(days - 90) < 1, `expected ~90 days, got ${days}`);
+  });
+
+  test('reviewDeadline auto-computed 90 days out for deferred-followup', () => {
+    const { entry } = buildDebtEntry(benignFinding, {
+      ...baseCaptureArgs, deferredReason: 'deferred-followup', followupPr: 'owner/repo#7',
+    });
+    assert.ok(entry.reviewDeadline);
+  });
+
+  test('reviewDeadline left unset for out-of-scope/accepted-permanent/policy-exception', () => {
+    const outOfScope = buildDebtEntry(benignFinding, baseCaptureArgs).entry;
+    assert.equal(outOfScope.reviewDeadline, undefined);
+
+    const acceptedPermanent = buildDebtEntry(benignFinding, {
+      ...baseCaptureArgs, deferredReason: 'accepted-permanent', approver: 'alice', approvedAt: '2026-04-05T12:00:00.000Z',
+    }).entry;
+    assert.equal(acceptedPermanent.reviewDeadline, undefined);
+  });
+
+  test('an explicit captureArgs.reviewDeadline overrides the auto-computed default', () => {
+    const { entry } = buildDebtEntry(benignFinding, {
+      ...baseCaptureArgs, deferredReason: 'blocked-by', blockedBy: 'owner/repo#42',
+      reviewDeadline: '2027-01-01T00:00:00.000Z',
+    });
+    assert.equal(entry.reviewDeadline, '2027-01-01T00:00:00.000Z');
+  });
+
   test('deferredAt is ISO timestamp', () => {
     const { entry } = buildDebtEntry(benignFinding, baseCaptureArgs);
     assert.ok(!Number.isNaN(Date.parse(entry.deferredAt)));

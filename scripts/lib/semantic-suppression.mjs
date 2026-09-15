@@ -182,6 +182,29 @@ export function toVectorLiteral(vec) {
   return `[${vec.join(',')}]`;
 }
 
+/**
+ * Parse a raw pgvector text literal ("[0.1,0.2,...]") back into a number[].
+ * `pg` has no built-in type parser for `vector` (a custom extension type),
+ * so a plain SELECT of a vector column returns it as this text form, not an
+ * array — the read-side counterpart to `toVectorLiteral` above. Gemini gate
+ * G1 (debt-ledger-persisted-record-contract.md §2): `debt-alias.mjs`'s
+ * embedding-cache-hit path assigned a raw `SELECT embedding ...` result
+ * straight to a variable later passed to `cosineSimilarity`, which silently
+ * breaks (string, not number[]) against a real Postgres — the exact class
+ * already root-caused once in `store/security.mjs`'s own `parseVectorLiteral`.
+ * Null-safe: a NULL embedding column already comes back as `null` from `pg`,
+ * never a string.
+ * @param {unknown} raw
+ * @returns {number[]|null}
+ */
+export function parseVectorLiteral(raw) {
+  if (raw == null) return null;
+  if (Array.isArray(raw)) return raw;
+  const trimmed = String(raw).trim().replace(/^\[|\]$/g, '');
+  if (!trimmed) return [];
+  return trimmed.split(',').map(Number);
+}
+
 /** Sort directions the retrospective reconciler's cap may take. */
 export const CAP_ORDERS = Object.freeze(['oldest', 'newest']);
 

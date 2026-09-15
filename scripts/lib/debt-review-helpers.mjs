@@ -135,6 +135,32 @@ export function findStaleEntries(debtEntries, ttlDays, now = new Date()) {
 }
 
 /**
+ * Find debt entries whose OWN `reviewDeadline` has passed (docs/plans/
+ * debt-ledger-persisted-record-contract.md §2 Fix D) — a different question
+ * from `findStaleEntries`'s age-based signal: "did you say you'd look at
+ * this by X" vs "is this just old". An entry with no `reviewDeadline` is
+ * never flagged (silence is not a deadline).
+ *
+ * Excludes superseded entries (`supersededBy` set) — Gemini gate round-1 G3:
+ * an entry already retired by its replacement has a moot review deadline,
+ * and without this exclusion it would nag forever after being superseded.
+ *
+ * @param {object[]} debtEntries - hydrated debt entries
+ * @param {Date} [now=new Date()]
+ * @returns {string[]} topicIds of entries overdue for review
+ */
+export function findOverdueForReview(debtEntries, now = new Date()) {
+  const nowMs = now.getTime();
+  return debtEntries
+    .filter(e => {
+      if (e.supersededBy) return false;
+      const t = Date.parse(e.reviewDeadline);
+      return Number.isFinite(t) && t < nowMs;
+    })
+    .map(e => e.topicId);
+}
+
+/**
  * Age of the oldest entry in days (integer, rounded down).
  */
 export function oldestEntryDays(debtEntries, now = new Date()) {

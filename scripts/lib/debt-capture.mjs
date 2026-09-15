@@ -60,6 +60,12 @@ export function computeSensitivity(finding) {
 const DETAIL_SNAPSHOT_MAX = 600;
 
 /**
+ * Default review window for deferredReasons that imply "revisit this"
+ * (docs/plans/debt-ledger-persisted-record-contract.md §2 Fix D).
+ */
+const REVIEW_DEADLINE_DEFAULT_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
  * Transform a finding into a PersistedDebtEntry payload.
  *
  * The caller MUST supply deferredReason + deferredRationale (operator decisions).
@@ -79,6 +85,7 @@ const DETAIL_SNAPSHOT_MAX = 600;
  * @param {string} [captureArgs.approvedAt]
  * @param {string} [captureArgs.policyRef]
  * @param {string} [captureArgs.owner]
+ * @param {string} [captureArgs.reviewDeadline] - ISO datetime override; auto-computed for blocked-by/deferred-followup when absent
  * @returns {{ entry: object, sensitivity: {sensitive, reasons}, redactions: {field, patterns}[] }}
  */
 export function buildDebtEntry(finding, captureArgs) {
@@ -93,6 +100,7 @@ export function buildDebtEntry(finding, captureArgs) {
     approvedAt,
     policyRef,
     owner,
+    reviewDeadline,
   } = captureArgs;
 
   // 1. Sensitivity scan BEFORE any transforms
@@ -143,6 +151,17 @@ export function buildDebtEntry(finding, captureArgs) {
   if (approver !== undefined) entry.approver = approver;
   if (approvedAt !== undefined) entry.approvedAt = approvedAt;
   if (policyRef !== undefined) entry.policyRef = policyRef;
+
+  // Revalidation trigger (docs/plans/debt-ledger-persisted-record-contract.md
+  // §2 Fix D): `blocked-by`/`deferred-followup` imply "revisit this" — the
+  // other three reasons (out-of-scope, accepted-permanent, policy-exception)
+  // are not expected to be revisited by design and get no automatic
+  // deadline, though an operator may still set one explicitly.
+  if (reviewDeadline !== undefined) {
+    entry.reviewDeadline = reviewDeadline;
+  } else if (deferredReason === 'blocked-by' || deferredReason === 'deferred-followup') {
+    entry.reviewDeadline = new Date(Date.parse(entry.deferredAt) + REVIEW_DEADLINE_DEFAULT_MS).toISOString();
+  }
 
   // Owner resolution (D.5): explicit arg wins, else consult CODEOWNERS for
   // the first affected file. If neither resolves → undefined (unassigned).

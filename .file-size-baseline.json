@@ -13,7 +13,7 @@
     "scripts/lib/install/transaction.mjs": 1060,
     "scripts/lib/ledger.mjs": 1281,
     "scripts/lib/model-resolver.mjs": 1074,
-    "scripts/lib/schemas.mjs": 1628,
+    "scripts/lib/schemas.mjs": 1676,
     "scripts/lib/store/campaign.mjs": 1786,
     "scripts/lib/store/runs-findings.mjs": 2483,
     "scripts/lib/sync-isolation-verify.mjs": 1032,

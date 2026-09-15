@@ -1,15 +1,17 @@
 # Plan: The five aged-out acceptances that are real, still live, and no longer surfaced
 
 - **Date**: 2026-09-04
-- **Status**: In Progress — §3 (`b091a8ab`) and §4 (`e3da8d42`) shipped
+- **Status**: Complete — §3 (`b091a8ab`) and §4 (`e3da8d42`) shipped
   2026-09-14, each had a concrete fix shape already and went straight to
   implementation without a separate `/plan` pass. §2's three findings
-  (`75981b9b`, `dd651e36`, `92fe5776`) remain: re-verified against the live
-  store on 2026-09-14 (still fully real — `content_aliases` 0/229,
-  unclassified 193/229, deferred-link fields 10/229), and still explicitly
-  out of scope for a queue-clearing session — a classification backfill
-  across ~190 rows is a per-entry judgement, and `content_aliases`
-  load-bearing-or-dead is a real design decision. §2 needs a `/plan` pass.
+  (`75981b9b`, `dd651e36`, `92fe5776`) **shipped 2026-09-15** via
+  `docs/plans/debt-ledger-persisted-record-contract.md` (commit `cf86eca6`,
+  [PR #108](https://github.com/Lbstrydom/claude-engineering-skills/pull/108)) —
+  full `/plan` → `/audit-plan` → `/audit-code` (12 rounds) → Gemini gate cycle,
+  run autonomously via `/cycle --autonomous`. Per that plan's explicit scope
+  boundary, a classification *backfill* across the 181 pre-existing empty
+  entries and a full semantic-clustering redesign were **not attempted** —
+  only the forward-going contract (every new/re-captured entry) is enforced.
 - **Author**: Claude + Louis
 - **Scope**: backend + one skill reference
 
@@ -125,14 +127,20 @@ instead of a prompt.
 
 ## 5. Acceptance criteria
 
-- [ ] §2: every `debt_entries` row for this repo either carries a
+- [x] §2: every `debt_entries` row for this repo either carries a
       classification or is explicitly recorded as unclassifiable, and the
-      writer refuses a new row that is neither.
-- [ ] §2: a decision recorded on whether `content_aliases` is load-bearing; if
-      it is, it is populated by the same semantic machinery `audit_findings`
-      uses, not a second one. If it is not, the field is removed.
-- [ ] §2: deferred entries carry a revalidation trigger, or the concept is
-      dropped and the doc says so.
+      writer refuses a new row that is neither. Shipped 2026-09-15
+      (`enforceDeferredReasonRequiredFields`'s disjunction in `schemas.mjs`,
+      normalized at every write boundary) — forward-going only, per that
+      plan's explicit scope boundary (no backfill across the 181 pre-existing
+      empty entries).
+- [x] §2: decided **load-bearing** — `content_aliases` is populated by the
+      same pgvector cosine machinery `audit_findings` dedup already uses
+      (`scripts/lib/debt-alias.mjs`, reusing `semantic-suppression.mjs`), not
+      a second mechanism. Shipped 2026-09-15, forward-going only.
+- [x] §2: deferred entries carry a revalidation trigger — `reviewDeadline`
+      (auto-computed 90 days from `deferredAt`) + `supersededBy` (explicit
+      linking, existence-verified on both ends). Shipped 2026-09-15.
 - [x] §3: the two alias shapes in the table resolve to 1; the shadowing control
       still resolves to 0; `regenerate-skill-copies.mjs` reports 2 sites.
       Verified 2026-09-14 (`tests/import-binding.test.mjs`,
