@@ -7,6 +7,11 @@
  *   symlinks (`realpath`) and stat the target via `resolveAndClassify`. They never
  *   write, and every failure mode — including a throwing `realpath` — is returned as
  *   `{ok:false, reason}` rather than propagated.
+ * - `readClassifiedFile` additionally **reads** — `classifyReadPath` plus the read, as
+ *   one call, closing the check-then-use gap a caller doing them as two separate
+ *   statements leaves open (see its own docstring, final-review-credit-queue fp
+ *   382bcb48). Prefer it over `classifyReadPath` + a later `readFileSync` whenever the
+ *   caller's only use of the classified path IS reading it.
  *
  * Why both classifiers resolve rather than string-compare: the call sites they serve
  * (`groundingNoteFor`, `lock-with-test`) accept **model-authored or operator-supplied**
@@ -114,6 +119,51 @@ export function classifyReadPath({ repoRoot, candidate, fs = fsDefault }) {
   catch { return { ok: false, reason: 'not-found' }; }
   if (!st.isFile()) return { ok: false, reason: 'not-a-file' };
   return contained;
+}
+
+/**
+ * `classifyReadPath` + the read, as ONE call — closes the check-then-use gap
+ * (final-review-credit-queue fp 382bcb48).
+ *
+ * Both real callers of `classifyReadPath` (`groundingNoteFor`,
+ * `grok-effort-preflight.mjs`'s `buildFixture`) validated a path and then
+ * read the RETURNED CANONICAL STRING in a separate, later statement. On this
+ * Tier-3 sensitive-egress seam (content is sent to a third-party LLM) that
+ * gap is exactly the wrong place for one: between the classifier's
+ * `realpath`/`stat` and the caller's own `readFileSync`, a local attacker
+ * able to race the filesystem could repoint the path (e.g. swap in a
+ * symlink escaping the repo) and have the ALREADY-VALIDATED string resolve
+ * to something the check never saw.
+ *
+ * **What this closes, and what it does not.** Reading immediately, inside
+ * the SAME function, with no caller-controlled code between validation and
+ * the read, collapses the window from "however long the caller takes to get
+ * around to it" to the syscall gap already inside `resolveAndClassify`
+ * itself. That residual is not fully closeable from plain Node `fs` APIs
+ * portably: the airtight fix is open-then-verify-via-fd (a `fstatSync(fd)`
+ * / realpath-of-the-open-fd re-check, immune to any LATER path swap because
+ * an open fd's target cannot change), but Node has no cross-platform
+ * primitive for "what does this open fd actually point at" — Linux has
+ * `/proc/self/fd/<n>`, Windows has no plain-`fs` equivalent, and this repo's
+ * primary dev platform is Windows. This is therefore the honest, portable
+ * improvement (near-elimination of the window), not a mathematical
+ * guarantee against a race measured in nanoseconds.
+ *
+ * @param {{repoRoot: string, candidate: string, fs?: object}} args
+ * @returns {{ok: true, canonical: string, content: string} | {ok: false, reason: string}}
+ */
+export function readClassifiedFile({ repoRoot, candidate, fs = fsDefault }) {
+  const verdict = classifyReadPath({ repoRoot, candidate, fs });
+  if (!verdict.ok) return verdict;
+
+  let fd;
+  try { fd = fs.openSync(verdict.canonical, 'r'); }
+  catch { return { ok: false, reason: 'not-found' }; }
+  try {
+    return { ok: true, canonical: verdict.canonical, content: fs.readFileSync(fd, 'utf-8') };
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 /**

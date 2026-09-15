@@ -8,11 +8,10 @@
  * `softFail` in the registry and pinned by the golden fixtures, not a
  * loophole discovered later.
  */
-import { readFileSync } from 'node:fs';
 import { CommandError } from '../dispatch.mjs';
 import { groupIntoWorkUnits, wantsWorkUnits } from '../work-unit-grouping.mjs';
 import { findRepoRootFromCwd } from '../../assert-repo-root.mjs';
-import { classifyReadPath } from '../../path-validation.mjs';
+import { readClassifiedFile } from '../../path-validation.mjs';
 import { checkFindingGrounding, formatGroundingNote } from '../../audit/finding-grounding.mjs';
 import {
   classifyFinalReviewOutcome, summariseCounts, orderItems, isActionable, renderFinalReviewCard,
@@ -193,9 +192,11 @@ function groundingNoteFor(f) {
       detail: f.detail_snapshot || '',
       primaryFile: f.primary_file || '',
       readFile: (rel) => {
-        const verdict = classifyReadPath({ repoRoot: root, candidate: rel });
-        if (!verdict.ok) return null;
-        return readFileSync(verdict.canonical, 'utf8');
+        // Validate-then-read as ONE call (final-review-credit-queue fp
+        // 382bcb48) — no gap between the containment check and the read for
+        // a local race to exploit on this Tier-3 sensitive-egress seam.
+        const verdict = readClassifiedFile({ repoRoot: root, candidate: rel });
+        return verdict.ok ? verdict.content : null;
       },
     });
     return formatGroundingNote(res);

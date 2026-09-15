@@ -47,12 +47,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { assertKnownFlags, ArgvError, emit } from './lib/cli-io.mjs';
-import { atomicWriteFileSync, readFileOrDie } from './lib/file-io.mjs';
+import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { buildReviewEnvelope } from './lib/final-review/envelope.mjs';
 import { redactSecretsWithCount } from './lib/sensitive-egress-gate.mjs';
 import { resolveModel, resolveXaiCreds } from './lib/model-resolver.mjs';
 import { priceFor } from './lib/model-pricing.mjs';
-import { classifyReadPath } from './lib/path-validation.mjs';
+import { readClassifiedFile } from './lib/path-validation.mjs';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 
 const KNOWN_FLAGS = Object.freeze(['--build-fixture', '--run', '--selfcheck-relocation', '--help', '-h']);
@@ -175,18 +175,23 @@ export function buildFixture({ transcriptPath, planPath, maxChars = PREFLIGHT_FI
   // path, its bytes would be persisted to `.audit/grok-preflight-fixture.json`
   // and sent to xAI, with redaction covering only what KD-8's content scanner
   // recognises as secret-SHAPED, not path-classified as sensitive.
+  // Validate-then-read as ONE call per path, not classify-then-read-later
+  // (final-review-credit-queue fp 382bcb48) — no gap between the containment
+  // check and the read for a local race to exploit on this Tier-3
+  // sensitive-egress seam (the assembled content is sent to xAI).
   const repoRoot = findRepoRootFromScript(import.meta.url) || process.cwd();
-  for (const [flag, candidate] of [['--build-fixture <transcript>', transcriptPath], ['--build-fixture <plan>', planPath]]) {
-    const verdict = classifyReadPath({ repoRoot, candidate });
+  const readValidated = (flag, candidate) => {
+    const verdict = readClassifiedFile({ repoRoot, candidate });
     if (!verdict.ok) {
       throw new Error(
         `[grok-preflight] ${flag} refused (${verdict.reason}): ${candidate}. `
         + 'Pass a path inside this repo that is not sensitive-shaped.',
       );
     }
-  }
-  const transcriptContent = readFileOrDie(transcriptPath);
-  const planContent = readFileOrDie(planPath);
+    return verdict.content;
+  };
+  const transcriptContent = readValidated('--build-fixture <transcript>', transcriptPath);
+  const planContent = readValidated('--build-fixture <plan>', planPath);
   let transcript;
   try { transcript = JSON.parse(transcriptContent); } catch { transcript = { raw: transcriptContent }; }
 

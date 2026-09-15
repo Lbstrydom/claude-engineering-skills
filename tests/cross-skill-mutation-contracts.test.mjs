@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { isPathContained, classifyTestPath, classifyReadPath } from '../scripts/lib/path-validation.mjs';
+import { isPathContained, classifyTestPath, classifyReadPath, readClassifiedFile } from '../scripts/lib/path-validation.mjs';
 import { validateCriteriaCount, validateCountFields } from '../scripts/lib/command-input.mjs';
 import { resolveRepoScope } from '../scripts/lib/repo-scope.mjs';
 import { rmrf as rmTmp } from './helpers/fixtures.mjs';
@@ -58,6 +58,45 @@ test('C2: an ordinary in-repo file is still readable', () => {
     fs.writeFileSync(path.join(repo, 'a.mjs'), 'x');
     const v = classifyReadPath({ repoRoot: repo, candidate: 'a.mjs' });
     assert.equal(v.ok, true, 'the fix must not refuse everything — that would also "pass"');
+  } finally { rmTmp(repo); }
+});
+
+// ── readClassifiedFile: check-then-use as ONE call (final-review-credit-queue
+// fp 382bcb48) ───────────────────────────────────────────────────────────────
+
+test('readClassifiedFile: reads the real content for an ordinary in-repo file', () => {
+  const repo = mkTmp('ces-rcf-ok-');
+  try {
+    fs.writeFileSync(path.join(repo, 'a.mjs'), 'hello world');
+    const v = readClassifiedFile({ repoRoot: repo, candidate: 'a.mjs' });
+    assert.equal(v.ok, true);
+    assert.equal(v.content, 'hello world');
+    assert.equal(v.canonical, fs.realpathSync(path.join(repo, 'a.mjs')));
+  } finally { rmTmp(repo); }
+});
+
+test('readClassifiedFile: refuses a symlink escaping the repo, same as classifyReadPath, and never reads it', () => {
+  const repo = mkTmp('ces-rcf-repo-');
+  const outside = mkTmp('ces-rcf-out-');
+  try {
+    const secret = path.join(outside, 'id_rsa');
+    fs.writeFileSync(secret, 'PRIVATE KEY');
+    const link = path.join(repo, 'innocent.txt');
+    try { fs.symlinkSync(secret, link); }
+    catch { return; } // unprivileged Windows cannot symlink — skip rather than false-pass
+
+    const v = readClassifiedFile({ repoRoot: repo, candidate: 'innocent.txt' });
+    assert.equal(v.ok, false, 'a symlink to a file outside the repo must not be read');
+    assert.equal(v.reason, 'path-escapes-repo');
+    assert.equal(v.content, undefined, 'a refused verdict must never carry content');
+  } finally { rmTmp(repo); rmTmp(outside); }
+});
+
+test('readClassifiedFile: an empty/missing candidate refuses the same way classifyReadPath does, without ever calling open', () => {
+  const repo = mkTmp('ces-rcf-missing-');
+  try {
+    assert.equal(readClassifiedFile({ repoRoot: repo, candidate: '' }).reason, 'empty-path');
+    assert.equal(readClassifiedFile({ repoRoot: repo, candidate: 'nope.mjs' }).reason, 'not-found');
   } finally { rmTmp(repo); }
 });
 
