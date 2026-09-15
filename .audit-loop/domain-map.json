@@ -322,9 +322,9 @@
       "domain": "shared-lib"
     },
     {
-      "_why": "MORE SPECIFIC than the campaign/** rule below — ordering is significant, this line must precede it (comparison-tooling-consolidation.md D2b). promote.mjs is the one file in that plan's whole decomposition that touches a store: `campaign/promote.mjs -> lib/store/campaign.mjs` is a genuine, currently-nonexistent shared-lib -> stores edge, and widening shared-lib's own allowedDeps to admit `stores` for every one of its 156 files to let this one through was rejected as too broad. Reuses the EXISTING model-eval domain (already permits stores) rather than inventing a domain for one file.",
+      "_why": "MORE SPECIFIC than the campaign/** rule below — ordering is significant, this line must precede it (comparison-tooling-consolidation.md D2b). promote.mjs is the one file in that plan's whole decomposition that touches a store: `campaign/promote.mjs -> lib/store/campaign.mjs` is a genuine, currently-nonexistent shared-lib -> stores edge, and widening shared-lib's own allowedDeps to admit `stores` for every one of its 156 files to let this one through was rejected as too broad. A prior version of this rule reused the EXISTING model-eval domain purely to borrow its `stores` permission — a permission borrow, not a description: promote.mjs is campaign-promotion logic and has nothing to do with model-eval, and the tag meant any FUTURE campaign/**/comparison/** sibling importing promote.mjs (both shared-lib) would silently create a shared-lib -> model-eval edge shared-lib's own allowedDeps does not permit (final-review-credit-queue fp 5584d70b). This dedicated one-file domain names what the file actually is and grants it only what it actually imports (verified: its one import is `../store/campaign.mjs`, i.e. `stores` — nothing else), closing that latent trap instead of leaving it for the next sibling to trip.",
       "pattern": "scripts/lib/campaign/promote.mjs",
-      "domain": "model-eval"
+      "domain": "campaign-promotion"
     },
     {
       "pattern": "scripts/lib/campaign/**",
@@ -431,6 +431,9 @@
       "requirements",
       "shared-lib"
     ],
+    "campaign-promotion": [
+      "stores"
+    ],
     "claude-hooks": [
       "shared-lib"
     ],
@@ -521,6 +524,7 @@
       "arch-intent",
       "arm-eval",
       "audit-orchestration",
+      "campaign-promotion",
       "claudemd-management",
       "findings",
       "fit-check",
@@ -541,6 +545,7 @@
       "shared-lib"
     ],
     "shared-lib": [
+      "campaign-promotion",
       "claude-hooks",
       "findings",
       "plan",
@@ -570,6 +575,7 @@
       "arm-eval",
       "audit-orchestration",
       "brainstorm",
+      "campaign-promotion",
       "claude-hooks",
       "claudemd-management",
       "cross-skill-bridge",

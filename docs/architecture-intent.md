@@ -192,6 +192,16 @@ Chain" section for the full four-lens framing).
 `scripts/lib/model-eval/**` — the model swap-in evaluation harness (auditor
 and adjudicator role comparisons, cost/pricing tables).
 
+### `campaign-promotion`
+`scripts/lib/campaign/promote.mjs` — the one file in the campaign/comparison
+decomposition (otherwise `shared-lib`) that touches a store. A dedicated
+one-file domain, not `shared-lib` widened for it and not a borrowed domain:
+its own `_why` in `.audit-loop/domain-map.json` records why (final-review-
+credit-queue fp 5584d70b — a prior version borrowed `model-eval` purely for
+its `stores` permission, which is a permission grant, not a description, and
+left a latent trap for the next `campaign/**`/`comparison/**` sibling that
+imports it).
+
 ### `requirements`
 `scripts/lib/requirements/**` — the de-facto invariant ledger extracted from
 the codebase (`.requirements/ledger.json`), consumed by `/audit-code` as a
