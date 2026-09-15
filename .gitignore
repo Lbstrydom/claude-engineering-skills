@@ -41,7 +41,18 @@ scripts/lib/consumer-repos.local.json
 #   documents the shape.
 # Recoverable: the file's SHAPE, from the committed example.
 # Disposable: the private hostnames and owners.
-scripts/lib/runner-hosts.local.json
+#
+# Glob, not the one literal filename (final-review-credit-queue fp 9d2fcd4a):
+# actions-runner-doctor.mjs's `--config <path>` accepts ANY path, so an
+# operator who names their local override differently than the canonical
+# `runner-hosts.local.json` — while still keeping it beside its committed
+# template — must still have it ignored. This does not close the fully
+# arbitrary `--config /elsewhere/path.json` case (no .gitignore rule can), only
+# the "same directory, different name" one; the structural leak guard
+# (tests/runner-leak-guard.test.mjs) deliberately does not cover this file's
+# shape at all — see its own module docstring on why.
+scripts/lib/runner-hosts.*.json
+!scripts/lib/runner-hosts.local.example.json
 .claude/scheduled_tasks.lock
 
 # Audit-loop operational state (local to each machine)

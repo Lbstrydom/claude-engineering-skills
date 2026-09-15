@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import {
   defaultInstallRoots,
   resolveRunnerArtifact,
@@ -753,4 +754,35 @@ test('discoverInstalls: a wsl-kind extraRoots entry is skipped without includeWs
   assert.equal(included.notProbed.wsl, false);
   assert.equal(included.installs.length, 1);
   assert.equal(included.installs[0].agentName, 'wsl-agent');
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// .gitignore: a differently-named local runner-hosts config is still ignored
+// (final-review-credit-queue fp 9d2fcd4a — the ONE literal filename it used
+// to cover left a same-directory rename unprotected; a fully arbitrary
+// `--config /elsewhere` path is a separate, unclosed gap this does not fix).
+// ─────────────────────────────────────────────────────────────────────────
+
+const REPO_ROOT = path.resolve(import.meta.dirname, '..');
+
+function isGitignored(relPath) {
+  try {
+    execFileSync('git', ['check-ignore', '-q', relPath], { cwd: REPO_ROOT });
+    return true;
+  } catch (err) {
+    if (err.status === 1) return false; // git's own "not ignored" signal
+    throw err;
+  }
+}
+
+test('.gitignore: the canonical runner-hosts.local.json is ignored', () => {
+  assert.equal(isGitignored('scripts/lib/runner-hosts.local.json'), true);
+});
+
+test('.gitignore: a DIFFERENTLY-NAMED local runner-hosts config in the same directory is also ignored', () => {
+  assert.equal(isGitignored('scripts/lib/runner-hosts.some-corp-name.json'), true);
+});
+
+test('.gitignore: the committed example template is NOT ignored (negative control — the glob must not swallow it)', () => {
+  assert.equal(isGitignored('scripts/lib/runner-hosts.local.example.json'), false);
 });
