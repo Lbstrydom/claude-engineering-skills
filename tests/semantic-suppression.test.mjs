@@ -46,6 +46,33 @@ test('decideReRaise CAN cross files when requireSameFile is relaxed', () => {
   assert.equal(d.suppress, true);
 });
 
+test('decideReRaise does NOT suppress when the candidate merely REFERENCES the neighbour\'s file in prose (final-review-credit-queue fp 94986074)', () => {
+  // The exact scenario the finding names: a candidate about a.mjs whose
+  // `section` prose mentions b.mjs in passing ("called from") must not be
+  // treated as being ABOUT b.mjs. Matching (affectedFilesOf) wants that wide
+  // union; suppression must not, because a false suppression here silently
+  // drops a genuinely distinct finding rather than merely costing a duplicate
+  // row.
+  const d = decideReRaise(
+    { primaryFile: 'scripts/a.mjs', section: 'scripts/a.mjs — called from scripts/b.mjs' },
+    { finding_id: 'x', cosine: 0.99, primary_file: 'scripts/b.mjs' },
+    OPTS,
+  );
+  assert.equal(d.suppress, false, 'a stray section reference to the neighbour\'s file must not count as the same file');
+  assert.equal(d.reason, 'different-file');
+});
+
+test('decideReRaise STILL suppresses on a genuine structured-field match, unaffected by the section-exclusion fix (negative control)', () => {
+  // Same candidate as above, but the neighbour's file matches the candidate's
+  // REAL primaryFile (scripts/a.mjs) rather than the merely-referenced one.
+  const d = decideReRaise(
+    { primaryFile: 'scripts/a.mjs', section: 'scripts/a.mjs — called from scripts/b.mjs' },
+    { finding_id: 'x', cosine: 0.99, primary_file: 'scripts/a.mjs' },
+    OPTS,
+  );
+  assert.equal(d.suppress, true, 'a real structured-field match must still suppress — the fix narrows the KEY, not the decision');
+});
+
 test('decideReRaise is safe on a null / cosineless neighbour', () => {
   assert.equal(decideReRaise({}, null, OPTS).suppress, false);
   assert.equal(decideReRaise({}, { finding_id: 'x', cosine: NaN, primary_file: 'a' }, OPTS).suppress, false);

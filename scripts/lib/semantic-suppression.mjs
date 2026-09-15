@@ -32,15 +32,22 @@
  * @module scripts/lib/audit/semantic-suppression
  */
 import { normalizePath } from './file-io.mjs';
-import { affectedFilesOf } from './finding-match.mjs';
+import { affectedFilesOf, structuredFilesOf } from './finding-match.mjs';
 
 /**
  * The pure suppression decision: given a candidate finding and its nearest
  * OPEN semantic neighbour, decide whether the candidate is a re-raise to
  * suppress. No I/O — the caller supplies the neighbour (from `nearestOpenReRaise`).
  *
- * @param {{primaryFile?: string}} candidate
- * @param {{finding_id: string, cosine: number, primary_file: string}|null} neighbour
+ * `requireSameFile` compares via `finding-match.mjs`'s `structuredFilesOf`:
+ * structured fields (affectedFiles/primaryFile/_primaryFile) win when any
+ * name a file; free `section` prose is consulted only when none do. A
+ * candidate merely REFERENCING another file in its text, alongside a real
+ * structured primary file, must not be treated as being ABOUT the referenced
+ * one (final-review-credit-queue fp 94986074).
+ *
+ * @param {{affectedFiles?: string[], primaryFile?: string, _primaryFile?: string}} candidate
+ * @param {{finding_id: string, cosine: number, primary_file: string, affected_files?: string[]}|null} neighbour
  * @param {{threshold: number, requireSameFile: boolean}} opts
  * @returns {{suppress: boolean, reason: string, matchedId?: string, cosine?: number}}
  */
@@ -79,12 +86,21 @@ export function decideReRaise(candidate, neighbour, { threshold, requireSameFile
     // handles the separator perfectly well; it was the prose round-trip in front
     // of it that lost the path. It failed OPEN, so nothing was mis-suppressed,
     // but it silently skipped suppressions it should have made.
-    // ONE call, no local fallback chain. The chain that used to live here
-    // (`affectedFiles` else `primaryFile` else `section`) was itself a
-    // narrowing: a candidate carrying BOTH a primary and a multi-file section
-    // lost the section's files. `affectedFilesOf` now unions every source, so
-    // there is nothing left here to get wrong.
-    const candidateFiles = affectedFilesOf(candidate);
+    //
+    // `structuredFilesOf`, NOT `affectedFilesOf` (final-review-credit-queue fp
+    // 94986074): matching and suppression have OPPOSITE error asymmetries and
+    // must not share one key. `affectedFilesOf`'s wide union always ALSO pulls
+    // in every file merely REFERENCED in `section` prose ("the bug in a.mjs,
+    // called from b.mjs"), so a candidate about a.mjs could falsely intersect
+    // a neighbour filed under b.mjs and get silently dropped as its re-raise —
+    // real data loss, not a duplicate row. `structuredFilesOf` still unions
+    // affectedFiles/primaryFile/_primaryFile in full (no either/or among
+    // those three — that WAS the earlier narrowing bug, and carrying a
+    // primary alongside a multi-file section must still keep both); `section`
+    // is consulted only as a LAST RESORT, when none of those three named
+    // anything at all, which is exactly the shape some findings have no other
+    // source for.
+    const candidateFiles = structuredFilesOf(candidate);
     // The neighbour is usually a DB row carrying ONE `primary_file` column. The
     // in-memory clustering path has the whole finding, though, so it may supply
     // `affected_files` — and must, or the canonical side reintroduces exactly
@@ -415,6 +431,13 @@ export async function partitionRecordTimeReRaises({ pool, repoId, runId, finding
     // nearest-neighbour search ranks only rows that could actually qualify
     // (see nearestOpenReRaise). `decideReRaise` still re-checks membership —
     // defence in depth, and it keeps the pure decision independently testable.
+    //
+    // WIDE on purpose here (`affectedFilesOf`, not `structuredFilesOf`): this
+    // only widens the candidate NEIGHBOUR SET the query considers, it never
+    // decides the suppression itself — `decideReRaise` below applies the
+    // narrow structured-fields-only check that actually gates suppression, so
+    // a neighbour admitted here only via a stray `section` mention still
+    // correctly fails `different-file` there.
     const candidateFiles = requireSameFile
       ? affectedFilesOf({ affectedFiles: f.affectedFiles, section: f._primaryFile || f.section || '' })
       : null;

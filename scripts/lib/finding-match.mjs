@@ -182,12 +182,58 @@ export function affectedFilesOf(finding) {
   const seen = new Set();
   const add = (p) => { if (p && !seen.has(p)) { seen.add(p); out.push(p); } };
 
+  for (const q of structuredFilesOf(finding)) add(q);
+  for (const q of extractFileRefs(finding?.section)) add(q);
+  return out;
+}
+
+/**
+ * The SAME-FILE key: `affectedFiles ∪ primaryFile ∪ _primaryFile`, falling
+ * back to `section`'s free-text extraction ONLY when none of those structured
+ * fields named a file at all.
+ *
+ * Matching (`affectedFilesOf`, above) and same-file determination (this
+ * function) have OPPOSITE error asymmetries and cannot share one wide key
+ * (final-review-credit-queue fp 94986074). Matching wants recall: missing a
+ * true cross-model match is cheap (the pair is reported as two findings
+ * instead of one — noisier, not wrong). A "same primary file" check for
+ * suppression wants precision: `section` is free prose that can legitimately
+ * REFERENCE another file without being ABOUT it ("the bug in a.mjs, called
+ * from b.mjs") — a plain UNION with section turns "reference" into
+ * "identity" and lets a genuinely distinct finding filed under b.mjs be
+ * silently dropped as a re-raise of the one filed under a.mjs.
+ *
+ * PRECEDENCE, not exclusion, is the fix: a candidate whose ONLY source of
+ * file information is prose (no structured field populated at all — the
+ * documented shape some review passes produce, `tests/finding-match.test.mjs`
+ * "the guard that was silently inert") must still resolve via `section`, or
+ * suppression regresses to never firing for such findings — the original,
+ * already-fixed defect this module's history records. Once ANY structured
+ * field names a file, `section` is not consulted — there is something more
+ * precise to prefer, and prose the candidate happens to mention alongside it
+ * is not evidence of "same finding".
+ *
+ * An empty return is not a failure: `decideReRaise` already fails OPEN (no
+ * suppression, i.e. an extra duplicate row — the accepted cost) when either
+ * side resolves to no files at all.
+ *
+ * @param {{affectedFiles?: string[], primaryFile?: string, _primaryFile?: string,
+ *          section?: string}|null|undefined} finding
+ * @returns {string[]} normalised, de-duplicated, first-appearance order
+ */
+export function structuredFilesOf(finding) {
+  const out = [];
+  const seen = new Set();
+  const add = (p) => { if (p && !seen.has(p)) { seen.add(p); out.push(p); } };
+
   for (const p of (Array.isArray(finding?.affectedFiles) ? finding.affectedFiles : [])) {
     for (const q of asPath(p)) add(q);
   }
   for (const q of asPath(finding?.primaryFile)) add(q);
   for (const q of asPath(finding?._primaryFile)) add(q);
-  for (const q of extractFileRefs(finding?.section)) add(q);
+  if (out.length === 0) {
+    for (const q of extractFileRefs(finding?.section)) add(q);
+  }
   return out;
 }
 
