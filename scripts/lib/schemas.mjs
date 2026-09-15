@@ -1176,6 +1176,17 @@ const DebtEntryPersistedFields = {
   contentAliases: z.array(z.string().max(12)).max(20).default([]),
   // Sensitivity flag (fix H6):
   sensitive: z.boolean().default(false),
+  // Classification-or-explicit-unavailable contract (docs/plans/debt-ledger-persisted-record-contract.md
+  // §2 Fix A): `classification` (inherited from LedgerCoreFields) stays
+  // nullable/optional — this field is the disjunction partner, so at least
+  // one of the two must be present (enforced below). `trim().min(1)` so a
+  // blank/whitespace-only string can't satisfy the disjunction.
+  classificationUnavailableReason: z.string().trim().min(1).max(200).optional(),
+  // Revalidation trigger (§2 Fix D): when an entry should be looked at again.
+  reviewDeadline: z.string().datetime().optional(),
+  // Canonical/successor link (§2 Fix D): the topicId of the entry that
+  // replaced this one, set via markSuperseded/markSupersededCloud.
+  supersededBy: z.string().max(120).optional(),
 };
 
 function enforceDeferredReasonRequiredFields(entry, ctx) {
@@ -1194,6 +1205,48 @@ function enforceDeferredReasonRequiredFields(entry, ctx) {
       });
     }
   }
+  // §2 Fix A — classification-or-explicit-unavailable disjunction.
+  if (!entry.classification && !entry.classificationUnavailableReason) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['classification'],
+      message: 'either classification or classificationUnavailableReason is required',
+    });
+  }
+  // §2 Fix D — supersededBy self-reference guard.
+  if (entry.supersededBy && entry.supersededBy === entry.topicId) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['supersededBy'],
+      message: 'supersededBy cannot equal the entry\'s own topicId',
+    });
+  }
+}
+
+/**
+ * Normalize the classification-or-unavailable disjunction (docs/plans/
+ * debt-ledger-persisted-record-contract.md §2 Fix A) before an entry reaches
+ * validation. Pure, no I/O — colocated with the schema it defends, mirroring
+ * `enforceDeferredReasonRequiredFields` above.
+ *
+ * A blank/whitespace-only `classificationUnavailableReason` does NOT count as
+ * "already set" — matching the schema's own `trim().min(1)`, so this function
+ * cannot leave an entry that will fail the very check it exists to satisfy.
+ *
+ * @param {object} entry
+ * @returns {object} entry unchanged, or with a default classificationUnavailableReason injected
+ */
+export function normalizeClassificationEnvelope(entry) {
+  // A null/non-object entry is a caller bug, not this function's to fix —
+  // return it unchanged so the caller's own validation (safeParse) rejects
+  // it with a real error, rather than this function throwing first on
+  // `entry.classification` (round-1 GPT audit H2/M5).
+  if (entry === null || typeof entry !== 'object') return entry;
+  const hasClassification = !!entry.classification;
+  const hasReason = typeof entry.classificationUnavailableReason === 'string'
+    && entry.classificationUnavailableReason.trim().length > 0;
+  if (hasClassification || hasReason) return entry;
+  return { ...entry, classificationUnavailableReason: 'not-provided-by-capture-source' };
 }
 
 /**

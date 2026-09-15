@@ -34,7 +34,7 @@ import { DebtReviewResultSchema } from './lib/schemas.mjs';
 import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
 import { DEFAULT_DEBT_EVENTS_PATH } from './lib/debt-events.mjs';
 import {
-  rankRefactorsByLeverage, findStaleEntries, oldestEntryDays,
+  rankRefactorsByLeverage, findStaleEntries, findOverdueForReview, oldestEntryDays,
   buildLocalClusters, findBudgetViolations, EFFORT_WEIGHTS,
   partitionByOwnership,
 } from './lib/debt-review-helpers.mjs';
@@ -83,7 +83,7 @@ Exit codes: 0=ok, 1=op-error, 3=sensitivity-gate (blocked)
 
 // ── Markdown Rendering ──────────────────────────────────────────────────────
 
-function renderMarkdown({ ledger, review, violations, mode, upstreamOwned = [] }) {
+function renderMarkdown({ ledger, review, violations, mode, upstreamOwned = [], overdueForReview = [] }) {
   const lines = [];
   const now = new Date().toISOString().slice(0, 10);
   lines.push(`# Debt Review — ${now}`);
@@ -142,6 +142,17 @@ function renderMarkdown({ ledger, review, violations, mode, upstreamOwned = [] }
       const e = ledger.entries.find(x => x.topicId === tid);
       const cat = e?.category ? ` — ${e.category}` : '';
       lines.push(`- \`${tid}\`${cat}`);
+    }
+    lines.push('');
+  }
+
+  if (overdueForReview.length > 0) {
+    lines.push('## Overdue for Review');
+    for (const tid of overdueForReview) {
+      const e = ledger.entries.find(x => x.topicId === tid);
+      const cat = e?.category ? ` — ${e.category}` : '';
+      const deadline = e?.reviewDeadline ? ` (due ${e.reviewDeadline.slice(0, 10)})` : '';
+      lines.push(`- \`${tid}\`${cat}${deadline}`);
     }
     lines.push('');
   }
@@ -442,7 +453,8 @@ async function main() {
   }
 
   // Render markdown
-  const md = renderMarkdown({ ledger, review, violations, mode, upstreamOwned });
+  const overdueForReview = findOverdueForReview(ledger.entries);
+  const md = renderMarkdown({ ledger, review, violations, mode, upstreamOwned, overdueForReview });
   if (opts.outFile) {
     fs.writeFileSync(opts.outFile, md, 'utf-8');
     process.stderr.write(`  [debt-review] wrote ${md.length} chars to ${opts.outFile}\n`);

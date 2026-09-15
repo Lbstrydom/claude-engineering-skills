@@ -3,7 +3,7 @@
  * Covers persisted/hydrated split, per-reason required fields, source markers.
  */
 
-import { test } from 'node:test';
+import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
@@ -36,6 +36,10 @@ const baseEntry = {
   deferredRationale: 'this is a sufficiently long rationale string',
   contentAliases: [],
   sensitive: false,
+  // §2 Fix A — classification-or-explicit-unavailable disjunction
+  // (docs/plans/debt-ledger-persisted-record-contract.md): every persisted
+  // entry needs one of `classification` / `classificationUnavailableReason`.
+  classificationUnavailableReason: 'not-provided-by-capture-source',
 };
 
 test('PersistedDebtEntrySchema — accepts valid out-of-scope entry', () => {
@@ -98,6 +102,69 @@ test('PersistedDebtEntrySchema — policy-exception requires policyRef AND appro
 test('PersistedDebtEntrySchema — source must be literal "debt"', () => {
   const r = PersistedDebtEntrySchema.safeParse({ ...baseEntry, source: 'session' });
   assert.equal(r.success, false);
+});
+
+// ── §2 Fix A — classification-or-explicit-unavailable disjunction ──────────
+// docs/plans/debt-ledger-persisted-record-contract.md
+
+test('PersistedDebtEntrySchema — rejects an entry with neither classification nor classificationUnavailableReason', () => {
+  const { classificationUnavailableReason, ...withoutReason } = baseEntry;
+  const r = PersistedDebtEntrySchema.safeParse(withoutReason);
+  assert.equal(r.success, false);
+  assert.match(r.error.message, /classification/);
+});
+
+test('PersistedDebtEntrySchema — accepts an entry with a real classification and no reason', () => {
+  const { classificationUnavailableReason, ...withoutReason } = baseEntry;
+  const r = PersistedDebtEntrySchema.safeParse({
+    ...withoutReason,
+    classification: { sonarType: 'BUG', effort: 'EASY', sourceKind: 'MODEL', sourceName: 'gpt-5.6' },
+  });
+  assert.equal(r.success, true, r.error?.message);
+});
+
+test('PersistedDebtEntrySchema — rejects a blank/whitespace-only classificationUnavailableReason (M3)', () => {
+  const r = PersistedDebtEntrySchema.safeParse({ ...baseEntry, classificationUnavailableReason: '   ' });
+  assert.equal(r.success, false);
+});
+
+test('PersistedDebtEntrySchema — supersededBy cannot equal the entry\'s own topicId', () => {
+  const r = PersistedDebtEntrySchema.safeParse({ ...baseEntry, supersededBy: baseEntry.topicId });
+  assert.equal(r.success, false);
+  assert.match(r.error.message, /supersededBy/);
+});
+
+test('PersistedDebtEntrySchema — supersededBy naming a DIFFERENT topicId passes', () => {
+  const r = PersistedDebtEntrySchema.safeParse({ ...baseEntry, supersededBy: 'other-topic-99' });
+  assert.equal(r.success, true, r.error?.message);
+});
+
+describe('normalizeClassificationEnvelope', () => {
+  test('no-op when classification is already present', async () => {
+    const { normalizeClassificationEnvelope } = await import('../scripts/lib/schemas.mjs');
+    const entry = { ...baseEntry, classification: { sonarType: 'BUG', effort: 'EASY', sourceKind: 'MODEL', sourceName: 'x' } };
+    delete entry.classificationUnavailableReason;
+    assert.deepEqual(normalizeClassificationEnvelope(entry), entry);
+  });
+
+  test('no-op when classificationUnavailableReason is already a non-blank string', async () => {
+    const { normalizeClassificationEnvelope } = await import('../scripts/lib/schemas.mjs');
+    const entry = { ...baseEntry, classificationUnavailableReason: 'legacy-backfill' };
+    assert.deepEqual(normalizeClassificationEnvelope(entry), entry);
+  });
+
+  test('injects a default reason when both classification and reason are absent', async () => {
+    const { normalizeClassificationEnvelope } = await import('../scripts/lib/schemas.mjs');
+    const { classificationUnavailableReason, ...withoutReason } = baseEntry;
+    const result = normalizeClassificationEnvelope(withoutReason);
+    assert.equal(result.classificationUnavailableReason, 'not-provided-by-capture-source');
+  });
+
+  test('a blank/whitespace-only reason is NOT treated as already-set — the default is still injected', async () => {
+    const { normalizeClassificationEnvelope } = await import('../scripts/lib/schemas.mjs');
+    const result = normalizeClassificationEnvelope({ ...baseEntry, classificationUnavailableReason: '   ' });
+    assert.equal(result.classificationUnavailableReason, 'not-provided-by-capture-source');
+  });
 });
 
 test('HydratedDebtEntrySchema — accepts derived fields', () => {

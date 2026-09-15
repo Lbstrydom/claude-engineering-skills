@@ -288,9 +288,24 @@ export function registerAuditStoreWriters() {
     schemaVersion: 1,
     rowKey: (row) => `${row.repo_id}:${row.topic_id}`,
     replay: async (payload) => {
-      const r = await upsertDebtEntries(payload.repoId, payload.entries);
+      const r = await upsertDebtEntries(payload.repoId, payload.entries, {
+        embeddingsByTopicId: payload.embeddingsByTopicId, embeddingSpace: payload.embeddingSpace,
+      });
       if (r.error) throw r.error; // original Error object — isConnectionScoped needs err.code
       if (r.reason) return { applied: false, declined: true, reason: r.reason };
+      // docs/plans/debt-ledger-persisted-record-contract.md §2 Fix B (round-1
+      // GPT audit H3, corrected by Gemini gate round-1 G1): `applied` and
+      // `declined` are mutually exclusive — `durableWrite` checks `applied`
+      // BEFORE `declined`, so asserting both would silently report
+      // `outcome: 'written'` and discard the rejection signal. An
+      // ALL-rejected batch (nothing durable happened) is `declined` — never
+      // spilled for retry, since a schema-invalid row does not become valid
+      // later. A PARTIAL batch (some rows genuinely wrote) is `applied` only;
+      // rejected-topic detail was already logged to stderr inside
+      // `upsertDebtEntries`, not threaded through this coarse outcome.
+      if (r.appliedCount === 0 && r.rejected?.length > 0) {
+        return { applied: false, declined: true, reason: 'schema-rejected' };
+      }
       return { applied: true };
     },
   });

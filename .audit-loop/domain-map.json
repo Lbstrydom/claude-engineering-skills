@@ -90,6 +90,10 @@
       "domain": "audit-orchestration"
     },
     {
+      "pattern": "scripts/lib/debt-alias.mjs",
+      "domain": "shared-lib"
+    },
+    {
       "pattern": "scripts/lib/debt-*.mjs",
       "domain": "tech-debt"
     },

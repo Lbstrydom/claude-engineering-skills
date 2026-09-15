@@ -49,13 +49,14 @@ import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildDebtEntry } from './lib/debt-capture.mjs';
-import { readDebtLedger, writeDebtEntries, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
+import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
+import { markDebtSuperseded, persistDebtEntries, selectEventSource as selectDebtEventSource } from './lib/debt-memory.mjs';
 import {
   findRoundLedgers, readDeferredEntries, collectDebtIdentities, findUncapturedDeferrals,
 } from './lib/debt-capture-trail.mjs';
-import { resolveRepoForStore, initLearningStore } from './learning-store.mjs';
+import { resolveRepoForStore, initLearningStore, isCloudEnabled } from './learning-store.mjs';
 import { generateRepoProfile } from './lib/context.mjs';
-import { durableWrite } from './lib/durable-write.mjs';
+import { finishAndExit } from './lib/cli-io.mjs';
 // Side-effecting import — populates the process-local writer registry
 // (`debt.entries` among others) the same way the orchestrator does. Without
 // it this CLI, run standalone, would find zero handlers and every write
@@ -73,6 +74,9 @@ function parseArgs(argv) {
     approver: undefined,
     approvedAt: undefined,
     policyRef: undefined,
+    reviewDeadline: undefined,
+    supersedes: undefined,
+    supersedesWith: undefined,
     run: null,                  // SID override; defaults to timestamp
     dryRun: false,
     help: false,
@@ -80,16 +84,19 @@ function parseArgs(argv) {
 
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
-      case '--ledger':       args.ledger      = argv[++i]; break;
-      case '--reason':       args.reason      = argv[++i]; break;
-      case '--blocked-by':   args.blockedBy   = argv[++i]; break;
-      case '--followup-pr':  args.followupPr  = argv[++i]; break;
-      case '--approver':     args.approver    = argv[++i]; break;
-      case '--approved-at':  args.approvedAt  = argv[++i]; break;
-      case '--policy-ref':   args.policyRef   = argv[++i]; break;
-      case '--run':          args.run         = argv[++i]; break;
-      case '--dry-run':      args.dryRun      = true;      break;
-      case '--help': case '-h': args.help     = true;      break;
+      case '--ledger':          args.ledger         = argv[++i]; break;
+      case '--reason':          args.reason         = argv[++i]; break;
+      case '--blocked-by':      args.blockedBy      = argv[++i]; break;
+      case '--followup-pr':     args.followupPr     = argv[++i]; break;
+      case '--approver':        args.approver       = argv[++i]; break;
+      case '--approved-at':     args.approvedAt     = argv[++i]; break;
+      case '--policy-ref':      args.policyRef      = argv[++i]; break;
+      case '--review-deadline': args.reviewDeadline = argv[++i]; break;
+      case '--supersedes':      args.supersedes     = argv[++i]; break;
+      case '--supersedes-with': args.supersedesWith = argv[++i]; break;
+      case '--run':              args.run          = argv[++i]; break;
+      case '--dry-run':          args.dryRun       = true;      break;
+      case '--help': case '-h':  args.help         = true;      break;
     }
   }
 
@@ -113,6 +120,12 @@ Options:
   --approver <name>      Required when --reason accepted-permanent or policy-exception
   --approved-at <iso>    Required when --reason accepted-permanent
   --policy-ref <ref>     Required when --reason policy-exception
+  --review-deadline <iso> Override the auto-computed revalidation trigger
+                          (auto-set for blocked-by/deferred-followup, 90 days out)
+  --supersedes <old-topic-id>       Link an existing entry as replaced by...
+  --supersedes-with <new-topic-id>  ...this newly-captured entry. Both flags
+                          are required together; refused if either topicId
+                          cannot be verified to exist after this capture.
   --run <SID>            Session ID stamp (default: auto-generated)
   --dry-run              Print what would be captured, but do not write
   --help                 Show this message
@@ -139,6 +152,22 @@ function validateReasonFields(args) {
   }
   if (reason === 'policy-exception' && (!args.policyRef || !args.approver)) {
     return '--reason policy-exception requires --policy-ref and --approver';
+  }
+  return null;
+}
+
+/**
+ * `--supersedes`/`--supersedes-with` are both-or-neither (docs/plans/
+ * debt-ledger-persisted-record-contract.md §2 Fix D, round-3 GPT audit H6) —
+ * a scalar flag alone is ambiguous the moment more than one topic is
+ * captured, so both endpoints must be named explicitly.
+ */
+function validateSupersedesFields(args) {
+  if (!!args.supersedes !== !!args.supersedesWith) {
+    return '--supersedes and --supersedes-with must be given together, naming both the old and the new topicId';
+  }
+  if (args.supersedes && args.supersedes === args.supersedesWith) {
+    return '--supersedes and --supersedes-with must name different topicIds';
   }
   return null;
 }
@@ -206,6 +235,7 @@ function buildEntries(deferredEntries, reason, sid, args) {
       approver:          args.approver,
       approvedAt:        args.approvedAt,
       policyRef:         args.policyRef,
+      reviewDeadline:    args.reviewDeadline,
     };
 
     try {
@@ -228,24 +258,33 @@ function buildEntries(deferredEntries, reason, sid, args) {
  * `.audit/write-spill/` for a later `cross-skill.mjs write-spill drain`
  * instead of being silently dropped (2026-08-27: a consumer's cloud mirror
  * had drifted 31 entries behind its local ledger with no way to recover
- * them). Returns the `durableWrite` outcome, or `null` when there is no repo
- * identity to sync against (Supabase not configured, or repo unresolved) —
- * distinct from a real failure. Non-blocking — callers must not fail on a
- * non-`written` outcome.
+ * them).
+ *
+ * **Routed through `persistDebtEntries` (docs/plans/
+ * debt-ledger-persisted-record-contract.md §2 Fix C), not a standalone
+ * `writeDebtEntries` + `durableWrite` pair** — this file used to call both
+ * separately, which meant this, the PRIMARY real-world capture path (Step
+ * 3.6 of every audit round), never ran through `enrichDebtEntriesWithAliases`
+ * at all: only `debt-backfill.mjs --promote` (a rare, one-off historical
+ * import) went through the facade. Fix C's content-aliasing would have been
+ * functionally dead on the path it was built for. `persistDebtEntries`
+ * already does both writes (local first, then cloud) in one call, so this is
+ * a straight replacement, not new plumbing.
+ *
+ * @param {object} debtContext - from resolveDebtContext()
+ * @param {object[]} entries
+ * @returns {Promise<{inserted:number, updated:number, total:number, rejected:object[], cloudOutcome:string, cloudMirrored:boolean}>}
  */
-async function syncToCloud(entries) {
-  let repoId;
-  try {
-    await initLearningStore();
-    const profile = generateRepoProfile();
-    // Cluster A (§2.1): stable repo_uuid identity, not the volatile fingerprint.
-    const ref = await resolveRepoForStore({ profile });
-    repoId = ref?.repoRowId ?? null;
-  } catch {
-    return null;
-  }
-  if (!repoId) return null;
-  return durableWrite('debt.entries', { repoId, entries });
+async function persistCapturedEntries(debtContext, entries) {
+  // No `ledgerPath` option here — `persistDebtEntries` defaults to
+  // `DEFAULT_DEBT_LEDGER_PATH` (`.audit/tech-debt.json`), the DEBT ledger.
+  // `main()`'s own `ledgerPath` variable names the ROUND/adjudication ledger
+  // (`--ledger <path>`, e.g. an audit round's `sid-ledger.json`) — a
+  // completely different file that happens to share the variable name.
+  // Passing it here was a real bug caught by this file's own test suite: it
+  // silently wrote debt entries INTO the round ledger instead of the debt
+  // ledger, corrupting the former and leaving the latter never created.
+  return persistDebtEntries(debtContext, entries);
 }
 
 // ── Capture-trail check ─────────────────────────────────────────────────────
@@ -349,6 +388,49 @@ function printSummary({ built, skipped, result, reason, sid, cloudSync, trail })
   }
 }
 
+// ── Supersession (§2 Fix D) ──────────────────────────────────────────────────
+
+/**
+ * Resolve the debt-event context (cloud when configured + the repo resolves,
+ * else local) — the ONE resolution this file uses for both the main capture
+ * write and `--supersedes`, so the two always agree about where debt lives.
+ */
+async function resolveDebtContext() {
+  try {
+    if (!await isCloudEnabled()) return selectDebtEventSource({ cloudEnabled: false });
+    await initLearningStore();
+    const profile = generateRepoProfile();
+    const ref = await resolveRepoForStore({ profile });
+    const repoId = ref?.repoRowId ?? null;
+    return selectDebtEventSource({ repoId, cloudEnabled: repoId != null });
+  } catch {
+    return selectDebtEventSource({ cloudEnabled: false });
+  }
+}
+
+/**
+ * `--supersedes <old> --supersedes-with <new>` (docs/plans/
+ * debt-ledger-persisted-record-contract.md §2 Fix D). Non-fatal to the
+ * capture that already happened — printed as a WARN, never changes this
+ * run's exit code, mirroring `checkCaptureTrail`'s own advisory convention
+ * in this file.
+ */
+async function runSupersedeIfRequested(args) {
+  if (!args.supersedes || !args.supersedesWith) return;
+  const context = await resolveDebtContext();
+  const { local, cloud } = await markDebtSuperseded(context, args.supersedes, args.supersedesWith);
+  console.log([
+    '',
+    '─── Supersession ───',
+    `  ${args.supersedes} -> superseded by ${args.supersedesWith}`,
+    `  Local: ${local.applied ? 'ok' : `failed (${local.error})`}`,
+    `  Cloud: ${cloud.applied ? 'ok' : `not applied (${cloud.error})`}`,
+  ].join('\n'));
+  if (!local.applied) {
+    console.warn(`\nWARN: supersession did not apply locally (${local.error}) — the debt capture above still succeeded.`);
+  }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -371,6 +453,11 @@ async function main() {
   const reasonError = validateReasonFields(args);
   if (reasonError) {
     console.error(`Error: ${reasonError}`);
+    process.exit(1);
+  }
+  const supersedesError = validateSupersedesFields(args);
+  if (supersedesError) {
+    console.error(`Error: ${supersedesError}`);
     process.exit(1);
   }
 
@@ -414,25 +501,34 @@ async function main() {
 
   const entries = built.map(b => b.entry);
 
+  const debtContext = await resolveDebtContext();
   let result;
   try {
-    result = await writeDebtEntries(entries);
+    result = await persistCapturedEntries(debtContext, entries);
   } catch (err) {
     console.error(`Error writing debt ledger: ${err.message}`);
     process.exit(1);
   }
 
-  const cloudSync = await syncToCloud(entries);
+  const cloudSync = { outcome: result.cloudOutcome, error: result.cloudOutcomeError };
   const trail = checkCaptureTrail(ledgerPath);
 
   printSummary({ built, skipped, result, reason, sid, cloudSync, trail });
+
+  await runSupersedeIfRequested(args);
 
   // ANY entry that failed to land makes this a partial capture, not a success.
   // Previously only an ALL-rejected run exited non-zero, so a run that dropped
   // SOME deferrals reported success to `$?` while its own summary card said
   // otherwise — the card is read by a human, the exit code by everything else.
+  //
+  // `finishAndExit`, not a bare `process.exit` — the new `--supersedes`
+  // summary (runSupersedeIfRequested, above) writes to stdout, and on
+  // Windows a piped stdout is asynchronous, so an unawaited exit can drop
+  // whatever has not flushed yet.
   if (result.rejected.length > 0 || skipped.length > 0) {
-    process.exit(1);
+    await finishAndExit(1);
+    return;
   }
 }
 

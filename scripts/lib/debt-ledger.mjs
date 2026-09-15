@@ -47,7 +47,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import lockfile from 'proper-lockfile';
 import { atomicWriteFileSync, normalizePath } from './file-io.mjs';
-import { PersistedDebtEntrySchema, DebtLedgerSchema } from './schemas.mjs';
+import { PersistedDebtEntrySchema, DebtLedgerSchema, normalizeClassificationEnvelope } from './schemas.mjs';
 import { readDebtEventsLocal, deriveMetricsFromEvents, DEFAULT_DEBT_EVENTS_PATH } from './debt-events.mjs';
 import { ignoredUntrackedPaths } from './disowned-paths.mjs';
 
@@ -313,7 +313,12 @@ export async function writeDebtEntries(entries, { ledgerPath = DEFAULT_DEBT_LEDG
     let inserted = 0, updated = 0;
 
     for (const entry of entries) {
-      const validated = PersistedDebtEntrySchema.safeParse(entry);
+      // §2 Fix A — normalized HERE, at the actual write boundary, not only
+      // in the `persistDebtEntries` facade: `debt-auto-capture.mjs` and
+      // `debt-backfill.mjs --promote` both call `writeDebtEntries` directly,
+      // bypassing that facade entirely. Idempotent — a no-op for an entry
+      // that already carries classification or an explicit reason.
+      const validated = PersistedDebtEntrySchema.safeParse(normalizeClassificationEnvelope(entry));
       if (!validated.success) {
         rejected.push({ entry, reason: validated.error.message.slice(0, 300) });
         continue;
@@ -398,6 +403,76 @@ export async function removeDebtEntry(topicId, { ledgerPath = DEFAULT_DEBT_LEDGE
     return true;
   } finally {
     try { await release(); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Link `oldTopicId` to its replacement `newTopicId` by setting the old
+ * entry's `supersededBy` field, under the same lock/atomic-write discipline
+ * as `writeDebtEntries` (docs/plans/debt-ledger-persisted-record-contract.md
+ * §2 Fix D). Verifies BOTH topicIds exist in this LOCAL ledger immediately
+ * before writing (round-3 GPT audit H7) — never inferred from an earlier
+ * write's outcome.
+ *
+ * **Local JSON only — no embedding-cache involvement** (Gemini gate round-1
+ * G2): this module has no DB pool and no `repoId`; `debt_embeddings` cleanup
+ * and any embedding-space concerns live exclusively in `store/debt.mjs`.
+ *
+ * **Historical-entry compatibility** (Gemini gate round-2 G4): the target
+ * entry is run through `normalizeClassificationEnvelope` before
+ * re-validation and write-back, so a historical entry with neither
+ * `classification` nor `classificationUnavailableReason` is honestly
+ * backfilled rather than either persisting a schema-violating row unchecked
+ * or refusing supersession for a reason unrelated to `supersededBy`.
+ *
+ * @param {string} oldTopicId
+ * @param {string} newTopicId
+ * @param {object} [opts]
+ * @param {string} [opts.ledgerPath=DEFAULT_DEBT_LEDGER_PATH]
+ * @returns {Promise<{ok: boolean, error?: string}>}
+ */
+export async function markSuperseded(oldTopicId, newTopicId, { ledgerPath = DEFAULT_DEBT_LEDGER_PATH } = {}) {
+  if (oldTopicId === newTopicId) return { ok: false, error: 'self-reference' };
+  const absPath = path.resolve(ledgerPath);
+  if (!fs.existsSync(absPath)) return { ok: false, error: 'ledger-not-found' };
+
+  let release;
+  try {
+    release = await lockfile.lock(absPath, {
+      retries: { retries: LOCK_RETRIES, minTimeout: 100, maxTimeout: 1000 },
+      stale: LOCK_STALE_MS,
+    });
+  } catch (err) {
+    throw new Error(`Failed to acquire debt-ledger lock: ${err.message}`);
+  }
+
+  try {
+    let raw;
+    try {
+      raw = JSON.parse(fs.readFileSync(absPath, 'utf-8'));
+    } catch (err) {
+      throw new Error(`Debt ledger corrupted: ${err.message}`);
+    }
+    if (!raw || !Array.isArray(raw.entries)) throw new Error('Debt ledger corrupted: missing entries array');
+
+    const oldIdx = raw.entries.findIndex((e) => e.topicId === oldTopicId);
+    if (oldIdx === -1) return { ok: false, error: 'old-topic-not-found' };
+    const newExists = raw.entries.some((e) => e.topicId === newTopicId);
+    if (!newExists) return { ok: false, error: 'new-topic-not-found' };
+
+    const normalized = normalizeClassificationEnvelope({ ...raw.entries[oldIdx], supersededBy: newTopicId });
+    const validated = PersistedDebtEntrySchema.safeParse(normalized);
+    if (!validated.success) {
+      return { ok: false, error: `schema-rejected: ${validated.error.message.slice(0, 300)}` };
+    }
+    raw.entries[oldIdx] = validated.data;
+    atomicWriteFileSync(absPath, JSON.stringify({
+      ...raw,
+      lastUpdated: new Date().toISOString(),
+    }, null, 2) + '\n');
+    return { ok: true };
+  } finally {
+    try { await release(); } catch { /* lock already released / stale */ }
   }
 }
 

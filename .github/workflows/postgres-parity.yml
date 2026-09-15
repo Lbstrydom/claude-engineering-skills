@@ -65,6 +65,13 @@ on:
       - 'tests/final-review-pending-db.test.mjs'
       - 'tests/final-review-replay-db.test.mjs'
       - 'tests/sync-packaging.test.mjs'
+      # docs/plans/debt-ledger-persisted-record-contract.md — debt_embeddings +
+      # the cosine-alias write path (round-1 GPT audit M8: none of these match
+      # a pattern above; scripts/lib/debt-alias.mjs sits beside, not inside,
+      # scripts/lib/db|store/**).
+      - 'scripts/lib/debt-alias.mjs'
+      - 'tests/store-debt-cloud-validation.test.mjs'
+      - 'tests/debt-alias-integration.test.mjs'
       - 'tests/fixtures/expected-schema.json'
       - 'package.json'
       - 'package-lock.json'
@@ -103,6 +110,13 @@ on:
       - 'tests/final-review-pending-db.test.mjs'
       - 'tests/final-review-replay-db.test.mjs'
       - 'tests/sync-packaging.test.mjs'
+      # docs/plans/debt-ledger-persisted-record-contract.md — debt_embeddings +
+      # the cosine-alias write path (round-1 GPT audit M8: none of these match
+      # a pattern above; scripts/lib/debt-alias.mjs sits beside, not inside,
+      # scripts/lib/db|store/**).
+      - 'scripts/lib/debt-alias.mjs'
+      - 'tests/store-debt-cloud-validation.test.mjs'
+      - 'tests/debt-alias-integration.test.mjs'
       - 'tests/fixtures/expected-schema.json'
       - 'package.json'
       - 'package-lock.json'
@@ -256,6 +270,7 @@ jobs:
             tests/campaign-quarantine.test.mjs \
             tests/candidate-audit-findings-window.test.mjs \
             tests/db-schema-realization-live.test.mjs \
+            tests/debt-alias-integration.test.mjs \
             tests/final-review-adjudicate.test.mjs \
             tests/final-review-pending-db.test.mjs \
             tests/final-review-replay-db.test.mjs \
@@ -276,6 +291,7 @@ jobs:
             tests/repo-identity-store.test.mjs \
             tests/repo-last-audited-at.test.mjs \
             tests/setup-postgres-surface-precondition.test.mjs \
+            tests/store-debt-cloud-validation.test.mjs \
             tests/store-ownership-db.test.mjs \
             tests/symbol-embeddings-rowcount.test.mjs \
             tests/symbol-file-imports.test.mjs \

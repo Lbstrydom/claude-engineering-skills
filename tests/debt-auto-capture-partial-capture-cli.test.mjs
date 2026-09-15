@@ -108,6 +108,7 @@ describe('PersistedDebtEntrySchema.deferredRationale — cap accommodates its pr
       deferredAt: new Date().toISOString(),
       deferredRun: 'sid1',
       deferredRationale: rationale,
+      classificationUnavailableReason: 'not-provided-by-capture-source',
     };
   }
 
