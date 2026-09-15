@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**4 active · 222 terminal · 29 audit summaries · 1 parked · 5 reference docs**
+**3 active · 223 terminal · 29 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -21,7 +21,6 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
-| [The five aged-out acceptances that are real, still live, and no longer surfaced](./aged-out-acceptance-remainder.md) | `In Progress` | §3 (`b091a8ab`) and §4 (`e3da8d42`) shipped 2026-09-14, each had a concrete fix shape already and went… |
 | [Enforce the debt ledger's persisted-record contract (§2 of aged-out-acceptance-remainder.md)](./debt-ledger-persisted-record-contract.md) | `Approved` | GPT plan audit converged after 3 rounds (9→3→2 findings, 100% acceptance throughout); Gemini final gate… |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
@@ -55,7 +54,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 219 completed plans</summary>
+<summary>Show all 220 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -66,6 +65,7 @@ source comments that no docs linter sees — stays valid.
 | [Adaptive Learning — Phase 3 (Replay Framework + Remaining Telemetry)](./adaptive-learning-phase-3-replay.md) | `Complete` | shipped as commit `e40a40e` on 2026-05-08 |
 | [Adaptive Learning Expansion v1](./adaptive-learning-v1.md) | `Complete` | (v1) — all 3 phases shipped (commits 0bde3ab, cf9a89b, e40a40e), schema migration applied to Supabase… |
 | [Containment-Adjacency Check — a mechanical wave that asks "what else is in this branch?"](./adjacency-check-containment.md) | `Complete` | all three clusters implemented, tested and gated (`/cycle --autonomous`, 2026-07-17). The §11 prerequisite… |
+| [The five aged-out acceptances that are real, still live, and no longer surfaced](./aged-out-acceptance-remainder.md) | `Complete` | §3 (`b091a8ab`) and §4 (`e3da8d42`) shipped 2026-09-14, each had a concrete fix shape already and went… |
 | [AI Context Sync — Reconcile Drift, Detect Drift, Copilot Slash-Command Parity](./ai-context-sync.md) | `Complete` | all 6 phases shipped 2026-04-26 / 2026-04-27 |
 | [allowTiered — per-call execution gate for tiered pipeline / shadow](./allow-tiered-callsite-gate.md) | `Complete` | audited (`/audit-code`, 1 GPT round + Gemini APPROVE, 0 new findings), shipped, verified via direct repro +… |
 | [Anthropic Backend Routing (Agent SDK credit prep)](./anthropic-backend-routing.md) | `Complete` | implemented + audited (R1→R3 + Gemini) |
