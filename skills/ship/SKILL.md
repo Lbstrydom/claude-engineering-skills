@@ -565,27 +565,16 @@ node scripts/symbol-index/render-mermaid.mjs || true
 # NOTE: do NOT `git add docs/architecture-map.md` — it is gitignored (Category A).
 ```
 
-> **`docs/architecture-map.md` is Category A and is NEVER staged.** This step
-> used to end with `git add docs/architecture-map.md 2>/dev/null || true`, which
-> outlived the file's B → A reclassification (2026-07-20) — the same stale-staging
-> instruction that Step 0.5d below already documents for the dashboard, and it
-> survived two steps away from that note. `git add` on a gitignored path *fails*,
-> and the `2>/dev/null || true` swallowed the failure, so an agent following the
-> instruction was told nothing while believing the map had shipped.
->
-> It fails the byte-identical Category B test three independent ways: the header
-> embeds a timestamp + commit sha + refresh_id; the body carries LLM-written
-> per-domain summaries (two renders of one commit differ in wording); and it
-> renders from the **cloud** `symbol_index`, i.e. external mutable state, not from
-> committed source. Citations to it in AGENTS.md stay legal via
-> `GENERATED_UNTRACKED_TARGETS` in `check-docs-refs.mjs`; a fresh clone of the
-> **source repo** regenerates it with `npm run dashboard:setup` — an alias that
-> exists here only, since the sync never adds npm scripts. A consumer runs the
-> three steps by path: `symbol-index/refresh.mjs`, `symbol-index/render-mermaid.mjs`,
-> `build-dashboard.mjs all`. The reasoning lives beside the `.gitignore` entry.
->
-> So this step's value is a current LOCAL map plus a fresh cloud symbol-index for
-> future arch-memory consultations — not a commit artifact.
+**`docs/architecture-map.md` is Category A and is NEVER staged** — it embeds a
+timestamp + commit sha, carries LLM-written summaries, and renders from the
+cloud `symbol_index`, so two renders of one commit differ. A fresh clone of
+the **source repo** regenerates it with `npm run dashboard:setup`; a consumer
+runs the three steps by path: `symbol-index/refresh.mjs`,
+`symbol-index/render-mermaid.mjs`, `build-dashboard.mjs all`. This step's
+value is a current LOCAL map plus a fresh cloud symbol-index for future
+arch-memory consultations — not a commit artifact. Why it is classified this
+way and the staging bug this replaced:
+`references/architecture-and-dashboard-refresh.md` §0.5c.
 
 **This step is ALWAYS advisory — it never blocks a ship.** Verified against
 the current `pg`-direct implementation (`scripts/lib/db/client.mjs`'s
@@ -619,10 +608,9 @@ the weekly GH workflow, never by /ship directly.
 
 **Source-repo-gated** — run this ONLY when
 `package.json.name === "claude-engineering-skills"` (same gate as Step 6.0).
-Skip silently in consumer repos. The dashboard is not unavailable there, just
-opt-in and unwired: the builder syncs, but the sync never adds npm scripts, so
-a consumer runs it by path and gets gitignored pages under its own
-`dashboard/`:
+Skip silently in consumer repos — the dashboard is opt-in and unwired there
+(the sync never adds npm scripts), so a consumer runs it by path and gets
+gitignored pages under its own `dashboard/`:
 
 ```bash
 node scripts/build-dashboard.mjs all         # reference + telemetry
@@ -636,36 +624,25 @@ Never blocks the ship.
 node scripts/build-dashboard.mjs reference 2>&1
 ```
 
-Run it WITHOUT `|| true` — the **exit code is the signal** and must be
-read, not masked. A non-zero exit must not abort the ship (this step is
-advisory): treat a failure as "skip staging, print a heads-up, continue".
+Run it WITHOUT `|| true` — the **exit code is the signal** and must be read,
+not masked. A non-zero exit must not abort the ship (this step is advisory):
+treat a failure as "skip staging, print a heads-up, continue".
 
 `reference` mode regenerates `dashboard/index.html` + `dashboard/telemetry.html`.
 The CLI exits non-zero on a **degraded** build (a source was invalid/errored).
 
-**Nothing here is ever staged.** Both pages are **gitignored** — Category A per
-the generated-artifact policy (they derive from mutable store state, so two
-builds of one commit can differ). They were reclassified B → A in 2026-06;
-this step's staging instruction outlived that change and told the agent to
-`git add` a gitignored path, which either fails or force-adds a Category-A
-artifact into a commit. (Design rationale, source repo only — `docs/plans/`
-is not synced to consumers: `docs/plans/local-dashboard.md` §2.1.)
-
-So the exit code is a **reporting** signal, not a staging one:
+**Nothing here is ever staged** — both pages are gitignored Category A (they
+derive from mutable store state, so two builds of one commit can differ). The
+exit code is a **reporting** signal, not a staging one:
 
 - Exit 0 → the local page is current; say nothing.
 - Exit non-zero → print a one-line heads-up that the dashboard build degraded;
   ship continues.
 
-This keeps the LOCAL reference dashboard current with the skills/plans
-being shipped.
-
-> **This is the only dashboard build.** There was a second one at "Step 5.5b"
-> that rebuilt AFTER plan archiving so the Plans tab reflected the final
-> active/completed split. Plans no longer move (Step 5.5), so nothing can change
-> between the two points and Step 5.5b was deleted along with the archiver — but
-> this note outlived it and still said "if you only run one, run 5.5b", naming a
-> step that does not exist.
+This keeps the LOCAL reference dashboard current with the skills/plans being
+shipped. Why the pages are Category A, and the deleted second dashboard
+build this step's note used to reference:
+`references/architecture-and-dashboard-refresh.md` §0.5d.
 
 ---
 
@@ -1104,23 +1081,16 @@ briefly.
 node scripts/security-memory/refresh-incidents.mjs
 ```
 
-**Call the script by path, never `npm run security:refresh`.** The sync never
-merges npm scripts into a consumer's `package.json`, so that alias exists in
-the source repo and nowhere else. From 2026-08-14 this step used that alias
-with `--if-present` appended, which silenced the `Missing script` error a
-consumer reported — and, because that flag exits **0** having run nothing,
-turned every consumer refresh into a silent no-op with a success exit code.
-The refresher itself **is** synced
-(`scripts/.claude-skills/security-memory/refresh-incidents.mjs`), so naming the
-path makes the step actually run where it was always meant to. Do not "fix" a
-missing alias by writing to a consumer's script table from a SKILL step.
+**Call the script by path, never `npm run security:refresh`** — that alias
+exists in the source repo only (the sync never merges npm scripts into a
+consumer's `package.json`); the refresher itself **is** synced
+(`scripts/.claude-skills/security-memory/refresh-incidents.mjs`). Why:
+`references/post-push-advisories.md` §6.5.
 
 After refresh, regex-match the HEAD commit subject against
 `/fix.*\bsecurity\b|\bcve\b|\bvuln\b|\bleak\b|\binjection\b|\bauth\b|\bxss\b|\bcsrf\b|\brce\b/i`
-(word-boundary-anchored — the unanchored form matched "leak" inside
-"leaking", "auth" inside "author/authoring", and "rce" inside
-"source/force/interface", false-flagging ~6% of commits in a 200-commit
-sample; confirmed 2026-07-22). If matched, emit a single passive log line
+(word-boundary-anchored — the unanchored form false-flagged ~6% of commits in
+a 200-commit sample). If matched, emit a single passive log line
 (NOT an interactive prompt — `/ship` runs to completion without asking, which
 is the whole contract in its `description`; a prompt here would strand the
 push mid-flight):
@@ -1156,11 +1126,10 @@ resolved, so a recurring papercut gets marked closed instead of recurring foreve
 >
 > **The cadence differs and that is worth knowing.** With the hook, friction is
 > surfaced *as you work*; without it, only here, once per ship. On a host with
-> no hooks the session-review call returns whatever the store holds — which,
-> with nothing injected during the session, is usually empty. That is a correct
-> empty, not a broken one, and this step must not read an empty list as
-> evidence that no friction existed. Earlier wording asserted the hook "injects"
-> callouts as plain fact, which is false outside Claude Code.
+> no hooks the session-review call returns whatever the store holds — usually
+> empty. That is a correct empty, not a broken one: this step must not read an
+> empty list as evidence that no friction existed. Why:
+> `references/post-push-advisories.md` §6.6.
 
 If push succeeded, list pending injected-but-unlinked friction:
 
@@ -1186,23 +1155,10 @@ Advisory; never blocks the ship.
 
 ## Step 6.7 — Final-review credit (after successful push, advisory)
 
-Closes the loop the shadow A/B could not measure. `final-review-adjudicate` and
-`final-review-record-fix` have existed and been tested since that experiment
-closed — and **nothing called them**, so `user_action` stayed null, credit landed
-only in source comments, and the resulting tail read as noise until a manual
-sweep recovered it (2026-07-28). This step is the missing caller.
-
-**Widened to the primary bucket (docs/plans/skill-efficacy-census.md Phase 1,
-2026-08-22)**: the 2026-07-28 fix only reached the shadow-only bucket — the
-READ side (`final-review-pending`) was hard-scoped to `shadowOnlyQueue`, so a
-primary GPT/Gemini-round finding was never surfaced here at all, however long
-it sat fixed with `user_action` still null (a live-store audit found 1,615
-such rows). `final-review-pending` now reads a merged `pendingQueue`
-(shadow-only ∪ primary-bucket fixed-but-unlabelled), and the card threads
-each item's own `bucket` through to its printed command instead of
-hardcoding `shadow-only` — a bug that would have silently mis-scoped every
-primary-bucket item even after the read side was widened. No change to this
-step's own invocation: the same command below now surfaces both buckets.
+Closes the loop the shadow A/B could not measure — this step is the missing
+caller of `final-review-adjudicate` / `final-review-record-fix`, both of
+which existed and were tested for months with nothing calling them (why:
+`references/post-push-advisories.md` §6.7).
 
 **Run AFTER the commit lands**, so the sha handed to `--commit` is the real one.
 `$REPO` is the `owner/repo` slug (same value `LEARNING_REPO_NAME` uses — the
@@ -1217,14 +1173,12 @@ the finished card, so there is nothing to parse and no formatting decision here.
 Omit `--render` to get the versioned JSON instead (`schemaVersion`, `state`,
 `counts`, `items`) if you need it programmatically.
 
-**Walking the whole queue (since 2026-09-13).** The card shows one page. The
-JSON form pages by a **keyset cursor**, never an offset — the queue is drained
-by the very adjudication that walks it, so an offset would skip one row per
-adjudication (measured before the change: a 50-row cap with no way past it
-left ~2,167 of 2,217 credit rows unreachable through this CLI). Loop on
-`nextCursor`, **not** on `shownCount`, and keep going through pages whose
-`items` is empty (`pageFilteredOut` says how many raw rows were fetched but
-not actionable); `nextCursor: null` is the end:
+**Walking the whole queue.** The card shows one page. The JSON form pages by a
+**keyset cursor**, never an offset — the queue is drained by the very
+adjudication that walks it, so an offset would skip one row per adjudication.
+Loop on `nextCursor`, **not** on `shownCount`, and keep going through pages
+whose `items` is empty (`pageFilteredOut` says how many raw rows were fetched
+but not actionable); `nextCursor: null` is the end:
 
 ```bash
 node scripts/cross-skill.mjs final-review-pending --repo owner/repo --page-size 50
@@ -1234,36 +1188,27 @@ node scripts/cross-skill.mjs final-review-pending --repo owner/repo --page-size 
 node scripts/cross-skill.mjs final-review-pending --repo owner/repo --page-size 50 --after eyJ2IjoxLC4uLn0
 ```
 
-`--page-size` is the alias of `--limit` (default 20, cap 200 — the same
-resolver the other backlog readers use); `--offset` is **not supported**, by
-design. `--group-by work-unit` (and `--work-unit <key>`, `--no-llm-labels`)
-groups a page's actionable rows into refactor-sized units through the same
-grouper `list-unlocked-fixes` and `list-unremediated-acceptances` share.
+`--page-size` is the alias of `--limit` (default 20, cap 200); `--offset` is
+**not supported**, by design. `--group-by work-unit` (and `--work-unit <key>`,
+`--no-llm-labels`) groups a page's actionable rows into refactor-sized units
+through the same grouper `list-unlocked-fixes` and `list-unremediated-acceptances`
+share.
 
-**A ruling on EITHER axis is a label (since 2026-09-14,
-docs/plans/final-review-credit-projection.md).** A finding's adjudication
-lives on two columns: `adjudication_outcome` (the triage ruling — written
-automatically by the audit loop's own deliberation) and `user_action` (the
-ship-time disposition this step's `final-review-adjudicate` writes). Until
-this date the card read only `user_action`, so a primary-bucket finding the
-loop had already ruled `accepted` weeks earlier — 1,649 of 2,280 rows in one
-live measurement — still printed as "fixed-but-unlabelled" and this step
-asked you to re-adjudicate it. `user_action` is a **durable override**: once
-set to anything but `needs_triage` it wins outright, so recording a ruling
-here is never undone by a later triage pass. The card now surfaces a
-`⚠ N finding(s) where the ship-time disposition and the triage ruling
-disagree in direction` line (`axisConflicts`) when the two axes point opposite
-ways — reconcile those by hand; everything else needs no special handling.
+**A ruling on EITHER axis is a label.** A finding's adjudication lives on two
+columns: `adjudication_outcome` (the triage ruling — written automatically by
+the audit loop's own deliberation) and `user_action` (the ship-time
+disposition this step's `final-review-adjudicate` writes). `user_action` is a
+**durable override**: once set to anything but `needs_triage` it wins
+outright, so recording a ruling here is never undone by a later triage pass.
+The card surfaces a `⚠ N finding(s) where the ship-time disposition and the
+triage ruling disagree in direction` line (`axisConflicts`) when the two axes
+point opposite ways — reconcile those by hand; everything else needs no
+special handling.
 
-**Re-running the final reviewer no longer erases prior rulings.** Before this
-date, `recordFinalReviewFindings` replaced a run's findings by DELETE-then-
-INSERT, so a second Gemini pass over the same `--run-id` (a re-run round, or a
-consolidated union-diff gate) silently wiped every `user_action` /
-`adjudication_outcome` a human or agent had already written on that run's
-rows. It now upserts the new snapshot and prunes only the rows the snapshot
-dropped that carry **no** ruling and **no** recorded remediation on either
-axis — a labelled or remediated finding that drops out of a later snapshot is
-kept, not erased.
+**Re-running the final reviewer does not erase prior rulings** — a re-run
+round or a consolidated union-diff gate upserts the new snapshot and prunes
+only rows the snapshot dropped that carry no ruling and no recorded
+remediation on either axis.
 
 **Advisory only — the reader always exits 0** across its three result states
 (`ready` / `disabled` / `unavailable`), emitting empty output when cloud is off
@@ -1299,12 +1244,9 @@ Pick the row(s) this push actually produced:
 | the skill manifest | re-derive from the pushed sha, not the working tree | regenerated bytes identical |
 
 **Write the outcome with `pending-note write` (body on stdin) — never by
-re-opening the status.md entry you just pushed.** status.md is append-only
-(Reminders, below), and this step runs AFTER that entry's commit already
-landed: writing into it now means a second commit and a second push, which
-re-triggers the same pre-push readiness suite Step 6.8 exists to verify —
-doubling the workflow's cost for one status line. A consumer hit exactly this
-2026-08-14 and reported it as friction. Include in the file: the immutable
+re-opening the status.md entry you just pushed** (status.md is append-only;
+this step runs AFTER that entry's commit already landed, so re-opening it
+means a second commit and a second push). Include in the file: the immutable
 locator (full sha / digest / bundle version), the retrieval command actually
 run, and the observed result. Write it with:
 
@@ -1312,37 +1254,17 @@ run, and the observed result. Write it with:
 node scripts/lib/worktree-preflight.mjs pending-note write
 ```
 
-It resolves the MAIN checkout, stamps the filename with the shipped sha and the
-time, and writes there. The **next** `/ship` invocation's Step 2 drains every
-pending note, prepends them as a `### Consumer Verification (previous ship)`
-subsection above that session's own entry, then deletes exactly those (template:
+It resolves the MAIN checkout (not the worktree you may be standing in —
+`.claude/tmp/` resolves per-tree, so a hand-written path would land in the
+wrong place; both reader and writer share one implementation of the durable
+lookup), stamps the filename with the shipped sha and the time, and writes
+there. The **next** `/ship` invocation's Step 2 drains every pending note,
+prepends them as a `### Consumer Verification (previous ship)` subsection
+above that session's own entry, then deletes exactly those (template:
 `references/status-md-format.md`). If no further `/ship` happens, the notes
-simply sit there unread — an acceptable loss for advisory documentation (never a
-gate), not a reason to force a push now.
-
-> **One note per ship, and none of them overwrite each other** (2026-09-07,
-> upstream b02d80b3). This step used to write ONE fixed filename
-> unconditionally, and the gap between a write and the next read is unbounded —
-> Step 2 only runs inside `/ship`, and not every status.md commit is a ship. A
-> second ship inside that gap destroyed an unread note by following this step as
-> written, silently in both directions. Hit live 2026-09-06: a verified note was
-> still unread ~10 hours later when the next Step 6.8 ran. The filename now
-> carries the sha and a timestamp, so a collision is not expressible rather than
-> merely unlikely.
-
-> **The MAIN checkout, not the worktree you are standing in** (2026-08-14). A
-> ship run from a linked worktree that is then deleted — the normal end of a
-> Claude Code session — destroys this note before any later `/ship` can read it,
-> so the handoff silently never happens and the only symptom is a note that
-> never appears. `.claude/tmp/` resolves per-tree, so a hand-written path means
-> a different directory depending on where you are standing.
->
-> Both commands resolve the durable one themselves, via the same
-> `--git-common-dir` trick `skills:hydrate` uses: in a linked worktree the
-> common dir's parent IS the main checkout, and the main checkout is the one
-> tree guaranteed to outlive the session. Reader and writer share ONE
-> implementation rather than two hand-copied recipes, so a note written from a
-> worktree is still found by a later ship run from anywhere.
+simply sit there unread — an acceptable loss for advisory documentation
+(never a gate), not a reason to force a push now. Incident history behind
+each of these rules: `references/post-push-advisories.md` §6.8.
 
 **Three terminal states, and only three**: `verified`, `failed`, `unverified`.
 **`unverified` must name a concrete blocked prerequisite** — "no network in this
@@ -1417,8 +1339,10 @@ situations — read them only when the trigger applies.
 
 | File | Summary | Read when |
 |---|---|---|
+| `references/architecture-and-dashboard-refresh.md` | Why the arch-map and dashboard pages are Category A, and deleted-step history for 0.5c/0.5d. | Debugging Step 0.5c/0.5d's staging behaviour, or before changing either. |
 | `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |
 | `references/migration-credentials.md` | Which role applies migrations, why the runtime DSN cannot, and where its credential belongs (never in .env). | Step 0.5g — a store is behind and `--migrate` is refused with `42501` (`must be owner of table …` / `permission denied for schema public`). |
+| `references/post-push-advisories.md` | Steps 6.5-6.8's post-push advisories — the incident history behind each rule, kept out of the routine flow. | Debugging Step 6.5/6.6/6.7/6.8's behaviour, or before changing one. |
 | `references/pre-ship-gate-queries.md` | Step 0.5's pre-ship nudges (0.5a/b/e/g/h/i) — the incident history behind each rule, kept out of the routine flow. | Debugging a Step 0.5 nudge's behaviour, or before changing one. |
 | `references/python-environment-discovery.md` | Python pre-push command discovery — env wrapper detection + per-tool probe order. | detect-stack returned `python` or `mixed` with Python files in the diff. |
 | `references/status-md-format.md` | status.md session-log template + update rules + persona / UX status sections. | Step 2 — creating status.md for the first time, OR appending UX / Persona / Regression-Lock / Plan-Verify sections. |
