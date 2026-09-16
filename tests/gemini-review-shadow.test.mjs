@@ -84,8 +84,12 @@ describe('shadowErrorBlock — a failed shadow carries its classification, not j
     // live transport. It proves the assignment is PRESENT, not that it runs —
     // `shadowErrorBlock`'s own tests above cover the behaviour once an error
     // with these fields exists. (Same shape as the buildShadowClient pin below.)
+    //
+    // Target path updated for the Phase 2 relocation
+    // (docs/plans/gemini-review-decomposition.md) — callReviewer moved to
+    // lib/final-review/transport.mjs; same pin, new location.
     const fs = await import('node:fs');
-    const src = fs.readFileSync('scripts/gemini-review.mjs', 'utf8');
+    const src = fs.readFileSync('scripts/lib/final-review/transport.mjs', 'utf8');
     const fn = src.slice(src.indexOf('async function callReviewer'));
     const body = fn.slice(0, fn.indexOf('\n}\n'));
     assert.match(

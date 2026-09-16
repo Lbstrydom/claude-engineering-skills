@@ -153,7 +153,9 @@ describe('call sites map the oracle into their OWN shape, and keep usageMissing'
     ['scripts/lib/audit-shadow.mjs', /output_tokens: g\.output_tokens/, /usageMissing: g\.usageMissing/],
     ['scripts/lib/brainstorm/gemini-adapter.mjs', /outputTokens: g\.output_tokens/, /usageMissing: g\.usageMissing/],
     ['scripts/lib/arm-eval/producers/model-call.mjs', /output_tokens: g\.output_tokens/, /usageMissing: g\.usageMissing/],
-    ['scripts/gemini-review.mjs', /output_tokens: g\.output_tokens/, /usageMissing: g\.usageMissing/],
+    // Relocated from scripts/gemini-review.mjs (docs/plans/gemini-review-decomposition.md
+    // Phase 2) — the gemini transport adapter now lives in transport.mjs.
+    ['scripts/lib/final-review/transport.mjs', /output_tokens: g\.output_tokens/, /usageMissing: g\.usageMissing/],
   ];
 
   /**

@@ -125,8 +125,12 @@ describe('gateway shadow — the OpenRouter routing pins are inherited, not re-p
     // `PROVIDERS[provider].requestExtras?.()`, and the shadow supplies its
     // CANONICAL name. If that name stopped matching, the shadow would silently
     // run unpinned and measure OpenRouter's router instead of the model.
+    //
+    // Target path updated for the Phase 2 relocation
+    // (docs/plans/gemini-review-decomposition.md) — the PROVIDERS catalog
+    // moved to lib/final-review/providers.mjs; same pin, new location.
     const src = await import('node:fs').then((fs) =>
-      fs.readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8'));
+      fs.readFileSync(new URL('../scripts/lib/final-review/providers.mjs', import.meta.url), 'utf-8'));
 
     const canonical = shadow({ provider: 'openrouter', model: KIMI }, { OPENROUTER_API_KEY: 'k' }).provider;
     assert.equal(canonical, 'openrouter');
@@ -187,7 +191,10 @@ describe('xAI shadow — the descriptor is DELIBERATELY NOT the OpenRouter shape
     // string (verified live 2026-08-14 against api.x.ai). Getting this wrong
     // is the "accepted but inert" failure class the Grok pre-flight (plan §8)
     // exists to catch — this test catches it earlier, for free.
-    const src = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
+    //
+    // Target path updated for the Phase 2 relocation — PROVIDERS moved to
+    // lib/final-review/providers.mjs.
+    const src = readFileSync(new URL('../scripts/lib/final-review/providers.mjs', import.meta.url), 'utf-8');
 
     const canonical = shadow({ provider: 'xai', model: null }, { XAI_API_KEY: 'k' }).provider;
     assert.equal(canonical, 'xai');
@@ -272,7 +279,9 @@ describe('Alibaba shadow — resolution states (native replacement for the qwen 
 
 describe('Alibaba shadow — the descriptor is a direct endpoint, not an OpenRouter-style router', () => {
   it('carries no OpenRouter routing pins, and sends enable_thinking EXPLICITLY TRUE — reasoning parity is the whole point of a comparison arm', () => {
-    const src = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
+    // Target path updated for the Phase 2 relocation — PROVIDERS moved to
+    // lib/final-review/providers.mjs.
+    const src = readFileSync(new URL('../scripts/lib/final-review/providers.mjs', import.meta.url), 'utf-8');
 
     const canonical = shadow({ provider: 'alibaba', model: 'qwen3.8-max' }, { ALIBABA_CLOUD_API_KEY: 'k', ALIBABA_CLOUD_BASE_URL: 'https://example.invalid/v1' }).provider;
     assert.equal(canonical, 'alibaba');
@@ -353,7 +362,9 @@ describe('DeepSeek shadow — resolution states (direct API, replaces the Alibab
 
 describe('DeepSeek shadow — the descriptor degrades gracefully on this provider\'s json_schema rejection', () => {
   it('carries no OpenRouter routing pins, and requestExtras is empty', () => {
-    const src = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
+    // Target path updated for the Phase 2 relocation — PROVIDERS moved to
+    // lib/final-review/providers.mjs.
+    const src = readFileSync(new URL('../scripts/lib/final-review/providers.mjs', import.meta.url), 'utf-8');
     const canonical = shadow({ provider: 'deepseek', model: 'deepseek-v4-pro' }, { DEEPSEEK_API_KEY: 'k' }).provider;
     assert.equal(canonical, 'deepseek');
     const descriptor = src.slice(src.indexOf('  deepseek: {'));
@@ -403,7 +414,12 @@ describe('Anthropic reviewer transports pin the sdk backend', () => {
   // meaning the final gate's own fallback reviewer was dead on any machine
   // running CLAUDE_BACKEND=cli. A source assertion, because reproducing it
   // needs a real CLI spawn and a 50K-token payload.
-  const SRC = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
+  //
+  // Two source files since the Phase 2 relocation (docs/plans/gemini-review-decomposition.md):
+  // `buildShadowClient` stays in gemini-review.mjs (Phase 3 territory, not yet
+  // moved); the `claude-opus` PROVIDERS descriptor moved to providers.mjs.
+  const CLI_SRC = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
+  const PROVIDERS_SRC = readFileSync(new URL('../scripts/lib/final-review/providers.mjs', import.meta.url), 'utf-8');
 
   // `backend: 'sdk'` as an OPTION, not as the sole option: since 2026-08-30
   // both sites also pass `azureRoute: null`, pinned separately below. Requiring
@@ -412,12 +428,12 @@ describe('Anthropic reviewer transports pin the sdk backend', () => {
   const PINS_SDK = /createAnthropicClient\(\{[^)]*backend:\s*'sdk'/;
 
   it('the shadow builder pins backend sdk', () => {
-    const fn = SRC.slice(SRC.indexOf('async function buildShadowClient'));
+    const fn = CLI_SRC.slice(CLI_SRC.indexOf('async function buildShadowClient'));
     assert.match(fn.slice(0, fn.indexOf('\n}\n')), PINS_SDK);
   });
 
   it('the PRIMARY claude-opus provider pins backend sdk — never the ambient env', () => {
-    const block = SRC.slice(SRC.indexOf("'claude-opus': {"));
+    const block = PROVIDERS_SRC.slice(PROVIDERS_SRC.indexOf("'claude-opus': {"));
     const body = block.slice(0, block.indexOf("'azure-claude': {"));
     assert.match(body, PINS_SDK);
     assert.doesNotMatch(body, /createAnthropicClient\(\s*\)/, 'ambient-backend construction reintroduced');
@@ -429,9 +445,9 @@ describe('Anthropic reviewer transports pin the sdk backend', () => {
     // route now adopts the tenant's Azure Claude, dropping this pin would make
     // both arms silently become `azure-claude` on any Azure machine — the A/B
     // would then compare a provider against itself and read as agreement.
-    const shadow = SRC.slice(SRC.indexOf('async function buildShadowClient'));
+    const shadow = CLI_SRC.slice(CLI_SRC.indexOf('async function buildShadowClient'));
     assert.match(shadow.slice(0, shadow.indexOf('\n}\n')), /azureRoute:\s*null/);
-    const block = SRC.slice(SRC.indexOf("'claude-opus': {"));
+    const block = PROVIDERS_SRC.slice(PROVIDERS_SRC.indexOf("'claude-opus': {"));
     assert.match(block.slice(0, block.indexOf("'azure-claude': {")), /azureRoute:\s*null/);
   });
 });
@@ -446,8 +462,11 @@ describe('final-review transports READ reasoning tokens, never fabricate them', 
   // you when it stops being true, which is the whole failure.
   //
   // Asserted at source because reproducing it needs three live providers.
-  const SRC = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
-  const transports = SRC.slice(SRC.indexOf('const REVIEW_TRANSPORTS'), SRC.indexOf('async function callReviewer'));
+  //
+  // Target path updated for the Phase 2 relocation — REVIEW_TRANSPORTS and
+  // callReviewer both moved to lib/final-review/transport.mjs.
+  const SRC = readFileSync(new URL('../scripts/lib/final-review/transport.mjs', import.meta.url), 'utf-8');
+  const transports = SRC.slice(SRC.indexOf('export const REVIEW_TRANSPORTS'), SRC.indexOf('export async function callReviewer'));
 
   it('no transport assigns a literal zero to thinking_tokens', () => {
     assert.doesNotMatch(transports, /thinking_tokens:\s*0\s*[,}]/,
