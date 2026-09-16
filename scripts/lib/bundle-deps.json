@@ -29,11 +29,12 @@
       "required": true,
       "importers": [
         "scripts/.claude-skills/evolve-prompts.mjs",
-        "scripts/.claude-skills/gemini-review.mjs",
         "scripts/.claude-skills/lib/arm-eval/producers/model-call.mjs",
         "scripts/.claude-skills/lib/audit-shadow.mjs",
         "scripts/.claude-skills/lib/brainstorm/gemini-adapter.mjs",
         "scripts/.claude-skills/lib/context.mjs",
+        "scripts/.claude-skills/lib/final-review/providers.mjs",
+        "scripts/.claude-skills/lib/final-review/shadow.mjs",
         "scripts/.claude-skills/lib/llm-wrappers.mjs",
         "scripts/.claude-skills/meta-assess.mjs",
         "scripts/.claude-skills/refine-prompts.mjs"
@@ -174,6 +175,7 @@
         "scripts/.claude-skills/lib/cross-skill/commands/persona.mjs",
         "scripts/.claude-skills/lib/dashboard/schema.mjs",
         "scripts/.claude-skills/lib/efficacy-lints.mjs",
+        "scripts/.claude-skills/lib/final-review/output-schemas.mjs",
         "scripts/.claude-skills/lib/finalize-outcomes.mjs",
         "scripts/.claude-skills/lib/learning/author-tier-observation.mjs",
         "scripts/.claude-skills/lib/llm-wrappers.mjs",
