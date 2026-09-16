@@ -341,8 +341,11 @@ describe('resolveModelEvalShadowOverride — discovery is unconditional, never r
 // invariant for the discovery generator.
 describe('buildShadowClient pins backend:sdk — a conversational backend silently voids the JSON contract', () => {
   it('passes backend:"sdk" explicitly rather than inheriting the ambient CLAUDE_BACKEND', async () => {
+    // Target path updated for the Phase 3 relocation
+    // (docs/plans/gemini-review-decomposition.md) — buildShadowClient moved
+    // to lib/final-review/shadow.mjs; same pin, new location.
     const fs = await import('node:fs');
-    const src = fs.readFileSync('scripts/gemini-review.mjs', 'utf8');
+    const src = fs.readFileSync('scripts/lib/final-review/shadow.mjs', 'utf8');
     const fn = src.slice(src.indexOf('async function buildShadowClient'));
     const body = fn.slice(0, fn.indexOf('\n}'));
     assert.match(

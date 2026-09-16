@@ -22,10 +22,15 @@ import url from 'node:url';
 
 import { applyExistenceGate } from '../scripts/gemini-review.mjs';
 
-const REVIEW_SRC = fs.readFileSync(
-  path.join(path.dirname(url.fileURLToPath(import.meta.url)), '../scripts/gemini-review.mjs'),
-  'utf-8',
-);
+// Two source files since the Phase 3 relocation (docs/plans/gemini-review-decomposition.md):
+// the primary reviewer's filter chain (applyScopeFilter/applyExistenceGate in
+// runFinalReview) stays in gemini-review.mjs; the shadow reviewer's identical
+// chain (in runShadowReview) moved to lib/final-review/shadow.mjs. "Every
+// chain, wherever it lives" is the invariant below actually checks — so the
+// haystack is both files concatenated, not gemini-review.mjs alone.
+const REPO_ROOT = path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..');
+const REVIEW_SRC = fs.readFileSync(path.join(REPO_ROOT, 'scripts/gemini-review.mjs'), 'utf-8')
+  + fs.readFileSync(path.join(REPO_ROOT, 'scripts/lib/final-review/shadow.mjs'), 'utf-8');
 
 /** A stub inventory. `complete: true` ⇒ absence is provable. */
 const inventory = (files, complete = true) => () => ({ files: new Set(files), complete });

@@ -415,10 +415,10 @@ describe('Anthropic reviewer transports pin the sdk backend', () => {
   // running CLAUDE_BACKEND=cli. A source assertion, because reproducing it
   // needs a real CLI spawn and a 50K-token payload.
   //
-  // Two source files since the Phase 2 relocation (docs/plans/gemini-review-decomposition.md):
-  // `buildShadowClient` stays in gemini-review.mjs (Phase 3 territory, not yet
-  // moved); the `claude-opus` PROVIDERS descriptor moved to providers.mjs.
-  const CLI_SRC = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
+  // Two source files since the Phase 2/3 relocation (docs/plans/gemini-review-decomposition.md):
+  // `buildShadowClient` moved to lib/final-review/shadow.mjs (Phase 3); the
+  // `claude-opus` PROVIDERS descriptor moved to providers.mjs (Phase 2).
+  const SHADOW_SRC = readFileSync(new URL('../scripts/lib/final-review/shadow.mjs', import.meta.url), 'utf-8');
   const PROVIDERS_SRC = readFileSync(new URL('../scripts/lib/final-review/providers.mjs', import.meta.url), 'utf-8');
 
   // `backend: 'sdk'` as an OPTION, not as the sole option: since 2026-08-30
@@ -428,7 +428,7 @@ describe('Anthropic reviewer transports pin the sdk backend', () => {
   const PINS_SDK = /createAnthropicClient\(\{[^)]*backend:\s*'sdk'/;
 
   it('the shadow builder pins backend sdk', () => {
-    const fn = CLI_SRC.slice(CLI_SRC.indexOf('async function buildShadowClient'));
+    const fn = SHADOW_SRC.slice(SHADOW_SRC.indexOf('async function buildShadowClient'));
     assert.match(fn.slice(0, fn.indexOf('\n}\n')), PINS_SDK);
   });
 
@@ -445,7 +445,7 @@ describe('Anthropic reviewer transports pin the sdk backend', () => {
     // route now adopts the tenant's Azure Claude, dropping this pin would make
     // both arms silently become `azure-claude` on any Azure machine — the A/B
     // would then compare a provider against itself and read as agreement.
-    const shadow = CLI_SRC.slice(CLI_SRC.indexOf('async function buildShadowClient'));
+    const shadow = SHADOW_SRC.slice(SHADOW_SRC.indexOf('async function buildShadowClient'));
     assert.match(shadow.slice(0, shadow.indexOf('\n}\n')), /azureRoute:\s*null/);
     const block = PROVIDERS_SRC.slice(PROVIDERS_SRC.indexOf("'claude-opus': {"));
     assert.match(block.slice(0, block.indexOf("'azure-claude': {")), /azureRoute:\s*null/);
