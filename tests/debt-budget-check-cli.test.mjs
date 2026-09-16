@@ -143,4 +143,16 @@ describe('debt-budget-check CLI', () => {
     assert.equal(r.status, 0);
     assert.match(r.stderr, /Usage:/);
   });
+
+  test('a literal --json after -- does not enable JSON mode', () => {
+    // jsonMode/help used to be read via a bare `args.includes('--json')`,
+    // which scans the ENTIRE argv unlike the value-flag `get()` helper — a
+    // literal `--json` after the POSIX `--` terminator is a positional, not
+    // a flag, and must not turn JSON mode on.
+    seedLedger([makeEntry('a', 'src/x.js')], {});
+    const r = runCli(['--ledger', ledgerPath, '--', '--json']);
+    assert.equal(r.status, 0);
+    assert.doesNotMatch(r.stdout, /^\{/, 'must render human text, not a JSON envelope');
+    assert.match(r.stdout, /No budgets configured/);
+  });
 });

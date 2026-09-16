@@ -28,6 +28,7 @@ import { selectEventSource, removeDebt, appendEvents } from './lib/debt-memory.m
 import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
 import { DEFAULT_DEBT_EVENTS_PATH } from './lib/debt-events.mjs';
 import { generateRepoProfile } from './lib/context.mjs';
+import { hasFlag } from './lib/cli-io.mjs';
 import path from 'node:path';
 
 function parseArgs(argv) {
@@ -45,8 +46,8 @@ function parseArgs(argv) {
     runId: get('--run-id') || `resolve-${Date.now()}`,
     ledgerPath: get('--ledger') || DEFAULT_DEBT_LEDGER_PATH,
     eventsPath: get('--events') || DEFAULT_DEBT_EVENTS_PATH,
-    noCloud: args.includes('--no-cloud'),
-    help: args.includes('--help') || args.includes('-h'),
+    noCloud: hasFlag('no-cloud'),
+    help: hasFlag('help', { short: 'h' }),
   };
 }
 

@@ -58,6 +58,80 @@ to `main` (35ff37c7) ahead of this `/ship` run, so that commit carries no
 
 Backlog 2026-09-16T04:37Z: Q1 50c/18p (+263 aged) · Q2 84c/68p (66 perm) · Q3 55 · debt unmeasured · upstream 1
 
+---
+
+## 2026-09-16 — debt-*.mjs boolean flags now respect the POSIX `--` terminator
+
+### Changes
+
+Ad-hoc fix (no plan; direct report). `debt-health-check.mjs`'s three boolean
+flags (`--json`, `--help`, `-h`) were read via a bare `args.includes(...)`,
+which scans the ENTIRE argv — unlike its value flags (`--ledger`, `--out`),
+which go through the shared `argOption()` and correctly stop at a POSIX `--`
+terminator. `node scripts/debt-health-check.mjs -- --json` would wrongly
+enable JSON mode even though `--json` after `--` is a literal positional.
+
+A census across `scripts/debt-*.mjs` found the same pattern in **9 files**,
+not just the 5 the report named:
+`debt-health-check.mjs`, `debt-budget-check.mjs`, `debt-resolve.mjs`,
+`debt-review.mjs`, `debt-reconcile.mjs`, `debt-capture-trail-check.mjs`,
+`debt-ledger-claims-check.mjs`, plus `debt-backfill.mjs` and
+`debt-pr-comment.mjs` (found by grep, not in the original report).
+`debt-capture-trail-check.mjs` and `debt-ledger-claims-check.mjs` had already
+migrated `--help` to `hasFlag('help')` but kept a bare
+`args.includes('-h')` beside it — the same bug, one spelling over.
+
+- **`hasFlag(name, { short })`** (`scripts/lib/cli-io.mjs`) — extended to take
+  an optional single-dash alias, checked in the same `--`-terminated region as
+  the long spelling. One oracle for where flags end, instead of a second
+  `args.includes('-h')` at each call site reintroducing the bug for the short
+  form.
+- All boolean flags in the 9 files above now read through `hasFlag`. Each
+  file's hand-rolled value-flag `get()` closure and the absence of
+  `assertKnownFlags` in several of them (already tracked in
+  `check-cli-flags.mjs`'s `BASELINE`) were left untouched — that's separate,
+  pre-existing debt, not this bug.
+- Tests: extended `tests/cli-io-equals-flags.test.mjs` for the new `short`
+  option; added `--`-terminator regression tests to the CLI-spawn suites that
+  already exist for `debt-health-check`, `debt-budget-check`, `debt-resolve`,
+  `debt-capture-trail-check`, and `debt-pr-comment`. `debt-review.mjs`,
+  `debt-reconcile.mjs`, `debt-backfill.mjs`, and `debt-ledger-claims-check.mjs`
+  have no existing CLI-spawn harness — not stood up new ones for this; the
+  shared `hasFlag` unit tests cover the actual mechanism they now delegate to.
+
+### Files Affected
+- `scripts/lib/cli-io.mjs` — `hasFlag()` gains `{ short }`.
+- `scripts/debt-health-check.mjs`, `debt-budget-check.mjs`, `debt-resolve.mjs`,
+  `debt-review.mjs`, `debt-reconcile.mjs`, `debt-capture-trail-check.mjs`,
+  `debt-ledger-claims-check.mjs`, `debt-backfill.mjs`, `debt-pr-comment.mjs` —
+  boolean flags switched to `hasFlag`.
+- `tests/cli-io-equals-flags.test.mjs`, `tests/debt-health-check.test.mjs`,
+  `tests/debt-budget-check-cli.test.mjs`, `tests/debt-resolve-cli.test.mjs`,
+  `tests/debt-capture-trail-check-cli.test.mjs`,
+  `tests/debt-pr-comment-cli.test.mjs` — new/extended tests.
+
+### Decisions Made
+- Left the un-migrated value-flag `get()` helpers and missing
+  `assertKnownFlags` calls alone — fixing those is a separate, larger
+  migration already tracked as accepted debt, not part of this bug.
+- Side effect, noted rather than "fixed": `cli:flags:gate`'s report-only
+  census now lists `debt-backfill.mjs`, `debt-budget-check.mjs`,
+  `debt-pr-comment.mjs`, and `debt-review.mjs` under "baseline can shrink —
+  fixed or gone". That's a false read from the gate's source-text heuristic
+  (it anchors on a literal `includes('--...')`, which those files no longer
+  contain) — those files still don't call `assertKnownFlags` and still
+  silently accept unknown flags. `BASELINE` was left untouched rather than
+  removing those 4 entries, which would misstate that the unknown-flag issue
+  is fixed.
+
+### Next Steps
+- None from this fix. The 4-entry `BASELINE` staleness above is cosmetic
+  (report-only, gate stays green) and not chased further here.
+
+Backlog 2026-09-16T04:32Z: Q1 50c/18p (+263 aged) · Q2 84c/68p (66 perm) · Q3 55 · debt unmeasured · upstream 1
+
+---
+
 ## 2026-09-14 — final-review credit: a ruling on either axis is a label, and replay no longer erases prior rulings
 
 ### Changes

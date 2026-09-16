@@ -28,6 +28,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
 import { findBudgetViolations } from './lib/debt-review-helpers.mjs';
+import { hasFlag } from './lib/cli-io.mjs';
 
 function parseArgs(argv) {
   const args = argv.slice(2);
@@ -38,8 +39,8 @@ function parseArgs(argv) {
   return {
     ledgerPath: get('--ledger') || DEFAULT_DEBT_LEDGER_PATH,
     budgetsFile: get('--budgets-file') || null,
-    jsonMode: args.includes('--json'),
-    help: args.includes('--help') || args.includes('-h'),
+    jsonMode: hasFlag('json'),
+    help: hasFlag('help', { short: 'h' }),
   };
 }
 

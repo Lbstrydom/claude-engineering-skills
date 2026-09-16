@@ -34,7 +34,7 @@ import './lib/load-env.mjs';
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { assertKnownFlags, ArgvError, argOption } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, argOption, hasFlag } from './lib/cli-io.mjs';
 import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
 import {
   findStaleEntries, oldestEntryDays, findRecurringEntries, findBudgetViolations,
@@ -61,11 +61,10 @@ const KNOWN_FLAGS = ['--ledger', '--json', '--out', '--help', '-h', '--selfcheck
 
 function parseArgs(argv) {
   const args = argv.slice(2);
-  // The shared `argOption` from cli-io, not a hand-rolled reader: it handles
-  // `--name=value`, refuses to swallow a FOLLOWING FLAG as a value, and stops
-  // at `--`. This script kept its own copy while its siblings were migrated in
-  // the same change — an inconsistent partial fix the final gate called out,
-  // and rightly: the utility was already in use two files away.
+  // argOption silently falls back to the default when a value flag has no
+  // value (or is immediately followed by another flag) — this loop exists so
+  // `--ledger`/`--out` fail loudly instead of quietly running against the
+  // default path.
   for (const flag of ['--ledger', '--out']) {
     const i = args.indexOf(flag);
     if (i !== -1 && (args[i + 1] === undefined || args[i + 1].startsWith('-'))) {
@@ -74,9 +73,9 @@ function parseArgs(argv) {
   }
   return {
     ledgerPath: argOption('ledger', DEFAULT_DEBT_LEDGER_PATH),
-    jsonMode: args.includes('--json'),
+    jsonMode: hasFlag('json'),
     outFile: argOption('out', null),
-    help: args.includes('--help') || args.includes('-h'),
+    help: hasFlag('help', { short: 'h' }),
   };
 }
 

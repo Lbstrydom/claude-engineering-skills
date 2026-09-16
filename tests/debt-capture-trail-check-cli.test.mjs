@@ -133,4 +133,24 @@ describe('debt-capture-trail-check CLI', () => {
     assert.equal(r.status, 0);
     assert.match(r.stderr, /Usage:/);
   });
+
+  test('a literal --json after -- does not enable JSON mode', () => {
+    // jsonMode/help used to be read via `hasFlag('json')` and
+    // `hasFlag('help') || args.includes('-h')` — the bare `-h` half scanned
+    // the ENTIRE argv, unlike hasFlag's own `--` handling. A literal `--json`
+    // after the POSIX `--` terminator is a positional, not a flag.
+    writeRoundLedger('sid1-ledger.json', [{ topicId: 'a', ruling: 'defer', severity: 'HIGH' }]);
+    seedDebtLedger([makeDebtEntry('a')]);
+    const r = runCli(['--', '--json']);
+    assert.equal(r.status, 0);
+    assert.doesNotMatch(r.stdout, /^\{/, 'must render human text, not a JSON envelope');
+    assert.match(r.stdout, /1 deferred entry/);
+  });
+
+  test('a literal -h after -- does not print usage', () => {
+    const r = runCli(['--', '-h']);
+    assert.equal(r.status, 0);
+    assert.doesNotMatch(r.stderr, /Usage:/);
+    assert.match(r.stdout, /nothing to verify/);
+  });
 });

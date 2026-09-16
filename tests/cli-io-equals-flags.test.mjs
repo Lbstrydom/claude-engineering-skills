@@ -122,6 +122,33 @@ describe('LAST occurrence wins — the wrapper-override convention', () => {
   });
 });
 
+describe('hasFlag short-flag alias (e.g. -h) is checked in the same -- terminated region', () => {
+  // Several call sites read `--help`/`-h` as `hasFlag('help') || args.includes('-h')`
+  // — the bare `args.includes('-h')` half reintroduces the exact pre-`--`-terminator
+  // bug this file exists to fix, just for the one-letter spelling. `short` folds
+  // both spellings through the one region so there is a single place that decides
+  // where flags end.
+  it('a bare short flag is present', () => {
+    argv('-h');
+    assert.equal(hasFlag('help', { short: 'h' }), true);
+  });
+
+  it('a short flag after -- is a positional, not a flag', () => {
+    argv('--', '-h');
+    assert.equal(hasFlag('help', { short: 'h' }), false);
+  });
+
+  it('the long flag before -- is still read alongside an unrelated positional -h', () => {
+    argv('--help', '--', '-h');
+    assert.equal(hasFlag('help', { short: 'h' }), true);
+  });
+
+  it('without a short option, the short spelling is not checked (backward compatible)', () => {
+    argv('-h');
+    assert.equal(hasFlag('help'), false);
+  });
+});
+
 describe('the POSIX `--` terminator ends flag parsing', () => {
   // The dispatcher's flagRegion already stopped at `--`; these helpers did not,
   // so the two DISAGREED about where flags end — the same validated-vs-consumed

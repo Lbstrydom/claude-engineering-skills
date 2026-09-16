@@ -109,4 +109,23 @@ describe('debt-resolve CLI', () => {
     assert.equal(r.status, 0);
     assert.match(r.stderr, /Usage:/);
   });
+
+  test('a literal --help after -- does not print usage — the resolve proceeds normally', () => {
+    // help/noCloud used to be read via a bare `args.includes(...)`, which
+    // scans the ENTIRE argv. A literal `--help` after the POSIX `--`
+    // terminator is a positional, not a flag; it must not short-circuit to
+    // printUsage() before the resolve logic runs.
+    const r = runCli([
+      'existing1',
+      '--rationale', 'fixed in commit abc1234 as part of refactor pass',
+      '--ledger', ledgerPath,
+      '--events', eventsPath,
+      '--no-cloud',
+      '--', '--help',
+    ]);
+    assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+    assert.doesNotMatch(r.stderr, /Usage:/);
+    const json = JSON.parse(r.stdout);
+    assert.equal(json.ok, true, 'the resolve must actually run, not short-circuit to usage');
+  });
 });

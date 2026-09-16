@@ -37,6 +37,7 @@ import { writeDebtEntries, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mj
 import { persistDebtEntries, selectEventSource } from './lib/debt-memory.mjs';
 import { resolveRepoForStore, initLearningStore, isCloudEnabled } from './learning-store.mjs';
 import { generateRepoProfile } from './lib/context.mjs';
+import { hasFlag } from './lib/cli-io.mjs';
 
 /**
  * Resolve the debt event source (cloud when configured + the repo resolves,
@@ -77,7 +78,7 @@ function parseArgs(argv) {
     ledgerPath: get('--ledger') || DEFAULT_DEBT_LEDGER_PATH,
     runId: get('--run-id') || `backfill-${Date.now()}`,
     defaultOwner: get('--owner'),
-    help: args.includes('--help') || args.includes('-h'),
+    help: hasFlag('help', { short: 'h' }),
   };
 }
 
