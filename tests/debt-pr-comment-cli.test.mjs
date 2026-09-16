@@ -136,3 +136,22 @@ describe('debt-pr-comment CLI — --no-git (D.8)', () => {
     assert.doesNotMatch(r.stdout, /occurrences:/);
   });
 });
+
+describe('debt-pr-comment CLI — the POSIX -- terminator narrows boolean flags too', () => {
+  // noOpIfEmpty/noGit/help used to be read via a bare `args.includes(...)`,
+  // which scans the ENTIRE argv. A literal `--no-op-if-empty` after `--` is a
+  // positional, not a flag, and must not suppress output.
+  test('a literal --no-op-if-empty after -- does not suppress output', () => {
+    seedLedger([makeEntry('t1', 'src/x.js')]);
+    const r = runCli([
+      '--changed', 'src/x.js',
+      '--ledger', ledgerPath,
+      '--surface-threshold', '5',
+      '--no-git',
+      '--', '--no-op-if-empty',
+    ]);
+    assert.equal(r.status, 0);
+    assert.notEqual(r.stdout, '', 'the no-op-if-empty flag must not fire from after the -- terminator');
+    assert.match(r.stdout, /No tracked debt overlaps this PR/);
+  });
+});

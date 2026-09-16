@@ -67,7 +67,7 @@ function parseArgs(argv) {
     jsonMode: hasFlag('json'),
     outFile,
     localOnly: hasFlag('local-only'),
-    help: hasFlag('help') || args.includes('-h'),
+    help: hasFlag('help', { short: 'h' }),
     outFlagWithoutValue: outFlagPresent && !outFile,
   };
 }

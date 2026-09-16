@@ -197,10 +197,14 @@ export function arg(argv, name, dflt = null) {
 
 /**
  * Whether a bare `--flag` is present anywhere in `process.argv`.
+ *
  * @param {string} name
+ * @param {{short?: string}} [opts] a single-dash alias (e.g. `-h` for `help`)
+ *   checked in the same `--`-terminated region — see below for why this
+ *   can't just be a second `args.includes('-h')` at the call site.
  * @returns {boolean}
  */
-export function hasFlag(name) {
+export function hasFlag(name, { short } = {}) {
   // `--name=<v>` is honoured for the same reason argOption had to learn it:
   // assertKnownFlags accepts the `=` form, so a boolean written that way would
   // otherwise be accepted and inert. The explicit falsy spellings mean OFF —
@@ -218,6 +222,12 @@ export function hasFlag(name) {
   // drift Cluster D fixed inside the dispatcher: a literal `--limit` after
   // `--` is a positional, and reading it as a flag is how a value meant for a
   // sub-command gets consumed by its wrapper.
+  //
+  // `short` exists because several `--help`/`-h` call sites read the short form
+  // via a bare `args.includes('-h')` alongside this function — the very
+  // pre-`--`-terminator bug this file exists to fix, just for the one-letter
+  // spelling instead of the long one. Folding it in here means there is exactly
+  // one place that decides where flags end.
   const stop = process.argv.indexOf('--');
   const region = stop < 0 ? process.argv : process.argv.slice(0, stop);
   let present = false;
@@ -225,7 +235,7 @@ export function hasFlag(name) {
     if (a === `--${name}`) present = true;
     else if (a.startsWith(`--${name}=`)) {
       present = !['false', '0', 'no', 'off', ''].includes(a.slice(name.length + 3).toLowerCase());
-    }
+    } else if (short && a === `-${short}`) present = true;
   }
   return present;
 }

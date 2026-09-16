@@ -45,6 +45,7 @@ import {
   findFirstDeferCommit,
   detectGitHubRepoUrl,
 } from './lib/debt-git-history.mjs';
+import { hasFlag } from './lib/cli-io.mjs';
 
 /** Magic marker that identifies our sticky PR comment. */
 export const STICKY_MARKER = '<!-- audit-loop:debt-comment -->';
@@ -63,10 +64,10 @@ function parseArgs(argv) {
     recurringThreshold: Number.parseInt(get('--recurring-threshold') || '3', 10),
     surfaceThreshold: Number.parseInt(get('--surface-threshold') || '1', 10),
     outFile: get('--out'),
-    noOpIfEmpty: args.includes('--no-op-if-empty'),
-    noGit: args.includes('--no-git'),
+    noOpIfEmpty: hasFlag('no-op-if-empty'),
+    noGit: hasFlag('no-git'),
     prNumber: get('--pr'),
-    help: args.includes('--help') || args.includes('-h'),
+    help: hasFlag('help', { short: 'h' }),
   };
 }
 

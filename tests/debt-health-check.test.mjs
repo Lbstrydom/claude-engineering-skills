@@ -141,4 +141,32 @@ describe('debt-health-check CLI', () => {
     assert.equal(r.status, 0);
     assert.match(r.stderr, /Usage:/);
   });
+
+  describe('the POSIX -- terminator narrows boolean flags too', () => {
+    // jsonMode/help used to be read via a bare `args.includes('--json')`,
+    // which scans the ENTIRE argv — unlike ledgerPath/outFile, which go
+    // through argOption and correctly stop at `--`. A literal `--json` after
+    // `--` is a positional, not a flag; it must not turn JSON mode on.
+    test('a literal --json after -- does not enable JSON mode', () => {
+      seedLedger([makeEntry('a', { deferredAt: new Date().toISOString() })]);
+      const r = runCli(['--ledger', ledgerPath, '--', '--json']);
+      assert.equal(r.status, 0);
+      assert.doesNotMatch(r.stdout, /^\{/, 'must render human text, not a JSON envelope');
+      assert.match(r.stdout, /1 open entries/);
+    });
+
+    test('a literal --help after -- does not print usage', () => {
+      seedLedger([makeEntry('a', { deferredAt: new Date().toISOString() })]);
+      const r = runCli(['--ledger', ledgerPath, '--', '--help']);
+      assert.equal(r.status, 0);
+      assert.doesNotMatch(r.stderr, /Usage:/);
+    });
+
+    test('a literal -h after -- does not print usage', () => {
+      seedLedger([makeEntry('a', { deferredAt: new Date().toISOString() })]);
+      const r = runCli(['--ledger', ledgerPath, '--', '-h']);
+      assert.equal(r.status, 0);
+      assert.doesNotMatch(r.stderr, /Usage:/);
+    });
+  });
 });

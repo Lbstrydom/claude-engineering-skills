@@ -42,7 +42,7 @@ import './lib/load-env.mjs';
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { assertKnownFlags, ArgvError, argOption } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, argOption, hasFlag } from './lib/cli-io.mjs';
 import { readDebtLedger, removeDebtEntry, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
 import { classifyReconciliation, evaluatePostcondition } from './lib/debt-reconcile.mjs';
 import { durableWrite, SPILL_DIR } from './lib/durable-write.mjs';
@@ -71,11 +71,11 @@ function parseArgs(argv) {
     throw new ArgvError('debt-reconcile: --ledger requires a path.');
   }
   return {
-    push: args.includes('--push'),
-    prune: args.includes('--prune-resolved'),
-    jsonMode: args.includes('--json'),
+    push: hasFlag('push'),
+    prune: hasFlag('prune-resolved'),
+    jsonMode: hasFlag('json'),
     ledgerPath: argOption('ledger', DEFAULT_DEBT_LEDGER_PATH),
-    help: args.includes('--help') || args.includes('-h'),
+    help: hasFlag('help', { short: 'h' }),
   };
 }
 

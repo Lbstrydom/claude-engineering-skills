@@ -40,6 +40,7 @@ import {
 } from './lib/debt-review-helpers.mjs';
 import { createUpstreamOwnershipOracle } from './lib/upstream-ownership.mjs';
 import { openaiConfig } from './lib/config.mjs';
+import { hasFlag } from './lib/cli-io.mjs';
 
 // ── CLI Arg Parsing ─────────────────────────────────────────────────────────
 
@@ -50,14 +51,14 @@ function parseArgs(argv) {
     return i !== -1 && args[i + 1] ? args[i + 1] : null;
   };
   return {
-    localOnly: args.includes('--local-only'),
-    includeSensitive: args.includes('--include-sensitive'),
-    writePlanDoc: args.includes('--write-plan-doc'),
+    localOnly: hasFlag('local-only'),
+    includeSensitive: hasFlag('include-sensitive'),
+    writePlanDoc: hasFlag('write-plan-doc'),
     ttlDays: Number.parseInt(get('--ttl-days') || '180', 10),
     ledgerPath: get('--ledger') || DEFAULT_DEBT_LEDGER_PATH,
     eventsPath: get('--events') || DEFAULT_DEBT_EVENTS_PATH,
     outFile: get('--out'),
-    help: args.includes('--help') || args.includes('-h'),
+    help: hasFlag('help', { short: 'h' }),
   };
 }
 

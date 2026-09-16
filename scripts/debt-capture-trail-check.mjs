@@ -49,7 +49,7 @@ function parseArgs() {
     auditDir: argOption('audit-dir', DEFAULT_AUDIT_DIR),
     ledgerPath: argOption('ledger', DEFAULT_DEBT_LEDGER_PATH),
     outFile,
-    help: hasFlag('help') || args.includes('-h'),
+    help: hasFlag('help', { short: 'h' }),
     outFlagWithoutValue: outFlagPresent && !outFile,
   };
 }
