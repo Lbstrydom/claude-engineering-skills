@@ -30,6 +30,34 @@
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `scripts/.claude-skills/lib/debt-ledger-claim-check.mjs` in wine-cellar-app's synced tree contains `mergeTopicIdEvidence` — present. The push's own sync summary confirmed 9 files updated across all 3/3 registered consumers.
 - **Result**: verified — the debt-ledger-claims-check cloud-evidence fix reached the consumer bundle intact.
 
+## 2026-09-16 — computeLeverage dedupes resolvedTopicIds before scoring
+
+### Changes
+
+Ad-hoc fix (not preceded by `/audit-code`): `computeLeverage` in
+[scripts/lib/debt-review-helpers.mjs](scripts/lib/debt-review-helpers.mjs)
+summed a `SONAR_TYPE_WEIGHTS` entry once per occurrence in `resolvedTopicIds`,
+so a repeated topicId (e.g. from a buggy upstream cluster-builder) doubled a
+refactor candidate's leverage score even though it resolves the same debt
+entry once. Deduped via `[...new Set(...)]` before the reduce. Full 15,978-test
+suite green (0 fail, 40 skipped) before pushing. Committed and pushed directly
+to `main` (35ff37c7) ahead of this `/ship` run, so that commit carries no
+`AI-*` provenance trailers — a plain fix + test, not a ship-orchestrated change.
+
+### Files Affected
+- `scripts/lib/debt-review-helpers.mjs` — dedupe `resolvedTopicIds` in `computeLeverage`
+- `tests/debt-review-helpers.test.mjs` — regression test: `['a','a']` scores the same as `['a']`
+
+### Gate summary (Step 0.5, informational only — none of this repo's queue is new from this session)
+- Persona P0 gate: no persona-test session recorded for this repo (silent, not a failure).
+- Regression-lock backlog: 68 unlocked HIGH fixes (50 code / 18 plan; 263 aged out — pre-existing, unrelated to this session).
+- Unremediated acceptances: 152 open (84 code / 68 plan; 66 permanently accepted; 126 aged out) — pre-existing.
+- Upstream queue: 1 open report (MEDIUM, wine-cellar-app: tech-debt.json topicId-uniqueness).
+- Store drift: storyline is 1 migration behind (`20260915120000_debt_ledger_persisted_record_contract.sql`) — needs its owner DSN to apply, not actionable from here.
+- Stalled campaigns: none.
+
+Backlog 2026-09-16T04:37Z: Q1 50c/18p (+263 aged) · Q2 84c/68p (66 perm) · Q3 55 · debt unmeasured · upstream 1
+
 ## 2026-09-14 — final-review credit: a ruling on either axis is a label, and replay no longer erases prior rulings
 
 ### Changes
