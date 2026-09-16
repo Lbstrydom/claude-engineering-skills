@@ -2,14 +2,24 @@
  * @fileoverview Fresh-process CLI smoke test — the one gap the decomposition
  * plan's Testing Strategy mapping surfaced (docs/plans/gemini-review-decomposition.md,
  * Phase 2 close-out): no existing test drove the real `main()` entrypoint
- * from a genuinely fresh `node` process, so nothing proved the relocated
- * modules' cross-file initialization order (e.g. `providers.mjs`'s module
- * load resolving `MODEL` before `main()` calls `refreshProviderModels()`) or
- * exercised stdout/stderr/exit-code behaviour post-decomposition. The 22
- * existing `gemini-review-*`/`final-review-*` test files all import the
- * module in-process — Node's module cache and any state a test file already
- * warmed can hide a real cross-module wiring defect that only a cold spawn
- * would surface.
+ * from a genuinely fresh `node` process. The 22 existing
+ * `gemini-review-*`/`final-review-*` test files all import the module
+ * in-process, so Node's module cache (already warm from an earlier import in
+ * the same test run) can hide a wiring defect that only shows up on a cold
+ * `node scripts/gemini-review.mjs` spawn — a broken import path or circular
+ * dependency between the relocated `output-schemas.mjs`/`prompts.mjs`/
+ * `transport.mjs`/`providers.mjs`/`shadow.mjs`/`post-review.mjs` modules that
+ * still "works" once something else has already loaded them once.
+ *
+ * What this proves: the relocated module graph loads cleanly end-to-end in a
+ * genuinely fresh process (no `MODULE_NOT_FOUND`/`ReferenceError` from a
+ * broken cross-file import), and `main()`'s real dispatch reaches `ping` with
+ * the expected stdout shape and exit code. It does NOT exercise the
+ * `MODEL_CATALOG_REFRESH` live-catalog re-resolution path specifically —
+ * that is set to `skip` below (deterministic, no live network call), the
+ * same choice `tests/gemini-review-termination.test.mjs` already makes for
+ * the same reason. (audit-code final-gate M6: an earlier draft of this
+ * comment overclaimed proving that specific reassignment path.)
  *
  * A local HTTP server stands in for the `openai-compatible` transport (same
  * pattern as `tests/gemini-review-termination.test.mjs`) — a real subprocess,
@@ -42,7 +52,20 @@ function startPingServer() {
   });
 }
 
-/** Spawn the real CLI, capturing stdout/stderr; resolve {code, timedOut, stdout, stderr}. */
+/**
+ * Spawn the real CLI, capturing stdout/stderr; resolve {code, timedOut, stdout, stderr}.
+ *
+ * Waits for `'close'`, not `'exit'` (audit-code final-gate M7): `'exit'` fires
+ * as soon as the process terminates, which can race ahead of buffered stdio
+ * data still arriving in `'data'` events — a real risk here specifically,
+ * since (unlike `tests/gemini-review-termination.test.mjs`'s all-`'ignore'`
+ * stdio) this test asserts on captured stdout/stderr CONTENT. `'close'` fires
+ * only once every stdio stream has ended, so the accumulated strings are
+ * guaranteed complete when the promise resolves. Same fix applied to the
+ * timeout path: `kill()` is a signal, not synchronous teardown, so the
+ * killer waits for the same `'close'` event too rather than resolving the
+ * instant `SIGKILL` is requested.
+ */
 function runCli(args, env, killMs = 30000) {
   return new Promise((resolvePromise) => {
     const child = spawn(process.execPath, [CLI, ...args], {
@@ -56,13 +79,14 @@ function runCli(args, env, killMs = 30000) {
     });
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
     child.stdout.on('data', (d) => { stdout += d; });
     child.stderr.on('data', (d) => { stderr += d; });
-    const killer = setTimeout(() => {
-      child.kill('SIGKILL');
-      resolvePromise({ code: null, timedOut: true, stdout, stderr });
-    }, killMs);
-    child.on('exit', (code) => { clearTimeout(killer); resolvePromise({ code, timedOut: false, stdout, stderr }); });
+    const killer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, killMs);
+    child.on('close', (code) => {
+      clearTimeout(killer);
+      resolvePromise({ code: timedOut ? null : code, timedOut, stdout, stderr });
+    });
   });
 }
 
