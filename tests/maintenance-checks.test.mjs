@@ -551,6 +551,70 @@ describe('maintenance-checks — AUDIT_LOOP_STATE_DIR override announcement (acc
   });
 });
 
+// ── Lock/heartbeat anchored on the MAIN checkout, not the invoking worktree
+// (topicIds 41ab598b1a4a, 944c042de5a9) ─────────────────────────────────────
+describe('maintenance-checks — the default (no AUDIT_LOOP_STATE_DIR) lock/heartbeat is shared across worktrees', () => {
+  const repoRoot = path.resolve(import.meta.dirname, '..');
+  const scriptPath = path.join(repoRoot, 'scripts', 'maintenance-checks.mjs');
+  const HAS_GIT = spawnSync('git', ['--version'], { stdio: 'ignore' }).status === 0;
+  let worktree;
+
+  afterEach(() => {
+    if (!worktree) return;
+    try { spawnSync('git', ['worktree', 'remove', '--force', worktree], { cwd: repoRoot, stdio: 'ignore' }); }
+    catch { /* fall through to prune */ }
+    try { spawnSync('git', ['worktree', 'prune'], { cwd: repoRoot, stdio: 'ignore' }); } catch { /* noop */ }
+    if (fs.existsSync(worktree)) { try { fs.rmSync(worktree, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* locked on win */ } }
+    worktree = undefined;
+  });
+
+  it('reports the IDENTICAL heartbeat from the main checkout and from a real linked worktree', (t) => {
+    if (!HAS_GIT) return t.skip('git is required to build a real linked worktree');
+    const headSha = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf-8' }).stdout.trim();
+    const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'maintenance-wt-anchor-'));
+    fs.rmSync(sandbox, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); // git worktree add needs the path to not exist
+    worktree = sandbox;
+    const add = spawnSync('git', ['worktree', 'add', '--detach', '--quiet', sandbox, headSha], { cwd: repoRoot, stdio: 'ignore' });
+    assert.equal(add.status, 0, 'git worktree add failed — cannot exercise the real defect scenario without one');
+
+    // A freshly-added worktree has no node_modules of its own (it's
+    // gitignored); junction to the real repo's so config.mjs's deps resolve —
+    // same shape as gate-contract-ratchet.test.mjs's sandbox provisioning.
+    let ancestor = repoRoot;
+    for (;;) {
+      if (fs.existsSync(path.join(ancestor, 'node_modules'))) break;
+      const parent = path.dirname(ancestor);
+      if (parent === ancestor) { ancestor = null; break; }
+      ancestor = parent;
+    }
+    if (ancestor) {
+      try { fs.symlinkSync(path.join(ancestor, 'node_modules'), path.join(sandbox, 'node_modules'), 'junction'); }
+      catch { /* best-effort — the spawn below will surface a clear failure if this was required */ }
+    }
+
+    const env = { ...process.env };
+    delete env.AUDIT_LOOP_STATE_DIR; // the default path is exactly what this test exercises
+
+    const fromRepoRoot = spawnSync(process.execPath, [scriptPath, '--status', '--json'], {
+      cwd: repoRoot, encoding: 'utf-8', timeout: 15_000, env,
+    });
+    const fromWorktree = spawnSync(process.execPath, [path.join(sandbox, 'scripts', 'maintenance-checks.mjs'), '--status', '--json'], {
+      cwd: sandbox, encoding: 'utf-8', timeout: 15_000, env,
+    });
+    assert.equal(fromRepoRoot.status, 0, `main checkout run failed: ${fromRepoRoot.stderr}`);
+    assert.equal(fromWorktree.status, 0, `worktree run failed: ${fromWorktree.stderr}`);
+
+    const heartbeatA = JSON.parse(fromRepoRoot.stdout).heartbeat;
+    const heartbeatB = JSON.parse(fromWorktree.stdout).heartbeat;
+    // A bug that scoped the lock/heartbeat to the invoking worktree's own path
+    // would make the worktree run see NO heartbeat (a fresh `.audit-loop/` was
+    // never created there) while the main-checkout run sees the real one —
+    // exactly the divergence this asserts against.
+    assert.deepEqual(heartbeatB, heartbeatA,
+      'a linked worktree must read the SAME heartbeat as the main checkout, not report its own (absent) state');
+  });
+});
+
 // ── CHECKS ↔ workflow drift (R1 "Configuration drift") ─────────────────────
 //
 // The finding: the CLI keeps a hand-authored inventory of the weekly commands

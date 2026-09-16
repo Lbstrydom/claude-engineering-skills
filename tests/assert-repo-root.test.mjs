@@ -1,13 +1,9 @@
-import { describe, it, afterEach } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import fs from 'node:fs';
-import os from 'node:os';
-import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-import { assertRepoRoot, findMainWorktreeRoot, _resetMainWorktreeCache, _internals } from '../scripts/lib/assert-repo-root.mjs';
-import { gitFixtureEnv } from './helpers/fixtures.mjs';
+import { assertRepoRoot, _internals } from '../scripts/lib/assert-repo-root.mjs';
 
 const { findExpectedRoot } = _internals;
 
@@ -193,73 +189,5 @@ describe('assertRepoRoot — case-only cwd difference must NOT abort (win32)', (
     } finally {
       process.chdir(orig);
     }
-  });
-});
-
-describe('findMainWorktreeRoot — topicIds 41ab598b1a4a, 944c042de5a9', () => {
-  const tmpDirs = [];
-  function git(args, cwd) {
-    return execFileSync('git', args, { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], env: gitFixtureEnv() });
-  }
-  afterEach(() => {
-    _resetMainWorktreeCache();
-    while (tmpDirs.length) {
-      const dir = tmpDirs.pop();
-      try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best-effort */ }
-    }
-  });
-
-  it('returns the same root from the main checkout and from a linked worktree — the exact bug this fixes', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'main-worktree-root-'));
-    tmpDirs.push(root);
-    const main = path.join(root, 'main');
-    fs.mkdirSync(main, { recursive: true });
-    git(['init', '-q', '-b', 'main'], main);
-    git(['config', 'user.email', 'test@example.com'], main);
-    git(['config', 'user.name', 'Test'], main);
-    fs.writeFileSync(path.join(main, 'readme.md'), 'x');
-    git(['add', '.'], main);
-    git(['commit', '-q', '-m', 'init'], main);
-
-    const wt = path.join(root, 'wt');
-    git(['worktree', 'add', '-q', '-b', 'feature', wt], main);
-
-    _resetMainWorktreeCache();
-    const fromMain = findMainWorktreeRoot(main);
-    _resetMainWorktreeCache();
-    const fromWorktree = findMainWorktreeRoot(wt);
-
-    assert.equal(fromWorktree, fromMain,
-      'a linked worktree must resolve to the SAME root as the main checkout, not its own path');
-    // Both must actually equal the real main checkout, not merely each other
-    // (a bug that made both wrongly resolve to `wt` would still pass the
-    // equality check above without this).
-    assert.equal(fs.realpathSync(fromMain), fs.realpathSync(main));
-    assert.notEqual(path.resolve(fromWorktree), path.resolve(wt),
-      'must not resolve to the worktree\'s own path');
-  });
-
-  it('falls back to startDir outside a git checkout', () => {
-    const nonRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'not-a-repo-'));
-    tmpDirs.push(nonRepo);
-    _resetMainWorktreeCache();
-    assert.equal(findMainWorktreeRoot(nonRepo), path.resolve(nonRepo));
-  });
-
-  it('memoises per directory (a second call does not re-invoke git)', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'main-worktree-root-cache-'));
-    tmpDirs.push(root);
-    git(['init', '-q', '-b', 'main'], root);
-    git(['config', 'user.email', 'test@example.com'], root);
-    git(['config', 'user.name', 'Test'], root);
-
-    _resetMainWorktreeCache();
-    const first = findMainWorktreeRoot(root);
-    // Remove .git so a SECOND (uncached) call would fall back to `root`
-    // itself instead of the real answer -- if this call still returns the
-    // git-derived answer, the cache served it without touching the filesystem.
-    fs.rmSync(path.join(root, '.git'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-    const second = findMainWorktreeRoot(root);
-    assert.equal(second, first, 'the cached value must be served, not re-derived after .git is gone');
   });
 });

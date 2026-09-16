@@ -70,7 +70,8 @@ import './lib/config.mjs';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { findRepoRootFromScript, findMainWorktreeRoot } from './lib/assert-repo-root.mjs';
+import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
+import { resolveMainRoot } from './lib/pinned-worktree/paths.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { withFileLock, LockTimeoutError } from './lib/file-lock.mjs';
 import { isSourceRepo } from './lib/is-source-repo.mjs';
@@ -88,7 +89,19 @@ const SCRIPTS_DIR = import.meta.dirname;
 // stays worktree-local on purpose: `runCheck` spawns each check FROM it
 // (line ~432), and a check must run the code actually checked out in the
 // invoking worktree, not the main checkout's possibly-different commit.
-const MAIN_WORKTREE_ROOT = findMainWorktreeRoot(REPO_ROOT);
+//
+// resolveMainRoot (scripts/lib/pinned-worktree/paths.mjs) is the repo's
+// canonical --git-common-dir oracle — tests/prepush-worktree-anchor.test.mjs
+// ratchets every "find the main checkout" derivation against a declared set,
+// so this reuses it rather than adding a second copy. It throws outside a
+// git checkout; REPO_ROOT is the same fallback assert-repo-root.mjs's own
+// git-backed resolvers use for that case.
+let MAIN_WORKTREE_ROOT;
+try {
+  MAIN_WORKTREE_ROOT = resolveMainRoot(REPO_ROOT);
+} catch {
+  MAIN_WORKTREE_ROOT = REPO_ROOT;
+}
 
 // isSourceRepo() lives in scripts/lib/is-source-repo.mjs (round-6 code-audit
 // Sustainability M5): a zero-side-effect module, so a caller that only wants
