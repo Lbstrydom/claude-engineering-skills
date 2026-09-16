@@ -227,7 +227,7 @@
   ],
   "ignoredCandidates": [
     {
-      "line": "> \"skills:hydrate\": \"node -e \\\"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\\\"\"",
+      "line": "> \"skills:hydrate\": \"node -e \\\"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const prune=(s,d)=>{if(!f.existsSync(d))return;for(const e of f.readdirSync(d,{withFileTypes:true})){const sp=p.join(s,e.name),dp=p.join(d,e.name);if(e.isDirectory()){if(!f.existsSync(sp)){f.rmSync(dp,{recursive:true,force:true});continue}prune(sp,dp);if(f.readdirSync(dp).length===0)f.rmSync(dp,{recursive:true,force:true})}else if(!f.existsSync(sp))f.rmSync(dp,{force:true})}};prune(src,dir);const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\\\"\"",
       "reason": "The worktree-preflight marker block's inlined `skills:hydrate` recipe. Every node one-liner carries `require` and `process.exit`, two ENFORCEMENT_VERBS, and no phrasing of a runnable recipe avoids them — the verbs are JavaScript here, not an enforcement claim about this skill. The recipe is inlined rather than cited because in an unadopted consumer both of the old pointers are dead at once (no `skills:hydrate` script yet, and `docs/runbooks/` is not synced), so a skill file is the only carrier that reaches the reader. Byte-identical across all 16 contracts by construction: it is generated from CONSUMER_HYDRATE_NPM_SCRIPT via MARKER_BLOCK, and `checkSkill` pins the block in every copy."
     },
     {
@@ -405,6 +405,30 @@
     {
       "line": "RUN_ID=$(node -e \"const fs=require('fs'); try { process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))._cloudRunId||''); } catch { process.stdout.write(''); }\" \".audit/$SID-r$ROUND-result.json\")",
       "reason": "Command-example text touching a technical identifier (\"require(\", \"-gate\"/\"GATE=\" as a flag/value name) that the enforcement-verb scanner matches as a whole word; not an enforcement claim about this skill's own behaviour. Introduced by the 2026-09-10 PowerShell-portability pass (cross-host-parity follow-up)."
+    },
+    {
+      "line": "The trailing `|| true` is required — `git diff --no-index` always exits 1 when the",
+      "reason": "Explains why the untracked-file diff pipeline's `|| true` is necessary (git diff --no-index's expected exit-1-on-differ, since one side is always /dev/null) -- descriptive shell-mechanics rationale (b08342000fed fix, 2026-09), not a claim this skill's own execution enforces via an exit code."
+    },
+    {
+      "line": "always `/dev/null`), and `xargs` propagates that as its own nonzero exit even",
+      "reason": "Continuation of the same || true rationale paragraph immediately above -- same descriptive-shell-mechanics class, not a new enforcement claim."
+    },
+    {
+      "line": "`xargs`/`git diff` failures alongside that expected exit, leaving no way to",
+      "reason": "Continuation of the same || true rationale paragraph -- explains the PRIOR (fixed) behavior being corrected (2>/dev/null swallowing real failures alongside the expected exit), not a claim this skill currently enforces."
+    },
+    {
+      "line": "cat .audit/$SID-untracked-diff-stderr.log   # non-empty = a real failure occurred, not the expected exit",
+      "reason": "The verification command's inline comment describing how to read the stderr log this fix introduced -- non-empty means investigate manually, not a gate this skill enforces via its own exit code."
+    },
+    {
+      "line": "**R2+'s scope is always the diff, not Round 1's `--scope` flag** — `--files`",
+      "reason": "Describes openai-audit.mjs's own pre-existing --files-overrides---scope precedence (5e88d1e1142b fix, 2026-09) -- a separately-implemented CLI behavior this prose explains, not a new claim this skill's own execution enforces."
+    },
+    {
+      "line": "Generate diff (dirty-aware base, matching R1 — untracked counts): `BASE=$([ -n \"$(git status --porcelain)\" ] && echo HEAD || echo HEAD~1); git diff \"$BASE\" -- . > .audit/$SID-diff.patch` — then append UNTRACKED new files (`git diff` omits them): `git ls-files --others --exclude-standard -z | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null \"{}\" >> .audit/$SID-diff.patch 2>.audit/$SID-untracked-diff-stderr.log || true` (the trailing `|| true` is only for `git diff --no-index`'s expected exit-1-on-differ; stderr goes to a file, not `/dev/null`, so a genuine `git`/`xargs` failure is still visible — see Step 2's fuller note on this exact pipeline)",
+      "reason": "Step 5's inline numbered-list copy of the Step 2 untracked-file diff pipeline recipe and its || true rationale (b08342000fed/ccda5b96c281 fix, 2026-09) -- same descriptive shell-mechanics class as the Step 2 block, not a new enforcement claim."
     }
   ]
 }
