@@ -158,6 +158,23 @@ graph LR
     `_internals`. `gemini-review.mjs` must keep re-exporting it at the top
     level too: `export { selectProvider } from './lib/final-review/providers.mjs';`
     — in addition to, not instead of, the `_internals` entry.
+  - **General rule (widens G2 beyond the one symbol Gemini happened to
+    flag)**: a systematic check of every currently-top-level-exported symbol
+    against all test imports found the same gap on five more —
+    `applyProviderSetting` (`tests/final-review-provider.test.mjs:15`),
+    `applyExistenceGate` (`tests/gemini-existence-gate.test.mjs:23`),
+    `applyScopeFilter` + `recordNewFindings`
+    (`tests/run-final-review-harness.test.mjs:24-27`), and
+    `GeminiFinalReviewSchema` (`tests/provider-contract-enforceable.test.mjs:35`).
+    **Every symbol `gemini-review.mjs` exports today keeps being exported
+    from `gemini-review.mjs` after this plan**, whichever new module now
+    defines it — `export { X } from './lib/final-review/<module>.mjs';` next
+    to the existing `_internals` entry, for every moved export, not only the
+    ones a test file happens to import directly. `SETTING_PROVIDERS` and
+    `ANTHROPIC_REVIEW_TOOL_NAME` get the same treatment even though no test
+    currently imports them directly — the cost of a redundant re-export is
+    one line; the cost of missing one is a silent import-time crash in
+    whichever test does.
   - `tests/gemini-review-shadow.test.mjs` has two **source-pinning**
     assertions that `fs.readFileSync('scripts/gemini-review.mjs', 'utf8')`
     and search the raw text for `'async function callReviewer'` (line ~89)
