@@ -458,7 +458,7 @@ describe('isLedgerTracked', () => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'debt-ledger-outside-'));
     const r = isLedgerTracked(path.join(outside, 'tech-debt.json'), repoDir);
     assert.equal(r.degraded, true);
-    try { fs.rmSync(outside, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(outside, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
   });
 
   test('returns degraded:true when git cannot be consulted (not a work tree)', () => {

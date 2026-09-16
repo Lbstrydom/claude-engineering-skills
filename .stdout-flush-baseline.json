@@ -1,7 +1,7 @@
 {
   "_description": "Reachable `process.exit()` sites preceded by a stdout write, per scripts/check-stdout-flush.mjs. Drift-only ratchet: a net-new site fails, and so does an unrecorded shrink. Shrink this list; never grow it. Re-baseline deliberately with --update. The fix for an entry is `await finishAndExit(code)` from scripts/lib/cli-io.mjs.",
-  "total": 220,
-  "envelope": 108,
+  "total": 217,
+  "envelope": 105,
   "files": {
     "scripts/audit-full.mjs": 4,
     "scripts/audit-loop.mjs": 2,
@@ -44,7 +44,6 @@
     "scripts/db-suites-gate.mjs": 2,
     "scripts/debt-auto-capture.mjs": 1,
     "scripts/debt-backfill.mjs": 1,
-    "scripts/debt-budget-check.mjs": 3,
     "scripts/debt-health-check.mjs": 1,
     "scripts/debt-pr-comment.mjs": 1,
     "scripts/debt-reconcile.mjs": 3,
@@ -207,9 +206,6 @@
     "scripts/db-suites-gate.mjs::<module>[if>then/try>catch]::main() → stdout->exit(1)#1",
     "scripts/debt-auto-capture.mjs::main[if>then]::usage() → stdout->exit(1)#1",
     "scripts/debt-backfill.mjs::main::runStage() → stdout->exit(dynamic)#1",
-    "scripts/debt-budget-check.mjs::main[if>then]::process.stdout.write->exit(0)#1",
-    "scripts/debt-budget-check.mjs::main[if>then]::process.stdout.write->exit(0)#2",
-    "scripts/debt-budget-check.mjs::main::process.stdout.write->exit(dynamic)#1",
     "scripts/debt-health-check.mjs::main::process.stdout.write->exit(dynamic)#1",
     "scripts/debt-pr-comment.mjs::main::process.stdout.write->exit(0)#1",
     "scripts/debt-reconcile.mjs::main[if>then]::process.stdout.write->exit(0)#1",

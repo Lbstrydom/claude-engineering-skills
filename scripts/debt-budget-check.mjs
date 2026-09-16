@@ -28,7 +28,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
 import { findBudgetViolations } from './lib/debt-review-helpers.mjs';
-import { hasFlag } from './lib/cli-io.mjs';
+import { hasFlag, finishAndExit } from './lib/cli-io.mjs';
 
 function parseArgs(argv) {
   const args = argv.slice(2);
@@ -80,16 +80,17 @@ function loadBudgets(opts, ledger) {
   return ledger.budgets || {};
 }
 
-function main() {
+async function main() {
   const opts = parseArgs(process.argv);
-  if (opts.help) { printUsage(); process.exit(0); }
+  if (opts.help) { printUsage(); await finishAndExit(0); return; }
 
   let ledger;
   try {
     ledger = readDebtLedger({ ledgerPath: opts.ledgerPath, events: [] });
   } catch (err) {
     console.error(`Error reading ledger: ${err.message}`);
-    process.exit(1);
+    await finishAndExit(1);
+    return;
   }
 
   let budgets;
@@ -97,7 +98,8 @@ function main() {
     budgets = loadBudgets(opts, ledger);
   } catch (err) {
     console.error(`Error: ${err.message}`);
-    process.exit(1);
+    await finishAndExit(1);
+    return;
   }
 
   // Separate "no budgets declared" from "no ledger to declare them in".
@@ -117,7 +119,8 @@ function main() {
     } else {
       process.stdout.write(`UNVERIFIABLE — no debt ledger (${ledger.reason}); no budgets evaluated.\n`);
     }
-    process.exit(1);
+    await finishAndExit(1);
+    return;
   }
 
   const budgetCount = Object.keys(budgets).length;
@@ -127,7 +130,8 @@ function main() {
     } else {
       process.stdout.write('✓ No budgets configured — nothing to check.\n');
     }
-    process.exit(0);
+    await finishAndExit(0);
+    return;
   }
 
   const violations = findBudgetViolations(ledger.entries, budgets);
@@ -150,7 +154,7 @@ function main() {
     }
   }
 
-  process.exit(violations.length > 0 ? 2 : 0);
+  await finishAndExit(violations.length > 0 ? 2 : 0);
 }
 
 main();
