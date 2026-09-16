@@ -80,6 +80,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "1c792b2e-b84f-4270-909c-da8cca373b40",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "exempt",
+        "value": "doc-only, underlying mechanism already tested (tests/commit-trailers.test.mjs escapes-repo + messageFileError cases pre-date this fix) — added a proactive callout in ship/SKILL.md Step 6.3 and ship-commit.mjs's usage docstring naming .claude/tmp/ before the failure happens instead of only after; nothing new to regression-test"
+      },
+      "recordedAt": "2026-09-16T07:23:41.842Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "1fb43574-6da6-4301-851b-a2f40b823a88",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
@@ -198,6 +209,17 @@
         "value": "tests/skill-command-blocks-parse-under-powershell.test.mjs"
       },
       "recordedAt": "2026-09-12T21:27:22.361Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "55b7460c-2f12-45a4-ad40-d14245f25bb1",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/gate-evidence-tree-identity.test.mjs"
+      },
+      "recordedAt": "2026-09-16T07:23:31.934Z"
     },
     {
       "schemaVersion": 1,
@@ -715,6 +737,17 @@
         "value": "tests/audit-transcript-build.test.mjs"
       },
       "recordedAt": "2026-09-09T06:52:12.319Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "f5ac366f-43aa-49df-93c6-0e0213676b22",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/plan-status.test.mjs"
+      },
+      "recordedAt": "2026-09-16T07:23:52.381Z"
     },
     {
       "schemaVersion": 1,
