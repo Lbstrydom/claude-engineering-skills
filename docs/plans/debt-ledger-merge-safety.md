@@ -1,7 +1,7 @@
 # Plan: Debt-Ledger Merge-Safety — CI Gate + Serialization Hardening
 
 - **Date**: 2026-09-15
-- **Status**: Implemented and code-audited to convergence. Plan audit: GPT converged after 4 rounds, Gemini APPROVE round 1. Implementation: Cluster A (CI-gate) converged after 4 code-audit rounds (PASS, H:0/M:1 — one pre-existing, already-adjudicated parser-consistency item); Cluster B (serialization + tracked-ledger warning + budgets passthrough + docstring fix + merge-acceptance test) converged after 2 rounds (PASS, H:0/M:0). Consolidated final gate (union diff, both clusters): round 1 CONCERNS (2 findings — missing promised unit tests, unsanitized git env in the new test harness — both fixed), round 2 **APPROVE** (0 new, 0 wrongly dismissed). 446 tests passing. Not yet shipped/committed.
+- **Status**: Complete. Plan audit: GPT converged after 4 rounds, Gemini APPROVE round 1. Implementation: Cluster A (CI-gate) converged after 4 code-audit rounds (PASS, H:0/M:1 — one pre-existing, already-adjudicated parser-consistency item); Cluster B (serialization + tracked-ledger warning + budgets passthrough + docstring fix + merge-acceptance test) converged after 2 rounds (PASS, H:0/M:0). Consolidated final gate (union diff, both clusters): round 1 CONCERNS (2 findings — missing promised unit tests, unsanitized git env in the new test harness — both fixed), round 2 **APPROVE** (0 new, 0 wrongly dismissed). 446 tests passing. Shipped.
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
 
