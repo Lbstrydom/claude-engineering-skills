@@ -889,25 +889,14 @@ Follow project convention:
 Types: `feat`, `fix`, `refactor`, `docs`, `style`, `test`, `chore`.
 Keep first line under 72 chars. Body explains WHY, not WHAT.
 
-**Pass the message as a file or on stdin** (not `-m`, no shell interpolation) —
-two routes, both fine:
-
-- **A file** — Write tool → `.claude/tmp/ship-commit-msg-<epoch>.txt`, then
-  `--message-file <that path>`. Delete it once the commit lands. **Not your
-  session scratchpad dir** — Claude Code's own default steers agents to write
-  temp files there, but it sits outside the repo and `--message-file` refuses
-  any path that resolves outside `repoRoot` (`escapes-repo`, upstream
-  `1c792b2e`). Use `.claude/tmp/` for this one file.
-- **Stdin** — `--message-file -` reads the message from stdin, so a heredoc
-  works and leaves nothing behind. Use `-`, not `/dev/stdin`: Git-Bash resolves
-  the latter to `/proc/self/fd/0`, which is not a regular file, so it looked to
-  the helper like a path that simply was not there (upstream `575256de`).
-
-Prefer stdin for a one-shot message — it also sidesteps the scratchpad-vs-repo
-collision above entirely. The file route is what filled
-`.claude/tmp` with 658 files / 39MB by 2026-08-10, nearly all of them spent
-commit messages nobody deleted — the directory is gitignored, so nothing ever
-prompted anyone to notice.
+**Pass the message as a file or on stdin** (not `-m`, no shell interpolation).
+**Prefer stdin** — `--message-file -` reads from stdin (a heredoc works,
+leaves nothing behind; use `-`, not `/dev/stdin`, which Git-Bash resolves to
+a non-regular file). The file route (Write tool →
+`.claude/tmp/ship-commit-msg-<epoch>.txt`, then `--message-file <that
+path>`, deleted once the commit lands) works too, but never your session
+scratchpad dir — `--message-file` refuses any path outside `repoRoot`. Why
+stdin is preferred: `references/commit-provenance-deep-dive.md`.
 
 Do NOT include any `AI-*` lines — the helper is their only writer and rejects
 them (`reserved-trailer`).
@@ -929,44 +918,15 @@ Decide the provenance values (full convention: `docs/reference/commit-provenance
     off / run not found / run did not converge).
   - `not-run` — no fresh evidence at all (docs-only ships).
 
-> **`passed` and `converged` are mutually exclusive halves of ONE comparison**,
-> so each refusal names the other: asking for `passed` on a moved tree points at
-> `converged`, and asking for `converged` on an unchanged tree points at `passed`
-> — you may not under-claim. Both clear the identical store bar, so cloud off or
-> a non-converged run refuses either and leaves `waived`. A partial commit of an
-> audited worktree differs from the audited tree, so it is `converged` territory,
-> never `passed`.
->
-> **`passed` is rare BY DESIGN, and its rarity is not a defect to engineer
-> around.** `/ship`'s own Steps 2–5 write `status.md`, sometimes CLAUDE.md, and
-> the plan's Implementation Log *after* the audit and *before* the commit — so
-> even a zero-finding, converged, otherwise-untouched audit moves the tree and
-> lands on `converged`. Measured over this repo's history when `converged` was
-> added: 647 `not-run`, 86 `waived`, 2 `passed`. Do NOT hand-write
-> `.audit/last-audit-run.json`, re-run a review purely to populate the column, or
-> reorder your ship to chase `passed`. **The value worth investigating is a
-> `passed` that should not be there.**
->
-> **`--no-run-id` exists, and it means "that audit was unrelated to this
-> commit".** Fresh evidence makes `not-run` illegal, so a docs-only follow-up
-> commit after an audited ship inherits the previous commit's marker and must
-> disclaim it: `--no-run-id --gate not-run`. It omits `AI-Run-ID` entirely. Use
-> it **only** when the claim is true — on a fix-heavy ship the audit was very
-> much related, and the honest value there is `converged`, not a disclaimed
-> `not-run`.
->
-> **Freshness is `evidenceMs > headCommitTs`, so someone ELSE's commit ages out
-> your evidence.** In a repo with a concurrent session, a foreign commit landing
-> between your audit and your ship makes the marker stale — which also removes
-> `waived` (it requires `fresh`) and leaves `not-run` as the only legal value.
-> If you need the trailer to reflect your audit, don't ship across another
-> session's commits. Note the converse is NOT guaranteed: committer timestamps
-> are user-controlled and non-monotonic, so freshness does not prove that no
-> commit intervened, and `converged` claims no such thing.
->
-> **`--no-tests` caps the gate.** With hooks skipped the helper forces `waived`
-> (fresh evidence) or `not-run` (otherwise), loudly, whatever you asked for.
-> Skipping hooks can never buy a stronger verdict.
+`passed` and `converged` clear the identical store bar and are mutually
+exclusive halves of one comparison — asking for one on the wrong tree state
+points at the other, and `--no-tests` always caps the verdict downward
+(`waived` or `not-run`), never up. `passed` is rare **by design** (Steps 2-5
+write status.md/CLAUDE.md between audit and commit, so even a clean audit
+usually lands on `converged`) — do not hand-write evidence or reorder a ship
+to chase it. `--no-run-id --gate not-run` disclaims a marker inherited from
+an unrelated prior audit. Full rationale for each value, `--no-run-id`, and
+the freshness rule: `references/commit-provenance-deep-dive.md`.
 
 ### 6.3 Commit and push
 
@@ -988,23 +948,14 @@ node scripts/ship-commit.mjs --message-file ".claude/tmp/ship-commit-msg-$EPOCH.
 git push origin "$SHIP_BRANCH"
 ```
 
-> **Why identity is a precondition and not a warning.** A concurrent session can
-> amend, rebase or check out between your first command and your commit — this
-> repo saw HEAD move six times in one session. An amend changes NO working-tree
-> file, so a content-hash check sails past it; only a sha comparison catches it.
-> And the pair is ATOMIC: a head-only check passes whenever two refs sit on the
-> same commit — a feature branch freshly cut from `main` is exactly that — and
-> the commit then lands on the wrong branch.
->
-> **On a detached HEAD** pass `--expect-detached` instead of `--expect-branch`.
-> A head with no ref disposition is `incomplete-expectation` → exit 2, never a
-> silent degrade to a sha-only check.
->
-> **You may omit the flags only when a FRESH audit ran in this session**: the
-> evidence marker carries `auditedSha` + `auditedBranch` and supplies the bundle
-> for you. A marker written before that field existed reports
-> `pre-bundle-evidence` and you must pass the flags explicitly — it can never
-> half-match.
+Identity is a precondition, not a warning, because a concurrent session can
+amend/rebase/checkout between your first command and your commit, and only a
+sha+branch pair (not a content hash) catches it. **On a detached HEAD** pass
+`--expect-detached` instead of `--expect-branch` — a head with no ref
+disposition is `incomplete-expectation` → exit 2. You may omit both flags
+only when a FRESH audit ran this session (the evidence marker supplies the
+bundle); an older marker reports `pre-bundle-evidence` and needs them passed
+explicitly. Full rationale: `references/commit-provenance-deep-dive.md`.
 
 **Shared working tree — `--path` is MANDATORY, not conditional.** `ship-commit`
 refuses an unscoped commit outright: it cannot know whose staged entries the
@@ -1053,20 +1004,13 @@ run sync)`.
 If push fails (behind remote, etc.), inform the user and suggest the
 fix. Do NOT force push.
 
-> **Continuing work in the same worktree after a squash merge: rebase, never
-> merge.** If a follow-up branch shares history with a `/ship`-created branch
-> whose PR was **squash-merged**, `git merge origin/<base>` reports a **false
-> conflict** on that file even when the content is byte-identical — a squash
-> merge creates a new commit on `<base>` with no parent relationship to the
-> original, so the 3-way merge treats an identical insertion as two
-> independent ones. `gh pr create` then shows `mergeable: CONFLICTING`. Use
-> `git rebase origin/<base>` instead: patch-id matching recognises the
-> commit's patch is already present, skips it, and replays only the genuinely
-> new commits; `git push --force-with-lease` then produces a clean PR
-> (`mergeable: MERGEABLE`). **A PR stuck at `mergeable: CONFLICTING` can also
-> correlate with zero CI runs firing at all** (not merely a cancelled run) —
-> "no checks reported" is not on its own proof the CI trigger is broken;
-> check mergeability first.
+**Continuing work in the same worktree after a squash merge: rebase, never
+merge** — `git merge origin/<base>` reports a false conflict on an unchanged
+file after a squash-merged PR (no shared parent), while `git rebase
+origin/<base>` skips the already-present patch cleanly. A PR stuck at
+`mergeable: CONFLICTING` can also correlate with zero CI runs firing — check
+mergeability before assuming the CI trigger is broken. Why:
+`references/commit-provenance-deep-dive.md`.
 
 ---
 
@@ -1340,6 +1284,7 @@ situations — read them only when the trigger applies.
 | File | Summary | Read when |
 |---|---|---|
 | `references/architecture-and-dashboard-refresh.md` | Why the arch-map and dashboard pages are Category A, and deleted-step history for 0.5c/0.5d. | Debugging Step 0.5c/0.5d's staging behaviour, or before changing either. |
+| `references/commit-provenance-deep-dive.md` | Step 6.2/6.3's AI-Gate and worktree-identity deep-dive — why each value/flag exists and the incidents behind them. | Debugging `--gate`/`--expect-head`/`--expect-branch` behaviour, or before changing one. |
 | `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |
 | `references/migration-credentials.md` | Which role applies migrations, why the runtime DSN cannot, and where its credential belongs (never in .env). | Step 0.5g — a store is behind and `--migrate` is refused with `42501` (`must be owner of table …` / `permission denied for schema public`). |
 | `references/post-push-advisories.md` | Steps 6.5-6.8's post-push advisories — the incident history behind each rule, kept out of the routine flow. | Debugging Step 6.5/6.6/6.7/6.8's behaviour, or before changing one. |
