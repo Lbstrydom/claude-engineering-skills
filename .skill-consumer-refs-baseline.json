@@ -1,11 +1,11 @@
 {
   "$comment": "Declared unreachable pointers in synced skill content. See scripts/check-skill-consumer-refs.mjs. Every entry needs a disposition and a real reason; new entries default to a TODO reason that the gate rejects.",
-  "totalSites": 189,
+  "totalSites": 191,
   "refs": {
     "doc docs/architecture-map.md": {
       "disposition": "consumer-authored",
       "reason": "Generated per repo by arch:render, never synced. A consumer renders its own (storyline writes docs/reference/architecture.md) — the skills read whatever that repo produced.",
-      "sites": 7
+      "sites": 8
     },
     "doc docs/audit/shared-references/browser-tool-detection.md": {
       "disposition": "provenance",
@@ -82,22 +82,12 @@
       "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
       "sites": 2
     },
-    "doc docs/plans/persona-nav-feedback-recovery.md": {
-      "disposition": "provenance",
-      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
-      "sites": 1
-    },
     "doc docs/plans/persona-test-consistency-mode.md": {
       "disposition": "source-repo-only",
       "reason": "docs/reference/consistency-contract.md line 5 — the LINK TEXT of a citation whose href is now an absolute upstream URL, and the line directly above it says \"(upstream only — the sync ships no docs/plans/)\". A consumer clicks the URL; the bare path is there so the reader knows what the URL points at. This file entered the gate on 2026-09-04 when the subject set moved from the literal skills/ directory to the sync closure (upstream 63552e8b) — it is the one closure member outside skills/, and it had carried this gate’s own defect class unseen for its whole history.",
       "sites": 1
     },
     "doc docs/plans/reference-integrity-gate.md": {
-      "disposition": "provenance",
-      "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
-      "sites": 1
-    },
-    "doc docs/plans/remediation-state-verification-reconciler.md": {
       "disposition": "provenance",
       "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
       "sites": 1
@@ -190,7 +180,7 @@
     "npm dashboard:setup": {
       "disposition": "source-repo-only",
       "reason": "Alias chaining three synced scripts. Named as a source-repo convenience beside the per-path form a consumer runs.",
-      "sites": 1
+      "sites": 2
     },
     "npm debt:capture-trail": {
       "disposition": "source-repo-only",
@@ -215,7 +205,7 @@
     "npm fixture:create": {
       "disposition": "source-repo-only",
       "reason": "Pinned-revision worktree for spend-bearing runs in this repo.",
-      "sites": 1
+      "sites": 2
     },
     "npm gates:check": {
       "disposition": "source-repo-only",
@@ -225,7 +215,7 @@
     "npm security:refresh": {
       "disposition": "source-repo-only",
       "reason": "Remaining mentions are prose EXPLAINING why the alias must not be used — the instruction beside them is the synced path.",
-      "sites": 1
+      "sites": 2
     },
     "npm skills:check": {
       "disposition": "source-repo-only",
