@@ -22,8 +22,17 @@ import {
  * destabilise timing-sensitive tests elsewhere in the suite — observed as an
  * intermittent unrelated failure while building this. A test that can flake
  * the rest of the suite is a bad test regardless of what it proves. 5s is
- * still ~20× the 200-300ms timeouts asserted below, so the wedge is
- * unambiguous while its worst case stays survivable.
+ * still 3-4× the 1500ms timeouts asserted below, so the wedge is unambiguous
+ * while its worst case stays survivable.
+ *
+ * The timeouts below were originally 200-300ms (~20× headroom) and flaked
+ * under a fully-loaded pre-push sandbox run: `timeoutMs` starts ticking the
+ * instant `spawn()` is called (subprocess.mjs's `timeouts.arm()`), correctly
+ * including child process-startup latency in the budget — a slow-to-start
+ * child should count against it. Under heavy CPU contention, Node's own
+ * interpreter startup occasionally exceeded 300ms, killing the child before
+ * it reached its first `stdout.write`. 1500ms absorbs realistic startup
+ * jitter while keeping a clear multiple of headroom under the 5s wedge.
  */
 const WEDGE = `
   process.stdout.write(JSON.stringify({type:'hello'}) + '\\n');
@@ -50,13 +59,24 @@ describe('runJsonLinesAsync — optional timeout', () => {
 
   it('kills a child wedged in synchronous work', async () => {
     const started = Date.now();
+    // timeoutMs/killGraceMs start ticking the instant spawn() is called (see
+    // subprocess.mjs's timeouts.arm()), correctly — a slow-to-start child
+    // should count against its own budget. But that means these values must
+    // absorb legitimate OS/Node process-startup jitter, not just the wedge's
+    // own execution: 200-300ms flaked under a heavily loaded full test-suite
+    // run (observed: the child's own startup ate the whole budget before it
+    // reached its first stdout write, so `records` came back `[]` instead of
+    // `[{type:'hello'}]` — not a kill-mechanism bug, a too-tight test budget).
+    // 1500/300 keeps the same ~3-4x proof margin against the 5s wedge and the
+    // `< 3_000` assertion below, while tolerating multi-hundred-ms spawn
+    // latency spikes under contention.
     const r = await runJsonLinesAsync(process.execPath, ['-e', WEDGE], {
-      timeoutMs: 300, killGraceMs: 200,
+      timeoutMs: 1500, killGraceMs: 300,
     });
     assert.equal(r.timedOut, true);
     // The wedge would run 5s; being back well inside that proves we killed it
     // rather than waited it out.
-    assert.ok(Date.now() - started < 3_000, 'must not wait out the wedged child');
+    assert.ok(Date.now() - started < 3_500, 'must not wait out the wedged child');
     // Output produced BEFORE the kill is still returned — a timeout degrades
     // the measurement, it does not discard what was already observed.
     assert.deepEqual(r.records, [{ type: 'hello' }]);
@@ -72,8 +92,10 @@ describe('runJsonLinesAsync — optional timeout', () => {
     // would survive. No current caller spawns one — see the LIMITATION note in
     // subprocess.mjs. Naming this "no child alive" would overclaim, and an
     // overclaiming test is worse than a missing one.
+    // See the timing note in the previous test — same latent flake, not yet
+    // observed here only because nothing asserts a wall-clock ceiling.
     const r = await runJsonLinesAsync(process.execPath, ['-e', WEDGE], {
-      timeoutMs: 200, killGraceMs: 150,
+      timeoutMs: 1500, killGraceMs: 300,
     });
     assert.equal(r.timedOut, true);
     // `close` fires only after the process is genuinely gone, so arriving here
@@ -87,9 +109,10 @@ describe('runJsonLinesAsyncStrict — the timeout surfaces as a THROW', () => {
     // NOT a flag on the success return: the strict wrapper returns only
     // `records` on success, so a result flag would be unreachable by
     // construction. The thrown error is the channel that already exists.
+    // Same timing note as the runJsonLinesAsync tests above.
     await assert.rejects(
       () => runJsonLinesAsyncStrict(process.execPath, ['-e', WEDGE], {
-        timeoutMs: 200, killGraceMs: 150, stage: 'extract',
+        timeoutMs: 1500, killGraceMs: 300, stage: 'extract',
       }),
       (err) => {
         assert.equal(err.code, SUBPROC_ERROR_CODES.KILLED_BY_SIGNAL);
