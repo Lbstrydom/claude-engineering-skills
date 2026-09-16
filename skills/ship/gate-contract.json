@@ -592,6 +592,58 @@
     {
       "line": "| `references/pre-ship-gate-queries.md` | Step 0.5's pre-ship nudges (0.5a/b/e/g/h/i) — the incident history behind each rule, kept out of the routine flow. | Debugging a Step 0.5 nudge's behaviour, or before changing one. |",
       "reason": "The reference-index ROW for the new pre-ship-gate-queries.md file, added by the Phase-1 size-reduction. The enforcement-verb scanner matches on the substring \"gate\" inside the filename in column 1, same as every citation of this file elsewhere in this table. Index rows describe what a document covers; they are not gate claims about /ship's behaviour."
+    },
+    {
+      "line": "**`docs/architecture-map.md` is Category A and is NEVER staged** — it embeds a",
+      "reason": "0.5c, condensed 2026 Phase-2 size-reduction. States the Category-A classification (timestamp+sha header, LLM-written summaries, renders from cloud symbol_index) — a design-rationale fact about the file, not a gate /ship's own exit code enforces. The SKILL-TEXT side (no `git add` of this path) is guarded by tests/skill-staging-instructions.test.mjs, contracted at category-a-never-staged above; this line is the classification rationale, same disposition as the pre-existing 'Category A and is NEVER staged' entry it replaces."
+    },
+    {
+      "line": "(the sync never adds npm scripts), so a consumer runs it by path and gets",
+      "reason": "0.5d, condensed 2026 Phase-2. Describes the consumer-sync mechanism (npm scripts are never merged into a consumer's package.json) — a fact about scripts/sync-to-repos.mjs, not a claim this skill enforces about its own execution. Same disposition as the pre-existing 'opt-in and unwired: the builder syncs, but the sync never adds npm scripts' entry it replaces."
+    },
+    {
+      "line": "Run it WITHOUT `|| true` — the **exit code is the signal** and must be read,",
+      "reason": "0.5d. Operator instruction about how to invoke `build-dashboard.mjs reference` so its exit code reaches the agent — not a /ship CLI exit code itself; build-dashboard.mjs's own exit-non-zero-on-degraded-build contract is a property of that script. No new claim, pre-existing pattern (advisory step whose exit code the agent must read, not mask)."
+    },
+    {
+      "line": "not masked. A non-zero exit must not abort the ship (this step is advisory):",
+      "reason": "Continuation of the line above: the negative guarantee that a non-zero exit here must not abort /ship. Same document-only class as step-0-5-gates-non-blocking — a judgement about agent flow around an advisory step's exit code, not a /ship exit code of its own."
+    },
+    {
+      "line": "exit code is a **reporting** signal, not a staging one:",
+      "reason": "0.5d. States that build-dashboard.mjs's exit code is read for reporting only, never for staging — design rationale for how this advisory step is composed, not an enforcement claim about /ship's own execution."
+    },
+    {
+      "line": "**Call the script by path, never `npm run security:refresh`** — that alias",
+      "reason": "Step 6.5 operator instruction about how to INVOKE the refresher script, not a gate /ship enforces (condensed 2026 Phase-3; supersedes the removed longer paragraph with the same disposition). `never` forbids an alias that only exists in the source repo. Nothing in this repo can assert what an agent types into a shell."
+    },
+    {
+      "line": "exists in the source repo only (the sync never merges npm scripts into a",
+      "reason": "Continuation of the line above, naming WHY the npm alias is source-repo-only (the sync never merges npm scripts into a consumer's package.json) — a fact about the sync mechanism, not a /ship enforcement claim. Same disposition as the pre-existing entries for this incident."
+    },
+    {
+      "line": "> empty. That is a correct empty, not a broken one: this step must not read an",
+      "reason": "Step 6.6, condensed 2026 Phase-3. Instructs the agent not to misread a genuinely-empty session-review result as evidence that no friction existed — descriptive guidance about interpreting a query result, not a mechanical gate. Same disposition as the pre-existing entry for this sentence."
+    },
+    {
+      "line": "**keyset cursor**, never an offset — the queue is drained by the very",
+      "reason": "Step 6.7, condensed 2026 Phase-3. Describes final-review-pending's own paging contract (keyset cursor, never an offset), enforced by resolveNudgePage + decodeQueueCursor and pinned by tests/final-review-pending.test.mjs and tests/final-review-pending-db.test.mjs — not a claim this skill's own execution enforces. Same disposition as the pre-existing 'JSON form pages by a keyset cursor' entry it replaces."
+    },
+    {
+      "line": "`--page-size` is the alias of `--limit` (default 20, cap 200); `--offset` is",
+      "reason": "Step 6.7. Descriptive prose about the final-review-pending CLI's flag contract (page-size alias, cap 200, no offset support) — enforced by that CLI and its own tests, not a /ship gate. Same disposition as the pre-existing '--page-size is the alias of --limit' entry it replaces."
+    },
+    {
+      "line": "outright, so recording a ruling here is never undone by a later triage pass.",
+      "reason": "Step 6.7. Describes user_action's durable-override semantics (once set, it wins outright over a later triage pass) — a property of the store's write contract, not a /ship exit code. Same disposition as the pre-existing entry for this claim."
+    },
+    {
+      "line": "round or a consolidated union-diff gate upserts the new snapshot and prunes",
+      "reason": "Step 6.7, condensed 2026 Phase-3. Describes recordFinalReviewFindings's upsert-and-prune behaviour (a re-run does not erase prior rulings) — enforced by scripts/lib/store/runs-findings.mjs and pinned by tests/final-review-replay-db.test.mjs and tests/final-review-persistence-isolation.test.mjs, not a claim /ship's own execution enforces. Same disposition as the pre-existing entries for this incident."
+    },
+    {
+      "line": "(never a gate), not a reason to force a push now. Incident history behind",
+      "reason": "Step 6.8, condensed 2026 Phase-3. States explicitly that an undrained pending-note is tolerated and this step is NOT a gate — the opposite of an enforcement claim, plus a pointer to the new reference file (the enforcement-verb scanner matches on 'gate' inside the word '(never a gate)' and inside the word 'never'). Same disposition as the pre-existing 'never a gate), not a reason to force a push now' entry it replaces."
     }
   ]
 }
