@@ -30,22 +30,18 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 import { buildClassificationRubric } from './lib/prompt-seeds.mjs';
 import { readFileOrDie, extractPlanPaths, writeOutput, isAuditInfraFile, atomicWriteFileSync } from './lib/file-io.mjs';
-import { semanticId, formatFindings, appendOutcome, FalsePositiveTracker } from './lib/findings.mjs';
-import { affectedFilesOf, primaryFileOf } from './lib/finding-match.mjs';
-import { readProjectContext, initAuditBrief, generateRepoProfile } from './lib/context.mjs';
+import { formatFindings } from './lib/findings.mjs';
+import { readProjectContext, initAuditBrief } from './lib/context.mjs';
 import { azureConfig, finalReviewConfig, auditShadowConfig } from './lib/config.mjs';
 import { describeAzureRoute, describeTransportFailure } from './lib/azure-route-report.mjs';
 import { SHADOW_PROVIDER_SPECS, shadowModelMatchesFamily } from './lib/final-review/provider-specs.mjs';
 import { createOpenAIClient } from './lib/openai-client.mjs';
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
-import { PromptBandit } from './bandit.mjs';
-import { getActiveRevisionId } from './lib/prompt-registry.mjs';
 import { getRepoContext } from './lib/repo-context.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 import { RUN_ID_RE } from './lib/commit-trailers.mjs';
 import { GATE_EVIDENCE_RELPATH } from './lib/audit/gate-evidence.mjs';
-import { verifyExistenceFindings, isRefuted } from './lib/audit/finding-verification.mjs';
-import { listRepoFiles } from './lib/repo-inventory.mjs';
+import { isRefuted } from './lib/audit/finding-verification.mjs';
 import { isCloudEnabled } from './lib/store/repo.mjs';
 import { statSync } from 'node:fs';
 import { resolveAndClassify, classifyPath } from './lib/sensitive-paths.mjs';
@@ -188,13 +184,13 @@ import {
 // Pure relocation (Phase 3). None of these were previously top-level exports
 // (only _internals entries — no test imports them directly), so no top-level
 // re-export is owed; _internals below keeps flowing through unchanged.
-// shadow.mjs imports FOUR functions back from this file one-directionally
-// (applyDebtSuppression/applyScopeFilter/applyExistenceGate/addSemanticIds —
-// see shadow.mjs's fileoverview) and this file imports its own entry points
-// back from shadow.mjs — a deliberate two-file cycle, safe under ESM because
-// nothing on either side runs at module top level, and permanent regardless
-// of Phase 4 (see shadow.mjs's fileoverview for why runReviewWithRetry/
-// runShadowAndPersist can never be one-directional).
+// shadow.mjs now imports its four post-review dependencies from post-review.mjs
+// below (not from this file — Phase 4 retargeted that edge), and this file
+// imports its own entry points back from shadow.mjs — the one PERMANENT
+// two-file cycle (runReviewWithRetry / runShadowAndPersist; see shadow.mjs's
+// fileoverview), safe under ESM because nothing on either side runs at module
+// top level, and no longer a cross-domain edge now that both files are
+// `audit-orchestration` (.audit-loop/domain-map.json).
 import {
   resolveShadow,
   buildShadowClient,
@@ -206,6 +202,27 @@ import {
   buildFinalReviewPersistPayload,
   runShadowAndPersist,
 } from './lib/final-review/shadow.mjs';
+
+// ── Post-review findings pipeline (relocated to lib/final-review/post-review.mjs) ──
+// Pure relocation (Phase 4). applyExistenceGate / applyScopeFilter /
+// recordNewFindings keep being re-exported at the top level (test-import
+// contract — see the plan's widened General rule); applyDebtSuppression /
+// addSemanticIds / recordGeminiOutcomes were never top-level exports (the
+// first two were a temporary Phase-3-only export for shadow.mjs's benefit,
+// now retired — shadow.mjs imports them from here instead).
+export {
+  applyExistenceGate,
+  applyScopeFilter,
+  recordNewFindings,
+} from './lib/final-review/post-review.mjs';
+import {
+  applyDebtSuppression,
+  applyExistenceGate,
+  applyScopeFilter,
+  addSemanticIds,
+  recordNewFindings,
+  recordGeminiOutcomes,
+} from './lib/final-review/post-review.mjs';
 
 // ── Review Orchestrator ────────────────────────────────────────────────────────
 
@@ -775,204 +792,6 @@ export async function runAdjudicatorOnlyReview(provider, client, planContent, tr
   }
 }
 
-// Exported (not otherwise a top-level API) — scripts/lib/final-review/shadow.mjs
-// imports this directly (one-directional; see that module's fileoverview).
-// Phase 4 retargets shadow.mjs's import to post-review.mjs, which will own
-// this function, and this export can drop then.
-export async function applyDebtSuppression(result, transcriptContent) {
-  try {
-    const transcriptObj = JSON.parse(transcriptContent);
-    const suppressionCtx = transcriptObj._debtMemory?.suppressionContext
-      || transcriptObj.debt_memory?.suppressionContext
-      || [];
-    if (!Array.isArray(suppressionCtx) || suppressionCtx.length === 0) return;
-    if (!Array.isArray(result.new_findings)) return;
-    const { jaccardSimilarity } = await import('./lib/ledger.mjs');
-    // Threshold 0.30 vs suppressReRaises' 0.35 — debt envelope signatures
-    // (category+section) are shorter than new_findings (which include detail
-    // text), so asymmetric lengths dilute Jaccard.
-    const THRESHOLD = 0.3;
-    const before = result.new_findings.length;
-    const kept = [];
-    const debtSuppressed = [];
-    for (const f of result.new_findings) {
-      const fSig = `${f.category} ${f.section} ${f.detail}`;
-      let match = null;
-      let bestScore = 0;
-      for (const d of suppressionCtx) {
-        const score = jaccardSimilarity(fSig, `${d.category} ${d.section}`);
-        if (score > bestScore) { bestScore = score; match = d; }
-      }
-      if (match && bestScore > THRESHOLD) debtSuppressed.push({ finding: f, matchedTopic: match.topicId, score: bestScore });
-      else kept.push(f);
-    }
-    if (debtSuppressed.length === 0) return;
-    process.stderr.write(`  [final-review] Debt re-suppression: ${debtSuppressed.length}/${before} new_findings matched pre-filtered debt\n`);
-    for (const s of debtSuppressed.slice(0, 3)) {
-      process.stderr.write(`    [debt-suppressed] ${s.matchedTopic.slice(0, 8)} score=${s.score.toFixed(2)}\n`);
-    }
-    result.new_findings = kept;
-    result._debtSuppressedCount = debtSuppressed.length;
-  } catch { /* transcript not JSON or no _debtMemory — skip */ }
-}
-
-/**
- * Project a `wrongly_dismissed` entry onto the `{category, section, detail}`
- * shape `classifyFinding` reads.
- *
- * **This projection is the whole point of the function** (validator-inert-by-
- * arguments). `WronglyDismissedSchema` shares NOT ONE field name with
- * `FindingBase` — its prose lives in `reason_claude_was_wrong`/`evidence_basis`
- * and its file references in `cited_lines`. Handing those entries to the gate
- * unprojected type-checks, runs, and classifies exactly zero of them, so the
- * gate would read clean on the path that needs it most: a re-asserted GPT
- * finding is where a false absence claim survives Claude's dismissal and comes
- * back as "you hallucinated the verification".
- *
- * `category` is left EMPTY on purpose — it is concatenated into the haystack
- * `classifyFinding` scans, so a synthetic label there could manufacture a
- * classification the model's own prose never made.
- */
-function projectWronglyDismissed(wd) {
-  const cited = Array.isArray(wd?.cited_lines) ? wd.cited_lines : [];
-  return {
-    category: '',
-    // `auth.js:132` → `extractCitedEntity` splits on `:` for the fromFile anchor.
-    section: cited.length > 0 ? String(cited[0]) : '',
-    detail: `${wd?.reason_claude_was_wrong || ''}\n${wd?.evidence_basis || ''}`.trim(),
-    // `mk()` defaults verdictSeverity to `finding.severity`; without this the
-    // projected view has no severity at all and the annotation reads undefined.
-    severity: wd?.recommended_severity,
-  };
-}
-
-/**
- * Deterministic existence-claim gate for FINAL-REVIEW findings — the same
- * `verifyExistenceFindings` the GPT audit path runs at
- * `legacy-production-audit.mjs`, which the final reviewer never passed through.
- *
- * Why it belongs here too: a "file/module/symbol X does not exist" claim is
- * mechanically decidable against the repo inventory, and until this ran, a
- * false one from the final reviewer could only be answered by argument — the
- * operator re-deriving `git ls-files` by hand while the reviewer restated the
- * claim. The failure shape is a category error (treating "not in the
- * changed-files list" as "not in the repo"), which no amount of prose settles
- * and one set lookup does.
- *
- * Deliberately ANNOTATES rather than drops, mirroring the GPT path: `.verification`
- * rides on the finding and `isRefuted` decides what it means. The model's own
- * `verdict` is NOT recomputed here — mechanically flipping a REJECT is a
- * separate decision with its own failure modes, and a refuted finding that is
- * *named as refuted* in the report already ends the argument.
- *
- * @param {object} result - parsed GeminiFinalReviewSchema object, mutated in place
- * @param {object} [deps] - test seam
- * @returns {{checked:number, refuted:number}}
- */
-export function applyExistenceGate(result, { listFiles = listRepoFiles } = {}) {
-  const stats = { checked: 0, refuted: 0 };
-  try {
-    const inv = listFiles({ baseDir: process.cwd() });
-    const ctx = { repoFiles: inv.files, inventoryComplete: inv.complete };
-
-    // ── new_findings: already FindingBase-shaped, gate applies directly ──
-    if (Array.isArray(result?.new_findings) && result.new_findings.length > 0) {
-      stats.checked += result.new_findings.length;
-      result.new_findings = verifyExistenceFindings(result.new_findings, ctx);
-    }
-
-    // ── wrongly_dismissed: needs the projection above to be adjudicable ──
-    if (Array.isArray(result?.wrongly_dismissed) && result.wrongly_dismissed.length > 0) {
-      stats.checked += result.wrongly_dismissed.length;
-      const projected = verifyExistenceFindings(result.wrongly_dismissed.map(projectWronglyDismissed), ctx);
-      // Map the verdict back onto the ORIGINAL entries — index-aligned because
-      // verifyExistenceFindings is a `.map`, one output per input, order kept.
-      result.wrongly_dismissed = result.wrongly_dismissed.map((wd, i) => (
-        projected[i]?.verification ? { ...wd, verification: projected[i].verification } : wd
-      ));
-    }
-
-    const refuted = [
-      ...(result?.new_findings || []),
-      ...(result?.wrongly_dismissed || []),
-    ].filter(isRefuted);
-    stats.refuted = refuted.length;
-
-    if (refuted.length > 0) {
-      // Name the entities, not just a count — the operator's next move is to
-      // stop arguing about a specific path, so the path has to be on screen.
-      process.stderr.write(
-        `  [final-review] Existence gate: ${refuted.length}/${stats.checked} claim(s) REFUTED against the repo inventory\n`,
-      );
-      for (const f of refuted.slice(0, 5)) {
-        const id = f.id || f.original_finding_id || '?';
-        process.stderr.write(`    [refuted] ${id}: ${f.verification?.verificationReason || 'entity exists'}\n`);
-      }
-    }
-    if (!inv.complete) {
-      // Absence is not provable against a partial inventory — the gate degrades
-      // to `requires_verification` internally, and saying so here stops the
-      // operator reading a quiet run as a clean one.
-      process.stderr.write('  [final-review] Existence gate: repo inventory INCOMPLETE — absence claims not adjudicable\n');
-    }
-  } catch (err) {
-    // Non-blocking, like the GPT path's own try/catch: a gate failure must not
-    // take down a review that otherwise succeeded.
-    process.stderr.write(`  [final-review] Existence gate skipped: ${err.message}\n`);
-  }
-  result._existenceGate = stats;
-  return stats;
-}
-
-export async function applyScopeFilter(result, transcriptContent) {
-  try {
-    const transcriptObj = JSON.parse(transcriptContent);
-    const changedFiles = Array.isArray(transcriptObj.changed_files) ? transcriptObj.changed_files : [];
-    if (changedFiles.length === 0) return;
-    if (!Array.isArray(result.new_findings)) return;
-    // Normalise paths for comparison: trim whitespace, strip leading ./.
-    const inScope = new Set(changedFiles.map(f => f.trim().replace(/^\.\//, '')));
-    const before = result.new_findings.length;
-    const kept = [];
-    const scopeFiltered = [];
-    for (const f of result.new_findings) {
-      const file = (f.file || f.location || '').trim().replace(/^\.\//, '');
-      // Empty file → keep (deliberation-level finding, not file-specific).
-      if (!file) { kept.push(f); continue; }
-      const matched = inScope.has(file) || [...inScope].some(s => file === s || file.endsWith('/' + s) || s.endsWith('/' + file));
-      if (matched) kept.push(f);
-      else scopeFiltered.push({ finding: f, file });
-    }
-    if (scopeFiltered.length === 0) return;
-    process.stderr.write(`  [final-review] Scope filter: ${scopeFiltered.length}/${before} new_findings cited out-of-scope files (dropped)\n`);
-    for (const s of scopeFiltered.slice(0, 3)) {
-      process.stderr.write(`    [scope-dropped] ${s.finding.id || '?'} → ${s.file}\n`);
-    }
-    result.new_findings = kept;
-    result._scopeFilteredCount = scopeFiltered.length;
-    result._scopeFilteredFindings = scopeFiltered.map(s => ({ id: s.finding.id, file: s.file, hash: s.finding._hash }));
-  } catch { /* transcript not JSON or no changed_files — skip */ }
-}
-
-// Exported for the same reason as applyDebtSuppression above — shadow.mjs
-// imports this one-directionally; Phase 4 retargets to post-review.mjs.
-export function addSemanticIds(result, provider) {
-  if (!result.new_findings) return;
-  for (let i = 0; i < result.new_findings.length; i++) {
-    const f = result.new_findings[i];
-    f.id = `${provider === 'gemini' ? 'G' : 'C'}${i + 1}`;
-    f._hash = semanticId(f);
-    f._source = provider;
-    // Stamp the MATCHING keys. Their absence is why cross-model bucketing was
-    // reduced to an exact hash over model-authored prose (0/48 matches on real
-    // data while 9/48 named the same file). `affectedFiles` is the set matching
-    // uses; `_primaryFile` is the reporting key and may be null, which is
-    // honest — a finding naming no file is unmatchable, not unique.
-    f.affectedFiles = affectedFilesOf(f);
-    f._primaryFile = primaryFileOf(f);
-  }
-}
-
 function emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile) {
   if (jsonMode || outFile) {
     const selectedModel = provider === 'gemini' ? MODEL : (provider === 'azure-claude' ? azureConfig.claudeDeployment : CLAUDE_OPUS_MODEL);
@@ -988,81 +807,6 @@ function emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile)
     return;
   }
   console.log(formatReviewResult(result, usage, latencyMs, provider));
-}
-
-export function recordNewFindings(result, fpTracker, repoFP, revId, modelId = 'gemini') {
-  if (!Array.isArray(result.new_findings)) return;
-  for (const f of result.new_findings) {
-    appendOutcome('.audit/outcomes.jsonl', {
-      findingId: f.id,
-      severity: f.severity,
-      category: f.category,
-      section: f.section,
-      pass: 'gemini-new',
-      model: modelId,
-      accepted: null,
-      gemini_reconfirmed: true,
-      round: 0,
-      promptVariant: revId,
-      promptRevisionId: revId,
-      semanticHash: f._hash,
-    });
-    fpTracker.record(f, true, repoFP);
-  }
-}
-
-function recordWronglyDismissed(result, revId, modelId = 'gemini') {
-  if (!Array.isArray(result.wrongly_dismissed)) return;
-  for (const w of result.wrongly_dismissed) {
-    appendOutcome('.audit/outcomes.jsonl', {
-      findingId: w.original_finding_id,
-      severity: w.recommended_severity,
-      category: `[wrongly-dismissed] ${w.original_finding_id}`,
-      section: w.reason_claude_was_wrong?.slice(0, 120) || '',
-      pass: 'gemini-wrongly-dismissed',
-      model: modelId,
-      accepted: null,
-      gemini_reconfirmed: true,
-      round: 0,
-      promptVariant: revId,
-      promptRevisionId: revId,
-      semanticHash: semanticId({
-        category: w.original_finding_id,
-        section: w.reason_claude_was_wrong || '',
-        detail: '',
-      }),
-    });
-  }
-}
-
-function recordGeminiOutcomes(result, modelId = 'gemini') {
-  try {
-    const repoProfile = generateRepoProfile();
-    const repoFP = repoProfile?.repoFingerprint || null;
-    const bandit = new PromptBandit();
-    const fpTracker = new FalsePositiveTracker();
-    const revId = getActiveRevisionId('gemini-review') || 'default';
-    recordNewFindings(result, fpTracker, repoFP, revId, modelId);
-    recordWronglyDismissed(result, revId, modelId);
-    const VERDICT_REWARDS = { APPROVE: 0.8, CONCERNS: 0.5, CONCERNS_REMAINING: 0.35, REJECT: 0.2 };
-    // A coverage-gated verdict is a mechanical post-condition, not a judgement
-    // about the prompt — feeding it to the bandit would teach the wrong lesson
-    // from a run the reviewer could not perform. Skip the verdict reward; the
-    // finding-level outcomes above are recorded either way.
-    if (!result._coverageGate?.downgraded) {
-      const verdictReward = VERDICT_REWARDS[result.verdict] ?? 0.5;
-      bandit.update('gemini-review', revId, verdictReward);
-    }
-    bandit.flush();
-    fpTracker.flush?.();
-    const newCount = result.new_findings?.length ?? 0;
-    const wrongCount = result.wrongly_dismissed?.length ?? 0;
-    if (newCount > 0 || wrongCount > 0) {
-      process.stderr.write(`  [learning] Recorded ${newCount} new + ${wrongCount} wrongly-dismissed outcomes for gemini-review pass\n`);
-    }
-  } catch (learnErr) {
-    process.stderr.write(`  [learning] ${learnErr.message?.slice(0, 100)}\n`);
-  }
 }
 
 /**

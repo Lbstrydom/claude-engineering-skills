@@ -19,33 +19,26 @@
  * `gemini-review.mjs`'s own domain, and this module is that CLI's shadow-A/B
  * orchestration in a sibling file, not a reusable library primitive).
  *
- * **This module and `gemini-review.mjs` still import each other — an
- * intra-domain cycle, not a domain-boundary violation now that both are
- * `audit-orchestration`.** Neither side reads the other's binding at module
- * top level (Node's ESM loader handles that safely; verified live by the
- * full test suite, not merely reasoned about), and the relationship is
- * explicit, not incidental:
- *   - `gemini-review.mjs` imports `runShadowAndPersist` (its own `main()`'s
- *     one call site) plus the `_internals` re-export surface below.
- *   - This module needs `runReviewWithRetry` back — a function that has no
- *     future non-`gemini-review.mjs` home (it stays there permanently; see
- *     the plan's "STAYS" list) — so it is received as an explicit dependency,
- *     never imported: `runShadowReview` takes `deps.runReviewWithRetry`
- *     (mirrors the already-established `persistFn` test-seam pattern on
- *     `runShadowAndPersist` below), and `runShadowAndPersist` forwards the
- *     one it receives from `gemini-review.mjs`'s call site. Corrected 2026-09-16
- *     (cluster B round 1 M2) after an earlier draft of this comment called the
- *     OTHER four-function edge below "ONE-DIRECTION" without acknowledging
- *     that this edge alone already makes the two-file relationship circular —
- *     true of that edge in isolation, misleading as a claim about the module
- *     graph as a whole.
- *   - `applyDebtSuppression`/`applyScopeFilter`/`applyExistenceGate`/
- *     `addSemanticIds` are imported directly from `gemini-review.mjs` (Phase 4
- *     hasn't landed yet — they live there until `post-review.mjs` exists).
- *     Phase 4 retargets these four imports to `post-review.mjs`, which
- *     removes this edge but leaves the `runReviewWithRetry`/
- *     `runShadowAndPersist` one — permanent, by design, and no longer a
- *     concern once both files agree on domain.
+ * **The module graph is now ACYCLIC — this module does not import
+ * `gemini-review.mjs` at all.** An earlier draft (Phase 3, before Phase 4
+ * landed) imported `applyDebtSuppression`/`applyScopeFilter`/
+ * `applyExistenceGate`/`addSemanticIds` from `gemini-review.mjs` directly
+ * (temporary, since `post-review.mjs` didn't exist yet) while ALSO needing
+ * `runReviewWithRetry` back — the second need made the two-file relationship
+ * genuinely circular at the time (cluster B round 1 M2's correction to this
+ * comment), even though the first edge, described in isolation, was
+ * "one-direction". Both are resolved now:
+ *   - The four post-review functions import from `post-review.mjs` below,
+ *     not `gemini-review.mjs` (Phase 4).
+ *   - `runReviewWithRetry` is still needed — it has no future home outside
+ *     `gemini-review.mjs` (see the plan's "STAYS" list) — but is received as
+ *     an explicit dependency, never imported: `runShadowReview` takes
+ *     `deps.runReviewWithRetry` (mirrors the already-established `persistFn`
+ *     test-seam pattern on `runShadowAndPersist` below), and
+ *     `runShadowAndPersist` forwards the one it receives from
+ *     `gemini-review.mjs`'s call site. A dependency received as a function
+ *     argument is not a module import — `gemini-review.mjs` imports this
+ *     file; this file imports nothing back.
  *
  * @module scripts/lib/final-review/shadow
  */
@@ -57,6 +50,7 @@ import { azureConfig, shadowReviewConfig, findingMatchConfig, FINDING_MATCH_SCHE
 import { SHADOW_PROVIDER_SPECS, shadowModelMatchesFamily } from './provider-specs.mjs';
 import { resolveOpenRouterCreds } from './providers.mjs';
 import { resolveEnvelopeScope, isNonBlindScope } from './scope.mjs';
+import { applyDebtSuppression, applyScopeFilter, applyExistenceGate, addSemanticIds } from './post-review.mjs';
 import { semanticId } from '../findings.mjs';
 import { matchFindings } from '../finding-match.mjs';
 import { classifyLlmError } from '../robustness.mjs';
@@ -66,8 +60,6 @@ import { getActiveEvalRunId } from '../store/model-eval.mjs';
 import { resolveCandidateRoute } from '../model-eval/route-catalog.mjs';
 import { appendModelEvalShadowObservation } from '../model-eval/finalize-shadow-eval.mjs';
 import { recordFinalReviewFindings } from '../../learning-store.mjs';
-// One-directional (see fileoverview) — Phase 4 retargets these to post-review.mjs.
-import { applyDebtSuppression, applyScopeFilter, applyExistenceGate, addSemanticIds } from '../../gemini-review.mjs';
 
 /**
  * Resolve the shadow reviewer config into a concrete plan, or a skip reason.
