@@ -117,19 +117,9 @@ is accurate. Best-effort — if a query fails, log and proceed.
 
 ### 0.5a — Recent persona-test P0s for this repo
 
-**Never pass `--repo "$PERSONA_TEST_REPO_NAME"`.** That is a SHELL expansion,
-and a Claude Code session inherits neither this repo's `.env` nor
-`~/.audit-loop.env` — so in every consumer that had not exported the variable
-into the shell, the flag arrived empty and the gate refused. The command
-resolves the repo itself: `--repo` -> `PERSONA_TEST_REPO_NAME` (read from
-`.env` by the CLI, not by your shell) -> the ambient `git remote` identity.
-Run it bare; pass `--repo <slug>` only to override.
-
-The PRIMARY source (WS4, `docs/plans/persona-nav-feedback-recovery.md`) joins
-the latest session's raw P0/P1 findings against the durable per-repo outcome
-ledger — a finding labeled `dismissed`/`wont_fix` no longer counts as open, and
-one labeled `fixed` that reappears in a LATER session re-flags as an open
-regression:
+Run bare — the command resolves the repo itself (`--repo` -> `PERSONA_TEST_REPO_NAME` -> ambient `git remote`).
+**Never pass `--repo "$PERSONA_TEST_REPO_NAME"` as a shell expansion** — see
+`references/pre-ship-gate-queries.md` §0.5a for why.
 
 ```bash
 node scripts/cross-skill.mjs persona-outcomes summary
@@ -154,34 +144,26 @@ naming the resolution it attempted, and NEVER as "gate silent":
 **Closed failure semantics — never a NEW blocker**:
 - `cloud: false` → proceed without the UX gate, exactly as today.
 - `measured: false` → print the UNMEASURED card above, then proceed.
-- `sessionId: null` **with `measured: true`** → the gate is genuinely silent:
-  the repo resolved and has no persona session. Name the repo it resolved
-  (`scope.slug`, `scope.mode`), so a silent gate can be told apart from one
-  pointed at the wrong repo.
+- `sessionId: null` **with `measured: true`** → the gate is genuinely silent —
+  name the repo it resolved (`scope.slug`, `scope.mode`).
 - `ok: false` (a real store/query failure) → log one warning line and fall
-  back to the legacy raw read (below) — a summary-command regression can
-  never make the gate stricter OR blind. It takes the same resolution chain
-  and carries the same `measured`/`scope` fields, so run it bare too:
+  back to the legacy raw read, same `measured`/`scope` fields:
   ```bash
   node scripts/cross-skill.mjs get-persona-sessions-by-repo     --limit 1 --p0-only     --select persona,focus,verdict,p0_count,p1_count,created_at,debrief_md
   ```
   (uses that session's raw `p0_count`/`p1_count` as `open_p0_count`/`open_p1_count`).
 
-**`pendingVerification*` is neither open nor clear.** A finding labeled `fixed`
-from the very session being read carries no newer evidence either way — the fix
-is claimed and no persona run has tested it. Counting it open made the gate
-unclearable by construction: label the fix, the same session is still the
-latest, and the gate re-flags what it was just told. When
+**`pendingVerification*` is neither open nor clear** — a `fixed` label from the
+very session being read has no newer evidence either way. When
 `pendingVerificationP0 > 0`, print one line and proceed:
 
 ```
   <n> P0 fix(es) awaiting verification — re-run /persona-test to confirm.
 ```
 
-Capture `openP0` + `openP1` from the primary read (or the legacy
-`p0_count`/`p1_count` from the fallback) as `open_p0_count`/`open_p1_count`.
-These feed the ship_event record. If `openP0 > 0` (or the legacy fallback's
-`p0_count > 0`):
+Capture `openP0` + `openP1` (or the legacy fallback's `p0_count`/`p1_count`)
+as `open_p0_count`/`open_p1_count` for the ship_event record. If `openP0 > 0`
+(or the legacy fallback's `p0_count > 0`):
 
 ```
 ⚠ UX GATE (non-blocking)
@@ -191,8 +173,8 @@ These feed the ship_event record. If `openP0 > 0` (or the legacy fallback's
   Label fixed/dismissed P0s: node scripts/cross-skill.mjs persona-outcomes --worksheet
 ```
 
-The worksheet line only appears when the PRIMARY read succeeded (labeling
-requires the outcome ledger — the legacy fallback path has no equivalent).
+The worksheet line only appears when the PRIMARY read succeeded (the legacy
+fallback path has no outcome ledger to label against).
 
 ### 0.5b — Fixes that lack a /ux-lock regression spec
 
@@ -209,118 +191,51 @@ was measured* (`reason: repo-identity-unresolvable` / `cloud-off`) — the zeroe
 are "not applicable", **not** "no obligations". Report it as unmeasured; never
 render it as a clean backlog.
 
-> **`agedOut` is the number to watch, and it should be 0** (added 2026-08-11).
-> The view's 14-day window used to sit inside the predicate that *defines* the
-> obligation, so "not shown" and "not owed" were one state: an unlocked HIGH fix
-> left the backlog by the passage of time and the only trace was a smaller
-> number. Measured the day this shipped, **94 code findings had aged out against
-> 1 still visible** — a gate whose cheapest clearing strategy was to wait two
-> weeks. Same defect `shown`/`total` already fixed on the row axis (`rows.length`
-> once reported 20 against a real 232), one axis over.
->
-> The window is KEPT and stays the default — an unbounded ship-time nudge becomes
-> noise and earns `--no-verify`. What changed is that it now *says* what it
-> dropped:
-> - **`agedOut`** — expired **while a locking practice was live**. This is a real
->   leak. Non-zero means obligations are being discharged by delay; say so.
-> - **`prePractice`** — expired before this repo's first audit-sourced lock
->   (`practiceStart`, derived from the store, never configured). You cannot lapse
->   a practice you had not started, so these are **not** obligations. A repo that
->   has never locked anything reports `agedOut: 0` rather than indicting itself.
->
-> *This repo's 190 `prePractice` rows (94 code / 96 plan, 2026-07-17..07-27, all
-> before `practiceStart` 2026-07-29) were written off deliberately on 2026-08-11
-> — see `status.md`. They are classified, not hidden.*
->
-> Read past the window with `--all-ages`; `total` and `byMode` then describe the
-> unwindowed set, because a denominator from a different source than the rows is
-> how `shown 5 / total 29` gets reported over a 219-row page.
+**Watch `agedOut` — it should be 0.** The 14-day window stays the default (an
+unbounded ship-time nudge becomes noise), split into what it dropped:
+- **`agedOut`** — expired while a locking practice was live. A real leak;
+  non-zero means obligations are being discharged by delay.
+- **`prePractice`** — expired before this repo's first lock (`practiceStart`).
+  Not an obligation — a repo that has never locked anything reports `agedOut: 0`.
+
+Read past the window with `--all-ages`; `total`/`byMode` then describe the
+unwindowed set:
 
 ```bash
 node scripts/cross-skill.mjs list-unlocked-fixes --all-ages
 ```
 
-> **Scoping — fixed 2026-07-30, and worth knowing why.** This command used to
-> read `--repo-id` only. `--repo` was accepted (it is globally valid, since
-> sibling subcommands read it) and **silently ignored**, and with neither flag
-> both store queries took their *unscoped* branch — returning **every
-> repository's** rows. A consumer measured a backlog of **207** that belonged
-> entirely to a different repo; its own true count was **0**. Scope is now
-> resolved as: `--all-repos` → `--repo-id` → `--repo <slug>` → ambient git
-> identity → `measured:false`. Global access must be asked for explicitly, and
-> `scope.mode` is echoed in the output so a global run is never mistakable for a
-> scoped one. The `byMode.code` guidance below shipped one day earlier and is
-> correct — but it was fixing the arithmetic on the wrong *population*, so read
-> both together.
->
-> **Never hand-derive a repo id to pass here.** There are two ids per repo and
-> they are different columns of the same `audit_repos` row: `id` (v4) is what
-> these views key on, and `repo_uuid` (v5, cached in `.audit-loop/repo-id`) is
-> the arch-memory identity. Passing the latter used to be trusted verbatim,
-> match nothing, and report `measured:true` with **0** — an authoritative empty
-> backlog for a repo that was never queried. That is how the incident above
-> reached its final answer, and a `warned` ship event got "corrected" to
-> `shipped` on the strength of it. `--repo-id` is now verified against
-> `audit_repos`: a `repo_uuid` is translated, anything unknown is
-> `reason: unknown-repo-id` + `measured:false`. Prefer no flag at all (ambient
-> identity) or `--repo <owner/repo>`.
+**Never hand-derive a repo id** — pass no flag (ambient identity) or
+`--repo <owner/repo>`; `--repo-id` is verified against `audit_repos`, and an
+unresolvable one reports `measured:false` rather than an authoritative empty
+backlog.
 
 **Use `byMode.code` as `missing_spec_count` — NOT `rows.length`.** `rows` is
-capped at 20 by the query, so counting it reported "20" when the real total was
-**232** (measured 2026-07-29). And `byMode.plan` findings come from `/audit-plan`
-runs: their `primary_file` is a section reference ("§9 testing strategy"), there
-is no code artifact, and **no lock of any kind can ever exist for them** — 113 of
-those 232 were plan rows, so a single mixed total makes half the backlog read as
-work that cannot be done.
+capped at 20. `byMode.plan` findings have a section reference, not a file —
+**no lock of any kind can ever exist for them** — so a single mixed total
+makes part of the backlog read as work that cannot be done. `byMode` counts by
+what a row IS (`primary_file`'s shape), not by which run recorded it.
 
-> **`byMode` counts by what a row IS, not by which run recorded it** (upstream
-> report `fe1ff38a`, fixed 2026-09-06). A plan-mode run is not the only source of
-> a section reference: the write side records `primary_file` as
-> `_primaryFile || section`, so a **code**-mode finding lacking a file path of its
-> own falls back to prose while `audit_mode` stays `'code'`. Counting on
-> `audit_mode` alone therefore reported unlockable rows as actionable work — 2.5x
-> overstated in the reporting consumer, and measured at fix time against the
-> upstream store: **33 of 233** `unlocked_fixes` code rows and **56 of 227**
-> `unremediated_acceptances` code rows were section references. The readers now
-> classify on `primary_file`'s shape as well, so `byMode.code` is the count you can
-> act on. Rows are unchanged — only the aggregate moved.
+**`danglingLocks` — a recorded lock whose test file is no longer there.**
+`count: null` means the question went unasked (cloud off, unresolved repo, a
+read that threw) — distinct from `0`. When `count > 0`, print the sampled rows
+and act on each:
 
-> **`danglingLocks` — a recorded lock whose test file is no longer there** (upstream
-> `b2c9a63f`, 2026-09-06). Recording a spec removes its finding from `unlocked_fixes`
-> permanently: that view's only lock predicate is
-> `EXISTS (SELECT 1 FROM regression_specs …)`. So a citation naming a file nobody can
-> open reads as coverage, and nothing surfaces it again — an obligation discharged by
-> silence, one axis over from `agedOut`. Measured upstream the day this shipped: **3 of
-> 235** rows, all three tests deleted by a later refactor, i.e. TRUE when recorded.
-> That is why this is checked on the READ side: a citation's truth is not a property of
-> the moment it was written.
->
-> `count: null` means the question went unasked (cloud off, unresolved repo, a read that
-> threw) — distinct from `0`, and not a clean result. When `count > 0`, print the sampled
-> rows and act on each: restore the test, re-point the lock at whatever replaced it, or
-> remove the lock so the finding rejoins the backlog it left.
->
-> ```bash
-> node scripts/cross-skill.mjs repoint-regression-spec --finding FINDING_UUID --test tests/dangling-regression-lock.test.mjs --description "why the old artefact went away"
-> ```
->
-> `--delete` instead of `--test` where no test discharges the finding at all — that is
-> the honest outcome, not a lesser one: the finding returns to `unlocked_fixes` and gets
-> raised again. Re-pointing it at a loosely-related file would move the dangling count
-> without making the claim true. The command refuses a missing target path, an
-> unresolvable repo, and an ambiguous `(repo, finding)` — a finding may legitimately
-> carry several citations, and picking one would repair it silently while leaving the
-> rest. Added 2026-09-07 for upstream `429683ac`, which measured this queue reporting a
-> condition nothing could clear: `lock-with-test` refuses an already-locked finding, and
-> `record-regression-spec` inserts a SECOND row rather than moving the first.
-`unlocked_fixes` is a generic "HIGH fix, zero `regression_specs` rows in 14
-days" check — it has no UI-relevance filter, so it fires identically for a
-DOM-facing fix and a pure backend/CLI one. `/ux-lock` can only ever cover
-the former (it drives a live URL via Playwright); recommending it
-unconditionally is wrong advice for a backend-only `primary_file` — verified
-2026-07-23: 22/22 accumulated rows in this repo were backend/CLI findings
-with no live URL for `/ux-lock` to drive, since this repo has no frontend.
-If > 0, judge each row by `primary_file` before suggesting a fix:
+```bash
+node scripts/cross-skill.mjs repoint-regression-spec --finding FINDING_UUID --test tests/dangling-regression-lock.test.mjs --description "why the old artefact went away"
+```
+
+`--delete` instead of `--test` where no test discharges the finding at all —
+that is the honest outcome, not a lesser one: the finding returns to
+`unlocked_fixes` and gets raised again. The command refuses a missing target
+path, an unresolvable repo, and an ambiguous `(repo, finding)`. Incident
+history + why each of these rules exists: `references/pre-ship-gate-queries.md`
+§0.5b.
+
+`unlocked_fixes` has no UI-relevance filter — it fires identically for a
+DOM-facing fix and a pure backend/CLI one, and `/ux-lock` can only ever cover
+the former. Judge each row by `primary_file` before suggesting a fix, if
+`byMode.code > 0`:
 
 ```
 ⚠ REGRESSION LOCK GATE (non-blocking)
@@ -338,9 +253,9 @@ If > 0, judge each row by `primary_file` before suggesting a fix:
   contract genuinely needs a live DOM.
 ```
 
-If `agedOutByMode.code > 0`, print it too — it is a distinct and worse signal
-than the backlog size, because those obligations are already past the point
-where the nudge will ever mention them again:
+If `agedOutByMode.code > 0`, print it too — lead with the CODE split, not the
+mixed `agedOut` total (a plan row can never be locked, so it is never a lost
+obligation):
 
 ```
 ⚠ OBLIGATIONS LOST TO THE WINDOW (non-blocking)
@@ -353,27 +268,9 @@ where the nudge will ever mention them again:
   the record — an obligation discharged by silence is the thing this counts.
 ```
 
-> **Lead with `agedOutByMode.code`, not `agedOut` — the same split the visible
-> backlog already applies** (fixed 2026-09-06). This banner used to trigger on
-> `agedOut` and lead with the mixed total, while the paragraph one screen up had
-> already established that a plan-mode row has a section reference for a
-> `primary_file` and **no lock of any kind can ever exist for it**. So the
-> loudest line in the step — the one that says obligations are being discharged
-> by delay — was the one still counting unlockable rows as lost obligations.
-> Measured here the day it was fixed: `agedOut` **218**, of which
-> `agedOutByMode.code` **24** and `agedOutByMode.plan` **194**. The headline
-> overstated the leak by **9x**, and a nudge that inflates its own number by an
-> order of magnitude is the one that earns `--no-verify`. Third instance of one
-> defect: `shown`/`total` fixed it on the page axis, `rows.length`/`byMode` on
-> the row axis, this one on the window axis — the data (`agedOutByMode`) was
-> already in the payload each time, and only the prose had to change.
->
-> **A plan-only `agedOut` prints nothing.** With `agedOutByMode.code == 0` there
-> is no obligation to report, and a banner reading `0 code fix(es)` under
-> OBLIGATIONS LOST TO THE WINDOW is a false alarm, not a conservative one.
-
-Do **not** print the `prePractice` figure as a backlog. It is bookkeeping for
-findings that predate the practice, not work anybody owes.
+A plan-only `agedOut` (`agedOutByMode.code == 0`) prints nothing — that banner
+would be a false alarm. Do **not** print `prePractice` as a backlog — it is
+bookkeeping for findings that predate the practice, not work anybody owes.
 
 **Re-running existing regression specs before a push** (optional gate): drive
 them through the deterministic runner with the ship `run_context` so the
@@ -391,31 +288,21 @@ block reason. Cloud off → it still runs + prints; Playwright missing → exit 
 
 ### 0.5e — Accepted findings that were never remediated
 
-**First, a capped auto-reconcile pass (best-effort, never blocks, no override
-flag).** The live-audit-round lifecycle that would otherwise flip
-`remediation_state` to `fixed` is session-scoped, round-diff-scoped, and
-14-day-bounded ([`docs/plans/remediation-state-verification-reconciler.md`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/docs/plans/remediation-state-verification-reconciler.md))
-— outside that intersection (the common case for a row that survives to reach
-this step at all) nothing else will ever re-check it. Run this BEFORE the
-query below, so its counts reflect what a machine already closed rather than a
-growing pile a human could have been spared:
+**First, a capped auto-reconcile pass** (best-effort, never blocks, no
+override flag) — closes what the live-audit lifecycle's session/round/14-day
+bounds will never revisit on their own:
 
 ```bash
 node scripts/remediation-reconcile.mjs --apply --cap 5 2>/dev/null
 ```
 
-Swallow any failure exactly like every other 0.5-step (`try { … } catch { log,
-continue }`) — this is advisory infrastructure, not a precondition for
-shipping. Files with no code change since acceptance cost nothing (skipped
-before any LLM call); a file that was simply deleted resolves mechanically,
-no LLM needed. Report its one-line summary alongside the nudge below:
-`Auto-reconciled: <resolved> verified (<mechanicallyResolved> of those by
-file-deletion, no LLM call), <stillPresent> still open, <uncertain> uncertain`
-— note `resolved` already INCLUDES the mechanically-resolved count, it is not
-a fifth bucket to add on top. `AUDIT_REMEDIATION_RECONCILE_ENABLED=false`
-opts out entirely (kill switch, not a flag on this command); an absent Claude
-credential degrades to the free mechanical-resolution path only, never a
-failure.
+Swallow any failure like every other 0.5-step. Report its one-line summary
+alongside the nudge below: `Auto-reconciled: <resolved> verified
+(<mechanicallyResolved> of those by file-deletion, no LLM call), <stillPresent>
+still open, <uncertain> uncertain` — `resolved` already includes the
+mechanically-resolved count. `AUDIT_REMEDIATION_RECONCILE_ENABLED=false` opts
+out entirely; an absent Claude credential degrades to the free
+mechanical-resolution path only, never a failure.
 
 ```bash
 node scripts/cross-skill.mjs list-unremediated-acceptances
@@ -425,156 +312,62 @@ Returns `{ok, cloud, scope:{mode,repoId,slug}, measured, reason, rows, shown,
 total, byMode:{total,code,plan}, allAges, agedOut, agedOutByMode:{code,plan},
 agedOutBySeverity:{HIGH,MEDIUM}, notYetDue, prePractice, practiceStart}`.
 
-> **This view has TWO bounds, and only one of them forgets** (added 2026-08-11,
-> the sibling of 0.5b's `agedOut`). Do not read them as one thing — both present
-> as "not shown", and they are opposite states:
->
-> - **`notYetDue`** — under the 7-day **maturity floor**. A finding accepted
->   three days ago is in flight, not forgotten, and it appears on its own once it
->   matures. **Never add this to `agedOut`, and never report it as a backlog.**
->   It is here so an empty page can be told from one whose rows have not ripened.
-> - **`agedOut`** — over the 30-day **ceiling**, accepted after this repo started
->   recording remediations (`practiceStart`). A real leak: never shown again.
-> - **`prePractice`** — over the ceiling but older than `practiceStart`. Not an
->   obligation this repo ever had.
->
-> Measured the day this shipped: `agedOut` **0**, but **201 live obligations**
-> (50 HIGH / 151 MEDIUM) with the first **31 due to expire five days later**, and
-> 146 gone inside a fortnight. Unlike 0.5b — where 94 rows had already been lost
-> before anyone looked — this one was instrumented *before* the first row went.
-> There is no pre-practice escape here either: remediations have been recorded
-> since 2026-07-17, which predates every live row.
->
-> `--all-ages` drops both bounds, and `total`/`byMode` then describe the
-> unwindowed set, because a denominator from a different source than the rows is
-> how a short page reads as an exhausted one.
+**Check `measured` BEFORE reading the count** — identical contract to 0.5b.
+`measured:false` means *nothing was measured*; an empty `rows` then means "not
+applicable", **not** "no unremediated acceptances".
+
+**Two bounds, and only one of them forgets** — both present as "not shown",
+opposite states:
+- **`notYetDue`** — under the 7-day maturity floor. In flight, not forgotten.
+  **Never add this to `agedOut`, and never report it as a backlog** — mention
+  it only if `total` is 0 and `notYetDue` is not, where it is the difference
+  between "nothing owed" and "nothing owed *yet*".
+- **`agedOut`** — over the 30-day ceiling, accepted after `practiceStart`. A
+  real leak: never shown again.
+- **`prePractice`** — over the ceiling but older than `practiceStart`. Not an
+  obligation this repo ever had.
+
+`--all-ages` drops both bounds; `total`/`byMode` then describe the unwindowed
+set:
 
 ```bash
 node scripts/cross-skill.mjs list-unremediated-acceptances --all-ages
 ```
 
-**Use `byMode.total` as `unremediated_count` — NEVER `rows.length`.** `rows` is
-capped at 20 by the query, and `shown` vs `total` exists to make that cap
-visible. This step told you to count the rows until 2026-08-09, three days after
-the CLI started reporting the real total: measured live, the instruction
-produced **20** against an actual **201** for this repo. A nudge whose entire
-job is to convey scale reported a tenth of it, and the figure was repeated back
-to the operator as the size of the backlog they were deciding whether to work.
-Identical defect to 0.5b's `rows.length` undercount — fixed in the tool for both
-views, fixed in the prose for only one.
-
-`byMode.plan` rows are counted separately, and **what they are worth depends on
-the plan's status** — a distinction this text used to miss. A plan-mode row is a
-plan section that was accepted and then not amended:
-
-- **Plan still in flight** → real work. Amending the section changes what gets
-  built. Treat it as an obligation.
+**Use `byMode.total` as `unremediated_count` — NEVER `rows.length`** (capped
+at 20). `byMode.plan` rows depend on the plan's status:
+- **Plan still in flight** → real work; treat it as an obligation.
 - **Plan marked Complete** → the obligation is to edit a shipped design
-  document, which is a historical record by then. That is close to worthless,
-  and it is not what anyone does. Write the class off with the reasoning on the
-  record; do not let it sit as a permanent count.
+  document — close to worthless. Write the class off with the reasoning on
+  the record rather than let it sit as a permanent count.
 
-Measured 2026-08-11: all 39 plan-mode rows in this repo belonged to seven plans,
-**every one Complete**. Sampling three of them, the under-specification each row
-named had been settled by the implementation — most explicitly by
-[tests/suppression-call-site.test.mjs](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/tests/suppression-call-site.test.mjs),
-whose header cites that plan and those finding IDs. The row that looked most
-dangerous (a data-destroying `alpha = sum(alpha) − (n−1)` recovery procedure) is
-annotated as verified-false *inside the plan document itself*. All 39 were
-written off; the backlog went 199 → 160, and every survivor is code-mode.
-
-**What a write-off here does not cover**: the code-level defect an ambiguity may
-have produced. That is a code finding, it lives in the code-mode rows, and code
-audits raise it. Writing off the document obligation does not write off the risk.
-
-> **Representation gap, worth knowing before you do this.** The store has no
-> "written off / declined on the merits" state — `remediation_state` runs
-> pending/planned/fixed/verified/regressed, and adjudication offers only
-> accepted/dismissed. So a class write-off has to be recorded as `dismissed`,
-> which reads as "this was not a real finding" when the truth is "this was real
-> and is no longer worth acting on". Put the reasoning in `status.md`; the store
-> alone cannot carry it.
-
-**Check `measured` BEFORE reading the count** — identical contract to 0.5b.
-`measured:false` (`reason: repo-identity-unresolvable` / `cloud-off`) means
-*nothing was measured*; an empty `rows` then means "not applicable", **not**
-"no unremediated acceptances". Report it as unmeasured.
-
-> **Scoping — fixed 2026-07-30, same defect as 0.5b, three days later.** This
-> command read `--repo-id` only, and this step invokes it with **no flags**, so
-> both the CLI and the store took their *unscoped* branch: a live run returned
-> rows spanning two repositories, which this step then told you to record as
-> *this* repo's `unremediated_count`. The 0.5b fix had introduced a data-access
-> fence for exactly this, but only the two `unlocked_fixes` readers were routed
-> through it — `getUnremediatedAcceptances` queried a sibling view and kept the
-> old shape. Scope now resolves identically for both steps (`--all-repos` →
-> `--repo-id` → `--repo <slug>` → ambient git identity → `measured:false`), and
-> `tests/cross-skill-unlocked-scope.test.mjs` enumerates the view family
-> mechanically so a *third* reader cannot repeat it.
+Write-offs cover the *document* obligation only — a code-level defect the
+ambiguity may have produced is a separate code finding, raised by code
+audits. The store has no "written off" state, so record a class write-off as
+`dismissed` and put the real reasoning in `status.md`.
 
 One step EARLIER in the lifecycle than 0.5b: `unlocked_fixes` asks *"this was
 fixed — is the fix locked?"*; this asks *"this was accepted — was it ever
 fixed at all?"*. The `unremediated_acceptances` view lists HIGH/MEDIUM findings
 whose `adjudication_outcome` is `accepted`/`severity_adjusted` but whose
-`remediation_state` is still NULL/`pending`/`planned` after 7+ days.
+`remediation_state` is still NULL/`pending`/`planned` after 7+ days —
+`accepted` is not evidence of a fix, and no other mechanism re-raises these
+(audits default to `--scope diff`, so a finding is re-raised only if a later
+audit happens to cover the same file). **That cuts both ways** — a row can
+also be already fixed with nobody having written it down. Treat each row as a
+hypothesis about current code, verify it, then close it in the right
+direction (`--state fixed` or a dismissal) rather than assuming either.
 
-**Why this exists**: measured 2026-07-27 on the 10 accepted final-review-shadow
-findings in this repo, only 3 had a confirmed targeted code fix. One — the bare
-`catch { result = null; }` in `stage0-relevance-context.mjs` — was accepted,
-shipped, and is still in the code today. **`accepted` is not evidence of a
-fix.**
-
-**And nothing is chasing them — this step is the only thing that will.** The
-line here used to read *"the audit loop is already designed to re-raise these
-(`suppressReRaises` suppresses only `dismissed` or `fixed`/`verified`)"*, which
-is true of the suppressor and false of the outcome. Measured 2026-08-11 over
-this repo's 201 windowed rows: **200 appear exactly once in the entire store,
-and zero were ever fixed or dismissed on a sibling row** — against a positive
-control of 707 findings marked fixed/verified and 462 dismissed, so the query
-could see a re-raise if one existed. Audits default to `--scope diff`, so a
-finding is re-raised only if a later audit happens to cover the same file, and
-mostly none does. An unremediated acceptance is an open obligation that no
-other mechanism will surface again.
-
-That also means the backlog decays the *other* way: a finding gets genuinely
-fixed and nobody writes that down, because the loop does not re-raise it to
-notice.
-Sampling four HIGH code rows the same day found three still-live defects and one
-already fixed — `duplicate-justification-pragma.mjs`, whose own source comment
-documents the `git grep -z` fix while the store still says `pending`. So treat a
-row as a *hypothesis about current code*, verify it, and then close it in the
-right direction (`--state fixed` or a dismissal) rather than assuming either.
-
-If > 0, print — **never blocks, and there is no override flag for it** (nudge,
-not gate; the same philosophy as quick-fix detection). **Show the first 5 rows
-as returned** — the reader now orders HIGH first, then oldest first, so the top
-of the page *is* the top of the backlog. Take them in order; do not re-sort.
-
-> **"HIGH first" was unsatisfiable until 2026-08-10** (upstream report 96a829f8,
-> filed HIGH from a consumer). The reader capped its page with **no ORDER BY of
-> its own**, so this step was asking you to show the highest-severity rows out
-> of a page that carried no guarantee of containing any. It *looked* right —
-> measured on the live store, `unremediated_acceptances` happens to define an
-> inner `ORDER BY CASE severity …`, the planner keeps that sort under the outer
-> cap, and all 15 HIGH rows of 44 landed on page 1. That was a property of the
-> view's text, not of the read: Postgres does not guarantee a subquery's ORDER BY
-> survives into an outer query, and the sibling `unlocked_fixes` view carries no
-> inner sort at all. A `CREATE OR REPLACE VIEW` dropping the inner clause — a
-> pure formatting change — would have silently started hiding HIGH rows with no
-> signal. The order is now asserted where the cap is applied, so today's output
-> is unchanged and the instruction is deliverable rather than lucky.
-
-The page is capped (default 20) and the point is the signal, not the backlog. To
-read past it — the consumer measured 44 obligations of which 24 were unreachable
-by any invocation — page with `--limit` / `--offset`; the order is total, so
-pages neither repeat nor skip a row:
+If `> 0`, print — never blocks, no override flag. **Show the first 5 rows as
+returned** (HIGH first, then oldest first — do not re-sort). To read past the
+default 20-row page (order is total; pages neither repeat nor skip a row):
 
 ```bash
 node scripts/cross-skill.mjs list-unremediated-acceptances --limit 20 --offset 20
 ```
 
-The payload echoes the **resolved** `limit`/`offset` (the store clamps to 200),
-so a short page can be told from an exhausted one.
+The payload echoes the resolved `limit`/`offset` (store clamps to 200), so a
+short page can be told from an exhausted one.
 
 ```
 ⚠ UNREMEDIATED ACCEPTANCES (non-blocking)
@@ -588,23 +381,15 @@ so a short page can be told from an exhausted one.
   Leaving them open is fine — leaving them open SILENTLY is what this catches.
 ```
 
-**`byDisposition.acceptedPermanent` is a decision, not a backlog — print it, do
-not chase it.** Those rows carry `user_action = 'accepted-permanent'`: weighed
-and declined on the merits, stamped with `decided_at`, and excluded from
-`open`/`total` by the nag view since migration
-`20260811160000_unremediated_acceptances_disposition`. Measured at that
-migration: 36 of 231 rows in this repo were already decided and still being
-reported as open work.
+**`byDisposition.acceptedPermanent` is a decision, not a backlog — print it,
+do not chase it.** Those rows are weighed and declined on the merits, and
+excluded from `open`/`total`. Reported for one reason: a disposition you
+cannot see is indistinguishable from a leak. `open === total` always — one
+number under two names.
 
-It is reported for one reason — **a disposition you cannot see is
-indistinguishable from a leak.** If that number climbs while `open` does not,
-`accepted-permanent` is being used as a silence button, and THAT is the thing to
-investigate. `open === total` always; they are one number under two names.
-
-If `agedOut > 0`, print it separately. It is a worse signal than the backlog
-size, because those rows are already past the point where this step will ever
-mention them again — and **split it by mode, because the two halves are closed
-by different acts**:
+If `agedOut > 0`, print it separately — split by mode, since the two halves
+close by different acts (a code row needs a fix; a plan row is an obligation
+only while its plan is still in flight):
 
 ```
 ⚠ ACCEPTANCES LOST TO THE CEILING (non-blocking)
@@ -619,46 +404,13 @@ by different acts**:
   off in status.md — an obligation discharged by silence is what this counts.
 ```
 
-> **Why the mode split here is NOT 0.5b's** (both fixed 2026-09-06, from the same
-> census). This reader returns the same `agedOutByMode:{code,plan}` and this
-> banner had the same defect — one mixed total under a leak headline — but the
-> correct wording is different, and copying 0.5b's would be wrong. A plan row is
-> unlockable *by construction* in 0.5b, so it is never an obligation. Here it is
-> an **unamended plan section**, which is real work while the plan is in flight
-> and near-worthless once the plan is Complete: the disposition is the plan's
-> status, not the row's mode, so this step names the test instead of the verdict.
-> `agedOutBySeverity.HIGH` spans both modes and is reported as such — it is not a
-> code-only figure, and reading it as one over-counts the same way the mixed
-> total did. Measured here at fix time: `agedOut` **18** = **5** code / **13**
-> plan, of which **9** HIGH.
-
-**Do not print `notYetDue` as a backlog** — those rows are under the 7-day floor
-and will surface here on their own. Mention it only if `total` is 0 and
-`notYetDue` is not, where it is the difference between "nothing owed" and
-"nothing owed *yet*".
-
-> **Why not `finalize-outcomes` (it used to say that, and it was unactionable).**
-> `finalize-outcomes` needs one round's `--ledger` + `--result`; a finding
-> accepted weeks ago in a since-deleted run has neither, so the advice could
-> could not be followed for exactly the rows this step lists. Worse, a finding fixed
-> in a LATER session is unreachable by a fresh `/audit-code` too — the
-> remediation transition is driven by the finding appearing in the ledger, and
-> the defect no longer reproduces, so "fixed" was unreachable *because the fix
-> worked*. Reported from a consumer as `da67a8c1` after two HIGH findings sat
-> `pending` for 10 days having been genuinely fixed and merged.
->
-> `final-review-record-fix` is generic despite its name — it takes `--run-id` +
-> `--fingerprint` with an OPTIONAL `--bucket`, so it is not shadow-only. It was
-> already the right command when `dd4cbae1` (2026-08-01) reworked this step; the
-> substitution simply did not happen here, and the row above kept naming a
-> command that cannot close these rows.
->
-> **Both keys come from the row.** `audit_run_id` and `finding_fingerprint` are
-> projected by the `unremediated_acceptances` view — the fingerprint only since
-> migration `20260808200000`, which exists because this step told you to close
-> rows the read gave you no key for (upstream `23544fca`). If your store
-> predates that migration the fingerprint is absent: run
-> `node scripts/setup-postgres.mjs --migrate` rather than hand-deriving it.
+**Close rows with `final-review-record-fix`, not `finalize-outcomes`** — the
+latter needs a live round's `--ledger`/`--result`, which a finding accepted
+weeks ago has neither. `final-review-record-fix` takes `--run-id` +
+`--fingerprint` (optional `--bucket`) — both keys come from the row
+(`audit_run_id`, `finding_fingerprint`). If your store predates migration
+`20260808200000` the fingerprint is absent: run
+`node scripts/setup-postgres.mjs --migrate` rather than hand-deriving it.
 
 Judge the list before echoing it — two rows look identical but are not:
 
@@ -670,160 +422,116 @@ Judge the list before echoing it — two rows look identical but are not:
 - `remediation_state = 'planned'` with a live plan is genuinely in-flight, not
   forgotten — drop it from the printed list.
 
+Incident history behind each rule above (the scoping fix, the mode-split
+rationale, the HIGH-first ordering bug, why `finalize-outcomes` was wrong):
+`references/pre-ship-gate-queries.md` §0.5e.
+
 ### 0.5g — Migration realization gate (ENFORCED by the binary, checked HERE too)
 
-A commit that ships a migration is only half-shipped until the migration is APPLIED. On
-2026-07-31 exactly that happened here: migration + dependent code committed, tests green,
-pushed — and the fix was byte-for-byte inert because nobody ran `--migrate`. The drift
-checker existed and was wired to nothing.
+A commit that ships a migration is only half-shipped until the migration is
+APPLIED — a migration can be committed, tests green, pushed, and still be
+byte-for-byte inert if nobody ran `--migrate`.
 
-**Run the read-only preflight now, before Steps 1–6.2's doc work and the pre-push hook's
-readiness suite** — not just at Step 6.3:
+**Run the read-only preflight now, before Steps 1–6.2's doc work and the
+pre-push hook's readiness suite** — not just at Step 6.3:
 
 ```bash
 node scripts/ship-commit.mjs --check-migrations
 ```
 
-A consumer reported (2026-08-14) discovering this block only at Step 6.3, after already
-running a full local + fresh-clone readiness pass — the block itself is cheap (one indexed
-SELECT), but finding out about it late meant redoing validation that unapplied migrations
-had nothing to do with. Running it here surfaces the same block before that work happens.
+- **The real enforcement stays at Step 6.3** — `ship-commit.mjs` performs the
+  check again inside the commit path and exits 2 there regardless of whether
+  this preflight ran. This early run is advisory, not a substitute gate.
+- **Unconditional when the cloud store is on** — deliberately NOT gated on
+  "the push range touches `supabase/migrations/`": a code-only commit can
+  depend on a migration left unapplied by an *earlier* push or a branch switch.
+- **Cloud off / unreachable / no ledger ⇒ silently skipped**, never a block.
+- **On a block**: run `node scripts/setup-postgres.mjs --migrate`, then
+  continue — Step 6.3 will pass without a retry once applied.
 
-- **The real enforcement stays at Step 6.3** — `ship-commit.mjs` performs the check again
-  inside the commit path and exits 2 there regardless of whether this preflight ran. A SKILL
-  step is an instruction to an agent and cannot block on its own; this early run is advisory,
-  not a substitute gate.
-- **Unconditional when the cloud store is on.** Deliberately NOT gated on "the push range
-  touches `supabase/migrations/`": a code-only commit can depend on a migration left
-  unapplied by an *earlier* push or a branch switch, which is the more dangerous version of
-  the same bug.
-- **Cloud off / unreachable / no ledger ⇒ silently skipped**, never a block. Blocking on an
-  unmeasurable condition is the cried-wolf shape that earns `--no-verify`.
-- **On a block**: run `node scripts/setup-postgres.mjs --migrate`, then continue — Step 6.3
-  will pass without a retry once the migration is applied.
+**Consumers are on their own stores — check theirs too** (source-repo only,
+`--check-migrations` above asks only about the AMBIENT store):
 
-> **This checks the AMBIENT store only — the consumers get their own read** (added
-> 2026-08-30, source-repo only). `--check-migrations` asks whether *this* process's
-> `AUDIT_DB_URL` is current. Consumers are not on one store, so a consumer whose store
-> falls behind is invisible from here until one of its own writes hits the realization
-> guard. Measured: a consumer's store sat **2 migrations behind for a day** — the `.sql`
-> files had synced to disk and were never applied, so its code and schema disagreed
-> silently and the `annotation` event shipped the day before could not have worked
-> there. It surfaced only when a routine upstream-report closure was refused.
->
-> ```bash
-> npm run stores:drift
-> ```
->
-> Print its stdout verbatim — it renders the finished card. **Never blocks, no override
-> flag**, same reasoning as 0.5h: applying a migration to a consumer's production
-> database is an operator decision, and a gate firing on something the commit cannot
-> change is what earns `--no-verify`.
->
-> **Read the `unqueried` / `no store` lines.** A store nobody could reach and a consumer
-> whose DSN could not be resolved are reported explicitly rather than counted as
-> current; if NO store answered, the card says `NOTHING WAS CHECKED` instead of
-> `all current`.
->
-> **The runtime DSN usually cannot apply migrations.** A consumer's `.env` carries its
-> *runtime* role; on managed Postgres that role does not own the tables (measured:
-> `must be owner of table audit_findings`, 42501). That is the least-privilege boundary
-> working — do NOT resolve it by granting the runtime role ownership, or by putting an
-> admin DSN in `.env`. Which role to use, and where its credential belongs (a secret
-> store, never a file): `references/migration-credentials.md`.
+```bash
+npm run stores:drift
+```
+
+Print its stdout verbatim — it renders the finished card. **Never blocks, no
+override flag** — applying a migration to a consumer's production database is
+an operator decision. **Read the `unqueried` / `no store` lines** — a store
+nobody could reach is reported explicitly, never counted as current; if NO
+store answered, the card says `NOTHING WAS CHECKED` instead of `all current`.
+
+**The runtime DSN usually cannot apply migrations** — a consumer's `.env`
+carries its *runtime* role, which does not own the tables on managed Postgres.
+Do NOT resolve this by granting the runtime role ownership, or by putting an
+admin DSN in `.env`. Which role to use, and where its credential belongs (a
+secret store, never a file): `references/migration-credentials.md`. Incident
+history behind the rules above: `references/pre-ship-gate-queries.md` §0.5g.
 
 ### 0.5h — Upstream issue queue (advisory, source-repo only)
 
 **Source-repo-gated** — run ONLY when `package.json.name === "claude-engineering-skills"`.
-Consumers FILE reports (`cross-skill.mjs upstream report`); this repo is where they
-get triaged, and nothing prompted anyone to read them. Measured 2026-08-01: two
-consumer reports sat unread, one of them already fixed ~45 minutes earlier and
-still showing `open`. A queue nobody is prompted to read is a queue that decays.
+Consumers FILE reports (`cross-skill.mjs upstream report`); this repo is where
+they get triaged, and nothing else prompts anyone to read them.
 
 ```bash
 npm run upstream:queues 2>/dev/null
 ```
 
-Print its stdout verbatim — it renders the finished card, so there is nothing to
-parse and no formatting decision here.
+Print its stdout verbatim — it renders the finished card. It reads **every
+registered consumer's own store** (never a single ambient one — consumers are
+not all on the same DSN), printing a fingerprint plus the consumer names,
+never a DSN or hostname.
 
-> **Read EVERY consumer's store, not the ambient one** (fixed 2026-08-29). This
-> step used to run `cross-skill.mjs upstream list`, which queries whatever store
-> `AUDIT_DB_URL` names in THIS repo. Consumers are not on one store: `storyline`
-> files into a corporate Azure Postgres while this repo defaults to the NAS one,
-> so the step printed **`0 open`** in the very session that consumer had EIGHT
-> genuinely open reports — four of them HIGH, the oldest already a day old. A
-> triage nudge blind to an entire consumer was reporting its blindness as a
-> clean queue.
->
-> `upstream-queues.mjs` resolves each registered consumer's store the way that
-> consumer's own tooling does (its `.env`, then the shared `~/.audit-loop.env`),
-> dedupes by `storeFingerprint` so repos sharing a store are queried once, and
-> asks each one in a child process. It prints a **fingerprint plus the consumer
-> names**, never a DSN or hostname — this output gets pasted into a public
-> repo's status log and one store is a corporate internal host.
-
-**Never blocks, and there is no override flag** — the queue is CLOUD state, not
-repo state, so it can only advise; a check firing on something the commit
-cannot change is the cried-wolf shape that earns `--no-verify`. It always exits 0.
-
-**Read the `unqueried` / `no store` lines, and do not treat the count as
-complete when either is present.** They are the whole point of the rewrite: a
-store nobody could reach and a consumer whose DSN could not be resolved are both
-reported explicitly rather than counted as zero. If NO store answered, the card
-says `NOTHING WAS CHECKED` instead of `0 open` — that is not a clean queue, it
-is an unasked question, and reporting it as clean is the defect this replaced.
+**Never blocks, and there is no override flag** — the queue is cloud state,
+not repo state; it always exits 0. **Read the `unqueried` / `no store` lines,
+and do not treat the count as complete when either is present** —
+`NOTHING WAS CHECKED` means an unasked question, not a clean queue.
 
 Triage against **the store that owns the row** — `upstream ack|fix|wont-fix`
 writes to the ambient `AUDIT_DB_URL`, which is only one of them. For a report
-belonging to another consumer's store, run the transition with that store's DSN
-in the environment:
+belonging to another consumer's store, run the transition with that store's
+DSN in the environment:
 
 ```bash
 node scripts/cross-skill.mjs upstream ack --id ISSUE_UUID     # or fix --commit / wont-fix
 ```
 
-Closing a report needs the **FULL uuid**, not a prefix: the store resolves a
-prefix but the committed disposition ledger records what you typed, and
-`upstream:coverage:gate` rejects a non-uuid key. Full ids:
-`node scripts/cross-skill.mjs upstream list --worksheet` (ambient store) or the
-card above.
+Closing a report needs the **FULL uuid**, not a prefix — the committed
+disposition ledger records what you typed, and `upstream:coverage:gate`
+rejects a non-uuid key. Full ids: `node scripts/cross-skill.mjs upstream list
+--worksheet` (ambient store) or the card above.
 
 Before triaging, check `freshness` and `priorFixes` on the row: a report can
-describe a defect that a LATER commit already fixed, so `fix --commit` may be the
-correct verb on a report you have not touched. Do not close one on the strength of
-the worksheet's evidence alone — confirm against current code.
+describe a defect that a LATER commit already fixed, so `fix --commit` may be
+the correct verb on a report you have not touched. Confirm against current
+code before closing one on the worksheet's evidence alone. Incident history:
+`references/pre-ship-gate-queries.md` §0.5h.
 
 ### 0.5i — Stalled comparison campaigns (advisory, source-repo only)
 
 **Source-repo-gated** — run ONLY when `package.json.name === "claude-engineering-skills"`.
-Campaigns are declared in `.campaigns/`, which exists only here; a consumer has
-no campaign to be stalled on, and `campaign.mjs` is deliberately not in the
-consumer bundle for that reason.
+Campaigns are declared in `.campaigns/`, which exists only here; a consumer
+has no campaign to be stalled on.
 
 A campaign short of `targetN` is **not decision-eligible** — the spend is
-banked but the evidence cannot answer anything yet. Nothing surfaced that:
-`campaign.mjs status` answers when asked, and answering only when asked is how
-a campaign goes quiet. Measured 2026-08-23 — `final-review-scoped-2026q3` sat
-at 9/12 for three days while 17 unrelated audit runs went past it, noticed only
-because someone thought to ask.
+banked but the evidence cannot answer anything yet.
 
 ```bash
 node scripts/campaign.mjs stale 2>/dev/null
 ```
 
-**Never blocks, no override flag** — same reasoning as 0.5h: collection state
-is CLOUD state the commit cannot change, so it can only advise. Silent when no
-campaign is stalled, when the store is unreachable, and when a campaign has
-never collected at all (never-started is not stalled). Prints its own card; pass
-it through verbatim rather than re-rendering it — the counts and the remedy line
-belong to the tool, not to this prose.
+**Never blocks, no override flag** — collection state is cloud state the
+commit cannot change. Silent when no campaign is stalled, the store is
+unreachable, or a campaign has never collected at all (never-started is not
+stalled). Prints its own card; pass it through verbatim.
 
-Do **not** treat a stalled campaign as a reason to collect right now: collection
-is spend-bearing and revision-pinned (`npm run fixture:create`), so it is a
-deliberate scheduled act, not a pre-push chore. The nudge exists so the decision
-is *made*, including the decision to close it out with
-`declare-inconclusive`.
+Do **not** treat a stalled campaign as a reason to collect right now:
+collection is spend-bearing and revision-pinned (`npm run fixture:create`), a
+deliberate scheduled act, not a pre-push chore. The nudge exists so the
+decision is *made*, including closing it out with `declare-inconclusive`.
+Incident history: `references/pre-ship-gate-queries.md` §0.5i.
 
 ### 0.5f — Override flags
 
@@ -1711,6 +1419,7 @@ situations — read them only when the trigger applies.
 |---|---|---|
 | `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |
 | `references/migration-credentials.md` | Which role applies migrations, why the runtime DSN cannot, and where its credential belongs (never in .env). | Step 0.5g — a store is behind and `--migrate` is refused with `42501` (`must be owner of table …` / `permission denied for schema public`). |
+| `references/pre-ship-gate-queries.md` | Step 0.5's pre-ship nudges (0.5a/b/e/g/h/i) — the incident history behind each rule, kept out of the routine flow. | Debugging a Step 0.5 nudge's behaviour, or before changing one. |
 | `references/python-environment-discovery.md` | Python pre-push command discovery — env wrapper detection + per-tool probe order. | detect-stack returned `python` or `mixed` with Python files in the diff. |
 | `references/status-md-format.md` | status.md session-log template + update rules + persona / UX status sections. | Step 2 — creating status.md for the first time, OR appending UX / Persona / Regression-Lock / Plan-Verify sections. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 6.8 — the push succeeded and the artifact must be verified from the consumer side. |
