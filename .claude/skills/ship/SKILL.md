@@ -1007,10 +1007,11 @@ fix. Do NOT force push.
 **Continuing work in the same worktree after a squash merge: rebase, never
 merge** — `git merge origin/<base>` reports a false conflict on an unchanged
 file after a squash-merged PR (no shared parent), while `git rebase
-origin/<base>` skips the already-present patch cleanly. A PR stuck at
-`mergeable: CONFLICTING` can also correlate with zero CI runs firing — check
-mergeability before assuming the CI trigger is broken. Why:
-`references/commit-provenance-deep-dive.md`.
+origin/<base>` cleanly drops an already-landed SINGLE-commit PR's patch (a
+multi-commit squash needs each commit resolved/`--skip`ped by hand — see
+reference). A PR stuck at `mergeable: CONFLICTING` can also correlate with
+zero CI runs firing — check mergeability before assuming the CI trigger is
+broken. Why: `references/commit-provenance-deep-dive.md`.
 
 ---
 
