@@ -70,7 +70,7 @@ import './lib/config.mjs';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
+import { findRepoRootFromScript, findMainWorktreeRoot } from './lib/assert-repo-root.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { withFileLock, LockTimeoutError } from './lib/file-lock.mjs';
 import { isSourceRepo } from './lib/is-source-repo.mjs';
@@ -79,6 +79,16 @@ if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); proces
 
 const REPO_ROOT = findRepoRootFromScript(import.meta.url);
 const SCRIPTS_DIR = import.meta.dirname;
+
+// 41ab598b1a4a, 944c042de5a9: the single-instance lock/heartbeat must live at
+// the ONE location every worktree of this repo agrees on, not at REPO_ROOT
+// above (the invoking worktree's own path) — otherwise the pre-push hook's
+// throwaway worktree and an operator's main checkout each hold a SEPARATE
+// lock, and two "single-instance" runs execute concurrently. REPO_ROOT itself
+// stays worktree-local on purpose: `runCheck` spawns each check FROM it
+// (line ~432), and a check must run the code actually checked out in the
+// invoking worktree, not the main checkout's possibly-different commit.
+const MAIN_WORKTREE_ROOT = findMainWorktreeRoot(REPO_ROOT);
 
 // isSourceRepo() lives in scripts/lib/is-source-repo.mjs (round-6 code-audit
 // Sustainability M5): a zero-side-effect module, so a caller that only wants
@@ -104,9 +114,13 @@ const SCRIPTS_DIR = import.meta.dirname;
  * deleted each other's fixture, so the CLI under test saw no lock and ran the
  * real checks until it hit the harness timeout.
  *
- * Unset (the normal case) → the repo path, byte-identical to previous behaviour.
+ * Unset (the normal case) → the MAIN worktree's `.audit-loop`, shared across
+ * every linked worktree of this repo (see MAIN_WORKTREE_ROOT above) — fixed
+ * 2026-09 (41ab598b1a4a, 944c042de5a9); was REPO_ROOT (the invoking
+ * worktree's own path), which gave the pre-push hook's throwaway worktree
+ * and a normal invocation separate locks.
  */
-const STATE_DIR = process.env.AUDIT_LOOP_STATE_DIR || path.join(REPO_ROOT, '.audit-loop');
+const STATE_DIR = process.env.AUDIT_LOOP_STATE_DIR || path.join(MAIN_WORKTREE_ROOT, '.audit-loop');
 const HEARTBEAT_PATH = path.join(STATE_DIR, 'last-maintenance.json');
 const LOCK_PATH = path.join(STATE_DIR, '.maintenance.lock');
 

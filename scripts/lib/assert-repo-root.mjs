@@ -190,4 +190,54 @@ const _rootCache = new Map();
 /** Test-only: the cache is process-lifetime, so a test changing cwd must clear it. */
 export function _resetRepoRootCache() { _rootCache.clear(); }
 
+/**
+ * Resolve the MAIN checkout root via git's COMMON directory — the one
+ * location shared by every worktree of a single repository. Distinct from
+ * BOTH `findRepoRootFromScript` (where the CALLING SCRIPT's own file lives —
+ * correct for running that worktree's own code) and `findRepoRootFromCwd`
+ * (`--show-toplevel`, which names the CALLING worktree's own top level, not
+ * the main one a linked worktree's `--show-toplevel` still differs per
+ * worktree). Only THIS function answers "which single location does every
+ * worktree of this repo agree on" — the question a repo-wide single-instance
+ * lock needs, and the two lock-scoping entries this closes
+ * (41ab598b1a4a, 944c042de5a9) found unanswered: `maintenance-checks.mjs`'s
+ * lock was scoped to `findRepoRootFromScript`'s per-worktree path, so the
+ * pre-push hook's throwaway worktree and an operator's main checkout each
+ * held a SEPARATE `.audit-loop/.maintenance.lock`, defeating the guard
+ * across exactly the two invocation shapes this script is meant to
+ * mutually exclude.
+ *
+ * In a linked worktree, `--git-common-dir` points at the main `.git`; its
+ * parent is the main checkout. In the main checkout itself it resolves to
+ * the same answer as `findRepoRootFromCwd` there (both name the one real
+ * root), so this is a strict widening for the worktree case, not a
+ * behaviour change for the common one.
+ *
+ * Falls back to `startDir` outside a git checkout (tarball install, CI
+ * export), matching `findRepoRootFromCwd`'s own fallback.
+ *
+ * @param {string} [startDir]
+ * @returns {string}
+ */
+export function findMainWorktreeRoot(startDir = process.cwd()) {
+  const key = path.resolve(startDir);
+  if (_mainWorktreeCache.has(key)) return _mainWorktreeCache.get(key);
+  let root;
+  try {
+    const common = execSync('git rev-parse --path-format=absolute --git-common-dir', {
+      cwd: key, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    root = common ? path.resolve(path.dirname(common)) : key;
+  } catch {
+    root = key;
+  }
+  _mainWorktreeCache.set(key, root);
+  return root;
+}
+
+const _mainWorktreeCache = new Map();
+
+/** Test-only: the cache is process-lifetime, so a test changing cwd must clear it. */
+export function _resetMainWorktreeCache() { _mainWorktreeCache.clear(); }
+
 export const _internals = Object.freeze({ findExpectedRoot, sameDirectory });
