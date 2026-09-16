@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**3 active · 224 terminal · 29 audit summaries · 1 parked · 5 reference docs**
+**4 active · 224 terminal · 29 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -22,6 +22,7 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [Enforce the debt ledger's persisted-record contract (§2 of aged-out-acceptance-remainder.md)](./debt-ledger-persisted-record-contract.md) | `Approved` | GPT plan audit converged after 3 rounds (9→3→2 findings, 100% acceptance throughout); Gemini final gate… |
+| [Decompose `gemini-review.mjs`](./gemini-review-decomposition.md) | `Approved` | GPT: 2 rounds, 100% acceptance both rounds, H:0 M:0 L:0 at R2; Gemini: 2 rounds, CONCERNS → APPROVE after… |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
 
