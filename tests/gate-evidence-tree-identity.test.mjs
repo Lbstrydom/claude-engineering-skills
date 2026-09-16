@@ -20,7 +20,9 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 
 import { buildGateEvidence, writeGateEvidence } from '../scripts/lib/audit/gate-evidence.mjs';
-import { resolveEvidence, evaluateGateVerification, TREE_ID_RE } from '../scripts/lib/commit-trailers.mjs';
+import {
+  resolveEvidence, evaluateGateVerification, isContentVerifiable, validateTrailerInput, TREE_ID_RE,
+} from '../scripts/lib/commit-trailers.mjs';
 import { gitWorktreeTree, gitIndexTree } from '../scripts/lib/vcs.mjs';
 import { gitFixtureEnv } from './helpers/fixtures.mjs';
 
@@ -34,6 +36,16 @@ const fsWith = (contents) => ({ readFileSync: () => contents });
 const freshEvidence = (payload) => resolveEvidence({
   auditRunPath: '/x/last-audit-run.json',
   headCommitTs: 0,                       // any real ts is newer → `fresh`
+  fsMod: fsWith(JSON.stringify(payload)),
+});
+
+// A foreign commit landing on the branch AFTER the audit ran: HEAD's committer
+// time is now later than the evidence timestamp, so `resolveEvidence` reads
+// `stale` by wall-clock ordering alone, even though nothing about the AUDITED
+// FILES changed.
+const staleEvidence = (payload) => resolveEvidence({
+  auditRunPath: '/x/last-audit-run.json',
+  headCommitTs: Math.floor(Date.now() / 1000) + 3600,
   fsMod: fsWith(JSON.stringify(payload)),
 });
 
@@ -68,6 +80,63 @@ describe('E1 — the false-pass attack is refused', () => {
       gate: 'passed', evidence, cloudEnabled: true, convergence: converged, committedTree: TREE_A,
     });
     assert.equal(verdict, null, 'audited tree === committed tree → passed is licensed');
+  });
+});
+
+// ── A foreign commit's timestamp must not defeat a genuinely audited tree ──
+// Upstream report 55b7460c: `resolveEvidence`'s freshness is `evidence > HEAD`
+// by committer timestamp, so a commit unrelated to the audited work landing
+// on the branch after a converged audit flips `fresh` to `stale` — forcing
+// `--gate not-run` on a commit whose content was, in substance, fully
+// audited. `isContentVerifiable` lets content identity (the same
+// `auditedTree` comparison the false-pass attack above already trusts) settle
+// it instead, whenever that identity was recorded.
+describe('E1 — a foreign commit after the audit does not defeat content identity', () => {
+  it('stale-by-timestamp but audited tree === committed tree: passed is still licensed', () => {
+    const evidence = staleEvidence(buildGateEvidence({ runId: RUN_ID, auditedTree: TREE_A, auditedSha: TREE_A, auditedBranch: 'main' }));
+    assert.equal(evidence.state, 'stale', 'a later foreign commit makes wall-clock freshness fail');
+    assert.equal(isContentVerifiable(evidence), true, 'a recorded auditedTree still supports content verification');
+
+    const verdict = evaluateGateVerification({
+      gate: 'passed', evidence, cloudEnabled: true, convergence: converged, committedTree: TREE_A,
+    });
+    assert.equal(verdict, null, 'content match must license passed even though the evidence read stale');
+  });
+
+  it('stale-by-timestamp AND content mismatch: still refused (fail-closed unchanged)', () => {
+    const evidence = staleEvidence(buildGateEvidence({ runId: RUN_ID, auditedTree: TREE_A, auditedSha: TREE_A, auditedBranch: 'main' }));
+    const verdict = evaluateGateVerification({
+      gate: 'passed', evidence, cloudEnabled: true, convergence: converged, committedTree: TREE_B,
+    });
+    assert.ok(verdict, 'a genuine content mismatch must still be refused when stale');
+    assert.match(verdict.custom, /is not what run .* audited/);
+  });
+
+  it('stale-by-timestamp with NO recorded auditedTree (pre-E1): no content fallback, stays refused', () => {
+    const evidence = staleEvidence({ runId: RUN_ID, sid: 'audit-1', round: 1, ts: new Date().toISOString() });
+    assert.equal(evidence.state, 'stale');
+    assert.equal(evidence.auditedTree, null);
+    assert.equal(isContentVerifiable(evidence), false, 'staleness with no content identity has nothing to fall back on');
+  });
+
+  it('validateTrailerInput: stale-but-content-verifiable evidence does not force --gate not-run', () => {
+    const evidence = staleEvidence(buildGateEvidence({ runId: RUN_ID, auditedTree: TREE_A, auditedSha: TREE_A, auditedBranch: 'main' }));
+    const { ok, errors, values } = validateTrailerInput(
+      { skill: 'ship', modelsRaw: 'claude', gate: 'converged', evidence },
+      { skillNames: ['ship'] },
+    );
+    assert.equal(ok, true, `expected no validation errors, got: ${JSON.stringify(errors)}`);
+    assert.equal(values.runId, RUN_ID, 'the run backing the claim is still attached to the trailer');
+  });
+
+  it('validateTrailerInput: stale WITHOUT auditedTree still forces --gate not-run', () => {
+    const evidence = staleEvidence({ runId: RUN_ID, sid: 'audit-1', round: 1, ts: new Date().toISOString() });
+    const { ok, errors } = validateTrailerInput(
+      { skill: 'ship', modelsRaw: 'claude', gate: 'converged', evidence },
+      { skillNames: ['ship'] },
+    );
+    assert.equal(ok, false);
+    assert.match(errors[0].custom, /no fresh audit evidence exists/);
   });
 });
 

@@ -16,6 +16,10 @@
  * `--message-file -` reads the message from stdin, so a heredoc works and no
  * temp file is left behind. NOT `/dev/stdin`: Git-Bash resolves it to
  * `/proc/self/fd/0`, which is not a regular file and fails the existence check.
+ * A file path must resolve INSIDE this repo (`.claude/tmp/` is the sanctioned
+ * spot) — an agent's own session scratchpad dir sits outside the repo and is
+ * refused as `escapes-repo` (upstream `1c792b2e`). Prefer stdin; it sidesteps
+ * the question entirely.
  *
  * `--path` (repeatable) scopes the commit to exactly those paths — git's
  * `--only` semantics: their WORKTREE contents are committed and every other
@@ -57,6 +61,7 @@ import {
   messageFileError,
   composeFinalMessage,
   evaluateGateVerification,
+  isContentVerifiable,
   formatTrailerBlock,
   parseMessageTrailers,
 } from './lib/commit-trailers.mjs';
@@ -420,7 +425,7 @@ async function main() {
   // second branch would be a second oracle deciding gate legality — the failure
   // class this repo names for `classifySelector` and `sensitive-paths.mjs`.
   // Plan: docs/plans/gate-taxonomy-remediated-ships.md §2.
-  if ((values.gate === 'passed' || values.gate === 'converged') && evidence.state === 'fresh') {
+  if ((values.gate === 'passed' || values.gate === 'converged') && isContentVerifiable(evidence)) {
     let cloudEnabled = false;
     let convergence = null;
     try {

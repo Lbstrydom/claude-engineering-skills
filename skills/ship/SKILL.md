@@ -1208,13 +1208,18 @@ Keep first line under 72 chars. Body explains WHY, not WHAT.
 two routes, both fine:
 
 - **A file** — Write tool → `.claude/tmp/ship-commit-msg-<epoch>.txt`, then
-  `--message-file <that path>`. Delete it once the commit lands.
+  `--message-file <that path>`. Delete it once the commit lands. **Not your
+  session scratchpad dir** — Claude Code's own default steers agents to write
+  temp files there, but it sits outside the repo and `--message-file` refuses
+  any path that resolves outside `repoRoot` (`escapes-repo`, upstream
+  `1c792b2e`). Use `.claude/tmp/` for this one file.
 - **Stdin** — `--message-file -` reads the message from stdin, so a heredoc
   works and leaves nothing behind. Use `-`, not `/dev/stdin`: Git-Bash resolves
   the latter to `/proc/self/fd/0`, which is not a regular file, so it looked to
   the helper like a path that simply was not there (upstream `575256de`).
 
-Prefer stdin for a one-shot message. The file route is what filled
+Prefer stdin for a one-shot message — it also sidesteps the scratchpad-vs-repo
+collision above entirely. The file route is what filled
 `.claude/tmp` with 658 files / 39MB by 2026-08-10, nearly all of them spent
 commit messages nobody deleted — the directory is gitignored, so nothing ever
 prompted anyone to notice.

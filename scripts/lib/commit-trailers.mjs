@@ -21,11 +21,13 @@ import { GIT_OBJECT_ID_RE } from './worktree-identity.mjs';
 export const GATE_VALUES = Object.freeze(['passed', 'converged', 'waived', 'not-run']);
 
 /**
- * The gates whose claim is VERIFIED rather than declared: both require fresh
- * evidence, an audited-tree identity, a resolvable comparand, and the store's
- * convergence verdict. They differ only in the tree comparison — `passed` is
- * `committedTree === auditedTree`, `converged` is `!==` — which makes them
- * mutually exclusive halves of one condition rather than two policies.
+ * The gates whose claim is VERIFIED rather than declared: both require
+ * content-verifiable evidence (see `isContentVerifiable` — fresh, or stale
+ * with a recorded audited-tree identity), a resolvable comparand, and the
+ * store's convergence verdict. They differ only in the tree comparison —
+ * `passed` is `committedTree === auditedTree`, `converged` is `!==` — which
+ * makes them mutually exclusive halves of one condition rather than two
+ * policies.
  *
  * `converged` exists because that condition's `!==` half was previously
  * unlabelled: an audit that ran, converged, and had its findings FIXED moves
@@ -36,10 +38,14 @@ export const GATE_VALUES = Object.freeze(['passed', 'converged', 'waived', 'not-
  * zero-finding converged audit lost `passed`.
  *
  * What `converged` does NOT claim, deliberately: that the delta is
- * findings-derived (nothing checks that — hence not `remediated`), that the
- * audit ran in this operator session (freshness is only `evidence > HEAD`),
- * and that no foreign commit intervened (committer timestamps are
- * user-controlled and non-monotonic).
+ * findings-derived (nothing checks that — hence not `remediated`), or that
+ * the audit ran in this operator session. It used to also disclaim "no
+ * foreign commit intervened", on the theory that committer timestamps are
+ * user-controlled and non-monotonic — but a foreign commit landing after a
+ * genuine audit only ever moves `resolveEvidence`'s wall-clock verdict to
+ * `stale`, and `isContentVerifiable` now lets content identity settle it
+ * instead when an audited-tree is on record (upstream report 55b7460c: this
+ * used to force `not-run` on commits that were, in substance, fully audited).
  *
  * Plan: docs/plans/gate-taxonomy-remediated-ships.md §2.
  */
@@ -63,6 +69,27 @@ export const RUN_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 export const TREE_ID_RE = GIT_OBJECT_ID_RE;
 export const SKILL_NAME_RE = /^[a-z][a-z0-9-]*$/;
 export const RESERVED_TRAILER_RE = /^AI-[A-Za-z0-9-]*\s*:/i;
+
+/**
+ * Whether this evidence can still be checked against committed content even
+ * though `resolveEvidence`'s wall-clock check called it stale. `fresh` answers
+ * "when" (evidence timestamp vs HEAD's committer time) — an unrelated commit
+ * landing on the branch after a genuinely converged audit advances HEAD's
+ * timestamp and flips this to stale even though the AUDITED FILES are
+ * untouched (upstream report 55b7460c). `auditedTree` answers "what": it is
+ * the same content identity `evaluateGateVerification` already compares
+ * against `committedTree`, so when it is present, content — not timestamp
+ * ordering — is the authoritative signal. Evidence with no recorded
+ * `auditedTree` (pre-E1) has no content fallback, so staleness there still
+ * means "not-run"; this never makes a `passed`/`converged` claim easier to
+ * earn, it only lets already-fail-closed content comparison run instead of
+ * being pre-empted by an unrelated commit's timestamp.
+ */
+export function isContentVerifiable(evidence) {
+  if (!evidence) return false;
+  if (evidence.state === 'fresh') return true;
+  return evidence.state === 'stale' && !!evidence.auditedTree;
+}
 
 const MESSAGE_FILE_EXAMPLE = '--message-file .claude/tmp/ship-commit-msg-1784022000000.txt';
 
@@ -282,14 +309,14 @@ export function validateTrailerInput(input, { skillNames }) {
         field: 'gate-evidence',
         custom: `AGENT FIX: gate-evidence: an audit ran after HEAD (.audit/last-audit-run.json ts ${ev.ts}) but --gate is "not-run"; pass --gate passed|converged|waived, or --no-run-id --gate not-run if that audit was unrelated. Example: --gate converged`,
       });
-    } else if (ev.state !== 'fresh' && gate !== 'not-run') {
+    } else if (!isContentVerifiable(ev) && gate !== 'not-run') {
       errors.push({
         field: 'gate-evidence',
         custom: `AGENT FIX: gate-evidence: no fresh audit evidence exists but --gate is "${gate}"; only not-run is legal without evidence. Example: --gate not-run`,
       });
     }
   }
-  values.runId = ev && ev.state === 'fresh' ? ev.runId : null;
+  values.runId = ev && isContentVerifiable(ev) ? ev.runId : null;
 
   return { ok: errors.length === 0, errors, values };
 }
@@ -309,7 +336,7 @@ export function validateTrailerInput(input, { skillNames }) {
  * @returns {null | {field: string, custom: string}}
  */
 export function evaluateGateVerification({ gate, evidence, cloudEnabled, convergence, committedTree = null }) {
-  if (!evidence || evidence.state !== 'fresh' || !VERIFIED_GATES.includes(gate)) return null;
+  if (!evidence || !isContentVerifiable(evidence) || !VERIFIED_GATES.includes(gate)) return null;
   const runId = evidence.runId;
 
   // ── E1: content identity, checked BEFORE the store lookups ────────────────
