@@ -83,6 +83,18 @@
     {
       "line": "payload to a file with the Write tool, then pipe it via `--stdin`** — never",
       "reason": "Prose using \"never\"/\"always\" as ordinary English in an explanation, not an enforcement claim about this skill's own gated behaviour. Introduced/reflowed by the 2026-09-10 PowerShell-portability pass."
+    },
+    {
+      "line": "**If this plan must not ship before another plan lands**, say so as a",
+      "reason": "Authoring guidance to the human/agent WRITING the plan (recommends using the structured Depends-on: field over free prose) — not a claim that /plan itself mechanically enforces the dependency. The reader (check-plan-status.mjs --check-deps) is real and tested (tests/plan-status.test.mjs), but this sentence is instructing the author, which /plan has no exit code to assert."
+    },
+    {
+      "line": "(`/cycle` Step 0.5 runs this automatically) — it is a nudge, not a gate:",
+      "reason": "'gate' appears in the sentence's own disclaimer 'it is a nudge, not a gate' — an explicit statement that this is NOT an enforcement claim, same shape as cycle's own Step 0.5 heading disposition."
+    },
+    {
+      "line": "an unmet dependency is reported, never blocked on, since only the operator",
+      "reason": "A NEGATIVE guarantee (an absence of blocking) — same disposition class as cycle's 'Exit is always 0 ... never blocks' entry above and ship/step-0-5-gates-non-blocking: a claim about what the agent does with the tool's output, not a /plan exit code."
     }
   ]
 }

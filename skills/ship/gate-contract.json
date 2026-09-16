@@ -648,6 +648,10 @@
     {
       "line": "consolidated union-diff gate) silently wiped every `user_action` /",
       "reason": "Descriptive prose about the credit-card's two-axis labelling and the replay-preserves-rulings behavior (recordFinalReviewFindings upsert+prune), enforced by scripts/lib/store/runs-findings.mjs and pinned by tests/final-review-replay-db.test.mjs and tests/final-review-persistence-isolation.test.mjs -- not a claim that this skill's own execution enforces anything. Same class as the existing design-rationale entries."
+    },
+    {
+      "line": "temp files there, but it sits outside the repo and `--message-file` refuses",
+      "reason": "Documents a PRE-EXISTING, already-enforced refusal — checkMessageFileSafety's escapes-repo check and messageFileError's AGENT FIX text, both already tested in tests/commit-trailers.test.mjs (the escapes-repo/sensitive/unresolvable cases, lines ~376-392) before this change. This SKILL.md callout (upstream report 1c792b2e) is the first time that behaviour is stated in prose here; it names an existing mechanism proactively, it does not introduce a new one. A formal cli-exit binding for the refusal itself is a separate, future addition, not required by this doc-only fix."
     }
   ]
 }

@@ -177,6 +177,14 @@
     {
       "line": "reuse `/audit-code`'s transcript path, no new gate machinery. **Pass one",
       "reason": "'gate' appears in 'no NEW gate machinery' — an explicit disclaimer that nothing new is being mechanically enforced here (reusing the existing build-audit-transcript.mjs/gemini-review.mjs path). Not an enforcement claim."
+    },
+    {
+      "line": "## Step 0.5 — Cross-plan coordination check (nudge, not a gate)",
+      "reason": "'gate' appears in the heading's own disclaimer '(nudge, not a gate)' — the section explicitly states it is NOT a gate. Section title, not an enforcement claim."
+    },
+    {
+      "line": "Exit is always 0 and the output goes to stderr only, so it never blocks the",
+      "reason": "A NEGATIVE guarantee (an absence of blocking), same disposition class as ship/step-0-5-gates-non-blocking and ship/upstream-queue-never-blocks: check-plan-status.mjs --check-deps is a cross-skill.mjs-shaped advisory read (real, but the READ half is verified by its own tests, e.g. tests/plan-status.test.mjs), and 'never blocks' is a claim about what the agent does with the printed output, not a CLI exit code a cli-exit recipe can assert."
     }
   ]
 }
