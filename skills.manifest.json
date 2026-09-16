@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "2183742f9ec3821a",
+  "bundleVersion": "5af685ecf029f0be",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -191,14 +191,14 @@
     },
     "cycle": {
       "path": "skills/cycle/SKILL.md",
-      "sha": "2c9fa0e460af",
-      "size": 38464,
+      "sha": "71d27f44c76e",
+      "size": 39731,
       "summary": "End-to-end feature cycle orchestrator. Runs the full skill chain in",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "2c9fa0e460af",
-          "size": 38464
+          "sha": "71d27f44c76e",
+          "size": 39731
         }
       ]
     },
@@ -346,14 +346,14 @@
     },
     "plan": {
       "path": "skills/plan/SKILL.md",
-      "sha": "044e16422194",
-      "size": 37286,
+      "sha": "45367fe1d7b4",
+      "size": 38058,
       "summary": "Unified architecture + UX planner with engineering principles. Auto-detects",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "044e16422194",
-          "size": 37286
+          "sha": "45367fe1d7b4",
+          "size": 38058
         },
         {
           "relPath": "examples/mermaid-blocks.md",
@@ -407,14 +407,14 @@
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "69d7d26b205e",
-      "size": 93667,
+      "sha": "24b420e6ca2c",
+      "size": 94029,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "69d7d26b205e",
-          "size": 93667
+          "sha": "24b420e6ca2c",
+          "size": 94029
         },
         {
           "relPath": "references/input-acquisition.md",

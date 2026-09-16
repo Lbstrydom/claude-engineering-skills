@@ -7,6 +7,8 @@ import os from 'node:os';
 import {
   parsePlanStatus,
   selectAuditPlan,
+  parsePlanDependencies,
+  checkPlanDependencies,
   PLAN_STATUS_VOCABULARY,
 } from '../scripts/lib/plan-status.mjs';
 
@@ -285,5 +287,110 @@ describe('plan-status / selectAuditPlan', () => {
     fs.writeFileSync(path.join(plans, 'security', 'nested.md'), '# Plan\n\n- **Status**: Draft\n');
     const sel = selectAuditPlan(plans);
     assert.equal(sel?.path ?? sel, null);
+  });
+});
+
+// Upstream report f5ac366f: "No mechanism enforces a plan's own 'wait for
+// cluster X' coordination note across concurrent sessions." These pin the
+// structured `Depends on:` convention that replaces the unchecked free-text
+// note, and the checker that reads it against a referenced plan's real status.
+describe('plan-status / parsePlanDependencies', () => {
+  it('no Depends-on line → empty array', () => {
+    assert.deepEqual(parsePlanDependencies('# Plan\n\n- **Status**: Draft\n'), []);
+  });
+
+  it('parses a bare path with no note', () => {
+    const md = '# Plan\n- **Depends on**: docs/plans/other.md\n- **Status**: Draft\n';
+    assert.deepEqual(parsePlanDependencies(md), [
+      { raw: '- **Depends on**: docs/plans/other.md', path: 'docs/plans/other.md', note: '' },
+    ]);
+  });
+
+  it('parses a path with a trailing human note', () => {
+    const md = '- **Depends on**: docs/plans/other.md — wait for Cluster F to land first\n';
+    const deps = parsePlanDependencies(md);
+    assert.equal(deps.length, 1);
+    assert.equal(deps[0].path, 'docs/plans/other.md');
+    assert.match(deps[0].note, /wait for Cluster F/);
+  });
+
+  it('multiple Depends-on lines all parse', () => {
+    const md = '- **Depends on**: docs/plans/a.md\n- **Depends on**: docs/plans/b.md\n';
+    const deps = parsePlanDependencies(md);
+    assert.deepEqual(deps.map(d => d.path), ['docs/plans/a.md', 'docs/plans/b.md']);
+  });
+
+  it('strips markdown link/backtick wrapping around the path', () => {
+    assert.equal(parsePlanDependencies('- **Depends on**: `docs/plans/other.md`\n')[0].path, 'docs/plans/other.md');
+    assert.equal(parsePlanDependencies('- **Depends on**: [other](docs/plans/other.md)\n')[0].path, 'docs/plans/other.md');
+  });
+
+  it('only the metadata-block line counts — an audit-trail mention is prose, not a dependency', () => {
+    const md = [
+      '# Plan: Foo',
+      '- **Status**: Draft',
+      '',
+      '## Audit trail',
+      '- **Depends on**: docs/plans/mentioned-in-prose.md',
+    ].join('\n');
+    assert.deepEqual(parsePlanDependencies(md), []);
+  });
+
+  it('non-string content → empty array, never throws', () => {
+    assert.deepEqual(parsePlanDependencies(null), []);
+    assert.deepEqual(parsePlanDependencies(undefined), []);
+  });
+});
+
+describe('plan-status / checkPlanDependencies', () => {
+  let dir, plans;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pd-'));
+    plans = path.join(dir, 'docs', 'plans');
+    fs.mkdirSync(plans, { recursive: true });
+  });
+  afterEach(() => {
+    try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
+  });
+  const writeDep = (name, status) => {
+    fs.writeFileSync(path.join(plans, name), `# Plan\n\n- **Status**: ${status}\n`);
+  };
+
+  it('the exact upstream scenario: a plan waiting on an active Cluster-F plan reads "unmet"', () => {
+    writeDep('cluster-f.md', 'In Progress');
+    const content = '- **Depends on**: docs/plans/cluster-f.md — wait for Cluster F to land first\n';
+    const [result] = checkPlanDependencies(content, { plansDir: plans });
+    assert.equal(result.outcome, 'unmet');
+    assert.equal(result.status, 'In Progress');
+    assert.match(result.note, /Cluster F/);
+  });
+
+  it('a Complete (landed) dependency reads "satisfied"', () => {
+    writeDep('other.md', 'Complete');
+    const [result] = checkPlanDependencies('- **Depends on**: docs/plans/other.md\n', { plansDir: plans });
+    assert.equal(result.outcome, 'satisfied');
+  });
+
+  it('a referenced plan that does not exist reads "missing", never "satisfied"', () => {
+    const [result] = checkPlanDependencies('- **Depends on**: docs/plans/ghost.md\n', { plansDir: plans });
+    assert.equal(result.outcome, 'missing');
+  });
+
+  it('a referenced plan with an unparseable Status reads "unparseable", never "satisfied"', () => {
+    fs.writeFileSync(path.join(plans, 'bad.md'), '# Plan\n\nno status line\n');
+    const [result] = checkPlanDependencies('- **Depends on**: docs/plans/bad.md\n', { plansDir: plans });
+    assert.equal(result.outcome, 'unparseable');
+  });
+
+  it('a path is resolved by basename only — cannot escape plansDir', () => {
+    writeDep('escape-target.md', 'Complete');
+    const outside = path.join(dir, 'escape-target.md');
+    fs.writeFileSync(outside, '# Plan\n\n- **Status**: Draft\n'); // decoy outside plansDir
+    const [result] = checkPlanDependencies('- **Depends on**: ../../escape-target.md\n', { plansDir: plans });
+    assert.equal(result.outcome, 'satisfied', 'must resolve inside plansDir (Complete), not the decoy (Draft)');
+  });
+
+  it('no declared dependencies → empty array', () => {
+    assert.deepEqual(checkPlanDependencies('- **Status**: Draft\n', { plansDir: plans }), []);
   });
 });

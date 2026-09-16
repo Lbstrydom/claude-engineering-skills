@@ -22,7 +22,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { parsePlanStatus, selectAuditPlan, isAuditSummary } from './lib/plan-status.mjs';
+import {
+  parsePlanStatus, selectAuditPlan, isAuditSummary, checkPlanDependencies,
+} from './lib/plan-status.mjs';
 import { resolvePushRange } from './lib/push-range.mjs';
 
 const PLANS_DIR = 'docs/plans';
@@ -177,6 +179,49 @@ function lintMode(jsonOut, drift = false) {
   process.exit(1);
 }
 
+/**
+ * `--check-deps <plan-file>` — surface the plan's declared `Depends on:`
+ * lines (f5ac366f) against the current on-disk status of each referenced
+ * plan. Advisory ONLY: unlike `lintMode`, this never gates and always exits
+ * 0 — whether an unmet dependency is safe to proceed past needs a human/agent
+ * judgement call the file's Status line cannot make, so the point is making
+ * the note visible before implementation starts, not blocking on it.
+ *
+ * @param {string} file
+ */
+function checkDepsMode(file) {
+  if (!file) {
+    process.stderr.write('  [plan-status] --check-deps requires a plan file path\n');
+    process.exit(1);
+  }
+  const abs = path.resolve(file);
+  let content;
+  try { content = fs.readFileSync(abs, 'utf8'); }
+  catch (err) {
+    process.stderr.write(`  [plan-status] cannot read ${file}: ${err.message}\n`);
+    process.exit(1);
+  }
+  const results = checkPlanDependencies(content, { plansDir: path.resolve(PLANS_DIR) });
+  if (results.length === 0) {
+    process.stderr.write(`  ${D}[plan-status] ${file} declares no cross-plan dependencies.${X}\n`);
+    process.exit(0);
+  }
+  const unmet = results.filter((r) => r.outcome !== 'satisfied');
+  for (const r of results) {
+    const mark = r.outcome === 'satisfied' ? `${G}✓${X}` : `${Y}○${X}`;
+    const statusNote = r.status ? ` (${r.status})` : '';
+    const humanNote = r.note ? ` — ${r.note}` : '';
+    process.stderr.write(`  ${mark} Depends on ${r.path}: ${r.outcome}${statusNote}${humanNote}\n`);
+  }
+  if (unmet.length > 0) {
+    process.stderr.write(
+      `\n  ${Y}${unmet.length} declared dependenc${unmet.length === 1 ? 'y is' : 'ies are'} not yet landed.${X} `
+      + 'This is a nudge, not a gate — decide by hand whether it is still safe to proceed.\n',
+    );
+  }
+  process.exit(0); // advisory only — never blocks
+}
+
 function main() {
   // Relocation smoke contract (AGENTS.md CLI_SMOKE_SET is CONSUMER-presence, so
   // this CLI is NOT in it — but the handler is free + correct; see R19/R22).
@@ -185,6 +230,8 @@ function main() {
   const argv = process.argv.slice(2);
   const selIdx = argv.indexOf('--select');
   if (selIdx >= 0) return selectMode(argv[selIdx + 1] ?? PLANS_DIR);
+  const depsIdx = argv.indexOf('--check-deps');
+  if (depsIdx >= 0) return checkDepsMode(argv[depsIdx + 1]);
   lintMode(
     argv.includes('--format') && argv[argv.indexOf('--format') + 1] === 'json',
     argv.includes('--drift'),

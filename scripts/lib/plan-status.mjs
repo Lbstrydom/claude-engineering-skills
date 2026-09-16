@@ -161,6 +161,84 @@ export function parsePlanStatus(content) {
   return { ok: false, reason: 'unrecognized', raw };
 }
 
+// A plan MAY declare zero or more ordering dependencies on OTHER plans via a
+// `- **Depends on**: <path>` line — the structured, checkable form of a free
+// "wait for Cluster X to land before this ships" coordination note (upstream
+// report f5ac366f: two concurrent sessions each executed a different plan,
+// one plan's prose said to wait on the other, but nothing checked it, so the
+// wrong one landed first and the loser had to hand-reconcile via a rebase +
+// manual code transplant). One dependency per line; free text after the path
+// is a human note, carried through but not parsed. Unlike `STATUS_LINE_RE`
+// this is deliberately single-line-only (no continuation folding) — a
+// dependency note is a pointer, not prose, and keeping it simple avoids
+// coupling to `foldListContinuations`' Status-line-specific exclusion.
+const DEPENDS_ON_LINE_RE = /^-?\s*\*\*Depends on\*\*:\s*(\S+)(.*)$/gm;
+
+/**
+ * Parse a plan's declared cross-plan ordering dependencies from its metadata
+ * header (the same region `parsePlanStatus` reads — before the first `## `).
+ *
+ * @param {string} content
+ * @returns {Array<{raw: string, path: string, note: string}>}
+ */
+export function parsePlanDependencies(content) {
+  if (typeof content !== 'string') return [];
+  const firstH2 = content.search(/^## /m);
+  const header = firstH2 >= 0 ? content.slice(0, firstH2) : content;
+  DEPENDS_ON_LINE_RE.lastIndex = 0;
+  const out = [];
+  for (const m of header.matchAll(DEPENDS_ON_LINE_RE)) {
+    // Strip markdown wrapping a bare path may carry: an inline-code span
+    // (`` `path` ``) or a markdown link (`[label](path)`, where the path is
+    // the PARENTHESISED half, not the whole match — stripping bracket/paren
+    // characters off each end independently would leave `label](path` behind).
+    const token = m[1].trim();
+    const link = /^\[[^\]]*\]\(([^)]+)\)$/.exec(token);
+    const depPath = (link ? link[1] : token.replace(/^`+|`+$/g, '')).trim();
+    if (!depPath) continue;
+    // Drop a leading separator (`—`, `-`, `:`) off the free-text note — it
+    // punctuates the split from the path in the source line, not the note
+    // itself, and a caller that re-punctuates before display would otherwise
+    // double it up (`missing — — smoke test`).
+    const note = (m[2] || '').trim().replace(/^[—\-:,;]\s*/, '');
+    out.push({ raw: m[0].trim(), path: depPath, note });
+  }
+  return out;
+}
+
+/**
+ * Check each declared dependency against the plans directory: has the
+ * referenced plan reached a TERMINAL status (landed), or is it still active
+ * (unmet)? Fail-open on a resolution problem by naming it as its own outcome
+ * — a missing or unparseable referent must never silently read as satisfied,
+ * the same fail-closed instinct `parsePlanStatus`'s callers apply.
+ *
+ * Advisory only: this has no opinion on whether unmet blocks anything — that
+ * judgement needs the human/agent reading the note's actual meaning. It only
+ * makes the dependency VISIBLE instead of unchecked prose.
+ *
+ * @param {string} content — the plan being checked
+ * @param {{plansDir: string, readFileSync?: typeof fs.readFileSync}} opts
+ * @returns {Array<{raw:string, path:string, note:string, resolvedPath:string,
+ *   outcome:'satisfied'|'unmet'|'missing'|'unparseable', status?:string}>}
+ */
+export function checkPlanDependencies(content, { plansDir, readFileSync = fs.readFileSync }) {
+  const deps = parsePlanDependencies(content);
+  return deps.map((dep) => {
+    // Accept either a bare filename or a full (repo- or plans-dir-relative) path
+    // — only the basename is trusted, so a dependency can never resolve outside
+    // plansDir regardless of how the author wrote it.
+    const base = dep.path.split(/[\\/]/).pop();
+    const resolvedPath = path.join(plansDir, base);
+    let depContent;
+    try { depContent = readFileSync(resolvedPath, 'utf8'); }
+    catch { return { ...dep, resolvedPath, outcome: 'missing' }; }
+    const status = parsePlanStatus(depContent);
+    if (!status.ok) return { ...dep, resolvedPath, outcome: 'unparseable' };
+    return { ...dep, resolvedPath, outcome: status.kind === 'terminal' ? 'satisfied' : 'unmet', status: status.token };
+  });
+}
+
 // `*-audit-summary.md` is exempt from the vocabulary lint — docs/README.md
 // mandates its free-text convergence sentence ("Audit-complete. 17 fixes
 // applied."). `[\w-]+` (not `\w+`) so a hyphenated suffix

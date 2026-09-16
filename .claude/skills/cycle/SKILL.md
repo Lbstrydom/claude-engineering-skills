@@ -144,6 +144,33 @@ Show kickoff card:
 
 ---
 
+## Step 0.5 — Cross-plan coordination check (nudge, not a gate)
+
+Whenever a target plan file already exists (`SKIP_PLAN`/`SKIP_TO_CODE`/`AUTO`
+modes — anything but a fresh FULL run, where the plan doesn't exist yet), run
+it before implementation or shipping proceeds:
+
+```bash
+node scripts/check-plan-status.mjs --check-deps "$PLAN"
+```
+
+This reads the plan's own `- **Depends on**: <path>` lines (plan/SKILL.md
+Phase 7) — the structured form of a "wait for Cluster X to land first"
+coordination note — against each referenced plan's current `Status:` line.
+Exit is always 0 and the output goes to stderr only, so it never blocks the
+run; a printed `unmet` line means a declared ordering dependency has not
+landed yet. **Read it and decide by hand** whether to proceed, hold, or
+sequence with whoever owns the other plan — this only makes the note visible,
+it cannot know whether proceeding anyway is actually safe.
+
+Why this exists: nothing previously checked a plan's own stated ordering
+dependency on another plan's status, so two concurrent sessions each running
+a different plan could land in the wrong order with no warning (upstream
+report `f5ac366f`). A plan with no `Depends on:` line prints nothing to act
+on and costs one cheap local read.
+
+---
+
 ## Step 0.7 — Clustering preflight (when `hasClustering`; fail-closed)
 
 Validate the §11 block **before any execution** — `/cycle code <plan>`

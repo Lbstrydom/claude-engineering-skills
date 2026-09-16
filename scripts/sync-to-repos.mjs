@@ -267,6 +267,11 @@ const CORE_ENTRY = [
   // that names it is synced: a documented command whose tooling is absent where
   // it runs is the shape AGENTS.md records as defect class (4).
   'scripts/cycle-cluster-scope.mjs',
+  // /cycle Step 0.5's cross-plan coordination check (`--check-deps`, upstream
+  // report f5ac366f) and /plan Phase 7's documented convention for declaring
+  // it. Same reason as cycle-cluster-scope.mjs above: both synced SKILL.md
+  // files name this command.
+  'scripts/check-plan-status.mjs',
   'scripts/gemini-review.mjs',
   'scripts/bandit.mjs',
   'scripts/learning-store.mjs',

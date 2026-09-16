@@ -663,6 +663,22 @@ needed. Metadata header:
 - **Scope**: backend | frontend | full-stack   ← from Phase 0
 ```
 
+**If this plan must not ship before another plan lands**, say so as a
+structured line, not only in prose — a free "wait for Cluster F to land
+first" note is invisible to every other session (upstream report
+`f5ac366f`: exactly that happened, and the loser hand-reconciled via a
+rebase + manual code transplant):
+
+```markdown
+- **Depends on**: docs/plans/<other-plan>.md — <why, e.g. "wait for Cluster F to land first">
+```
+
+One line per dependency. `node scripts/check-plan-status.mjs --check-deps
+<this-plan>` reads it back against the referenced plan's own `Status:` line
+(`/cycle` Step 0.5 runs this automatically) — it is a nudge, not a gate:
+an unmet dependency is reported, never blocked on, since only the operator
+knows whether it is still safe to proceed.
+
 Register in the cross-skill store so audit-plan/audit-code + ux-lock can link:
 
 Include the user's ORIGINAL task description as `taskText` in the SAME payload
