@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**3 active · 223 terminal · 29 audit summaries · 1 parked · 5 reference docs**
+**3 active · 224 terminal · 29 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -54,7 +54,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 220 completed plans</summary>
+<summary>Show all 221 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -125,6 +125,7 @@ source comments that no docs linter sees — stays valid.
 | [Dashboard UX — category/workflow clusters, new-user orientation, tiered-shadow panel](./dashboard-ux-clusters-and-shadow-panel.md) | `Complete` |  |
 | [Dead-Code Detection — Phase 1 (Orphan-Introduced Check)](./dead-code-phase-1-orphan-introduced.md) | `Complete` |  |
 | [Debt Burndown — Workstreams A–E (master)](./debt-burndown-workstreams.md) | `Complete` | (2026-07-19) — all workstreams closed and traced against the code, not against their labels. WS-D and… |
+| [Debt-Ledger Merge-Safety — CI Gate + Serialization Hardening](./debt-ledger-merge-safety.md) | `Complete` | Plan audit: GPT converged after 4 rounds, Gemini APPROVE round 1. Implementation: Cluster A (CI-gate)… |
 | [Determinism Follow-ups — Model-Independent Outcome Capture + Deterministic ux-lock Runners](./determinism-follow-ups.md) | `Complete` | both workstreams implemented, audited, and shipped via autonomous `/cycle` (2026-06-22). WS1… |
 | [Deterministic `/audit-code` outcome capture for rounds 1..N-1 (orchestrator-only)](./deterministic-outcome-capture.md) | `Complete` | shipped 2026-06-29. Audit trail: v1 hook+queue design REJECTED by Gemini… |
 | [Device-profile emulation for persona-driven + structural browser tests](./device-profile-emulation.md) | `Complete` | implemented in this repo; shareable brief for porting elsewhere |
