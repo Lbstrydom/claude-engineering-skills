@@ -31,13 +31,47 @@
 -- ╚══════════════════════════════════════════════════════════════════════════╝
 
 -- ── 1. Extensions ─────────────────────────────────────────────────────────
--- `IF NOT EXISTS` is idempotent. On managed Postgres without the underlying
--- packages installed, these will hard-fail — the preflight in
--- setup-postgres.mjs surfaces a precise install hint before reaching here.
+-- GUARDED ON EXISTENCE (SELECT from pg_extension), not on `IF NOT EXISTS`
+-- alone — same bug class as the stub roles below, and it is NOT hypothetical:
+-- measured against a consumer's Azure store 2026-09-16. `runMigrate` in
+-- setup-postgres.mjs only decides whether to run this WHOLE FILE (skipped
+-- when `findMissingSurface` reports nothing absent); it does not know that a
+-- run triggered by, say, a missing `auth` schema will still re-execute every
+-- statement here, including these. On Azure Flexible Server, `vector` is not
+-- a "trusted" extension, so `CREATE EXTENSION IF NOT EXISTS vector` demands
+-- `azure_pg_admin` regardless of whether `vector` is already installed — the
+-- platform's allowlist check fires ahead of the IF-NOT-EXISTS short-circuit,
+-- exactly like `CREATE ROLE` firing `insufficient_privilege` before the
+-- duplicate-object check. Existence-guarding each statement individually
+-- means an already-installed extension is never re-asked for, no matter why
+-- the rest of the file ran. On managed Postgres without the underlying
+-- packages installed, an actually-missing extension still hard-fails inside
+-- the DO block — the preflight in setup-postgres.mjs surfaces a precise
+-- install hint before reaching here.
 
-CREATE EXTENSION IF NOT EXISTS pgcrypto;   -- gen_random_uuid() on PG < 13
-CREATE EXTENSION IF NOT EXISTS pg_trgm;    -- memory_health_metrics()
-CREATE EXTENSION IF NOT EXISTS vector;     -- pgvector — symbol_index, security_incidents
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto') THEN
+    CREATE EXTENSION pgcrypto;   -- gen_random_uuid() on PG < 13
+  END IF;
+END
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') THEN
+    CREATE EXTENSION pg_trgm;    -- memory_health_metrics()
+  END IF;
+END
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
+    CREATE EXTENSION vector;    -- pgvector — symbol_index, security_incidents
+  END IF;
+END
+$$;
 
 -- ── 2. `auth` schema ──────────────────────────────────────────────────────
 
