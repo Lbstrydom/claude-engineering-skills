@@ -35,6 +35,56 @@
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `scripts/.claude-skills/lib/debt-ledger-claim-check.mjs` in wine-cellar-app's synced tree contains `mergeTopicIdEvidence` — present. The push's own sync summary confirmed 9 files updated across all 3/3 registered consumers.
 - **Result**: verified — the debt-ledger-claims-check cloud-evidence fix reached the consumer bundle intact.
 
+## 2026-09-16 — ship/SKILL.md size reduction: four reference files, 93,664 → 66,002 chars (-29.5%)
+
+Executed `docs/plans/ship-skill-size-reduction.md` (Approved, GPT 3 rounds
+100% acceptance, Gemini APPROVE) via `/cycle --autonomous`'s clustered path.
+Extracted the incident-history "why" prose behind Step 0.5's six-section
+nudge family (0.5a/b/e/g/h/i), 0.5c/0.5d's Category-A classification
+rationale, Step 6.2/6.3's AI-Gate + worktree-identity deep-dive, and Steps
+6.5-6.8's post-push advisories into four new reference files, keeping every
+command, return shape, behavior-changing rule, and printed warning-card
+template inline verbatim (union invariant: original section text ⊆
+condensed inline text ∪ reference-file text).
+
+### Changes
+- **[skills/ship/SKILL.md](skills/ship/SKILL.md)** — 93,664 → 66,002 chars
+  (1716 → ~1230 lines).
+- **[skills/ship/references/pre-ship-gate-queries.md](skills/ship/references/pre-ship-gate-queries.md)** (new, 23,830 chars) — 0.5a/b/e/g/h/i.
+- **[skills/ship/references/architecture-and-dashboard-refresh.md](skills/ship/references/architecture-and-dashboard-refresh.md)** (new, 2,574 chars) — 0.5c/0.5d.
+- **[skills/ship/references/post-push-advisories.md](skills/ship/references/post-push-advisories.md)** (new, 6,352 chars) — 6.5-6.8.
+- **[skills/ship/references/commit-provenance-deep-dive.md](skills/ship/references/commit-provenance-deep-dive.md)** (new, 6,647 chars) — 6.2/6.3's AI-Gate + identity deep-dive.
+- **[skills/ship/gate-contract.json](skills/ship/gate-contract.json)** — re-dispositioned across four follow-up commits: 49 orphaned `ignoredCandidates` entries (matching text that no longer exists after condensation) removed, 63 new entries added for the reworded/relocated lines, each reusing the original claim's enforcement binding (same tests, same code) rather than inventing a new one.
+
+### Decisions Made
+- **Did not chase the plan's 40,000-char floor at the cost of the
+  no-content-lost invariant.** Final size is 66,002 chars, 26,002 above the
+  target. The floor was derived from a full-removal theoretical maximum
+  (near-zero inline residue) that contradicts the plan's own Testing
+  Strategy ("no operative content lost… survives somewhere reachable"). The
+  same "below 40,000" finding was raised by the audit gates in all four
+  rounds (Clusters A, B, C, the union gate) and is dispositioned at
+  close-out as accepted-not-fixable-without-violating-the-invariant, not
+  silently dropped — see the plan's Testing Strategy CLOSE-OUT RESULT row.
+  Tech-debt topicId `44716fd984ed` resolved on the strength of the achieved
+  −29.5% reduction with this shortfall recorded, not hidden.
+- **Fixed one genuine pre-existing correctness bug found along the way**
+  (not part of the plan's stated scope, but the content it lived in was
+  relocated by this change): the squash-merge "rebase, never merge" note
+  claimed patch-id matching cleanly drops an already-landed PR's commits on
+  rebase. Verified empirically (git sandbox) that this holds only for a
+  single-commit PR — a multi-commit squash's combined patch-id does not
+  match any individual pre-squash commit, so rebase hits a genuine conflict
+  on replay instead. Both the reference file and the condensed inline text
+  now state the single- vs multi-commit distinction.
+
+### Verification
+`npm run skills:check` and `npm run gates:check` green after every phase and
+after every gate-contract follow-up. GPT code-audit + Gemini final review
+run per cluster (A: APPROVE 0 new; B: APPROVE 0 new; C: APPROVE 0 new) plus
+the mandatory consolidated Gemini gate over the full union diff: **APPROVE**,
+0 new findings, 0 wrongly-dismissed.
+
 ## 2026-09-16 — computeLeverage dedupes resolvedTopicIds before scoring
 
 ### Changes
