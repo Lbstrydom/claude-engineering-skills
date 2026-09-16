@@ -11,12 +11,14 @@
  * to stop (*the instruction ships and the tool does not*), reappearing one
  * level up: in the remedy rather than the subject it remedies.
  */
-import { describe, it } from 'node:test';
+import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 
 import {
-  planHydration, resolveMainWorktree, resolveExplicitSource,
+  planHydration, resolveMainWorktree, resolveExplicitSource, pruneStale,
   SYNCED_TOOLING_DIR, SYNCED_MANIFEST_PATH, SOURCE_ENV_VAR, INSTALL_ARGV, DEFAULT_INSTALL_COMMAND,
 } from '../scripts/skills-hydrate.mjs';
 import { displayDlx } from '../scripts/lib/package-manager.mjs';
@@ -339,5 +341,113 @@ describe('the plain-clone remedy speaks the reader\u2019s package manager', () =
     // drift apart.
     assert.equal(DEFAULT_INSTALL_COMMAND, `npx ${INSTALL_ARGV.join(' ')}`);
     assert.equal(displayDlx('pnpm', [...INSTALL_ARGV]), `pnpm dlx ${INSTALL_ARGV.join(' ')}`);
+  });
+});
+
+describe('pruneStale — topicIds 7949a7c28e1c, a1b7f50d0277, d19c7f929169, f19a74763f93', () => {
+  const tmpDirs = [];
+  function mkTmp() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skills-hydrate-prune-'));
+    tmpDirs.push(dir);
+    return dir;
+  }
+  afterEach(() => {
+    while (tmpDirs.length) {
+      const dir = tmpDirs.pop();
+      try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best-effort */ }
+    }
+  });
+
+  it('removes a file present in dest but no longer present in src', () => {
+    const root = mkTmp();
+    const src = path.join(root, 'src');
+    const dest = path.join(root, 'dest');
+    fs.mkdirSync(src, { recursive: true });
+    fs.writeFileSync(path.join(src, 'a.mjs'), 'current');
+    fs.mkdirSync(dest, { recursive: true });
+    fs.writeFileSync(path.join(dest, 'a.mjs'), 'current');
+    fs.writeFileSync(path.join(dest, 'deleted-upstream.mjs'), 'stale — no longer in src');
+
+    const removed = pruneStale(src, dest);
+
+    assert.deepEqual(removed, ['deleted-upstream.mjs']);
+    assert.equal(fs.existsSync(path.join(dest, 'a.mjs')), true, 'a live file must survive');
+    assert.equal(fs.existsSync(path.join(dest, 'deleted-upstream.mjs')), false, 'the stale file must be gone');
+  });
+
+  it('removes a whole directory deleted upstream, recursively', () => {
+    const root = mkTmp();
+    const src = path.join(root, 'src');
+    const dest = path.join(root, 'dest');
+    fs.mkdirSync(src, { recursive: true });
+    fs.mkdirSync(path.join(dest, 'retired-dir', 'nested'), { recursive: true });
+    fs.writeFileSync(path.join(dest, 'retired-dir', 'x.mjs'), 'stale');
+    fs.writeFileSync(path.join(dest, 'retired-dir', 'nested', 'y.mjs'), 'stale');
+
+    const removed = pruneStale(src, dest);
+
+    assert.equal(fs.existsSync(path.join(dest, 'retired-dir')), false);
+    assert.ok(removed.includes('retired-dir'));
+  });
+
+  it('leaves a directory that still exists in src untouched even if pruning left it non-empty', () => {
+    const root = mkTmp();
+    const src = path.join(root, 'src');
+    const dest = path.join(root, 'dest');
+    fs.mkdirSync(path.join(src, 'lib'), { recursive: true });
+    fs.writeFileSync(path.join(src, 'lib', 'keep.mjs'), 'current');
+    fs.mkdirSync(path.join(dest, 'lib'), { recursive: true });
+    fs.writeFileSync(path.join(dest, 'lib', 'keep.mjs'), 'current');
+    fs.writeFileSync(path.join(dest, 'lib', 'gone.mjs'), 'stale');
+
+    const removed = pruneStale(src, dest);
+
+    assert.deepEqual(removed, [path.join('lib', 'gone.mjs')]);
+    assert.equal(fs.existsSync(path.join(dest, 'lib')), true, 'the directory itself is still current in src');
+    assert.equal(fs.existsSync(path.join(dest, 'lib', 'keep.mjs')), true);
+  });
+
+  it('a fully in-sync mirror is left completely alone', () => {
+    const root = mkTmp();
+    const src = path.join(root, 'src');
+    const dest = path.join(root, 'dest');
+    fs.mkdirSync(src, { recursive: true });
+    fs.writeFileSync(path.join(src, 'a.mjs'), 'current');
+    fs.mkdirSync(dest, { recursive: true });
+    fs.writeFileSync(path.join(dest, 'a.mjs'), 'current');
+
+    assert.deepEqual(pruneStale(src, dest), []);
+    assert.equal(fs.existsSync(path.join(dest, 'a.mjs')), true);
+  });
+
+  it('a dest that does not exist yet is a no-op, not a crash', () => {
+    const root = mkTmp();
+    assert.deepEqual(pruneStale(path.join(root, 'src'), path.join(root, 'never-created')), []);
+  });
+
+  it('hydration converges a mirror across a real prune-then-copy cycle, not just an overlay', () => {
+    // The end-to-end contract this fixes: hydrate once, delete a file upstream,
+    // hydrate again — the second hydration must remove it from the mirror
+    // rather than leaving it there forever (the exact defect named in the
+    // linked topicIds).
+    const root = mkTmp();
+    const src = path.join(root, 'src');
+    const dest = path.join(root, 'dest');
+    fs.mkdirSync(src, { recursive: true });
+    fs.writeFileSync(path.join(src, 'a.mjs'), 'v1');
+    fs.writeFileSync(path.join(src, 'b.mjs'), 'v1');
+
+    // First hydration.
+    fs.cpSync(src, dest, { recursive: true });
+    pruneStale(src, dest);
+    assert.deepEqual(fs.readdirSync(dest).sort(), ['a.mjs', 'b.mjs']);
+
+    // b.mjs is removed upstream.
+    fs.rmSync(path.join(src, 'b.mjs'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+
+    // Second hydration — the overlay copy alone would leave b.mjs behind.
+    fs.cpSync(src, dest, { recursive: true });
+    pruneStale(src, dest);
+    assert.deepEqual(fs.readdirSync(dest).sort(), ['a.mjs'], 'b.mjs must not survive a re-hydration after upstream deletion');
   });
 });

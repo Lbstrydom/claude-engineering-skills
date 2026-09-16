@@ -39,6 +39,7 @@ import {
   partitionByOwnership,
 } from './lib/debt-review-helpers.mjs';
 import { createUpstreamOwnershipOracle } from './lib/upstream-ownership.mjs';
+import { findPossiblyStaleEntries } from './lib/debt-git-history.mjs';
 import { openaiConfig } from './lib/config.mjs';
 import { hasFlag } from './lib/cli-io.mjs';
 
@@ -84,7 +85,7 @@ Exit codes: 0=ok, 1=op-error, 3=sensitivity-gate (blocked)
 
 // ── Markdown Rendering ──────────────────────────────────────────────────────
 
-function renderMarkdown({ ledger, review, violations, mode, upstreamOwned = [], overdueForReview = [] }) {
+function renderMarkdown({ ledger, review, violations, mode, upstreamOwned = [], overdueForReview = [], possiblyStale = new Map() }) {
   const lines = [];
   const now = new Date().toISOString().slice(0, 10);
   lines.push(`# Debt Review — ${now}`);
@@ -94,6 +95,7 @@ function renderMarkdown({ ledger, review, violations, mode, upstreamOwned = [], 
   lines.push(`- **Clusters**: ${review.clusters.length}`);
   lines.push(`- **Oldest entry**: ${review.summary.oldestEntryDays} days`);
   lines.push(`- **Stale (>TTL)**: ${review.summary.staleEntries.length}`);
+  lines.push(`- **Possibly stale (files changed since filing)**: ${review.summary.possiblyStaleFromGit?.length ?? 0}`);
   if (violations.length > 0) {
     lines.push(`- **Budget violations**: ${violations.length}`);
   }
@@ -147,6 +149,20 @@ function renderMarkdown({ ledger, review, violations, mode, upstreamOwned = [], 
     lines.push('');
   }
 
+  if ((review.summary.possiblyStaleFromGit?.length ?? 0) > 0) {
+    lines.push('## Possibly Stale (files changed since filing — verify before treating as work)');
+    lines.push('A non-zero commit count does NOT prove the finding was fixed — it means the file');
+    lines.push('has changed since this entry was filed and needs a fresh read before you trust it.');
+    lines.push('');
+    for (const tid of review.summary.possiblyStaleFromGit) {
+      const e = ledger.entries.find(x => x.topicId === tid);
+      const cat = e?.category ? ` — ${e.category}` : '';
+      const commits = possiblyStale.get(tid) ?? 0;
+      lines.push(`- \`${tid}\`${cat} (${commits} commit${commits === 1 ? '' : 's'} touching its files since ${e?.deferredAt?.slice(0, 10) ?? '?'})`);
+    }
+    lines.push('');
+  }
+
   if (overdueForReview.length > 0) {
     lines.push('## Overdue for Review');
     for (const tid of overdueForReview) {
@@ -188,21 +204,29 @@ function renderMarkdown({ ledger, review, violations, mode, upstreamOwned = [], 
 
 // ── Local-Only Clustering ───────────────────────────────────────────────────
 
-function runLocalClustering(entries, ttlDays) {
+function runLocalClustering(entries, ttlDays, possiblyStale) {
   const now = new Date();
   const clusters = buildLocalClusters(entries);
   const stale = findStaleEntries(entries, ttlDays, now);
 
   // Build a simple refactor candidate per cluster (no effort estimation without LLM)
-  const refactors = clusters.map(c => ({
-    clusterId: c.id,
-    targetModules: c.kind === 'file' ? [c.id.replace(/^file:/, '')] : [],
-    resolvedTopicIds: c.entries,
-    effortEstimate: c.entries.length >= 5 ? 'MAJOR' : c.entries.length >= 3 ? 'MEDIUM' : 'EASY',
-    effortRationale: `Heuristic estimate from ${c.entries.length} members in ${c.kind} cluster.`,
-    risks: ['Heuristic clustering — no LLM judgment on interactions'],
-    rollbackStrategy: 'Revert commit; no state changes outside source files.',
-  }));
+  const refactors = clusters.map(c => {
+    const staleMembers = c.entries.filter(tid => possiblyStale.has(tid));
+    const staleNote = staleMembers.length > 0
+      ? ` ${staleMembers.length}/${c.entries.length} member(s) have commits touching their files since filing (\`${staleMembers.join('`, `')}\`) — re-read the current code before trusting this cluster's leverage/effort.`
+      : '';
+    return {
+      clusterId: c.id,
+      targetModules: c.kind === 'file' ? [c.id.replace(/^file:/, '')] : [],
+      resolvedTopicIds: c.entries,
+      effortEstimate: c.entries.length >= 5 ? 'MAJOR' : c.entries.length >= 3 ? 'MEDIUM' : 'EASY',
+      effortRationale: `Heuristic estimate from ${c.entries.length} members in ${c.kind} cluster.${staleNote}`,
+      risks: staleMembers.length > 0
+        ? ['Heuristic clustering — no LLM judgment on interactions', 'Contains possibly-stale entries — see effort rationale']
+        : ['Heuristic clustering — no LLM judgment on interactions'],
+      rollbackStrategy: 'Revert commit; no state changes outside source files.',
+    };
+  });
   const ranked = rankRefactorsByLeverage(refactors, entries);
 
   return {
@@ -211,6 +235,7 @@ function runLocalClustering(entries, ttlDays) {
       clustersIdentified: clusters.length,
       oldestEntryDays: oldestEntryDays(entries, now),
       staleEntries: stale,
+      possiblyStaleFromGit: [...possiblyStale.keys()],
     },
     clusters,
     refactorPlan: ranked,
@@ -225,7 +250,13 @@ const DEBT_REVIEW_SYSTEM = `You are a senior engineer reviewing accumulated tech
 You receive a JSON list of debt entries. Each entry has: topicId, severity,
 category, detailSnapshot (summary), affectedFiles, affectedPrinciples,
 deferredReason, deferredRationale, distinctRunCount (how many audits it
-surfaced in — higher = more systemic), classification (sonarType + effort).
+surfaced in — higher = more systemic), classification (sonarType + effort),
+commitsSinceDefer (commits touching an affectedFile since this entry was
+filed — a NON-ZERO value means the file has changed since the finding was
+made and the entry may already be fixed; it is not proof, but it is a
+strong staleness signal you should weigh down effort/leverage for and call
+out explicitly in that cluster's rationale, since the code needs a fresh
+read before this is trusted as live work).
 
 YOUR TASKS:
 
@@ -251,7 +282,7 @@ RULES:
 - Group entries aggressively — a cluster of 1 is not useful.
 - Match clusterId to the first word of the cluster title (kebab-case).`;
 
-async function runLLMClustering(openai, entries, ttlDays, includeSensitive) {
+async function runLLMClustering(openai, entries, ttlDays, includeSensitive, possiblyStale) {
   const now = new Date();
   const stale = findStaleEntries(entries, ttlDays, now);
 
@@ -267,6 +298,7 @@ async function runLLMClustering(openai, entries, ttlDays, includeSensitive) {
         clustersIdentified: 0,
         oldestEntryDays: oldestEntryDays(entries, now),
         staleEntries: stale,
+        possiblyStaleFromGit: [...possiblyStale.keys()],
       },
       clusters: [],
       refactorPlan: [],
@@ -285,6 +317,7 @@ async function runLLMClustering(openai, entries, ttlDays, includeSensitive) {
     deferredReason: e.deferredReason,
     distinctRunCount: e.distinctRunCount ?? 0,
     sonarType: e.classification?.sonarType ?? null,
+    commitsSinceDefer: possiblyStale.get(e.topicId) ?? 0,
   }));
 
   const userPrompt = `Debt ledger with ${toSend.length} entries${sensitiveCount > 0 ? ` (${sensitiveCount} sensitive entries withheld)` : ''}:\n\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``;
@@ -437,12 +470,26 @@ async function main() {
       + `(via ${ownership.sources.join(' + ')}) — listed, but excluded from leverage ranking\n`);
   }
 
+  // Staleness preflight (topicId 3040a87641ef): before presenting any cluster
+  // as work, check whether its entries' affected files have changed since
+  // filing. A 24-entry cluster once sat open for a month after every entry
+  // had already been fixed — this is the check that would have caught it.
+  const possiblyStale = new Map(
+    findPossiblyStaleEntries(actionable, { cwd: process.cwd() })
+      .map(({ topicId, commitsSinceDefer }) => [topicId, commitsSinceDefer])
+  );
+  if (possiblyStale.size > 0) {
+    process.stderr.write(`  [debt-review] ${possiblyStale.size} of ${actionable.length} entries have `
+      + 'commits touching their affected files since filing — re-read the current code before trusting '
+      + 'a cluster containing them. See "Possibly Stale" in the output.\n');
+  }
+
   let review;
   let mode;
   if (opts.localOnly) {
     mode = 'local-only';
     process.stderr.write('  [debt-review] local-only mode (no LLM)\n');
-    review = runLocalClustering(actionable, opts.ttlDays);
+    review = runLocalClustering(actionable, opts.ttlDays, possiblyStale);
   } else {
     mode = opts.includeSensitive ? 'llm (include-sensitive)' : 'llm';
     if (!process.env.OPENAI_API_KEY) {
@@ -450,12 +497,12 @@ async function main() {
       process.exit(1);
     }
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    review = await runLLMClustering(openai, actionable, opts.ttlDays, opts.includeSensitive);
+    review = await runLLMClustering(openai, actionable, opts.ttlDays, opts.includeSensitive, possiblyStale);
   }
 
   // Render markdown
   const overdueForReview = findOverdueForReview(ledger.entries);
-  const md = renderMarkdown({ ledger, review, violations, mode, upstreamOwned, overdueForReview });
+  const md = renderMarkdown({ ledger, review, violations, mode, upstreamOwned, overdueForReview, possiblyStale });
   if (opts.outFile) {
     fs.writeFileSync(opts.outFile, md, 'utf-8');
     process.stderr.write(`  [debt-review] wrote ${md.length} chars to ${opts.outFile}\n`);

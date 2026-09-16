@@ -18,6 +18,8 @@ import {
   detectGitHubRepoUrl,
   buildCommitUrl,
   deriveOccurrencesFromGit,
+  countCommitsSinceDefer,
+  findPossiblyStaleEntries,
 } from '../scripts/lib/debt-git-history.mjs';
 import { gitFixtureEnv } from './helpers/fixtures.mjs';
 
@@ -307,5 +309,115 @@ describe('deriveOccurrencesFromGit', () => {
     assert.equal(result.get('aa11bb22'), 1);
     assert.equal(result.get('cc33dd44'), 1);
     assert.equal(result.get('zzzzzzzz'), 0);
+  });
+});
+
+// ── countCommitsSinceDefer / findPossiblyStaleEntries ──────────────────────
+
+// git() above doesn't accept a per-call env override — reimplement here so
+// these tests can pin commit dates without touching the shared helper.
+function gitAt(args, envOverride) {
+  return execFileSync('git', args, {
+    cwd: tmpDir, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...gitFixtureEnv(), ...envOverride },
+  });
+}
+
+describe('countCommitsSinceDefer', () => {
+  test('returns 0 for an entry with no affectedFiles', () => {
+    assert.equal(countCommitsSinceDefer({ deferredAt: '2026-01-01T00:00:00Z', affectedFiles: [] }, { cwd: tmpDir }), 0);
+    assert.equal(countCommitsSinceDefer({ deferredAt: '2026-01-01T00:00:00Z' }, { cwd: tmpDir }), 0);
+  });
+
+  test('returns 0 for a missing or unparseable deferredAt', () => {
+    assert.equal(countCommitsSinceDefer({ affectedFiles: ['x.js'] }, { cwd: tmpDir }), 0);
+    assert.equal(countCommitsSinceDefer({ affectedFiles: ['x.js'], deferredAt: 'not-a-date' }, { cwd: tmpDir }), 0);
+  });
+
+  test('returns 0 when not a git repo', () => {
+    const nonRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'not-a-repo-'));
+    try {
+      const entry = { affectedFiles: ['x.js'], deferredAt: '2026-01-01T00:00:00Z' };
+      assert.equal(countCommitsSinceDefer(entry, { cwd: nonRepo, env: gitFixtureEnv() }), 0);
+    } finally {
+      fs.rmSync(nonRepo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  test('returns 0 when the file has no commits after deferredAt', () => {
+    fs.writeFileSync(path.join(tmpDir, 'x.js'), 'v1');
+    gitAt(['add', 'x.js']);
+    gitAt(['commit', '-q', '-m', 'add x.js'], { GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' });
+
+    const entry = { affectedFiles: ['x.js'], deferredAt: '2026-06-01T00:00:00Z' };
+    assert.equal(countCommitsSinceDefer(entry, { cwd: tmpDir, env: gitFixtureEnv() }), 0);
+  });
+
+  test('counts commits touching the file strictly after deferredAt', () => {
+    fs.writeFileSync(path.join(tmpDir, 'x.js'), 'v1');
+    gitAt(['add', 'x.js']);
+    gitAt(['commit', '-q', '-m', 'add x.js'], { GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' });
+
+    const entry = { affectedFiles: ['x.js'], deferredAt: '2026-06-01T00:00:00Z' };
+    assert.equal(countCommitsSinceDefer(entry, { cwd: tmpDir, env: gitFixtureEnv() }), 0);
+
+    // A fix lands after the deferral
+    fs.writeFileSync(path.join(tmpDir, 'x.js'), 'v2 -- fixed');
+    gitAt(['add', 'x.js']);
+    gitAt(['commit', '-q', '-m', 'fix x.js'], { GIT_AUTHOR_DATE: '2026-07-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-07-01T00:00:00Z' });
+
+    assert.equal(countCommitsSinceDefer(entry, { cwd: tmpDir, env: gitFixtureEnv() }), 1);
+  });
+
+  test('checks every affectedFile, not just the first', () => {
+    fs.mkdirSync(path.join(tmpDir, 'lib'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, 'x.js'), 'v1');
+    fs.writeFileSync(path.join(tmpDir, 'lib', 'y.js'), 'v1');
+    gitAt(['add', '.']);
+    gitAt(['commit', '-q', '-m', 'initial'], { GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' });
+
+    // Only the SECOND affectedFile changes after deferral
+    fs.writeFileSync(path.join(tmpDir, 'lib', 'y.js'), 'v2');
+    gitAt(['add', '.']);
+    gitAt(['commit', '-q', '-m', 'touch lib/y.js'], { GIT_AUTHOR_DATE: '2026-07-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-07-01T00:00:00Z' });
+
+    const entry = { affectedFiles: ['x.js', 'lib/y.js'], deferredAt: '2026-06-01T00:00:00Z' };
+    assert.equal(countCommitsSinceDefer(entry, { cwd: tmpDir, env: gitFixtureEnv() }), 1);
+  });
+});
+
+describe('findPossiblyStaleEntries', () => {
+  test('empty input returns empty array', () => {
+    assert.deepEqual(findPossiblyStaleEntries([], { cwd: tmpDir, env: gitFixtureEnv() }), []);
+    assert.deepEqual(findPossiblyStaleEntries(null, { cwd: tmpDir, env: gitFixtureEnv() }), []);
+  });
+
+  test('skips entries without a topicId', () => {
+    fs.writeFileSync(path.join(tmpDir, 'x.js'), 'v1');
+    gitAt(['add', 'x.js']);
+    gitAt(['commit', '-q', '-m', 'add'], { GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' });
+    const result = findPossiblyStaleEntries(
+      [{ affectedFiles: ['x.js'], deferredAt: '2020-01-01T00:00:00Z' }],
+      { cwd: tmpDir, env: gitFixtureEnv() }
+    );
+    assert.deepEqual(result, []);
+  });
+
+  test('flags only entries whose files changed after their own deferredAt', () => {
+    fs.writeFileSync(path.join(tmpDir, 'fixed.js'), 'v1');
+    fs.writeFileSync(path.join(tmpDir, 'untouched.js'), 'v1');
+    gitAt(['add', '.']);
+    gitAt(['commit', '-q', '-m', 'initial'], { GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' });
+
+    fs.writeFileSync(path.join(tmpDir, 'fixed.js'), 'v2 -- fixed');
+    gitAt(['add', '.']);
+    gitAt(['commit', '-q', '-m', 'fix fixed.js'], { GIT_AUTHOR_DATE: '2026-07-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-07-01T00:00:00Z' });
+
+    const entries = [
+      { topicId: 'stale1', affectedFiles: ['fixed.js'], deferredAt: '2026-06-01T00:00:00Z' },
+      { topicId: 'fresh1', affectedFiles: ['untouched.js'], deferredAt: '2026-06-01T00:00:00Z' },
+    ];
+    const result = findPossiblyStaleEntries(entries, { cwd: tmpDir, env: gitFixtureEnv() });
+    assert.deepEqual(result, [{ topicId: 'stale1', commitsSinceDefer: 1 }]);
   });
 });

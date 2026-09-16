@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import { resolveAndClassify } from '../sensitive-paths.mjs';
+import { resolveReferencedPath } from './ref-checker.mjs';
 
 /**
  * Strict line-number normalization for untrusted `finding.line` input
@@ -176,6 +177,25 @@ export function applyFixes(findings, repoRoot, options = {}) {
       const standaloneLink = /^\s*(?:[-*+]\s+|\d+[.)]\s+)?\[([^\]]*)\]\(([^)]+)\)\s*$/.exec(line);
       if (!standaloneLink) {
         skipped.push({ file: finding.file, line: finding.line, reason: 'reference embedded in prose' });
+        continue;
+      }
+
+      // a33dad5b16d0: `finding.line` only proves a line NUMBER, not that this
+      // is still the STALE link that was scanned — a concurrent edit between
+      // the scan and this fix can replace a genuinely dead link with a new,
+      // valid one at the same line, and the syntax check above alone cannot
+      // tell the two apart (both are standalone markdown links). Re-resolve
+      // the link target the CURRENT line actually carries and only delete it
+      // if it is still unresolvable; a link that now exists — fixed by
+      // someone else, or simply a different link that landed on this line
+      // number — is left untouched rather than deleted.
+      const recheck = resolveReferencedPath(finding.file, standaloneLink[2], repoRoot);
+      if (recheck.skip) {
+        skipped.push({ file: finding.file, line: finding.line, reason: `current link is no longer a checkable file reference (${recheck.reason})` });
+        continue;
+      }
+      if (recheck.exists) {
+        skipped.push({ file: finding.file, line: finding.line, reason: 'current link target now exists — no longer stale' });
         continue;
       }
 

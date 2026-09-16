@@ -4,7 +4,8 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 
-import { findSyncTargets, EXPECTED_CONSUMERS, syncPairs , renderForTarget } from '../scripts/sync-shared-audit-refs.mjs';
+import { findSyncTargets, EXPECTED_CONSUMERS, syncPairs, renderForTarget, findMissingCanonicals } from '../scripts/sync-shared-audit-refs.mjs';
+import { trySymlink } from './helpers/fs-symlink-test-utils.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -294,5 +295,98 @@ describe('a canonical with no provenance sentence is REFUSED (round-6 audit M5)'
         `${f} would render copies with no provenance banner`,
       );
     }
+  });
+});
+
+describe('772a785c384e: refuse to write through a symlinked target', () => {
+  it('a symlinked target is refused, not followed', () => {
+    const dir = path.join(TMP, 'docs/audit/shared-references');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'prov.md'),
+      '# X\n\nThis is the canonical copy. **Edit this file, never a copy.**\n');
+
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-shared-outside-'));
+    const outsideFile = path.join(outsideDir, 'secret.txt');
+    fs.writeFileSync(outsideFile, 'do not overwrite me');
+
+    const refsDir = path.join(TMP, 'skills', 'some-skill', 'references');
+    fs.mkdirSync(refsDir, { recursive: true });
+    const target = path.join(refsDir, 'prov.md');
+    const created = trySymlink(outsideFile, target, 'file');
+    try {
+      if (!created) return; // host cannot create symlinks — not a test failure
+      assert.throws(
+        () => syncPairs([{
+          canonical: path.join(dir, 'prov.md'), target, skill: 'some-skill', basename: 'prov.md',
+        }]),
+        /refusing to write through a symlink/,
+      );
+      assert.equal(fs.readFileSync(outsideFile, 'utf-8'), 'do not overwrite me', 'the symlink target must be untouched');
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('a plain (non-symlink) target still syncs — the guard must not overreach', () => {
+    const dir = path.join(TMP, 'docs/audit/shared-references');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'prov.md'),
+      '# X\n\nThis is the canonical copy. **Edit this file, never a copy.**\n');
+    const refsDir = path.join(TMP, 'skills', 'some-skill', 'references');
+    fs.mkdirSync(refsDir, { recursive: true });
+    const target = path.join(refsDir, 'prov.md');
+    fs.writeFileSync(target, 'stale plain file');
+
+    const r = syncPairs([{
+      canonical: path.join(dir, 'prov.md'), target, skill: 'some-skill', basename: 'prov.md',
+    }]);
+    assert.equal(r.writes, 1);
+  });
+});
+
+describe('8af4be31ab3e: the GENERATED COPY substitution is verified on the OUTPUT', () => {
+  it('a canonical whose wording satisfies the loose check but not the strict one is refused', () => {
+    const dir = path.join(TMP, 'docs/audit/shared-references');
+    fs.mkdirSync(dir, { recursive: true });
+    // Contains "This is the canonical copy." (passes CANONICAL_SELF_DESCRIPTION,
+    // the pre-check) but never the closing "**Edit this file, never a copy.**"
+    // bold text renderForTarget's own SELF_DESC pattern requires — the strict
+    // substitution silently no-ops, and previously nothing noticed.
+    fs.writeFileSync(path.join(dir, 'mismatch.md'),
+      '# X\n\nThis is the canonical copy. Please only edit the source.\n');
+    const target = path.join(TMP, 'skills', 'some-skill', 'references', 'mismatch.md');
+    assert.throws(
+      () => syncPairs([{
+        canonical: path.join(dir, 'mismatch.md'), target, skill: 'some-skill', basename: 'mismatch.md',
+      }]),
+      /banner substitution did not fire/,
+    );
+    assert.equal(fs.existsSync(target), false, 'nothing should have been written');
+  });
+});
+
+describe('58877f2e845f: a registered canonical missing from disk is detected', () => {
+  it('returns empty when every EXPECTED_CONSUMERS key has a file on disk', () => {
+    const dir = path.join(TMP, 'docs/audit/shared-references');
+    fs.mkdirSync(dir, { recursive: true });
+    for (const basename of Object.keys(EXPECTED_CONSUMERS)) {
+      fs.writeFileSync(path.join(dir, basename), 'CANONICAL');
+    }
+    assert.deepEqual(findMissingCanonicals(TMP), []);
+  });
+
+  it('flags an EXPECTED_CONSUMERS key with no matching file, sorted', () => {
+    const dir = path.join(TMP, 'docs/audit/shared-references');
+    fs.mkdirSync(dir, { recursive: true });
+    // Write all but the first two (alphabetically) registered basenames.
+    const keys = Object.keys(EXPECTED_CONSUMERS).sort();
+    for (const basename of keys.slice(2)) {
+      fs.writeFileSync(path.join(dir, basename), 'CANONICAL');
+    }
+    assert.deepEqual(findMissingCanonicals(TMP), keys.slice(0, 2));
+  });
+
+  it('returns every key when the canonical directory does not exist', () => {
+    assert.deepEqual(findMissingCanonicals(TMP), Object.keys(EXPECTED_CONSUMERS).sort());
   });
 });

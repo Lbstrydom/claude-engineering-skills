@@ -822,7 +822,7 @@ Add one script to the consumer's `package.json`. `package.json` is tracked, so
 it is present in every worktree — that is what makes this bootstrappable at all:
 
 ```json
-"skills:hydrate": "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\""
+"skills:hydrate": "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const prune=(s,d)=>{if(!f.existsSync(d))return;for(const e of f.readdirSync(d,{withFileTypes:true})){const sp=p.join(s,e.name),dp=p.join(d,e.name);if(e.isDirectory()){if(!f.existsSync(sp)){f.rmSync(dp,{recursive:true,force:true});continue}prune(sp,dp);if(f.readdirSync(dp).length===0)f.rmSync(dp,{recursive:true,force:true})}else if(!f.existsSync(sp))f.rmSync(dp,{force:true})}};prune(src,dir);const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\""
 ```
 
 Then, in the worktree:
@@ -831,7 +831,7 @@ Then, in the worktree:
 npm run skills:hydrate
 ```
 
-Four properties worth knowing, each verified by running the branch:
+Five properties worth knowing, each verified by running the branch:
 
 - In the **main checkout** it is a no-op that says so — it never re-syncs, and
   never masks a stale bundle as a fresh one.
@@ -839,6 +839,10 @@ Four properties worth knowing, each verified by running the branch:
   rather than leaving you with a half-populated tree.
 - It **copies, so it can go stale.** Re-run it in each worktree after a
   re-sync from `claude-engineering-skills`.
+- It **converges, not just overlays**: after copying, it deletes anything under
+  `scripts/.claude-skills/` that no longer exists in the main checkout's copy —
+  a file deleted or renamed upstream does not survive in an already-hydrated
+  worktree forever (fixed 2026-09; `fs.cpSync` alone only adds/updates).
 - It carries **two items, and says how many it got**: the tooling tree and
   `scripts/.sync-manifest.json`. See below for why the second one matters.
 

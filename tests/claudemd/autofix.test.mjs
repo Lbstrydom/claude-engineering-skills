@@ -430,3 +430,68 @@ describe('applyFixes — dry-run/real-run partition consistency', () => {
     for (const entry of realResult.applied) assert.match(entry.action, /^removed:/);
   });
 });
+
+describe('applyFixes — defect a33dad5b16d0: content identity, not just line number', () => {
+  it('a concurrent edit that replaces the stale link with a VALID one is not deleted', () => {
+    const repoRoot = mkTmpRepo();
+    const relFile = 'AGENTS.md';
+    // The finding was produced against an EARLIER scan where line 2 pointed at
+    // a target that didn't exist. Before the fix runs, a concurrent edit
+    // replaces line 2 with a different, now-valid standalone link — exactly
+    // the named scenario in topicId a33dad5b16d0.
+    fs.writeFileSync(path.join(repoRoot, 'current.md'), 'still here');
+    fs.writeFileSync(
+      path.join(repoRoot, relFile),
+      'line one\n[current guide](current.md)\nline three\n',
+    );
+    const findings = [
+      { file: relFile, line: 2, fixable: true, ruleId: 'stale/file-ref' },
+    ];
+
+    const result = applyFixes(findings, repoRoot, { dryRun: false });
+
+    assert.equal(result.applied.length, 0, 'the now-valid link must not be deleted');
+    assert.equal(result.skipped.length, 1);
+    assert.equal(result.skipped[0].reason, 'current link target now exists — no longer stale');
+    const after = fs.readFileSync(path.join(repoRoot, relFile), 'utf-8');
+    assert.equal(after, 'line one\n[current guide](current.md)\nline three\n', 'file must be byte-identical to before the fix ran');
+  });
+
+  it('a link still pointing at a nonexistent target is fixed as before (no false negative)', () => {
+    const repoRoot = mkTmpRepo();
+    const relFile = 'AGENTS.md';
+    fs.writeFileSync(
+      path.join(repoRoot, relFile),
+      'line one\n[stale ref](docs/gone.md)\nline three\n',
+    );
+    const findings = [
+      { file: relFile, line: 2, fixable: true, ruleId: 'stale/file-ref' },
+    ];
+
+    const result = applyFixes(findings, repoRoot, { dryRun: false });
+
+    assert.equal(result.applied.length, 1);
+    assert.match(result.applied[0].action, /^removed:/);
+    const after = fs.readFileSync(path.join(repoRoot, relFile), 'utf-8');
+    assert.equal(after, 'line one\nline three\n');
+  });
+
+  it('a concurrent edit that turns the link into an external URL is left untouched, not deleted', () => {
+    const repoRoot = mkTmpRepo();
+    const relFile = 'AGENTS.md';
+    fs.writeFileSync(
+      path.join(repoRoot, relFile),
+      'line one\n[external now](https://example.com/docs)\nline three\n',
+    );
+    const findings = [
+      { file: relFile, line: 2, fixable: true, ruleId: 'stale/file-ref' },
+    ];
+
+    const result = applyFixes(findings, repoRoot, { dryRun: false });
+
+    assert.equal(result.applied.length, 0);
+    assert.equal(result.skipped[0].reason, 'current link is no longer a checkable file reference (external)');
+    const after = fs.readFileSync(path.join(repoRoot, relFile), 'utf-8');
+    assert.equal(after, 'line one\n[external now](https://example.com/docs)\nline three\n');
+  });
+});

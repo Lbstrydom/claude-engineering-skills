@@ -39,7 +39,7 @@ Full contract: `references/input-acquisition.md`.
 > this entry to its `package.json` `scripts` and run it — it copies the tooling
 > tree in from the main checkout, and leans on nothing but node and git:
 >
-> "skills:hydrate": "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\""
+> "skills:hydrate": "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const prune=(s,d)=>{if(!f.existsSync(d))return;for(const e of f.readdirSync(d,{withFileTypes:true})){const sp=p.join(s,e.name),dp=p.join(d,e.name);if(e.isDirectory()){if(!f.existsSync(sp)){f.rmSync(dp,{recursive:true,force:true});continue}prune(sp,dp);if(f.readdirSync(dp).length===0)f.rmSync(dp,{recursive:true,force:true})}else if(!f.existsSync(sp))f.rmSync(dp,{force:true})}};prune(src,dir);const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\""
 >
 > Rationale (source repo only — `docs/runbooks/` is not synced to consumers):
 > `docs/runbooks/consumer-adoption.md` §"Linked git worktrees".
@@ -184,7 +184,22 @@ git diff "$BASE" -- . > .audit/$SID-diff.patch
 **Include UNTRACKED new files** — `git diff` omits them, so without this a brand-new file reaches the auditor with NO `[CHANGED]` annotation (it's still read in full via `--files`, but loses the diff focus markers). Append each as a new-file diff against `/dev/null`. **POSIX shell only** (Git Bash on Windows) — `xargs` and `/dev/null` have no native PowerShell equivalent; run this step in a bash-capable shell even on a Windows/Copilot host:
 
 ```bash
-git ls-files --others --exclude-standard -z | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null "{}" >> .audit/$SID-diff.patch 2>/dev/null || true
+git ls-files --others --exclude-standard -z | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null "{}" >> .audit/$SID-diff.patch 2>.audit/$SID-untracked-diff-stderr.log || true
+```
+
+The trailing `|| true` is required — `git diff --no-index` always exits 1 when the
+compared files differ (expected on every invocation here, since one side is
+always `/dev/null`), and `xargs` propagates that as its own nonzero exit even
+on full success. But `2>/dev/null` used to throw away genuine `git ls-files`/
+`xargs`/`git diff` failures alongside that expected exit, leaving no way to
+tell "normal" from "broken" apart. Redirecting stderr to a file instead makes
+real failures observable: `git diff --no-index` writes nothing to stderr for
+the expected differ-from-`/dev/null` case, so any content in
+`.audit/$SID-untracked-diff-stderr.log` is a genuine error — check it before
+trusting the diff patch:
+
+```bash
+cat .audit/$SID-untracked-diff-stderr.log   # non-empty = a real failure occurred, not the expected exit
 ```
 
 ```bash
@@ -193,6 +208,16 @@ FILES="$CHANGED"                            # + any dependent you also want in s
 PASSES="sustainability"                     # e.g. sustainability,backend — per r2-plus-mode.md
 node scripts/openai-audit.mjs code "$PLAN_FILE" --round 2 --ledger .audit/$SID-ledger.json --diff .audit/$SID-diff.patch --changed "$CHANGED" --files "$FILES" --passes "$PASSES" --out .audit/$SID-r2-result.json 2>.audit/$SID-r2-stderr.log
 ```
+
+**R2+'s scope is always the diff, not Round 1's `--scope` flag** — `--files`
+is set on every R2+ invocation, and `openai-audit.mjs` ignores `--scope`
+whenever `--files` is explicitly provided. This is deliberate, not a
+propagation gap to close: Round 1's `--scope diff|plan|full` chooses what to
+*discover*; once you're fixing specific findings, `$CHANGED`/`$FILES`
+self-corrects to whatever you actually touched, which is the right R2+ scope
+regardless of how broad Round 1 was. Do not add `--scope "$SCOPE"` here
+expecting it to widen R2+ back to Round 1's scope — it would be silently
+ignored by the same `--files` precedence rule.
 
 ### Requirements rubric (automatic)
 
@@ -558,7 +583,7 @@ After fixes, re-audit using R2+ mode (back to Step 2):
 
 1. Collect files modified during Step 4 → `--changed`
 2. Compute scope: changed + importers → `--files`
-3. Generate diff (dirty-aware base, matching R1 — untracked counts): `BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1); git diff "$BASE" -- . > .audit/$SID-diff.patch` — then append UNTRACKED new files (`git diff` omits them): `git ls-files --others --exclude-standard -z | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null "{}" >> .audit/$SID-diff.patch 2>/dev/null || true`
+3. Generate diff (dirty-aware base, matching R1 — untracked counts): `BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1); git diff "$BASE" -- . > .audit/$SID-diff.patch` — then append UNTRACKED new files (`git diff` omits them): `git ls-files --others --exclude-standard -z | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null "{}" >> .audit/$SID-diff.patch 2>.audit/$SID-untracked-diff-stderr.log || true` (the trailing `|| true` is only for `git diff --no-index`'s expected exit-1-on-differ; stderr goes to a file, not `/dev/null`, so a genuine `git`/`xargs` failure is still visible — see Step 2's fuller note on this exact pipeline)
 4. Build `--passes` from file types
 5. Run R2+ audit with `--round <N> --ledger --diff --changed --files`
 

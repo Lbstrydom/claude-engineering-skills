@@ -233,6 +233,55 @@ export function planHydration({
 }
 
 /**
+ * Delete anything in `dest` that no longer exists in `src`. `fs.cpSync` is a
+ * pure overlay — it adds and updates, but never removes, so a file deleted
+ * or renamed in the source tree survives in every already-hydrated worktree
+ * indefinitely: hydration overlays onto the EXISTING (possibly stale) mirror
+ * rather than converging it to an exact snapshot (topicIds 7949a7c28e1c,
+ * a1b7f50d0277, d19c7f929169, f19a74763f93). Call AFTER `fs.cpSync` has
+ * already added/updated everything current, so nothing is deleted-then-
+ * missed by a copy that hasn't run yet.
+ *
+ * Walks `dest`, not `src` — that is the only tree that can show what no
+ * longer belongs there. A directory is removed once it is either absent
+ * from `src` or left empty after its own contents were pruned.
+ *
+ * @param {string} src absolute source directory (the tree of record)
+ * @param {string} dest absolute destination directory (the mirror)
+ * @returns {string[]} paths removed, relative to `dest`
+ */
+export function pruneStale(src, dest) {
+  const removed = [];
+  if (!fs.existsSync(dest)) return removed;
+  const rm = (p) => fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  const walk = (relDir) => {
+    const destDir = path.join(dest, relDir);
+    for (const entry of fs.readdirSync(destDir, { withFileTypes: true })) {
+      const rel = path.join(relDir, entry.name);
+      const srcPath = path.join(src, rel);
+      const destPath = path.join(dest, rel);
+      if (entry.isDirectory()) {
+        if (!fs.existsSync(srcPath)) {
+          rm(destPath);
+          removed.push(rel);
+          continue;
+        }
+        walk(rel);
+        if (fs.readdirSync(destPath).length === 0) {
+          rm(destPath);
+          removed.push(rel);
+        }
+      } else if (!fs.existsSync(srcPath)) {
+        rm(destPath);
+        removed.push(rel);
+      }
+    }
+  };
+  walk('');
+  return removed;
+}
+
+/**
  * The explicitly-named tooling source, if any. Flag beats env; both are
  * resolved to an absolute path so the plan's `from`/`to` are comparable.
  *
@@ -317,20 +366,24 @@ function main() {
     installCommand: displayDlx(detectPackageManager(cwd), [...INSTALL_ARGV]),
   });
 
+  let pruned = [];
   if (plan.action === 'copy') {
     for (const item of plan.items) {
       if (!item.present) continue;
-      if (item.recursive) fs.cpSync(item.from, item.to, { recursive: true });
-      else {
+      if (item.recursive) {
+        fs.cpSync(item.from, item.to, { recursive: true });
+        pruned = pruned.concat(pruneStale(item.from, item.to));
+      } else {
         fs.mkdirSync(path.dirname(item.to), { recursive: true });
         fs.copyFileSync(item.from, item.to);
       }
     }
   }
   if (asJson) {
-    console.log(JSON.stringify({ ok: plan.action !== 'fail', ...plan }));
+    console.log(JSON.stringify({ ok: plan.action !== 'fail', ...plan, pruned }));
   } else {
-    (plan.action === 'fail' ? process.stderr : process.stdout).write(`${plan.message}\n`);
+    const message = pruned.length > 0 ? `${plan.message} (pruned ${pruned.length} stale item(s))` : plan.message;
+    (plan.action === 'fail' ? process.stderr : process.stdout).write(`${message}\n`);
   }
   process.exit(plan.action === 'fail' ? 1 : 0);
 }

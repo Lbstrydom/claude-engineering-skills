@@ -25,7 +25,7 @@ description: |
 > this entry to its `package.json` `scripts` and run it — it copies the tooling
 > tree in from the main checkout, and leans on nothing but node and git:
 >
-> "skills:hydrate": "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\""
+> "skills:hydrate": "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const prune=(s,d)=>{if(!f.existsSync(d))return;for(const e of f.readdirSync(d,{withFileTypes:true})){const sp=p.join(s,e.name),dp=p.join(d,e.name);if(e.isDirectory()){if(!f.existsSync(sp)){f.rmSync(dp,{recursive:true,force:true});continue}prune(sp,dp);if(f.readdirSync(dp).length===0)f.rmSync(dp,{recursive:true,force:true})}else if(!f.existsSync(sp))f.rmSync(dp,{force:true})}};prune(src,dir);const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\""
 >
 > Rationale (source repo only — `docs/runbooks/` is not synced to consumers):
 > `docs/runbooks/consumer-adoption.md` §"Linked git worktrees".
@@ -76,6 +76,7 @@ _This site: `subcommand` — no first word means no sub-command; fall through to
 
 - `list` → **Sub-command: LIST**
 - `add` → **Sub-command: ADD**
+- contains `--mode consistency` anywhere → **Phase 3b: Consistency Mode** (deterministic canary run; skips Phases 0b–3a entirely — it needs only `--canary <name>` + URL, no persona resolution)
 - contains `--pair` anywhere → **Sub-command: PAIR** (see Phase 7 at the end)
 - otherwise → **Phase 0b: Parse Test Arguments** (normal test run)
 
@@ -215,11 +216,10 @@ via `isCloudEnabled()` (an actual pool-presence check, not an env guess):
 node scripts/cross-skill.mjs whoami
 ```
 
-Set `memory_enabled = .cloud` from the probe's JSON output. `audit_link =
-.cloud && repo_name` — it additionally requires a resolved `repo_name` (the
-`PERSONA_TEST_REPO_NAME` env value, or git remote — see Phase 0c). When `cloud`
+Set `memory_enabled = .cloud` from the probe's JSON output. When `cloud`
 is false the skill runs in "stateless" mode — tests complete but nothing is
-saved or cross-referenced.
+saved or cross-referenced. `audit_link` is NOT computed here — it needs
+`repo_name`, which isn't resolved until Phase 0c below; see there.
 
 ---
 
@@ -233,6 +233,10 @@ Otherwise treat `persona_input` as an ad-hoc persona description;
 
 If `repo_name` is not on the persona, detect from `PERSONA_TEST_REPO_NAME` env,
 or `git remote get-url origin`, or leave null.
+
+Now that `repo_name` is resolved (or confirmed null), compute
+`audit_link = memory_enabled && repo_name` — cross-referencing needs both
+cloud storage AND a resolved repo identity to look findings up against.
 
 ---
 

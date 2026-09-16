@@ -40,7 +40,7 @@ Full contract: `references/input-acquisition.md`.
 > this entry to its `package.json` `scripts` and run it — it copies the tooling
 > tree in from the main checkout, and leans on nothing but node and git:
 >
-> "skills:hydrate": "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\""
+> "skills:hydrate": "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const prune=(s,d)=>{if(!f.existsSync(d))return;for(const e of f.readdirSync(d,{withFileTypes:true})){const sp=p.join(s,e.name),dp=p.join(d,e.name);if(e.isDirectory()){if(!f.existsSync(sp)){f.rmSync(dp,{recursive:true,force:true});continue}prune(sp,dp);if(f.readdirSync(dp).length===0)f.rmSync(dp,{recursive:true,force:true})}else if(!f.existsSync(sp))f.rmSync(dp,{force:true})}};prune(src,dir);const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\""
 >
 > Rationale (source repo only — `docs/runbooks/` is not synced to consumers):
 > `docs/runbooks/consumer-adoption.md` §"Linked git worktrees".
@@ -51,13 +51,25 @@ Full contract: `references/input-acquisition.md`.
 
 | Input | Mode | Effect |
 |---|---|---|
-| `audit` | AUDIT | Run `node scripts/check-context-drift.mjs --strict`; report findings; no writes |
+| `audit` | AUDIT | Run `node scripts/check-context-drift.mjs --strict --repo "$REPO"`; report findings; no writes |
 | `reconcile` | RECONCILE | Detect drift, propose patch, apply after confirmation |
 | `migrate` | MIGRATE | Convert legacy CLAUDE.md-canonical → AGENTS.md-canonical |
 | (no args) | AUDIT | Default to audit |
 
+**`REPO=<the --repo path if passed, else cwd>`** — set this once, here, before
+any mode branch. Every command in Steps 1–3 below runs against `$REPO`, not
+the invoking cwd; `check-context-drift.mjs` itself takes `--repo <path>`
+(default: cwd) for exactly this. Step 3's file operations (reading/writing
+`AGENTS.md`/`CLAUDE.md`) likewise target `$REPO`, not the cwd.
+
 For `reconcile` and `migrate`, **never write files without user confirmation** —
-present the proposed patch first, ask for `apply` / `cancel`, then act.
+present the proposed patch first, ask for `apply` / `cancel`, then act. This
+gate covers writes to the **audited repo's own content** (`AGENTS.md`,
+`CLAUDE.md`). It does NOT cover the Worktree preflight above, which — when it
+runs at all — provisions local tooling (`scripts/.claude-skills/`) before Step
+0 is even reached, regardless of mode. That is infrastructure bootstrap, not
+a content edit, and every mode including `audit` needs the tooling present to
+run its own commands at all.
 
 ---
 
@@ -66,7 +78,7 @@ present the proposed patch first, ask for `apply` / `cancel`, then act.
 Run the drift detector and summarise findings.
 
 ```bash
-node scripts/check-context-drift.mjs --strict 2>&1
+node scripts/check-context-drift.mjs --strict --repo "$REPO" 2>&1
 ```
 
 Exit codes: `0` = no findings, `1` = HIGH (blocking), `2` = MEDIUM only.
@@ -88,16 +100,16 @@ Claude-only content in CLAUDE.md.
 
 Steps:
 
-1. Run `node scripts/check-context-drift.mjs --format json > .audit/drift.json` to get structured findings.
+1. Run `node scripts/check-context-drift.mjs --format json --repo "$REPO" > .audit/drift.json` to get structured findings.
 2. For each finding:
-   - `ctx/missing-import` → propose adding `@./AGENTS.md` near top of CLAUDE.md.
-   - `ctx/non-allowlist-heading` → propose moving the section to AGENTS.md and removing from CLAUDE.md.
-   - `ctx/shared-section-drift` → propose deleting from CLAUDE.md (AGENTS.md wins for shared content).
+   - `ctx/missing-import` → propose adding `@./AGENTS.md` near top of `$REPO/CLAUDE.md`.
+   - `ctx/non-allowlist-heading` → propose moving the section to `$REPO/AGENTS.md` and removing from `$REPO/CLAUDE.md`.
+   - `ctx/shared-section-drift` → propose deleting from `$REPO/CLAUDE.md` (AGENTS.md wins for shared content).
    - `ctx/oversized-claude-md` → identify the largest non-allowlisted sections; propose moving them.
 3. Show a unified diff of proposed changes.
 4. Wait for `apply` confirmation.
-5. Apply via Edit tool.
-6. Re-run `node scripts/check-context-drift.mjs --strict` to confirm green.
+5. Apply via Edit tool, against the files under `$REPO`.
+6. Re-run `node scripts/check-context-drift.mjs --strict --repo "$REPO"` to confirm green.
 
 Full step-by-step playbook with conflict resolution: `references/reconcile-playbook.md`.
 
@@ -118,7 +130,7 @@ Steps:
    - Propose: copy CLAUDE.md → AGENTS.md (rename heading)
    - Propose: replace CLAUDE.md with `@./AGENTS.md` import + Claude-only addendum
 3. Show diff. Wait for confirmation. Apply.
-4. Run `node scripts/check-context-drift.mjs --strict` to verify alignment.
+4. Run `node scripts/check-context-drift.mjs --strict --repo "$REPO"` to verify alignment.
 5. Update brief generators that read CLAUDE.md to also/preferably read AGENTS.md
    (see `scripts/lib/context.mjs` `INSTRUCTION_FILE_CANDIDATES` for the pattern).
 
@@ -135,7 +147,7 @@ After every mode, emit a compact status card:
   AI-CONTEXT-MANAGEMENT — <MODE> — Done
   HIGH: 0  MEDIUM: 0  Files updated: 2
   AGENTS.md: 349 lines  CLAUDE.md: 41 lines
-  Next: node scripts/check-context-drift.mjs --strict (verify) | git diff (review)
+  Next: node scripts/check-context-drift.mjs --strict --repo "$REPO" (verify) | git diff (review)
 ═══════════════════════════════════════
 ```
 

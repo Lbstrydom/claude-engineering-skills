@@ -129,6 +129,27 @@ export function findSyncTargets(rootDir = ROOT) {
 }
 
 /**
+ * Registered-but-absent canonicals: `EXPECTED_CONSUMERS` keys with no
+ * matching file under `docs/audit/shared-references/`. `findSyncTargets`
+ * only iterates files it finds ON DISK (`fs.readdirSync(canonicalDir)`), so
+ * a registry entry whose canonical was renamed, deleted, or never created
+ * produces zero sync pairs and nothing reports it as missing — a required
+ * consumer silently goes un-synced instead of being flagged (topicId
+ * 58877f2e845f).
+ *
+ * @param {string} [rootDir=ROOT]
+ * @returns {string[]} basenames registered in EXPECTED_CONSUMERS with no
+ *   file on disk, sorted
+ */
+export function findMissingCanonicals(rootDir = ROOT) {
+  const canonicalDir = path.join(rootDir, 'docs', 'audit', 'shared-references');
+  const onDisk = fs.existsSync(canonicalDir)
+    ? new Set(fs.readdirSync(canonicalDir).filter(f => f.endsWith('.md')))
+    : new Set();
+  return Object.keys(EXPECTED_CONSUMERS).filter(basename => !onDisk.has(basename)).sort();
+}
+
+/**
  * Every flag this CLI reads. Declared beside `main()` and asserted inside it —
  * this module is imported by `tests/sync-shared-audit-refs.test.mjs` for its
  * exports, so throwing at module scope would break that import.
@@ -286,11 +307,37 @@ export function syncPairs(pairs, { check = false, dry = false } = {}) {
         + `${canonical} — renderForTarget substitutes it for the GENERATED COPY banner.`,
       );
     }
-    const srcBuf = Buffer.from(
-      renderForTarget(canonicalText, canonical, target, ROOT),
-      'utf-8',
-    );
+    // 8af4be31ab3e: the check above only proves the CANONICAL carries the
+    // loose one-line self-description; renderForTarget's own substitution
+    // pattern (SELF_DESC, in this file) is stricter -- it requires the
+    // sentence AND the trailing "**Edit this file, never a copy.**" bold
+    // text to both be present. If the canonical's exact wording drifted
+    // between the two, the loose pre-check passes while the strict
+    // substitution silently no-ops (renderForTarget is deliberately pure
+    // and non-throwing there — see its own docstring), shipping a copy that
+    // still reads as the canonical. Verified on the OUTPUT, not assumed.
+    const renderedText = renderForTarget(canonicalText, canonical, target, ROOT);
+    if (CANONICAL_SELF_DESCRIPTION.test(renderedText)) {
+      throw new Error(
+        `sync-shared-audit-refs: ${basename}'s GENERATED COPY banner substitution did not fire — `
+        + 'the rendered copy still contains the canonical self-description sentence. renderForTarget\'s '
+        + 'stricter pattern (opening sentence through "**Edit this file, never a copy.**") did not match '
+        + `even though the looser check on ${canonical} did. Check the canonical's exact wording.`,
+      );
+    }
+    const srcBuf = Buffer.from(renderedText, 'utf-8');
     const exists = fs.existsSync(target);
+    // 772a785c384e: `fs.writeFileSync` follows symlinks, so a target that is
+    // a symlink (accidental or otherwise) would have this sync overwrite
+    // through it into whatever it points at, possibly outside the repo.
+    // Refused before any read/write of it, the same fail-closed shape as
+    // `resolveAndClassify`'s symlink guard (INC-001).
+    if (exists && fs.lstatSync(target).isSymbolicLink()) {
+      throw new Error(
+        `sync-shared-audit-refs: refusing to write through a symlink at ${target} — `
+        + 'a sync target must be a plain file. Remove the symlink and re-run.',
+      );
+    }
     const dstBuf = exists ? fs.readFileSync(target) : Buffer.alloc(0);
     if (exists && sha(srcBuf) === sha(dstBuf)) {
       unchanged++;
@@ -340,16 +387,25 @@ function main() {
     process.exit(2);
   }
 
+  const missingCanonicals = findMissingCanonicals(ROOT);
+  if (missingCanonicals.length > 0) {
+    process.stderr.write(
+      `${R}Registered but missing canonical(s): ${missingCanonicals.join(', ')} — EXPECTED_CONSUMERS `
+      + `names ${missingCanonicals.length === 1 ? 'a file' : 'files'} not present under ${CANONICAL_DIR}. `
+      + `No sync target was emitted for ${missingCanonicals.length === 1 ? 'it' : 'them'}.${X}\n`,
+    );
+  }
+
   const pairs = findSyncTargets(ROOT);
   const { writes, unchanged, drift, lines } = syncPairs(pairs, { check: CHECK, dry: DRY });
   for (const line of lines) process.stdout.write(line);
 
-  const verdict = drift === 0 ? 'IN SYNC' : (CHECK ? 'DRIFT' : 'CHANGES');
+  const verdict = drift === 0 && missingCanonicals.length === 0 ? 'IN SYNC' : (CHECK ? 'DRIFT' : 'CHANGES');
   process.stdout.write(
     `\n${B}sync-shared-audit-refs:${X} ${pairs.length} pair(s), ${writes} write, ${unchanged} unchanged, ${drift} drifted — ${verdict}\n`,
   );
 
-  if (CHECK && drift > 0) {
+  if (CHECK && (drift > 0 || missingCanonicals.length > 0)) {
     process.stderr.write(
       `${R}Shared reference drift detected. Run: node scripts/sync-shared-audit-refs.mjs${X}\n`,
     );

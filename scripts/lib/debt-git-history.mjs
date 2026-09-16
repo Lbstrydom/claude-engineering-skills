@@ -168,3 +168,71 @@ export function deriveOccurrencesFromGit(entries, opts = {}) {
   }
   return result;
 }
+
+// ── Staleness preflight ──────────────────────────────────────────────────
+
+/**
+ * Count commits touching any of an entry's `affectedFiles` at or after its
+ * `deferredAt` timestamp. A non-zero count does NOT prove the finding was
+ * fixed -- only that the file changed since filing and the entry needs a
+ * fresh read before being trusted as live work. A zero count is the
+ * stronger signal: nothing has touched the file since the entry was filed,
+ * so the original disposition almost certainly still holds.
+ *
+ * This is the preflight a debt entry (topicId 3040a87641ef) asked the
+ * clustering pipeline to run: "diff each candidate deferredAt against git
+ * log for its file before presenting a cluster as work." Without it, a
+ * 24-entry cluster on one file sat open in the ledger for a month after
+ * every one of its entries had already been fixed -- all 24 predated the
+ * fixing commit by 3-6 weeks, and nothing in debt-review ever compared the
+ * two.
+ *
+ * Fails open (returns 0) on any git error, matching this module's other
+ * git-log helpers -- git unavailability degrades the signal to "assume
+ * fresh", never to blocking the review.
+ *
+ * @param {object} entry - hydrated debt entry ({deferredAt, affectedFiles})
+ * @param {object} [opts]
+ * @param {string} [opts.cwd=process.cwd()]
+ * @param {NodeJS.ProcessEnv} [opts.env] - when supplied, REPLACES the
+ *   inherited `process.env` for this subprocess.
+ * @returns {number} commits touching any affectedFile since deferredAt
+ */
+export function countCommitsSinceDefer(entry, { cwd = process.cwd(), env } = {}) {
+  const files = (entry?.affectedFiles || []).filter(Boolean);
+  const deferredAt = entry?.deferredAt;
+  if (files.length === 0 || !deferredAt || !Number.isFinite(Date.parse(deferredAt))) return 0;
+  try {
+    const out = execFileSync('git', [
+      'log',
+      '--oneline',
+      `--since=${deferredAt}`,
+      '--',
+      ...files,
+    ], { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], ...(env ? { env } : {}) });
+    if (!out) return 0;
+    return out.trim().split('\n').filter(Boolean).length;
+  } catch {
+    // git unavailable, not a repo, or an affected path never tracked
+    return 0;
+  }
+}
+
+/**
+ * Annotate debt entries with `countCommitsSinceDefer` and return only the
+ * ones with at least one post-defer commit -- the candidates that need a
+ * fresh code read before a cluster containing them is presented as work.
+ *
+ * @param {object[]} debtEntries
+ * @param {object} [opts]
+ * @returns {{topicId: string, commitsSinceDefer: number}[]}
+ */
+export function findPossiblyStaleEntries(debtEntries, opts = {}) {
+  const result = [];
+  for (const e of debtEntries || []) {
+    if (!e?.topicId) continue;
+    const commits = countCommitsSinceDefer(e, opts);
+    if (commits > 0) result.push({ topicId: e.topicId, commitsSinceDefer: commits });
+  }
+  return result;
+}
