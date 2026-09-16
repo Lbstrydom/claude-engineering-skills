@@ -644,6 +644,38 @@
     {
       "line": "(never a gate), not a reason to force a push now. Incident history behind",
       "reason": "Step 6.8, condensed 2026 Phase-3. States explicitly that an undrained pending-note is tolerated and this step is NOT a gate — the opposite of an enforcement claim, plus a pointer to the new reference file (the enforcement-verb scanner matches on 'gate' inside the word '(never a gate)' and inside the word 'never'). Same disposition as the pre-existing 'never a gate), not a reason to force a push now' entry it replaces."
+    },
+    {
+      "line": "path>`, deleted once the commit lands) works too, but never your session",
+      "reason": "Step 6.2, condensed 2026 Phase-4 size-reduction. Operator instruction about NOT using the session scratchpad dir for the commit-message file — `--message-file` refuses any path outside repoRoot, a real refusal tested in tests/ship-commit-cli.test.mjs (the escapes-repo case), not a claim /ship's own execution makes about itself beyond that existing binding. Same disposition as the pre-existing 'Not your session scratchpad dir' entry it replaces."
+    },
+    {
+      "line": "scratchpad dir — `--message-file` refuses any path outside `repoRoot`. Why",
+      "reason": "Continuation of the line above, naming the refusal + pointing at the new reference file for the full incident (upstream 1c792b2e). Same disposition as the pre-existing entry for this sentence."
+    },
+    {
+      "line": "points at the other, and `--no-tests` always caps the verdict downward",
+      "reason": "Step 6.2, condensed 2026 Phase-4. Restates the mutual-exclusivity of `passed`/`converged` and that `--no-tests` only ever downgrades the gate verdict — both already contracted executably/document-only at gate-converged-requires-verified-divergence and gate-no-tests-caps-the-verdict above. This condensed line restates those same claims in shorter form; no new enforcement surface."
+    },
+    {
+      "line": "(`waived` or `not-run`), never up. `passed` is rare **by design** (Steps 2-5",
+      "reason": "Continuation of the line above. 'never up' restates gate-no-tests-caps-the-verdict's claim; 'passed is rare by design' is descriptive statistics about the AI-Gate trailer's real-world distribution (measured: 647 not-run, 86 waived, 2 passed), not an enforcement claim. Same disposition as the pre-existing 'passed is rare BY DESIGN' entry it replaces."
+    },
+    {
+      "line": "to chase it. `--no-run-id --gate not-run` disclaims a marker inherited from",
+      "reason": "Step 6.2. Names the `--no-run-id --gate not-run` combination and what it disclaims — a usage instruction for the ship-commit CLI's own documented flag, not a /ship exit-code claim beyond what gate-converged-requires-verified-divergence and the sibling document-only gates already cover. Same disposition as the pre-existing '--no-run-id exists' entry it replaces."
+    },
+    {
+      "line": "disposition is `incomplete-expectation` → exit 2. You may omit both flags",
+      "reason": "Step 6.3, condensed 2026 Phase-4. Names the `incomplete-expectation` exit-2 refusal on a detached HEAD with no `--expect-detached` — real and mechanically enforced, contracted at guard-b-identity-is-a-precondition (executable, bound above) and pinned by tests/worktree-identity.test.mjs. This condensed line restates that same claim in shorter form; no new enforcement surface."
+    },
+    {
+      "line": "**Continuing work in the same worktree after a squash merge: rebase, never",
+      "reason": "Step 6.3, condensed 2026 Phase-4. Git-workflow guidance the agent applies when choosing rebase vs merge after a squash-merged PR — there is no `/ship` CLI exit code to assert, because ship-commit.mjs never sees which git command the agent chose beforehand. Same disposition as the pre-existing 'Continuing work in the same worktree after a squash merge' entry it replaces."
+    },
+    {
+      "line": "| `references/commit-provenance-deep-dive.md` | Step 6.2/6.3's AI-Gate and worktree-identity deep-dive — why each value/flag exists and the incidents behind them. | Debugging `--gate`/`--expect-head`/`--expect-branch` behaviour, or before changing one. |",
+      "reason": "The reference-index ROW for the new commit-provenance-deep-dive.md file, added by the Phase-4 size-reduction. Index rows describe what a document covers; they are not gate claims about /ship's behaviour. Matched on 'gate' inside '--gate' and 'AI-Gate', same class as the existing command-example-text entries in this file."
     }
   ]
 }
