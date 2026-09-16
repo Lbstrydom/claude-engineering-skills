@@ -3,6 +3,17 @@
   "entries": [
     {
       "schemaVersion": 1,
+      "issueId": "00052a5a-a9b4-4b5c-ad99-16eeeab36ff6",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/debt-ledger-merge-safety.test.mjs"
+      },
+      "recordedAt": "2026-09-16T06:24:58.415Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "08b4f5fc-1de9-4a78-8094-25589100b774",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
