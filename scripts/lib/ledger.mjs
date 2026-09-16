@@ -532,9 +532,19 @@ export function normaliseCategoryKey(category) {
 }
 
 export function ledgerFindingSimilarity(f, d) {
+  // Categories are normalised (bracket pass-tag stripped) before scoring —
+  // the same reason `overruleCountIndex` strips it a few lines below: every
+  // category in this repo carries a `[PassName]` prefix, and comparing raw
+  // strings folds that tag into the token set. Same-pass pairs share one tag
+  // (harmless noise either way), but a CROSS-PASS re-raise — GPT restating a
+  // dismissed [backend] finding as [Sustainability] — differs on the tag
+  // word too, on top of any real paraphrasing, penalising the score exactly
+  // when the cross-pass fallback (Step 1b below) needs more tolerance, not
+  // less. Stripping only ever raises the score, so this can only make a
+  // real re-raise more likely to match its ledger entry — never the reverse.
   return jaccardSimilarity(
-    `${f.category} ${f.section} ${f.detail}`,
-    `${d.category} ${d.section} ${d.detailSnapshot || d.detail}`
+    `${normaliseCategoryKey(f.category)} ${f.section} ${f.detail}`,
+    `${normaliseCategoryKey(d.category)} ${d.section} ${d.detailSnapshot || d.detail}`
   );
 }
 

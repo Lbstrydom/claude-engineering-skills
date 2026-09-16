@@ -3,6 +3,12 @@
  * Written BEFORE `matchesLedgerEntry`/`ledgerFindingSimilarity` are extracted —
  * the extraction must leave every classification below byte-identical. If this
  * suite goes red after the refactor, the matcher semantics drifted.
+ *
+ * Deliberately widened 2026-09-16 (consumer report, storyline): `category` is
+ * now normalised (bracket pass-tag stripped) before Jaccard scoring — see
+ * `ledgerFindingSimilarity`. None of the fixtures above carry a `[Tag]`
+ * prefix, so that change is a no-op for every existing case; the new test
+ * below exercises the case it exists for.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -114,6 +120,29 @@ test('cross-pass low similarity → kept (below the 0.8 cross-pass bar)', () => 
   const r = suppressReRaises(findings, ledger, { changedFiles: [] });
   assert.equal(r.kept.length, 1, 'cross-pass below 0.8 → kept');
   assert.equal(r.suppressed.length, 0);
+});
+
+test('cross-pass re-raise with a differing pass-tag prefix still crosses the 0.8 bar', () => {
+  // Same underlying claim, restated under a different pass's category tag —
+  // the exact shape GPT produced in the field (`[backend]` dismissed in R1,
+  // `[Sustainability]` re-raised in R2 with the same reasoning). Comparing
+  // RAW category strings scores this at 0.733 (below the cross-pass bar) —
+  // the bracket tag words ("backend" vs "sustainability") count as
+  // differing tokens on top of the real paraphrase. Stripping the tag
+  // (ledgerFindingSimilarity) raises it to 0.846, above the bar.
+  const ledger = { entries: [entry({
+    topicId: 't1', pass: 'backend', category: '[backend] fsync error swallowed', section: 'src/a.mjs:10',
+    detail: 'the write path catches the fsync error and discards it silently',
+    affectedFiles: ['src/a.mjs'], adjudicationOutcome: 'dismissed',
+  })] };
+  const findings = [finding({
+    category: '[Sustainability] fsync error swallowed', section: 'src/a.mjs:10',
+    detail: 'the write path catches the fsync error and discards it quietly',
+    pass: 'sustainability', file: 'src/a.mjs',
+  })];
+  const r = suppressReRaises(findings, ledger, { changedFiles: [] });
+  assert.equal(r.suppressed.length, 1, 'cross-pass re-raise under a different tag must still suppress');
+  assert.equal(r.kept.length, 0);
 });
 
 test('fixed unchanged-scope entry suppresses a re-raise (the fix-lifecycle-relevant branch)', () => {

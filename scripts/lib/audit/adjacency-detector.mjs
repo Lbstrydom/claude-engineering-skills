@@ -571,13 +571,21 @@ export async function runAdjacencyAnalysis({ repoRoot, auditBaseCommit, bounds, 
       return done();
     }
     if (ns.files.length > bounds.maxChangedFiles) {
+      // Name the base commit: a consumer report (storyline, 2026-09-16) read
+      // this count as an importer-graph expansion of the files they actually
+      // edited — it isn't (this is a literal `git diff --numstat`, see
+      // `a.numstat` above) — but the message gave them nothing to check that
+      // against. `git diff --stat <auditBaseCommit>` reproduces this exact
+      // count; without the ref, that command can't be formed.
       inc.push(incompleteness(INCOMPLETENESS_KINDS.INPUT_BOUND, 'diff',
-        `${ns.files.length} changed files exceeds maxChangedFiles=${bounds.maxChangedFiles} — adjacency not enumerated`));
+        `${ns.files.length} changed files exceeds maxChangedFiles=${bounds.maxChangedFiles} since ` +
+        `${auditBaseCommit} — adjacency not enumerated (run \`git diff --stat ${auditBaseCommit}\` to see them)`));
       return done();
     }
     if (ns.totalChangedLines > bounds.maxChangedLines) {
       inc.push(incompleteness(INCOMPLETENESS_KINDS.INPUT_BOUND, 'diff',
-        `${ns.totalChangedLines} changed lines exceeds maxChangedLines=${bounds.maxChangedLines} — adjacency not enumerated`));
+        `${ns.totalChangedLines} changed lines exceeds maxChangedLines=${bounds.maxChangedLines} since ` +
+        `${auditBaseCommit} — adjacency not enumerated (run \`git diff --stat ${auditBaseCommit}\` to see them)`));
       return done();
     }
 
