@@ -86,6 +86,23 @@ CREATE TABLE IF NOT EXISTS auth.users (
   id uuid PRIMARY KEY
 );
 
+-- Unlike a newly created FUNCTION (which grants EXECUTE to PUBLIC by
+-- default), a newly created SCHEMA or TABLE grants nothing to PUBLIC — so
+-- whoever runs THIS bootstrap becomes the only role that can see `auth` at
+-- all. That is fine when the bootstrap runner is also the migration runner,
+-- but this repo's own docs (docs/runbooks/postgres-parity.md,
+-- references/migration-credentials.md) document a DELIBERATE split: an
+-- admin role bootstraps once, a narrower runtime role runs `--migrate`
+-- thereafter. Without these grants, `--migrate` under the runtime role
+-- fails with "permission denied for schema auth" the moment a pending
+-- migration references `auth.users`/`auth.uid()` — a real find (a
+-- consumer's Azure store, 2026-09-16) that these are idempotent to re-run
+-- and safe to grant broadly: `auth` here holds nothing but the inert
+-- compat stubs this file creates, never real Supabase auth data.
+
+GRANT USAGE ON SCHEMA auth TO PUBLIC;
+GRANT SELECT ON auth.users TO PUBLIC;
+
 -- ── 4. Stub `auth.uid()` ──────────────────────────────────────────────────
 -- Used in 9 RLS policies that are also dropped immediately by the next
 -- migration. The stub returns NULL — audit confirmed no NOT NULL DEFAULT
