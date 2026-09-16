@@ -81,6 +81,15 @@ describe('computeLeverage', () => {
     // 3 / 16 = 0.1875, rounded to 3 decimals = 0.188
     assert.equal(computeLeverage({ effortEstimate: 'CRITICAL', resolvedTopicIds: ['a'] }, index), 0.188);
   });
+
+  test('duplicate topicId counted once, matching the deduped-count score', () => {
+    const index = new Map([['a', makeEntry({ topicId: 'a', classification: { sonarType: 'BUG' } })]]);
+    // 'a' resolves one distinct debt entry regardless of how many times it's listed.
+    const deduped = computeLeverage({ effortEstimate: 'EASY', resolvedTopicIds: ['a'] }, index);
+    const withDuplicate = computeLeverage({ effortEstimate: 'EASY', resolvedTopicIds: ['a', 'a'] }, index);
+    assert.equal(withDuplicate, deduped);
+    assert.equal(withDuplicate, 1.5);
+  });
 });
 
 // ── rankRefactorsByLeverage ─────────────────────────────────────────────────

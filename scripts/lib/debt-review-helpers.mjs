@@ -89,7 +89,7 @@ export function computeLeverage(refactor, debtIndex) {
   const effortWeight = EFFORT_WEIGHTS[refactor.effortEstimate];
   if (!effortWeight || effortWeight <= 0) return 0;
 
-  const impact = refactor.resolvedTopicIds.reduce((sum, topicId) => {
+  const impact = [...new Set(refactor.resolvedTopicIds)].reduce((sum, topicId) => {
     const entry = debtIndex.get(topicId);
     if (!entry) return sum;
     const w = SONAR_TYPE_WEIGHTS[entry.classification?.sonarType] ?? DEFAULT_SONAR_WEIGHT;
