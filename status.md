@@ -1,6 +1,11 @@
 # Project Status Log
 
 ### Consumer Verification (previous ship)
+- **Commit**: 1dc155c3 on `main` (pushed 2026-09-13, range `f371d9c8..1dc155c3`; the backlog-tooling honesty cycle, 15 commits)
+- **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — gates 1..9 green. Subject check: `scripts/.claude-skills/lib/cross-skill/work-unit-grouping.mjs` present (Created: 3 / Updated: 39 in the push's sync summary, 3/3 consumers reached); `scripts/.claude-skills/lib/store/final-review-credit-population.mjs` carries `pendingQueueSql` (x1).
+- **Result**: verified — the shared grouper and the keyset-paged credit-queue SQL reached the consumer bundle intact.
+
+### Consumer Verification (previous ship)
 - **Commit**: 625650d6 on `main` (pushed 2026-09-13, range `5f3bfcf2..625650d6`; the arch:drift duplication-cleanup ships, `94304e44..625650d6`)
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `scripts/.claude-skills/lib/symbol-index/drift-path-exemptions.mjs` present in the synced tree (`DRIFT_PATH_EXEMPT_PREFIXES` x3); `scripts/.claude-skills/symbol-index/refresh.mjs` imports/calls `isDriftPathExempt` (x2). The push's own sync summary confirmed 3/3 consumers updated.
 - **Result**: verified — the path-based duplication-exemption mechanism (the bucket-1 fix for the arch:drift RED-80 cleanup) reached the consumer bundle intact.
@@ -131,6 +136,79 @@ migrated `--help` to `hasFlag('help')` but kept a bare
 Backlog 2026-09-16T04:32Z: Q1 50c/18p (+263 aged) · Q2 84c/68p (66 perm) · Q3 55 · debt unmeasured · upstream 1
 
 ---
+
+## 2026-09-16 — debt-ledger merge safety: a CI gate + git-merge-friendly serialization, not the requested per-topicId-file migration
+
+### Changes
+
+`/cycle --autonomous` over [docs/plans/debt-ledger-merge-safety.md](docs/plans/debt-ledger-merge-safety.md)
+— closes upstream report `00052a5a` (wine-cellar-app: 22 duplicated topicIds /
+44 array elements in `.audit/tech-debt.json`, from a plain `git merge`
+silently unioning non-conflicting array-element edits instead of
+conflicting). A brainstorm session (this repo, cross-examined by OpenAI +
+Gemini) first proposed a per-topicId-file storage migration; plan-audit
+Phase 1 exploration found the real blast radius bigger than assumed (3
+raw-`budgets`-read bypasses, a `git log -S<topicId>` pickaxe dependency in
+`debt-git-history.mjs`, an unconstrained-`topicId`-as-filename path-traversal
+surface) and substituted a smaller fix that directly targets the incident's
+own signature instead. audit-plan GPT R1 H:2/M:2 → R2 H:0/M:1 → R3 H:0/M:1 →
+R4 H:0/M:0 (100% acceptance every round); Gemini APPROVE R1. Executed as two
+§11 clusters (A: CI gate, fix-gate:yes, 4 code-audit rounds to PASS; B:
+serialization + warning + budgets + docstring + acceptance test, fix-gate:final,
+2 rounds to PASS); consolidated Gemini gate R1 CONCERNS (2 findings) → R2
+APPROVE.
+
+- **`debt-health-check.mjs --fail-on-duplicates`** — a CI-blocking mode scoped
+  to duplicate topicIds only (ignores stale/recurring/budget for its exit
+  code), documented as a `pull_request`-triggered step so GitHub's default
+  merge-ref checkout supplies the "prospective merged tree" with no new diffing
+  logic.
+- **`serializeLedgerForDisk`** (`scripts/lib/debt-ledger.mjs`) — one JSON object
+  per line, adopted by all three writers (`writeDebtEntries`/`removeDebtEntry`/
+  `markSuperseded`). Format-only by design (round-1 audit H2): never
+  deduplicates, so a pre-existing duplicate pair round-trips unchanged rather
+  than the serializer becoming a second silent place data could be lost.
+- **`isLedgerTracked`/`warnIfLedgerTracked`** — a direct `git ls-files
+  --error-unmatch` check (round-1 audit M1: NOT the inverse of the existing
+  `ignoredUntrackedPaths` oracle — a third state, untracked-but-not-ignored,
+  is equally invisible to `git merge` and would false-positive under naive
+  inversion). Informs a consumer if they've deviated from this repo's shipped
+  gitignore-everything default, which is the actual precondition for the
+  incident.
+- **`budgets` promoted to a first-class field on `readDebtLedger`'s return**,
+  closing three independent raw-file-read duplicates (`debt-health-check.mjs`,
+  `debt-review.mjs`, `debt-budget-check.mjs`).
+- **Real bug found in passing**: `debt-budget-check.mjs` reported
+  `UNVERIFIABLE` on an unavailable ledger but still `process.exit(0)` — a fail-
+  open policy-enforcement gate whose own docstring already specified exit 1 for
+  this case. Fixed; the test that had pinned the old exit code as expected
+  behavior corrected (round-1 audit H3). Regression-locked via
+  `lock-with-test`.
+- **Merge-level acceptance test** (`tests/debt-ledger-merge-safety.test.mjs`,
+  new) — real two-branch `git merge` scenarios, not just unit-level formatting
+  checks; asserts one of two acceptable outcomes (clean-and-correct, or a loud
+  detected conflict) and forbids the third (clean exit + silent corruption).
+- Final-gate G1/G2 (round 1 CONCERNS): added the unit tests for
+  `serializeLedgerForDisk`/`isLedgerTracked` the plan had promised but the
+  implementation skipped (`tests/debt-ledger.test.mjs`); `warnIfLedgerTracked`'s
+  tests went into `tests/debt-ledger-durability.test.mjs` instead, reusing its
+  existing per-case-child-process pattern rather than risking the same
+  module-level warn-once latch leaking across in-process test cases. Fixed the
+  new merge-safety harness's `git()` helper to sanitize inherited `GIT_*` env
+  vars via this repo's existing `gitFixtureEnv()` (`tests/helpers/fixtures.mjs`)
+  rather than a second implementation.
+- **Deferred, not built**: the full per-topicId-file storage migration —
+  documented as an explicit, revisit-triggered option in the plan's Risk
+  Register.
+- **Two unrelated bugs found during audit, filed as follow-ups, not fixed
+  here**: a `--` terminator parsing inconsistency in `debt-health-check.mjs`
+  (re-raised 4× across the cycle — always dismissed as the same pre-existing
+  item); `computeLeverage`/`rankRefactorsByLeverage` double-counting a
+  duplicate topicId within one refactor's own `resolvedTopicIds` list.
+
+446 tests passing (`tests/debt-*.test.mjs`).
+
+Backlog 2026-09-16T04:31Z: Q1 50c/18p (+263 aged) · Q2 84c/68p (66 perm) · Q3 55 · debt unmeasured · upstream 1
 
 ## 2026-09-14 — final-review credit: a ruling on either axis is a label, and replay no longer erases prior rulings
 

@@ -123,6 +123,79 @@ describe('debt-health-check CLI', () => {
     assert.deepEqual(data.stale, ['a']);
   });
 
+  test('exit 1 when a topicId is duplicated', () => {
+    seedLedger([makeEntry('dup'), makeEntry('dup'), makeEntry('unique')]);
+    const r = runCli(['--ledger', ledgerPath]);
+    assert.equal(r.status, 1);
+    assert.match(r.stdout, /Duplicate topicIds: 1/);
+    assert.match(r.stdout, /dup: 2 copies/);
+  });
+
+  test('--json mode reports duplicate topicIds on an unhealthy ledger', () => {
+    seedLedger([makeEntry('dup'), makeEntry('dup')]);
+    const r = runCli(['--ledger', ledgerPath, '--json']);
+    assert.equal(r.status, 1);
+    const data = JSON.parse(r.stdout);
+    assert.equal(data.ok, false);
+    assert.deepEqual(data.duplicates, [{ topicId: 'dup', count: 2 }]);
+  });
+
+  describe('--fail-on-duplicates (CI gate mode)', () => {
+    // Hermetic against the operator's real shell env — `runCli` spreads
+    // `process.env` before its own overrides, so an operator with
+    // DEBT_HEALTH_TTL_DAYS/RECURRENCE_THRESHOLD already exported would
+    // otherwise leak into these assertions. Empty string is `numEnv`'s
+    // "use default" sentinel (debt-health-check.mjs), not a parse failure.
+    const DEFAULT_ENV = { DEBT_HEALTH_TTL_DAYS: '', DEBT_HEALTH_RECURRENCE_THRESHOLD: '' };
+
+    test('exit 1 when duplicates are present, even with no other attention triggers', () => {
+      // deferredAt explicit: makeEntry's fixed default date is a ticking time
+      // bomb against the 180-day TTL — this test's own claim ("no other
+      // attention triggers") would silently go false once real time passes it.
+      const now = new Date().toISOString();
+      seedLedger([makeEntry('dup', { deferredAt: now }), makeEntry('dup', { deferredAt: now })]);
+      const r = runCli(['--ledger', ledgerPath, '--fail-on-duplicates'], DEFAULT_ENV);
+      assert.equal(r.status, 1);
+    });
+
+    test('exit 0 when duplicates are absent, EVEN IF stale/budget would trigger default mode', () => {
+      // Exercises stale + budget specifically (both cheap to seed directly).
+      // Recurrence is deliberately NOT exercised here: `distinctRunCount` is
+      // hydrated from the event log (debt-events.mjs), not the raw seeded
+      // ledger — proving it would need a second fixture (a matching events
+      // file), disproportionate to what this test needs to establish. The
+      // production code's narrowing (debt-health-check.mjs's `escalationTrigger`)
+      // reads `summary.duplicates.length` alone regardless of which of the
+      // three dimensions triggered `summary.triggered`, so stale+budget
+      // already demonstrates the narrowing logic; recurrence is the same
+      // code path, not a separate branch to prove separately.
+      const old = new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString();
+      seedLedger(
+        [makeEntry('a', { file: 'src/big.js', deferredAt: old }),
+          makeEntry('b', { file: 'src/big.js', deferredAt: new Date().toISOString() })],
+        { 'src/big.js': 1 },
+      );
+      // Sanity: default mode DOES trigger on this ledger (proves the two modes differ).
+      const defaultRun = runCli(['--ledger', ledgerPath], DEFAULT_ENV);
+      assert.equal(defaultRun.status, 1, 'sanity check: default mode should flag stale+budget');
+
+      const r = runCli(['--ledger', ledgerPath, '--fail-on-duplicates'], DEFAULT_ENV);
+      assert.equal(r.status, 0, '--fail-on-duplicates must ignore stale/budget for its exit code');
+    });
+
+    test('exit 0 on an unavailable (missing) ledger — never gates on a measurement that did not happen', () => {
+      const r = runCli(['--ledger', ledgerPath, '--fail-on-duplicates'], DEFAULT_ENV);
+      assert.equal(r.status, 0);
+      assert.match(r.stdout, /UNVERIFIABLE/);
+    });
+
+    test('exit 2 on corrupt ledger — op-error is unchanged by the flag', () => {
+      fs.writeFileSync(ledgerPath, '{not json');
+      const r = runCli(['--ledger', ledgerPath, '--fail-on-duplicates'], DEFAULT_ENV);
+      assert.equal(r.status, 2);
+    });
+  });
+
   test('exit 2 on corrupt ledger', () => {
     fs.writeFileSync(ledgerPath, '{not json');
     const r = runCli(['--ledger', ledgerPath]);

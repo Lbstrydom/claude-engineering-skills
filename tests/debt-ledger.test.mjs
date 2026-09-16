@@ -16,7 +16,11 @@ import {
   mergeLedgers,
   findDebtByAlias,
   markSuperseded,
+  serializeLedgerForDisk,
+  isLedgerTracked,
 } from '../scripts/lib/debt-ledger.mjs';
+import { findDuplicateTopicIds } from '../scripts/lib/debt-review-helpers.mjs';
+import { gitInit, commit } from './helpers/fixtures.mjs';
 
 let tmpDir;
 let ledgerPath;
@@ -64,7 +68,7 @@ describe('readDebtLedger', () => {
     // See docs/plans/backlog-and-drift-reduction.md §2 (availability contract).
     const r = readDebtLedger({ ledgerPath, events: [] });
     assert.deepEqual(r, {
-      version: 1, entries: [], available: false, reason: 'clean-checkout-sandbox',
+      version: 1, entries: [], available: false, reason: 'clean-checkout-sandbox', budgets: {},
     });
   });
 
@@ -200,6 +204,23 @@ describe('removeDebtEntry', () => {
     await writeDebtEntries([makeEntry({ topicId: 'aa00' })], { ledgerPath });
     const r = await removeDebtEntry('zz99', { ledgerPath });
     assert.equal(r, false);
+  });
+
+  test('preserves compact (one-line-per-entry) serialization after removal', async () => {
+    await writeDebtEntries([makeEntry({ topicId: 'aa00' }), makeEntry({ topicId: 'bb00' })], { ledgerPath });
+    await removeDebtEntry('aa00', { ledgerPath });
+    const raw = fs.readFileSync(ledgerPath, 'utf-8');
+    const entryLines = raw.split('\n').filter((l) => l.includes('"topicId"'));
+    assert.equal(entryLines.length, 1, 'the remaining entry must still be one line, not re-expanded to multi-line');
+  });
+
+  test('preserves budgets after removal', async () => {
+    await writeDebtEntries([makeEntry({ topicId: 'aa00' }), makeEntry({ topicId: 'bb00' })], { ledgerPath });
+    const raw = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+    fs.writeFileSync(ledgerPath, JSON.stringify({ ...raw, budgets: { 'src/**': 5 } }));
+    await removeDebtEntry('aa00', { ledgerPath });
+    const after = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+    assert.deepEqual(after.budgets, { 'src/**': 5 });
   });
 });
 
@@ -338,6 +359,14 @@ describe('markSuperseded', () => {
     assert.equal(r.error, 'ledger-not-found');
   });
 
+  test('preserves compact (one-line-per-entry) serialization after superseding', async () => {
+    await writeDebtEntries([makeEntry({ topicId: 'old1' }), makeEntry({ topicId: 'new1' })], { ledgerPath });
+    await markSuperseded('old1', 'new1', { ledgerPath });
+    const raw = fs.readFileSync(ledgerPath, 'utf-8');
+    const entryLines = raw.split('\n').filter((l) => l.includes('"topicId"'));
+    assert.equal(entryLines.length, 2, 'both entries must still be one line each, not re-expanded to multi-line');
+  });
+
   test('normalizes a historical entry with no classification field before writing it back (Gemini gate round-2 G4)', async () => {
     // A "historical" entry has neither classification nor
     // classificationUnavailableReason — writeDebtEntries would normally
@@ -352,5 +381,89 @@ describe('markSuperseded', () => {
     const updated = read.entries.find(e => e.topicId === 'old1');
     assert.equal(updated.supersededBy, 'new1');
     assert.equal(updated.classificationUnavailableReason, 'not-provided-by-capture-source');
+  });
+});
+
+// ── serializeLedgerForDisk ───────────────────────────────────────────────────
+// docs/plans/debt-ledger-merge-safety.md — final-gate G1: these were promised
+// in the plan's §5/§6 but not written when the writers were first wired up.
+
+describe('serializeLedgerForDisk', () => {
+  test('renders one compact (single-line) JSON object per entry', () => {
+    const out = serializeLedgerForDisk({ version: 1, entries: [makeEntry({ topicId: 'a' }), makeEntry({ topicId: 'b' })] });
+    const lines = out.split('\n').filter((l) => l.includes('"topicId"'));
+    assert.equal(lines.length, 2, 'each entry must be exactly one line');
+    for (const line of lines) assert.doesNotThrow(() => JSON.parse(line.trim().replace(/,$/, '')));
+  });
+
+  test('round-trips: JSON.parse(serializeLedgerForDisk(ledger)) deep-equals the input', () => {
+    const ledger = { version: 1, entries: [makeEntry({ topicId: 'a' }), makeEntry({ topicId: 'b' })], lastUpdated: '2026-01-01T00:00:00.000Z' };
+    assert.deepEqual(JSON.parse(serializeLedgerForDisk(ledger)), ledger);
+  });
+
+  test('preserves an arbitrary top-level field (e.g. budgets) in its original position', () => {
+    const ledger = { version: 1, budgets: { 'src/**': 5 }, entries: [makeEntry({ topicId: 'a' })] };
+    const parsed = JSON.parse(serializeLedgerForDisk(ledger));
+    assert.deepEqual(parsed.budgets, { 'src/**': 5 });
+  });
+
+  test('empty entries array renders as `[]`, not a malformed/empty-line array', () => {
+    const parsed = JSON.parse(serializeLedgerForDisk({ version: 1, entries: [] }));
+    assert.deepEqual(parsed.entries, []);
+  });
+
+  test('NEGATIVE CONTROL (round-1 audit H2): preserves BOTH copies of a pre-existing duplicate topicId unchanged — never deduplicates', () => {
+    const dup1 = makeEntry({ topicId: 'dup', severity: 'MEDIUM' });
+    const dup2 = makeEntry({ topicId: 'dup', severity: 'HIGH' }); // e.g. one resolved-looking copy
+    const parsed = JSON.parse(serializeLedgerForDisk({ version: 1, entries: [dup1, dup2] }));
+    assert.equal(parsed.entries.length, 2, 'the serializer must never collapse duplicates by topicId');
+    assert.equal(findDuplicateTopicIds(parsed.entries).length, 1);
+    assert.equal(parsed.entries[0].severity, 'MEDIUM');
+    assert.equal(parsed.entries[1].severity, 'HIGH');
+  });
+});
+
+// ── isLedgerTracked ──────────────────────────────────────────────────────────
+// Safe to test in-process (unlike warnIfLedgerTracked below): a pure function,
+// no module-level warn-once state to leak across cases. warnIfLedgerTracked's
+// own tests live in tests/debt-ledger-durability.test.mjs, which already runs
+// each case in a fresh child process for exactly that reason.
+
+describe('isLedgerTracked', () => {
+  let repoDir;
+  beforeEach(() => {
+    repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'debt-ledger-tracked-test-'));
+  });
+  afterEach(() => {
+    try { fs.rmSync(repoDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
+  });
+
+  test('returns tracked:true for a committed file', () => {
+    gitInit(repoDir);
+    commit(repoDir, 'tech-debt.json', '{"version":1,"entries":[]}', 'add ledger');
+    const r = isLedgerTracked(path.join(repoDir, 'tech-debt.json'), repoDir);
+    assert.deepEqual(r, { tracked: true, degraded: false });
+  });
+
+  test('returns tracked:false, degraded:false for an untracked file in a real repo', () => {
+    gitInit(repoDir);
+    commit(repoDir, 'other.txt', 'x', 'unrelated commit'); // repo must have a HEAD for ls-files to behave normally
+    fs.writeFileSync(path.join(repoDir, 'tech-debt.json'), '{"version":1,"entries":[]}');
+    const r = isLedgerTracked(path.join(repoDir, 'tech-debt.json'), repoDir);
+    assert.deepEqual(r, { tracked: false, degraded: false });
+  });
+
+  test('returns degraded:true for a path outside repoRoot (git ownership is not the right question there)', () => {
+    gitInit(repoDir);
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'debt-ledger-outside-'));
+    const r = isLedgerTracked(path.join(outside, 'tech-debt.json'), repoDir);
+    assert.equal(r.degraded, true);
+    try { fs.rmSync(outside, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  test('returns degraded:true when git cannot be consulted (not a work tree)', () => {
+    // repoDir was mkdtemp'd but never `git init`'d.
+    const r = isLedgerTracked(path.join(repoDir, 'tech-debt.json'), repoDir);
+    assert.equal(r.degraded, true);
   });
 });

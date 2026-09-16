@@ -63,7 +63,7 @@ Exit codes: 0=within-budget, 1=op-error, 2=over-budget
 `);
 }
 
-function loadBudgets(opts) {
+function loadBudgets(opts, ledger) {
   if (opts.budgetsFile) {
     const resolved = path.resolve(opts.budgetsFile);
     if (!fs.existsSync(resolved)) {
@@ -75,11 +75,9 @@ function loadBudgets(opts) {
     }
     return raw;
   }
-  // Read budgets from the ledger's top-level `budgets` field
-  const resolved = path.resolve(opts.ledgerPath);
-  if (!fs.existsSync(resolved)) return {};
-  const raw = JSON.parse(fs.readFileSync(resolved, 'utf-8'));
-  return raw.budgets || {};
+  // Budgets are opt-in policy stored on the ledger's top-level `budgets`
+  // field — readDebtLedger() already surfaces it, no second raw read needed.
+  return ledger.budgets || {};
 }
 
 function main() {
@@ -96,7 +94,7 @@ function main() {
 
   let budgets;
   try {
-    budgets = loadBudgets(opts);
+    budgets = loadBudgets(opts, ledger);
   } catch (err) {
     console.error(`Error: ${err.message}`);
     process.exit(1);
@@ -104,7 +102,13 @@ function main() {
 
   // Separate "no budgets declared" from "no ledger to declare them in".
   // Both used to collapse into `reason:'no-budgets-configured'` with a ✓, so an
-  // absent gitignored ledger reported a policy pass it had not evaluated.
+  // absent gitignored ledger reported a policy pass it had not evaluated. The
+  // earlier fix corrected the MESSAGE/verdict but left the EXIT CODE at 0
+  // (round-1 audit H3, this plan) — and for an enforcement gate (unlike
+  // debt-health-check.mjs's advisory check) that's the field CI actually
+  // consumes: a policy that was never evaluated must not exit the same as one
+  // that passed. Exit 1 matches this CLI's own documented contract
+  // ("1 — operational error: missing/corrupt ledger, bad args").
   if (ledger.available === false) {
     if (opts.jsonMode) {
       process.stdout.write(JSON.stringify({
@@ -113,7 +117,7 @@ function main() {
     } else {
       process.stdout.write(`UNVERIFIABLE — no debt ledger (${ledger.reason}); no budgets evaluated.\n`);
     }
-    process.exit(0);
+    process.exit(1);
   }
 
   const budgetCount = Object.keys(budgets).length;

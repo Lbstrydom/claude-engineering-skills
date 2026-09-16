@@ -406,9 +406,9 @@ async function main() {
     process.stderr.write(`  [debt-review] ${sensitiveEntries.length} sensitive entries in ledger — filtering from external LLM payload. Use --include-sensitive to override or --local-only for local clustering.\n`);
   }
 
-  // Read budgets from ledger (optional top-level field)
-  const rawLedger = JSON.parse(fs.readFileSync(path.resolve(opts.ledgerPath), 'utf-8'));
-  const violations = findBudgetViolations(ledger.entries, rawLedger.budgets || {});
+  // Budgets are opt-in policy stored on the raw ledger file's top level —
+  // readDebtLedger() surfaces it, so no second raw read is needed.
+  const violations = findBudgetViolations(ledger.entries, ledger.budgets || {});
 
   // Ownership partition — entries citing only files this repo cannot edit are
   // real debt, but they are not refactor candidates: nobody here can act on

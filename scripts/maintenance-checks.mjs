@@ -239,9 +239,13 @@ export const CHECKS = [
     // existed, were tested and synced to consumers, but were referenced by
     // no skill step, no CI gate, and no maintenance check. This closes that
     // discoverability gap. `attention` = stale (>TTL) and/or recurring
-    // (>=3 distinct runs) and/or over-budget entries present; never blocks.
+    // (>=3 distinct runs) and/or over-budget and/or duplicate-topicId
+    // entries present; never blocks. Duplicates come from a plain 3-way
+    // `git merge` unioning two branches' edits to this flat JSON array —
+    // topicId is a logical record key git cannot see (found live in a
+    // consumer: 22 duplicated topicIds / 44 elements).
     key: 'debt-health',
-    label: 'Tech-debt ledger health (staleness, recurrence, budgets)',
+    label: 'Tech-debt ledger health (staleness, recurrence, budgets, duplicate topicIds)',
     requiredEnv: [],
     steps: [{ script: 'debt-health-check.mjs', args: [] }],
   },

@@ -2,7 +2,8 @@
 /**
  * @fileoverview debt-health — local maintenance check reporting the
  * tech-debt ledger's health (open count, staleness, recurrence, budget
- * violations) with no LLM call and no required env var. Mirrors
+ * violations, duplicate topicIds) with no LLM call and no required env var.
+ * Mirrors
  * memory-health.mjs's shape (numeric thresholds via env, --json/--out,
  * 0/1/2 exit contract) so scripts/maintenance-checks.mjs can spawn it
  * exactly like its siblings.
@@ -23,9 +24,15 @@
  *   1 — stale and/or recurring and/or budget-violating entries present
  *   2 — op error (corrupt ledger, unknown flag)
  *
+ * `--fail-on-duplicates` is a CI-gate mode: same exit-2/0 op-error and
+ * unavailable handling, but exit 1 is scoped to duplicate topicIds ONLY
+ * (ignoring stale/recurring/budget) — see the docs/plans/debt-ledger-merge-safety.md
+ * design rationale. Intended as a `pull_request`-triggered CI step, which
+ * checks out the merge commit by default, so no diffing logic is needed here.
+ *
  * Usage:
  *   node scripts/debt-health-check.mjs [--json] [--out <path.md>]
- *                                       [--ledger <path>]
+ *                                       [--ledger <path>] [--fail-on-duplicates]
  *
  * @module scripts/debt-health-check
  */
@@ -35,9 +42,10 @@ import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { assertKnownFlags, ArgvError, argOption, hasFlag } from './lib/cli-io.mjs';
-import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
+import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH, warnIfLedgerTracked } from './lib/debt-ledger.mjs';
 import {
   findStaleEntries, oldestEntryDays, findRecurringEntries, findBudgetViolations,
+  findDuplicateTopicIds,
 } from './lib/debt-review-helpers.mjs';
 
 // Parse a numeric env var, falling back to the default on absent/garbage —
@@ -57,7 +65,9 @@ function numEnv(name, fallback) {
 const TTL_DAYS = numEnv('DEBT_HEALTH_TTL_DAYS', 180);
 const RECURRENCE_THRESHOLD = numEnv('DEBT_HEALTH_RECURRENCE_THRESHOLD', 3);
 
-const KNOWN_FLAGS = ['--ledger', '--json', '--out', '--help', '-h', '--selfcheck-relocation'];
+const KNOWN_FLAGS = [
+  '--ledger', '--json', '--out', '--fail-on-duplicates', '--help', '-h', '--selfcheck-relocation',
+];
 
 function parseArgs(argv) {
   const args = argv.slice(2);
@@ -75,6 +85,7 @@ function parseArgs(argv) {
     ledgerPath: argOption('ledger', DEFAULT_DEBT_LEDGER_PATH),
     jsonMode: hasFlag('json'),
     outFile: argOption('out', null),
+    failOnDuplicates: hasFlag('fail-on-duplicates'),
     help: hasFlag('help', { short: 'h' }),
   };
 }
@@ -102,19 +113,35 @@ function printUsage() {
   process.stderr.write(`Usage: node scripts/debt-health-check.mjs [options]
 
 Report tech-debt ledger health: open count, staleness, recurrence, budget
-violations. No LLM call, no required env — safe to run in any repo state.
+violations, duplicate topicIds. No LLM call, no required env — safe to run
+in any repo state.
 
 Options:
-  --ledger <path>   Debt ledger path (default: .audit/tech-debt.json)
-  --json            Machine-readable JSON output to stdout
-  --out <file>      Write markdown report to file (default: stdout/human)
-  --help            Show this message
+  --ledger <path>          Debt ledger path (default: .audit/tech-debt.json)
+  --json                   Machine-readable JSON output to stdout
+  --out <file>             Write markdown report to file (default: stdout/human)
+  --fail-on-duplicates     CI gate mode: exit 1 ONLY on duplicate topicIds,
+                           ignoring stale/recurring/budget for the exit code
+                           (still printed). Op-error (2) and unavailable (0)
+                           are unchanged. Use as a merge-safety CI check:
+
+                             # .github/workflows/*.yml — MUST trigger on
+                             # pull_request (not push), so the default
+                             # checkout ref is the MERGE commit
+                             # (refs/pull/<n>/merge), not either branch alone.
+                             on: [pull_request]
+                             steps:
+                               - uses: actions/checkout@v4
+                               - run: node scripts/debt-health-check.mjs --fail-on-duplicates
+
+  --help                   Show this message
 
 Tunables (env):
   DEBT_HEALTH_TTL_DAYS               Stale-entry age threshold (default: 180)
   DEBT_HEALTH_RECURRENCE_THRESHOLD   distinctRunCount considered "recurring" (default: 3)
 
-Exit codes: 0=healthy, 1=attention (stale/recurring/over-budget), 2=op-error
+Exit codes: 0=healthy, 1=attention (stale/recurring/over-budget/duplicate), 2=op-error
+With --fail-on-duplicates: 0=no-duplicates-or-unavailable, 1=duplicates-found, 2=op-error
 `);
 }
 
@@ -150,6 +177,12 @@ function renderHuman(summary) {
       lines.push(`    ${v.path}: ${v.count}/${v.budget} (over by ${v.count - v.budget})`);
     }
   }
+  if (summary.duplicates.length > 0) {
+    lines.push(`  Duplicate topicIds: ${summary.duplicates.length}`);
+    for (const d of summary.duplicates) {
+      lines.push(`    ${d.topicId}: ${d.count} copies`);
+    }
+  }
   if (summary.triggered) {
     lines.push('');
     lines.push('  Run `node scripts/debt-review.mjs --local-only` to cluster into refactor candidates,');
@@ -181,20 +214,18 @@ function main() {
     process.exit(2);
   }
 
+  // A tracked ledger is the actual precondition for the merge-duplication
+  // failure mode below — surfaced once, in the default (non-CI-gate) path,
+  // matching the advisory tone of this whole check.
+  if (!opts.failOnDuplicates) warnIfLedgerTracked(path.resolve(opts.ledgerPath));
+
   const now = new Date();
   const bySeverity = {};
   for (const e of ledger.entries) bySeverity[e.severity] = (bySeverity[e.severity] || 0) + 1;
 
   // Budgets are opt-in policy stored on the raw ledger file (not part of the
-  // hydrated HydratedDebtEntry shape readDebtLedger returns) — same read as
-  // debt-budget-check.mjs's loadBudgets().
-  let budgets = {};
-  const resolvedLedgerPath = path.resolve(opts.ledgerPath);
-  if (fs.existsSync(resolvedLedgerPath)) {
-    try {
-      budgets = JSON.parse(fs.readFileSync(resolvedLedgerPath, 'utf-8')).budgets || {};
-    } catch { /* already surfaced above by readDebtLedger if truly corrupt */ }
-  }
+  // hydrated HydratedDebtEntry shape). readDebtLedger now surfaces it.
+  const budgets = ledger.budgets || {};
 
   const summary = {
     available: ledger.available !== false,
@@ -205,8 +236,10 @@ function main() {
     stale: findStaleEntries(ledger.entries, TTL_DAYS, now),
     recurring: findRecurringEntries(ledger.entries, RECURRENCE_THRESHOLD).map((e) => e.topicId),
     violations: findBudgetViolations(ledger.entries, budgets),
+    duplicates: findDuplicateTopicIds(ledger.entries),
   };
-  summary.triggered = summary.stale.length > 0 || summary.recurring.length > 0 || summary.violations.length > 0;
+  summary.triggered = summary.stale.length > 0 || summary.recurring.length > 0
+    || summary.violations.length > 0 || summary.duplicates.length > 0;
 
   if (opts.jsonMode) {
     // `ok:false` when nothing was measured — a machine consumer reading `ok`
@@ -231,8 +264,12 @@ function main() {
   }
 
   // Unavailable never escalates: it is not an "attention" state, it is the
-  // absence of a measurement.
-  process.exit(summary.available !== false && summary.triggered ? 1 : 0);
+  // absence of a measurement. `--fail-on-duplicates` NARROWS the trigger to
+  // duplicates only — a CI gate must be surgical (fail on the one thing it
+  // exists to catch) or teams disable it the first time it flags unrelated
+  // staleness noise on an unrelated PR.
+  const escalationTrigger = opts.failOnDuplicates ? summary.duplicates.length > 0 : summary.triggered;
+  process.exit(summary.available !== false && escalationTrigger ? 1 : 0);
 }
 
 main();

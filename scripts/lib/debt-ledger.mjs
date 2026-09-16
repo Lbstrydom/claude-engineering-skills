@@ -45,6 +45,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import lockfile from 'proper-lockfile';
 import { atomicWriteFileSync, normalizePath } from './file-io.mjs';
 import { PersistedDebtEntrySchema, DebtLedgerSchema, normalizeClassificationEnvelope } from './schemas.mjs';
@@ -151,6 +152,76 @@ function assertLedgerDurability(absPath, cloudMirrored) {
   }
 }
 
+// Warn-once, sibling to `_durabilityWarned` above — same rationale (a run
+// checks health many times; the same notice repeated is a notice nobody reads).
+let _trackedWarned = false;
+
+/**
+ * Is `absPath` TRACKED by git (in the index / committed to history)?
+ *
+ * **Not the inverse of `ignoredUntrackedPaths`** (round-1 plan-audit M1 — the
+ * first draft of this module got this wrong). "Ignored AND untracked" has a
+ * third complement besides "tracked": a file that is untracked but matches NO
+ * ignore pattern (e.g. nobody has `git add`ed it yet). That state is exactly
+ * as invisible to `git merge` as an ignored one, so treating "not
+ * ignored-and-untracked" as "merge-exposed" would false-positive on it.
+ * TRACKED is the actual precondition for merge exposure, and needs a direct
+ * check — the standard idiom already used independently three times in this
+ * repo (`worktree-identity.mjs`, `remove-legacy-synced.mjs::isTracked`,
+ * `sync-divergence.mjs`), not a fourth copy consolidated here (out of scope
+ * for this fix; a candidate for extraction if a fifth caller appears).
+ *
+ * @param {string} absPath resolved path to check
+ * @param {string} repoRoot
+ * @returns {{tracked: boolean, degraded: boolean}} `degraded:true` means git
+ *   could not be consulted (not a work tree, git absent, or the path escapes
+ *   the repo) — `tracked` is then meaningless, not a confirmed `false`.
+ */
+export function isLedgerTracked(absPath, repoRoot) {
+  const rel = path.relative(repoRoot, absPath).split(path.sep).join('/');
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return { tracked: false, degraded: true };
+  try {
+    execFileSync('git', ['ls-files', '--error-unmatch', '--', rel], {
+      cwd: repoRoot, stdio: ['ignore', 'ignore', 'ignore'], windowsHide: true,
+    });
+    return { tracked: true, degraded: false };
+  } catch (err) {
+    // Exit 1 = definitively not tracked. Anything else (128 = not a work
+    // tree, ENOENT = git absent, etc.) means we could not determine it.
+    if (err && err.status === 1) return { tracked: false, degraded: false };
+    return { tracked: false, degraded: true };
+  }
+}
+
+/**
+ * Warn once when the debt ledger IS tracked by git — the actual precondition
+ * for the merge-duplication failure mode `findDuplicateTopicIds` detects
+ * after the fact (docs/plans/debt-ledger-merge-safety.md). By default this
+ * repo's `.gitignore` ignores `.audit/` entirely (verified: `git ls-files
+ * .audit/` is empty here and, per this module's own header, in every
+ * consumer checked) — a consumer only hits this warning by deviating from
+ * that default. Informational, not prescriptive (mirrors
+ * `assertLedgerDurability`'s tone for its own unknown-cloud-mirror case):
+ * this repo does not know why a consumer chose to track the file, so it
+ * states the exposure and the mitigation rather than recommending untracking.
+ *
+ * @param {string} absPath resolved ledger path
+ * @param {string} [repoRoot=process.cwd()]
+ */
+export function warnIfLedgerTracked(absPath, repoRoot = process.cwd()) {
+  if (_trackedWarned) return;
+  const { tracked, degraded } = isLedgerTracked(absPath, repoRoot);
+  if (degraded || !tracked) return;
+  _trackedWarned = true;
+  const rel = path.relative(repoRoot, absPath).split(path.sep).join('/');
+  process.stderr.write(
+    `  [debt] ${rel} is tracked by git — a plain \`git merge\` can silently duplicate topicId entries `
+    + `across branches (git's line-based merge has no notion of topicId as a record key). Run `
+    + `\`node scripts/debt-health-check.mjs --fail-on-duplicates\` as a required check on every `
+    + `pull_request-triggered CI run to catch it at merge time.\n`,
+  );
+}
+
 // ── Read ────────────────────────────────────────────────────────────────────
 
 /**
@@ -190,7 +261,7 @@ export const LEDGER_UNAVAILABLE_REASONS = Object.freeze([
  * @param {string} [opts.ledgerPath=DEFAULT_DEBT_LEDGER_PATH]
  * @param {object[]|null} [opts.events=null] - Pre-fetched events; if null, reads local log
  * @param {string} [opts.eventsPath=DEFAULT_DEBT_EVENTS_PATH]
- * @returns {{ version: 1, entries: object[], available: boolean, reason: string|null }}
+ * @returns {{ version: 1, entries: object[], available: boolean, reason: string|null, budgets: Record<string, number> }}
  */
 export function readDebtLedger({
   ledgerPath = DEFAULT_DEBT_LEDGER_PATH,
@@ -199,7 +270,9 @@ export function readDebtLedger({
 } = {}) {
   const absPath = path.resolve(ledgerPath);
   if (!fs.existsSync(absPath)) {
-    return { version: 1, entries: [], available: false, reason: 'clean-checkout-sandbox' };
+    return {
+      version: 1, entries: [], available: false, reason: 'clean-checkout-sandbox', budgets: {},
+    };
   }
 
   let text;
@@ -209,9 +282,13 @@ export function readDebtLedger({
     // Exists but unreadable — EACCES/EPERM/EISDIR, or a read that raced an
     // atomic replace. Never a measurement, so never an empty ledger.
     if (err && err.code === 'ENOENT') {
-      return { version: 1, entries: [], available: false, reason: 'clean-checkout-sandbox' };
+      return {
+        version: 1, entries: [], available: false, reason: 'clean-checkout-sandbox', budgets: {},
+      };
     }
-    return { version: 1, entries: [], available: false, reason: 'ledger-unreadable' };
+    return {
+      version: 1, entries: [], available: false, reason: 'ledger-unreadable', budgets: {},
+    };
   }
 
   let raw;
@@ -250,7 +327,70 @@ export function readDebtLedger({
     });
   }
 
-  return { version: 1, entries: hydrated, available: true, reason: null };
+  // `budgets` is opt-in policy stored on the raw ledger file's top level, not
+  // part of any individual entry — three call sites (debt-health-check.mjs,
+  // debt-review.mjs, debt-budget-check.mjs) each raw-read the file a second
+  // time just to reach this field. Additive: `entries` keeps its exact
+  // existing meaning, so a caller destructuring only `{entries}` is unaffected.
+  const budgets = (raw && typeof raw.budgets === 'object' && raw.budgets !== null && !Array.isArray(raw.budgets))
+    ? raw.budgets
+    : {};
+
+  return {
+    version: 1, entries: hydrated, available: true, reason: null, budgets,
+  };
+}
+
+// ── Serialization (shared by every writer) ──────────────────────────────────
+
+/**
+ * Render a ledger object as compact, git-merge-friendly JSON: every
+ * top-level field is pretty-printed normally EXCEPT `entries`, which renders
+ * one COMPACT (single-line) JSON object per array element. This is the one
+ * place all three ledger writers (`writeDebtEntries`, `removeDebtEntry`,
+ * `markSuperseded`) produce their on-disk bytes.
+ *
+ * **Format-only, by design — never deduplicates.** This function renders
+ * EXACTLY the `entries` array it is given, in its existing order, with no
+ * topicId-keyed reconciliation of any kind. If given an already
+ * duplicate-laden array (e.g. a ledger already corrupted by a bad merge,
+ * mid-repair), both copies round-trip unchanged. A `Map`-keyed-by-topicId
+ * implementation — the idiom `mergeLedgers`/`findDuplicateTopicIds` use for
+ * their own, different purposes — would silently discard one of exactly the
+ * resolved/unresolved duplicate pairs this function exists to stop losing,
+ * making the serializer itself a second, silent place duplicates could
+ * disappear without triage. Deduplication stays where it already correctly
+ * lives: `findDuplicateTopicIds` (detection) + `debt-resolve.mjs` (the only
+ * sanctioned removal path).
+ *
+ * **Why one-record-per-line.** git's line-based 3-way merge aligns cleanly on
+ * an array boundary only when each record occupies exactly one line. The
+ * previous multi-line `JSON.stringify(ledger, null, 2)` let git's diff3
+ * misalign on repetitive near-identical multi-line blocks — the mechanism
+ * behind a real consumer incident (22 duplicated topicIds from a plain
+ * `git merge`). See docs/plans/debt-ledger-merge-safety.md.
+ *
+ * Assembled by hand rather than `JSON.stringify(ledger, null, 2)` followed by
+ * a regex collapse: regex-collapsing risks corrupting a string VALUE that
+ * happens to contain literal `},\n{`-shaped text (e.g. inside a finding's
+ * `detailSnapshot`). Building the array body from already-serialized,
+ * already-escaped entries is the only construction that cannot do that.
+ *
+ * @param {{entries?: object[], [key: string]: any}} ledger
+ * @returns {string} JSON text, trailing newline included
+ */
+export function serializeLedgerForDisk(ledger) {
+  const parts = [];
+  for (const [key, value] of Object.entries(ledger)) {
+    if (key === 'entries') {
+      const arr = Array.isArray(value) ? value : [];
+      const body = arr.map((e) => `    ${JSON.stringify(e)}`).join(',\n');
+      parts.push(`  "entries": [\n${body ? `${body}\n` : ''}  ]`);
+    } else {
+      parts.push(`  ${JSON.stringify(key)}: ${JSON.stringify(value)}`);
+    }
+  }
+  return `{\n${parts.join(',\n')}\n}\n`;
 }
 
 // ── Write (single-writer, locked) ───────────────────────────────────────────
@@ -351,10 +491,15 @@ export async function writeDebtEntries(entries, { ledgerPath = DEFAULT_DEBT_LEDG
     const sortedEntries = [...byTopic.values()].sort((a, b) => a.topicId.localeCompare(b.topicId));
     const next = {
       version: 1,
+      // `current.budgets` preserved — this write path previously dropped it
+      // silently (found while unifying serialization): any consumer with
+      // budget policy configured would lose it on the very next
+      // debt-auto-capture.mjs run.
+      ...(current.budgets ? { budgets: current.budgets } : {}),
       entries: sortedEntries,
       lastUpdated: new Date().toISOString(),
     };
-    atomicWriteFileSync(absPath, JSON.stringify(next, null, 2) + '\n');
+    atomicWriteFileSync(absPath, serializeLedgerForDisk(next));
 
     return {
       inserted,
@@ -395,11 +540,13 @@ export async function removeDebtEntry(topicId, { ledgerPath = DEFAULT_DEBT_LEDGE
     const before = raw.entries.length;
     const after = raw.entries.filter(e => e.topicId !== topicId);
     if (after.length === before) return false;
-    atomicWriteFileSync(absPath, JSON.stringify({
+    atomicWriteFileSync(absPath, serializeLedgerForDisk({
       version: 1,
+      // `raw.budgets` preserved — same fix as writeDebtEntries.
+      ...(raw.budgets ? { budgets: raw.budgets } : {}),
       entries: after,
       lastUpdated: new Date().toISOString(),
-    }, null, 2) + '\n');
+    }));
     return true;
   } finally {
     try { await release(); } catch { /* ignore */ }
@@ -466,10 +613,10 @@ export async function markSuperseded(oldTopicId, newTopicId, { ledgerPath = DEFA
       return { ok: false, error: `schema-rejected: ${validated.error.message.slice(0, 300)}` };
     }
     raw.entries[oldIdx] = validated.data;
-    atomicWriteFileSync(absPath, JSON.stringify({
+    atomicWriteFileSync(absPath, serializeLedgerForDisk({
       ...raw,
       lastUpdated: new Date().toISOString(),
-    }, null, 2) + '\n');
+    }));
     return { ok: true };
   } finally {
     try { await release(); } catch { /* lock already released / stale */ }

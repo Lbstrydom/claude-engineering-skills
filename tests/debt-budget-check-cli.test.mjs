@@ -132,10 +132,29 @@ describe('debt-budget-check CLI', () => {
     assert.match(r.stderr, /not found/);
   });
 
-  test('exit 0 when ledger file missing + no budgets', () => {
-    // Ledger that doesn't exist yet + no budgets file → treated as empty
+  test('exit 1 when the ledger file is missing — never a false pass (round-1 audit H3)', () => {
+    // This used to assert exit 0 ("treated as empty"), pinning a fail-open
+    // bug: an UNAVAILABLE ledger (never read) and a genuinely EMPTY one (read,
+    // zero entries/budgets) are different facts, and this is an ENFORCEMENT
+    // gate, not the advisory debt-health-check.mjs — CI consumes the exit
+    // code, so "policy never evaluated" must not exit the same as "policy
+    // passed". A missing ledger is still reported clearly (UNVERIFIABLE), but
+    // the exit code now matches this CLI's own documented operational-error
+    // contract instead of contradicting it.
     const r = runCli(['--ledger', ledgerPath]);
-    assert.equal(r.status, 0);
+    assert.equal(r.status, 1);
+    assert.match(r.stdout, /UNVERIFIABLE/);
+  });
+
+  test('exit 1 when the ledger is missing, even with --budgets-file supplied', () => {
+    // Budgets can come from an external file, but the ENTRIES to check them
+    // against always come from the ledger (`ledger.entries`) — an unavailable
+    // ledger means there's nothing to count regardless of budget source, so
+    // this branch fires unconditionally, before budgetCount is even examined.
+    const budgetsFile = path.join(tmpDir, 'budgets.json');
+    fs.writeFileSync(budgetsFile, JSON.stringify({ 'src/**': 0 }));
+    const r = runCli(['--ledger', ledgerPath, '--budgets-file', budgetsFile]);
+    assert.equal(r.status, 1);
   });
 
   test('--help exits 0 and prints usage', () => {

@@ -174,6 +174,52 @@ export function oldestEntryDays(debtEntries, now = new Date()) {
   return Math.floor(ageMs / (24 * 60 * 60 * 1000));
 }
 
+// ── Duplicate topicId detection ─────────────────────────────────────────────
+
+/**
+ * Find topicIds that appear more than once in the ledger's entry array.
+ *
+ * The ledger is a flat JSON array with no VCS-aware merge driver, so a plain
+ * `git merge` that touches two different array elements on each branch
+ * unions the line ranges instead of raising a conflict — topicId is a
+ * logical record key `git` cannot see. This surfaced as real corruption in a
+ * consumer (22 duplicated topicIds / 44 elements), several with one copy
+ * `status:"resolved"` sitting beside a still-open twin. Nothing in the
+ * ledger's own tooling asserted uniqueness across the whole array, so this
+ * is the detection half of the fix — see debt-health-check.mjs.
+ *
+ * **A `.gitattributes` merge driver is REJECTED, not merely deferred** (a
+ * brainstorm session cross-examined this design before docs/plans/
+ * debt-ledger-merge-safety.md was written): a topicId-keyed merge driver
+ * never runs on a GitHub/GitLab web-UI merge or a bot-driven auto-merge — it
+ * only fires on a LOCAL `git merge`, so any consumer whose PRs merge through
+ * the hosted UI (the common case) would have it silently bypassed on exactly
+ * the merges that caused the incident. That is a structural blind spot in the
+ * mechanism itself, not a per-clone adoption-friction problem that more setup
+ * tooling could close. See the plan doc for what was built instead: a
+ * merge-friendly on-disk serialization (`serializeLedgerForDisk`,
+ * `debt-ledger.mjs`) plus a CI-blocking mode for this function
+ * (`debt-health-check.mjs --fail-on-duplicates`) that runs on every
+ * `pull_request`-triggered check regardless of merge path. A full
+ * per-topicId-file storage migration remains a separately-scoped, larger
+ * option — see that plan's Risk Register for why it wasn't built and its
+ * revisit trigger.
+ *
+ * @param {object[]} debtEntries - hydrated debt entries
+ * @returns {{topicId: string, count: number}[]} sorted by count desc, then topicId
+ */
+export function findDuplicateTopicIds(debtEntries) {
+  const counts = new Map();
+  for (const e of debtEntries) {
+    if (!e?.topicId) continue;
+    counts.set(e.topicId, (counts.get(e.topicId) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([topicId, count]) => ({ topicId, count }))
+    .sort((a, b) => (b.count - a.count) || a.topicId.localeCompare(b.topicId));
+}
+
 // ── Local-only Clustering (no-LLM fallback) ─────────────────────────────────
 
 /**

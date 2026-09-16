@@ -20,6 +20,7 @@ import {
   buildLocalClusters,
   countDebtByFile,
   findBudgetViolations,
+  findDuplicateTopicIds,
 } from '../scripts/lib/debt-review-helpers.mjs';
 
 function makeEntry(overrides = {}) {
@@ -374,5 +375,50 @@ describe('countDebtByFile', () => {
   test('skips entries with no affectedFiles', () => {
     const c = countDebtByFile([makeEntry({ affectedFiles: [] })]);
     assert.equal(c.size, 0);
+  });
+});
+
+describe('findDuplicateTopicIds', () => {
+  test('flags a topicId appearing more than once', () => {
+    const entries = [
+      makeEntry({ topicId: 'a' }),
+      makeEntry({ topicId: 'a' }),
+      makeEntry({ topicId: 'b' }),
+    ];
+    assert.deepEqual(findDuplicateTopicIds(entries), [{ topicId: 'a', count: 2 }]);
+  });
+
+  test('empty on a ledger with no duplicates', () => {
+    const entries = [makeEntry({ topicId: 'a' }), makeEntry({ topicId: 'b' })];
+    assert.deepEqual(findDuplicateTopicIds(entries), []);
+  });
+
+  test('sorts by count descending, then topicId ascending', () => {
+    const entries = [
+      makeEntry({ topicId: 'z' }), makeEntry({ topicId: 'z' }),
+      makeEntry({ topicId: 'y' }), makeEntry({ topicId: 'y' }), makeEntry({ topicId: 'y' }),
+      makeEntry({ topicId: 'a' }), makeEntry({ topicId: 'a' }),
+    ];
+    assert.deepEqual(findDuplicateTopicIds(entries), [
+      { topicId: 'y', count: 3 },
+      { topicId: 'a', count: 2 },
+      { topicId: 'z', count: 2 },
+    ]);
+  });
+
+  test('ignores entries with no topicId', () => {
+    assert.deepEqual(findDuplicateTopicIds([{ topicId: undefined }, { topicId: undefined }]), []);
+  });
+
+  test('the byte-identical-resolved-copy case: a resolved duplicate is still flagged', () => {
+    // The wine-cellar-app incident: a merge produced two copies of the same
+    // topicId, one carrying status:"resolved". Duplicate detection is keyed
+    // purely on topicId — it must not be fooled into treating a resolved
+    // copy as a different, legitimate entry.
+    const entries = [
+      makeEntry({ topicId: 'dup', status: 'resolved' }),
+      makeEntry({ topicId: 'dup' }),
+    ];
+    assert.deepEqual(findDuplicateTopicIds(entries), [{ topicId: 'dup', count: 2 }]);
   });
 });
