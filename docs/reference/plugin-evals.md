@@ -82,3 +82,35 @@ This pilot is deliberately narrow (three cases, two skill pairs). Before
 widening it to more skills or to output-quality grading (not just
 triggering), revisit whether the cost is earning its keep — the same
 right-sizing question AGENTS.md asks of any new mechanical check.
+
+## Two lessons from the first real run (measured 2026-09-19)
+
+`claude plugin eval . --tag pilot --runs 1 --ablation none` (Claude Code
+v2.1.278, single run each, `--ablation none`): $0.64 total, 0/3 cases scored
+above threshold on the first attempt. Both failures were the eval's, not the
+skills':
+
+- **`min` defaults to 1 even when only `max` is set.** A `tool_used` grader
+  meant to assert "this skill must NOT fire" needs `min: 0` set explicitly —
+  omitting it leaves the impossible band `min:1, max:0`, which fails
+  regardless of what Claude does. The report showed this literally:
+  `expected 1..0`. `investigate-claim-question` had actually behaved
+  correctly (called `investigate` once, `explain` zero times) but scored 50%
+  because of this. Fixed by adding `min: 0` to every "does-not-invoke-*"
+  grader.
+- **The eval sandbox does not mount the repo, only the plugin's declared
+  skill surface.** Prompts that named real internals (`sensitive-paths.mjs`,
+  "the R2+ audit mode's post-output suppression layer") sent Claude looking
+  for files that don't exist in the ephemeral workspace, burning through
+  `max_turns` before it ever reached a skill decision, or arguably ever
+  contributing that finding at all. Fixed by rewriting prompts to be
+  self-contained: they keep the *shape* that should trigger the right skill
+  (a WHY question, a claim to verify, a greenfield design ask) without
+  naming anything that only exists in this repo. `max_turns` was also raised
+  from 5 to 8 to give a genuine trigger decision room to happen before a
+  timeout, independent of the file-access issue.
+
+Net: a case scoring 0% on a `tool_used` grader is not evidence a skill
+failed to trigger until you've ruled out an impossible grader range and a
+prompt that sent the model chasing nonexistent files — check the report's
+per-run turn count and error field before reading the score at face value.
