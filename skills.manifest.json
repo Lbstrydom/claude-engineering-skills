@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "f99e657fac5da4ea",
+  "bundleVersion": "b5f403e1f0ce0f49",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -75,8 +75,8 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "62dbc01f66b0",
-          "size": 13985
+          "sha": "ae7634b4c994",
+          "size": 14623
         },
         {
           "relPath": "references/input-acquisition.md",
@@ -118,8 +118,8 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "62dbc01f66b0",
-          "size": 13985
+          "sha": "ae7634b4c994",
+          "size": 14623
         },
         {
           "relPath": "references/input-acquisition.md",
@@ -191,14 +191,14 @@
     },
     "cycle": {
       "path": "skills/cycle/SKILL.md",
-      "sha": "a5498033f2c2",
-      "size": 40125,
+      "sha": "2f3083679bdd",
+      "size": 42586,
       "summary": "End-to-end feature cycle orchestrator. Runs the full skill chain in",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "a5498033f2c2",
-          "size": 40125
+          "sha": "2f3083679bdd",
+          "size": 42586
         }
       ]
     },

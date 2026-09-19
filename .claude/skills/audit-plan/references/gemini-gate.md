@@ -208,7 +208,15 @@ by finding *character* (mirrors the GPT "exceed cap only for genuine bugs" rule)
 
 - **Concrete design/correctness defect** (wrong contract, unsafe migration,
   dangling FK, data loss) → the genuine-bug exception: fix + run ONE more round.
-  Rare.
+  **This is meant to be occasional, not the norm** — but that has not yet been
+  measured across enough sessions to call it "rare" as a fact rather than an
+  intent (one tracked consumer session used it, correctly, on its first two
+  extension opportunities — upstream report `aa6469b3`). If this exception is
+  firing on most sessions rather than a minority of them, that is itself a
+  finding: it means the round-2 cap is set too low for real design review, not
+  that every session happens to be unusually bug-laden. Note when you use it
+  (round count + what the defect was) so that pattern is visible to whoever
+  next reviews this cap.
 - **Implementation-completeness** ("specify the store step", "where does the
   cooldown go", a missing parameter) → **STOP**. Fold the items into the
   plan/PR as captured notes; these belong to the **code** audit, which checks

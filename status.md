@@ -1,6 +1,20 @@
 # Project Status Log
 
 ### Consumer Verification (previous ship)
+- **Commit**: 295194a025797e71d12bec0422729a2ae27bb8a1 on `main` (pushed 2026-09-16, range `35ff37c7..295194a0`; the computeLeverage dedup fix, 35ff37c7)
+- **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `grep "new Set(refactor.resolvedTopicIds)" scripts/.claude-skills/lib/debt-review-helpers.mjs` — present at line 97. The push's own sync summary confirmed 3/3 consumers updated.
+- **Result**: verified — the computeLeverage resolvedTopicIds-dedup fix reached the consumer bundle intact.
+- **Commit**: de454b2d53b3ca8f606ed9c55cfce3f53fdecd5d on `claude/bold-shirley-5cb9ea` (not yet merged to `main`)
+- **Retrieval**: pre-push checks ran 4x in a full clean-checkout sandbox (`npm run check`, ~9-10 min each). Pushes 2-4 each failed with exactly ONE unrelated pre-existing flaky test: `subprocess-timeout.test.mjs` "kills a child wedged in synchronous work" (x2, a kill-timing race) and `bakeoff-log-concurrent-append.test.mjs` "NEGATIVE CONTROL...loses updates" (a deliberate busy-wait race whose own assertion message says "this platform/timing did not exercise the race"). Neither touches `cli-io.mjs`/`debt-*.mjs`/their tests; `subprocess-timeout.test.mjs` passed 3/3 standalone outside the loaded sandbox. Pushed with `git push --no-verify` on explicit user authorization after presenting this evidence.
+- **Result**: unverified — consumer-bundle sync (`scripts/debt-*.mjs` + `scripts/lib/cli-io.mjs` are in the synced bundle) is blocked on this branch not yet being merged to `main`; sync only fires from there. Re-verify via `sync-isolation-verify.mjs` in a consumer's MAIN checkout once merged.
+- **Commit**: c693a452 on `main` (pushed 2026-09-16, range `77f006c7..c693a452`; the debt-ledger merge-safety cycle, 5 commits, rebased twice around concurrent sessions)
+- **Retrieval**: fresh `git clone` (not the worktree) into a temp dir at the pushed sha, `npm install`, `node --test tests/debt-*.test.mjs` — 455/455 pass. Subject check: `scripts/lib/debt-ledger.mjs` exports `serializeLedgerForDisk`/`isLedgerTracked`/`warnIfLedgerTracked`; `debt-health-check.mjs --help` documents `--fail-on-duplicates`.
+- **Result**: verified — the CI-blocking duplicate-topicId gate and the merge-friendly serialization reached a genuine clean-clone checkout intact.
+- **Commit**: 5c430d5c on main (pushed 2026-09-16, range 16d7b075..5c430d5c; ship/SKILL.md size-reduction)
+- **Retrieval**: node scripts/.claude-skills/lib/sync-isolation-verify.mjs run in wine-cellar-app's MAIN checkout -- exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: .claude/skills/ship/references/{architecture-and-dashboard-refresh,commit-provenance-deep-dive,post-push-advisories,pre-ship-gate-queries}.md all present in the synced tree. The push's own sync summary confirmed 1/1 target reached (Updated: 1).
+- **Result**: verified -- the four new ship/SKILL.md reference files reached the consumer bundle intact.
+
+### Consumer Verification (previous ship)
 - **Commit**: 1dc155c3 on `main` (pushed 2026-09-13, range `f371d9c8..1dc155c3`; the backlog-tooling honesty cycle, 15 commits)
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — gates 1..9 green. Subject check: `scripts/.claude-skills/lib/cross-skill/work-unit-grouping.mjs` present (Created: 3 / Updated: 39 in the push's sync summary, 3/3 consumers reached); `scripts/.claude-skills/lib/store/final-review-credit-population.mjs` carries `pendingQueueSql` (x1).
 - **Result**: verified — the shared grouper and the keyset-paged credit-queue SQL reached the consumer bundle intact.
@@ -34,6 +48,45 @@
 - **Commit**: dfe57eae on `main` (pushed 2026-09-12, range `534d7550..dfe57eae`)
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `scripts/.claude-skills/lib/debt-ledger-claim-check.mjs` in wine-cellar-app's synced tree contains `mergeTopicIdEvidence` — present. The push's own sync summary confirmed 9 files updated across all 3/3 registered consumers.
 - **Result**: verified — the debt-ledger-claims-check cloud-evidence fix reached the consumer bundle intact.
+
+## 2026-09-19 — Fix two storyline upstream reports: /cycle Step 7 ship-invocation limitation undocumented; /audit-plan Gemini-gate "rare exception" framing unsupported
+
+Read both reports from storyline's own store (Azure, not the ambient NAS —
+`upstream list` against the ambient DSN returns zero rows for these; see
+`feedback_consumer_reports_may_live_in_another_store`).
+
+- **Report `3e93533e` (HIGH)**: `/cycle --autonomous` documented Step 7 as
+  "Invoke `/ship`," but `ship/SKILL.md` carries `disable-model-invocation: true`
+  and refuses every programmatic call, including from `/cycle`'s own
+  orchestration — by design, and it correctly refused. `skills/cycle/SKILL.md`
+  Step 7 now states this plainly and gives a blocked-handoff card naming the
+  exact resume command (`/ship docs/plans/<name>.md`); the same caveat is
+  added by both `--autonomous` mentions (Usage line + flag description), at
+  the end of the autonomous loop (Step 3C.2), and the Step 8 summary template
+  no longer fabricates a `Ship: commit abc1234 pushed to main` line.
+- **Report `aa6469b3` (MEDIUM)**: the Gemini final-gate's round-2-cap
+  "rare exception" for a genuine design defect fired 2-for-2 in one tracked
+  session — real findings both times, but "rare" was asserted as fact with no
+  measurement behind it. Canonical `docs/audit/shared-references/gemini-gate.md`
+  (synced into `audit-plan`/`audit-code`, and mirrored in `cycle/SKILL.md`'s
+  own copy of the rule) now says the exception is *meant* to be occasional but
+  unmeasured, reframes frequent firing as a signal the cap may be
+  miscalibrated rather than proof of unusually buggy sessions, and asks
+  future sessions to log each use so a broader sample can decide.
+
+Verified: `skills:check`, `docs:synced-links:gate`, `plans:lint`, and the
+gate-contract/sync-isolation-npm-script-targets/skill-tmp-path-safety test
+files all pass clean after regenerating the `.claude/skills/**` copies and
+`skills.manifest.json`.
+
+**Backlog**: Backlog 2026-09-19T11:33Z: Q1 22c/9p (+307 aged) · Q2 79c/64p (54 perm) · Q3 35 · debt 219 cloud/91 local (0 spilled) · upstream 1
+
+**Upstream queue note**: `npm run upstream:queues` still shows 3 open reports
+across 2 stores — the two closed by this ship (`3e93533e`, `aa6469b3`, both in
+storyline's Azure store) plus one unrelated wine-cellar-app report
+(`512cf1c9`, `ux-lock-run.mjs` run_id uuid/text mismatch) left untouched per
+scope discipline. `3e93533e`/`aa6469b3` are closed via `upstream fix --commit`
+against storyline's store once this commit's sha is known.
 
 ## 2026-09-16 — ship/SKILL.md size reduction: four reference files, 93,664 → 66,002 chars (-29.5%)
 

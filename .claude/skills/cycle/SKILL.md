@@ -39,7 +39,7 @@ Usage: /cycle <plan-file> --persona-url <url> — Explicit persona-test target (
 Usage: /cycle <plan-file> --no-uxlock     — Skip ux-lock step (no UI changes)
 Usage: /cycle <plan-file> --no-ship       — Stop after audit; don't commit or push
 Usage: /cycle <plan-file> --max-rounds N  — Pass through to /audit-plan and /audit-code
-Usage: /cycle --autonomous <plan-file>    — Opt-in: autonomously implement + audit each §11 cluster (default still pauses for the human)
+Usage: /cycle --autonomous <plan-file>    — Opt-in: autonomously implement + audit each §11 cluster (default still pauses for the human; Step 7/ship is NEVER autonomous — see Step 7)
 Usage: /cycle code <plan-file> --cluster <ID> [--baseline-ref <sha>]  — Resume one declared cluster (human clustered path)
 Usage: /cycle --autonomous <plan-file> --authorize-stale-reaudit      — Resume a halted autonomous run; re-process stale clusters
 ```
@@ -120,7 +120,7 @@ Optional flags:
 - `--no-uxlock` — skip /ux-lock (use when no UI changes shipped)
 - `--no-ship` — stop after audit; don't commit or push
 - `--max-rounds N` — pass through to /audit-plan and /audit-code
-- `--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster (see "Clustered execution"). On a plan with **no §11 block** it runs the **degenerate single-cluster** path (the whole plan as one unit — Step 3) rather than silently pausing. Without the flag, `/cycle` pauses for the human at Step 3 exactly as today — the autonomous behaviour is never silent either way.
+- `--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster (see "Clustered execution"). On a plan with **no §11 block** it runs the **degenerate single-cluster** path (the whole plan as one unit — Step 3) rather than silently pausing. Without the flag, `/cycle` pauses for the human at Step 3 exactly as today — the autonomous behaviour is never silent either way. **`--autonomous` does not reach Step 7** — `/ship` refuses every programmatic call regardless of this flag, so even a fully autonomous run ends in the Step 7 blocked handoff, not a completed ship.
 - `--cluster <ID>` — implement/audit a single declared cluster (human resume path).
 - `--baseline-ref <sha>` — audit baseline for a resume where no `clusterStartRef` was captured (work already committed).
 - `--authorize-stale-reaudit` — resume a halted autonomous run by re-processing exactly the `stale` clusters.
@@ -415,7 +415,9 @@ apply here — no active cluster; touched `gate-clear` clusters are flagged
 `stale` for the next run), **re-run Gemini**. **Max 2 consolidated rounds**
 (symmetric with `/audit-plan`'s Gemini cap): after round 2 with `CONCERNS`,
 triage by finding character — a concrete **design/correctness** defect earns one
-more round (rare); **implementation-completeness** nits ("specify the store
+more round (meant to be occasional, not the norm — see `gemini-gate.md`'s
+calibration note on this exception before treating "rare" as an established
+fact); **implementation-completeness** nits ("specify the store
 step", parameter placement) or **rising praise + ~1 nit/round** → **STOP**, the
 classic `/audit-code` path (Step 4) already verified the code against the real
 implementation, so record + close rather than re-running the union gate. Exit on
@@ -453,6 +455,12 @@ adversarial agent over the union diff → only-then skip) are in
 independent-agent substitute rather than skipping the mandatory gate. Generated
 `.claude/skills/**` copies are byte-verified by `skills:check`, not
 re-reviewed. Then continue to Step 5.
+
+> Reaching this point means the ENTIRE autonomous loop — implement, audit,
+> fix-gate, close-out, consolidated Gemini gate — completed without a human.
+> Step 7 still stops it: `/ship` cannot be invoked programmatically (see Step 7
+> below), so even a fully autonomous, fully converged run ends in a blocked
+> handoff naming `/ship docs/plans/<name>.md`, never a pushed commit.
 
 ---
 
@@ -538,12 +546,34 @@ scope.
 
 ## Step 7 — Ship (unless --no-ship)
 
-Invoke `/ship`. Runs the existing /ship checklist (status update, AGENTS
-sync, plan update, stage + commit + push, ship_event log).
-
-**Step 0.5c of /ship** automatically refreshes the architectural-memory
-index (incremental refresh, regenerates `docs/architecture-map.md` if
-changed). No additional action needed here.
+> **`/ship` cannot actually be invoked from here — by design, every time.**
+> `/ship`'s frontmatter carries `disable-model-invocation: true`, which refuses
+> ANY programmatic call, including one made from inside `/cycle`'s own
+> orchestration (Claude Code and VS Code Copilot both honour the key — see
+> `/ship`'s own header). This is not a failure mode to handle; it is the
+> permanent, unconditional shape of this step, autonomous or not — the
+> `--autonomous` flag authorizes within-cluster fixes (Hard rules), it does
+> NOT authorize shipping. There is no version of Step 7 that completes without
+> the human typing `/ship` themselves.
+>
+> So Step 7 always ends in a **blocked handoff**, never an "Invoke `/ship`."
+> Show this card and stop — name the plan path so the human never has to go
+> hunting for it (a bare `/ship` with no argument is a second manual step, not
+> a resume command):
+>
+> ```
+> ═══════════════════════════════════════
+>   /cycle blocked at Step 7 (ship)
+>   /ship requires explicit user invocation — it cannot be called
+>   programmatically, even from /cycle's own orchestration.
+>   Resume with: /ship docs/plans/<name>.md
+> ═══════════════════════════════════════
+> ```
+>
+> Once the human runs that command, `/ship` executes its own checklist
+> (status update, AGENTS sync, plan update, stage + commit + push,
+> ship_event log) and its Step 0.5c refreshes the architectural-memory index —
+> no further action from `/cycle` either way.
 
 ---
 
@@ -559,11 +589,17 @@ changed). No additional action needed here.
   Final gate:  Gemini APPROVE over union diff                  ← only if hasClustering
   Persona:    0 P0, 1 P1 (deferred)
   UX-lock:    2 specs generated
-  Ship:       commit abc1234 pushed to main
+  Ship:       BLOCKED — run: /ship docs/plans/<name>.md
   Total time: 18m
   Total cost: ~$1.40
 ═══════════════════════════════════════
 ```
+
+**The `Ship:` line is BLOCKED unless the user already ran `/ship` themselves in
+this same turn** — Step 7 can never invoke it (see Step 7's note), so
+"commit abc1234 pushed to main" is only correct after the human has actually
+typed `/ship docs/plans/<name>.md` and it completed. Never print a commit sha
+here on the assumption that Step 7 "ran" — it didn't.
 
 If any step was skipped, note why. If any step exited non-success,
 surface as a warning at the top. For clustered runs, show the per-cluster
