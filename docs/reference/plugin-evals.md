@@ -16,20 +16,36 @@ steers Claude to the right skill for an ambiguous prompt. That's the same
 matching 0/7 sessions on a field-name mismatch) — plugin evals give that seam
 a mechanical check for the first time.
 
-**Scope of the pilot**: three cases targeting the two pairs of skills whose
-own descriptions call out an explicit discriminator (so a regression here is
-a real trigger-boundary break, not noise):
+**Scope of the pilot**: expanded 2026-09-19 from 3 cases (one pair) to 12
+cases covering every one of this repo's 13 model-invokable skills (the other
+3 — `security-strategy`, `ship`, `skills` — carry `disable-model-invocation:
+true` and can only be reached by explicit slash command, so there is no
+triggering ambiguity to test):
 
 | Case | Asserts |
 |------|---------|
 | `evals/explain-topic-question/` | a WHY/topic question invokes `explain`, not `investigate` |
 | `evals/investigate-claim-question/` | a claim-verification question invokes `investigate`, not `explain` |
 | `evals/plan-vs-audit-plan-design-request/` | a greenfield design request invokes `plan`, not `audit-plan` |
+| `evals/audit-code-request/` | a "review my code before a PR" request invokes `audit-code`, not `audit-plan` |
+| `evals/audit-plan-request/` | a "review this plan doc" request invokes `audit-plan`, not `audit-code` |
+| `evals/ux-lock-verify-vs-audit-code/` | "was the plan actually built" (live app) invokes `ux-lock`, not `audit-code` |
+| `evals/visual-audit-vs-persona-test/` | a styling/theme-consistency check invokes `visual-audit`, not `persona-test` |
+| `evals/click-test-vs-persona-test/` | a structural DOM/accessibility walk invokes `click-test`, not `persona-test` |
+| `evals/nav-audit-vs-persona-test/` | a "does the menu offer what's needed" question invokes `nav-audit`, not `persona-test` |
+| `evals/brainstorm-vs-plan/` | wanting another LLM's independent take invokes `brainstorm`, not `plan` |
+| `evals/cycle-full-flow-request/` | an explicit end-to-end request invokes the `cycle` orchestrator, not a single step directly |
+| `evals/ai-context-management-drift-check/` | an AGENTS.md/CLAUDE.md drift question invokes `ai-context-management`, not `explain` |
 
-Each case has two `tool_used` graders: one asserting the intended skill fired
-(`min: 1`), one asserting the wrong sibling didn't (`max: 0`). Both are
-`arm: with-only` — the assertion can only ever be true when the plugin is
-loaded, so scoring it against the without-arm baseline is meaningless.
+Each case has one or two `tool_used` graders: one asserting the intended
+skill fired (`min: 1`), and — where a sibling call doesn't legitimately
+happen as part of correct behavior — one asserting the wrong sibling didn't
+(`max: 0`). `cycle-full-flow-request` deliberately has only the positive
+grader: `cycle`'s own documented flow calls `/plan` as its real first step,
+so asserting "does not invoke plan" would fail on *correct* orchestration —
+caught before running it, not after. All graders are `arm: with-only` — the
+assertion can only ever be true when the plugin is loaded, so scoring it
+against the without-arm baseline is meaningless (see below).
 
 ## Running it
 
@@ -295,3 +311,108 @@ suggests the lever isn't trigger-phrase wording), or accepting this as a
 real, bounded trigger-reliability ceiling for judgment-heavy skills and
 scoping the pilot's pass/fail threshold accordingly instead of chasing
 1.00.
+
+## Full-repo expansion: 9 new cases, 2 new mechanisms found
+(measured 2026-09-19)
+
+Expanded to cover every model-invokable skill (12 cases total, up from 3).
+Each new case was run 3 times from the start — the "n=1 looks clean" trap
+above is now a known failure mode, not a risk to repeat. Results:
+
+| Case | First attempt | After iteration |
+|---|---|---|
+| `visual-audit-vs-persona-test` | 3/3 | — (clean first try) |
+| `click-test-vs-persona-test` | 3/3 | — (clean first try) |
+| `nav-audit-vs-persona-test` | 3/3 | — (clean first try) |
+| `brainstorm-vs-plan` | 3/3 | — (clean first try) |
+| `cycle-full-flow-request` | 3/3 | — (clean first try) |
+| `ai-context-management-drift-check` | 3/3 | — (clean first try) |
+| `ux-lock-verify-vs-audit-code` | 0/3 | **3/3** after mirroring ux-lock's own trigger phrases |
+| `audit-code-request` | 0/3 | 0/3 after an inline-diff fix — different, unresolved mechanism |
+| `audit-plan-request` | 0/3 | 0/3, same mechanism as `audit-code` |
+
+Six of nine new pairs were clean on the very first prompt attempt — a much
+higher hit rate than the original three, likely because most of these
+prompts read as an abstract, answerable *question* ("can you check
+whether...", "can you map out...") rather than a claim about the reader's
+own concrete state ("I just finished implementing...", "it's running
+locally right now"). That distinction turned out to matter a lot; see below.
+
+### Fixed: `ux-lock` — trigger-phrase mirroring, isolated from a confound
+that looked related but wasn't
+
+The original prompt gave a live URL and asked Claude to check whether a
+button was "actually there in the running app." Trace inspection showed
+Claude explicitly searched for Bash/browser/fetch tools, found none,
+concluded it had no way to reach `localhost:3000`, and gave up — **it never
+considered that invoking the `ux-lock` skill is itself what would unlock
+that capability** (the skill's own driver-resolution step is what sets up
+Playwright). A first fix hypothesis — keep the URL, but nothing else —
+wasn't isolated as a separate test; instead the wording was changed to
+mirror `ux-lock`'s own `Triggers on:` phrases directly ("verify the plan
+was actually built — did we actually ship what it called for?"), still
+carrying the same URL. That scored 3/3. So the failure wasn't really about
+the URL forcing premature tool-capability checking (click-test and
+nav-audit's prompts also reference "our page"/"our menu" without a pinned
+URL and passed clean regardless) — it was that the original wording didn't
+match `ux-lock`'s own vocabulary closely enough for Claude's first-pass
+shape-matching to land on it, so it fell through to literal
+tool-inventory-checking instead of skill-shape-matching.
+
+### Unresolved, distinct mechanism: `audit-code` and `audit-plan` — Claude
+just does the job itself
+
+Both cases failed 0/3 with prompts implying real state ("I just finished
+implementing...", "I've drafted a plan..."), matching the established
+sandbox-confound shape. The `explain` fix (an inline snippet, concrete
+without being greppable) was applied here too — a 6-line diff pasted
+directly into the `audit-code` prompt, an inline plan block into the
+`audit-plan` prompt. **Both still scored 0/3**, but trace inspection showed
+a genuinely different failure than every other case in this pilot: Claude
+didn't bail, didn't hunt for files, and didn't answer weakly. It gave a
+**substantive, correct, well-reasoned code/plan review directly** — for the
+diff, it correctly identified that `next()` is called unconditionally
+(no rate limiting actually happens) and that the bucket never refills; for
+the plan, it flagged exactly which claims it couldn't verify without real
+code and reviewed the design on its merits. It just never called `Skill`.
+
+The likely reason: `audit-code` and `audit-plan` exist to invoke a
+**heavyweight, multi-pass, multi-model pipeline** (5-pass static analysis +
+a GPT/Gemini gate). For a small, self-contained inline artifact, a
+reasonably calibrated model's own judgment — reinforced by this repo's own
+`AGENTS.md` engineering-principles instructions to avoid unneeded process —
+is "I can just review this myself," and that judgment isn't obviously
+wrong. This is a different category of problem than `explain`'s or
+`ux-lock`'s: those skills got *nothing done* until fixed; here Claude
+produced genuinely good output, just not through the named skill. Whether
+that counts as a "failure" depends on what the skill is *for* — if a real
+user pastes a 6-line function and asks for an audit, do they actually want
+the full GPT+Gemini pipeline invoked, or was Claude's direct answer the
+right call? Left open rather than chased further; flagging as a real,
+qualitatively different finding rather than forcing a third prompt-tuning
+attempt at a case that may not represent a genuine bug.
+
+### Corrected, full-session picture: all 12 pilot cases
+
+| Case | Status |
+|---|---|
+| `investigate-claim-question` | Reliably clean (6/6 across all samples) |
+| `visual-audit-vs-persona-test` | Clean (3/3) |
+| `click-test-vs-persona-test` | Clean (3/3) |
+| `nav-audit-vs-persona-test` | Clean (3/3) |
+| `brainstorm-vs-plan` | Clean (3/3) |
+| `cycle-full-flow-request` | Clean (3/3) |
+| `ai-context-management-drift-check` | Clean (3/3) |
+| `ux-lock-verify-vs-audit-code` | Clean after one iteration (3/3) |
+| `plan-vs-audit-plan-design-request` | Genuinely flaky, unresolved (6/9, ~67%) |
+| `explain-topic-question` | Genuinely flaky, unresolved (2/4 post-fix, ~50%) |
+| `audit-code-request` | 0/3 — distinct mechanism (self-solves instead of delegating), open question rather than confirmed bug |
+| `audit-plan-request` | 0/3 — same mechanism as `audit-code-request` |
+
+8 of 12 cases are solidly green. The four that aren't split into two
+categories worth tracking separately: two unexplained nondeterministic
+triggering gaps (`explain`, `plan`), and two cases where the skill's own
+value proposition (heavyweight process for something Claude can do
+adequately alone) may be in tension with how a well-calibrated model
+should behave on a small example — not obviously fixable by rewording, and
+not obviously a bug either.
