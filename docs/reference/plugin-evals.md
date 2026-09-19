@@ -393,26 +393,43 @@ qualitatively different finding rather than forcing a third prompt-tuning
 attempt at a case that may not represent a genuine bug.
 
 ### Corrected, full-session picture: all 12 pilot cases
+(re-corrected after a 12-case, 36-run confirmation pass — see below)
 
-| Case | Status |
-|---|---|
-| `investigate-claim-question` | Reliably clean (6/6 across all samples) |
-| `visual-audit-vs-persona-test` | Clean (3/3) |
-| `click-test-vs-persona-test` | Clean (3/3) |
-| `nav-audit-vs-persona-test` | Clean (3/3) |
-| `brainstorm-vs-plan` | Clean (3/3) |
-| `cycle-full-flow-request` | Clean (3/3) |
-| `ai-context-management-drift-check` | Clean (3/3) |
-| `ux-lock-verify-vs-audit-code` | Clean after one iteration (3/3) |
-| `plan-vs-audit-plan-design-request` | Genuinely flaky, unresolved (6/9, ~67%) |
-| `explain-topic-question` | Genuinely flaky, unresolved (2/4 post-fix, ~50%) |
-| `audit-code-request` | 0/3 — distinct mechanism (self-solves instead of delegating), open question rather than confirmed bug |
-| `audit-plan-request` | 0/3 — same mechanism as `audit-code-request` |
+A full `--tag pilot --ablation none` run across all 12 cases (36 runs, one
+more independent 3-run sample per case) landed right after the table below
+was first written, and it moved two of the "clean" claims. Reporting the
+**fully pooled** numbers across every batch run this session, not just the
+latest one — the same discipline this doc had to learn the hard way for
+`explain` at n=1 applies to `ux-lock` at n=3 too:
 
-8 of 12 cases are solidly green. The four that aren't split into two
-categories worth tracking separately: two unexplained nondeterministic
-triggering gaps (`explain`, `plan`), and two cases where the skill's own
-value proposition (heavyweight process for something Claude can do
-adequately alone) may be in tension with how a well-calibrated model
-should behave on a small example — not obviously fixable by rewording, and
-not obviously a bug either.
+| Case | Pooled result (all samples, all batches) | Status |
+|---|---|---|
+| `investigate-claim-question` | 7/7 (100%) | Reliably clean |
+| `visual-audit-vs-persona-test` | 6/6 (100%) | Clean |
+| `click-test-vs-persona-test` | 3/3 (100%) | Clean |
+| `nav-audit-vs-persona-test` | 3/3 (100%) | Clean |
+| `brainstorm-vs-plan` | 3/3 (100%) | Clean |
+| `cycle-full-flow-request` | 3/3 (100%) | Clean |
+| `ai-context-management-drift-check` | 3/3 (100%) | Clean |
+| `ux-lock-verify-vs-audit-code` (post-fix) | 5/6 (83%) | Improved a lot (0/9 pre-fix), not fully reliable |
+| `plan-vs-audit-plan-design-request` | 7/12 (58%) | Genuinely flaky, unresolved |
+| `explain-topic-question` (post-fix) | 2/7 (29%) | Genuinely flaky — **worse** than the 50% reported after the ablation run, not better |
+| `audit-code-request` | 0/9 (0%) | Deterministic — not flaky, a real and reproducible mechanism (self-solves instead of delegating) |
+| `audit-plan-request` | 0/6 (0%) | Same, deterministic |
+
+Two corrections from the table this replaces: `ux-lock` was reported as
+"clean after one iteration (3/3)" off a single post-fix batch; the very
+next full-pilot run scored it 2/3, so it's a real, large improvement (0% →
+83%) but not the clean win it looked like at n=3. `explain` was reported
+at "~50% post-fix"; the next batch scored 0/3, pulling the pooled rate down
+to 29% — worse, not better, than initially thought. Meanwhile
+`audit-code`/`audit-plan` staying at exactly 0% across three independent
+3-run batches each (9 and 6 samples) is itself informative: that's not
+noise, it's about as deterministic a result as this harness produces.
+
+**Net**: 7 of 12 cases are solidly, repeatedly green. `ux-lock` is a real
+but partial win. Three cases (`explain`, `plan`, and the `audit-code`/
+`audit-plan` pair) remain open, for two different reasons — unexplained
+nondeterminism in the first two, and a plausible-not-a-bug tension in the
+skill's own design for the second pair — documented rather than forced to
+a false 1.00.
