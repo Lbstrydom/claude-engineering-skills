@@ -114,3 +114,27 @@ Net: a case scoring 0% on a `tool_used` grader is not evidence a skill
 failed to trigger until you've ruled out an impossible grader range and a
 prompt that sent the model chasing nonexistent files — check the report's
 per-run turn count and error field before reading the score at face value.
+
+## A third lesson: self-contained isn't the same as abstract (measured 2026-09-19)
+
+Second run, prompts rewritten per the lesson above: `investigate` and `plan`
+both went to 1.00 clean (confirming their earlier 0% *was* the sandbox
+confound, not a real trigger gap). `explain` stayed at 0.50.
+
+The difference: the working `plan` prompt kept a concrete action framing
+("I want to **add** a feature... how should I **structure** this") that
+echoes the skill's own trigger language. The `explain` rewrite over-corrected
+into a fully abstract, hypothetical design question with no reference to
+*existing* code at all ("why would a shared library expose one canonical
+validation function..."). `/explain`'s whole premise is explaining why code
+that already exists is the way it is; a pure hypothetical with nothing
+concrete to point at gives Claude no reason to reach for a skill built
+around git history and architectural memory; it just answers the design
+question directly.
+
+The fix is neither the original (a literal file path that doesn't exist in
+the sandbox) nor the first rewrite (no existing-code referent at all): keep
+an "existing code" frame — `"this codebase routes X through Y"` — without
+naming a real file. Self-contained and concrete are separate axes; a prompt
+needs to clear the sandbox-access bar *and* still look like the shape of
+question the target skill actually answers.

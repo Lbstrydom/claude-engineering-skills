@@ -8,6 +8,6 @@ max_turns: 8
 expected_outcome: "Claude invokes the explain skill, not investigate."
 ---
 
-Why would a shared library expose one canonical validation function that
-every caller goes through, instead of letting each caller re-implement
-the same check on its own?
+Why does this codebase route all sensitive-path checks through one
+shared classifier function instead of letting each caller implement its
+own version of the same check?
