@@ -49,6 +49,71 @@
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `scripts/.claude-skills/lib/debt-ledger-claim-check.mjs` in wine-cellar-app's synced tree contains `mergeTopicIdEvidence` — present. The push's own sync summary confirmed 9 files updated across all 3/3 registered consumers.
 - **Result**: verified — the debt-ledger-claims-check cloud-evidence fix reached the consumer bundle intact.
 
+### Consumer Verification (previous ship)
+- **Commit**: c21ae557f02c03087f763bc2896a18ccb266d51d on `main` (pushed 2026-09-19, range `5c430d5c..c21ae557`; storyline upstream-report fixes 3e93533e/aa6469b3)
+- **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `.claude/skills/audit-plan/references/gemini-gate.md` and `.claude/skills/cycle/SKILL.md` both carry the new prose (grep confirmed). storyline itself REFUSED this sync (27 files diverged, pre-existing committed customizations unrelated to this change) — not verified there; ai-organiser and wine-cellar-app both reached cleanly.
+- **Result**: verified — the /cycle Step 7 blocked-handoff prose and the gemini-gate.md calibration note reached the consumer bundle intact (wine-cellar-app, ai-organiser). storyline unverified — sync REFUSED on pre-existing divergence, not this change's fault.
+
+## 2026-09-19 — Close the two remaining gaps in the storyline upstream fixes: ship/SKILL.md cross-reference note, Gemini-gate calibration grounded in real data
+
+Follow-up to the same-day `c21ae557` fix below, closing what that commit left
+undone (both explicitly called out in the original storyline report):
+
+- **`ship/SKILL.md` cross-reference note (report `3e93533e`'s 3rd ask)**: Step 5
+  had no note telling an operator resuming a blocked `/cycle --autonomous` run
+  that the plan path is required, not optional — a bare `/ship` there skips
+  the plan update entirely, matching `/cycle`'s own Step 7 handoff card
+  (`/ship docs/plans/<name>.md`). Added, plus an `ignoredCandidates` entry in
+  `skills/ship/gate-contract.json` for the new prose's enforcement-verb line
+  (document-only: the consequence is the same one Step 5's grammar note two
+  lines above already states — no new /ship exit code).
+- **Gemini-gate calibration (report `aa6469b3`'s 2nd ask)**: the prior fix
+  softened "rare" to "occasional, unmeasured" but never pulled the broader
+  sample the report itself asked for. Queried `audit_runs` (this repo's NAS
+  store), filtered to real `/audit-plan` invocations (`arm_eval_run_id` /
+  `experiment_tag` / `assignment_id` all null, excluding the arm-eval/
+  model-ab/shadow harnesses that otherwise dominate the row count): of 58 real
+  sessions across this repo, wine-cellar-app and ai-organiser that reached the
+  Gemini gate, **zero** ever invoked it a second time, let alone a third. The
+  storyline session behind `aa6469b3` (2-for-2 to the ceiling) is a genuine
+  outlier against this sample, not evidence the round-2 cap is generally too
+  low — the cap stays as-is; the finding is recorded as evidence in the
+  canonical `docs/audit/shared-references/gemini-gate.md`, synced to both
+  skill copies, regenerated into `.claude/skills/**`.
+
+Verified: `npm run skills:check` and `npm run gates:check` both exit 0.
+Backlog 2026-09-19T13:55Z: Q1 22c/9p (+307 aged) · Q2 79c/64p (54 perm) · Q3 35 · debt unmeasured · upstream 1
+(pre-existing backlog, unrelated to this doc-only change — noted, not acted on)
+Pushed directly to `main` as `273094c8` (this worktree's branch sat exactly at
+`origin/main`, so a plain fast-forward push, not a PR).
+
+**Consumer sync ran as part of the push** (3/3 targets reached: storyline,
+wine-cellar-app, ai-organiser). Unlike `c21ae557`'s ship, storyline did **not**
+refuse this time — its sync tooling wrote the 4 changed files
+(`.claude/skills/{audit-code,audit-plan}/references/gemini-gate.md`,
+`.claude/skills/ship/SKILL.md`, plus the receipt/ownership sidecars) and
+auto-committed them locally as `c5726a43 chore(sync): update audit-loop
+tooling` on storyline's `main` — 1 commit ahead of `origin/main` there,
+**not yet pushed to storyline's own remote**. storyline's checkout also
+carries 5 unrelated pre-existing untracked files (a migration SQL file +
+4 `ship/references/*.md` files from an earlier sync round) — left untouched,
+per scope discipline; not part of this change.
+
+**Not yet done — needs the user's call, since it's a push + a store write in a
+separate corporate repo (storyline)**: push `c5726a43` to storyline's own
+`origin/main`, then close upstream reports `3e93533e-dc27-42e6-8bf8-abc796d9d8c7`
+and `aa6469b3-bfcd-447b-9806-bfbb05a33121` against storyline's own Azure store
+(they are NOT visible from the ambient NAS `AUDIT_DB_URL` — confirmed via
+`upstream reconcile`'s `otherStore` bucket) with, from storyline's main
+checkout:
+```
+node scripts/.claude-skills/cross-skill.mjs upstream fix --id <uuid> \
+  --commit "$(git rev-parse HEAD)" --disposition "exempt:<reason>" --note -
+```
+(`--commit` must resolve in whatever repo the command runs in — confirmed by
+reading `upstreamTransition` in `scripts/lib/upstream/commands.mjs`, which is
+exactly why this has to run from storyline, not the NAS-connected source repo.)
+
 ## 2026-09-19 — Fix two storyline upstream reports: /cycle Step 7 ship-invocation limitation undocumented; /audit-plan Gemini-gate "rare exception" framing unsupported
 
 Read both reports from storyline's own store (Azure, not the ambient NAS —
