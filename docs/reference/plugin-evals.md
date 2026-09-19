@@ -186,14 +186,40 @@ already in view) — and the empty sandbox can never satisfy the former for
 a skill whose own flow starts with an existence check.
 
 ## A second, separate flakiness finding: `plan-vs-audit-plan-design-request`
+(diagnosed 2026-09-19, unresolved)
 
 Re-running the full `--tag pilot` smoke check after the `explain` fix
 surfaced a new issue: `plan-vs-audit-plan-design-request`, previously
-reported as "1.00 clean" (on a single run), scored 0.50 on a fresh single
-run and **0.67 across its designed 3-run default (1 pass, 2 fails)** when
-re-checked. This is a real, separate finding — not sandbox-confound
-shaped, plan's prompt never referenced anything sandbox-dependent — and
-is unexplained as of this writing. Flagging it here rather than chasing
-it further in this session; the original "1.00 clean" claim for this case
-should be read as unreliable until someone inspects why 2 of 3 runs don't
-invoke `plan`.
+reported as "1.00 clean" (on a single run), scores **0.67 across its
+designed 3-run default** on repeated re-checks (measured across two
+separate 3-run batches: 3/3 pass, then 1/3 pass — the failure rate itself
+is noisy, not just the per-run outcome).
+
+`--keep-temp` traces of the failing runs show the same *family* of bug as
+`explain`'s sandbox confound, but via a different route. Comparing a
+passing trace to a failing one:
+
+- **Passing run**: first action is `Skill({skill: "plan", args: "..."})`,
+  *then* it explores the (empty) sandbox for stack context as part of the
+  skill's own flow.
+- **Failing runs**: Claude explores the empty sandbox *first* (2–4 `Glob`
+  calls hunting for `package.json`, `README`, dotfiles), confirms there's
+  no code or stack to ground a recommendation in, and answers the design
+  question directly — never calling `Skill` at all.
+
+So this is the same "empty sandbox short-circuits before a skill decision"
+shape as `explain`, but the trigger for it isn't a documented
+existence-check (like `explain`'s Step 0) — it's Claude nondeterministically
+choosing "explore the repo for context first" vs. "invoke the skill first"
+for a design-shaped prompt. Unlike `explain`, **the fix that worked there
+does not transfer**: adding inline stack context to the prompt ("We have a
+React + Node dashboard app already running in production...") was tested
+for 3 runs and still scored 0.67 (2 fails) — reverted rather than shipped
+as an unearned fix. The prompt is back to its original wording.
+
+This is a case where the plan/audit-code doctrine "stop tuning after a
+falsified hypothesis" applies directly: two prompt-shape hypotheses
+(sandbox-confound-style rewrite, now the inline-context fix) have been
+tried and falsified for this specific case. Left as an open, documented
+limitation rather than chased further — a genuine finding about `plan`'s
+trigger reliability under this harness, not (yet) a fixable prompt bug.
