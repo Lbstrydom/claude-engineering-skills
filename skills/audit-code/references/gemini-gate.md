@@ -208,15 +208,28 @@ by finding *character* (mirrors the GPT "exceed cap only for genuine bugs" rule)
 
 - **Concrete design/correctness defect** (wrong contract, unsafe migration,
   dangling FK, data loss) → the genuine-bug exception: fix + run ONE more round.
-  **This is meant to be occasional, not the norm** — but that has not yet been
-  measured across enough sessions to call it "rare" as a fact rather than an
-  intent (one tracked consumer session used it, correctly, on its first two
-  extension opportunities — upstream report `aa6469b3`). If this exception is
-  firing on most sessions rather than a minority of them, that is itself a
-  finding: it means the round-2 cap is set too low for real design review, not
-  that every session happens to be unusually bug-laden. Note when you use it
-  (round count + what the defect was) so that pattern is visible to whoever
-  next reviews this cap.
+  **This is meant to be occasional, not the norm** — a consumer session tracked
+  by upstream report `aa6469b3` used it twice back-to-back (round 3 *and*
+  round 4, both genuine, since-fixed defects), which reads as more than
+  "rare" from n=1. **Checked against a broader sample before treating that as
+  a miscalibration signal** (2026-09-19, `audit_runs`, this repo's own store,
+  filtered to real invocations — `arm_eval_run_id`/`experiment_tag`/
+  `assignment_id` all null, which excludes the arm-eval/model-ab/shadow
+  harnesses that otherwise dominate the row count): of 58 non-harness
+  `/audit-plan` sessions across this repo, wine-cellar-app and ai-organiser
+  that reached the Gemini gate at all, **zero** invoked Gemini a second time,
+  let alone a third — every one of them settled on its first Gemini verdict.
+  So the storyline session is a genuine outlier against this sample, not
+  evidence the round-2 cap is generally too low; **do not raise the cap or
+  loosen the exception's bar off this one session**. The caveat: storyline
+  itself is barely represented in this store (3 rows, one session, no Gemini
+  re-invocation recorded) because it reports upstream against its own Azure
+  store, not this one — so this comparison is "this repo's workflow vs. one
+  storyline session," not "storyline's own history vs. itself." If storyline
+  (or any other consumer) sees the exception fire repeatedly across *its own*
+  sessions, that pattern — not a single occurrence — is what would justify
+  revisiting the cap. Note when you use it (round count + what the defect
+  was) so that pattern is visible to whoever next reviews this cap.
 - **Implementation-completeness** ("specify the store step", "where does the
   cooldown go", a missing parameter) → **STOP**. Fold the items into the
   plan/PR as captured notes; these belong to the **code** audit, which checks

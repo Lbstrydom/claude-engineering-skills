@@ -759,6 +759,11 @@ Only when `$ARGUMENTS` contains a plan file path:
 <!-- host-contract: input-acquisition; grammar=path+flags; empty=default -->
 _This site: `path+flags` — no path means skip the plan update entirely; do not search for a plausible plan to update._
 
+**Resuming after a blocked `/cycle --autonomous` run?** Treat the plan path as
+required, not optional — `/cycle`'s Step 7 handoff card names it explicitly
+(`/ship docs/plans/<name>.md`) for exactly this reason: a bare `/ship` here
+skips this step entirely, and the plan's `Status:`/Implementation Log never
+picks up what the autonomous run did.
 
 1. **Read the plan**
 2. **Compare against git diff** — which planned items were implemented?

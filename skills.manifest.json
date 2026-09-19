@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "b5f403e1f0ce0f49",
+  "bundleVersion": "9c713f4052651eb1",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -75,8 +75,8 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "ae7634b4c994",
-          "size": 14623
+          "sha": "930775b5ed48",
+          "size": 15637
         },
         {
           "relPath": "references/input-acquisition.md",
@@ -118,8 +118,8 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "ae7634b4c994",
-          "size": 14623
+          "sha": "930775b5ed48",
+          "size": 15637
         },
         {
           "relPath": "references/input-acquisition.md",
@@ -407,14 +407,14 @@
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "412d646a4d42",
-      "size": 66002,
+      "sha": "4538e13f730a",
+      "size": 66349,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "412d646a4d42",
-          "size": 66002
+          "sha": "4538e13f730a",
+          "size": 66349
         },
         {
           "relPath": "references/architecture-and-dashboard-refresh.md",
