@@ -433,3 +433,67 @@ but partial win. Three cases (`explain`, `plan`, and the `audit-code`/
 nondeterminism in the first two, and a plausible-not-a-bug tension in the
 skill's own design for the second pair — documented rather than forced to
 a false 1.00.
+
+## `audit-plan` splits from `audit-code`: shape-matching fixes one, not the
+other (measured 2026-09-19)
+
+The `audit-code`/`audit-plan` pair looked like one finding — both
+process-heavyweight skills, both failing 0% on prompts implying real state.
+Two follow-up hypotheses, tested independently, show they're actually two
+different problems:
+
+**Hypothesis 1 — diff/plan size.** Maybe a 6-line snippet or a 4-line plan
+summary reads as too small to warrant a heavyweight pipeline. Tested by
+scaling `audit-code`'s prompt up to a realistic 4-file PR diff (middleware,
+registration, a route comment, a test file). **Falsified**: still 0/3, and
+the trace shows the identical mechanism as the 6-line version — a quick
+existence check, then a genuinely good multi-file review delivered
+directly, never through the skill. Size was never the variable.
+
+**Hypothesis 2 — document shape.** `audit-plan` explicitly operates on
+`docs/plans/*.md`-shaped files; the original prompt was a 4-line paraphrase
+with no resemblance to that format. Tested by rewriting the plan as this
+repo's actual structure (title, `Date`/`Status`/`Scope` metadata, numbered
+`## N. Section` headings, an `## N. Acceptance Criteria` checklist — the
+exact shape real `docs/plans/*.md` files use, confirmed by reading one).
+**Confirmed**: 3/3 clean, then 2/3 on an independent second batch — pooled
+**5/6 (83%)**, up from a deterministic 0% before the fix. Same shape as the
+`ux-lock` fix: it was never about scale, it was about the prompt reading as
+the specific artifact-shape the skill is built to recognize.
+
+So the pair splits: `audit-plan`'s failure was a fixable shape-matching gap
+(now resolved the same way as `ux-lock`, kept in the case file).
+`audit-code`'s failure survives across **four independent hypotheses now**
+(original wording, an inline 6-line diff, this final-confirmation batch,
+and a realistic 4-file PR diff) — 0/12 total, zero variance. That's not an
+unexplored prompt-shape gap; it's the most deterministic finding in this
+entire pilot. The mechanism (Claude reviewing competently on its own rather
+than invoking the heavyweight pipeline) looks like a real, stable property
+of how a well-calibrated model responds to an in-context code-review ask,
+not a SKILL.md defect — left as a documented open question about what
+`audit-code`'s trigger threshold *should* be, not a bug to keep chasing
+with more prompt rewrites.
+
+### Final state, this session
+
+| Case | Pooled result | Status |
+|---|---|---|
+| `investigate-claim-question` | 7/7 (100%) | Reliably clean |
+| `visual-audit-vs-persona-test` | 6/6 (100%) | Clean |
+| `click-test-vs-persona-test` | 3/3 (100%) | Clean |
+| `nav-audit-vs-persona-test` | 3/3 (100%) | Clean |
+| `brainstorm-vs-plan` | 3/3 (100%) | Clean |
+| `cycle-full-flow-request` | 3/3 (100%) | Clean |
+| `ai-context-management-drift-check` | 3/3 (100%) | Clean |
+| `ux-lock-verify-vs-audit-code` (post-fix) | 5/6 (83%) | Fixed — shape-matching |
+| `audit-plan-request` (post-fix) | 5/6 (83%) | Fixed — shape-matching |
+| `plan-vs-audit-plan-design-request` | 7/12 (58%) | Genuinely flaky, unresolved |
+| `explain-topic-question` (post-fix) | 2/7 (29%) | Genuinely flaky, unresolved |
+| `audit-code-request` | 0/12 (0%) | Deterministic — real finding, not a bug to fix by rewording |
+
+9 of 12 cases are green (7 solidly, 2 via a confirmed shape-matching fix).
+Two remain unexplained flaky triggers. One — `audit-code` — is the
+strongest, most reproducible finding of the whole pilot: a well-calibrated
+model answering a small-to-medium code-review request directly, every
+single time, rather than reaching for a heavyweight audit pipeline it was
+never functionally blocked from calling.
