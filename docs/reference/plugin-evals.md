@@ -138,24 +138,62 @@ fix above was tried and also failed** — 0.50 again, `explain` never called,
 wasn't the fix either. Self-contained and concrete are still separate axes
 worth keeping apart, but they weren't sufficient on their own.
 
-## Open question: does `explain` need its own trigger phrase, not just an existing-code frame?
+## Fourth attempt also failed at 0.50 — and the trace revealed the real
+## mechanism (measured 2026-09-19)
 
-Three attempts (real file path, fully abstract, "this codebase routes X")
-all failed to trigger `explain`, while single-attempt prompts for
-`investigate` and `plan` both scored 1.00 clean. Looking at what the
-winning prompts had in common: both happened to echo their target skill's
-own `Triggers on:` list almost verbatim — `investigate`'s prompt used
-"check whether... actually" (from "check whether X is really"), `plan`'s
-used "I want to add... how should I structure this" (two literal phrases
-from its own list). None of the three `explain` attempts did this; they
-were all "why does X work this way" comparative questions, not `explain`'s
-actual documented pattern of "why is X structured this way and not Y" or
-the deictic "why is *this*" (pointing at something concrete already in
-view, not describing a hypothetical).
+The fourth attempt (mirroring `explain`'s own "why is X structured this
+way and not Y" phrase almost verbatim, still naming the real
+`sensitive-path` classifier) scored 0.50 again — `explain` never called,
+no error, no timeout. Re-run with `--keep-temp` to inspect
+`out/trace.jsonl` directly (rather than guess from the score) showed the
+actual mechanism: Claude grepped the sandbox for the classifier
+(`sensitive|is_sensitive|isSensitive|classif`), found the sandbox `cwd`
+completely empty (0 files — only `.gitconfig` and a bare `.git` dir one
+level up), and answered directly: *"I can't answer that one, because the
+premise doesn't hold up: there's no codebase here to explain."* It never
+reached a skill-choice moment at all.
 
-A fourth attempt mirrors that literal phrase. If it also fails to trigger,
-treat that as a genuine finding about `explain`'s trigger reliability
-relative to its siblings, worth reporting, not another round of prompt
-tuning, three failed hypotheses against two skills that fire reliably on
-their first is enough signal to stop guessing and look at the skill
-description itself.
+This means the "trigger phrase" hypothesis above was never actually
+isolated — attempts 1, 3, and 4 all named a real, greppable repo pattern
+(a literal file path, then the sensitive-path classifier twice), which is
+exactly the "prompt sends Claude hunting for files that don't exist"
+confound from the first lesson, just without a literal path the second
+and third time. The real asymmetry isn't trigger-phrase wording, it's
+structural: `explain`'s own Step 0 says "validate the file exists...
+exit with 'not found'" if the target is missing, so a well-behaved model
+pre-verifies existence *before* deciding to invoke a skill whose own
+contract says it will fail otherwise. `investigate` has no such
+precondition — a negative finding ("that number doesn't hold up") is
+itself a valid investigate outcome, so pre-checking and finding nothing
+is still consistent with invoking it. `plan` doesn't need existing code
+at all. Neither of `explain`'s siblings has a target-existence gate to
+trip over.
+
+**The fix, confirmed by a fifth attempt**: give Claude a target that's
+concrete *without being greppable* — an inline code snippet pasted
+directly into the prompt, satisfying `explain`'s own "deictic 'why is
+*this*'" pattern (pointing at something already in view) without asking
+Claude to verify anything exists on disk first. That scored **1.00
+clean**. This is the fix that was actually novel; "mirror the trigger
+phrase" alone was not — attempt 4 did that too and still failed for the
+sandbox-confound reason above.
+
+**Net**: this was never a genuine `explain`-vs-siblings trigger-reliability
+gap. It was the sandbox-confound from the first lesson, recurring because
+"self-contained" prompts for `explain` kept describing a named pattern
+(concrete but externally verifiable) rather than showing one (concrete and
+already in view) — and the empty sandbox can never satisfy the former for
+a skill whose own flow starts with an existence check.
+
+## A second, separate flakiness finding: `plan-vs-audit-plan-design-request`
+
+Re-running the full `--tag pilot` smoke check after the `explain` fix
+surfaced a new issue: `plan-vs-audit-plan-design-request`, previously
+reported as "1.00 clean" (on a single run), scored 0.50 on a fresh single
+run and **0.67 across its designed 3-run default (1 pass, 2 fails)** when
+re-checked. This is a real, separate finding — not sandbox-confound
+shaped, plan's prompt never referenced anything sandbox-dependent — and
+is unexplained as of this writing. Flagging it here rather than chasing
+it further in this session; the original "1.00 clean" claim for this case
+should be read as unreliable until someone inspects why 2 of 3 runs don't
+invoke `plan`.

@@ -8,6 +8,13 @@ max_turns: 8
 expected_outcome: "Claude invokes the explain skill, not investigate."
 ---
 
-Why is the sensitive-path check in this codebase structured as one
-shared classifier function that every caller goes through, instead of
-each caller implementing its own version?
+Here's a function from this codebase:
+
+```js
+function checkPath(p) {
+  return classifySensitivePath(p);
+}
+```
+
+Every caller goes through `classifySensitivePath` instead of writing its
+own check. Why is this structured that way and not the other way?
