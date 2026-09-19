@@ -37,11 +37,14 @@ loaded, so scoring it against the without-arm baseline is meaningless.
 # Cheap smoke check — one run, no baseline arm
 claude plugin eval . --tag pilot --runs 1 --ablation none
 
-# Full pilot pass — 3 runs each way, cost-capped
-claude plugin eval . --tag pilot --max-cost-usd 5
+# Full pilot pass — 3 runs, cost-capped. Always pass --ablation none for
+# this pilot: every grader here is with-only (see above), so the default
+# ablation's without-arm score is a structural constant, not a
+# measurement -- see "The ablation Δ is confirmed meaningless" below.
+claude plugin eval . --tag pilot --max-cost-usd 5 --ablation none
 
 # A single case
-claude plugin eval . --case explain-topic-question
+claude plugin eval . --case explain-topic-question --ablation none
 ```
 
 Every run is a real, billed API call (the with-arm, the without-arm, and any
@@ -223,3 +226,72 @@ falsified hypothesis" applies directly: two prompt-shape hypotheses
 tried and falsified for this specific case. Left as an open, documented
 limitation rather than chased further — a genuine finding about `plan`'s
 trigger reliability under this harness, not (yet) a fixable prompt bug.
+
+## The ablation Δ is confirmed meaningless for this pilot's graders
+(measured 2026-09-19)
+
+`claude plugin eval . --tag pilot --max-cost-usd 5` (default `--ablation
+with-without`, 18 runs, $3.62) ran all three cases with the plugin loaded
+(with-arm) and without (without-arm). Result: **every one of the 9
+without-arm runs scored exactly 0.50**, across all three cases, zero
+variance. That's not evidence Claude fails without the plugin — it's a
+tautology in the grader design that the "Running it" section above already
+called out on paper: both graders per case are `tool_used: Skill` marked
+`arm: with-only`. Without the plugin loaded, the named skill can't be
+called under any circumstances, so the "does-not-invoke" grader
+(`max: 0`) auto-passes and the "invokes" grader (`min: 1`) auto-fails,
+every single time, regardless of what Claude actually does. The reported
+"Δ" column (`+0.17`, `+0.50`, `+0.33`) is therefore not a measurement of
+what the SKILL.md prose contributes — it's `with-score − 0.50` restated.
+Measuring the real claim ("would Claude have reasoned this well without
+being told to use `/explain`?") needs an output-quality grader on the
+baseline response, which this pilot doesn't have and — per "Extending the
+pilot" above — shouldn't be added without weighing the added judge-model
+cost and variance first. Use `--ablation none` for this pilot; the default
+ablation burns 3x the cost for no signal here.
+
+## Corrected picture: `explain`'s "fix" doesn't hold at n=3 either
+(measured 2026-09-19)
+
+The same ablation run's with-arm is a real 3-run sample of the "fixed"
+`explain` prompt (inline code snippet), taken independently of the
+single validation run reported above as "1.00 clean". Result: **1 pass,
+2 fails (0.67)**. Combined with the earlier single-run validation, that's
+2 passes out of 4 runs since the fix — statistically indistinguishable
+from the ~50% failure rate before it. The inline-snippet framing was
+real progress (it eliminated the specific "hunts for a named file, finds
+nothing, bails before choosing a skill" failure mode caught on trace
+inspection), but it did not make `explain`'s triggering reliable, and the
+single-run "1.00 clean" claim earlier in this doc should be read as
+**n=1, not confirmed** — the kind of premature-green result the repo's
+own verification discipline (`AGENTS.md` §Verification discipline) warns
+against: "a check is not trustworthy until seen to fail" cuts both ways —
+a check that only ever ran once isn't trustworthy as a pass either.
+
+`plan`'s with-arm score in the same run (0.83, 2/3 pass) is consistent
+with — not worse than — its already-documented flakiness above.
+
+**Corrected standing, all cases, all with-arm runs this session**
+(pooling every sample, not just the latest):
+
+| Case | With-arm pass rate this session | Status |
+|---|---|---|
+| `investigate-claim-question` | 6/6 (100%) | Reliably clean |
+| `plan-vs-audit-plan-design-request` | 6/9 (67%) | Genuinely flaky, unresolved |
+| `explain-topic-question` (post-fix) | 2/4 (50%) | Genuinely flaky, unresolved |
+
+Only `investigate` has earned "clean" by this repo's own standard of
+requiring a check to demonstrate it can fail before trusting it to pass.
+`explain` and `plan` should be reported as **~50–67% trigger reliability
+under this harness**, not as fixed, until a larger sample or a different
+intervention changes that. Neither failure mode looks like a SKILL.md
+wording defect at this point — both are Claude nondeterministically
+choosing to explore/answer directly instead of invoking a skill, on
+prompts that read as reasonable to a human either way. Candidates worth
+trying before more prompt tuning: a stronger imperative in `explain`'s
+and `plan`'s own `description` (their `Triggers on:` lists are already
+being echoed almost verbatim without eliminating the flakiness, which
+suggests the lever isn't trigger-phrase wording), or accepting this as a
+real, bounded trigger-reliability ceiling for judgment-heavy skills and
+scoping the pilot's pass/fail threshold accordingly instead of chasing
+1.00.
