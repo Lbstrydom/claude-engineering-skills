@@ -8,6 +8,6 @@ max_turns: 8
 expected_outcome: "Claude invokes the explain skill, not investigate."
 ---
 
-Why does this codebase route all sensitive-path checks through one
-shared classifier function instead of letting each caller implement its
-own version of the same check?
+Why is the sensitive-path check in this codebase structured as one
+shared classifier function that every caller goes through, instead of
+each caller implementing its own version?

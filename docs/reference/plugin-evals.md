@@ -132,9 +132,30 @@ concrete to point at gives Claude no reason to reach for a skill built
 around git history and architectural memory; it just answers the design
 question directly.
 
-The fix is neither the original (a literal file path that doesn't exist in
-the sandbox) nor the first rewrite (no existing-code referent at all): keep
-an "existing code" frame — `"this codebase routes X through Y"` — without
-naming a real file. Self-contained and concrete are separate axes; a prompt
-needs to clear the sandbox-access bar *and* still look like the shape of
-question the target skill actually answers.
+**Correction (same day, third rerun): the "this codebase routes X through Y"
+fix above was tried and also failed** — 0.50 again, `explain` never called,
+5 turns, no error, no timeout. So the existing-code-frame hypothesis alone
+wasn't the fix either. Self-contained and concrete are still separate axes
+worth keeping apart, but they weren't sufficient on their own.
+
+## Open question: does `explain` need its own trigger phrase, not just an existing-code frame?
+
+Three attempts (real file path, fully abstract, "this codebase routes X")
+all failed to trigger `explain`, while single-attempt prompts for
+`investigate` and `plan` both scored 1.00 clean. Looking at what the
+winning prompts had in common: both happened to echo their target skill's
+own `Triggers on:` list almost verbatim — `investigate`'s prompt used
+"check whether... actually" (from "check whether X is really"), `plan`'s
+used "I want to add... how should I structure this" (two literal phrases
+from its own list). None of the three `explain` attempts did this; they
+were all "why does X work this way" comparative questions, not `explain`'s
+actual documented pattern of "why is X structured this way and not Y" or
+the deictic "why is *this*" (pointing at something concrete already in
+view, not describing a hypothetical).
+
+A fourth attempt mirrors that literal phrase. If it also fails to trigger,
+treat that as a genuine finding about `explain`'s trigger reliability
+relative to its siblings, worth reporting, not another round of prompt
+tuning, three failed hypotheses against two skills that fire reliably on
+their first is enough signal to stop guessing and look at the skill
+description itself.
