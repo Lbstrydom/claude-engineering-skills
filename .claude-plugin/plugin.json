@@ -1,0 +1,6 @@
+{
+  "name": "claude-engineering-skills",
+  "displayName": "Claude Engineering Skills",
+  "description": "Eval-only manifest wrapping the skills/ directory so `claude plugin eval` can test skill-triggering behaviour. This is NOT the distribution surface: consumers install skills via `npm run sync` into scripts/.claude-skills/ and .claude/skills/, never via this file. See docs/reference/plugin-evals.md.",
+  "version": "0.1.0"
+}

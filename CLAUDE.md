@@ -39,3 +39,16 @@ prefer AGENTS.md.
 Auto-memory directory (managed by the harness, do not hand-edit unless
 removing stale entries):
 `~/.claude/projects/<repo-slug>/memory/`
+
+### Plugin evals (pilot)
+
+`.claude-plugin/plugin.json` + `evals/` at repo root let `claude plugin eval`
+test whether a skill's SKILL.md prose actually steers Claude to the right
+skill for an ambiguous prompt (e.g. `/plan` vs `/audit-plan`, `/explain` vs
+`/investigate`) — a surface `npm test` doesn't cover, since that suite only
+exercises `scripts/lib/**`. **CLI-only, by design**: Copilot/Cursor have no
+equivalent feature, and the eval sandbox never reads `.claude/skills/`, so it
+cannot affect the Copilot-native distribution surface either way. Pilot
+cases, cost guidance, and how to extend it:
+[`docs/reference/plugin-evals.md`](docs/reference/plugin-evals.md). Cheap
+smoke check: `claude plugin eval . --tag pilot --runs 1 --ablation none`.
