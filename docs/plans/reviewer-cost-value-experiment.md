@@ -34,11 +34,30 @@ what non-inferiority margin makes the cheaper option acceptable?
 | Cheap final reviewers vs Opus | `docs/research/experiment-4-cheap-final-reviewer-smoke.md` | Settles: kimi/glm not a drop-in for the gate. |
 
 So this experiment does **not** re-ask "is the apparatus good". It asks the
-narrower, unanswered pair: **(Q1)** does any cheap model, run N times and
-unioned, reach a cold Sonnet's verified-HIGH yield at a fraction of the cost;
-**(Q2)** does the apparatus beat the best cold arm by enough to justify its
-cost. Q3 (5-pass structure with a cheap seat) has one data point (exp-3) and
-is deferred to a conditional Phase 5 (§7b).
+narrower, unanswered pair: **(Q1)** does ONE cheap challenger, run N times
+and unioned, reach a cold Sonnet's verified-HIGH yield at a fraction of the
+cost; **(Q2)** does the apparatus beat the best cold arm by enough to justify
+its cost. Q3 (5-pass structure with a cheap seat) has one data point (exp-3)
+and is deferred to a conditional Phase 5 (§7b).
+
+**Why one challenger, and which (decided 2026-09-21, live-checked)**: the
+operator's call was to pick the cheap arm by independent coding benchmarks +
+price + route stability and test it first, adding a second only if it
+fails — the corpus and blind protocol are reusable, so a later arm costs
+only its own calls and adjudication rows. Benchmarks are a prior for
+*which arm to try*, not a substitute for the measurement: GLM-5.2 was the
+top open-weight on SWE-bench Pro and the AA index when exp-3 chose it, and
+still lost on false-positive rate. Live state on 2026-09-21: Grok 4.6 and
+Qwen3.8-max are $2/$6 per 1M — frontier-priced, not challengers; GLM-5.3-
+Flash (AA 42, $0.09/$0.30) is OpenRouter-only, which this repo has found
+less stable than direct routes; Qwen3.8-Flash-Next (best open-weight on
+SWE-bench Pro, 62.5%) sits behind the Alibaba workspace whose 176s→900s
+latency variance on identical input is documented in `.env`; **DeepSeek
+V4.1 Flash** (released 2026-09-10, API id `deepseek-flash`, AA 40, ~$0.15/
+$0.60) is the one cheap model with a direct, consistent route already wired
+and keyed (`resolveDeepseekCreds`). It is the challenger. Fallback order if
+it fails non-inferiority: GLM-5.3-Flash (accepting OpenRouter), then
+Qwen3.8-Flash after a workspace latency probe.
 
 ## 1. Context Summary
 
@@ -141,16 +160,12 @@ graph LR
   X --> B["Arm B: cold Sonnet x1"]
   X --> C["Arm C: cold Sonnet x3 union"]
   X --> D["Arm D: cold Opus x1"]
-  X --> E["Arm E: Qwen x3 union<br/>OpenRouter"]
-  X --> F["Arm F: DeepSeek x3 union<br/>OpenRouter"]
-  X --> G["Arm G: Grok x3 union<br/>OpenRouter"]
+  X --> E["Arm E: DeepSeek V4.1 Flash x3 union<br/>direct API, fingerprint-pinned"]
   A --> M["merge: blind CSV<br/>+ .blind-map.json"]
   B --> M
   C --> M
   D --> M
   E --> M
-  F --> M
-  G --> M
   APLUS --> M
   A -. paired gate ablation .- APLUS
   M --> H["human labels + cluster + severity<br/>proven / actionable / plausible / false"]
@@ -165,8 +180,11 @@ graph LR
   allowed on the CLI, never in artifacts), then classifies the *resolved* id
   by **recipient** — `anthropic` (native SDK, `runPass`), `openai` (native,
   `runGptPass`), `gemini` (native, `runGeminiReview`/`runGeminiPass`),
-  `openrouter` (any id the resolver maps to an OpenRouter route,
-  `runOssPass`). `modelFamily` is used only for pricing and the
+  `deepseek` (direct: OpenAI-compatible client on `resolveDeepseekCreds()`,
+  the seam `final-review/providers.mjs:299` already uses, driving
+  `runOssPass`'s structured-output path), `openrouter` (any id the resolver
+  maps to an OpenRouter route, `runOssPass`). `alibaba`/`xai` direct are
+  recognised by the vocabulary but no arm uses them in this run. `modelFamily` is used only for pricing and the
   `self_family` flag, never for routing — an `openai/…` OpenRouter slug and a
   native `gpt-…` id are the same family on two transports. The effective
   `{input, resolvedModel, transport, family, pricingVersion}` is written once
@@ -264,14 +282,12 @@ source: kd|draw, allowedTransports: subset of [anthropic, openai, gemini, openro
 is **required** on every entry — the schema validator refuses a corpus with a missing or empty
 list (fail closed, H1).
 
-**Data-governance split** (see §Security): commits from **this repo and
-ai-organiser** carry `allowedTransports` including `openrouter`;
-**wine-cellar-app** commits do not. This yields two pre-declared cohorts:
-**Cohort ALL** (35 commits; configurations A, A+, B, C, D) and **Cohort OR**
-(the 23 OpenRouter-eligible commits; configurations A, A+, B–G). Every
-comparison is computed within one cohort — E–G are only ever compared to
-A–D on Cohort OR. The gate ablation is reported on Cohort ALL, paired per
-commit, outside both rankings.
+**Data governance** (see §Security): policy v2 (operator decision
+2026-09-21) permits `openrouter`, `deepseek` and `alibaba` for all three
+repos, wine-cellar-app included. There is therefore **one cohort** — all 35
+commits run every configuration — and the two-cohort machinery from the
+earlier draft is retired. The gate ablation is reported paired per commit,
+outside the ranking.
 
 **Arms** (resolved ids recorded in the run manifest; sentinels forbidden in
 artifacts):
@@ -293,9 +309,7 @@ measurement that is not a configuration.
 | B | cold `claude-sonnet-5` ×1, same five passes | `run --label B --model claude-sonnet-5` |
 | C | cold `claude-sonnet-5` ×3 union, temperature pinned at 1.0 | `run --label C --model claude-sonnet-5 --repeats 3 --sdk` |
 | D | cold `claude-opus-5` ×1 | `run --label D --model claude-opus-5` |
-| E | `qwen/qwen3.8-max` ×3 union via OpenRouter, `provider:{require_parameters:true, sort:'throughput'}` + `reasoning:{effort}` pinned | `run --label E --model qwen/qwen3.8-max --repeats 3` |
-| F | `deepseek/<slug pinned in the manifest at run time>` ×3 union | `run --label F --model deepseek/<slug> --repeats 3` |
-| G | `x-ai/<slug pinned in the manifest>` ×3 union — **only if** OpenRouter lists it at preflight; else the arm is recorded `state: not-run` in the manifest, never silently dropped | `run --label G --model x-ai/<slug> --repeats 3` |
+| E | **the cheap challenger**: DeepSeek V4.1 Flash via the **direct** API (`resolveDeepseekCreds`, OpenAI-compatible), id `deepseek-flash`, ×3 union, temperature pinned at 1.0. `deepseek-flash` is an **unversioned alias** (the response's `model` field echoes the alias, verified 2026-09-21), so the manifest pins the response `system_fingerprint` captured at preflight and the runner **refuses any cell whose response fingerprint differs** — a silent V4.2 behind the same alias would otherwise change the arm mid-run. | `run --label E --model deepseek-flash --repeats 3` |
 
 **Gate ablation (not a candidate)** — *Pro vs Flash, paired*: both gates
 consume the **same immutable pre-gate artifact** `S-pregate-A-<sha>.json`
@@ -313,12 +327,17 @@ the post-gate union, `:674-679`).
 
 **Recipient vocabulary (R2-H2)** — `allowedTransports` values are
 **recipients** (the party that receives repository content), distinct from
-wire protocol: `anthropic`, `openai`, `gemini`, `openrouter`. OpenRouter is
-one recipient regardless of which upstream model it routes to; an
-`openai/…` OpenRouter slug is recipient `openrouter`, not `openai`.
-Arms A/A+ need `openai` **and** `gemini`; B–D need `anthropic`; E–G need
-`openrouter`. A corpus entry that lacks `gemini` cannot run A/A+ and is
-`excluded` for those arms — it is not silently routed around.
+wire protocol: `anthropic`, `openai`, `gemini`, `openrouter`, `deepseek`
+(DeepSeek's direct API), `alibaba` (the Alibaba Cloud workspace), `xai`
+(x.ai direct). OpenRouter is one recipient regardless of which upstream
+model it routes to; an `openai/…` OpenRouter slug is recipient
+`openrouter`, not `openai`; `deepseek-flash` reached directly is recipient
+`deepseek`, while `deepseek/…` via OpenRouter would be `openrouter`.
+Arms A/A+ need `openai` **and** `gemini`; B–D need `anthropic`; E needs
+`deepseek`. A corpus entry lacking a required recipient cannot run that
+arm and is `excluded` for it — never silently routed around. (Under policy
+v2 no entry lacks any of these; the rule is kept because the policy file is
+the thing that can change.)
 
 **Execution contract (H4)** — every `(arm, commit, repeat, chunk, pass)`
 cell has exactly one terminal state in the call ledger:
@@ -405,12 +424,11 @@ configuration** (5-pass + Flash), because that is what consumers have today:
    `$/diff ≤ 0.25 × A.$/diff` (only computable when A is eligible and
    `costComplete`). This is the claim the operator wanted answered; it is a
    *finding*, and the winner rule above is what actually changes the default.
-7. **Cohort precedence**: the default configuration for consumers is
-   decided on **Cohort ALL** (it includes the private repo, which is where
-   the default will run). Cohort OR answers only whether a cheap arm is
-   worth offering as an *opt-in* for public repos.
+7. **One cohort**: with policy v2 every configuration runs on all 35
+   commits, so `decide()` runs once. (The earlier draft's Cohort OR
+   opt-in question no longer exists.)
 
-If the winner on Cohort ALL is A, A stays the default and the question is
+If the winner is A, A stays the default and the question is
 closed for this model generation. If the winner is not A, the `audit-code` description clause added 2026-09-20 ("invoke for ANY
 code review, even a pasted snippet") is reverted in the same ship as the
 default change.
@@ -441,13 +459,14 @@ replaces the human sheet (the repo's own 52%-agreement finding applies).
 
 | File | Intent | Purpose / key change | Principle |
 |---|---|---|---|
-| `scripts/solo-control-audit.mjs` | modify | `cmdRun`: preflight `resolveModel` → recipient classification (`anthropic|openai|gemini|openrouter`) → run manifest; dispatch `runPass` / `runGptPass` / `runGeminiPass` / `runOssPass` by recipient; `--repeats` for every recipient; per-cell checkpoint + `--resume`; `--corpus <path>` (validates schema incl. `allowedTransports`); `--label <arm>` is **required** and names every artifact (`cmdRun` today derives `S-<model>[-xN]` at `:391`, which is why an explicit label is needed once two arms share a model); `recipientPolicy` check before any client is built. `cmdApparatus`: write the immutable pre-gate artifact `S-pregate-A-<sha>.json` (deduped 5-pass union + gate-context chunk bytes, sha256 in the manifest) **before** calling any gate; `--gate-model <id>`; `--gate-only` re-runs `runGeminiReview` over the pre-gate artifact (refusing if its sha256 does not match the manifest); gate outputs persisted separately as `G-<gate>-A-<sha>.json`; shared 5-pass ledger rows tagged `sharedBy`; `--corpus <path>` and per-cell checkpoint + `--resume` exactly as `cmdRun` (Arm A is the expensive arm and must survive interruption); **assembly**: after each gate run `cmdApparatus` writes the composite candidate file `S-findings-<A|A+>.json` = pre-gate union ∪ that gate's output (rows tagged `stage: pregate|gate`, `gateModel`), so `cmdMerge` ingests candidates through the existing `S-findings-*.json` glob unchanged and the pre-gate/gate files remain the immutable audit record. All provider calls append to the call ledger via one `recordCall()` helper. Imports `resolveModel`, `modelFamily`, `costFromUsage`. | #1, #5, #12, #19 |
+| `scripts/solo-control-audit.mjs` | modify | `cmdRun`: preflight `resolveModel` → recipient classification (`anthropic|openai|gemini|deepseek|openrouter`, plus `alibaba|xai` recognised) → run manifest (incl. the DeepSeek `system_fingerprint` captured by one preflight call); per-cell fingerprint check for alias-addressed models; dispatch `runPass` / `runGptPass` / `runGeminiPass` / `runOssPass` by recipient; `--repeats` for every recipient; per-cell checkpoint + `--resume`; `--corpus <path>` (validates schema incl. `allowedTransports`); `--label <arm>` is **required** and names every artifact (`cmdRun` today derives `S-<model>[-xN]` at `:391`, which is why an explicit label is needed once two arms share a model); `recipientPolicy` check before any client is built. `cmdApparatus`: write the immutable pre-gate artifact `S-pregate-A-<sha>.json` (deduped 5-pass union + gate-context chunk bytes, sha256 in the manifest) **before** calling any gate; `--gate-model <id>`; `--gate-only` re-runs `runGeminiReview` over the pre-gate artifact (refusing if its sha256 does not match the manifest); gate outputs persisted separately as `G-<gate>-A-<sha>.json`; shared 5-pass ledger rows tagged `sharedBy`; `--corpus <path>` and per-cell checkpoint + `--resume` exactly as `cmdRun` (Arm A is the expensive arm and must survive interruption); **assembly**: after each gate run `cmdApparatus` writes the composite candidate file `S-findings-<A|A+>.json` = pre-gate union ∪ that gate's output (rows tagged `stage: pregate|gate`, `gateModel`), so `cmdMerge` ingests candidates through the existing `S-findings-*.json` glob unchanged and the pre-gate/gate files remain the immutable audit record. All provider calls append to the call ledger via one `recordCall()` helper. Imports `resolveModel`, `modelFamily`, `costFromUsage`. | #1, #5, #12, #19 |
 | `scripts/lib/solo-control/scoring.mjs` | modify | `scoreArms`: prefer the adjudicated `sev` column over emitted severity when present; new `decide({cohort, arms, ledgerAggregates})` implementing §3's five steps, returning `{eligible[], ineligible[{arm,reason}], best, trustBar, acceptable[], winner, winnerReason: incumbent|replacement|incumbent-ineligible-fallback, nonInferiorCheap[], inconclusive}`; total over every input (a winner or `inconclusive`, never undefined). Existing eligibility thresholds untouched. | #5, #11 |
-| `scripts/lib/model-pricing.mjs` | modify | Add `qwen/qwen3.8-max` and the pinned DeepSeek / `x-ai` OpenRouter slugs to `OSS_PRICING`; bump `PRICING_VERSION`. Absent rows stay `null`-honest. | #4, #19 |
+| `scripts/lib/model-pricing.mjs` | modify | Add a native `deepseek-flash` row (V4.1 Flash direct pricing, verified against DeepSeek's pricing page at run time); bump `PRICING_VERSION`. Absent rows stay `null`-honest. | #4, #19 |
+| `scripts/lib/model-resolver.mjs` | modify | `DEEPSEEK_POOL`: `deepseek-v4-flash` → `deepseek-flash` (the old id is a temporary compatibility redirect since 2026-09-10; verified live that it serves `deepseek-flash`). Pool-coverage test must pass. Stale `OSS_POOL` head (`glm-5.2`) and the non-live `qwen/qwen3.8-max` slug are noted for a separate maintenance pass, not changed here. | #4 |
 | `docs/experiments/audit-effectiveness/recipient-policy.json` | create | `{repoIdentity → allowedTransports}` — the ONE source every entry path (`--corpus`, `--commits`, `discoverCommits`) consults; corpus entries must be subsets of it. | #5 |
 | `docs/experiments/audit-effectiveness/experiment-5-corpus.json` | create | The 35-commit pre-registered corpus: `{repo, repoIdentity, sha, stratum, source, allowedTransports}` per entry. | #5 |
 | `docs/experiments/audit-effectiveness/experiment-5-adjudication-rubric.md` | create | The written impact rubric for `sev` and the `proven`/`actionable` evidence bar, fixed before any labelling. | — |
-| `tests/solo-control-dispatch.test.mjs` | create | Transport dispatch per resolved id; a sentinel input resolves once and the *resolved* id lands in the manifest; prompt text per pass is byte-equal across the three adapters (transport stubs); `costUsd` null for unpriced, numeric for priced; ledger row per call incl. retries; `--resume` re-runs only missing cells; `score` drops a `partial` commit from every arm in the cohort; `decide` returns `inconclusive` on `best.value === 0`, never ranks an ineligible arm, selects A when A is eligible and nothing beats it, selects the lowest-cost acceptable arm when A is ineligible and `acceptable` is non-empty, and the highest-value trusted arm only when `acceptable` is empty, never returns undefined, and labels `nonInferiorCheap` only under the 0.25 ceiling; scoring aggregate includes `sharedBy` rows while the budget aggregate counts each `callId` once; a bare `--commits` run on a repo absent from `recipient-policy.json` is refused. | Tier 1 |
+| `tests/solo-control-dispatch.test.mjs` | create | Transport dispatch per resolved id; a sentinel input resolves once and the *resolved* id lands in the manifest; prompt text per pass is byte-equal across the three adapters (transport stubs); `costUsd` null for unpriced, numeric for priced; ledger row per call incl. retries; `--resume` re-runs only missing cells; `score` drops a `partial` commit from every arm in the cohort; `decide` returns `inconclusive` on `best.value === 0`, never ranks an ineligible arm, selects A when A is eligible and nothing beats it, selects the lowest-cost acceptable arm when A is ineligible and `acceptable` is non-empty, and the highest-value trusted arm only when `acceptable` is empty, never returns undefined, and labels `nonInferiorCheap` only under the 0.25 ceiling; scoring aggregate includes `sharedBy` rows while the budget aggregate counts each `callId` once; a bare `--commits` run on a repo absent from `recipient-policy.json` is refused; a DeepSeek cell whose response `system_fingerprint` differs from the manifest is refused and recorded `provider-error: fingerprint-drift`. | Tier 1 |
 | `tests/solo-control-egress.test.mjs` | create | (a) A diff with a sensitive path or a secret pattern reaches NO provider stub un-redacted, for all **four** recipients (anthropic, openai, gemini, openrouter). (b) A corpus entry whose `allowedTransports` excludes `openrouter` is **refused before any OpenRouter client is constructed** — asserted on the stub's constructor never being called; missing `allowedTransports` ⇒ exit 2. Same-commit obligation. | Tier 3a |
 | `docs/research/experiment-5-reviewer-cost-value.md` | create | Verdict document: corpus, manifest (resolved ids, transports, pricing version), run matrix with cell states, per-cohort per-arm table, `decide` output verbatim, what the margin does and does not claim. Written **after** `score`, never before. | — |
 | `docs/runbooks/model-eval-harness.md` | modify | One section: "cold-arm comparisons run on solo-control, not model-eval — and why". | — |
@@ -479,13 +498,14 @@ adjudicated-severity scoring and `decide`; pricing rows; both tests. Files:
 
 **Phase 3 — Execution (spend)**: from a pinned worktree
 (`npm run fixture:create -- --name exp5 --rev <sha>`), preflight writes the
-manifest (resolved ids, G present/`not-run`); with
+manifest (resolved ids, DeepSeek fingerprint); with
 `LEARNING_DISABLE=1 AUDIT_SEMANTIC_SUPPRESS_ENABLED=false` run, per the
 §3 registry: **A** = `apparatus --label A --gate-model gemini-flash-latest`
 (writes the pre-gate artifact + `G-flash`), then **A+** = `apparatus --label
 A+ --gate-only --gate-model gemini-pro-latest` (consumes that artifact, writes `G-pro`),
-then B–G via `run`. The gate ablation needs no extra call — it is the paired
-read of `G-flash` vs `G-pro`. One sitting;
+then B–E via `run` (E first does one preflight call to capture the
+`system_fingerprint` into the manifest). The gate ablation needs no extra
+call — it is the paired read of `G-flash` vs `G-pro`. One sitting;
 `--resume` on interruption; artifacts under `.audit-loop/solo-control/`
 (Category A). Files: none.
 
@@ -527,10 +547,13 @@ exp-3 method), reported as a *separate* measurement. Files: none new.
 - **Human adjudication is the real cost**: ~2 person-hours per 10 diffs
   → ~7 hours. Deferring to an LLM judge would reintroduce the 52%
   disagreement; the plan keeps the human sheet primary.
-- **OpenRouter provider drift**: a slug may route to a different backend
-  mid-run. Mitigated by `provider:{require_parameters:true, sort}` and
-  recording `provider_cost_usd` where the response carries it.
-- **Arm G may not exist** at run time; recorded `not-run`, never a zero.
+- **The challenger is alias-addressed.** `deepseek-flash` could silently
+  become V4.2 mid-run; the fingerprint pin turns that into a refused cell
+  (`partial`), never a mixed arm. A fingerprint change between sittings
+  means the arm is re-run from scratch, not resumed.
+- **A single challenger answers Q1 for one model only.** If E fails
+  non-inferiority the verdict says "DeepSeek V4.1 Flash is not", not "no
+  cheap model is"; the fallback order in §0 is pre-registered.
 - **Apparatus arm cost**: A is the expensive arm (~$4–8/diff × 35). Budget
   ceiling for the whole run: **$350 API**, enforced from the call ledger's
   running Σ `costUsd` at preflight of each cell; on breach the runner stops,
@@ -563,7 +586,9 @@ exp-3 method), reported as a *separate* measurement. Files: none new.
   request body*, not the client config. Recipient policy refuses **before**
   client construction (constructor spy never called).
 - **Integration**: one commit through configurations A, A+, B and E
-  end-to-end against stubbed providers; artifacts round-trip through `merge` (with `sev`
+  end-to-end against stubbed providers (E's stub returns a fixed
+  `system_fingerprint`; a second stub returning a different one makes the
+  cell `provider-error: fingerprint-drift`); artifacts round-trip through `merge` (with `sev`
   column) and `score --decide`; the gate-only re-run consumes the
   pre-gate artifact (sha256-checked) and NOT the post-gate union — asserted
   by seeding the post-gate file with a marker finding and proving the Flash
@@ -600,7 +625,13 @@ incident:
 - **Gemini round 2** (cap): CONCERNS, 3 new, 0 wrongly dismissed — G1 HIGH: the step-5 fallback sentence contradicted the set rule when A is ineligible but acceptable is non-empty (fixed: fallbacks apply only when the set is empty); G2 HIGH: F/G table rows lacked `--model` (fixed); G3 MEDIUM: `cmdApparatus` lacked `--corpus`/`--resume` and the pre-gate/gate → `S-findings-<A|A+>.json` assembly was unspecified (fixed). **Gate closed at the 2-round cap on CONCERNS-with-fixes-applied, not APPROVE**: round-2 findings were one prose contradiction plus two completeness items, the character the cap exists for; the code audit verifies the completeness items against real code.
 - **Gemini round 1**: CONCERNS, 4 new (G1 HIGH: `decide()` could never accept the incumbent — `$/diff ≤ 0.25×A` is false for A itself — and held frontier arms to a challenger-only discount; G2 HIGH: no fallback when A fails the trust bar, which exp-1 measured at ~40%; G3 MEDIUM: `recipientPolicy` undefined for bare `--commits`; G4 MEDIUM: shared-row aggregation predicate ambiguous), 0 wrongly dismissed, deliberation "exemplary". All four accepted: roles + total winner rule + incumbent-ineligible fallback + `nonInferiorCheap` as a reported finding; committed `recipient-policy.json` as the one source; scoring vs budget predicates stated. Gemini round 2 follows (cap 2).
 
+- **2026-09-21 revision (operator decisions, not an audit round)**: (1) policy v2 — wine-cellar-app now permits `openrouter`/`deepseek`/`alibaba`, collapsing the two cohorts into one; (2) one cheap challenger instead of three, chosen by live benchmark + price + route stability: DeepSeek V4.1 Flash direct (`deepseek-flash`), fingerprint-pinned; Grok/Qwen-max dropped as frontier-priced, GLM-5.3-Flash and Qwen3.8-Flash pre-registered as fallbacks. Corpus v3 keeps v2's 35 shas; only `allowedTransports` changed.
+
 ## Implementation Log
+
+### 2026-09-21 — Phase 1 amended (no API spend)
+- Completed: policy v2 (wine-cellar-app permits `openrouter`/`deepseek`/`alibaba`; `xai` for the two public repos); corpus v3 — same 35 shas as v2, `allowedTransports` refreshed from policy v2, single cohort. Live-checked the challenger: DeepSeek direct API lists only `deepseek-flash` + `deepseek-v4-pro`; `deepseek-v4-flash` serves `deepseek-flash` by compatibility redirect; the response echoes the alias in `model` but carries a `system_fingerprint`, which is the pin. No V4.2 exists (changelog + API).
+- Remaining: Phases 2–4.
 
 ### 2026-09-20 — Phase 1 complete (no API spend)
 - Completed: `recipient-policy.json` (3 repos; wine excludes `openrouter`); `experiment-5-corpus.json` — 35 entries = 18 KD `buggyCommit`s + 17 seeded (seed 20260920) stratified draws from each repo's `main` 2026-06..09, all 35 shas verified to resolve in their `SOLO_CONTROL_REPO_ROOTS` checkouts, zero policy violations; Cohort ALL = 35, Cohort OR = 27; sources kd 18 / clean 10 / sampled 7; `experiment-5-adjudication-rubric.md` (label evidence bar, per-cluster `sev` impact rubric with lower-tier tie-break, clustering rules, 40-row cap).
