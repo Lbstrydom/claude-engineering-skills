@@ -3,10 +3,14 @@
 **What it is**: `.claude-plugin/plugin.json` at repo root plus `evals/` wrap
 the existing `skills/` directory so the Claude Code CLI's `claude plugin eval`
 can run realistic prompts against this repo's skills and assert, mechanically,
-which skill fires. It runs each case with the plugin loaded (with-arm) and
-without (without-arm) and reports the delta, isolating what the skill's
-SKILL.md prose actually contributes rather than what Claude would have done
-anyway.
+which skill fires. Every case's graders are `arm: with-only` `tool_used`
+checks against `Skill` — they assert whether the *intended* skill fired (and
+the wrong sibling didn't) when the plugin is loaded. **Always run with
+`--ablation none`** (see "Running it" below): the CLI's default `with-without`
+ablation mode reports a `with`/`without`/`Δ` breakdown, but for `with-only`
+graders the without-arm score is a structural constant (confirmed
+empirically — see "The ablation Δ is confirmed meaningless" further down),
+not a measurement of what the SKILL.md prose contributes.
 
 **Why it exists**: `npm test` (14,000+ tests) exercises `scripts/lib/**` —
 the code the skills call into — but nothing in this repo tests the prose
@@ -16,11 +20,18 @@ steers Claude to the right skill for an ambiguous prompt. That's the same
 matching 0/7 sessions on a field-name mismatch) — plugin evals give that seam
 a mechanical check for the first time.
 
-**Scope of the pilot**: expanded 2026-09-19 from 3 cases (one pair) to 12
-cases covering every one of this repo's 13 model-invokable skills (the other
-3 — `security-strategy`, `ship`, `skills` — carry `disable-model-invocation:
+**Scope of the pilot**: expanded 2026-09-19 from 3 cases (one pair) to 13
+cases giving every one of this repo's 13 model-invokable skills at least one
+POSITIVE assertion that it fires when it should (the other 3 —
+`security-strategy`, `ship`, `skills` — carry `disable-model-invocation:
 true` and can only be reached by explicit slash command, so there is no
-triggering ambiguity to test):
+triggering ambiguity to test). Until `persona-test-vs-click-test` was added,
+`persona-test` appeared only as a negative control in three other skills'
+cases (asserting it does NOT fire) — real coverage of three OTHER skills, but
+none of it proves `persona-test` itself fires when it should; a broken or
+undiscoverable `persona-test` skill would have satisfied every assertion
+concerning it. Caught by a real `/audit-code` run against this pilot's own
+diff — see "Coverage gap" below.
 
 | Case | Asserts |
 |------|---------|
@@ -33,8 +44,9 @@ triggering ambiguity to test):
 | `evals/visual-audit-vs-persona-test/` | a styling/theme-consistency check invokes `visual-audit`, not `persona-test` |
 | `evals/click-test-vs-persona-test/` | a structural DOM/accessibility walk invokes `click-test`, not `persona-test` |
 | `evals/nav-audit-vs-persona-test/` | a "does the menu offer what's needed" question invokes `nav-audit`, not `persona-test` |
+| `evals/persona-test-vs-click-test/` | a journey-level "explore as a user" request invokes `persona-test`, not `click-test` — closes the positive-coverage GAP above, though the case itself is genuinely flaky (1/3 — see below) |
 | `evals/brainstorm-vs-plan/` | wanting another LLM's independent take invokes `brainstorm`, not `plan` |
-| `evals/cycle-full-flow-request/` | an explicit end-to-end request invokes the `cycle` orchestrator, not a single step directly |
+| `evals/cycle-full-flow-request/` | an explicit end-to-end request invokes the `cycle` orchestrator, not a single step directly (grader limitation: confirms `cycle` fires, not that it was the *entry point* — see "Known grader limitation" below) |
 | `evals/ai-context-management-drift-check/` | an AGENTS.md/CLAUDE.md drift question invokes `ai-context-management`, not `explain` |
 
 Each case has one or two `tool_used` graders: one asserting the intended
@@ -497,3 +509,84 @@ strongest, most reproducible finding of the whole pilot: a well-calibrated
 model answering a small-to-medium code-review request directly, every
 single time, rather than reaching for a heavyweight audit pipeline it was
 never functionally blocked from calling.
+
+## Why no eval run ever billed GPT/Gemini, and why that's correct
+(measured 2026-09-20)
+
+Worth stating explicitly, since it's a reasonable question the numbers above
+raise on their own: none of this session's 45+ `claude plugin eval` runs —
+including every `audit-code-request` and `audit-plan-request` run, several
+of which DID successfully invoke `Skill(audit-code)`/`Skill(audit-plan)` —
+ever called the real `scripts/openai-audit.mjs` / `gemini-review.mjs`
+pipeline, so none of them billed OpenAI or Gemini. This is not a missing-
+API-key artefact (`.env` in this checkout carries real `OPENAI_API_KEY`,
+`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `AUDIT_DB_URL` — confirmed by reading
+the file directly, not by trusting an ambient `process.env` check, which is
+its own well-known false-negative for this repo's env-loading pattern). Two
+independent, deliberate gates prevent it regardless of keys:
+
+1. Every case's `allowed_tools` in this pilot excludes `Bash` — the pipeline
+   scripts can only be invoked via a shell.
+2. The harness has a **second, separate** gate on top of that: `Bash` also
+   needs an explicit `--allow-tools Bash` grant on the `claude plugin eval`
+   invocation itself, confirmed live — a case declaring `allowed_tools:
+   [Bash]` without the CLI flag gets `not granted (missing --allow-tools
+   grant)` and the tool never reaches the model at all, not even as a
+   refused call.
+
+So a triggering eval correctly invoking `Skill(audit-code)` was never one
+`--allow-tools` flag away from a real, billed GPT+Gemini run — it would
+still need Bash granted at BOTH levels, which no case in this pilot
+requests. This is the right design for a routine trigger-regression suite:
+it measures the trigger decision only, cheaply and safely, and deliberately
+cannot be walked into a $10+ real audit by an unnoticed flag. It does mean
+the pilot has never validated (and structurally cannot validate, without a
+dedicated `--allow-tools Bash` case with real cost) that the pipeline
+`audit-code`/`audit-plan` invoke actually *runs* once triggered — only that
+the trigger decision itself fires correctly. A real, direct `/audit-code`
+invocation outside this harness (against the actual repo, with Bash and
+real keys) is the only way to test that, and is a separate, already-billed
+activity from the pilot's own eval runs.
+
+## Findings from a real `/audit-code` run against this pilot's own diff
+(measured 2026-09-20)
+
+Ran a genuine `/audit-code` (real GPT 5-pass + Gemini gate, not the eval
+harness) against this session's own commits. Two findings were real and
+in-scope; both are reflected in this doc's earlier sections:
+
+- **`persona-test` had no positive-coverage case** — three cases asserted it
+  does NOT fire (as the correct sibling-rejection for `visual-audit`,
+  `click-test`, `nav-audit`), but none asserted it fires when it *should*.
+  Added `evals/persona-test-vs-click-test/` to close the gap — but the case
+  itself scored **1/3 (33%)**, not clean. Trace inspection shows the same
+  mechanism as `ux-lock`'s original failure: Claude checks for a browser
+  driver, finds none in the sandbox, and gives up before ever considering
+  `Skill(persona-test)` — even though the prompt already echoes
+  `persona-test`'s own "explore the app as" trigger phrase almost verbatim,
+  so phrase-mirroring alone isn't the lever here (same as `explain`/`plan`).
+  Not chased further; joins `explain` and `plan` as the pilot's third
+  genuinely-flaky, unresolved case. The coverage GAP is closed (there is now
+  a real assertion that `persona-test` fires); the RELIABILITY is not.
+- **Known grader limitation, `cycle-full-flow-request`**: the single
+  `invokes-cycle` grader (`min: 1`) confirms `cycle` was called at some point
+  in the trace, not that it was the *entry point*. A trace where Claude calls
+  `Skill(plan)` directly first and only separately invokes `cycle` afterward
+  would still pass. This wasn't fixed — the `tool_used` grader vocabulary
+  available to this pilot has no ordering primitive, and building one is a
+  bigger lift than this finding's severity (MEDIUM, and the failure mode it
+  describes — Claude calling `plan` then *also*, redundantly, `cycle` — has
+  no observed instance in any of this case's runs) justifies right now.
+  Documented here as the honest residual risk rather than engineered around.
+
+The remaining findings from that audit run (a `.md a` link contrast issue in
+generated `report.html`, mismatched `runsPerCase` counts, an ablation-arm
+recording inconsistency, temp-directory trace paths) were all traced to one
+root cause: `evals/results/` — this repo's own generated eval-run output —
+was untracked but not gitignored, so `--scope diff`'s dirty-aware/untracked
+sweep pulled a pile of third-party-generated report internals into audit
+scope alongside the real diff. None of those files are authored content;
+they regenerate differently on every run and were never meant to be
+reviewed. Fixed at the root: `evals/results/` is now in `.gitignore`
+(Category A — regenerated by every eval run, never a function of committed
+source), so no future audit of this repo can be contaminated by it again.
