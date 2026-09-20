@@ -179,6 +179,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "3e93533e-dc27-42e6-8bf8-abc796d9d8c7",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "exempt",
+        "value": "prose-only SKILL.md fix (cycle/SKILL.md Step 7 + Step 8 + --autonomous docs); no CLI exit code to bind a test to, /ship's own disable-model-invocation refusal is already tested"
+      },
+      "recordedAt": "2026-09-19T12:06:12.426Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "429683ac-f537-43da-909a-4708a4e2b60e",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
@@ -473,6 +484,17 @@
         "value": "tests/ux-lock-capture.test.mjs"
       },
       "recordedAt": "2026-08-22T00:00:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "aa6469b3-bfcd-447b-9806-bfbb05a33121",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "exempt",
+        "value": "prose-only calibration note in docs/audit/shared-references/gemini-gate.md (synced into audit-plan/audit-code, mirrored in cycle/SKILL.md); softens a framing claim, no mechanism change pending a broader sample"
+      },
+      "recordedAt": "2026-09-19T12:06:21.308Z"
     },
     {
       "schemaVersion": 1,

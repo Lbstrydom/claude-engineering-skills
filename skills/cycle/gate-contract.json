@@ -185,6 +185,50 @@
     {
       "line": "Exit is always 0 and the output goes to stderr only, so it never blocks the",
       "reason": "A NEGATIVE guarantee (an absence of blocking), same disposition class as ship/step-0-5-gates-non-blocking and ship/upstream-queue-never-blocks: check-plan-status.mjs --check-deps is a cross-skill.mjs-shaped advisory read (real, but the READ half is verified by its own tests, e.g. tests/plan-status.test.mjs), and 'never blocks' is a claim about what the agent does with the printed output, not a CLI exit code a cli-exit recipe can assert."
+    },
+    {
+      "line": "Usage: /cycle --autonomous <plan-file>    — Opt-in: autonomously implement + audit each §11 cluster (default still pauses for the human; Step 7/ship is NEVER autonomous — see Step 7)",
+      "reason": "Usage-line summary of the Step 7 fact below (upstream report 3e93533e, 2026-09-19): /ship's OWN frontmatter (disable-model-invocation:true) refuses every programmatic call, a claim already document-only-dispositioned in skills/ship/gate-contract.json against ship's own SKILL.md. /cycle has no exit code of its own — this line only restates, for the Usage table, a refusal that lives and is enforced one skill over."
+    },
+    {
+      "line": "`--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster (see \"Clustered execution\"). On a plan with **no §11 block** it runs the **degenerate single-cluster** path (the whole plan as one unit — Step 3) rather than silently pausing. Without the flag, `/cycle` pauses for the human at Step 3 exactly as today — the autonomous behaviour is never silent either way. **`--autonomous` does not reach Step 7** — `/ship` refuses every programmatic call regardless of this flag, so even a fully autonomous run ends in the Step 7 blocked handoff, not a completed ship.",
+      "reason": "Flag-description paragraph. The 'never silent' half restates Step 3's existing decision table (already the skill's documented behaviour, not a new claim); the 'refuses every programmatic call' half points at /ship's OWN frontmatter refusal (dispositioned document-only in skills/ship/gate-contract.json), not something /cycle enforces with an exit code of its own. /cycle is a thin orchestrator — see consolidated-gemini-gate-mandatory and the other document-only gates above for the same reasoning."
+    },
+    {
+      "line": "more round (meant to be occasional, not the norm — see `gemini-gate.md`'s",
+      "reason": "Part of the Step 3C.2 round-cap paragraph pointing the agent at gemini-gate.md's own calibration note (upstream report aa6469b3, 2026-09-19) rather than asserting a new /cycle-enforced cap. The 2-round cap itself is gemini-review.mjs's, exercised via the same closed loop already covered by consolidated-gemini-gate-mandatory above; this line only softens a framing claim, it does not add a mechanism."
+    },
+    {
+      "line": "> fix-gate, close-out, consolidated Gemini gate — completed without a human.",
+      "reason": "Part of the Step 3C.2 closing note (upstream report 3e93533e, 2026-09-19) summarising that the autonomous loop above ran without a human — descriptive recap of steps already covered by this file's own document-only gates (fix-gate-convergence-before-next-cluster, consolidated-gemini-gate-mandatory), not a new claim."
+    },
+    {
+      "line": "> handoff naming `/ship docs/plans/<name>.md`, never a pushed commit.",
+      "reason": "Same Step 3C.2 closing note: restates that Step 7 (below) ends in a blocked handoff rather than a push. The refusal it describes is /ship's own frontmatter behaviour, dispositioned document-only in skills/ship/gate-contract.json; /cycle has no exit code asserting it."
+    },
+    {
+      "line": "> `/ship`'s frontmatter carries `disable-model-invocation: true`, which refuses",
+      "reason": "States a fact about ANOTHER skill's frontmatter (skills/ship/SKILL.md), already dispositioned document-only in skills/ship/gate-contract.json against ship's own file. /cycle has no exit code of its own to assert this with — Step 7 is agent orchestration reading that fact, the same reasoning as every other document-only entry in this file (upstream report 3e93533e, 2026-09-19)."
+    },
+    {
+      "line": "> So Step 7 always ends in a **blocked handoff**, never an \"Invoke `/ship`.\"",
+      "reason": "Orchestration-flow statement about what /cycle's Step 7 does (present a card and stop), not a mechanical gate /cycle's own CLI enforces — /cycle emits no exit code, per the reasoning already given for preview-gate-halt-blocks-ship and consolidated-gemini-gate-mandatory above."
+    },
+    {
+      "line": "> Show this card and stop — name the plan path so the human never has to go",
+      "reason": "Instructs the agent to print the blocked-handoff card and stop; agent-flow guidance, not a CLI exit code. Same disposition class as the other Step 7/Step 3C.2 entries added for upstream report 3e93533e (2026-09-19)."
+    },
+    {
+      "line": ">   /ship requires explicit user invocation — it cannot be called",
+      "reason": "Restates /ship's own disable-model-invocation refusal (dispositioned document-only in skills/ship/gate-contract.json) inside the card /cycle prints at Step 7. /cycle itself has no exit code behind this line."
+    },
+    {
+      "line": "this same turn** — Step 7 can never invoke it (see Step 7's note), so",
+      "reason": "Part of the Step 8 summary-template note (upstream report 3e93533e, 2026-09-19) pointing back at Step 7's own document-only-dispositioned claim about /ship's frontmatter refusal. Not a new /cycle-enforced gate."
+    },
+    {
+      "line": "typed `/ship docs/plans/<name>.md` and it completed. Never print a commit sha",
+      "reason": "Agent-flow instruction for composing the Step 8 summary card (don't fabricate a shipped-commit line before /ship has actually run) — guidance for the model authoring the summary, not a mechanical check /cycle's own CLI performs. Same disposition class as the other Step 7/8 entries added for upstream report 3e93533e (2026-09-19)."
     }
   ]
 }
