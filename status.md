@@ -54,6 +54,98 @@
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `.claude/skills/audit-plan/references/gemini-gate.md` and `.claude/skills/cycle/SKILL.md` both carry the new prose (grep confirmed). storyline itself REFUSED this sync (27 files diverged, pre-existing committed customizations unrelated to this change) — not verified there; ai-organiser and wine-cellar-app both reached cleanly.
 - **Result**: verified — the /cycle Step 7 blocked-handoff prose and the gemini-gate.md calibration note reached the consumer bundle intact (wine-cellar-app, ai-organiser). storyline unverified — sync REFUSED on pre-existing divergence, not this change's fault.
 
+## 2026-09-20 — Plugin-eval pilot: 3 → 13 cases, every model-invokable skill covered and green; four skills' trigger reliability fixed at the description, not the eval
+
+Branch `claude/test-skills-claude-code-4at63h` (PR #109), merged with
+`origin/main` (4 commits: `c21ae557`, `bea90f4f`, `273094c8`, `dba98e3b`;
+only `skills.manifest.json` conflicted — regenerated, not hand-merged). Shipped
+via `/ship` then merged to `main`.
+
+**What the pilot now is.** `evals/` grew from 3 cases (one skill pair) to 13,
+giving each of the 13 model-invokable skills at least one POSITIVE assertion
+that it fires when it should (`security-strategy`, `ship`, `skills` carry
+`disable-model-invocation: true` and have no ambiguity to test). Full
+`--tag pilot` run after the fixes below: **13/13 at 1.00**. Doc:
+`docs/reference/plugin-evals.md`.
+
+**Four findings that generalise (all measured, all in the doc):**
+
+- **The eval sandbox is empty by design** — it mounts `skills/` only, never the
+  repo, `scripts/` or `.env`. Any prompt naming something greppable sends
+  Claude hunting, finding nothing, and bailing before a skill decision. Two
+  independent gates keep evals from ever reaching real GPT/Gemini:
+  `allowed_tools` excludes `Bash`, AND the CLI needs an explicit
+  `--allow-tools Bash` grant on top (confirmed live). So "no GPT/Gemini bills
+  from the evals" was never a missing-key artefact; the keys are in `.env`, and
+  a bare `process.env` probe reading them absent was this repo's known
+  false-negative.
+- **The ablation Δ is a structural constant for `with-only` graders** — 9/9
+  without-arm runs scored exactly 0.50. `--ablation none` is now the documented
+  invocation; the default `with-without` mode burns 3x cost for no signal here.
+- **A single 3-run batch is not a fix.** `explain` "1.00 clean" (n=1) and
+  `ux-lock` "3/3" both cracked on the next batch. Every fix in this ship was
+  confirmed across two independent batches.
+- **`audit-code` failed 0/12 across four prompt-side hypotheses, never
+  flakily** — trace inspection showed Claude reviewing the pasted diff
+  *competently* and never delegating, not failing. The other three flaky cases
+  (`explain` 29%, `plan` 58%, `persona-test` 33%) shared one shape: Claude
+  pre-checks something (file exists / browser tool available / stack context)
+  and never reaches a skill-choice.
+
+**The real fix: SKILL.md `description`, not eval prompts.** The description is
+the only thing visible before `Skill()` is called. One targeted clause each in
+`explain`, `plan`, `persona-test`, `audit-code` ("invoke on the request's
+shape; don't pre-check X first…" / "invoke for ANY code review, even a pasted
+snippet…"). Pooled results, two batches each: explain 2/7→**6/6**, plan
+7/12→**6/6**, persona-test 1/3→**6/6**, audit-code 0/12→**6/6**. All four under
+the 1024-char frontmatter cap (`persona-test` needed trimming). The
+gate-honesty pre-push check caught the word "never" in my first `audit-code`
+clause as an undispositioned enforcement verb — reworded rather than
+dispositioned, since it was persuasive prose, not a gate claim. This is a
+product change to four shipped skills, not a scorecard fix; the description
+edit affects every real request of that shape. Caveat carried in the doc:
+`audit-code`'s flip from a rock-solid 0% is either a clean win or narrowly
+matched to the pilot's two inline-diff prompt shapes — real PR-review usage is
+the actual test.
+
+**A real `/audit-code` was run against this branch's own diff** (plan-file
+`docs/reference/plugin-evals.md`, `--base 8c7ee29a`, run
+`432581d4-4b46-40aa-b187-c2fe5bb03427`): R1 `SIGNIFICANT_ISSUES` H:2 M:6 L:1.
+Five findings (both HIGHs) traced to one root cause — `evals/results/`
+(generated eval output) was untracked but not gitignored, so `--scope diff`'s
+untracked sweep pulled third-party-generated `report.html`/JSON internals into
+scope; dismissed, root-caused, `evals/results/` now `.gitignore`d (Category A).
+Three accepted+fixed: `persona-test` had zero positive coverage (only ever a
+negative control — a broken skill would have passed every assertion), and the
+doc's opener still called the ablation Δ meaningful. One accepted+deferred with
+rationale: the `cycle` grader confirms `cycle` fired, not that it was the entry
+point; no ordering primitive exists and no run has shown the failure mode.
+R2 and R3 (R2+ mode, `--files` scoped) both `PASS` H:0 M:0 L:0 — converged;
+Step 7 Gemini: **APPROVE**, 0 new, 0 wrongly dismissed. Also caught before
+running: a `does-not-invoke-plan` grader on the `cycle` case would have failed
+on *correct* orchestration (cycle legitimately calls plan) — dropped.
+
+**Pilot 2 (throwaway, deleted)**: `wartsila-brand` personal skill, 2 cases, 2/2
+clean on the first valid run. Evidence that the `min: 0` grader fix and the
+run-from-the-plugin-root gotcha generalise.
+
+Verified: `npm run skills:check` exit 0; `node scripts/check-gate-contracts.mjs`
+exit 0; `skills.manifest.json` regenerated post-merge (bundle `109db489fe1b6979`).
+Backlog 2026-09-20T12:23Z: Q1 22c/9p (+307 aged) · Q2 79c/64p (54 perm) · Q3 35 · debt 219 cloud/91 local (0 spilled) · upstream 1
+(pre-existing backlog, unchanged by this work — noted, not acted on; the one
+open upstream report, `512cf1c9` from wine-cellar-app, is a separate triage.)
+
+**Spend, for the record**: ~45 `claude plugin eval` invocations (~$60 of
+Claude API), plus one real 3-round `/audit-code` + Gemini gate. **Open
+question this raised, to be settled next**: your own solo-control experiment
+read "solo Sonnet beat the apparatus" (re-run pending) and the shadow-reviewer
+verdict was "real, not unique" — while today's `audit-code` finding was Claude
+reviewing competently alone. Whether the multi-model loop earns its cost over
+a bare frontier model, and which pieces do, is the next decision — via
+`/brainstorm` with a debate round. Note the GPT leg resolved to `gpt-6-astra`
+(model-resolver upgraded from `gpt-5.6-terra` via the live catalog), so "GPT ≈
+Sonnet-tier" is not currently what's running.
+
 ## 2026-09-19 — Close the two remaining gaps in the storyline upstream fixes: ship/SKILL.md cross-reference note, Gemini-gate calibration grounded in real data
 
 Follow-up to the same-day `c21ae557` fix below, closing what that commit left

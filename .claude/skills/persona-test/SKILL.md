@@ -5,11 +5,12 @@ description: |
   Drives a browser as a specific user persona using a Plan → Act → Reflect loop,
   takes screenshots at each step, analyses UX and functional issues with
   confidence scoring, and returns a structured P0–P3 severity report plus a
-  qualitative persona debrief. Personas are tracked per app URL (list/add
-  subcommands); pair mode runs two opposed personas back-to-back; consistency
-  mode runs a deterministic code-driven canary. Use for exploratory QA against
-  deployed apps — not scripted regression tests. Driver is resolved by capability,
-  not vendor: Playwright MCP, host-native browser tools, BrightData, or read-only.
+  qualitative persona debrief. Personas are tracked per app URL; pair mode
+  runs two opposed personas back-to-back; consistency mode runs a
+  deterministic code-driven canary. Use for exploratory QA against deployed
+  apps — not scripted regression tests. Invoke on the request's shape; don't
+  check for browser tools first and decline — the skill resolves its own
+  driver (Playwright MCP, host tools, BrightData, or read-only) once invoked.
   Triggers on: "persona test", "test as", "explore the app as", "run persona
   test", "test the site as", "browse the app as", "QA as", "list personas",
   "add persona", "who are my personas", "which persona should test".

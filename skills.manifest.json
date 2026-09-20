@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "9c713f4052651eb1",
+  "bundleVersion": "109db489fe1b6979",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -54,14 +54,14 @@
     },
     "audit-code": {
       "path": "skills/audit-code/SKILL.md",
-      "sha": "d48b2b2ff371",
-      "size": 49487,
+      "sha": "818d00090b1c",
+      "size": 49783,
       "summary": "Iteratively audit code against a plan with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "d48b2b2ff371",
-          "size": 49487
+          "sha": "818d00090b1c",
+          "size": 49783
         },
         {
           "relPath": "examples/contract-test-scaffold.md",
@@ -204,14 +204,14 @@
     },
     "explain": {
       "path": "skills/explain/SKILL.md",
-      "sha": "0fbfe84fb998",
-      "size": 16745,
+      "sha": "da546432b4cb",
+      "size": 16922,
       "summary": "Explain WHY a piece of code is structured the way it is. Synthesises",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "0fbfe84fb998",
-          "size": 16745
+          "sha": "da546432b4cb",
+          "size": 16922
         },
         {
           "relPath": "references/verification-discipline.md",
@@ -288,14 +288,14 @@
     },
     "persona-test": {
       "path": "skills/persona-test/SKILL.md",
-      "sha": "cf87a5637df1",
-      "size": 54296,
+      "sha": "ea6f20542a79",
+      "size": 54346,
       "summary": "Persona-driven exploratory browser testing against a live URL.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "cf87a5637df1",
-          "size": 54296
+          "sha": "ea6f20542a79",
+          "size": 54346
         },
         {
           "relPath": "examples/report-and-debrief.md",
@@ -346,14 +346,14 @@
     },
     "plan": {
       "path": "skills/plan/SKILL.md",
-      "sha": "35af1a25aeae",
-      "size": 38452,
+      "sha": "c38e11ce050e",
+      "size": 38602,
       "summary": "Unified architecture + UX planner with engineering principles. Auto-detects",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "35af1a25aeae",
-          "size": 38452
+          "sha": "c38e11ce050e",
+          "size": 38602
         },
         {
           "relPath": "examples/mermaid-blocks.md",

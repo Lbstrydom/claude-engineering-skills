@@ -9,7 +9,9 @@ description: |
   ("can I change this safely or is there hidden context?").
   Pick by INPUT: a TOPIC to survey comes here ("have we touched rate
   limiting?"); a CLAIM to test goes to /investigate ("that landed in July" —
-  it uses --history as one of its instruments).
+  it uses --history as one of its instruments). Invoke on the question's
+  shape, don't pre-check the target exists first — Step 0 validates it and
+  reports cleanly if missing; don't Grep/Glob and answer directly instead.
   Triggers on: "why is this", "explain this code", "why does this exist",
   "what is this for", "/explain", "give me context on".
   Full command syntax: see the Usage section in this skill.
