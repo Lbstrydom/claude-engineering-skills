@@ -247,11 +247,19 @@ is regular and verifiable → scripted (the runner).
 
 **Corpus**: 35 commits = the 18 `known-defects.json` entries + 17 sampled
 from the three repos' `main` history in 2026-06..09, stratified: size
-(S <100 / M 100–500 / L >500 changed lines), kind (backend / frontend /
-docs-or-config / migration), and **at least 6 "apparently clean"** commits
-(no shadow finding, no known defect) so arms are scored on false alarms too.
+(S <100 / M 100–500 / L >500 changed lines) and kind (backend / frontend /
+docs-or-config / migration), weighted toward wine-cellar-app frontend (the
+full-stack consumer). **Draws carry no cleanliness or prior-finding label.**
+The original text here pre-registered "≥6 apparently clean (no shadow
+finding)" commits; that was retracted during Phase 1 because (a) the store
+no longer holds B/C shadow rows, (b) every "clean" candidate turned out to
+be merely *never audited*, and (c) `audit_runs.commit_sha` is HEAD at audit
+time, not the audited change, so findings cannot be joined to commits by
+sha at all (verified: a run against `4195f9ec29` cites three files that
+commit never touched). False-alarm behaviour is therefore reported on "the
+17 draws with no pre-registered defect", never on "clean commits".
 Each entry records `{repo, repoIdentity, sha, stratum: {size, kind},
-source: kd|sampled|clean, allowedTransports: subset of [anthropic, openai, gemini, openrouter]}`
+source: kd|draw, allowedTransports: subset of [anthropic, openai, gemini, openrouter]}`
 (recipients, not protocols — see §3 Recipient vocabulary). `allowedTransports`
 is **required** on every entry — the schema validator refuses a corpus with a missing or empty
 list (fail closed, H1).
@@ -260,7 +268,7 @@ list (fail closed, H1).
 ai-organiser** carry `allowedTransports` including `openrouter`;
 **wine-cellar-app** commits do not. This yields two pre-declared cohorts:
 **Cohort ALL** (35 commits; configurations A, A+, B, C, D) and **Cohort OR**
-(the ≈24 OpenRouter-eligible commits; configurations A, A+, B–G). Every
+(the 23 OpenRouter-eligible commits; configurations A, A+, B–G). Every
 comparison is computed within one cohort — E–G are only ever compared to
 A–D on Cohort OR. The gate ablation is reported on Cohort ALL, paired per
 commit, outside both rankings.
@@ -597,4 +605,4 @@ incident:
 ### 2026-09-20 — Phase 1 complete (no API spend)
 - Completed: `recipient-policy.json` (3 repos; wine excludes `openrouter`); `experiment-5-corpus.json` — 35 entries = 18 KD `buggyCommit`s + 17 seeded (seed 20260920) stratified draws from each repo's `main` 2026-06..09, all 35 shas verified to resolve in their `SOLO_CONTROL_REPO_ROOTS` checkouts, zero policy violations; Cohort ALL = 35, Cohort OR = 27; sources kd 18 / clean 10 / sampled 7; `experiment-5-adjudication-rubric.md` (label evidence bar, per-cluster `sev` impact rubric with lower-tier tie-break, clustering rules, 40-row cap).
 - Remaining: Phases 2–4.
-- Deviations: the store holds **no** B/C shadow rows any more (that track closed 2026-07), so "apparently clean" was operationalised as *no `audit_findings` row against the sha* rather than *no shadow finding*. ai-organiser has only 4 finding-bearing commits, so two of its targeted-flagged slots are clean draws. Corpus is backend-heavy (3 frontend commits) — recorded as a limitation in the corpus file; the verdict must not generalise to UI-heavy consumers.
+- Deviations (corrected same day, corpus v2): v1 labelled draws "clean"/"sampled" from the store and under-sampled frontend (3/35). Both retracted after the operator pushed back: every "clean" draw was merely never audited, and `audit_runs.commit_sha` proved to be HEAD-at-audit-time, so findings cannot be attributed to commits by sha (a repo-level finding, spawned as its own task). v2: 17 draws stratified by repo/kind/size only, no prior labels; frontend 7/35 (6 wine), wine 12/35; Cohort OR = 23. Corpus records its own limitations.

@@ -1,13 +1,14 @@
 {
-  "version": 1,
+  "version": 2,
   "experiment": "experiment-5-reviewer-cost-value",
   "frozenAt": "2026-09-20",
   "seed": 20260920,
-  "selection": "known-defects.json v3 buggyCommits (18) + 17 seeded stratified draws from each repo's main history 2026-06-01..2026-09-20, excluding KD commits, merge/sync/regen/status/lockfile churn, and commits outside 10..3000 changed lines. \"clean\" = no audit_findings row against the sha in the store at freeze time; \"sampled\" = the pipeline previously raised findings on it.",
+  "selection": "known-defects.json v3 buggyCommits (18) + 17 seeded stratified draws from each repo's main history 2026-06-01..2026-09-20, excluding KD commits, merge/sync/regen/status/lockfile churn, and commits outside 10..3000 changed lines. Draws are stratified by repo, kind and size ONLY.",
+  "noPriorLabels": "v1 of this file labelled draws \"clean\"/\"sampled\" from the store. Retracted the same day: (1) every \"clean\" draw was simply never audited (absence of evidence), and (2) audit_runs.commit_sha is HEAD at audit time, not the audited change, so findings cannot be joined to commits by sha at all (verified: a run against 4195f9ec29 cites 3 files, 0 of which that commit touches). Draws therefore carry NO cleanliness or prior-finding claim; the blind adjudication establishes truth. FP burden on draws is reported as \"commits with no pre-registered defect\", never as \"clean commits\".",
   "limitations": [
-    "Backend-heavy: 21/35 backend, 7 migration, 4 docs-or-config, 3 frontend. These repos are tooling/backend-heavy, so this is representative of them, but the verdict must not be generalised to UI-heavy consumers.",
-    "ai-organiser has only 4 finding-bearing commits in the store, so two of its slots targeted as pipeline-flagged were filled with clean commits instead (10 clean total vs the >=6 pre-registered floor).",
-    "18/35 are known-defect commits (source: kd), which selects on commits where a defect was found; the 10 clean draws are the counterweight."
+    "18/35 entries are known-defect commits, which selects on commits where a defect was found; the 17 draws are the counterweight, with no claim either way.",
+    "Frontend is 7/35 (6 from wine-cellar-app) — deliberately weighted to the full-stack consumer, still short of parity with backend; the verdict must state coverage per kind.",
+    "ai-organiser draws are undated by prior audit activity (it has almost none); they are ordinary history."
   ],
   "cohorts": {
     "ALL": [
@@ -64,10 +65,6 @@
       "E5-16",
       "E5-17",
       "E5-18",
-      "E5-25",
-      "E5-26",
-      "E5-27",
-      "E5-28",
       "E5-29",
       "E5-30",
       "E5-31",
@@ -79,21 +76,31 @@
   },
   "strata": {
     "L/migration": 4,
-    "L/backend": 10,
+    "L/backend": 9,
     "M/backend": 8,
-    "S/backend": 3,
-    "M/migration": 2,
-    "M/frontend": 1,
+    "S/backend": 2,
+    "M/migration": 1,
     "S/frontend": 2,
-    "S/docs-or-config": 2,
-    "M/docs-or-config": 1,
-    "L/docs-or-config": 1,
-    "S/migration": 1
+    "M/frontend": 2,
+    "L/frontend": 3,
+    "S/migration": 2,
+    "S/docs-or-config": 1,
+    "M/docs-or-config": 1
+  },
+  "byKind": {
+    "migration": 7,
+    "backend": 19,
+    "frontend": 7,
+    "docs-or-config": 2
+  },
+  "byRepo": {
+    "claude-engineering-skills": 16,
+    "wine-cellar-app": 12,
+    "ai-organiser": 7
   },
   "sources": {
     "kd": 18,
-    "clean": 10,
-    "sampled": 7
+    "draw": 17
   },
   "entries": [
     {
@@ -494,18 +501,16 @@
       "id": "E5-19",
       "repo": "wine-cellar-app",
       "repoIdentity": "github.com/Lbstrydom/wine-cellar-app",
-      "sha": "e04b6d9c9333adf113340e492731656e5029849a",
-      "date": "2026-09-07",
-      "source": "clean",
-      "priorFindings": 0,
-      "priorHigh": 0,
+      "sha": "4ad826a198ae2a08245dd4f2941fc06e0b1320a1",
+      "date": "2026-08-29",
+      "source": "draw",
       "stratum": {
-        "size": "M",
-        "kind": "backend"
+        "size": "S",
+        "kind": "frontend"
       },
-      "changedLines": 190,
+      "changedLines": 24,
       "files": 2,
-      "subject": "fix(tooling): hydration copied the tooling but not its stamp, so every consumer failed open",
+      "subject": "fix(a11y): make the sources drawer a real disclosure control",
       "allowedTransports": [
         "anthropic",
         "openai",
@@ -516,18 +521,16 @@
       "id": "E5-20",
       "repo": "wine-cellar-app",
       "repoIdentity": "github.com/Lbstrydom/wine-cellar-app",
-      "sha": "c8ffdbf8047f2d64afe7eae6974369b8f40f886e",
-      "date": "2026-08-30",
-      "source": "sampled",
-      "priorFindings": 29,
-      "priorHigh": 6,
+      "sha": "f75f6741dda94f6ef5771c1cea72378b36cd1f41",
+      "date": "2026-08-29",
+      "source": "draw",
       "stratum": {
-        "size": "L",
-        "kind": "backend"
+        "size": "M",
+        "kind": "frontend"
       },
-      "changedLines": 1386,
-      "files": 7,
-      "subject": "feat(organise): carry classification provenance end-to-end (Cluster A)",
+      "changedLines": 177,
+      "files": 6,
+      "subject": "feat(lookup): offer placement after saving, so a saved wine is not stranded",
       "allowedTransports": [
         "anthropic",
         "openai",
@@ -538,18 +541,16 @@
       "id": "E5-21",
       "repo": "wine-cellar-app",
       "repoIdentity": "github.com/Lbstrydom/wine-cellar-app",
-      "sha": "c3038d3d09b9b0780b0d6e5b899833d1039b9761",
-      "date": "2026-09-16",
-      "source": "sampled",
-      "priorFindings": 19,
-      "priorHigh": 3,
+      "sha": "15aa143c1f2ff9b8b7e38096870388f9574ce3b8",
+      "date": "2026-08-30",
+      "source": "draw",
       "stratum": {
         "size": "M",
         "kind": "frontend"
       },
-      "changedLines": 174,
-      "files": 8,
-      "subject": "fix(cellar-analysis): route the status-badge's reorg click through the fridge-first gate (#620)",
+      "changedLines": 344,
+      "files": 4,
+      "subject": "fix(lookup): distinguish a failed island open from a cancelled one (#376, #375)",
       "allowedTransports": [
         "anthropic",
         "openai",
@@ -560,18 +561,16 @@
       "id": "E5-22",
       "repo": "wine-cellar-app",
       "repoIdentity": "github.com/Lbstrydom/wine-cellar-app",
-      "sha": "3f130619381293dcd46f4ef4193c7e6d69778ad6",
-      "date": "2026-08-13",
-      "source": "clean",
-      "priorFindings": 0,
-      "priorHigh": 0,
+      "sha": "f223fb6b53bd6fcfec533f9b16260a30818d2493",
+      "date": "2026-09-06",
+      "source": "draw",
       "stratum": {
-        "size": "S",
+        "size": "L",
         "kind": "frontend"
       },
-      "changedLines": 81,
-      "files": 2,
-      "subject": "fix(mode-switch): the zero-item review screen described the wrong axis (#327)",
+      "changedLines": 2054,
+      "files": 21,
+      "subject": "feat(consumption): wire the \"Paired with?\" combobox so consumed_with_recipe_id is written (#504)",
       "allowedTransports": [
         "anthropic",
         "openai",
@@ -582,18 +581,16 @@
       "id": "E5-23",
       "repo": "wine-cellar-app",
       "repoIdentity": "github.com/Lbstrydom/wine-cellar-app",
-      "sha": "9f6ec73979e6395baca8262f7a29c55744df2912",
-      "date": "2026-08-29",
-      "source": "sampled",
-      "priorFindings": 3,
-      "priorHigh": 0,
+      "sha": "33a3ecd230fd0bc1f42489a10437906056a96e0d",
+      "date": "2026-06-24",
+      "source": "draw",
       "stratum": {
-        "size": "M",
-        "kind": "migration"
+        "size": "S",
+        "kind": "frontend"
       },
-      "changedLines": 412,
-      "files": 5,
-      "subject": "feat(db): migration 170 — zone_label_migration_audit (Cluster A)",
+      "changedLines": 47,
+      "files": 3,
+      "subject": "fix(ingest): Cluster B audit — scan reset, suggest guard, patch defense-in-depth",
       "allowedTransports": [
         "anthropic",
         "openai",
@@ -604,18 +601,16 @@
       "id": "E5-24",
       "repo": "wine-cellar-app",
       "repoIdentity": "github.com/Lbstrydom/wine-cellar-app",
-      "sha": "65e94250b03670a1fdc00d178a249588d6e225a4",
-      "date": "2026-09-03",
-      "source": "clean",
-      "priorFindings": 0,
-      "priorHigh": 0,
+      "sha": "5c87d6497b4fddf7f816b401c7b67f3d6eda5717",
+      "date": "2026-09-15",
+      "source": "draw",
       "stratum": {
-        "size": "S",
-        "kind": "docs-or-config"
+        "size": "L",
+        "kind": "frontend"
       },
-      "changedLines": 40,
-      "files": 2,
-      "subject": "docs(plan): close out country/region classification reliability (#433)",
+      "changedLines": 1260,
+      "files": 9,
+      "subject": "fix(grid): visibility-aware batch selection + ARIA sync for multi-select (#595)",
       "allowedTransports": [
         "anthropic",
         "openai",
@@ -624,112 +619,98 @@
     },
     {
       "id": "E5-25",
-      "repo": "ai-organiser",
-      "repoIdentity": "github.com/Lbstrydom/ai-organiser",
-      "sha": "5517391237cde865d03343e8330c87291b2e0314",
-      "date": "2026-06-02",
-      "source": "clean",
-      "priorFindings": 0,
-      "priorHigh": 0,
-      "stratum": {
-        "size": "S",
-        "kind": "backend"
-      },
-      "changedLines": 80,
-      "files": 3,
-      "subject": "refactor(presentation): registry true-MRU fix (audit) + test typing",
-      "allowedTransports": [
-        "anthropic",
-        "openai",
-        "gemini",
-        "openrouter"
-      ]
-    },
-    {
-      "id": "E5-26",
-      "repo": "ai-organiser",
-      "repoIdentity": "github.com/Lbstrydom/ai-organiser",
-      "sha": "fea8204cb29b3c10bfb7005fe1937ecc42b16014",
-      "date": "2026-06-02",
-      "source": "clean",
-      "priorFindings": 0,
-      "priorHigh": 0,
+      "repo": "wine-cellar-app",
+      "repoIdentity": "github.com/Lbstrydom/wine-cellar-app",
+      "sha": "9f01299ec6d4ce9b4b2abdbde02ad6448495f019",
+      "date": "2026-06-12",
+      "source": "draw",
       "stratum": {
         "size": "M",
         "kind": "backend"
       },
-      "changedLines": 108,
+      "changedLines": 242,
       "files": 7,
-      "subject": "refactor(slides): debt D5+D6 — tag-agnostic prompt escaper + constant consolidation",
+      "subject": "fix(research): wine search starved itself — cross-vintage ban, discarded enrichment, orphaned jobs",
       "allowedTransports": [
         "anthropic",
         "openai",
-        "gemini",
-        "openrouter"
+        "gemini"
       ]
     },
     {
-      "id": "E5-27",
-      "repo": "ai-organiser",
-      "repoIdentity": "github.com/Lbstrydom/ai-organiser",
-      "sha": "07b85f3f3bcd76846b56d94e22a9865bdd37f5db",
-      "date": "2026-06-05",
-      "source": "clean",
-      "priorFindings": 0,
-      "priorHigh": 0,
+      "id": "E5-26",
+      "repo": "wine-cellar-app",
+      "repoIdentity": "github.com/Lbstrydom/wine-cellar-app",
+      "sha": "ad1c2d681b308c5288c83bcbe9e63c4c0196ce10",
+      "date": "2026-06-15",
+      "source": "draw",
       "stratum": {
         "size": "L",
         "kind": "backend"
       },
-      "changedLines": 1049,
-      "files": 17,
-      "subject": "feat(azure): pace requests under the Azure RPM cap + Azure-aware 429 retry",
+      "changedLines": 536,
+      "files": 10,
+      "subject": "feat(zoning): Cluster C — golden-set regression lock + validation harness",
       "allowedTransports": [
         "anthropic",
         "openai",
-        "gemini",
-        "openrouter"
+        "gemini"
+      ]
+    },
+    {
+      "id": "E5-27",
+      "repo": "wine-cellar-app",
+      "repoIdentity": "github.com/Lbstrydom/wine-cellar-app",
+      "sha": "6c32eae13a3c81e2414d7541fb113888330997fd",
+      "date": "2026-07-24",
+      "source": "draw",
+      "stratum": {
+        "size": "S",
+        "kind": "migration"
+      },
+      "changedLines": 32,
+      "files": 2,
+      "subject": "fix(db): strip leaked baseline_ro operator-role policy from schema baseline",
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini"
       ]
     },
     {
       "id": "E5-28",
-      "repo": "ai-organiser",
-      "repoIdentity": "github.com/Lbstrydom/ai-organiser",
-      "sha": "89b8d91357741260ea4cba1b825bada66f4f8b03",
-      "date": "2026-06-04",
-      "source": "clean",
-      "priorFindings": 0,
-      "priorHigh": 0,
+      "repo": "wine-cellar-app",
+      "repoIdentity": "github.com/Lbstrydom/wine-cellar-app",
+      "sha": "60f200b97100a14ae7a1cfb9fe2b37819744e4e7",
+      "date": "2026-08-16",
+      "source": "draw",
       "stratum": {
         "size": "S",
-        "kind": "frontend"
+        "kind": "docs-or-config"
       },
-      "changedLines": 48,
+      "changedLines": 14,
       "files": 1,
-      "subject": "fix(taxonomy): Gemini gate G1 — complete internal Essentials→Pinned rename",
+      "subject": "docs(plans): record Cluster 1's actual touched-file set",
       "allowedTransports": [
         "anthropic",
         "openai",
-        "gemini",
-        "openrouter"
+        "gemini"
       ]
     },
     {
       "id": "E5-29",
       "repo": "ai-organiser",
       "repoIdentity": "github.com/Lbstrydom/ai-organiser",
-      "sha": "0bef971c824d1b3979843706d3da73729c990ed8",
-      "date": "2026-09-04",
-      "source": "clean",
-      "priorFindings": 0,
-      "priorHigh": 0,
+      "sha": "16a750afc91b973fd78332e85cb8efd50aba0464",
+      "date": "2026-06-07",
+      "source": "draw",
       "stratum": {
-        "size": "S",
-        "kind": "docs-or-config"
+        "size": "L",
+        "kind": "frontend"
       },
-      "changedLines": 77,
-      "files": 3,
-      "subject": "docs(claude): record the worktree preflight and #-key memory routing",
+      "changedLines": 519,
+      "files": 14,
+      "subject": "feat(settings): make unreachable features configurable + collapsible quick-commands",
       "allowedTransports": [
         "anthropic",
         "openai",
@@ -739,20 +720,18 @@
     },
     {
       "id": "E5-30",
-      "repo": "claude-engineering-skills",
-      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
-      "sha": "1c2a4235f18f299aab9ff53bb21813e49e6c5327",
-      "date": "2026-08-24",
-      "source": "clean",
-      "priorFindings": 0,
-      "priorHigh": 0,
+      "repo": "ai-organiser",
+      "repoIdentity": "github.com/Lbstrydom/ai-organiser",
+      "sha": "4bae29fe0e25a00237f43da39817a5b89372cde2",
+      "date": "2026-06-09",
+      "source": "draw",
       "stratum": {
         "size": "S",
         "kind": "backend"
       },
-      "changedLines": 99,
-      "files": 2,
-      "subject": "fix(actions-runner-doctor): --json local ran the wrong command",
+      "changedLines": 42,
+      "files": 6,
+      "subject": "fix(slides): polish/refine token-scaling parity + benign config log wording",
       "allowedTransports": [
         "anthropic",
         "openai",
@@ -762,20 +741,18 @@
     },
     {
       "id": "E5-31",
-      "repo": "claude-engineering-skills",
-      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
-      "sha": "4195f9ec29ed22814f97af7ed54aa210b09b88c9",
-      "date": "2026-08-17",
-      "source": "sampled",
-      "priorFindings": 13,
-      "priorHigh": 4,
+      "repo": "ai-organiser",
+      "repoIdentity": "github.com/Lbstrydom/ai-organiser",
+      "sha": "d2367d9fbd860fd8d671122ba6e77d14ed76bf53",
+      "date": "2026-06-11",
+      "source": "draw",
       "stratum": {
         "size": "M",
         "kind": "backend"
       },
-      "changedLines": 101,
-      "files": 4,
-      "subject": "fix(campaign): repoId throws on real store failures; redaction terms are additive",
+      "changedLines": 114,
+      "files": 6,
+      "subject": "fix(azure-audio): Cluster A audit fixes — policy op-matrix + unknown-id fail-closed + narration policy gate",
       "allowedTransports": [
         "anthropic",
         "openai",
@@ -785,20 +762,18 @@
     },
     {
       "id": "E5-32",
-      "repo": "claude-engineering-skills",
-      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
-      "sha": "e370eba580afdff6ac48ff9e553322d7aa2770d2",
-      "date": "2026-08-09",
-      "source": "sampled",
-      "priorFindings": 11,
-      "priorHigh": 8,
+      "repo": "ai-organiser",
+      "repoIdentity": "github.com/Lbstrydom/ai-organiser",
+      "sha": "0a0aa8328425b6d1cc7bfc9c0ab9c7ee1c51e7d7",
+      "date": "2026-06-05",
+      "source": "draw",
       "stratum": {
         "size": "L",
         "kind": "backend"
       },
-      "changedLines": 762,
-      "files": 6,
-      "subject": "fix(learning): a receipt for a decision nobody kept, and a rebuild that never ran",
+      "changedLines": 1452,
+      "files": 17,
+      "subject": "feat(slides): complete consultant-quality Cluster A — content spine + review gate",
       "allowedTransports": [
         "anthropic",
         "openai",
@@ -808,20 +783,18 @@
     },
     {
       "id": "E5-33",
-      "repo": "claude-engineering-skills",
-      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
-      "sha": "5dd481b71e05d814e6133d48716ffdf30fc68449",
-      "date": "2026-07-30",
-      "source": "clean",
-      "priorFindings": 0,
-      "priorHigh": 0,
+      "repo": "ai-organiser",
+      "repoIdentity": "github.com/Lbstrydom/ai-organiser",
+      "sha": "24805eb3ff651c8e5abc38952d21165d93569c09",
+      "date": "2026-06-08",
+      "source": "draw",
       "stratum": {
         "size": "M",
         "kind": "docs-or-config"
       },
-      "changedLines": 305,
-      "files": 2,
-      "subject": "docs(plans): record V1/V2 results — the live run found an inert over-cap",
+      "changedLines": 120,
+      "files": 3,
+      "subject": "chore: add GitHub issue templates (bug report + feature request)",
       "allowedTransports": [
         "anthropic",
         "openai",
@@ -833,18 +806,16 @@
       "id": "E5-34",
       "repo": "claude-engineering-skills",
       "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
-      "sha": "da9bcae0d4fb0a2d675ff7ba3af99e34b4f45330",
-      "date": "2026-07-27",
-      "source": "sampled",
-      "priorFindings": 16,
-      "priorHigh": 5,
+      "sha": "ad588bf75477339faf3251efc0bc71ca99a1fe0c",
+      "date": "2026-08-14",
+      "source": "draw",
       "stratum": {
-        "size": "L",
-        "kind": "docs-or-config"
+        "size": "M",
+        "kind": "backend"
       },
-      "changedLines": 1554,
-      "files": 2,
-      "subject": "docs(plans): add + audit failure-contract tech-debt cluster plan (approved, not implemented)",
+      "changedLines": 381,
+      "files": 9,
+      "subject": "fix(comparison): three rounds of Cluster A audit — a security control that rejected its own output",
       "allowedTransports": [
         "anthropic",
         "openai",
@@ -856,18 +827,16 @@
       "id": "E5-35",
       "repo": "claude-engineering-skills",
       "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
-      "sha": "6b460d71a3afac91539d37ea49cba2d15a5015de",
-      "date": "2026-07-21",
-      "source": "sampled",
-      "priorFindings": 1,
-      "priorHigh": 0,
+      "sha": "c970b5779720168cabe03b0d81dd38cd08970930",
+      "date": "2026-06-05",
+      "source": "draw",
       "stratum": {
         "size": "S",
         "kind": "migration"
       },
-      "changedLines": 85,
+      "changedLines": 19,
       "files": 2,
-      "subject": "fix(security): revoke anon execute on 8 SECURITY DEFINER RPCs + pin 5 search_paths",
+      "subject": "fix(db): drop leftover NOT NULL on audit_repos.fingerprint (unify_repo_identity gap)",
       "allowedTransports": [
         "anthropic",
         "openai",
