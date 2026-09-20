@@ -1613,24 +1613,42 @@ export async function calibrationSummary(cohortId) {
 }
 
 /**
- * The commit each arm-run's `audit_runs` row was taken at.
+ * The audited-target identity each arm-run's `audit_runs` row was taken at.
  *
- * This is where `audited_sha` comes from, and it is a LOOKUP rather than a
- * field on the bake-off log, deliberately: the log records what the collector
- * observed, while the sha is a property of the audit the arm actually ran, and
- * only the run row knows it. A snapshot whose arms disagree about the commit is
- * not one snapshot (§2.5b-i) — the caller refuses it rather than picking one.
+ * This is a LOOKUP rather than a field on the bake-off log, deliberately: the
+ * log records what the collector observed, while the identity is a property
+ * of the audit the arm actually ran, and only the run row knows it. A
+ * snapshot whose arms disagree about the identity is not one snapshot
+ * (§2.5b-i) — the caller refuses it rather than picking one.
+ *
+ * `audited_tree` (not `commit_sha`, and not `audited_sha`) is the equality
+ * key: `commit_sha`/`audited_sha` are both HEAD at capture time, which cannot
+ * distinguish two arms that shared one HEAD while auditing different dirty
+ * trees — exactly the case `classifyLogEntry`'s "one snapshot is one
+ * revision" rule exists to catch. Fallback chain `audited_tree ?? audited_sha
+ * ?? commit_sha` for pre-2026-07-19 rows (or a capture failure on either
+ * column) that never got a real `audited_tree`; `identityVerified` says which
+ * tier resolved it so a caller never silently treats a weaker legacy match as
+ * equivalent to a real one. Guarded explicitly against the all-NULL case (a
+ * naive `identity === audited_tree` reads `null === null` as `true`).
  *
  * @param {string[]} runIds
- * @returns {Promise<{ok: boolean, cloud: boolean, byRunId: Record<string, string|null>}>}
+ * @returns {Promise<{ok: boolean, cloud: boolean, byRunId: Record<string, {identity: string|null, identityVerified: boolean}>}>}
  */
 export async function auditedShasForRuns(runIds) {
   if (!await isCloudEnabled()) return { ok: true, cloud: false, byRunId: {} };
   const ids = [...new Set((runIds || []).filter(Boolean))];
   if (ids.length === 0) return { ok: true, cloud: true, byRunId: {} };
   try {
-    const rows = await many('SELECT id, commit_sha FROM audit_runs WHERE id = ANY($1::uuid[])', [ids]);
-    return { ok: true, cloud: true, byRunId: Object.fromEntries(rows.map((r) => [r.id, r.commit_sha ?? null])) };
+    const rows = await many('SELECT id, audited_tree, audited_sha, commit_sha FROM audit_runs WHERE id = ANY($1::uuid[])', [ids]);
+    return {
+      ok: true, cloud: true,
+      byRunId: Object.fromEntries(rows.map((r) => {
+        const identity = r.audited_tree ?? r.audited_sha ?? r.commit_sha ?? null;
+        const identityVerified = r.audited_tree != null && identity === r.audited_tree;
+        return [r.id, { identity, identityVerified }];
+      })),
+    };
   } catch (err) {
     process.stderr.write(`  [campaign] auditedShasForRuns failed: ${err.message}\n`);
     return { ok: false, cloud: true, byRunId: {}, error: err.message };

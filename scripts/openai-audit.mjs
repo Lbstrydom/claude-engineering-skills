@@ -900,6 +900,14 @@ async function main() {
     // diff base). Best-effort — never throws; a resolution failure degrades
     // the tiered pipeline's adapters to their safe 'unknown' default, same
     // as every other git-derived signal in this file.
+    //
+    // `ctxCommitSha` (persisted as `audit_runs.commit_sha`) is HEAD at THIS
+    // capture moment — the PARENT of the audited change on a dirty tree (the
+    // normal case), not necessarily the commit that ends up containing it. Do
+    // not treat it as "the commit this audit's findings apply to". The precise
+    // target identity is `ctx.auditedTree`/`ctx.auditedSha` (~line 475-481,
+    // persisted as `audit_runs.audited_tree`/`audited_sha`) — see AGENTS.md's
+    // Postgres-Parity-Store section.
     let ctxCommitSha = null;
     let ctxWorkingTreeDirty = false;
     try {

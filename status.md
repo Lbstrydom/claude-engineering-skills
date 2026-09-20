@@ -1,6 +1,11 @@
 # Project Status Log
 
 ### Consumer Verification (previous ship)
+- **Commit**: 09b729d1e7c277e733b0dd4b0bf91854c69e93e0 on `main` (PR #109 merge commit; ship commit 6f853140, range `ba004598..6f853140`; branch `claude/test-skills-claude-code-4at63h`, deleted)
+- **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: the four new `description` clauses are present in wine's synced `.claude/skills/{explain,plan,persona-test,audit-code}/SKILL.md` (grepped each clause verbatim after CRLF/indent normalisation — 4/4 found). The push's own sync summary confirmed 3/3 consumers updated (15 files).
+- **Result**: verified — the SKILL.md trigger-reliability fix (explain/plan/persona-test/audit-code descriptions) reached the consumer bundle intact.
+
+### Consumer Verification (previous ship)
 - **Commit**: 295194a025797e71d12bec0422729a2ae27bb8a1 on `main` (pushed 2026-09-16, range `35ff37c7..295194a0`; the computeLeverage dedup fix, 35ff37c7)
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `grep "new Set(refactor.resolvedTopicIds)" scripts/.claude-skills/lib/debt-review-helpers.mjs` — present at line 97. The push's own sync summary confirmed 3/3 consumers updated.
 - **Result**: verified — the computeLeverage resolvedTopicIds-dedup fix reached the consumer bundle intact.
@@ -53,6 +58,31 @@
 - **Commit**: c21ae557f02c03087f763bc2896a18ccb266d51d on `main` (pushed 2026-09-19, range `5c430d5c..c21ae557`; storyline upstream-report fixes 3e93533e/aa6469b3)
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `.claude/skills/audit-plan/references/gemini-gate.md` and `.claude/skills/cycle/SKILL.md` both carry the new prose (grep confirmed). storyline itself REFUSED this sync (27 files diverged, pre-existing committed customizations unrelated to this change) — not verified there; ai-organiser and wine-cellar-app both reached cleanly.
 - **Result**: verified — the /cycle Step 7 blocked-handoff prose and the gemini-gate.md calibration note reached the consumer bundle intact (wine-cellar-app, ai-organiser). storyline unverified — sync REFUSED on pre-existing divergence, not this change's fault.
+
+## 2026-09-20 — Fix audit_runs.commit_sha off-by-N-commits identity bug (solo-control-audit.mjs + campaign.mjs)
+
+Autonomous `/cycle --autonomous` run on `docs/plans/audit-target-identity-commit-sha-correction.md`.
+
+### Changes
+- `scripts/solo-control-audit.mjs`: `discoverCommits`/`locateCommit`/`extractAuditedDiff` reconstruct the real audited diff from `audited_sha`/`audited_tree` via a self-evidencing dirty/clean branch, instead of treating `commit_sha` (HEAD at capture time — the PARENT of a dirty-tree audit) as a real commit to `git show`. Per-unit identity is the composite `(auditedSha, auditedTree)` pair, not `audited_tree` alone (a real collision the plan-audit's own R2 caught: two different starting HEADs can land on the same resulting tree via different diffs). `discoverCommits` requires both columns non-null and reports an `unresolvedIncompleteIdentityCount`; `treeExists` degrades a missing/GC'd tree object to `unresolved-object-missing`, never a crash.
+- `scripts/lib/store/campaign.mjs`: `auditedShasForRuns` now keys on `audited_tree` (content-equality identity, not diff-reconstruction identity — a deliberately different key from solo-control's), falling back through `audited_sha` then `commit_sha`, with a returned `identityVerified` flag guarded against the all-NULL false-positive case.
+- `scripts/lib/campaign/promote.mjs`: `classifyLogEntry` consumes the new `{identity, identityVerified}` shape; two arms sharing one `audited_sha` but differing `audited_tree` are now correctly refused as "one snapshot is one revision" (previously undetectable).
+- `scripts/lib/store/runs-findings.mjs` / `scripts/lib/dashboard/sections/audit-run-detail.mjs`: dashboard surfaces `audited_tree` and relabels `commit_sha` from "commit" to "HEAD at capture" so it's not mistaken for the commit under review.
+- `scripts/openai-audit.mjs` + `AGENTS.md`: documented `commit_sha`'s real semantics at the capture site and in the shared context file.
+- New test: `tests/solo-control-audit-target-diff.test.mjs` (git-fixture-based, isolated from ambient git config). Extended `tests/campaign-promote.test.mjs`, `tests/dashboard-audit-run.test.mjs`.
+
+### Measured evidence (drove the fix)
+Sampled 155 `audit_runs` rows (stage_type='audit-code') across this repo, wine-cellar-app, and ai-organiser. Of 94 rows with findings carrying a `primary_file`, 68/94 (72%) had zero file overlap between `git show --name-only <commit_sha>` and the findings' own `primary_file` set.
+
+### Audit trail
+- `/audit-plan`: 3 GPT rounds (100% acceptance each round — H1-H4 real design gaps in round 1, H5/M1 a real key-collision + null-guard bug I introduced in round 2, L1 a doc-consistency nit in round 3) + 2 Gemini rounds → APPROVE.
+- `/audit-code`: 3 rounds, CONVERGED H:0 M:0 L:0, Gemini APPROVE. 24 pre-existing HIGH/MEDIUM findings in unrelated `runs-findings.mjs`/`promote.mjs` functions deferred as tech debt (verified zero call-path coupling to the functions this fix touches). Two real MEDIUM findings fixed: git-gc retention risk documented as an accepted limitation (comment on `treeExists`); test fixture isolated from ambient git config (`GIT_CONFIG_NOSYSTEM` + throwaway `HOME`).
+- `npm test`: 16,048 pass, 0 fail, 40 skipped (DB-gated), run twice (before and after the audit-code fixes).
+
+### Known, accepted limitation (not fixed — needs a schema migration, out of scope per the user's original instruction not to touch the schema without asking)
+An explicit `--base` run (e.g. `/cycle`'s clustered `--cluster` resume) whose tree is clean relative to its own HEAD is indistinguishable from the ordinary clean-tree case — no column persists the real diff base. Documented in the plan's Risk register.
+
+Backlog 2026-09-20T18:40Z: Q1 22c/24p (+307 aged) · Q2 100c/69p (54 perm) · Q3 35 · debt 243 cloud/24 local (0 spilled) · upstream 1
 
 ## 2026-09-20 — Plugin-eval pilot: 3 → 13 cases, every model-invokable skill covered and green; four skills' trigger reliability fixed at the description, not the eval
 
