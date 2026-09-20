@@ -5,6 +5,10 @@ description: |
   5-pass parallel static analysis (structure, wiring, backend, frontend,
   sustainability), R2+ ledger-driven suppression, debt capture for
   out-of-scope findings, max 6 rounds with 2-stable-rounds convergence.
+  Invoke this for ANY code-correctness review, even a small pasted snippet
+  or diff — don't just review it yourself directly; a single read-through
+  is not a substitute for the multi-pass GPT+Gemini adjudication this skill
+  performs, and skipping it means the review didn't actually happen.
   Triggers on: "audit my code", "audit my changes", "audit my PR",
   "check the implementation", "review my code", "audit code", "/audit-code",
   "audit this", "verify the implementation".

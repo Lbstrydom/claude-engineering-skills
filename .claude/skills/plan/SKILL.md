@@ -9,7 +9,9 @@ description: |
   database schemas. Also auto-invoke when detecting planning context like
   "I want to add", "let's design", "plan the implementation", "how should we
   structure this", "I need to refactor", "design the UI for", "build a
-  component", "improve the UX of". Accepts a task description as argument;
+  component", "improve the UX of". Invoke on the request's shape; don't
+  explore the repo for stack context first and answer directly — the skill
+  gathers that itself once invoked. Accepts a task description as argument;
   an explicit scope hint and diagram controls are available as flags.
   Triggers on: "plan", "design this", "architect this".
   Full command syntax: see the Usage section in this skill.
