@@ -81,7 +81,14 @@ describe('receipt filename parsing', () => {
 // ── promotion: the producer for the arm-run spine ───────────────────────────
 
 describe('bake-off log promotion', () => {
-  const ctx = { campaignId: 'camp', lockDigest: 'lock1', shaByRunId: { r1: 'abc123', r2: 'abc123', r3: 'def456' } };
+  const ctx = {
+    campaignId: 'camp', lockDigest: 'lock1',
+    shaByRunId: {
+      r1: { identity: 'abc123', identityVerified: true },
+      r2: { identity: 'abc123', identityVerified: true },
+      r3: { identity: 'def456', identityVerified: true },
+    },
+  };
 
   it('promotes a well-formed entry and derives audited_sha from the arms\' runs', () => {
     const cls = classifyLogEntry({
@@ -198,6 +205,76 @@ describe('bake-off log promotion', () => {
     assert.equal(cls.eligible, true);
     assert.equal(cls.armRuns.find((a) => a.armId === 'kimi').error, 'exit 1');
   });
+
+  it('promotes with identityVerified: true when both arms resolved a real audited_tree match', () => {
+    const cls = classifyLogEntry({
+      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1',
+      arms: { opus: { runId: 'r1' }, kimi: { runId: 'r2' } },
+    }, ctx);
+    assert.equal(cls.eligible, true);
+    assert.equal(cls.identityVerified, true);
+  });
+});
+
+// ── H2 (audit-target-identity-commit-sha-correction.md): audited_sha alone ──
+// cannot catch two arms sharing HEAD while auditing different dirty trees —
+// audited_tree must be the equality key, and a weaker legacy match must be
+// distinguishable via identityVerified, never silently upgraded.
+
+describe('classifyLogEntry — audited_tree is the equality key, not audited_sha (H2)', () => {
+  it('two arms sharing one audited_sha but differing audited_tree are NOT one snapshot', () => {
+    // The exact failure mode: an audited_sha-only equality check would have
+    // read this as eligible (both share 'H1'); audited_tree-keyed identity
+    // correctly refuses it.
+    const ctx = {
+      campaignId: 'camp', lockDigest: 'lock1',
+      shaByRunId: {
+        r1: { identity: 'T1', identityVerified: true }, // audited_sha=H1, audited_tree=T1
+        r2: { identity: 'T2', identityVerified: true }, // audited_sha=H1, audited_tree=T2
+      },
+    };
+    const cls = classifyLogEntry({
+      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1',
+      arms: { opus: { runId: 'r1' }, kimi: { runId: 'r2' } },
+    }, ctx);
+    assert.equal(cls.eligible, false);
+    assert.match(cls.reason, /one snapshot is one revision/);
+  });
+
+  it('a legacy row (no audited_tree, fallen back to commit_sha) is eligible but identityVerified: false', () => {
+    const ctx = {
+      campaignId: 'camp', lockDigest: 'lock1',
+      shaByRunId: {
+        r1: { identity: 'legacy-sha', identityVerified: false },
+        r2: { identity: 'legacy-sha', identityVerified: false },
+      },
+    };
+    const cls = classifyLogEntry({
+      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1',
+      arms: { opus: { runId: 'r1' }, kimi: { runId: 'r2' } },
+    }, ctx);
+    assert.equal(cls.eligible, true, 'a legacy identity is still eligible — refusing it would regress existing bake-off history');
+    assert.equal(cls.identityVerified, false, 'must be visibly WEAKER, never silently upgraded to a verified match');
+  });
+
+  it('one verified arm + one legacy-fallback arm sharing the same identity: identityVerified is false (M1)', () => {
+    // Regression for the naive `identity === audited_tree` expression, which
+    // reads `null === null` as true for an all-NULL row. Mixed here with a
+    // real match to prove the aggregate correctly downgrades to false.
+    const ctx = {
+      campaignId: 'camp', lockDigest: 'lock1',
+      shaByRunId: {
+        r1: { identity: 'X', identityVerified: true },
+        r2: { identity: 'X', identityVerified: false },
+      },
+    };
+    const cls = classifyLogEntry({
+      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1',
+      arms: { opus: { runId: 'r1' }, kimi: { runId: 'r2' } },
+    }, ctx);
+    assert.equal(cls.eligible, true);
+    assert.equal(cls.identityVerified, false);
+  });
 });
 
 // ── §7 Phase 3: identity-keyed promotion (replaces count-based --force) ─────
@@ -291,7 +368,10 @@ describe('resolvePromotionAttempts — IDENTITY-keyed (round 6, Phase 3 rework)'
 });
 
 describe('classifyLogEntry — superseded attempts survive into promotion', () => {
-  const ctx = { campaignId: 'camp', lockDigest: 'lock1', shaByRunId: { r1: 'sha1', r0: 'sha0' } };
+  const ctx = {
+    campaignId: 'camp', lockDigest: 'lock1',
+    shaByRunId: { r1: { identity: 'sha1', identityVerified: true }, r0: { identity: 'sha0', identityVerified: true } },
+  };
 
   it('projects each superseded attempt with its own run id and unpriced cost', () => {
     const cls = classifyLogEntry({
@@ -371,7 +451,7 @@ describe('detectPlanHashMismatches — the extracted comparison rule (round 6, M
 });
 
 describe('classifyLogEntry — plan-hash consistency check (§7 Phase 4)', () => {
-  const ctx = { campaignId: 'camp', lockDigest: 'lock1', shaByRunId: { r1: 'sha1' } };
+  const ctx = { campaignId: 'camp', lockDigest: 'lock1', shaByRunId: { r1: { identity: 'sha1', identityVerified: true } } };
 
   it('NULL-vs-NULL is a match — a legacy snapshot with no live hash accepts a further NULL-hash attempt', () => {
     const cls = classifyLogEntry({
@@ -645,5 +725,41 @@ describe('promoteFromLog against a live schema — identity, quarantine, and the
     assert.equal(exclusionRow.rows[0].scope, 'pairing');
     assert.equal(exclusionRow.rows[0].plan_content_hash, 'hash-OLD');
     assert.match(exclusionRow.rows[0].excluded_reason, /auto-quarantined via --confirm-mismatch/);
+  });
+
+  // ── H2/M1 (audit-target-identity-commit-sha-correction.md): auditedShasForRuns
+  // must prefer audited_tree, fall back through audited_sha then commit_sha for
+  // legacy rows, and never let an all-NULL identity read as verified.
+
+  it('auditedShasForRuns: audited_tree wins over audited_sha, with identityVerified: true', async () => {
+    const r = await client.query(
+      "INSERT INTO audit_runs (repo_id, plan_file, mode, commit_sha, audited_sha, audited_tree) VALUES ($1, 'docs/plans/x.md', 'code', 'sha-a', 'sha-a', 'tree-a') RETURNING id",
+      [repoRowId],
+    );
+    const runId = r.rows[0].id;
+    const shas = await store.auditedShasForRuns([runId]);
+    assert.equal(shas.ok, true);
+    assert.deepEqual(shas.byRunId[runId], { identity: 'tree-a', identityVerified: true });
+  });
+
+  it('auditedShasForRuns: falls back to audited_sha, then commit_sha, for legacy rows — always identityVerified: false', async () => {
+    const shaOnly = await client.query(
+      "INSERT INTO audit_runs (repo_id, plan_file, mode, commit_sha, audited_sha, audited_tree) VALUES ($1, 'docs/plans/x.md', 'code', 'sha-a', 'sha-b', NULL) RETURNING id",
+      [repoRowId],
+    );
+    const commitOnly = await mkRun(); // commit_sha only — pre-2026-07-19 shape
+    const shas = await store.auditedShasForRuns([shaOnly.rows[0].id, commitOnly]);
+    assert.deepEqual(shas.byRunId[shaOnly.rows[0].id], { identity: 'sha-b', identityVerified: false });
+    assert.deepEqual(shas.byRunId[commitOnly], { identity: 'sha-a', identityVerified: false });
+  });
+
+  it('auditedShasForRuns: an all-NULL identity is identityVerified: false, never a false positive (M1)', async () => {
+    const r = await client.query(
+      "INSERT INTO audit_runs (repo_id, plan_file, mode) VALUES ($1, 'docs/plans/x.md', 'code') RETURNING id",
+      [repoRowId],
+    );
+    const runId = r.rows[0].id;
+    const shas = await store.auditedShasForRuns([runId]);
+    assert.deepEqual(shas.byRunId[runId], { identity: null, identityVerified: false });
   });
 });

@@ -70,6 +70,7 @@ function makeFakeClient({
 const ALL_FINDING_OPTIONAL = new Set(['audit_findings.adjudication_outcome', 'audit_findings.remediation_state']);
 const ALL_META_OPTIONAL = new Set([
   'audit_runs.round_converged_after', 'audit_runs.commit_sha', 'audit_runs.branch', 'audit_runs.plan_id',
+  'audit_runs.audited_sha', 'audit_runs.audited_tree',
 ]);
 
 describe('getRunFindings — store read-query contract', () => {
@@ -240,6 +241,8 @@ describe('getRunMeta — store read-query contract', () => {
         total_findings: 7,
         round_converged_after: 3,
         commit_sha: 'abc123',
+        audited_sha: 'abc123',
+        audited_tree: 'tree-xyz',
         branch: 'main',
         plan_id: 'plan-uuid',
         created_at: '2026-06-09T00:00:00Z',
@@ -258,6 +261,8 @@ describe('getRunMeta — store read-query contract', () => {
       totalFindings: 7,
       roundConvergedAfter: 3,
       commitSha: 'abc123',
+      auditedSha: 'abc123',
+      auditedTree: 'tree-xyz',
       branch: 'main',
       planId: 'plan-uuid',
       createdAt: '2026-06-09T00:00:00Z',
@@ -273,9 +278,13 @@ describe('getRunMeta — store read-query contract', () => {
     const dataCall = fake.calls.find((c) => !/LIMIT 0/i.test(c.sql));
     assert.doesNotMatch(dataCall.sql, /round_converged_after/);
     assert.doesNotMatch(dataCall.sql, /commit_sha/);
+    assert.doesNotMatch(dataCall.sql, /audited_sha/);
+    assert.doesNotMatch(dataCall.sql, /audited_tree/);
     // Domain fields still present (null), so downstream never reads undefined.
     assert.equal(out.roundConvergedAfter, null);
     assert.equal(out.commitSha, null);
+    assert.equal(out.auditedSha, null);
+    assert.equal(out.auditedTree, null);
     assert.equal(out.planId, null);
   });
 });

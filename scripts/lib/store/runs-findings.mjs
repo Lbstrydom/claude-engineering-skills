@@ -1897,7 +1897,7 @@ export async function getRunMeta(runId, deps = {}) {
   if (!await cloudFn()) return null;
 
   const cols = ['id', 'plan_file', 'mode', 'rounds', 'gemini_verdict', 'total_findings', 'created_at'];
-  for (const c of ['round_converged_after', 'commit_sha', 'branch', 'plan_id']) {
+  for (const c of ['round_converged_after', 'commit_sha', 'branch', 'plan_id', 'audited_sha', 'audited_tree']) {
     if (await columnExists('audit_runs', c, manyFn, cloudFn)) cols.push(c);
   }
 
@@ -1912,7 +1912,13 @@ export async function getRunMeta(runId, deps = {}) {
     geminiVerdict: row.gemini_verdict ?? null,
     totalFindings: row.total_findings ?? null,
     roundConvergedAfter: row.round_converged_after ?? null,
+    // `commitSha` is HEAD at audit-capture time — the PARENT of a dirty-tree
+    // audit, not the commit containing the audited diff (see AGENTS.md's
+    // Postgres-Parity-Store section). `auditedSha`/`auditedTree` are the real
+    // target identity; both null on pre-2026-07-19 rows.
     commitSha: row.commit_sha ?? null,
+    auditedSha: row.audited_sha ?? null,
+    auditedTree: row.audited_tree ?? null,
     branch: row.branch ?? null,
     planId: row.plan_id ?? null,
     createdAt: row.created_at ?? null,

@@ -689,6 +689,12 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
 - **Never use the dashboard as the routine migration path** — it reintroduces the
   silent-drift the ledger exists to eliminate; make the source migration idempotent
   and retry `--migrate` instead.
+- **`audit_runs.commit_sha` is HEAD at audit-capture time, not the commit containing
+  the audited diff** — the parent on a dirty tree (the normal case). Use `audited_sha`/
+  `audited_tree` (added `20260719120000`) for target identity; NULL on both means
+  unverifiable, never guess. Measured 2026-09-20: 72% zero file-overlap between
+  `commit_sha`'s diff and its own findings across 94 sampled runs.
+  [Plan](docs/plans/audit-target-identity-commit-sha-correction.md).
 - **jsonb-safe write seam — do NOT hand-`JSON.stringify` a jsonb column.** The
   db-layer write builders (`serializeWriteParam`) auto-serialize a plain array
   bound to ANY column on the write path, because node-postgres binds one as a
