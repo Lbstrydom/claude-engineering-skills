@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "note": "Recipients that may receive repository content (diffs) for experiment 5. Values are RECIPIENTS (the party that receives the bytes), not wire protocols: openrouter is one recipient regardless of upstream model. Absence of a repo here means REFUSE. wine-cellar-app is private and never goes to OpenRouter.",
+  "repos": {
+    "github.com/Lbstrydom/claude-engineering-skills": [
+      "anthropic",
+      "openai",
+      "gemini",
+      "openrouter"
+    ],
+    "github.com/Lbstrydom/ai-organiser": [
+      "anthropic",
+      "openai",
+      "gemini",
+      "openrouter"
+    ],
+    "github.com/Lbstrydom/wine-cellar-app": [
+      "anthropic",
+      "openai",
+      "gemini"
+    ]
+  }
+}

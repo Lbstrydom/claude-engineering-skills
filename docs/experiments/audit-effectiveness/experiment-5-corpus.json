@@ -1,0 +1,879 @@
+{
+  "version": 1,
+  "experiment": "experiment-5-reviewer-cost-value",
+  "frozenAt": "2026-09-20",
+  "seed": 20260920,
+  "selection": "known-defects.json v3 buggyCommits (18) + 17 seeded stratified draws from each repo's main history 2026-06-01..2026-09-20, excluding KD commits, merge/sync/regen/status/lockfile churn, and commits outside 10..3000 changed lines. \"clean\" = no audit_findings row against the sha in the store at freeze time; \"sampled\" = the pipeline previously raised findings on it.",
+  "limitations": [
+    "Backend-heavy: 21/35 backend, 7 migration, 4 docs-or-config, 3 frontend. These repos are tooling/backend-heavy, so this is representative of them, but the verdict must not be generalised to UI-heavy consumers.",
+    "ai-organiser has only 4 finding-bearing commits in the store, so two of its slots targeted as pipeline-flagged were filled with clean commits instead (10 clean total vs the >=6 pre-registered floor).",
+    "18/35 are known-defect commits (source: kd), which selects on commits where a defect was found; the 10 clean draws are the counterweight."
+  ],
+  "cohorts": {
+    "ALL": [
+      "E5-01",
+      "E5-02",
+      "E5-03",
+      "E5-04",
+      "E5-05",
+      "E5-06",
+      "E5-07",
+      "E5-08",
+      "E5-09",
+      "E5-10",
+      "E5-11",
+      "E5-12",
+      "E5-13",
+      "E5-14",
+      "E5-15",
+      "E5-16",
+      "E5-17",
+      "E5-18",
+      "E5-19",
+      "E5-20",
+      "E5-21",
+      "E5-22",
+      "E5-23",
+      "E5-24",
+      "E5-25",
+      "E5-26",
+      "E5-27",
+      "E5-28",
+      "E5-29",
+      "E5-30",
+      "E5-31",
+      "E5-32",
+      "E5-33",
+      "E5-34",
+      "E5-35"
+    ],
+    "OR": [
+      "E5-01",
+      "E5-02",
+      "E5-03",
+      "E5-04",
+      "E5-05",
+      "E5-06",
+      "E5-07",
+      "E5-08",
+      "E5-11",
+      "E5-12",
+      "E5-13",
+      "E5-14",
+      "E5-15",
+      "E5-16",
+      "E5-17",
+      "E5-18",
+      "E5-25",
+      "E5-26",
+      "E5-27",
+      "E5-28",
+      "E5-29",
+      "E5-30",
+      "E5-31",
+      "E5-32",
+      "E5-33",
+      "E5-34",
+      "E5-35"
+    ]
+  },
+  "strata": {
+    "L/migration": 4,
+    "L/backend": 10,
+    "M/backend": 8,
+    "S/backend": 3,
+    "M/migration": 2,
+    "M/frontend": 1,
+    "S/frontend": 2,
+    "S/docs-or-config": 2,
+    "M/docs-or-config": 1,
+    "L/docs-or-config": 1,
+    "S/migration": 1
+  },
+  "sources": {
+    "kd": 18,
+    "clean": 10,
+    "sampled": 7
+  },
+  "entries": [
+    {
+      "id": "E5-01",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "153adb52c91c8c7b34b1222e4d7792e65a410bc1",
+      "date": "2026-04-17",
+      "source": "kd",
+      "kdId": "KD-002",
+      "kdSeverity": "HIGH",
+      "stratum": {
+        "size": "L",
+        "kind": "migration"
+      },
+      "changedLines": 644,
+      "files": 12,
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-02",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "105da2fbe58bd3b37f511437ae4d86cde46f2e14",
+      "date": "2026-07-01",
+      "source": "kd",
+      "kdId": "KD-005",
+      "kdSeverity": "MEDIUM",
+      "stratum": {
+        "size": "L",
+        "kind": "migration"
+      },
+      "changedLines": 1328,
+      "files": 10,
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-03",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "d1ee5cc2e4c213979dda4e58ccfbb0e97947701b",
+      "date": "2026-05-21",
+      "source": "kd",
+      "kdId": "KD-006",
+      "kdSeverity": "HIGH",
+      "stratum": {
+        "size": "L",
+        "kind": "backend"
+      },
+      "changedLines": 2680,
+      "files": 9,
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-04",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "7ca21a3a86d45cc31fa0d50eb34db3e126df02ed",
+      "date": "2026-07-03",
+      "source": "kd",
+      "kdId": "KD-015",
+      "kdSeverity": "MEDIUM",
+      "stratum": {
+        "size": "M",
+        "kind": "backend"
+      },
+      "changedLines": 332,
+      "files": 9,
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-05",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "86dd669f3e773424d7dd37cd66482159dd140a88",
+      "date": "2026-06-28",
+      "source": "kd",
+      "kdId": "KD-016",
+      "kdSeverity": "HIGH",
+      "stratum": {
+        "size": "M",
+        "kind": "backend"
+      },
+      "changedLines": 330,
+      "files": 12,
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-06",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "5cd1fc72d68835ed98375f6e0728c52e2efa6357",
+      "date": "2026-06-26",
+      "source": "kd",
+      "kdId": "KD-017",
+      "kdSeverity": "MEDIUM",
+      "stratum": {
+        "size": "M",
+        "kind": "backend"
+      },
+      "changedLines": 462,
+      "files": 19,
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-07",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "2f57718324a134088828075fb67137c01b920637",
+      "date": "2026-05-17",
+      "source": "kd",
+      "kdId": "KD-018",
+      "kdSeverity": "MEDIUM",
+      "stratum": {
+        "size": "L",
+        "kind": "backend"
+      },
+      "changedLines": 1945,
+      "files": 23,
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-08",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "540cacf1c4b1fe4251756f3d0610d9cd83f301ab",
+      "date": "2026-04-06",
+      "source": "kd",
+      "kdId": "KD-019",
+      "kdSeverity": "MEDIUM",
+      "stratum": {
+        "size": "L",
+        "kind": "backend"
+      },
+      "changedLines": 1275,
+      "files": 18,
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-09",
+      "repo": "wine-cellar-app",
+      "repoIdentity": "github.com/Lbstrydom/wine-cellar-app",
+      "sha": "9b08adbe99b3edf41b6b2150f9b82b91941b21dc",
+      "date": "2026-04-16",
+      "source": "kd",
+      "kdId": "KD-008",
+      "kdSeverity": "HIGH",
+      "stratum": {
+        "size": "L",
+        "kind": "migration"
+      },
+      "changedLines": 1469,
+      "files": 21,
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini"
+      ]
+    },
+    {
+      "id": "E5-10",
+      "repo": "wine-cellar-app",
+      "repoIdentity": "github.com/Lbstrydom/wine-cellar-app",
+      "sha": "58bba0320e6d2fd6e9624e6b5681e7390d3f5cd3",
+      "date": "2025-12-22",
+      "source": "kd",
+      "kdId": "KD-011",
+      "kdSeverity": "HIGH",
+      "stratum": {
+        "size": "L",
+        "kind": "backend"
+      },
+      "changedLines": 1762,
+      "files": 7,
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini"
+      ]
+    },
+    {
+      "id": "E5-11",
+      "repo": "ai-organiser",
+      "repoIdentity": "github.com/Lbstrydom/ai-organiser",
+      "sha": "8b61fa66b8b18ab20c2d0d9d34a4825c090140cc",
+      "date": "2026-06-04",
+      "source": "kd",
+      "kdId": "KD-012",
+      "kdSeverity": "HIGH",
+      "stratum": {
+        "size": "L",
+        "kind": "backend"
+      },
+      "changedLines": 1424,
+      "files": 35,
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-12",
+      "repo": "ai-organiser",
+      "repoIdentity": "github.com/Lbstrydom/ai-organiser",
+      "sha": "573cbe186745f4f5b19a7ec24e6912a97f26f258",
+      "date": "2026-04-16",
+      "source": "kd",
+      "kdId": "KD-013",
+      "kdSeverity": "HIGH",
+      "stratum": {
+        "size": "M",
+        "kind": "backend"
+      },
+      "changedLines": 227,
+      "files": 8,
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-13",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "1823c7c81edfaa6624d29dd5de984031c4d20afe",
+      "date": "2026-04-07",
+      "source": "kd",
+      "kdId": "KD-020",
+      "kdSeverity": "MEDIUM",
+      "stratum": {
+        "size": "S",
+        "kind": "backend"
+      },
+      "changedLines": 53,
+      "files": 1,
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-14",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "fb8244f749b93c5b3ba1a62ecc30a23f02e85a5c",
+      "date": "2026-05-23",
+      "source": "kd",
+      "kdId": "KD-021",
+      "kdSeverity": "HIGH",
+      "stratum": {
+        "size": "L",
+        "kind": "backend"
+      },
+      "changedLines": 547,
+      "files": 3,
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-15",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "b6917174f1ce2a3bdb866b27680a89c7ee9c409f",
+      "date": "2026-06-22",
+      "source": "kd",
+      "kdId": "KD-022",
+      "kdSeverity": "MEDIUM",
+      "stratum": {
+        "size": "L",
+        "kind": "backend"
+      },
+      "changedLines": 1304,
+      "files": 15,
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-16",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "6498f99b61b8ddea88456e29dfc017bae9db81c3",
+      "date": "2026-05-11",
+      "source": "kd",
+      "kdId": "KD-023",
+      "kdSeverity": "MEDIUM",
+      "stratum": {
+        "size": "M",
+        "kind": "migration"
+      },
+      "changedLines": 107,
+      "files": 4,
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-17",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "eecdbf98915811e63d0223fd2d7ef95173435ea2",
+      "date": "2026-04-01",
+      "source": "kd",
+      "kdId": "KD-024",
+      "kdSeverity": "MEDIUM",
+      "stratum": {
+        "size": "M",
+        "kind": "backend"
+      },
+      "changedLines": 117,
+      "files": 1,
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-18",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "be9545d6f9e854eef8d9dd5d808cd8afd1d52d73",
+      "date": "2026-05-20",
+      "source": "kd",
+      "kdId": "KD-026",
+      "kdSeverity": "MEDIUM",
+      "stratum": {
+        "size": "L",
+        "kind": "migration"
+      },
+      "changedLines": 991,
+      "files": 3,
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-19",
+      "repo": "wine-cellar-app",
+      "repoIdentity": "github.com/Lbstrydom/wine-cellar-app",
+      "sha": "e04b6d9c9333adf113340e492731656e5029849a",
+      "date": "2026-09-07",
+      "source": "clean",
+      "priorFindings": 0,
+      "priorHigh": 0,
+      "stratum": {
+        "size": "M",
+        "kind": "backend"
+      },
+      "changedLines": 190,
+      "files": 2,
+      "subject": "fix(tooling): hydration copied the tooling but not its stamp, so every consumer failed open",
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini"
+      ]
+    },
+    {
+      "id": "E5-20",
+      "repo": "wine-cellar-app",
+      "repoIdentity": "github.com/Lbstrydom/wine-cellar-app",
+      "sha": "c8ffdbf8047f2d64afe7eae6974369b8f40f886e",
+      "date": "2026-08-30",
+      "source": "sampled",
+      "priorFindings": 29,
+      "priorHigh": 6,
+      "stratum": {
+        "size": "L",
+        "kind": "backend"
+      },
+      "changedLines": 1386,
+      "files": 7,
+      "subject": "feat(organise): carry classification provenance end-to-end (Cluster A)",
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini"
+      ]
+    },
+    {
+      "id": "E5-21",
+      "repo": "wine-cellar-app",
+      "repoIdentity": "github.com/Lbstrydom/wine-cellar-app",
+      "sha": "c3038d3d09b9b0780b0d6e5b899833d1039b9761",
+      "date": "2026-09-16",
+      "source": "sampled",
+      "priorFindings": 19,
+      "priorHigh": 3,
+      "stratum": {
+        "size": "M",
+        "kind": "frontend"
+      },
+      "changedLines": 174,
+      "files": 8,
+      "subject": "fix(cellar-analysis): route the status-badge's reorg click through the fridge-first gate (#620)",
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini"
+      ]
+    },
+    {
+      "id": "E5-22",
+      "repo": "wine-cellar-app",
+      "repoIdentity": "github.com/Lbstrydom/wine-cellar-app",
+      "sha": "3f130619381293dcd46f4ef4193c7e6d69778ad6",
+      "date": "2026-08-13",
+      "source": "clean",
+      "priorFindings": 0,
+      "priorHigh": 0,
+      "stratum": {
+        "size": "S",
+        "kind": "frontend"
+      },
+      "changedLines": 81,
+      "files": 2,
+      "subject": "fix(mode-switch): the zero-item review screen described the wrong axis (#327)",
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini"
+      ]
+    },
+    {
+      "id": "E5-23",
+      "repo": "wine-cellar-app",
+      "repoIdentity": "github.com/Lbstrydom/wine-cellar-app",
+      "sha": "9f6ec73979e6395baca8262f7a29c55744df2912",
+      "date": "2026-08-29",
+      "source": "sampled",
+      "priorFindings": 3,
+      "priorHigh": 0,
+      "stratum": {
+        "size": "M",
+        "kind": "migration"
+      },
+      "changedLines": 412,
+      "files": 5,
+      "subject": "feat(db): migration 170 — zone_label_migration_audit (Cluster A)",
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini"
+      ]
+    },
+    {
+      "id": "E5-24",
+      "repo": "wine-cellar-app",
+      "repoIdentity": "github.com/Lbstrydom/wine-cellar-app",
+      "sha": "65e94250b03670a1fdc00d178a249588d6e225a4",
+      "date": "2026-09-03",
+      "source": "clean",
+      "priorFindings": 0,
+      "priorHigh": 0,
+      "stratum": {
+        "size": "S",
+        "kind": "docs-or-config"
+      },
+      "changedLines": 40,
+      "files": 2,
+      "subject": "docs(plan): close out country/region classification reliability (#433)",
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini"
+      ]
+    },
+    {
+      "id": "E5-25",
+      "repo": "ai-organiser",
+      "repoIdentity": "github.com/Lbstrydom/ai-organiser",
+      "sha": "5517391237cde865d03343e8330c87291b2e0314",
+      "date": "2026-06-02",
+      "source": "clean",
+      "priorFindings": 0,
+      "priorHigh": 0,
+      "stratum": {
+        "size": "S",
+        "kind": "backend"
+      },
+      "changedLines": 80,
+      "files": 3,
+      "subject": "refactor(presentation): registry true-MRU fix (audit) + test typing",
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-26",
+      "repo": "ai-organiser",
+      "repoIdentity": "github.com/Lbstrydom/ai-organiser",
+      "sha": "fea8204cb29b3c10bfb7005fe1937ecc42b16014",
+      "date": "2026-06-02",
+      "source": "clean",
+      "priorFindings": 0,
+      "priorHigh": 0,
+      "stratum": {
+        "size": "M",
+        "kind": "backend"
+      },
+      "changedLines": 108,
+      "files": 7,
+      "subject": "refactor(slides): debt D5+D6 — tag-agnostic prompt escaper + constant consolidation",
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-27",
+      "repo": "ai-organiser",
+      "repoIdentity": "github.com/Lbstrydom/ai-organiser",
+      "sha": "07b85f3f3bcd76846b56d94e22a9865bdd37f5db",
+      "date": "2026-06-05",
+      "source": "clean",
+      "priorFindings": 0,
+      "priorHigh": 0,
+      "stratum": {
+        "size": "L",
+        "kind": "backend"
+      },
+      "changedLines": 1049,
+      "files": 17,
+      "subject": "feat(azure): pace requests under the Azure RPM cap + Azure-aware 429 retry",
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-28",
+      "repo": "ai-organiser",
+      "repoIdentity": "github.com/Lbstrydom/ai-organiser",
+      "sha": "89b8d91357741260ea4cba1b825bada66f4f8b03",
+      "date": "2026-06-04",
+      "source": "clean",
+      "priorFindings": 0,
+      "priorHigh": 0,
+      "stratum": {
+        "size": "S",
+        "kind": "frontend"
+      },
+      "changedLines": 48,
+      "files": 1,
+      "subject": "fix(taxonomy): Gemini gate G1 — complete internal Essentials→Pinned rename",
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-29",
+      "repo": "ai-organiser",
+      "repoIdentity": "github.com/Lbstrydom/ai-organiser",
+      "sha": "0bef971c824d1b3979843706d3da73729c990ed8",
+      "date": "2026-09-04",
+      "source": "clean",
+      "priorFindings": 0,
+      "priorHigh": 0,
+      "stratum": {
+        "size": "S",
+        "kind": "docs-or-config"
+      },
+      "changedLines": 77,
+      "files": 3,
+      "subject": "docs(claude): record the worktree preflight and #-key memory routing",
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-30",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "1c2a4235f18f299aab9ff53bb21813e49e6c5327",
+      "date": "2026-08-24",
+      "source": "clean",
+      "priorFindings": 0,
+      "priorHigh": 0,
+      "stratum": {
+        "size": "S",
+        "kind": "backend"
+      },
+      "changedLines": 99,
+      "files": 2,
+      "subject": "fix(actions-runner-doctor): --json local ran the wrong command",
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-31",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "4195f9ec29ed22814f97af7ed54aa210b09b88c9",
+      "date": "2026-08-17",
+      "source": "sampled",
+      "priorFindings": 13,
+      "priorHigh": 4,
+      "stratum": {
+        "size": "M",
+        "kind": "backend"
+      },
+      "changedLines": 101,
+      "files": 4,
+      "subject": "fix(campaign): repoId throws on real store failures; redaction terms are additive",
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-32",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "e370eba580afdff6ac48ff9e553322d7aa2770d2",
+      "date": "2026-08-09",
+      "source": "sampled",
+      "priorFindings": 11,
+      "priorHigh": 8,
+      "stratum": {
+        "size": "L",
+        "kind": "backend"
+      },
+      "changedLines": 762,
+      "files": 6,
+      "subject": "fix(learning): a receipt for a decision nobody kept, and a rebuild that never ran",
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-33",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "5dd481b71e05d814e6133d48716ffdf30fc68449",
+      "date": "2026-07-30",
+      "source": "clean",
+      "priorFindings": 0,
+      "priorHigh": 0,
+      "stratum": {
+        "size": "M",
+        "kind": "docs-or-config"
+      },
+      "changedLines": 305,
+      "files": 2,
+      "subject": "docs(plans): record V1/V2 results — the live run found an inert over-cap",
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-34",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "da9bcae0d4fb0a2d675ff7ba3af99e34b4f45330",
+      "date": "2026-07-27",
+      "source": "sampled",
+      "priorFindings": 16,
+      "priorHigh": 5,
+      "stratum": {
+        "size": "L",
+        "kind": "docs-or-config"
+      },
+      "changedLines": 1554,
+      "files": 2,
+      "subject": "docs(plans): add + audit failure-contract tech-debt cluster plan (approved, not implemented)",
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    },
+    {
+      "id": "E5-35",
+      "repo": "claude-engineering-skills",
+      "repoIdentity": "github.com/Lbstrydom/claude-engineering-skills",
+      "sha": "6b460d71a3afac91539d37ea49cba2d15a5015de",
+      "date": "2026-07-21",
+      "source": "sampled",
+      "priorFindings": 1,
+      "priorHigh": 0,
+      "stratum": {
+        "size": "S",
+        "kind": "migration"
+      },
+      "changedLines": 85,
+      "files": 2,
+      "subject": "fix(security): revoke anon execute on 8 SECURITY DEFINER RPCs + pin 5 search_paths",
+      "allowedTransports": [
+        "anthropic",
+        "openai",
+        "gemini",
+        "openrouter"
+      ]
+    }
+  ]
+}

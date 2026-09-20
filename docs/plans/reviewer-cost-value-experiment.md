@@ -1,7 +1,7 @@
 # Plan: Reviewer Cost-vs-Value Experiment (Experiment 5)
 
 - **Date**: 2026-09-20
-- **Status**: Draft
+- **Status**: In Progress
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `scripts`, `solo-control`, `docs`
@@ -594,4 +594,7 @@ incident:
 
 ## Implementation Log
 
-*(empty — written by `/ship docs/plans/reviewer-cost-value-experiment.md`)*
+### 2026-09-20 — Phase 1 complete (no API spend)
+- Completed: `recipient-policy.json` (3 repos; wine excludes `openrouter`); `experiment-5-corpus.json` — 35 entries = 18 KD `buggyCommit`s + 17 seeded (seed 20260920) stratified draws from each repo's `main` 2026-06..09, all 35 shas verified to resolve in their `SOLO_CONTROL_REPO_ROOTS` checkouts, zero policy violations; Cohort ALL = 35, Cohort OR = 27; sources kd 18 / clean 10 / sampled 7; `experiment-5-adjudication-rubric.md` (label evidence bar, per-cluster `sev` impact rubric with lower-tier tie-break, clustering rules, 40-row cap).
+- Remaining: Phases 2–4.
+- Deviations: the store holds **no** B/C shadow rows any more (that track closed 2026-07), so "apparently clean" was operationalised as *no `audit_findings` row against the sha* rather than *no shadow finding*. ai-organiser has only 4 finding-bearing commits, so two of its targeted-flagged slots are clean draws. Corpus is backend-heavy (3 frontend commits) — recorded as a limitation in the corpus file; the verdict must not generalise to UI-heavy consumers.
