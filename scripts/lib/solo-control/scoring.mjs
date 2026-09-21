@@ -35,9 +35,14 @@ function bestLabel(a, b) { return (LABEL_RANK[b] ?? -1) > (LABEL_RANK[a] ?? -1) 
 const RISKY_CLASSES = /\b(security|migration|concurrenc|auth|data.?loss|race|deadlock)\b/i;
 
 /**
- * @param {Array<{arm:string, commit:string, severity:string, label:string,
+ * @param {Array<{arm:string, commit:string, severity:string, sev?:string, label:string,
  *   humanCluster?:string, category?:string, matches?:string|null}>} rows
  *   labeled adjudication rows (label in {proven,actionable,plausible,false}).
+ *   `severity` is the finding's EMITTED severity (the model's own claim);
+ *   `sev` is the adjudicator's blind, per-cluster severity from the impact
+ *   rubric (experiment-5-adjudication-rubric.md) — when present it is what
+ *   scoring weights by, so an arm cannot earn extra value by over-claiming
+ *   its own severity. `severity` is kept on the item for calibration only.
  * @param {{knownDefects?: Array<{id:string}>, underpowered?: Set<string>|string[],
  *   apparatusArm?: string}} opts
  */
@@ -53,15 +58,20 @@ export function scoreArms(rows, { knownDefects = [], underpowered = [], apparatu
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     rawByArm[r.arm] = (rawByArm[r.arm] || 0) + 1;
+    const effSeverity = r.sev || r.severity; // adjudicated wins when present
     const cl = (r.humanCluster && String(r.humanCluster).trim()) || `row:${i}`;
     const key = `${r.arm}\x00${r.commit}\x00${cl}`;
     const prev = clusters.get(key);
     if (!prev) {
-      clusters.set(key, { arm: r.arm, commit: r.commit, severity: r.severity, label: r.label, category: r.category || '', matches: r.matches || null });
+      clusters.set(key, {
+        arm: r.arm, commit: r.commit, severity: effSeverity, emittedSeverity: r.severity,
+        label: r.label, category: r.category || '', matches: r.matches || null,
+      });
     } else {
       prev.label = bestLabel(prev.label, r.label);
-      // keep the highest severity + any KD match in the cluster
-      if (sevWeight(r.severity) > sevWeight(prev.severity)) prev.severity = r.severity;
+      // keep the highest (effective) severity + the emitted severity of that
+      // same row + any KD match in the cluster
+      if (sevWeight(effSeverity) > sevWeight(prev.severity)) { prev.severity = effSeverity; prev.emittedSeverity = r.severity; }
       if (!prev.matches && r.matches) prev.matches = r.matches;
     }
   }
@@ -206,4 +216,119 @@ export function costPerKnownDefect(perArmScore, costRow) {
     return { usdPerKnownDefect: null, costStatus: 'unavailable' };
   }
   return { usdPerKnownDefect: +(costRow.totalUsd / perArmScore.knownDefectsMatched).toFixed(4), costStatus: 'available' };
+}
+
+// ── decide() — experiment 5's default-configuration decision function ──────
+//
+// docs/plans/reviewer-cost-value-experiment.md §3. Went through 3 GPT + 3
+// Gemini audit rounds; each Gemini round found a real logic bug in an
+// earlier draft of this function (R2-G1: decision contract could never
+// accept the incumbent; R2-G3: an untrusted arm could set the acceptance
+// threshold; see the plan's Audit Trail). The shape below is the corrected,
+// FINAL version — do not re-derive from the plan's earlier prose, which is
+// kept as history, not as a second spec.
+//
+// Single cohort (policy v2, 2026-09-21): every configuration is scored on
+// the same commit set, so this runs once, not once per cohort.
+
+/**
+ * @param {ReturnType<typeof scoreArms>} scored
+ * @param {{
+ *   incumbentArm?: string,
+ *   costPerDiff: Record<string, number|null>,     // arm -> $/diff (null = costComplete:false)
+ *   costComplete?: Record<string, boolean>,       // arm -> whether every cell priced (default: costPerDiff != null)
+ *   recipients?: Record<string, number>,          // arm -> recipient count, tiebreak only
+ *   repeats?: Record<string, number>,             // arm -> repeat count, tiebreak only
+ * }} ledger
+ */
+export function decide(scored, ledger) {
+  const incumbentArm = ledger.incumbentArm ?? scored.apparatusArm ?? 'A';
+  const costPerDiff = ledger.costPerDiff || {};
+  const costComplete = ledger.costComplete || Object.fromEntries(Object.keys(costPerDiff).map((a) => [a, costPerDiff[a] != null]));
+  const arms = Object.values(scored.arms);
+  const byArm = scored.arms;
+
+  // Eligibility ceiling already lives in scoreArms (underpowered / falseRate /
+  // noiseRate). Extend it here with costComplete — an arm with unpriced cells
+  // cannot be ranked, since its $/diff is unknown, not zero.
+  const eligible = arms.filter((a) => a.eligible && costComplete[a.arm] !== false);
+  const ineligible = arms
+    .filter((a) => !eligible.includes(a))
+    .map((a) => ({ arm: a.arm, reason: a.ineligibleReason || (costComplete[a.arm] === false ? 'cost-incomplete' : 'unknown') }));
+
+  const incumbent = byArm[incumbentArm] || null;
+  const incumbentEligible = !!incumbent && eligible.includes(incumbent);
+
+  // Trust bar (Gemini R3-G1): when the incumbent is eligible, a replacement
+  // candidate must be AT LEAST as clean as the incumbent — an eligible-but-
+  // noisier-than-A arm must never set the threshold others are measured
+  // against. When the incumbent itself is ineligible, fall back to the fixed
+  // ceiling scoreArms already enforces (every `eligible` arm already clears
+  // it), so no extra filter is needed in that branch.
+  const trusted = incumbentEligible
+    ? eligible.filter((a) => a.falseRate <= Math.min(incumbent.falseRate, 0.33))
+    : eligible;
+
+  if (trusted.length === 0) {
+    return { incumbentArm, eligible: eligible.map((a) => a.arm), ineligible, trusted: [], best: null, winner: null, winnerReason: null, acceptable: [], nonInferiorCheap: [], inconclusive: true, inconclusiveReason: 'no arm clears the trust bar' };
+  }
+
+  // best = the highest-value TRUSTED arm — an untrusted arm can never set the
+  // threshold others are measured against (this is the R3-G1 fix: `best` used
+  // to be drawn from `eligible`, which is a strictly looser set than `trusted`).
+  const best = trusted.reduce((a, b) => (b.value > a.value ? b : a));
+  if (best.value === 0) {
+    return { incumbentArm, eligible: eligible.map((a) => a.arm), ineligible, trusted: trusted.map((a) => a.arm), best: best.arm, winner: null, winnerReason: null, acceptable: [], nonInferiorCheap: [], inconclusive: true, inconclusiveReason: 'best.value === 0 — no arm may be declared acceptable on a zero' };
+  }
+
+  // nearBest = every trusted arm within 90% of best's value — this is the SET
+  // the winner is drawn from. `best` is always a member of its own set, so
+  // this set is never empty once `trusted` is non-empty (the R2-G1 fix
+  // collapsed the old "empty set" fallback branches into an invariant rather
+  // than a reachable code path — see the plan's decide() step 5 note).
+  const nearBest = trusted.filter((a) => a.value >= 0.9 * best.value);
+
+  // Winner: lowest $/diff among nearBest; ties -> fewer recipients -> fewer
+  // repeats -> arm id (fully deterministic).
+  const sortKey = (a) => [
+    costPerDiff[a.arm] ?? Number.POSITIVE_INFINITY,
+    ledger.recipients?.[a.arm] ?? Number.POSITIVE_INFINITY,
+    ledger.repeats?.[a.arm] ?? Number.POSITIVE_INFINITY,
+    a.arm,
+  ];
+  const winner = [...nearBest].sort((x, y) => {
+    const kx = sortKey(x), ky = sortKey(y);
+    for (let i = 0; i < kx.length; i++) { if (kx[i] !== ky[i]) return typeof kx[i] === 'string' ? kx[i].localeCompare(ky[i]) : kx[i] - ky[i]; }
+    return 0;
+  })[0];
+
+  // acceptable = replacement candidates (non-incumbent) that clear nearBest —
+  // reported for readability; the winner rule above already decides.
+  const acceptable = nearBest.filter((a) => a.arm !== incumbentArm).map((a) => a.arm);
+
+  // nonInferiorCheap (Q1, a FINDING, never a winner condition): an acceptable
+  // replacement candidate whose $/diff is <=25% of the incumbent's — only
+  // computable when the incumbent is eligible and both costs are complete.
+  const nonInferiorCheap = incumbentEligible && costComplete[incumbentArm] !== false
+    ? acceptable.filter((armId) => {
+      const c = costPerDiff[armId];
+      const c0 = costPerDiff[incumbentArm];
+      return c != null && c0 != null && c0 > 0 && c <= 0.25 * c0;
+    })
+    : [];
+
+  return {
+    incumbentArm,
+    eligible: eligible.map((a) => a.arm),
+    ineligible,
+    trusted: trusted.map((a) => a.arm),
+    best: best.arm,
+    nearBest: nearBest.map((a) => a.arm),
+    acceptable,
+    winner: winner.arm,
+    winnerReason: winner.arm === incumbentArm ? 'incumbent' : 'replacement',
+    nonInferiorCheap,
+    inconclusive: false,
+    inconclusiveReason: null,
+  };
 }

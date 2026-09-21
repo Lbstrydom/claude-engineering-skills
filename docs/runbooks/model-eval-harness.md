@@ -18,6 +18,27 @@ from, the live `solo-control-audit.mjs` experiment), the $/KD cost formula,
 `model-resolver.mjs`'s sentinel system, and the shadow-final-review A/B's
 pre-registered stopping rule.
 
+## Cold-arm comparisons run on solo-control, not model-eval — and why
+
+Experiment 5 (docs/plans/reviewer-cost-value-experiment.md) compares the
+production audit apparatus against several **cold, un-audited** arms —
+Claude Sonnet solo, Claude Opus solo, and DeepSeek V4.1 Flash x3 union —
+reviewing the same diff bare, with no GPT/Gemini layer at all. That is NOT
+this harness: `model-eval-{auditor,adjudicator}.mjs` answers "is candidate
+model X, playing the SAME role an existing pipeline stage already plays
+(auditor or adjudicator), worth switching to?" against the `known-defects.json`
+oracle-matching corpus. Exp-5's question is different in kind — "does a cold
+review from ANY model (no pipeline stage at all) rival the multi-model
+apparatus?" — and its corpus, recipient-authorization model, and adjudication
+rubric are all exp-5-specific (a blind human sheet, not oracle matching).
+
+Reusing this harness for that question would silently assume oracle-matching
+recall is a valid instrument for a "no pipeline" comparison, which the
+harness's own §"Screen-tier oracle matching has a real ceiling" section
+already says it is not. `scripts/solo-control-audit.mjs` (`run`/`apparatus`
+subcommands) is the standing instrument for cold-arm comparisons instead —
+see `docs/research/runbooks/solo-control-experiment.md`.
+
 ## Playbook — "a new model just shipped, is it worth switching to?"
 
 **Start here.** This is the standing answer, written 2026-07-26 so the next swap

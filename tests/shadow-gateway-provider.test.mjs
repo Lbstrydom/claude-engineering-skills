@@ -328,7 +328,7 @@ describe('DeepSeek shadow — resolution states (direct API, replaces the Alibab
   });
 
   it('is ready with either curated model id and just the one env var (a universal endpoint, unlike alibaba)', () => {
-    for (const id of ['deepseek-v4-pro', 'deepseek-v4-flash']) {
+    for (const id of ['deepseek-v4-pro', 'deepseek-flash']) {
       const r = shadow({ provider: 'deepseek', model: id }, { DEEPSEEK_API_KEY: 'k' });
       assert.equal(r.state, 'ready', id);
       assert.equal(r.model, id);
@@ -336,8 +336,8 @@ describe('DeepSeek shadow — resolution states (direct API, replaces the Alibab
     }
   });
 
-  it('rejects the retired Alibaba-workspace dated snapshot and other unrelated ids', () => {
-    for (const bad of ['deepseek-v4-pro-0813', 'qwen3.8-max', 'grok-4.6']) {
+  it('rejects the retired Alibaba-workspace dated snapshot, other unrelated ids, and the superseded v4-flash spelling', () => {
+    for (const bad of ['deepseek-v4-pro-0813', 'qwen3.8-max', 'grok-4.6', 'deepseek-v4-flash']) {
       const r = shadow({ provider: 'deepseek', model: bad }, { DEEPSEEK_API_KEY: 'k' });
       assert.equal(r.state, 'skipped-unsupported-provider', `"${bad}" must not resolve via deepseek`);
     }

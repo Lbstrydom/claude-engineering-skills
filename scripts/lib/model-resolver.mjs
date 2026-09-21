@@ -256,8 +256,15 @@ export function isAlibabaModel(id) {
  * these two, with no `-0813`-style dated snapshot suffix; that suffix was
  * an Alibaba-workspace-specific pin, not a DeepSeek naming convention).
  * Curated allowlist, same rationale as `ALIBABA_POOL`.
+ *
+ * `deepseek-flash` (not `deepseek-v4-flash`) since 2026-09-21: DeepSeek shipped
+ * V4.1 Flash under this id (confirmed live against its pricing docs and
+ * `/models` endpoint); the old id is now a temporary compatibility redirect on
+ * DeepSeek's own side, not this pool's canonical spelling. `isDeepseekModel`
+ * therefore no longer recognises the old string — a caller that still sends it
+ * gets the correct refusal rather than a silently-stale route.
  */
-export const DEEPSEEK_POOL = Object.freeze(['deepseek-v4-pro', 'deepseek-v4-flash']);
+export const DEEPSEEK_POOL = Object.freeze(['deepseek-v4-pro', 'deepseek-flash']);
 
 /** True iff `id` is a bare model id DeepSeek's own API serves — see `DEEPSEEK_POOL`. */
 export function isDeepseekModel(id) {

@@ -37,8 +37,10 @@
  * artifact: a function of DB + git + an LLM call, not committed source).
  *
  * Usage:
- *   node scripts/solo-control-audit.mjs run   [--model <id>] [--label <S-x>] [--commits <sha,sha>] [--max-chars N] [--repeats N] [--sdk]
- *   node scripts/solo-control-audit.mjs apparatus --commits <sha,sha> [--max-chars N]
+ *   node scripts/solo-control-audit.mjs run   [--model <id>] [--label <S-x>] [--commits <sha,sha> | --corpus <path>] [--max-chars N] [--repeats N] [--sdk] [--resume]
+ *     --label is REQUIRED for any non-anthropic recipient (exp-5); optional for anthropic (auto-derived, unchanged).
+ *     --corpus <path>: exp-5 pre-registered corpus JSON, filtered to entries eligible for the resolved recipient.
+ *   node scripts/solo-control-audit.mjs apparatus --commits <sha,sha> [--max-chars N] [--gate-model <id>] [--gate-only] [--resume]
  *   node scripts/solo-control-audit.mjs apparatus-bc --commits <sha,sha> [--max-chars N] [--force]
  *   node scripts/solo-control-audit.mjs merge [--severity high[,medium,low]] [--commits <sha,sha>]
  *                                             [--kd-candidates] [--medium-sample N] [--seed N] [--allow-apparatus-gaps]
@@ -72,6 +74,7 @@
 import './lib/load-env.mjs'; // load repo-local .env (CLAUDE_BACKEND, AUDIT_DB_URL, keys)
 
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -88,6 +91,13 @@ import { redactSecrets } from './lib/secret-patterns.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { log, argOption, hasFlag } from './lib/cli-io.mjs';
 import { dupHash } from './lib/solo-control/cluster-propose.mjs';
+import { classifyRecipient } from './lib/solo-control/recipient.mjs';
+import { loadRecipientPolicy, resolveAndAuthorize } from './lib/solo-control/policy.mjs';
+import { loadCorpus, entriesEligibleForRecipient } from './lib/solo-control/corpus.mjs';
+import { computeCallId, appendLedgerRow } from './lib/solo-control/ledger.mjs';
+import { canonicaliseRemoteUrl } from './lib/repo-identity.mjs';
+import { costFromUsage, PRICING_VERSION } from './lib/model-pricing.mjs';
+import { resolveDeepseekCreds } from './lib/model-resolver.mjs';
 
 // The 5 generation passes an arm runs (audit-shadow.mjs::SHADOW_PASSES == the
 // PASS_PROMPTS keys minus quickfix). Re-derived here so the control can't drift
@@ -108,6 +118,19 @@ const OUT_DIR = path.resolve('.audit-loop/solo-control');
 const BLIND_CSV = path.join(OUT_DIR, 'blind-adjudication.csv');
 const BLIND_MAP = path.join(OUT_DIR, '.blind-map.json'); // private — never open while labeling
 const STAGE_TYPE = 'audit-code'; // cold-diff is a code concept; plan-audit's subject is a doc, not a git diff
+
+// exp-5 (docs/plans/reviewer-cost-value-experiment.md) — the ONE recipient-policy
+// file every entry path (--corpus, --commits, discoverCommits) consults, and the
+// shared call ledger every provider call appends to via recordCall().
+// The env override exists ONLY so a test can point a real subprocess at an
+// isolated fixture instead of mutating the committed file on disk — mutating a
+// shared, committed file as a test fixture races every OTHER test file reading
+// it concurrently (Node's test runner parallelises across files by default;
+// this raced tests/solo-control-dispatch.test.mjs the first time it shipped).
+const RECIPIENT_POLICY_PATH = process.env.SOLO_CONTROL_RECIPIENT_POLICY_PATH
+  ? path.resolve(process.env.SOLO_CONTROL_RECIPIENT_POLICY_PATH)
+  : path.resolve('docs/experiments/audit-effectiveness/recipient-policy.json');
+const CALL_LEDGER_PATH = path.join(OUT_DIR, 'call-ledger.jsonl');
 
 /** Per-solo-arm findings file. One per author model so Sonnet + Fable can coexist
  * as SEPARATE solo arms (S-sonnet, S-fable) compared against A/B/C — the cost-
@@ -136,6 +159,35 @@ function git(root, args) {
 }
 function tryGit(root, args) {
   try { return git(root, args); } catch { return null; }
+}
+
+/** Canonical `repoIdentity` (e.g. "github.com/x/wine") for a repo root, in the
+ * exact form recipient-policy.json keys on. `null` for no/unresolvable remote
+ * — assertRecipientAllowed then refuses (absence means refuse), never a crash. */
+function repoIdentityFor(root) {
+  return canonicaliseRemoteUrl(tryGit(root, ['config', '--get', 'remote.origin.url'])?.trim() || null);
+}
+
+/**
+ * Append one row to the shared exp-5 call ledger (docs/plans/reviewer-cost-
+ * value-experiment.md §2) — every provider call this file makes for exp-5
+ * arms goes through this ONE helper so a caller can never forget a row.
+ * Derives costUsd from `usage` + `resolvedModel` via costFromUsage — never
+ * hand-computed, so an unpriced model stays null-honest rather than reading
+ * as free. `sharedBy` marks a row credited to more than one arm (the
+ * apparatus's shared 5-pass compute behind both A and A+).
+ */
+function recordCall({ arm, sharedBy = null, commit, purpose, pass, chunkIndex, repeatIndex, resolvedModel, recipient, usage, state }) {
+  const callId = computeCallId({ commit, purpose, pass, chunkIndex, repeatIndex, resolvedModel });
+  const priced = usage ? costFromUsage(usage, resolvedModel) : null;
+  return appendLedgerRow(CALL_LEDGER_PATH, {
+    callId, arm, sharedBy, commit, repeat: repeatIndex, chunk: chunkIndex, pass, purpose,
+    resolvedModel, recipient,
+    usage: usage ? { input_tokens: usage.input_tokens ?? usage.prompt_tokens ?? 0, output_tokens: usage.output_tokens ?? usage.completion_tokens ?? 0 } : null,
+    costUsd: priced?.priced && !priced.unmeterable ? priced.totalUsd : null,
+    pricingVersion: priced?.priced && !priced.unmeterable ? PRICING_VERSION : null,
+    state,
+  });
 }
 // dupHash (stable dedup/cluster hint — category|file|detail, consistent
 // across S and DB findings so `merge` can pre-group VERBATIM duplicates; NOT
@@ -307,25 +359,39 @@ function parseJsonLoose(text) {
   try { return JSON.parse(t); } catch { return null; }
 }
 
-/** Run one audit pass with the author model over the cold diff. Mirrors
- * audit-shadow.mjs::runStage's per-pass prompt shape (system = PASS_PROMPTS[pass],
- * user = task + code), minus the reservation/cost machinery (offline, uncapped —
- * this is a bounded 20-call batch, not the live spend path). */
-async function runPass(client, model, passName, diff, { temperature } = {}) {
-  // system = the arm's pass prompt VERBATIM (fairness); JSON contract goes last in user.
+/**
+ * The ONE cold-pass prompt builder — exp-5's fairness axis for Arms B/C/D
+ * (anthropic, via runPass) vs Arm E (deepseek, via runDeepseekPass) rests on
+ * these two functions sending IDENTICAL text for the same (passName, diff),
+ * so this is factored out rather than duplicated: a structural guarantee, not
+ * a copy-paste hope. Mirrors audit-shadow.mjs::runStage's per-pass prompt
+ * shape (system = PASS_PROMPTS[pass], user = task + code + JSON contract).
+ * @returns {{system: string, user: string}}
+ */
+function buildColdPassPrompt(passName, diff) {
   const system = PASS_PROMPTS[passName] || `Audit the code for ${passName} issues.`;
   const user = [
     `## Task\nAudit the code CHANGE below for the "${passName}" concern.`,
     `## Diff\n${diff}`,
     JSON_CONTRACT,
   ].join('\n\n');
+  return { system, user };
+}
+const JSON_RETRY_SUFFIX = '\n\nYour previous reply was not valid JSON. Reply with ONLY the JSON object.';
+
+/** Run one audit pass with the author model over the cold diff, minus the
+ * reservation/cost machinery (offline, uncapped — this is a bounded 20-call
+ * batch, not the live spend path). See buildColdPassPrompt for the shared
+ * prompt shape. */
+async function runPass(client, model, passName, diff, { temperature } = {}) {
+  const { system, user } = buildColdPassPrompt(passName, diff);
   let lastErr = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
     let resp;
     try {
       const params = {
         model, max_tokens: 8000, system,
-        messages: [{ role: 'user', content: attempt === 1 ? user : user + '\n\nYour previous reply was not valid JSON. Reply with ONLY the JSON object.' }],
+        messages: [{ role: 'user', content: attempt === 1 ? user : user + JSON_RETRY_SUFFIX }],
       };
       // temperature only meaningful on the SDK backend (cli `claude -p` ignores it);
       // pinned non-zero for --repeats so the N samples are genuinely independent.
@@ -349,7 +415,64 @@ async function runPass(client, model, passName, diff, { temperature } = {}) {
   return { findings: [], usage: null, conformanceMiss: true, rawText: null };
 }
 
+/**
+ * DeepSeek's exp-5 Arm-E counterpart to runPass — deliberately mirrors it
+ * (buildColdPassPrompt, loose JSON parse, 2-attempt retry, no schema-forcing)
+ * rather than the OSS-structured-output shape runOssPass/runGeminiPass use,
+ * so a comparison against cold Sonnet/Opus (Arms B/C/D) isolates the MODEL as
+ * the only variable — neither arm gets provider-enforced structured output as
+ * an assist the other lacks. Captures `system_fingerprint` (DeepSeek-only;
+ * absent from Anthropic's response) for the alias-drift pin (plan §2/§8):
+ * `deepseek-flash` is an unversioned alias and could silently start serving a
+ * different snapshot mid-run.
+ * @param {import('openai').OpenAI} client - createOpenAIClient({oss:{baseURL,apiKey}}) pointed at DeepSeek
+ */
+async function runDeepseekPass(client, model, passName, diff, { temperature } = {}) {
+  const { system, user } = buildColdPassPrompt(passName, diff);
+  let lastErr = null;
+  let lastFingerprint = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    let resp;
+    const messages = [
+      { role: 'system', content: system },
+      { role: 'user', content: attempt === 1 ? user : user + JSON_RETRY_SUFFIX },
+    ];
+    assertEgressSafe(messages, { label: `deepseek:${passName}` });
+    try {
+      const params = { model, max_tokens: 8000, messages };
+      if (temperature != null) params.temperature = temperature;
+      resp = await client.chat.completions.create(params);
+    } catch (err) {
+      lastErr = (err?.error?.message || err?.message || String(err)).slice(0, 160);
+      continue;
+    }
+    lastFingerprint = resp.system_fingerprint || null;
+    const text = resp.choices?.[0]?.message?.content || '';
+    const parsed = clampToSchema(parseJsonLoose(text));
+    const check = ShadowPassSchema.safeParse(parsed);
+    if (check.success) {
+      const u = resp.usage || null;
+      const usage = u ? { input_tokens: u.prompt_tokens ?? 0, output_tokens: u.completion_tokens ?? 0 } : null;
+      return { findings: check.data.findings, usage, rawText: text, systemFingerprint: lastFingerprint };
+    }
+    lastErr = check.error?.issues?.map((i) => i.message).join('; ') || 'unparseable';
+  }
+  log(`      ! pass ${passName} produced no conformant JSON (${lastErr}) — recorded 0 findings`);
+  return { findings: [], usage: null, conformanceMiss: true, rawText: null, systemFingerprint: lastFingerprint };
+}
+
 // ── subcommands ──────────────────────────────────────────────────────────────
+
+/** Pure resume/incremental decision (tests/solo-control-dispatch.test.mjs):
+ * which requested commits still need a run, given what perCommit already
+ * records as 'ran'. --force ignores prior coverage entirely; --resume is
+ * documented sugar for the (already-incremental) default and additionally
+ * refuses to combine with --force (starting over and resuming are opposites). */
+function planIncrementalRun({ requested, prior, force, resume }) {
+  if (force && resume) throw new Error('--force and --resume are mutually exclusive (start over vs continue from checkpoint)');
+  const covered = new Set(force || !prior ? [] : prior.perCommit.filter((c) => c.state === 'ran').map((c) => c.sha));
+  return { commits: requested.filter((sha) => !covered.has(sha)), covered };
+}
 
 async function cmdRun() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
@@ -361,7 +484,9 @@ async function cmdRun() {
   const model = resolveModel(modelArg);
   const maxChars = Number.parseInt(argOption('max-chars', '45000'), 10); // per-chunk cap (~11k tok); larger chunks slow claude -p past its timeout
   const commitsArg = argOption('commits');
+  const corpusArg = argOption('corpus');
   const force = hasFlag('force');
+  const resume = hasFlag('resume');
   // xN arm (the confound-breaker). N sequential samples per pass×chunk. A non-zero
   // temperature is MANDATORY (Gemini-R2-HIGH): at temp 0 the N samples are identical
   // and collapse to x1. temperature only works on the SDK backend (cli claude -p
@@ -375,52 +500,111 @@ async function cmdRun() {
   const maxDiffChars = Number.parseInt(argOption('max-diff-chars', '600000'), 10);
   const useSdk = hasFlag('sdk'); // force the fast SDK backend for x1 runs too (real API spend)
 
-  // SELF-GATE on the arm-eval/shadow toggle: the standing policy is "run the solo
-  // control WHENEVER the shadow is on". So the audit skills fire `solo-control:
-  // catchup` UNCONDITIONALLY (backgrounded) and this no-ops when the toggle is off
-  // — the on/off decision lives in ONE place (the toggle), not duplicated in each
-  // SKILL. An explicit --commits / --force is a manual override that bypasses the gate.
-  if (!commitsArg && !force) {
-    const shadow = resolveShadowArmsWithToggle();
-    if (!shadow.enabled) { log('arm-eval/shadow toggle is OFF — solo control no-op (use --force or --commits to run anyway).'); process.exit(0); }
-  }
-  const requested = commitsArg ? commitsArg.split(',').map((s) => s.trim()).filter(Boolean) : await discoverCommits();
-  if (requested.length === 0) { log('No target commits found (no B/C audit-code shadow units yet).'); process.exit(0); }
+  // exp-5: preflight-load the recipient policy ALWAYS (Security Considerations
+  // §2 — "missing policy ⇒ refuse", below every entry path, before any client is
+  // constructed). Fatal for the whole run: a missing/malformed policy file is an
+  // operator setup error, not a per-commit condition.
+  let recipientPolicy;
+  try { recipientPolicy = loadRecipientPolicy(RECIPIENT_POLICY_PATH); }
+  catch (err) { log(`FATAL: recipient policy unavailable (${err.message})`); process.exit(2); }
+  const recipient = classifyRecipient(model);
 
-  const baseLabel = armLabelFor(model, argOption('label'));
+  // --label: armLabelFor only knows how to derive a distinct label for the
+  // Anthropic sub-families (sonnet/opus/haiku/fable) this file's original
+  // solo-control experiment uses — every other recipient collapses to the
+  // generic 'S' bucket, which is a silent cross-experiment collision, not a
+  // cosmetic gap. So --label is required for every NON-anthropic recipient
+  // (exp-5's DeepSeek arm and beyond); the pre-existing anthropic-only
+  // `solo-control:catchup` npm script and its documented invocation are
+  // unaffected (armLabelFor already gives them a safe, distinct label).
+  const labelArg = argOption('label');
+  if (recipient !== 'anthropic' && !labelArg) {
+    log(`FATAL: --label is required for recipient "${recipient}" (armLabelFor has no safe auto-derivation outside the anthropic family — every unlabelled non-anthropic run would collide on the generic "S" bucket).`);
+    process.exit(2);
+  }
+
+  let requested;
+  if (corpusArg) {
+    const corpus = loadCorpus(corpusArg, recipientPolicy);
+    requested = entriesEligibleForRecipient(corpus, recipient);
+    if (commitsArg) log(`  (--corpus given — ignoring --commits; ${requested.length}/${corpus.entries.length} corpus entries are eligible for recipient "${recipient}")`);
+  } else if (commitsArg) {
+    requested = commitsArg.split(',').map((s) => s.trim()).filter(Boolean);
+  } else {
+    // SELF-GATE on the arm-eval/shadow toggle: the standing policy is "run the
+    // solo control WHENEVER the shadow is on". So the audit skills fire
+    // `solo-control:catchup` UNCONDITIONALLY (backgrounded) and this no-ops
+    // when the toggle is off — the on/off decision lives in ONE place (the
+    // toggle), not duplicated in each SKILL. An explicit --commits / --corpus /
+    // --force is a manual override that bypasses the gate.
+    if (!force) {
+      const shadow = resolveShadowArmsWithToggle();
+      if (!shadow.enabled) { log('arm-eval/shadow toggle is OFF — solo control no-op (use --force, --commits, or --corpus to run anyway).'); process.exit(0); }
+    }
+    requested = await discoverCommits();
+  }
+  if (requested.length === 0) { log('No target commits found (no B/C audit-code shadow units yet, or no corpus entries eligible for this recipient).'); process.exit(0); }
+
+  const baseLabel = armLabelFor(model, labelArg);
   const label = repeats > 1 ? `${baseLabel}-x${repeats}` : baseLabel;   // S-sonnet vs S-sonnet-x3
   const dest = sFindingsPath(label);
 
   // INCREMENTAL accumulation (standing-policy use): merge onto any prior file for
   // this arm and skip commits already successfully audited, so repeated/scheduled
   // runs only cover NEW shadow commits and data grows monotonically. `--force`
-  // re-audits everything.
+  // re-audits everything; `--resume` is the same skip logic, named explicitly for
+  // the "continuing an interrupted run" case (mutually exclusive with --force).
   const prior = fs.existsSync(dest) ? JSON.parse(fs.readFileSync(dest, 'utf8')) : null;
-  const covered = new Set(force || !prior ? [] : prior.perCommit.filter((c) => c.state === 'ran').map((c) => c.sha));
-  const commits = requested.filter((sha) => !covered.has(sha));
+  let plan;
+  try { plan = planIncrementalRun({ requested, prior, force, resume }); }
+  catch (err) { log(`FATAL: ${err.message}`); process.exit(2); }
+  const { commits, covered } = plan;
   const out = prior && !force
     ? { ...prior, model, modelArg, generatedFor: [...new Set([...(prior.generatedFor || []), ...requested])] }
     : { armLabel: label, model, modelArg, stageType: STAGE_TYPE, generatedFor: requested, findings: [], perCommit: [] };
   out.armLabel = label;
+  out.manifest = { ...(out.manifest || {}), resolvedModel: model, recipient, systemFingerprint: (out.manifest && out.manifest.systemFingerprint) || null };
 
   if (commits.length === 0) { log(`All ${requested.length} commit(s) already covered for ${label} — nothing to do (use --force to re-audit).`); process.exit(0); }
+
+  // ── recipient-specific client construction (AFTER the policy preflight
+  // above, BEFORE any per-commit dispatch — no client for a refused recipient
+  // is ever constructed) ─────────────────────────────────────────────────────
   const backend = (repeats > 1 || useSdk) ? 'sdk' : undefined; // sdk needed for temperature; opt-in via --sdk for speed
-  log(`Solo control — arm=${label} · model=${model} (${modelArg}), ${commits.length} new commit(s)${covered.size ? ` (${covered.size} already covered)` : ''}${repeats > 1 ? ` · repeats=${repeats} temp=${temperature} backend=sdk` : ''}, stage=${STAGE_TYPE}`);
-  let client;
-  try {
-    client = await createAnthropicClient(backend ? { backend } : {});
-  } catch (err) {
-    log(`FATAL: cannot create ${backend || 'default'} client${repeats > 1 ? ' (the xN arm needs ANTHROPIC_API_KEY for the SDK backend — cli claude -p cannot set temperature)' : ''}: ${err.message}`);
+  let anthropicClient = null, deepseekClient = null;
+  if (recipient === 'anthropic') {
+    try { anthropicClient = await createAnthropicClient(backend ? { backend } : {}); }
+    catch (err) {
+      log(`FATAL: cannot create ${backend || 'default'} client${repeats > 1 ? ' (the xN arm needs ANTHROPIC_API_KEY for the SDK backend — cli claude -p cannot set temperature)' : ''}: ${err.message}`);
+      process.exit(2);
+    }
+  } else if (recipient === 'deepseek') {
+    const { createOpenAIClient } = await import('./lib/openai-client.mjs');
+    const creds = resolveDeepseekCreds();
+    if (!creds.apiKey) { log('FATAL: recipient "deepseek" needs DEEPSEEK_API_KEY.'); process.exit(2); }
+    deepseekClient = await createOpenAIClient({ oss: { baseURL: creds.baseUrl, apiKey: creds.apiKey } });
+  } else {
+    log(`FATAL: recipient "${recipient}" has no cold-dispatch adapter wired in cmdRun yet (only anthropic/deepseek today).`);
     process.exit(2);
   }
+  log(`Solo control — arm=${label} · model=${model} (${modelArg}) · recipient=${recipient}, ${commits.length} new commit(s)${covered.size ? ` (${covered.size} already covered)` : ''}${repeats > 1 ? ` · repeats=${repeats} temp=${temperature}${recipient === 'anthropic' ? ' backend=sdk' : ''}` : ''}, stage=${STAGE_TYPE}`);
+
   // Provenance (§12.5): pin what actually ran so the experiment is reproducible + fair.
-  out.provenance = { repeats, temperature, backend: backend || 'cli(default)', maxChars, resolvedModel: model };
+  out.provenance = { repeats, temperature, backend: recipient === 'anthropic' ? (backend || 'cli(default)') : recipient, maxChars, resolvedModel: model };
   let totalIn = 0, totalOut = 0, samplingVariedUnits = 0, samplingTotalUnits = 0;
 
   for (const sha of commits) {
     const short = sha.slice(0, 8);
     const root = locateCommit(sha);
     if (!root) { log(`  ${short}: NOT FOUND in any local repo root — skipped`); out.perCommit.push({ sha, state: 'not-found' }); continue; }
+
+    // exp-5 recipient-policy check — per commit, so a run spanning REPO_ROOTS
+    // that resolve to different repos is authorized (or refused) individually,
+    // never blanket-approved off the first commit's repo.
+    const repoIdentity = repoIdentityFor(root);
+    try { resolveAndAuthorize({ model, repoIdentity, policy: recipientPolicy }); }
+    catch (err) { log(`  ${short}: POLICY REFUSED (${err.message}) — skipped, not sent`); out.perCommit.push({ sha, repo: path.basename(root), state: 'policy-refused', error: err.message }); continue; }
+
     let ext;
     try { ext = extractDiff(root, sha); }
     catch (err) {
@@ -444,20 +628,44 @@ async function cmdRun() {
     // for post-hoc eval: a temperature-driven conformance miss degrades to 0
     // findings for that repeat (never crashes), but a skewed miss rate on one pass
     // should be visible in scoring, not silently absorbed as "the model found less".
+    let fingerprintDrift = false;
     for (const passName of PASSES) {
-      for (const chunk of chunks) {
+      for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+        const chunk = chunks[chunkIndex];
         // xN: N sequential samples per pass×chunk (never concurrent — Gemini-R1-MEDIUM,
         // avoids 429s). Union their findings; detect sampling degeneracy.
         const rawTexts = [];
         const findings = [];
         for (let rep = 0; rep < repeats; rep++) {
-          const r = await runPass(client, model, passName, chunk, { temperature });
+          const r = recipient === 'anthropic'
+            ? await runPass(anthropicClient, model, passName, chunk, { temperature })
+            : await runDeepseekPass(deepseekClient, model, passName, chunk, { temperature });
           if (r.usage) { totalIn += r.usage.input_tokens || 0; totalOut += r.usage.output_tokens || 0; }
           if (r.rawText != null) rawTexts.push(r.rawText);
-          findings.push(...r.findings);
           const cc = (commitConformance[passName] ||= { attempts: 0, misses: 0 });
           cc.attempts++;
           if (r.conformanceMiss) cc.misses++;
+
+          // DeepSeek fingerprint pin (plan §2/§8): `deepseek-flash` is an
+          // unversioned alias — the FIRST successful call this run seeds the
+          // manifest's pin (doubling as the "one preflight call"); every
+          // subsequent call is checked against it. A drift refuses just this
+          // cell (provider-error, findings discarded), never crashes the run
+          // or silently mixes two snapshots into one arm.
+          let cellState = r.conformanceMiss ? 'conformance-miss' : 'ok';
+          if (recipient === 'deepseek' && r.systemFingerprint) {
+            if (!out.manifest.systemFingerprint) out.manifest.systemFingerprint = r.systemFingerprint;
+            else if (r.systemFingerprint !== out.manifest.systemFingerprint) {
+              log(`      ⚠ FINGERPRINT DRIFT on ${passName} chunk ${chunkIndex} rep ${rep}: manifest pinned "${out.manifest.systemFingerprint}", got "${r.systemFingerprint}" — refusing this cell, not mixing snapshots.`);
+              cellState = 'provider-error';
+              fingerprintDrift = true;
+            }
+          }
+          recordCall({
+            arm: label, commit: sha, purpose: 'pass', pass: passName, chunkIndex, repeatIndex: rep,
+            resolvedModel: model, recipient, usage: r.usage, state: cellState,
+          });
+          if (cellState !== 'provider-error') findings.push(...r.findings);
         }
         if (repeats > 1) {
           samplingTotalUnits++;
@@ -481,7 +689,15 @@ async function cmdRun() {
     const misses = Object.values(commitConformance).reduce((a, c) => a + c.misses, 0);
     const attempts = Object.values(commitConformance).reduce((a, c) => a + c.attempts, 0);
     log(`      → ${commitFindings} finding(s)${misses ? ` (${misses}/${attempts} conformance misses — see perCommit.conformanceByPass)` : ''}`);
-    out.perCommit.push({ sha, repo: path.basename(root), state: 'ran', findings: commitFindings, chunks: chunks.length, skippedSensitive: ext.skippedSensitive, conformanceByPass: commitConformance });
+    out.perCommit.push({
+      sha, repo: path.basename(root), state: fingerprintDrift ? 'provider-error' : 'ran', findings: commitFindings,
+      chunks: chunks.length, skippedSensitive: ext.skippedSensitive, conformanceByPass: commitConformance,
+      ...(fingerprintDrift ? { error: 'fingerprint-drift' } : {}),
+    });
+    // Per-commit checkpoint (matches cmdApparatus's existing pattern) — a run
+    // spanning many commits survives an interruption having lost at most the
+    // ONE commit in flight, not everything since the last invocation.
+    atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
   }
 
   // Accumulate token usage across incremental runs.
@@ -608,83 +824,180 @@ async function runGeminiPass(geminiModel, passName, diff) {
 }
 
 /** Run the apparatus (arm A) retro over --commits. Incremental like cmdRun. */
+/** The immutable pre-gate artifact path for one commit (plan §7: written BEFORE
+ * any gate call, so --gate-only can replay the exact bytes the first gate saw). */
+const pregatePath = (sha) => path.join(OUT_DIR, `S-pregate-A-${sha}.json`);
+/** Gate-output artifact path, tagged by a short gate label derived from the
+ * resolved model id (falls back to a sanitised full id for an unrecognised gate). */
+function gatePath(sha, resolvedGateModel) {
+  const tag = /flash/i.test(resolvedGateModel) ? 'flash' : /pro/i.test(resolvedGateModel) ? 'pro' : resolvedGateModel.replace(/[^a-z0-9]+/gi, '-');
+  return path.join(OUT_DIR, `G-${tag}-A-${sha}.json`);
+}
+function sha256hex(text) {
+  return createHash('sha256').update(text || '').digest('hex');
+}
+
 async function cmdApparatus() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const commitsArg = argOption('commits');
-  if (!commitsArg) { log('apparatus requires --commits <sha,sha,...> (the known-defect commits).'); process.exit(2); }
-  const requested = commitsArg.split(',').map((s) => s.trim()).filter(Boolean);
+  const corpusArg = argOption('corpus');
   const maxChars = Number.parseInt(argOption('max-chars', '45000'), 10);
   const maxDiffChars = Number.parseInt(argOption('max-diff-chars', '600000'), 10);
   const force = hasFlag('force');
+  const resume = hasFlag('resume');
+  const gateOnly = hasFlag('gate-only');
+  const label = argOption('label', 'A'); // legacy default 'A' preserved for the pre-exp-5 caller
+
+  let recipientPolicy;
+  try { recipientPolicy = loadRecipientPolicy(RECIPIENT_POLICY_PATH); }
+  catch (err) { log(`FATAL: recipient policy unavailable (${err.message})`); process.exit(2); }
 
   const { createOpenAIClient } = await import('./lib/openai-client.mjs');
   const { zodTextFormat } = await import('openai/helpers/zod');
   const { PASS_REASONING } = await import('./lib/config.mjs');
   try { const mr = await import('./lib/model-resolver.mjs'); await mr.refreshModelCatalog?.(); } catch { /* offline */ }
   const gptModel = resolveModel('latest-gpt');
-  const geminiModel = resolveModel('latest-pro');
+  const gateModelArg = argOption('gate-model', 'latest-pro'); // legacy default preserved
+  const geminiModel = resolveModel(gateModelArg);
   const client = await createOpenAIClient({ purpose: 'gpt' });
 
-  const dest = sFindingsPath('A');
+  let requested;
+  if (corpusArg) {
+    const corpus = loadCorpus(corpusArg, recipientPolicy);
+    // apparatus dispatches to BOTH openai (5-pass) and gemini (gate) per
+    // commit — an entry must be eligible for the FULL pipeline, not just one leg.
+    const openaiEligible = new Set(entriesEligibleForRecipient(corpus, 'openai'));
+    requested = entriesEligibleForRecipient(corpus, 'gemini').filter((id) => openaiEligible.has(id));
+    if (commitsArg) log(`  (--corpus given — ignoring --commits; ${requested.length}/${corpus.entries.length} corpus entries are eligible for both openai and gemini)`);
+  } else if (commitsArg) {
+    requested = commitsArg.split(',').map((s) => s.trim()).filter(Boolean);
+  } else {
+    log('apparatus requires --commits <sha,sha,...> or --corpus <path>.'); process.exit(2);
+  }
+
+  const dest = sFindingsPath(label);
   const prior = fs.existsSync(dest) ? JSON.parse(fs.readFileSync(dest, 'utf8')) : null;
-  const covered = new Set(force || !prior ? [] : prior.perCommit.filter((c) => c.state === 'ran').map((c) => c.sha));
-  const commits = requested.filter((sha) => !covered.has(sha));
+  let plan;
+  try { plan = planIncrementalRun({ requested, prior, force, resume }); }
+  catch (err) { log(`FATAL: ${err.message}`); process.exit(2); }
+  const { commits } = plan;
   const out = prior && !force
     ? { ...prior, generatedFor: [...new Set([...(prior.generatedFor || []), ...requested])] }
-    : { armLabel: 'A', model: `${gptModel}+${geminiModel}`, modelArg: 'apparatus(latest-gpt→latest-pro)', stageType: STAGE_TYPE, generatedFor: requested, findings: [], perCommit: [] };
-  out.armLabel = 'A';
-  out.provenance = { composition: 'gpt-5pass→gemini-review', gptModel, geminiModel, maxChars, retro: true, note: 'NOT persisted to audit_findings — experiment-local (keeps Phase-1 ledger clean)' };
+    : { armLabel: label, model: `${gptModel}+${geminiModel}`, modelArg: `apparatus(latest-gpt→${gateModelArg})`, stageType: STAGE_TYPE, generatedFor: requested, findings: [], perCommit: [] };
+  out.armLabel = label;
+  out.provenance = {
+    composition: gateOnly ? 'gate-only(reuses saved pre-gate artifact)' : 'gpt-5pass→gemini-review',
+    gptModel, geminiModel, gateModel: gateModelArg, maxChars, retro: true,
+    note: 'NOT persisted to audit_findings — experiment-local (keeps Phase-1 ledger clean)',
+  };
 
-  if (commits.length === 0) { log(`All ${requested.length} commit(s) already covered for apparatus — nothing to do.`); process.exit(0); }
-  log(`Apparatus retro — arm=A · ${gptModel} 5-pass → ${geminiModel} review · ${commits.length} new commit(s)`);
+  if (commits.length === 0) { log(`All ${requested.length} commit(s) already covered for ${label} — nothing to do.`); process.exit(0); }
+  log(`Apparatus retro — arm=${label} · ${gateOnly ? 'GATE-ONLY over saved pre-gate' : gptModel + ' 5-pass'} → ${geminiModel} review · ${commits.length} new commit(s)`);
 
   for (const sha of commits) {
     const short = sha.slice(0, 8);
-    const root = locateCommit(sha);
-    if (!root) { log(`  ${short}: NOT FOUND — skipped`); out.perCommit.push({ sha, state: 'not-found' }); continue; }
-    let ext;
-    try { ext = extractDiff(root, sha); }
-    catch (err) {
-      if (String(err?.message).includes('[egress-gate]')) { log(`  ${short}: EGRESS REFUSAL — skipped`); out.perCommit.push({ sha, state: 'egress-refused' }); continue; }
-      log(`  ${short}: diff extraction failed (${err.message})`); out.perCommit.push({ sha, state: 'diff-error', error: err.message }); continue;
-    }
-    if (!ext.diff) { out.perCommit.push({ sha, state: 'no-clean-files' }); continue; }
-    if (ext.diff.length > maxDiffChars) {
-      log(`  ${short}: diff ${ext.diff.length} chars > cap — RECORDED diff-too-large`);
-      out.perCommit.push({ sha, repo: path.basename(root), state: 'diff-too-large', diffChars: ext.diff.length });
-      continue;
-    }
-    const chunks = chunkDiff(ext.diff, maxChars);
-    log(`  ${short}: ${path.basename(root)} · ${ext.diff.length} chars · ${chunks.length} chunk(s)`);
-    const seen = new Set();
-    const collected = [];
-    let commitFindings = 0;
-    for (const passName of PASSES) {
-      for (const chunk of chunks) {
-        let r;
-        try { r = await runGptPass(client, zodTextFormat, gptModel, passName, chunk, PASS_REASONING[passName] ?? null); }
-        catch (err) { log(`      ! gpt ${passName} failed: ${String(err?.message).slice(0, 120)} — 0 findings`); continue; }
-        for (const f of r.findings) collected.push(f);
+    let ext, chunks, collected, repoBasename;
+
+    if (gateOnly) {
+      const pgPath = pregatePath(sha);
+      if (!fs.existsSync(pgPath)) { log(`  ${short}: --gate-only but no pre-gate artifact at ${pgPath} — skipped (run without --gate-only first)`); out.perCommit.push({ sha, state: 'no-pregate' }); continue; }
+      const pregate = JSON.parse(fs.readFileSync(pgPath, 'utf8'));
+      const recomputed = sha256hex(pregate.gateContext);
+      if (recomputed !== pregate.gateContextSha256) {
+        log(`  ${short}: PRE-GATE INTEGRITY MISMATCH (recorded ${pregate.gateContextSha256}, recomputed ${recomputed}) — refusing, not gating a possibly-altered artifact`);
+        out.perCommit.push({ sha, state: 'pregate-integrity-mismatch' });
+        continue;
       }
+      collected = pregate.findings;
+      ext = { files: pregate.files || [] };
+      chunks = [pregate.gateContext];
+      repoBasename = pregate.repo || null;
+      log(`  ${short}: gate-only, reusing pre-gate (${collected.length} finding(s), verified sha256)`);
+    } else {
+      const root = locateCommit(sha);
+      if (!root) { log(`  ${short}: NOT FOUND — skipped`); out.perCommit.push({ sha, state: 'not-found' }); continue; }
+      const repoIdentity = repoIdentityFor(root);
+      try { resolveAndAuthorize({ model: gptModel, repoIdentity, policy: recipientPolicy }); resolveAndAuthorize({ model: geminiModel, repoIdentity, policy: recipientPolicy }); }
+      catch (err) { log(`  ${short}: POLICY REFUSED (${err.message}) — skipped, not sent`); out.perCommit.push({ sha, repo: path.basename(root), state: 'policy-refused', error: err.message }); continue; }
+      try { ext = extractDiff(root, sha); }
+      catch (err) {
+        if (String(err?.message).includes('[egress-gate]')) { log(`  ${short}: EGRESS REFUSAL — skipped`); out.perCommit.push({ sha, state: 'egress-refused' }); continue; }
+        log(`  ${short}: diff extraction failed (${err.message})`); out.perCommit.push({ sha, state: 'diff-error', error: err.message }); continue;
+      }
+      if (!ext.diff) { out.perCommit.push({ sha, state: 'no-clean-files' }); continue; }
+      if (ext.diff.length > maxDiffChars) {
+        log(`  ${short}: diff ${ext.diff.length} chars > cap — RECORDED diff-too-large`);
+        out.perCommit.push({ sha, repo: path.basename(root), state: 'diff-too-large', diffChars: ext.diff.length });
+        continue;
+      }
+      repoBasename = path.basename(root);
+      chunks = chunkDiff(ext.diff, maxChars);
+      log(`  ${short}: ${repoBasename} · ${ext.diff.length} chars · ${chunks.length} chunk(s)`);
+      const raw = [];
+      for (const passName of PASSES) {
+        for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+          const chunk = chunks[chunkIndex];
+          let r;
+          try { r = await runGptPass(client, zodTextFormat, gptModel, passName, chunk, PASS_REASONING[passName] ?? null); }
+          catch (err) {
+            log(`      ! gpt ${passName} failed: ${String(err?.message).slice(0, 120)} — 0 findings`);
+            recordCall({ arm: label, sharedBy: ['A', 'A+'], commit: sha, purpose: 'pass', pass: passName, chunkIndex, repeatIndex: 0, resolvedModel: gptModel, recipient: 'openai', usage: null, state: 'provider-error' });
+            continue;
+          }
+          // 5-pass compute is SHARED between A and A+ (A+'s --gate-only reuses
+          // this exact pregate artifact) — tagged sharedBy regardless of which
+          // gate this specific invocation runs, so aggregateCostForArm credits
+          // both configurations and aggregateBudgetSpent still counts it once.
+          recordCall({ arm: label, sharedBy: ['A', 'A+'], commit: sha, purpose: 'pass', pass: passName, chunkIndex, repeatIndex: 0, resolvedModel: gptModel, recipient: 'openai', usage: r.usage, state: 'ok' });
+          for (const f of r.findings) raw.push(f);
+        }
+      }
+      collected = dedupeFindings(raw); // "deduped 5-pass union" per plan §7
+      // Write the immutable pre-gate artifact BEFORE calling any gate.
+      const gateContext = chunks[0] || '';
+      atomicWriteFileSync(pregatePath(sha), JSON.stringify({
+        sha, repo: repoBasename, files: ext.files, findings: collected,
+        gateContext, gateContextSha256: sha256hex(gateContext), writtenAt: new Date().toISOString(),
+      }, null, 2));
     }
-    // Gemini net-new over the deduped union (per-arm gate, mirrors production).
+
+    // Gate — net-new over the deduped union (whichever way it was produced).
     let geminiFindings = [];
-    try { geminiFindings = (await runGeminiReview(geminiModel, collected, chunks[0] || '')).findings; }
-    catch (err) { log(`      ! gemini review failed: ${String(err?.message).slice(0, 120)}`); }
-    for (const f of [...collected, ...geminiFindings]) {
+    try {
+      const r = await runGeminiReview(geminiModel, collected, chunks[0] || '');
+      geminiFindings = r.findings;
+      recordCall({ arm: label, commit: sha, purpose: 'gate', pass: 'apparatus-gate', chunkIndex: 0, repeatIndex: 0, resolvedModel: geminiModel, recipient: 'gemini', usage: r.usage || null, state: 'ok' });
+    } catch (err) {
+      log(`      ! gemini review failed: ${String(err?.message).slice(0, 120)}`);
+      recordCall({ arm: label, commit: sha, purpose: 'gate', pass: 'apparatus-gate', chunkIndex: 0, repeatIndex: 0, resolvedModel: geminiModel, recipient: 'gemini', usage: null, state: 'provider-error' });
+    }
+    atomicWriteFileSync(gatePath(sha, geminiModel), JSON.stringify({ sha, gateModel: geminiModel, findings: geminiFindings }, null, 2));
+
+    // Composite assembly: pre-gate union ∪ this gate's output, tagged stage.
+    const seen = new Set();
+    let commitFindings = 0;
+    for (const f of collected) {
       const file = f.section || (ext.files[0] || '');
       const h = dupHash(f.category, file, f.detail);
       if (seen.has(h)) continue;
       seen.add(h);
-      out.findings.push({ commit: sha, repo: path.basename(root), model: out.model, pass: 'apparatus', severity: f.severity, category: f.category, section: file, detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix, _dup: h });
+      out.findings.push({ commit: sha, repo: repoBasename, model: out.model, pass: 'apparatus', stage: 'pregate', severity: f.severity, category: f.category, section: file, detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix, _dup: h });
+      commitFindings++;
+    }
+    for (const f of geminiFindings) {
+      const file = f.section || (ext.files[0] || '');
+      const h = dupHash(f.category, file, f.detail);
+      if (seen.has(h)) continue;
+      seen.add(h);
+      out.findings.push({ commit: sha, repo: repoBasename, model: out.model, pass: 'apparatus', stage: 'gate', gateModel: geminiModel, severity: f.severity, category: f.category, section: file, detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix, _dup: h });
       commitFindings++;
     }
     log(`      → ${commitFindings} finding(s)`);
-    out.perCommit.push({ sha, repo: path.basename(root), state: 'ran', findings: commitFindings, chunks: chunks.length });
+    out.perCommit.push({ sha, repo: repoBasename, state: 'ran', findings: commitFindings, chunks: chunks.length });
     atomicWriteFileSync(dest, JSON.stringify(out, null, 2)); // checkpoint per commit
   }
   atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
-  log(`\nWrote ${out.findings.length} total arm-A findings → ${path.relative(process.cwd(), dest)}`);
+  log(`\nWrote ${out.findings.length} total ${label} findings → ${path.relative(process.cwd(), dest)}`);
 }
 
 // ── B/C retro (OSS-gen + optional GPT-round + per-arm Gemini) ────────────────
@@ -1584,4 +1897,4 @@ async function main() {
 // like chunkDiff) without triggering a live CLI run + process.exit.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
 
-export const _internals = { chunkDiff, continuationMarker };
+export const _internals = { chunkDiff, continuationMarker, planIncrementalRun, repoIdentityFor, buildColdPassPrompt, sha256hex, gatePath, pregatePath };

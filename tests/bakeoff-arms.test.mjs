@@ -197,7 +197,11 @@ describe('transportForModel — the HOW the config deliberately does not express
     assert.equal(transportForModel('grok-4.6').route, 'xai');
     assert.equal(transportForModel('qwen3.8-max').route, 'alibaba');
     assert.equal(transportForModel('deepseek-v4-pro').route, 'deepseek');
-    assert.equal(transportForModel('deepseek-v4-flash').route, 'deepseek');
+    assert.equal(transportForModel('deepseek-flash').route, 'deepseek');
+  });
+
+  it('the superseded deepseek-v4-flash spelling has no transport (renamed to deepseek-flash 2026-09-21)', () => {
+    assert.throws(() => transportForModel('deepseek-v4-flash'), /no transport for model/);
   });
 
   it('the retired Alibaba-workspace deepseek pin has no transport — it was removed from ALIBABA_POOL, not moved elsewhere silently', () => {
@@ -244,7 +248,7 @@ describe('transportForModel — the HOW the config deliberately does not express
     const ms = transportForModel('deepseek-v4-pro').timeoutMs;
     assert.equal(ms, 900000);
     assert.ok(ms >= 405640 * 1.5, 'must keep >=1.5x headroom over the 405.6s measured review');
-    assert.equal(transportForModel('deepseek-v4-flash').timeoutMs, 900000, 'the sibling id shares the route, so it shares the ceiling');
+    assert.equal(transportForModel('deepseek-flash').timeoutMs, 900000, 'the sibling id shares the route, so it shares the ceiling');
   });
 
   it('every OTHER route has NO timeoutMs override — the 300s default is fine there', () => {

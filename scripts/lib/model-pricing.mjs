@@ -85,6 +85,13 @@ export const OSS_PRICING = Object.freeze({
   // Replace with the published rates when someone verifies them.
   'deepseek-v4-pro':                   { input: 0.435, output: 0.87 },
   'deepseek-v4-flash':                 { input: 0.098, output: 0.196 },
+  // deepseek-flash (V4.1 Flash) — the CORRECT current native id (model-resolver.mjs
+  // DEEPSEEK_POOL renamed deepseek-v4-flash -> deepseek-flash, exp-5). Verified live
+  // against DeepSeek's own pricing docs 2026-09-21: PEAK-hour cache-miss rates
+  // ($0.30 in / $1.20 out / $0.006 cached), not the cheaper off-peak tier
+  // ($0.15/$0.60/$0.003) — same "errs HIGH" doctrine as the -v4- row above, because
+  // an experiment run at an unpredictable hour must never under-report its spend.
+  'deepseek-flash':                    { input: 0.30, output: 1.20, cachedInput: 0.006 },
 });
 
 /**
@@ -136,7 +143,7 @@ function selectTier(tiers, inputTokens) {
 export const EUR_PER_USD = 0.92;
 
 /** Effective-date stamp for the price table — bump when refreshing OSS_PRICING (audit R1 L4). */
-export const PRICING_VERSION = '2026-09-07';
+export const PRICING_VERSION = '2026-09-21';
 
 /**
  * Multiple of the priciest KNOWN model used to derive the spend-cap fallback.

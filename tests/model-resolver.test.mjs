@@ -479,12 +479,13 @@ describe('resolveAlibabaCreds — workspace endpoint has NO fallback (unlike XAI
 describe('isDeepseekModel — direct-API route, replaces the Alibaba-workspace pin (2026-08-17)', () => {
   it('accepts the two ids confirmed live on DeepSeek\'s own /models endpoint', () => {
     assert.equal(isDeepseekModel('deepseek-v4-pro'), true);
-    assert.equal(isDeepseekModel('deepseek-v4-flash'), true);
+    assert.equal(isDeepseekModel('deepseek-flash'), true);
   });
 
-  it('rejects the retired Alibaba-workspace dated snapshot and the OpenRouter slug', () => {
+  it('rejects the retired Alibaba-workspace dated snapshot, the OpenRouter slug, and the superseded v4-flash spelling', () => {
     assert.equal(isDeepseekModel('deepseek-v4-pro-0813'), false, 'that was an Alibaba-workspace pin, not a DeepSeek id');
     assert.equal(isDeepseekModel('deepseek/deepseek-v4-pro'), false, 'the OSS-pool OpenRouter slug is a different route');
+    assert.equal(isDeepseekModel('deepseek-v4-flash'), false, 'renamed to deepseek-flash 2026-09-21 — the old id is now a DeepSeek-side compatibility redirect, not this pool\'s spelling');
   });
 
   it('rejects unrelated ids and non-string input without throwing', () => {
