@@ -246,15 +246,26 @@ test('cmdApparatus refuses a gate model with no wired adapter (e.g. an OpenRoute
 // ── pre-Phase-3 fixes: budget ceiling + the incumbent GPT pin ──────────────
 
 const LEDGER_PATH = '.audit-loop/solo-control/call-ledger.jsonl';
+/** The budget-guard tests need a REAL, locatable commit whose diff reaches the
+ * per-cell preflight — i.e. one that is small and clears the egress gate. HEAD
+ * is neither reliably: 4a5ec701's own diff carries a deliberate fake AWS key
+ * in a test fixture, so the egress gate refused it BEFORE the budget guard
+ * could fire and both tests failed on that commit while passing on the one
+ * before it (a probe must be representative — the subject is now pinned to a
+ * docs-only commit, immutable in a public repo). Absent (shallow clone) ⇒ the
+ * test skips by name, never passes vacuously. */
+const BUDGET_SUBJECT_SHA = '901348a29a4f626c1efff009ddbfdef66f1e1aaf'; // docs(plans): drop exp5 Arms B/D
+const budgetSubjectAvailable = () => spawnSync('git', ['cat-file', '-e', `${BUDGET_SUBJECT_SHA}^{commit}`]).status === 0;
 const cleanArtifacts = () => {
   for (const p of [S_FINDINGS_PATH, A_FINDINGS_PATH, LEDGER_PATH]) fs.rmSync(p, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
 };
 
-test('budget ceiling: cmdRun stops BEFORE any provider call when the ledger already meets the cap — exit 3, the commit recorded budget-exceeded, exactly one refused ledger row', () => {
+test('budget ceiling: cmdRun stops BEFORE any provider call when the ledger already meets the cap — exit 3, the commit recorded budget-exceeded, exactly one refused ledger row', (t) => {
   // A ceiling of 0 is met by an empty ledger (0 >= 0), so the guard trips at the
   // very first cell of a REAL commit with no network access and no spend —
-  // exactly the preflight the plan §8 promises. HEAD is a real, locatable commit.
-  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  // exactly the preflight the plan §8 promises.
+  if (!budgetSubjectAvailable()) { t.skip(`pinned subject commit ${BUDGET_SUBJECT_SHA.slice(0, 8)} is not in this clone`); return; }
+  const sha = BUDGET_SUBJECT_SHA;
   cleanArtifacts();
   try {
     const { output, status } = runCliFull(['run', '--commits', sha, '--force', '--budget-usd', '0'], { scrubKeys: true });
@@ -272,8 +283,9 @@ test('budget ceiling: cmdRun stops BEFORE any provider call when the ledger alre
   } finally { cleanArtifacts(); }
 });
 
-test('budget ceiling: cmdApparatus has the same guard on its pass cells (exit 3, nothing sent)', () => {
-  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+test('budget ceiling: cmdApparatus has the same guard on its pass cells (exit 3, nothing sent)', (t) => {
+  if (!budgetSubjectAvailable()) { t.skip(`pinned subject commit ${BUDGET_SUBJECT_SHA.slice(0, 8)} is not in this clone`); return; }
+  const sha = BUDGET_SUBJECT_SHA;
   cleanArtifacts();
   try {
     const { output, status } = runCliFull(['apparatus', '--commits', sha, '--budget-usd', '0'], { scrubKeys: true });
@@ -282,7 +294,12 @@ test('budget ceiling: cmdApparatus has the same guard on its pass cells (exit 3,
     assert.equal(written.perCommit.find((c) => c.sha === sha).state, 'budget-exceeded');
     const rows = fs.readFileSync(LEDGER_PATH, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     assert.equal(rows.length, 1);
-    assert.deepEqual(rows[0].sharedBy, ['A', 'A+'], 'even a refused 5-pass cell is tagged as shared compute');
+    // The payer names no sharer: which --gate-only configurations will reuse
+    // this cell is unknowable at A's write time. Each sharer credits itself
+    // (sharedPassCreditRows) — a hardcoded ['A','A+'] here was wrong the day a
+    // third gate candidate was added (2026-09-21).
+    assert.equal(rows[0].sharedBy, null, 'the payer writes no guessed sharer list');
+    assert.equal(rows[0].arm, 'A');
   } finally { cleanArtifacts(); }
 });
 

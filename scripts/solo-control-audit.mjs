@@ -90,6 +90,7 @@ import { createAnthropicClient } from './lib/anthropic-client.mjs';
 import { resolveModel } from './lib/model-resolver.mjs';
 import { PASS_PROMPTS } from './lib/prompt-seeds.mjs';
 import { ShadowPassSchema, seededShuffle, SHADOW_PASSES } from './lib/audit-shadow.mjs';
+import { ProducerFindingSchema } from './lib/schemas.mjs';
 import { assertEgressSafe } from './lib/sensitive-egress-gate.mjs';
 import { resolveShadowArmsWithToggle } from './lib/arm-eval/toggle.mjs';
 import { classifyPath } from './lib/sensitive-paths.mjs';
@@ -105,7 +106,7 @@ import { computeCallId, appendLedgerRow } from './lib/solo-control/ledger.mjs';
 import { canonicaliseRemoteUrl } from './lib/repo-identity.mjs';
 import { costFromUsage, PRICING_VERSION } from './lib/model-pricing.mjs';
 import { normalizeGeminiUsage } from './lib/gemini-usage.mjs';
-import { readLedger, aggregateBudgetSpent, aggregateCostForArm } from './lib/solo-control/ledger.mjs';
+import { readLedger, aggregateBudgetSpent, aggregateCostForArm, sharedPassCreditRows } from './lib/solo-control/ledger.mjs';
 import { commitsCompleteForAllArms } from './lib/solo-control/completion.mjs';
 import { resolveDeepseekCreds } from './lib/model-resolver.mjs';
 
@@ -192,8 +193,9 @@ function repoIdentityFor(root) {
  * arms goes through this ONE helper so a caller can never forget a row.
  * Derives costUsd from `usage` + `resolvedModel` via costFromUsage — never
  * hand-computed, so an unpriced model stays null-honest rather than reading
- * as free. `sharedBy` marks a row credited to more than one arm (the
- * apparatus's shared 5-pass compute behind both A and A+).
+ * as free. `sharedBy` marks a row credited to more than one arm; it is
+ * written by the SHARER (creditSharedPassRows, from a --gate-only run), never
+ * guessed by the arm that first paid for the call.
  */
 /**
  * The exp-5 budget ceiling (plan §8: "$350 API, enforced from the call
@@ -430,8 +432,10 @@ function continuationMarker(fileLabel, partNumber) {
  * `system` stays byte-identical to what the arms' passes receive (PASS_PROMPTS[pass])
  * for fairness. The agentic `claude -p` CLI defaults to conversational markdown, so
  * the directive must be forceful and final to force raw JSON (empirically Sonnet-5
- * emits a table otherwise). Validated against ShadowPassSchema — the exact schema the
- * arms' passes conform to. */
+ * emits a table otherwise). Validated against ColdPassSchema (below) — the arms'
+ * ShadowPassSchema with the round-2-only `is_reopened` defaulted, since a cold
+ * arm is round 1 by construction. Every key the model MUST supply is named here;
+ * the test derives that set from the emitted schema and checks it. */
 const JSON_CONTRACT = [
   'CRITICAL OUTPUT REQUIREMENT: Respond with a SINGLE raw JSON object and NOTHING else —',
   'no markdown, no tables, no code fences, no prose before or after. Your entire response',
@@ -450,6 +454,47 @@ const JSON_CONTRACT = [
     + 'risk ≤500, recommendation ≤600, category ≤80, section ≤120, principle ≤150, summary ≤1000. '
     + 'Lead each field with the essential point (what is wrong + where) so it is self-contained.',
 ].join('\n');
+
+/**
+ * The schema a COLD pass's free-JSON reply is validated against. It is
+ * ShadowPassSchema with ONE difference: `is_reopened` defaults to `false`
+ * instead of being required. That field's own contract says "ROUND 2+ ONLY …
+ * FALSE on round 1", and a cold arm is round 1 by construction — the value is
+ * a structural fact of the arm, not something to ask the model for. The
+ * apparatus arms get it filled by enforced structured output (GPT
+ * zodTextFormat / Gemini responseSchema / Claude tool-use) and always write
+ * `false` there too, so the two paths agree on the value; they differ only in
+ * WHO writes it.
+ *
+ * Why this exists (measured 2026-09-21, exp-5 Phase 3 launch): `is_reopened`
+ * became required on ProducerFindingSchema on 2026-08-14 (ffbfdaa5), AFTER the
+ * cold path and its prose JSON_CONTRACT were written. Nothing type-checks a
+ * prose contract against a Zod schema, so from that day every cold finding
+ * failed `expected boolean, received undefined` and every cold cell landed as
+ * `conformance-miss` with 0 findings — a state completion.mjs deliberately
+ * counts as COMPLETE ("a real, countable outcome of the model"). Arms C and E
+ * would have scored as "found nothing" and cost as "unknown" (usage was also
+ * dropped on a miss). The AGENTS.md prose↔code seam rule, verbatim: "a prompt
+ * that names a field is a claim about a contract you have not checked."
+ * `tests/solo-control-dispatch.test.mjs` now derives the model-supplied key
+ * set from the EMITTED schema (`z.toJSONSchema(…, {io:'input'}).required`)
+ * and asserts JSON_CONTRACT names each one, so the next required field added
+ * to ProducerFindingSchema fails a test instead of silently zeroing an arm.
+ */
+const ColdPassSchema = ShadowPassSchema.extend({
+  findings: z.array(ProducerFindingSchema.extend({ is_reopened: z.boolean().default(false) })).max(50),
+});
+
+/** Sum two usage records (either may be null) — one cell's cost is the cost of
+ * EVERY attempt it took, including a first attempt whose reply did not parse.
+ * The provider billed that attempt; dropping it under-reports $/diff, the
+ * experiment's primary axis. Returns null only when neither attempt produced a
+ * response (nothing was billed, nothing is fabricated). */
+function sumUsage(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return { input_tokens: (a.input_tokens || 0) + (b.input_tokens || 0), output_tokens: (a.output_tokens || 0) + (b.output_tokens || 0) };
+}
 
 /** Clamp verbose free-JSON string fields to the ShadowPassSchema/ProducerFinding
  * caps so a valid-but-too-long finding is KEPT (truncated), not dropped. The arms
@@ -558,6 +603,7 @@ async function runPass(client, model, passName, diff, { temperature, reasoningEf
   const { system, user } = buildColdPassPrompt(passName, diff);
   const maxTokens = reasoningEffort ? REASONING_TIERS.anthropic[reasoningEffort] : 8000;
   let lastErr = null;
+  let usage = null; // accumulated over BOTH attempts — see sumUsage
   for (let attempt = 1; attempt <= 2; attempt++) {
     let resp;
     try {
@@ -576,16 +622,18 @@ async function runPass(client, model, passName, diff, { temperature, reasoningEf
       lastErr = (err?.message || String(err)).slice(0, 160);
       continue;
     }
+    usage = sumUsage(usage, resp.usage || null);
     const text = Array.isArray(resp.content) ? resp.content.map((c) => c.text || '').join('') : '';
     const parsed = clampToSchema(parseJsonLoose(text));
-    const check = ShadowPassSchema.safeParse(parsed);
+    const check = ColdPassSchema.safeParse(parsed);
     if (check.success) {
-      return { findings: check.data.findings, usage: resp.usage || null, rawText: text };
+      return { findings: check.data.findings, usage, rawText: text };
     }
     lastErr = check.error?.issues?.map((i) => i.message).join('; ') || 'unparseable';
   }
   log(`      ! pass ${passName} produced no conformant JSON (${lastErr}) — recorded 0 findings`);
-  return { findings: [], usage: null, conformanceMiss: true, rawText: null };
+  // usage is kept: a miss still billed every attempt that returned a reply.
+  return { findings: [], usage, conformanceMiss: true, rawText: null };
 }
 
 /**
@@ -615,6 +663,7 @@ async function runDeepseekPass(client, model, passName, diff, { reasoningEffort 
   const maxTokens = REASONING_TIERS.deepseek[reasoningEffort ?? 'high'];
   let lastErr = null;
   let lastFingerprint = null;
+  let usage = null; // accumulated over BOTH attempts — see sumUsage
   for (let attempt = 1; attempt <= 2; attempt++) {
     let resp;
     const messages = [
@@ -631,18 +680,19 @@ async function runDeepseekPass(client, model, passName, diff, { reasoningEffort 
       continue;
     }
     lastFingerprint = resp.system_fingerprint || null;
+    const u = resp.usage || null;
+    usage = sumUsage(usage, u ? { input_tokens: u.prompt_tokens ?? 0, output_tokens: u.completion_tokens ?? 0 } : null);
     const text = resp.choices?.[0]?.message?.content || '';
     const parsed = clampToSchema(parseJsonLoose(text));
-    const check = ShadowPassSchema.safeParse(parsed);
+    const check = ColdPassSchema.safeParse(parsed);
     if (check.success) {
-      const u = resp.usage || null;
-      const usage = u ? { input_tokens: u.prompt_tokens ?? 0, output_tokens: u.completion_tokens ?? 0 } : null;
       return { findings: check.data.findings, usage, rawText: text, systemFingerprint: lastFingerprint };
     }
     lastErr = check.error?.issues?.map((i) => i.message).join('; ') || 'unparseable';
   }
   log(`      ! pass ${passName} produced no conformant JSON (${lastErr}) — recorded 0 findings`);
-  return { findings: [], usage: null, conformanceMiss: true, rawText: null, systemFingerprint: lastFingerprint };
+  // usage is kept: a miss still billed every attempt that returned a reply.
+  return { findings: [], usage, conformanceMiss: true, rawText: null, systemFingerprint: lastFingerprint };
 }
 
 // ── subcommands ──────────────────────────────────────────────────────────────
@@ -1167,7 +1217,34 @@ async function runGeminiPass(geminiModel, passName, diff) {
 /** Run the apparatus (arm A) retro over --commits. Incremental like cmdRun. */
 /** The immutable pre-gate artifact path for one commit (plan §7: written BEFORE
  * any gate call, so --gate-only can replay the exact bytes the first gate saw). */
-const pregatePath = (sha) => path.join(OUT_DIR, `S-pregate-A-${sha}.json`);
+const PREGATE_BASE_ARM = 'A'; // the ONE arm whose 5-pass run writes the pregate artifact every --gate-only run reuses
+const pregatePath = (sha) => path.join(OUT_DIR, `S-pregate-${PREGATE_BASE_ARM}-${sha}.json`);
+
+/**
+ * A `--gate-only` run reuses the 5-pass compute Arm A already paid for over
+ * this commit. Credit those cells to THIS configuration by appending one row
+ * per shared cell under the SAME callId (the ledger's documented "same call,
+ * written once per sharing arm" shape), with `sharedBy` widened to include
+ * this label. Nothing is fabricated — cost, usage and state are the base
+ * arm's latest row for that cell, verbatim. The sharer declares itself, at
+ * the moment it shares: Arm A cannot know at its own run time which gate
+ * candidates will later be run over its artifact, so a sharer list written
+ * by A was wrong the day a third candidate was added (measured 2026-09-21:
+ * `sharedBy: ['A','A+']` was hardcoded at A's write, so A-sonnet and A-sol
+ * held only their gate row — `aggregateCostForArm` priced them as gate-only
+ * and `commitArmCompletion` read every one of their commits as `partial`,
+ * which `score --decide` would have dropped cohort-wide).
+ *
+ * Idempotent under --resume: a second credit for the same cell writes a row
+ * with identical callId and content, and every reader dedupes last-wins.
+ * Returns the number of cells credited (0 when A never recorded any — the
+ * gate arm is then honestly `partial` for this commit, never padded).
+ */
+function creditSharedPassRows(sha, label) {
+  const credits = sharedPassCreditRows(readLedger(CALL_LEDGER_PATH), { commit: sha, baseArm: PREGATE_BASE_ARM, label });
+  for (const row of credits) appendLedgerRow(CALL_LEDGER_PATH, row);
+  return credits.length;
+}
 /** Gate-output artifact path, tagged by a short gate label derived from the
  * resolved model id (falls back to a sanitised full id for an unrecognised gate). */
 function gatePath(sha, resolvedGateModel) {
@@ -1281,10 +1358,10 @@ async function cmdApparatus() {
 
   /** Budget preflight for one apparatus cell (plan §8). On breach: record the
    * cell as provider-error, the commit as budget-exceeded, checkpoint, stop. */
-  const guardBudget = (sha, purpose, pass, chunkIndex, resolvedModel, recipient, sharedBy = null) => {
+  const guardBudget = (sha, purpose, pass, chunkIndex, resolvedModel, recipient) => {
     const hit = budgetBreached(budgetUsd);
     if (!hit) return false;
-    recordCall({ arm: label, sharedBy, commit: sha, purpose, pass, chunkIndex, repeatIndex: 0, resolvedModel, recipient, usage: null, state: 'provider-error' });
+    recordCall({ arm: label, commit: sha, purpose, pass, chunkIndex, repeatIndex: 0, resolvedModel, recipient, usage: null, state: 'provider-error' });
     out.perCommit.push({ sha, state: 'budget-exceeded', error: 'budget', spentUsd: hit.spentUsd });
     atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
     log(`\n✗ BUDGET CEILING: $${hit.spentUsd.toFixed(2)} spent across the ledger ≥ $${budgetUsd} cap${hit.complete ? '' : ' (a FLOOR — some rows are unpriced)'}. Stopped at ${sha.slice(0, 8)}; it and every later commit are partial and will be dropped cohort-wide by score.`);
@@ -1310,7 +1387,8 @@ async function cmdApparatus() {
       chunks = [pregate.gateContext];
       passChunks = pregate.passChunks ?? null; // how many chunks the SHARED 5-pass rows span
       repoBasename = pregate.repo || null;
-      log(`  ${short}: gate-only, reusing pre-gate (${collected.length} finding(s), verified sha256)`);
+      const credited = creditSharedPassRows(sha, label);
+      log(`  ${short}: gate-only, reusing pre-gate (${collected.length} finding(s), verified sha256; ${credited} shared 5-pass cell(s) credited to ${label})`);
     } else {
       const root = locateCommit(sha);
       if (!root) { log(`  ${short}: NOT FOUND — skipped`); out.perCommit.push({ sha, state: 'not-found' }); continue; }
@@ -1336,19 +1414,21 @@ async function cmdApparatus() {
       for (const passName of PASSES) {
         for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
           const chunk = chunks[chunkIndex];
-          guardBudget(sha, 'pass', passName, chunkIndex, gptModel, 'openai', ['A', 'A+']);
+          guardBudget(sha, 'pass', passName, chunkIndex, gptModel, 'openai');
           let r;
           try { r = await runGptPass(client, zodTextFormat, gptModel, passName, chunk, PASS_REASONING[passName] ?? null); }
           catch (err) {
             log(`      ! gpt ${passName} failed: ${String(err?.message).slice(0, 120)} — 0 findings`);
-            recordCall({ arm: label, sharedBy: ['A', 'A+'], commit: sha, purpose: 'pass', pass: passName, chunkIndex, repeatIndex: 0, resolvedModel: gptModel, recipient: 'openai', usage: null, state: 'provider-error' });
+            recordCall({ arm: label, commit: sha, purpose: 'pass', pass: passName, chunkIndex, repeatIndex: 0, resolvedModel: gptModel, recipient: 'openai', usage: null, state: 'provider-error' });
             continue;
           }
-          // 5-pass compute is SHARED between A and A+ (A+'s --gate-only reuses
-          // this exact pregate artifact) — tagged sharedBy regardless of which
-          // gate this specific invocation runs, so aggregateCostForArm credits
-          // both configurations and aggregateBudgetSpent still counts it once.
-          recordCall({ arm: label, sharedBy: ['A', 'A+'], commit: sha, purpose: 'pass', pass: passName, chunkIndex, repeatIndex: 0, resolvedModel: gptModel, recipient: 'openai', usage: r.usage, state: 'ok' });
+          // 5-pass compute is SHARED with every --gate-only configuration that
+          // later reuses this pregate artifact — but which those are is not
+          // knowable here, so this row names no sharer: each gate-only run
+          // credits itself via creditSharedPassRows (see its docstring for the
+          // hardcoded-list bug this replaced). aggregateBudgetSpent still counts
+          // the call once, by callId.
+          recordCall({ arm: label, commit: sha, purpose: 'pass', pass: passName, chunkIndex, repeatIndex: 0, resolvedModel: gptModel, recipient: 'openai', usage: r.usage, state: 'ok' });
           for (const f of r.findings) raw.push(f);
         }
       }
@@ -2357,4 +2437,5 @@ export const _internals = {
   sha256hex, gatePath, pregatePath, extractDiff, extractAuditedDiff, locateCommit, treeExists, partitionDiscoveredRows,
   runClaudeGateReview, runGeminiReview, runGptGateReview, buildGateReviewPrompt,
   runPass, runDeepseekPass, REASONING_TIERS, assertReasoningTier, geminiUsageOrNull, budgetBreached, PASSES,
+  ColdPassSchema, JSON_CONTRACT, sumUsage, creditSharedPassRows, PREGATE_BASE_ARM,
 };

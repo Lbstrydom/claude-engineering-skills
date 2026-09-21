@@ -73,16 +73,60 @@ export function readLedger(ledgerPath) {
  * predicates — an arm's own $/diff must include compute it shares with a
  * sibling configuration, or A+ would appear to cost only its gate call.
  *
+ * Cells are deduplicated by `callId`, LAST row wins — the same rule
+ * completion.mjs applies. The ledger is append-only and `callId` is
+ * deterministic over the cell's identity, so a resumed or re-run cell writes
+ * a second row with the same id; without the dedupe that cell was billed to
+ * the arm twice, and a first attempt that had landed unpriced (`costUsd:null`)
+ * kept the whole arm's cost `unknown` forever, however many priced re-runs
+ * followed it. Measured 2026-09-21: two conformance-miss rows from a broken
+ * first launch of Arm E would have poisoned E's $/diff for the whole
+ * experiment even after the re-run superseded them.
+ *
  * @returns {{costUsd: number|null, complete: boolean}} `complete:false` (and
- *   `costUsd:null`) when any contributing row has `costUsd:null` — an
- *   unpriced call makes the aggregate unknown, never a partial sum that
+ *   `costUsd:null`) when any contributing cell's LATEST row has `costUsd:null`
+ *   — an unpriced call makes the aggregate unknown, never a partial sum that
  *   silently reads low.
  */
 export function aggregateCostForArm(rows, arm) {
-  const mine = rows.filter((r) => r.arm === arm || (r.sharedBy || []).includes(arm));
+  const byCallId = new Map();
+  for (const r of rows) if (r.arm === arm || (r.sharedBy || []).includes(arm)) byCallId.set(r.callId, r);
+  const mine = [...byCallId.values()];
   if (mine.length === 0) return { costUsd: null, complete: false };
   if (mine.some((r) => r.costUsd == null)) return { costUsd: null, complete: false };
   return { costUsd: +mine.reduce((a, r) => a + r.costUsd, 0).toFixed(4), complete: true };
+}
+
+/**
+ * The rows a configuration appends to credit itself with cells another arm
+ * paid for — the ledger's "same call, written once per sharing arm" shape.
+ * Pure: takes the ledger rows, returns the rows to append. For every cell
+ * (latest row per `callId`) on `commit` with `purpose:'pass'` that belongs to
+ * `baseArm` (directly or via `sharedBy`), returns a copy under the SAME
+ * callId with `arm: label` and `sharedBy` widened to include `label`. Cost,
+ * usage and state are copied verbatim — nothing is fabricated, the call is
+ * the same call. Returns `[]` when `label === baseArm` (an arm does not share
+ * with itself) or when the base arm recorded nothing for the commit (the
+ * sharer is then honestly `partial` there, never padded).
+ *
+ * Why the sharer writes this and not the payer: the payer cannot know, at its
+ * own run time, which configurations will later reuse its artifact. A sharer
+ * list hardcoded at the payer's write was wrong the day a third gate
+ * candidate was added (2026-09-21 — see solo-control-audit.mjs
+ * creditSharedPassRows for the measured consequence).
+ *
+ * @param {Array<object>} rows every ledger row
+ * @param {{commit:string, baseArm:string, label:string}} target
+ * @returns {Array<object>} rows to append, in ledger order
+ */
+export function sharedPassCreditRows(rows, { commit, baseArm, label }) {
+  if (label === baseArm) return [];
+  const latest = new Map();
+  for (const r of rows) {
+    if (r.commit !== commit || r.purpose !== 'pass') continue;
+    if (r.arm === baseArm || (r.sharedBy || []).includes(baseArm)) latest.set(r.callId, r);
+  }
+  return [...latest.values()].map((r) => ({ ...r, arm: label, sharedBy: [...new Set([...(r.sharedBy || [r.arm]), label])] }));
 }
 
 /**

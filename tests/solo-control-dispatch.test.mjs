@@ -7,7 +7,8 @@ import path from 'node:path';
 import { classifyRecipient, RECIPIENTS } from '../scripts/lib/solo-control/recipient.mjs';
 import { loadRecipientPolicy, assertRecipientAllowed, resolveAndAuthorize, validateCorpusAgainstPolicy } from '../scripts/lib/solo-control/policy.mjs';
 import { loadCorpus } from '../scripts/lib/solo-control/corpus.mjs';
-import { computeCallId, appendLedgerRow, readLedger, aggregateCostForArm, aggregateBudgetSpent } from '../scripts/lib/solo-control/ledger.mjs';
+import { z } from 'zod';
+import { computeCallId, appendLedgerRow, readLedger, aggregateCostForArm, aggregateBudgetSpent, sharedPassCreditRows } from '../scripts/lib/solo-control/ledger.mjs';
 import { commitArmCompletion, commitsCompleteForAllArms } from '../scripts/lib/solo-control/completion.mjs';
 import { _internals as soloCtl } from '../scripts/solo-control-audit.mjs';
 
@@ -186,9 +187,9 @@ test('aggregateCostForArm: a SHARED row (sharedBy) is credited to BOTH configura
   // shared with A, so filtering strictly on row.arm === arm would make A+
   // appear to cost only its gate call.
   const rows = [
-    { arm: 'A', sharedBy: ['A', 'A+'], costUsd: 0.50 }, // one shared 5-pass call
-    { arm: 'A', sharedBy: null, costUsd: 0.10 },        // A's own Flash gate call
-    { arm: 'A+', sharedBy: null, costUsd: 0.20 },       // A+'s own Pro gate call
+    { callId: 'shared-1', arm: 'A', sharedBy: ['A', 'A+'], costUsd: 0.50 }, // one shared 5-pass call
+    { callId: 'gate-a', arm: 'A', sharedBy: null, costUsd: 0.10 },          // A's own Flash gate call
+    { callId: 'gate-aplus', arm: 'A+', sharedBy: null, costUsd: 0.20 },     // A+'s own Pro gate call
   ];
   const a = aggregateCostForArm(rows, 'A');
   const aPlus = aggregateCostForArm(rows, 'A+');
@@ -211,12 +212,29 @@ test('aggregateBudgetSpent: the SAME shared row is counted ONCE across the whole
 });
 
 test('aggregateCostForArm: any unpriced contributing row makes the aggregate null/incomplete — never a partial sum read as the true cost', () => {
-  const rows = [{ arm: 'E', sharedBy: null, costUsd: 0.10 }, { arm: 'E', sharedBy: null, costUsd: null }];
+  const rows = [{ callId: 'e0', arm: 'E', sharedBy: null, costUsd: 0.10 }, { callId: 'e1', arm: 'E', sharedBy: null, costUsd: null }];
   assert.deepEqual(aggregateCostForArm(rows, 'E'), { costUsd: null, complete: false });
 });
 
+test('aggregateCostForArm: a re-run cell (same callId, later row) SUPERSEDES its earlier row — never billed twice, and an earlier unpriced attempt never poisons the arm', () => {
+  // The ledger is append-only and callId is deterministic over the cell, so a
+  // resumed/re-run cell is a second row under the same id. Measured 2026-09-21:
+  // two conformance-miss rows (usage null => costUsd null) from a broken first
+  // launch would otherwise have kept the whole arm's cost `unknown` forever.
+  const rows = [
+    { callId: 'e0', arm: 'E', sharedBy: null, costUsd: null },  // first launch: unpriced miss
+    { callId: 'e1', arm: 'E', sharedBy: null, costUsd: 0.10 },
+    { callId: 'e0', arm: 'E', sharedBy: null, costUsd: 0.05 },  // re-run of the SAME cell, priced
+    { callId: 'e1', arm: 'E', sharedBy: null, costUsd: 0.10 },  // re-run of e1 too — must not double to 0.20
+  ];
+  assert.deepEqual(aggregateCostForArm(rows, 'E'), { costUsd: 0.15, complete: true });
+  // Same rule completion.mjs applies (last row wins per callId) — the two
+  // readers must not disagree about which row IS the cell.
+  assert.equal(commitArmCompletion(rows.map((r) => ({ ...r, commit: 'c', state: r.costUsd == null ? 'provider-error' : 'ok' })), { arm: 'E', commit: 'c', expectedCellCount: 2 }), 'complete');
+});
+
 test('aggregateCostForArm: an arm with zero contributing rows is null/incomplete, not a fabricated $0', () => {
-  assert.deepEqual(aggregateCostForArm([{ arm: 'OTHER', sharedBy: null, costUsd: 1 }], 'E'), { costUsd: null, complete: false });
+  assert.deepEqual(aggregateCostForArm([{ callId: 'o0', arm: 'OTHER', sharedBy: null, costUsd: 1 }], 'E'), { costUsd: null, complete: false });
 });
 
 // ── completion states ────────────────────────────────────────────────────────
@@ -526,6 +544,139 @@ test('runDeepseekPass: sends thinking.reasoning_effort, sizes max_tokens to the 
   await soloCtl.runDeepseekPass(stub, 'deepseek-flash', 'structure', 'X');
   assert.ok(!('thinking' in seen), 'null effort leaves the provider default in place');
   assert.equal(seen.max_tokens, soloCtl.REASONING_TIERS.deepseek.high);
+});
+
+// ── the prose↔schema seam of the cold pass (AGENTS.md "Contracts across the
+// prose↔code seam") ──────────────────────────────────────────────────────────
+
+/** A finding shaped exactly as JSON_CONTRACT asks the model to write it —
+ * deliberately WITHOUT `is_reopened`, which the contract never names. */
+const coldFinding = () => ({
+  id: 'H1', severity: 'HIGH', category: 'bug', section: 'x.js', detail: 'd', risk: 'r', recommendation: 'fix',
+  is_quick_fix: false, is_mechanical: false, principle: 'p',
+  classification: { sonarType: 'BUG', effort: 'EASY', sourceKind: 'MODEL', sourceName: 'solo-control' },
+});
+
+test('JSON_CONTRACT names every key the cold schema REQUIRES the model to supply — derived from the emitted schema, never from the Zod source', () => {
+  // The bug this pins (2026-09-21): `is_reopened` became required on
+  // ProducerFindingSchema on 2026-08-14, after the prose contract was written.
+  // Nothing type-checks prose against Zod, so every cold finding failed
+  // `expected boolean, received undefined` and every cold cell became a
+  // conformance-miss with 0 findings — which completion.mjs counts as COMPLETE.
+  // Arms C and E would have scored as "found nothing". The check asks the
+  // EMITTED schema what the model must supply (`io:'input'` — a defaulted field
+  // is not the model's to write) and greps the contract for each key.
+  const emitted = z.toJSONSchema(soloCtl.ColdPassSchema, { io: 'input' });
+  const finding = emitted.properties.findings.items;
+  assert.ok(Array.isArray(finding.required) && finding.required.length >= 10, 'the finding schema exposes its required keys');
+  for (const key of finding.required) {
+    assert.match(soloCtl.JSON_CONTRACT, new RegExp(`"${key}"\\s*:`), `JSON_CONTRACT never names required finding key "${key}" — a model following the prompt cannot produce a conformant reply`);
+  }
+  for (const key of emitted.required) {
+    assert.match(soloCtl.JSON_CONTRACT, new RegExp(`"${key}"\\s*:`), `JSON_CONTRACT never names required top-level key "${key}"`);
+  }
+  // Negative control: the same check against the ARMS' schema (enforced
+  // structured output, not prose) must FAIL on is_reopened — proving the
+  // assertion above can fail, and that ColdPassSchema differs from it in
+  // exactly that key.
+  const armsEmitted = z.toJSONSchema(soloCtl.ColdPassSchema.shape.findings.element.omit({ is_reopened: true }).extend({ is_reopened: z.boolean() }), { io: 'input' });
+  assert.ok(armsEmitted.required.includes('is_reopened'));
+  assert.doesNotMatch(soloCtl.JSON_CONTRACT, /"is_reopened"\s*:/, 'the contract must NOT ask a round-1 model for a round-2-only field');
+});
+
+test('ColdPassSchema: a finding written exactly as JSON_CONTRACT describes it (no is_reopened) conforms, and is_reopened lands as false', () => {
+  const check = soloCtl.ColdPassSchema.safeParse({ findings: [coldFinding()], summary: '' });
+  assert.ok(check.success, JSON.stringify(check.error?.issues));
+  assert.equal(check.data.findings[0].is_reopened, false, 'round-1 by construction — the arm, not the model, owns this value');
+});
+
+test('runPass / runDeepseekPass: a reply shaped as the contract asks is COUNTED, not a conformance miss', async () => {
+  const text = JSON.stringify({ findings: [coldFinding()], summary: 's' });
+  const anth = { messages: { create: async () => ({ content: [{ type: 'text', text }], usage: { input_tokens: 10, output_tokens: 5 } }) } };
+  const a = await soloCtl.runPass(anth, 'claude-sonnet-5', 'structure', 'X', { reasoningEffort: 'xhigh' });
+  assert.equal(a.findings.length, 1);
+  assert.ok(!a.conformanceMiss);
+  const ds = { chat: { completions: { create: async () => ({ choices: [{ message: { content: text } }], usage: { prompt_tokens: 10, completion_tokens: 5 }, system_fingerprint: 'fp' }) } } };
+  const e = await soloCtl.runDeepseekPass(ds, 'deepseek-flash', 'structure', 'X', { reasoningEffort: 'max' });
+  assert.equal(e.findings.length, 1);
+  assert.ok(!e.conformanceMiss);
+});
+
+test('runPass / runDeepseekPass: a conformance MISS still carries the usage of every attempt that replied — the provider billed them', async () => {
+  // Before 2026-09-21 a miss returned usage:null, so the ledger row was
+  // unpriced (costUsd null) and aggregateCostForArm read the whole arm's cost
+  // as unknown. A miss costs real money — two full thinking-mode attempts.
+  let calls = 0;
+  const anth = { messages: { create: async () => { calls++; return { content: [{ type: 'text', text: 'not json' }], usage: { input_tokens: 100, output_tokens: 7 } }; } } };
+  const a = await soloCtl.runPass(anth, 'claude-sonnet-5', 'structure', 'X');
+  assert.equal(calls, 2);
+  assert.equal(a.conformanceMiss, true);
+  assert.deepEqual(a.usage, { input_tokens: 200, output_tokens: 14 }, 'both attempts summed');
+  const ds = { chat: { completions: { create: async () => ({ choices: [{ message: { content: 'nope' } }], usage: { prompt_tokens: 50, completion_tokens: 3 } }) } } };
+  const e = await soloCtl.runDeepseekPass(ds, 'deepseek-flash', 'structure', 'X');
+  assert.equal(e.conformanceMiss, true);
+  assert.deepEqual(e.usage, { input_tokens: 100, output_tokens: 6 });
+  // A miss with NO reply at all (both attempts threw) has nothing to sum — null,
+  // never a fabricated zero that would price the cell as free.
+  const dead = { messages: { create: async () => { throw new Error('529 overloaded'); } } };
+  const d = await soloCtl.runPass(dead, 'claude-sonnet-5', 'structure', 'X');
+  assert.equal(d.usage, null);
+});
+
+test('runPass: a first attempt that did not parse still counts toward the cell\'s usage when the retry succeeds', async () => {
+  let n = 0;
+  const anth = { messages: { create: async () => { n++; return n === 1
+    ? { content: [{ type: 'text', text: 'garbage' }], usage: { input_tokens: 10, output_tokens: 1 } }
+    : { content: [{ type: 'text', text: '{"findings":[],"summary":""}' }], usage: { input_tokens: 12, output_tokens: 2 } }; } } };
+  const r = await soloCtl.runPass(anth, 'claude-sonnet-5', 'structure', 'X');
+  assert.ok(!r.conformanceMiss);
+  assert.deepEqual(r.usage, { input_tokens: 22, output_tokens: 3 });
+});
+
+test('sumUsage: null-safe, sums both token counts, and two nulls stay null', () => {
+  assert.equal(soloCtl.sumUsage(null, null), null);
+  assert.deepEqual(soloCtl.sumUsage(null, { input_tokens: 1, output_tokens: 2 }), { input_tokens: 1, output_tokens: 2 });
+  assert.deepEqual(soloCtl.sumUsage({ input_tokens: 1, output_tokens: 2 }, { input_tokens: 3, output_tokens: 4 }), { input_tokens: 4, output_tokens: 6 });
+});
+
+// ── shared 5-pass credit for --gate-only configurations ─────────────────────
+
+test('sharedPassCreditRows: a gate-only configuration credits itself with the base arm\'s pass cells under the SAME callId, sharedBy widened', () => {
+  // The bug this pins (2026-09-21): A's writer hardcoded sharedBy ['A','A+'],
+  // so the third and fourth gate candidates (A-sonnet, A-sol) held only their
+  // gate row — priced as gate-only and read as `partial` on every commit.
+  const base = [
+    { callId: 'p0', arm: 'A', sharedBy: null, commit: 'c1', purpose: 'pass', pass: 'structure', costUsd: 0.5, state: 'ok' },
+    { callId: 'p1', arm: 'A', sharedBy: ['A', 'A+'], commit: 'c1', purpose: 'pass', pass: 'wiring', costUsd: 0.4, state: 'ok' }, // legacy hardcoded shape
+    { callId: 'g0', arm: 'A', sharedBy: null, commit: 'c1', purpose: 'gate', pass: 'apparatus-gate', costUsd: 0.1, state: 'ok' }, // A's OWN gate — never shared
+    { callId: 'p9', arm: 'A', sharedBy: null, commit: 'c2', purpose: 'pass', pass: 'structure', costUsd: 0.5, state: 'ok' }, // other commit
+    { callId: 'e0', arm: 'E', sharedBy: null, commit: 'c1', purpose: 'pass', pass: 'structure', costUsd: 0.01, state: 'ok' }, // a cold arm's own pass — not A's
+  ];
+  const credits = sharedPassCreditRows(base, { commit: 'c1', baseArm: 'A', label: 'A-sonnet' });
+  assert.deepEqual(credits.map((r) => r.callId).sort(), ['p0', 'p1']);
+  for (const r of credits) {
+    assert.equal(r.arm, 'A-sonnet');
+    assert.ok(r.sharedBy.includes('A') && r.sharedBy.includes('A-sonnet'));
+    assert.equal(r.purpose, 'pass');
+  }
+  assert.deepEqual(credits.find((r) => r.callId === 'p1').sharedBy, ['A', 'A+', 'A-sonnet'], 'the legacy list is widened, not replaced');
+  // Once appended, every reader sees the sharer whole and the base arm unchanged.
+  const rows = [...base, ...credits, { callId: 'gs', arm: 'A-sonnet', sharedBy: null, commit: 'c1', purpose: 'gate', pass: 'apparatus-gate', costUsd: 0.3, state: 'ok' }];
+  assert.deepEqual(aggregateCostForArm(rows, 'A-sonnet'), { costUsd: 1.2, complete: true }); // 0.5 + 0.4 + own gate 0.3
+  assert.deepEqual(aggregateCostForArm(rows, 'A'), { costUsd: 1.5, complete: true });        // unchanged: 0.5 + 0.4 + 0.1 + 0.5(c2)
+  assert.equal(commitArmCompletion(rows, { arm: 'A-sonnet', commit: 'c1', expectedCellCount: 3 }), 'complete');
+  assert.equal(aggregateBudgetSpent(rows).spentUsd, 1.81, 'budget counts each callId ONCE despite the credit copies');
+});
+
+test('sharedPassCreditRows: an arm never credits itself, an empty base yields no rows (partial, not padded), and a re-credit is idempotent under last-wins', () => {
+  assert.deepEqual(sharedPassCreditRows([{ callId: 'p0', arm: 'A', commit: 'c1', purpose: 'pass' }], { commit: 'c1', baseArm: 'A', label: 'A' }), []);
+  assert.deepEqual(sharedPassCreditRows([], { commit: 'c1', baseArm: 'A', label: 'A+' }), []);
+  const base = [{ callId: 'p0', arm: 'A', sharedBy: null, commit: 'c1', purpose: 'pass', costUsd: 0.5, state: 'ok' }];
+  const once = sharedPassCreditRows(base, { commit: 'c1', baseArm: 'A', label: 'A+' });
+  const twice = sharedPassCreditRows([...base, ...once], { commit: 'c1', baseArm: 'A', label: 'A+' });
+  assert.deepEqual(twice, once);
+  assert.equal(commitArmCompletion([...base, ...once, ...twice], { arm: 'A+', commit: 'c1', expectedCellCount: 1 }), 'complete');
+  assert.deepEqual(aggregateCostForArm([...base, ...once, ...twice], 'A+'), { costUsd: 0.5, complete: true });
 });
 
 test('geminiUsageOrNull: a usable usageMetadata becomes ledger usage; a missing one is NULL, never a fabricated zero that prices as free', () => {
