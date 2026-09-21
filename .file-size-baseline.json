@@ -12,7 +12,7 @@
     "scripts/lib/config.mjs": 1055,
     "scripts/lib/install/transaction.mjs": 1060,
     "scripts/lib/ledger.mjs": 1291,
-    "scripts/lib/model-resolver.mjs": 1074,
+    "scripts/lib/model-resolver.mjs": 1081,
     "scripts/lib/schemas.mjs": 1681,
     "scripts/lib/store/campaign.mjs": 1804,
     "scripts/lib/store/runs-findings.mjs": 2489,
@@ -20,7 +20,7 @@
     "scripts/lib/upstream/commands.mjs": 1093,
     "scripts/openai-audit.mjs": 1317,
     "scripts/setup-postgres.mjs": 1506,
-    "scripts/solo-control-audit.mjs": 1714,
+    "scripts/solo-control-audit.mjs": 2032,
     "scripts/symbol-index/extract.mjs": 1219,
     "scripts/sync-to-repos.mjs": 2708
   }
