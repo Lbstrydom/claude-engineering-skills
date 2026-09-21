@@ -549,6 +549,34 @@ test('runGeminiReview: the gate call now returns usage (it returned findings onl
   } finally { if (saved !== undefined) process.env.GEMINI_API_KEY = saved; }
 });
 
+test('runGptGateReview: fourth gate candidate — same shared prompt, GPT\'s own structured output (Responses API + zodTextFormat), effort + scaled max_output_tokens', async () => {
+  let seen = null;
+  const client = { responses: { parse: async (p) => { seen = p; return { output_parsed: { findings: [{ id: 'G1', severity: 'HIGH', category: 'bug', section: 'x', detail: 'd', risk: 'r', recommendation: 'f', is_quick_fix: false, is_mechanical: false, is_reopened: false, principle: 'p', classification: { sonarType: 'BUG', effort: 'EASY', sourceKind: 'REVIEWER', sourceName: 'gpt-gate' } }] }, usage: { input_tokens: 5, output_tokens: 2 } }; } } };
+  const zodTextFormat = (schema, name) => ({ type: 'json_schema', name }); // transport stub: the real helper is openai/helpers/zod
+  const collected = [{ severity: 'MEDIUM', category: 'style', detail: 'already raised' }];
+  const r = await soloCtl.runGptGateReview(client, zodTextFormat, 'gpt-5.6-sol', collected, 'DIFF', { reasoningEffort: 'high' });
+  assert.equal(seen.model, 'gpt-5.6-sol');
+  assert.equal(seen.input[0].content, soloCtl.buildGateReviewPrompt(collected, 'DIFF'), 'byte-identical prompt to the Gemini/Claude gates');
+  assert.deepEqual(seen.reasoning, { effort: 'high' });
+  assert.equal(seen.max_output_tokens, soloCtl.REASONING_TIERS.openai.high);
+  assert.equal(seen.text.format.name, 'shadow_pass');
+  assert.equal(r.findings.length, 1);
+  assert.deepEqual(r.usage, { input_tokens: 5, output_tokens: 2 }, 'usage must reach the ledger — a null here is the blocker-#2 class');
+});
+
+test('runGptGateReview: a diff carrying a secret refuses BEFORE the client is called', async () => {
+  let calls = 0;
+  const client = { responses: { parse: async () => { calls++; return { output_parsed: { findings: [] } }; } } };
+  await assert.rejects(() => soloCtl.runGptGateReview(client, () => ({}), 'gpt-5.6-sol', [], 'aws_secret_key = "AKIA1234567890ABCDEF1234567890ABCDEF1234"'), /egress-gate/);
+  assert.equal(calls, 0);
+});
+
+test('gatePath: the GPT gate tags (sol/terra/luna) are anchored to the id TAIL, so a future gpt-*-sol-* variant cannot silently share a file', () => {
+  assert.match(soloCtl.gatePath('abc', 'gpt-5.6-sol'), /G-sol-A-abc\.json$/);
+  assert.match(soloCtl.gatePath('abc', 'gpt-5.6-terra'), /G-terra-A-abc\.json$/);
+  assert.match(soloCtl.gatePath('abc', 'gpt-6-astra'), /G-gpt-6-astra-A-abc\.json$/, 'an unlisted GPT variant falls back to its full id');
+});
+
 test('runClaudeGateReview: max_tokens follows the effort tier for the same thinking-budget reason as runPass', async () => {
   let seen = null;
   const stub = { messages: { create: async (p) => { seen = p; return { content: [{ type: 'tool_use', input: { findings: [] } }] }; } } };

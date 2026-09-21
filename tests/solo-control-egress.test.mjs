@@ -301,6 +301,19 @@ test('cmdApparatus pins the incumbent GPT to gpt-5.6-terra by default — the li
   } finally { cleanArtifacts(); }
 });
 
+test('cmdApparatus --gate-model gpt-5.6-sol dispatches to the openai gate branch and refuses an unverified tier', () => {
+  cleanArtifacts();
+  try {
+    const { output, status } = runCliFull(['apparatus', '--label', 'A-sol', '--gate-model', 'gpt-5.6-sol', '--commits', 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef']);
+    assert.equal(status, 0, output);
+    assert.match(output, /gpt-5\.6-sol review/);
+    assert.doesNotMatch(output, /no adapter yet/);
+    const r2 = runCliFull(['apparatus', '--label', 'A-sol', '--gate-model', 'gpt-5.6-sol', '--gate-reasoning-effort', 'xhigh', '--commits', 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef']);
+    assert.equal(r2.status, 2);
+    assert.match(r2.output, /not a openai tier \(valid: low\|medium\|high\)/);
+  } finally { cleanArtifacts(); fs.rmSync('.audit-loop/solo-control/S-findings-A-sol.json', { force: true, recursive: true, maxRetries: 3, retryDelay: 50 }); }
+});
+
 test('cmdRun refuses a reasoning-effort tier the recipient would silently alias, before any client is built', () => {
   const { output, status } = runCliFull(['run', '--model', 'deepseek-flash', '--label', 'E', '--reasoning-effort', 'xhigh', '--commits', 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef', '--force']);
   assert.equal(status, 2);

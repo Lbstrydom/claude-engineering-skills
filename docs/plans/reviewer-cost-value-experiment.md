@@ -324,14 +324,19 @@ locally re-derived `PASSES` had silently enrolled the `duplication`/`adjacency`
 fairness break — now imported from `audit-shadow.mjs::SHADOW_PASSES`, the one
 oracle. Each has a red-then-green regression lock.
 
-**Gate ablation, third candidate (operator request, 2026-09-21)**: `claude-sonnet-5`
-at effort `xhigh` as the gate, over the SAME pre-gate artifact —
-`apparatus --label A-sonnet --gate-only --gate-model claude-sonnet-5 --gate-reasoning-effort xhigh --corpus <corpus>`.
-Same rule as A+: paired per commit, excluded from `decide()`. It compares
-gate *models* on identical input (`buildGateReviewPrompt` is one shared
-builder) while each gate uses its own native structured-output mechanism —
-the gate ablation asks "which model, at its best, is the better gate", not the
-cold arms' "isolate the model" question.
+**Gate ablation, third and fourth candidates (operator requests, 2026-09-21)**:
+over the SAME pre-gate artifact — **`claude-sonnet-5` at effort `xhigh`**
+(`apparatus --label A-sonnet --gate-only --gate-model claude-sonnet-5 --gate-reasoning-effort xhigh --corpus <corpus>`)
+and **`gpt-5.6-sol` at effort `high`** (`apparatus --label A-sol --gate-only
+--gate-model gpt-5.6-sol --gate-reasoning-effort high --corpus <corpus>`;
+`high` is the top tier the production pipeline uses — an OpenAI `xhigh` is
+unverified for gpt-5.6 and is refused, not guessed). Sol was added after the
+Arm A dry run measured the gate at ~$0.03/diff: a fourth candidate on the gate
+step is nearly free. Same rule as A+: paired per commit, excluded from
+`decide()`. The ablation compares gate *models* on identical input
+(`buildGateReviewPrompt` is one shared builder) while each gate uses its own
+native structured-output mechanism — it asks "which model, at its best, is the
+better gate", not the cold arms' "isolate the model" question.
 
 **Arms B (cold Sonnet ×1) and D (cold Opus ×1) are dropped, not deferred**
 (operator decision, 2026-09-21 revision below): both were run in an earlier,
@@ -534,10 +539,11 @@ manifest (resolved ids, DeepSeek fingerprint); with
 (writes the pre-gate artifact + `G-flash`), then **A+** = `apparatus --label
 A+ --gate-only --gate-model gemini-pro-latest` (consumes that artifact, writes `G-pro`),
 then **A-sonnet** = `apparatus --label A-sonnet --gate-only --gate-model claude-sonnet-5 --gate-reasoning-effort xhigh`
-(same artifact, writes `G-sonnet`), then C and E via `run` with their
+(same artifact, writes `G-sonnet`), then **A-sol** = `apparatus --label A-sol --gate-only --gate-model gpt-5.6-sol --gate-reasoning-effort high`
+(same artifact, writes `G-sol`), then C and E via `run` with their
 `--reasoning-effort` (E's first real call seeds the `system_fingerprint` pin
 in the manifest). The gate ablation needs no extra 5-pass spend — it is the
-paired read of `G-flash` vs `G-pro` vs `G-sonnet`. Every runner enforces the
+paired read of `G-flash` vs `G-pro` vs `G-sonnet` vs `G-sol`. Every runner enforces the
 §8 ceiling (`--budget-usd`, default 350) from the shared ledger before each
 cell. One sitting; `--resume` on interruption; artifacts under
 `.audit-loop/solo-control/` (Category A). Files: none.

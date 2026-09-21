@@ -532,6 +532,11 @@ const JSON_RETRY_SUFFIX = '\n\nYour previous reply was not valid JSON. Reply wit
 const REASONING_TIERS = Object.freeze({
   anthropic: Object.freeze({ low: 8000, medium: 8000, high: 8000, xhigh: 64000, max: 64000 }),
   deepseek: Object.freeze({ low: 65536, high: 65536, max: 131072 }),
+  // Responses API `reasoning.effort`; `max_output_tokens` INCLUDES reasoning
+  // tokens, so it scales with the tier. Only the tiers the production pipeline
+  // already uses (PASS_REASONING) — an `xhigh` exists on some newer OpenAI
+  // models but is not verified for gpt-5.6, so it is refused, not guessed.
+  openai: Object.freeze({ low: 8000, medium: 16000, high: 32000 }),
 });
 function assertReasoningTier(recipient, tier) {
   if (tier == null) return null;
@@ -1110,6 +1115,28 @@ async function runClaudeGateReview(client, model, collected, diff, { reasoningEf
   return { findings: check.success ? check.data.findings : [], usage: resp.usage || null };
 }
 
+/**
+ * GPT's gate-ablation counterpart (fourth candidate: Flash / Pro / Sonnet-xhigh /
+ * Sol-high) — same shared prompt, GPT's own structured-output mechanism
+ * (Responses API + zodTextFormat, exactly what runGptPass uses for the 5-pass).
+ * The whole prompt goes as ONE user input item so the text the model sees is
+ * byte-identical to what the Gemini and Claude gates see.
+ * @param {import('openai').OpenAI} client - the same `purpose:'gpt'` client the 5-pass uses
+ */
+async function runGptGateReview(client, zodTextFormat, model, collected, diff, { reasoningEffort = 'high' } = {}) {
+  const prompt = buildGateReviewPrompt(collected, diff);
+  assertEgressSafe(prompt, { label: 'apparatus:gpt-gate' });
+  const params = {
+    model,
+    input: [{ role: 'user', content: prompt }],
+    text: { format: zodTextFormat(ShadowPassSchema, 'shadow_pass') },
+    max_output_tokens: REASONING_TIERS.openai[reasoningEffort] ?? 8000,
+  };
+  if (reasoningEffort) params.reasoning = { effort: reasoningEffort };
+  const resp = await client.responses.parse(params);
+  return { findings: resp.output_parsed?.findings || [], usage: resp.usage || null };
+}
+
 /** Gemini as a FROM-SCRATCH generator — same open-ended "audit this diff" task
  * and prompt shape as runGptPass/runOssPass (PASS_PROMPTS system + the diff,
  * no prior findings to react to). Everywhere else in this experiment Gemini
@@ -1152,6 +1179,9 @@ function gatePath(sha, resolvedGateModel) {
     : /^gemini-.*pro/i.test(resolvedGateModel) ? 'pro'
     : /^claude-.*sonnet/i.test(resolvedGateModel) ? 'sonnet'
     : /^claude-.*opus/i.test(resolvedGateModel) ? 'opus'
+    : /^gpt-.*-sol$/i.test(resolvedGateModel) ? 'sol'
+    : /^gpt-.*-terra$/i.test(resolvedGateModel) ? 'terra'
+    : /^gpt-.*-luna$/i.test(resolvedGateModel) ? 'luna'
     : resolvedGateModel.replace(/[^a-z0-9]+/gi, '-');
   return path.join(OUT_DIR, `G-${tag}-A-${sha}.json`);
 }
@@ -1193,18 +1223,20 @@ async function cmdApparatus() {
   // — a third gate vendor would need a new branch below, same shape as cmdRun's
   // recipient dispatch. Never construct a client for a recipient not being used.
   const gateRecipient = classifyRecipient(gateModel);
+  // Gate effort: an explicit tier for the anthropic/openai gates (validated
+  // against that vendor's table); Gemini gates take no effort knob here.
   let gateReasoningEffort = null;
-  if (gateRecipient === 'anthropic') {
-    try { gateReasoningEffort = assertReasoningTier('anthropic', argOption('gate-reasoning-effort', 'high')); }
+  if (gateRecipient === 'anthropic' || gateRecipient === 'openai') {
+    try { gateReasoningEffort = assertReasoningTier(gateRecipient, argOption('gate-reasoning-effort', 'high')); }
     catch (err) { log(`FATAL: ${err.message.replace('--reasoning-effort', '--gate-reasoning-effort')}`); process.exit(2); }
   } else if (argOption('gate-reasoning-effort')) {
-    log(`FATAL: --gate-reasoning-effort applies to an anthropic gate only; "${gateModel}" is ${gateRecipient}.`); process.exit(2);
+    log(`FATAL: --gate-reasoning-effort applies to an anthropic or openai gate; "${gateModel}" is ${gateRecipient}.`); process.exit(2);
   }
   const budgetUsd = Number.parseFloat(argOption('budget-usd', '350')); // plan §8 ceiling, experiment-wide
-  const client = await createOpenAIClient({ purpose: 'gpt' });
+  const client = await createOpenAIClient({ purpose: 'gpt' }); // the 5-pass client; an openai gate reuses it with its own model id
   const anthropicGateClient = gateRecipient === 'anthropic' ? await createAnthropicClient({ backend: 'sdk' }) : null;
-  if (gateRecipient !== 'gemini' && gateRecipient !== 'anthropic') {
-    log(`FATAL: gate recipient "${gateRecipient}" has no adapter yet (gemini/anthropic only).`); process.exit(2);
+  if (!['gemini', 'anthropic', 'openai'].includes(gateRecipient)) {
+    log(`FATAL: gate recipient "${gateRecipient}" has no adapter yet (gemini/anthropic/openai only).`); process.exit(2);
   }
 
   let requested;
@@ -1335,7 +1367,9 @@ async function cmdApparatus() {
     try {
       const r = gateRecipient === 'anthropic'
         ? await runClaudeGateReview(anthropicGateClient, gateModel, collected, chunks[0] || '', { reasoningEffort: gateReasoningEffort })
-        : await runGeminiReview(gateModel, collected, chunks[0] || '');
+        : gateRecipient === 'openai'
+          ? await runGptGateReview(client, zodTextFormat, gateModel, collected, chunks[0] || '', { reasoningEffort: gateReasoningEffort })
+          : await runGeminiReview(gateModel, collected, chunks[0] || '');
       gateFindings = r.findings;
       recordCall({ arm: label, commit: sha, purpose: 'gate', pass: 'apparatus-gate', chunkIndex: 0, repeatIndex: 0, resolvedModel: gateModel, recipient: gateRecipient, usage: r.usage || null, state: 'ok' });
     } catch (err) {
@@ -2321,6 +2355,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 export const _internals = {
   chunkDiff, continuationMarker, planIncrementalRun, repoIdentityFor, buildColdPassPrompt,
   sha256hex, gatePath, pregatePath, extractDiff, extractAuditedDiff, locateCommit, treeExists, partitionDiscoveredRows,
-  runClaudeGateReview, runGeminiReview, buildGateReviewPrompt,
+  runClaudeGateReview, runGeminiReview, runGptGateReview, buildGateReviewPrompt,
   runPass, runDeepseekPass, REASONING_TIERS, assertReasoningTier, geminiUsageOrNull, budgetBreached, PASSES,
 };
