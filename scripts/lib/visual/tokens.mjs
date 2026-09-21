@@ -110,12 +110,45 @@ function round1(n) { return Math.round(n * 10) / 10; }
 // ── Adapter registry ────────────────────────────────────────────────────────
 
 const LENGTH_RE = /^-?[\d.]+(px|rem|em)$/;
+const COLOR_NAME_RE = /(^|-)colou?r(-|$)/;
+const LIGHT_DARK_THEMES = ['light', 'dark'];
+
+/**
+ * Split a CSS `light-dark(<light>, <dark>)` value into its two halves, or null
+ * when the value is not one. The split is at the TOP-LEVEL comma only — a half
+ * may itself be `rgb(1, 2, 3)` / `rgba(…)`, so a naive comma split is wrong.
+ * @param {string} value
+ * @returns {{light:string, dark:string}|null}
+ */
+export function splitLightDark(value) {
+  const s = String(value).trim();
+  const m = s.match(/^light-dark\((.*)\)$/is);
+  if (!m) return null;
+  const inner = m[1];
+  let depth = 0;
+  for (let i = 0; i < inner.length; i++) {
+    const c = inner[i];
+    if (c === '(') depth++;
+    else if (c === ')') depth--;
+    else if (c === ',' && depth === 0) {
+      const light = inner.slice(0, i).trim();
+      const dark = inner.slice(i + 1).trim();
+      return light && dark ? { light, dark } : null;
+    }
+  }
+  return null;
+}
 
 /** Heuristic family for a CSS custom-property name + value. */
 function familyForVar(name, value) {
   const n = name.toLowerCase();
   const isLength = LENGTH_RE.test(String(value).trim());
   if (normalizeColor(value)) return 'colors';
+  // A `--color-*` / `--*-color(-*)` name whose value the normaliser cannot parse
+  // (hsl(), oklch(), color-mix(), …) is still a COLOUR token: classify it so the
+  // extraction seam can WARN (`token_unparsed_color`) instead of dropping it
+  // silently. A colour-named LENGTH (`--color-swatch-size: 24px`) is not a colour.
+  if (!isLength && COLOR_NAME_RE.test(n)) return 'colors';
   if (/radius|rounded/.test(n)) return 'radius';
   if (/shadow|elevation/.test(n)) return 'shadow';
   if (/font-?weight|weight/.test(n)) return 'fontWeight';
@@ -143,13 +176,32 @@ const cssVarsAdapter = {
     // Match every `--name: value;` declaration (across :root and scoped blocks).
     const re = /(--[\w-]+)\s*:\s*([^;}{]+)[;}]/g;
     let m;
+    const scopedLightDark = []; // light-dark() declarations that lost a half to a source-level theme
     while ((m = re.exec(css))) {
       const name = m[1].trim();
       const value = m[2].trim();
       if (value.startsWith('var(')) continue; // alias — resolved transitively below
+      // `light-dark(a, b)` is ONE declaration carrying BOTH themes — the per-source
+      // theme model cannot say that, so it becomes two theme-scoped tokens. Found
+      // 2026-09-21: a 22-colour tokens.css extracted as `colors: absent`, silently.
+      const ld = splitLightDark(value);
+      if (ld) {
+        let lost = false;
+        for (const t of LIGHT_DARK_THEMES) {
+          if (theme && theme !== t) { lost = true; continue; } // only the matching half applies
+          const fam = familyForVar(name, ld[t]);
+          if (fam) pushToken(out.values, fam, { value: ld[t], varName: name, theme: t });
+        }
+        if (lost) scopedLightDark.push(name);
+        continue;
+      }
       const fam = familyForVar(name, value);
       if (!fam) continue;
       pushToken(out.values, fam, { value, varName: name, theme: theme ?? null });
+    }
+    if (scopedLightDark.length) {
+      const shown = scopedLightDark.slice(0, 5).join(', ') + (scopedLightDark.length > 5 ? ', …' : '');
+      out.warnings.push(`token_light_dark_theme_scoped: ${path.basename(absPath)} is scoped to theme=${theme} but ${scopedLightDark.length} declaration(s) use light-dark(); only the ${theme} half was taken (${shown})`);
     }
     return out;
   },
@@ -224,7 +276,13 @@ export async function extractAllowedSet(root, contract) {
       if (scope && !scope.has(fam)) continue;
       for (const tok of list) {
         const norm = normalizeByFamily(fam, tok.value);
-        if (norm == null) continue;
+        if (norm == null) {
+          // A colour the normaliser cannot represent (hsl(), oklch(), color-mix(),
+          // …) is dropped from the scale — but never silently: an absent colours
+          // family read as "no colour tokens declared" for a 22-colour file.
+          if (fam === 'colors') warnings.push(`token_unparsed_color: ${tok.varName ?? '(unnamed)'} in ${src.path}${tok.theme ? ` (theme ${tok.theme})` : ''} has value "${tok.value}" that normalizeColor cannot parse (hex / rgb() / rgba() only) — dropped from the colours scale`);
+          continue;
+        }
         const dupKey = `${fam}:${norm}:${tok.theme ?? ''}`;
         if (seen.has(dupKey)) {
           warnings.push(`token_duplicate_definition: ${fam} value ${norm}${tok.theme ? ` (theme ${tok.theme})` : ''} defined in both ${seen.get(dupKey)} and ${src.path}`);

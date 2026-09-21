@@ -24,6 +24,31 @@ overrides**; precedence is the `tokenSources` order in the contract. Arbitrary-v
 / plugin-generated Tailwind classes that can't be resolved statically become
 `warnings`, never false allowed-set entries.
 
+### `light-dark()` colours (css-vars only)
+
+A `--x: light-dark(<light>, <dark>)` declaration is ONE property carrying BOTH
+themes — the per-source `theme` model can't express that, so the adapter splits
+it into two theme-scoped tokens (`{value: light, theme: 'light'}` +
+`{value: dark, theme: 'dark'}`) sharing one `varName`. If the *source* also
+declares a `theme` (a per-theme stylesheet), only the matching half is kept and
+the source emits one aggregated `token_light_dark_theme_scoped` warning naming
+how many declarations lost a half — never a silent drop of the other half.
+Found 2026-09-21: a 22-colour `light-dark()` tokens.css extracted as
+`colors: absent, warnings: []` before this existed, because `normalizeColor`
+doesn't parse `light-dark(...)` and the (then colour-blind) `familyForVar`
+name-matcher found nothing to classify it by either.
+
+### Unparseable colour values
+
+`normalizeColor` only recognises hex and `rgb()`/`rgba()` — a `hsl()`, `oklch()`
+or `color-mix()` value is legitimately out of scope for it. A variable whose
+NAME still reads as a colour (`--color-*` / `--*-color(-*)`) but whose value
+the normaliser can't parse emits `token_unparsed_color` and is dropped from the
+scale, rather than falling through `familyForVar`'s value-only color check and
+vanishing as an unclassified, unwarned token. Applies to every adapter (the
+warning fires in the shared `extractAllowedSet` normalization step, not per
+adapter).
+
 ## Normalization (shared canonical-value space)
 
 `normalizeColor` → `r,g,b[,a]`; `normalizeLength` → px (rem×16, rounded 0.1px);

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "109db489fe1b6979",
+  "bundleVersion": "9d8caae9c533cf22",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -547,8 +547,8 @@
         },
         {
           "relPath": "references/token-extraction-and-adapters.md",
-          "sha": "554da1f503ec",
-          "size": 1999
+          "sha": "4c91954c9b3b",
+          "size": 3449
         }
       ]
     }
