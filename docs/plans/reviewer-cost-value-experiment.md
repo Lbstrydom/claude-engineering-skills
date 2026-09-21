@@ -157,14 +157,10 @@ graph LR
   X --> U["5-pass union<br/>immutable pre-gate artifact"]
   U --> A["Arm A: + Flash gate<br/>(production config)"]
   U --> APLUS["Arm A+: + Pro gate"]
-  X --> B["Arm B: cold Sonnet x1"]
   X --> C["Arm C: cold Sonnet x3 union"]
-  X --> D["Arm D: cold Opus x1"]
   X --> E["Arm E: DeepSeek V4.1 Flash x3 union<br/>direct API, fingerprint-pinned"]
   A --> M["merge: blind CSV<br/>+ .blind-map.json"]
-  B --> M
   C --> M
-  D --> M
   E --> M
   APLUS --> M
   A -. paired gate ablation .- APLUS
@@ -253,7 +249,7 @@ graph LR
   accept three families.
 - **Chosen**: extend `cmdRun`'s client construction to dispatch by family
   and reuse the two helpers in the same file; add `costUsd`; add two pricing
-  rows. Current requirement served: arms B–G run through one code path
+  rows. Current requirement served: arms C and E run through one code path
   with one egress guard and one cost function.
 
 **Manual vs scripted**: corpus selection is judgment-heavy (stratification,
@@ -306,10 +302,16 @@ measurement that is not a configuration.
 |---|---|---|
 | A | **the production configuration**: one round of the 5-pass (`gpt-6-astra`, all five passes, every chunk) → immutable pre-gate artifact → one Gemini net-new review over it with **`gemini-flash-latest`** (production's default since 2026-09-07); suppression OFF. **No repair loop** — see §1. A's findings = pre-gate union ∪ Flash gate output. | `apparatus --label A --gate-model gemini-flash-latest` |
 | A+ | the same pre-gate artifact → **`gemini-pro-latest`** gate (what `cmdApparatus` pins today, `:625`). A+'s findings = pre-gate union ∪ Pro gate output. The 5-pass calls are **shared** with A: the ledger records them once, tagged `sharedBy: [A, A+]`, and each configuration's `$/diff` counts them once (shared compute, not double spend). | `apparatus --label A+ --gate-only --gate-model gemini-pro-latest` |
-| B | cold `claude-sonnet-5` ×1, same five passes | `run --label B --model claude-sonnet-5` |
 | C | cold `claude-sonnet-5` ×3 union, temperature pinned at 1.0 | `run --label C --model claude-sonnet-5 --repeats 3 --sdk` |
-| D | cold `claude-opus-5` ×1 | `run --label D --model claude-opus-5` |
 | E | **the cheap challenger**: DeepSeek V4.1 Flash via the **direct** API (`resolveDeepseekCreds`, OpenAI-compatible), id `deepseek-flash`, ×3 union, temperature pinned at 1.0. `deepseek-flash` is an **unversioned alias** (the response's `model` field echoes the alias, verified 2026-09-21), so the manifest pins the response `system_fingerprint` captured at preflight and the runner **refuses any cell whose response fingerprint differs** — a silent V4.2 behind the same alias would otherwise change the arm mid-run. | `run --label E --model deepseek-flash --repeats 3` |
+
+**Arms B (cold Sonnet ×1) and D (cold Opus ×1) are dropped, not deferred**
+(operator decision, 2026-09-21 revision below): both were run in an earlier,
+pre-exp-5 test and produced expensive, poor results — a single-shot cold
+review is already known to be noisy regardless of model, and the natural fix
+(×3 union) is only cost-justified for Sonnet, not Opus. There is therefore no
+version of either arm worth spending on: Opus exits the experiment entirely
+rather than being retested at ×1 for the same reason C exists instead of B.
 
 **Gate ablation (not a candidate)** — *Pro vs Flash, paired*: both gates
 consume the **same immutable pre-gate artifact** `S-pregate-A-<sha>.json`
@@ -333,7 +335,7 @@ wire protocol: `anthropic`, `openai`, `gemini`, `openrouter`, `deepseek`
 model it routes to; an `openai/…` OpenRouter slug is recipient
 `openrouter`, not `openai`; `deepseek-flash` reached directly is recipient
 `deepseek`, while `deepseek/…` via OpenRouter would be `openrouter`.
-Arms A/A+ need `openai` **and** `gemini`; B–D need `anthropic`; E needs
+Arms A/A+ need `openai` **and** `gemini`; C needs `anthropic`; E needs
 `deepseek`. A corpus entry lacking a required recipient cannot run that
 arm and is `excluded` for it — never silently routed around. (Under policy
 v2 no entry lacks any of these; the rule is kept because the policy file is
@@ -377,7 +379,7 @@ present), reported as **adjudicated-HIGH count** and as the weighted
 
 **Decision function (H5)** — deterministic, run by `score --decide`, inputs
 `{cohort, configurations[], scoreArms output, ledger aggregates}`. Only
-**configuration candidates** (A, A+, B–G) are inputs; the gate ablation is
+**configuration candidates** (A, A+, C, E) are inputs; the gate ablation is
 never a candidate (R2-H3). `A` below is always the **production
 configuration** (5-pass + Flash), because that is what consumers have today:
 
@@ -401,7 +403,7 @@ configuration** (5-pass + Flash), because that is what consumers have today:
    that branch is live, not hypothetical).
 4. A replacement candidate is **acceptable** iff `value ≥ 0.9 × best.value`
    (it is trusted by construction). **No cost condition gates
-   acceptability** — cost decides *among* acceptable arms, so A+, B and D
+   acceptability** — cost decides *among* acceptable arms, so A+, C and E
    compete on value first and are never disqualified for costing more than a
    discount they were never meant to meet.
 5. **Winner** = the arm with the lowest `$/diff` in the set
@@ -503,7 +505,7 @@ manifest (resolved ids, DeepSeek fingerprint); with
 §3 registry: **A** = `apparatus --label A --gate-model gemini-flash-latest`
 (writes the pre-gate artifact + `G-flash`), then **A+** = `apparatus --label
 A+ --gate-only --gate-model gemini-pro-latest` (consumes that artifact, writes `G-pro`),
-then B–E via `run` (E first does one preflight call to capture the
+then C and E via `run` (E first does one preflight call to capture the
 `system_fingerprint` into the manifest). The gate ablation needs no extra
 call — it is the paired read of `G-flash` vs `G-pro`. One sitting;
 `--resume` on interruption; artifacts under `.audit-loop/solo-control/`
@@ -585,7 +587,7 @@ exp-3 method), reported as a *separate* measurement. Files: none new.
   a provider stub for any transport; the assertion is on the *emitted
   request body*, not the client config. Recipient policy refuses **before**
   client construction (constructor spy never called).
-- **Integration**: one commit through configurations A, A+, B and E
+- **Integration**: one commit through configurations A, A+, C and E
   end-to-end against stubbed providers (E's stub returns a fixed
   `system_fingerprint`; a second stub returning a different one makes the
   cell `provider-error: fingerprint-drift`); artifacts round-trip through `merge` (with `sev`
@@ -626,6 +628,7 @@ incident:
 - **Gemini round 1**: CONCERNS, 4 new (G1 HIGH: `decide()` could never accept the incumbent — `$/diff ≤ 0.25×A` is false for A itself — and held frontier arms to a challenger-only discount; G2 HIGH: no fallback when A fails the trust bar, which exp-1 measured at ~40%; G3 MEDIUM: `recipientPolicy` undefined for bare `--commits`; G4 MEDIUM: shared-row aggregation predicate ambiguous), 0 wrongly dismissed, deliberation "exemplary". All four accepted: roles + total winner rule + incumbent-ineligible fallback + `nonInferiorCheap` as a reported finding; committed `recipient-policy.json` as the one source; scoring vs budget predicates stated. Gemini round 2 follows (cap 2).
 
 - **2026-09-21 revision (operator decisions, not an audit round)**: (1) policy v2 — wine-cellar-app now permits `openrouter`/`deepseek`/`alibaba`, collapsing the two cohorts into one; (2) one cheap challenger instead of three, chosen by live benchmark + price + route stability: DeepSeek V4.1 Flash direct (`deepseek-flash`), fingerprint-pinned; Grok/Qwen-max dropped as frontier-priced, GLM-5.3-Flash and Qwen3.8-Flash pre-registered as fallbacks. Corpus v3 keeps v2's 35 shas; only `allowedTransports` changed.
+- **2026-09-21 revision 2 (operator decision, not an audit round)**: Arms B (cold Sonnet ×1) and D (cold Opus ×1) dropped from the registry, before any Phase 3 spend. Reason (operator, from a prior test run outside this experiment): a single-shot cold review already produces expensive, poor results regardless of model, and re-measuring that here would spend real money confirming a known result. The ×3 fix is cost-justified only for Sonnet (kept as Arm C); Opus ×3 is not, so Opus exits the experiment entirely rather than being retested at ×1. Configuration candidates are now `{A, A+, C, E}`; every §3–§9 reference to B/D updated to match (mermaid diagram, arms table, recipient vocabulary, `decide()` candidate set and step-4 example, Phase 3 recipe, Testing Strategy integration case).
 
 ## Implementation Log
 
