@@ -186,3 +186,46 @@ test('cmdRun proceeds past the policy gate for the same commit once the repo IS 
     fs.rmSync(S_FINDINGS_PATH, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
   }
 });
+
+// ── cmdApparatus: the wired CLI (regression + Sonnet-as-gate dispatch) ─────
+
+const A_FINDINGS_PATH = '.audit-loop/solo-control/S-findings-A.json';
+const A_SONNET_FINDINGS_PATH = '.audit-loop/solo-control/S-findings-A-sonnet-gate.json';
+
+test('cmdApparatus does not crash on a real invocation — regression lock for the planIncrementalRun/units signature mismatch', () => {
+  // planIncrementalRun's signature moved from {requested} to {units} while
+  // reconciling with the commit_sha identity fix (origin PR #110); cmdRun's
+  // call site was updated but cmdApparatus's was not, so every real
+  // cmdApparatus invocation threw "Cannot read properties of undefined
+  // (reading 'filter')" before ever reaching a single commit. Caught by
+  // hand before shipping, but a real commit slipped through review once —
+  // this locks it so it can't again.
+  fs.rmSync(A_FINDINGS_PATH, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
+  try {
+    const output = runCli(['apparatus', '--commits', 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef']);
+    assert.doesNotMatch(output, /TypeError|Cannot read propert/, `cmdApparatus crashed:\n${output}`);
+    assert.match(output, /NOT FOUND/);
+    const written = JSON.parse(fs.readFileSync(A_FINDINGS_PATH, 'utf8'));
+    assert.equal(written.perCommit[0].state, 'not-found');
+  } finally {
+    fs.rmSync(A_FINDINGS_PATH, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
+  }
+});
+
+test('cmdApparatus --gate-model claude-sonnet-5 dispatches to the anthropic gate branch without crashing (no provider spend — commit not found short-circuits first)', () => {
+  fs.rmSync(A_SONNET_FINDINGS_PATH, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
+  try {
+    const output = runCli(['apparatus', '--label', 'A-sonnet-gate', '--gate-model', 'claude-sonnet-5', '--commits', 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef']);
+    assert.doesNotMatch(output, /TypeError|Cannot read propert|no adapter yet/, `unexpected dispatch failure:\n${output}`);
+    assert.match(output, /claude-sonnet-5 review/, 'the kickoff line must name the resolved gate model, proving dispatch reached the anthropic branch, not the gemini default');
+    const written = JSON.parse(fs.readFileSync(A_SONNET_FINDINGS_PATH, 'utf8'));
+    assert.equal(written.perCommit[0].state, 'not-found');
+  } finally {
+    fs.rmSync(A_SONNET_FINDINGS_PATH, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
+  }
+});
+
+test('cmdApparatus refuses a gate model with no wired adapter (e.g. an OpenRouter id) before doing any work', () => {
+  const output = runCli(['apparatus', '--gate-model', 'qwen/qwen3.8-max', '--commits', 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef']);
+  assert.match(output, /FATAL:.*openrouter.*no adapter yet/);
+});

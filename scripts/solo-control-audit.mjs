@@ -92,6 +92,7 @@ import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { log, argOption, hasFlag } from './lib/cli-io.mjs';
 import { dupHash } from './lib/solo-control/cluster-propose.mjs';
 import { classifyRecipient } from './lib/solo-control/recipient.mjs';
+import { zodToOpenAiJsonSchema } from './lib/oss-structured-output.mjs';
 import { loadRecipientPolicy, resolveAndAuthorize } from './lib/solo-control/policy.mjs';
 import { loadCorpus, entriesEligibleForRecipient } from './lib/solo-control/corpus.mjs';
 import { computeCallId, appendLedgerRow } from './lib/solo-control/ledger.mjs';
@@ -902,19 +903,30 @@ async function runGptPass(client, zodTextFormat, gptModel, passName, diff, reaso
   return { findings: resp.output_parsed?.findings || [], usage: resp.usage || null };
 }
 
+/**
+ * The ONE gate-review prompt builder — every gate candidate (Flash, Pro,
+ * Sonnet-<effort>, ...) sends BYTE-IDENTICAL text for the same (collected,
+ * diff), so the ablation compares gate MODELS, not prompt wording. Factored
+ * out for the same reason as buildColdPassPrompt: a structural guarantee via
+ * one shared function, not a maintained coincidence between two copies.
+ */
+function buildGateReviewPrompt(collected, diff) {
+  const priorList = collected.slice(0, 40).map((f) => `- [${f.severity}] ${f.category}: ${(f.detail || '').slice(0, 160)}`).join('\n');
+  return [
+    'You are the final-gate reviewer. Below are findings already raised by a prior audit.',
+    'Emit ONLY NET-NEW findings the prior audit MISSED (do not restate). Return per the schema.',
+    `## Prior findings\n${priorList || '(none)'}`,
+    `## Subject under audit\n${diff}`,
+  ].join('\n\n');
+}
+
 /** Gemini net-new review over the collected GPT findings (mirrors callGeminiDefault). */
 async function runGeminiReview(geminiModel, collected, diff) {
   if (!process.env.GEMINI_API_KEY) return { findings: [], skipped: 'no-key' };
   const { GoogleGenAI } = await import('@google/genai');
   const { zodToGeminiSchema } = await import('./lib/schemas.mjs');
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const priorList = collected.slice(0, 40).map((f) => `- [${f.severity}] ${f.category}: ${(f.detail || '').slice(0, 160)}`).join('\n');
-  const prompt = [
-    'You are the final-gate reviewer. Below are findings already raised by a prior audit.',
-    'Emit ONLY NET-NEW findings the prior audit MISSED (do not restate). Return per the schema.',
-    `## Prior findings\n${priorList || '(none)'}`,
-    `## Subject under audit\n${diff}`,
-  ].join('\n\n');
+  const prompt = buildGateReviewPrompt(collected, diff);
   assertEgressSafe(prompt, { label: 'apparatus:gemini' });
   const resp = await ai.models.generateContent({
     model: geminiModel, contents: prompt,
@@ -922,6 +934,48 @@ async function runGeminiReview(geminiModel, collected, diff) {
   });
   let parsed = null; try { parsed = JSON.parse(resp.text); } catch { /* conformance miss */ }
   return { findings: parsed?.findings || [] };
+}
+
+/**
+ * Claude's gate-ablation counterpart to runGeminiReview — a third candidate
+ * (Flash vs Pro vs Sonnet-<effort>) in the gate ablation, paired against the
+ * SAME immutable pre-gate artifact and never ranked in decide() (plan §3
+ * "Gate ablation (not a candidate)"). Mirrors runGeminiReview's prompt text
+ * VERBATIM (same "emit only net-new" framing, same priorList/diff shape) so
+ * the ablation compares GATE MODELS, not prompt wording — but uses Claude's
+ * OWN structured-output mechanism (forced tool-use), matching how
+ * runGeminiReview/runGptPass each use their model's best mechanism rather
+ * than a shared lowest-common-denominator one. This is deliberately NOT the
+ * buildColdPassPrompt fairness rule (that isolates the MODEL for the cold-
+ * arm comparison); the gate ablation asks "which model, at its best, makes
+ * a better gate", so each gate gets its native structured-output path.
+ *
+ * @param {import('@anthropic-ai/sdk').default} client - createAnthropicClient({backend:'sdk'})
+ * @param {string} model - resolved Claude model id (e.g. claude-sonnet-5)
+ * @param {Array} collected - the GPT 5-pass deduped union
+ * @param {string} diff - chunks[0] — same "gate sees chunk 0 only" limitation as the Gemini gates
+ * @param {{reasoningEffort?: 'low'|'medium'|'high'}} [opts] - 'high' is the max effort tier
+ *   this repo has for Claude (no numeric thinking-budget knob exists here, unlike Gemini)
+ */
+async function runClaudeGateReview(client, model, collected, diff, { reasoningEffort = 'high' } = {}) {
+  const prompt = buildGateReviewPrompt(collected, diff);
+  assertEgressSafe(prompt, { label: 'apparatus:claude-gate' });
+
+  const params = {
+    model, max_tokens: 8000,
+    messages: [{ role: 'user', content: prompt }],
+    tools: [{ name: 'emit_findings', description: 'Return the net-new findings.', input_schema: zodToOpenAiJsonSchema(ShadowPassSchema) }],
+    tool_choice: { type: 'tool', name: 'emit_findings' },
+  };
+  if (reasoningEffort) params.output_config = { effort: reasoningEffort };
+
+  let resp;
+  try { resp = await client.messages.create(params, { timeoutMs: 300000 }); }
+  catch (err) { return { findings: [], skipped: `error: ${String(err?.message || err).slice(0, 160)}` }; }
+
+  const toolUse = Array.isArray(resp.content) ? resp.content.find((c) => c.type === 'tool_use') : null;
+  const check = ShadowPassSchema.safeParse(clampToSchema(toolUse?.input ?? null));
+  return { findings: check.success ? check.data.findings : [], usage: resp.usage || null };
 }
 
 /** Gemini as a FROM-SCRATCH generator — same open-ended "audit this diff" task
@@ -958,7 +1012,15 @@ const pregatePath = (sha) => path.join(OUT_DIR, `S-pregate-A-${sha}.json`);
 /** Gate-output artifact path, tagged by a short gate label derived from the
  * resolved model id (falls back to a sanitised full id for an unrecognised gate). */
 function gatePath(sha, resolvedGateModel) {
-  const tag = /flash/i.test(resolvedGateModel) ? 'flash' : /pro/i.test(resolvedGateModel) ? 'pro' : resolvedGateModel.replace(/[^a-z0-9]+/gi, '-');
+  // Scoped to the known gate-vendor id SHAPES (gemini-*/claude-*), not a bare
+  // substring match — "flash"/"pro" alone would also match a non-gate model
+  // that happens to contain the word (e.g. deepseek-flash, the exp-5 cold-arm
+  // challenger), colliding two unrelated models onto one gate-output filename.
+  const tag = /^gemini-.*flash/i.test(resolvedGateModel) ? 'flash'
+    : /^gemini-.*pro/i.test(resolvedGateModel) ? 'pro'
+    : /^claude-.*sonnet/i.test(resolvedGateModel) ? 'sonnet'
+    : /^claude-.*opus/i.test(resolvedGateModel) ? 'opus'
+    : resolvedGateModel.replace(/[^a-z0-9]+/gi, '-');
   return path.join(OUT_DIR, `G-${tag}-A-${sha}.json`);
 }
 function sha256hex(text) {
@@ -986,17 +1048,26 @@ async function cmdApparatus() {
   try { const mr = await import('./lib/model-resolver.mjs'); await mr.refreshModelCatalog?.(); } catch { /* offline */ }
   const gptModel = resolveModel('latest-gpt');
   const gateModelArg = argOption('gate-model', 'latest-pro'); // legacy default preserved
-  const geminiModel = resolveModel(gateModelArg);
+  const gateModel = resolveModel(gateModelArg);
+  // Gate ablation (plan §3): Flash/Pro (gemini) or Sonnet/Opus-class (anthropic)
+  // — a third gate vendor would need a new branch below, same shape as cmdRun's
+  // recipient dispatch. Never construct a client for a recipient not being used.
+  const gateRecipient = classifyRecipient(gateModel);
+  const gateReasoningEffort = argOption('gate-reasoning-effort', 'high'); // anthropic gate only; 'high' is the max tier this repo has for Claude
   const client = await createOpenAIClient({ purpose: 'gpt' });
+  const anthropicGateClient = gateRecipient === 'anthropic' ? await createAnthropicClient({ backend: 'sdk' }) : null;
+  if (gateRecipient !== 'gemini' && gateRecipient !== 'anthropic') {
+    log(`FATAL: gate recipient "${gateRecipient}" has no adapter yet (gemini/anthropic only).`); process.exit(2);
+  }
 
   let requested;
   if (corpusArg) {
     const corpus = loadCorpus(corpusArg, recipientPolicy);
-    // apparatus dispatches to BOTH openai (5-pass) and gemini (gate) per
+    // apparatus dispatches to BOTH openai (5-pass) and the gate's recipient per
     // commit — an entry must be eligible for the FULL pipeline, not just one leg.
     const openaiEligible = new Set(entriesEligibleForRecipient(corpus, 'openai'));
-    requested = entriesEligibleForRecipient(corpus, 'gemini').filter((id) => openaiEligible.has(id));
-    if (commitsArg) log(`  (--corpus given — ignoring --commits; ${requested.length}/${corpus.entries.length} corpus entries are eligible for both openai and gemini)`);
+    requested = entriesEligibleForRecipient(corpus, gateRecipient).filter((id) => openaiEligible.has(id));
+    if (commitsArg) log(`  (--corpus given — ignoring --commits; ${requested.length}/${corpus.entries.length} corpus entries are eligible for both openai and ${gateRecipient})`);
   } else if (commitsArg) {
     requested = commitsArg.split(',').map((s) => s.trim()).filter(Boolean);
   } else {
@@ -1005,22 +1076,26 @@ async function cmdApparatus() {
 
   const dest = sFindingsPath(label);
   const prior = fs.existsSync(dest) ? JSON.parse(fs.readFileSync(dest, 'utf8')) : null;
+  // cmdApparatus has no auto-discovery path (always manual --commits/--corpus),
+  // so every unit's resumeKey is just its sha — wrap/unwrap around the shared
+  // planIncrementalRun contract without changing this function's own sha-based loop body.
+  const requestedUnits = requested.map((sha) => ({ mode: 'manual', resumeKey: sha, commitSha: sha, auditedSha: null, auditedTree: null }));
   let plan;
-  try { plan = planIncrementalRun({ requested, prior, force, resume }); }
+  try { plan = planIncrementalRun({ units: requestedUnits, prior, force, resume }); }
   catch (err) { log(`FATAL: ${err.message}`); process.exit(2); }
-  const { commits } = plan;
+  const commits = plan.commits.map((u) => u.commitSha);
   const out = prior && !force
     ? { ...prior, generatedFor: [...new Set([...(prior.generatedFor || []), ...requested])] }
-    : { armLabel: label, model: `${gptModel}+${geminiModel}`, modelArg: `apparatus(latest-gpt→${gateModelArg})`, stageType: STAGE_TYPE, generatedFor: requested, findings: [], perCommit: [] };
+    : { armLabel: label, model: `${gptModel}+${gateModel}`, modelArg: `apparatus(latest-gpt→${gateModelArg})`, stageType: STAGE_TYPE, generatedFor: requested, findings: [], perCommit: [] };
   out.armLabel = label;
   out.provenance = {
-    composition: gateOnly ? 'gate-only(reuses saved pre-gate artifact)' : 'gpt-5pass→gemini-review',
-    gptModel, geminiModel, gateModel: gateModelArg, maxChars, retro: true,
+    composition: gateOnly ? 'gate-only(reuses saved pre-gate artifact)' : `gpt-5pass→${gateRecipient}-review`,
+    gptModel, gateModel, gateRecipient, gateReasoningEffort: gateRecipient === 'anthropic' ? gateReasoningEffort : null, maxChars, retro: true,
     note: 'NOT persisted to audit_findings — experiment-local (keeps Phase-1 ledger clean)',
   };
 
   if (commits.length === 0) { log(`All ${requested.length} commit(s) already covered for ${label} — nothing to do.`); process.exit(0); }
-  log(`Apparatus retro — arm=${label} · ${gateOnly ? 'GATE-ONLY over saved pre-gate' : gptModel + ' 5-pass'} → ${geminiModel} review · ${commits.length} new commit(s)`);
+  log(`Apparatus retro — arm=${label} · ${gateOnly ? 'GATE-ONLY over saved pre-gate' : gptModel + ' 5-pass'} → ${gateModel} review · ${commits.length} new commit(s)`);
 
   for (const sha of commits) {
     const short = sha.slice(0, 8);
@@ -1045,7 +1120,7 @@ async function cmdApparatus() {
       const root = locateCommit(sha);
       if (!root) { log(`  ${short}: NOT FOUND — skipped`); out.perCommit.push({ sha, state: 'not-found' }); continue; }
       const repoIdentity = repoIdentityFor(root);
-      try { resolveAndAuthorize({ model: gptModel, repoIdentity, policy: recipientPolicy }); resolveAndAuthorize({ model: geminiModel, repoIdentity, policy: recipientPolicy }); }
+      try { resolveAndAuthorize({ model: gptModel, repoIdentity, policy: recipientPolicy }); resolveAndAuthorize({ model: gateModel, repoIdentity, policy: recipientPolicy }); }
       catch (err) { log(`  ${short}: POLICY REFUSED (${err.message}) — skipped, not sent`); out.perCommit.push({ sha, repo: path.basename(root), state: 'policy-refused', error: err.message }); continue; }
       try { ext = extractDiff(root, sha); }
       catch (err) {
@@ -1090,16 +1165,18 @@ async function cmdApparatus() {
     }
 
     // Gate — net-new over the deduped union (whichever way it was produced).
-    let geminiFindings = [];
+    let gateFindings = [];
     try {
-      const r = await runGeminiReview(geminiModel, collected, chunks[0] || '');
-      geminiFindings = r.findings;
-      recordCall({ arm: label, commit: sha, purpose: 'gate', pass: 'apparatus-gate', chunkIndex: 0, repeatIndex: 0, resolvedModel: geminiModel, recipient: 'gemini', usage: r.usage || null, state: 'ok' });
+      const r = gateRecipient === 'anthropic'
+        ? await runClaudeGateReview(anthropicGateClient, gateModel, collected, chunks[0] || '', { reasoningEffort: gateReasoningEffort })
+        : await runGeminiReview(gateModel, collected, chunks[0] || '');
+      gateFindings = r.findings;
+      recordCall({ arm: label, commit: sha, purpose: 'gate', pass: 'apparatus-gate', chunkIndex: 0, repeatIndex: 0, resolvedModel: gateModel, recipient: gateRecipient, usage: r.usage || null, state: 'ok' });
     } catch (err) {
-      log(`      ! gemini review failed: ${String(err?.message).slice(0, 120)}`);
-      recordCall({ arm: label, commit: sha, purpose: 'gate', pass: 'apparatus-gate', chunkIndex: 0, repeatIndex: 0, resolvedModel: geminiModel, recipient: 'gemini', usage: null, state: 'provider-error' });
+      log(`      ! ${gateRecipient} gate review failed: ${String(err?.message).slice(0, 120)}`);
+      recordCall({ arm: label, commit: sha, purpose: 'gate', pass: 'apparatus-gate', chunkIndex: 0, repeatIndex: 0, resolvedModel: gateModel, recipient: gateRecipient, usage: null, state: 'provider-error' });
     }
-    atomicWriteFileSync(gatePath(sha, geminiModel), JSON.stringify({ sha, gateModel: geminiModel, findings: geminiFindings }, null, 2));
+    atomicWriteFileSync(gatePath(sha, gateModel), JSON.stringify({ sha, gateModel, findings: gateFindings }, null, 2));
 
     // Composite assembly: pre-gate union ∪ this gate's output, tagged stage.
     const seen = new Set();
@@ -1112,12 +1189,12 @@ async function cmdApparatus() {
       out.findings.push({ commit: sha, repo: repoBasename, model: out.model, pass: 'apparatus', stage: 'pregate', severity: f.severity, category: f.category, section: file, detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix, _dup: h });
       commitFindings++;
     }
-    for (const f of geminiFindings) {
+    for (const f of gateFindings) {
       const file = f.section || (ext.files[0] || '');
       const h = dupHash(f.category, file, f.detail);
       if (seen.has(h)) continue;
       seen.add(h);
-      out.findings.push({ commit: sha, repo: repoBasename, model: out.model, pass: 'apparatus', stage: 'gate', gateModel: geminiModel, severity: f.severity, category: f.category, section: file, detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix, _dup: h });
+      out.findings.push({ commit: sha, repo: repoBasename, model: out.model, pass: 'apparatus', stage: 'gate', gateModel, severity: f.severity, category: f.category, section: file, detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix, _dup: h });
       commitFindings++;
     }
     log(`      → ${commitFindings} finding(s)`);
@@ -2028,4 +2105,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 export const _internals = {
   chunkDiff, continuationMarker, planIncrementalRun, repoIdentityFor, buildColdPassPrompt,
   sha256hex, gatePath, pregatePath, extractDiff, extractAuditedDiff, locateCommit, treeExists, partitionDiscoveredRows,
+  runClaudeGateReview, runGeminiReview, buildGateReviewPrompt,
 };

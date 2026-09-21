@@ -364,12 +364,104 @@ test('sha256hex: deterministic and sensitive to every byte (the pre-gate integri
   assert.equal(soloCtl.sha256hex(''), soloCtl.sha256hex(null), 'null/undefined gateContext must hash as empty, never throw');
 });
 
-test('gatePath: derives a short, stable tag from the resolved gate model (flash/pro), never leaks the full id when a short tag is available', () => {
+test('gatePath: derives a short, stable tag from the resolved gate model (flash/pro/sonnet/opus), never leaks the full id when a short tag is available', () => {
   assert.match(soloCtl.gatePath('abc123', 'gemini-flash-latest'), /G-flash-A-abc123\.json$/);
   assert.match(soloCtl.gatePath('abc123', 'gemini-pro-latest'), /G-pro-A-abc123\.json$/);
+  // Claude gate candidates (the Sonnet-as-gate ablation) get their own short tags too.
+  assert.match(soloCtl.gatePath('abc123', 'claude-sonnet-5'), /G-sonnet-A-abc123\.json$/);
+  assert.match(soloCtl.gatePath('abc123', 'claude-opus-5'), /G-opus-A-abc123\.json$/);
   // An unrecognised gate model falls back to a sanitised full id rather than
   // colliding two different gate models onto the same filename.
-  assert.match(soloCtl.gatePath('abc123', 'claude-opus-5'), /G-claude-opus-5-A-abc123\.json$/);
+  assert.match(soloCtl.gatePath('abc123', 'grok-4.6'), /G-grok-4-6-A-abc123\.json$/);
+});
+
+test('gatePath: the tag match is scoped to the vendor id SHAPE, not a bare substring — a non-gate model containing "flash"/"pro" as a word must not collide with the real Gemini gate tags', () => {
+  // deepseek-flash is the exp-5 cold-arm challenger (Arm E), never a gate
+  // candidate today — but it contains the literal word "flash", and a bare
+  // /flash/i test would tag it identically to gemini-flash-latest's gate
+  // output file, silently merging two unrelated models' artifacts.
+  assert.doesNotMatch(soloCtl.gatePath('abc123', 'deepseek-flash'), /G-flash-A-abc123\.json$/);
+  assert.match(soloCtl.gatePath('abc123', 'deepseek-flash'), /G-deepseek-flash-A-abc123\.json$/);
+});
+
+// ── the third gate candidate: runClaudeGateReview (Sonnet-as-gate) ─────────
+
+test('buildGateReviewPrompt: deterministic and byte-identical for the same (collected, diff) — the gate-ablation fairness contract', () => {
+  // This is what makes runGeminiReview and runClaudeGateReview send
+  // byte-equal text: both call this ONE function rather than each building
+  // their own copy, so the ablation compares GATE MODELS, not prompt wording.
+  const collected = [{ severity: 'HIGH', category: 'bug', detail: 'x' }];
+  const a = soloCtl.buildGateReviewPrompt(collected, 'diff --git a/x b/x\n+foo();\n');
+  const b = soloCtl.buildGateReviewPrompt(collected, 'diff --git a/x b/x\n+foo();\n');
+  assert.equal(a, b);
+  assert.match(a, /Emit ONLY NET-NEW findings the prior audit MISSED/);
+  assert.match(a, /## Prior findings\n- \[HIGH\] bug: x/);
+  assert.match(a, /## Subject under audit\ndiff --git a\/x b\/x/);
+});
+
+test('buildGateReviewPrompt: empty collected findings reads as "(none)", never an empty section that looks like a parse failure', () => {
+  assert.match(soloCtl.buildGateReviewPrompt([], 'X'), /## Prior findings\n\(none\)/);
+});
+
+function stubAnthropicClient(handler) {
+  let calls = 0;
+  return {
+    messages: {
+      create: async (params, opts) => { calls++; return handler(params, opts); },
+    },
+    get callCount() { return calls; },
+  };
+}
+
+test('runClaudeGateReview: sends the shared prompt verbatim, forces the emit_findings tool, and applies the requested reasoning effort', async () => {
+  let seenParams = null;
+  const client = stubAnthropicClient((params) => {
+    seenParams = params;
+    return { content: [{ type: 'tool_use', input: { findings: [{ id: 'H1', severity: 'HIGH', category: 'bug', section: 'x.js', detail: 'd', risk: 'r', recommendation: 'fix', is_quick_fix: false, is_mechanical: false, is_reopened: false, principle: 'p', classification: { sonarType: 'BUG', effort: 'EASY', sourceKind: 'MODEL', sourceName: 'claude-gate' } }] } }], usage: { input_tokens: 10, output_tokens: 5 } };
+  });
+  const collected = [{ severity: 'MEDIUM', category: 'style', detail: 'already raised' }];
+  const r = await soloCtl.runClaudeGateReview(client, 'claude-sonnet-5', collected, 'DIFF-TEXT', { reasoningEffort: 'medium' });
+
+  assert.equal(seenParams.model, 'claude-sonnet-5');
+  assert.equal(seenParams.messages[0].content, soloCtl.buildGateReviewPrompt(collected, 'DIFF-TEXT'));
+  assert.equal(seenParams.tool_choice.name, 'emit_findings');
+  assert.equal(seenParams.output_config.effort, 'medium');
+  assert.equal(r.findings.length, 1);
+  assert.equal(r.findings[0].category, 'bug');
+});
+
+test('runClaudeGateReview: defaults to "high" effort — the max tier this repo has for Claude — when the caller passes none', async () => {
+  let seenParams = null;
+  const client = stubAnthropicClient((params) => { seenParams = params; return { content: [{ type: 'tool_use', input: { findings: [] } }] }; });
+  await soloCtl.runClaudeGateReview(client, 'claude-sonnet-5', [], 'X');
+  assert.equal(seenParams.output_config.effort, 'high');
+});
+
+test('runClaudeGateReview: a provider error degrades to a conformance-style empty result, never a thrown crash', async () => {
+  const client = stubAnthropicClient(() => { throw new Error('network blip'); });
+  const r = await soloCtl.runClaudeGateReview(client, 'claude-sonnet-5', [], 'X');
+  assert.deepEqual(r.findings, []);
+  assert.match(r.skipped, /network blip/);
+});
+
+test('runClaudeGateReview: a tool_use input that fails schema validation (or a missing tool_use block) returns empty findings, not a thrown parse error', async () => {
+  const missingToolUse = stubAnthropicClient(() => ({ content: [{ type: 'text', text: 'sorry, no tool call' }] }));
+  const r1 = await soloCtl.runClaudeGateReview(missingToolUse, 'claude-sonnet-5', [], 'X');
+  assert.deepEqual(r1.findings, []);
+
+  const malformedInput = stubAnthropicClient(() => ({ content: [{ type: 'tool_use', input: { findings: 'not-an-array' } }] }));
+  const r2 = await soloCtl.runClaudeGateReview(malformedInput, 'claude-sonnet-5', [], 'X');
+  assert.deepEqual(r2.findings, []);
+});
+
+test('runClaudeGateReview: a diff carrying a real secret pattern refuses BEFORE the client is ever called', async () => {
+  const client = stubAnthropicClient(() => ({ content: [{ type: 'tool_use', input: { findings: [] } }] }));
+  const dirtyDiff = 'aws_secret_key = "AKIA1234567890ABCDEF1234567890ABCDEF1234"';
+  await assert.rejects(
+    () => soloCtl.runClaudeGateReview(client, 'claude-sonnet-5', [], dirtyDiff),
+    /egress-gate/,
+  );
+  assert.equal(client.callCount, 0, 'the client must never be called for a payload the egress gate refuses');
 });
 
 test('pregatePath: one immutable artifact path per commit sha, independent of which arm/gate later reads it', () => {
