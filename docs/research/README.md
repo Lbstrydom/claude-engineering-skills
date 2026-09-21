@@ -29,6 +29,12 @@ in any public-facing material.
 | 6 | [`next-steps.md`](next-steps.md) | The roadmap — what the approved plan covers, and the four workstreams that sit *outside* it. |
 | 7 | [`experiment-4-discovery-model-glm-disqualification.md`](experiment-4-discovery-model-glm-disqualification.md) | Decision record: GLM-5.2 disqualified as a `required` discovery generator on three axes (36% availability / 80.9% FP / highest cost), the DeepSeek-V3.2-led replacement shortlist, and the two-gate (availability → quality) evaluation that must run before the default changes. Companion to `experiment-3` (which graded GLM in the *auditor* role). |
 
+## Standalone decision memos (outside the arc)
+
+| Document | Decision |
+|---|---|
+| [`claude-design-integration-memo.md`](claude-design-integration-memo.md) | Claude Design vs the skill chain (2026-09-21): adopt `/plan --mockup <committed-path>` only; no shared token extractor; no `/cycle` step until Design has version history; no lens made redundant. Side finding: `tokens.mjs` drops every `light-dark()` colour silently. |
+
 ## Data artifacts in this folder
 
 - [`data/experiment-dataset.json`](data/experiment-dataset.json) — the structured
