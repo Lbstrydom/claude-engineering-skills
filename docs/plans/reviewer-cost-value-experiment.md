@@ -468,7 +468,7 @@ replaces the human sheet (the repo's own 52%-agreement finding applies).
 | `docs/experiments/audit-effectiveness/experiment-5-adjudication-rubric.md` | create | The written impact rubric for `sev` and the `proven`/`actionable` evidence bar, fixed before any labelling. | — |
 | `tests/solo-control-dispatch.test.mjs` | create | Transport dispatch per resolved id; a sentinel input resolves once and the *resolved* id lands in the manifest; prompt text per pass is byte-equal across the three adapters (transport stubs); `costUsd` null for unpriced, numeric for priced; ledger row per call incl. retries; `--resume` re-runs only missing cells; `score` drops a `partial` commit from every arm in the cohort; `decide` returns `inconclusive` on `best.value === 0`, never ranks an ineligible arm, selects A when A is eligible and nothing beats it, selects the lowest-cost acceptable arm when A is ineligible and `acceptable` is non-empty, and the highest-value trusted arm only when `acceptable` is empty, never returns undefined, and labels `nonInferiorCheap` only under the 0.25 ceiling; scoring aggregate includes `sharedBy` rows while the budget aggregate counts each `callId` once; a bare `--commits` run on a repo absent from `recipient-policy.json` is refused; a DeepSeek cell whose response `system_fingerprint` differs from the manifest is refused and recorded `provider-error: fingerprint-drift`. | Tier 1 |
 | `tests/solo-control-egress.test.mjs` | create | (a) A diff with a sensitive path or a secret pattern reaches NO provider stub un-redacted, for all **four** recipients (anthropic, openai, gemini, openrouter). (b) A corpus entry whose `allowedTransports` excludes `openrouter` is **refused before any OpenRouter client is constructed** — asserted on the stub's constructor never being called; missing `allowedTransports` ⇒ exit 2. Same-commit obligation. | Tier 3a |
-| `docs/research/experiment-5-reviewer-cost-value.md` | create | Verdict document: corpus, manifest (resolved ids, transports, pricing version), run matrix with cell states, per-cohort per-arm table, `decide` output verbatim, what the margin does and does not claim. Written **after** `score`, never before. | — |
+| `docs/research/experiment-5-reviewer-cost-value.md` (planned) | create | Verdict document: corpus, manifest (resolved ids, transports, pricing version), run matrix with cell states, per-cohort per-arm table, `decide` output verbatim, what the margin does and does not claim. Written **after** `score`, never before. | — |
 | `docs/runbooks/model-eval-harness.md` | modify | One section: "cold-arm comparisons run on solo-control, not model-eval — and why". | — |
 
 Repo-relative path self-check: run `node scripts/lib/plan-paths.mjs
@@ -514,7 +514,7 @@ call — it is the paired read of `G-flash` vs `G-pro`. One sitting;
 --decide` per cohort → write the verdict with the run matrix and the
 `decide` output verbatim; flip the default (and revert the `audit-code`
 description clause if the rule says so) in a *separate* ship. Files:
-`docs/research/experiment-5-reviewer-cost-value.md` (create),
+`docs/research/experiment-5-reviewer-cost-value.md` (planned) (create),
 `docs/runbooks/model-eval-harness.md` (modify).
 
 **Phase 5 — Conditional, Q3**: only if no cold arm is acceptable and A wins
