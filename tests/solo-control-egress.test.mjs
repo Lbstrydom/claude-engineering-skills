@@ -23,9 +23,22 @@ const S_FINDINGS_PATH = '.audit-loop/solo-control/S-findings-S-sonnet.json';
  * confirmed live: tests/solo-control-dispatch.test.mjs's own real-policy
  * reads failed intermittently the first time this test mutated it in place. */
 function runCli(args, { policyPath } = {}) {
-  const env = policyPath ? { ...process.env, SOLO_CONTROL_RECIPIENT_POLICY_PATH: policyPath } : process.env;
+  return runCliFull(args, { policyPath }).output;
+}
+/** Same, but also the REAL exit status — a pipe through `tail` reports the
+ * pipe's exit, which is how a process.exit(3) reads as 0 (memory:
+ * feedback_pipe_masks_git_exit_code). */
+function runCliFull(args, { policyPath, scrubKeys = false } = {}) {
+  const env = { ...process.env };
+  if (policyPath) env.SOLO_CONTROL_RECIPIENT_POLICY_PATH = policyPath;
+  // For tests whose PASSING path is "the guard stops us before any call": if the
+  // guard ever regresses, the subprocess would reach a real provider. Preset
+  // keys win over the repo's env loader (dotenv no-override — verified), so an
+  // invalid key turns a regressed guard into a fast 401, not spend. Also pin
+  // the sdk backend so the cli (`claude -p`) path can't authenticate around it.
+  if (scrubKeys) Object.assign(env, { OPENAI_API_KEY: 'scrubbed', ANTHROPIC_API_KEY: 'scrubbed', GEMINI_API_KEY: 'scrubbed', DEEPSEEK_API_KEY: 'scrubbed', CLAUDE_BACKEND: 'sdk' });
   const r = spawnSync('node', ['scripts/solo-control-audit.mjs', ...args], { encoding: 'utf8', env });
-  return `${r.stdout || ''}${r.stderr || ''}`;
+  return { output: `${r.stdout || ''}${r.stderr || ''}`, status: r.status };
 }
 
 function withTempPolicyFile(policyObj, fn) {
@@ -228,4 +241,68 @@ test('cmdApparatus --gate-model claude-sonnet-5 dispatches to the anthropic gate
 test('cmdApparatus refuses a gate model with no wired adapter (e.g. an OpenRouter id) before doing any work', () => {
   const output = runCli(['apparatus', '--gate-model', 'qwen/qwen3.8-max', '--commits', 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef']);
   assert.match(output, /FATAL:.*openrouter.*no adapter yet/);
+});
+
+// ── pre-Phase-3 fixes: budget ceiling + the incumbent GPT pin ──────────────
+
+const LEDGER_PATH = '.audit-loop/solo-control/call-ledger.jsonl';
+const cleanArtifacts = () => {
+  for (const p of [S_FINDINGS_PATH, A_FINDINGS_PATH, LEDGER_PATH]) fs.rmSync(p, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
+};
+
+test('budget ceiling: cmdRun stops BEFORE any provider call when the ledger already meets the cap — exit 3, the commit recorded budget-exceeded, exactly one refused ledger row', () => {
+  // A ceiling of 0 is met by an empty ledger (0 >= 0), so the guard trips at the
+  // very first cell of a REAL commit with no network access and no spend —
+  // exactly the preflight the plan §8 promises. HEAD is a real, locatable commit.
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  cleanArtifacts();
+  try {
+    const { output, status } = runCliFull(['run', '--commits', sha, '--force', '--budget-usd', '0'], { scrubKeys: true });
+    assert.equal(status, 3, `expected exit 3 (budget), got ${status}:\n${output}`);
+    assert.match(output, /BUDGET CEILING/);
+    const written = JSON.parse(fs.readFileSync(S_FINDINGS_PATH, 'utf8'));
+    const rec = written.perCommit.find((c) => c.sha === sha);
+    assert.equal(rec.state, 'budget-exceeded');
+    assert.equal(rec.error, 'budget');
+    assert.ok(Number.isInteger(rec.expectedCells) && rec.expectedCells > 0, 'the denominator is recorded even for a refused commit');
+    const rows = fs.readFileSync(LEDGER_PATH, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.equal(rows.length, 1, 'one row: the refused cell — nothing was sent');
+    assert.equal(rows[0].state, 'provider-error');
+    assert.equal(rows[0].costUsd, null);
+  } finally { cleanArtifacts(); }
+});
+
+test('budget ceiling: cmdApparatus has the same guard on its pass cells (exit 3, nothing sent)', () => {
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  cleanArtifacts();
+  try {
+    const { output, status } = runCliFull(['apparatus', '--commits', sha, '--budget-usd', '0'], { scrubKeys: true });
+    assert.equal(status, 3, `expected exit 3 (budget), got ${status}:\n${output}`);
+    const written = JSON.parse(fs.readFileSync(A_FINDINGS_PATH, 'utf8'));
+    assert.equal(written.perCommit.find((c) => c.sha === sha).state, 'budget-exceeded');
+    const rows = fs.readFileSync(LEDGER_PATH, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.equal(rows.length, 1);
+    assert.deepEqual(rows[0].sharedBy, ['A', 'A+'], 'even a refused 5-pass cell is tagged as shared compute');
+  } finally { cleanArtifacts(); }
+});
+
+test('cmdApparatus pins the incumbent GPT to gpt-5.6-terra by default — the live catalog must not silently upgrade Arm A to a newer, unpriced model', () => {
+  // `latest-gpt` resolved to gpt-6-astra via the catalog refresh at the time of
+  // writing: unpriced here (=> costUsd:null => A ineligible => inconclusive
+  // after real spend) and not the model exp-3 validated the apparatus against.
+  cleanArtifacts();
+  try {
+    const output = runCli(['apparatus', '--commits', 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef']);
+    assert.match(output, /gpt-5\.6-terra 5-pass/);
+    assert.doesNotMatch(output, /astra/);
+    const written = JSON.parse(fs.readFileSync(A_FINDINGS_PATH, 'utf8'));
+    assert.equal(written.provenance.gptModel, 'gpt-5.6-terra');
+    assert.equal(written.provenance.gptModelArg, 'gpt-5.6-terra', 'the manifest records a CONCRETE id, never a sentinel (plan §3)');
+  } finally { cleanArtifacts(); }
+});
+
+test('cmdRun refuses a reasoning-effort tier the recipient would silently alias, before any client is built', () => {
+  const { output, status } = runCliFull(['run', '--model', 'deepseek-flash', '--label', 'E', '--reasoning-effort', 'xhigh', '--commits', 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef', '--force']);
+  assert.equal(status, 2);
+  assert.match(output, /not a deepseek tier \(valid: low\|high\|max\)/);
 });

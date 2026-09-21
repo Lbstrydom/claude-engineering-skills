@@ -38,9 +38,15 @@
  *
  * Usage:
  *   node scripts/solo-control-audit.mjs run   [--model <id>] [--label <S-x>] [--commits <sha,sha> | --corpus <path>] [--max-chars N] [--repeats N] [--sdk] [--resume]
+ *                                             [--reasoning-effort <tier>] [--budget-usd N]
  *     --label is REQUIRED for any non-anthropic recipient (exp-5); optional for anthropic (auto-derived, unchanged).
  *     --corpus <path>: exp-5 pre-registered corpus JSON, filtered to entries eligible for the resolved recipient.
- *   node scripts/solo-control-audit.mjs apparatus --commits <sha,sha> [--max-chars N] [--gate-model <id>] [--gate-only] [--resume]
+ *     --reasoning-effort: validated per recipient (anthropic low|medium|high|xhigh|max; deepseek low|high|max) — see REASONING_TIERS.
+ *     --budget-usd: experiment-wide ceiling read from the shared call ledger before every cell (default 350).
+ *   node scripts/solo-control-audit.mjs apparatus --commits <sha,sha> | --corpus <path> [--max-chars N] [--gpt-model <id>] [--gate-model <id>]
+ *                                             [--gate-reasoning-effort <tier>] [--gate-only] [--resume] [--budget-usd N]
+ *     --gpt-model defaults to the CONCRETE gpt-5.6-terra pin (never latest-gpt — the live catalog would silently upgrade it).
+ *   node scripts/solo-control-audit.mjs score [--decide]   (--decide: exp-5 decision over the call ledger; drops partial commits cohort-wide)
  *   node scripts/solo-control-audit.mjs apparatus-bc --commits <sha,sha> [--max-chars N] [--force]
  *   node scripts/solo-control-audit.mjs merge [--severity high[,medium,low]] [--commits <sha,sha>]
  *                                             [--kd-candidates] [--medium-sample N] [--seed N] [--allow-apparatus-gaps]
@@ -83,7 +89,7 @@ import { z } from 'zod';
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
 import { resolveModel } from './lib/model-resolver.mjs';
 import { PASS_PROMPTS } from './lib/prompt-seeds.mjs';
-import { ShadowPassSchema, seededShuffle } from './lib/audit-shadow.mjs';
+import { ShadowPassSchema, seededShuffle, SHADOW_PASSES } from './lib/audit-shadow.mjs';
 import { assertEgressSafe } from './lib/sensitive-egress-gate.mjs';
 import { resolveShadowArmsWithToggle } from './lib/arm-eval/toggle.mjs';
 import { classifyPath } from './lib/sensitive-paths.mjs';
@@ -98,12 +104,23 @@ import { loadCorpus, entriesEligibleForRecipient } from './lib/solo-control/corp
 import { computeCallId, appendLedgerRow } from './lib/solo-control/ledger.mjs';
 import { canonicaliseRemoteUrl } from './lib/repo-identity.mjs';
 import { costFromUsage, PRICING_VERSION } from './lib/model-pricing.mjs';
+import { normalizeGeminiUsage } from './lib/gemini-usage.mjs';
+import { readLedger, aggregateBudgetSpent, aggregateCostForArm } from './lib/solo-control/ledger.mjs';
+import { commitsCompleteForAllArms } from './lib/solo-control/completion.mjs';
 import { resolveDeepseekCreds } from './lib/model-resolver.mjs';
 
-// The 5 generation passes an arm runs (audit-shadow.mjs::SHADOW_PASSES == the
-// PASS_PROMPTS keys minus quickfix). Re-derived here so the control can't drift
-// from the baseline pass set.
-const PASSES = Object.freeze(Object.keys(PASS_PROMPTS).filter((p) => p !== 'quickfix'));
+// The generation passes an arm runs — IMPORTED from audit-shadow.mjs, never
+// re-derived. The previous line here was `PASS_PROMPTS keys minus quickfix`,
+// written when quickfix was the only mechanical wave; `duplication` and
+// `adjacency` were later added to PASS_PROMPTS as MECHANICAL waves (regex /
+// index lookups, not model calls) and this file kept sending them to every
+// model as paid LLM passes: 7 calls per chunk against a baseline of 5 — 40%
+// over-spend AND a fairness break against the very apparatus the control
+// exists to mirror. Found 2026-09-21 by a pre-spend expectedCells check
+// reading 7 where the plan said 5. AGENTS.md names this trap ("a new
+// mechanical wave must be declared in MECHANICAL_WAVES, or PASS_PROMPTS
+// silently enrols it in the paid comparison"); the fix is one oracle.
+const PASSES = SHADOW_PASSES;
 
 // Candidate local repo roots a ledger commit could live in. Always the current
 // repo (cwd), plus any extra roots from SOLO_CONTROL_REPO_ROOTS (comma-separated
@@ -178,6 +195,19 @@ function repoIdentityFor(root) {
  * as free. `sharedBy` marks a row credited to more than one arm (the
  * apparatus's shared 5-pass compute behind both A and A+).
  */
+/**
+ * The exp-5 budget ceiling (plan §8: "$350 API, enforced from the call
+ * ledger's running Σ costUsd at preflight of each cell"). Reads the SHARED
+ * ledger — every arm's spend, each callId once — so the cap is experiment-wide,
+ * not per-invocation. Returns the spend when the ceiling is breached, else
+ * null. An unpriced row cannot be summed, so `complete:false` is reported
+ * alongside: the floor is then a floor, and the caller logs that.
+ */
+function budgetBreached(budgetUsd) {
+  const { spentUsd, complete } = aggregateBudgetSpent(readLedger(CALL_LEDGER_PATH));
+  return spentUsd >= budgetUsd ? { spentUsd, complete } : null;
+}
+
 function recordCall({ arm, sharedBy = null, commit, purpose, pass, chunkIndex, repeatIndex, resolvedModel, recipient, usage, state }) {
   const callId = computeCallId({ commit, purpose, pass, chunkIndex, repeatIndex, resolvedModel });
   const priced = usage ? costFromUsage(usage, resolvedModel) : null;
@@ -481,23 +511,59 @@ function buildColdPassPrompt(passName, diff) {
 }
 const JSON_RETRY_SUFFIX = '\n\nYour previous reply was not valid JSON. Reply with ONLY the JSON object.';
 
+/**
+ * Reasoning-effort tiers per recipient, verified against each vendor's docs
+ * 2026-09-21. The tables are deliberately NOT unified: DeepSeek silently
+ * aliases `xhigh` → `high` and `medium` → `high`, so passing an Anthropic tier
+ * through would record one effort in the manifest and run another. A tier
+ * not in the recipient's table is refused at the CLI, never remapped.
+ *
+ * - anthropic: `output_config.effort`; `high` is the API default (identical to
+ *   omitting it); `max` is documented to overthink structured output, so
+ *   `xhigh` is the above-default tier exp-5 uses.
+ * - deepseek: `thinking.reasoning_effort`; thinking is ON by default at `high`;
+ *   `max` is the only above-default tier. Thinking mode IGNORES `temperature`.
+ *
+ * `maxTokens` is the vendor-documented ceiling that thinking shares with the
+ * answer — raising effort without raising it truncates the chain of thought
+ * and reads as a conformance miss, an instrument artifact the experiment
+ * would then mis-score as "the model found less".
+ */
+const REASONING_TIERS = Object.freeze({
+  anthropic: Object.freeze({ low: 8000, medium: 8000, high: 8000, xhigh: 64000, max: 64000 }),
+  deepseek: Object.freeze({ low: 65536, high: 65536, max: 131072 }),
+});
+function assertReasoningTier(recipient, tier) {
+  if (tier == null) return null;
+  const table = REASONING_TIERS[recipient];
+  if (!table) throw new Error(`--reasoning-effort is not supported for recipient "${recipient}"`);
+  if (!Object.hasOwn(table, tier)) {
+    throw new Error(`--reasoning-effort "${tier}" is not a ${recipient} tier (valid: ${Object.keys(table).join('|')}) — refusing rather than letting the provider silently remap it`);
+  }
+  return tier;
+}
+
 /** Run one audit pass with the author model over the cold diff, minus the
  * reservation/cost machinery (offline, uncapped — this is a bounded 20-call
  * batch, not the live spend path). See buildColdPassPrompt for the shared
- * prompt shape. */
-async function runPass(client, model, passName, diff, { temperature } = {}) {
+ * prompt shape. `reasoningEffort` null ⇒ omit `output_config` entirely (the
+ * API default, `high`) so the pre-exp-5 solo-control:catchup request body
+ * stays byte-identical. */
+async function runPass(client, model, passName, diff, { temperature, reasoningEffort = null } = {}) {
   const { system, user } = buildColdPassPrompt(passName, diff);
+  const maxTokens = reasoningEffort ? REASONING_TIERS.anthropic[reasoningEffort] : 8000;
   let lastErr = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
     let resp;
     try {
       const params = {
-        model, max_tokens: 8000, system,
+        model, max_tokens: maxTokens, system,
         messages: [{ role: 'user', content: attempt === 1 ? user : user + JSON_RETRY_SUFFIX }],
       };
       // temperature only meaningful on the SDK backend (cli `claude -p` ignores it);
       // pinned non-zero for --repeats so the N samples are genuinely independent.
       if (temperature != null) params.temperature = temperature;
+      if (reasoningEffort) params.output_config = { effort: reasoningEffort };
       resp = await client.messages.create(params, { timeoutMs: 300000 });
     } catch (err) {
       // A provider/backend failure on ONE pass must NOT crash the whole run —
@@ -527,10 +593,21 @@ async function runPass(client, model, passName, diff, { temperature } = {}) {
  * absent from Anthropic's response) for the alias-drift pin (plan §2/§8):
  * `deepseek-flash` is an unversioned alias and could silently start serving a
  * different snapshot mid-run.
+ *
+ * No `temperature` parameter, deliberately: `deepseek-flash` runs in thinking
+ * mode (on by default), and DeepSeek documents that thinking mode ignores
+ * `temperature` without error. Sending it would put a value in the manifest
+ * the provider never honoured. The ×3 union's sample variance comes from the
+ * model's own stochastic decoding, and cmdRun's existing samplingDegenerate
+ * guard is what verifies the repeats actually differed.
  * @param {import('openai').OpenAI} client - createOpenAIClient({oss:{baseURL,apiKey}}) pointed at DeepSeek
  */
-async function runDeepseekPass(client, model, passName, diff, { temperature } = {}) {
+async function runDeepseekPass(client, model, passName, diff, { reasoningEffort = null } = {}) {
   const { system, user } = buildColdPassPrompt(passName, diff);
+  // Thinking is on by default at `high`; a null tier leaves the provider default
+  // in place but still sets the documented 64K ceiling (max_tokens spans
+  // reasoning + answer — an 8K cap would truncate the chain of thought).
+  const maxTokens = REASONING_TIERS.deepseek[reasoningEffort ?? 'high'];
   let lastErr = null;
   let lastFingerprint = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
@@ -541,8 +618,8 @@ async function runDeepseekPass(client, model, passName, diff, { temperature } = 
     ];
     assertEgressSafe(messages, { label: `deepseek:${passName}` });
     try {
-      const params = { model, max_tokens: 8000, messages };
-      if (temperature != null) params.temperature = temperature;
+      const params = { model, max_tokens: maxTokens, messages };
+      if (reasoningEffort) params.thinking = { type: 'enabled', reasoning_effort: reasoningEffort };
       resp = await client.chat.completions.create(params);
     } catch (err) {
       lastErr = (err?.error?.message || err?.message || String(err)).slice(0, 160);
@@ -604,6 +681,7 @@ async function cmdRun() {
   // report the defect as unscored-by-refusal rather than missed.
   const maxDiffChars = Number.parseInt(argOption('max-diff-chars', '600000'), 10);
   const useSdk = hasFlag('sdk'); // force the fast SDK backend for x1 runs too (real API spend)
+  const budgetUsd = Number.parseFloat(argOption('budget-usd', '350')); // plan §8 ceiling, experiment-wide
 
   // exp-5: preflight-load the recipient policy ALWAYS (Security Considerations
   // §2 — "missing policy ⇒ refuse", below every entry path, before any client is
@@ -613,6 +691,19 @@ async function cmdRun() {
   try { recipientPolicy = loadRecipientPolicy(RECIPIENT_POLICY_PATH); }
   catch (err) { log(`FATAL: recipient policy unavailable (${err.message})`); process.exit(2); }
   const recipient = classifyRecipient(model);
+
+  // --reasoning-effort: validated against THIS recipient's tier table, so a
+  // tier the provider would silently alias never lands in the manifest as
+  // something it was not (see REASONING_TIERS). Null ⇒ provider default.
+  let reasoningEffort;
+  try { reasoningEffort = assertReasoningTier(recipient, argOption('reasoning-effort') || null); }
+  catch (err) { log(`FATAL: ${err.message}`); process.exit(2); }
+  // DeepSeek thinking mode ignores temperature (documented, no error) — the
+  // manifest must say so rather than carry a pinned value the provider dropped.
+  const effectiveTemperature = recipient === 'deepseek' ? null : temperature;
+  if (recipient === 'deepseek' && repeats > 1) {
+    log('  note: deepseek thinking mode ignores temperature — the x' + repeats + ' union relies on the model\'s own stochastic decoding; samplingDegenerate will report if the repeats did not vary.');
+  }
 
   // --label: armLabelFor only knows how to derive a distinct label for the
   // Anthropic sub-families (sonnet/opus/haiku/fable) this file's original
@@ -667,8 +758,11 @@ async function cmdRun() {
     log(`⚠ ${unresolvedIncompleteIdentityCount} B/C shadow row(s) have only one of audited_sha/audited_tree captured — excluded (unresolved-incomplete-identity), not audited.`);
   }
 
+  // The -xN suffix disambiguates AUTO-DERIVED labels (S-sonnet vs S-sonnet-x3).
+  // An explicit --label is the operator naming the arm — exp-5's registry says
+  // `--label C --repeats 3` and scores arm "C", not "C-x3".
   const baseLabel = armLabelFor(model, labelArg);
-  const label = repeats > 1 ? `${baseLabel}-x${repeats}` : baseLabel;   // S-sonnet vs S-sonnet-x3
+  const label = (!labelArg && repeats > 1) ? `${baseLabel}-x${repeats}` : baseLabel;
   const dest = sFindingsPath(label);
 
   // INCREMENTAL accumulation (standing-policy use): merge onto any prior file for
@@ -693,12 +787,15 @@ async function cmdRun() {
   // ── recipient-specific client construction (AFTER the policy preflight
   // above, BEFORE any per-commit dispatch — no client for a refused recipient
   // is ever constructed) ─────────────────────────────────────────────────────
-  const backend = (repeats > 1 || useSdk) ? 'sdk' : undefined; // sdk needed for temperature; opt-in via --sdk for speed
+  // sdk backend is needed for temperature AND for output_config.effort (the cli
+  // backend reads only {model,max_tokens,system,messages} and drops the rest
+  // silently — AGENTS.md "Anthropic Backend Routing"); opt-in via --sdk for speed.
+  const backend = (repeats > 1 || useSdk || reasoningEffort) ? 'sdk' : undefined;
   let anthropicClient = null, deepseekClient = null;
   if (recipient === 'anthropic') {
     try { anthropicClient = await createAnthropicClient(backend ? { backend } : {}); }
     catch (err) {
-      log(`FATAL: cannot create ${backend || 'default'} client${repeats > 1 ? ' (the xN arm needs ANTHROPIC_API_KEY for the SDK backend — cli claude -p cannot set temperature)' : ''}: ${err.message}`);
+      log(`FATAL: cannot create ${backend || 'default'} client${backend === 'sdk' ? ' (repeats>1 / --reasoning-effort need ANTHROPIC_API_KEY for the SDK backend — cli claude -p cannot set temperature or effort)' : ''}: ${err.message}`);
       process.exit(2);
     }
   } else if (recipient === 'deepseek') {
@@ -710,10 +807,15 @@ async function cmdRun() {
     log(`FATAL: recipient "${recipient}" has no cold-dispatch adapter wired in cmdRun yet (only anthropic/deepseek today).`);
     process.exit(2);
   }
-  log(`Solo control — arm=${label} · model=${model} (${modelArg}) · recipient=${recipient}, ${commits.length} new commit(s)${covered.size ? ` (${covered.size} already covered)` : ''}${repeats > 1 ? ` · repeats=${repeats} temp=${temperature}${recipient === 'anthropic' ? ' backend=sdk' : ''}` : ''}, stage=${STAGE_TYPE}`);
+  log(`Solo control — arm=${label} · model=${model} (${modelArg}) · recipient=${recipient}, ${commits.length} new commit(s)${covered.size ? ` (${covered.size} already covered)` : ''}${repeats > 1 ? ` · repeats=${repeats} temp=${effectiveTemperature ?? 'n/a'}` : ''}${reasoningEffort ? ` · effort=${reasoningEffort}` : ''}${backend === 'sdk' ? ' · backend=sdk' : ''} · budget=$${budgetUsd}, stage=${STAGE_TYPE}`);
 
   // Provenance (§12.5): pin what actually ran so the experiment is reproducible + fair.
-  out.provenance = { repeats, temperature, backend: recipient === 'anthropic' ? (backend || 'cli(default)') : recipient, maxChars, resolvedModel: model };
+  out.provenance = {
+    repeats, temperature: effectiveTemperature,
+    temperatureNote: recipient === 'deepseek' && repeats > 1 ? 'deepseek thinking mode ignores temperature; variance is the model\'s own stochastic decoding (see samplingDegenerate)' : null,
+    reasoningEffort: reasoningEffort ?? null,
+    backend: recipient === 'anthropic' ? (backend || 'cli(default)') : recipient, maxChars, resolvedModel: model, budgetUsd,
+  };
   let totalIn = 0, totalOut = 0, samplingVariedUnits = 0, samplingTotalUnits = 0;
 
   for (const unit of commits) {
@@ -758,7 +860,8 @@ async function cmdRun() {
     // findings for that repeat (never crashes), but a skewed miss rate on one pass
     // should be visible in scoring, not silently absorbed as "the model found less".
     let fingerprintDrift = false;
-    for (const passName of PASSES) {
+    let budgetHit = null;
+    cells: for (const passName of PASSES) {
       for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
         const chunk = chunks[chunkIndex];
         // xN: N sequential samples per pass×chunk (never concurrent — Gemini-R1-MEDIUM,
@@ -766,9 +869,17 @@ async function cmdRun() {
         const rawTexts = [];
         const findings = [];
         for (let rep = 0; rep < repeats; rep++) {
+          // Budget ceiling at the preflight of EVERY cell (plan §8) — this cell is
+          // recorded as provider-error, the commit as budget-exceeded (a partial,
+          // so score drops it cohort-wide), and the run stops. Never spent past.
+          budgetHit = budgetBreached(budgetUsd);
+          if (budgetHit) {
+            recordCall({ arm: label, commit: sha, purpose: 'pass', pass: passName, chunkIndex, repeatIndex: rep, resolvedModel: model, recipient, usage: null, state: 'provider-error' });
+            break cells;
+          }
           const r = recipient === 'anthropic'
-            ? await runPass(anthropicClient, model, passName, chunk, { temperature })
-            : await runDeepseekPass(deepseekClient, model, passName, chunk, { temperature });
+            ? await runPass(anthropicClient, model, passName, chunk, { temperature: effectiveTemperature, reasoningEffort })
+            : await runDeepseekPass(deepseekClient, model, passName, chunk, { reasoningEffort });
           if (r.usage) { totalIn += r.usage.input_tokens || 0; totalOut += r.usage.output_tokens || 0; }
           if (r.rawText != null) rawTexts.push(r.rawText);
           const cc = (commitConformance[passName] ||= { attempts: 0, misses: 0 });
@@ -818,15 +929,25 @@ async function cmdRun() {
     const misses = Object.values(commitConformance).reduce((a, c) => a + c.misses, 0);
     const attempts = Object.values(commitConformance).reduce((a, c) => a + c.attempts, 0);
     log(`      → ${commitFindings} finding(s)${misses ? ` (${misses}/${attempts} conformance misses — see perCommit.conformanceByPass)` : ''}`);
+    const state = budgetHit ? 'budget-exceeded' : fingerprintDrift ? 'provider-error' : 'ran';
     out.perCommit.push({
-      sha, unitKey: unit.resumeKey, repo: path.basename(root), state: fingerprintDrift ? 'provider-error' : 'ran', findings: commitFindings,
+      sha, unitKey: unit.resumeKey, repo: path.basename(root), state, findings: commitFindings,
       chunks: chunks.length, skippedSensitive: ext.skippedSensitive, conformanceByPass: commitConformance,
+      // The DENOMINATOR score's completion check derives cell-completeness
+      // against (plan §3 "Execution contract"): passes × chunks × repeats for
+      // THIS commit — a structural fact only the runner knows.
+      expectedCells: PASSES.length * chunks.length * repeats,
       ...(fingerprintDrift ? { error: 'fingerprint-drift' } : {}),
+      ...(budgetHit ? { error: 'budget', spentUsd: budgetHit.spentUsd } : {}),
     });
     // Per-commit checkpoint (matches cmdApparatus's existing pattern) — a run
     // spanning many commits survives an interruption having lost at most the
     // ONE commit in flight, not everything since the last invocation.
     atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
+    if (budgetHit) {
+      log(`\n✗ BUDGET CEILING: $${budgetHit.spentUsd.toFixed(2)} spent across the ledger ≥ $${budgetUsd} cap${budgetHit.complete ? '' : ' (a FLOOR — some rows are unpriced)'}. Stopped at ${short}; it and every later commit are partial and will be dropped cohort-wide by score.`);
+      process.exit(3);
+    }
   }
 
   // Accumulate token usage across incremental runs.
@@ -933,7 +1054,17 @@ async function runGeminiReview(geminiModel, collected, diff) {
     config: { responseMimeType: 'application/json', responseSchema: zodToGeminiSchema(ShadowPassSchema) },
   });
   let parsed = null; try { parsed = JSON.parse(resp.text); } catch { /* conformance miss */ }
-  return { findings: parsed?.findings || [] };
+  return { findings: parsed?.findings || [], usage: geminiUsageOrNull(resp) };
+}
+
+/** Gemini's `usageMetadata` → the ledger's `{input_tokens, output_tokens}`,
+ * or null when the provider reported nothing usable — never a fabricated 0,
+ * which costFromUsage would price as FREE (the "always-null column reads as
+ * free" defect). Reuses the shared normaliser so thoughts vs candidates are
+ * billed the way Google bills them. */
+function geminiUsageOrNull(resp) {
+  const g = normalizeGeminiUsage(resp?.usageMetadata);
+  return g.usageMissing ? null : { input_tokens: g.input_tokens, output_tokens: g.output_tokens };
 }
 
 /**
@@ -954,15 +1085,16 @@ async function runGeminiReview(geminiModel, collected, diff) {
  * @param {string} model - resolved Claude model id (e.g. claude-sonnet-5)
  * @param {Array} collected - the GPT 5-pass deduped union
  * @param {string} diff - chunks[0] — same "gate sees chunk 0 only" limitation as the Gemini gates
- * @param {{reasoningEffort?: 'low'|'medium'|'high'}} [opts] - 'high' is the max effort tier
- *   this repo has for Claude (no numeric thinking-budget knob exists here, unlike Gemini)
+ * @param {{reasoningEffort?: keyof typeof REASONING_TIERS.anthropic}} [opts] - an
+ *   Anthropic `output_config.effort` tier; `high` is the API default. max_tokens
+ *   follows the tier (REASONING_TIERS) because thinking shares that budget.
  */
 async function runClaudeGateReview(client, model, collected, diff, { reasoningEffort = 'high' } = {}) {
   const prompt = buildGateReviewPrompt(collected, diff);
   assertEgressSafe(prompt, { label: 'apparatus:claude-gate' });
 
   const params = {
-    model, max_tokens: 8000,
+    model, max_tokens: REASONING_TIERS.anthropic[reasoningEffort] ?? 8000,
     messages: [{ role: 'user', content: prompt }],
     tools: [{ name: 'emit_findings', description: 'Return the net-new findings.', input_schema: zodToOpenAiJsonSchema(ShadowPassSchema) }],
     tool_choice: { type: 'tool', name: 'emit_findings' },
@@ -1002,7 +1134,7 @@ async function runGeminiPass(geminiModel, passName, diff) {
     config: { responseMimeType: 'application/json', responseSchema: zodToGeminiSchema(ShadowPassSchema) },
   });
   let parsed = null; try { parsed = JSON.parse(resp.text); } catch { /* conformance miss */ }
-  return { findings: parsed?.findings || [] };
+  return { findings: parsed?.findings || [], usage: geminiUsageOrNull(resp) };
 }
 
 /** Run the apparatus (arm A) retro over --commits. Incremental like cmdRun. */
@@ -1046,14 +1178,29 @@ async function cmdApparatus() {
   const { zodTextFormat } = await import('openai/helpers/zod');
   const { PASS_REASONING } = await import('./lib/config.mjs');
   try { const mr = await import('./lib/model-resolver.mjs'); await mr.refreshModelCatalog?.(); } catch { /* offline */ }
-  const gptModel = resolveModel('latest-gpt');
+  // The incumbent's GPT is a CONCRETE PIN, not `latest-gpt`: the live-catalog
+  // refresh above would resolve the sentinel to whatever OpenAI shipped most
+  // recently (gpt-6-astra at the time of writing — pricier, unpriced in this
+  // repo, and not the model exp-3 validated the apparatus against). Arm A is
+  // "what production ran when the prior results were measured", so the id is
+  // fixed here and recorded in provenance; a sentinel is still accepted for a
+  // deliberate override.
+  const gptModelArg = argOption('gpt-model', 'gpt-5.6-terra');
+  const gptModel = resolveModel(gptModelArg);
   const gateModelArg = argOption('gate-model', 'latest-pro'); // legacy default preserved
   const gateModel = resolveModel(gateModelArg);
   // Gate ablation (plan §3): Flash/Pro (gemini) or Sonnet/Opus-class (anthropic)
   // — a third gate vendor would need a new branch below, same shape as cmdRun's
   // recipient dispatch. Never construct a client for a recipient not being used.
   const gateRecipient = classifyRecipient(gateModel);
-  const gateReasoningEffort = argOption('gate-reasoning-effort', 'high'); // anthropic gate only; 'high' is the max tier this repo has for Claude
+  let gateReasoningEffort = null;
+  if (gateRecipient === 'anthropic') {
+    try { gateReasoningEffort = assertReasoningTier('anthropic', argOption('gate-reasoning-effort', 'high')); }
+    catch (err) { log(`FATAL: ${err.message.replace('--reasoning-effort', '--gate-reasoning-effort')}`); process.exit(2); }
+  } else if (argOption('gate-reasoning-effort')) {
+    log(`FATAL: --gate-reasoning-effort applies to an anthropic gate only; "${gateModel}" is ${gateRecipient}.`); process.exit(2);
+  }
+  const budgetUsd = Number.parseFloat(argOption('budget-usd', '350')); // plan §8 ceiling, experiment-wide
   const client = await createOpenAIClient({ purpose: 'gpt' });
   const anthropicGateClient = gateRecipient === 'anthropic' ? await createAnthropicClient({ backend: 'sdk' }) : null;
   if (gateRecipient !== 'gemini' && gateRecipient !== 'anthropic') {
@@ -1065,8 +1212,11 @@ async function cmdApparatus() {
     const corpus = loadCorpus(corpusArg, recipientPolicy);
     // apparatus dispatches to BOTH openai (5-pass) and the gate's recipient per
     // commit — an entry must be eligible for the FULL pipeline, not just one leg.
+    // entriesEligibleForRecipient returns entry IDS, not shas — map back
+    // through the entries to the sha this runner needs (same fix as cmdRun).
     const openaiEligible = new Set(entriesEligibleForRecipient(corpus, 'openai'));
-    requested = entriesEligibleForRecipient(corpus, gateRecipient).filter((id) => openaiEligible.has(id));
+    const eligibleIds = new Set(entriesEligibleForRecipient(corpus, gateRecipient).filter((id) => openaiEligible.has(id)));
+    requested = corpus.entries.filter((e) => eligibleIds.has(e.id)).map((e) => e.sha);
     if (commitsArg) log(`  (--corpus given — ignoring --commits; ${requested.length}/${corpus.entries.length} corpus entries are eligible for both openai and ${gateRecipient})`);
   } else if (commitsArg) {
     requested = commitsArg.split(',').map((s) => s.trim()).filter(Boolean);
@@ -1090,16 +1240,28 @@ async function cmdApparatus() {
   out.armLabel = label;
   out.provenance = {
     composition: gateOnly ? 'gate-only(reuses saved pre-gate artifact)' : `gpt-5pass→${gateRecipient}-review`,
-    gptModel, gateModel, gateRecipient, gateReasoningEffort: gateRecipient === 'anthropic' ? gateReasoningEffort : null, maxChars, retro: true,
+    gptModel, gptModelArg, gateModel, gateModelArg, gateRecipient, gateReasoningEffort, maxChars, budgetUsd, retro: true,
     note: 'NOT persisted to audit_findings — experiment-local (keeps Phase-1 ledger clean)',
   };
 
   if (commits.length === 0) { log(`All ${requested.length} commit(s) already covered for ${label} — nothing to do.`); process.exit(0); }
   log(`Apparatus retro — arm=${label} · ${gateOnly ? 'GATE-ONLY over saved pre-gate' : gptModel + ' 5-pass'} → ${gateModel} review · ${commits.length} new commit(s)`);
 
+  /** Budget preflight for one apparatus cell (plan §8). On breach: record the
+   * cell as provider-error, the commit as budget-exceeded, checkpoint, stop. */
+  const guardBudget = (sha, purpose, pass, chunkIndex, resolvedModel, recipient, sharedBy = null) => {
+    const hit = budgetBreached(budgetUsd);
+    if (!hit) return false;
+    recordCall({ arm: label, sharedBy, commit: sha, purpose, pass, chunkIndex, repeatIndex: 0, resolvedModel, recipient, usage: null, state: 'provider-error' });
+    out.perCommit.push({ sha, state: 'budget-exceeded', error: 'budget', spentUsd: hit.spentUsd });
+    atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
+    log(`\n✗ BUDGET CEILING: $${hit.spentUsd.toFixed(2)} spent across the ledger ≥ $${budgetUsd} cap${hit.complete ? '' : ' (a FLOOR — some rows are unpriced)'}. Stopped at ${sha.slice(0, 8)}; it and every later commit are partial and will be dropped cohort-wide by score.`);
+    process.exit(3);
+  };
+
   for (const sha of commits) {
     const short = sha.slice(0, 8);
-    let ext, chunks, collected, repoBasename;
+    let ext, chunks, collected, repoBasename, passChunks;
 
     if (gateOnly) {
       const pgPath = pregatePath(sha);
@@ -1114,6 +1276,7 @@ async function cmdApparatus() {
       collected = pregate.findings;
       ext = { files: pregate.files || [] };
       chunks = [pregate.gateContext];
+      passChunks = pregate.passChunks ?? null; // how many chunks the SHARED 5-pass rows span
       repoBasename = pregate.repo || null;
       log(`  ${short}: gate-only, reusing pre-gate (${collected.length} finding(s), verified sha256)`);
     } else {
@@ -1135,11 +1298,13 @@ async function cmdApparatus() {
       }
       repoBasename = path.basename(root);
       chunks = chunkDiff(ext.diff, maxChars);
+      passChunks = chunks.length;
       log(`  ${short}: ${repoBasename} · ${ext.diff.length} chars · ${chunks.length} chunk(s)`);
       const raw = [];
       for (const passName of PASSES) {
         for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
           const chunk = chunks[chunkIndex];
+          guardBudget(sha, 'pass', passName, chunkIndex, gptModel, 'openai', ['A', 'A+']);
           let r;
           try { r = await runGptPass(client, zodTextFormat, gptModel, passName, chunk, PASS_REASONING[passName] ?? null); }
           catch (err) {
@@ -1159,12 +1324,13 @@ async function cmdApparatus() {
       // Write the immutable pre-gate artifact BEFORE calling any gate.
       const gateContext = chunks[0] || '';
       atomicWriteFileSync(pregatePath(sha), JSON.stringify({
-        sha, repo: repoBasename, files: ext.files, findings: collected,
+        sha, repo: repoBasename, files: ext.files, findings: collected, passChunks,
         gateContext, gateContextSha256: sha256hex(gateContext), writtenAt: new Date().toISOString(),
       }, null, 2));
     }
 
     // Gate — net-new over the deduped union (whichever way it was produced).
+    guardBudget(sha, 'gate', 'apparatus-gate', 0, gateModel, gateRecipient);
     let gateFindings = [];
     try {
       const r = gateRecipient === 'anthropic'
@@ -1198,7 +1364,15 @@ async function cmdApparatus() {
       commitFindings++;
     }
     log(`      → ${commitFindings} finding(s)`);
-    out.perCommit.push({ sha, repo: repoBasename, state: 'ran', findings: commitFindings, chunks: chunks.length });
+    out.perCommit.push({
+      sha, repo: repoBasename, state: 'ran', findings: commitFindings, chunks: chunks.length,
+      // Denominator for score's completion check: the shared 5-pass rows (over
+      // the chunk count the passes actually ran on — for a gate-only run that is
+      // the ORIGINAL run's count, carried in the pregate artifact) + this gate.
+      // null when a legacy pregate artifact predates passChunks: score then
+      // treats the commit as partial rather than guessing a denominator.
+      expectedCells: passChunks == null ? null : PASSES.length * passChunks + 1,
+    });
     atomicWriteFileSync(dest, JSON.stringify(out, null, 2)); // checkpoint per commit
   }
   atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
@@ -2051,9 +2225,50 @@ async function cmdScore() {
   }));
 
   const soloMeta = {};
+  const armFiles = {};
   for (const f of listSFindings()) {
     const r = JSON.parse(fs.readFileSync(path.join(OUT_DIR, f), 'utf8'));
-    soloMeta[r.armLabel || 'S'] = { model: r.model, repeats: r.provenance?.repeats ?? 1, samplingDegenerate: !!r.samplingDegenerate };
+    const arm = r.armLabel || 'S';
+    soloMeta[arm] = { model: r.model, repeats: r.provenance?.repeats ?? 1, samplingDegenerate: !!r.samplingDegenerate };
+    armFiles[arm] = r;
+  }
+
+  // exp-5 `--decide` (plan §3 H5): the decision function over the call ledger.
+  // Two things the plain score does not do: (1) drop any commit that is partial
+  // for ANY arm from EVERY arm before scoring, so arms are compared on identical
+  // commits (plan §3 "Execution contract"), and (2) hand decide() $/diff per arm
+  // from the ledger, null-honest when any contributing row is unpriced.
+  let decision = null;
+  if (hasFlag('decide')) {
+    const rows = readLedger(CALL_LEDGER_PATH);
+    const arms = Object.keys(result.arms);
+    const expectedCellsFor = (commit, arm) => armFiles[arm]?.perCommit?.find((c) => c.sha === commit && c.state === 'ran')?.expectedCells ?? null;
+    const { kept, dropped } = commitsCompleteForAllArms(rows, arms, commits, expectedCellsFor);
+    const keptSet = new Set(kept);
+    const rowsKept = rows.filter((r) => keptSet.has(r.commit));
+    const scoredKept = kept.length > 0
+      ? scoreArms(exhaustiveRows.filter((r) => keptSet.has(r.commit)), { knownDefects, underpowered, apparatusArm: 'A' })
+      : result;
+    const ledger = { incumbentArm: 'A', costPerDiff: {}, costComplete: {}, recipients: {}, repeats: {} };
+    for (const arm of arms) {
+      const agg = aggregateCostForArm(rowsKept, arm);
+      ledger.costPerDiff[arm] = agg.complete && kept.length > 0 ? +(agg.costUsd / kept.length).toFixed(4) : null;
+      ledger.costComplete[arm] = agg.complete;
+      ledger.recipients[arm] = new Set(rowsKept.filter((r) => r.arm === arm || (r.sharedBy || []).includes(arm)).map((r) => r.recipient)).size;
+      ledger.repeats[arm] = soloMeta[arm]?.repeats ?? 1;
+    }
+    const { decide } = await import('./lib/solo-control/scoring.mjs');
+    const verdict = decide(scoredKept, ledger);
+    // Plan §3: "A verdict may not change the default while any arm in the
+    // deciding cohort has > 10% partial cells" — reported, never silently applied.
+    const partialFraction = Object.fromEntries(arms.map((arm) => [arm, +(dropped.filter((d) => d.causes.some((c) => c.arm === arm)).length / Math.max(1, commits.length)).toFixed(3)]));
+    const worstPartial = Math.max(0, ...Object.values(partialFraction));
+    decision = {
+      ...verdict, ledger,
+      cohort: { commitsScored: commits.length, kept: kept.length, dropped },
+      partialFraction,
+      verdictBlocked: worstPartial > 0.10 ? `INCOMPLETE — ${(worstPartial * 100).toFixed(0)}% partial in at least one arm exceeds the 10% rule; the default may not change on this run` : null,
+    };
   }
 
   const report = {
@@ -2065,6 +2280,7 @@ async function cmdScore() {
     lowVolumeByArm,
     systemicPatterns: patternReport.length ? patternReport : null,
     soloArmModels: soloMeta,
+    ...(decision ? { decision } : {}),
     notes: {
       proofGap: highNeedingProof.length ? `${highNeedingProof.length} HIGH accepted finding(s) lack a proof cell → directional-only (§12.3 P4 gate)` : null,
       invalidLabels: invalid || null,
@@ -2106,4 +2322,5 @@ export const _internals = {
   chunkDiff, continuationMarker, planIncrementalRun, repoIdentityFor, buildColdPassPrompt,
   sha256hex, gatePath, pregatePath, extractDiff, extractAuditedDiff, locateCommit, treeExists, partitionDiscoveredRows,
   runClaudeGateReview, runGeminiReview, buildGateReviewPrompt,
+  runPass, runDeepseekPass, REASONING_TIERS, assertReasoningTier, geminiUsageOrNull, budgetBreached, PASSES,
 };

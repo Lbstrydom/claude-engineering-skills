@@ -53,14 +53,22 @@ export function commitArmCompletion(rows, { arm, commit, expectedCellCount }) {
  * @param {Array<{callId:string, arm:string, sharedBy?:string[]|null, commit:string, state:string}>} rows
  * @param {string[]} arms the configurations being compared this decision
  * @param {string[]} commits the full commit set under consideration
- * @param {(commit:string) => number} expectedCellCountFor per-commit expected cell count
+ * @param {(commit:string, arm:string) => number|null} expectedCellCountFor the
+ *   expected cell count for (commit, arm) — it differs per ARM (a ×3 arm has
+ *   three times the cells of a ×1 arm on the same commit; the apparatus adds
+ *   a gate cell). `null` means the runner never recorded a denominator for
+ *   that pair, which is treated as partial: completeness cannot be derived
+ *   against an unknown total, and guessing one would be asserting it.
  */
 export function commitsCompleteForAllArms(rows, arms, commits, expectedCellCountFor) {
   const kept = [];
   const dropped = [];
   for (const commit of commits) {
-    const expected = expectedCellCountFor(commit);
-    const states = arms.map((arm) => ({ arm, state: commitArmCompletion(rows, { arm, commit, expectedCellCount: expected }) }));
+    const states = arms.map((arm) => {
+      const expected = expectedCellCountFor(commit, arm);
+      if (expected == null) return { arm, state: 'partial', reason: 'no-expected-cell-count' };
+      return { arm, state: commitArmCompletion(rows, { arm, commit, expectedCellCount: expected }) };
+    });
     const bad = states.filter((s) => s.state === 'partial');
     if (bad.length > 0) dropped.push({ commit, causes: bad });
     else kept.push(commit);

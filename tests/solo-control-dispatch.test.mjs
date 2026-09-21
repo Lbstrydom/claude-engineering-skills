@@ -468,3 +468,109 @@ test('pregatePath: one immutable artifact path per commit sha, independent of wh
   assert.match(soloCtl.pregatePath('abc123'), /S-pregate-A-abc123\.json$/);
   assert.equal(soloCtl.pregatePath('abc123'), soloCtl.pregatePath('abc123'));
 });
+
+// ── pre-Phase-3 fixes (2026-09-21 fresh-look review) ───────────────────────
+
+test('pass set: the solo-control runner uses EXACTLY the baseline SHADOW_PASSES — never a locally re-derived list', async () => {
+  // Regression lock. The file used to compute `PASS_PROMPTS keys minus
+  // quickfix`, which silently enrolled the later-added MECHANICAL waves
+  // (duplication, adjacency — regex/index lookups, not model calls) as paid
+  // LLM passes: 7 calls per chunk against the apparatus's 5. Both a 40%
+  // over-spend and a fairness break. The only oracle is audit-shadow's own.
+  const { SHADOW_PASSES, MECHANICAL_WAVES } = await import('../scripts/lib/audit-shadow.mjs');
+  const { PASS_PROMPTS } = await import('../scripts/lib/prompt-seeds.mjs');
+  // The RUNNER's own list — the thing that actually drifted. (A first draft of
+  // this lock asserted on SHADOW_PASSES alone and stayed green with the bug
+  // planted: it never looked at what the runner iterates. Seen to fail first.)
+  assert.deepEqual([...soloCtl.PASSES], [...SHADOW_PASSES], 'the runner must iterate exactly the baseline pass set');
+  for (const wave of MECHANICAL_WAVES) assert.ok(!soloCtl.PASSES.includes(wave), `${wave} is mechanical and must not be a paid generation pass`);
+  assert.ok(soloCtl.PASSES.every((p) => p in PASS_PROMPTS));
+  // Vacuous-pass guard: the trap only exists because PASS_PROMPTS carries MORE
+  // keys than the pass set — if that ever stops being true the lock is moot.
+  assert.ok(Object.keys(PASS_PROMPTS).length > soloCtl.PASSES.length, 'PASS_PROMPTS must contain mechanical waves for this lock to mean anything');
+});
+
+test('REASONING_TIERS: per-vendor tables are deliberately NOT unified — a tier one vendor silently aliases is refused, never remapped', () => {
+  assert.equal(soloCtl.assertReasoningTier('anthropic', 'xhigh'), 'xhigh');
+  assert.equal(soloCtl.assertReasoningTier('deepseek', 'max'), 'max');
+  assert.equal(soloCtl.assertReasoningTier('anthropic', null), null, 'null = provider default, never an error');
+  // DeepSeek documents xhigh -> high and medium -> high as SILENT aliases: the
+  // manifest would say one effort and the provider would run another.
+  assert.throws(() => soloCtl.assertReasoningTier('deepseek', 'xhigh'), /not a deepseek tier/);
+  assert.throws(() => soloCtl.assertReasoningTier('deepseek', 'medium'), /not a deepseek tier/);
+  assert.throws(() => soloCtl.assertReasoningTier('anthropic', 'ultra'), /not a anthropic tier/);
+  assert.throws(() => soloCtl.assertReasoningTier('gemini', 'high'), /not supported for recipient/);
+});
+
+test('runPass: effort raises max_tokens (thinking shares the budget) and a null effort keeps the request body byte-identical to the pre-exp-5 shape', async () => {
+  let seen = null;
+  const stub = { messages: { create: async (p) => { seen = p; return { content: [{ type: 'text', text: '{"findings":[],"summary":""}' }], usage: null }; } } };
+  await soloCtl.runPass(stub, 'claude-sonnet-5', 'structure', 'X');
+  assert.equal(seen.max_tokens, 8000);
+  assert.ok(!('output_config' in seen), 'no effort => no output_config key at all (solo-control:catchup must not change)');
+  await soloCtl.runPass(stub, 'claude-sonnet-5', 'structure', 'X', { reasoningEffort: 'xhigh' });
+  assert.deepEqual(seen.output_config, { effort: 'xhigh' });
+  assert.equal(seen.max_tokens, soloCtl.REASONING_TIERS.anthropic.xhigh);
+  assert.ok(seen.max_tokens > 8000, 'raising effort without raising max_tokens truncates the chain of thought into a conformance miss');
+});
+
+test('runDeepseekPass: sends thinking.reasoning_effort, sizes max_tokens to the documented thinking-mode ceiling, and NEVER sends temperature', async () => {
+  let seen = null;
+  const stub = { chat: { completions: { create: async (p) => { seen = p; return { choices: [{ message: { content: '{"findings":[],"summary":""}' } }], usage: { prompt_tokens: 1, completion_tokens: 1 }, system_fingerprint: 'fp_a' }; } } } };
+  await soloCtl.runDeepseekPass(stub, 'deepseek-flash', 'structure', 'X', { reasoningEffort: 'max' });
+  assert.deepEqual(seen.thinking, { type: 'enabled', reasoning_effort: 'max' });
+  assert.equal(seen.max_tokens, soloCtl.REASONING_TIERS.deepseek.max);
+  assert.ok(!('temperature' in seen), 'DeepSeek thinking mode ignores temperature silently; sending it would put an unhonoured value in the manifest');
+  // Default (null effort) still gets the 64K thinking-mode ceiling, not the old
+  // 8K that would have truncated reasoning + answer.
+  await soloCtl.runDeepseekPass(stub, 'deepseek-flash', 'structure', 'X');
+  assert.ok(!('thinking' in seen), 'null effort leaves the provider default in place');
+  assert.equal(seen.max_tokens, soloCtl.REASONING_TIERS.deepseek.high);
+});
+
+test('geminiUsageOrNull: a usable usageMetadata becomes ledger usage; a missing one is NULL, never a fabricated zero that prices as free', () => {
+  const ok = soloCtl.geminiUsageOrNull({ usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 20, thoughtsTokenCount: 30 } });
+  assert.deepEqual(ok, { input_tokens: 100, output_tokens: 50 }); // thoughts are billed output, disjoint from candidates
+  assert.equal(soloCtl.geminiUsageOrNull({}), null);
+  assert.equal(soloCtl.geminiUsageOrNull({ usageMetadata: { promptTokenCount: 'x' } }), null);
+});
+
+test('runGeminiReview: the gate call now returns usage (it returned findings only, so every gate row was costUsd:null and A/A+ were ineligible by construction)', async () => {
+  // Cannot stub @google/genai's dynamic import cheaply; assert the contract at
+  // the seam the function uses instead — the same normaliser it now calls.
+  const r = soloCtl.geminiUsageOrNull({ usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } });
+  assert.notEqual(r, null);
+  // and the no-key early return is unchanged (no network in a test suite)
+  const saved = process.env.GEMINI_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  try {
+    const out = await soloCtl.runGeminiReview('gemini-flash-latest', [], 'X');
+    assert.deepEqual(out, { findings: [], skipped: 'no-key' });
+  } finally { if (saved !== undefined) process.env.GEMINI_API_KEY = saved; }
+});
+
+test('runClaudeGateReview: max_tokens follows the effort tier for the same thinking-budget reason as runPass', async () => {
+  let seen = null;
+  const stub = { messages: { create: async (p) => { seen = p; return { content: [{ type: 'tool_use', input: { findings: [] } }] }; } } };
+  await soloCtl.runClaudeGateReview(stub, 'claude-sonnet-5', [], 'X', { reasoningEffort: 'xhigh' });
+  assert.equal(seen.output_config.effort, 'xhigh');
+  assert.equal(seen.max_tokens, soloCtl.REASONING_TIERS.anthropic.xhigh);
+});
+
+test('commitsCompleteForAllArms: the denominator is per (commit, ARM) — a x3 arm has three times the cells — and a missing denominator is partial, never guessed', () => {
+  const rows = [
+    { callId: 'c1-a', arm: 'C', commit: 'c1', state: 'ok' }, { callId: 'c1-b', arm: 'C', commit: 'c1', state: 'ok' }, { callId: 'c1-c', arm: 'C', commit: 'c1', state: 'ok' },
+    { callId: 'e1-a', arm: 'E', commit: 'c1', state: 'ok' },
+  ];
+  const expected = { C: 3, E: 1 };
+  assert.deepEqual(commitsCompleteForAllArms(rows, ['C', 'E'], ['c1'], (commit, arm) => expected[arm]).kept, ['c1']);
+  // Same rows, but E claims 3 expected cells: E is partial, so c1 drops for BOTH.
+  const r = commitsCompleteForAllArms(rows, ['C', 'E'], ['c1'], (commit, arm) => ({ C: 3, E: 3 })[arm]);
+  assert.deepEqual(r.kept, []);
+  assert.equal(r.dropped[0].causes[0].arm, 'E');
+  // No recorded denominator for an arm => partial with a named reason, not a
+  // vacuous "complete" against an unknown total.
+  const r2 = commitsCompleteForAllArms(rows, ['C', 'E'], ['c1'], (commit, arm) => (arm === 'E' ? null : 3));
+  assert.deepEqual(r2.kept, []);
+  assert.equal(r2.dropped[0].causes[0].reason, 'no-expected-cell-count');
+});

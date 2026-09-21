@@ -300,10 +300,38 @@ measurement that is not a configuration.
 
 | Arm | What | Runner |
 |---|---|---|
-| A | **the production configuration**: one round of the 5-pass (`gpt-6-astra`, all five passes, every chunk) → immutable pre-gate artifact → one Gemini net-new review over it with **`gemini-flash-latest`** (production's default since 2026-09-07); suppression OFF. **No repair loop** — see §1. A's findings = pre-gate union ∪ Flash gate output. | `apparatus --label A --gate-model gemini-flash-latest` |
-| A+ | the same pre-gate artifact → **`gemini-pro-latest`** gate (what `cmdApparatus` pins today, `:625`). A+'s findings = pre-gate union ∪ Pro gate output. The 5-pass calls are **shared** with A: the ledger records them once, tagged `sharedBy: [A, A+]`, and each configuration's `$/diff` counts them once (shared compute, not double spend). | `apparatus --label A+ --gate-only --gate-model gemini-pro-latest` |
-| C | cold `claude-sonnet-5` ×3 union, temperature pinned at 1.0 | `run --label C --model claude-sonnet-5 --repeats 3 --sdk` |
-| E | **the cheap challenger**: DeepSeek V4.1 Flash via the **direct** API (`resolveDeepseekCreds`, OpenAI-compatible), id `deepseek-flash`, ×3 union, temperature pinned at 1.0. `deepseek-flash` is an **unversioned alias** (the response's `model` field echoes the alias, verified 2026-09-21), so the manifest pins the response `system_fingerprint` captured at preflight and the runner **refuses any cell whose response fingerprint differs** — a silent V4.2 behind the same alias would otherwise change the arm mid-run. | `run --label E --model deepseek-flash --repeats 3` |
+| A | **the production configuration**: one round of the 5-pass (**`gpt-5.6-terra`**, pinned — see the note below the table; all five passes, every chunk) → immutable pre-gate artifact → one Gemini net-new review over it with **`gemini-flash-latest`** (production's default since 2026-09-07); suppression OFF. **No repair loop** — see §1. A's findings = pre-gate union ∪ Flash gate output. | `apparatus --label A --gpt-model gpt-5.6-terra --gate-model gemini-flash-latest --corpus <corpus>` |
+| A+ | the same pre-gate artifact → **`gemini-pro-latest`** gate (what `cmdApparatus` pins today, `:625`). A+'s findings = pre-gate union ∪ Pro gate output. The 5-pass calls are **shared** with A: the ledger records them once, tagged `sharedBy: [A, A+]`, and each configuration's `$/diff` counts them once (shared compute, not double spend). | `apparatus --label A+ --gate-only --gate-model gemini-pro-latest --corpus <corpus>` |
+| C | cold `claude-sonnet-5` ×3 union, temperature pinned at 1.0, **effort `xhigh`** (Anthropic's above-default tier; `high` is the API default, `max` is documented to overthink structured output; `max_tokens` 64K because thinking shares it) | `run --label C --model claude-sonnet-5 --repeats 3 --sdk --reasoning-effort xhigh --corpus <corpus>` |
+| E | **the cheap challenger**: DeepSeek V4.1 Flash via the **direct** API (`resolveDeepseekCreds`, OpenAI-compatible), id `deepseek-flash`, ×3 union, **thinking mode at effort `max`** (DeepSeek's only above-default tier — its tiers are `low/high/max`, `high` the default, and `xhigh` silently aliases to `high`; `max_tokens` 128K, the documented ceiling at `max`, because it spans reasoning + answer). **Temperature is NOT pinned**: DeepSeek documents that thinking mode ignores `temperature` without error, so the manifest records `null` and the ×3 union's variance is the model's own stochastic decoding, verified by `samplingDegenerate`. `deepseek-flash` is an **unversioned alias** (the response's `model` field echoes the alias, verified 2026-09-21), so the manifest pins the response `system_fingerprint` captured at preflight and the runner **refuses any cell whose response fingerprint differs** — a silent V4.2 behind the same alias would otherwise change the arm mid-run. | `run --label E --model deepseek-flash --repeats 3 --reasoning-effort max --corpus <corpus>` |
+
+**Why the incumbent's GPT is pinned (2026-09-21 fresh-look review, pre-spend)**:
+the earlier registry text said `gpt-6-astra` because `latest-gpt` resolved
+there through the live-catalog refresh — a newer, pricier model OpenAI shipped
+after this plan was written, unpriced in `model-pricing.mjs` (every 5-pass
+row would have been `costUsd: null`, making A `costComplete: false` and
+therefore *ineligible* in `decide()` — an `inconclusive` verdict after the
+spend, exactly the "always-null column reads as free" defect the pricing
+module documents), and not the model exp-3 measured the apparatus against.
+Arm A is "what production ran when the prior results were measured", so
+`cmdApparatus` now takes `--gpt-model` with a **concrete default of
+`gpt-5.6-terra`** and records the resolved id in provenance. The same review
+found and fixed: Gemini gate calls returned no `usage` (every gate row also
+`costUsd: null`); the §8 budget ceiling was specified but unwired; `score
+--decide` was specified but unwired; and the runner iterated 7 passes — its
+locally re-derived `PASSES` had silently enrolled the `duplication`/`adjacency`
+**mechanical** waves as paid LLM passes, 40% over the baseline's 5 and a
+fairness break — now imported from `audit-shadow.mjs::SHADOW_PASSES`, the one
+oracle. Each has a red-then-green regression lock.
+
+**Gate ablation, third candidate (operator request, 2026-09-21)**: `claude-sonnet-5`
+at effort `xhigh` as the gate, over the SAME pre-gate artifact —
+`apparatus --label A-sonnet --gate-only --gate-model claude-sonnet-5 --gate-reasoning-effort xhigh --corpus <corpus>`.
+Same rule as A+: paired per commit, excluded from `decide()`. It compares
+gate *models* on identical input (`buildGateReviewPrompt` is one shared
+builder) while each gate uses its own native structured-output mechanism —
+the gate ablation asks "which model, at its best, is the better gate", not the
+cold arms' "isolate the model" question.
 
 **Arms B (cold Sonnet ×1) and D (cold Opus ×1) are dropped, not deferred**
 (operator decision, 2026-09-21 revision below): both were run in an earlier,
@@ -502,14 +530,17 @@ adjudicated-severity scoring and `decide`; pricing rows; both tests. Files:
 (`npm run fixture:create -- --name exp5 --rev <sha>`), preflight writes the
 manifest (resolved ids, DeepSeek fingerprint); with
 `LEARNING_DISABLE=1 AUDIT_SEMANTIC_SUPPRESS_ENABLED=false` run, per the
-§3 registry: **A** = `apparatus --label A --gate-model gemini-flash-latest`
+§3 registry: **A** = `apparatus --label A --gpt-model gpt-5.6-terra --gate-model gemini-flash-latest`
 (writes the pre-gate artifact + `G-flash`), then **A+** = `apparatus --label
 A+ --gate-only --gate-model gemini-pro-latest` (consumes that artifact, writes `G-pro`),
-then C and E via `run` (E first does one preflight call to capture the
-`system_fingerprint` into the manifest). The gate ablation needs no extra
-call — it is the paired read of `G-flash` vs `G-pro`. One sitting;
-`--resume` on interruption; artifacts under `.audit-loop/solo-control/`
-(Category A). Files: none.
+then **A-sonnet** = `apparatus --label A-sonnet --gate-only --gate-model claude-sonnet-5 --gate-reasoning-effort xhigh`
+(same artifact, writes `G-sonnet`), then C and E via `run` with their
+`--reasoning-effort` (E's first real call seeds the `system_fingerprint` pin
+in the manifest). The gate ablation needs no extra 5-pass spend — it is the
+paired read of `G-flash` vs `G-pro` vs `G-sonnet`. Every runner enforces the
+§8 ceiling (`--budget-usd`, default 350) from the shared ledger before each
+cell. One sitting; `--resume` on interruption; artifacts under
+`.audit-loop/solo-control/` (Category A). Files: none.
 
 **Phase 4 — Adjudication + verdict**: `merge` → human labels `label`,
 `cluster`, `sev`, `sevReason` on the blind CSV per the rubric → `score
@@ -628,6 +659,7 @@ incident:
 - **Gemini round 1**: CONCERNS, 4 new (G1 HIGH: `decide()` could never accept the incumbent — `$/diff ≤ 0.25×A` is false for A itself — and held frontier arms to a challenger-only discount; G2 HIGH: no fallback when A fails the trust bar, which exp-1 measured at ~40%; G3 MEDIUM: `recipientPolicy` undefined for bare `--commits`; G4 MEDIUM: shared-row aggregation predicate ambiguous), 0 wrongly dismissed, deliberation "exemplary". All four accepted: roles + total winner rule + incumbent-ineligible fallback + `nonInferiorCheap` as a reported finding; committed `recipient-policy.json` as the one source; scoring vs budget predicates stated. Gemini round 2 follows (cap 2).
 
 - **2026-09-21 revision (operator decisions, not an audit round)**: (1) policy v2 — wine-cellar-app now permits `openrouter`/`deepseek`/`alibaba`, collapsing the two cohorts into one; (2) one cheap challenger instead of three, chosen by live benchmark + price + route stability: DeepSeek V4.1 Flash direct (`deepseek-flash`), fingerprint-pinned; Grok/Qwen-max dropped as frontier-priced, GLM-5.3-Flash and Qwen3.8-Flash pre-registered as fallbacks. Corpus v3 keeps v2's 35 shas; only `allowedTransports` changed.
+- **2026-09-21 fresh-look review before Phase 3 spend (operator-requested, model switched for an independent read)**: four blockers found and fixed with red-then-green locks — (1) the incumbent's GPT resolved to the unpriced, unintended `gpt-6-astra` via the live catalog → pinned `--gpt-model gpt-5.6-terra`; (2) Gemini gate calls captured no `usage` → `normalizeGeminiUsage`, null-honest; (3) §8 budget ceiling unwired → `--budget-usd` guard before every cell on both runners, exit 3; (4) `score --decide` unwired → wired, with cohort-wide partial-commit dropping on a per-(commit, arm) denominator the runner records as `expectedCells`, and the > 10% rule reported as `verdictBlocked`. A fifth defect surfaced from the fix for (4): the runner iterated **7** passes, not the baseline's 5 — a locally re-derived `PASSES` had enrolled the mechanical `duplication`/`adjacency` waves as paid model calls; now imported from `SHADOW_PASSES`. Two design decisions: Sonnet arms get effort `xhigh` (verified: five tiers exist, `max` overthinks structured output); DeepSeek gets `max` (its only above-default tier; `xhigh` would silently alias to `high`), and its `temperature` pin was retracted because thinking mode documents ignoring it — recorded `null`, variance verified by `samplingDegenerate`. Contamination (public repo): dismissed on timing — corpus commits are 2026-06..09, after the candidates' cutoffs; no separate-stratum reporting required. Gate ablation gains a third candidate, `claude-sonnet-5` at `xhigh`. Also fixed: the `--corpus` branch in both runners used corpus entry IDs as commit shas; an explicit `--label` no longer gets the auto-derivation `-xN` suffix.
 - **2026-09-21 revision 2 (operator decision, not an audit round)**: Arms B (cold Sonnet ×1) and D (cold Opus ×1) dropped from the registry, before any Phase 3 spend. Reason (operator, from a prior test run outside this experiment): a single-shot cold review already produces expensive, poor results regardless of model, and re-measuring that here would spend real money confirming a known result. The ×3 fix is cost-justified only for Sonnet (kept as Arm C); Opus ×3 is not, so Opus exits the experiment entirely rather than being retested at ×1. Configuration candidates are now `{A, A+, C, E}`; every §3–§9 reference to B/D updated to match (mermaid diagram, arms table, recipient vocabulary, `decide()` candidate set and step-4 example, Phase 3 recipe, Testing Strategy integration case).
 
 ## Implementation Log
