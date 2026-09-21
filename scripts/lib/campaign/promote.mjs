@@ -93,7 +93,7 @@ export async function repoId() {
  *    entirely and a corrected re-collection needs no flag once quarantined.
  *
  * @param {object} entry
- * @param {{campaignId: string, lockDigest: string, shaByRunId: Record<string,string|null>,
+ * @param {{campaignId: string, lockDigest: string, shaByRunId: Record<string,{identity:string|null,identityVerified:boolean}>,
  *   existingPlanHashesByArm?: Record<string, Set<string|null>>, confirmMismatch?: boolean}} ctx
  */
 /**
@@ -140,6 +140,7 @@ export function classifyLogEntry(entry, {
   }
   const armEntries = Object.entries(entry.arms ?? {});
   const shas = new Set();
+  let identityVerified = true;
   for (const [, arm] of armEntries) {
     // LIVE attempts only, deliberately — a superseded attempt's run id is NOT
     // folded in here. A human-invoked retry can happen days after the first
@@ -148,8 +149,10 @@ export function classifyLogEntry(entry, {
     // revision" rule below and make the whole snapshot ineligible for having
     // been retried. The revision that must be single is the one adjudication
     // verifies findings against, which is the live attempt's.
-    const sha = arm?.runId ? shaByRunId[arm.runId] : null;
-    if (sha) shas.add(sha);
+    const record = arm?.runId ? shaByRunId[arm.runId] : null;
+    if (!record || !record.identity) continue;
+    shas.add(record.identity);
+    if (!record.identityVerified) identityVerified = false;
   }
   if (shas.size === 0) {
     return { eligible: false, reason: 'no arm resolved an audited_sha — an unverifiable revision makes the snapshot unadjudicatable (§2.5b-i)' };
@@ -173,6 +176,11 @@ export function classifyLogEntry(entry, {
   return {
     eligible: true,
     auditedSha: [...shas][0],
+    // False when any contributing arm's identity came from the audited_sha/
+    // commit_sha fallback rather than a real audited_tree match — a weaker,
+    // legacy identity that is still eligible but should never be silently
+    // treated as equivalent to a verified one.
+    identityVerified,
     // Non-empty only when a REAL mismatch was let through by confirmMismatch
     // — the caller (`promoteFromLog`) auto-quarantines each named oldHash in
     // the same locked transaction before admitting the new attempt.

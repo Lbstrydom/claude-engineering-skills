@@ -25,7 +25,13 @@ function runHeader(runId, meta, ui) {
   if (meta.rounds != null) bits.push(`${ui.escapeHtml(meta.rounds)} rounds`);
   if (meta.geminiVerdict) bits.push(`Gemini ${ui.escapeHtml(meta.geminiVerdict)}`);
   if (meta.totalFindings != null) bits.push(`${ui.escapeHtml(meta.totalFindings)} findings`);
-  if (meta.commitSha) bits.push(`commit <code>${ui.escapeHtml(meta.commitSha)}</code>`);
+  // `commitSha` is HEAD at audit-capture time, not necessarily the commit
+  // containing the audited diff (dirty-tree audits are the normal case) — see
+  // AGENTS.md's Postgres-Parity-Store section. Labelled accordingly so a
+  // reader doesn't assume it names the change under review; `auditedTree`
+  // (when captured) is the real target identity.
+  if (meta.commitSha) bits.push(`HEAD at capture <code>${ui.escapeHtml(meta.commitSha)}</code>`);
+  if (meta.auditedTree) bits.push(`audited tree <code>${ui.escapeHtml(meta.auditedTree)}</code>`);
   const sub = bits.length ? `<p class="section-note">${bits.join(' · ')}</p>` : '';
   const plan = meta.planFile ? `<p class="section-note">plan: ${ui.escapeHtml(meta.planFile)}</p>` : '';
   return heading + sub + plan;

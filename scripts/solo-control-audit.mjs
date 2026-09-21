@@ -200,18 +200,58 @@ function csvField(v) {
 
 // ── target-commit discovery ──────────────────────────────────────────────────
 
-/** The audit-code units that already have a B/C shadow assignment — the paired
- * set the control must cover for an apples-to-apples comparison. */
+/**
+ * The audit-code units that already have a B/C shadow assignment — the paired
+ * set the control must cover for an apples-to-apples comparison.
+ *
+ * `commit_sha` is HEAD at audit-capture time — the PARENT of a dirty-tree audit,
+ * not the diff the arms actually read (see AGENTS.md's Postgres-Parity-Store
+ * section). `audited_sha`/`audited_tree` (added 20260719120000) are the real
+ * target identity. A row needs BOTH to be a usable audit unit, but a `WHERE ...
+ * IS NOT NULL` filter and an in-process count of what it excluded are mutually
+ * exclusive from one query (caught by the Gemini gate on this plan) — so this
+ * relaxes to `OR`, dedups by `ar.id` (never by the identity columns, which a
+ * partial-null row doesn't have yet), and partitions in JS.
+ *
+ * @returns {Promise<{resolved: {commitSha:string, auditedSha:string, auditedTree:string}[], unresolvedIncompleteIdentityCount: number}>}
+ */
+/**
+ * Partition raw `{commit_sha, audited_sha, audited_tree}` rows into usable
+ * audit units vs. incomplete-identity rows, and dedup units by the COMPOSITE
+ * `(audited_sha, audited_tree)` pair — never `audited_tree` alone, which would
+ * collapse two genuinely different diffs that happen to land on the same
+ * resulting tree from different starting HEADs (e.g. one run changing file
+ * `f`, another changing `g`, both ending at tree `T`). Pure — no DB, no git —
+ * so it is unit-testable without either.
+ *
+ * @param {{commit_sha:string, audited_sha:string|null, audited_tree:string|null}[]} rows
+ * @returns {{resolved: {commitSha:string, auditedSha:string, auditedTree:string}[], unresolvedIncompleteIdentityCount: number}}
+ */
+function partitionDiscoveredRows(rows) {
+  let unresolvedIncompleteIdentityCount = 0;
+  const seen = new Set();
+  const resolved = [];
+  for (const row of rows) {
+    if (!row.audited_sha || !row.audited_tree) { unresolvedIncompleteIdentityCount++; continue; }
+    const key = `${row.audited_sha}:${row.audited_tree}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    resolved.push({ commitSha: row.commit_sha, auditedSha: row.audited_sha, auditedTree: row.audited_tree });
+  }
+  return { resolved, unresolvedIncompleteIdentityCount };
+}
+
 async function discoverCommits() {
   const { query } = await import('./lib/db/query.mjs');
   const r = await query(
-    `SELECT DISTINCT ar.commit_sha
+    `SELECT DISTINCT ON (ar.id) ar.id, ar.commit_sha, ar.audited_sha, ar.audited_tree
        FROM audit_findings f JOIN audit_runs ar ON ar.id = f.run_id
-      WHERE f.arm IN ('B','C') AND ar.stage_type = $1 AND ar.commit_sha IS NOT NULL
-      ORDER BY ar.commit_sha`,
+      WHERE f.arm IN ('B','C') AND ar.stage_type = $1
+        AND (ar.audited_sha IS NOT NULL OR ar.audited_tree IS NOT NULL)
+      ORDER BY ar.id`,
     [STAGE_TYPE],
   );
-  return r.rows.map((x) => x.commit_sha);
+  return partitionDiscoveredRows(r.rows);
 }
 
 /** Find which local repo root contains `sha` (as a real commit). */
@@ -223,18 +263,28 @@ function locateCommit(sha) {
   return null;
 }
 
-/**
- * Extract the redacted, sensitive-file-filtered diff for a commit. Returns
- * { diff, files, skippedSensitive } or throws on an egress-gate refusal (a secret
- * in the diff — surface loudly, never send). `-U8` local context (NOT `-W` whole-
- * function, which inflates 2× on large commits without matching what the arms
- * audited — they map-reduce large diffs, they don't read whole function bodies).
- * NO truncation here: large diffs are CHUNKED at audit time (chunkDiff) so S gets
- * full coverage, mirroring the arms' map-reduce rather than seeing only a slice.
- */
-function extractDiff(root, sha) {
-  const nameOut = git(root, ['show', '--pretty=format:', '--name-only', sha]).trim();
-  const allFiles = nameOut.split('\n').map((s) => s.trim()).filter(Boolean);
+/** True when `tree` (a git tree object id) also resolves as a real tree object
+ * in `root`'s object database — false for a tree captured on another machine/
+ * clone or since garbage-collected.
+ *
+ * `audited_tree` has no durable retention mechanism (no ref pins it, since it
+ * was written via a throwaway index — see `gitWorktreeTree`, `scripts/lib/
+ * vcs.mjs`), so `git gc` could in principle prune it as an unreachable dangling
+ * object before a solo-control replay reads it. Accepted risk, not eliminated:
+ * this function is exactly the honest degrade for that case (a missing tree
+ * becomes `unresolved-object-missing`, never a crash and never a silently wrong
+ * diff) rather than a guarantee the object survives forever. */
+function treeExists(root, tree) {
+  return tryGit(root, ['cat-file', '-e', `${tree}^{tree}`]) !== null;
+}
+
+/** Shared tail of `extractDiff`/`extractAuditedDiff`: classify files, drop
+ * sensitive/generated-noise ones, redact, egress-check. `nameListOut` is the
+ * raw `\n`-separated file list; `rawDiffForFiles(cleanFiles)` produces the raw
+ * diff text for exactly those files (deferred so a sensitive-only diff never
+ * runs the full `git diff`/`git show` invocation at all). */
+function finalizeDiff(nameListOut, rawDiffForFiles, label) {
+  const allFiles = nameListOut.trim().split('\n').map((s) => s.trim()).filter(Boolean);
   const clean = [];
   const skippedSensitive = [];
   for (const f of allFiles) {
@@ -245,10 +295,61 @@ function extractDiff(root, sha) {
     else skippedSensitive.push(`${f} (${cls})`);
   }
   if (clean.length === 0) return { diff: '', files: [], skippedSensitive };
-  let diff = git(root, ['show', sha, '-U8', '--', ...clean]);
+  let diff = rawDiffForFiles(clean);
   diff = redactSecrets(diff).text; // {text, redacted} — take the redacted string
-  assertEgressSafe(diff, { label: `solo-control:${sha.slice(0, 8)}` });
+  assertEgressSafe(diff, { label });
   return { diff, files: clean, skippedSensitive };
+}
+
+/**
+ * Extract the redacted, sensitive-file-filtered diff for a commit. Returns
+ * { diff, files, skippedSensitive } or throws on an egress-gate refusal (a secret
+ * in the diff — surface loudly, never send). `-U8` local context (NOT `-W` whole-
+ * function, which inflates 2× on large commits without matching what the arms
+ * audited — they map-reduce large diffs, they don't read whole function bodies).
+ * NO truncation here: large diffs are CHUNKED at audit time (chunkDiff) so S gets
+ * full coverage, mirroring the arms' map-reduce rather than seeing only a slice.
+ *
+ * For a REAL historical commit (`cmdApparatus`/`cmdApparatusBC`/`cmdJudgeGpt`/
+ * `cmdPassRetro`'s manual `--commits`) — never called from the `discoverCommits`
+ * auto-discovery path, which needs `extractAuditedDiff` below instead (a bare
+ * `git show <sha>` is wrong when `sha` is HEAD at a dirty-tree audit's capture
+ * time, not the commit containing the audited change).
+ */
+function extractDiff(root, sha) {
+  const nameOut = git(root, ['show', '--pretty=format:', '--name-only', sha]);
+  return finalizeDiff(nameOut, (files) => git(root, ['show', sha, '-U8', '--', ...files]), `solo-control:${sha.slice(0, 8)}`);
+}
+
+/**
+ * Reconstruct the diff a `discoverCommits`-discovered audit unit actually
+ * audited, from `{auditedSha, auditedTree}` (see `discoverCommits`'s docstring
+ * for why `commit_sha`/a bare `git show` is wrong here). Self-evidencing
+ * dirty/clean branch — no persisted flag needed:
+ *
+ *   - `auditedTree === git rev-parse <auditedSha>^{tree}` (worktree matched the
+ *     committed tree) → the dirty-aware base rule put the diff base at
+ *     `auditedSha~1`, i.e. the audited diff IS `git show <auditedSha>`.
+ *   - Otherwise (worktree was dirty at capture) → the base WAS `auditedSha`, so
+ *     the audited diff is `git diff <auditedSha> <auditedTree>`.
+ *
+ * Known, accepted limitation (see the plan's Risk register): an explicit
+ * `--base` run (e.g. `/cycle`'s clustered `--cluster` resume) whose tree is
+ * clean relative to its own HEAD is indistinguishable from the ordinary
+ * clean-tree case and silently takes the `git show` branch, which is wrong for
+ * that run — no column records the real base, so this is not detectable here.
+ *
+ * @returns {{diff:string, files:string[], skippedSensitive:string[]}}
+ */
+function extractAuditedDiff(root, { auditedSha, auditedTree }) {
+  const cleanTreeSha = git(root, ['rev-parse', `${auditedSha}^{tree}`]).trim();
+  const label = `solo-control:${auditedSha.slice(0, 8)}`;
+  if (cleanTreeSha === auditedTree) {
+    const nameOut = git(root, ['show', '--pretty=format:', '--name-only', auditedSha]);
+    return finalizeDiff(nameOut, (files) => git(root, ['show', auditedSha, '-U8', '--', ...files]), label);
+  }
+  const nameOut = git(root, ['diff', '--name-only', auditedSha, auditedTree]);
+  return finalizeDiff(nameOut, (files) => git(root, ['diff', auditedSha, auditedTree, '-U8', '--', ...files]), label);
 }
 
 /** Split a diff into ≤maxChars blocks at file (`diff --git`) boundaries so each
@@ -464,14 +565,17 @@ async function runDeepseekPass(client, model, passName, diff, { temperature } = 
 // ── subcommands ──────────────────────────────────────────────────────────────
 
 /** Pure resume/incremental decision (tests/solo-control-dispatch.test.mjs):
- * which requested commits still need a run, given what perCommit already
- * records as 'ran'. --force ignores prior coverage entirely; --resume is
+ * which requested units still need a run, given what perCommit already
+ * records as 'ran'. Resume key is `unit.resumeKey`, matched against a
+ * perCommit entry's `unitKey` (falling back to the legacy `.sha` field for
+ * entries written before this composite key existed, where `sha` alone WAS
+ * the resume key). --force ignores prior coverage entirely; --resume is
  * documented sugar for the (already-incremental) default and additionally
  * refuses to combine with --force (starting over and resuming are opposites). */
-function planIncrementalRun({ requested, prior, force, resume }) {
+function planIncrementalRun({ units, prior, force, resume }) {
   if (force && resume) throw new Error('--force and --resume are mutually exclusive (start over vs continue from checkpoint)');
-  const covered = new Set(force || !prior ? [] : prior.perCommit.filter((c) => c.state === 'ran').map((c) => c.sha));
-  return { commits: requested.filter((sha) => !covered.has(sha)), covered };
+  const covered = new Set(force || !prior ? [] : prior.perCommit.filter((c) => c.state === 'ran').map((c) => c.unitKey || c.sha));
+  return { commits: units.filter((u) => !covered.has(u.resumeKey)), covered };
 }
 
 async function cmdRun() {
@@ -523,13 +627,25 @@ async function cmdRun() {
     process.exit(2);
   }
 
-  let requested;
+  // Normalize every entry path into ONE `units` shape so the rest of this
+  // function doesn't branch per-item. Manual `--commits`/`--corpus` give bare
+  // real-commit shas (unchanged legacy shape, `git show` is correct for them —
+  // see `extractDiff`'s docstring). Auto-discovery gives
+  // `{commitSha, auditedSha, auditedTree}` records needing the dirty/clean-
+  // branching `extractAuditedDiff` below (the audited-tree identity fix — a
+  // bare `git show <sha>` is wrong when the audit ran against a dirty tree).
+  let units, unresolvedIncompleteIdentityCount = 0;
   if (corpusArg) {
     const corpus = loadCorpus(corpusArg, recipientPolicy);
-    requested = entriesEligibleForRecipient(corpus, recipient);
-    if (commitsArg) log(`  (--corpus given — ignoring --commits; ${requested.length}/${corpus.entries.length} corpus entries are eligible for recipient "${recipient}")`);
+    // entriesEligibleForRecipient returns corpus entry IDS, not shas — map
+    // back through the entries themselves to the field this runner needs.
+    const eligibleIds = new Set(entriesEligibleForRecipient(corpus, recipient));
+    const eligibleEntries = corpus.entries.filter((e) => eligibleIds.has(e.id));
+    units = eligibleEntries.map((e) => ({ mode: 'manual', resumeKey: e.sha, commitSha: e.sha, auditedSha: null, auditedTree: null }));
+    if (commitsArg) log(`  (--corpus given — ignoring --commits; ${units.length}/${corpus.entries.length} corpus entries are eligible for recipient "${recipient}")`);
   } else if (commitsArg) {
-    requested = commitsArg.split(',').map((s) => s.trim()).filter(Boolean);
+    units = commitsArg.split(',').map((s) => s.trim()).filter(Boolean)
+      .map((sha) => ({ mode: 'manual', resumeKey: sha, commitSha: sha, auditedSha: null, auditedTree: null }));
   } else {
     // SELF-GATE on the arm-eval/shadow toggle: the standing policy is "run the
     // solo control WHENEVER the shadow is on". So the audit skills fire
@@ -541,9 +657,14 @@ async function cmdRun() {
       const shadow = resolveShadowArmsWithToggle();
       if (!shadow.enabled) { log('arm-eval/shadow toggle is OFF — solo control no-op (use --force, --commits, or --corpus to run anyway).'); process.exit(0); }
     }
-    requested = await discoverCommits();
+    const discovered = await discoverCommits();
+    unresolvedIncompleteIdentityCount = discovered.unresolvedIncompleteIdentityCount;
+    units = discovered.resolved.map((u) => ({ mode: 'discovered', resumeKey: `${u.auditedSha}:${u.auditedTree}`, ...u }));
   }
-  if (requested.length === 0) { log('No target commits found (no B/C audit-code shadow units yet, or no corpus entries eligible for this recipient).'); process.exit(0); }
+  if (units.length === 0) { log('No target commits found (no B/C audit-code shadow units yet, or no corpus entries eligible for this recipient).'); process.exit(0); }
+  if (unresolvedIncompleteIdentityCount > 0) {
+    log(`⚠ ${unresolvedIncompleteIdentityCount} B/C shadow row(s) have only one of audited_sha/audited_tree captured — excluded (unresolved-incomplete-identity), not audited.`);
+  }
 
   const baseLabel = armLabelFor(model, labelArg);
   const label = repeats > 1 ? `${baseLabel}-x${repeats}` : baseLabel;   // S-sonnet vs S-sonnet-x3
@@ -556,16 +677,17 @@ async function cmdRun() {
   // the "continuing an interrupted run" case (mutually exclusive with --force).
   const prior = fs.existsSync(dest) ? JSON.parse(fs.readFileSync(dest, 'utf8')) : null;
   let plan;
-  try { plan = planIncrementalRun({ requested, prior, force, resume }); }
+  try { plan = planIncrementalRun({ units, prior, force, resume }); }
   catch (err) { log(`FATAL: ${err.message}`); process.exit(2); }
   const { commits, covered } = plan;
+  const requestedCommitShas = units.map((u) => u.commitSha);
   const out = prior && !force
-    ? { ...prior, model, modelArg, generatedFor: [...new Set([...(prior.generatedFor || []), ...requested])] }
-    : { armLabel: label, model, modelArg, stageType: STAGE_TYPE, generatedFor: requested, findings: [], perCommit: [] };
+    ? { ...prior, model, modelArg, generatedFor: [...new Set([...(prior.generatedFor || []), ...requestedCommitShas])] }
+    : { armLabel: label, model, modelArg, stageType: STAGE_TYPE, generatedFor: requestedCommitShas, findings: [], perCommit: [] };
   out.armLabel = label;
   out.manifest = { ...(out.manifest || {}), resolvedModel: model, recipient, systemFingerprint: (out.manifest && out.manifest.systemFingerprint) || null };
 
-  if (commits.length === 0) { log(`All ${requested.length} commit(s) already covered for ${label} — nothing to do (use --force to re-audit).`); process.exit(0); }
+  if (commits.length === 0) { log(`All ${units.length} commit(s) already covered for ${label} — nothing to do (use --force to re-audit).`); process.exit(0); }
 
   // ── recipient-specific client construction (AFTER the policy preflight
   // above, BEFORE any per-commit dispatch — no client for a refused recipient
@@ -593,28 +715,34 @@ async function cmdRun() {
   out.provenance = { repeats, temperature, backend: recipient === 'anthropic' ? (backend || 'cli(default)') : recipient, maxChars, resolvedModel: model };
   let totalIn = 0, totalOut = 0, samplingVariedUnits = 0, samplingTotalUnits = 0;
 
-  for (const sha of commits) {
+  for (const unit of commits) {
+    const sha = unit.commitSha; // display/label — the join key `cmdMerge`/`fetchExternalFindings` expect, unchanged
     const short = sha.slice(0, 8);
-    const root = locateCommit(sha);
-    if (!root) { log(`  ${short}: NOT FOUND in any local repo root — skipped`); out.perCommit.push({ sha, state: 'not-found' }); continue; }
+    const root = locateCommit(unit.auditedSha || sha);
+    if (!root) { log(`  ${short}: NOT FOUND in any local repo root — skipped`); out.perCommit.push({ sha, unitKey: unit.resumeKey, state: 'not-found' }); continue; }
+    if (unit.mode === 'discovered' && !treeExists(root, unit.auditedTree)) {
+      log(`  ${short}: audited_tree ${unit.auditedTree.slice(0, 8)} not resolvable in ${path.basename(root)} — skipped (unresolved-object-missing)`);
+      out.perCommit.push({ sha, unitKey: unit.resumeKey, state: 'unresolved-object-missing' });
+      continue;
+    }
 
     // exp-5 recipient-policy check — per commit, so a run spanning REPO_ROOTS
     // that resolve to different repos is authorized (or refused) individually,
     // never blanket-approved off the first commit's repo.
     const repoIdentity = repoIdentityFor(root);
     try { resolveAndAuthorize({ model, repoIdentity, policy: recipientPolicy }); }
-    catch (err) { log(`  ${short}: POLICY REFUSED (${err.message}) — skipped, not sent`); out.perCommit.push({ sha, repo: path.basename(root), state: 'policy-refused', error: err.message }); continue; }
+    catch (err) { log(`  ${short}: POLICY REFUSED (${err.message}) — skipped, not sent`); out.perCommit.push({ sha, unitKey: unit.resumeKey, repo: path.basename(root), state: 'policy-refused', error: err.message }); continue; }
 
     let ext;
-    try { ext = extractDiff(root, sha); }
+    try { ext = unit.mode === 'discovered' ? extractAuditedDiff(root, unit) : extractDiff(root, sha); }
     catch (err) {
-      if (String(err?.message).includes('[egress-gate]')) { log(`  ${short}: EGRESS REFUSAL (${err.message}) — skipped, not sent`); out.perCommit.push({ sha, state: 'egress-refused' }); continue; }
-      log(`  ${short}: diff extraction failed (${err.message}) — skipped`); out.perCommit.push({ sha, state: 'diff-error', error: err.message }); continue;
+      if (String(err?.message).includes('[egress-gate]')) { log(`  ${short}: EGRESS REFUSAL (${err.message}) — skipped, not sent`); out.perCommit.push({ sha, unitKey: unit.resumeKey, state: 'egress-refused' }); continue; }
+      log(`  ${short}: diff extraction failed (${err.message}) — skipped`); out.perCommit.push({ sha, unitKey: unit.resumeKey, state: 'diff-error', error: err.message }); continue;
     }
-    if (!ext.diff) { log(`  ${short}: no auditable (non-sensitive) files — skipped`); out.perCommit.push({ sha, state: 'no-clean-files', skippedSensitive: ext.skippedSensitive }); continue; }
+    if (!ext.diff) { log(`  ${short}: no auditable (non-sensitive) files — skipped`); out.perCommit.push({ sha, unitKey: unit.resumeKey, state: 'no-clean-files', skippedSensitive: ext.skippedSensitive }); continue; }
     if (ext.diff.length > maxDiffChars) {
       log(`  ${short}: diff ${ext.diff.length} chars exceeds --max-diff-chars ${maxDiffChars} — RECORDED as diff-too-large (unscored-by-refusal, not missed)`);
-      out.perCommit.push({ sha, repo: path.basename(root), state: 'diff-too-large', diffChars: ext.diff.length });
+      out.perCommit.push({ sha, unitKey: unit.resumeKey, repo: path.basename(root), state: 'diff-too-large', diffChars: ext.diff.length });
       continue;
     }
     const chunks = chunkDiff(ext.diff, maxChars);
@@ -690,7 +818,7 @@ async function cmdRun() {
     const attempts = Object.values(commitConformance).reduce((a, c) => a + c.attempts, 0);
     log(`      → ${commitFindings} finding(s)${misses ? ` (${misses}/${attempts} conformance misses — see perCommit.conformanceByPass)` : ''}`);
     out.perCommit.push({
-      sha, repo: path.basename(root), state: fingerprintDrift ? 'provider-error' : 'ran', findings: commitFindings,
+      sha, unitKey: unit.resumeKey, repo: path.basename(root), state: fingerprintDrift ? 'provider-error' : 'ran', findings: commitFindings,
       chunks: chunks.length, skippedSensitive: ext.skippedSensitive, conformanceByPass: commitConformance,
       ...(fingerprintDrift ? { error: 'fingerprint-drift' } : {}),
     });
@@ -1897,4 +2025,7 @@ async function main() {
 // like chunkDiff) without triggering a live CLI run + process.exit.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
 
-export const _internals = { chunkDiff, continuationMarker, planIncrementalRun, repoIdentityFor, buildColdPassPrompt, sha256hex, gatePath, pregatePath };
+export const _internals = {
+  chunkDiff, continuationMarker, planIncrementalRun, repoIdentityFor, buildColdPassPrompt,
+  sha256hex, gatePath, pregatePath, extractDiff, extractAuditedDiff, locateCommit, treeExists, partitionDiscoveredRows,
+};

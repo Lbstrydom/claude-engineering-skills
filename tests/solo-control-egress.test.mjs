@@ -162,9 +162,14 @@ test('cmdRun refuses a real commit when this repo has no entry in recipient-poli
 test('cmdRun proceeds past the policy gate for the same commit once the repo IS in policy (paired positive control)', () => {
   // Without this, a CLI that always printed "POLICY REFUSED" regardless of
   // policy content would pass the test above vacuously. `--max-diff-chars 1`
-  // forces an immediate, network-free 'diff-too-large' short-circuit right
-  // after the gate — proving the gate itself let this commit through,
-  // without ever reaching runPass (no real provider spend in a test suite).
+  // forces an immediate, network-free short-circuit right after the gate
+  // (either 'diff-too-large' or, if this very commit's diff happens to carry
+  // the deliberate secret fixture from the test above, 'egress-refused') —
+  // both prove the policy gate let this commit through without ever reaching
+  // runPass (no real provider spend in a test suite). The exact downstream
+  // state is NOT what this test is about — asserting one specific value
+  // couples the test to incidental diff content (which commit HEAD happens to
+  // be) rather than the property under test: did the POLICY gate pass.
   const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   const identity = canonicaliseRemoteUrl(execFileSync('git', ['config', '--get', 'remote.origin.url'], { encoding: 'utf8' }).trim());
   fs.rmSync(S_FINDINGS_PATH, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
@@ -174,7 +179,8 @@ test('cmdRun proceeds past the policy gate for the same commit once the repo IS 
       assert.doesNotMatch(output, /POLICY REFUSED/);
       const written = JSON.parse(fs.readFileSync(S_FINDINGS_PATH, 'utf8'));
       const record = written.perCommit.find((c) => c.sha === sha);
-      assert.equal(record.state, 'diff-too-large', 'proves the policy gate passed and dispatch reached the (network-free) diff-size check next');
+      assert.notEqual(record.state, 'policy-refused', 'the policy gate itself must have passed for this authorized repo');
+      assert.ok(['diff-too-large', 'egress-refused'].includes(record.state), `expected a network-free short-circuit state, got "${record.state}"`);
     });
   } finally {
     fs.rmSync(S_FINDINGS_PATH, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });

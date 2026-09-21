@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**6 active · 224 terminal · 29 audit summaries · 1 parked · 5 reference docs**
+**6 active · 225 terminal · 30 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -57,7 +57,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 221 completed plans</summary>
+<summary>Show all 222 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -93,6 +93,7 @@ source comments that no docs linter sees — stays valid.
 | [Claude Audit Loop v1.0](./audit-loop-v1.md) | `Complete` |  |
 | [Audit Orchestrator Hardening](./audit-orchestrator-hardening.md) | `Complete` | implemented (9 phases, 5 clusters), audit-code gate-clear (2 rounds, 6 genuine bugs fixed), covered by the… |
 | [Audit-store write durability and failure contract](./audit-store-write-durability.md) | `Complete` | all 6 phases shipped; the final gate ran twice over the union diff… |
+| [Correct audit-target identity readers off `commit_sha` onto `audited_sha`/`audited_tree`](./audit-target-identity-commit-sha-correction.md) | `Complete` |  |
 | [Plan — Consumer-side audit-tool staleness check (Option A)](./audit-tool-staleness-check.md) | `Complete` | shipped 2026-05-13 as commit bc537f0. |
 | [Audit-Transcript Durability Across Worktree Teardown](./audit-transcript-durability.md) | `Complete` | mirror-at-write + filesystem sweep backstop shipped with `tests/audit-transcript-durability.test.mjs`… |
 | [Auditor Controls Execution Wiring](./auditor-controls-execution-wiring.md) | `Complete` | implemented and shipped… |
@@ -291,12 +292,13 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 (they carry a free-text convergence sentence by convention).
 
 <details>
-<summary>Show all 29 audit summaries</summary>
+<summary>Show all 30 audit summaries</summary>
 
 | Plan | Notes |
 |---|---|
 | [Audit Summary — Architecture-Intent PR-B (Python & Java Adapters)](./arch-intent-pr-b-audit-summary.md) |  |
 | [Audit Summary — Architecture-Intent PR-C (Postgres Adapter)](./arch-intent-pr-c-audit-summary.md) |  |
+| [Audit Summary: audit-target-identity-commit-sha-correction](./audit-target-identity-commit-sha-correction-audit-summary.md) |  |
 | [Audit Summary — brainstorm-arch-context](./brainstorm-arch-context-audit-summary.md) |  |
 | [`/audit-code` summary — `machine/git-autocrlf` probe (8620cfe8)](./consumer-friction-doctor-audit-summary.md) |  |
 | [Audit Summary — discovery-portfolio-secret-redaction](./discovery-portfolio-secret-redaction-audit-summary.md) |  |

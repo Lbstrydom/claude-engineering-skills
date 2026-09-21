@@ -279,32 +279,46 @@ test('commitsCompleteForAllArms: a commit partial for ANY one arm is dropped fro
 
 // ── cmdRun/cmdApparatus internals (scripts/solo-control-audit.mjs) ─────────
 
-test('planIncrementalRun: with no prior file, every requested commit is scheduled', () => {
-  const { commits, covered } = soloCtl.planIncrementalRun({ requested: ['a', 'b'], prior: null, force: false, resume: false });
-  assert.deepEqual(commits, ['a', 'b']);
+// unit() mirrors cmdRun's own manual-mode shape ({mode, resumeKey, commitSha,
+// auditedSha:null, auditedTree:null}) — a manual unit's resumeKey IS its sha.
+function unit(sha) { return { mode: 'manual', resumeKey: sha, commitSha: sha, auditedSha: null, auditedTree: null }; }
+
+test('planIncrementalRun: with no prior file, every requested unit is scheduled', () => {
+  const { commits, covered } = soloCtl.planIncrementalRun({ units: [unit('a'), unit('b')], prior: null, force: false, resume: false });
+  assert.deepEqual(commits, [unit('a'), unit('b')]);
   assert.equal(covered.size, 0);
 });
 
-test('planIncrementalRun: a commit already recorded state:"ran" is skipped on the next incremental run', () => {
-  const prior = { perCommit: [{ sha: 'a', state: 'ran' }, { sha: 'b', state: 'not-found' }] };
-  const { commits, covered } = soloCtl.planIncrementalRun({ requested: ['a', 'b', 'c'], prior, force: false, resume: false });
+test('planIncrementalRun: a unit already recorded state:"ran" (by unitKey) is skipped on the next incremental run', () => {
+  const prior = { perCommit: [{ sha: 'a', unitKey: 'a', state: 'ran' }, { sha: 'b', unitKey: 'b', state: 'not-found' }] };
+  const { commits, covered } = soloCtl.planIncrementalRun({ units: [unit('a'), unit('b'), unit('c')], prior, force: false, resume: false });
   // 'b' was attempted but never completed (state != 'ran') — it must be
   // RETRIED, not treated as permanently skipped, or a transient failure
   // (diff-too-large threshold change, a fixed egress false-positive) could
   // never be recovered by re-running.
-  assert.deepEqual(commits, ['b', 'c']);
+  assert.deepEqual(commits.map((u) => u.resumeKey), ['b', 'c']);
   assert.deepEqual([...covered], ['a']);
 });
 
-test('planIncrementalRun: --force ignores prior coverage entirely, even for a completed commit', () => {
-  const prior = { perCommit: [{ sha: 'a', state: 'ran' }] };
-  const { commits, covered } = soloCtl.planIncrementalRun({ requested: ['a'], prior, force: true, resume: false });
-  assert.deepEqual(commits, ['a']);
+test('planIncrementalRun: a prior perCommit entry with no unitKey (written before that field existed) still resumes via its legacy .sha', () => {
+  // The off-by-N fix (origin PR #110) introduced unitKey; S-findings files
+  // written before it exist only with the bare .sha field. The fallback
+  // `c.unitKey || c.sha` is what keeps those old files resuming correctly
+  // rather than re-running everything once.
+  const prior = { perCommit: [{ sha: 'a', state: 'ran' }] }; // legacy shape, no unitKey
+  const { commits } = soloCtl.planIncrementalRun({ units: [unit('a'), unit('b')], prior, force: false, resume: false });
+  assert.deepEqual(commits.map((u) => u.resumeKey), ['b']);
+});
+
+test('planIncrementalRun: --force ignores prior coverage entirely, even for a completed unit', () => {
+  const prior = { perCommit: [{ sha: 'a', unitKey: 'a', state: 'ran' }] };
+  const { commits, covered } = soloCtl.planIncrementalRun({ units: [unit('a')], prior, force: true, resume: false });
+  assert.deepEqual(commits, [unit('a')]);
   assert.equal(covered.size, 0);
 });
 
 test('planIncrementalRun: --force and --resume together is a contradiction (start over vs continue) and must throw, not silently pick one', () => {
-  assert.throws(() => soloCtl.planIncrementalRun({ requested: ['a'], prior: null, force: true, resume: true }), /mutually exclusive/);
+  assert.throws(() => soloCtl.planIncrementalRun({ units: [unit('a')], prior: null, force: true, resume: true }), /mutually exclusive/);
 });
 
 test('buildColdPassPrompt: the fairness contract — deterministic and byte-identical for the same (passName, diff)', () => {
