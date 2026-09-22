@@ -17,17 +17,20 @@
  * Usage:
  *   node scripts/concern-telemetry-report.mjs              # last 7 days
  *   node scripts/concern-telemetry-report.mjs --days 14 --json
+ *   node scripts/concern-telemetry-report.mjs --days 7 --out .audit/concern-report.json   (weekly maintenance)
  *
  * @module scripts/concern-telemetry-report
  */
 import './lib/load-env.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { many } from './lib/db/query.mjs';
 import { getPool, storeDescriptor } from './lib/db/client.mjs';
 import { finishAndExit, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { CONCERN_TELEMETRY_EPOCH, HARD_SUPPRESS_THRESHOLD } from './lib/concern-identity.mjs';
 
-const KNOWN_FLAGS = ['--days', '--json', '--selfcheck-relocation'];
+const KNOWN_FLAGS = ['--days', '--json', '--out', '--selfcheck-relocation'];
 const BAND_KEYS = ['lt10', 'lt20', 'lt35', 'gte35'];
 
 function emptyTotals() {
@@ -171,6 +174,11 @@ async function main() {
     process.exitCode = 2;
     return;
   }
+  if (argv.includes('--out') && !argv[argv.indexOf('--out') + 1]) {
+    process.stderr.write('concern-telemetry-report: --out needs a file path\n');
+    process.exitCode = 2;
+    return;
+  }
   const store = storeDescriptor(process.env.AUDIT_DB_URL || '')?.label ?? 'unknown store';
   if (!await getPool()) {
     process.stderr.write('concern-telemetry-report: UNMEASURED — no audit store configured (AUDIT_DB_URL).\n');
@@ -178,9 +186,17 @@ async function main() {
     return;
   }
   const summary = summariseConcernTelemetry(await fetchRows(daysArg));
+  const envelope = { ok: true, store, days: daysArg, epoch: CONCERN_TELEMETRY_EPOCH, generatedAt: new Date().toISOString(), ...summary };
+  // `--out`: the weekly maintenance run keeps only a 6-line tail, so the full
+  // readout must land in a file someone can open afterwards.
+  const outPath = argv.includes('--out') ? argv[argv.indexOf('--out') + 1] : null;
+  if (outPath) {
+    fs.mkdirSync(path.dirname(path.resolve(outPath)), { recursive: true });
+    fs.writeFileSync(path.resolve(outPath), `${JSON.stringify(envelope, null, 2)}\n`);
+  }
 
   if (argv.includes('--json')) {
-    console.log(JSON.stringify({ ok: true, store, days: daysArg, epoch: CONCERN_TELEMETRY_EPOCH, ...summary }, null, 2));
+    console.log(JSON.stringify(envelope, null, 2));
   } else {
     console.log(`Concern telemetry · store ${store} · last ${daysArg} day(s) · epoch ${CONCERN_TELEMETRY_EPOCH}\n`);
     for (const [name, t] of [['ALL', summary.all], ...Object.entries(summary.byRepo).sort()]) {

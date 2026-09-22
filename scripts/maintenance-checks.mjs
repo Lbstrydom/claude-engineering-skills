@@ -213,6 +213,16 @@ export const CHECKS = [
     steps: [{ script: 'memory-health.mjs', args: [] }],
   },
   {
+    // Ad hoc — no dedicated workflow file; a read-only weekly report
+    // (docs/plans/concern-identity-suppression.md). Is re-raise hard-suppress
+    // firing, are concern links being made, how many re-raises slip past. The
+    // runner keeps only a 6-line tail, so the full readout goes to --out.
+    key: 'concern-report',
+    label: 'Re-raise suppression telemetry (concern-v1), last 7 days',
+    requiredEnv: ['AUDIT_DB_URL'],
+    steps: [{ script: 'concern-telemetry-report.mjs', args: ['--days', '7', '--out', '.audit/concern-report.json'] }],
+  },
+  {
     key: 'learning-weekly-review', // formerly learning-weekly-review.yml -- Actions cron deleted 2026-09-13; this is its only runner here
     label: 'Learning-system weekly review',
     requiredEnv: ['AUDIT_DB_URL', 'LEARNING_REPO_NAME'],

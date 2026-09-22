@@ -405,6 +405,33 @@ const CLI_EXIT_RECIPES = {
     expectStderrContains: 'PARTIAL CAPTURE',
     envPrereq: null, // deterministic: filesystem only, no store/network/browser
   },
+  // audit-code concern decision (concern-identity.mjs findUndecidedReRaises):
+  // a round-2 dismissal whose finding carries `_priorRuling` naming a dismissed
+  // ledger entry, with no sameConcernAs/newConcern → exit 2, nothing written.
+  // The stderr match proves the refusal came from THAT check, not from argv or
+  // schema validation, which also exit 2.
+  'ledger-undecided-reraise': {
+    args: ['--result', 'r2.json', '--ledger', 'ledger.json', '--triage', 'triage.json'],
+    fixture(dir) {
+      const prior = {
+        topicId: 'abc123def456', semanticHash: 'h0', severity: 'MEDIUM', category: '[S] Hardcoded policy limit',
+        section: 'src/a.ts', detailSnapshot: 'x', affectedFiles: ['src/a.ts'], affectedPrinciples: [], pass: 'sustainability',
+        source: 'session', adjudicationOutcome: 'dismissed', remediationState: 'pending', originalSeverity: 'MEDIUM',
+        ruling: 'overrule', rulingRationale: 'provider contract', resolvedRound: 1,
+      };
+      atomicWriteFileSync(path.join(dir, 'ledger.json'), JSON.stringify({ version: 1, entries: [prior] }));
+      atomicWriteFileSync(path.join(dir, 'r2.json'), JSON.stringify({ round: 2, findings: [{
+        id: 'M1', severity: 'MEDIUM', category: '[S] Hardcoded retry budget', section: 'src/a.ts', detail: 'y',
+        principle: 'p', _pass: 'sustainability', _hash: 'h1', _priorRuling: { topicId: prior.topicId, score: 0.2 },
+      }] }));
+      atomicWriteFileSync(path.join(dir, 'triage.json'), JSON.stringify({
+        M1: { outcome: 'dismissed', state: 'pending', ruling: 'overrule', why: 'second raising' },
+      }));
+    },
+    expectExit: 2,
+    expectStderrContains: 'no concern decision',
+    envPrereq: null, // deterministic: filesystem only
+  },
 };
 
 /** @returns {Promise<OracleResult>} */

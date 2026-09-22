@@ -459,6 +459,7 @@ const CORE_ENTRY = [
   // wine-cellar-app produced a live MODULE_NOT_FOUND.
   'scripts/maintenance-checks.mjs',
   'scripts/memory-health.mjs',
+  'scripts/concern-telemetry-report.mjs', // concern-report maintenance check
   'scripts/check-model-freshness.mjs',
   'scripts/context-staleness.mjs',
   'scripts/debt-health-check.mjs',
