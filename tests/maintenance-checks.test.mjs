@@ -49,6 +49,7 @@ describe('maintenance-checks — CHECKS manifest', () => {
       'accepted-debt',
       'arch-maintenance',
       'cache-hitrate',
+      'concern-report',
       'context-staleness',
       'debt-capture-trail',
       'debt-health',
@@ -650,7 +651,7 @@ describe('maintenance CHECKS — workflow citations resolve', () => {
   it('every check whose key names no workflow is marked ad hoc in the header', () => {
     // The inverse direction: a check with no workflow must be DECLARED as such,
     // so "no citation" is a stated fact rather than an omission.
-    const adHoc = ['cache-hitrate', 'debt-health', 'debt-ledger-claims', 'debt-capture-trail', 'context-staleness', 'slice-recurrence', 'accepted-debt', 'workflow-cadence'];
+    const adHoc = ['cache-hitrate', 'concern-report', 'debt-health', 'debt-ledger-claims', 'debt-capture-trail', 'context-staleness', 'slice-recurrence', 'accepted-debt', 'workflow-cadence'];
     for (const key of adHoc) {
       assert.ok(CHECKS.some((c) => c.key === key), `${key} must still exist for this assertion to mean anything`);
     }

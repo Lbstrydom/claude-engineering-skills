@@ -38,7 +38,10 @@
  *             "why": "same limits-from-policy ask as before", "sameConcernAs": "3fa91c" }
  *   }
  *
- * `sameConcernAs` (optional) links a re-raise to the concern it repeats — a
+ * A dismissal whose finding carries `_priorRuling` pointing at an earlier
+ * dismissal MUST decide: `sameConcernAs` or `"newConcern": true`; an undecided
+ * one refuses the batch (concern-identity.mjs `findUndecidedReRaises`).
+ * `sameConcernAs` links a re-raise to the concern it repeats — a
  * finding id in this triage, or a ledger topicId / unique 6+ char prefix (a
  * kept R2+ finding carries its nearest prior ruling as `_priorRuling.topicId`). Three dismissals of one concern hard-suppress
  * the next raise however it is worded (concern-identity.mjs).
@@ -52,7 +55,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { generateTopicId, populateFindingMetadata } from './lib/ledger.mjs';
-import { resolveConcernLinks } from './lib/concern-identity.mjs';
+import { resolveConcernLinks, findUndecidedReRaises } from './lib/concern-identity.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { withFileLock } from './lib/file-lock.mjs';
 import { LedgerEntrySchema } from './lib/schemas.mjs';
@@ -333,6 +336,12 @@ async function main() {
     if (t.sameConcernAs !== undefined && (typeof t.sameConcernAs !== 'string' || t.sameConcernAs.trim() === '')) {
       throw new ArgvError(`write-ledger-entries: ${id}.sameConcernAs must be a finding id or a ledger topicId (or unique prefix).`);
     }
+    if (t.newConcern !== undefined && typeof t.newConcern !== 'boolean') {
+      throw new ArgvError(`write-ledger-entries: ${id}.newConcern must be true or false.`);
+    }
+    if (t.newConcern === true && t.sameConcernAs !== undefined) {
+      throw new ArgvError(`write-ledger-entries: ${id} sets both sameConcernAs and newConcern — pick one.`);
+    }
     const f = byId.get(id);
     populateFindingMetadata(f, f._pass || passDefault);   // idempotent; ensures _hash/_primaryFile
     const topicId = generateTopicId(f);
@@ -367,6 +376,15 @@ async function main() {
   // the concern it names may have been written by a concurrent adjudication.
   let linked = 0;
   await writeLedgerAtomically(ledgerPath, (byTopic) => {
+    const undecided = findUndecidedReRaises(Object.entries(triage).map(([id, t]) => [id, byId.get(id), t]), byTopic);
+    if (undecided.length > 0) {
+      throw new ArgvError(
+        `write-ledger-entries: ${undecided.length} dismissal(s) sit beside an earlier dismissal with no concern `
+        + 'decision. Nothing was written. For each, add "sameConcernAs": "<prior>" if it is the same concern '
+        + 'reworded, or "newConcern": true if it is a different defect:\n  '
+        + undecided.map(u => `${u.id} beside ${u.prior.slice(0, 6)} "${u.priorCategory}"`).join('\n  '),
+      );
+    }
     const { entries, errors } = resolveConcernLinks(pending, concernRefs, topicByFindingId, byTopic);
     if (errors.length > 0) {
       throw new ArgvError(

@@ -754,7 +754,8 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
   const nearMisses = kept.map(f => describeNearMiss(f, resolved, ledgerFindingSimilarity, concernIndex)).filter(Boolean);
   // Put the prior ruling ON the finding the adjudicator triages, so linking a
   // re-raise (`sameConcernAs`) needs no search of the ledger.
-  for (const m of nearMisses) m.finding._priorRuling = { topicId: m.matchedTopic, score: m.matchScore };
+  const byTopic = new Map(resolved.map(d => [d.topicId, d]));
+  for (const m of nearMisses) m.finding._priorRuling = { topicId: m.matchedTopic, score: m.matchScore, category: byTopic.get(m.matchedTopic)?.category ?? null };
   const concernTelemetry = summariseConcernRound({ suppressed, nearMisses, index: concernIndex, reopenTelemetry });
   return { kept, suppressed, reopened, reopenTelemetry, nearMisses, concernTelemetry };
 }

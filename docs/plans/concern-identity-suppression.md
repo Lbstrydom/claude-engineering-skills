@@ -47,9 +47,15 @@ Measured before the fix (scratch replays, not committed):
 No migration: `kept` was already in the table's CHECK, and `suppression_stats`
 is jsonb.
 
+**Follow-up (2026-09-22).** The link is no longer left to prose: a dismissal
+whose finding carries `_priorRuling` naming an earlier dismissal must say
+`sameConcernAs` or `newConcern: true`, or `write-ledger-entries` refuses the
+batch. The weekly local maintenance run gains a `concern-report` check writing
+`.audit/concern-report.json`.
+
 ## 3. Observation protocol (pre-registered)
 
-Read the report on 2026-09-29, on every store a consumer writes to. The rules
+Read the report on 2026-09-29, on every store a consumer writes to (the weekly `concern-report` maintenance check leaves it in `.audit/concern-report.json`). The rules
 below are fixed now so the week's data cannot be used to tune them.
 
 **Sample floor.** At least 10 stamped R2+ rounds across consumers. Below that,
@@ -58,7 +64,7 @@ extend by a week; do not conclude.
 | Question | Signal | Reading | Action |
 |---|---|---|---|
 | Q1. Does hard-suppress fire? | `hard-suppress:` line | `NOT FIRING` with a concern at threshold | Bug. Reproduce from the kept rows before anything else |
-| Q2. Is `sameConcernAs` used? | adoption x/y | Low adoption while `in a known concern` or recurring topics are high | The SKILL prose is not steering. Fix the prose, not thresholds |
+| Q2. Are links right? | adoption x/y, recurring topics | Linking is enforced at write (2026-09-22 follow-up), so low adoption means few re-raises, not skipped links. Recurring topics that stay high mean links are being answered `newConcern` wrongly | Sample 5 `newConcern` rulings from the ledgers by hand |
 | Q3. How much still slips? | recurring topics, score bands | Same-concern near-misses mostly below 0.2 | The fuzzy threshold is out of reach by construction. Do not tune it |
 | Q4. Is Layer 3 over-suppressing? | re-litigation declined | Any | Sample 5 rows by hand; a stale dismissal hidden is a recall loss |
 | Q5. Does `[SYSTEMIC]` keying need work? | multi-file near-misses | A large share of recurring topics are multi-file | Open the keying plan (the report's item 4). Otherwise leave it |

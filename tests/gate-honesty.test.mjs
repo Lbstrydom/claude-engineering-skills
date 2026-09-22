@@ -62,7 +62,11 @@ const PINNED_EXECUTABLE = {
   // capture exits non-zero. Genuinely bindable where the sibling debt gates are
   // not -- the trigger is a JSON ledger on disk, so the cli-exit fixture builds
   // it outright with no store, network or browser.
-  'audit-code': ['convergence-threshold', 'tiered-shadow-window-honesty', 'debt-capture-partial-refusal'],
+  // `concern-decision-required` (2026-09-22): Step 3.5 states write-ledger-entries
+  // refuses a dismissal beside an earlier dismissal with no concern decision.
+  // Same shape as the one above: the trigger is files on disk (a ledger, a
+  // round result carrying _priorRuling, a triage), so cli-exit builds it outright.
+  'audit-code': ['convergence-threshold', 'tiered-shadow-window-honesty', 'debt-capture-partial-refusal', 'concern-decision-required'],
   'visual-audit': ['static-gate-refusal', 'empty-capture-unverified', 'gate-unverified-reasons'],
   // gate-contract-authoring.md Phase B exemplar — the two ai-context-management
   // exit-map scenarios (one per outcome, R3-H1).
@@ -247,7 +251,10 @@ describe('gate-honesty — real skills/', () => {
     //   include an over-cap rationale, and asserts the real CLI exits 1 with
     //   PARTIAL CAPTURE on stderr. The stderr match is load-bearing -- exit 1 is
     //   also this CLI's code for a missing arg or an unreadable ledger.
-    assert.equal(totalExecutable, 15); // +1 ux-lock strict-selectors (Phase C final)
+    // 15 -> 16: +1 audit-code (concern-decision-required, /audit-code Step 3.5,
+    //   2026-09-22). The stderr match ('no concern decision') is load-bearing --
+    //   exit 2 is also this CLI's code for argv and schema errors.
+    assert.equal(totalExecutable, 16); // +1 ux-lock strict-selectors (Phase C final)
     // 35 → 36: +1 ship (unremediated-acceptances-never-blocks, /ship Step 0.5e, 2026-07-27).
     // 36 → 37: +1 ship (unit-test-lock-refuses-unverifiable-claims, 2026-07-29).
     // 37 → 38: +1 ship (final-review-credit-advisory-exit-zero, 2026-07-29).

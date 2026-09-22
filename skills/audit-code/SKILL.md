@@ -436,11 +436,12 @@ suppression.
 
 Full writer invocation example + status field semantics: `references/ledger-format.md`.
 
-**A re-raise of a concern you already dismissed**, even reworded or on another
-file: set `sameConcernAs` in its triage entry. A finding kept beside an earlier
-ruling carries `_priorRuling.topicId` — use it when it is the SAME concern. Three
-linked dismissals hard-suppress the next raise; without the link, rewording
-defeats suppression. See `references/ledger-format.md`.
+**Dismissing a finding that carries `_priorRuling`** (kept beside an earlier
+ruling, named with its category) needs a concern decision in its triage entry:
+same concern reworded → `"sameConcernAs": "<its topicId>"`; a different defect
+in the same file → `"newConcern": true`.
+`write-ledger-entries` refuses a batch with an undecided one (exit 2).
+Three linked dismissals hard-suppress the next raise. See `references/ledger-format.md`.
 
 ---
 

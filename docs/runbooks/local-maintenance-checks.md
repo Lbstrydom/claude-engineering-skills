@@ -23,6 +23,7 @@ beside it. Recount from `CHECKS` if they ever disagree again.)
 | `model-freshness` | `model-freshness.yml` | Live provider catalog vs `STATIC_POOL` | none (public catalogs) |
 | `memory-health` | `memory-health.yml` | Findings-memory trigger metrics | `AUDIT_DB_URL` |
 | `learning-weekly-review` | `learning-weekly-review.yml` | Recurring-issue digest | `AUDIT_DB_URL`, `LEARNING_REPO_NAME` |
+| `concern-report` | *(ad hoc weekly routine, [docs/plans/concern-identity-suppression.md](../plans/concern-identity-suppression.md))* | `node scripts/concern-telemetry-report.mjs --days 7 --out .audit/concern-report.json` — is re-raise hard-suppress firing, are `sameConcernAs` links being made, how many re-raises are kept beside a prior ruling. Read-only; the full readout is in `.audit/concern-report.json` because the runner keeps only a 6-line tail. | `AUDIT_DB_URL` |
 | `cache-hitrate` | *(ad hoc weekly routine)* | `AUDIT_CACHE_SEED` payoff check | `AUDIT_DB_URL` |
 | `debt-health` | *(ad hoc weekly routine)* | `.audit/tech-debt.json` ledger health: stale entries (>`DEBT_HEALTH_TTL_DAYS`, default 180d), recurring entries (>=`DEBT_HEALTH_RECURRENCE_THRESHOLD` distinct audit runs, default 3), and any configured per-path budget violations (see `debt-review.mjs`/`debt-budget-check.mjs`) | none (local file only) |
 | `debt-ledger-claims` | *(ad hoc weekly routine)* | `docs/plans/*.md` "captured to / named in the debt ledger" claims vs. whether the cited `topicId` actually resolves in `.audit/tech-debt.json` | none (local files only) |

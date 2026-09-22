@@ -56,6 +56,9 @@ export const CLI_EXIT_SCENARIOS = Object.freeze([
   // buildHermeticEnv deletes AUDIT_DB_* and relocates HOME, so syncToCloud
   // resolves no repo identity and returns null on the graceful-degradation path.
   'debt-capture-partial-refusal',
+  // audit-code concern decision: a dismissal beside an earlier dismissal with
+  // neither sameConcernAs nor newConcern. Files only, like the one above.
+  'ledger-undecided-reraise',
 ]);
 
 const ProofSchema = z.enum(['process', 'unit-seam']);

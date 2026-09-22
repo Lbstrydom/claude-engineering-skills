@@ -28,6 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { suppressReRaises } from '../scripts/lib/ledger.mjs';
 import {
   resolveConcernLinks, buildConcernIndex, summariseConcernRound, CONCERN_TELEMETRY_EPOCH,
+  findUndecidedReRaises,
 } from '../scripts/lib/concern-identity.mjs';
 
 const APIM = 'src/services/azure-apim-base-provider.ts';
@@ -420,6 +421,65 @@ describe('the adjudicator sees the prior ruling on the finding itself', () => {
     const prior = dismissed('[Sustainability] Hardcoded operational policy', [APIM]);
     const r = suppressReRaises([raise('[Sustainability] Hardcoded retry budget', [APIM])], ledgerOf(prior), { changedFiles: [] });
     assert.equal(r.kept[0]._priorRuling.topicId, prior.topicId);
+    assert.equal(r.kept[0]._priorRuling.category, prior.category, 'the prior category makes the decision quick');
     assert.equal(typeof r.kept[0]._priorRuling.score, 'number');
+  });
+});
+
+// ── The decision is enforced, not requested ────────────────────────────────
+
+// Gate contract `concern-decision-required` (skills/audit-code/gate-contract.json)
+// binds the SKILL.md refusal claim to this behaviour via the cli-exit oracle.
+describe('a dismissal beside an earlier dismissal must decide: same concern or new', () => {
+  const priorEntry = { topicId: 'abc123000000', adjudicationOutcome: 'dismissed', category: '[S] Hardcoded policy limit', source: 'session' };
+  const ledgerMap = new Map([[priorEntry.topicId, priorEntry]]);
+  const beside = { _priorRuling: { topicId: priorEntry.topicId, score: 0.2 } };
+
+  it('flags an undecided dismissal, and names the prior so the decision is quick', () => {
+    const u = findUndecidedReRaises([['M1', beside, { outcome: 'dismissed' }]], ledgerMap);
+    assert.deepEqual(u, [{ id: 'M1', prior: priorEntry.topicId, priorCategory: priorEntry.category }]);
+  });
+  it('either decision satisfies it', () => {
+    assert.deepEqual(findUndecidedReRaises([['M1', beside, { outcome: 'dismissed', newConcern: true }]], ledgerMap), []);
+    assert.deepEqual(findUndecidedReRaises([['M1', beside, { outcome: 'dismissed', sameConcernAs: 'abc123' }]], ledgerMap), []);
+  });
+  it('does not apply to an accepted finding, a fixed prior, a mechanical prior, or a prior not in the ledger', () => {
+    assert.deepEqual(findUndecidedReRaises([['M1', beside, { outcome: 'accepted' }]], ledgerMap), []);
+    for (const prior of [{ ...priorEntry, adjudicationOutcome: 'accepted' }, { ...priorEntry, source: 'stage1-mechanical' }]) {
+      assert.deepEqual(findUndecidedReRaises([['M1', beside, { outcome: 'dismissed' }]], new Map([[prior.topicId, prior]])), []);
+    }
+    assert.deepEqual(findUndecidedReRaises([['M1', beside, { outcome: 'dismissed' }]], new Map()), []);
+  });
+
+  it('end to end: the CLI refuses the undecided batch, writes nothing, then accepts a decision', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'concern-'));
+    const ledgerPath = path.join(dir, 'ledger.json');
+    const triage = path.join(dir, 'triage.json');
+    const r1 = roundFixture(dir, 1, [f('M1', '[Sustainability] Hardcoded policy limit', APIM, 'h1')]);
+    fs.writeFileSync(triage, JSON.stringify({ M1: overrule('first raising') }));
+    cli(['--result', r1, '--ledger', ledgerPath, '--triage', triage, '--round', '1']);
+    const before = fs.readFileSync(ledgerPath, 'utf-8');
+    const prior = JSON.parse(before).entries[0];
+
+    // Round 2's finding carries _priorRuling exactly as suppressReRaises leaves it.
+    const r2 = roundFixture(dir, 2, [{ ...f('M1', '[Sustainability] Hardcoded retry budget', APIM, 'h2'),
+      _priorRuling: { topicId: prior.topicId, score: 0.21, category: prior.category } }]);
+    fs.writeFileSync(triage, JSON.stringify({ M1: overrule('second raising') }));
+    assert.throws(() => cli(['--result', r2, '--ledger', ledgerPath, '--triage', triage, '--round', '2']),
+      (err) => err.status === 2 && /no concern\s+decision/.test(err.stderr) && err.stderr.includes(prior.topicId.slice(0, 6)));
+    assert.equal(fs.readFileSync(ledgerPath, 'utf-8'), before, 'a refused batch writes nothing');
+
+    fs.writeFileSync(triage, JSON.stringify({ M1: overrule('different defect, same file', { newConcern: true }) }));
+    cli(['--result', r2, '--ledger', ledgerPath, '--triage', triage, '--round', '2']);
+    assert.equal(JSON.parse(fs.readFileSync(ledgerPath, 'utf-8')).entries.length, 2);
+  });
+
+  it('refuses both decisions at once', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'concern-'));
+    const triage = path.join(dir, 'triage.json');
+    const r1 = roundFixture(dir, 1, [f('M1', '[S] X', APIM, 'h1')]);
+    fs.writeFileSync(triage, JSON.stringify({ M1: overrule('x', { newConcern: true, sameConcernAs: 'M1' }) }));
+    assert.throws(() => cli(['--result', r1, '--ledger', path.join(dir, 'l.json'), '--triage', triage]),
+      (err) => err.status === 2 && /pick one/.test(err.stderr));
   });
 });

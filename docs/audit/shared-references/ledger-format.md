@@ -75,10 +75,14 @@ silently un-adjudicated). Findings you don't rule on stay `pending` and are
 reported on stderr — that is the silent half of a `0/N labelled` outcome
 report.
 
-**Linking a re-raise — `sameConcernAs` (optional).** When a finding repeats a
+**Linking a re-raise — `sameConcernAs` / `newConcern`.** When a finding repeats a
 concern you already dismissed, even reworded or anchored on a different file,
-add `"sameConcernAs": "<id>"` to its triage entry. A round-2+ finding that sat
-beside an earlier ruling carries `_priorRuling: {topicId, score}` in the result
+add `"sameConcernAs": "<id>"` to its triage entry. **Required, not optional,
+when you dismiss a finding whose `_priorRuling` names an earlier dismissal:**
+either `sameConcernAs` or `"newConcern": true` (a different defect that shares a
+file). An undecided one refuses the batch and names the prior, so nothing is
+written until every such dismissal is decided. A round-2+ finding that sat
+beside an earlier ruling carries `_priorRuling: {topicId, score, category}` in the result
 JSON — use that topicId when it is the same concern. Any full ledger topicId,
 unique 6+ char prefix, or another finding id in the same triage file also works. The writer stores the concern's ROOT as `concernId`,
 and three dismissals of one concern hard-suppress its next raise however it is

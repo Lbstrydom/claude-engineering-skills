@@ -202,6 +202,33 @@ export function resolveConcernLinks(pending, refsByTopic, topicByFindingId, ledg
   return { entries, errors };
 }
 
+/**
+ * Dismissals that re-raise an earlier dismissal but carry no concern DECISION.
+ *
+ * A kept R2+ finding carries `_priorRuling` (the nearest prior ruling on its
+ * files). When that prior is a judgement dismissal still in the ledger and the
+ * new finding is being dismissed too, the triage must say which it is:
+ * `sameConcernAs` (link it) or `newConcern: true` (a different defect that
+ * happens to share a file). Leaving it to an instruction in prose was how the
+ * link got skipped; a missing decision now refuses the batch. The decision
+ * stays with the adjudicator, because on the measured rows no text score can
+ * tell "reworded" from "different defect in the same file".
+ *
+ * @param {Array<[string, object, object]>} ruled - [findingId, finding, triageEntry]
+ * @param {Map<string, object>} ledgerByTopic
+ * @returns {Array<{id: string, prior: string, priorCategory: string}>}
+ */
+export function findUndecidedReRaises(ruled, ledgerByTopic) {
+  const out = [];
+  for (const [id, f, t] of ruled) {
+    if (t?.outcome !== 'dismissed' || t.sameConcernAs !== undefined || t.newConcern === true) continue;
+    const prior = ledgerByTopic.get(f?._priorRuling?.topicId);
+    if (!prior || prior.adjudicationOutcome !== 'dismissed' || prior.source === 'stage1-mechanical') continue;
+    out.push({ id, prior: prior.topicId, priorCategory: prior.category ?? '' });
+  }
+  return out;
+}
+
 /** The durable `suppression_events.reason` for a hard-suppress. The prefix is
  *  the historical string, kept so an existing `LIKE` query still matches. */
 export function hardSuppressReason(group) {
