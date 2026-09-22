@@ -33,8 +33,15 @@
  *     "H1": { "outcome": "accepted",  "state": "planned", "ruling": "sustain",
  *             "why": "valid — the plan's fix is scheduled" },
  *     "M3": { "outcome": "dismissed", "state": "pending", "ruling": "overrule",
- *             "why": "300-line file, 2 consumers, acceptable" }
+ *             "why": "300-line file, 2 consumers, acceptable" },
+ *     "M4": { "outcome": "dismissed", "state": "pending", "ruling": "overrule",
+ *             "why": "same limits-from-policy ask as before", "sameConcernAs": "3fa91c" }
  *   }
+ *
+ * `sameConcernAs` (optional) links a re-raise to the concern it repeats — a
+ * finding id in this triage, or a ledger topicId / unique 6+ char prefix (a
+ * kept R2+ finding carries its nearest prior ruling as `_priorRuling.topicId`). Three dismissals of one concern hard-suppress
+ * the next raise however it is worded (concern-identity.mjs).
  *
  * Mark fixes after Step 4 with the same tool:
  *   node scripts/write-ledger-entries.mjs --ledger <l> --mark-fixed <topicId> [<topicId> …]
@@ -45,6 +52,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { generateTopicId, populateFindingMetadata } from './lib/ledger.mjs';
+import { resolveConcernLinks } from './lib/concern-identity.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { withFileLock } from './lib/file-lock.mjs';
 import { LedgerEntrySchema } from './lib/schemas.mjs';
@@ -309,6 +317,8 @@ async function main() {
   const written = [];
   const writtenTopicIds = [];
   const pending = [];
+  const concernRefs = new Map();      // topicId → raw sameConcernAs
+  const topicByFindingId = new Map();
   for (const [id, t] of Object.entries(triage)) {
     for (const [field, allowed] of [['outcome', OUTCOMES], ['state', STATES], ['ruling', RULINGS]]) {
       if (!allowed.has(t?.[field])) {
@@ -320,10 +330,15 @@ async function main() {
     if (typeof t.why !== 'string' || t.why.trim() === '') {
       throw new ArgvError(`write-ledger-entries: ${id}.why (the ruling rationale) is required.`);
     }
+    if (t.sameConcernAs !== undefined && (typeof t.sameConcernAs !== 'string' || t.sameConcernAs.trim() === '')) {
+      throw new ArgvError(`write-ledger-entries: ${id}.sameConcernAs must be a finding id or a ledger topicId (or unique prefix).`);
+    }
     const f = byId.get(id);
     populateFindingMetadata(f, f._pass || passDefault);   // idempotent; ensures _hash/_primaryFile
     const topicId = generateTopicId(f);
     writtenTopicIds.push(topicId);
+    topicByFindingId.set(id, topicId);
+    if (t.sameConcernAs !== undefined) concernRefs.set(topicId, t.sameConcernAs.trim());
     pending.push({
       topicId,                                     // from the REAL finding — never a stand-in
       latestFindingId: f.id,                       // second join key for outcome labeling
@@ -348,7 +363,20 @@ async function main() {
   // Validate the whole batch before a single entry reaches disk.
   // `pending` derives from the result + triage files, never from the ledger,
   // so it carries no stale-read hazard; assertAllValid runs inside the write.
-  await writeLedgerAtomically(ledgerPath, pending);
+  // `sameConcernAs` resolves INSIDE the lock, against the ledger as it is now:
+  // the concern it names may have been written by a concurrent adjudication.
+  let linked = 0;
+  await writeLedgerAtomically(ledgerPath, (byTopic) => {
+    const { entries, errors } = resolveConcernLinks(pending, concernRefs, topicByFindingId, byTopic);
+    if (errors.length > 0) {
+      throw new ArgvError(
+        `write-ledger-entries: ${errors.length} sameConcernAs reference(s) could not be resolved. Nothing was `
+        + `written — a dropped link is the lost knowledge the field exists to keep.\n  ${errors.join('\n  ')}`,
+      );
+    }
+    linked = entries.filter(e => e.concernId && concernRefs.has(e.topicId)).length;
+    return entries;
+  });
 
   // Verify BEFORE reporting: the counts below are a claim about disk, and
   // `writeLedgerEntry` fails silently on a schema rejection.
@@ -380,13 +408,14 @@ async function main() {
   if (argv.includes('--json')) {
     console.log(JSON.stringify({
       ok: true, ledger: ledgerPath, round, written, unruled,
-      accepted, adjusted, dismissed, deferred, acceptanceRate,
+      accepted, adjusted, dismissed, deferred, acceptanceRate, linked,
     }));
   } else {
     console.log(`ledger → ${ledgerPath} · round ${round} · ${written.length}/${findings.length} findings ruled`);
     console.log(
       `acceptance ${(acceptanceRate * 100).toFixed(0)}% `
-      + `(accepted ${accepted} · severity-adjusted ${adjusted} · dismissed ${dismissed} · deferred ${deferred})`,
+      + `(accepted ${accepted} · severity-adjusted ${adjusted} · dismissed ${dismissed} · deferred ${deferred})`
+      + (linked > 0 ? ` · ${linked} linked to an earlier concern` : ''),
     );
   }
   if (unruled.length > 0) {

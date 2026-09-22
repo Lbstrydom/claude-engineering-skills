@@ -153,6 +153,9 @@ export function buildSuppressionStats({ round, ledger, suppression } = {}) {
     // cheap side of that trade; weakening the guard is not. (The token must not
     // appear here even in prose — a whole-file scan reads comments too.)
     if (suppression.fpSuppressedCount != null) stats.falsePositiveSuppressed = suppression.fpSuppressedCount;
+    // Counts + epoch only (concern-identity.mjs `summariseConcernRound`) — the
+    // run-level stamp a reader filters on, never a date cut-off.
+    if (suppression.concernTelemetry) stats.concern = suppression.concernTelemetry;
   }
   return stats;
 }

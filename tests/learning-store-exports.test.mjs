@@ -81,6 +81,9 @@ const EXPECTED_EXPORTS = [
   // inlined) so the string contract is directly testable: it is the accumulating
   // signal the deferred reopen-policy decision reads.
   'reopenReason',
+  // The suppression_events row mapper, lifted out of recordSuppressionEvents
+  // (2026-09-22) so the `kept` near-miss rows are testable without a DB.
+  'buildSuppressionEventRows',
   'updatePassStatsPostDeliberation',
   'updateRunMeta',
   'getPassTimings',
@@ -598,6 +601,8 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // C) — debt-memory.mjs (tech-debt domain) has no pool of its own and may
     // not import db/client.mjs directly; this keeps pool lifecycle private
     // to the stores domain instead of exposing a raw accessor.
-    assert.equal(EXPECTED_EXPORTS.length, 208);
+    // 208 → 209: +buildSuppressionEventRows (2026-09-22, concern-identity
+    // telemetry) — the pure row mapper recordSuppressionEvents now delegates to.
+    assert.equal(EXPECTED_EXPORTS.length, 209);
   });
 });

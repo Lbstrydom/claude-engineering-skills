@@ -436,6 +436,12 @@ suppression.
 
 Full writer invocation example + status field semantics: `references/ledger-format.md`.
 
+**A re-raise of a concern you already dismissed**, even reworded or on another
+file: set `sameConcernAs` in its triage entry. A finding kept beside an earlier
+ruling carries `_priorRuling.topicId` — use it when it is the SAME concern. Three
+linked dismissals hard-suppress the next raise; without the link, rewording
+defeats suppression. See `references/ledger-format.md`.
+
 ---
 
 ## Step 3.5b — Record Triage Outcomes (closes the adaptive-learning loop)
