@@ -1056,6 +1056,10 @@ const LedgerCoreFields = {
   // written "with latestFindingId" persisted without one and the fallback join
   // could never fire. Optional: entries predating this carry no id.
   latestFindingId: z.string().optional(),
+  // The ROOT topicId of the concern this entry was linked to via triage
+  // `sameConcernAs` (concern-identity.mjs). Declared so no parse→persist path
+  // strips it — the latestFindingId lesson above. Absent = its own concern.
+  concernId: z.string().optional(),
   semanticHash: z.string(),
   severity: z.enum(['HIGH', 'MEDIUM', 'LOW']),
   category: z.string(),

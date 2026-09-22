@@ -1951,13 +1951,9 @@ export function reopenReason(f) {
   return `Scope changed; declared=${declared ? 'yes' : 'no'}; matched=${outcome}`;
 }
 
-/**
- * Record both suppressed-and-reopened events from an R2+ post-processing pass.
- */
-export async function recordSuppressionEvents(runId, suppressionResult) {
-  if (!runId) return { applied: false, rows: 0, reason: 'no-run-id' };
-  if (!await isCloudEnabled()) return { applied: false, rows: 0, reason: 'cloud-off' };
-  const rows = [
+/** One round's `suppression_events` rows — pure, so the shape is testable without a DB. */
+export function buildSuppressionEventRows(runId, suppressionResult) {
+  return [
     ...suppressionResult.suppressed.map((s) => ({
       run_id: runId,
       finding_fingerprint: fingerprintOf(s.finding),
@@ -1983,7 +1979,19 @@ export async function recordSuppressionEvents(runId, suppressionResult) {
       // preserved for any existing query.
       reason: reopenReason(f),
     })),
+    // A missed re-raise (concern-identity.mjs); `kept` was in the CHECK, never written.
+    ...(suppressionResult.nearMisses ?? []).map((m) => ({
+      run_id: runId, finding_fingerprint: fingerprintOf(m.finding),
+      matched_topic_id: m.matchedTopic, match_score: m.matchScore, action: 'kept', reason: m.reason,
+    })),
   ];
+}
+
+/** Record suppressed, reopened and near-miss events from an R2+ post-processing pass. */
+export async function recordSuppressionEvents(runId, suppressionResult) {
+  if (!runId) return { applied: false, rows: 0, reason: 'no-run-id' };
+  if (!await isCloudEnabled()) return { applied: false, rows: 0, reason: 'cloud-off' };
+  const rows = buildSuppressionEventRows(runId, suppressionResult);
   // Terminal for a replayed artifact: a suppression result with no suppressed
   // and no reopened findings maps to zero rows on every attempt.
   if (rows.length === 0) return { applied: true, rows: 0, reason: 'no-rows' };

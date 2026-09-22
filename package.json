@@ -42,6 +42,7 @@
     "cache:check:json": "node scripts/cache-hitrate-check.mjs --json",
     "audit:check-deps": "node scripts/check-deps.mjs",
     "memory:health": "node scripts/memory-health.mjs",
+    "concern:report": "node scripts/concern-telemetry-report.mjs",
     "memory:health:json": "node scripts/memory-health.mjs --json",
     "debt:health": "node scripts/debt-health-check.mjs",
     "debt:resolve": "node scripts/debt-resolve.mjs",

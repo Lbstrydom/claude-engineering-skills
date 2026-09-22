@@ -999,7 +999,7 @@ When `--round >= 2`, the audit script enables three-layer defence against findin
 2. **R2+ prompts** (Layer 2): `R2_ROUND_MODIFIER` + pass rubric (not "find all issues")
 3. **Post-output suppression** (Layer 3): `suppressReRaises()` against the ledger, then the cloud FP-pattern policy — called **unconditionally** (a no-ledger run is exactly the case a pattern learned elsewhere serves) and **exempting `reopened`** so statistics can never mask a regression. Layer 1 stays local-ledger-only on purpose.
 
-Two invariants constrain anyone changing them; the group table, both traps and
+Three invariants constrain anyone changing them; the group table, both traps and
 the incidents are in
 [`docs/reference/r2-audit-mode.md`](docs/reference/r2-audit-mode.md):
 
@@ -1007,6 +1007,9 @@ the incidents are in
   defer is not a disproof, so DEFERRED bars re-arguing scope while *licensing a
   different defect in the same code*. Give a new group the weakest instruction
   that is **true** — an overstated header suppresses true positives silently.
+- **Hard-suppress keys on the CONCERN, never on category text** — adjudicator
+  `sameConcernAs` links + file overlap ([concern-identity.mjs](scripts/lib/concern-identity.mjs)).
+  Died twice to rewording; do not fuzz the category.
 - **The existence gate runs on BOTH reviewer paths, and its classifier is
   prose-shaped.** Widening classification is the safe direction (unadjudicable ⇒
   `requires_verification`, severity preserved; only `refuted` downgrades) — and

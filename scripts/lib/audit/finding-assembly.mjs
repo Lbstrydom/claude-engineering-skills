@@ -392,7 +392,7 @@ export async function assembleFindings(data) {
   }
 
   if (mergedLedger.entries.length > 0) {
-    let { kept, suppressed, reopened, reopenTelemetry } = suppressReRaises(allFindings, mergedLedger, { changedFiles, impactSet });
+    let { kept, suppressed, reopened, reopenTelemetry, nearMisses, concernTelemetry } = suppressReRaises(allFindings, mergedLedger, { changedFiles, impactSet });
 
     process.stderr.write(`\n═══════════════════════════════════════\n`);
     process.stderr.write(`  R${round} POST-PROCESSING\n`);
@@ -429,6 +429,19 @@ export async function assembleFindings(data) {
             + `score=${Number(s.matchScore).toFixed(2)}\n`,
           );
         }
+      }
+    }
+    // Observation-only (concern-identity.mjs): the missed re-raise shape. A kept
+    // finding sharing a file with a prior ruling left NO trace before, so a
+    // dead suppressor looked exactly like a quiet ledger.
+    if (concernTelemetry && (concernTelemetry.nearMisses > 0 || concernTelemetry.hardSuppressed > 0)) {
+      const b = concernTelemetry.nearMissBands;
+      process.stderr.write(
+        `  Concerns: ${concernTelemetry.hardSuppressed} hard-suppressed | ${concernTelemetry.nearMisses} kept beside a prior ruling`
+        + ` (score <.1:${b.lt10} <.2:${b.lt20} <.35:${b.lt35} >=.35:${b.gte35}; ${concernTelemetry.nearMissInConcern} in a known concern)\n`,
+      );
+      for (const m of [...(nearMisses ?? [])].sort((x, y) => y.matchScore - x.matchScore).slice(0, 5)) {
+        process.stderr.write(`    [beside] ${String(m.matchedTopic).slice(0, 6)} ${m.finding?._primaryFile ?? '?'} score=${m.matchScore.toFixed(2)}\n`);
       }
     }
     if (suppressed.length > 0) {
@@ -516,6 +529,11 @@ export async function assembleFindings(data) {
       // declared-vs-mechanical reopen signal is retained per round rather than
       // only printed to stderr. Not read by any gate.
       reopenTelemetry,
+      // Observation-only (concern-identity.mjs): `nearMisses` become `kept` rows in
+      // suppression_events; `concernTelemetry` (counts, epoch-stamped) lands in
+      // audit_runs.suppression_stats.concern. Not read by any gate.
+      nearMisses: nearMisses ?? [],
+      concernTelemetry: concernTelemetry ?? null,
       fpSuppressedCount: 0,   // set by runSuppressionPasses — the local pass moved out
     };
 

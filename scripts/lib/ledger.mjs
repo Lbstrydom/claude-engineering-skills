@@ -20,6 +20,12 @@ import { semanticId } from './findings.mjs';
 import { redactSecrets } from './sensitive-egress-gate.mjs';
 import { jaccardSimilarity } from './text-similarity.mjs';
 import { extractFileRefs, displayPathOf } from './finding-match.mjs';
+import {
+  normaliseCategoryKey, buildConcernIndex, matchConcern, hardSuppressReason,
+  describeNearMiss, summariseConcernRound, HARD_SUPPRESS_THRESHOLD,
+} from './concern-identity.mjs';
+
+export { normaliseCategoryKey };
 
 // Re-exported for backward compatibility — existing consumers import
 // jaccardSimilarity from here (and via shared.mjs's barrel). The
@@ -134,7 +140,7 @@ export function writeLedgerEntry(ledgerPath, entry) {
  * into the SAME ledger file session entries live in — `suppressReRaises`
  * reads `source` per-entry to route stage1-mechanical entries through the
  * fuzzy/reopen-on-touch path (like session) while excluding them from
- * `overruleCountIndex`'s hard-suppress-at-3 count (see `suppressReRaises`).
+ * the hard-suppress-at-3 concern index (see concern-identity.mjs).
  *
  * @param {string} ledgerPath
  * @param {object} entry - Stage1MechanicalLedgerEntrySchema shape
@@ -504,6 +510,8 @@ export function populateFindingMetadata(finding, passName) {
 
 // ── Fuzzy Suppression ───────────────────────────────────────────────────────
 // jaccardSimilarity moved to text-similarity.mjs and is re-exported above.
+// `normaliseCategoryKey` moved to concern-identity.mjs with the index it keys;
+// re-exported above so every existing importer keeps its path.
 
 /**
  * The single fuzzy text-similarity used to compare a current finding against a
@@ -516,24 +524,9 @@ export function populateFindingMetadata(finding, passName) {
  * @param {object} d - ledger entry (category/section/detailSnapshot|detail)
  * @returns {number} Jaccard similarity in [0,1]
  */
-/**
- * The ONE spelling of the hard-suppress category key.
- *
- * Extracted because it was previously written twice, differently — the ledger
- * side kept the `[Tag]` prefix and the finding side stripped it, so the two
- * keys could never be equal and the counter was dead. One function is the fix
- * that cannot drift again; two call sites of one expression cannot disagree.
- *
- * @param {string|undefined} category
- * @returns {string}
- */
-export function normaliseCategoryKey(category) {
-  return (category || '').toLowerCase().replaceAll(/\[.*?\]\s*/g, '').trim();
-}
-
 export function ledgerFindingSimilarity(f, d) {
   // Categories are normalised (bracket pass-tag stripped) before scoring —
-  // the same reason `overruleCountIndex` strips it a few lines below: every
+  // the same reason the concern index (concern-identity.mjs) strips it: every
   // category in this repo carries a `[PassName]` prefix, and comparing raw
   // strings folds that tag into the token set. Same-pass pairs share one tag
   // (harmless noise either way), but a CROSS-PASS re-raise — GPT restating a
@@ -594,7 +587,7 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
   //   stage1-mechanical entries (Phase 8) suppress the same way session does
   //     (adjudicationOutcome is always 'dismissed' per Stage1MechanicalLedgerEntrySchema)
   //     — they flow through the SAME fuzzy/reopen-on-touch path as session,
-  //     just excluded from overruleCountIndex below (see that comment)
+  //     just excluded from the hard-suppress concern index (concern-identity.mjs)
   //   Entries without an explicit source default to session (backward compat
   //     for ledger files written before Phase D)
   const resolved = (ledger?.entries || []).filter(e => {
@@ -632,49 +625,23 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
    */
   const requireDeclaration = process.env.AUDIT_DISMISSAL_REOPEN_REQUIRES_DECLARATION !== 'false';
 
-  // Fix #4: Build ruling count index. When a (category + primaryFile) pair has been
-  // ruled 'overrule' 3+ times across rounds, hard-suppress regardless of hash drift.
-  // The semantic hash drifts with GPT rewording, but the category+file is stable.
-  //
-  // stage1-mechanical entries are deliberately EXCLUDED (tiered-recall pipeline
-  // Phase 8) — a mechanical dismissal reason (e.g. "the cited function doesn't
-  // exist") can become false later (the function gets added) in a way a
-  // human/GPT judgment overrule never does; counting it toward a PERMANENT
-  // hard-suppress would let a stale mechanical fact silently outlive the code
-  // state it was true about.
-  const HARD_SUPPRESS_THRESHOLD = 3;
-  const overruleCountIndex = new Map();
-  for (const e of resolved) {
-    if (e.source === 'stage1-mechanical') continue;
-    if (e.ruling === 'overrule' || e.adjudicationOutcome === 'dismissed') {
-      // MUST strip the `[Tag]` prefix, exactly as the finding side does twelve
-      // lines below. It did not, and the two keys therefore never matched:
-      // an entry keyed `[sustainability] error swallowing|foo.mjs` could not
-      // equal a finding keyed `error swallowing|foo.mjs`. Every category in
-      // this repo carries a bracketed pass tag, so the hard-suppress counter
-      // — documented as "Fix #4" — had never fired for ANY finding.
-      //
-      // Found 2026-08-10 by the first dedicated test for this module (debt
-      // bb15049a): the feature was unreachable, and nothing noticed because
-      // nothing asserted it. Stripping is also the module's own convention —
-      // `generateTopicId` normalises the same way, so a finding re-tagged from
-      // `[Sustainability]` to `[be-services]` keeps its identity.
-      const catFile = `${normaliseCategoryKey(e.category)}|${normalizePath(e.affectedFiles?.[0] || e.section || '')}`;
-      overruleCountIndex.set(catFile, (overruleCountIndex.get(catFile) || 0) + 1);
-    }
-  }
+  // Fix #4: hard-suppress a concern dismissed HARD_SUPPRESS_THRESHOLD+ times,
+  // regardless of hash drift or file-touch. Keyed by CONCERN, not by one
+  // category spelling + affectedFiles[0] — that key died twice to rewording
+  // (2026-08-10, 2026-09-22). Grouping, the stage1-mechanical exclusion and
+  // the reasons are in concern-identity.mjs.
+  const concernIndex = buildConcernIndex(resolved);
 
   for (const f of findings) {
-    // Fix #4: Hard suppress check — category+file ruled overrule 3+ times
-    const fCatFile = `${normaliseCategoryKey(f.category)}|${normalizePath(f._primaryFile || f.section || '')}`;
-    const overruleCount = overruleCountIndex.get(fCatFile) || 0;
-    if (overruleCount >= HARD_SUPPRESS_THRESHOLD) {
+    const concern = matchConcern(f, concernIndex);
+    if (concern && concern.count >= HARD_SUPPRESS_THRESHOLD) {
       suppressed.push({
         finding: f,
         matchedTopic: 'hard-suppress',
         matchScore: 1.0,
         matchedSource: 'ruling-count',
-        reason: `Category+file overruled ${overruleCount} times — hard-suppressed`,
+        concernId: concern.id,
+        reason: hardSuppressReason(concern),
       });
       continue;
     }
@@ -722,7 +689,7 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
       // claim true. `requireDeclaration` splits them (Layer 3, the deferred
       // "Phase 2" of docs/plans/dismissed-fp-reopen-policy.md).
       // `stage1-mechanical` is EXCLUDED, for the same reason it is already
-      // excluded from `overruleCountIndex` above: its dismissal reason is a
+      // excluded from the hard-suppress concern index: its dismissal reason is a
       // mechanical FACT about the code ("the cited function does not exist"),
       // and a fact can be falsified by the very edit that touched the file —
       // unlike a human/GPT judgment, which a later edit does not retroactively
@@ -780,9 +747,16 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
     }
   }
 
-  // `reopenTelemetry` is an ADDED key — every existing caller destructures
-  // `{kept, suppressed, reopened}` and is unaffected.
-  return { kept, suppressed, reopened, reopenTelemetry };
+  // `reopenTelemetry`, `nearMisses` and `concernTelemetry` are ADDED keys — every
+  // existing caller destructures `{kept, suppressed, reopened}` and is unaffected.
+  // Observation-only: a kept finding sharing a file with a prior ruling is the
+  // missed re-raise shape, which otherwise leaves no trace at all.
+  const nearMisses = kept.map(f => describeNearMiss(f, resolved, ledgerFindingSimilarity, concernIndex)).filter(Boolean);
+  // Put the prior ruling ON the finding the adjudicator triages, so linking a
+  // re-raise (`sameConcernAs`) needs no search of the ledger.
+  for (const m of nearMisses) m.finding._priorRuling = { topicId: m.matchedTopic, score: m.matchScore };
+  const concernTelemetry = summariseConcernRound({ suppressed, nearMisses, index: concernIndex, reopenTelemetry });
+  return { kept, suppressed, reopened, reopenTelemetry, nearMisses, concernTelemetry };
 }
 
 // ── Rulings Block & R2+ Prompts ─────────────────────────────────────────────

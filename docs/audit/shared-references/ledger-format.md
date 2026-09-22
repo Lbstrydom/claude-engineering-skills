@@ -75,6 +75,24 @@ silently un-adjudicated). Findings you don't rule on stay `pending` and are
 reported on stderr — that is the silent half of a `0/N labelled` outcome
 report.
 
+**Linking a re-raise — `sameConcernAs` (optional).** When a finding repeats a
+concern you already dismissed, even reworded or anchored on a different file,
+add `"sameConcernAs": "<id>"` to its triage entry. A round-2+ finding that sat
+beside an earlier ruling carries `_priorRuling: {topicId, score}` in the result
+JSON — use that topicId when it is the same concern. Any full ledger topicId,
+unique 6+ char prefix, or another finding id in the same triage file also works. The writer stores the concern's ROOT as `concernId`,
+and three dismissals of one concern hard-suppress its next raise however it is
+worded. Link only the SAME concern — a different defect in the same file stays
+unlinked. An id that matches nothing, or more than one entry, refuses the whole
+batch rather than silently dropping the link:
+
+```json
+{
+  "M4": { "outcome": "dismissed", "state": "pending", "ruling": "overrule",
+          "why": "third raising of the limits-from-policy ask", "sameConcernAs": "3fa91c" }
+}
+```
+
 Add `--pass <name>` only for a CODE audit whose findings somehow lack `_pass`;
 the default is `plan`, and a real finding's own `_pass` always wins.
 

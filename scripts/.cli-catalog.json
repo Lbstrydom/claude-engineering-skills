@@ -419,6 +419,10 @@
       "description": "Memory-health gate — fuzzy re-raise rate, cluster density, recurrence (human report).",
       "category": "diagnostic"
     },
+    "concern:report": {
+      "description": "Concern-identity telemetry — is hard-suppress firing, is sameConcernAs used, how many re-raises slip past (per repo, last N days).",
+      "category": "diagnostic"
+    },
     "memory:health:json": {
       "description": "Memory-health gate, JSON output.",
       "category": "diagnostic"
