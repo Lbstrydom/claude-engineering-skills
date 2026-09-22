@@ -679,6 +679,30 @@ test('sharedPassCreditRows: an arm never credits itself, an empty base yields no
   assert.deepEqual(aggregateCostForArm([...base, ...once, ...twice], 'A+'), { costUsd: 0.5, complete: true });
 });
 
+test('cmdMerge forces backend:\'sdk\' for its clustering client, never the ambient CLAUDE_BACKEND', () => {
+  // cmdMerge is a CLI-only subcommand (not in _internals — it drives real I/O
+  // via main()'s argv dispatch), so this is a source-text assertion rather
+  // than a call-through unit test, matching this repo's Azure-work-profile
+  // pattern for the same lever (AGENTS.md "An availability gate must ask
+  // whether a ROUTE exists"). The bug this pins (2026-09-22): under a local
+  // `cli` backend, the clustering step is one `claude` subprocess spin-up per
+  // <=50-row batch (dozens of sequential calls on exp5's real corpus) with NO
+  // progress output — a real run went silent for 2.5 wall-clock hours and was
+  // killed as presumed-hung, when the per-call arithmetic (dozens of calls x
+  // up to the 120s per-call ceiling) shows it was very likely still working.
+  // `backend:'sdk'` removes the subprocess overhead entirely; the paired fix
+  // (progress logging, asserted below) removes the silence that caused the
+  // misdiagnosis. Neither alone would have prevented the incident.
+  const src = fs.readFileSync(new URL('../scripts/solo-control-audit.mjs', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('async function cmdMerge()'));
+  const clientLine = fn.match(/const client = await createAnthropicClient\((\{[^)]*\})\)/);
+  assert.ok(clientLine, 'cmdMerge must construct its clustering client with an explicit options object');
+  assert.match(clientLine[1], /backend:\s*'sdk'/, `cmdMerge's clustering client must force backend:'sdk' (found: ${clientLine[1]}) — the ambient CLAUDE_BACKEND is a per-machine local setting, not a property of this experiment`);
+  // The paired half: at least one progress line per clustered commit, so a
+  // future long-running merge is never silent again.
+  assert.match(fn.slice(0, fn.indexOf('const clusterMode =')), /log\(`\s*cluster \$\{clusteredCommits\}\/\$\{totalCommitsToCluster\}/, 'cmdMerge must log per-commit clustering progress');
+});
+
 test('geminiUsageOrNull: a usable usageMetadata becomes ledger usage; a missing one is NULL, never a fabricated zero that prices as free', () => {
   const ok = soloCtl.geminiUsageOrNull({ usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 20, thoughtsTokenCount: 30 } });
   assert.deepEqual(ok, { input_tokens: 100, output_tokens: 50 }); // thoughts are billed output, disjoint from candidates

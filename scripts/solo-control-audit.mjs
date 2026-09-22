@@ -2170,17 +2170,36 @@ async function cmdMerge() {
   const { proposeClusters } = await import('./lib/solo-control/cluster-propose.mjs');
   const clusterOf = new Map();
   const clusterModesUsed = new Set();
-  const client = await createAnthropicClient().catch(() => null);
+  // Force sdk explicitly rather than the ambient CLAUDE_BACKEND — same lever
+  // AGENTS.md documents for the gate calls, applied here for a different
+  // reason: under a local `cli` backend this loop is ~1 subprocess spin-up per
+  // ≤50-row batch (35 commits here → dozens of sequential `claude -p` calls),
+  // each able to run to its own 120s per-call ceiling with NOTHING printed in
+  // between. Measured 2026-09-22: a real run against exp5's ~2.5k HIGH-tier
+  // rows was silent — zero stdout, near-zero parent CPU, no parent-owned
+  // sockets (the cli backend delegates the actual network I/O to a child
+  // `claude` process, invisible to a process-level liveness check) — for
+  // 2.5 hours before being killed as presumed-hung. The per-call arithmetic
+  // (dozens of calls × up to 120s) matches that wall-clock almost exactly, so
+  // the kill was very likely premature. `backend:'sdk'` removes the
+  // subprocess-spawn overhead entirely (a real HTTPS call per batch, no CLI
+  // process startup), and the progress line below removes the silence — the
+  // two together are the fix, not either alone.
+  const client = await createAnthropicClient({ backend: 'sdk' }).catch(() => null);
   const rowsByCommit = new Map();
   rows.forEach((r, i) => {
     if (!rowsByCommit.has(r.commit)) rowsByCommit.set(r.commit, []);
     rowsByCommit.get(r.commit).push(i);
   });
+  let clusteredCommits = 0;
+  const totalCommitsToCluster = rowsByCommit.size;
   for (const [commitSha, idxs] of rowsByCommit) {
     const batch = idxs.map((i) => ({ category: rows[i].category, file: rows[i].file, detail: rows[i].detail }));
     let prop;
     try { prop = await proposeClusters(batch, { client }); }
     catch { prop = { clusters: {}, mode: 'duphash-degraded' }; }
+    clusteredCommits++;
+    log(`  cluster ${clusteredCommits}/${totalCommitsToCluster}: ${commitSha.slice(0, 8)} · ${idxs.length} row(s) · mode=${prop.mode}`);
     clusterModesUsed.add(prop.mode);
     for (const [cid, localIdxs] of Object.entries(prop.clusters)) {
       const globalCid = `${commitSha.slice(0, 8)}:${cid}`;
