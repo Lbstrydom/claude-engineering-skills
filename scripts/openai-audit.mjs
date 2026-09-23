@@ -87,8 +87,9 @@ import { recordDecision as _learningRecordDecision, flush as _learningFlush, ins
 import { deriveSignals as _deriveTierSignals, buildAuthorTierObservation as _buildAuthorTierObservation } from './lib/learning/author-tier-observation.mjs';
 import { loadDomainRules as _loadDomainRules, computeTargetDomains as _computeTargetDomains } from './lib/symbol-index/domain-tagger.mjs';
 import { PromptBandit, computeReward, buildContext } from './bandit.mjs';
-import { openaiConfig, PASS_NAMES, modelPricing, azureConfig, tieredAuditConfig } from './lib/config.mjs';
-import { refreshModelCatalog, resolveModel, pricingKey } from './lib/model-resolver.mjs';
+import { openaiConfig, PASS_NAMES, azureConfig, tieredAuditConfig } from './lib/config.mjs';
+import { refreshModelCatalog, resolveModel } from './lib/model-resolver.mjs';
+import { priceFor } from './lib/model-pricing.mjs';
 import { createOpenAIClient } from './lib/openai-client.mjs';
 import {
   MODEL, setModel, getPassPrompt, buildCachePrompt, normalisePromptInput,
@@ -114,8 +115,11 @@ function printCostPreflight(stage, inputChars, modelId, reasoningTokens = 0) {
   if (process.env.AUDIT_NO_PREFLIGHT === '1') return;
   const inputTokens = Math.ceil(inputChars / 4);
   const outputTokens = Math.min(openaiConfig.maxOutputTokensCap || 16000, 16000);
-  const key = pricingKey ? pricingKey(modelId) : modelId;
-  const px = modelPricing[key] || modelPricing[modelId] || null;
+  // Through the SSoT walk (version+SKU row before family fallback), and with
+  // the input size, because the GPT-5.6/6 rows are prompt-size TIERED — a
+  // bare table index landed on the family row, which since 2026-09-23 is
+  // the wrong rate for every SKU this audit actually resolves to.
+  const px = priceFor(modelId, { inputTokens });
   if (!px) {
     process.stderr.write(`  [cost] preflight: model ${modelId} not in price table — actual cost unknown\n`);
     return;

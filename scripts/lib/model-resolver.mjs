@@ -51,14 +51,21 @@ import './load-env.mjs';
 // via `npm run models:freshness` (HIGH: 0) before and after this prune.
 export const STATIC_POOL = Object.freeze({
   openai: Object.freeze([
-    // GPT-5.6 (2026-07-09) renamed the three-tier family to sol/terra/luna
-    // (see parseOpenAIModel above) — terra is the plain/balanced SKU
-    // (isPremium=false), so compareVersions' premium tiebreak correctly
-    // prefers it over sol for `latest-gpt`; luna is the isLite SKU, so it
-    // correctly wins `latest-gpt-mini`. 5.5 kept one generation back;
-    // 5.4/4.1-mini/4o-mini removed — strictly dominated, never selectable.
+    // GPT-6 (added 2026-09-23, from developers.openai.com/api/docs/pricing)
+    // renamed the three-tier family AGAIN: astra = premium ($10/$50), sol =
+    // balanced ($2/$10), luna = lite ($0.10/$0.50). GPT-5.6 (2026-07-09) had
+    // sol = premium / terra = balanced / luna = lite — so `sol` changed
+    // MEANING between generations, and parseOpenAIModel's isPremium is
+    // version-aware for exactly that reason. Before this entry the live
+    // catalog upgraded `latest-gpt` to gpt-6-astra (status.md 2026-09-20):
+    // astra parsed as plain, tied with sol, and catalog order picked the 5x
+    // pricier SKU. Now compareVersions' premium tiebreak lands on gpt-6-sol,
+    // which is CHEAPER than gpt-5.6-terra ($2/$10 vs $2/$12) — the whole
+    // reason to move. 5.6 kept one generation back; 5.5/5.5-pro removed —
+    // strictly dominated, never selectable (5.5 keeps its price row for
+    // operator pins).
+    'gpt-6-sol', 'gpt-6-astra', 'gpt-6-luna',
     'gpt-5.6-terra', 'gpt-5.6-sol', 'gpt-5.6-luna',
-    'gpt-5.5', 'gpt-5.5-pro',
   ]),
   anthropic: Object.freeze([
     // Claude 5 family (2026-07-14): `claude-sonnet-5`/`claude-opus-4-8`
@@ -78,7 +85,14 @@ export const STATIC_POOL = Object.freeze({
     // `pickNewestClaude(pool, 'opus')` the same way `claude-sonnet-5` already
     // does for the sonnet tier below — not independently live-verified here;
     // `npm run models:freshness` catches a wrong/retired id.
-    'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7',
+    //
+    // `claude-opus-5-5` added 2026-09-23 from the public pricing page
+    // (platform.claude.com/docs/en/about-claude/pricing: $4/$20, cache read
+    // 0.05x) — CHEAPER than Opus 5, so `latest-opus` falling back to this pool
+    // must not cap at the pricier predecessor. Same caveat as above: taken
+    // from the published catalog, not live-verified in the adding session.
+    // `claude-opus-4-7` pruned (two generations back).
+    'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8',
     'claude-sonnet-5', 'claude-sonnet-4-6',
     'claude-haiku-4-5', 'claude-haiku-4-5-20251001',
   ]),
@@ -550,19 +564,29 @@ export function parseOpenAIModel(id) {
   if (!m) return null;
   const variant = m[4] || null;
   const firstSeg = variant ? variant.split('-')[0] : null;
+  const major = Number.parseInt(m[2], 10);
   return {
     provider: 'openai',
     family: m[1],
-    major: Number.parseInt(m[2], 10),
+    major,
     minor: m[3] ? Number.parseInt(m[3], 10) : 0,
     variant,
     isLite: /^(mini|nano|luna)$/.test(firstSeg || ''),
-    // Premium/flagship SKU at the same version as the plain/balanced SKU
-    // (pro, sol). TIER_MAP's own documented design: for OpenAI, latest-gpt's
-    // tier axis is reasoning effort, not model SKU — a premium SKU must be
-    // pinned explicitly, never silently auto-selected by the standard/
-    // frontier sentinel. See compareVersions' isPremium tiebreak.
-    isPremium: /^(pro|sol)$/.test(firstSeg || ''),
+    // Premium/flagship SKU at the same version as the plain/balanced SKU.
+    // TIER_MAP's own documented design: for OpenAI, latest-gpt's tier axis is
+    // reasoning effort, not model SKU — a premium SKU must be pinned
+    // explicitly, never silently auto-selected by the standard/frontier
+    // sentinel. See compareVersions' isPremium tiebreak.
+    //
+    // The premium SKU's NAME is generation-specific, and OpenAI reused one:
+    //   gpt-5.5  pro (premium)   / plain
+    //   gpt-5.6  sol (premium)   / terra (balanced) / luna (lite)
+    //   gpt-6    astra (premium) / sol (balanced)   / luna (lite)
+    // so `sol` is premium below major 6 and balanced from 6 on. Reading it
+    // as premium everywhere would leave GPT-6 with no balanced SKU at all;
+    // reading astra as plain (the state until 2026-09-23) is what let the
+    // live catalog upgrade `latest-gpt` to the $10/$50 astra by list order.
+    isPremium: firstSeg === 'pro' || firstSeg === 'astra' || (firstSeg === 'sol' && major < 6),
     isPreview: /(^|-)preview(-|$)/.test(variant || ''),
     original: id,
   };
@@ -987,8 +1011,12 @@ export function supportsReasoningEffort(modelId) {
 }
 
 /**
- * Get a human-readable pricing tier key for a model.
- * Used by the modelPricing table; maps any concrete ID to a stable family key.
+ * Coarse FAMILY key for a model id — `claude-opus`, `gpt-5`, `gpt-5-mini`,
+ * `gemini-pro` — or the id verbatim when no parser recognises it. The right
+ * key for a family-scoped property (efficacy-lints' cache-minimum lookup); the
+ * WRONG key for a price on its own, because since GPT-6 the family no longer
+ * determines the price — a price lookup walks `pricingKeys()` in
+ * model-pricing.mjs, which ends in this key.
  */
 export function pricingKey(modelId) {
   const claude = parseClaudeModel(modelId);

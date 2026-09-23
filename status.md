@@ -59,6 +59,58 @@
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `.claude/skills/audit-plan/references/gemini-gate.md` and `.claude/skills/cycle/SKILL.md` both carry the new prose (grep confirmed). storyline itself REFUSED this sync (27 files diverged, pre-existing committed customizations unrelated to this change) — not verified there; ai-organiser and wine-cellar-app both reached cleanly.
 - **Result**: verified — the /cycle Step 7 blocked-handoff prose and the gemini-gate.md calibration note reached the consumer bundle intact (wine-cellar-app, ai-organiser). storyline unverified — sync REFUSED on pre-existing divergence, not this change's fault.
 
+## 2026-09-23 — Pricing: GPT-6 astra/sol/luna + Opus 5.5, and the family key stops being the price
+
+Prompted by the observation that both providers shipped new models and that
+running GPT-6's `sol` is now about as cheap as GPT-5.6's `terra`. Checked
+against both live pricing pages on 2026-09-23 (developers.openai.com/api/docs/
+pricing, platform.claude.com/docs/en/about-claude/pricing): true, and slightly
+better than stated — gpt-6-sol is $2/$10 against gpt-5.6-terra's $2/$12
+(<272K prompts; both double for long context), and Opus 5.5 is $4/$20 against
+Opus 5's $5/$25, with a 0.05x cache read.
+
+What was wrong here, three things stacked:
+
+- **`latest-gpt` was already resolving to gpt-6-astra ($10/$50)** via the live
+  catalog (noted 2026-09-20 below). The parser knew 5.6's sol/terra/luna but
+  not GPT-6's astra/sol/luna: astra parsed as plain, tied with sol on the
+  premium tiebreak, and catalog order picked the 5x pricier SKU. `sol` also
+  changed MEANING between generations (premium at 5.6, balanced at 6), so
+  `isPremium` is now version-aware (`pro`, `astra`, or `sol` below major 6).
+  Offline, `latest-gpt` → gpt-6-sol, `latest-gpt-mini` → gpt-6-luna,
+  `latest-opus` → claude-opus-5-5 (STATIC_POOL refreshed; 5.5/5.5-pro and
+  Opus 4.7 pruned as two generations back).
+- **The price table had one row per FAMILY** (`gpt-5` $2.50/$10,
+  `claude-opus` $15/$75 — Opus 4.1's rate) and `pricingKey()` folded every SKU
+  into it, so gpt-6-astra, gpt-6-sol and gpt-5.5 all priced the same, and every
+  Opus call was costed at 3–4x its real rate. The SKU is the price axis now:
+  `pricingKeys()` (model-pricing.mjs) yields a most-specific-first chain
+  (`gpt-5.6-terra` → `gpt-5`; `claude-opus-5-5` → `claude-opus-5` →
+  `claude-opus`) that `priceFor` walks; `pricingKey()` keeps its family meaning
+  for efficacy-lints. A PREMIUM OpenAI SKU gets no family fallback (a fallback
+  errs cheap, the one direction the spend cap must never take) — unlisted
+  premium prices null, i.e. the budget over-estimate. The rate card moved to
+  `model-pricing-table.mjs` (config.mjs was over the size ratchet and the
+  table is data, not config); config.mjs re-exports it. OpenAI 5.6/6 rows are
+  prompt-size TIERED at 272K, grok-style.
+- **Nothing could fail on either.** `tests/model-pricing-pool-coverage.test.mjs`
+  iterates STATIC_POOL (the side a price table cannot see) and fails on any
+  OpenAI/Anthropic id that lands on the family row or on nothing.
+
+`openai-audit.mjs`'s cost preflight now goes through `priceFor(model,
+{inputTokens})` instead of indexing the table by family. `FALLBACK_PRICE_USD`
+moved from {30,150} to {40,150} (derived from the new max, gpt-6-astra's
+long-context $20 in). Not live-verified this session (no provider keys):
+`claude-opus-5-5`'s presence in Anthropic's `/v1/models` — taken from the
+public pricing page; `npm run models:freshness` catches a wrong id.
+
+Verified: focused suites (resolver, pricing, freshness, brainstorm, cost-budget,
+audit-arms, layering, relocation) 354/354; `size:ratchet:gate` re-baselined
+(config.mjs 1055 → 1005 locked in; model-resolver.mjs 1081 → 1109, +28 lines of
+provider-rename rationale after moving `pricingKeys` out); knip and bundle-deps
+gates clean. The 7 `solo-control-egress` failures in this container reproduce
+on an untouched HEAD checkout (they need `OPENAI_API_KEY`) — environmental.
+
 ## 2026-09-20 — Fix audit_runs.commit_sha off-by-N-commits identity bug (solo-control-audit.mjs + campaign.mjs)
 
 Autonomous `/cycle --autonomous` run on `docs/plans/audit-target-identity-commit-sha-correction.md`.
