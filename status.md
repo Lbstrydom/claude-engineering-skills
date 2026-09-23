@@ -104,6 +104,19 @@ long-context $20 in). Not live-verified this session (no provider keys):
 `claude-opus-5-5`'s presence in Anthropic's `/v1/models` — taken from the
 public pricing page; `npm run models:freshness` catches a wrong id.
 
+**Opus 5.5 follow-through (same day).** Every Opus use in the repo goes through
+`latest-opus` (final-review `claude-opus` provider, arm-eval judge, visual
+explain, Azure Claude discovery's candidate list), so the pool refresh is the
+whole switch — no concrete Opus pin exists to edit; Sonnet paths are untouched.
+One consequence of the newer API surface: Opus 5.5 returns 400 on a forced
+`tool_choice`, and the campaign adjudicator (documented as `latest-opus`)
+forced its `record_verdict` call, which would have turned every verdict into
+`unverifiable`. It now uses `tool_choice: auto` with the instruction in the
+system prompt, the same pattern (and thinking-preserving measurement) as
+final-review/transport.mjs. The other forced-tool sites default to Sonnet
+(remediation-reconcile `latest-sonnet`, tiered pipeline, solo-control's gate);
+pointing one at an Opus id fails loudly as a provider error, never silently.
+
 Verified: focused suites (resolver, pricing, freshness, brainstorm, cost-budget,
 audit-arms, layering, relocation) 354/354; `size:ratchet:gate` re-baselined
 (config.mjs 1055 → 1005 locked in; model-resolver.mjs 1081 → 1109, +28 lines of

@@ -453,7 +453,12 @@ describe('adjudication verdict', () => {
     const src = fs.readFileSync('scripts/campaign.mjs', 'utf-8');
     const tools = src.match(/tools:\s*\[([^\]]*)\]/g) ?? [];
     assert.deepEqual(tools, ['tools: [ADJUDICATION_TOOL]'], 'only one tool list, holding only the verdict tool');
-    assert.ok(!/tool_choice:\s*\{\s*type:\s*'auto'/.test(src), 'the tool call must stay forced');
+    // `auto`, never forced: Opus 5.5 (the current `latest-opus`) and Fable 5.1
+    // return 400 on a forced tool_choice, and forcing silently disabled
+    // thinking on Opus 5. The one-tool policy above is what bounds the model,
+    // not the choice mode — a prose answer is the retried `no tool call` path.
+    assert.ok(/tool_choice:\s*\{\s*type:\s*'auto'\s*\}/.test(src), 'the tool call must be auto — forced is a 400 on Opus 5.5');
+    assert.ok(!/tool_choice:\s*\{\s*type:\s*'(tool|any)'/.test(src), 'no forced tool_choice may return');
   });
 });
 
