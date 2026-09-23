@@ -77,6 +77,63 @@ function loadManifestFiles(repoRoot) {
 }
 
 /**
+ * Run the classification pipeline for one consumer checkout: `git status`
+ * → parse → ownership oracle + manifest provenance → `classifyDirtyEntries`.
+ * Shared by `main()` below and by `scripts/sync-pr.mjs`, which turns the
+ * `syncOwned` group into a branch + PR — ONE pipeline, so the two can never
+ * disagree about what "written by the sync" means.
+ *
+ * @param {string} repoRoot
+ * @returns {{ok:false, error:string}
+ *   | {ok:true, clean:boolean,
+ *      syncOwned: Array<{status:string, path:string, origPath:string|null}>,
+ *      needsReview: Array<{status:string, path:string, origPath:string|null}>,
+ *      other: Array<{status:string, path:string, origPath:string|null}>,
+ *      manifestFound: boolean, degraded: boolean, partial: boolean, blindTo: string[]}}
+ */
+export function classifyRepo(repoRoot) {
+  // `--untracked-files=all`, not the default `normal`: an entirely-untracked
+  // directory collapses to one `dirname/` record under `normal`, which cannot
+  // be classified against the sidecar's per-FILE path list — every file inside
+  // reads as "not attributed" on a first sync, which is exactly the run where
+  // the most sync-owned content exists. `all` lists each file individually.
+  const status = spawnSync(
+    'git',
+    ['-C', repoRoot, 'status', '--porcelain=v1', '-z', '--untracked-files=all'],
+    { encoding: 'utf-8', windowsHide: true, maxBuffer: 32 * 1024 * 1024 },
+  );
+  if (status.error || typeof status.status !== 'number' || status.status !== 0) {
+    return {
+      ok: false,
+      error: `\`git status\` failed in ${repoRoot}: ${status.error?.message || status.stderr || `exit ${status.status}`}`,
+    };
+  }
+
+  const entries = parsePorcelainZ(status.stdout);
+  if (entries.length === 0) {
+    return { ok: true, clean: true, syncOwned: [], needsReview: [], other: [], manifestFound: true, degraded: false, partial: false, blindTo: [] };
+  }
+
+  const candidates = entries.flatMap((e) => (e.origPath ? [e.path, e.origPath] : [e.path]));
+  const oracle = createUpstreamOwnershipOracle(repoRoot, candidates);
+  const manifestFiles = loadManifestFiles(repoRoot);
+  const isVerifiedSyncOutput = createProvenanceVerifier({
+    manifestFiles,
+    hashOf: (relPath) => {
+      try { return hashFile(path.join(repoRoot, relPath)); } catch { return null; }
+    },
+  });
+  const { syncOwned, needsReview, other } = classifyDirtyEntries({
+    entries, isUpstreamOwned: oracle.isUpstreamOwned, isVerifiedSyncOutput,
+  });
+  return {
+    ok: true, clean: false, syncOwned, needsReview, other,
+    manifestFound: manifestFiles !== null,
+    degraded: oracle.degraded, partial: oracle.partial, blindTo: oracle.blindTo,
+  };
+}
+
+/**
  * @param {string[]} argv
  * @param {NodeJS.WriteStream} out
  * @param {NodeJS.WriteStream} err
@@ -108,26 +165,12 @@ export function main(argv = process.argv, out = process.stdout, err = process.st
   const asJson = formatRaw === 'json';
   const repoRoot = path.resolve(flagValue('--repo-root') ?? process.cwd());
 
-  // `--untracked-files=all`, not the default `normal`: an entirely-untracked
-  // directory collapses to one `dirname/` record under `normal`, which cannot
-  // be classified against the sidecar's per-FILE path list — every file inside
-  // reads as "not attributed" on a first sync, which is exactly the run where
-  // the most sync-owned content exists. `all` lists each file individually.
-  const status = spawnSync(
-    'git',
-    ['-C', repoRoot, 'status', '--porcelain=v1', '-z', '--untracked-files=all'],
-    { encoding: 'utf-8', windowsHide: true, maxBuffer: 32 * 1024 * 1024 },
-  );
-  if (status.error || typeof status.status !== 'number' || status.status !== 0) {
-    err.write(
-      `sync-status: \`git status\` failed in ${repoRoot}: `
-      + `${status.error?.message || status.stderr || `exit ${status.status}`}\n`,
-    );
+  const classified = classifyRepo(repoRoot);
+  if (!classified.ok) {
+    err.write(`sync-status: ${classified.error}\n`);
     return 1;
   }
-
-  const entries = parsePorcelainZ(status.stdout);
-  if (entries.length === 0) {
+  if (classified.clean) {
     if (asJson) {
       out.write(`${JSON.stringify({ repoRoot, syncOwned: [], needsReview: [], other: [], clean: true }, null, 2)}\n`);
     } else {
@@ -135,19 +178,11 @@ export function main(argv = process.argv, out = process.stdout, err = process.st
     }
     return 0;
   }
-
-  const candidates = entries.flatMap((e) => (e.origPath ? [e.path, e.origPath] : [e.path]));
-  const oracle = createUpstreamOwnershipOracle(repoRoot, candidates);
-  const manifestFiles = loadManifestFiles(repoRoot);
-  const isVerifiedSyncOutput = createProvenanceVerifier({
-    manifestFiles,
-    hashOf: (relPath) => {
-      try { return hashFile(path.join(repoRoot, relPath)); } catch { return null; }
-    },
-  });
-  const { syncOwned, needsReview, other } = classifyDirtyEntries({
-    entries, isUpstreamOwned: oracle.isUpstreamOwned, isVerifiedSyncOutput,
-  });
+  const { syncOwned, needsReview, other } = classified;
+  // The report below only asks "was a manifest found" and the oracle's
+  // degradation flags; neither needs the underlying objects.
+  const manifestFiles = classified.manifestFound ? {} : null;
+  const oracle = { degraded: classified.degraded, partial: classified.partial, blindTo: classified.blindTo };
   // Display lists are the CURRENT path per entry; the commit needs BOTH sides
   // of a rename (`/audit-code` round 2 H2) so the old path's deletion lands
   // in the same commit as the new path's addition.

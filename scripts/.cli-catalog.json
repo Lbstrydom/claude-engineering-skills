@@ -640,6 +640,10 @@
       "description": "Classify a consumer repo's dirty `git status` paths as sync-owned (safe to commit as-is) vs its own edits, using the committed scripts/.sync-owned.json sidecar.",
       "category": "sync"
     },
+    "sync:pr": {
+      "description": "For each registered consumer, commit the sync-owned dirty group on a chore/sync-<sha> branch, push, open a PR and arm squash auto-merge. Skips receipt-only changes and checkouts off their base branch.",
+      "category": "sync"
+    },
     "sync:version-check": {
       "description": "Compare consumer-repo audit-tool versions against the source manifest.",
       "category": "sync"

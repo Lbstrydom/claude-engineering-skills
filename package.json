@@ -98,6 +98,7 @@
     "sync:path": "node scripts/sync-to-repos.mjs --target-path",
     "sync:check": "node scripts/check-sync.mjs",
     "sync:status": "node scripts/sync-status.mjs",
+    "sync:pr": "node scripts/sync-pr.mjs",
     "sync:version-check": "node scripts/check-audit-tool-version.mjs",
     "update-auditloop": "node scripts/update-auditloop.mjs",
     "skills:regenerate": "node scripts/sync-shared-audit-refs.mjs && node scripts/regenerate-skill-copies.mjs && node scripts/build-manifest.mjs",

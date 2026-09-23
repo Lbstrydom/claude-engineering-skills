@@ -368,5 +368,5 @@ export function describeSafeToCommit(
   // No renames in this caller's data (plain created/updated destination
   // lists), so every entry is its own origin.
   const entries = paths.map((path) => ({ path, origPath: null }));
-  return `  ${G}safe to commit${X} ${D}(written by this sync — \`node ${statusCliRel}\` re-derives this list any time):${X}\n    ${buildCommitSuggestion(entries, { repoRoot })}`;
+  return `  ${G}safe to commit${X} ${D}(written by this sync — \`node ${statusCliRel}\` re-derives this list any time):${X}\n    ${buildCommitSuggestion(entries, { repoRoot })}\n  ${D}or, from the upstream repo, \`npm run sync:pr\` commits exactly this group on a branch, opens the PR and arms auto-merge.${X}`;
 }

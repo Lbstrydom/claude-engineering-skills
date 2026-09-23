@@ -707,6 +707,16 @@ should touch). `--format json` for scripting; `sync-to-repos.mjs` itself
 prints the same "safe to commit" line at the end of every run against a
 target it can reach directly.
 
+**Zero-touch variant (maintainer side).** From the upstream repo,
+`npm run sync:pr` (optionally `-- --target wine`, `--dry-run`, `--no-merge`)
+runs that same classification against every registered consumer and, for the
+sync-owned group only, creates a `chore/sync-<upstream-sha>` branch, commits by
+pathspec, pushes (your pre-push hook still runs), opens the PR and arms squash
+auto-merge — so the artifacts land once your required checks pass, without a
+ruleset bypass. Two rules to know: a receipt-only change opens no PR (the receipt
+changes on every run), and a checkout that is off its base branch or ahead of
+`origin/<base>` is skipped with a named reason rather than forked from.
+
 ---
 
 ## Linked git worktrees — the tooling tree is not there
