@@ -229,7 +229,14 @@ const why = (r) => (r.error?.message || `${r.stderr || ''}${r.stdout || ''}`.tri
  */
 export function runConsumerPr({ plan, repoRoot, baseBranch, currentBranch, merge, run, log = () => {} }) {
   const warnings = [];
-  const git = (args, opts = {}) => run('git', ['--literal-pathspecs', '-C', repoRoot, ...args], opts);
+  // `--literal-pathspecs` ONLY on the two commands that take our pathspecs.
+  // As a global flag git exports it as GIT_LITERAL_PATHSPECS to every child —
+  // including the consumer's pre-push hook, whose own `git ls-files -- '*.md'`
+  // then matches nothing. First live run (2026-09-23): ai-organiser's npm-args
+  // gate refused the push with `scan/empty-scan-set`, correctly — the
+  // instrument had been poisoned from outside.
+  const git = (args, opts = {}) => run('git', ['-C', repoRoot, ...args], opts);
+  const gitLiteral = (args, opts = {}) => run('git', ['--literal-pathspecs', '-C', repoRoot, ...args], opts);
   const ghState = { original: null, current: null };
   const gh = (args, opts = {}) => {
     let r = run('gh', args, { cwd: repoRoot, ...opts });
@@ -265,9 +272,9 @@ export function runConsumerPr({ plan, repoRoot, baseBranch, currentBranch, merge
   };
 
   try {
-    const added = git(['add', '--', ...plan.addPaths]);
+    const added = gitLiteral(['add', '--', ...plan.addPaths]);
     if (!ok(added)) { switchBack(); return fail('add', added); }
-    const committed = git(['commit', '-q', '-m', plan.message, '--', ...plan.commitPathspecs]);
+    const committed = gitLiteral(['commit', '-q', '-m', plan.message, '--', ...plan.commitPathspecs]);
     if (!ok(committed)) { switchBack(); return fail('commit', committed); }
     log(`  pushing ${plan.branch} (the consumer's own pre-push hook runs now — this can take a while)`);
     const pushed = git(['push', '-u', 'origin', plan.branch]);

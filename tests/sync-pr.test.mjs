@@ -178,6 +178,15 @@ describe('runConsumerPr — command sequence', () => {
     assert.deepEqual(merge.args, ['pr', 'merge', 'https://github.com/o/r/pull/7', '--auto', '--squash', '--delete-branch']);
   });
 
+  it('--literal-pathspecs rides ONLY add and commit — as a global flag it leaks GIT_LITERAL_PATHSPECS into the consumer hook (first live run, ai-organiser)', () => {
+    const { run, calls } = fakeRunner({ 'gh pr create': { stdout: 'https://github.com/o/r/pull/7\n' } });
+    exec(run);
+    const literal = calls.filter((c) => c.cmd === 'git' && c.args[0] === '--literal-pathspecs').map((c) => gitArgs(c)[0]);
+    const plain = calls.filter((c) => c.cmd === 'git' && c.args[0] !== '--literal-pathspecs').map((c) => gitArgs(c)[0]);
+    assert.deepEqual(literal, ['add', 'commit']);
+    assert.deepEqual(plain, ['switch', 'push', 'switch']);
+  });
+
   it('--no-merge opens the PR and stops', () => {
     const { run, calls } = fakeRunner({ 'gh pr create': { stdout: 'https://github.com/o/r/pull/8\n' } });
     const r = exec(run, { merge: false });
@@ -186,7 +195,7 @@ describe('runConsumerPr — command sequence', () => {
   });
 
   it('a push failure (consumer hook rejected) switches the checkout back and names the step', () => {
-    const { run, calls } = fakeRunner({ 'git --literal-pathspecs -C C:/consumer push': { status: 1, stderr: '[pre-push] unit tests failed' } });
+    const { run, calls } = fakeRunner({ 'git -C C:/consumer push': { status: 1, stderr: '[pre-push] unit tests failed' } });
     const r = exec(run);
     assert.equal(r.ok, false);
     assert.equal(r.step, 'push');
@@ -196,7 +205,7 @@ describe('runConsumerPr — command sequence', () => {
   });
 
   it('a failed switch -c leaves the checkout alone and does nothing else', () => {
-    const { run, calls } = fakeRunner({ 'git --literal-pathspecs -C C:/consumer switch -c': { status: 128, stderr: 'fatal: a branch named x already exists' } });
+    const { run, calls } = fakeRunner({ 'git -C C:/consumer switch -c': { status: 128, stderr: 'fatal: a branch named x already exists' } });
     const r = exec(run);
     assert.equal(r.ok, false);
     assert.equal(r.step, 'switch -c');
