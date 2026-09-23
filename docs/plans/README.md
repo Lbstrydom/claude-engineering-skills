@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**7 active · 225 terminal · 30 audit summaries · 1 parked · 5 reference docs**
+**6 active · 226 terminal · 30 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -24,7 +24,6 @@ This is the list to read when asking "what is in flight?".
 | [Concern identity for re-raise suppression, and a one-week observation window](./concern-identity-suppression.md) | `In Progress` | fix shipped; observation window running, readout due 2026-09-29 |
 | [Enforce the debt ledger's persisted-record contract (§2 of aged-out-acceptance-remainder.md)](./debt-ledger-persisted-record-contract.md) | `Approved` | GPT plan audit converged after 3 rounds (9→3→2 findings, 100% acceptance throughout); Gemini final gate… |
 | [Decompose `gemini-review.mjs`](./gemini-review-decomposition.md) | `Approved` | GPT: 2 rounds, 100% acceptance both rounds, H:0 M:0 L:0 at R2; Gemini: 2 rounds, CONCERNS → APPROVE after… |
-| [Reviewer Cost-vs-Value Experiment (Experiment 5)](./reviewer-cost-value-experiment.md) | `In Progress` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Reduce `skills/ship/SKILL.md`'s size via progressive disclosure](./ship-skill-size-reduction.md) | `Approved` | GPT: 3 rounds, 4→1→0 findings, 100% acceptance both rounds with findings; Gemini: 1 round, APPROVE — no… |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
@@ -58,7 +57,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 222 completed plans</summary>
+<summary>Show all 223 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -241,6 +240,7 @@ source comments that no docs linter sees — stays valid.
 | [Repo-context budget honesty — sections fitted by priority, coverage reported](./repo-context-budget-honesty.md) | `Complete` |  |
 | [Repo-Scoped Skill Surfaces + a Third-Party-Usable Installer](./repo-scoped-skill-surfaces-and-installer.md) | `Complete` |  |
 | [Requirements Layer — a materialized view of the codebase's de-facto requirements](./requirements-layer.md) | `Complete` |  |
+| [Reviewer Cost-vs-Value Experiment (Experiment 5)](./reviewer-cost-value-experiment.md) | `Complete` | verdict: keep Arm A (incumbent). See… |
 | [Robustness Hardening & R2+ Ledger Auto-Write](./robustness-and-ledger-wiring.md) | `Complete` | shipped — `scripts/lib/ledger.mjs` exports `writeLedgerEntry` + tracks the two-axis state model… |
 | [Role-Agnostic Model-Comparison Core](./role-agnostic-comparison-core.md) | `Complete` | all three clusters shipped (`916147a0..a0c72290`) and the mandatory consolidated Gemini gate returned… |
 | [Sast-Routing, Sandbox Integrity & Migration-Adoption Hardening (7-item punch list)](./sast-sandbox-backlog-hardening.md) | `Complete` | all 7 items implemented + tested (19 new/updated tests across 5 test files), audit-code stopped at round 5… |
