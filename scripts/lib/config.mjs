@@ -626,62 +626,12 @@ export const rewardWeights = Object.freeze({
   default: 0.5,
 });
 
-// ── Model Pricing (per 1M tokens) ───────────────────────────────────────────
-// Keyed by family/tier so sentinel resolution never lands on an unpriced key.
-// Callers look up via pricingKey(modelId) from model-resolver.mjs, with a
-// coarse family-level fallback when the exact key is absent.
-
-export const modelPricing = Object.freeze({
-  // OpenAI
-  'gpt-5':         { input: 2.5,  output: 10  },
-  'gpt-5-mini':    { input: 0.25, output: 2   },
-  'gpt-4':         { input: 2.5,  output: 10  },
-  'gpt-4-mini':    { input: 0.15, output: 0.6 },
-
-  // Anthropic (per-tier)
-  'claude-opus':   { input: 15,   output: 75  },
-  'claude-sonnet': { input: 3,    output: 15  },
-  'claude-haiku':  { input: 1,    output: 5   },
-  // Legacy key preserved for callers not yet migrated
-  'claude':        { input: 3,    output: 15  },
-
-  // Google — refreshed 2026-09-07 from ai.google.dev/gemini-api/docs/pricing. The
-  // prior values (flash 0.15/0.60, pro 1.25/5, set 2026-04-23 in 900f58e5) priced
-  // the 2.x generation, so 3.x flash was costed at ~1/5 of its real rate — the
-  // exact axis `switchIfCostImprovesByPct` decides a model swap on.
-  //
-  // TWO CAVEATS. (1) The flash rates are PROMOTIONAL through 2026-12-31, then
-  // $1.50/$7.50 — re-check before acting on any cost delta. (2) `pricingKey()`
-  // keys on TIER not version, so every *-flash id shares this row and 3.5 Flash
-  // ($1.50/$9.00) is mis-priced — tolerable only while `latest-flash` resolves to
-  // the always-current alias.
-  //
-  // `gemini-pro` is TIERED for the same reason `grok-4.6` below is: Google
-  // prices Pro by prompt size, and a flat row under-counts every long audit
-  // diff — precisely the call shape the final-review gate makes.
-  'gemini-pro': {
-    tiers: [
-      { maxInputTokens: 200_000, input: 2.00, output: 12.00 },
-      { maxInputTokens: Infinity, input: 4.00, output: 18.00 },
-    ],
-  },
-  'gemini-flash':      { input: 0.75, output: 3.75 },
-  'gemini-flash-lite': { input: 0.30, output: 2.50 },
-  // Legacy key for callers still reading `gemini-3.1` — 3.1 Pro, same schedule.
-  'gemini-3.1': {
-    tiers: [
-      { maxInputTokens: 200_000, input: 2.00, output: 12.00 },
-      { maxInputTokens: Infinity, input: 4.00, output: 18.00 },
-    ],
-  },
-
-  'grok-4.6': {
-    tiers: [
-      { maxInputTokens: 200_000, input: 2.00, output: 6.00, cachedInput: 0.50 },
-      { maxInputTokens: Infinity, input: 4.00, output: 12.00, cachedInput: 1.00 },
-    ],
-  },
-});
+// ── Model Pricing ───────────────────────────────────────────────────────────
+// The rate card lives in model-pricing-table.mjs — split out 2026-09-23 when
+// the version+SKU rows landed and this file was already over the size ratchet.
+// Re-exported here so every existing importer keeps working; read a PRICE
+// through `priceFor()` (model-pricing.mjs), never by indexing the table.
+export { modelPricing } from './model-pricing-table.mjs';
 
 // ── Architectural Memory Config ─────────────────────────────────────────────
 // Per docs/plans/architectural-memory.md §5 file-level plan.

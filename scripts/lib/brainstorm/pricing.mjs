@@ -7,9 +7,10 @@
  * key-length preference: `'gpt-5.6-terra'.startsWith('gpt-5')` matched the
  * bare 'gpt-5' entry — no 'gpt-5.6' key existed to take priority — silently
  * under-pricing every gpt-5.6-terra cost estimate by ~2x on input tokens.
- * `priceFor()` here delegates to `pricingKey()` (model-resolver.mjs), which
- * resolves a model id to its FAMILY before lookup, so a future dated release
- * prices correctly with no per-release table edit.
+ * `priceFor()` here delegates to the SSoT, which walks its own `pricingKeys()`
+ * most-specific-first — the version+SKU row, then the
+ * family — so a dated snapshot of a listed SKU prices correctly with no
+ * per-snapshot table edit, and two SKUs of one family never share a rate.
  */
 import { priceFor as resolvePrice, FALLBACK_PRICE_USD } from '../model-pricing.mjs';
 

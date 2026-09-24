@@ -710,13 +710,21 @@ async function callAdjudicator({ client, model, blind, attempts = 2 }) {
       const resp = await client.messages.create({
         model,
         max_tokens: 4000,
-        system: ADJUDICATION_SYSTEM_PROMPT,
+        system: `${ADJUDICATION_SYSTEM_PROMPT}\n\nRecord your verdict by calling the ${ADJUDICATION_TOOL.name} tool. Every field is required. Never answer in prose.`,
         messages: [{ role: 'user', content: JSON.stringify(blind, null, 2) }],
         tools: [ADJUDICATION_TOOL],
-        // Forced structured output. `{backend:'sdk'}` is pinned at construction
-        // because the cli backend silently DROPS tools/tool_choice — a caller
-        // forcing tool_choice there gets a plain text block back with no error.
-        tool_choice: { type: 'tool', name: ADJUDICATION_TOOL.name },
+        // `auto`, NOT forced (2026-09-23). The adjudicator is `latest-opus`,
+        // which now resolves to Opus 5.5, and Opus 5.5 (like Fable 5.1) returns
+        // 400 on `tool_choice` type `tool`/`any` — a forced call would turn
+        // every verdict into `unverifiable` after two failed attempts. `auto`
+        // also keeps reasoning ON: forcing silently zeroed thinking on Opus 5
+        // (final-review/transport.mjs, measured 2026-08-03). The case `auto`
+        // reopens — prose instead of a tool call — is the `no … tool call`
+        // branch below, which retries once and then hands off honestly.
+        // `{backend:'sdk'}` stays pinned at construction because the cli
+        // backend silently DROPS tools — a caller there gets a plain text block
+        // back with no error.
+        tool_choice: { type: 'auto' },
       });
       usage = resp?.usage ?? null;
       const call = resp?.content?.find((b) => b.type === 'tool_use' && b.name === ADJUDICATION_TOOL.name);

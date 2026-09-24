@@ -8,9 +8,10 @@
  * OSS models the harness introduces.
  *
  * Design:
- *   - The family-keyed table in config.mjs (`modelPricing`) stays the SSoT for
- *     the closed-catalog providers (GPT/Claude/Gemini) — this module layers the
- *     OSS ids on top rather than forking a second table (#5 SSoT).
+ *   - The rate card in model-pricing-table.mjs (`modelPricing`, version+SKU
+ *     rows over family fallbacks; re-exported by config.mjs) stays the SSoT
+ *     for the closed-catalog providers (GPT/Claude/Gemini) — this module
+ *     layers the OSS ids on top rather than forking a second table (#5 SSoT).
  *   - Capture universal token **usage** always; **derive** cost. A model whose
  *     price is unknown yields a **null** cost (logged by the caller, never 0 —
  *     plan decision 8 / R1-M3), so an unpriced arm is excluded from the cost
@@ -23,8 +24,8 @@
  * @module scripts/lib/model-pricing
  */
 
-import { modelPricing as familyPricing } from './config.mjs';
-import { pricingKey } from './model-resolver.mjs';
+import { modelPricing as familyPricing } from './model-pricing-table.mjs';
+import { pricingKey, parseClaudeModel, parseGeminiModel, parseOpenAIModel } from './model-resolver.mjs';
 
 /**
  * Prices keyed by the VERBATIM model id — both OpenRouter `vendor/model` slugs
@@ -143,7 +144,7 @@ function selectTier(tiers, inputTokens) {
 export const EUR_PER_USD = 0.92;
 
 /** Effective-date stamp for the price table — bump when refreshing OSS_PRICING (audit R1 L4). */
-export const PRICING_VERSION = '2026-09-21';
+export const PRICING_VERSION = '2026-09-23';
 
 /**
  * Multiple of the priciest KNOWN model used to derive the spend-cap fallback.
@@ -259,9 +260,64 @@ export function round6(n) {
 }
 
 /**
+ * Ordered price-table lookup keys for a model id, MOST specific first, ending
+ * in `pricingKey()`'s family key (model-resolver.mjs). `priceFor()` below walks
+ * them in order; the first key present in `modelPricing` wins.
+ *
+ * Why a chain and not the family key alone (2026-09-23): the SKU became the
+ * price axis. Under one family key, gpt-6-astra ($10/$50), gpt-6-sol ($2/$10)
+ * and gpt-5.5 ($5/$30) all keyed `gpt-5`/`gpt-6`, and claude-opus-5-5
+ * ($4/$20) keyed `claude-opus` beside the retired Opus 4.1 rate ($15/$75) that
+ * row still carried. One row per family cannot be right for more than one of
+ * them, and the one it was right for was the retired one.
+ *
+ *   openai:    gpt-5.6-terra-2026-08-01  → ['gpt-5.6-terra', 'gpt-5']
+ *              gpt-5.6-luna              → ['gpt-5.6-luna', 'gpt-5-mini']
+ *              gpt-5-2025-11-01          → ['gpt-5']            (a date is not a SKU)
+ *              gpt-6-astra               → ['gpt-6-astra']      (premium: no fallback)
+ *   anthropic: claude-opus-5-5           → ['claude-opus-5-5', 'claude-opus-5', 'claude-opus']
+ *              claude-haiku-4-5-20251001 → ['claude-haiku-4-5', 'claude-haiku-4', 'claude-haiku']
+ *   google:    gemini-3.1-pro-preview    → ['gemini-pro']       (Google's alias is the row)
+ *   other:     verbatim id               → [id]
+ *
+ * A PREMIUM OpenAI SKU (pro, sol below 6, astra) gets NO family fallback:
+ * every fallback here errs cheap (the family row is the balanced SKU's rate;
+ * a premium SKU costs 5–6x that), and cheap is the one direction the spend
+ * cap must never take. Unlisted premium ⇒ null ⇒ `costForBudget`'s
+ * over-estimate, and `isPriced` false — honest, not free.
+ * @param {string} modelId
+ * @returns {string[]} non-empty
+ */
+export function pricingKeys(modelId) {
+  const family = pricingKey(modelId);
+  const claude = parseClaudeModel(modelId);
+  if (claude) {
+    const keys = [];
+    if (claude.minor) keys.push(`claude-${claude.tier}-${claude.major}-${claude.minor}`);
+    keys.push(`claude-${claude.tier}-${claude.major}`, family);
+    return keys;
+  }
+  if (parseGeminiModel(modelId)) return [family];
+  const openai = parseOpenAIModel(modelId);
+  if (openai) {
+    const version = `${openai.family}-${openai.major}${openai.minor ? `.${openai.minor}` : ''}`;
+    // The first dash-segment is the SKU (terra, luna, pro, turbo); a leading
+    // digit means a snapshot date or context tag, which is not one.
+    const firstSeg = openai.variant ? openai.variant.split('-')[0] : null;
+    const sku = firstSeg && !/^\d/.test(firstSeg) ? firstSeg : null;
+    const specific = sku ? `${version}-${sku}` : version;
+    if (openai.isPremium) return [specific];
+    return specific === family ? [family] : [specific, family];
+  }
+  return [family];
+}
+
+/**
  * Look up the {input, output} per-1M-token price for a resolved model id.
- * Tries the OSS table (full id) first, then the family-keyed config table via
- * `pricingKey()`, then a bare-id lookup. Returns null when the model is unpriced.
+ * Tries the OSS table (full id) first, then the config table by each of
+ * `pricingKeys()` in order (version+SKU row before the family fallback — see
+ * that function for why the family alone stopped being a price on 2026-09-23),
+ * then a bare-id lookup. Returns null when the model is unpriced.
  *
  * TIERED entries (currently: xAI's grok-4.6, KD-7) are resolved to a concrete
  * `{input,output}` here too, so every existing caller keeps working against
@@ -287,15 +343,16 @@ export function priceFor(modelId, opts = {}) {
     return isValidCount(opts.inputTokens) ? selectTier(entry.tiers, opts.inputTokens) : entry.tiers[0];
   };
   if (Object.hasOwn(OSS_PRICING, modelId)) return resolve(OSS_PRICING[modelId]);
-  const key = pricingKey(modelId);
-  // adbda8c8 fix — these two were bare bracket lookups while the OSS_PRICING
+  // adbda8c8 fix — these were bare bracket lookups while the OSS_PRICING
   // check one line up already used Object.hasOwn: two different lookup
   // disciplines inside one function. A model id colliding with an
   // Object.prototype member ('constructor', 'toString', 'valueOf') returned a
   // truthy NON-price whose .input/.output are undefined, which then priced as
   // NaN while still reporting priced:true — a fabricated cost, not a caught
   // error. Match the safer adjacent pattern.
-  if (Object.hasOwn(familyPricing, key)) return resolve(familyPricing[key]);
+  for (const key of pricingKeys(modelId)) {
+    if (Object.hasOwn(familyPricing, key)) return resolve(familyPricing[key]);
+  }
   if (Object.hasOwn(familyPricing, modelId)) return resolve(familyPricing[modelId]);
   return null;
 }

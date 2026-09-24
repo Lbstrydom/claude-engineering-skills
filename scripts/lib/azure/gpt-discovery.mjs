@@ -34,13 +34,28 @@
  * @module scripts/lib/azure/gpt-discovery
  */
 
-import { STATIC_POOL } from '../model-resolver.mjs';
+import { STATIC_POOL, parseOpenAIModel, compareVersions } from '../model-resolver.mjs';
 import { ProbeOutcome, dedupeOrdered, classifyDeploymentNotFound, walkLadder } from './deployment-ladder.mjs';
 
 export { ProbeOutcome };
 
-/** Same ids the public-profile `latest-gpt`/`latest-gpt-mini` sentinels resolve from. */
-export const STATIC_GPT_CANDIDATES = Object.freeze([...STATIC_POOL.openai]);
+/**
+ * The GPT-auditor slot's static candidates: the BALANCED SKUs of
+ * `STATIC_POOL.openai`, newest first — exactly the set `latest-gpt` chooses
+ * from. Derived, not the pool's hand-written order (2026-09-23): the ladder
+ * takes the FIRST deployment that answers, and the raw pool put gpt-6-astra
+ * (premium, $10/$50) and gpt-6-luna (lite) right behind gpt-6-sol, so a tenant
+ * with either deployed but not sol would have had its auditor silently moved
+ * to the wrong tier. A premium or lite deployment is still selectable, but
+ * only when named explicitly (configured or `--candidate`), never guessed.
+ */
+export const STATIC_GPT_CANDIDATES = Object.freeze(
+  STATIC_POOL.openai
+    .map(parseOpenAIModel)
+    .filter((p) => p && !p.isPremium && !p.isLite)
+    .sort(compareVersions)
+    .map((p) => p.original),
+);
 
 /**
  * Probe ONE deployment name with a minimal Responses API call.

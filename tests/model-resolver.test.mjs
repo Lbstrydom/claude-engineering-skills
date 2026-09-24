@@ -8,6 +8,7 @@ import {
   supportsReasoningEffort, pricingKey, isXaiModel, isAlibabaModel, resolveAlibabaCreds,
   isDeepseekModel, resolveDeepseekCreds, DEEPSEEK_BASE_URL,
 } from '../scripts/lib/model-resolver.mjs';
+import { pricingKeys } from '../scripts/lib/model-pricing.mjs';
 
 // Reset state between tests so catalog overrides from one test don't leak
 beforeEach(() => _resetCatalogCache());
@@ -136,6 +137,24 @@ describe('parseOpenAIModel', () => {
     assert.equal(luna.isPremium, false);
   });
 
+  it('GPT-6 renamed the tiers again (astra/sol/luna) — sol is BALANCED from major 6, premium before it', () => {
+    // developers.openai.com/api/docs/pricing, 2026-09-23: astra $10/$50,
+    // sol $2/$10, luna $0.10/$0.50. Reading astra as plain (the prior regex)
+    // tied it with sol and let catalog order upgrade latest-gpt to the 5x
+    // pricier SKU; reading sol as premium everywhere would leave GPT-6 with no
+    // balanced SKU at all.
+    const astra = parseOpenAIModel('gpt-6-astra');
+    assert.equal(astra.major, 6);
+    assert.equal(astra.isPremium, true);
+    assert.equal(astra.isLite, false);
+    const sol6 = parseOpenAIModel('gpt-6-sol');
+    assert.equal(sol6.isPremium, false, 'sol is the balanced SKU at major 6');
+    assert.equal(sol6.isLite, false);
+    assert.equal(parseOpenAIModel('gpt-5.6-sol').isPremium, true, 'sol stays premium at 5.6 — the meaning is per generation');
+    assert.equal(parseOpenAIModel('gpt-6-luna').isLite, true);
+    assert.equal(parseOpenAIModel('gpt-6-sol-2026-09-01').isPremium, false, 'a dated snapshot classifies on its first segment');
+  });
+
   it('flags gpt-*-pro as isPremium (the pre-existing premium-SKU shape)', () => {
     const p = parseOpenAIModel('gpt-5.5-pro');
     assert.equal(p.isPremium, true);
@@ -200,6 +219,13 @@ describe('pickNewestOpenAI', () => {
   it('still prefers a newer plain/balanced SKU over an older premium one (version beats SKU rank)', () => {
     const pool = ['gpt-5.5-pro', 'gpt-5.6-terra'];
     assert.equal(pickNewestOpenAI(pool), 'gpt-5.6-terra');
+  });
+
+  it('at major 6 picks sol (balanced) over astra (premium) — the SKU that is cheaper than 5.6-terra, not 5x pricier', () => {
+    const pool = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-terra'];
+    assert.equal(pickNewestOpenAI(pool), 'gpt-6-sol');
+    assert.equal(pickNewestOpenAI(['gpt-6-astra', 'gpt-6-sol']), 'gpt-6-sol', 'independent of list order');
+    assert.equal(pickNewestOpenAI(pool, 'mini'), 'gpt-6-luna');
   });
 
   it('variant=mini matches ANY lite SKU by literal name, not just "mini" — regression for a renamed cheap tier (mini -> luna)', () => {
@@ -279,14 +305,31 @@ describe('resolveModel', () => {
 
   it('uses live catalog when populated (overrides static)', () => {
     // Seed live catalog with a future model that doesn't exist in static pool
-    setCatalog('anthropic', ['claude-opus-5-0', 'claude-sonnet-4-6']);
-    assert.equal(resolveModel('latest-opus'), 'claude-opus-5-0');
+    // (strictly newer than the static head, claude-opus-5-5 since 2026-09-23)
+    setCatalog('anthropic', ['claude-opus-6-0', 'claude-sonnet-4-6']);
+    assert.equal(resolveModel('latest-opus'), 'claude-opus-6-0');
   });
 
-  it('end-to-end: latest-gpt resolves to the newest plain/balanced SKU (terra) and latest-gpt-mini to the newest lite SKU (luna) once GPT-5.6 is live — regression for the sol/terra/luna naming + mini-generalization fixes together', () => {
-    setCatalog('openai', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4-mini']);
-    assert.equal(resolveModel('latest-gpt'), 'gpt-5.6-terra');
-    assert.equal(resolveModel('latest-gpt-mini'), 'gpt-5.6-luna');
+  it('offline (STATIC_POOL only): latest-gpt → gpt-6-sol, latest-gpt-mini → gpt-6-luna, latest-opus → claude-opus-5-5 (2026-09-23 refresh)', () => {
+    assert.equal(resolveModel('latest-gpt'), 'gpt-6-sol');
+    assert.equal(resolveModel('latest-gpt-mini'), 'gpt-6-luna');
+    assert.equal(resolveModel('latest-opus'), 'claude-opus-5-5');
+    assert.equal(resolveModel('latest-sonnet'), 'claude-sonnet-5');
+  });
+
+  it('a live catalog listing astra BEFORE sol still resolves latest-gpt to sol — the incident shape (status.md 2026-09-20)', () => {
+    setCatalog('openai', ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol']);
+    assert.equal(resolveModel('latest-gpt'), 'gpt-6-sol');
+  });
+
+  it('end-to-end: a live catalog one generation ahead of STATIC_POOL resolves latest-gpt to its balanced SKU and latest-gpt-mini to its lite SKU — regression for the sol/terra/luna naming + mini-generalization fixes together', () => {
+    // A hypothetical GPT-7 in GPT-6's astra/sol/luna shape: it must be
+    // strictly newer than the static head (gpt-6-sol since 2026-09-23) for
+    // the live entries to be the ones under test; the 5.6 fixture this used
+    // to seed is now OLDER than the pool and merged-and-lost, correctly.
+    setCatalog('openai', ['gpt-7-astra', 'gpt-7-sol', 'gpt-7-luna', 'gpt-5.6-terra', 'gpt-5.4-mini']);
+    assert.equal(resolveModel('latest-gpt'), 'gpt-7-sol');
+    assert.equal(resolveModel('latest-gpt-mini'), 'gpt-7-luna');
   });
 
   it('merges live and static pools', () => {
@@ -340,6 +383,53 @@ describe('pricingKey', () => {
   it('handles OpenAI variants', () => {
     assert.equal(pricingKey('gpt-5.4'), 'gpt-5');
     assert.equal(pricingKey('gpt-5.4-mini'), 'gpt-5-mini');
+  });
+
+  it('stays the FAMILY key for a premium SKU too (efficacy-lints keys cache minimums on it)', () => {
+    assert.equal(pricingKey('gpt-6-astra'), 'gpt-6');
+    assert.equal(pricingKey('gpt-5.5-pro'), 'gpt-5');
+  });
+});
+
+// ── pricingKeys ─────────────────────────────────────────────────────────────
+
+describe('pricingKeys — most specific first, family last', () => {
+  it('OpenAI: version+SKU row, then the family; a dated snapshot keeps its SKU and a date is not a SKU', () => {
+    assert.deepEqual(pricingKeys('gpt-5.6-terra'), ['gpt-5.6-terra', 'gpt-5']);
+    assert.deepEqual(pricingKeys('gpt-5.6-terra-2026-08-01'), ['gpt-5.6-terra', 'gpt-5']);
+    assert.deepEqual(pricingKeys('gpt-5.6-luna'), ['gpt-5.6-luna', 'gpt-5-mini']);
+    assert.deepEqual(pricingKeys('gpt-6-sol'), ['gpt-6-sol', 'gpt-6']);
+    assert.deepEqual(pricingKeys('gpt-5.5'), ['gpt-5.5', 'gpt-5']);
+    assert.deepEqual(pricingKeys('gpt-5-2025-11-01'), ['gpt-5']);
+    assert.deepEqual(pricingKeys('gpt-5'), ['gpt-5']);
+    assert.deepEqual(pricingKeys('gpt-5-mini'), ['gpt-5-mini']);
+    assert.deepEqual(pricingKeys('gpt-4-turbo-16k'), ['gpt-4-turbo', 'gpt-4']);
+  });
+
+  it('OpenAI: a PREMIUM SKU gets no family fallback — a fallback errs cheap, the direction a spend cap must never take', () => {
+    assert.deepEqual(pricingKeys('gpt-6-astra'), ['gpt-6-astra']);
+    assert.deepEqual(pricingKeys('gpt-5.6-sol'), ['gpt-5.6-sol']);
+    assert.deepEqual(pricingKeys('gpt-5.5-pro'), ['gpt-5.5-pro']);
+  });
+
+  it('Anthropic: tier-major-minor, tier-major, tier', () => {
+    assert.deepEqual(pricingKeys('claude-opus-5-5'), ['claude-opus-5-5', 'claude-opus-5', 'claude-opus']);
+    assert.deepEqual(pricingKeys('claude-opus-5'), ['claude-opus-5', 'claude-opus']);
+    assert.deepEqual(pricingKeys('claude-haiku-4-5-20251001'), ['claude-haiku-4-5', 'claude-haiku-4', 'claude-haiku']);
+  });
+
+  it('Gemini keys on the tier alone (Google\'s alias is the row); unknown ids pass through verbatim', () => {
+    assert.deepEqual(pricingKeys('gemini-3.1-pro-preview'), ['gemini-pro']);
+    assert.deepEqual(pricingKeys('gemini-pro-latest'), ['gemini-pro']);
+    assert.deepEqual(pricingKeys('qwen/qwen3.8-max'), ['qwen/qwen3.8-max']);
+    assert.deepEqual(pricingKeys('grok-4.6'), ['grok-4.6']);
+  });
+
+  it('the last key is always pricingKey() — the two cannot drift', () => {
+    for (const id of ['gpt-5.6-terra', 'gpt-6-luna', 'claude-opus-5-5', 'gemini-flash-latest', 'grok-4.6', 'gpt-5-2025-11-01']) {
+      const keys = pricingKeys(id);
+      assert.equal(keys[keys.length - 1], pricingKey(id), id);
+    }
   });
 });
 

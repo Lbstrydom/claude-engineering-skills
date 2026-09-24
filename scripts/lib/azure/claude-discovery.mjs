@@ -15,13 +15,28 @@
  * @module scripts/lib/azure/claude-discovery
  */
 
-import { STATIC_POOL } from '../model-resolver.mjs';
+import { STATIC_POOL, parseClaudeModel, compareVersions } from '../model-resolver.mjs';
 import { ProbeOutcome, dedupeOrdered, classifyDeploymentNotFound, walkLadder } from './deployment-ladder.mjs';
 
 export { ProbeOutcome };
 
-/** Same ids the public-profile `latest-opus`/`latest-sonnet`/`latest-haiku` sentinels resolve from. */
-export const STATIC_CLAUDE_CANDIDATES = Object.freeze([...STATIC_POOL.anthropic]);
+/**
+ * The Claude slot's static candidates (`AZURE_FOUNDRY_CLAUDE_DEPLOYMENT`, the
+ * Opus final reviewer): `STATIC_POOL.anthropic` ordered Opus → Sonnet → Haiku,
+ * newest first within each tier, so the newest Opus is always probed first.
+ * Derived rather than taken in the pool's hand-written order (2026-09-23):
+ * that order was right, but only by an edit nobody is forced to make, and the
+ * ladder takes the FIRST deployment that answers. Sonnet and Haiku stay as
+ * later fallbacks, exactly as before.
+ */
+const CLAUDE_TIER_ORDER = Object.freeze({ opus: 0, sonnet: 1, haiku: 2 });
+export const STATIC_CLAUDE_CANDIDATES = Object.freeze(
+  STATIC_POOL.anthropic
+    .map(parseClaudeModel)
+    .filter(Boolean)
+    .sort((a, b) => (CLAUDE_TIER_ORDER[a.tier] - CLAUDE_TIER_ORDER[b.tier]) || compareVersions(a, b))
+    .map((p) => p.original),
+);
 
 /**
  * Probe ONE deployment name with a minimal Messages API call.

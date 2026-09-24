@@ -1287,8 +1287,8 @@ async function cmdApparatus() {
   try { const mr = await import('./lib/model-resolver.mjs'); await mr.refreshModelCatalog?.(); } catch { /* offline */ }
   // The incumbent's GPT is a CONCRETE PIN, not `latest-gpt`: the live-catalog
   // refresh above would resolve the sentinel to whatever OpenAI shipped most
-  // recently (gpt-6-astra at the time of writing — pricier, unpriced in this
-  // repo, and not the model exp-3 validated the apparatus against). Arm A is
+  // recently (gpt-6-sol since the 2026-09-23 resolver fix, gpt-6-astra before
+  // it — either way not the model exp-3 validated the apparatus against). Arm A is
   // "what production ran when the prior results were measured", so the id is
   // fixed here and recorded in provenance; a sentinel is still accepted for a
   // deliberate override.

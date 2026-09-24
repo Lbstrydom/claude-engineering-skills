@@ -132,8 +132,10 @@ describe('azure-claude adapter — emitted request', () => {
       _clientOptions: { azureRoute: route, fetch: fetchImpl, redactor: null },
     });
     assert.deepEqual(r.usage, { inputTokens: 120, outputTokens: 40 });
-    // 120 * 15/1M + 40 * 75/1M = 0.0018 + 0.003
-    assert.ok(Math.abs(r.estimatedCostUsd - 0.0048) < 1e-9, `unexpected cost ${r.estimatedCostUsd}`);
+    // claude-opus-4-7 at its own published rate ($5/$25 — the old $15/$75
+    // `claude-opus` family row was Opus 4.1's, retired 2026-09-23):
+    // 120 * 5/1M + 40 * 25/1M = 0.0006 + 0.001
+    assert.ok(Math.abs(r.estimatedCostUsd - 0.0016) < 1e-9, `unexpected cost ${r.estimatedCostUsd}`);
   });
 
   it('joins every text block rather than reading only the first', async () => {

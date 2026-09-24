@@ -19,8 +19,10 @@ beforeEach(() => {
 describe('check-model-freshness', () => {
   describe('detectSentinelDrift', () => {
     it('reports HIGH when live catalog has newer Opus than static pool', () => {
+      // Strictly newer than STATIC_POOL's opus head (claude-opus-5-5 since
+      // 2026-09-23) — a same-or-older live id is not drift.
       const liveCatalog = {
-        anthropic: ['claude-opus-5-0', ...STATIC_POOL.anthropic],
+        anthropic: ['claude-opus-6-0', ...STATIC_POOL.anthropic],
         openai: [],
         google: [],
       };
@@ -28,7 +30,7 @@ describe('check-model-freshness', () => {
       const opus = findings.filter(f => f.sentinel === 'latest-opus');
       assert.equal(opus.length, 1);
       assert.equal(opus[0].severity, 'error');
-      assert.equal(opus[0].livePick, 'claude-opus-5-0');
+      assert.equal(opus[0].livePick, 'claude-opus-6-0');
       assert.match(opus[0].message, /STATIC_POOL\.anthropic/);
     });
 
