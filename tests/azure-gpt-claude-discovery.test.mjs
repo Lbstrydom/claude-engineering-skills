@@ -98,6 +98,44 @@ describe('gpt-discovery — probeGptDeployment (Responses API, clientFor require
   });
 });
 
+describe('static candidate order — newest Opus and the balanced GPT SKU first (2026-09-23)', () => {
+  test('GPT candidates are the balanced SKUs, newest first: gpt-6-sol leads, never astra or luna', () => {
+    assert.equal(STATIC_GPT_CANDIDATES[0], 'gpt-6-sol');
+    assert.deepEqual(STATIC_GPT_CANDIDATES, ['gpt-6-sol', 'gpt-5.6-terra']);
+    for (const guessedTier of ['gpt-6-astra', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-luna']) {
+      assert.equal(STATIC_GPT_CANDIDATES.includes(guessedTier), false, `${guessedTier} must only be probed when named explicitly`);
+    }
+  });
+
+  test('an explicitly named premium deployment is still selectable', async () => {
+    const clientFor = async () => ({ responses: { create: async ({ model }) => { if (model !== 'gpt-6-astra') throw err(404, 'DeploymentNotFound'); return { id: 'ok' }; } } });
+    const r = await selectGptDeployment({ configured: 'nope', userCandidates: ['gpt-6-astra'], clientFor });
+    assert.equal(r.selected, 'gpt-6-astra');
+  });
+
+  test('a tenant with only astra + terra deployed gets terra, not the 5x-priced astra', async () => {
+    const deployed = new Set(['gpt-6-astra', 'gpt-5.6-terra']);
+    const clientFor = async () => ({ responses: { create: async ({ model }) => { if (!deployed.has(model)) throw err(404, 'DeploymentNotFound'); return { id: 'ok' }; } } });
+    const r = await selectGptDeployment({ configured: null, clientFor });
+    assert.equal(r.selected, 'gpt-5.6-terra');
+  });
+
+  test('Claude candidates: claude-opus-5-5 first, every Opus before any Sonnet, every Sonnet before any Haiku', () => {
+    assert.equal(STATIC_CLAUDE_CANDIDATES[0], 'claude-opus-5-5');
+    const tierRank = (id) => (id.includes('-opus-') ? 0 : id.includes('-sonnet-') ? 1 : 2);
+    const ranks = STATIC_CLAUDE_CANDIDATES.map(tierRank);
+    assert.deepEqual(ranks, [...ranks].sort((a, b) => a - b), `tier order broken: ${STATIC_CLAUDE_CANDIDATES.join(', ')}`);
+  });
+
+  test('a fresh tenant with Opus 5.5 deployed selects it on the first static probe', async () => {
+    const seen = [];
+    const client = { messages: { create: async ({ model }) => { seen.push(model); if (model !== 'claude-opus-5-5') throw err(404, 'model_not_found'); return { id: 'ok' }; } } };
+    const r = await selectClaudeDeployment({ configured: null, client });
+    assert.equal(r.selected, 'claude-opus-5-5');
+    assert.deepEqual(seen, ['claude-opus-5-5']);
+  });
+});
+
 describe('selectGptDeployment — one client per candidate, static ladder', () => {
   test('configured wins with a single probe', async () => {
     const built = [];
