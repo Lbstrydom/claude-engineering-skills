@@ -737,9 +737,13 @@ export function buildFindingRow(f, { runId, passName, round, columns = {} }) {
   // App-layer validation of the bucket domain (plan R3 M5 / cluster-A M5,M7,M10:
   // the migration deliberately has no DB CHECK — Postgres lacks idempotent
   // ADD CONSTRAINT — so the write boundary enforces the literal domain here).
-  // An unexpected value is coerced to null + logged rather than silently
-  // persisting drift.
-  if (columns.hasBucket) base.bucket = normaliseBucket(f._bucket);
+  // Deliberately RAW here, not coerced — bucket participates in finding
+  // IDENTITY (round-3 audit H1: coercing an invalid value to null here would
+  // silently reassign it onto the DIFFERENT, real identity null legitimately
+  // carries). `filterPersistableRows` below validates and drops on an
+  // out-of-domain value instead; this field is only ever coerced-to-null
+  // for a genuinely absent/null source value, which is already correct.
+  if (columns.hasBucket) base.bucket = f._bucket ?? null;
   if (columns.hasStage) base.stage = f._stage ?? null;
   // v2 hybrid attribution: `arm` is stamped by the shadow ONLY on arm-specific
   // stages (gemini/gpt-round); null for shared/production findings (the view
@@ -757,6 +761,73 @@ export function buildFindingRow(f, { runId, passName, round, columns = {} }) {
     base.verdict_severity = normaliseEnum(f.verification?.verdictSeverity, VALID_SEVERITIES, 'verdict_severity');
   }
   return base;
+}
+
+/**
+ * The NOT-NULL write-boundary guard (2026-07-26), extracted to a pure
+ * function — same reason `buildFindingRow` was pulled out of `recordFindings`
+ * above: the decision needs to be directly unit-testable without a live DB.
+ *
+ * `finding_fingerprint` has always had a `|| 'unknown'` fallback; `severity`
+ * and `category` had none, yet both are NOT NULL with no DB default. One
+ * malformed row therefore aborted the whole INSERT — and inside a
+ * caller-supplied transaction that poisons the tx, so the subsequent COMMIT
+ * silently degrades to ROLLBACK and the entire batch disappears with no error
+ * reaching the caller. Found live: the Opus shadow reviewer returned a finding
+ * with a null `category`, which discarded the PRIMARY reviewer's findings too.
+ *
+ * Coerce vs skip is deliberately asymmetric:
+ *  - `category` is descriptive → coerce to a visible defect marker so the row
+ *    survives. `detail_snapshot` is what a human grades; keeping the row keeps
+ *    it gradeable, and the marker makes the provider bug visible IN THE DATA
+ *    rather than only in a log line that scrolls away.
+ *  - `severity` is the metric → NEVER fabricated. The shadow A/B's stopping
+ *    rule counts HIGH/MEDIUM findings; inventing a severity would corrupt the
+ *    exact number the row exists to feed. Drop it, loudly — keyed on
+ *    `VALID_SEVERITIES.has(row.severity)`, not mere truthiness: a truthy but
+ *    out-of-domain value (e.g. a producer emitting `"CRITICAL"`) previously
+ *    survived this guard and hit the DB's `severity` CHECK constraint instead,
+ *    triggering the exact same whole-batch-lost failure this guard exists to
+ *    prevent — just one step later, and with no application-level warning.
+ *
+ * `bucket` (round-3 audit H1) gets the SAME drop-not-coerce treatment as
+ * `severity`, for the same structural reason: it participates in finding
+ * IDENTITY (the dedup key below, the DB's ON CONFLICT target,
+ * `pruneUnrecordedUnruled`'s comparison) rather than being purely
+ * descriptive like `category`. `buildFindingRow` deliberately does NOT
+ * coerce an out-of-domain bucket to null before this point — null is a
+ * REAL, DIFFERENT identity value (the one primary/no-bucket findings
+ * legitimately carry), so coercing here would silently reassign an
+ * invalid-bucket finding onto an unrelated finding's identity slot instead
+ * of dropping it. Checked via `'bucket' in row` rather than a separate
+ * `hasBucket` flag — `buildFindingRow` only ever sets the property at all
+ * when the store has the column, so property presence already carries
+ * that signal without this pure function needing `columns` threaded in.
+ *
+ * @param {object[]} mappedRows - rows already produced by `buildFindingRow`
+ * @returns {{rows: object[], droppedFingerprints: string[], droppedBucketFingerprints: string[], coercedCategories: number}}
+ */
+export function filterPersistableRows(mappedRows) {
+  const rows = [];
+  let coercedCategories = 0;
+  const droppedFingerprints = [];
+  const droppedBucketFingerprints = [];
+  for (const row of mappedRows) {
+    if (!VALID_SEVERITIES.has(row.severity)) {
+      droppedFingerprints.push(row.finding_fingerprint);
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(row, 'bucket') && row.bucket != null && !VALID_BUCKETS.has(row.bucket)) {
+      droppedBucketFingerprints.push(row.finding_fingerprint);
+      continue;
+    }
+    if (row.category == null || row.category === '') {
+      row.category = MISSING_CATEGORY_MARKER;
+      coercedCategories++;
+    }
+    rows.push(row);
+  }
+  return { rows, droppedFingerprints, droppedBucketFingerprints, coercedCategories };
 }
 
 /**
@@ -818,75 +889,32 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   // (the code-audit path that carries the measured churn) are considered.
   const { kept: suppressionKept, vectorByFinding, embeddingSpace } = await applyRecordTimeSuppression(runId, findings, passName);
   const columns = { hasClassification, hasSourceModel, hasBucket, hasStage, hasArm, hasIsQuickFix, hasVerification };
-  // Build one row PER finding up front, pairing it with its source finding —
-  // round-1 audit H5 found that dedup used to run BEFORE severity validation,
-  // so an invalid finding could claim a (fingerprint,bucket) dedup slot and
-  // then get dropped by the guard below, silently losing a LATER, VALID
-  // finding sharing that same key too (the "first occurrence carries no
-  // information the first does not" comment's premise is false once the two
-  // occurrences differ on validity). Pairing `f`/`row` here — instead of three
-  // independently-filtered lists — is what lets validation run first while
-  // keeping `keptFindings` (for embedding persistence, below) in lockstep
-  // with whichever rows actually survive both steps.
-  const built = suppressionKept.map((f) => ({ f, row: buildFindingRow(f, { runId, passName, round, columns }) }));
+  // A side Map from row -> its originating raw finding (never a property ON
+  // the row — `cols = Object.keys(rows[0])` below builds the INSERT column
+  // list directly from row keys, so any extra property would try to become a
+  // column). Needed downstream to recover `keptFindings` for
+  // `persistKeptEmbeddings`, which keys `vectorByFinding` by raw-finding
+  // object identity — lost once rows go through filter+dedup by value.
+  const rowToFinding = new Map();
+  const mappedRows = suppressionKept.map((f) => {
+    const row = buildFindingRow(f, { runId, passName, round, columns });
+    rowToFinding.set(row, f);
+    return row;
+  });
 
-  // ── NOT-NULL + domain write-boundary guard (2026-07-26; domain check added
-  // round-1 audit H18) — runs BEFORE dedup, see above. `finding_fingerprint`
-  // has always had a `|| 'unknown'` fallback; `severity` and `category` had
-  // none, yet both are NOT NULL with no DB default. One malformed finding
-  // therefore aborted the whole INSERT — and inside a caller-supplied
-  // transaction that poisons the tx, so the subsequent COMMIT silently
-  // degrades to ROLLBACK and the entire batch disappears with no error
-  // reaching the caller. Found live: the Opus shadow reviewer returned a
-  // finding with a null `category`, which discarded the PRIMARY reviewer's
-  // findings too.
-  //
-  // Coerce vs skip is deliberately asymmetric:
-  //  - `category` is descriptive → coerce to a visible defect marker so the row
-  //    survives. `detail_snapshot` is what a human grades; keeping the row keeps
-  //    it gradeable, and the marker makes the provider bug visible IN THE DATA
-  //    rather than only in a log line that scrolls away.
-  //  - `severity` is the metric → NEVER fabricated. The shadow A/B's stopping
-  //    rule counts HIGH/MEDIUM findings; inventing a severity would corrupt the
-  //    exact number the row exists to feed. Drop it, loudly. A truthy but
-  //    OUT-OF-DOMAIN value (e.g. a producer sending "CRITICAL") is exactly as
-  //    dangerous as a falsy one — `audit_findings_severity_check` would reject
-  //    the INSERT and abort the whole batch/poison the caller's tx, the same
-  //    failure mode the falsy-only check was written to prevent — so it is
-  //    validated against the same closed domain the DB CHECK enforces, not
-  //    merely tested for truthiness.
-  const validated = [];
-  let coercedCategories = 0;
-  const droppedFingerprints = [];
-  const droppedBucketFingerprints = [];
-  for (const { f, row } of built) {
-    if (!row.severity || !VALID_SEVERITIES.has(row.severity)) {
-      droppedFingerprints.push(row.finding_fingerprint);
-      continue;
-    }
-    // round-3 audit H1: `bucket` participates in finding IDENTITY (the dedup
-    // key below, the DB's ON CONFLICT target, and pruneUnrecordedUnruled's
-    // comparison) — unlike `category`, it is NOT purely descriptive, so it
-    // cannot get category's coerce-and-keep treatment. `buildFindingRow`'s own
-    // `normaliseBucket` already coerces an out-of-domain value to `null` for
-    // the row itself — but `null` is a REAL, DIFFERENT identity value (the
-    // one primary/no-bucket findings legitimately carry), so that coercion
-    // would silently reassign an invalid-bucket finding onto an unrelated
-    // finding's identity slot instead of dropping it: a collision, not a safe
-    // default. Checked on the RAW `f._bucket` (buildFindingRow already
-    // replaced `row.bucket` with the coerced value by this point) and only
-    // when this store actually has the column — an absent/null bucket is
-    // legitimate and must not be flagged.
-    if (columns.hasBucket && f._bucket != null && !VALID_BUCKETS.has(f._bucket)) {
-      droppedBucketFingerprints.push(row.finding_fingerprint);
-      continue;
-    }
-    if (row.category == null || row.category === '') {
-      row.category = MISSING_CATEGORY_MARKER;
-      coercedCategories++;
-    }
-    validated.push({ f, row });
-  }
+  // NOT-NULL + domain write-boundary guard (2026-07-26; severity-domain check
+  // added round-1 audit H18, bucket-domain check added round-3 audit H1) runs
+  // BEFORE dedup (round-2 code-audit H4/H5) — the pure decision lives in
+  // `filterPersistableRows` above; this call site only owns the I/O (logging).
+  // Order is load-bearing: dedup below keeps only the FIRST occurrence of a
+  // key, on the assumption that "a later duplicate carries no information the
+  // first does not." An invalid/missing-severity or out-of-domain-bucket
+  // occurrence breaks that assumption — if it happened to be the first of its
+  // key, dedup would consume the key's one slot and a later, VALID occurrence
+  // of the same key would never be reached. Filtering for persistability
+  // first means dedup only ever chooses among rows that were already going
+  // to survive.
+  const { rows: persistableRows, droppedFingerprints, droppedBucketFingerprints, coercedCategories } = filterPersistableRows(mappedRows);
   if (coercedCategories > 0) {
     process.stderr.write(
       `  [learning] WARNING: ${coercedCategories} ${passName} finding(s) had no category — `
@@ -897,9 +925,9 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   if (droppedFingerprints.length > 0) {
     // Never a silent cap — name what was dropped and why (AGENTS.md).
     process.stderr.write(
-      `  [learning] WARNING: dropped ${droppedFingerprints.length} ${passName} finding(s) with no/invalid severity `
-      + `(${droppedFingerprints.join(', ')}) — severity is the metric the A/B stopping rule counts, so it is `
-      + 'never fabricated or accepted out-of-domain. These findings are NOT persisted.\n'
+      `  [learning] WARNING: dropped ${droppedFingerprints.length} ${passName} finding(s) with a missing or `
+      + `invalid severity (${droppedFingerprints.join(', ')}) — severity is the metric the A/B stopping rule `
+      + 'counts, so it is never fabricated or coerced. These findings are NOT persisted.\n'
     );
   }
   if (droppedBucketFingerprints.length > 0) {
@@ -923,7 +951,7 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   // previously wrote two rows. `ON CONFLICT DO UPDATE` does not rescue it
   // either — Postgres refuses to affect one row twice in a single command
   // (21000). So the collapse has to happen before the statement is built, and
-  // (see above) after severity validation — never before it.
+  // (see above) after severity/bucket validation — never before it.
   //
   // Keep the FIRST occurrence: the batch is ordered, and a later duplicate of an
   // already-VALID-and-seen key carries no information the first does not. Never
@@ -935,20 +963,18 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   // pass_name+bucket, so an intra-batch dedup on fingerprint alone silently
   // collapsed a same-fingerprint-different-bucket pair BEFORE that correctly-
   // scoped statement ever ran. Read straight off the already-built row's own
-  // `finding_fingerprint`/`bucket` fields — never recomputed via `fingerprintOf`/
-  // `normaliseBucket` a second time — so the dedup key can never drift from what
-  // actually lands in the row. Only scoped by bucket when this store has the
-  // column at all (`hasBucket`); an un-migrated store has no column to
-  // disambiguate on, matching the DB conflict target's own `hasBucket` condition.
-  const keptFindings = [];
+  // `finding_fingerprint`/`bucket` fields — never recomputed a second time —
+  // so the dedup key can never drift from what actually lands in the row.
+  // Only scoped by bucket when this store has the column at all (`hasBucket`);
+  // an un-migrated store has no column to disambiguate on, matching the DB
+  // conflict target's own `hasBucket` condition.
   const rows = [];
   const seenKeys = new Set();
   let intraBatchDuplicates = 0;
-  for (const { f, row } of validated) {
+  for (const row of persistableRows) {
     const key = findingKeyString({ fingerprint: row.finding_fingerprint, bucket: hasBucket ? row.bucket : undefined });
     if (seenKeys.has(key)) { intraBatchDuplicates++; continue; }
     seenKeys.add(key);
-    keptFindings.push(f);
     rows.push(row);
   }
   if (intraBatchDuplicates > 0) {
@@ -1044,6 +1070,9 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
     if (vectorByFinding && vectorByFinding.size > 0) {
       const idByKey = new Map((inserted.rows || []).map((r) =>
         [findingKeyString({ fingerprint: r.finding_fingerprint, bucket: hasBucket ? r.bucket : undefined }), r.id]));
+      // Recover the raw findings behind the rows that actually made it through
+      // filter + dedup, in the same order — see `rowToFinding` above.
+      const keptFindings = rows.map((row) => rowToFinding.get(row));
       const embedResult = await persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByKey, runId, embeddingSpace, !!opts.client, hasBucket);
       if (embedResult.failed > 0) {
         process.stderr.write(`  [semantic-suppress] embedding persistence: ${embedResult.persisted} ok, ${embedResult.failed} failed this batch\n`);
@@ -2587,39 +2616,40 @@ export function normalizeRemediationUpdates(updates) {
  * needed) doesn't duplicate this transaction's careful rules. See the inline
  * comments below for what each of them protects against.
  *
+ * `repoId` is REQUIRED (positional, thrown on absence — main's PR #117):
+ * folded into the terminal UPDATE's own WHERE clause via an atomic `EXISTS`,
+ * never checked via a separate prior SELECT. The row-id caller and
+ * `applyRemediationVerificationResults` used to verify repo ownership with a
+ * SELECT and only then issue the write — a real TOCTOU window (the finding's
+ * repo association could change between the two statements) this closes.
+ *
+ * `fingerprint` (round-2 audit H3, optional): the same atomic-predicate
+ * treatment for identity, not just ownership — the ownership SELECT this
+ * replaces never checked that a caller-supplied `findingId` actually carried
+ * the caller-supplied fingerprint, so a mismatched (id, fingerprint) pair
+ * could still target the wrong finding. `null` by default (no predicate
+ * added) for callers that already resolved the exact row by fingerprint and
+ * need no re-check.
+ *
+ * `throttleStamp` (write-boundary-hardening plan Phase 8, debt a2999cbf144f,
+ * optional): when supplied, the `remediation_last_checked_*` throttle
+ * columns are stamped as a THIRD statement inside this function's own
+ * `withTx`, instead of `applyRemediationVerificationResults` running a
+ * second, separately-transactional UPDATE after this one returns. A failure
+ * anywhere in the transaction now rolls back the terminal state too, so
+ * "verified but not counted" (the confirmed bug: the terminal write landing
+ * while a later, independent throttle-stamp failure discounted it) is
+ * structurally impossible rather than merely less likely.
+ *
+ * @param {string} repoId - audit_repos.id; the finding must belong to it
  * @param {string} findingId - audit_findings.id, already resolved by the caller
  * @param {string} state - a member of TERMINAL_REMEDIATION
- * @param {{resolvedRound?: number|null}} [opts]
- * @returns {Promise<number>} rows affected in audit_findings (0 or 1)
- */
-/**
- * `throttleStamp` (write-boundary-hardening plan Phase 8, debt a2999cbf144f):
- * when supplied, the `remediation_last_checked_*` throttle columns are
- * stamped as a THIRD statement inside this function's own `withTx`, instead
- * of `applyRemediationVerificationResults` running a second, separately-
- * transactional UPDATE after this one returns. A failure anywhere in the
- * transaction now rolls back the terminal state too, so "verified but not
- * counted" (the confirmed bug: the terminal write landing while a later,
- * independent throttle-stamp failure discounted it) is structurally
- * impossible rather than merely less likely.
- * @param {{resolvedRound?: number|null, throttleStamp?: {checkedAtCommit: string}|null}} [opts]
+ * @param {{resolvedRound?: number|null, throttleStamp?: {checkedAtCommit: string}|null, fingerprint?: string|null}} [opts]
  * @returns {Promise<{affected: number, throttleStamped: boolean|null}>} `throttleStamped`
  *   is `null` when no `throttleStamp` was requested.
  */
-/**
- * `repoId`/`fingerprint` (round-2 audit H2/H3): folded into the terminal
- * UPDATE's own WHERE clause, not checked via a separate prior SELECT.
- * `markFindingsRemediation`'s row-id path and `applyRemediationVerificationResults`
- * used to verify repo ownership with a SELECT and only then issue the write —
- * a real TOCTOU window (the finding's repo association, or its fingerprint,
- * could change between the two statements) and, for the row-id path
- * specifically, the ownership SELECT never even checked the fingerprint the
- * caller supplied, so a mismatched (id, fingerprint) pair could still target
- * the wrong finding. Both are `null` by default (no predicate added) for
- * callers that already resolved the exact row and need no re-check (e.g. the
- * fingerprint-only path immediately after its own resolving SELECT).
- */
-async function projectRemediationState(findingId, state, { resolvedRound = null, throttleStamp = null, repoId = null, fingerprint = null } = {}) {
+async function projectRemediationState(repoId, findingId, state, { resolvedRound = null, throttleStamp = null, fingerprint = null } = {}) {
+  if (!repoId) throw new Error('projectRemediationState requires repoId');
   return withTx(async () => {
     // `user_action` is filled here, and ONLY out of an undecided state.
     //
@@ -2656,9 +2686,7 @@ async function projectRemediationState(findingId, state, { resolvedRound = null,
                 THEN 'fix-now'
                 ELSE user_action END
         WHERE id = $2
-          AND ($3::uuid IS NULL OR EXISTS (
-                SELECT 1 FROM audit_runs r WHERE r.id = audit_findings.run_id AND r.repo_id = $3
-              ))
+          AND EXISTS (SELECT 1 FROM audit_runs r WHERE r.id = audit_findings.run_id AND r.repo_id = $3)
           AND ($4::text IS NULL OR finding_fingerprint = $4)
         RETURNING id`,
       [state, findingId, repoId, fingerprint]
@@ -2769,7 +2797,7 @@ export async function markFindingsRemediation(repoId, updates) {
       // fingerprint-only path it's a same-transaction re-assertion of what
       // the resolving SELECT just found, closing that path's own smaller
       // TOCTOU window between resolve and write.
-      const { affected } = await projectRemediationState(findingId, state, { resolvedRound, repoId, fingerprint: fp });
+      const { affected } = await projectRemediationState(repoId, findingId, state, { resolvedRound, fingerprint: fp });
       if (affected > 0) updated += 1;
       else process.stderr.write(`  [lifecycle] markFindingsRemediation(${fp}): 0-row update (not found, not owned by repo ${repoId}, or fingerprint mismatch) — not counted\n`);
     } catch (err) {
@@ -2797,7 +2825,9 @@ const VALID_VERIFICATION_OUTCOMES = new Set(['resolved', 'still-present', 'uncer
 /**
  * Apply out-of-band verification results to `audit_findings`. Fail-open PER
  * ACTION, mirroring `markFindingsRemediation` — one bad row never aborts the
- * batch.
+ * batch. `repoId` scopes BOTH writes here (the terminal `projectRemediationState`
+ * call and this function's own throttle-column `UPDATE`) via an atomic `EXISTS`
+ * clause — a `findingId` from another repo affects nothing.
  *
  * @param {string} repoId
  * @param {Array<{findingId: string, outcome: 'resolved'|'still-present'|'uncertain',
@@ -2851,10 +2881,9 @@ export async function applyRemediationVerificationResults(repoId, actions) {
         // statements/transactions; a failure of the second discounted a
         // `verified` state that had already landed. Now either both land or
         // neither does.
-        const { affected } = await projectRemediationState(findingId, 'verified', {
+        const { affected } = await projectRemediationState(repoId, findingId, 'verified', {
           resolvedRound: null,
           throttleStamp: hasThrottleColumns ? { checkedAtCommit } : null,
-          repoId,
         });
         if (affected === 0) {
           process.stderr.write(`  [lifecycle] applyRemediationVerificationResults(${findingId}): 0-row update on the terminal write (not found, or not owned by repo ${repoId}) — not counted\n`);

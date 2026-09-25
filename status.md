@@ -124,6 +124,74 @@ Backlog 2026-09-25T12:53Z: Q1 82c/31p (+307 aged) · Q2 138c/52p (54 perm) · Q3
 
 ---
 
+## 2026-09-25 — Triage independence test tightened: same-file "defer" needs more than a call-graph claim
+
+Prompted by a pattern noticed in the debt backlog: findings get triaged
+`out-of-scope` → `defer` and never come back, even when hindsight says they
+should have been fixed in-session. Measured before touching anything: 234
+open out-of-scope debt entries, 71 HIGH; one run alone mass-deferred 19
+same-file findings on the boilerplate "unrelated to `<new function>`...
+verified zero coupling" — call-graph independence only, never checked against
+shared state. Two of those deferred findings were confirmed still-live bugs
+by reading the current code.
+
+**Fixed the two live bugs, defense-in-depth:**
+- [`scripts/lib/store/runs-findings.mjs`](scripts/lib/store/runs-findings.mjs) —
+  `filterPersistableRows` now checks severity by `VALID_SEVERITIES.has(...)`
+  membership instead of truthiness, and runs BEFORE fingerprint-dedup (not
+  after) so an invalid-severity row can no longer consume a fingerprint slot
+  and silently drop a later valid finding sharing that hash.
+- `projectRemediationState` now requires `repoId` and the `audit_findings`
+  UPDATE carries `AND EXISTS (SELECT 1 FROM audit_runs r WHERE r.id =
+  audit_findings.run_id AND r.repo_id = $N)` — atomic, TOCTOU-safe cross-repo
+  isolation instead of a separate precondition SELECT.
+
+**Fixed the triage-process defect that let both bugs sit as debt for months.**
+Tightened AGENTS.md's "scope is decided by impact, not authorship" test:
+for a same-file finding, "the new code doesn't call the cited path" is no
+longer sufficient on its own. The independence sentence must additionally
+state, truthfully, both that the cited code shares no column/constraint the
+new code also touches, and that it does not execute inside the same
+transaction instance — checkable against real code, not a judgement call.
+Mirrored into `skills/audit-code/SKILL.md` Step 3, `skills/audit-plan/SKILL.md`,
+and `skills/audit-code/references/debt-capture.md`. Applied this same
+tightened test to my own triage during this session's audit-code rounds
+(per explicit instruction), which caught 2 additional real bugs beyond the
+original two: a dedup-ordering data-loss bug in `recordFindings` (findings
+mapped to rows, deduped, THEN filtered — an invalid row could still consume
+a fingerprint slot ahead of filtering) and a test-teardown pool leak. Both
+fixed with red-then-green verification.
+
+**Closed the "prose alone won't catch a batch split to duck the threshold"
+gap.** Added `detectTemplateRationales` to `scripts/debt-auto-capture.mjs` —
+a second, independent nudge alongside the existing same-file-batch WARN: 3+
+deferrals sharing near-identical rationale wording (normalized by stripping
+backtick-quoted / dotted / snake_case identifiers) fire a WARN even when
+split across files or rounds specifically to stay under the same-file
+threshold. Advisory only, never blocks. 12 new tests in
+`tests/debt-auto-capture-same-file-nudge.test.mjs` cover both nudges,
+including the split-batch case the same-file check structurally can't see.
+
+**Known remaining limitation (named in the plan's addendum, not silently
+dropped):** both the independence test and the two nudges are still
+enforcement-by-visibility — nothing mechanically verifies that a stated
+"no shared column/transaction" claim is actually true. Closing that would
+mean parsing SQL for column/transaction overlap, which is out of scope for
+this pass; flagged as a follow-up, not fixed here.
+
+Full plan + audit trail:
+[`docs/plans/triage-independence-test-and-write-boundary-fixes.md`](docs/plans/triage-independence-test-and-write-boundary-fixes.md),
+[`docs/plans/triage-independence-test-and-write-boundary-fixes-audit-summary.md`](docs/plans/triage-independence-test-and-write-boundary-fixes-audit-summary.md).
+Built via `/cycle --autonomous`: plan → 4 rounds of audit-plan → implement →
+4 rounds of audit-code (GPT + Gemini final gate, APPROVE) → additional Gemini
+re-review rounds on request. Verified via `node scripts/db-test-container.mjs
+suites` (the sanctioned disposable-Postgres runner) — all DB-integration
+suites pass, including the two new ones
+(`tests/record-findings-write-boundary.test.mjs`,
+extended `tests/mark-findings-remediation.test.mjs`).
+
+Backlog 2026-09-25T11:21Z: Q1 68c/31p (+307 aged) · Q2 138c/52p (54 perm) · Q3 35 · debt 296 cloud/48 local (0 spilled) · upstream 1
+
 ## 2026-09-23 — Pricing: GPT-6 astra/sol/luna + Opus 5.5, and the family key stops being the price
 
 Prompted by the observation that both providers shipped new models and that

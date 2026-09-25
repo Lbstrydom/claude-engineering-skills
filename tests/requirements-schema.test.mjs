@@ -4,10 +4,15 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   RequirementCandidateSchema, GapAssessmentSchema, RequirementSchema,
   RequirementsLedgerSchema, OverridesSchema,
 } from '../scripts/lib/requirements/schema.mjs';
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const candidate = {
   id: 'REQ-security-deadbeef', assertion: 'Sensitive paths are excluded from the inventory.',
@@ -91,5 +96,21 @@ describe('OverridesSchema', () => {
   });
   it('rejects a malformed override key — must be a frozen requirement id (audit M5)', () => {
     assert.equal(OverridesSchema.safeParse({ 'REQ-a-1': { decision: 'accept' } }).success, false);
+  });
+
+  // Fixture derived from the real committed row, not a hand-rolled shape —
+  // `.requirements/overrides.json` shipped for weeks with a `{$comment,
+  // overrides: {...}}` wrapper the schema has never accepted (born
+  // non-conformant in 411b6bd5), which every prior test here missed because
+  // each one only exercised synthetic objects matching the schema by
+  // construction. `reconcile` fails closed on an invalid file (see
+  // requirements.mjs `cmdReconcile`), so this silently broke `reconcile` for
+  // as long as the file existed.
+  it('the committed .requirements/overrides.json parses (regression — was a {$comment,overrides} wrapper)', () => {
+    const overridesPath = path.join(REPO_ROOT, '.requirements/overrides.json');
+    if (!fs.existsSync(overridesPath)) return; // absent is a valid state (README) — nothing to check
+    const raw = JSON.parse(fs.readFileSync(overridesPath, 'utf-8'));
+    const result = OverridesSchema.safeParse(raw);
+    assert.equal(result.success, true, result.success ? undefined : JSON.stringify(result.error.issues, null, 2));
   });
 });

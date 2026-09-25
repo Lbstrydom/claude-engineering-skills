@@ -291,6 +291,7 @@ const EXPECTED_EXPORTS = [
   'markRunFindingsNeedsTriage', // determinism WS1 Phase 2 — finalize reconciliation writeback
   'markRunFindingsAutoDismissed', // 2026-07-22 — control-marker findings sibling writer (scripts/lib/audit/control-markers.mjs)
   'buildFindingRow',            // 2026-08-13 — pure finding→row mapper (existence-gate persistence, migration 20260813120000)
+  'filterPersistableRows',      // 2026-09-25 — NOT-NULL write-boundary guard, lifted out of recordFindings for direct unit testing (triage-independence-test-and-write-boundary-fixes.md)
   // fix-lifecycle projection (docs/plans/remediation-state-fix-lifecycle.md)
   'buildFindingAdjudicationPatch', // gap #2 — remediation_state → audit_findings (pure seam)
   'markFindingsRemediation',       // repo-scoped fingerprint writer for fixed/regressed
@@ -603,6 +604,12 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // to the stores domain instead of exposing a raw accessor.
     // 208 → 209: +buildSuppressionEventRows (2026-09-22, concern-identity
     // telemetry) — the pure row mapper recordSuppressionEvents now delegates to.
-    assert.equal(EXPECTED_EXPORTS.length, 209);
+    // 209 → 210: +filterPersistableRows (2026-09-25, triage-independence-
+    // test-and-write-boundary-fixes.md) — the NOT-NULL write-boundary guard,
+    // lifted out of recordFindings's inline loop so the severity-membership
+    // decision (VALID_SEVERITIES.has, not truthiness — a truthy-but-invalid
+    // value used to reach the DB CHECK constraint instead) is directly
+    // unit-testable, same class as buildFindingRow above.
+    assert.equal(EXPECTED_EXPORTS.length, 210);
   });
 });

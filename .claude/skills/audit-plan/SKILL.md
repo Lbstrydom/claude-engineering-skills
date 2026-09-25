@@ -180,6 +180,19 @@ A `defer` of an `out-of-scope` finding must name the **independence** in its
 rationale (one sentence: the plan's design does not depend on the cited
 concern). If you can't write it truthfully, it's load-bearing → fold it in.
 
+**Same-module independence needs more than "the plan doesn't propose editing
+that section" (measured 2026-09-25 in the sibling `/audit-code` invariant —
+same failure mode applies here).** A finding about a module/section the
+plan's own design already extends is not independent merely because the plan
+doesn't touch that section's *text*. When the cited concern is about a
+module/table the plan's new design reads or writes, the independence
+sentence needs the same two-part answer `/audit-code` Step 3 requires,
+reframed for a not-yet-built design: does the plan's new design read/write
+the SAME column(s) or depend on the SAME constraint the cited concern
+describes (not merely the same table), and does it execute inside the SAME
+transaction instance (not merely the same request or subsystem)? If either
+is true, fold the resolution into the plan rather than deferring it.
+
 ### Grounding rubric (is the plan traced to real code?)
 
 The whole plan file is in context — no new machinery. Check that **§1's Code

@@ -29,7 +29,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyExistenceFindings } from '../scripts/lib/audit/finding-verification.mjs';
-import { buildFindingRow } from '../scripts/lib/store/runs-findings.mjs';
+import { buildFindingRow, filterPersistableRows } from '../scripts/lib/store/runs-findings.mjs';
 
 const ALL_COLUMNS = Object.freeze({
   hasClassification: false,
@@ -153,6 +153,56 @@ test('an out-of-domain verdict is coerced to null, never sent at the CHECK', () 
   );
   assert.equal(row.verification, null);
   assert.equal(row.severity, 'HIGH', 'coercing the verdict must not disturb the finding');
+});
+
+// ── filterPersistableRows: the NOT-NULL write-boundary guard, pure ─────────
+// Extracted from recordFindings's inline loop for the same reason
+// buildFindingRow was extracted above — the DB-integration proof that
+// recordFindings actually PERSISTS accordingly lives in
+// tests/record-findings-write-boundary.test.mjs; these tests lock the pure
+// filter decision itself, no DB required.
+
+test('a truthy but out-of-domain severity is dropped, same as a missing one', () => {
+  const { rows, droppedFingerprints } = filterPersistableRows([
+    { finding_fingerprint: 'a', severity: 'CRITICAL', category: 'x' },
+    { finding_fingerprint: 'b', severity: undefined, category: 'x' },
+    { finding_fingerprint: 'c', severity: 'HIGH', category: 'x' },
+  ]);
+  assert.deepEqual(rows.map((r) => r.finding_fingerprint), ['c']);
+  assert.deepEqual(droppedFingerprints.sort(), ['a', 'b']);
+});
+
+test('every VALID_SEVERITIES member survives the guard unchanged', () => {
+  for (const severity of ['HIGH', 'MEDIUM', 'LOW']) {
+    const { rows, droppedFingerprints } = filterPersistableRows([
+      { finding_fingerprint: `fp-${severity}`, severity, category: 'x' },
+    ]);
+    assert.equal(rows.length, 1, `${severity} must not be dropped`);
+    assert.equal(droppedFingerprints.length, 0);
+  }
+});
+
+test('a missing category is coerced to the visible marker, never dropped', () => {
+  const { rows, coercedCategories, droppedFingerprints } = filterPersistableRows([
+    { finding_fingerprint: 'a', severity: 'HIGH', category: null },
+    { finding_fingerprint: 'b', severity: 'HIGH', category: '' },
+  ]);
+  assert.equal(rows.length, 2, 'both rows survive — category is descriptive, not the metric');
+  assert.equal(droppedFingerprints.length, 0);
+  assert.equal(coercedCategories, 2);
+  assert.match(rows[0].category, /missing/i);
+});
+
+test('coercedCategories and droppedFingerprints counts stay correct on a mixed batch', () => {
+  const { rows, coercedCategories, droppedFingerprints } = filterPersistableRows([
+    { finding_fingerprint: 'valid', severity: 'HIGH', category: 'x' },
+    { finding_fingerprint: 'invalid-severity', severity: 'CRITICAL', category: 'x' },
+    { finding_fingerprint: 'no-severity', severity: null, category: 'x' },
+    { finding_fingerprint: 'no-category', severity: 'MEDIUM', category: undefined },
+  ]);
+  assert.deepEqual(rows.map((r) => r.finding_fingerprint).sort(), ['no-category', 'valid']);
+  assert.equal(coercedCategories, 1);
+  assert.deepEqual(droppedFingerprints.sort(), ['invalid-severity', 'no-severity']);
 });
 
 // ── the columns the writer emits are the columns the migration adds ─────────

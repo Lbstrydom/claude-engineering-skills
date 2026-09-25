@@ -167,6 +167,7 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   'tests/persist-kept-embeddings.test.mjs',
   'tests/persona-outcomes-hash-backfill.test.mjs',
   'tests/plans-ship-persona-correlation.test.mjs',
+  'tests/record-findings-write-boundary.test.mjs',
   'tests/refresh-provenance-promotion.test.mjs',
   // Enrolled 2026-09-04 with the refresh_runs phantom-column fix. Its pure
   // half runs everywhere; the DB-gated half is the ONLY thing that can prove
