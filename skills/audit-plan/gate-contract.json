@@ -84,6 +84,10 @@
     {
       "line": "RUN_ID=$(node -e \"const fs=require('fs'); try { process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))._cloudRunId||''); } catch { process.stdout.write(''); }\" \".audit/$SID-r$ROUND-result.json\")",
       "reason": "Command-example text touching a technical identifier (\"require(\", \"-gate\"/\"GATE=\" as a flag/value name) that the enforcement-verb scanner matches as a whole word; not an enforcement claim about this skill's own behaviour. Introduced by the 2026-09-10 PowerShell-portability pass (cross-host-parity follow-up)."
+    },
+    {
+      "line": "sentence needs the same two-part answer `/audit-code` Step 3 requires,",
+      "reason": "2026-09-25 same-file independence tightening, plan-review twin of the /audit-code entry of the same name (docs/plans/triage-independence-test-and-write-boundary-fixes.md). Instructs the agent writing a defer rationale what it must truthfully claim about a plan's not-yet-built design; no CLI exit code verifies the claimed column/constraint or transaction-instance independence is actually true. Same disposition as the pre-existing document-only/judgement-call entries in this contract (round-caps, mode-plan-required) — agent judgement, not a mechanical seam. Named as a known limitation in the plan's addendum."
     }
   ]
 }

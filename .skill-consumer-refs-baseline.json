@@ -1,11 +1,11 @@
 {
   "$comment": "Declared unreachable pointers in synced skill content. See scripts/check-skill-consumer-refs.mjs. Every entry needs a disposition and a real reason; new entries default to a TODO reason that the gate rejects.",
-  "totalSites": 191,
+  "totalSites": 190,
   "refs": {
     "doc docs/architecture-map.md": {
       "disposition": "consumer-authored",
       "reason": "Generated per repo by arch:render, never synced. A consumer renders its own (storyline writes docs/reference/architecture.md) — the skills read whatever that repo produced.",
-      "sites": 8
+      "sites": 7
     },
     "doc docs/audit/shared-references/browser-tool-detection.md": {
       "disposition": "provenance",

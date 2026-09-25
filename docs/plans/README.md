@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**6 active · 226 terminal · 30 audit summaries · 1 parked · 5 reference docs**
+**6 active · 227 terminal · 31 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -57,7 +57,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 223 completed plans</summary>
+<summary>Show all 224 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -273,6 +273,7 @@ source comments that no docs linter sees — stays valid.
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `Complete` | implementation shipped (Clusters A-F, gate-clear). The Close-out shadow-validation window… |
 | [Tiered-shadow cloud persistence + report CLI cross-repo aggregation](./tiered-shadow-cloud-persistence.md) | `Complete` |  |
 | [Distinguish "nothing to clean up" from "cleanup failed" in the install WAL](./transaction-wal-cleanup-failure-distinction.md) | `Complete` |  |
+| [Close the Same-File Independence Loophole in Triage, Fix Two Bugs It Let Through](./triage-independence-test-and-write-boundary-fixes.md) | `Complete` |  |
 | [Unremediated acceptances — honour the disposition that already exists](./unremediated-acceptance-backlog.md) | `Complete` | (shipped 2026-08-11, `ed41ec78`) — the §6 follow-on campaign is deliberately unstarted and is NOT a phase of… |
 | [Upstream Issue Reports (consumer → source bug channel)](./upstream-issue-reports.md) | `Complete` | all 4 phases shipped 2026-07-31 — see Audit Trail + Implementation Log |
 | [/ux-lock selector policy — locate semantically, lint the drift](./ux-lock-selector-policy.md) | `Complete` | implemented + code-audited 2026-07-04; consolidated Gemini gate over the union diff: APPROVE, 0 findings —… |
@@ -293,7 +294,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 (they carry a free-text convergence sentence by convention).
 
 <details>
-<summary>Show all 30 audit summaries</summary>
+<summary>Show all 31 audit summaries</summary>
 
 | Plan | Notes |
 |---|---|
@@ -325,6 +326,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 | [Audit Summary — Requirements Layer](./requirements-layer-audit-summary.md) |  |
 | [Audit Summary — symbol-index-bugs](./symbol-index-bugs-audit-summary.md) |  |
 | [/audit-code summary — sync-output-drift-classification](./sync-output-drift-classification-audit-summary.md) |  |
+| [Audit Summary: triage-independence-test-and-write-boundary-fixes](./triage-independence-test-and-write-boundary-fixes-audit-summary.md) |  |
 | [Audit Summary — vcs-parsing-and-rmsync-scope-hardening](./vcs-parsing-and-rmsync-scope-hardening-audit-summary.md) |  |
 | [Audit Summary: visual-contract-semantic-validation](./visual-contract-semantic-validation-audit-summary.md) |  |
 

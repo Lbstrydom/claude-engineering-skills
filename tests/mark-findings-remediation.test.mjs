@@ -262,11 +262,17 @@ describe('markFindingsRemediation — DB write shape (integration)', { skip }, (
     if (!q) return;
     // FK is ON DELETE CASCADE finding_adjudication_events -> audit_findings, so
     // deleting audit_findings is sufficient to clean up both tables.
-    await q.query('DELETE FROM audit_findings WHERE run_id = $1', [runId]);
-    await q.query('DELETE FROM audit_runs WHERE id = $1', [runId]);
-    await q.query('DELETE FROM audit_repos WHERE id = $1', [repoId]);
-    const { closePool } = await import('../scripts/lib/db/client.mjs');
-    await closePool();
+    // try/finally (round-3 code-audit M4): a DELETE failure must not skip
+    // closePool() — an unclosed pool here leaks into the next test file
+    // sharing this process.
+    try {
+      await q.query('DELETE FROM audit_findings WHERE run_id = $1', [runId]);
+      await q.query('DELETE FROM audit_runs WHERE id = $1', [runId]);
+      await q.query('DELETE FROM audit_repos WHERE id = $1', [repoId]);
+    } finally {
+      const { closePool } = await import('../scripts/lib/db/client.mjs');
+      await closePool();
+    }
   });
 
   // ── user_action fill (2026-08-23) ──────────────────────────────────────────
@@ -382,6 +388,10 @@ describe('applyRemediationVerificationResults — DB write shape (integration)',
   const FP_STILL_PRESENT = 'rvfp2';
   const FP_UNCERTAIN = 'rvfp3';
   let findingIdResolved, findingIdStillPresent, findingIdUncertain;
+  // Cross-repo isolation fixture (round-1/round-2 plan-audit H1/H2/M2) — a
+  // SECOND repo/run/finding/event set, entirely separate from the one above.
+  let otherRepoId, otherRunId, otherFindingId;
+  const FP_OTHER_REPO = 'rvfp-other-repo';
 
   before(async () => {
     const { assertDisposableDbUrl, _resetForTest } = await import('../scripts/lib/db/client.mjs');
@@ -421,6 +431,24 @@ describe('applyRemediationVerificationResults — DB write shape (integration)',
        VALUES ($1, 'accepted', 'pending', 'sustain', 'real bug, needs fix', 1)`,
       [findingIdResolved]
     );
+
+    otherRepoId = crypto.randomUUID();
+    otherRunId = crypto.randomUUID();
+    await q.query(`INSERT INTO audit_repos (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
+      [otherRepoId, `test-rv-other-${otherRepoId.slice(0, 8)}`]);
+    await q.query(`INSERT INTO audit_runs (id, repo_id, plan_file, mode) VALUES ($1, $2, 'docs/plans/test-fixture.md', 'code')
+                   ON CONFLICT (id) DO NOTHING`, [otherRunId, otherRepoId]);
+    const otherRow = await q.one(
+      `INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category, adjudication_outcome, remediation_state)
+       VALUES ($1, $2, 'test', 'HIGH', 'test', 'accepted', 'pending') RETURNING id`,
+      [otherRunId, FP_OTHER_REPO]
+    );
+    otherFindingId = otherRow.id;
+    await q.query(
+      `INSERT INTO finding_adjudication_events (finding_id, adjudication_outcome, remediation_state, ruling, ruling_rationale, round)
+       VALUES ($1, 'accepted', 'pending', 'sustain', 'unrelated repo fixture', 1)`,
+      [otherFindingId]
+    );
   });
 
   after(async () => {
@@ -430,11 +458,39 @@ describe('applyRemediationVerificationResults — DB write shape (integration)',
     if (savedAuditDbUrl === undefined) delete process.env.AUDIT_DB_URL;
     else process.env.AUDIT_DB_URL = savedAuditDbUrl;
     if (!q) return;
-    await q.query('DELETE FROM audit_findings WHERE run_id = $1', [runId]);
-    await q.query('DELETE FROM audit_runs WHERE id = $1', [runId]);
-    await q.query('DELETE FROM audit_repos WHERE id = $1', [repoId]);
-    const { closePool } = await import('../scripts/lib/db/client.mjs');
-    await closePool();
+    // try/finally (round-3 code-audit M4): a DELETE failure must not skip
+    // closePool() — an unclosed pool here leaks into the next test file
+    // sharing this process.
+    try {
+      await q.query('DELETE FROM audit_findings WHERE run_id = $1', [runId]);
+      await q.query('DELETE FROM audit_runs WHERE id = $1', [runId]);
+      await q.query('DELETE FROM audit_repos WHERE id = $1', [repoId]);
+      await q.query('DELETE FROM audit_findings WHERE run_id = $1', [otherRunId]);
+      await q.query('DELETE FROM audit_runs WHERE id = $1', [otherRunId]);
+      await q.query('DELETE FROM audit_repos WHERE id = $1', [otherRepoId]);
+    } finally {
+      const { closePool } = await import('../scripts/lib/db/client.mjs');
+      await closePool();
+    }
+  });
+
+  it('a call scoped to repoId does not affect a findingId belonging to a DIFFERENT repo (cross-repo isolation)', async () => {
+    const r = await applyRemediationVerificationResultsLive(repoId, [
+      { findingId: otherFindingId, outcome: 'resolved', checkedAtCommit: 'shouldnotapply' },
+    ]);
+    assert.equal(r.updated, 0, 'the wrong-repo action must not count as updated');
+
+    const row = await q.one(
+      `SELECT remediation_state, remediation_last_checked_at, remediation_last_checked_commit
+         FROM audit_findings WHERE id = $1`, [otherFindingId]);
+    assert.equal(row.remediation_state, 'pending', 'the other repo\'s finding must not be projected to verified');
+    assert.equal(row.remediation_last_checked_at, null, 'the throttle timestamp must not be bumped either');
+    assert.equal(row.remediation_last_checked_commit, null);
+
+    const event = await q.one(
+      `SELECT remediation_state, round FROM finding_adjudication_events WHERE finding_id = $1`, [otherFindingId]);
+    assert.equal(event.remediation_state, 'pending', 'the adjudication-events row must be untouched too');
+    assert.equal(event.round, 1);
   });
 
   it('a "resolved" outcome writes the terminal remediation_state AND bumps the throttle columns', async () => {

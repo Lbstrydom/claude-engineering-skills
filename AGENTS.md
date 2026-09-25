@@ -194,6 +194,10 @@
 > exercised paths. Legitimate `defer` therefore requires naming the
 > **independence** (the new code does not call/depend on the cited path), not the
 > authorship. `/audit-code` (Step 3) and `/audit-plan` (Step 3) both enforce this.
+> A same-file finding needs more than a call-graph claim: the independence
+> sentence must state the cited code does not share the SAME column/constraint
+> or the SAME transaction instance the new code depends on — sharing a table
+> or a broader boundary is not sufficient.
 
 ## Project Overview
 

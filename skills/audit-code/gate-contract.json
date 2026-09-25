@@ -442,6 +442,18 @@
     {
       "line": "Generate diff (dirty-aware base, matching R1 — untracked counts): `BASE=$([ -n \"$(git status --porcelain)\" ] && echo HEAD || echo HEAD~1); git diff \"$BASE\" -- . > .audit/$SID-diff.patch` — then append UNTRACKED new files (`git diff` omits them): `git ls-files --others --exclude-standard -z | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null \"{}\" >> .audit/$SID-diff.patch 2>.audit/$SID-untracked-diff-stderr.log || true` (the trailing `|| true` is only for `git diff --no-index`'s expected exit-1-on-differ; stderr goes to a file, not `/dev/null`, so a genuine `git`/`xargs` failure is still visible — see Step 2's fuller note on this exact pipeline)",
       "reason": "Step 5's inline numbered-list copy of the Step 2 untracked-file diff pipeline recipe and its || true rationale (b08342000fed/ccda5b96c281 fix, 2026-09) -- same descriptive shell-mechanics class as the Step 2 block, not a new enforcement claim."
+    },
+    {
+      "line": "independence sentence must additionally state, truthfully, BOTH: (a) the",
+      "reason": "2026-09-25 same-file independence tightening (docs/plans/triage-independence-test-and-write-boundary-fixes.md). Instructs the agent writing a `defer` rationale what the sentence must truthfully claim; nothing in /audit-code's execution reads the stored rationale text and mechanically verifies the claimed column/constraint or transaction-instance independence is actually true (that would require parsing SQL for real overlap, out of scope for this fix). The rationale's presence and minimum length are enforced elsewhere (deferredRationale >=20 chars, schema-checked); the TRUTH of what it states is agent judgement, same disposition class as the pre-existing 'never silent-defer a load-bearing finding' judgement-call entries in this contract. Explicitly named as a known limitation in the plan's addendum, not an oversight."
+    },
+    {
+      "line": "overlap must be at the column/constraint level; and (b) the cited code's",
+      "reason": "Continuation of the same independence-test sentence as the candidate above — same disposition: agent-judgement content of a defer rationale, not mechanically verified."
+    },
+    {
+      "line": "`fix-now`. Invariant: **never `defer` because",
+      "reason": "Continuation of the honest-deferral-check paragraph (2026-09-25 tightening) — 'never defer because the fix is merely larger' is an instruction to the agent's triage judgement, with no CLI exit code asserting a given defer's stated reason was actually size-not-scope. Same disposition as the pre-existing Step 3.5b 'labelled: 0 is a failure to fix, never a pass' judgement-call entries in this contract."
     }
   ]
 }
