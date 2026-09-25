@@ -38,9 +38,13 @@ const MISSING_CATEGORY_MARKER = (() => {
   return m[1];
 })();
 
-/** Slice a named function's body out of the source for static assertions. */
+/** Slice a named function's body out of the source for static assertions.
+ *  Tries `export async function` first, then plain `export function` — the
+ *  write-boundary guard (`filterPersistableRows`) is a pure, synchronous
+ *  seam, unlike its neighbours here. */
 function fnBody(name) {
-  const start = SRC.indexOf(`export async function ${name}`);
+  let start = SRC.indexOf(`export async function ${name}`);
+  if (start === -1) start = SRC.indexOf(`export function ${name}`);
   assert.notEqual(start, -1, `precondition: ${name} exists`);
   const rest = SRC.slice(start);
   const end = rest.indexOf('\n}\n');
@@ -56,7 +60,14 @@ describe('recordFindings — NOT NULL write-boundary guard', () => {
   });
 
   it('coerces a missing category rather than losing the row (detail stays gradeable)', () => {
-    const body = fnBody('recordFindings');
+    // The decision lives in `filterPersistableRows`, extracted from
+    // `recordFindings`'s inline loop (2026-09-25, same plan as the
+    // VALID_SEVERITIES tightening below) so it's directly unit-testable —
+    // see tests/store-finding-verification-persistence.test.mjs for the
+    // behavioural coverage. This file keeps the static-source assertion
+    // pointed at the new seam rather than at `recordFindings`, which now
+    // only calls it.
+    const body = fnBody('filterPersistableRows');
     assert.match(
       body, /row\.category\s*=\s*MISSING_CATEGORY_MARKER/,
       'a null category must be coerced — dropping the row would discard a gradeable detail_snapshot',
@@ -65,11 +76,16 @@ describe('recordFindings — NOT NULL write-boundary guard', () => {
   });
 
   it('DROPS a finding with no severity rather than fabricating one', () => {
-    const body = fnBody('recordFindings');
+    const body = fnBody('filterPersistableRows');
     // Asymmetric on purpose: severity is the metric the A/B stopping rule counts
     // (accepted shadow-only HIGH/MEDIUM per run). Inventing one would corrupt the
     // number the row exists to feed, which is worse than losing the row.
-    assert.match(body, /if \(!row\.severity\)/, 'severity-less rows must be filtered');
+    // Keyed on VALID_SEVERITIES.has(), not truthiness (2026-09-25) — a truthy
+    // but out-of-domain value (e.g. "CRITICAL") used to survive this guard and
+    // hit the DB CHECK constraint instead, the same whole-batch-lost failure
+    // one step later. See tests/record-findings-write-boundary.test.mjs for
+    // the live-DB proof.
+    assert.match(body, /if \(!VALID_SEVERITIES\.has\(row\.severity\)\)/, 'severity-less/invalid rows must be filtered');
     assert.match(body, /droppedFingerprints/, 'and named in the log — never a silent cap');
     assert.doesNotMatch(
       body, /severity:\s*row\.severity\s*\|\|\s*['"]/,

@@ -18,8 +18,15 @@ deferred reason).
 > not depend on the cited code path. A pre-existing finding in a *changed* file
 > that the new code rides on is `fix-now`, not debt — see Step 3 "Scope is
 > decided by impact, not authorship". The `deferredRationale` for an
-> `out-of-scope` entry must state the **independence** (the new code does not
-> call/depend on the cited path), not merely that it's pre-existing.
+> `out-of-scope` entry must state the **independence** — and for a same-file
+> finding, "the new code does not call/depend on the cited path" is **not
+> enough on its own** (measured 2026-09-25: 234 open out-of-scope entries,
+> several audit runs mass-deferring 19-46 same-file findings on exactly that
+> call-graph-only claim). It must additionally state, truthfully, BOTH: the
+> cited code shares no column/constraint the new code also touches, AND it
+> does not execute inside the same transaction instance — see Step 3's full
+> two-part test. If either can't be stated truthfully, it's load-bearing, not
+> debt.
 
 ## Required fields per deferredReason
 
@@ -33,13 +40,32 @@ deferred reason).
 
 ## Capture flow
 
-One command, run after Step 3.5 (ledger write) and before Step 4 (fix). It
-reads the ledger and converts every `ruling: 'defer'` entry into a debt entry,
-deriving each one from the ledger's own record:
+Run after Step 3.5 (ledger write) and before Step 4 (fix). It reads the
+ledger and converts every `ruling: 'defer'` entry into a debt entry,
+deriving each one from the ledger's own record. Pass `--changed` so the
+same-file-batch nudge (below) can be scoped to the diff instead of falling
+back to a hedged heuristic — computed fresh here, since no earlier step in a
+first-round capture has a changed-files variable in scope yet.
+
+**POSIX shell only** (Git Bash on Windows) — the `[ ... ]` test syntax has no
+native PowerShell equivalent, same caveat `/cycle`'s Step 3 empty-diff guard
+states:
 
 ```bash
-node scripts/debt-auto-capture.mjs --ledger .audit/$SID-ledger.json --run $SID
+BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1)
+CHANGED_FILES=$( (git diff --name-only "$BASE"; git ls-files --others --exclude-standard) | sort -u | tr '\n' ',')
+if [ -n "$CHANGED_FILES" ]; then
+  node scripts/debt-auto-capture.mjs --ledger .audit/$SID-ledger.json --run $SID --changed "$CHANGED_FILES"
+else
+  node scripts/debt-auto-capture.mjs --ledger .audit/$SID-ledger.json --run $SID
+fi
 ```
+
+`git diff --name-only` alone omits untracked files even though `git status
+--porcelain`'s dirty check already counts them — the `git ls-files --others
+--exclude-standard` union closes that. The `if`/`else` matters too: an
+**empty** `CHANGED_FILES` must omit `--changed` entirely, not pass it as an
+empty string — the two are different signals to the nudge (§ below).
 
 `--dry-run` previews without writing. `--reason` overrides the default
 `out-of-scope`, paired with its required field — e.g.
@@ -83,6 +109,30 @@ exited non-zero, so a run that dropped some deferrals reported success to
 - **Idempotent upserts** — same topicId across runs updates existing entry,
   does not duplicate
 - Event written to `.audit/local/debt-events.jsonl` (or Supabase when cloud active)
+- **Same-file-batch WARN** (`out-of-scope` reason only): when 5+ deferrals in
+  this capture batch cite the same file — counting a ledger entry toward
+  EVERY file in its `affectedFiles`, not just the first — a WARN names the
+  file and count. Advisory, never blocks. With `--changed` given, the WARN
+  fires only for a file confirmed in the diff (assertive wording: "which is
+  in your diff") and clusters outside `--changed` are silently excluded;
+  without it, every over-threshold cluster gets a hedged WARN ("may be in
+  your diff — verify"). This is a *batch-shape* signal, independent of the
+  per-finding independence test above — it can (and should) fire even when
+  every individual finding in the batch genuinely passes that test, because
+  the point is prompting a second look at the batch, not re-litigating each
+  finding.
+- **Template-rationale WARN** (`out-of-scope` reason only): when 3+ deferrals
+  in this batch share near-identical rationale wording — normalized by
+  stripping backtick-quoted and dotted/slashed/snake_case identifiers, so
+  "unrelated to `getRunMeta`... verified zero coupling to `getRunMeta`" and
+  "unrelated to `recordFindings`... verified zero coupling to `recordFindings`"
+  collapse to the same template — a WARN names the shared topic ids.
+  Complements the same-file WARN rather than duplicating it: file co-location
+  catches a batch clustered in one file, this catches the sharper tell (a
+  copy-pasted excuse) even when the batch is split across files, or across
+  rounds, specifically to stay under the same-file threshold. Exact match on
+  the normalized text, not fuzzy similarity — the observed failure mode was
+  templated substitution, not loose paraphrasing.
 
 ## Status card
 

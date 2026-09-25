@@ -635,6 +635,54 @@ export function buildFindingRow(f, { runId, passName, round, columns = {} }) {
 }
 
 /**
+ * The NOT-NULL write-boundary guard (2026-07-26), extracted to a pure
+ * function — same reason `buildFindingRow` was pulled out of `recordFindings`
+ * above: the decision needs to be directly unit-testable without a live DB.
+ *
+ * `finding_fingerprint` has always had a `|| 'unknown'` fallback; `severity`
+ * and `category` had none, yet both are NOT NULL with no DB default. One
+ * malformed row therefore aborted the whole INSERT — and inside a
+ * caller-supplied transaction that poisons the tx, so the subsequent COMMIT
+ * silently degrades to ROLLBACK and the entire batch disappears with no error
+ * reaching the caller. Found live: the Opus shadow reviewer returned a finding
+ * with a null `category`, which discarded the PRIMARY reviewer's findings too.
+ *
+ * Coerce vs skip is deliberately asymmetric:
+ *  - `category` is descriptive → coerce to a visible defect marker so the row
+ *    survives. `detail_snapshot` is what a human grades; keeping the row keeps
+ *    it gradeable, and the marker makes the provider bug visible IN THE DATA
+ *    rather than only in a log line that scrolls away.
+ *  - `severity` is the metric → NEVER fabricated. The shadow A/B's stopping
+ *    rule counts HIGH/MEDIUM findings; inventing a severity would corrupt the
+ *    exact number the row exists to feed. Drop it, loudly — keyed on
+ *    `VALID_SEVERITIES.has(row.severity)`, not mere truthiness: a truthy but
+ *    out-of-domain value (e.g. a producer emitting `"CRITICAL"`) previously
+ *    survived this guard and hit the DB's `severity` CHECK constraint instead,
+ *    triggering the exact same whole-batch-lost failure this guard exists to
+ *    prevent — just one step later, and with no application-level warning.
+ *
+ * @param {object[]} mappedRows - rows already produced by `buildFindingRow`
+ * @returns {{rows: object[], droppedFingerprints: string[], coercedCategories: number}}
+ */
+export function filterPersistableRows(mappedRows) {
+  const rows = [];
+  let coercedCategories = 0;
+  const droppedFingerprints = [];
+  for (const row of mappedRows) {
+    if (!VALID_SEVERITIES.has(row.severity)) {
+      droppedFingerprints.push(row.finding_fingerprint);
+      continue;
+    }
+    if (row.category == null || row.category === '') {
+      row.category = MISSING_CATEGORY_MARKER;
+      coercedCategories++;
+    }
+    rows.push(row);
+  }
+  return { rows, droppedFingerprints, coercedCategories };
+}
+
+/**
  * Insert a batch of findings rows. Optionally includes the Phase B
  * classification columns when the schema supports them.
  *
@@ -686,6 +734,33 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   // returns every finding when disabled or on any error. Only `merged` findings
   // (the code-audit path that carries the measured churn) are considered.
   const { kept: suppressionKept, vectorByFinding, embeddingSpace } = await applyRecordTimeSuppression(runId, findings, passName);
+  const columns = { hasClassification, hasSourceModel, hasBucket, hasStage, hasArm, hasIsQuickFix, hasVerification };
+  // A side Map from row -> its originating raw finding (never a property ON
+  // the row — `cols = Object.keys(rows[0])` below builds the INSERT column
+  // list directly from row keys, so any extra property would try to become a
+  // column). Needed downstream to recover `keptFindings` for
+  // `persistKeptEmbeddings`, which keys `vectorByFinding` by raw-finding
+  // object identity — lost once rows go through filter+dedup by value.
+  const rowToFinding = new Map();
+  const mappedRows = suppressionKept.map((f) => {
+    const row = buildFindingRow(f, { runId, passName, round, columns });
+    rowToFinding.set(row, f);
+    return row;
+  });
+
+  // NOT-NULL write-boundary guard (2026-07-26) runs BEFORE dedup (round-2
+  // code-audit H4/H5, 2026-09-25) — the pure decision lives in
+  // `filterPersistableRows` above; this call site only owns the I/O (logging).
+  // Order is load-bearing: dedup below keeps only the FIRST occurrence of a
+  // fingerprint, on the assumption that "a later duplicate carries no
+  // information the first does not." An invalid/missing-severity occurrence
+  // breaks that assumption — if it happened to be the first of its
+  // fingerprint, dedup would consume the fingerprint's one slot and a later,
+  // VALID occurrence of the same fingerprint would never be reached. Filtering
+  // for persistability first means dedup only ever chooses among rows that
+  // were already going to survive.
+  const { rows: persistableRows, droppedFingerprints, coercedCategories } = filterPersistableRows(mappedRows);
+
   // ── Intra-batch fingerprint dedup (durability plan Phase 3) ───────────────
   // `audit_findings_run_fingerprint_uniq_full` (migration 20260812070000) makes
   // `(run_id, finding_fingerprint)` unique, and a multi-row INSERT carrying the
@@ -695,56 +770,22 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   // (21000). So the collapse has to happen before the statement is built.
   //
   // Keep the FIRST occurrence: the batch is ordered, and a later duplicate of an
-  // already-seen fingerprint carries no information the first does not. Never
-  // silent — a dropped finding is exactly what this plan exists to make visible.
-  const keptFindings = [];
+  // already-seen fingerprint carries no information the first does not (now
+  // true by construction — both are already-persistable rows). Never silent —
+  // a dropped finding is exactly what this plan exists to make visible.
+  const rows = [];
   const seenFingerprints = new Set();
   let intraBatchDuplicates = 0;
-  for (const f of suppressionKept) {
-    const fp = fingerprintOf(f);
-    if (seenFingerprints.has(fp)) { intraBatchDuplicates++; continue; }
-    seenFingerprints.add(fp);
-    keptFindings.push(f);
+  for (const row of persistableRows) {
+    if (seenFingerprints.has(row.finding_fingerprint)) { intraBatchDuplicates++; continue; }
+    seenFingerprints.add(row.finding_fingerprint);
+    rows.push(row);
   }
   if (intraBatchDuplicates > 0) {
     process.stderr.write(
       `  [learning] ${intraBatchDuplicates} ${passName} finding(s) shared a fingerprint with an earlier one in the `
       + 'same batch and were collapsed — (run_id, finding_fingerprint) is unique, so they could not both be rows.\n'
     );
-  }
-  const columns = { hasClassification, hasSourceModel, hasBucket, hasStage, hasArm, hasIsQuickFix, hasVerification };
-  const mappedRows = keptFindings.map((f) => buildFindingRow(f, { runId, passName, round, columns }));
-
-  // ── NOT-NULL write-boundary guard (2026-07-26) ────────────────────────────
-  // `finding_fingerprint` has always had a `|| 'unknown'` fallback; `severity`
-  // and `category` had none, yet both are NOT NULL with no DB default. One
-  // malformed finding therefore aborted the whole INSERT — and inside a
-  // caller-supplied transaction that poisons the tx, so the subsequent COMMIT
-  // silently degrades to ROLLBACK and the entire batch disappears with no error
-  // reaching the caller. Found live: the Opus shadow reviewer returned a finding
-  // with a null `category`, which discarded the PRIMARY reviewer's findings too.
-  //
-  // Coerce vs skip is deliberately asymmetric:
-  //  - `category` is descriptive → coerce to a visible defect marker so the row
-  //    survives. `detail_snapshot` is what a human grades; keeping the row keeps
-  //    it gradeable, and the marker makes the provider bug visible IN THE DATA
-  //    rather than only in a log line that scrolls away.
-  //  - `severity` is the metric → NEVER fabricated. The shadow A/B's stopping
-  //    rule counts HIGH/MEDIUM findings; inventing a severity would corrupt the
-  //    exact number the row exists to feed. Drop it, loudly.
-  const rows = [];
-  let coercedCategories = 0;
-  const droppedFingerprints = [];
-  for (const row of mappedRows) {
-    if (!row.severity) {
-      droppedFingerprints.push(row.finding_fingerprint);
-      continue;
-    }
-    if (row.category == null || row.category === '') {
-      row.category = MISSING_CATEGORY_MARKER;
-      coercedCategories++;
-    }
-    rows.push(row);
   }
   if (coercedCategories > 0) {
     process.stderr.write(
@@ -756,9 +797,9 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   if (droppedFingerprints.length > 0) {
     // Never a silent cap — name what was dropped and why (AGENTS.md).
     process.stderr.write(
-      `  [learning] WARNING: dropped ${droppedFingerprints.length} ${passName} finding(s) with no severity `
-      + `(${droppedFingerprints.join(', ')}) — severity is the metric the A/B stopping rule counts, so it is `
-      + 'never fabricated. These findings are NOT persisted.\n'
+      `  [learning] WARNING: dropped ${droppedFingerprints.length} ${passName} finding(s) with a missing or `
+      + `invalid severity (${droppedFingerprints.join(', ')}) — severity is the metric the A/B stopping rule `
+      + 'counts, so it is never fabricated or coerced. These findings are NOT persisted.\n'
     );
   }
   // Terminal, not pending: this payload will map to zero rows however often it
@@ -841,6 +882,9 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
     // targets. Best-effort; keyed by fingerprint→id (unique within a batch).
     if (vectorByFinding && vectorByFinding.size > 0) {
       const idByFingerprint = new Map((inserted.rows || []).map((r) => [r.finding_fingerprint, r.id]));
+      // Recover the raw findings behind the rows that actually made it through
+      // filter + dedup, in the same order — see `rowToFinding` above.
+      const keptFindings = rows.map((row) => rowToFinding.get(row));
       const embedResult = await persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByFingerprint, runId, embeddingSpace);
       if (embedResult.failed > 0) {
         process.stderr.write(`  [semantic-suppress] embedding persistence: ${embedResult.persisted} ok, ${embedResult.failed} failed this batch\n`);
@@ -2179,12 +2223,21 @@ export function normalizeRemediationUpdates(updates) {
  * needed) doesn't duplicate this transaction's careful rules. See the inline
  * comments below for what each of them protects against.
  *
+ * `repoId` is REQUIRED and enforced inside the same atomic `UPDATE` — not a
+ * separate precondition query — so this writer can never touch a finding
+ * outside the caller's repo, and every future caller is forced to supply
+ * one (both existing call sites already have it in scope). A wrong-repo
+ * `findingId` reads as an ordinary 0-row update, the same code path a
+ * genuinely vanished finding already takes.
+ *
+ * @param {string} repoId - audit_repos.id; the finding must belong to it
  * @param {string} findingId - audit_findings.id, already resolved by the caller
  * @param {string} state - a member of TERMINAL_REMEDIATION
  * @param {{resolvedRound?: number|null}} [opts]
  * @returns {Promise<number>} rows affected in audit_findings (0 or 1)
  */
-async function projectRemediationState(findingId, state, { resolvedRound = null } = {}) {
+async function projectRemediationState(repoId, findingId, state, { resolvedRound = null } = {}) {
+  if (!repoId) throw new Error('projectRemediationState requires repoId');
   return withTx(async () => {
     // `user_action` is filled here, and ONLY out of an undecided state.
     //
@@ -2220,8 +2273,10 @@ async function projectRemediationState(findingId, state, { resolvedRound = null 
                  AND (user_action IS NULL OR user_action = 'needs_triage')
                 THEN 'fix-now'
                 ELSE user_action END
-        WHERE id = $2 RETURNING id`,
-      [state, findingId]
+        WHERE id = $2
+          AND EXISTS (SELECT 1 FROM audit_runs r WHERE r.id = audit_findings.run_id AND r.repo_id = $3)
+        RETURNING id`,
+      [state, findingId, repoId]
     );
     if (rows.length === 0) return 0; // 0-row → do not write a phantom event
     // UPDATE, never delete+insert: `finding_adjudication_events.adjudication_outcome`
@@ -2266,7 +2321,7 @@ export async function markFindingsRemediation(repoId, updates) {
         [repoId, fp]
       );
       if (!finding?.id) continue;
-      const affected = await projectRemediationState(finding.id, state, { resolvedRound });
+      const affected = await projectRemediationState(repoId, finding.id, state, { resolvedRound });
       if (affected > 0) updated += 1;
       else process.stderr.write(`  [lifecycle] markFindingsRemediation(${fp}): 0-row update (finding vanished) — not counted\n`);
     } catch (err) {
@@ -2294,7 +2349,9 @@ const VALID_VERIFICATION_OUTCOMES = new Set(['resolved', 'still-present', 'uncer
 /**
  * Apply out-of-band verification results to `audit_findings`. Fail-open PER
  * ACTION, mirroring `markFindingsRemediation` — one bad row never aborts the
- * batch.
+ * batch. `repoId` scopes BOTH writes here (the terminal `projectRemediationState`
+ * call and this function's own throttle-column `UPDATE`) via an atomic `EXISTS`
+ * clause — a `findingId` from another repo affects nothing.
  *
  * @param {string} repoId
  * @param {Array<{findingId: string, outcome: 'resolved'|'still-present'|'uncertain',
@@ -2321,7 +2378,7 @@ export async function applyRemediationVerificationResults(repoId, actions) {
   for (const { findingId, outcome, checkedAtCommit } of valid) {
     try {
       if (outcome === 'resolved') {
-        const affected = await projectRemediationState(findingId, 'verified', { resolvedRound: null });
+        const affected = await projectRemediationState(repoId, findingId, 'verified', { resolvedRound: null });
         if (affected === 0) {
           process.stderr.write(`  [lifecycle] applyRemediationVerificationResults(${findingId}): 0-row update on the terminal write (finding vanished) — not counted\n`);
           continue;
@@ -2337,8 +2394,10 @@ export async function applyRemediationVerificationResults(repoId, actions) {
       // row still needs the "last checked" stamp like any other.
       const rows = await many(
         `UPDATE audit_findings SET remediation_last_checked_at = now(), remediation_last_checked_commit = $1
-          WHERE id = $2 RETURNING id`,
-        [checkedAtCommit, findingId]
+          WHERE id = $2
+            AND EXISTS (SELECT 1 FROM audit_runs r WHERE r.id = audit_findings.run_id AND r.repo_id = $3)
+          RETURNING id`,
+        [checkedAtCommit, findingId, repoId]
       );
       if (rows.length > 0) updated += 1;
       else process.stderr.write(`  [lifecycle] applyRemediationVerificationResults(${findingId}): 0-row tracking-column update (finding vanished) — not counted\n`);

@@ -78,6 +78,7 @@ function parseArgs(argv) {
     supersedes: undefined,
     supersedesWith: undefined,
     run: null,                  // SID override; defaults to timestamp
+    changed: undefined,         // comma-separated changed-file paths (same-file-batch nudge scoping)
     dryRun: false,
     help: false,
   };
@@ -95,6 +96,7 @@ function parseArgs(argv) {
       case '--supersedes':      args.supersedes     = argv[++i]; break;
       case '--supersedes-with': args.supersedesWith = argv[++i]; break;
       case '--run':              args.run          = argv[++i]; break;
+      case '--changed':          args.changed      = argv[++i]; break;
       case '--dry-run':          args.dryRun       = true;      break;
       case '--help': case '-h':  args.help         = true;      break;
     }
@@ -127,8 +129,23 @@ Options:
                           are required together; refused if either topicId
                           cannot be verified to exist after this capture.
   --run <SID>            Session ID stamp (default: auto-generated)
+  --changed <a,b,...>    Comma-separated changed-file paths for this run.
+                         When set, the same-file-batch WARN (below) fires
+                         only for a file that is ALSO in this list, and is
+                         phrased as a statement rather than a hedge. Omitted
+                         (or empty) falls back to a hedged count-only heuristic.
   --dry-run              Print what would be captured, but do not write
   --help                 Show this message
+
+Same-file-batch WARN: when this batch captures 5+ out-of-scope defers
+citing the same file (reason=out-of-scope only), a WARN names the file and
+count — a nudge, never a gate. See AGENTS.md's "Scope is decided by impact,
+not authorship" for why a same-file batch this size is worth a second look.
+
+Template-rationale WARN: when 3+ out-of-scope defers in this batch share
+near-identical rationale wording (only the named function/path differs),
+a WARN names the topic ids — catches a copy-pasted excuse even when it's
+split across files or rounds to duck the same-file count above.
 `.trim());
 }
 
@@ -214,6 +231,138 @@ function ledgerEntryToFinding(ledgerEntry) {
     _pass:              ledgerEntry.pass || 'unknown',
     classification:     ledgerEntry.classification || null,
   };
+}
+
+// ── Same-file-batch nudge ────────────────────────────────────────────────────
+// AGENTS.md "Scope is decided by impact, not authorship" — measured 2026-09-25:
+// several audit runs mass-deferred 19-46 out-of-scope findings citing the same
+// file in one batch, each with near-identical "doesn't call my new function"
+// boilerplate. Advisory only, never blocks a capture — same posture as the
+// capture-trail WARN below. See references/debt-capture.md.
+
+const SAME_FILE_BATCH_THRESHOLD = 5;
+
+/**
+ * Normalize a file path for cross-platform comparison: backslashes to
+ * forward slashes, a leading `./` stripped. This repo develops on Windows;
+ * `git diff --name-only` always emits forward slashes, but a model-authored
+ * `affectedFiles` entry is not guaranteed to.
+ */
+function normalizeFilePath(p) {
+  if (!p) return '';
+  return p.replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
+/**
+ * Group this batch's out-of-scope deferrals by file, counting a ledger entry
+ * toward EVERY file in its `affectedFiles` array (not just index 0 — a cited
+ * sibling file listed second must still count), falling back to the
+ * `section` prefix only when `affectedFiles` is empty. Returns clusters at
+ * or above `threshold`.
+ *
+ * `changedFiles` (from `--changed`), when non-empty, narrows each cluster's
+ * `inDiff` flag — the caller uses this to choose assertive vs hedged
+ * wording. An empty/absent `changedFiles` leaves `inDiff: null` (unknown),
+ * never `false` — "no `--changed` given" is not evidence the file was
+ * untouched.
+ *
+ * @param {object[]} deferredEntries - ledger entries with `ruling: 'defer'`
+ * @param {{threshold?: number, changedFiles?: string[]}} [opts]
+ * @returns {Array<{file: string, count: number, topicIds: string[], inDiff: boolean|null}>}
+ */
+function detectSameFileBatchDefers(deferredEntries, { threshold = SAME_FILE_BATCH_THRESHOLD, changedFiles } = {}) {
+  const changedSet = Array.isArray(changedFiles) && changedFiles.length > 0
+    ? new Set(changedFiles.map(normalizeFilePath))
+    : null;
+  const byFile = new Map();
+  for (const entry of deferredEntries) {
+    const files = Array.isArray(entry.affectedFiles) && entry.affectedFiles.length > 0
+      ? entry.affectedFiles
+      : [entry.section?.split(':')[0]].filter(Boolean);
+    const seenForThisEntry = new Set();
+    for (const rawFile of files) {
+      const file = normalizeFilePath(rawFile);
+      if (!file || seenForThisEntry.has(file)) continue; // one entry counts once per file
+      seenForThisEntry.add(file);
+      if (!byFile.has(file)) byFile.set(file, []);
+      byFile.get(file).push(entry.topicId);
+    }
+  }
+  const clusters = [];
+  for (const [file, topicIds] of byFile.entries()) {
+    if (topicIds.length < threshold) continue;
+    // changedSet present + file NOT in it → positive evidence this file was
+    // NOT touched by the current change; suppress the WARN entirely rather
+    // than print a hedge we have evidence against.
+    if (changedSet && !changedSet.has(file)) continue;
+    clusters.push({
+      file,
+      count: topicIds.length,
+      topicIds,
+      // true = confirmed in --changed; null = no --changed given, unknown
+      // (never false here — that case was filtered above).
+      inDiff: changedSet ? true : null,
+    });
+  }
+  return clusters;
+}
+
+// ── Template-rationale nudge ─────────────────────────────────────────────────
+// A second, independent signal from the same investigation: the same-file
+// count catches co-location, but the actual observed failure mode was
+// near-IDENTICAL PHRASING — "unrelated to `getRunMeta`... verified zero
+// coupling to `getRunMeta`" repeated 19-46 times with only the identifier
+// changing. That is copy-pasted reasoning wearing a per-finding rationale's
+// clothes, and it is a STRONGER, more specific tell than file co-location:
+// it fires even when a batch is split across files or across rounds to stay
+// under the same-file threshold, which the file-count check alone cannot see.
+
+const TEMPLATE_RATIONALE_THRESHOLD = 3;
+const MIN_TEMPLATE_LENGTH = 20; // shorter than this, a coincidental match is noise, not a template
+
+/**
+ * Strip anything that looks like a specific code identifier — backtick-quoted
+ * tokens, and bare dotted/slashed/snake_case words — so what remains is the
+ * surrounding PROSE TEMPLATE. Two rationales differing only in which
+ * function/path they name collapse to the same normalized string; this is
+ * deliberately an EXACT match on the normalized text, not a fuzzy-similarity
+ * score — the observed pattern was templated substitution, not loose
+ * paraphrasing, so exact-after-normalization catches it without pulling in a
+ * similarity library to solve a problem that hasn't been observed.
+ */
+function normalizeRationaleTemplate(rationale) {
+  return (rationale || '')
+    .toLowerCase()
+    .replace(/`[^`]*`/g, '‹id›')
+    .replace(/\b[\w./-]*[_./][\w./-]*\b/g, '‹id›')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Group this batch's out-of-scope deferrals by normalized rationale template,
+ * across ALL files (not scoped to one same-file cluster — a template split
+ * across files is exactly the case this exists to catch). Returns clusters
+ * at or above `threshold`.
+ *
+ * @param {object[]} deferredEntries - ledger entries with `ruling: 'defer'`
+ * @param {{threshold?: number}} [opts]
+ * @returns {Array<{template: string, count: number, topicIds: string[]}>}
+ */
+function detectTemplateRationales(deferredEntries, { threshold = TEMPLATE_RATIONALE_THRESHOLD } = {}) {
+  const byTemplate = new Map();
+  for (const entry of deferredEntries) {
+    const template = normalizeRationaleTemplate(entry.rulingRationale);
+    if (template.length < MIN_TEMPLATE_LENGTH) continue;
+    if (!byTemplate.has(template)) byTemplate.set(template, []);
+    byTemplate.get(template).push(entry.topicId);
+  }
+  const clusters = [];
+  for (const [template, topicIds] of byTemplate.entries()) {
+    if (topicIds.length < threshold) continue;
+    clusters.push({ template, count: topicIds.length, topicIds });
+  }
+  return clusters;
 }
 
 /**
@@ -332,7 +481,7 @@ function cloudSyncLabel(cloudSync) {
   }
 }
 
-function printSummary({ built, skipped, result, reason, sid, cloudSync, trail }) {
+function printSummary({ built, skipped, result, reason, sid, cloudSync, trail, sameFileBatches = [], templateBatches = [] }) {
   const sensitive = built.filter(b => b.sensitivity.sensitive).length;
   const totalRedactions = built.reduce((n, b) => n + b.redactions.length, 0);
   const skippedLine = skipped.length > 0 ? `\n  Skipped:  ${skipped.length} (see stderr)` : '';
@@ -371,6 +520,35 @@ function printSummary({ built, skipped, result, reason, sid, cloudSync, trail })
   if (trail && trail.corruptLedgers.length > 0) {
     console.warn(`\nWARN: ${trail.corruptLedgers.length} round ledger(s) could not be parsed — capture status unverifiable:`);
     for (const c of trail.corruptLedgers) console.warn(`  ${c.path} — ${c.error}`);
+  }
+
+  // Same-file-batch nudge — advisory, never changes the exit code (same
+  // posture as the capture-trail WARN above). `inDiff === true` means
+  // `--changed` confirmed the file is in this change's diff (assertive
+  // wording); `inDiff === null` means no `--changed` was given (hedged —
+  // this is a proxy signal, not a diff-membership claim).
+  for (const b of sameFileBatches) {
+    const claim = b.inDiff === true
+      ? `is in your diff`
+      : `may be in your diff — verify before trusting the independence claims`;
+    console.warn(
+      `\nWARN: ${b.count} out-of-scope defers in this batch cite ${b.file}, which ${claim}. `
+      + 'Before trusting the independence rationale on each, see AGENTS.md\'s "Scope is decided '
+      + 'by impact, not authorship" — a call-graph-only independence claim is not sufficient when '
+      + 'the finding shares a column/constraint or a transaction with the new code.'
+    );
+  }
+
+  // Same-file count catches co-location; this catches the sharper tell —
+  // near-identical PHRASING, which fires even when a batch is split across
+  // files or rounds to duck the count above.
+  for (const t of templateBatches) {
+    console.warn(
+      `\nWARN: ${t.count} out-of-scope defers in this batch share near-identical rationale wording `
+      + `(differing only in which function/path each names) — topics: ${t.topicIds.join(', ')}. `
+      + 'A templated excuse repeated across findings is rarely genuine per-finding reasoning; '
+      + 'check each one actually states the two-part independence test, not a copy-pasted line.'
+    );
   }
 
   // Name the incompleteness in the operator's own words, right next to the
@@ -483,6 +661,17 @@ async function main() {
   const sid = args.run || `auto-capture-${Date.now()}`;
   const reason = args.reason;
 
+  // Same-file-batch nudge — only meaningful for the default out-of-scope
+  // reason; the other four deferredReason values aren't about the
+  // independence test this nudge exists to catch.
+  const changedFiles = args.changed ? args.changed.split(',').map((s) => s.trim()).filter(Boolean) : undefined;
+  const sameFileBatches = reason === 'out-of-scope'
+    ? detectSameFileBatchDefers(deferredEntries, { changedFiles })
+    : [];
+  const templateBatches = reason === 'out-of-scope'
+    ? detectTemplateRationales(deferredEntries)
+    : [];
+
   if (args.dryRun) {
     console.log(`\n[DRY RUN] Would capture ${deferredEntries.length} deferred entries:`);
     for (const e of deferredEntries) {
@@ -513,7 +702,7 @@ async function main() {
   const cloudSync = { outcome: result.cloudOutcome, error: result.cloudOutcomeError };
   const trail = checkCaptureTrail(ledgerPath);
 
-  printSummary({ built, skipped, result, reason, sid, cloudSync, trail });
+  printSummary({ built, skipped, result, reason, sid, cloudSync, trail, sameFileBatches, templateBatches });
 
   await runSupersedeIfRequested(args);
 

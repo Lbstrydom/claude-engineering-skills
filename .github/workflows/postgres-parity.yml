@@ -73,6 +73,12 @@ on:
       - 'tests/store-debt-cloud-validation.test.mjs'
       - 'tests/debt-alias-integration.test.mjs'
       - 'tests/fixtures/expected-schema.json'
+      # triage-independence-test-and-write-boundary-fixes.md round-1 code-audit
+      # M4: neither matches a pattern above (not db-*/campaign-*/final-review-*/
+      # learning-store-*), so a standalone change to either — including the
+      # brand-new write-boundary test — would never trigger this workflow.
+      - 'tests/mark-findings-remediation.test.mjs'
+      - 'tests/record-findings-write-boundary.test.mjs'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/postgres-parity.yml'
@@ -118,6 +124,9 @@ on:
       - 'tests/store-debt-cloud-validation.test.mjs'
       - 'tests/debt-alias-integration.test.mjs'
       - 'tests/fixtures/expected-schema.json'
+      # See the matching pull_request comment above (round-1 code-audit M4).
+      - 'tests/mark-findings-remediation.test.mjs'
+      - 'tests/record-findings-write-boundary.test.mjs'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/postgres-parity.yml'
@@ -282,6 +291,7 @@ jobs:
             tests/persona-outcomes-hash-backfill.test.mjs \
             tests/plans-ship-persona-correlation.test.mjs \
             tests/postgres-parity-identity-columns.test.mjs \
+            tests/record-findings-write-boundary.test.mjs \
             tests/refresh-ownership-epoch-db.test.mjs \
             tests/refresh-provenance-promotion.test.mjs \
             tests/refresh-runs-column-allowlist.test.mjs \
