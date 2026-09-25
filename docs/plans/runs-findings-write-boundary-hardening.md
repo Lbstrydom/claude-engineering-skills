@@ -3,7 +3,7 @@
 - **Status**: Approved
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
-- **Depends on**: none (docs/plans/triage-independence-test-and-write-boundary-fixes.md already landed its two call sites; this plan does not touch `projectRemediationState`'s repo-isolation fix or the severity-truthiness guard it shipped)
+- **Depends on**: none (a sibling "triage-independence-test-and-write-boundary-fixes" plan from a concurrent session already landed its two call sites — that plan's document is not present in this branch, so it is described here by name only, not cited as a resolvable path; this plan does not touch `projectRemediationState`'s repo-isolation fix or the severity-truthiness guard it shipped)
 
 ## 1. Context Summary
 
@@ -11,7 +11,7 @@
 
 **What exists today**: `scripts/lib/store/runs-findings.mjs` (2,496 lines) is the sole persistence module for `audit_findings`/`audit_runs` — writers, readers, and reconciliation logic for the whole audit-code/audit-plan pipeline. It already contains real hardening discipline in places (`recordFindings`' NOT-NULL write-boundary guard, its `opts.client`-aware rethrow-inside-caller-tx, `applyRemediationVerificationResults`' fail-open-per-action framing, `resolveFindingBucket`'s refuse-to-guess-on-ambiguity contract) — this is not a neglected file, it is an inconsistently-hardened one: the same discipline some functions already have was never generalised into a shared primitive, so newer/adjacent functions repeat the two gaps below instead of reusing a fix.
 
-**Origin of this plan**: `/audit-code` session `audit-code-1790324930` (round 1, `be-services` + `Sustainability` passes) surfaced 19 debt entries against this file while auditing `docs/plans/triage-independence-test-and-write-boundary-fixes.md` (deferred — that plan fixed only `projectRemediationState`/`applyRemediationVerificationResults`'s repo-isolation gap). Read back via `node scripts/debt-review.mjs` is not sufficient (it only sees the local ledger in a fresh worktree); the entries live in the cloud debt store — `repo_id 6461a693-6690-4bf3-98ee-14c0385cc357`, `deferred_run='audit-code-1790324930'`. 4 of the 23 total entries target unrelated SKILL.md documents (broken CLI example, audit-scope drift, session-ID collision, non-reproducible worktree hydration) and are explicitly **out of scope** here.
+**Origin of this plan**: `/audit-code` session `audit-code-1790324930` (round 1, `be-services` + `Sustainability` passes) surfaced 19 debt entries against this file while auditing the sibling "triage-independence-test-and-write-boundary-fixes" plan noted above (deferred — that plan fixed only `projectRemediationState`/`applyRemediationVerificationResults`'s repo-isolation gap). Read back via `node scripts/debt-review.mjs` is not sufficient (it only sees the local ledger in a fresh worktree); the entries live in the cloud debt store — `repo_id 6461a693-6690-4bf3-98ee-14c0385cc357`, `deferred_run='audit-code-1790324930'`. 4 of the 23 total entries target unrelated SKILL.md documents (broken CLI example, audit-scope drift, session-ID collision, non-reproducible worktree hydration) and are explicitly **out of scope** here.
 
 **Code Trace** (pinned at `8e4f7060`) — every debt-entry claim below was re-verified by reading the live function, not taken on the audit's word:
 

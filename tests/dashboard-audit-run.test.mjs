@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import {
   getRunFindings,
   getRunMeta,
+  updateRunMeta,
   _resetRunReadColumnCache,
 } from '../scripts/lib/store/runs-findings.mjs';
 import { collectAuditRun } from '../scripts/lib/dashboard/collect-audit-run.mjs';
@@ -286,6 +287,87 @@ describe('getRunMeta — store read-query contract', () => {
     assert.equal(out.auditedSha, null);
     assert.equal(out.auditedTree, null);
     assert.equal(out.planId, null);
+  });
+});
+
+describe('updateRunMeta — transient-probe vs confirmed-absent (round-3 audit H2)', () => {
+  beforeEach(() => _resetRunReadColumnCache());
+
+  /** A `many` fake that fails BOTH retry attempts for `failCol` with a
+   *  transient (non-42703) error, and answers every other probe as present. */
+  function transientManyFor(failCol) {
+    const probeRe = /SELECT\s+"?(\w+)"?\s+FROM\s+(\w+)\s+LIMIT 0/i;
+    return async (sql) => {
+      const m = probeRe.exec(sql);
+      if (m && m[1] === failCol) {
+        const err = new Error('connection terminated unexpectedly');
+        err.code = '57P01'; // transient — NOT undefined-column
+        throw err;
+      }
+      return [];
+    };
+  }
+
+  it('a supplied field lost to an EXHAUSTED transient probe reports {ok:true, partial:true}, not a silent {ok:true}', async () => {
+    let updateCall = null;
+    const deps = {
+      many: transientManyFor('final_review_model'),
+      isCloudEnabled: async () => true,
+      updateWhere: async (table, patch, where) => { updateCall = { table, patch, where }; return { rowCount: 1 }; },
+    };
+    const out = await updateRunMeta('run-1', { geminiVerdict: 'APPROVE', finalReviewModel: 'gpt-real-value' }, deps);
+    assert.deepEqual(out, { ok: true, partial: true, skippedFields: ['final_review_model'] });
+    // The verdict itself (never columnExists-guarded) must still land — only
+    // the probe-failed optional field is missing from the write.
+    assert.equal(updateCall.patch.gemini_verdict, 'APPROVE');
+    assert.equal('final_review_model' in updateCall.patch, false, 'the skipped field must not appear in the actual UPDATE patch');
+  });
+
+  it('a CONFIRMED-absent column (42703, un-migrated store) is a clean degrade, not partial', async () => {
+    const deps = {
+      many: async () => { const err = new Error('column "final_review_model" of relation "audit_runs" does not exist'); err.code = '42703'; throw err; },
+      isCloudEnabled: async () => true,
+      updateWhere: async () => ({ rowCount: 1 }),
+    };
+    const out = await updateRunMeta('run-1', { geminiVerdict: 'APPROVE', finalReviewModel: 'gpt-real-value' }, deps);
+    assert.deepEqual(out, { ok: true }, 'confirmed absence is NOT the same fact as a transient probe failure — no partial flag');
+  });
+
+  it('no supplied optional fields → no probe calls, no partial flag', async () => {
+    let probed = false;
+    const deps = {
+      many: async () => { probed = true; return []; },
+      isCloudEnabled: async () => true,
+      updateWhere: async () => ({ rowCount: 1 }),
+    };
+    const out = await updateRunMeta('run-1', { geminiVerdict: 'APPROVE' }, deps);
+    assert.deepEqual(out, { ok: true });
+    assert.equal(probed, false, 'a field the caller did not supply must never trigger a column probe');
+  });
+
+  it('round-4 audit M1: when EVERY supplied field is skipped on a transient probe, the skip signal is not lost behind a bare `undefined`', async () => {
+    // No `geminiVerdict`/`labeled`/etc — the ONLY thing supplied is an
+    // optional, columnExists-guarded field whose probe fails both retries.
+    // `update` ends up empty, which previously hit the early
+    // `if (Object.keys(update).length === 0) return;` and returned bare
+    // `undefined` — indistinguishable from "the caller supplied nothing".
+    const deps = {
+      many: transientManyFor('final_review_model'),
+      isCloudEnabled: async () => true,
+      updateWhere: async () => { throw new Error('must not be called — there is nothing to write'); },
+    };
+    const out = await updateRunMeta('run-1', { finalReviewModel: 'gpt-real-value' }, deps);
+    assert.deepEqual(out, { ok: false, partial: true, skippedFields: ['final_review_model'] });
+  });
+
+  it('round-4 audit M1 (negative control): a genuinely empty meta object still returns undefined — the fix must not manufacture a signal from nothing', async () => {
+    const deps = {
+      many: async () => { throw new Error('must not be called — nothing was supplied to probe'); },
+      isCloudEnabled: async () => true,
+      updateWhere: async () => { throw new Error('must not be called'); },
+    };
+    const out = await updateRunMeta('run-1', {}, deps);
+    assert.equal(out, undefined);
   });
 });
 

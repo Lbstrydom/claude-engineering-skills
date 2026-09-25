@@ -69,7 +69,8 @@ describe('recordFindings — NOT NULL write-boundary guard', () => {
     // Asymmetric on purpose: severity is the metric the A/B stopping rule counts
     // (accepted shadow-only HIGH/MEDIUM per run). Inventing one would corrupt the
     // number the row exists to feed, which is worse than losing the row.
-    assert.match(body, /if \(!row\.severity\)/, 'severity-less rows must be filtered');
+    assert.match(body, /if \(!row\.severity \|\| !VALID_SEVERITIES\.has\(row\.severity\)\)/,
+      'severity-less AND out-of-domain rows must be filtered (round-1 audit H18 widened this from a bare falsy check)');
     assert.match(body, /droppedFingerprints/, 'and named in the log — never a silent cap');
     assert.doesNotMatch(
       body, /severity:\s*row\.severity\s*\|\|\s*['"]/,

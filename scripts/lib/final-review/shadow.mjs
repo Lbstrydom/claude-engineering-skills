@@ -461,12 +461,15 @@ export function buildFinalReviewPersistPayload({ result, diff, primaryModel, sha
  *   (`modelEvalOverride` with `shadow.state !== 'ready'`) never reach the
  *   code path that calls it, so they may omit it.
  */
-export async function runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent, projectContext, auditMode }, { modelEvalOverride = null, envelopeScopeCli = null, campaignDigest = null, persistFn = recordFinalReviewFindings, runReviewWithRetry } = {}) {
+export async function runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent, projectContext, auditMode }, { modelEvalOverride = null, envelopeScopeCli = null, campaignDigest = null, persistFn = recordFinalReviewFindings, runReviewWithRetry, appendModelEvalShadowObservationFn = appendModelEvalShadowObservation } = {}) {
   // `persistFn` is a test seam ONLY, same shape as `modelEvalOverride` above —
   // production always takes the default (the real store writer). Lets the
   // producer→store contract test capture the payload this function builds
   // (final-review-credit-projection.md Seam 3) without a whole-provider mock
-  // or a real database.
+  // or a real database. `appendModelEvalShadowObservationFn` is the same seam
+  // shape, for the Gemini final-gate G1 regression (round-6 Step 7): lets a
+  // test capture the `findingRefs` this function builds without a live
+  // model-eval store.
   // modelEvalOverride (Phase 4) takes priority over the ordinary
   // FINAL_REVIEW_SHADOW-derived resolution — resolveModelEvalShadowOverride()
   // itself only returns non-null when an adjudicator Tier A/B eval run is
@@ -622,6 +625,22 @@ export async function runShadowAndPersist(result, primaryModel, runId, { planCon
   if (persistResult?.findingsRecorded === true && persistResult?.verdictPersisted === false) {
     process.stderr.write(`  [shadow-review] WARNING: run ${runId} — final-review findings recorded but verdict metadata failed to persist; the two are now inconsistent for this run\n`);
   }
+  // round-3 audit H4: `findingsRecorded: true` only means a verdict-backing
+  // snapshot was written, not that every supplied finding landed — surface a
+  // partial-batch drop the same way the verdict/findings inconsistency above
+  // is surfaced, so it is observable here rather than only in the store
+  // writer's own stderr line.
+  const totalDropped = (persistResult?.primaryDroppedCount || 0) + (persistResult?.shadowDroppedCount || 0);
+  if (totalDropped > 0) {
+    process.stderr.write(`  [shadow-review] WARNING: run ${runId} — ${totalDropped} finding(s) dropped by a producer defect (primary: ${persistResult?.primaryDroppedCount || 0}, shadow: ${persistResult?.shadowDroppedCount || 0}); the persisted snapshot is INCOMPLETE for this run\n`);
+  }
+  // round-5 audit H1: `shadowDroppedCount: 0` on its own is ambiguous between
+  // "the shadow ran cleanly, nothing dropped" and "the shadow write threw and
+  // nothing landed at all" — `shadowWriteFailed` disambiguates; surface it
+  // here too, not only in the store writer's own stderr line.
+  if (persistResult?.shadowWriteFailed === true) {
+    process.stderr.write(`  [shadow-review] WARNING: run ${runId} — the shadow observation write failed (primary is unaffected); this run contributes NO shadow data, not a clean zero\n`);
+  }
 
   // Phase 4 — append a model_eval_shadow_observations row when a Tier A/B
   // eval run is actively collecting AND the shadow actually ran this time
@@ -634,13 +653,25 @@ export async function runShadowAndPersist(result, primaryModel, runId, { planCon
   //
   // Reuses `persistPayload.primary`/`.shadow`/`.shadowRan` — the SAME
   // findings/flag just handed to the store, never a second derivation.
-  if (modelEvalOverride && persistPayload.shadowRan) {
+  //
+  // Gemini final-gate finding (round-6 Step 7, G1): this used to append
+  // `findingRefs` unconditionally whenever `shadowRan` was true, without
+  // checking whether the write those refs point at actually landed.
+  // `findingsRecorded === false` means NOTHING was recorded (primary tx1
+  // failed, or every primary finding was dropped) — every ref, primary and
+  // shadow alike, would point at rows that don't exist, so skip the append
+  // entirely. `shadowWriteFailed === true` is narrower: the primary DID
+  // land, only the shadow's own transaction rolled back — dropping the
+  // (dangling) shadow refs while keeping the (real) primary refs preserves
+  // real model-eval data instead of discarding it over an unrelated
+  // failure.
+  if (modelEvalOverride && persistPayload.shadowRan && persistResult?.findingsRecorded !== false) {
     const findingRefs = [
       ...persistPayload.primary.map((f) => ({ auditRunId: runId, findingFingerprint: f._hash, passName: 'final-review', bucket: f._bucket })),
-      ...persistPayload.shadow.map((f) => ({ auditRunId: runId, findingFingerprint: f._hash, passName: 'final-review-shadow', bucket: f._bucket })),
+      ...(persistResult?.shadowWriteFailed === true ? [] : persistPayload.shadow.map((f) => ({ auditRunId: runId, findingFingerprint: f._hash, passName: 'final-review-shadow', bucket: f._bucket }))),
     ];
     try {
-      await appendModelEvalShadowObservation({
+      await appendModelEvalShadowObservationFn({
         repoId: modelEvalOverride.repoId, runId: modelEvalOverride.modelEvalRunId,
         observation: { findingRefs }, idempotencyKey: runId,
       });

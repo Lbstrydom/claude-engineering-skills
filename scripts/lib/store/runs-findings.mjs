@@ -111,10 +111,12 @@ async function applyRecordTimeSuppression(runId, findings, passName) {
  *
  * `isCallerTx` (write-boundary-hardening plan Phase 7, debt 3c3f95142582):
  * routed through `finding-write.mjs`'s `applyFindingWrite` with
- * `expectAffected: 0` — a 0-row result here is the `WHERE EXISTS(...)` guard
- * legitimately matching nothing (NOT a Postgres error, and NOT itself a sign
- * the transaction is poisoned), so it stays a per-row `failed` count exactly
- * as before. A genuinely THROWN error (constraint violation, bad vector
+ * `expectAffected: null` — this function does not know in advance whether a
+ * `WHERE EXISTS(...)`-guarded row will match (0 or 1 is both legitimate), so
+ * it skips the count check entirely rather than asserting a specific number.
+ * A 0-row result is NOT a Postgres error, and NOT itself a sign the
+ * transaction is poisoned, so it stays a per-row `failed` count exactly as
+ * before. A genuinely THROWN error (constraint violation, bad vector
  * literal, connection issue) is what poisons a caller-supplied transaction —
  * previously swallowed unconditionally by this function's own `try`/`catch`
  * even when `exec` was the caller's open transaction client, so the caller's
@@ -123,10 +125,21 @@ async function applyRecordTimeSuppression(runId, findings, passName) {
  * `if (opts.client) throw err` for its own statement — set from the SAME
  * `!!opts.client` `recordFindings` already computes, not re-derived.
  *
+ * `idByKey` (round-2 audit H4 — renamed from `idByFingerprint`): keyed by
+ * `findingKeyString({fingerprint, bucket})`, not fingerprint alone. Write-
+ * boundary-hardening plan Phase 3 made it possible for TWO findings sharing a
+ * fingerprint but differing in bucket to both persist in one batch — a
+ * fingerprint-only map could then only hold ONE of their ids (`Map` silently
+ * overwrites on a duplicate key), so the other's embedding would be attached
+ * to the WRONG finding_id. `hasBucket` must be the SAME value the caller used
+ * to build `idByKey`, so the lookup key agrees with how it was built.
+ *
  * @param {boolean} [isCallerTx] - true when `exec` is inside an open transaction
+ * @param {boolean} [hasBucket] - whether this store has the `bucket` column;
+ *   must match what the caller used when building `idByKey`
  * @returns {Promise<{persisted: number, failed: number}>}
  */
-export async function persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByFingerprint, runId, embeddingSpace, isCallerTx = false) {
+export async function persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByKey, runId, embeddingSpace, isCallerTx = false, hasBucket = false) {
   const result = { persisted: 0, failed: 0 };
   if (!vectorByFinding || vectorByFinding.size === 0) return result;
   // The space these vectors were ACTUALLY made in, passed down from the call
@@ -138,26 +151,65 @@ export async function persistKeptEmbeddings(exec, keptFindings, vectorByFinding,
   for (const f of keptFindings) {
     const vec = vectorByFinding.get(f);
     if (!vec) continue;
-    const id = idByFingerprint.get(fingerprintOf(f));
+    const key = findingKeyString({ fingerprint: fingerprintOf(f), bucket: hasBucket ? normaliseBucket(f._bucket) : undefined });
+    const id = idByKey.get(key);
     if (!id) continue;
     const text = (typeof f.detail === 'string' ? f.detail : '').slice(0, 500);
     const hash = crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
-    // expectAffected:0 — a 0-row EXISTS-guard miss must NOT be treated the
+    // expectAffected:null — a 0-row EXISTS-guard miss must NOT be treated the
     // same as a thrown error by applyFindingWrite; only a real exception
     // should propagate under isCallerTx:true. This function decides what a
     // 0-row result means (below), applyFindingWrite decides only whether an
     // EXCEPTION propagates.
-    const write = await applyFindingWrite(
-      exec,
-      {
+    //
+    // round-5 audit M1: embeddings are explicitly BEST-EFFORT (this whole
+    // function's contract — one failed write must cost one embedding, never
+    // the batch), but under isCallerTx:true a thrown error does not merely
+    // fail JS-side: Postgres itself aborts the OUTER transaction at the
+    // statement level, poisoning the primary findings that were ALREADY
+    // inserted earlier in that same transaction — the exact "one bad
+    // optional write costs the whole batch" failure this file's guards exist
+    // to prevent, now happening one level up. `withTx`'s own re-entrant
+    // SAVEPOINT nesting (it auto-detects the active transaction via
+    // AsyncLocalStorage — no client threading needed) isolates each write:
+    // a failure rolls back only its savepoint, so it costs exactly this one
+    // embedding, and the outer transaction (the findings that matter) stays
+    // valid. Caught HERE, not left to propagate — the savepoint rollback
+    // already cleanly undid the damage, so this is now genuinely safe to
+    // treat as a per-item failure, same as the isCallerTx:false path always
+    // has.
+    let write;
+    try {
+      // round-6 audit H3: `toVectorLiteral(vec)` throws synchronously (a
+      // malformed/non-finite vector) and MUST be inside this try — building
+      // it before the try block let that one exception bypass everything
+      // below, including the round-5 savepoint isolation, and propagate
+      // straight out to poison the outer transaction: the exact failure this
+      // whole fix exists to prevent, just reached through a different door.
+      const statement = {
         text: `INSERT INTO finding_embeddings (finding_id, embedding, embedding_model, dimension, snapshot_hash)
                SELECT $1::uuid, $2::vector, $3, $4, $5
                 WHERE EXISTS (SELECT 1 FROM audit_findings af WHERE af.id = $1::uuid AND af.run_id = $6::uuid)
                ON CONFLICT (finding_id) DO UPDATE SET embedding=EXCLUDED.embedding, embedding_model=EXCLUDED.embedding_model, dimension=EXCLUDED.dimension, snapshot_hash=EXCLUDED.snapshot_hash, created_at=now()`,
         values: [id, toVectorLiteral(vec), space.provenanceId, space.dim, hash, runId],
-      },
-      { expectAffected: 0, isCallerTx }
-    );
+      };
+      // round-6 audit H1: the nested `withTx` callback must write through
+      // the CLIENT `withTx` ITSELF HANDS BACK, never through the outer
+      // closured `exec` — they only happen to be the same reference today
+      // because every current caller threads `exec` in from an
+      // AsyncLocalStorage-tracked client. Using the callback's own parameter
+      // instead makes this correct BY CONSTRUCTION (the write always targets
+      // whatever connection `withTx` is actually managing — a re-entrant
+      // SAVEPOINT on the parent when one is active, or a fresh top-level
+      // transaction otherwise) rather than by that coincidence holding.
+      write = isCallerTx
+        ? await withTx((spClient) => applyFindingWrite(spClient, statement, { expectAffected: null, isCallerTx: true }))
+        : await applyFindingWrite(exec, statement, { expectAffected: null, isCallerTx: false });
+    } catch (err) {
+      result.failed++;
+      process.stderr.write(`  [semantic-suppress] embedding persistence failed for finding ${id} (savepoint rolled back, outer transaction intact): ${err.message?.slice(0, 150)}\n`);
+      continue;
+    }
     if (write.outcome === 'failed') {
       result.failed++;
       process.stderr.write(`  [semantic-suppress] embedding persistence failed for finding ${id}: ${write.error?.message?.slice(0, 150)}\n`);
@@ -480,67 +532,82 @@ export async function recordRunComplete(runId, stats) {
  *   above) means "nothing to write" — a different case from a write that was
  *   attempted and failed.
  */
-export async function updateRunMeta(runId, meta) {
+export async function updateRunMeta(runId, meta, deps = {}) {
+  // `deps` (round-3 audit H2 test seam): mirrors the injectable `deps = {}`
+  // pattern `getRunFindings`/`getRunMeta` already use in this same file.
+  // Defaults are the real store — production behavior is unchanged; a test
+  // can inject `many`/`isCloudEnabled`/`updateWhereFn` to exercise the new
+  // transient-vs-confirmed-absent branch without a live DB.
+  const { many: manyFn = many, isCloudEnabled: cloudFn = isCloudEnabled, updateWhere: updateWhereFn = updateWhere } = deps;
   if (!runId) return;
   const update = {};
   if (meta.geminiVerdict != null)  update.gemini_verdict   = meta.geminiVerdict;
   if (meta.labeled != null)        update.labeled          = meta.labeled;
   if (meta.acceptedCount != null)  update.accepted_count   = meta.acceptedCount;
   if (meta.dismissedCount != null) update.dismissed_count  = meta.dismissedCount;
+  // round-3 audit H2 (GPT deliberation: compromise, MEDIUM): this function
+  // backs verdict persistence (`geminiVerdict` above), so a caller-supplied
+  // optional field silently vanishing on an EXHAUSTED TRANSIENT probe — not a
+  // confirmed-absent column — while the write still reports `{ok:true}` is
+  // misleading in exactly the way GPT's ruling singled out. `probeColumnExistence`
+  // exposes `definitive` so this one write site can tell the two apart and
+  // surface a `partial` outcome; every other `columnExists` boolean-context
+  // caller in this file is deliberately untouched (GPT explicitly rejected
+  // widening all ~25 of them — that risks aborting a whole batch for one
+  // optional field, the exact failure this file's guards exist to prevent).
+  const skippedFields = [];
+  async function tryColumn(value, table, col, updateKey) {
+    if (value == null) return;
+    const { present, definitive } = await probeColumnExistence(table, col, manyFn, cloudFn);
+    if (present) { update[updateKey] = value; return; }
+    if (!definitive) skippedFields.push(col);
+  }
   // Final-review model attribution + shadow cost telemetry (migration
   // 20260610120000). columnExists-guarded so the write degrades cleanly on an
   // un-migrated store (omit the absent column rather than fail the UPDATE).
-  if (meta.finalReviewModel != null
-      && await columnExists('audit_runs', 'final_review_model', many, isCloudEnabled)) {
-    update.final_review_model = meta.finalReviewModel;
-  }
-  if (meta.finalReviewShadowModel != null
-      && await columnExists('audit_runs', 'final_review_shadow_model', many, isCloudEnabled)) {
-    update.final_review_shadow_model = meta.finalReviewShadowModel;
-  }
-  if (meta.finalReviewShadowInputTokens != null
-      && await columnExists('audit_runs', 'final_review_shadow_input_tokens', many, isCloudEnabled)) {
-    update.final_review_shadow_input_tokens = meta.finalReviewShadowInputTokens;
-  }
-  if (meta.finalReviewShadowOutputTokens != null
-      && await columnExists('audit_runs', 'final_review_shadow_output_tokens', many, isCloudEnabled)) {
-    update.final_review_shadow_output_tokens = meta.finalReviewShadowOutputTokens;
-  }
-  if (meta.finalReviewShadowLatencyMs != null
-      && await columnExists('audit_runs', 'final_review_shadow_latency_ms', many, isCloudEnabled)) {
-    update.final_review_shadow_latency_ms = meta.finalReviewShadowLatencyMs;
-  }
+  await tryColumn(meta.finalReviewModel, 'audit_runs', 'final_review_model', 'final_review_model');
+  await tryColumn(meta.finalReviewShadowModel, 'audit_runs', 'final_review_shadow_model', 'final_review_shadow_model');
+  await tryColumn(meta.finalReviewShadowInputTokens, 'audit_runs', 'final_review_shadow_input_tokens', 'final_review_shadow_input_tokens');
+  await tryColumn(meta.finalReviewShadowOutputTokens, 'audit_runs', 'final_review_shadow_output_tokens', 'final_review_shadow_output_tokens');
+  await tryColumn(meta.finalReviewShadowLatencyMs, 'audit_runs', 'final_review_shadow_latency_ms', 'final_review_shadow_latency_ms');
   // Model-A/B/C v2 assignment grain (migration 20260701140000). Set by the
   // generation shadow when the experiment runs; columnExists-guarded so a
   // pre-migration store degrades cleanly (omit the absent column).
-  if (meta.assignmentId != null
-      && await columnExists('audit_runs', 'assignment_id', many, isCloudEnabled)) {
-    update.assignment_id = meta.assignmentId;
+  await tryColumn(meta.assignmentId, 'audit_runs', 'assignment_id', 'assignment_id');
+  await tryColumn(meta.stageType, 'audit_runs', 'stage_type', 'stage_type');
+  await tryColumn(meta.phase, 'audit_runs', 'phase', 'phase');
+  await tryColumn(meta.promptVariant, 'audit_runs', 'prompt_variant', 'prompt_variant');
+  await tryColumn(meta.attempt, 'audit_runs', 'attempt', 'attempt');
+  await tryColumn(meta.armOrderSeed, 'audit_runs', 'arm_order_seed', 'arm_order_seed');
+  if (Object.keys(update).length === 0) {
+    // round-4 audit M1: a bare early-return-to-`undefined` here previously
+    // discarded `skippedFields` whenever EVERY field the caller supplied was
+    // an optional one that hit the transient-probe-skip path (round-3 H2) —
+    // `undefined` reads as "nothing was supplied", which is a different fact
+    // from "something real was supplied but couldn't be verified writable".
+    // Report the latter honestly: nothing was written (`ok:false`, there is
+    // no update to run), but `skippedFields` is still surfaced.
+    if (skippedFields.length > 0) {
+      process.stderr.write(`  [learning] updateRunMeta: run ${runId} — every supplied field was skipped on an unresolved schema probe (${skippedFields.join(', ')}); nothing written\n`);
+      return { ok: false, partial: true, skippedFields };
+    }
+    return;
   }
-  if (meta.stageType != null
-      && await columnExists('audit_runs', 'stage_type', many, isCloudEnabled)) {
-    update.stage_type = meta.stageType;
-  }
-  if (meta.phase != null
-      && await columnExists('audit_runs', 'phase', many, isCloudEnabled)) {
-    update.phase = meta.phase;
-  }
-  if (meta.promptVariant != null
-      && await columnExists('audit_runs', 'prompt_variant', many, isCloudEnabled)) {
-    update.prompt_variant = meta.promptVariant;
-  }
-  if (meta.attempt != null
-      && await columnExists('audit_runs', 'attempt', many, isCloudEnabled)) {
-    update.attempt = meta.attempt;
-  }
-  if (meta.armOrderSeed != null
-      && await columnExists('audit_runs', 'arm_order_seed', many, isCloudEnabled)) {
-    update.arm_order_seed = meta.armOrderSeed;
-  }
-  if (Object.keys(update).length === 0) return;
-  if (!await isCloudEnabled()) return;
+  if (!await cloudFn()) return;
   try {
-    await updateWhere('audit_runs', update, { id: runId });
+    // round-2 audit H1: previously returned `{ok:true}` whenever the query
+    // did not THROW, never checking whether it actually matched a row — so a
+    // stale/invalid `runId` (the row already deleted, or never existed)
+    // reported success identically to a real write.
+    const { rowCount } = await updateWhereFn('audit_runs', update, { id: runId });
+    if (rowCount === 0) {
+      process.stderr.write(`  [learning] updateRunMeta: 0 rows matched for run ${runId} — not written\n`);
+      return { ok: false };
+    }
+    if (skippedFields.length > 0) {
+      process.stderr.write(`  [learning] updateRunMeta: run ${runId} — wrote but SKIPPED ${skippedFields.length} supplied field(s) on an unresolved schema probe (${skippedFields.join(', ')}); this write is PARTIAL, not a confirmed column-absence degrade\n`);
+      return { ok: true, partial: true, skippedFields };
+    }
     return { ok: true };
   } catch (err) {
     process.stderr.write(`  [learning] updateRunMeta failed: ${err.message}\n`);
@@ -750,56 +817,29 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   // returns every finding when disabled or on any error. Only `merged` findings
   // (the code-audit path that carries the measured churn) are considered.
   const { kept: suppressionKept, vectorByFinding, embeddingSpace } = await applyRecordTimeSuppression(runId, findings, passName);
-  // ── Intra-batch fingerprint dedup (durability plan Phase 3) ───────────────
-  // `audit_findings_run_fingerprint_uniq_full` (migration 20260812070000) makes
-  // `(run_id, finding_fingerprint)` unique, and a multi-row INSERT carrying the
-  // same fingerprint twice would now abort the WHOLE batch (23505) where it
-  // previously wrote two rows. `ON CONFLICT DO UPDATE` does not rescue it
-  // either — Postgres refuses to affect one row twice in a single command
-  // (21000). So the collapse has to happen before the statement is built.
-  //
-  // Keep the FIRST occurrence: the batch is ordered, and a later duplicate of an
-  // already-seen fingerprint carries no information the first does not. Never
-  // silent — a dropped finding is exactly what this plan exists to make visible.
-  //
-  // Keyed on (fingerprint, bucket) via findingKeyString, not fingerprint alone
-  // (write-boundary-hardening plan Phase 3, fixing debt 1b5bce68d2ce/883d3001f45f):
-  // the DB-level ON CONFLICT target a few lines below is already scoped by
-  // pass_name+bucket, so an intra-batch dedup on fingerprint alone silently
-  // collapsed a same-fingerprint-different-bucket pair BEFORE that correctly-
-  // scoped statement ever ran. `bucket` is read through the same
-  // `normaliseBucket(f._bucket)` transform `buildFindingRow` applies below, so
-  // the dedup key matches what actually lands in the row — and only when this
-  // store has the `bucket` column at all (`hasBucket`); an un-migrated store
-  // has no column to disambiguate on, matching the DB conflict target's own
-  // `hasBucket` condition.
-  const keptFindings = [];
-  const seenKeys = new Set();
-  let intraBatchDuplicates = 0;
-  for (const f of suppressionKept) {
-    const fp = fingerprintOf(f);
-    const key = findingKeyString({ fingerprint: fp, bucket: hasBucket ? normaliseBucket(f._bucket) : undefined });
-    if (seenKeys.has(key)) { intraBatchDuplicates++; continue; }
-    seenKeys.add(key);
-    keptFindings.push(f);
-  }
-  if (intraBatchDuplicates > 0) {
-    process.stderr.write(
-      `  [learning] ${intraBatchDuplicates} ${passName} finding(s) shared a fingerprint with an earlier one in the `
-      + 'same batch and were collapsed — (run_id, finding_fingerprint) is unique, so they could not both be rows.\n'
-    );
-  }
   const columns = { hasClassification, hasSourceModel, hasBucket, hasStage, hasArm, hasIsQuickFix, hasVerification };
-  const mappedRows = keptFindings.map((f) => buildFindingRow(f, { runId, passName, round, columns }));
+  // Build one row PER finding up front, pairing it with its source finding —
+  // round-1 audit H5 found that dedup used to run BEFORE severity validation,
+  // so an invalid finding could claim a (fingerprint,bucket) dedup slot and
+  // then get dropped by the guard below, silently losing a LATER, VALID
+  // finding sharing that same key too (the "first occurrence carries no
+  // information the first does not" comment's premise is false once the two
+  // occurrences differ on validity). Pairing `f`/`row` here — instead of three
+  // independently-filtered lists — is what lets validation run first while
+  // keeping `keptFindings` (for embedding persistence, below) in lockstep
+  // with whichever rows actually survive both steps.
+  const built = suppressionKept.map((f) => ({ f, row: buildFindingRow(f, { runId, passName, round, columns }) }));
 
-  // ── NOT-NULL write-boundary guard (2026-07-26) ────────────────────────────
-  // `finding_fingerprint` has always had a `|| 'unknown'` fallback; `severity`
-  // and `category` had none, yet both are NOT NULL with no DB default. One
-  // malformed finding therefore aborted the whole INSERT — and inside a
-  // caller-supplied transaction that poisons the tx, so the subsequent COMMIT
-  // silently degrades to ROLLBACK and the entire batch disappears with no error
-  // reaching the caller. Found live: the Opus shadow reviewer returned a finding
-  // with a null `category`, which discarded the PRIMARY reviewer's findings too.
+  // ── NOT-NULL + domain write-boundary guard (2026-07-26; domain check added
+  // round-1 audit H18) — runs BEFORE dedup, see above. `finding_fingerprint`
+  // has always had a `|| 'unknown'` fallback; `severity` and `category` had
+  // none, yet both are NOT NULL with no DB default. One malformed finding
+  // therefore aborted the whole INSERT — and inside a caller-supplied
+  // transaction that poisons the tx, so the subsequent COMMIT silently
+  // degrades to ROLLBACK and the entire batch disappears with no error
+  // reaching the caller. Found live: the Opus shadow reviewer returned a
+  // finding with a null `category`, which discarded the PRIMARY reviewer's
+  // findings too.
   //
   // Coerce vs skip is deliberately asymmetric:
   //  - `category` is descriptive → coerce to a visible defect marker so the row
@@ -808,20 +848,44 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   //    rather than only in a log line that scrolls away.
   //  - `severity` is the metric → NEVER fabricated. The shadow A/B's stopping
   //    rule counts HIGH/MEDIUM findings; inventing a severity would corrupt the
-  //    exact number the row exists to feed. Drop it, loudly.
-  const rows = [];
+  //    exact number the row exists to feed. Drop it, loudly. A truthy but
+  //    OUT-OF-DOMAIN value (e.g. a producer sending "CRITICAL") is exactly as
+  //    dangerous as a falsy one — `audit_findings_severity_check` would reject
+  //    the INSERT and abort the whole batch/poison the caller's tx, the same
+  //    failure mode the falsy-only check was written to prevent — so it is
+  //    validated against the same closed domain the DB CHECK enforces, not
+  //    merely tested for truthiness.
+  const validated = [];
   let coercedCategories = 0;
   const droppedFingerprints = [];
-  for (const row of mappedRows) {
-    if (!row.severity) {
+  const droppedBucketFingerprints = [];
+  for (const { f, row } of built) {
+    if (!row.severity || !VALID_SEVERITIES.has(row.severity)) {
       droppedFingerprints.push(row.finding_fingerprint);
+      continue;
+    }
+    // round-3 audit H1: `bucket` participates in finding IDENTITY (the dedup
+    // key below, the DB's ON CONFLICT target, and pruneUnrecordedUnruled's
+    // comparison) — unlike `category`, it is NOT purely descriptive, so it
+    // cannot get category's coerce-and-keep treatment. `buildFindingRow`'s own
+    // `normaliseBucket` already coerces an out-of-domain value to `null` for
+    // the row itself — but `null` is a REAL, DIFFERENT identity value (the
+    // one primary/no-bucket findings legitimately carry), so that coercion
+    // would silently reassign an invalid-bucket finding onto an unrelated
+    // finding's identity slot instead of dropping it: a collision, not a safe
+    // default. Checked on the RAW `f._bucket` (buildFindingRow already
+    // replaced `row.bucket` with the coerced value by this point) and only
+    // when this store actually has the column — an absent/null bucket is
+    // legitimate and must not be flagged.
+    if (columns.hasBucket && f._bucket != null && !VALID_BUCKETS.has(f._bucket)) {
+      droppedBucketFingerprints.push(row.finding_fingerprint);
       continue;
     }
     if (row.category == null || row.category === '') {
       row.category = MISSING_CATEGORY_MARKER;
       coercedCategories++;
     }
-    rows.push(row);
+    validated.push({ f, row });
   }
   if (coercedCategories > 0) {
     process.stderr.write(
@@ -833,9 +897,64 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   if (droppedFingerprints.length > 0) {
     // Never a silent cap — name what was dropped and why (AGENTS.md).
     process.stderr.write(
-      `  [learning] WARNING: dropped ${droppedFingerprints.length} ${passName} finding(s) with no severity `
+      `  [learning] WARNING: dropped ${droppedFingerprints.length} ${passName} finding(s) with no/invalid severity `
       + `(${droppedFingerprints.join(', ')}) — severity is the metric the A/B stopping rule counts, so it is `
-      + 'never fabricated. These findings are NOT persisted.\n'
+      + 'never fabricated or accepted out-of-domain. These findings are NOT persisted.\n'
+    );
+  }
+  if (droppedBucketFingerprints.length > 0) {
+    process.stderr.write(
+      `  [learning] WARNING: dropped ${droppedBucketFingerprints.length} ${passName} finding(s) with an out-of-domain bucket `
+      + `(${droppedBucketFingerprints.join(', ')}) — an invalid bucket cannot be coerced to null without colliding with a `
+      + 'DIFFERENT, legitimate null-bucket identity. These findings are NOT persisted.\n'
+    );
+  }
+  // Single count covering EVERY drop reason (severity + bucket) — every
+  // `droppedCount` consumer below (the terminal early-return, the bulk-insert
+  // return, and recordFinalReviewFindings' own all-dropped guard) needs "how
+  // many rows failed to land", not "why", so a caller checking completeness
+  // can't miss a whole drop CLASS just because it only summed one list.
+  const droppedTotalCount = droppedFingerprints.length + droppedBucketFingerprints.length;
+
+  // ── Intra-batch fingerprint dedup (durability plan Phase 3) ───────────────
+  // `audit_findings_run_fingerprint_uniq_full` (migration 20260812070000) makes
+  // `(run_id, finding_fingerprint)` unique, and a multi-row INSERT carrying the
+  // same fingerprint twice would now abort the WHOLE batch (23505) where it
+  // previously wrote two rows. `ON CONFLICT DO UPDATE` does not rescue it
+  // either — Postgres refuses to affect one row twice in a single command
+  // (21000). So the collapse has to happen before the statement is built, and
+  // (see above) after severity validation — never before it.
+  //
+  // Keep the FIRST occurrence: the batch is ordered, and a later duplicate of an
+  // already-VALID-and-seen key carries no information the first does not. Never
+  // silent — a dropped finding is exactly what this plan exists to make visible.
+  //
+  // Keyed on (fingerprint, bucket) via findingKeyString, not fingerprint alone
+  // (write-boundary-hardening plan Phase 3, fixing debt 1b5bce68d2ce/883d3001f45f):
+  // the DB-level ON CONFLICT target a few lines below is already scoped by
+  // pass_name+bucket, so an intra-batch dedup on fingerprint alone silently
+  // collapsed a same-fingerprint-different-bucket pair BEFORE that correctly-
+  // scoped statement ever ran. Read straight off the already-built row's own
+  // `finding_fingerprint`/`bucket` fields — never recomputed via `fingerprintOf`/
+  // `normaliseBucket` a second time — so the dedup key can never drift from what
+  // actually lands in the row. Only scoped by bucket when this store has the
+  // column at all (`hasBucket`); an un-migrated store has no column to
+  // disambiguate on, matching the DB conflict target's own `hasBucket` condition.
+  const keptFindings = [];
+  const rows = [];
+  const seenKeys = new Set();
+  let intraBatchDuplicates = 0;
+  for (const { f, row } of validated) {
+    const key = findingKeyString({ fingerprint: row.finding_fingerprint, bucket: hasBucket ? row.bucket : undefined });
+    if (seenKeys.has(key)) { intraBatchDuplicates++; continue; }
+    seenKeys.add(key);
+    keptFindings.push(f);
+    rows.push(row);
+  }
+  if (intraBatchDuplicates > 0) {
+    process.stderr.write(
+      `  [learning] ${intraBatchDuplicates} ${passName} finding(s) shared a fingerprint with an earlier one in the `
+      + 'same batch and were collapsed — (run_id, finding_fingerprint) is unique, so they could not both be rows.\n'
     );
   }
   // Terminal, not pending: this payload will map to zero rows however often it
@@ -847,7 +966,7 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   // be able to tell "the round genuinely raised nothing" from "a producer
   // defect silently rejected part of the batch" — pruning on the latter would
   // treat rows the round never actually re-examined as absent and erase them.
-  if (rows.length === 0) return { applied: true, rows: 0, reason: 'no-persistable-rows', keptKeys: [], droppedCount: droppedFingerprints.length };
+  if (rows.length === 0) return { applied: true, rows: 0, reason: 'no-persistable-rows', keptKeys: [], droppedCount: droppedTotalCount };
   // Bulk INSERT — homogeneous rows by construction. Use the caller's tx client
   // when provided (atomic delete+insert); otherwise grab a pool connection.
   try {
@@ -912,13 +1031,20 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
     const sql = `INSERT INTO audit_findings (${cols.map((c) => `"${c}"`).join(', ')})
                  VALUES ${valueGroups.join(', ')}
                  ${conflict}
-                 RETURNING id, finding_fingerprint`;
+                 RETURNING id, finding_fingerprint${hasBucket ? ', bucket' : ''}`;
     const inserted = await exec.query(sql, params);
     // Persist embeddings for the kept findings so they become future dedup
-    // targets. Best-effort; keyed by fingerprint→id (unique within a batch).
+    // targets. Best-effort; keyed by (fingerprint,bucket) via findingKeyString,
+    // NOT fingerprint alone (round-2 audit H4) — a bare Map keyed by
+    // finding_fingerprint silently collapses two rows this batch legitimately
+    // persisted at different buckets (Phase 3 made that possible), attaching
+    // an embedding to the wrong finding_id. `bucket` is only in the RETURNING
+    // list — and only read here — when `hasBucket`, matching every other
+    // `hasBucket`-guarded reference in this function.
     if (vectorByFinding && vectorByFinding.size > 0) {
-      const idByFingerprint = new Map((inserted.rows || []).map((r) => [r.finding_fingerprint, r.id]));
-      const embedResult = await persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByFingerprint, runId, embeddingSpace, !!opts.client);
+      const idByKey = new Map((inserted.rows || []).map((r) =>
+        [findingKeyString({ fingerprint: r.finding_fingerprint, bucket: hasBucket ? r.bucket : undefined }), r.id]));
+      const embedResult = await persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByKey, runId, embeddingSpace, !!opts.client, hasBucket);
       if (embedResult.failed > 0) {
         process.stderr.write(`  [semantic-suppress] embedding persistence: ${embedResult.persisted} ok, ${embedResult.failed} failed this batch\n`);
       }
@@ -930,7 +1056,7 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
     // snapshot, scoped to the SAME pass_name/bucket space the upsert wrote —
     // deriving it from the upserted rows themselves, never re-guessed.
     const keptKeys = rows.map((row) => ({ fingerprint: row.finding_fingerprint, bucket: row.bucket ?? null }));
-    return { applied: true, rows: rows.length, keptKeys, droppedCount: droppedFingerprints.length };
+    return { applied: true, rows: rows.length, keptKeys, droppedCount: droppedTotalCount };
   } catch (err) {
     process.stderr.write(`  [learning] recordFindings failed: ${err.message}\n`);
     // RETHROW when running inside a caller-supplied transaction (2026-07-26).
@@ -994,10 +1120,23 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
  *                           // verdict is deliberately NOT written here — it is
  *                           // observation-only and must never gate a build.
  * }} payload
- * @returns {Promise<{findingsRecorded: boolean, verdictPersisted: boolean}|undefined>}
+ * @returns {Promise<{findingsRecorded: boolean, verdictPersisted: boolean,
+ *   primaryDroppedCount?: number, shadowDroppedCount?: number, shadowWriteFailed?: boolean}|undefined>}
  *   `undefined` only for the cloud-off/no-runId early return (nothing was
  *   attempted). Once findings recording is attempted, always a definite
  *   shape — see the write-boundary-hardening plan Phase 10 note below.
+ *   `primaryDroppedCount`/`shadowDroppedCount` (round-3 audit H4) name a
+ *   MIXED-batch drop explicitly: `findingsRecorded: true` only means "a
+ *   verdict-backing snapshot was written", not "every supplied finding
+ *   landed" — a producer defect on part of the batch (invalid severity or
+ *   bucket) still drops just those rows (by design, see the tx1-block
+ *   comment below) while the verdict and the surviving findings persist. A
+ *   caller that needs to know whether the batch was COMPLETE must check
+ *   these counts, not infer completeness from `findingsRecorded` alone.
+ *   `shadowWriteFailed` (round-5 audit H1): `true` when the shadow's own
+ *   transaction threw and was caught (still non-fatal to the primary) —
+ *   distinguishes "the shadow write was LOST" from "the shadow ran cleanly
+ *   with `shadowDroppedCount: 0`", which previously read identically.
  */
 export async function recordFinalReviewFindings(runId, { primary = [], shadow = [], shadowRan = false, models = {}, verdict = null } = {}) {
   if (!runId || !await isCloudEnabled()) return;
@@ -1023,10 +1162,12 @@ export async function recordFinalReviewFindings(runId, { primary = [], shadow = 
   // existing lock covers this (`withTx` is a bare BEGIN/COMMIT).
   //
   // tx1 keeps the atomic upsert+prune the idempotent-replace contract needs.
+  let primaryResult;
   try {
     await withTx(async (client) => {
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${runId}:final-review`]);
       const res = await recordFindings(runId, primary, 'final-review', 0, { client });
+      primaryResult = res;
       // Prune ONLY on a complete batch (audit-code cluster A R1 H17): a
       // producer defect (e.g. every finding missing `severity`) silently
       // drops rows via `recordFindings`' own defensive filter, and a dropped
@@ -1049,6 +1190,18 @@ export async function recordFinalReviewFindings(runId, { primary = [], shadow = 
     // flags read false, not the mixed "verdict recorded, findings not" state
     // this reorder exists to prevent.
     return { findingsRecorded: false, verdictPersisted: false };
+  }
+  // A batch that raised findings but had EVERY one dropped by recordFindings'
+  // own guard (a producer defect, e.g. every finding missing severity) is the
+  // SAME orphan-verdict risk the tx1-failure early return above already closes
+  // — `applied:true, rows:0` did not throw, so control would otherwise fall
+  // through to the metadata write below and persist a verdict backed by zero
+  // recorded findings (round-1 audit H16). `primary.length === 0` (a
+  // genuinely empty round — nothing was ever claimed) is NOT this case: that
+  // is a legitimate clean result, and writing its verdict is correct.
+  if (primary.length > 0 && primaryResult.rows === 0 && primaryResult.droppedCount === primary.length) {
+    process.stderr.write(`  [learning] recordFinalReviewFindings: all ${primary.length} primary finding(s) were dropped by a producer defect — skipping the verdict write to avoid persisting one with no backing findings\n`);
+    return { findingsRecorded: false, verdictPersisted: false, primaryDroppedCount: primaryResult.droppedCount, shadowDroppedCount: 0, shadowWriteFailed: false };
   }
   // (b) Run metadata — moved to run AFTER tx1 succeeds (write-boundary-
   // hardening plan Phase 10, debt 3d77eba7cae1). Previously ran BEFORE tx1:
@@ -1105,11 +1258,22 @@ export async function recordFinalReviewFindings(runId, { primary = [], shadow = 
       'treating the shadow as not-run (no write, no prune). This is a producer contract violation in the caller.\n'
     );
   }
+  let shadowDroppedCount = 0;
+  // round-5 audit H1: a shadow write that THREW left `shadowDroppedCount` at
+  // its initialised 0 — byte-identical to a shadow that ran cleanly and
+  // dropped nothing, so a caller could not tell "the shadow observation was
+  // lost" from "the shadow observation succeeded with zero drops". The log
+  // line below was already loud, but the RETURN VALUE — what a caller
+  // actually branches on — carried no such signal. `shadowWriteFailed` names
+  // it explicitly; still non-fatal (the try/catch shape, and the "primary
+  // rows are safe" guarantee, are unchanged).
+  let shadowWriteFailed = false;
   if (shadowRan === true) {
     try {
       await withTx(async (client) => {
         await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${runId}:final-review-shadow`]);
         const res = await recordFindings(runId, shadow, 'final-review-shadow', 0, { client });
+        shadowDroppedCount = res.droppedCount || 0;
         // Same "complete batch only" gate as the primary tx above (H17).
         if (res.droppedCount > 0) {
           process.stderr.write(`  [learning] recordFinalReviewFindings: skipping prune for final-review-shadow — ${res.droppedCount} finding(s) were dropped from this batch (producer defect), so it is not a complete replacement snapshot\n`);
@@ -1118,12 +1282,16 @@ export async function recordFinalReviewFindings(runId, { primary = [], shadow = 
         }
       });
     } catch (err) {
+      shadowWriteFailed = true;
       process.stderr.write(
         `  [learning] recordFinalReviewFindings failed (shadow, non-fatal — primary rows are safe): ${err.message}\n`
       );
     }
   }
-  return { findingsRecorded: true, verdictPersisted };
+  return {
+    findingsRecorded: true, verdictPersisted,
+    primaryDroppedCount: primaryResult.droppedCount || 0, shadowDroppedCount, shadowWriteFailed,
+  };
 }
 
 /**
@@ -1272,6 +1440,15 @@ export async function adjudicateFinalReviewFinding(runId, fingerprint, action, o
  * back `WHERE id = $resolvedId` instead of re-deriving a `(run_id,
  * fingerprint, bucket)` predicate a second time.
  *
+ * Scoped to `pass_name IN ('final-review', 'final-review-shadow')`
+ * (round-1 audit M1): both callers (`adjudicateFinalReviewFinding`,
+ * `recordFinalReviewFix`) are final-review-specific commands, but the
+ * un-scoped query previously let an UNAMBIGUOUS single match from a
+ * different pass_name population (e.g. a `'merged'`-pass row with no
+ * final-review counterpart) resolve silently — the multi-row ambiguity
+ * check above only catches the case where MULTIPLE rows collide; a lone
+ * wrong-population match never triggered it.
+ *
  * @param {string} runId
  * @param {string} fingerprint
  * @param {{bucket?: string|null}} [opts] - omit to auto-resolve; pass explicitly to disambiguate
@@ -1280,7 +1457,8 @@ export async function adjudicateFinalReviewFinding(runId, fingerprint, action, o
 async function resolveFindingBucket(runId, fingerprint, opts = {}) {
   const rows = await many(
     `SELECT id, bucket FROM audit_findings
-      WHERE run_id = $1 AND finding_fingerprint = $2`,
+      WHERE run_id = $1 AND finding_fingerprint = $2
+        AND pass_name IN ('final-review', 'final-review-shadow')`,
     [runId, fingerprint]
   );
   if (rows.length === 0) return { ok: false, reason: 'no-match' };
@@ -1384,6 +1562,16 @@ export async function recordFinalReviewFix(runId, fingerprint, opts = {}) {
       },
       { isCallerTx: false }
     );
+    if (result.outcome === 'failed') {
+      // round-2 audit H1: a genuine write ERROR (the query threw) must not
+      // fall into the 0-row investigation below — that branch's conclusion
+      // ("no-rows-affected" / "dismissed-cannot-be-fixed") asserts the
+      // predicate ran and simply matched nothing, which is false here: the
+      // statement never completed. Conflating the two told a caller "the
+      // finding was already dismissed" when the real story was a DB error.
+      process.stderr.write(`  [learning] recordFinalReviewFix write error for ${fingerprint}: ${result.error?.message}\n`);
+      return { ok: false, updated: 0, cloud: true, reason: `db-error: ${result.error?.message}`, bucket };
+    }
     if (result.outcome !== 'written') {
       // Zero rows is ambiguous between "the row is gone" and "it's now
       // dismissed" — resolving that does not change what was WRITTEN (the
@@ -1881,30 +2069,72 @@ export function _resetRunReadColumnCache() {
  * @param {() => Promise<boolean>} cloudFn
  * @returns {Promise<boolean>}
  */
-async function columnExists(table, col, manyFn, cloudFn) {
+/**
+ * round-3 audit H2 (GPT deliberation: compromise, MEDIUM): the boolean
+ * `columnExists` below cannot distinguish "confirmed absent" from "an
+ * exhausted transient probe" — both read `false` to every one of its ~25
+ * boolean-context call sites, and GPT's own ruling was explicit that widening
+ * ALL of them to a tri-state contract is disproportionate (it would risk
+ * aborting whole batches for the sake of one optional field, the exact
+ * failure mode this file's NOT-NULL/domain guards exist to prevent). This
+ * helper is the one exception: it exposes the `definitive` bit for the ONE
+ * write site that persists a REPORTED OUTCOME a caller trusts — `updateRunMeta`,
+ * which backs verdict persistence — so a transient probe there can produce an
+ * honest `partial` result instead of silently dropping a supplied value while
+ * reporting `{ok:true}`. `columnExists` itself is now a thin wrapper that
+ * discards `definitive` and keeps its existing boolean contract byte-for-byte
+ * for every other caller.
+ * @returns {Promise<{present: boolean, definitive: boolean}>}
+ */
+async function probeColumnExistence(table, col, manyFn, cloudFn) {
   const key = `${table}.${col}`;
-  if (_runReadColumnCache.has(key)) return _runReadColumnCache.get(key);
+  if (_runReadColumnCache.has(key)) return { present: _runReadColumnCache.get(key), definitive: true };
   if (!await cloudFn()) {
     _runReadColumnCache.set(key, false);
-    return false;
+    return { present: false, definitive: true };
   }
-  try {
-    await manyFn(`SELECT "${col}" FROM ${table} LIMIT 0`);
-    _runReadColumnCache.set(key, true);
-    return true;
-  } catch (err) {
-    // Only a genuine "absent" signal — undefined_column (42703) or
-    // undefined_table (42P01) — is a STABLE capability fact worth caching.
-    // A transient connectivity/auth/timeout error must NOT poison the cache:
-    // caching `false` there would permanently omit a column that actually
-    // exists, silently dropping adjudication/remediation data for the whole
-    // process. On a transient error, omit the column for THIS call only and
-    // leave the cache unset so the next call re-probes.
-    if (err && (err.code === '42703' || err.code === '42P01')) {
-      _runReadColumnCache.set(key, false);
+  // Retry once before degrading (round-1 audit H8/H17, mirroring `probeColumn`'s
+  // established pattern — and its own `isUndefinedColumnError` oracle instead of
+  // a second, drifting inline `42703`/`42P01` check): the cache was already
+  // correctly never poisoned by a transient failure, but a single blip still
+  // silently omitted the probed column from THIS one call with no retry —
+  // load-bearing for Phase 3, whose intra-batch dedup key depends on `hasBucket`
+  // being accurate for the batch it is actually probed for.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await manyFn(`SELECT "${col}" FROM ${table} LIMIT 0`);
+      _runReadColumnCache.set(key, true);
+      return { present: true, definitive: true };
+    } catch (err) {
+      // Only a genuine "absent" signal is a STABLE capability fact worth
+      // caching. A transient connectivity/auth/timeout error must NOT poison
+      // the cache: caching `false` there would permanently omit a column that
+      // actually exists, silently dropping adjudication/remediation data for
+      // the whole process. On a transient error, retry once; if it persists,
+      // omit the column for THIS call only and leave the cache unset so the
+      // next call re-probes.
+      if (isUndefinedColumnError(err)) {
+        _runReadColumnCache.set(key, false);
+        return { present: false, definitive: true };
+      }
+      if (attempt === 0) continue;
+      // round-2 audit H5: both retries failed on a NON-definitive error (not
+      // `isUndefinedColumnError` — a real schema gap would have returned
+      // above). This is an exhausted transient probe, not a confirmed-absent
+      // column, and previously returned bare `false` with no signal — making
+      // it silently indistinguishable from genuine absence. Mirrors
+      // `probeColumn`'s own log line for the same case. The cache is
+      // deliberately left unset (see the comment above the loop) so the next
+      // call re-probes instead of being poisoned by this one blip.
+      process.stderr.write(`  [learning] columnExists(${key}) probe failed transiently (${err.code || err.message}); treating as absent for this call only\n`);
     }
-    return false;
   }
+  return { present: false, definitive: false };
+}
+
+async function columnExists(table, col, manyFn, cloudFn) {
+  const { present } = await probeColumnExistence(table, col, manyFn, cloudFn);
+  return present;
 }
 
 /**
@@ -2376,7 +2606,20 @@ export function normalizeRemediationUpdates(updates) {
  * @returns {Promise<{affected: number, throttleStamped: boolean|null}>} `throttleStamped`
  *   is `null` when no `throttleStamp` was requested.
  */
-async function projectRemediationState(findingId, state, { resolvedRound = null, throttleStamp = null } = {}) {
+/**
+ * `repoId`/`fingerprint` (round-2 audit H2/H3): folded into the terminal
+ * UPDATE's own WHERE clause, not checked via a separate prior SELECT.
+ * `markFindingsRemediation`'s row-id path and `applyRemediationVerificationResults`
+ * used to verify repo ownership with a SELECT and only then issue the write —
+ * a real TOCTOU window (the finding's repo association, or its fingerprint,
+ * could change between the two statements) and, for the row-id path
+ * specifically, the ownership SELECT never even checked the fingerprint the
+ * caller supplied, so a mismatched (id, fingerprint) pair could still target
+ * the wrong finding. Both are `null` by default (no predicate added) for
+ * callers that already resolved the exact row and need no re-check (e.g. the
+ * fingerprint-only path immediately after its own resolving SELECT).
+ */
+async function projectRemediationState(findingId, state, { resolvedRound = null, throttleStamp = null, repoId = null, fingerprint = null } = {}) {
   return withTx(async () => {
     // `user_action` is filled here, and ONLY out of an undecided state.
     //
@@ -2412,10 +2655,20 @@ async function projectRemediationState(findingId, state, { resolvedRound = null,
                  AND (user_action IS NULL OR user_action = 'needs_triage')
                 THEN 'fix-now'
                 ELSE user_action END
-        WHERE id = $2 RETURNING id`,
-      [state, findingId]
+        WHERE id = $2
+          AND ($3::uuid IS NULL OR EXISTS (
+                SELECT 1 FROM audit_runs r WHERE r.id = audit_findings.run_id AND r.repo_id = $3
+              ))
+          AND ($4::text IS NULL OR finding_fingerprint = $4)
+        RETURNING id`,
+      [state, findingId, repoId, fingerprint]
     );
-    if (rows.length === 0) return { affected: 0, throttleStamped: null }; // 0-row → do not write a phantom event
+    // 0-row → do not write a phantom event. Indistinguishable here between
+    // "no such row" and "row exists but failed the repoId/fingerprint
+    // predicate" — both mean the same thing to a caller: this write did not
+    // happen, for a reason that must not be silently retried against a
+    // different row.
+    if (rows.length === 0) return { affected: 0, throttleStamped: null };
     // UPDATE, never delete+insert: `finding_adjudication_events.adjudication_outcome`
     // is NOT NULL with no default, and this projector never re-adjudicates a
     // finding (Gemini-gate-2 — that would desync the DB from a human
@@ -2442,6 +2695,19 @@ async function projectRemediationState(findingId, state, { resolvedRound = null,
         [throttleStamp.checkedAtCommit, findingId]
       );
       throttleStamped = throttleRows.length > 0;
+      // round-3 audit M1: checking this invariant AFTER projectRemediationState
+      // returns (round-2 audit H1's fix, in applyRemediationVerificationResults)
+      // only detects a violation post-commit — this transaction has already
+      // committed the terminal write by the time the caller sees it. Provably
+      // unreachable in practice (same transaction, same row id the terminal
+      // UPDATE just matched — Postgres holds that row's lock across both
+      // statements), but "provably unreachable" is exactly why this must throw
+      // HERE, inside the transaction: if it is ever violated, the whole write
+      // should roll back rather than commit a terminal state whose throttle
+      // stamp silently failed to land alongside it.
+      if (!throttleStamped) {
+        throw new Error(`projectRemediationState(${findingId}): throttle-stamp UPDATE affected 0 rows in the same transaction as the terminal write it must accompany — invariant violated`);
+      }
     }
     return { affected: rows.length, throttleStamped };
   });
@@ -2449,8 +2715,14 @@ async function projectRemediationState(findingId, state, { resolvedRound = null,
 
 export async function markFindingsRemediation(repoId, updates) {
   if (!repoId || !await isCloudEnabled()) return { updated: 0, attempted: 0 };
-  const { valid } = normalizeRemediationUpdates(updates);
-  if (valid.length === 0) return { updated: 0, attempted: 0 };
+  const { valid, rejected } = normalizeRemediationUpdates(updates);
+  // `rejected` (round-1 audit M2): previously computed by `normalizeRemediationUpdates`
+  // and then silently discarded — a caller could not distinguish "5 sent, 5
+  // processed" from "5 sent, 2 rejected as malformed input, 3 processed",
+  // which matters most for exactly the case Phase 9's null-safety fix added
+  // (a non-object array entry): catching bad input only to make it invisible
+  // in the receipt defeats part of the point of catching it.
+  if (valid.length === 0) return { updated: 0, attempted: 0, rejected: rejected.length };
   // `attempted` is returned alongside `updated` (audit 2026-08-13) so a caller
   // can see a SHORTFALL without re-deriving it. This is fail-open PER ROW: a
   // throw is caught, logged, and the loop continues — so `updated` alone cannot
@@ -2466,20 +2738,17 @@ export async function markFindingsRemediation(repoId, updates) {
         // via selectReconcileTargets) already identified this SPECIFIC divergent
         // row — address it directly instead of re-resolving "newest row for this
         // fingerprint", which can silently reconcile the wrong row when two runs
-        // in the window both raised the same fingerprint. Repo-scoped, not
-        // trusted bare: an id from another repo is never used to update a row
-        // (the same Root-Cause-1 bypass class every other site in this plan
-        // closes) — verified via a join, never a raw `WHERE id = $1`.
-        const owned = await one(
-          `SELECT f.id FROM audit_findings f JOIN audit_runs r ON r.id = f.run_id
-            WHERE f.id = $1 AND r.repo_id = $2`,
-          [id, repoId]
-        );
-        if (!owned?.id) {
-          process.stderr.write(`  [lifecycle] markFindingsRemediation(${fp}): row id ${id} not owned by repo ${repoId} — skipped\n`);
-          continue;
-        }
-        findingId = owned.id;
+        // in the window both raised the same fingerprint.
+        //
+        // repo ownership AND fingerprint (round-2 audit H2/H3) are enforced in
+        // `projectRemediationState`'s own UPDATE predicate below, not via a
+        // prior SELECT here — a SELECT-then-write leaves a TOCTOU window where
+        // the finding's repo association (or fingerprint) could change between
+        // the two statements, and a separate ownership-only SELECT never
+        // checked that `id` actually carries the fingerprint the caller
+        // supplied, so a mismatched (id, fingerprint) pair could silently
+        // target the wrong finding.
+        findingId = id;
       } else {
         // Fingerprint-only path — kept for the ledger-driven /audit-code
         // projection caller, which has no row id (the on-disk ledger indexes
@@ -2495,14 +2764,19 @@ export async function markFindingsRemediation(repoId, updates) {
         if (!finding?.id) continue;
         findingId = finding.id;
       }
-      const { affected } = await projectRemediationState(findingId, state, { resolvedRound });
+      // repoId + fingerprint always threaded through: for the row-id path
+      // this IS the ownership/identity check (see above); for the
+      // fingerprint-only path it's a same-transaction re-assertion of what
+      // the resolving SELECT just found, closing that path's own smaller
+      // TOCTOU window between resolve and write.
+      const { affected } = await projectRemediationState(findingId, state, { resolvedRound, repoId, fingerprint: fp });
       if (affected > 0) updated += 1;
-      else process.stderr.write(`  [lifecycle] markFindingsRemediation(${fp}): 0-row update (finding vanished) — not counted\n`);
+      else process.stderr.write(`  [lifecycle] markFindingsRemediation(${fp}): 0-row update (not found, not owned by repo ${repoId}, or fingerprint mismatch) — not counted\n`);
     } catch (err) {
       process.stderr.write(`  [lifecycle] markFindingsRemediation(${fp}) failed: ${err.message}\n`);
     }
   }
-  return { updated, attempted: valid.length };
+  return { updated, attempted: valid.length, rejected: rejected.length };
 }
 
 // ── Remediation-state verification reconciler writer ────────────────────────
@@ -2545,10 +2819,31 @@ export async function applyRemediationVerificationResults(repoId, actions) {
   // verdict still lands correctly either way — only the re-check throttle is
   // unavailable until the store migrates, which fails toward MORE
   // verification (never toward silently skipping a real check).
-  const hasThrottleColumns = await columnExists('audit_findings', 'remediation_last_checked_at', many, isCloudEnabled);
+  //
+  // round-4 audit H1: `columnExists`'s bare boolean can't tell "confirmed
+  // absent" from "an exhausted transient probe" — both used to read as
+  // "throttle columns absent" here, so a rare blip could silently skip
+  // EVERY action's throttle stamp for the whole batch, not just log-and-omit
+  // one field the way `updateRunMeta`'s targeted fix (round-3 H2) does.
+  // `probeColumnExistence` exposes `definitive` so this can distinguish them:
+  // a genuinely un-migrated store still degrades exactly as before, but an
+  // unresolved probe now logs loudly and is NOT silently treated the same as
+  // confirmed absence.
+  const { present: hasThrottleColumns, definitive: throttleColumnsDefinitive } =
+    await probeColumnExistence('audit_findings', 'remediation_last_checked_at', many, isCloudEnabled);
+  if (!hasThrottleColumns && !throttleColumnsDefinitive) {
+    process.stderr.write(`  [lifecycle] applyRemediationVerificationResults: remediation_last_checked_at probe failed transiently — treating throttle columns as unavailable for THIS batch only (not a confirmed un-migrated store); re-verification may fire sooner than intended for these ${valid.length} action(s)\n`);
+  }
   let updated = 0;
   for (const { findingId, outcome, checkedAtCommit } of valid) {
     try {
+      // Repo-scope verification (write-boundary-hardening plan round-1 audit
+      // H1/H10, hardened round-2 H2): `repoId` is enforced in EACH write's own
+      // WHERE clause below (via `projectRemediationState`'s `repoId` option,
+      // or inline here for the throttle-only path) — not via a prior SELECT.
+      // A SELECT-then-write here left a TOCTOU window where the finding's
+      // repo association could change between the ownership check and the
+      // write; folding the check into the write predicate closes it.
       if (outcome === 'resolved') {
         // write-boundary-hardening plan Phase 8: the terminal write and the
         // throttle stamp are now ONE atomic call — see projectRemediationState's
@@ -2559,11 +2854,19 @@ export async function applyRemediationVerificationResults(repoId, actions) {
         const { affected } = await projectRemediationState(findingId, 'verified', {
           resolvedRound: null,
           throttleStamp: hasThrottleColumns ? { checkedAtCommit } : null,
+          repoId,
         });
         if (affected === 0) {
-          process.stderr.write(`  [lifecycle] applyRemediationVerificationResults(${findingId}): 0-row update on the terminal write (finding vanished) — not counted\n`);
+          process.stderr.write(`  [lifecycle] applyRemediationVerificationResults(${findingId}): 0-row update on the terminal write (not found, or not owned by repo ${repoId}) — not counted\n`);
           continue;
         }
+        // round-3 audit M1: the throttle-stamp/terminal-write invariant is now
+        // enforced INSIDE projectRemediationState's own transaction (it throws
+        // and rolls back there, rather than this caller detecting it after the
+        // fact once the write has already committed) — see its throttleStamp
+        // block. `affected > 0` here is therefore already a guarantee that
+        // either both landed or the whole write rolled back and this call
+        // rejected with an error.
         updated += 1;
         continue;
       }
@@ -2573,14 +2876,17 @@ export async function applyRemediationVerificationResults(repoId, actions) {
         continue;
       }
       // Not 'resolved': a single, already-atomic UPDATE — no terminal write
-      // to compose with here, so this path is unchanged.
+      // to compose with here, but STILL repo-scoped in the predicate itself
+      // (round-2 audit H2), not via a separate prior SELECT.
       const rows = await many(
         `UPDATE audit_findings SET remediation_last_checked_at = now(), remediation_last_checked_commit = $1
-          WHERE id = $2 RETURNING id`,
-        [checkedAtCommit, findingId]
+          WHERE id = $2
+            AND EXISTS (SELECT 1 FROM audit_runs r WHERE r.id = audit_findings.run_id AND r.repo_id = $3)
+          RETURNING id`,
+        [checkedAtCommit, findingId, repoId]
       );
       if (rows.length > 0) updated += 1;
-      else process.stderr.write(`  [lifecycle] applyRemediationVerificationResults(${findingId}): 0-row tracking-column update (finding vanished) — not counted\n`);
+      else process.stderr.write(`  [lifecycle] applyRemediationVerificationResults(${findingId}): 0-row tracking-column update (not found, or not owned by repo ${repoId}) — not counted\n`);
     } catch (err) {
       process.stderr.write(`  [lifecycle] applyRemediationVerificationResults(${findingId}) failed: ${err.message}\n`);
     }
