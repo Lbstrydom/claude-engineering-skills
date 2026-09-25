@@ -7,7 +7,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadLedger, writeLedger, reconcile, deriveIndex, statusFor, inferAmbiguousFromStatus } from '../scripts/lib/requirements/ledger.mjs';
+import { OverridesSchema } from '../scripts/lib/requirements/schema.mjs';
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function cand(over = {}) {
   return {
@@ -88,6 +92,31 @@ describe('reconcile — scoped partial merge (audit G1)', () => {
     assert.ok(l.requirements.find((r) => r.id === 'REQ-safety-bbbbbbbb'), 'b-file requirement retained');
     assert.ok(l.requirements.find((r) => r.id === 'REQ-correctness-aaaaaaaa'), 'new requirement added');
     assert.deepEqual(l.coveredFiles, ['scripts/lib/requirements/ledger.mjs', 'scripts/other.mjs']);
+  });
+});
+
+describe('reconcile — the real committed overrides.json is applied (regression)', () => {
+  // The committed .requirements/overrides.json shipped for weeks as a
+  // {$comment, overrides:{...}} wrapper OverridesSchema has never accepted
+  // (`node scripts/requirements.mjs reconcile` threw on it every time), so
+  // its one entry — a correction to REQ-persistence-7bc1224d — never actually
+  // reached ledger.json. This drives the real file through the real
+  // OverridesSchema and reconcile(), not a hand-rolled override object, so a
+  // future re-drift back to an unparseable shape fails here instead of
+  // silently no-op'ing reconcile again.
+  it('parses and, applied over a matching candidate, replaces its assertion', () => {
+    const overridesPath = path.join(REPO_ROOT, '.requirements/overrides.json');
+    if (!fs.existsSync(overridesPath)) return; // absent is a valid state (README)
+    const overrides = OverridesSchema.parse(JSON.parse(fs.readFileSync(overridesPath, 'utf-8')));
+    const [id] = Object.keys(overrides);
+    if (!id) return; // nothing to exercise
+    const l = reconcile({
+      candidates: [cand({ id, assertion: 'The stale, pre-override extracted text.' })],
+      coveredFiles: COVERED, gapAssessments: [], overrides,
+    });
+    const req = l.requirements.find((r) => r.id === id);
+    assert.ok(req, `${id} present in the reconciled ledger`);
+    if (overrides[id].assertion) assert.equal(req.assertion, overrides[id].assertion.slice(0, 200));
   });
 });
 
