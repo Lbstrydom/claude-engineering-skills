@@ -25,6 +25,8 @@
 import { many, one, query, insertReturning, updateWhere, deleteWhere, withTx, pgArray } from '../db/query.mjs';
 import { getPool } from '../db/client.mjs';
 import { isCloudEnabled, getRepoIdByName } from './repo.mjs';
+import { findingKeyString, selectFindingRow } from './finding-identity.mjs';
+import { applyFindingWrite } from './finding-write.mjs';
 // Imported, never re-exported (learning-store.mjs does `export *` from here).
 import { CREDIT_BRANCH_SHADOW_WHERE, CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE, pendingQueueSql, UNRULED_WHERE } from './final-review-credit-population.mjs';
 import crypto from 'node:crypto';
@@ -107,9 +109,24 @@ async function applyRecordTimeSuppression(runId, findings, passName) {
  * `normalizeRemediationUpdates` below) so the write-verification and
  * run-scoping behaviour is directly unit-testable without a live DB.
  *
+ * `isCallerTx` (write-boundary-hardening plan Phase 7, debt 3c3f95142582):
+ * routed through `finding-write.mjs`'s `applyFindingWrite` with
+ * `expectAffected: 0` — a 0-row result here is the `WHERE EXISTS(...)` guard
+ * legitimately matching nothing (NOT a Postgres error, and NOT itself a sign
+ * the transaction is poisoned), so it stays a per-row `failed` count exactly
+ * as before. A genuinely THROWN error (constraint violation, bad vector
+ * literal, connection issue) is what poisons a caller-supplied transaction —
+ * previously swallowed unconditionally by this function's own `try`/`catch`
+ * even when `exec` was the caller's open transaction client, so the caller's
+ * later `COMMIT` silently degraded to `ROLLBACK` with no signal. `isCallerTx`
+ * makes that propagate instead, mirroring `recordFindings`' own
+ * `if (opts.client) throw err` for its own statement — set from the SAME
+ * `!!opts.client` `recordFindings` already computes, not re-derived.
+ *
+ * @param {boolean} [isCallerTx] - true when `exec` is inside an open transaction
  * @returns {Promise<{persisted: number, failed: number}>}
  */
-export async function persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByFingerprint, runId, embeddingSpace) {
+export async function persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByFingerprint, runId, embeddingSpace, isCallerTx = false) {
   const result = { persisted: 0, failed: 0 };
   if (!vectorByFinding || vectorByFinding.size === 0) return result;
   // The space these vectors were ACTUALLY made in, passed down from the call
@@ -123,25 +140,35 @@ export async function persistKeptEmbeddings(exec, keptFindings, vectorByFinding,
     if (!vec) continue;
     const id = idByFingerprint.get(fingerprintOf(f));
     if (!id) continue;
-    try {
-      const text = (typeof f.detail === 'string' ? f.detail : '').slice(0, 500);
-      const hash = crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
-      const res = await exec.query(
-        `INSERT INTO finding_embeddings (finding_id, embedding, embedding_model, dimension, snapshot_hash)
-         SELECT $1::uuid, $2::vector, $3, $4, $5
-          WHERE EXISTS (SELECT 1 FROM audit_findings af WHERE af.id = $1::uuid AND af.run_id = $6::uuid)
-         ON CONFLICT (finding_id) DO UPDATE SET embedding=EXCLUDED.embedding, embedding_model=EXCLUDED.embedding_model, dimension=EXCLUDED.dimension, snapshot_hash=EXCLUDED.snapshot_hash, created_at=now()`,
-        [id, toVectorLiteral(vec), space.provenanceId, space.dim, hash, runId]);
-      if ((res?.rowCount ?? 0) === 0) {
-        result.failed++;
-        process.stderr.write(`  [semantic-suppress] embedding write affected 0 rows for finding ${id} (run ${runId}) — not persisted\n`);
-        continue;
-      }
-      result.persisted++;
-    } catch (err) {
+    const text = (typeof f.detail === 'string' ? f.detail : '').slice(0, 500);
+    const hash = crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
+    // expectAffected:0 — a 0-row EXISTS-guard miss must NOT be treated the
+    // same as a thrown error by applyFindingWrite; only a real exception
+    // should propagate under isCallerTx:true. This function decides what a
+    // 0-row result means (below), applyFindingWrite decides only whether an
+    // EXCEPTION propagates.
+    const write = await applyFindingWrite(
+      exec,
+      {
+        text: `INSERT INTO finding_embeddings (finding_id, embedding, embedding_model, dimension, snapshot_hash)
+               SELECT $1::uuid, $2::vector, $3, $4, $5
+                WHERE EXISTS (SELECT 1 FROM audit_findings af WHERE af.id = $1::uuid AND af.run_id = $6::uuid)
+               ON CONFLICT (finding_id) DO UPDATE SET embedding=EXCLUDED.embedding, embedding_model=EXCLUDED.embedding_model, dimension=EXCLUDED.dimension, snapshot_hash=EXCLUDED.snapshot_hash, created_at=now()`,
+        values: [id, toVectorLiteral(vec), space.provenanceId, space.dim, hash, runId],
+      },
+      { expectAffected: 0, isCallerTx }
+    );
+    if (write.outcome === 'failed') {
       result.failed++;
-      process.stderr.write(`  [semantic-suppress] embedding persistence failed for finding ${id}: ${err.message?.slice(0, 150)}\n`);
+      process.stderr.write(`  [semantic-suppress] embedding persistence failed for finding ${id}: ${write.error?.message?.slice(0, 150)}\n`);
+      continue;
     }
+    if (write.affected === 0) {
+      result.failed++;
+      process.stderr.write(`  [semantic-suppress] embedding write affected 0 rows for finding ${id} (run ${runId}) — not persisted\n`);
+      continue;
+    }
+    result.persisted++;
   }
   return result;
 }
@@ -244,6 +271,25 @@ async function detectPassStatsRoundColumn() {
  * Insert a new audit_runs row. Returns the new run's id, or null when
  * cloud is disabled / the insert fails.
  */
+/**
+ * Symmetric repo-identity match for `recordRunStart`'s reuse paths
+ * (write-boundary-hardening plan Phase 6, debt 68dc4939db8b/6706b21a3335).
+ * The prior guard only refused reuse when BOTH `existing.repo_id` and
+ * `repoId` were present and differed — a mixed case (one side null, the
+ * other set) silently allowed reuse in either direction: a legacy row with
+ * a null `repo_id`, or a caller that forgot to thread `repoId`. Reuse is now
+ * allowed only when both are non-null and equal, or both are null/absent
+ * (the genuine single-tenant/local-only case) — any mixed case refuses.
+ * @param {string|null|undefined} a
+ * @param {string|null|undefined} b
+ * @returns {boolean}
+ */
+function repoIdentityMatches(a, b) {
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  return a === b;
+}
+
 export async function recordRunStart(repoId, planFile, mode, { scopeMode, commitSha, branch, planId, runId, experimentTag } = {}) {
   if (!await isCloudEnabled()) return null;
   // Run-unification (WS1 §1.2/§1.3b): when the orchestrator threads an explicit
@@ -263,7 +309,7 @@ export async function recordRunStart(repoId, planFile, mode, { scopeMode, commit
         // legitimately collides across repos, so a mismatch means a
         // mis-threaded id — refuse to reuse (return null → the audit proceeds
         // cloud-degraded rather than corrupting another repo's run).
-        if (existing.repo_id && repoId && existing.repo_id !== repoId) {
+        if (!repoIdentityMatches(existing.repo_id, repoId)) {
           process.stderr.write(`  [learning] recordRunStart: run_id ${runId} belongs to a different repo — refusing reuse\n`);
           return null;
         }
@@ -309,7 +355,7 @@ export async function recordRunStart(repoId, planFile, mode, { scopeMode, commit
       // Same repo-scoped guard as the primary reuse path (Gemini R2): never
       // reuse a row that raced in for a DIFFERENT repo — that would attach this
       // audit's findings to another repo's run.
-      if (existing?.id && (!existing.repo_id || !repoId || existing.repo_id === repoId)) {
+      if (existing?.id && repoIdentityMatches(existing.repo_id, repoId)) {
         return existing.id;
       }
     }
@@ -424,6 +470,16 @@ export async function recordRunComplete(runId, stats) {
  * Non-destructive partial update of run metadata (only the supplied
  * fields are written). Best-effort.
  */
+/**
+ * @returns {Promise<{ok: boolean}|undefined>} `{ok:false}` on a caught write
+ *   failure (write-boundary-hardening plan Phase 10) — mechanical, not new
+ *   error-handling: the existing `try`/`catch` below already caught this
+ *   outcome and only logged it; this makes it ALSO a return value so
+ *   `recordFinalReviewFindings` can tell. Every pre-existing caller ignores
+ *   the return value, so this is additive. `undefined` (the early returns
+ *   above) means "nothing to write" — a different case from a write that was
+ *   attempted and failed.
+ */
 export async function updateRunMeta(runId, meta) {
   if (!runId) return;
   const update = {};
@@ -485,8 +541,10 @@ export async function updateRunMeta(runId, meta) {
   if (!await isCloudEnabled()) return;
   try {
     await updateWhere('audit_runs', update, { id: runId });
+    return { ok: true };
   } catch (err) {
     process.stderr.write(`  [learning] updateRunMeta failed: ${err.message}\n`);
+    return { ok: false };
   }
 }
 
@@ -647,6 +705,12 @@ export function buildFindingRow(f, { runId, passName, round, columns = {} }) {
  *   transaction) instead of grabbing its own pool connection. This lets a
  *   caller make a delete+insert atomic (final-review replace-persistence). The
  *   default `{}` preserves every existing call site byte-for-byte.
+ *   **Invariant (write-boundary-hardening plan Phase 7)**: `opts.client`,
+ *   when supplied, MUST be a client from an OPEN transaction — passing a bare
+ *   pool connection here is a caller bug, not a supported mode. This function's
+ *   own `if (opts.client) throw err` below already relied on that equivalence
+ *   silently; `persistKeptEmbeddings`' `isCallerTx` parameter now inherits the
+ *   same, now-documented, invariant instead of re-deriving it.
  *
  * **Returns a RECEIPT** (durability plan Phase 3). Every existing caller ignores
  * the return value, so this is additive — but `durableWrite`'s contract is that
@@ -697,13 +761,26 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   // Keep the FIRST occurrence: the batch is ordered, and a later duplicate of an
   // already-seen fingerprint carries no information the first does not. Never
   // silent — a dropped finding is exactly what this plan exists to make visible.
+  //
+  // Keyed on (fingerprint, bucket) via findingKeyString, not fingerprint alone
+  // (write-boundary-hardening plan Phase 3, fixing debt 1b5bce68d2ce/883d3001f45f):
+  // the DB-level ON CONFLICT target a few lines below is already scoped by
+  // pass_name+bucket, so an intra-batch dedup on fingerprint alone silently
+  // collapsed a same-fingerprint-different-bucket pair BEFORE that correctly-
+  // scoped statement ever ran. `bucket` is read through the same
+  // `normaliseBucket(f._bucket)` transform `buildFindingRow` applies below, so
+  // the dedup key matches what actually lands in the row — and only when this
+  // store has the `bucket` column at all (`hasBucket`); an un-migrated store
+  // has no column to disambiguate on, matching the DB conflict target's own
+  // `hasBucket` condition.
   const keptFindings = [];
-  const seenFingerprints = new Set();
+  const seenKeys = new Set();
   let intraBatchDuplicates = 0;
   for (const f of suppressionKept) {
     const fp = fingerprintOf(f);
-    if (seenFingerprints.has(fp)) { intraBatchDuplicates++; continue; }
-    seenFingerprints.add(fp);
+    const key = findingKeyString({ fingerprint: fp, bucket: hasBucket ? normaliseBucket(f._bucket) : undefined });
+    if (seenKeys.has(key)) { intraBatchDuplicates++; continue; }
+    seenKeys.add(key);
     keptFindings.push(f);
   }
   if (intraBatchDuplicates > 0) {
@@ -841,7 +918,7 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
     // targets. Best-effort; keyed by fingerprint→id (unique within a batch).
     if (vectorByFinding && vectorByFinding.size > 0) {
       const idByFingerprint = new Map((inserted.rows || []).map((r) => [r.finding_fingerprint, r.id]));
-      const embedResult = await persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByFingerprint, runId, embeddingSpace);
+      const embedResult = await persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByFingerprint, runId, embeddingSpace, !!opts.client);
       if (embedResult.failed > 0) {
         process.stderr.write(`  [semantic-suppress] embedding persistence: ${embedResult.persisted} ok, ${embedResult.failed} failed this batch\n`);
       }
@@ -917,28 +994,14 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
  *                           // verdict is deliberately NOT written here — it is
  *                           // observation-only and must never gate a build.
  * }} payload
+ * @returns {Promise<{findingsRecorded: boolean, verdictPersisted: boolean}|undefined>}
+ *   `undefined` only for the cloud-off/no-runId early return (nothing was
+ *   attempted). Once findings recording is attempted, always a definite
+ *   shape — see the write-boundary-hardening plan Phase 10 note below.
  */
 export async function recordFinalReviewFindings(runId, { primary = [], shadow = [], shadowRan = false, models = {}, verdict = null } = {}) {
   if (!runId || !await isCloudEnabled()) return;
-  // (a) Run metadata — overwrite-idempotent, so it's fine outside the findings
-  // tx. Null shadow fields are simply not written (updateRunMeta guards on
-  // `!= null`), which is correct when the shadow didn't run.
-  await updateRunMeta(runId, {
-    // The Step-7 verdict. Written HERE, by the final reviewer that produced it
-    // — `recordRunComplete` runs before Step 7 and has always hardcoded null
-    // with a comment claiming this function would fill it in. Nothing did, so
-    // `gemini_verdict` was NULL on every run ever recorded, which in turn made
-    // "did the final gate approve this?" unanswerable from the store.
-    // `updateRunMeta` skips null, so a reviewer that produced no verdict still
-    // leaves the column honestly empty rather than writing a fake value.
-    geminiVerdict: verdict ?? null,
-    finalReviewModel: models.primaryModel,
-    finalReviewShadowModel: models.shadowModel,
-    finalReviewShadowInputTokens: models.shadowInputTokens,
-    finalReviewShadowOutputTokens: models.shadowOutputTokens,
-    finalReviewShadowLatencyMs: models.shadowLatencyMs,
-  });
-  // (b) Replace the findings — UPSERT + prune-unruled-absentees, never DELETE
+  // (a) Replace the findings — UPSERT + prune-unruled-absentees, never DELETE
   // (final-review-credit-projection.md Seam 3). Until 2026-09-14 this function
   // unconditionally DELETEd every 'final-review'/'final-review-shadow' row for
   // the run before re-inserting, so a re-run (round 2 of a Gemini gate, or a
@@ -981,8 +1044,50 @@ export async function recordFinalReviewFindings(runId, { primary = [], shadow = 
     // The shadow rows belong to a review whose primary half is now unrecorded —
     // writing them alone would produce a run with shadow-only findings and no
     // baseline to diff against, which reads as "the primary found nothing".
-    return;
+    // Nothing landed at all (write-boundary-hardening plan Phase 10) — the
+    // reorder below means run metadata was never attempted either, so both
+    // flags read false, not the mixed "verdict recorded, findings not" state
+    // this reorder exists to prevent.
+    return { findingsRecorded: false, verdictPersisted: false };
   }
+  // (b) Run metadata — moved to run AFTER tx1 succeeds (write-boundary-
+  // hardening plan Phase 10, debt 3d77eba7cae1). Previously ran BEFORE tx1:
+  // the columns here are overwrite-idempotent on RETRY, but that argument
+  // never covered a *first-ever* call whose findings tx then failed — the
+  // early return above already correctly skipped recording anything further
+  // in that case, yet the metadata write had already landed, leaving a
+  // `gemini_verdict` persisted with no findings behind it and no guarantee a
+  // retry would ever happen. Conditioning this write on tx1's success closes
+  // that. The mirror-image case (findings commit, this write then fails) is a
+  // real, distinct, and DELIBERATELY accepted gap — not chased into full
+  // cross-write-path atomicity, since `updateRunMeta` is shared,
+  // non-transactional infrastructure used by unrelated callers (model-A/B/C
+  // shadow assignment) with no atomicity relationship to `audit_findings`
+  // writes; retrofitting it, or duplicating its column-probed UPDATE inline
+  // inside this transaction, would both be larger, riskier changes than this
+  // fix's scope for a less consequential defect (a stale/missing verdict, not
+  // a misleading one). Instead: `verdictPersisted` below reports it, and the
+  // one real production caller (`runShadowAndPersist` in
+  // scripts/lib/final-review/shadow.mjs) is wired to surface it loudly.
+  const metaResult = await updateRunMeta(runId, {
+    // The Step-7 verdict. Written HERE, by the final reviewer that produced it
+    // — `recordRunComplete` runs before Step 7 and has always hardcoded null
+    // with a comment claiming this function would fill it in. Nothing did, so
+    // `gemini_verdict` was NULL on every run ever recorded, which in turn made
+    // "did the final gate approve this?" unanswerable from the store.
+    // `updateRunMeta` skips null, so a reviewer that produced no verdict still
+    // leaves the column honestly empty rather than writing a fake value.
+    geminiVerdict: verdict ?? null,
+    finalReviewModel: models.primaryModel,
+    finalReviewShadowModel: models.shadowModel,
+    finalReviewShadowInputTokens: models.shadowInputTokens,
+    finalReviewShadowOutputTokens: models.shadowOutputTokens,
+    finalReviewShadowLatencyMs: models.shadowLatencyMs,
+  });
+  // `metaResult` is `undefined` when updateRunMeta had nothing to write (every
+  // meta field null) — that is not a failure, so it counts as persisted here;
+  // only an explicit `{ok:false}` (a caught write error) is a real failure.
+  const verdictPersisted = metaResult?.ok !== false;
   // tx2 — shadow. Its own transaction so a provider-shaped defect here cannot
   // roll back tx1. A failure is loud but non-fatal: the A/B loses one
   // observation, the audit record stays intact.
@@ -1018,6 +1123,7 @@ export async function recordFinalReviewFindings(runId, { primary = [], shadow = 
       );
     }
   }
+  return { findingsRecorded: true, verdictPersisted };
 }
 
 /**
@@ -1119,23 +1225,22 @@ export async function adjudicateFinalReviewFinding(runId, fingerprint, action, o
   try {
     const resolved = await resolveFindingBucket(runId, fingerprint, opts);
     if (!resolved.ok) return { ...resolved, updated: 0, cloud: true };
-    const bucket = resolved.bucket;
-    // `bucket` may legitimately be null (a primary finding), which updateWhere
-    // renders as `IS NULL` — the reason this uses a raw predicate rather than
-    // an equality object.
+    // Write by the resolved row's `id` (write-boundary-hardening plan Phase
+    // 4) — never by re-deriving a `(run_id, fingerprint, bucket)` predicate a
+    // second time, which leaves a TOCTOU window between "which row did we
+    // mean" and "which row did we actually update".
     const res = await query(
       `UPDATE audit_findings
-          SET user_action = $3, adjudication_outcome = $4, decided_at = NOW()
-        WHERE run_id = $1 AND finding_fingerprint = $2
-          AND bucket IS NOT DISTINCT FROM $5`,
-      [runId, fingerprint, userAction, outcome, bucket]
+          SET user_action = $2, adjudication_outcome = $3, decided_at = NOW()
+        WHERE id = $1`,
+      [resolved.id, userAction, outcome]
     );
     const updated = res.rowCount ?? 0;
     if (updated === 0) {
       // Reachable only on a concurrent delete between the probe and the write.
       return { ok: false, updated: 0, cloud: true, reason: 'no-rows-affected' };
     }
-    return { ok: true, updated, cloud: true, bucket };
+    return { ok: true, updated, cloud: true, bucket: resolved.bucket };
   } catch (err) {
     process.stderr.write(`  [learning] adjudicateFinalReviewFinding failed: ${err.message}\n`);
     return { ok: false, updated: 0, cloud: true, reason: `db-error: ${err.message}` };
@@ -1143,39 +1248,66 @@ export async function adjudicateFinalReviewFinding(runId, fingerprint, action, o
 }
 
 /**
- * Resolve which `bucket` a (runId, fingerprint) pair refers to.
+ * Resolve which `bucket` (and, critically, which ROW `id`) a (runId,
+ * fingerprint) pair refers to.
  *
  * Extracted so `adjudicateFinalReviewFinding` and `recordFinalReviewFix` share
  * ONE disambiguation oracle — a second copy would be free to drift, and the
  * rule it encodes (never guess between primary and shadow) is exactly the one
  * whose violation would corrupt the A/B comparison.
  *
+ * write-boundary-hardening plan Phase 4 (debt 49e4b2b29f9f/c4a5540210a8): the
+ * previous `SELECT DISTINCT bucket` query silently collapsed two rows that
+ * share a fingerprint AND a bucket value but differ in `pass_name` (e.g. a
+ * `'merged'`-pass finding and a `'final-review'`-pass finding, both
+ * `bucket=NULL`) into a single DISTINCT bucket — so the "ambiguous, refuse"
+ * branch never fired even though the identity was genuinely ambiguous, and a
+ * caller's subsequent `bucket`-only `WHERE` would match BOTH rows. This
+ * queries every matching ROW (not `DISTINCT bucket`) and refuses whenever
+ * more than one row remains after applying whatever the caller supplied —
+ * whether that ambiguity is across buckets or, now, across pass_names within
+ * one bucket. Reason vocabulary (`no-match` / `no-match-in-bucket` /
+ * `ambiguous-bucket`) is unchanged so existing callers/tests keep working;
+ * `ok:true` now also carries the resolved row's `id`, so a caller can write
+ * back `WHERE id = $resolvedId` instead of re-deriving a `(run_id,
+ * fingerprint, bucket)` predicate a second time.
+ *
  * @param {string} runId
  * @param {string} fingerprint
  * @param {{bucket?: string|null}} [opts] - omit to auto-resolve; pass explicitly to disambiguate
- * @returns {Promise<{ok: true, bucket: string|null} | {ok: false, reason: string, buckets?: Array<string|null>}>}
+ * @returns {Promise<{ok: true, id: string, bucket: string|null} | {ok: false, reason: string, buckets?: Array<string|null>}>}
  */
 async function resolveFindingBucket(runId, fingerprint, opts = {}) {
-  const candidates = await many(
-    `SELECT DISTINCT bucket FROM audit_findings
+  const rows = await many(
+    `SELECT id, bucket FROM audit_findings
       WHERE run_id = $1 AND finding_fingerprint = $2`,
     [runId, fingerprint]
   );
-  if (candidates.length === 0) return { ok: false, reason: 'no-match' };
+  if (rows.length === 0) return { ok: false, reason: 'no-match' };
   if (Object.prototype.hasOwnProperty.call(opts, 'bucket')) {
     const bucket = opts.bucket;
-    if (!candidates.some((c) => c.bucket === bucket)) {
-      return { ok: false, reason: 'no-match-in-bucket', buckets: candidates.map((c) => c.bucket) };
+    const matching = rows.filter((r) => r.bucket === bucket);
+    if (matching.length === 0) {
+      return { ok: false, reason: 'no-match-in-bucket', buckets: [...new Set(rows.map((r) => r.bucket))] };
     }
-    return { ok: true, bucket };
+    if (matching.length > 1) {
+      // Same fingerprint AND same (caller-supplied) bucket, but more than one
+      // row — differing only by pass_name. Still ambiguous; the caller's
+      // explicit bucket did not fully pin down a single row.
+      return { ok: false, reason: 'ambiguous-bucket', buckets: [bucket] };
+    }
+    return { ok: true, id: matching[0].id, bucket };
   }
-  if (candidates.length > 1) {
-    // Do NOT guess. Two buckets sharing a fingerprint are two independent
-    // observations (primary vs shadow) — collapsing them would corrupt the
-    // A/B comparison the shadow experiment exists to make.
-    return { ok: false, reason: 'ambiguous-bucket', buckets: candidates.map((c) => c.bucket) };
+  const distinctBuckets = [...new Set(rows.map((r) => r.bucket))];
+  if (distinctBuckets.length > 1 || rows.length > 1) {
+    // Do NOT guess. Either two DIFFERENT bucket values share this fingerprint
+    // (primary vs shadow — the original check), OR one bucket value is shared
+    // by more than one row (the pass_name-blind-spot this fix closes).
+    // Collapsing either would corrupt the A/B comparison the shadow
+    // experiment exists to make, or silently target the wrong row.
+    return { ok: false, reason: 'ambiguous-bucket', buckets: distinctBuckets };
   }
-  return { ok: true, bucket: candidates[0].bucket };
+  return { ok: true, id: rows[0].id, bucket: rows[0].bucket };
 }
 
 /**
@@ -1227,35 +1359,47 @@ export async function recordFinalReviewFix(runId, fingerprint, opts = {}) {
     if (!resolved.ok) return { ...resolved, updated: 0, cloud: true };
     const bucket = resolved.bucket;
 
-    const existing = await one(
-      `SELECT user_action, adjudication_outcome FROM audit_findings
-        WHERE run_id = $1 AND finding_fingerprint = $2 AND bucket IS NOT DISTINCT FROM $3
-        LIMIT 1`,
-      [runId, fingerprint, bucket]
-    );
-    // A completed dismissal on EITHER axis (final-review-credit-projection.md
-    // Seam 1) closes this off — a finding the audit loop's own triage already
-    // ruled `dismissed` (adjudication_outcome) is exactly as non-issue as one a
-    // human dismissed via `user_action`, and recording a "fix" for a dismissed
-    // finding is the same incoherent write either way.
-    if (existing?.user_action === 'dismissed' || existing?.adjudication_outcome === 'dismissed') {
-      return { ok: false, updated: 0, cloud: true, reason: 'dismissed-cannot-be-fixed', bucket };
-    }
-
+    // write-boundary-hardening plan Phase 4 (debt fb6936368272/14b6898621c4):
+    // the dismissal check used to be a separate SELECT followed by an
+    // unconditional UPDATE — another writer could dismiss the finding in the
+    // window between them. Folded into one atomic conditional UPDATE, by
+    // `id` (never a re-derived predicate), via `finding-write.mjs` with
+    // `isCallerTx:false` — this is a standalone action, not part of a larger
+    // caller-owned transaction, so a 0-row result comes back as a typed
+    // outcome rather than a thrown exception. A completed dismissal on
+    // EITHER axis (final-review-credit-projection.md Seam 1) still closes
+    // this off, checked in the WHERE clause instead of a preceding read.
     const patch = { remediation_state: state };
     if (opts.commitSha != null) patch.fix_commit_sha = opts.commitSha;
-    const sets = Object.keys(patch).map((k, i) => `${k} = $${i + 4}`).join(', ');
-    const res = await query(
-      `UPDATE audit_findings SET ${sets}
-        WHERE run_id = $1 AND finding_fingerprint = $2
-          AND bucket IS NOT DISTINCT FROM $3`,
-      [runId, fingerprint, bucket, ...Object.values(patch)]
+    const setCols = Object.keys(patch);
+    const sets = setCols.map((k, i) => `${k} = $${i + 2}`).join(', ');
+    const result = await applyFindingWrite(
+      { query },
+      {
+        text: `UPDATE audit_findings SET ${sets}
+                WHERE id = $1
+                  AND user_action IS DISTINCT FROM 'dismissed'
+                  AND adjudication_outcome IS DISTINCT FROM 'dismissed'`,
+        values: [resolved.id, ...setCols.map((k) => patch[k])],
+      },
+      { isCallerTx: false }
     );
-    const updated = res.rowCount ?? 0;
-    // A 0-row write reported as success is the exact class this codebase treats
-    // as HIGH elsewhere — and the class that hid the hardcoded-bucket bug.
-    if (updated === 0) return { ok: false, updated: 0, cloud: true, reason: 'no-rows-affected', bucket };
-    return { ok: true, updated, cloud: true, bucket, state };
+    if (result.outcome !== 'written') {
+      // Zero rows is ambiguous between "the row is gone" and "it's now
+      // dismissed" — resolving that does not change what was WRITTEN (the
+      // atomic UPDATE above already correctly refused in both cases), only
+      // what the caller is TOLD. This read is not part of the atomicity
+      // guarantee; its own staleness is harmless.
+      const still = await one(
+        `SELECT user_action, adjudication_outcome FROM audit_findings WHERE id = $1`,
+        [resolved.id]
+      );
+      if (still?.user_action === 'dismissed' || still?.adjudication_outcome === 'dismissed') {
+        return { ok: false, updated: 0, cloud: true, reason: 'dismissed-cannot-be-fixed', bucket };
+      }
+      return { ok: false, updated: 0, cloud: true, reason: 'no-rows-affected', bucket };
+    }
+    return { ok: true, updated: result.affected, cloud: true, bucket, state };
   } catch (err) {
     process.stderr.write(`  [learning] recordFinalReviewFix failed: ${err.message}\n`);
     return { ok: false, updated: 0, cloud: true, reason: `db-error: ${err.message}` };
@@ -2046,31 +2190,31 @@ export function buildFindingAdjudicationPatch(event, decidedAt) {
 /**
  * Record an adjudication event for a finding. Two-step:
  *   1. Resolve the audit_findings.id from the finding fingerprint
- *      (+ optional pass_name / round_raised disambiguation)
+ *      (+ optional pass_name / round_raised disambiguation), via the shared
+ *      `selectFindingRow` oracle (write-boundary-hardening plan Phase 4,
+ *      debt 28d5f3d2fde7/8dbc3a738ff8) — never a bare `LIMIT 1` with no
+ *      `ORDER BY`, and a missing/ambiguous/db-error outcome is now
+ *      distinguishable to the caller instead of a uniform `undefined`.
  *   2. Inside a transaction:
  *        - DELETE any prior adjudication events on this finding (idempotent re-record)
  *        - INSERT the new event
  *        - UPDATE audit_findings.adjudication_outcome + remediation_state (denormalised)
+ *
+ * @returns {Promise<{ok: true} | {ok: false, reason: 'no-match'|'ambiguous'|'db-error', detail?: string}>}
  */
 export async function recordAdjudicationEvent(runId, findingFingerprint, event) {
-  if (!runId || !await isCloudEnabled()) return;
+  if (!runId || !await isCloudEnabled()) return { ok: false, reason: 'no-match' };
   try {
-    // Build the disambiguating WHERE clause for the finding lookup.
-    const where = ['run_id = $1', 'finding_fingerprint = $2'];
-    const params = [runId, findingFingerprint];
-    if (event.passName) {
-      where.push(`pass_name = $${params.length + 1}`);
-      params.push(event.passName);
+    const resolved = await selectFindingRow({
+      runId,
+      fingerprint: findingFingerprint,
+      passName: event.passName || undefined,
+      roundRaised: event.round || undefined,
+    });
+    if (!resolved.ok) {
+      return { ok: false, reason: resolved.reason === 'ambiguous' ? 'ambiguous' : 'no-match' };
     }
-    if (event.round) {
-      where.push(`round_raised = $${params.length + 1}`);
-      params.push(event.round);
-    }
-    const finding = await one(
-      `SELECT id FROM audit_findings WHERE ${where.join(' AND ')} LIMIT 1`,
-      params
-    );
-    if (!finding?.id) return;
+    const finding = { id: resolved.id };
 
     await withTx(async () => {
       await deleteWhere('finding_adjudication_events', { finding_id: finding.id });
@@ -2084,8 +2228,10 @@ export async function recordAdjudicationEvent(runId, findingFingerprint, event) 
       });
       await updateWhere('audit_findings', buildFindingAdjudicationPatch(event, new Date()), { id: finding.id });
     });
+    return { ok: true };
   } catch (err) {
     process.stderr.write(`  [learning] recordAdjudicationEvent failed: ${err.message}\n`);
+    return { ok: false, reason: 'db-error', detail: err.message };
   }
 }
 
@@ -2118,15 +2264,30 @@ export function buildLedgerTerminalIndex(ledger) {
  * bounded (caller supplies only recent rows) and COMPLETE — it heals
  * pending→terminal AND terminal→terminal divergence (Gemini-gate-3), unlike a
  * `remediation_state='pending'`-only filter.
- * @param {Array<{finding_fingerprint:string, remediation_state:string}>} dbRows
+ * write-boundary-hardening plan Phase 5 (debt 61809b947026/08cf3203f120):
+ * carries the row's `id` through when the input row has one (real DB rows
+ * from `reconcileRemediationProjection` do; hand-built test fixtures without
+ * one are unaffected). This is what lets `markFindingsRemediation` address
+ * the SPECIFIC divergent row it found instead of re-resolving "the newest
+ * row for this fingerprint" — which silently reconciles the wrong row when
+ * two runs in the window both raised the same fingerprint and only one
+ * actually diverges.
+ *
+ * @param {Array<{finding_fingerprint:string, remediation_state:string, id?:string}>} dbRows
  * @param {Map<string,string>} index
- * @returns {Array<{fingerprint:string, state:string}>}
+ * @returns {Array<{fingerprint:string, state:string, id?:string}>}
  */
 export function selectReconcileTargets(dbRows, index) {
   const out = [];
   for (const row of dbRows || []) {
     const want = index.get(row.finding_fingerprint);
-    if (want && want !== row.remediation_state) out.push({ fingerprint: row.finding_fingerprint, state: want });
+    if (want && want !== row.remediation_state) {
+      out.push({
+        fingerprint: row.finding_fingerprint,
+        state: want,
+        ...(row.id !== undefined ? { id: row.id } : {}),
+      });
+    }
   }
   return out;
 }
@@ -2141,18 +2302,35 @@ function updateTargetState(u) {
  * update has both a resolvable terminal `state` and a `findingFingerprint`.
  * Exported so validation is unit-testable directly (not masked behind a
  * cloud-off no-op — audit R1/M7). `rejected` carries a reason per input.
+ * `id` (an `audit_findings.id`, e.g. from `selectReconcileTargets`) is
+ * carried through when present on the input, so `markFindingsRemediation`
+ * can address that specific row directly (write-boundary-hardening plan
+ * Phase 5) — omitted from `valid`'s shape entirely when absent, so this
+ * stays behaviour-identical for every existing caller/fixture that never
+ * supplies one.
+ *
  * @param {Array<object>} updates
- * @returns {{valid: Array<{fingerprint:string, state:string, resolvedRound:number|null}>, rejected: Array<{update:object, reason:string}>}}
+ * @returns {{valid: Array<{fingerprint:string, state:string, resolvedRound:number|null, id?:string}>, rejected: Array<{update:object, reason:string}>}}
  */
 export function normalizeRemediationUpdates(updates) {
   const valid = [], rejected = [];
   for (const u of (Array.isArray(updates) ? updates : [])) {
+    // write-boundary-hardening plan Phase 9 (debt a6b21fc5011f): a null/
+    // non-object array entry passes the top-level array check, but
+    // `updateTargetState(u)` reads `u.state` — on `null` that throws
+    // TypeError OUTSIDE this function entirely, past markFindingsRemediation's
+    // per-row try/catch, defeating its fail-open-per-row contract. Reject it
+    // as an invalid input instead of letting it throw.
+    if (u == null || typeof u !== 'object') { rejected.push({ update: u, reason: 'update is not an object' }); continue; }
     const state = updateTargetState(u);
     const fingerprint = u.findingFingerprint || u.fingerprint;
     if (!state) { rejected.push({ update: u, reason: 'no resolvable remediation state' }); continue; }
     if (!TERMINAL_REMEDIATION.has(state)) { rejected.push({ update: u, reason: `non-terminal state "${state}"` }); continue; }
     if (!fingerprint) { rejected.push({ update: u, reason: 'missing findingFingerprint' }); continue; }
-    valid.push({ fingerprint, state, resolvedRound: u.resolvedRound ?? null });
+    valid.push({
+      fingerprint, state, resolvedRound: u.resolvedRound ?? null,
+      ...(u.id !== undefined ? { id: u.id } : {}),
+    });
   }
   return { valid, rejected };
 }
@@ -2184,7 +2362,21 @@ export function normalizeRemediationUpdates(updates) {
  * @param {{resolvedRound?: number|null}} [opts]
  * @returns {Promise<number>} rows affected in audit_findings (0 or 1)
  */
-async function projectRemediationState(findingId, state, { resolvedRound = null } = {}) {
+/**
+ * `throttleStamp` (write-boundary-hardening plan Phase 8, debt a2999cbf144f):
+ * when supplied, the `remediation_last_checked_*` throttle columns are
+ * stamped as a THIRD statement inside this function's own `withTx`, instead
+ * of `applyRemediationVerificationResults` running a second, separately-
+ * transactional UPDATE after this one returns. A failure anywhere in the
+ * transaction now rolls back the terminal state too, so "verified but not
+ * counted" (the confirmed bug: the terminal write landing while a later,
+ * independent throttle-stamp failure discounted it) is structurally
+ * impossible rather than merely less likely.
+ * @param {{resolvedRound?: number|null, throttleStamp?: {checkedAtCommit: string}|null}} [opts]
+ * @returns {Promise<{affected: number, throttleStamped: boolean|null}>} `throttleStamped`
+ *   is `null` when no `throttleStamp` was requested.
+ */
+async function projectRemediationState(findingId, state, { resolvedRound = null, throttleStamp = null } = {}) {
   return withTx(async () => {
     // `user_action` is filled here, and ONLY out of an undecided state.
     //
@@ -2223,7 +2415,7 @@ async function projectRemediationState(findingId, state, { resolvedRound = null 
         WHERE id = $2 RETURNING id`,
       [state, findingId]
     );
-    if (rows.length === 0) return 0; // 0-row → do not write a phantom event
+    if (rows.length === 0) return { affected: 0, throttleStamped: null }; // 0-row → do not write a phantom event
     // UPDATE, never delete+insert: `finding_adjudication_events.adjudication_outcome`
     // is NOT NULL with no default, and this projector never re-adjudicates a
     // finding (Gemini-gate-2 — that would desync the DB from a human
@@ -2242,7 +2434,16 @@ async function projectRemediationState(findingId, state, { resolvedRound = null 
     if (eventRows.length === 0) {
       process.stderr.write(`  [lifecycle] projectRemediationState(${findingId}): audit_findings projected but no adjudication_events row exists to update\n`);
     }
-    return rows.length;
+    let throttleStamped = null;
+    if (throttleStamp) {
+      const throttleRows = await many(
+        `UPDATE audit_findings SET remediation_last_checked_at = now(), remediation_last_checked_commit = $1
+          WHERE id = $2 RETURNING id`,
+        [throttleStamp.checkedAtCommit, findingId]
+      );
+      throttleStamped = throttleRows.length > 0;
+    }
+    return { affected: rows.length, throttleStamped };
   });
 }
 
@@ -2256,17 +2457,45 @@ export async function markFindingsRemediation(repoId, updates) {
   // distinguish "projected all 5" from "projected 2 of 5 and logged 3 failures",
   // and the on-disk ledger then diverges from the store with nobody counting.
   let updated = 0;
-  for (const { fingerprint: fp, state, resolvedRound } of valid) {
+  for (const { fingerprint: fp, state, resolvedRound, id } of valid) {
     try {
-      const finding = await one(
-        `SELECT f.id FROM audit_findings f JOIN audit_runs r ON r.id = f.run_id
-         WHERE r.repo_id = $1 AND f.finding_fingerprint = $2
-           AND r.created_at > now() - interval '14 days'
-         ORDER BY f.created_at DESC LIMIT 1`,
-        [repoId, fp]
-      );
-      if (!finding?.id) continue;
-      const affected = await projectRemediationState(finding.id, state, { resolvedRound });
+      let findingId;
+      if (id !== undefined) {
+        // Row-id path (write-boundary-hardening plan Phase 5, debt
+        // 61809b947026/08cf3203f120): the caller (reconcileRemediationProjection,
+        // via selectReconcileTargets) already identified this SPECIFIC divergent
+        // row — address it directly instead of re-resolving "newest row for this
+        // fingerprint", which can silently reconcile the wrong row when two runs
+        // in the window both raised the same fingerprint. Repo-scoped, not
+        // trusted bare: an id from another repo is never used to update a row
+        // (the same Root-Cause-1 bypass class every other site in this plan
+        // closes) — verified via a join, never a raw `WHERE id = $1`.
+        const owned = await one(
+          `SELECT f.id FROM audit_findings f JOIN audit_runs r ON r.id = f.run_id
+            WHERE f.id = $1 AND r.repo_id = $2`,
+          [id, repoId]
+        );
+        if (!owned?.id) {
+          process.stderr.write(`  [lifecycle] markFindingsRemediation(${fp}): row id ${id} not owned by repo ${repoId} — skipped\n`);
+          continue;
+        }
+        findingId = owned.id;
+      } else {
+        // Fingerprint-only path — kept for the ledger-driven /audit-code
+        // projection caller, which has no row id (the on-disk ledger indexes
+        // by fingerprint alone; see docs/plans/runs-findings-write-boundary-hardening.md
+        // Phase 5 for why that is the correct fallback, not a second unfixed gap).
+        const finding = await one(
+          `SELECT f.id FROM audit_findings f JOIN audit_runs r ON r.id = f.run_id
+           WHERE r.repo_id = $1 AND f.finding_fingerprint = $2
+             AND r.created_at > now() - interval '14 days'
+           ORDER BY f.created_at DESC LIMIT 1`,
+          [repoId, fp]
+        );
+        if (!finding?.id) continue;
+        findingId = finding.id;
+      }
+      const { affected } = await projectRemediationState(findingId, state, { resolvedRound });
       if (affected > 0) updated += 1;
       else process.stderr.write(`  [lifecycle] markFindingsRemediation(${fp}): 0-row update (finding vanished) — not counted\n`);
     } catch (err) {
@@ -2321,20 +2550,30 @@ export async function applyRemediationVerificationResults(repoId, actions) {
   for (const { findingId, outcome, checkedAtCommit } of valid) {
     try {
       if (outcome === 'resolved') {
-        const affected = await projectRemediationState(findingId, 'verified', { resolvedRound: null });
+        // write-boundary-hardening plan Phase 8: the terminal write and the
+        // throttle stamp are now ONE atomic call — see projectRemediationState's
+        // `throttleStamp` option. Previously these were two independent
+        // statements/transactions; a failure of the second discounted a
+        // `verified` state that had already landed. Now either both land or
+        // neither does.
+        const { affected } = await projectRemediationState(findingId, 'verified', {
+          resolvedRound: null,
+          throttleStamp: hasThrottleColumns ? { checkedAtCommit } : null,
+        });
         if (affected === 0) {
           process.stderr.write(`  [lifecycle] applyRemediationVerificationResults(${findingId}): 0-row update on the terminal write (finding vanished) — not counted\n`);
           continue;
         }
-        if (!hasThrottleColumns) { updated += 1; continue; }
-      } else if (!hasThrottleColumns) {
+        updated += 1;
+        continue;
+      }
+      if (!hasThrottleColumns) {
         // Nothing to project (not resolved) and nowhere to stamp the throttle
         // — genuinely a no-op on this store, not a failure.
         continue;
       }
-      // Tracking columns are bumped for EVERY outcome, including the terminal
-      // one above — a single UPDATE covers both, since a resolved finding's
-      // row still needs the "last checked" stamp like any other.
+      // Not 'resolved': a single, already-atomic UPDATE — no terminal write
+      // to compose with here, so this path is unchanged.
       const rows = await many(
         `UPDATE audit_findings SET remediation_last_checked_at = now(), remediation_last_checked_commit = $1
           WHERE id = $2 RETURNING id`,
@@ -2367,7 +2606,7 @@ export async function reconcileRemediationProjection(repoId, ledger) {
   if (index.size === 0) return { reconciled: 0, attempted: 0, ok: true, reason: 'empty-ledger' };
   try {
     const rows = await many(
-      `SELECT f.finding_fingerprint, f.remediation_state
+      `SELECT f.id, f.finding_fingerprint, f.remediation_state
        FROM audit_findings f JOIN audit_runs r ON r.id = f.run_id
        WHERE r.repo_id = $1 AND r.created_at > now() - interval '14 days'
          AND f.adjudication_outcome IN ('accepted','severity_adjusted')`,

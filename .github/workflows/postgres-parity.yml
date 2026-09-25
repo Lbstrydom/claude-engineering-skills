@@ -72,6 +72,10 @@ on:
       - 'scripts/lib/debt-alias.mjs'
       - 'tests/store-debt-cloud-validation.test.mjs'
       - 'tests/debt-alias-integration.test.mjs'
+      # docs/plans/runs-findings-write-boundary-hardening.md Phases 7-8 — real
+      # Postgres transaction-abort behaviour, named explicitly since it doesn't
+      # start with 'db-'.
+      - 'tests/store-finding-write-db.test.mjs'
       - 'tests/fixtures/expected-schema.json'
       - 'package.json'
       - 'package-lock.json'
@@ -117,6 +121,10 @@ on:
       - 'scripts/lib/debt-alias.mjs'
       - 'tests/store-debt-cloud-validation.test.mjs'
       - 'tests/debt-alias-integration.test.mjs'
+      # docs/plans/runs-findings-write-boundary-hardening.md Phases 7-8 — real
+      # Postgres transaction-abort behaviour, named explicitly since it doesn't
+      # start with 'db-'.
+      - 'tests/store-finding-write-db.test.mjs'
       - 'tests/fixtures/expected-schema.json'
       - 'package.json'
       - 'package-lock.json'
@@ -292,6 +300,7 @@ jobs:
             tests/repo-last-audited-at.test.mjs \
             tests/setup-postgres-surface-precondition.test.mjs \
             tests/store-debt-cloud-validation.test.mjs \
+            tests/store-finding-write-db.test.mjs \
             tests/store-ownership-db.test.mjs \
             tests/symbol-embeddings-rowcount.test.mjs \
             tests/symbol-file-imports.test.mjs \

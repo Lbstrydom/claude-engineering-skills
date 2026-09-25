@@ -614,7 +614,14 @@ export async function runShadowAndPersist(result, primaryModel, runId, { planCon
   // Cloud persistence — primary always (when cloud+runId); shadow only when ran.
   if (!runId) return;
   const persistPayload = buildFinalReviewPersistPayload({ result, diff, primaryModel, shadow });
-  await persistFn(runId, persistPayload);
+  const persistResult = await persistFn(runId, persistPayload);
+  // write-boundary-hardening plan Phase 10: surface the genuinely inconsistent
+  // state (findings landed, verdict metadata didn't) loudly — findingsRecorded
+  // === false is a different, already-clean outcome (nothing was written, so
+  // there is no inconsistency to flag).
+  if (persistResult?.findingsRecorded === true && persistResult?.verdictPersisted === false) {
+    process.stderr.write(`  [shadow-review] WARNING: run ${runId} — final-review findings recorded but verdict metadata failed to persist; the two are now inconsistent for this run\n`);
+  }
 
   // Phase 4 — append a model_eval_shadow_observations row when a Tier A/B
   // eval run is actively collecting AND the shadow actually ran this time

@@ -201,6 +201,13 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // Two edits, always — this list AND postgres-parity.yml.
   'tests/store-debt-cloud-validation.test.mjs',
   'tests/debt-alias-integration.test.mjs',
+  // Enrolled 2026-09-25 (docs/plans/runs-findings-write-boundary-hardening.md
+  // Phases 7-8): proves a thrown error inside a caller-supplied transaction
+  // actually aborts a real Postgres transaction and rolls back a sibling
+  // statement — a fake client cannot produce a genuine transaction-abort
+  // state, only simulate a thrown JS exception. Two edits, always — this
+  // list AND postgres-parity.yml.
+  'tests/store-finding-write-db.test.mjs',
 ]);
 
 /**
