@@ -809,6 +809,13 @@ const EDITOR_FILES = [
  */
 const CLAUDE_CODE_FILES = [
   '.claude/hooks/arch-memory-check.sh',
+  // SessionStart dependency install for cloud sessions (npm/pnpm/yarn by
+  // lockfile, + Playwright's browser only when the repo declares it as a
+  // dependency). A cloud "Setup script" runs before repo checkout and fails
+  // there with ENOENT on package.json; this hook runs after checkout instead
+  // and is a no-op outside CLAUDE_CODE_REMOTE. Zero imports, fully portable.
+  // Authoritative list is sync-to-repos.mjs; keep sync-inventory.mjs in lock-step.
+  '.claude/hooks/install-cloud-deps.sh',
   '.claude/settings.json',
 ];
 
