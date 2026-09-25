@@ -307,6 +307,8 @@ function buildSkillFiles() {
 const EDITOR_FILES = ['.vscode/mcp.json'];
 const CLAUDE_CODE_FILES = [
   '.claude/hooks/arch-memory-check.sh',
+  // Authoritative list is sync-to-repos.mjs; keep in lock-step.
+  '.claude/hooks/install-cloud-deps.sh',
   '.claude/settings.json',
 ];
 
