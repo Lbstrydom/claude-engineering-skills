@@ -59,6 +59,71 @@
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `.claude/skills/audit-plan/references/gemini-gate.md` and `.claude/skills/cycle/SKILL.md` both carry the new prose (grep confirmed). storyline itself REFUSED this sync (27 files diverged, pre-existing committed customizations unrelated to this change) — not verified there; ai-organiser and wine-cellar-app both reached cleanly.
 - **Result**: verified — the /cycle Step 7 blocked-handoff prose and the gemini-gate.md calibration note reached the consumer bundle intact (wine-cellar-app, ai-organiser). storyline unverified — sync REFUSED on pre-existing divergence, not this change's fault.
 
+## 2026-09-25 — runs-findings.mjs write-boundary hardening: 5-round GPT audit + Gemini final gate
+
+### Changes
+- Continued `/cycle --autonomous` on `docs/plans/runs-findings-write-boundary-hardening.md`
+  through `/audit-code` rounds 2-6 (round 1's Phases 1-10 + its own 27 findings
+  were already committed as `060ade2d`/`7b480061` before this session).
+- 34 GPT findings triaged across rounds 2-6: 13 fixed, 8 dismissed via GPT
+  deliberation (2 of them my own rebuttals, both fully upheld), 6 deferred as
+  independent pre-existing debt (captured via `debt-auto-capture`). Every HIGH
+  finding across all rounds was fixed or GPT-adjudicated, never silently
+  accepted.
+- Two of the fixes were serious, self-inflicted regressions caught by later
+  rounds re-auditing earlier rounds' own work: an embedding-persistence
+  id-lookup that could silently attach one finding's vector to a different
+  finding sharing its fingerprint (Phase 3's own dedup fix exposed this); and
+  an optional embedding write inside a caller's transaction that could poison
+  the WHOLE transaction (discarding real primary findings) on a genuine
+  write failure — fixed via `withTx`'s re-entrant SAVEPOINT nesting, then
+  hardened twice more (statement construction moved inside the try block;
+  the savepoint write threaded through `withTx`'s own callback client instead
+  of a closured reference) after round 6 caught both gaps in the round-5 fix.
+- Step 7 (Gemini final gate, mandatory regardless of round-6 convergence) ran
+  twice: first pass → `CONCERNS` (one new, real, mechanical finding — a
+  shadow-observation write could reference findings that never landed after a
+  rollback); fixed immediately; second pass → `APPROVE`, architectural
+  coherence "Strong", 0 new findings, Gemini independently confirmed all 6 of
+  this session's GPT-finding dismissals were correct.
+- Full round-by-round finding table + rationale:
+  `docs/plans/runs-findings-write-boundary-hardening-audit-summary.md`.
+
+### Files Affected
+- `scripts/lib/store/runs-findings.mjs` — bucket/severity domain guards,
+  repo+fingerprint write-predicate scoping, `probeColumnExistence`, savepoint-
+  isolated embedding persistence, `shadowWriteFailed`/`primaryDroppedCount`/
+  `shadowDroppedCount` completeness signals.
+- `scripts/lib/store/finding-write.mjs` — documented the `isCallerTx:false`
+  unique-predicate invariant (GPT-confirmed unreachable today, guarded for
+  future callers).
+- `scripts/lib/final-review/shadow.mjs` — surfaced the new completeness
+  signals; gated `appendModelEvalShadowObservation` on actual persistence
+  success (Gemini G1 fix).
+- 6 test files extended with red-then-green regression coverage for every
+  fix, including 2 pre-existing tests corrected where they pinned
+  since-fixed bugs.
+
+### Decisions Made
+- Rebutted 2 findings back to GPT deliberation (round-3 H2/H3) rather than
+  either silently dismissing or over-implementing the recommended fix; GPT's
+  compromise/overrule rulings shaped the actual remedy scope in both cases.
+- Declined a full `columnExists` → `{present,definitive}` API rewrite (~25
+  call sites) in favour of a targeted `probeColumnExistence` fix at the two
+  write sites where the ambiguity actually mattered (verdict persistence,
+  throttle stamping) — GPT's own stated criterion.
+- Round 6 (the cap) closed without full GPT-side stability; reported honestly
+  rather than forced green, per the skill's own `Round 6, not stable` handling.
+
+### Next Steps
+- None from this plan — Gemini APPROVE, all tests green.
+- Standing backlog is pre-existing, not from this session (`Q1 82c/31p +307
+  aged`, `Q2 138c/52p 54 perm` — see Backlog line below); not chased here.
+
+Backlog 2026-09-25T12:53Z: Q1 82c/31p (+307 aged) · Q2 138c/52p (54 perm) · Q3 35 · debt 302 cloud/11 local (0 spilled) · upstream 1
+
+---
+
 ## 2026-09-25 — Triage independence test tightened: same-file "defer" needs more than a call-graph claim
 
 Prompted by a pattern noticed in the debt backlog: findings get triaged

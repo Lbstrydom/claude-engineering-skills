@@ -22,12 +22,20 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { persistKeptEmbeddings } from '../scripts/lib/store/runs-findings.mjs';
+import { findingKeyString } from '../scripts/lib/store/finding-identity.mjs';
 
 const RUN_ID = 'run-aaaa';
 const VEC = [0.1, 0.2, 0.3];
 
 function makeFinding(hash, detail = 'boom') {
   return { _hash: hash, detail };
+}
+
+/** `idByKey` lookup keys are `findingKeyString({fingerprint, bucket})`, not a
+ *  bare fingerprint (round-2 audit H4) — these tests all pass `hasBucket`
+ *  false/omitted, so bucket is never part of the key. */
+function keyFor(fingerprint) {
+  return findingKeyString({ fingerprint });
 }
 
 function fakeExec(queryImpl) {
@@ -79,7 +87,7 @@ describe('persistKeptEmbeddings — write-success verification + run scoping (co
     const f = makeFinding('fp-space');
     const space = { provenanceId: 'https://contoso.openai.azure.com::text-embedding-3-large', dim: 768 };
     const out = await persistKeptEmbeddings(
-      exec, [f], new Map([[f, VEC]]), new Map([['fp-space', 'id-1']]), RUN_ID, space);
+      exec, [f], new Map([[f, VEC]]), new Map([[keyFor('fp-space'), 'id-1']]), RUN_ID, space);
     assert.deepEqual(out, { persisted: 1, failed: 0 });
     const [{ params }] = exec.calls;
     assert.equal(params[2], space.provenanceId, 'embedding_model must be the endpoint-qualified provenance id');
@@ -92,7 +100,7 @@ describe('persistKeptEmbeddings — write-success verification + run scoping (co
     const f = makeFinding('fp1');
     const exec = fakeExec(() => ({ rowCount: 0 }));
     const { result: out, lines } = await captureStderr(() => persistKeptEmbeddings(
-      exec, [f], new Map([[f, VEC]]), new Map([['fp1', 'finding-id-1']]), RUN_ID));
+      exec, [f], new Map([[f, VEC]]), new Map([[keyFor('fp1'), 'finding-id-1']]), RUN_ID));
     assert.deepEqual(out, { persisted: 0, failed: 1 });
     // A future implementation could increment `failed` while silently
     // dropping the operational signal — assert the log line actually fires,
@@ -107,7 +115,7 @@ describe('persistKeptEmbeddings — write-success verification + run scoping (co
     const f = makeFinding('fp1');
     const exec = fakeExec(() => ({ rowCount: 1 }));
     const { result: out, lines } = await captureStderr(() => persistKeptEmbeddings(
-      exec, [f], new Map([[f, VEC]]), new Map([['fp1', 'finding-id-1']]), RUN_ID));
+      exec, [f], new Map([[f, VEC]]), new Map([[keyFor('fp1'), 'finding-id-1']]), RUN_ID));
     assert.deepEqual(out, { persisted: 1, failed: 0 });
     assert.equal(lines.length, 0, 'a clean persist must not log a failure line');
   });
@@ -116,20 +124,39 @@ describe('persistKeptEmbeddings — write-success verification + run scoping (co
     const f = makeFinding('fp1');
     const exec = fakeExec(() => { throw new Error('connection reset'); });
     const { result: out, lines } = await captureStderr(() => persistKeptEmbeddings(
-      exec, [f], new Map([[f, VEC]]), new Map([['fp1', 'finding-id-1']]), RUN_ID));
+      exec, [f], new Map([[f, VEC]]), new Map([[keyFor('fp1'), 'finding-id-1']]), RUN_ID));
     assert.deepEqual(out, { persisted: 0, failed: 1 });
     assert.ok(
       lines.some((l) => l.includes('[semantic-suppress]') && l.includes('finding-id-1') && l.includes('connection reset')),
       `expected a [semantic-suppress] error log line, got: ${JSON.stringify(lines)}`);
   });
 
+  it('round-6 audit H3: a malformed vector (toVectorLiteral throws BEFORE any query runs) is caught and counted as failed, not propagated', async () => {
+    const fBad = makeFinding('fp-nan');
+    const fOk = makeFinding('fp-ok');
+    const exec = fakeExec(() => ({ rowCount: 1 }));
+    const idByKey = new Map([[keyFor('fp-nan'), 'id-nan'], [keyFor('fp-ok'), 'id-ok']]);
+    // NaN is a non-finite value — toVectorLiteral throws a TypeError on it,
+    // synchronously, before any SQL is built. This must not escape the loop:
+    // a later, well-formed finding in the SAME batch must still persist.
+    const vectorByFinding = new Map([[fBad, [0.1, NaN, 0.3]], [fOk, VEC]]);
+    const { result: out, lines } = await captureStderr(() => persistKeptEmbeddings(
+      exec, [fBad, fOk], vectorByFinding, idByKey, RUN_ID));
+    assert.deepEqual(out, { persisted: 1, failed: 1 });
+    assert.ok(
+      lines.some((l) => l.includes('[semantic-suppress]') && l.includes('id-nan') && l.includes('not finite')),
+      `expected a [semantic-suppress] log naming the serialization failure, got: ${JSON.stringify(lines)}`);
+    // Only the well-formed finding's INSERT should have run.
+    assert.equal(exec.calls.length, 1);
+  });
+
   it('mixed batch: a success and a 0-row failure are counted independently', async () => {
     const fOk = makeFinding('fp-ok');
     const fBad = makeFinding('fp-bad');
     const exec = fakeExec((sql, params) => (params[0] === 'id-ok' ? { rowCount: 1 } : { rowCount: 0 }));
-    const idByFingerprint = new Map([['fp-ok', 'id-ok'], ['fp-bad', 'id-bad']]);
+    const idByKey = new Map([[keyFor('fp-ok'), 'id-ok'], [keyFor('fp-bad'), 'id-bad']]);
     const vectorByFinding = new Map([[fOk, VEC], [fBad, VEC]]);
-    const out = await persistKeptEmbeddings(exec, [fOk, fBad], vectorByFinding, idByFingerprint, RUN_ID);
+    const out = await persistKeptEmbeddings(exec, [fOk, fBad], vectorByFinding, idByKey, RUN_ID);
     assert.deepEqual(out, { persisted: 1, failed: 1 });
   });
 
@@ -137,7 +164,7 @@ describe('persistKeptEmbeddings — write-success verification + run scoping (co
     const f = makeFinding('fp1');
     const exec = fakeExec(() => ({ rowCount: 1 }));
     await persistKeptEmbeddings(
-      exec, [f], new Map([[f, VEC]]), new Map([['fp1', 'finding-id-1']]), RUN_ID);
+      exec, [f], new Map([[f, VEC]]), new Map([[keyFor('fp1'), 'finding-id-1']]), RUN_ID);
     assert.equal(exec.calls.length, 1);
     const { sql, params } = exec.calls[0];
     // A bare `INSERT ... VALUES (...)` keyed only on finding_id (the pre-fix
@@ -217,7 +244,7 @@ describe('persistKeptEmbeddings — cross-run write rejection (integration)', { 
     const f = { _hash: 'fp-embedtest', detail: 'x' };
     const vec = new Array(768).fill(0.01);
     const out = await persistKeptEmbeddings(
-      pool, [f], new Map([[f, vec]]), new Map([['fp-embedtest', findingA]]), runB /* wrong run/repo */);
+      pool, [f], new Map([[f, vec]]), new Map([[keyFor('fp-embedtest'), findingA]]), runB /* wrong run/repo */);
     assert.deepEqual(out, { persisted: 0, failed: 1 });
     const row = await q.one('SELECT finding_id FROM finding_embeddings WHERE finding_id = $1', [findingA]);
     assert.equal(row, null, 'a cross-run write must not land any row');
@@ -227,7 +254,7 @@ describe('persistKeptEmbeddings — cross-run write rejection (integration)', { 
     const f = { _hash: 'fp-embedtest', detail: 'x' };
     const vec = new Array(768).fill(0.01);
     const out = await persistKeptEmbeddings(
-      pool, [f], new Map([[f, vec]]), new Map([['fp-embedtest', findingA]]), runA /* correct run */);
+      pool, [f], new Map([[f, vec]]), new Map([[keyFor('fp-embedtest'), findingA]]), runA /* correct run */);
     assert.deepEqual(out, { persisted: 1, failed: 0 });
     const row = await q.one('SELECT finding_id FROM finding_embeddings WHERE finding_id = $1', [findingA]);
     assert.ok(row, 'the correctly-scoped write must land');

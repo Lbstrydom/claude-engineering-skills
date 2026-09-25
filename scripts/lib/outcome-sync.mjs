@@ -159,12 +159,19 @@ async function writeCloudOutcomes(store, runId, enriched, passCounts, round) {
       // 2nd arg MUST be the finding fingerprint (`_hash`) — that is what
       // recordFindings stores in `audit_findings.finding_fingerprint`.
       // `f.id` is a per-run short id ("H1") and never resolves.
-      await store.recordAdjudicationEvent(runId, f._hash || semanticId(f), {
+      const fingerprint = f._hash || semanticId(f);
+      const result = await store.recordAdjudicationEvent(runId, fingerprint, {
         adjudicationOutcome: f.adjudicationOutcome,
         remediationState: f.remediationState,
         ruling: dbRuling(f),
         round,
       });
+      // write-boundary-hardening plan Phase 4: the write's outcome is now a
+      // typed result instead of a discarded `undefined` — surface a failure
+      // rather than silently proceeding as though the event was recorded.
+      if (result && result.ok === false) {
+        process.stderr.write(`  [outcome-sync] recordAdjudicationEvent(${fingerprint}) failed: ${result.reason}${result.detail ? ` — ${result.detail}` : ''}\n`);
+      }
     }
   }
 

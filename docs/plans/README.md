@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**6 active · 227 terminal · 31 audit summaries · 1 parked · 5 reference docs**
+**7 active · 227 terminal · 32 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -24,6 +24,7 @@ This is the list to read when asking "what is in flight?".
 | [Concern identity for re-raise suppression, and a one-week observation window](./concern-identity-suppression.md) | `In Progress` | fix shipped; observation window running, readout due 2026-09-29 |
 | [Enforce the debt ledger's persisted-record contract (§2 of aged-out-acceptance-remainder.md)](./debt-ledger-persisted-record-contract.md) | `Approved` | GPT plan audit converged after 3 rounds (9→3→2 findings, 100% acceptance throughout); Gemini final gate… |
 | [Decompose `gemini-review.mjs`](./gemini-review-decomposition.md) | `Approved` | GPT: 2 rounds, 100% acceptance both rounds, H:0 M:0 L:0 at R2; Gemini: 2 rounds, CONCERNS → APPROVE after… |
+| [`runs-findings.mjs` Identity & Write-Boundary Hardening](./runs-findings-write-boundary-hardening.md) | `Approved` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Reduce `skills/ship/SKILL.md`'s size via progressive disclosure](./ship-skill-size-reduction.md) | `Approved` | GPT: 3 rounds, 4→1→0 findings, 100% acceptance both rounds with findings; Gemini: 1 round, APPROVE — no… |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
@@ -294,7 +295,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 (they carry a free-text convergence sentence by convention).
 
 <details>
-<summary>Show all 31 audit summaries</summary>
+<summary>Show all 32 audit summaries</summary>
 
 | Plan | Notes |
 |---|---|
@@ -324,6 +325,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 | [Audit summary — arch-memory / symbol-index manifest transport](./refactor-arch-memory-symbol-index-2026-07-audit-summary.md) |  |
 | [Audit Summary — refactor-architecture-debt-remainder-2026-07](./refactor-architecture-debt-remainder-2026-07-audit-summary.md) |  |
 | [Audit Summary — Requirements Layer](./requirements-layer-audit-summary.md) |  |
+| [Audit convergence summary — runs-findings write-boundary hardening](./runs-findings-write-boundary-hardening-audit-summary.md) |  |
 | [Audit Summary — symbol-index-bugs](./symbol-index-bugs-audit-summary.md) |  |
 | [/audit-code summary — sync-output-drift-classification](./sync-output-drift-classification-audit-summary.md) |  |
 | [Audit Summary: triage-independence-test-and-write-boundary-fixes](./triage-independence-test-and-write-boundary-fixes-audit-summary.md) |  |

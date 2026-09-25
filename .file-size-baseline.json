@@ -15,7 +15,7 @@
     "scripts/lib/model-resolver.mjs": 1109,
     "scripts/lib/schemas.mjs": 1685,
     "scripts/lib/store/campaign.mjs": 1804,
-    "scripts/lib/store/runs-findings.mjs": 2556,
+    "scripts/lib/store/runs-findings.mjs": 3071,
     "scripts/lib/sync-isolation-verify.mjs": 1032,
     "scripts/lib/upstream/commands.mjs": 1093,
     "scripts/openai-audit.mjs": 1321,

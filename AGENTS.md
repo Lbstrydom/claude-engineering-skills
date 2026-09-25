@@ -500,6 +500,11 @@ bake-off log**, which reads near-zero and looks like lost progress.
   census found **15 enrolled nowhere**; six failed the moment they ran.
   `npm run db:enrolment:gate` iterates the FILESYSTEM — the only side that can see
   a file no list mentions. **Adding a DB-gated suite is two edits, never one.**
+  Run them locally via `npm run db:local` (mirrors CI: `--test-concurrency=1`,
+  isolated→destructive→contract) — never by setting `AUDIT_DB_TEST_URL` globally
+  for an unscoped `npm test`, which throws every enrolled file at one container
+  concurrently and times out (`cancelledByParent`), reading as failures that are
+  pure contention, not regressions (measured 2026-09-25).
 - **Sandbox-honesty rule.** A fresh worktree has no gitignored inputs, so a check
   that *skips* on a missing input passes having read nothing. **Adding a check? Ask
   whether it can go green in a clean checkout having checked nothing — if so it
