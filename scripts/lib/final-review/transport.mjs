@@ -262,6 +262,16 @@ export const REVIEW_TRANSPORTS = {
       // byte-identical across transports; parseReviewJson handles clean JSON first.
       text = JSON.stringify(toolUse.input);
     } else {
+      // A refusal is billed yet carries no review. Without this throw the
+      // `|| '{}'` below turns it into an EMPTY review that validation only
+      // warns about, which reads as a clean gate. The tool path above already
+      // throws on a refusal (no tool call), naming the stop_reason.
+      if (r.stop_reason === 'refusal') {
+        throw new Error(
+          'anthropic final review returned stop_reason: refusal (billed, no content) - '
+          + 'treat as a failed review, not an empty one'
+        );
+      }
       text = r.content?.find((b) => b.type === 'text')?.text?.trim() || '{}';
     }
 
@@ -532,6 +542,19 @@ export async function streamAnthropicMessage(client, params, { signal } = {}) {
         if (block) block.json += event.delta.partial_json ?? '';
       }
     } else if (event.type === 'message_delta') {
+      // message_delta's usage is CUMULATIVE for the whole turn, input included:
+      // with a server tool (web search) each iteration's result tokens land in
+      // input_tokens only here, never at message_start. Anthropic's own
+      // streaming example reads 2,679 at start and 10,682 at the end after one
+      // search. No caller runs a server tool today, so this is latent, but a
+      // reader that takes input from message_start alone under-counts the
+      // first one that does.
+      usage.input_tokens = event.usage?.input_tokens ?? usage.input_tokens;
+      usage.cache_creation_input_tokens =
+        event.usage?.cache_creation_input_tokens ?? usage.cache_creation_input_tokens;
+      usage.cache_read_input_tokens =
+        event.usage?.cache_read_input_tokens ?? usage.cache_read_input_tokens;
+      if (event.usage?.server_tool_use) usage.server_tool_use = event.usage.server_tool_use;
       usage.output_tokens = event.usage?.output_tokens ?? usage.output_tokens;
       // Later events win: message_delta carries the CUMULATIVE totals, so a
       // details block here supersedes anything seen at message_start.

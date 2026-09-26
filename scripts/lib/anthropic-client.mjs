@@ -69,6 +69,7 @@ const ClaudeCliEnvelope = z.object({
   num_turns: z.number().optional(),
 }).passthrough();
 
+const CLI_USAGE_KEYS = ['input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'];
 const ClaudeCliErrorEnvelope = z.object({
   is_error: z.literal(true),
   result: z.string().optional(),
@@ -984,12 +985,10 @@ function normaliseCliOutput(stdout, requestedModel) {
 
   return {
     content: [{ type: 'text', text: data.result }],
-    usage: {
-      input_tokens: Number(data.usage?.input_tokens) || 0,
-      output_tokens: Number(data.usage?.output_tokens) || 0,
-    },
+    // Cache counts carried: claude -p puts most of its prompt there. stop_reason read so a refusal is visible.
+    usage: Object.fromEntries(CLI_USAGE_KEYS.map((k) => [k, Number(data.usage?.[k]) || 0])),
     model: requestedModel || data.model,
-    stop_reason: 'end_turn',
+    stop_reason: data.stop_reason || 'end_turn',
     _meta: {
       cost_usd: data.total_cost_usd,
       duration_ms: data.duration_ms,
