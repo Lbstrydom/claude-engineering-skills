@@ -1054,7 +1054,7 @@ node scripts/cross-skill.mjs link-persona-pair --json '{
 }'
 ```
 
-The subcommand does not exist, so this call fails; log one stderr line and
+The subcommand does not exist yet, so expect an unknown-command error; log one stderr line and
 continue. Until it ships, the two solo sessions plus the pair report on stdout
 are the authoritative artefacts — say so in the report rather than implying
 the pairing was persisted.
