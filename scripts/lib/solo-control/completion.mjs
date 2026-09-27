@@ -75,3 +75,88 @@ export function commitsCompleteForAllArms(rows, arms, commits, expectedCellCount
   }
   return { kept, dropped };
 }
+
+/** A gate or review result's cell state: any runner's `skipped` (e.g. Gemini
+ * no-key, a caught provider error) measured nothing, so it is never `ok`. */
+export const gateCellState = (r) => r.state ?? (r.skipped ? 'provider-error' : 'ok');
+
+/**
+ * Per-commit state of a run whose review stage (the Gemini net-new review in
+ * `apparatus-bc` / `sonnet-gemini-retro`) did not produce a measurement. Not
+ * `ran`: resume re-runs it, and `merge` refuses it (see unmeasuredCommits).
+ */
+export const UNMEASURED_REVIEW_STATE = 'review-unmeasured';
+
+/**
+ * Run one review call and say whether it MEASURED anything. A throw, a skip,
+ * or an unparseable reply (`conformance-miss`) is unmeasured — its empty list
+ * is an absence of evidence, and treating it as "found nothing" is exactly the
+ * clean-round-clothes defect. Only a returned `ok` review keeps its findings.
+ * @param {() => Promise<{findings?: object[], state?: string, skipped?: string, error?: string}>} run
+ * @returns {Promise<{findings: object[], measured: boolean, error: string|null}>}
+ */
+export async function runMeasuredReview(run) {
+  let r;
+  try { r = await run(); } catch (err) { return { findings: [], measured: false, error: String(err?.message || err).slice(0, 160) }; }
+  const state = gateCellState(r);
+  if (state === 'ok') return { findings: r.findings || [], measured: true, error: null };
+  return { findings: [], measured: false, error: r.error || r.skipped || state };
+}
+
+/** The perCommit state fields for a run whose review stage returned `rev`. */
+export function reviewCommitState(rev) {
+  return rev.measured ? { state: 'ran' } : { state: UNMEASURED_REVIEW_STATE, error: rev.error };
+}
+
+/**
+ * Commits among `commits` whose LATEST perCommit entry in some run is an
+ * unmeasured review. Latest wins because resume appends: a successful re-run
+ * of the same commit supersedes the failure. Legitimate exclusions
+ * (no-clean-files, diff-too-large, …) are not reviews and are not returned.
+ * @param {Array<{armLabel?: string, perCommit?: Array<{sha: string, state: string, error?: string}>}>} runs
+ * @param {string[]} commits
+ * @returns {Array<{arm: string, commit: string, error: string|null}>}
+ */
+export function unmeasuredCommits(runs, commits) {
+  const want = new Set(commits);
+  const out = [];
+  for (const run of runs) {
+    const latest = new Map();
+    for (const c of run.perCommit || []) if (want.has(c.sha)) latest.set(c.sha, c);
+    for (const [sha, c] of latest) {
+      if (c.state === UNMEASURED_REVIEW_STATE) out.push({ arm: run.armLabel || 'S', commit: sha, error: c.error ?? null });
+    }
+  }
+  return out;
+}
+
+/**
+ * Commits a resumed run may skip: those whose LATEST perCommit entry is `ran`
+ * in EVERY given run file (null = no prior file, constrains nothing). One
+ * subcommand writes several arm files (apparatus-bc: B and C); reading only
+ * the first let a commit whose C review never ran count as covered for both.
+ * @param {Array<{perCommit?: Array<{sha: string, state: string}>}|null>} runs
+ * @returns {Set<string>}
+ */
+export function coveredCommits(runs) {
+  const latestByRun = runs.filter(Boolean).map((run) => {
+    const latest = new Map();
+    for (const c of run.perCommit || []) latest.set(c.sha, c.state);
+    return latest;
+  });
+  const shas = new Set(latestByRun.flatMap((m) => [...m.keys()]));
+  return new Set([...shas].filter((sha) => latestByRun.every((m) => m.get(sha) === 'ran')));
+}
+
+/**
+ * The output object a resumed run appends to. `fresh` under --force or with no
+ * prior file; otherwise a copy of the prior file minus the findings of the
+ * commits about to be re-run (an unmeasured commit kept its upstream findings,
+ * and re-running it would otherwise append them a second time). perCommit
+ * history is kept: the re-run's entry is appended and wins as the latest.
+ */
+export function resumeArmFile(prior, { force, rerun, fresh }) {
+  if (!prior || force) return fresh;
+  const again = new Set(rerun);
+  return { ...prior, findings: prior.findings.filter((f) => !again.has(f.commit)), perCommit: [...prior.perCommit] };
+}

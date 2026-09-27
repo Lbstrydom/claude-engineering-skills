@@ -191,7 +191,7 @@ async function invokeNativeAnthropic({ route, messages, schema, signal, dials })
     }
     // The route (not a bare baseURL) is what pairs the endpoint with its own
     // credential and auth header.
-    client = await createAnthropicClient({ azureRoute: azureConfig.claudeRoute });
+    client = await createAnthropicClient({ backend: 'sdk', azureRoute: azureConfig.claudeRoute });
     model = route.deploymentId;
   } else {
     // `azureRoute: null` is the EXPLICIT public opt-out. Since 2026-08-30 an
@@ -199,9 +199,15 @@ async function invokeNativeAnthropic({ route, messages, schema, signal, dials })
     // profile is active; here the caller has already chosen a non-azure route,
     // so a bare call on an Azure machine would silently redirect a public-provider
     // arm onto the tenant's Claude and mis-attribute the comparison.
-    client = await createAnthropicClient({ azureRoute: null });
+    client = await createAnthropicClient({ backend: 'sdk', azureRoute: null });
     model = route.resolvedModel;
   }
+  // `backend: 'sdk'` on BOTH routes, never the ambient CLAUDE_BACKEND. The cli
+  // backend sends only {model, max_tokens, system, messages} through `claude -p`
+  // and cannot enforce max_tokens, so the dials below would be dropped while
+  // `honoredDials` still reported them applied, and the request measured would
+  // not be the API request being evaluated. (The Azure route was already
+  // coerced to sdk by its baseURL; the public route was not.)
   const jsonSchema = JSON.stringify(z.toJSONSchema(schema));
   const system = [
     messages.find((m) => m.role === 'system')?.content,
