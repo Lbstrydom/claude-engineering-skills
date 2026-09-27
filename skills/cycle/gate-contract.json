@@ -209,8 +209,8 @@
       "reason": "Flag-description paragraph. The 'never silent' half restates Step 3's existing decision table (already the skill's documented behaviour, not a new claim); the 'refuses every programmatic call' half points at /ship's OWN frontmatter refusal (dispositioned document-only in skills/ship/gate-contract.json), not something /cycle enforces with an exit code of its own. /cycle is a thin orchestrator — see consolidated-gemini-gate-mandatory and the other document-only gates above for the same reasoning."
     },
     {
-      "line": "more round (meant to be occasional, not the norm — see `gemini-gate.md`'s",
-      "reason": "Part of the Step 3C.2 round-cap paragraph pointing the agent at gemini-gate.md's own calibration note (upstream report aa6469b3, 2026-09-19) rather than asserting a new /cycle-enforced cap. The 2-round cap itself is gemini-review.mjs's, exercised via the same closed loop already covered by consolidated-gemini-gate-mandatory above; this line only softens a framing claim, it does not add a mechanism."
+      "line": "which refuses `--round 3`.** A round-2",
+      "reason": "Step 3C.2 round-cap line. Not a /cycle-enforced gate (/cycle is an orchestrator with no exit code of its own) — the cap it names IS mechanical one layer down since 2026-09-27: scripts/lib/final-review/round-gate.mjs::validateRoundArgs refuses --round 3+, and gemini-review.mjs exits non-zero before building a provider. Pinned by tests/final-review-round-cap-cli.test.mjs ('refuses --round 3 with a non-zero exit naming the cap', spawning the real CLI) and tests/final-review-round-gate.test.mjs. This replaces the pre-2026-09-27 disposition, which claimed the cap was gemini-review.mjs's when that script had no round flag at all."
     },
     {
       "line": "> fix-gate, close-out, consolidated Gemini gate — completed without a human.",

@@ -100,6 +100,32 @@ RULES:
    description), not as a standalone finding pointing at the unchanged file. Findings whose
    primary file is out-of-scope will be filtered post-hoc and counted as scope errors.`;
 
+// ── Release-blocking contract ──────────────────────────────────────────────────
+// Appended by getReviewPrompt() AFTER the registry-resolved base, never folded
+// into REVIEW_SYSTEM: a promoted registry variant replaces REVIEW_SYSTEM whole,
+// and this block describes two REQUIRED schema fields (release_blocking,
+// blocking_basis) — a prompt variant that silently lost their definition would
+// leave the model filling a contract it was never told the meaning of. The
+// gate disposition is computed from these fields IN CODE
+// (round-gate.mjs::computeGateDisposition); the model is never asked for it.
+
+export const RELEASE_BLOCKING_BLOCK = `
+
+## RELEASE-BLOCKING CLASSIFICATION (required on every new_findings entry)
+
+Set release_blocking + blocking_basis on EACH new finding. A finding is release-blocking ONLY if it names,
+in the change under review, one of these five grounds (blocking_basis):
+- acceptance_criterion — a stated acceptance criterion of the plan is violated or unmet.
+- changed_code_regression — the change breaks behaviour that worked before it.
+- security — a concrete, reachable security failure (injection, auth bypass, secret/data exposure).
+- data_loss — data can be lost, corrupted or silently dropped.
+- runtime_failure — a crash, unhandled exception or hang on a reachable path.
+Everything else — hardening, maintainability, DRY, naming, missing tests, "should track as debt", anything you
+would not personally stop a release for — is release_blocking: false with blocking_basis: "none".
+blocking_basis MUST be "none" exactly when release_blocking is false. A finding you describe as
+"not release-blocking" in prose MUST carry release_blocking: false. The gate decides whether the change may ship
+from these fields, not from your verdict word, so classify each finding honestly and independently.`;
+
 // ── Plan Audit Mode Override ───────────────────────────────────────────────────
 // Appended to system prompt when --mode plan is passed. Overrides the generic
 // "AUDIT MODE AWARENESS" section with an explicit, hard-to-ignore constraint.
@@ -190,6 +216,6 @@ bootstrapFromConstants({ 'gemini-review': REVIEW_SYSTEM });
  * @returns {string}
  */
 export function getReviewPrompt() {
-  const base = getActivePrompt('gemini-review') || REVIEW_SYSTEM;
+  const base = `${getActivePrompt('gemini-review') || REVIEW_SYSTEM}${RELEASE_BLOCKING_BLOCK}`;
   return _roleAddendum ? `${base}\n${_roleAddendum}` : base;
 }

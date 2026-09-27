@@ -222,7 +222,14 @@ import {
   addSemanticIds,
   recordNewFindings,
   recordGeminiOutcomes,
+  applyPriorRoundSuppression,
 } from './lib/final-review/post-review.mjs';
+// Round cap + code-computed gate disposition (field report 2026-09-26).
+import { parseReviewArgs, REVIEW_FLAGS } from './lib/final-review/review-args.mjs';
+import { assertKnownFlags } from './lib/cli-io.mjs';
+import {
+  validateRoundArgs, parsePriorResult, priorFindingsOf, buildPriorRoundBlock, stampGateDisposition,
+} from './lib/final-review/round-gate.mjs';
 
 // ── Review Orchestrator ────────────────────────────────────────────────────────
 
@@ -240,7 +247,7 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
   // byte-identical to the pre-extraction behaviour (plan KD-1: threaded as a
   // parameter, NOT as a second module-global — `_roleAddendum` already has a
   // documented non-reentrancy caveat and adding a consumer would compound it).
-  const { envelopeScope = 'full', primaryResult = null } = options;
+  const { envelopeScope = 'full', primaryResult = null, roundBlock = '' } = options;
   const reduced = isReducedScope(envelopeScope);
 
   // Parse transcript to extract code file paths for direct code inclusion
@@ -446,6 +453,7 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
   if (auditMode === 'plan') {
     systemPrompt += PLAN_MODE_BLOCK;
   }
+  systemPrompt += roundBlock; // round >= 2 only: settled prior-round findings (round-gate.mjs)
 
   // REQUEST IDENTITY. Hash what actually determines the model's answer, so
   // "are these two arms different?" is a comparison, not an investigation.
@@ -578,7 +586,7 @@ function formatReviewResult(result, usage, latencyMs, provider) {
   const VERDICT_ICONS = { APPROVE: '✅', CONCERNS: '⚠️', CONCERNS_REMAINING: '⚠️', REJECT: '❌' };
   const icon = VERDICT_ICONS[result.verdict] ?? '❌';
   lines.push(`## Verdict: ${icon} **${result.verdict}**`);
-  lines.push('');
+  lines.push(`**Gate**: ${result.gateDisposition ?? 'n/a'}${result.gateDispositionDetail?.reasons?.length ? ` — ${result.gateDispositionDetail.reasons.join('; ')}` : ''}`, '');
 
   // Deliberation quality
   const dq = result.deliberation_quality;
@@ -708,43 +716,6 @@ async function runPing(args = []) {
   }
 }
 
-function parseReviewArgs(args) {
-  const planFile = args[1];
-  const transcriptFile = args[2];
-  const jsonMode = args.includes('--json');
-  const outIdx = args.indexOf('--out');
-  const outFile = outIdx !== -1 && args[outIdx + 1] ? args[outIdx + 1] : null;
-  const providerIdx = args.indexOf('--provider');
-  const providerOverride = providerIdx !== -1 && args[providerIdx + 1] ? args[providerIdx + 1] : null;
-  const modeIdx = args.indexOf('--mode');
-  const auditMode = modeIdx !== -1 && args[modeIdx + 1] ? args[modeIdx + 1] : 'code';
-  // --run-id <audit_runs.id> — enables per-finding cloud persistence keyed to
-  // this run (shadow A/B). Absent → local-only, today's behaviour unchanged.
-  const runIdIdx = args.indexOf('--run-id');
-  const runId = runIdIdx !== -1 && args[runIdIdx + 1] ? args[runIdIdx + 1] : null;
-  // --role <adjudicator-only> (Phase 12) — closed value set, validated in
-  // main(). Absent (null) → today's default behaviour, byte-identical.
-  const roleIdx = args.indexOf('--role');
-  const role = roleIdx !== -1 && args[roleIdx + 1] ? args[roleIdx + 1] : null;
-  // --envelope-scope <full|thin|gap> — the CAMPAIGN's declared scope for the
-  // shadow reviewer this process spawns. Presence of this flag (or
-  // --campaign-digest) is the "a campaign is active" signal — see KD-6's
-  // correction: an earlier draft used the presence of ANY envelope-scope
-  // source as that signal, which made identical `gap` intent behave
-  // differently by transport (env-supplied gap was fine, CLI-supplied gap was
-  // a campaign violation). Precedence: this flag > FINAL_REVIEW_SHADOW_SCOPE
-  // env > 'full' default (resolveEnvelopeScope owns the actual resolution).
-  const envelopeScopeIdx = args.indexOf('--envelope-scope');
-  const envelopeScopeCli = envelopeScopeIdx !== -1 && args[envelopeScopeIdx + 1] ? args[envelopeScopeIdx + 1] : null;
-  // --campaign-digest <hex> — the manifest's configDigest, recorded (never
-  // verified here; verification is the COLLECTOR's job, which owns the
-  // manifest) so a persisted snapshot can be matched to the specific signed
-  // cohort that claims it. Its PRESENCE is the campaign-active signal.
-  const campaignDigestIdx = args.indexOf('--campaign-digest');
-  const campaignDigest = campaignDigestIdx !== -1 && args[campaignDigestIdx + 1] ? args[campaignDigestIdx + 1] : null;
-  return { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId, role, envelopeScopeCli, campaignDigest };
-}
-
 function isJsonTruncationError(err) {
   return err.message?.includes('Unterminated string')
     || err.message?.includes('JSON')
@@ -795,14 +766,14 @@ export async function runAdjudicatorOnlyReview(provider, client, planContent, tr
   }
 }
 
-function emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile) {
+function emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile, gateSummary) {
   if (jsonMode || outFile) {
     const selectedModel = provider === 'gemini' ? MODEL : (provider === 'azure-claude' ? azureConfig.claudeDeployment : CLAUDE_OPUS_MODEL);
     const data = { ...result, _model: selectedModel, _provider: provider, _usage: usage };
     if (outFile) {
       const newCount = result.new_findings?.length ?? 0;
       const dismissedCount = result.wrongly_dismissed?.length ?? 0;
-      const summaryLine = `Verdict: ${result.verdict} | New: ${newCount} | Wrongly dismissed: ${dismissedCount} | ${(latencyMs / 1000).toFixed(0)}s`;
+      const summaryLine = `Verdict: ${result.verdict} | ${gateSummary} | New: ${newCount} | Wrongly dismissed: ${dismissedCount} | ${(latencyMs / 1000).toFixed(0)}s`;
       writeOutput(data, outFile, summaryLine);
     } else {
       console.log(JSON.stringify(data, null, 2));
@@ -825,7 +796,7 @@ function emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile)
  * repo already uses for provider stubbing elsewhere, just crossing a
  * subprocess boundary instead of a function-call boundary.
  */
-function runFixtureReview({ transcriptFile, outFile, jsonMode }) {
+function runFixtureReview({ transcriptFile, outFile, jsonMode, round = null, prior = null }) {
   let transcript = {};
   try {
     transcript = JSON.parse(readFileOrDie(transcriptFile));
@@ -846,7 +817,7 @@ function runFixtureReview({ transcriptFile, outFile, jsonMode }) {
       id: 'F1', severity: 'MEDIUM', category: 'Fixture', section: targetFile || 'fixture.js',
       detail: 'fixture canned missed-candidate finding', risk: 'fixture risk',
       recommendation: 'fixture recommendation', is_quick_fix: false, is_mechanical: false, is_reopened: false,
-      principle: 'fixture', classification: { sonarType: 'CODE_SMELL', effort: 'EASY', sourceKind: 'REVIEWER', sourceName: 'fixture' },
+      release_blocking: false, blocking_basis: 'none', principle: 'fixture', classification: { sonarType: 'CODE_SMELL', effort: 'EASY', sourceKind: 'REVIEWER', sourceName: 'fixture' },
     }] : [],
     wrongly_dismissed: wantReversed ? [{
       original_finding_id: findingId, reason_claude_was_wrong: 'fixture canned reversal', recommended_severity: 'MEDIUM',
@@ -855,9 +826,11 @@ function runFixtureReview({ transcriptFile, outFile, jsonMode }) {
     architectural_coherence: 'Adequate',
     overall_reasoning: 'fixture canned result — no live model call made (NODE_ENV=test, --provider fixture).',
   });
+  applyPriorRoundSuppression(result, priorFindingsOf(prior));
   addSemanticIds(result, 'gemini');
+  const gateSummary = stampGateDisposition(result, round);
   const data = { ...result, _model: 'fixture', _provider: 'fixture', _usage: { input_tokens: 0, output_tokens: 0, thinking_tokens: 0 } };
-  const summaryLine = `Verdict: ${result.verdict} | New: ${result.new_findings.length} | Wrongly dismissed: ${result.wrongly_dismissed.length} | fixture (no live call)`;
+  const summaryLine = `Verdict: ${result.verdict} | ${gateSummary} | New: ${result.new_findings.length} | Wrongly dismissed: ${result.wrongly_dismissed.length} | fixture (no live call)`;
   if (outFile) {
     writeOutput(data, outFile, summaryLine);
   } else if (jsonMode) {
@@ -989,7 +962,18 @@ async function main() {
   if (mode === 'ping') return runPing(args);
   if (mode === 'set-provider') return runSetProvider(args[1]);
 
-  const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId: cliRunId, role, envelopeScopeCli, campaignDigest } = parseReviewArgs(args);
+  // A typo'd flag must refuse, not run: `--rond 3` silently dropped is an UNCAPPED review.
+  try { assertKnownFlags(args, REVIEW_FLAGS, { cli: 'gemini-review', from: 1 }); } catch (err) { console.error(`Error: ${err.message}`); process.exit(2); }
+  const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId: cliRunId, role, envelopeScopeCli, campaignDigest, round: roundArg, priorPath } = parseReviewArgs(args);
+  // The 2-round cap is CODE: --round 3+ is refused before any provider is built.
+  const roundCheck = validateRoundArgs({ round: roundArg, priorPath });
+  const priorCheck = roundCheck.ok && priorPath ? parsePriorResult(readFileOrDie(priorPath)) : { ok: true, prior: null };
+  if (!roundCheck.ok || !priorCheck.ok) {
+    console.error(`Error: ${roundCheck.error ?? priorCheck.error}`);
+    process.exit(1);
+  }
+  const { round } = roundCheck;
+  const { prior } = priorCheck;
   let runId = cliRunId;
   // A cloud-enabled invocation with no --run-id is a SILENT total loss of this
   // review's persistence (found live 2026-07-26, chasing a consumer repo whose
@@ -1026,7 +1010,7 @@ async function main() {
     }
   }
   if (mode !== 'review' || !planFile || !transcriptFile) {
-    console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|azure-claude|anthropic|openai-compatible|openrouter] [--mode plan|code] [--role adjudicator-only] [--run-id <audit_runs.id>] [--envelope-scope full|thin|gap] [--campaign-digest <hex>]');
+    console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|azure-claude|anthropic|openai-compatible|openrouter] [--mode plan|code] [--role adjudicator-only] [--run-id <audit_runs.id>] [--envelope-scope full|thin|gap] [--campaign-digest <hex>] [--round 1|2] [--prior <round-1 result.json>]');
     console.error('       node scripts/gemini-review.mjs set-provider <gemini|azure-claude|anthropic|openai-compatible|openrouter|default>');
     console.error('       node scripts/gemini-review.mjs ping');
     process.exit(1);
@@ -1047,7 +1031,7 @@ async function main() {
       console.error('Error: --provider fixture is test-only (requires NODE_ENV=test).');
       process.exit(1);
     }
-    return runFixtureReview({ transcriptFile, outFile, jsonMode });
+    return runFixtureReview({ transcriptFile, outFile, jsonMode, round, prior });
   }
 
   // Arm the hard-deadline watchdog for the whole review (incl. cloud persistence)
@@ -1065,14 +1049,18 @@ async function main() {
   try {
     // `--role adjudicator-only` routes through the sibling wrapper that
     // injects the role-specific system-prompt addendum; default (no --role)
-    // is byte-identical to today (runReviewWithRetry, unchanged call).
-    const runReview = role === 'adjudicator-only' ? runAdjudicatorOnlyReview : runReviewWithRetry;
-    const r = await runReview(provider, client, planContent, transcriptContent, projectContext, auditMode);
+    // is runReviewWithRetry, plus the settled-items block only on --round 2.
+    const roundOpts = prior ? { roundBlock: buildPriorRoundBlock(prior, round) } : {};
+    const r = role === 'adjudicator-only'
+      ? await runAdjudicatorOnlyReview(provider, client, planContent, transcriptContent, projectContext, auditMode)
+      : await runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode, null, roundOpts);
     const { result, usage, latencyMs, transcriptContent: usedTranscript } = r;
     await applyDebtSuppression(result, usedTranscript);
     await applyScopeFilter(result, usedTranscript);
+    applyPriorRoundSuppression(result, priorFindingsOf(prior));
     applyExistenceGate(result);
     addSemanticIds(result, provider);
+    const gateSummary = stampGateDisposition(result, round);
     // Primary reviewer's resolved concrete model id (for source_model attribution).
     const primaryModel = provider === 'gemini' ? MODEL
       : provider === 'azure-claude' ? azureConfig.claudeDeployment
@@ -1094,7 +1082,7 @@ async function main() {
     // import it without a permanent cross-file cycle (see shadow.mjs's
     // fileoverview), so it is threaded through as an explicit dependency.
     await runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent: usedTranscript, projectContext, auditMode }, { modelEvalOverride, envelopeScopeCli, campaignDigest, runReviewWithRetry });
-    emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile);
+    emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile, gateSummary);
     recordGeminiOutcomes(result, primaryModel);
     await finishAndExit(0); // guarantee termination — never rely on natural drain
   } catch (err) {

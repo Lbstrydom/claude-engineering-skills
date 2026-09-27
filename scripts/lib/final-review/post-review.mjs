@@ -40,6 +40,68 @@ import { verifyExistenceFindings, isRefuted } from '../audit/finding-verificatio
 import { generateRepoProfile } from '../context.mjs';
 import { getActiveRevisionId } from '../prompt-registry.mjs';
 import { PromptBandit } from '../../bandit.mjs';
+// The pure primitive ledger.mjs re-exports — imported from its home so this
+// module does not pull ledger.mjs's env-reading module graph just to compare
+// two strings (the reason text-similarity.mjs was extracted in the first place).
+import { jaccardSimilarity } from '../text-similarity.mjs';
+
+/** The topic signature both post-review topic matchers compare on. */
+function findingTopicSig(f) {
+  return `${f?.category ?? ''} ${f?.section ?? ''} ${f?.detail ?? ''}`;
+}
+
+/**
+ * The ONE topic matcher of this pipeline: best Jaccard match of `sig` among
+ * `candidates`. Shared by debt re-suppression and prior-round suppression so
+ * the two can never drift into different similarity notions.
+ */
+function bestTopicMatch(sig, candidates, sigOf) {
+  let match = null;
+  let score = 0;
+  for (const c of candidates) {
+    const s = jaccardSimilarity(sig, sigOf(c));
+    if (s > score) { score = s; match = c; }
+  }
+  return { match, score };
+}
+
+/**
+ * Round >= 2: drop new_findings whose topic matches a finding the PREVIOUS
+ * final-review round already raised — those are settled (fixed, or accepted as
+ * debt). A finding the reviewer marks `is_reopened: true` survives: the prompt
+ * requires it to cite the changed line that reopened it. Deterministic backstop
+ * to the prompt's "do not re-raise" instruction, which is otherwise the only
+ * thing standing between a round-2 run and a fresh full review.
+ *
+ * 0.35 = `suppressReRaises`' threshold: both sides here are full
+ * category+section+detail signatures, the symmetric case that value was tuned
+ * for (the debt path's 0.30 compensates for an asymmetric, shorter signature).
+ *
+ * @param {object} result - mutated in place
+ * @param {object[]} priorFindings - the previous round's new_findings
+ * @returns {{suppressed: number}}
+ */
+export function applyPriorRoundSuppression(result, priorFindings, { threshold = 0.35 } = {}) {
+  if (!Array.isArray(result?.new_findings) || !Array.isArray(priorFindings) || priorFindings.length === 0) {
+    return { suppressed: 0 };
+  }
+  const kept = [];
+  const dropped = [];
+  for (const f of result.new_findings) {
+    if (f.is_reopened === true) { kept.push(f); continue; }
+    const { match, score } = bestTopicMatch(findingTopicSig(f), priorFindings, findingTopicSig);
+    if (match && score > threshold) dropped.push({ category: f.category, matchedPriorId: match.id ?? null, score: Number(score.toFixed(2)) });
+    else kept.push(f);
+  }
+  if (dropped.length > 0) {
+    process.stderr.write(`  [final-review] Prior-round suppression: ${dropped.length}/${result.new_findings.length} new_findings re-raise a settled previous-round finding (dropped)\n`);
+    for (const d of dropped.slice(0, 3)) process.stderr.write(`    [prior-settled] ~${d.matchedPriorId} score=${d.score}\n`);
+  }
+  result.new_findings = kept;
+  result._priorSuppressedCount = dropped.length;
+  result._priorSuppressedFindings = dropped;
+  return { suppressed: dropped.length };
+}
 
 export async function applyDebtSuppression(result, transcriptContent) {
   try {
@@ -49,7 +111,6 @@ export async function applyDebtSuppression(result, transcriptContent) {
       || [];
     if (!Array.isArray(suppressionCtx) || suppressionCtx.length === 0) return;
     if (!Array.isArray(result.new_findings)) return;
-    const { jaccardSimilarity } = await import('../ledger.mjs');
     // Threshold 0.30 vs suppressReRaises' 0.35 — debt envelope signatures
     // (category+section) are shorter than new_findings (which include detail
     // text), so asymmetric lengths dilute Jaccard.
@@ -58,14 +119,8 @@ export async function applyDebtSuppression(result, transcriptContent) {
     const kept = [];
     const debtSuppressed = [];
     for (const f of result.new_findings) {
-      const fSig = `${f.category} ${f.section} ${f.detail}`;
-      let match = null;
-      let bestScore = 0;
-      for (const d of suppressionCtx) {
-        const score = jaccardSimilarity(fSig, `${d.category} ${d.section}`);
-        if (score > bestScore) { bestScore = score; match = d; }
-      }
-      if (match && bestScore > THRESHOLD) debtSuppressed.push({ finding: f, matchedTopic: match.topicId, score: bestScore });
+      const { match, score } = bestTopicMatch(findingTopicSig(f), suppressionCtx, (d) => `${d.category} ${d.section}`);
+      if (match && score > THRESHOLD) debtSuppressed.push({ finding: f, matchedTopic: match.topicId, score });
       else kept.push(f);
     }
     if (debtSuppressed.length === 0) return;

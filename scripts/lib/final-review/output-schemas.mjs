@@ -32,6 +32,44 @@ const WronglyDismissedSchema = z.object({
   ),
 });
 
+/**
+ * The five grounds on which a final-review finding may block release, plus
+ * `none`. Closed set, shared by the provider schema below and the code-side
+ * gate (`round-gate.mjs::computeGateDisposition`) so the two can never name
+ * different bases. Mirrors the release-blocking rule in
+ * docs/audit/shared-references/gemini-gate.md.
+ */
+export const BLOCKING_BASIS_VALUES = Object.freeze([
+  'acceptance_criterion', 'changed_code_regression', 'security', 'data_loss', 'runtime_failure', 'none',
+]);
+
+/**
+ * A final-review `new_findings` entry: the shared producer finding plus the
+ * release-blocking pair. Both fields are REQUIRED (so every provider dialect —
+ * Gemini responseSchema, Anthropic tool `input_schema`, OpenAI-compatible
+ * json_schema — carries them), and deliberately NOT tied together by a
+ * `.refine`: a provider cannot enforce a refinement and `z.toJSONSchema` drops
+ * it silently (tests/provider-contract-enforceable.test.mjs). The pairing rule
+ * — `blocking_basis === 'none'` iff `release_blocking === false` — is enforced
+ * in code by `checkBlockingPair`, fail-closed.
+ *
+ * Extends `ProducerFindingSchema` locally rather than adding the fields to it:
+ * that schema is the response contract for every GPT audit pass too, where a
+ * release-blocking judgement has no meaning.
+ */
+export const FinalReviewFindingSchema = ProducerFindingSchema.extend({
+  release_blocking: z.boolean().describe(
+    'TRUE only if this finding, in the reviewed change, names one of the blocking_basis grounds. '
+    + 'FALSE for hardening, maintainability, DRY, style, "track as debt", or anything you would not stop a release for.'
+  ),
+  blocking_basis: z.enum(BLOCKING_BASIS_VALUES).describe(
+    'The ground that makes it release-blocking: acceptance_criterion (a stated plan acceptance criterion is violated), '
+    + 'changed_code_regression (the change breaks behaviour that worked before), security, data_loss, '
+    + 'runtime_failure (a crash/exception/hang on a reachable path). MUST be "none" when release_blocking is false, '
+    + 'and MUST NOT be "none" when it is true.'
+  ),
+});
+
 // Exported so tests/provider-contract-enforceable.test.mjs can assert it stays
 // refinement-free (evidence-anchor-path-contract §7d). It is handed to a
 // provider via z.toJSONSchema below, and z.toJSONSchema drops `.refine`/
@@ -47,7 +85,7 @@ export const GeminiFinalReviewSchema = z.object({
     quality_summary: z.string().max(2000).describe('Brief assessment of the deliberation process')
   }),
 
-  new_findings: z.array(ProducerFindingSchema).max(10).describe('Issues neither Claude nor GPT caught. Max 10, only genuinely new.'),
+  new_findings: z.array(FinalReviewFindingSchema).max(10).describe('Issues neither Claude nor GPT caught. Max 10, only genuinely new.'),
 
   wrongly_dismissed: z.array(WronglyDismissedSchema).max(10).describe('GPT findings Claude dismissed but were actually valid'),
 

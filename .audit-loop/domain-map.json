@@ -362,6 +362,11 @@
       "domain": "audit-orchestration"
     },
     {
+      "_why": "MORE SPECIFIC than the final-review/** shared-lib rule below — added 2026-09-27 with the module itself (final-review round cap + code-computed gate disposition). round-gate.mjs reads isRefuted from lib/audit/finding-verification.mjs (audit-orchestration) — the existence gate's single accessor, deliberately not re-spelled — so it is not a zero-import shared-lib primitive. Importers: gemini-review.mjs and post-review.mjs (audit-orchestration, same domain) and debt-auto-capture.mjs (tech-debt -> audit-orchestration, already declared 2026-08-27). Adds no new domain edge.",
+      "pattern": "scripts/lib/final-review/round-gate.mjs",
+      "domain": "audit-orchestration"
+    },
+    {
       "_why": "EXPLICIT shared-lib claim, added 2026-08-14 (final-review-scoped-second-reviewer plan, Cluster A) so the domain is DECIDED rather than defaulted — same shape as the 2026-08-13 six-subsystem rule above (tests/domain-map-subsystem-coverage.test.mjs). VERIFIED at source before claiming: envelope.mjs, gap-projection.mjs and scope.mjs have ZERO import statements — pure, self-contained modules (envelope.mjs's own docstring: 'Pure: no fs, no env, no I/O'), so shared-lib is correct on the evidence, stronger than the precedent's 'shared-lib primitives only' bar. Adding the directory without this rule would have let it fall through to the scripts/lib/** catch-all silently, the same shape that produced 10 layering violations on 2026-08-12. shadow.mjs and post-review.mjs are EXCLUDED — see the more specific rules immediately above.",
       "pattern": "scripts/lib/final-review/**",
       "domain": "shared-lib"

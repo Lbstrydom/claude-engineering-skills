@@ -159,36 +159,53 @@ Provider-agnostic routes — **explicit selection only** (`--provider` /
 (any OpenAI-shaped gateway: OpenRouter/Together/Fireworks/Groq/vLLM/Ollama/LM
 Studio). See `docs/runbooks/azure-work-profile.md` §Provider-agnostic final review.
 
-## Process the verdict
+Pass `--round 1` on the first run; round 2 is shown under Step 7.1.
 
-| Verdict | Action |
-|---|---|
-| `APPROVE` | Done → final report |
-| `CONCERNS` | Step 7.1: Deliberate → fix → Gemini re-verify |
-| `CONCERNS_REMAINING` | Step 7.1 for the **new** findings only; the disputed items are already settled by your cited challenges — do not re-litigate them |
-| `REJECT` | Present to user — needs human judgement |
+## Process the result — `gateDisposition`, not the verdict word
 
-Max 2 final-review rounds — a **hard** cap, not a target. Each rerun is a fresh
-full review of a scope that has grown by every fix, so a round-N reviewer will
-almost always find *something*; "the last run still found things" is expected
+Every new finding carries `release_blocking` + `blocking_basis`
+(`acceptance_criterion` | `changed_code_regression` | `security` | `data_loss` |
+`runtime_failure` | `none` — `none` exactly when not blocking). From those,
+`gemini-review.mjs` computes **in code** a `gateDisposition` on the result JSON
+(and in the stdout summary, `Gate: …`); `verdict` is left as the reviewer's own
+word. Act on the disposition:
+
+| `gateDisposition` | When | Action |
+|---|---|---|
+| `approve` | `APPROVE`, nothing blocking | Done → final report |
+| `approve_with_debt` | `CONCERNS`/`CONCERNS_REMAINING`, no release-blocking finding, no HIGH `wrongly_dismissed` | Done. Capture the findings as debt (below) and list them in the report. Do not re-run; do not ask the user to override. |
+| `blocked` | `REJECT`; any release-blocking finding; a HIGH `wrongly_dismissed`; the coverage gate fired; or a finding with a missing/contradictory pair (fail-closed) | `gateDispositionDetail.reasons` names why. Round 1 → Step 7.1. Round 2 → present the named items to the user. |
+
+`APPROVE` with a release-blocking finding is `blocked` (the contradiction
+resolves closed); a finding the existence gate **refuted** neither blocks nor
+becomes debt. For `CONCERNS_REMAINING`, the disputed items are already settled
+by your cited challenges — do not re-litigate them.
+
+Max 2 final-review rounds — a **hard** cap, not a target, and now enforced in
+code: `gemini-review.mjs` refuses `--round 3`. Each rerun is a fresh full review
+of a scope that has grown by every fix, so a round-N reviewer will almost
+always find *something*; "the last run still found things" is expected
 behaviour, not evidence the change is unfit to ship.
 
-**Release-blocking is the only question the cap leaves open.** After round 2,
-a finding blocks ship only when it names at least one of: a violated plan
-acceptance criterion, a regression in the changed code, a security failure, a
-data-loss risk, or a runtime failure on a reachable path. Everything else —
+**Release-blocking is the only question the cap leaves open**, and the
+reviewer answers it per finding: a finding blocks ship only when it names at
+least one of the five bases above in the reviewed change. Everything else —
 defensive hardening, maintainability, DRY, "track as debt", findings the
-reviewer itself calls non-blocking — is **tracked debt**: record each one (id, severity, one-line reason) in the
-plan's Remaining / debt section — automatic capture from final-review output is
-not wired yet, so this step is manual — then close the gate as
-**approved-with-debt**. Do not ask the user to override a
-`CONCERNS`/`CONCERNS_REMAINING` verdict whose remaining findings are all
-non-blocking; report it as approved-with-debt and list the debt.
+reviewer itself calls non-blocking — is **tracked debt**. Capture it from the
+result that closed the gate (non-blocking findings only; `--dry-run` previews):
 
-## Step 7.1 — Deliberate on Gemini Findings (CONCERNS only)
+```bash
+node scripts/debt-auto-capture.mjs --final-review .audit/$SID-gemini-result.json --run $SID
+```
 
-When Gemini returns `CONCERNS`, Claude deliberates on each `new_findings`
-and `wrongly_dismissed` item — same peer relationship as GPT deliberation:
+then close the gate as **approved-with-debt** and list the debt.
+
+## Step 7.1 — Deliberate on Gemini Findings (round 1, `blocked` only)
+
+When round 1 is `blocked`, Claude deliberates on each `new_findings`
+and `wrongly_dismissed` item — same peer relationship as GPT deliberation.
+Fixing is required for the release-blocking items; the rest may be fixed or
+left as debt:
 
 1. **For each Gemini finding**, decide: ACCEPT, PARTIAL, or CHALLENGE
    - CHALLENGE must cite evidence (file paths, code, conventions)
@@ -202,24 +219,35 @@ and `wrongly_dismissed` item — same peer relationship as GPT deliberation:
    missing from the list makes its own follow-up finding look out-of-scope.
    `runFinalReview()` re-reads file contents from the working tree on every
    call, so no manual content re-inlining is needed.
-4. **Re-run Gemini review** with updated transcript:
+4. **Re-run the review as round 2**, handing it the round-1 result as
+   structured memory. Round 2 is told the round-1 findings are settled and to
+   review only regressions introduced by the fixes plus unresolved blocking
+   items; a round-2 finding whose topic matches a round-1 finding is dropped in
+   code (`_priorSuppressedCount`) unless the reviewer marks it `is_reopened`
+   and cites the changed line:
 
 ```bash
-node scripts/gemini-review.mjs review $PLAN_FILE .audit/$SID-transcript-v2.json --mode $AUDIT_MODE --out .audit/$SID-gemini-result-v2.json 2>.audit/$SID-gemini-stderr-v2.log
+node scripts/gemini-review.mjs review $PLAN_FILE .audit/$SID-transcript-v2.json --mode $AUDIT_MODE --round 2 --prior .audit/$SID-gemini-result.json --out .audit/$SID-gemini-result-v2.json 2>.audit/$SID-gemini-stderr-v2.log
 ```
 
 **CRITICAL**: Do NOT use GPT to verify Gemini's findings — GPT already
 missed them. Gemini must verify its own concerns were addressed. This
 closes the loop properly.
 
-If Gemini returns `APPROVE` on re-review → done.
+Round 2 `approve`/`approve_with_debt` → done (capture debt from the `-v2`
+result).
 
-**After round 2, do NOT auto-run a 3rd round.** Triage the round-2 `CONCERNS`
-by finding *character* (mirrors the GPT "exceed cap only for genuine bugs" rule):
+**After round 2 there is no 3rd round** — `--round 3` is refused. A round-2
+`blocked` goes to the user with its named blocking items. Triage them by
+finding *character* first, so what you escalate is only what deserves it:
 
 - **Concrete design/correctness defect** (wrong contract, unsafe migration,
-  dangling FK, data loss) → the genuine-bug exception: fix + run ONE more round.
-  **This is meant to be occasional, not the norm** — a consumer session tracked
+  dangling FK, data loss) → fix it, then **escalate to the user** with the
+  round-2 result and the fix: the user decides whether the fix is verified
+  (e.g. by a test) or needs a fresh audit cycle. There is no automated third
+  final-review round. (Before 2026-09-27 this bullet granted "fix + run ONE
+  more round"; the history below is why that exception was measured as rare.)
+  **History of the retired exception** — a consumer session tracked
   by upstream report `aa6469b3` used it twice back-to-back (round 3 *and*
   round 4, both genuine, since-fixed defects), which reads as more than
   "rare" from n=1. **Checked against a broader sample before treating that as
@@ -239,8 +267,8 @@ by finding *character* (mirrors the GPT "exceed cap only for genuine bugs" rule)
   storyline session," not "storyline's own history vs. itself." If storyline
   (or any other consumer) sees the exception fire repeatedly across *its own*
   sessions, that pattern — not a single occurrence — is what would justify
-  revisiting the cap. Note when you use it (round count + what the defect
-  was) so that pattern is visible to whoever next reviews this cap.
+  revisiting the cap. Note each escalation (what the defect was) so that
+  pattern is visible to whoever next reviews this cap.
 - **Implementation-completeness** ("specify the store step", "where does the
   cooldown go", a missing parameter) → **STOP**. Fold the items into the
   plan/PR as captured notes; these belong to the **code** audit, which checks
