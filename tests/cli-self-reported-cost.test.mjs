@@ -2,9 +2,8 @@
  * The `cli` Anthropic backend self-reports its exact cost (`claude -p`'s
  * `total_cost_usd`). AGENTS.md says to use it, but it only ever reached
  * `_meta.cost_usd`, which nothing but `anthropic-ping.mjs` read — so a usage
- * event priced the call from tokens instead, and `normaliseCliOutput` keeps
- * only input/output tokens (no cache reads/writes), so that estimate
- * under-reports. The first test failed before the fix.
+ * event priced the call from tokens instead of the CLI's exact figure. The
+ * first test failed before the fix.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -36,9 +36,9 @@ batched `claude -p` calls on its incremental path).
 `buildUsageEvent` ([usage-event.mjs](../../scripts/lib/audit/usage-event.mjs))
 reads that field as an exact self-reported cost. Before that it reached only
 `_meta`, which only `anthropic-ping.mjs` read, so usage events priced cli calls
-from tokens — and the cli `usage` carries no cache tokens, so the estimate
-under-reported (a 90K-token cache read priced at $0.0002 against a real $0.042).
-Pass the response's `usage` through; don't re-derive a cost from tokens.
+from tokens, an estimate rather than the backend's own figure (and, until #120
+carried the cli cache counts, one that missed most of the prompt). Pass the
+response's `usage` through; don't re-derive a cost from tokens.
 
 **`claude-trace` canNOT meter the scripted cli backend.** Three independent
 reasons, each fatal on its own:
