@@ -90,8 +90,11 @@ export const UsageEventSchema = z.object({
  * @param {object|null} raw.usage - provider usage object ({input_tokens,output_tokens,...} or {prompt_tokens,completion_tokens})
  * @param {number} [raw.wallClockMs]
  * @param {number} [raw.selfReportedCostUsd] - when the backend self-reports
- *   cost (e.g. the Claude CLI backend's `total_cost_usd`), pass it here to
- *   mark the event `usageReliability: 'exact'` and skip token-based pricing.
+ *   cost, pass it here to mark the event `usageReliability: 'exact'` and skip
+ *   token-based pricing. Defaults to `raw.usage.provider_cost_usd`, which the
+ *   OSS/OpenRouter path and the Claude CLI backend (`total_cost_usd`, via
+ *   anthropic-client's normaliseCliOutput) both set — so a caller holding a
+ *   usage object cannot drop the exact figure by forgetting to pass it.
  * @param {string} createdAt - ISO timestamp, caller-supplied (no Date.now() here)
  * @returns {import('zod').infer<typeof UsageEventSchema>}
  * @throws {import('zod').ZodError} if the resulting event doesn't conform
@@ -104,9 +107,10 @@ export function buildUsageEvent(raw, createdAt) {
   let inputTokens;
   let outputTokens;
   let usageReliability;
+  const selfReported = typeof raw.selfReportedCostUsd === 'number' ? raw.selfReportedCostUsd : raw.usage?.provider_cost_usd;
 
-  if (typeof raw.selfReportedCostUsd === 'number') {
-    costAmountUsd = raw.selfReportedCostUsd;
+  if (typeof selfReported === 'number' && Number.isFinite(selfReported)) {
+    costAmountUsd = selfReported;
     inputTokens = raw.usage?.input_tokens ?? raw.usage?.prompt_tokens ?? 0;
     outputTokens = raw.usage?.output_tokens ?? raw.usage?.completion_tokens ?? 0;
     usageReliability = 'exact';

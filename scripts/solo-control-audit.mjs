@@ -87,6 +87,7 @@ import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
+import { buildToolUseRequest } from './lib/anthropic-tool-choice.mjs';
 import { resolveModel } from './lib/model-resolver.mjs';
 import { PASS_PROMPTS } from './lib/prompt-seeds.mjs';
 import { ShadowPassSchema, seededShuffle, SHADOW_PASSES } from './lib/audit-shadow.mjs';
@@ -1129,7 +1130,7 @@ function geminiUsageOrNull(resp) {
  * "Gate ablation (not a candidate)"). Mirrors runGeminiReview's prompt text
  * VERBATIM (same "emit only net-new" framing, same priorList/diff shape) so
  * the ablation compares GATE MODELS, not prompt wording — but uses Claude's
- * OWN structured-output mechanism (forced tool-use), matching how
+ * OWN structured-output mechanism (tool-use, forced where the model allows), matching how
  * runGeminiReview/runGptPass each use their model's best mechanism rather
  * than a shared lowest-common-denominator one. This is deliberately NOT the
  * buildColdPassPrompt fairness rule (that isolates the MODEL for the cold-
@@ -1147,23 +1148,29 @@ function geminiUsageOrNull(resp) {
 async function runClaudeGateReview(client, model, collected, diff, { reasoningEffort = 'high' } = {}) {
   const prompt = buildGateReviewPrompt(collected, diff);
   assertEgressSafe(prompt, { label: 'apparatus:claude-gate' });
-
+  // Opus 5.5 400s on forced tool_choice: auto + a SYSTEM instruction there keeps the user prompt byte-identical.
+  const toolUse = buildToolUseRequest(model, { name: 'emit_findings', description: 'Return the net-new findings.', input_schema: zodToOpenAiJsonSchema(ShadowPassSchema) });
   const params = {
     model, max_tokens: REASONING_TIERS.anthropic[reasoningEffort] ?? 8000,
-    messages: [{ role: 'user', content: prompt }],
-    tools: [{ name: 'emit_findings', description: 'Return the net-new findings.', input_schema: zodToOpenAiJsonSchema(ShadowPassSchema) }],
-    tool_choice: { type: 'tool', name: 'emit_findings' },
+    messages: [{ role: 'user', content: prompt }], tools: toolUse.tools, tool_choice: toolUse.tool_choice,
+    ...(toolUse.instruction ? { system: toolUse.instruction } : {}),
   };
   if (reasoningEffort) params.output_config = { effort: reasoningEffort };
 
+  // A gate that did not review is provider-error (commit reads partial), never a clean `{findings: []}`.
   let resp;
   try { resp = await client.messages.create(params, { timeoutMs: 300000 }); }
-  catch (err) { return { findings: [], skipped: `error: ${String(err?.message || err).slice(0, 160)}` }; }
-
-  const toolUse = Array.isArray(resp.content) ? resp.content.find((c) => c.type === 'tool_use') : null;
-  const check = ShadowPassSchema.safeParse(clampToSchema(toolUse?.input ?? null));
-  return { findings: check.success ? check.data.findings : [], usage: resp.usage || null };
+  catch (err) { return { findings: [], usage: null, state: 'provider-error', error: String(err?.message || err).slice(0, 160) }; }
+  const usage = resp.usage || null;
+  if (resp.stop_reason === 'refusal') return { findings: [], usage, state: 'provider-error', error: 'refusal (stop_reason: refusal)' };
+  const call = Array.isArray(resp.content) ? resp.content.find((c) => c.type === 'tool_use') : null;
+  if (!call) return { findings: [], usage, state: 'provider-error', error: `no emit_findings tool call (stop_reason: ${resp.stop_reason ?? 'unknown'})` };
+  const check = ShadowPassSchema.safeParse(clampToSchema(call.input ?? null));
+  return check.success ? { findings: check.data.findings, usage, state: 'ok' } : { findings: [], usage, state: 'conformance-miss' };
 }
+
+/** A gate result's ledger cell state: any runner's `skipped` (e.g. Gemini no-key) measured nothing. */
+const gateCellState = (r) => r.state ?? (r.skipped ? 'provider-error' : 'ok');
 
 /**
  * GPT's gate-ablation counterpart (fourth candidate: Flash / Pro / Sonnet-xhigh /
@@ -1443,20 +1450,22 @@ async function cmdApparatus() {
 
     // Gate — net-new over the deduped union (whichever way it was produced).
     guardBudget(sha, 'gate', 'apparatus-gate', 0, gateModel, gateRecipient);
-    let gateFindings = [];
+    let gateFindings = [], gateState = 'provider-error';
     try {
       const r = gateRecipient === 'anthropic'
         ? await runClaudeGateReview(anthropicGateClient, gateModel, collected, chunks[0] || '', { reasoningEffort: gateReasoningEffort })
         : gateRecipient === 'openai'
           ? await runGptGateReview(client, zodTextFormat, gateModel, collected, chunks[0] || '', { reasoningEffort: gateReasoningEffort })
           : await runGeminiReview(gateModel, collected, chunks[0] || '');
-      gateFindings = r.findings;
-      recordCall({ arm: label, commit: sha, purpose: 'gate', pass: 'apparatus-gate', chunkIndex: 0, repeatIndex: 0, resolvedModel: gateModel, recipient: gateRecipient, usage: r.usage || null, state: 'ok' });
+      gateState = gateCellState(r);
+      if (gateState === 'provider-error') log(`      ! ${gateRecipient} gate did not review: ${r.error || r.skipped} — commit reads partial`);
+      else gateFindings = r.findings;
+      recordCall({ arm: label, commit: sha, purpose: 'gate', pass: 'apparatus-gate', chunkIndex: 0, repeatIndex: 0, resolvedModel: gateModel, recipient: gateRecipient, usage: r.usage || null, state: gateState });
     } catch (err) {
       log(`      ! ${gateRecipient} gate review failed: ${String(err?.message).slice(0, 120)}`);
       recordCall({ arm: label, commit: sha, purpose: 'gate', pass: 'apparatus-gate', chunkIndex: 0, repeatIndex: 0, resolvedModel: gateModel, recipient: gateRecipient, usage: null, state: 'provider-error' });
     }
-    atomicWriteFileSync(gatePath(sha, gateModel), JSON.stringify({ sha, gateModel, findings: gateFindings }, null, 2));
+    atomicWriteFileSync(gatePath(sha, gateModel), JSON.stringify({ sha, gateModel, state: gateState, findings: gateFindings }, null, 2));
 
     // Composite assembly: pre-gate union ∪ this gate's output, tagged stage.
     const seen = new Set();
@@ -1479,7 +1488,7 @@ async function cmdApparatus() {
     }
     log(`      → ${commitFindings} finding(s)`);
     out.perCommit.push({
-      sha, repo: repoBasename, state: 'ran', findings: commitFindings, chunks: chunks.length,
+      sha, repo: repoBasename, state: 'ran', gateState, findings: commitFindings, chunks: chunks.length,
       // Denominator for score's completion check: the shared 5-pass rows (over
       // the chunk count the passes actually ran on — for a gate-only run that is
       // the ORIGINAL run's count, carried in the pregate artifact) + this gate.
@@ -2454,7 +2463,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 export const _internals = {
   chunkDiff, continuationMarker, planIncrementalRun, repoIdentityFor, buildColdPassPrompt,
   sha256hex, gatePath, pregatePath, extractDiff, extractAuditedDiff, locateCommit, treeExists, partitionDiscoveredRows,
-  runClaudeGateReview, runGeminiReview, runGptGateReview, buildGateReviewPrompt,
+  runClaudeGateReview, runGeminiReview, runGptGateReview, buildGateReviewPrompt, gateCellState,
   runPass, runDeepseekPass, REASONING_TIERS, assertReasoningTier, geminiUsageOrNull, budgetBreached, PASSES,
   ColdPassSchema, JSON_CONTRACT, sumUsage, creditSharedPassRows, PREGATE_BASE_ARM,
 };

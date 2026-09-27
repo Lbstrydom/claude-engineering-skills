@@ -911,38 +911,23 @@ function runClaudeCli(bin, args, signal, stdinPayload = '', timeoutMs = DEFAULT_
 }
 
 /**
- * Parse the JSON envelope produced by `claude -p --output-format json` and
- * reshape it into the raw-SDK response shape.
+ * Parse + validate `claude -p --output-format json` stdout into the raw-SDK
+ * response shape. Throws on malformed JSON, non-object root, schema mismatch,
+ * or `is_error: true` envelopes. Reads `result`, `usage.{input,output}_tokens`
+ * and `total_cost_usd`/`duration_ms`/`num_turns` (Claude Code docs, v1.x).
  *
- * Expected input fields (per Claude Code docs, stable as of v1.x):
- *   - `result`: final assistant text
- *   - `usage.input_tokens`, `usage.output_tokens`: token counts
- *   - `total_cost_usd`, `duration_ms`, `num_turns`: surfaced via _meta
- *
- * @param {string} stdout
- * @param {string|undefined} requestedModel
- * @returns {{
- *   content: [{type: 'text', text: string}],
- *   usage: {input_tokens: number, output_tokens: number},
- *   model: string|undefined,
- *   stop_reason: string,
- *   _meta: object
- * }}
- */
-/**
- * Parse + validate `claude -p --output-format json` stdout. Throws on malformed
- * JSON, non-object root, schema mismatch, or `is_error: true` envelopes.
- *
- * The returned `_meta` field is the **cli backend's extension** of the SDK
- * response shape — it surfaces metrics (cost, duration, turn count) the raw
- * SDK doesn't include. It is documented and stable; the `sdk` backend
- * does not populate it.
+ * `_meta` is the **cli backend's extension** of the SDK shape (cost,
+ * duration, turn count); the `sdk` backend does not populate it. The cost
+ * ALSO rides on `usage.provider_cost_usd` — the field every usage consumer
+ * already reads (`buildUsageEvent` takes it as an exact, self-reported cost).
+ * `_meta` alone reached only anthropic-ping, so the CLI's exact figure was
+ * dropped for a token estimate that cannot see the envelope's cache tokens.
  *
  * @param {string} stdout
  * @param {string|undefined} requestedModel
  * @returns {{
  *   content: [{type: 'text', text: string}],
- *   usage: {input_tokens: number, output_tokens: number},
+ *   usage: {input_tokens: number, output_tokens: number, provider_cost_usd?: number},
  *   model: string|undefined,
  *   stop_reason: string,
  *   _meta: {cost_usd?: number, duration_ms?: number, num_turns?: number}
@@ -987,6 +972,7 @@ function normaliseCliOutput(stdout, requestedModel) {
     usage: {
       input_tokens: Number(data.usage?.input_tokens) || 0,
       output_tokens: Number(data.usage?.output_tokens) || 0,
+      ...(typeof data.total_cost_usd === 'number' ? { provider_cost_usd: data.total_cost_usd } : {}),
     },
     model: requestedModel || data.model,
     stop_reason: 'end_turn',

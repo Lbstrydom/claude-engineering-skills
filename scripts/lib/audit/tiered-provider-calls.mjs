@@ -15,6 +15,7 @@ import { clampToJsonSchemaLimits } from '../schemas.mjs';
 import { buildStage1TriagerPrompt } from './discovery-prompts.mjs';
 import { callGPT } from './llm-helpers.mjs';
 import { resolveModel } from '../model-resolver.mjs';
+import { buildToolUseRequest, withToolInstruction } from '../anthropic-tool-choice.mjs';
 
 const Stage1TriagerResponseSchema = z.object({
   dismissalAttempted: z.boolean(),
@@ -169,8 +170,12 @@ export function createSonnetDiscoveryCall({ providers, ctx, contract, discoveryP
     };
   }
   return async () => {
+    const model = resolveModel('latest-sonnet');
+    // Forced today (Sonnet 5 accepts it); auto + instruction the day the
+    // sentinel moves to a release that 400s on forcing, as Opus 5.5 does.
+    const toolReq = buildToolUseRequest(model, contract.sonnetFindingsTool);
     const resp = await providers.anthropicClient.messages.create({
-      model: resolveModel('latest-sonnet'),
+      model,
       // With maxItems:15 and per-finding text caps, a full 15-item response
       // needs ~9000+ output tokens; 16000 covers the worst case with headroom
       // (2026-07-14 — a lower budget truncated `toolUse` before the JSON
@@ -179,19 +184,19 @@ export function createSonnetDiscoveryCall({ providers, ctx, contract, discoveryP
       // The SAME anchor contract + diff-path table the GLM generator gets —
       // one string, so the two generators cannot drift into citing different
       // id sets.
-      system: [
+      system: withToolInstruction([
         'You are a code-audit finding generator (cold pass, no prior context). Produce candidate findings by calling report_findings.',
         '',
         contract.anchorContract,
-      ].join('\n'),
+      ].join('\n'), toolReq.instruction),
       messages: [{ role: 'user', content: `## Plan\n${discoveryPlan}\n\n## Changed Files (code)\n${discoveryCode}` }],
-      tools: [contract.sonnetFindingsTool],
-      tool_choice: { type: 'tool', name: 'report_findings' },
+      tools: toolReq.tools,
+      tool_choice: toolReq.tool_choice,
     });
     // Anthropic SDK usage is `{input_tokens, output_tokens, ...}` — the shape
     // costFromUsage already reads. Priced via the family table.
     recordUsage({
-      provider: 'anthropic', modelSentinel: 'latest-sonnet', resolvedModel: resolveModel('latest-sonnet'),
+      provider: 'anthropic', modelSentinel: 'latest-sonnet', resolvedModel: model,
       usage: resp?.usage,
     });
     const toolUse = resp?.content?.find((block) => block.type === 'tool_use' && block.name === 'report_findings');

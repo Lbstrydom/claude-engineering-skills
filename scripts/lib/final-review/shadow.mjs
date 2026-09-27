@@ -384,7 +384,11 @@ export function shadowErrorBlock(shadow, err) {
     // never returned a usage block. `usage: null` above already reads as
     // unmeterable to `armCostUsd`; this states it in the artifact so a reader
     // does not have to infer it from an absence.
-    usageEvidence: 'unreported-call-may-have-been-billed',
+    usageEvidence: err.usage ? 'billed-usage-is-a-floor' : 'unreported-call-may-have-been-billed',
+    // Summed usage of the attempts that DID answer (runReviewWithRetry). A
+    // floor, not the cost: an attempt that timed out reported nothing, which
+    // is why `usage` above stays null (unmeterable) rather than taking it.
+    billedUsage: err.usage ?? null,
   };
 }
 

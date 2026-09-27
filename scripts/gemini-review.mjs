@@ -22,7 +22,7 @@
  */
 
 // dotenv loaded by lib/config.mjs (worktree-safe discovery)
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { once } from 'node:events';
@@ -43,7 +43,7 @@ import { RUN_ID_RE } from './lib/commit-trailers.mjs';
 import { GATE_EVIDENCE_RELPATH } from './lib/audit/gate-evidence.mjs';
 import { isRefuted } from './lib/audit/finding-verification.mjs';
 import { isCloudEnabled } from './lib/store/repo.mjs';
-import { statSync } from 'node:fs';
+import { sumUsage } from './lib/model-pricing.mjs';
 import { resolveAndClassify, classifyPath } from './lib/sensitive-paths.mjs';
 import { redactSecretsWithCount } from './lib/sensitive-egress-gate.mjs';
 import {
@@ -754,11 +754,14 @@ function isJsonTruncationError(err) {
 export async function runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode, modelOverride = null, options = {}) {
   const MAX_ATTEMPTS = 2;
   let txContent = transcriptContent;
+  let billed = null; // usage of failed-but-answered attempts: each was billed, so each is summed in
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const r = await runFinalReview(provider, client, planContent, txContent, projectContext, auditMode, modelOverride, options);
-      return { ...r, transcriptContent: txContent };
+      return { ...r, usage: billed ? sumUsage(billed, r.usage) : r.usage, transcriptContent: txContent };
     } catch (err) {
+      billed = sumUsage(billed, err.usage ?? null);
+      if (billed) err.usage = billed;
       if (!isJsonTruncationError(err) || attempt >= MAX_ATTEMPTS) throw err;
       process.stderr.write(`  [final-review] JSON truncation on attempt ${attempt} — retrying with conciseness instruction...\n`);
       txContent = JSON.stringify({
