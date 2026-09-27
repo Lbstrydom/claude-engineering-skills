@@ -34,7 +34,8 @@
  * @module scripts/lib/final-review/post-review
  */
 import { semanticId, appendOutcome, FalsePositiveTracker } from '../findings.mjs';
-import { affectedFilesOf, primaryFileOf } from '../finding-match.mjs';
+import { affectedFilesOf, primaryFileOf, structuredFilesOf, sectionLociOf } from '../finding-match.mjs';
+import { isReleaseBlocking } from './round-gate.mjs';
 import { listRepoFiles } from '../repo-inventory.mjs';
 import { verifyExistenceFindings, isRefuted } from '../audit/finding-verification.mjs';
 import { generateRepoProfile } from '../context.mjs';
@@ -51,9 +52,9 @@ function findingTopicSig(f) {
 }
 
 /**
- * The ONE topic matcher of this pipeline: best Jaccard match of `sig` among
- * `candidates`. Shared by debt re-suppression and prior-round suppression so
- * the two can never drift into different similarity notions.
+ * Best Jaccard match of `sig` among `candidates`. Both suppressions score with
+ * the same `jaccardSimilarity`, so they cannot drift into different similarity
+ * notions; each narrows its candidates by `suppressionLocusOf` first.
  */
 function bestTopicMatch(sig, candidates, sigOf) {
   let match = null;
@@ -63,6 +64,25 @@ function bestTopicMatch(sig, candidates, sigOf) {
     if (s > score) { score = s; match = c; }
   }
   return { match, score };
+}
+
+/**
+ * The SAME-LOCUS key a suppression decision requires on top of topic
+ * similarity: the files a finding is filed under (`structuredFilesOf` — the
+ * precision key, not the recall union), or its `§`/decision-id loci when it
+ * names no file (a plan-mode finding). Prose similarity alone suppressed
+ * similarly-worded DISTINCT defects in different files (audit H5/H17): two
+ * "swallows the parse error" findings in two modules read alike and are two bugs.
+ */
+function suppressionLocusOf(f) {
+  const files = structuredFilesOf(f);
+  return files.length > 0 ? files : sectionLociOf(f);
+}
+
+/** First locus key the two sides share, or null. Either side empty ⇒ null (fail OPEN: keep the finding). */
+function sharedLocus(a, b) {
+  const bs = new Set(b);
+  return a.find((k) => bs.has(k)) ?? null;
 }
 
 /**
@@ -77,6 +97,21 @@ function bestTopicMatch(sig, candidates, sigOf) {
  * category+section+detail signatures, the symmetric case that value was tuned
  * for (the debt path's 0.30 compensates for an asymmetric, shorter signature).
  *
+ * Two conditions beyond similarity, both from the 2026-09-27 code audit:
+ * - **Same locus** (H5/H17): the finding and the prior must share a file (or,
+ *   for file-less plan findings, a `§`/decision-id locus). Either side naming
+ *   none ⇒ no suppression — an extra finding is the cheap error, a vanished
+ *   distinct defect the expensive one.
+ * - **Only a NON-blocking prior settles anything** (H6): a prior finding that
+ *   was release-blocking is exactly what round 2 must re-check ("previous-round
+ *   items marked BLOCKING that remain unresolved"). Suppressing its re-raise
+ *   would turn an unfixed blocker into `approve_with_debt`. `isReleaseBlocking`
+ *   fails closed, so a prior with a missing/invalid pair counts as blocking too.
+ *
+ * Every decision that matched on similarity is recorded: drops in
+ * `_priorSuppressedFindings`, similarity matches that were KEPT (and why) in
+ * `_priorRoundKept`, so a suppression is auditable after the fact.
+ *
  * @param {object} result - mutated in place
  * @param {object[]} priorFindings - the previous round's new_findings
  * @returns {{suppressed: number}}
@@ -85,21 +120,40 @@ export function applyPriorRoundSuppression(result, priorFindings, { threshold = 
   if (!Array.isArray(result?.new_findings) || !Array.isArray(priorFindings) || priorFindings.length === 0) {
     return { suppressed: 0 };
   }
+  const priors = priorFindings.map((p) => ({ p, locus: suppressionLocusOf(p), blocking: isReleaseBlocking(p) }));
   const kept = [];
   const dropped = [];
+  const keptMatches = [];
   for (const f of result.new_findings) {
     if (f.is_reopened === true) { kept.push(f); continue; }
-    const { match, score } = bestTopicMatch(findingTopicSig(f), priorFindings, findingTopicSig);
-    if (match && score > threshold) dropped.push({ category: f.category, matchedPriorId: match.id ?? null, score: Number(score.toFixed(2)) });
-    else kept.push(f);
+    const sig = findingTopicSig(f);
+    const locus = suppressionLocusOf(f);
+    // Similarity-qualifying priors that share this finding's locus.
+    const qualifying = priors
+      .map((c) => ({ ...c, score: jaccardSimilarity(sig, findingTopicSig(c.p)), shared: sharedLocus(locus, c.locus) }))
+      .filter((c) => c.score > threshold);
+    const sameLocus = qualifying.filter((c) => c.shared);
+    const decision = (c) => ({ id: f.id ?? null, category: f.category, matchedPriorId: c.p.id ?? null, score: Number(c.score.toFixed(2)), locus: c.shared });
+    const blockingMatch = sameLocus.find((c) => c.blocking);
+    if (blockingMatch) {
+      kept.push(f);
+      keptMatches.push({ ...decision(blockingMatch), reason: 'prior_release_blocking' });
+      continue;
+    }
+    const best = sameLocus.reduce((a, c) => (a && a.score >= c.score ? a : c), null);
+    if (best) { dropped.push(decision(best)); continue; }
+    kept.push(f);
+    const bestOther = qualifying.reduce((a, c) => (a && a.score >= c.score ? a : c), null);
+    if (bestOther) keptMatches.push({ ...decision(bestOther), reason: 'no_shared_locus' });
   }
   if (dropped.length > 0) {
     process.stderr.write(`  [final-review] Prior-round suppression: ${dropped.length}/${result.new_findings.length} new_findings re-raise a settled previous-round finding (dropped)\n`);
-    for (const d of dropped.slice(0, 3)) process.stderr.write(`    [prior-settled] ~${d.matchedPriorId} score=${d.score}\n`);
+    for (const d of dropped.slice(0, 3)) process.stderr.write(`    [prior-settled] ~${d.matchedPriorId} score=${d.score} locus=${d.locus}\n`);
   }
   result.new_findings = kept;
   result._priorSuppressedCount = dropped.length;
   result._priorSuppressedFindings = dropped;
+  result._priorRoundKept = keptMatches;
   return { suppressed: dropped.length };
 }
 
@@ -118,10 +172,22 @@ export async function applyDebtSuppression(result, transcriptContent) {
     const before = result.new_findings.length;
     const kept = [];
     const debtSuppressed = [];
+    // Same-locus requirement (audit H5/H17), applied ONLY to a debt entry that
+    // carries file info (`affectedFiles`, or a file path in `section`): an entry
+    // without any keeps the pre-existing similarity-only behaviour, since there
+    // is nothing to compare against. Candidates whose files do not intersect the
+    // finding's are excluded BEFORE the best match is chosen, so a same-worded
+    // debt topic in another module cannot swallow the finding.
     for (const f of result.new_findings) {
-      const { match, score } = bestTopicMatch(findingTopicSig(f), suppressionCtx, (d) => `${d.category} ${d.section}`);
-      if (match && score > THRESHOLD) debtSuppressed.push({ finding: f, matchedTopic: match.topicId, score });
-      else kept.push(f);
+      const locus = suppressionLocusOf(f);
+      const eligible = suppressionCtx.filter((d) => {
+        const debtFiles = structuredFilesOf(d);
+        return debtFiles.length === 0 || sharedLocus(locus, debtFiles) !== null;
+      });
+      const { match, score } = bestTopicMatch(findingTopicSig(f), eligible, (d) => `${d.category} ${d.section}`);
+      if (match && score > THRESHOLD) {
+        debtSuppressed.push({ finding: f, matchedTopic: String(match.topicId ?? ''), score, file: sharedLocus(locus, structuredFilesOf(match)) });
+      } else kept.push(f);
     }
     if (debtSuppressed.length === 0) return;
     process.stderr.write(`  [final-review] Debt re-suppression: ${debtSuppressed.length}/${before} new_findings matched pre-filtered debt\n`);
@@ -130,6 +196,10 @@ export async function applyDebtSuppression(result, transcriptContent) {
     }
     result.new_findings = kept;
     result._debtSuppressedCount = debtSuppressed.length;
+    result._debtSuppressedFindings = debtSuppressed.map((s) => ({
+      id: s.finding.id ?? null, category: s.finding.category, matchedTopicId: s.matchedTopic,
+      score: Number(s.score.toFixed(2)), file: s.file,
+    }));
   } catch { /* transcript not JSON or no _debtMemory — skip */ }
 }
 

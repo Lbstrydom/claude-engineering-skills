@@ -22,7 +22,7 @@ import {
   stampGateDisposition, validateRoundArgs, parsePriorResult, buildPriorRoundBlock,
   finalReviewToLedgerEntries,
 } from '../scripts/lib/final-review/round-gate.mjs';
-import { applyPriorRoundSuppression } from '../scripts/lib/final-review/post-review.mjs';
+import { applyPriorRoundSuppression, applyDebtSuppression } from '../scripts/lib/final-review/post-review.mjs';
 import { getReviewPrompt, RELEASE_BLOCKING_BLOCK } from '../scripts/lib/final-review/prompts.mjs';
 
 function finding(overrides = {}) {
@@ -88,6 +88,26 @@ describe('computeGateDisposition — truth table', () => {
       assert.equal(computeGateDisposition(r).disposition, expected);
     });
   }
+
+  it('fails CLOSED on missing / non-array collections, naming the malformed field (H7)', () => {
+    const bad = [
+      [{ verdict: 'APPROVE', new_findings: null, wrongly_dismissed: null }, /new_findings is null/],
+      [{ verdict: 'APPROVE' }, /new_findings is missing/],
+      [{ verdict: 'APPROVE', new_findings: [], wrongly_dismissed: 'none' }, /wrongly_dismissed is string/],
+      [{ verdict: 'CONCERNS', new_findings: {}, wrongly_dismissed: [] }, /new_findings is object/],
+    ];
+    for (const [r, reason] of bad) {
+      const d = computeGateDisposition(r);
+      assert.equal(d.disposition, 'blocked', JSON.stringify(r));
+      assert.ok(d.reasons.some((x) => reason.test(x) && /malformed result/.test(x)), d.reasons.join(' | '));
+    }
+  });
+
+  it('negative control: a well-formed APPROVE with empty arrays still approves, with no malformed reason', () => {
+    const d = computeGateDisposition(result('APPROVE', [], []));
+    assert.equal(d.disposition, 'approve');
+    assert.deepEqual(d.reasons, []);
+  });
 
   it('names the blocking ids, the debt ids and the pair violations', () => {
     const d = computeGateDisposition(result('CONCERNS', [finding(), blocking(), finding({ id: 'G9', blocking_basis: 'bogus' })]));
@@ -169,9 +189,108 @@ describe('applyPriorRoundSuppression — round 2 does not re-raise settled items
     assert.equal(r.new_findings.length, 1);
   });
 
+  it('records each suppression decision: finding id, matched prior id, score, shared locus', () => {
+    const r = { new_findings: [{ ...reworded, id: 'N1' }] };
+    applyPriorRoundSuppression(r, prior);
+    const [d] = r._priorSuppressedFindings;
+    assert.equal(d.id, 'N1');
+    assert.equal(d.matchedPriorId, 'G1');
+    assert.ok(d.score > 0.35);
+    assert.equal(d.locus, 'scripts/lib/foo.mjs');
+  });
+
+  it('H5/H17: a similarly-worded finding in a DIFFERENT file is a distinct defect and survives', () => {
+    const elsewhere = { ...reworded, id: 'N2', section: 'scripts/lib/bar.mjs:10' };
+    const r = { new_findings: [elsewhere] };
+    applyPriorRoundSuppression(r, prior);
+    assert.equal(r.new_findings.length, 1, 'same prose, different file ⇒ not a re-raise');
+    assert.equal(r._priorSuppressedCount, 0);
+    assert.equal(r._priorRoundKept[0].reason, 'no_shared_locus');
+    assert.equal(r._priorRoundKept[0].matchedPriorId, 'G1');
+  });
+
+  it('H5/H17: a finding naming no file cannot be matched to a file-scoped prior (fail open)', () => {
+    const r = { new_findings: [{ ...reworded, section: 'config loading' }] };
+    applyPriorRoundSuppression(r, prior);
+    assert.equal(r.new_findings.length, 1);
+  });
+
+  it('plan-mode: file-less findings sharing a § locus are still suppressible', () => {
+    const planPrior = [finding({ id: 'G1', section: '§3 Config loading' })];
+    const r = { new_findings: [{ ...reworded, section: '§3 Config loading' }] };
+    applyPriorRoundSuppression(r, planPrior);
+    assert.equal(r.new_findings.length, 0);
+  });
+
+  it('H6: a re-raise of a prior RELEASE-BLOCKING finding is kept, and the gate blocks', () => {
+    const priorBlocking = [blocking({ id: 'G2' })];
+    const reraise = blocking({ id: 'N1', detail: reworded.detail });
+    const r = result('CONCERNS_REMAINING', [reraise]);
+    applyPriorRoundSuppression(r, priorBlocking);
+    assert.equal(r.new_findings.length, 1, 'an unresolved blocker must not vanish');
+    assert.equal(r._priorSuppressedCount, 0);
+    assert.equal(r._priorRoundKept[0].reason, 'prior_release_blocking');
+    assert.equal(computeGateDisposition(r).disposition, 'blocked');
+  });
+
+  it('H6: a prior with an invalid blocking pair counts as blocking (fail closed) — not suppressible', () => {
+    const r = { new_findings: [reworded] };
+    applyPriorRoundSuppression(r, [finding({ id: 'G1', release_blocking: undefined })]);
+    assert.equal(r.new_findings.length, 1);
+  });
+
+  it('H6 negative control: the same re-raise of a NON-blocking prior is still suppressed', () => {
+    const r = result('CONCERNS_REMAINING', [finding({ id: 'N1', detail: reworded.detail })]);
+    applyPriorRoundSuppression(r, prior);
+    assert.equal(r.new_findings.length, 0);
+    assert.equal(computeGateDisposition(r).disposition, 'approve_with_debt');
+  });
+
   it('no prior findings → no-op', () => {
     const r = { new_findings: [reworded] };
     assert.deepEqual(applyPriorRoundSuppression(r, []), { suppressed: 0 });
+    assert.equal(r.new_findings.length, 1);
+  });
+});
+
+describe('applyDebtSuppression — file overlap required when the debt entry carries files (H5/H17)', () => {
+  const debt = (o = {}) => ({
+    topicId: 'debt0001aaaa', category: 'Missing Error Handling',
+    section: 'readConfig swallows the parse error and returns an empty object', ...o,
+  });
+  const transcript = (entries) => JSON.stringify({ _debtMemory: { suppressionContext: entries } });
+
+  it('suppresses a finding matching a debt entry in the SAME file, recording id/topic/score/file', async () => {
+    const r = { new_findings: [finding({ id: 'N1' })] };
+    await applyDebtSuppression(r, transcript([debt({ affectedFiles: ['scripts/lib/foo.mjs'] })]));
+    assert.equal(r.new_findings.length, 0);
+    assert.equal(r._debtSuppressedCount, 1);
+    assert.deepEqual(
+      { id: r._debtSuppressedFindings[0].id, topic: r._debtSuppressedFindings[0].matchedTopicId, file: r._debtSuppressedFindings[0].file },
+      { id: 'N1', topic: 'debt0001aaaa', file: 'scripts/lib/foo.mjs' },
+    );
+  });
+
+  it('keeps a similarly-worded finding when the debt entry names a DIFFERENT file', async () => {
+    const r = { new_findings: [finding({ id: 'N1' })] };
+    await applyDebtSuppression(r, transcript([debt({ affectedFiles: ['scripts/lib/bar.mjs'] })]));
+    assert.equal(r.new_findings.length, 1);
+    assert.equal(r._debtSuppressedCount, undefined);
+  });
+
+  it('pre-existing behaviour: a debt entry with NO file info still suppresses on similarity alone', async () => {
+    const r = { new_findings: [finding({ id: 'N1' })] };
+    await applyDebtSuppression(r, transcript([debt()]));
+    assert.equal(r.new_findings.length, 0);
+  });
+
+  it('negative control: a genuinely different finding in the same file survives', async () => {
+    const other = finding({
+      id: 'N2', category: 'Race Condition', section: 'scripts/lib/foo.mjs:88',
+      detail: 'drainQueue reads the length before awaiting the lock, so two workers can both pop the last job',
+    });
+    const r = { new_findings: [other] };
+    await applyDebtSuppression(r, transcript([debt({ affectedFiles: ['scripts/lib/foo.mjs'] })]));
     assert.equal(r.new_findings.length, 1);
   });
 });

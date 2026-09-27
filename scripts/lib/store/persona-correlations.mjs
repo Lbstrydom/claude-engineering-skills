@@ -17,22 +17,86 @@
 
 import { isCloudEnabled } from './repo.mjs';
 import { many, one, upsert, deleteWhere, withTx } from '../db/query.mjs';
-import { assertParentOwnership, ownedReadPredicate } from './ownership.mjs';
+import { ownedReadPredicate } from './ownership.mjs';
 import { PERSONA_FINDING_HASH_VERSION, PERSONA_FINDING_HASH_SHAPE } from '../persona/audit-correlator.mjs';
 
 // ── persona_audit_correlations ─────────────────────────────────────────────
 
 /**
+ * The ownership DECISION for one correlation write, kept apart from the SQL
+ * that feeds it so each refusal is one readable branch. Pure. Module-private
+ * (the learning-store export surface is pinned); every branch is exercised
+ * through the real writer on Postgres in
+ * tests/plans-ship-persona-correlation.test.mjs.
+ *
+ * Reasons: `parent-not-found` · `parent-not-owned` · `parent-repo-unknown` ·
+ * `audit-run-not-found` · `audit-run-cross-tenant` · `audit-finding-not-found`
+ * · `audit-finding-cross-tenant` · `audit-finding-run-mismatch`.
+ *
+ * @param {{session_repo: string|null, run_id: string|null, run_repo: string|null,
+ *   finding_id: string|null, finding_run: string|null, finding_repo: string|null}|null} ident
+ *   the identity row, or null when the session does not exist
+ * @param {{auditRunId: string|null, auditFindingId: string|null, repoId: string|null}} want
+ * @returns {{reason: string, message: string}|null} null ⇒ the write may proceed
+ */
+function correlationOwnershipRefusal(ident, { auditRunId = null, auditFindingId = null, repoId = null } = {}) {
+  if (!ident) {
+    return { reason: 'parent-not-found', message: 'the persona session does not exist — the write was refused rather than attached to nothing' };
+  }
+  const sessionRepo = ident.session_repo ?? null;
+  if (repoId != null && sessionRepo !== repoId) {
+    return { reason: 'parent-not-owned', message: 'the persona session belongs to a different repository than the resolved scope — refusing a cross-tenant write' };
+  }
+  if ((auditRunId || auditFindingId) && sessionRepo == null) {
+    // A session with no repo cannot vouch for ANY audit row's tenancy — "same
+    // repo?" has no answer, so it is refused, never assumed.
+    return { reason: 'parent-repo-unknown', message: 'the persona session carries no repo_id, so an audit run/finding cannot be proven to belong to the same repository' };
+  }
+  if (auditRunId) {
+    if (!ident.run_id) return { reason: 'audit-run-not-found', message: `auditRunId ${auditRunId} does not exist` };
+    if (ident.run_repo !== sessionRepo) {
+      return { reason: 'audit-run-cross-tenant', message: `auditRunId ${auditRunId} belongs to a different repo than the persona session` };
+    }
+  }
+  if (auditFindingId) {
+    if (!ident.finding_id) return { reason: 'audit-finding-not-found', message: `auditFindingId ${auditFindingId} does not exist` };
+    if (ident.finding_repo !== sessionRepo) {
+      return { reason: 'audit-finding-cross-tenant', message: `auditFindingId ${auditFindingId} belongs to a different repo than the persona session` };
+    }
+    if (auditRunId && ident.finding_run !== auditRunId) {
+      return { reason: 'audit-finding-run-mismatch', message: `auditFindingId ${auditFindingId} belongs to audit run ${ident.finding_run}, not the supplied auditRunId ${auditRunId}` };
+    }
+  }
+  return null;
+}
+
+/**
  * Record a correlation between a persona finding and an audit finding —
  * the highest-leverage ground-truth labelling for the bandit reward.
- * Discriminated result so the auto-correlator (WS1) can count
- * `writeFailed` in its `correlationSummary` — cloud-off / invalid-input
- * are `ok: true` (nothing to write, not a failure); a real write failure
- * is `ok: false`.
- * @returns {Promise<{ok: boolean, error?: string}>}
+ *
+ * Discriminated result, and `written` says whether a row landed:
+ *  - `{ok:true, written:true}` — the row was written.
+ *  - `{ok:true, written:false, reason:'cloud-off'}` — cloud store disabled, a
+ *    supported mode with nothing to write (never a failure, never a write).
+ *  - `{ok:false, written:false, reason, error}` — refused or failed. A missing
+ *    `personaSessionId` is `reason:'invalid-input'` (audit H21): it used to
+ *    return a bare `{ok:true}`, indistinguishable from a real write.
+ *
+ * TENANCY IS DERIVED, NEVER ASSUMED (audit H1/H2/H23). The session row's own
+ * `repo_id` is the tenant. Any supplied `auditRunId` / `auditFindingId` must
+ * belong to THAT repo, and a supplied finding must belong to the supplied run
+ * — checked on every call, not only when the caller happened to resolve an
+ * `opts.repoId` (the old gate let an unscoped call correlate one repo's
+ * session with another repo's audit row). `opts.repoId`, when given, is an
+ * ADDITIONAL predicate on the session. Refusal reasons are
+ * `correlationOwnershipRefusal`'s.
+ * @returns {Promise<{ok: boolean, written: boolean, reason?: string, error?: string}>}
  */
 export async function recordPersonaAuditCorrelation(personaSessionId, correlation, opts = {}) {
-  if (!personaSessionId || !await isCloudEnabled()) return { ok: true };
+  if (!personaSessionId) {
+    return { ok: false, written: false, reason: 'invalid-input', error: 'personaSessionId is required — nothing was written' };
+  }
+  if (!await isCloudEnabled()) return { ok: true, written: false, reason: 'cloud-off' };
   // Was a silent `{ok:true}` no-op (findings eef38861/bc8cea53) — indistinguishable
   // from a real write, so a producer bug (a missing field on an emitted
   // correlation) never surfaced anywhere. Both callers already handle
@@ -40,7 +104,7 @@ export async function recordPersonaAuditCorrelation(personaSessionId, correlatio
   // free and closes the same masked-bug class that check was written for.
   if (!correlation?.personaFindingHash || !correlation?.correlationType || !correlation?.personaSeverity) {
     return {
-      ok: false,
+      ok: false, written: false, reason: 'invalid-input',
       error: 'personaFindingHash, correlationType, and personaSeverity are all required — got '
         + JSON.stringify({
           personaFindingHash: correlation?.personaFindingHash ?? null,
@@ -62,7 +126,7 @@ export async function recordPersonaAuditCorrelation(personaSessionId, correlatio
   // class instead of persisting it.
   if (!PERSONA_FINDING_HASH_SHAPE.test(correlation.personaFindingHash)) {
     return {
-      ok: false,
+      ok: false, written: false, reason: 'invalid-input',
       error: `personaFindingHash must be a 64-hex (v2) hash — got ${JSON.stringify(correlation.personaFindingHash)}`,
     };
   }
@@ -85,48 +149,32 @@ export async function recordPersonaAuditCorrelation(personaSessionId, correlatio
       // for another rather than adding one. Inside this transaction there is no
       // TOCTOU window, and the check lives in the WRITER, where a caller cannot
       // forget it. `one()` is transaction-scoped here via withTx's async store.
-      const owned = await assertParentOwnership(
-        { parentTable: 'persona_test_sessions', parentId: personaSessionId, repoId: opts.repoId ?? null },
-        (text, values) => one(text, values),
+      //
+      // ONE identity read (audit H1/H2/H23): the session's repo is the tenant,
+      // and the audit run / finding are measured against IT — not against
+      // `opts.repoId`, which a caller may not have resolved. `FOR SHARE OF
+      // pts` pins the session row for the rest of this transaction, so its
+      // repo cannot change between this read and the upsert below; the audit
+      // rows are held by the correlation table's foreign keys.
+      const auditRunId = correlation.auditRunId || null;
+      const auditFindingId = correlation.auditFindingId || null;
+      const ident = await one(
+        `SELECT pts.repo_id AS session_repo,
+                ar.id       AS run_id,
+                ar.repo_id  AS run_repo,
+                af.id       AS finding_id,
+                af.run_id   AS finding_run,
+                far.repo_id AS finding_repo
+           FROM persona_test_sessions pts
+           LEFT JOIN audit_runs     ar  ON ar.id  = $2::uuid
+           LEFT JOIN audit_findings af  ON af.id  = $3::uuid
+           LEFT JOIN audit_runs     far ON far.id = af.run_id
+          WHERE pts.id = $1
+            FOR SHARE OF pts`,
+        [personaSessionId, auditRunId, auditFindingId],
       );
-      if (!owned.ok) {
-        refusal = owned;
-        throw new Error(owned.message);
-      }
-      // Cross-tenant guard (findings 62bee23e/0d5c4c8d): `assertParentOwnership`
-      // above proves `personaSessionId` belongs to `opts.repoId`, but
-      // `auditFindingId`/`auditRunId` are a SEPARATE caller-supplied identity
-      // with no join through the session — a wrong id threaded in (the
-      // documented threat model, ownership.mjs) could correlate this repo's
-      // session against another repo's audit row, corrupting bandit-reward
-      // ground truth for both. Only enforced when the caller resolved a repo
-      // scope (`opts.repoId`); an unscoped call already relaxes the tenant
-      // predicate the same way `assertParentOwnership` does above.
-      if (opts.repoId != null && correlation.auditRunId) {
-        const run = await one(`SELECT repo_id FROM audit_runs WHERE id = $1`, [correlation.auditRunId]);
-        if (!run) {
-          refusal = { reason: 'audit-run-not-found', message: `auditRunId ${correlation.auditRunId} does not exist` };
-          throw new Error(refusal.message);
-        }
-        if (run.repo_id !== opts.repoId) {
-          refusal = { reason: 'audit-run-cross-tenant', message: `auditRunId ${correlation.auditRunId} belongs to a different repo than the resolved scope` };
-          throw new Error(refusal.message);
-        }
-      }
-      if (opts.repoId != null && correlation.auditFindingId) {
-        const finding = await one(
-          `SELECT ar.repo_id FROM audit_findings af JOIN audit_runs ar ON ar.id = af.run_id WHERE af.id = $1`,
-          [correlation.auditFindingId],
-        );
-        if (!finding) {
-          refusal = { reason: 'audit-finding-not-found', message: `auditFindingId ${correlation.auditFindingId} does not exist` };
-          throw new Error(refusal.message);
-        }
-        if (finding.repo_id !== opts.repoId) {
-          refusal = { reason: 'audit-finding-cross-tenant', message: `auditFindingId ${correlation.auditFindingId} belongs to a different repo than the resolved scope` };
-          throw new Error(refusal.message);
-        }
-      }
+      refusal = correlationOwnershipRefusal(ident, { auditRunId, auditFindingId, repoId: opts.repoId ?? null });
+      if (refusal) throw new Error(refusal.message);
       // Retire any auto-emitted `audit_missed` (NULL audit_finding_id) row
       // for this exact (session, hash) pair FIRST — a manual repair that
       // corrects a false miss into a real match must not leave BOTH rows
@@ -198,16 +246,16 @@ export async function recordPersonaAuditCorrelation(personaSessionId, correlatio
         }
       }
     });
-    return { ok: true };
+    return { ok: true, written: true };
   } catch (err) {
     // An ownership refusal is a REFUSAL, not a crash: it rolled the transaction
     // back deliberately, so it is reported with its own reason rather than as an
     // opaque write failure. A caller can then tell a dangling session id from a
     // cross-tenant one from a database outage — three causes that produced one
     // indistinguishable `{ok:false, error}` before D7.
-    if (refusal) return { ok: false, reason: refusal.reason, error: refusal.message };
+    if (refusal) return { ok: false, written: false, reason: refusal.reason, error: refusal.message };
     process.stderr.write(`  [learning] recordPersonaAuditCorrelation failed: ${err.message}\n`);
-    return { ok: false, error: err.message };
+    return { ok: false, written: false, reason: 'write-failed', error: err.message };
   }
 }
 

@@ -72,15 +72,45 @@ function definitionOf(category, row) {
   return category === 'constraints' ? row.definition : row.indexdef;
 }
 
+/**
+ * The repair statement for one finding, derived from the EXPECTED definition.
+ *
+ * A MISSING object needs only its ADD/CREATE — there is nothing to drop. An
+ * ALTERED object needs a drop then a recreate, and those two must be ONE unit:
+ * printed as separate statements, a recreate that fails (duplicate rows under a
+ * UNIQUE, a lock timeout) leaves the original already dropped — strictly worse
+ * than the drift being repaired. Postgres DDL is transactional (and a
+ * non-CONCURRENT CREATE INDEX is legal inside a transaction), so the pair is
+ * wrapped in `BEGIN; … COMMIT;` and a failed recreate rolls the drop back.
+ */
 function repairFor(kind, category, expected) {
   const table = `public.${quoteIdent(tableOf(category, expected))}`;
   const name = quoteIdent(nameOf(category, expected));
-  if (category === 'constraints') {
-    const add = `ALTER TABLE ${table} ADD CONSTRAINT ${name} ${expected.definition};`;
-    return kind === 'altered' ? `ALTER TABLE ${table} DROP CONSTRAINT ${name}; ${add}` : add;
-  }
-  const create = `${expected.indexdef};`;
-  return kind === 'altered' ? `DROP INDEX public.${name}; ${create}` : create;
+  const [drop, create] = category === 'constraints'
+    ? [`ALTER TABLE ${table} DROP CONSTRAINT ${name};`, `ALTER TABLE ${table} ADD CONSTRAINT ${name} ${expected.definition};`]
+    : [`DROP INDEX public.${name};`, `${expected.indexdef};`];
+  return kind === 'altered' ? `BEGIN; ${drop} ${create} COMMIT;` : create;
+}
+
+/**
+ * Fail CLOSED on a vacuous expected inventory. With nothing expected,
+ * `diffSchemas` has nothing to find missing, every live object lands in `extra`
+ * (which never fails), and the check would print a clean pass having checked
+ * nothing. An expected schema with no PRIMARY KEY / UNIQUE constraint, or no
+ * index, is not a real store's schema — it is a truncated or placeholder
+ * manifest, and the honest result is "not measured".
+ *
+ * @param {Record<string, unknown>} expected
+ * @returns {string | null} the reason, or null when the inventory is usable
+ */
+export function vacuousInventoryReason(expected) {
+  const exp = project(expected);
+  const empty = [];
+  if (!Array.isArray(expected?.constraints) || exp.constraints.length === 0) empty.push('PRIMARY KEY/UNIQUE constraints');
+  if (!Array.isArray(expected?.indexes) || exp.indexes.length === 0) empty.push('indexes');
+  if (!empty.length) return null;
+  return `expected-schema manifest declares no ${empty.join(' and no ')} — a vacuous inventory `
+    + 'checks nothing (truncated or placeholder manifest? re-run the sync)';
 }
 
 /**
@@ -90,10 +120,14 @@ function repairFor(kind, category, expected) {
  * @param {Record<string, unknown>} expected - the expected-schema manifest
  * @param {Record<string, unknown>} live - `captureLiveSchema(pool, {only: LIVE_CONSTRAINT_CATEGORIES})`
  * @returns {{measured: true, hasDrift: boolean,
- *   missing: object[], altered: object[], extra: object[], repairs: string[]}}
- *   `missing`/`altered` fail the check; `extra` is context only.
+ *   missing: object[], altered: object[], extra: object[], repairs: string[]}
+ *   | ReturnType<typeof unmeasuredConstraintDrift>}
+ *   `missing`/`altered` fail the check; `extra` is context only. A vacuous
+ *   expected inventory returns `measured:false` (see `vacuousInventoryReason`).
  */
 export function assessConstraintDrift(expected, live) {
+  const vacuous = vacuousInventoryReason(expected);
+  if (vacuous) return unmeasuredConstraintDrift(vacuous);
   const diffs = diffSchemas(project(expected), project(live), { sampleLimit: Infinity });
   const missing = [];
   const altered = [];
@@ -179,9 +213,9 @@ export async function checkLiveConstraints({ pool, expectedSchemaPath, capture, 
   } catch (err) {
     return unmeasuredConstraintDrift(`expected-schema manifest unreadable: ${err.message}`);
   }
-  if (!Array.isArray(expected?.constraints) || !Array.isArray(expected?.indexes)) {
-    return unmeasuredConstraintDrift('expected-schema manifest has no constraints/indexes arrays');
-  }
+  // Checked BEFORE the capture, so a vacuous manifest never touches the pool.
+  const vacuous = vacuousInventoryReason(expected);
+  if (vacuous) return unmeasuredConstraintDrift(vacuous);
   const live = await capture(pool, { only: LIVE_CONSTRAINT_CATEGORIES });
   return assessConstraintDrift(expected, live);
 }

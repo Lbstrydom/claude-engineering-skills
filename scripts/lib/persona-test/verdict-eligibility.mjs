@@ -48,6 +48,9 @@ export const LIFECYCLE_STATUSES = Object.freeze(['verified', 'partial', 'not-app
 /** The `Reason:` label a lifecycle-capped run reports on its OVERALL line. */
 export const LIFECYCLE_UNVERIFIED_LABEL = 'Goal reached — lifecycle unverified';
 
+/** The blocker a session with no P0/P1 counts reports — never read as zero. */
+export const SEVERITY_COUNTS_UNREPORTED = 'severity counts not reported';
+
 /**
  * `lifecycle` as the session payload carries it. `unchecked` lists the steps
  * NOT verified; it must be empty for `verified`/`not-applicable` and non-empty
@@ -67,14 +70,31 @@ export const LifecycleSchema = z.object({
 });
 
 /**
+ * A severity count as the eligibility predicate may read it: a non-negative
+ * integer, or `null` when the caller did not report one. OMITTED IS NOT ZERO
+ * (audit H13/H29): `Number(undefined) || 0` used to turn a count nobody
+ * measured into a measured clean zero, so a session that never said how many
+ * P0/P1 it found read as eligible.
+ */
+function reportedCount(v) {
+  return (typeof v === 'number' && Number.isInteger(v) && v >= 0) ? v : null;
+}
+
+/**
  * Every conjunct of the `Ready for users` predicate that FAILS for this
- * session. Empty ⇒ eligible.
+ * session. Empty ⇒ eligible. Fails CLOSED on every input it cannot read:
  *
- * `lifecycle` absent is a failing conjunct (`lifecycle=unreported`), not a
- * pass: an unasked question must never render as a clean answer. The three
- * work-record conjuncts are checked only when the caller supplied them —
- * they are optional on the wire for callers predating this module, and a
- * missing one is not evidence either way.
+ *  - `p0Count`/`p1Count` omitted or non-numeric ⇒ `severity counts not
+ *    reported` — distinct from a measured `0`, which passes, and from a
+ *    measured positive count (`p0p1=N`).
+ *  - `lifecycle` absent ⇒ `lifecycle=unreported`; present but not a valid
+ *    `LifecycleSchema` value (unknown status, a `partial` naming nothing, an
+ *    unknown step id) ⇒ `lifecycle=invalid`. An unasked or unreadable question
+ *    must never render as a clean answer.
+ *
+ * The three work-record conjuncts are checked only when the caller supplied
+ * them — they are optional on the wire for callers predating this module, and
+ * a missing one is not evidence either way.
  *
  * @param {{p0Count?: number, p1Count?: number, lifecycle?: {status: string, unchecked?: string[]},
  *   terminalReason?: string, authState?: string, originPolicyResult?: string}} s
@@ -82,12 +102,17 @@ export const LifecycleSchema = z.object({
  */
 export function readyForUsersBlockers(s) {
   const blockers = [];
-  const p0 = Number(s?.p0Count) || 0;
-  const p1 = Number(s?.p1Count) || 0;
-  if (p0 + p1 > 0) blockers.push(`p0p1=${p0 + p1}`);
-  const lc = s?.lifecycle;
-  if (!lc) blockers.push('lifecycle=unreported');
-  else if (lc.status === 'partial') blockers.push(`lifecycle=partial (unchecked: ${(lc.unchecked ?? []).join(', ')})`);
+  const p0 = reportedCount(s?.p0Count);
+  const p1 = reportedCount(s?.p1Count);
+  if (p0 === null || p1 === null) blockers.push(SEVERITY_COUNTS_UNREPORTED);
+  else if (p0 + p1 > 0) blockers.push(`p0p1=${p0 + p1}`);
+  const raw = s?.lifecycle;
+  if (raw == null) blockers.push('lifecycle=unreported');
+  else {
+    const lc = LifecycleSchema.safeParse(raw);
+    if (!lc.success) blockers.push('lifecycle=invalid');
+    else if (lc.data.status === 'partial') blockers.push(`lifecycle=partial (unchecked: ${lc.data.unchecked.join(', ')})`);
+  }
   if (s?.terminalReason != null && s.terminalReason !== 'goal-reached') blockers.push(`terminalReason=${s.terminalReason}`);
   if (s?.authState === 'auth-wall-untested') blockers.push('authState=auth-wall-untested');
   if (s?.originPolicyResult === 'cross-origin-attempted-and-blocked') blockers.push('originPolicyResult=cross-origin-attempted-and-blocked');
@@ -108,11 +133,13 @@ export function capPersonaVerdict(session) {
   if (claimed !== 'Ready for users') return { verdict: claimed, capped: false, blockers: [], label: null };
   const blockers = readyForUsersBlockers(session);
   if (blockers.length === 0) return { verdict: claimed, capped: false, blockers, label: null };
-  const lifecycleOnly = blockers.every((b) => b.startsWith('lifecycle='));
+  // The label claims "goal reached, state not verified" — only a VALID partial
+  // lifecycle establishes that; unreported/invalid lifecycle data does not.
+  const lifecycleOnly = blockers.every((b) => b.startsWith('lifecycle=partial'));
   return {
     verdict: 'Needs work',
     capped: true,
     blockers,
-    label: lifecycleOnly && session?.lifecycle ? LIFECYCLE_UNVERIFIED_LABEL : null,
+    label: lifecycleOnly ? LIFECYCLE_UNVERIFIED_LABEL : null,
   };
 }

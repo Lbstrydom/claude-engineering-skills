@@ -23,48 +23,70 @@ import { derivePairOverlapRate } from '../persona-test/pair-overlap.mjs';
 /** Max stored click-path steps (R2-M1) — truncate, never reject the session. */
 const CLICK_PATH_CAP = 40;
 
-/**
- * Does a URL/path segment or query value look like a secret/token/PII that must
- * never be stored (R1-H3/H4, R2-H1)? uuid · long hex/base64 · JWT · email · long
- * digit run. Conservative: when in doubt, collapse to `:param`.
- * @param {string} s
- * @returns {boolean}
- */
-/** Percent-decode REPEATEDLY (bounded), tolerating a malformed `%` sequence at
- *  any step (stops and returns the last successfully-decoded value). The single
- *  decode helper so EVERY secret/route heuristic sees the same decoded form —
- *  an encoded token or auth keyword can't bypass one check by matching a
- *  different one's encoding assumption (audit HIGH — encoded-auth-keyword bypass).
- *  A SINGLE decode still left a DOUBLY-encoded auth keyword unmatched
- *  (`%2572eset` → one decode → `%72eset`, which contains no literal "reset" —
- *  audit HIGH, doubly-encoded-route bypass): `%2572eset` needs two decodes to
- *  reach `reset`. Bounded at 5 iterations (arbitrary encoding depth some
- *  browser/proxy could produce is not worth chasing further) and stops as soon
- *  as a decode is a no-op, so a normal single-encoded or plain segment costs
- *  one extra no-op decodeURIComponent call, not five. */
+/** Decode ONE layer of percent-escapes, escape-by-escape (audit H4/H20).
+ *  `decodeURIComponent` is all-or-nothing: one malformed escape (`%ZZ`, a
+ *  truncated `%E0%A4`) throws for the whole string, and the old loop then
+ *  returned the RAW text — so a valid `%40` later in the same segment was never
+ *  decoded and `%ZZjane%40example.com` escaped the email check. Here each RUN of
+ *  well-formed `%XX` escapes is decoded on its own (a run, so a multi-byte
+ *  UTF-8 character decodes whole); a run that is not valid UTF-8 falls back to
+ *  decoding its ASCII-range escapes and leaving the rest literal, and anything
+ *  that is not a well-formed `%XX` is left exactly as written. */
+function decodeOnceLenient(s) {
+  return s.replace(/(?:%[0-9A-Fa-f]{2})+/g, (run) => {
+    try { return decodeURIComponent(run); } catch {
+      return run.replace(/%([0-7][0-9A-Fa-f])/g, (_m, hex) => String.fromCharCode(parseInt(hex, 16)));
+    }
+  });
+}
+
+/** Percent-decode to a FIXED POINT (bounded) — the single decode helper, so
+ *  EVERY secret/route heuristic sees the same decoded form. Iterated because a
+ *  doubly-encoded keyword (`%2572eset` → `%72eset` → `reset`) needs two
+ *  layers; bounded at 5 (an encoding depth beyond that is not worth chasing, and
+ *  every step is cheap). Each layer is `decodeOnceLenient`, so a malformed
+ *  escape no longer halts decoding of the valid ones beside it. */
 function safeDecode(s) {
   let out = s;
   for (let i = 0; i < 5; i++) {
-    let next;
-    try { next = decodeURIComponent(out); } catch { break; }
+    const next = decodeOnceLenient(out);
     if (next === out) break;
     out = next;
   }
   return out;
 }
 
-function looksSecret(s) {
-  if (typeof s !== 'string' || s.length === 0) return false;
-  // Percent-decode first so encoded secrets (`jane%40example.com`, `%2F`) can't
-  // bypass the shape checks (audit HIGH — safe-decode).
-  s = safeDecode(s);
+/** Shape test on ONE already-decoded component. */
+function componentLooksSecret(s) {
+  if (s.length === 0) return false;
   if (s.includes('@')) return true;                                  // email
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)) return true; // uuid
   if (/^[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\./.test(s)) return true; // JWT-ish
   if (/^[0-9a-f]{16,}$/i.test(s)) return true;                       // long hex
   if (/^[A-Za-z0-9+/_-]{24,}={0,2}$/.test(s) && /[0-9]/.test(s) && /[A-Za-z]/.test(s)) return true; // base64-ish token
-  if (/^\d{12,}$/.test(s)) return true;                              // long digit run (ids/cards)
+  if (/^\d{12,}$/.test(s)) return true;                             // long digit run (ids/cards)
   return false;
+}
+
+/**
+ * Does a URL/path segment or query value look like a secret/token/PII that must
+ * never be stored (R1-H3/H4, R2-H1)? uuid · long hex/base64 · JWT · email · long
+ * digit run. Conservative: when in doubt, collapse to `:param`. Tested on the
+ * fully-decoded text AND on every component a decoded separator splits it into,
+ * and a component that follows an auth keyword INSIDE the same segment is a
+ * secret whatever its shape (`reset%2F123456`).
+ * @param {string} s
+ * @returns {boolean}
+ */
+function looksSecret(s) {
+  if (typeof s !== 'string' || s.length === 0) return false;
+  const decoded = safeDecode(s);
+  if (componentLooksSecret(decoded)) return true;
+  // Decoding can introduce a separator — `reset%2F123456` is ONE raw segment
+  // and TWO decoded components — so every component is tested (audit H4/H20).
+  const comps = decoded.split(/[/\\]/);
+  return comps.some((c, j) => componentLooksSecret(c)
+    || (j > 0 && c.length > 0 && AUTH_KEYWORD.test(comps[j - 1])));
 }
 
 /**
@@ -108,7 +130,8 @@ function collapsePath(segments) {
   // token just like `/reset/123456` does (audit HIGH — encoded-auth-keyword
   // bypass: `new URL().pathname` does NOT decode, so a raw-form test missed it).
   return segments.map((seg, i) => (
-    looksSecret(seg) || (i > 0 && AUTH_KEYWORD.test(safeDecode(segments[i - 1])) && seg.length > 0) ? ':param' : seg
+    looksSecret(seg)
+    || (i > 0 && seg.length > 0 && AUTH_KEYWORD.test(safeDecode(segments[i - 1]))) ? ':param' : seg
   )).join('/');
 }
 

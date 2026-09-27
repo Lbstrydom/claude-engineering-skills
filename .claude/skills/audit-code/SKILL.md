@@ -181,9 +181,13 @@ git status --porcelain
 Non-empty output above → `BASE=HEAD` (dirty tree). Empty output → `BASE=HEAD~1` (clean, use last commit).
 
 ```bash
-BASE=HEAD
-git diff "$BASE" -- . > .audit/$SID-diff.patch
+BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1)
+git diff --output=.audit/$SID-diff.patch "$BASE" -- .
 ```
+
+`--output` makes git write the patch bytes itself. A PowerShell `>` re-encodes
+them (UTF-16 on 5.1, CRLF on 7.x); the parser now tolerates both, but git's own
+bytes are what the annotations were built for.
 
 **Include UNTRACKED new files** — `git diff` omits them, so without this a brand-new file reaches the auditor with NO `[CHANGED]` annotation (it's still read in full via `--files`, but loses the diff focus markers). Append each as a new-file diff against `/dev/null`. **POSIX shell only** (Git Bash on Windows) — `xargs` and `/dev/null` have no native PowerShell equivalent; run this step in a bash-capable shell even on a Windows/Copilot host:
 

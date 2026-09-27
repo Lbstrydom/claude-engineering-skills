@@ -24,6 +24,7 @@ import {
 } from '../scripts/lib/cross-skill/commands/persona.mjs';
 import {
   capPersonaVerdict, readyForUsersBlockers, LIFECYCLE_STEPS, LifecycleSchema, LIFECYCLE_UNVERIFIED_LABEL,
+  SEVERITY_COUNTS_UNREPORTED,
 } from '../scripts/lib/persona-test/verdict-eligibility.mjs';
 import { derivePairOverlapRate } from '../scripts/lib/persona-test/pair-overlap.mjs';
 
@@ -68,6 +69,42 @@ describe('capPersonaVerdict — the Ready-for-users predicate in code', () => {
   });
 });
 
+// Audit H13/H29 — the predicate fails CLOSED on input it cannot read.
+describe('readyForUsersBlockers — omitted is not zero, malformed is not verified', () => {
+  it('measured 0 P0/P1 passes (the control the next two cases are measured against)', () => {
+    assert.deepEqual(readyForUsersBlockers({ ...clean, p0Count: 0, p1Count: 0 }), []);
+  });
+  it('OMITTED p0Count/p1Count is a blocker, distinct from a measured 0', () => {
+    const { p0Count, p1Count, ...noCounts } = clean;
+    void p0Count; void p1Count;
+    assert.deepEqual(readyForUsersBlockers(noCounts), [SEVERITY_COUNTS_UNREPORTED]);
+    const { p1Count: _p1, ...noP1 } = clean;
+    void _p1;
+    assert.deepEqual(readyForUsersBlockers(noP1), [SEVERITY_COUNTS_UNREPORTED], 'one missing count is enough');
+    const r = capPersonaVerdict(noCounts);
+    assert.equal(r.verdict, 'Needs work');
+    assert.equal(r.label, null, 'unreported counts do not establish "goal reached, lifecycle unverified"');
+  });
+  it('a non-numeric count is unreported, never coerced to 0', () => {
+    for (const bad of ['0', null, NaN, -1, 1.5, 'lots']) {
+      assert.deepEqual(readyForUsersBlockers({ ...clean, p0Count: bad }), [SEVERITY_COUNTS_UNREPORTED], `p0Count=${String(bad)}`);
+    }
+  });
+  it('a measured positive count reports the count, not "unreported"', () => {
+    assert.deepEqual(readyForUsersBlockers({ ...clean, p0Count: 1, p1Count: 2 }), ['p0p1=3']);
+  });
+  it('a MALFORMED lifecycle is a blocker — the pre-fix unreported-status / empty-unchecked case', () => {
+    for (const lc of [{}, { status: 'done', unchecked: [] }, { unchecked: [] },
+      { status: 'partial', unchecked: [] }, { status: 'verified', unchecked: ['command-outcome'] },
+      { status: 'partial', unchecked: ['vibes'] }, 'verified', []]) {
+      const r = capPersonaVerdict({ ...clean, lifecycle: lc });
+      assert.deepEqual(r.blockers, ['lifecycle=invalid'], JSON.stringify(lc));
+      assert.equal(r.verdict, 'Needs work');
+      assert.equal(r.label, null, 'an unreadable lifecycle does not establish the lifecycle-unverified label');
+    }
+  });
+});
+
 describe('LifecycleSchema — partial must name what it skipped', () => {
   it('partial with no unchecked steps is refused', () => {
     assert.equal(LifecycleSchema.safeParse({ status: 'partial', unchecked: [] }).success, false);
@@ -101,7 +138,7 @@ function stubDeps(overrides = {}) {
 }
 
 describe('record-persona-session — the stored verdict is the capped one', () => {
-  const base = { persona: 'p', url: 'https://x.test', browserTool: 'playwright (ok)', verdict: 'Ready for users', findings: [] };
+  const base = { persona: 'p', url: 'https://x.test', browserTool: 'playwright (ok)', verdict: 'Ready for users', findings: [], p0Count: 0, p1Count: 0 };
 
   it('a partial lifecycle reaches the store as Needs work and the envelope says so', async () => {
     let stored = null;
@@ -127,6 +164,32 @@ describe('record-persona-session — the stored verdict is the capped one', () =
     const r = await dispatch(argv('record-persona-session', '--json', payload), { deps, cloudGate: 'ready' });
     assert.equal(stored.verdict, 'Ready for users');
     assert.equal('verdictCap' in r.envelope, false);
+  });
+
+  it('a MALFORMED lifecycle is refused at the boundary — never stored as Ready for users (H13/H29)', async () => {
+    let stored = null;
+    const deps = stubDeps({
+      recordPersonaSession: async (s) => { stored = s; return { ok: true, cloud: true, sessionId: 'row-1', existed: false, statsUpdated: true, statsReason: null }; },
+    });
+    const payload = JSON.stringify({ ...base, lifecycle: { status: 'done' }, terminalReason: 'goal-reached' });
+    const r = await dispatch(argv('record-persona-session', '--json', payload), { deps, cloudGate: 'ready' });
+    assert.equal(r.exitCode, 2, JSON.stringify(r.envelope));
+    assert.equal(r.envelope.error.code, 'BAD_INPUT');
+    assert.equal(stored, null);
+  });
+
+  it('OMITTED counts still write the session — capped with the unreported blocker (H13/H29)', async () => {
+    let stored = null;
+    const deps = stubDeps({
+      recordPersonaSession: async (s) => { stored = s; return { ok: true, cloud: true, sessionId: 'row-1', existed: false, statsUpdated: true, statsReason: null }; },
+    });
+    const { p0Count, p1Count, ...noCounts } = base;
+    void p0Count; void p1Count;
+    const payload = JSON.stringify({ ...noCounts, lifecycle: verified, terminalReason: 'goal-reached' });
+    const r = await dispatch(argv('record-persona-session', '--json', payload), { deps, cloudGate: 'ready' });
+    assert.equal(r.exitCode, 0, JSON.stringify(r.envelope));
+    assert.equal(stored.verdict, 'Needs work');
+    assert.deepEqual(r.envelope.verdictCap.blockers, [SEVERITY_COUNTS_UNREPORTED]);
   });
 });
 

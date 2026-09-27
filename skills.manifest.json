@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "337a5e1cccf3e362",
+  "bundleVersion": "d4af5204b4ce2d52",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -54,14 +54,14 @@
     },
     "audit-code": {
       "path": "skills/audit-code/SKILL.md",
-      "sha": "651b812cc718",
-      "size": 53687,
+      "sha": "426fda4c5d73",
+      "size": 53962,
       "summary": "Iteratively audit code against a plan with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "651b812cc718",
-          "size": 53687
+          "sha": "426fda4c5d73",
+          "size": 53962
         },
         {
           "relPath": "examples/contract-test-scaffold.md",

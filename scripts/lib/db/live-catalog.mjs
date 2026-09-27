@@ -95,6 +95,12 @@ export const SHARED_CATALOG_QUERIES = Object.freeze({
     WHERE schemaname = 'public'
     ORDER BY tablename, policyname
   `,
+  // The join carries the TABLE identity (conrelid → pg_class.relname), not only
+  // name + schema: a constraint name is unique per TABLE, not per schema — two
+  // tables may legally each own a CHECK named `valid_status` — and a
+  // name-only join cross-multiplies them, attributing each table's definition
+  // to the other. (The generator's copy predates this; the committed fixture
+  // has no name shared across tables, so both produce identical rows today.)
   constraints: `
     SELECT
       tc.table_name,
@@ -104,6 +110,8 @@ export const SHARED_CATALOG_QUERIES = Object.freeze({
     FROM information_schema.table_constraints tc
     JOIN pg_constraint c ON c.conname = tc.constraint_name
     JOIN pg_namespace n  ON n.oid = c.connamespace AND n.nspname = tc.constraint_schema
+    JOIN pg_class rel    ON rel.oid = c.conrelid AND rel.relname = tc.table_name
+                        AND rel.relnamespace = n.oid
     WHERE tc.constraint_schema = 'public'
     ORDER BY tc.table_name, tc.constraint_name
   `,

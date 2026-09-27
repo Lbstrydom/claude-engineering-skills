@@ -174,6 +174,111 @@ describe('recordPersonaAuditCorrelation hash_version stamping (disposable DB)', 
     }
   });
 
+  // ── Audit H1/H2/H23: tenancy is derived from the SESSION row on every call,
+  // not only when the caller resolved opts.repoId, and a finding must belong
+  // to the supplied run. Each refusal below wrote a row before the fix.
+  async function seedOtherRepoRunAndFinding() {
+    const other = await upsertRepoByUuid({
+      repoUuid: `test-persona-correlation-other-${crypto.randomUUID()}`,
+      name: 'persona-correlation-other-repo', fingerprint: null,
+    });
+    const pool = await getPool();
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO audit_runs (repo_id, plan_file, mode) VALUES ($1, 'n/a', 'code') RETURNING id`, [other.id]);
+    const { rows: [finding] } = await pool.query(
+      `INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category, round_raised)
+       VALUES ($1, $2, 'structure', 'HIGH', 'x', 1) RETURNING id`, [run.id, `fp-${crypto.randomUUID()}`]);
+    return { repoId: other.id, runId: run.id, findingId: finding.id };
+  }
+  async function seedSameRepoRunWithFinding() {
+    const pool = await getPool();
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO audit_runs (repo_id, plan_file, mode) VALUES ($1, 'n/a', 'code') RETURNING id`, [repoId]);
+    const { rows: [finding] } = await pool.query(
+      `INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category, round_raised)
+       VALUES ($1, $2, 'structure', 'HIGH', 'x', 1) RETURNING id`, [run.id, `fp-${crypto.randomUUID()}`]);
+    return { runId: run.id, findingId: finding.id };
+  }
+  async function dropSeeded({ runIds = [], repoIds = [] }) {
+    const pool = await getPool();
+    for (const id of runIds) {
+      await pool.query(`DELETE FROM persona_audit_correlations WHERE audit_run_id = $1
+                          OR audit_finding_id IN (SELECT id FROM audit_findings WHERE run_id = $1)`, [id]);
+      await pool.query(`DELETE FROM audit_findings WHERE run_id = $1`, [id]);
+      await pool.query(`DELETE FROM audit_runs WHERE id = $1`, [id]);
+    }
+    for (const id of repoIds) await pool.query(`DELETE FROM audit_repos WHERE id = $1`, [id]);
+  }
+  async function rowCount(hash) {
+    const pool = await getPool();
+    const { rows } = await pool.query(
+      `SELECT 1 FROM persona_audit_correlations WHERE persona_session_id = $1 AND persona_finding_hash = $2`, [sessionId, hash]);
+    return rows.length;
+  }
+  const correlation = (over) => ({
+    personaFindingHash: crypto.randomBytes(32).toString('hex'), personaSeverity: 'P1',
+    correlationType: 'confirmed_hit', matchScore: 1.0, matchRationale: 'ownership probe', matcherVersion: null,
+    auditFindingId: null, auditRunId: null, ...over,
+  });
+
+  it('H1: refuses another repo\'s auditRunId even with NO resolved scope (tenant derived from the session)', async () => {
+    const other = await seedOtherRepoRunAndFinding();
+    try {
+      const c = correlation({ auditRunId: other.runId });
+      const r = await recordPersonaAuditCorrelation(sessionId, c); // no opts.repoId
+      assert.equal(r.ok, false);
+      assert.equal(r.written, false);
+      assert.equal(r.reason, 'audit-run-cross-tenant');
+      assert.equal(await rowCount(c.personaFindingHash), 0);
+    } finally { await dropSeeded({ runIds: [other.runId], repoIds: [other.repoId] }); }
+  });
+
+  it('H2: refuses another repo\'s auditFindingId with no resolved scope', async () => {
+    const other = await seedOtherRepoRunAndFinding();
+    try {
+      const c = correlation({ auditFindingId: other.findingId });
+      const r = await recordPersonaAuditCorrelation(sessionId, c);
+      assert.equal(r.reason, 'audit-finding-cross-tenant');
+      assert.equal(await rowCount(c.personaFindingHash), 0);
+    } finally { await dropSeeded({ runIds: [other.runId], repoIds: [other.repoId] }); }
+  });
+
+  it('H23: refuses a same-repo finding that belongs to a DIFFERENT run than the one supplied', async () => {
+    const a = await seedSameRepoRunWithFinding();
+    const b = await seedSameRepoRunWithFinding();
+    try {
+      const c = correlation({ auditRunId: a.runId, auditFindingId: b.findingId });
+      const r = await recordPersonaAuditCorrelation(sessionId, c, { repoId });
+      assert.equal(r.reason, 'audit-finding-run-mismatch');
+      assert.equal(await rowCount(c.personaFindingHash), 0);
+    } finally { await dropSeeded({ runIds: [a.runId, b.runId] }); }
+  });
+
+  it('refuses a dangling session id as parent-not-found, and a scope that does not own the session as parent-not-owned', async () => {
+    const dangling = await recordPersonaAuditCorrelation(crypto.randomUUID(), correlation({}));
+    assert.equal(dangling.reason, 'parent-not-found');
+    const other = await seedOtherRepoRunAndFinding();
+    try {
+      const c = correlation({});
+      const r = await recordPersonaAuditCorrelation(sessionId, c, { repoId: other.repoId });
+      assert.equal(r.reason, 'parent-not-owned');
+      assert.equal(await rowCount(c.personaFindingHash), 0);
+    } finally { await dropSeeded({ runIds: [other.runId], repoIds: [other.repoId] }); }
+  });
+
+  it('NEGATIVE CONTROL: a same-repo finding with ITS OWN run writes, scoped or not', async () => {
+    const a = await seedSameRepoRunWithFinding();
+    try {
+      for (const opts of [{ repoId }, {}]) {
+        const c = correlation({ auditRunId: a.runId, auditFindingId: a.findingId });
+        const r = await recordPersonaAuditCorrelation(sessionId, c, opts);
+        assert.equal(r.ok, true, r.error);
+        assert.equal(r.written, true);
+        assert.equal(await rowCount(c.personaFindingHash), 1);
+      }
+    } finally { await dropSeeded({ runIds: [a.runId] }); }
+  });
+
   it('accepts an auditRunId belonging to the SAME repo when a scope is resolved', async () => {
     const pool = await getPool();
     const { rows: runRows } = await pool.query(

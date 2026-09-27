@@ -68,12 +68,22 @@ export function planLegacyCopilotBlockRetirement(content) {
   if (start === -1 || endSearch === -1) {
     return { action: 'malformed', reason: 'only one audit-loop-bundle marker (or markers out of order) — not provably ours; left untouched' };
   }
-  const eol = content.includes('\r\n') ? '\r\n' : '\n';
-  const before = content.slice(0, start).replace(/\s+$/, '');
-  const after = content.slice(endSearch + LEGACY_COPILOT_END.length).replace(/^\s+/, '');
-  if (before === '' && after === '') return { action: 'delete-file' };
-  const joined = before && after ? `${before}${eol}${eol}${after}` : (before || after);
-  return { action: 'remove-block', content: `${joined.replace(/\s+$/, '')}${eol}` };
+  // Exact inverse of the retired installer's append (`trimmed + '\n\n' + block
+  // + '\n'`, git show b7efb9e6^:scripts/lib/install/merge.mjs): remove the
+  // managed span, the one line ending closing the end-marker line, and the one
+  // blank separator line directly before the start marker. Every other
+  // consumer byte is preserved — trimming whitespace wholesale would rewrite
+  // consumer content such as an indented Markdown code block.
+  let cut = endSearch + LEGACY_COPILOT_END.length;
+  if (content.startsWith('\r\n', cut)) cut += 2;
+  else if (content[cut] === '\n') cut += 1;
+  let keepTo = start;
+  for (const eol of ['\r\n', '\n']) {
+    if (content.slice(0, keepTo).endsWith(eol + eol)) { keepTo -= eol.length; break; }
+  }
+  const remaining = content.slice(0, keepTo) + content.slice(cut);
+  if (remaining.trim() === '') return { action: 'delete-file' };
+  return { action: 'remove-block', content: remaining };
 }
 
 /**

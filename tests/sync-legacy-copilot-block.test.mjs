@@ -33,6 +33,19 @@ This repo uses \`claude-engineering-skills\`. Skills available:
 ${LEGACY_COPILOT_END}`;
 
 describe('planLegacyCopilotBlockRetirement', () => {
+  // Audit H14 (2026-09-27): wholesale whitespace trimming rewrote consumer
+  // bytes adjacent to the block — here an indented Markdown code block (whose
+  // meaning IS its leading spaces) and trailing blank lines of the consumer's.
+  it('consumer bytes adjacent to the block are preserved exactly (indented code block)', () => {
+    const before = '# Rules\n\n    npm run lint   # indented = code block\n\n';
+    const after = '\n\n    keep this indent\n\n\n';
+    const plan = planLegacyCopilotBlockRetirement(`${before}${BLOCK}\n${after}`);
+    assert.equal(plan.action, 'remove-block');
+    // Only the installer's own separator line (one EOL before the block) and the
+    // block's terminating EOL are removed.
+    assert.equal(plan.content, `${before.slice(0, -1)}${after}`);
+  });
+
   it('file holding ONLY the block (installer created it) → delete-file', () => {
     assert.deepEqual(planLegacyCopilotBlockRetirement(`${BLOCK}\n`), { action: 'delete-file' });
   });

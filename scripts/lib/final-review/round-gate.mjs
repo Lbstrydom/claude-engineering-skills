@@ -64,9 +64,13 @@ export function isReleaseBlocking(finding) {
   return finding.release_blocking === true;
 }
 
+const describeShape = (v) => (v === null ? 'null' : v === undefined ? 'missing' : typeof v);
+
 /**
  * Compute the gate disposition from a (post-filtered) final-review result.
  *
+ * - `blocked` also when `new_findings` or `wrongly_dismissed` is missing or not
+ *   an array — a malformed result fails closed with a named reason.
  * - `blocked` — verdict REJECT; or the coverage gate downgraded the verdict
  *   (it rests on code the reviewer never received); or any non-refuted
  *   new_finding is release-blocking (fail-closed on a bad pair); or any
@@ -98,6 +102,11 @@ export function computeGateDisposition(result) {
   const highDismissed = dismissed.filter((d) => !isRefuted(d) && d.recommended_severity === 'HIGH');
 
   const reasons = [];
+  // FAIL CLOSED on a malformed result (audit H7): a missing or non-array
+  // collection is "the reviewer's findings were not delivered", never "there
+  // were none" — APPROVE with new_findings: null must not read as approve.
+  if (!Array.isArray(result?.new_findings)) reasons.push(`malformed result: new_findings is ${describeShape(result?.new_findings)}, not an array`);
+  if (!Array.isArray(result?.wrongly_dismissed)) reasons.push(`malformed result: wrongly_dismissed is ${describeShape(result?.wrongly_dismissed)}, not an array`);
   if (verdict === 'REJECT') reasons.push('verdict REJECT');
   if (!['APPROVE', 'CONCERNS', 'CONCERNS_REMAINING', 'REJECT'].includes(verdict)) reasons.push(`unrecognised verdict "${verdict}"`);
   if (result?._coverageGate?.downgraded) reasons.push('coverage gate: the reviewer received none of the changed code');

@@ -52,7 +52,12 @@ export const RecordPersonaSessionRequestSchema = z.object({
   verdict: z.enum(PERSONA_VERDICTS),
   // The stateful-mission checklist outcome (SKILL.md Phase 3). OPTIONAL on the
   // wire, but ABSENT is not a pass: capPersonaVerdict treats an unreported
-  // lifecycle as a failing `Ready for users` conjunct.
+  // lifecycle as a failing `Ready for users` conjunct. A PRESENT-but-malformed
+  // lifecycle is refused here at the boundary (golden
+  // `rec-session-lifecycle-partial-empty`); capPersonaVerdict re-validates with
+  // the same schema for every other caller (audit H13/H29), so the predicate
+  // never trusts an unparsed lifecycle either way. Omitted p0/p1 counts are NOT
+  // refused — they cap the verdict (`severity counts not reported`).
   lifecycle: LifecycleSchema.optional(),
   // Session work-record fields (SKILL.md Phase 3). Optional for callers that
   // predate them; when present they feed the same eligibility predicate.
@@ -143,7 +148,12 @@ export async function personaOutcomesCmd(ctx) {
       // so backticks / `$(…)` / `$VAR` can ride into a pasteable line. The
       // sibling lock-with-test worksheet closed exactly this with the same
       // oracle; this one had not been given it.
+      // `--repo` is carried (audit H15/H28) so the pasted line names the repo
+      // this worksheet was rendered for, and `label` REFUSES it when the
+      // addressed session belongs to a different repo — a worksheet from one
+      // checkout pasted into another cannot relabel the wrong repo silently.
       commandFor: (it, a) => 'node scripts/cross-skill.mjs persona-outcomes label'
+        + (effectiveName ? ` --repo ${shellQuoteSingle(String(effectiveName))}` : '')
         + ` --session ${shellQuoteSingle(String(it.runId))}`
         + ` --hash ${shellQuoteSingle(String(it.fingerprint))}`
         + ` --outcome ${a}`
@@ -223,6 +233,18 @@ export async function personaOutcomesCmd(ctx) {
     }
     const target = await ctx.deps.resolveLabelTarget({ sessionId, personaFindingHash: hash });
     if (!target.ok) throw new CommandError('BAD_INPUT', target.error);
+    // The session decides the repo (see the registry note). An explicit
+    // `--repo` — which the worksheet's generated commands carry — is a claim
+    // about that repo, so it is CHECKED, never silently ignored: a mismatch
+    // means the command was pasted against the wrong repository.
+    const repoFlag = ctx.flag('repo');
+    if (repoFlag) {
+      const scope = await ctx.resolveScope({ explicitRepoName: repoFlag });
+      if (scope.repoId && scope.repoId !== target.repoId) {
+        throw new CommandError('PARENT_NOT_OWNED',
+          `--repo "${repoFlag}" does not own session ${sessionId} — refusing to label another repository's finding`, {}, 1);
+      }
+    }
     const result = await ctx.deps.upsertPersonaFindingOutcome({
       repoId: target.repoId, personaFindingHash: hash, outcome,
       lastSeenSessionId: sessionId, labeledBy, rationale,
@@ -371,7 +393,7 @@ export async function recordPersonaSessionCmd(ctx) {
  * store-call goldens intercept its writes like any other.
  */
 async function runAutoCorrelate(deps, data, sessionId) {
-  const base = { attempted: false, candidates: 0, route: 0, fuzzy: 0, missed: 0, skippedExisting: 0, malformed: 0, writeFailed: 0, matcherVersion: MATCHER_VERSION };
+  const base = { attempted: false, candidates: 0, route: 0, fuzzy: 0, missed: 0, skippedExisting: 0, malformed: 0, writeFailed: 0, refused: 0, matcherVersion: MATCHER_VERSION };
   // A null sessionId means recordPersonaSession's OWN write failed (a genuine
   // DB error inside its catch block — cloud is already confirmed on by this
   // point) — distinct from "no repo identity", which is a resolvable-input
@@ -426,21 +448,31 @@ async function runAutoCorrelate(deps, data, sessionId) {
       process.stderr.write(`  [correlator] session ${sessionId}: ${malformed} P0/P1 finding(s) quarantined (missing element/observed) — not correlated\n`);
     }
 
-    let route = 0, fuzzy = 0, missed = 0, writeFailed = 0;
+    // Each emission is counted by what the WRITER says happened, never by what
+    // was attempted. `writeFailed` counts every emission that did not land
+    // (a refusal included — the row is absent either way); `refused` is the
+    // subset the writer declined by NAME (a tenancy/shape refusal, audit
+    // H1/H2/H23), so a store outage and a cross-repo candidate stay
+    // distinguishable in the summary.
+    let route = 0, fuzzy = 0, missed = 0, writeFailed = 0, refused = 0;
     for (const emission of emissions) {
       if (emission._tier === 'route') route += 1;
       else if (emission._tier === 'fuzzy') fuzzy += 1;
       else missed += 1;
-      const writeResult = await deps.recordPersonaAuditCorrelation(sessionId, emission);
-      if (!writeResult.ok) {
+      const writeResult = await deps.recordPersonaAuditCorrelation(sessionId, emission, { repoId: data.repoId });
+      if (!writeResult?.ok || writeResult.written === false) {
         writeFailed += 1;
-        process.stderr.write(`  [correlator] write failed for finding ${emission.personaFindingHash}: ${writeResult.error}\n`);
+        if (writeResult?.reason && !['write-failed', 'cloud-off'].includes(writeResult.reason)) refused += 1;
+        process.stderr.write(
+          `  [correlator] correlation not written for finding ${emission.personaFindingHash}: `
+          + `${writeResult?.reason ?? 'unknown'} — ${writeResult?.error ?? 'no detail'}\n`,
+        );
       }
     }
 
     const summary = {
       attempted: true, candidates: candResult.rows.length,
-      route, fuzzy, missed, skippedExisting, malformed, writeFailed, matcherVersion: MATCHER_VERSION,
+      route, fuzzy, missed, skippedExisting, malformed, writeFailed, refused, matcherVersion: MATCHER_VERSION,
     };
     if (writeFailed > 0) {
       process.stderr.write(`  [correlator] session ${sessionId}: ${writeFailed}/${emissions.length} correlation writes failed\n`);
@@ -459,10 +491,24 @@ async function runAutoCorrelate(deps, data, sessionId) {
  * `record-correlation` — /persona-test links a finding to an audit row.
  * Moved from `cmdRecordCorrelation`.
  *
- * NOTE (Cluster F): `personaSessionId` is an opaque parent id with no
- * ownership check — the deferred `parent: {table:'persona_test_sessions'}`
- * declaration lands here.
+ * Ownership is enforced in the WRITER (store/persona-correlations.mjs): the
+ * session row's repo is the tenant, and a supplied audit run/finding must
+ * belong to it (and the finding to the run) — whether or not scope resolved
+ * here. Each refusal keeps its own exit code: a dangling id, a cross-repo id
+ * and a finding/run mismatch are different things for the operator to fix.
  */
+const CORRELATION_REFUSAL_CODES = Object.freeze({
+  'invalid-input': 'BAD_INPUT',
+  'parent-not-found': 'PARENT_NOT_FOUND',
+  'audit-run-not-found': 'PARENT_NOT_FOUND',
+  'audit-finding-not-found': 'PARENT_NOT_FOUND',
+  'parent-not-owned': 'PARENT_NOT_OWNED',
+  'parent-repo-unknown': 'PARENT_NOT_OWNED',
+  'audit-run-cross-tenant': 'PARENT_NOT_OWNED',
+  'audit-finding-cross-tenant': 'PARENT_NOT_OWNED',
+  'audit-finding-run-mismatch': 'PARENT_NOT_OWNED',
+});
+
 export async function recordCorrelationCmd(ctx) {
   const p = ctx.payload();
   if (!p.personaSessionId || !p.personaFindingHash || !p.personaSeverity || !p.correlationType) {
@@ -489,11 +535,16 @@ export async function recordCorrelationCmd(ctx) {
     // An ownership refusal is exit 1 with its own code, not a generic
     // WRITE_FAILED: 'that session does not exist' and 'that session belongs to
     // another repository' are different things for the operator to do next.
-    const code = result.reason === 'parent-not-found' ? 'PARENT_NOT_FOUND'
-      : result.reason === 'parent-not-owned' ? 'PARENT_NOT_OWNED' : 'WRITE_FAILED';
-    throw new CommandError(code, result.error || 'correlation write failed', { reason: result.reason }, 1);
+    // An invalid input the writer caught is the caller's to fix — exit 2.
+    const code = CORRELATION_REFUSAL_CODES[result.reason] ?? 'WRITE_FAILED';
+    throw new CommandError(code, result.error || 'correlation write failed', { reason: result.reason ?? null },
+      code === 'BAD_INPUT' ? 2 : 1);
   }
-  return { ok: true, cloud: true };
+  // `ok:true` without a written row is the writer's cloud-off outcome; this
+  // handler's cloud gate returned before reaching the store, so it should be
+  // unreachable — but it must never read as a write if it happens.
+  if (result.written === false) return { ok: true, cloud: false, written: false, reason: result.reason ?? null };
+  return { ok: true, cloud: true, written: true };
 }
 
 /**

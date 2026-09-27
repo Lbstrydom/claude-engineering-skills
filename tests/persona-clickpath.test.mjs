@@ -63,6 +63,43 @@ test('sanitizeStepUrl: a DOUBLY percent-encoded auth keyword still collapses the
   assert.equal(sanitizeStepUrl('https://x/%252572eset/123456'), '/%252572eset/:param');
 });
 
+// ── Tier-3 egress seam (audit H4/H20): the decode is per-escape and the
+// secret tests run on every DECODED component. Each case below leaked before.
+test('sanitizeStepUrl: a malformed escape no longer shields a valid escape later in the same segment (H4)', () => {
+  // `%ZZ` made decodeURIComponent throw for the whole segment, so `%40` was never
+  // decoded and the email shape check saw no `@`.
+  assert.equal(sanitizeStepUrl('https://x/users/%ZZjane%40example.com'), '/users/:param');
+  // A truncated multi-byte escape before a valid one — same shape.
+  assert.equal(sanitizeStepUrl('https://x/users/%E0%A4jane%40example.com'), '/users/:param');
+  // Malformed escape in a query value of a KEPT routing key.
+  assert.match(sanitizeStepUrl('https://x/a?view=%ZZjane%40example.com'), /view=:param/);
+});
+
+test('sanitizeStepUrl: an ENCODED separator cannot hide an auth keyword + token inside one segment (H20)', () => {
+  // `reset%2F123456` is ONE raw segment, `reset/123456` decoded — the short OTP
+  // is only a secret by position, and the position was invisible per raw segment.
+  assert.equal(sanitizeStepUrl('https://x/reset%2F123456'), '/:param');
+  assert.equal(sanitizeStepUrl('https://x/app/reset%5C123456'), '/app/:param');              // encoded backslash
+  assert.equal(sanitizeStepUrl('https://x/#/verify%2F987654'), '/#/:param');                  // hash route
+  // A secret-SHAPED component behind an encoded separator (email/uuid).
+  assert.equal(sanitizeStepUrl('https://x/files/docs%2Fjane%40example.com'), '/files/:param');
+});
+
+test('sanitizeStepUrl: double-encoded separator + malformed escape still resolve (H4/H20)', () => {
+  assert.equal(sanitizeStepUrl('https://x/reset%252F123456'), '/:param');
+  assert.equal(sanitizeStepUrl('https://x/%ZZreset%252F123456'), '/:param');
+  assert.equal(sanitizeStepUrl('https://x/users/jane%2540example.com'), '/users/:param');
+});
+
+test('sanitizeStepUrl: NEGATIVE CONTROL — benign routes survive unchanged', () => {
+  assert.equal(sanitizeStepUrl('https://x/score_entry'), '/score_entry');
+  assert.equal(sanitizeStepUrl('https://x/wines/42/edit'), '/wines/42/edit');
+  assert.equal(sanitizeStepUrl('https://x/100%25-club'), '/100%25-club');                     // an encoded % is not a secret
+  assert.equal(sanitizeStepUrl('https://x/caf%C3%A9/menu'), '/caf%C3%A9/menu');             // valid multi-byte, benign
+  assert.equal(sanitizeStepUrl('https://x/a%ZZb/list'), '/a%ZZb/list');                     // malformed alone is not a secret
+  assert.equal(sanitizeStepUrl('https://x/cellar?view=cellar'), '/cellar?view=cellar');
+});
+
 test('sanitizeStepUrl: a hash ROUTE with its own query is not mangled as an OAuth token bag (Gemini HIGH)', () => {
   // `#/wines?view=today` starts with `/` → it is a SPA route, not `#token=…`.
   assert.equal(sanitizeStepUrl('https://x/#/wines?view=today'), '/#/wines?view=today');

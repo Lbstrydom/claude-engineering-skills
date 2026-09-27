@@ -125,6 +125,9 @@ const QUERIES = {
     FROM information_schema.table_constraints tc
     JOIN pg_constraint c ON c.conname = tc.constraint_name
     JOIN pg_namespace n  ON n.oid = c.connamespace AND n.nspname = tc.constraint_schema
+    -- Table identity too: CHECK names may repeat across tables (audit H10).
+    JOIN pg_class rel    ON rel.oid = c.conrelid AND rel.relname = tc.table_name
+                        AND rel.relnamespace = n.oid
     WHERE tc.constraint_schema = 'public'
     ORDER BY tc.table_name, tc.constraint_name
   `,

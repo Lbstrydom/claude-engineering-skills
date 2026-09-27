@@ -19,8 +19,9 @@ import { fileURLToPath } from 'node:url';
 
 import {
   assessConstraintDrift, checkLiveConstraints, renderConstraintDrift, quoteIdent,
-  LIVE_CONSTRAINT_CATEGORIES,
+  LIVE_CONSTRAINT_CATEGORIES, vacuousInventoryReason,
 } from '../scripts/lib/db/constraint-drift.mjs';
+import { SHARED_CATALOG_QUERIES } from '../scripts/lib/db/live-catalog.mjs';
 import { _internals } from '../scripts/setup-postgres.mjs';
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..');
@@ -82,7 +83,7 @@ describe('assessConstraintDrift — classification', () => {
     assert.deepEqual(r.repairs, []);
   });
 
-  it('an out-of-band REPLACEMENT (same name, wider columns) is ALTERED, with drop+add repair', () => {
+  it('an out-of-band REPLACEMENT (same name, wider columns) is ALTERED, with drop+add in ONE transaction', () => {
     const live = liveFrom(EXPECTED);
     const row = live.constraints.find((c) => c.constraint_name === 'bandit_arms_unique');
     row.definition = 'UNIQUE (pass_name, variant_id, context_bucket, user_id)';
@@ -90,8 +91,32 @@ describe('assessConstraintDrift — classification', () => {
     assert.equal(r.hasDrift, true);
     assert.equal(r.missing.length, 0);
     assert.equal(r.altered.length, 1);
-    assert.match(r.altered[0].repair, /DROP CONSTRAINT bandit_arms_unique; ALTER TABLE public\.bandit_arms ADD CONSTRAINT bandit_arms_unique UNIQUE \(pass_name, variant_id, context_bucket\);/);
+    // Wrapped: a recreate that fails (e.g. duplicate rows under the UNIQUE)
+    // must roll the DROP back, never leave the original constraint gone.
+    assert.equal(r.altered[0].repair,
+      'BEGIN; ALTER TABLE public.bandit_arms DROP CONSTRAINT bandit_arms_unique; '
+      + 'ALTER TABLE public.bandit_arms ADD CONSTRAINT bandit_arms_unique UNIQUE (pass_name, variant_id, context_bucket); COMMIT;');
     assert.match(r.altered[0].live, /user_id/);
+  });
+
+  it('an ALTERED plain index gets DROP + CREATE in ONE transaction', () => {
+    const live = liveFrom(EXPECTED);
+    const row = live.indexes.find((i) => i.indexname === 'idx_bandit_arms_pass');
+    row.indexdef = 'CREATE INDEX idx_bandit_arms_pass ON public.bandit_arms USING btree (pass_name)';
+    const r = assessConstraintDrift(EXPECTED, live);
+    assert.deepEqual(r.repairs, ['BEGIN; DROP INDEX public.idx_bandit_arms_pass; '
+      + 'CREATE INDEX idx_bandit_arms_pass ON public.bandit_arms USING btree (pass_name, user_id); COMMIT;']);
+  });
+
+  it('negative control: a MISSING object repair is a bare ADD/CREATE — no DROP, no transaction wrapper', () => {
+    const live = withoutBanditUnique(EXPECTED);
+    live.indexes = live.indexes.filter((r) => r.indexname !== 'idx_bandit_arms_pass');
+    const r = assessConstraintDrift(EXPECTED, live);
+    assert.equal(r.repairs.length, 2, 'vacuous-pass guard: one constraint + one index repair to inspect');
+    for (const sql of r.repairs) {
+      assert.doesNotMatch(sql, /\bDROP\b/);
+      assert.doesNotMatch(sql, /\bBEGIN\b|\bCOMMIT\b/);
+    }
   });
 
   it('a missing plain index gets its CREATE INDEX from the expected indexdef', () => {
@@ -117,6 +142,75 @@ describe('assessConstraintDrift — classification', () => {
   it('quoteIdent quotes only names that need it', () => {
     assert.equal(quoteIdent('bandit_arms'), 'bandit_arms');
     assert.equal(quoteIdent('Weird"Name'), '"Weird""Name"');
+  });
+});
+
+describe('assessConstraintDrift — a VACUOUS expected inventory is UNMEASURED, never clean', () => {
+  const vacuousCases = {
+    'empty constraints and indexes': { constraints: [], indexes: [] },
+    'empty constraints only': { constraints: [], indexes: clone(EXPECTED.indexes) },
+    'empty indexes only': { constraints: clone(EXPECTED.constraints), indexes: [] },
+    'constraints present but none PRIMARY KEY/UNIQUE': {
+      constraints: EXPECTED.constraints.filter((r) => r.constraint_type === 'FOREIGN KEY'),
+      indexes: clone(EXPECTED.indexes),
+    },
+    'sections absent': {},
+  };
+  for (const [label, manifest] of Object.entries(vacuousCases)) {
+    it(`${label} → measured:false with a reason, not a clean pass`, () => {
+      // Every live object would otherwise land in `extra` (never a failure)
+      // and the check would read clean having compared nothing.
+      const r = assessConstraintDrift({ schema: 'public', ...manifest }, liveFrom(EXPECTED));
+      assert.equal(r.measured, false);
+      assert.equal(r.hasDrift, false);
+      assert.match(r.reason, /vacuous inventory/);
+      assert.match(renderConstraintDrift(r).join('\n'), /NOT MEASURED.*not a clean result/);
+    });
+  }
+
+  it('negative control: the real manifest is NOT vacuous', () => {
+    assert.equal(vacuousInventoryReason(EXPECTED), null);
+    assert.equal(assessConstraintDrift(EXPECTED, liveFrom(EXPECTED)).measured, true);
+  });
+
+  it('checkLiveConstraints refuses a vacuous manifest before touching the pool', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vacuous-manifest-'));
+    const file = path.join(dir, 'expected-schema.json');
+    fs.writeFileSync(file, JSON.stringify({ schema: 'public', constraints: [], indexes: [] }));
+    let captured = false;
+    const r = await checkLiveConstraints({
+      pool: {}, expectedSchemaPath: file, fs,
+      capture: async () => { captured = true; return liveFrom(EXPECTED); },
+    });
+    assert.equal(r.measured, false);
+    assert.equal(captured, false);
+  });
+
+  it('runCheckDrift --live with a vacuous manifest → exit 4, same path as an absent one', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vacuous-manifest-'));
+    const file = path.join(dir, 'expected-schema.json');
+    fs.writeFileSync(file, JSON.stringify({ schema: 'public', constraints: [], indexes: [] }));
+    const r = await _internals.runCheckDrift(stubPool(), {
+      format: 'json', migrationsDir: emptyMigrationsDir(), stdout: sink(), stderr: sink(),
+      live: true, expectedSchemaPath: file, capture: async () => liveFrom(EXPECTED),
+    });
+    assert.equal(r.exitCode, 4);
+    assert.equal(r.liveConstraints.measured, false);
+  });
+});
+
+describe('SHARED_CATALOG_QUERIES.constraints — joins on TABLE identity, not name alone', () => {
+  // A constraint name is unique per table, not per schema (two tables may each
+  // own a CHECK named `valid_status`); a name+schema join cross-multiplies them.
+  // The behavioural proof needs a real Postgres; this pins the join shape so it
+  // cannot silently regress to name-only.
+  const sql = SHARED_CATALOG_QUERIES.constraints.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ');
+  it('joins pg_constraint.conrelid to the table table_constraints names', () => {
+    assert.match(sql, /JOIN pg_class rel ON rel\.oid = c\.conrelid AND rel\.relname = tc\.table_name/);
+  });
+  it('negative control: the name + schema join is still present (the table join adds to it)', () => {
+    assert.match(sql, /JOIN pg_constraint c ON c\.conname = tc\.constraint_name/);
+    assert.match(sql, /n\.nspname = tc\.constraint_schema/);
   });
 });
 
