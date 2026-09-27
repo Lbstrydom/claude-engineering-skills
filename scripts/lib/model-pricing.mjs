@@ -449,6 +449,36 @@ export function costFromUsage(usage, modelId) {
 }
 
 /**
+ * Sum two provider usage records, for a call that took more than one billed
+ * attempt. Every finite numeric field present in either side is added (token
+ * counts, cache reads/writes, thinking tokens, latency, a self-reported
+ * `provider_cost_usd`); boolean flags (`usageMissing`) are OR-ed, so one
+ * unreported attempt keeps the total marked unreliable. `null` only when
+ * neither attempt reported usage: nothing is fabricated.
+ *
+ * Overwriting instead of summing is the defect this exists for: a retried
+ * call was costed as its LAST attempt, so every retry read as free.
+ * @param {object|null} a
+ * @param {object|null} b
+ * @returns {object|null}
+ */
+export function sumUsage(a, b) {
+  if (!a) return b ? { ...b } : null;
+  if (!b) return { ...a };
+  const out = { ...a };
+  for (const [k, v] of Object.entries(b)) {
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      out[k] = (typeof out[k] === 'number' && Number.isFinite(out[k]) ? out[k] : 0) + v;
+    } else if (typeof v === 'boolean') {
+      out[k] = Boolean(out[k]) || v;
+    } else if (!(k in out)) {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+/**
  * Cost for the SPEND-CAP path — never null (audit R1 H7). An unknown price
  * falls back to FALLBACK_PRICE_USD (a conservative OVER-estimate) so the hard €
  * ceiling can never be silently overshot by an unmetered arm. `estimated:true`

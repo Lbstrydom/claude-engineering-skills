@@ -69,6 +69,14 @@ describe('shadowErrorBlock — a failed shadow carries its classification, not j
     const b = shadowErrorBlock(SHADOW, new Error('Timeout after 900s'));
     assert.equal(b.usage, null);
     assert.equal(b.usageEvidence, 'unreported-call-may-have-been-billed');
+    assert.equal(b.billedUsage, null);
+  });
+
+  it('keeps the summed usage of attempts that answered as a FLOOR, while `usage` stays unmeterable', () => {
+    const b = shadowErrorBlock(SHADOW, Object.assign(new Error('Failed to parse gemini JSON response'), { usage: { input_tokens: 2000, output_tokens: 900 } }));
+    assert.equal(b.usage, null, 'a floor must not be read as the cost');
+    assert.deepEqual(b.billedUsage, { input_tokens: 2000, output_tokens: 900 });
+    assert.equal(b.usageEvidence, 'billed-usage-is-a-floor');
   });
 
   it('callReviewer’s wrap PRESERVES the abort classification the block above depends on', async () => {

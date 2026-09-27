@@ -6,7 +6,7 @@
     "scripts/campaign.mjs": 1019,
     "scripts/cross-skill.mjs": 1124,
     "scripts/gemini-review.mjs": 1138,
-    "scripts/lib/anthropic-client.mjs": 1043,
+    "scripts/lib/anthropic-client.mjs": 1029,
     "scripts/lib/audit/evidence-triage.mjs": 1245,
     "scripts/lib/audit/legacy-production-audit.mjs": 1702,
     "scripts/lib/config.mjs": 1005,

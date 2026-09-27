@@ -22,6 +22,7 @@ import {
   gitDiffWithWorkingTree, gitNumstatWithWorkingTree, gitUnifiedDiffWithWorkingTree, isSafeGitRevision,
 } from './vcs.mjs';
 import { resolveAndClassify } from './sensitive-paths.mjs';
+import { buildToolUseRequest, withToolInstruction } from './anthropic-tool-choice.mjs';
 
 // ── Selection / gating (pure) ────────────────────────────────────────────
 
@@ -477,14 +478,17 @@ export async function callVerifier({ client, model, file, findings, diffText, cu
       detail: f.detail_snapshot,
     })),
   };
+  // Forced only where the model accepts it: `--model latest-opus` resolves to
+  // Opus 5.5, which 400s on a forced tool_choice (anthropic-tool-choice.mjs).
+  const toolUse = buildToolUseRequest(model, VERIFICATION_RESULT_TOOL);
   try {
     const resp = await client.messages.create({
       model,
       max_tokens: 4000,
-      system: VERIFICATION_SYSTEM_PROMPT,
+      system: withToolInstruction(VERIFICATION_SYSTEM_PROMPT, toolUse.instruction),
       messages: [{ role: 'user', content: JSON.stringify(userPayload, null, 2) }],
-      tools: [VERIFICATION_RESULT_TOOL],
-      tool_choice: { type: 'tool', name: VERIFICATION_RESULT_TOOL.name },
+      tools: toolUse.tools,
+      tool_choice: toolUse.tool_choice,
     });
     const call = resp?.content?.find((b) => b.type === 'tool_use' && b.name === VERIFICATION_RESULT_TOOL.name);
     if (!call) {

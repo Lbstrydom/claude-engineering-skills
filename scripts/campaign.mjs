@@ -68,7 +68,7 @@ import {
 } from './lib/campaign/promote.mjs';
 import { findingMatchConfig, FINDING_MATCH_SCHEMA_VERSION } from './lib/config.mjs';
 import { resolveModel } from './lib/model-resolver.mjs';
-import { costFromUsage } from './lib/model-pricing.mjs';
+import { costFromUsage, sumUsage } from './lib/model-pricing.mjs';
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
 import * as store from './lib/store/campaign.mjs';
 
@@ -726,7 +726,7 @@ async function callAdjudicator({ client, model, blind, attempts = 2 }) {
         // back with no error.
         tool_choice: { type: 'auto' },
       });
-      usage = resp?.usage ?? null;
+      usage = sumUsage(usage, resp?.usage ?? null); // every attempt is billed, not just the last
       const call = resp?.content?.find((b) => b.type === 'tool_use' && b.name === ADJUDICATION_TOOL.name);
       if (!call) { lastError = `no ${ADJUDICATION_TOOL.name} tool call (stop_reason ${resp?.stop_reason ?? 'unknown'})`; continue; }
       const norm = normaliseVerdict(call.input, { worksheetRowId: blind.worksheetRowId });

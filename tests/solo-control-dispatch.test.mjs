@@ -431,7 +431,7 @@ function stubAnthropicClient(handler) {
   };
 }
 
-test('runClaudeGateReview: sends the shared prompt verbatim, forces the emit_findings tool, and applies the requested reasoning effort', async () => {
+test('runClaudeGateReview: sends the shared prompt verbatim, forces the emit_findings tool on a forcing-capable model, and applies the requested reasoning effort', async () => {
   let seenParams = null;
   const client = stubAnthropicClient((params) => {
     seenParams = params;
@@ -455,21 +455,27 @@ test('runClaudeGateReview: defaults to "high" effort — the max tier this repo 
   assert.equal(seenParams.output_config.effort, 'high');
 });
 
-test('runClaudeGateReview: a provider error degrades to a conformance-style empty result, never a thrown crash', async () => {
+test('runClaudeGateReview: a provider error is a provider-error cell (unverified), not a thrown crash and not a clean empty result', async () => {
+  // This test used to assert `{findings: [], skipped}` — and the call site
+  // recorded that as an `ok` gate cell, so a gate that never ran scored as a
+  // gate that found nothing. Opus 5.5's forced-tool_choice 400 hit exactly it.
   const client = stubAnthropicClient(() => { throw new Error('network blip'); });
   const r = await soloCtl.runClaudeGateReview(client, 'claude-sonnet-5', [], 'X');
   assert.deepEqual(r.findings, []);
-  assert.match(r.skipped, /network blip/);
+  assert.equal(r.state, 'provider-error');
+  assert.match(r.error, /network blip/);
 });
 
-test('runClaudeGateReview: a tool_use input that fails schema validation (or a missing tool_use block) returns empty findings, not a thrown parse error', async () => {
+test('runClaudeGateReview: a missing tool_use block is provider-error; a tool_use input that fails the schema is conformance-miss — neither is a thrown parse error', async () => {
   const missingToolUse = stubAnthropicClient(() => ({ content: [{ type: 'text', text: 'sorry, no tool call' }] }));
   const r1 = await soloCtl.runClaudeGateReview(missingToolUse, 'claude-sonnet-5', [], 'X');
   assert.deepEqual(r1.findings, []);
+  assert.equal(r1.state, 'provider-error');
 
   const malformedInput = stubAnthropicClient(() => ({ content: [{ type: 'tool_use', input: { findings: 'not-an-array' } }] }));
   const r2 = await soloCtl.runClaudeGateReview(malformedInput, 'claude-sonnet-5', [], 'X');
   assert.deepEqual(r2.findings, []);
+  assert.equal(r2.state, 'conformance-miss');
 });
 
 test('runClaudeGateReview: a diff carrying a real secret pattern refuses BEFORE the client is ever called', async () => {

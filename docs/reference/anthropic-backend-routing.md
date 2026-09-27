@@ -31,6 +31,15 @@ from `claude -p --output-format json` by `normaliseCliOutput`. That is the
 authoritative per-call signal for scripted jobs like `npm run arch:refresh` (12
 batched `claude -p` calls on its incremental path).
 
+**Where it lands (2026-09-27).** `normaliseCliOutput` puts the cost on
+`usage.provider_cost_usd` as well as `_meta.cost_usd`, and
+`buildUsageEvent` ([usage-event.mjs](../../scripts/lib/audit/usage-event.mjs))
+reads that field as an exact self-reported cost. Before that it reached only
+`_meta`, which only `anthropic-ping.mjs` read, so usage events priced cli calls
+from tokens, an estimate rather than the backend's own figure (and, until #120
+carried the cli cache counts, one that missed most of the prompt). Pass the
+response's `usage` through; don't re-derive a cost from tokens.
+
 **`claude-trace` canNOT meter the scripted cli backend.** Three independent
 reasons, each fatal on its own:
 
@@ -94,3 +103,16 @@ before it was root-caused. See
 **Rule**: any call site that forces `tool_choice` must pass
 `createAnthropicClient({backend: 'sdk'})` explicitly. Never rely on the ambient
 `CLAUDE_BACKEND` resolution for that case.
+
+### Forced `tool_choice` is a 400 on Opus 5.5 (and Fable/Mythos 5.1)
+
+`latest-opus` resolves to `claude-opus-5-5` since 2026-09-23, and that model
+rejects `tool_choice: {type: 'tool'|'any'}` with HTTP 400. Build the request
+with `buildToolUseRequest(model, tool)`
+([anthropic-tool-choice.mjs](../../scripts/lib/anthropic-tool-choice.mjs)):
+forced where the model accepts it (byte-identical to before), otherwise `auto`
+\+ `strict: true` + an `instruction` to append to the **system** prompt. The
+predicate is an allowlist (4.x and 5.0), so an unknown id gets `auto`, which
+no model rejects. Under `auto` a missing `tool_use` block is possible: report
+it as a failure, never as an empty result. Still pin `{backend: 'sdk'}` — the
+cli backend drops `tools` either way.

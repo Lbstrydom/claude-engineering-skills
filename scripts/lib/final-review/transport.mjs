@@ -245,6 +245,27 @@ export const REVIEW_TRANSPORTS = {
     // Stream — non-streaming create() throws above the SDK's max_tokens ceiling.
     const r = await streamAnthropicMessage(client, req, { signal });
 
+    const usage = {
+      input_tokens: r.usage?.input_tokens ?? 0,
+      output_tokens: r.usage?.output_tokens ?? 0,
+      // Anthropic reports UNCACHED input in `input_tokens` and puts cached
+      // tokens in these two fields instead. Carrying them is not optional
+      // bookkeeping: on a cache HIT `input_tokens` collapses to a few hundred,
+      // so a cost derived from it alone would read a full 81K-token review as
+      // near-free — a fabricated saving in exactly the shape of a measurement.
+      // costFromUsage prices all three at their real multipliers.
+      cache_creation_input_tokens: r.usage?.cache_creation_input_tokens ?? 0,
+      cache_read_input_tokens: r.usage?.cache_read_input_tokens ?? 0,
+      // READ, never assumed. This was hardcoded to 0, and the zero happened to
+      // be CORRECT for the wrong reason — not because the path declined
+      // thinking (Opus 5 thinks by default) but because forced tool_choice
+      // suppressed it. A constant that is only accidentally right cannot show
+      // you when it stops being right: the moment tool_choice moved to `auto`
+      // the same literal would have under-reported real reasoning as zero.
+      // `?? 0` is the genuine absent case (a transport reporting no count).
+      thinking_tokens: r.usage?.output_tokens_details?.thinking_tokens ?? 0,
+    };
+
     let text;
     if (useTool) {
       const toolUse = r.content?.find((b) => b.type === 'tool_use' && b.name === ANTHROPIC_REVIEW_TOOL_NAME);
@@ -252,11 +273,11 @@ export const REVIEW_TRANSPORTS = {
         // stop_reason:'max_tokens' is the truncation signature — surfaced so a
         // recurrence is diagnosable from the message alone (same rationale as
         // the tiered discovery generator's error).
-        throw new Error(
+        throw Object.assign(new Error(
           `anthropic response contained no ${ANTHROPIC_REVIEW_TOOL_NAME} tool call `
           + `(stop_reason: ${r.stop_reason ?? 'unknown'}). Under CLAUDE_BACKEND=cli the `
           + 'tools/tool_choice params are silently dropped — this transport needs the sdk backend.'
-        );
+        ), { usage }); // the response was billed even though it is unusable
       }
       // Re-serialize so the shared downstream path (parse → truncate → Zod) is
       // byte-identical across transports; parseReviewJson handles clean JSON first.
@@ -267,38 +288,14 @@ export const REVIEW_TRANSPORTS = {
       // warns about, which reads as a clean gate. The tool path above already
       // throws on a refusal (no tool call), naming the stop_reason.
       if (r.stop_reason === 'refusal') {
-        throw new Error(
+        throw Object.assign(new Error(
           'anthropic final review returned stop_reason: refusal (billed, no content) - '
           + 'treat as a failed review, not an empty one'
-        );
+        ), { usage });
       }
       text = r.content?.find((b) => b.type === 'text')?.text?.trim() || '{}';
     }
-
-    return {
-      text,
-      usage: {
-        input_tokens: r.usage?.input_tokens ?? 0,
-        output_tokens: r.usage?.output_tokens ?? 0,
-        // Anthropic reports UNCACHED input in `input_tokens` and puts cached
-        // tokens in these two fields instead. Carrying them is not optional
-        // bookkeeping: on a cache HIT `input_tokens` collapses to a few hundred,
-        // so a cost derived from it alone would read a full 81K-token review as
-        // near-free — a fabricated saving in exactly the shape of a measurement.
-        // costFromUsage prices all three at their real multipliers.
-        cache_creation_input_tokens: r.usage?.cache_creation_input_tokens ?? 0,
-        cache_read_input_tokens: r.usage?.cache_read_input_tokens ?? 0,
-        // READ, never assumed. This was hardcoded to 0, and the zero happened to
-        // be CORRECT for the wrong reason — not because the path declined
-        // thinking (Opus 5 thinks by default) but because forced tool_choice
-        // suppressed it. A constant that is only accidentally right cannot show
-        // you when it stops being right: the moment tool_choice moved to `auto`
-        // the same literal would have under-reported real reasoning as zero.
-        // `?? 0` is the genuine absent case (a transport reporting no count).
-        thinking_tokens: r.usage?.output_tokens_details?.thinking_tokens ?? 0,
-      },
-      finishReason: r.stop_reason ?? null,
-    };
+    return { text, usage, finishReason: r.stop_reason ?? null };
   },
 
   async openai(client, { model, maxTokens, systemPrompt, userPrompt, signal, requestExtras, openAiJsonSchema }) {
@@ -429,7 +426,9 @@ export async function callReviewer(client, { transportKind, model, systemPrompt,
     try {
       result = parseReviewJson(raw.text);
     } catch (parseErr) {
-      throw new Error(`Failed to parse ${transportKind} JSON response: ${parseErr.message}\nRaw: ${String(raw.text).slice(0, 500)}`);
+      // The response arrived and was billed: its usage rides out on the error
+      // so the retry loop can sum it (a truncated first attempt is not free).
+      throw Object.assign(new Error(`Failed to parse ${transportKind} JSON response: ${parseErr.message}\nRaw: ${String(raw.text).slice(0, 500)}`), { usage: { ...raw.usage, latency_ms: latencyMs } });
     }
     const truncated = [];
     result = truncateToSchema(result, '', truncated);
@@ -459,6 +458,7 @@ export async function callReviewer(client, { transportKind, model, systemPrompt,
     process.stderr.write(`  [${label}] FAILED: ${msg}\n`);
     const wrapped = new Error(msg);
     if (err.status) wrapped.status = err.status; // preserve for classifyLlmError (404 → non-retryable)
+    if (err.usage) wrapped.usage = err.usage; // billed-but-unusable response (see runReviewWithRetry)
     // A timeout must stay classifiable AFTER the wrap. `classifyLlmError` reads
     // `name`/`code` to reach its `timeout` branch, and both are lost here — the
     // wrapped error carries only a message, so every abort was classified
