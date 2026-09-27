@@ -61,15 +61,32 @@ export const DOCTOR_CONSUMER_PATH = `${LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR}/do
  * (git show b7efb9e6^:scripts/lib/install/merge.mjs). A consumer example that
  * quotes the markers and path inline fails at least one of these.
  */
+function insideFence(text) {
+  let open = null; // { ch, len }
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (!m) continue;
+    const ch = m[1][0];
+    const len = m[1].length;
+    if (!open) {
+      if (ch === '`' && m[2].includes('`')) continue; // backtick info string may not contain `
+      open = { ch, len };
+    } else if (ch === open.ch && len >= open.len && m[2].trim() === '') {
+      open = null;
+    }
+  }
+  return open !== null;
+}
+
 function isRetiredInstallerBlock(content, start, end) {
   const onOwnLine = (i, len) => (i === 0 || content[i - 1] === '\n')
     && /^(\r?\n|$)/.test(content.slice(i + len, i + len + 2));
   if (!onOwnLine(start, LEGACY_COPILOT_START.length) || !onOwnLine(end, LEGACY_COPILOT_END.length)) return false;
   // A block quoted inside a fenced code example is the consumer's, not the
-  // installer's: an odd number of fence lines before the marker means it sits
-  // inside an open fence (R5 H1).
-  const fencesBefore = (content.slice(0, start).match(/^[ \t]*(```|~~~)/gm) || []).length;
-  if (fencesBefore % 2 === 1) return false;
+  // installer's (R5 H1). Fences are tracked CommonMark-style (R6): a fence
+  // closes only on the same character with at least the opening length, so
+  // `~~~` inside a backtick fence, or ``` inside a ```` fence, stays literal.
+  if (insideFence(content.slice(0, start))) return false;
   const body = content.slice(start + LEGACY_COPILOT_START.length, end).replace(/\r\n/g, '\n');
   return body.startsWith('\n## Engineering Skills Bundle\n')
     && /\n## Keeping Skills Current\n[\s\S]*\.audit-loop\/bootstrap\.mjs/.test(body);
@@ -116,7 +133,9 @@ export function planLegacyCopilotBlockRetirement(content) {
     if (content.slice(0, keepTo).endsWith(eol + eol)) { keepTo -= eol.length; break; }
   }
   const remaining = content.slice(0, keepTo) + content.slice(cut);
-  if (remaining.trim() === '') return { action: 'delete-file' };
+  // Delete only when NOTHING of the consumer's remains; whitespace they wrote
+  // outside the managed span is still theirs (R6 M1).
+  if (remaining === '') return { action: 'delete-file' };
   return { action: 'remove-block', content: remaining };
 }
 

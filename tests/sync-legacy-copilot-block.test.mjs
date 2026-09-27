@@ -219,3 +219,23 @@ describe('R5 — a fenced example of the real block is the consumer\'s', () => {
     assert.equal(planLegacyCopilotBlockRetirement(doc).action, 'remove-block');
   });
 });
+
+describe('R6 — CommonMark fence tracking and exact-empty deletion', () => {
+  it('~~~ inside a backtick fence does not close it: the block stays an example', () => {
+    const doc = '```md\n~~~\n' + BLOCK + '\n```\n';
+    assert.equal(planLegacyCopilotBlockRetirement(doc).action, 'malformed');
+  });
+  it('``` inside a ```` fence does not close it: the block stays an example', () => {
+    const doc = '````md\n```\n' + BLOCK + '\n````\n';
+    assert.equal(planLegacyCopilotBlockRetirement(doc).action, 'malformed');
+  });
+  it('control: a block after a properly closed ```` fence is removed', () => {
+    const doc = '````md\n```\nx\n````\n\n' + BLOCK + '\n';
+    assert.equal(planLegacyCopilotBlockRetirement(doc).action, 'remove-block');
+  });
+  it('consumer whitespace outside the span keeps the file (no delete)', () => {
+    const plan = planLegacyCopilotBlockRetirement('  \n\n' + BLOCK + '\n');
+    assert.equal(plan.action, 'remove-block');
+    assert.equal(plan.content, '  \n');
+  });
+});
