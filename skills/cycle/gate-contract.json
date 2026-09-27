@@ -251,6 +251,42 @@
     {
       "line": "| `/cycle plan <plan-file>` | **SKIP_PLAN** — plan exists; skip Step 1 only. Audit it (Step 2), then the Step 3 implementation gate (pause, or implement under `--autonomous`), audit code, ship |",
       "reason": "Mode description, not an enforcement claim: \"implementation gate\" names the Step 3 human-pause checkpoint that SKIP_PLAN reaches, whose own contract is the existing implementation-gate entry. The line routes between modes; it enforces nothing itself."
+    },
+    {
+      "line": "**`/audit-plan` is never skipped by inference.** Only the explicit `code` or",
+      "reason": "Part of the audit-plan-skip-requires-explicit-mode gate (document-only: only an explicit code/remediate keyword skips /audit-plan); its stated wraps across lines."
+    },
+    {
+      "line": "already implemented, so only it bypasses the gate (straight to Step 4 audit).",
+      "reason": "Mode-routing description of the existing Step 3 implementation gate, not a new enforcement claim."
+    },
+    {
+      "line": "implemented, so it meets this gate exactly like FULL. `REMEDIATE` never reaches",
+      "reason": "Mode-routing description of the existing Step 3 implementation gate, not a new enforcement claim."
+    },
+    {
+      "line": "this step; its own remediation gate is Step R.",
+      "reason": "Mode-routing description of the existing Step 3 implementation gate, not a new enforcement claim."
+    },
+    {
+      "line": "via `scripts/cycle-cluster-scope.mjs`, which exits non-zero on any edit outside",
+      "reason": "Part of the remediate-focused-audit-scope gate (scripts/cycle-cluster-scope.mjs exits non-zero on an out-of-set edit); that gate's stated wraps across lines, which line-level coverage cannot match."
+    },
+    {
+      "line": "that set. Never a whole-dirty-tree diff. **Caps unchanged**: 6 audit rounds,",
+      "reason": "Part of the remediate-focused-audit-scope gate (scripts/cycle-cluster-scope.mjs exits non-zero on an out-of-set edit); that gate's stated wraps across lines, which line-level coverage cannot match."
+    },
+    {
+      "line": "then Step 7's blocked `/ship` handoff — never autonomous.",
+      "reason": "Restates the existing Step 7 never-autonomous /ship handoff contract, already dispositioned for FULL/AUTO modes."
+    },
+    {
+      "line": "**Never skip `/audit-plan`** unless explicitly in SKIP_TO_CODE or REMEDIATE mode. SKIP_PLAN skips `/plan`, not `/audit-plan`. Never infer \"already accepted\" — there is no mechanical record of which plan content was approved (Step 0).",
+      "reason": "Part of the audit-plan-skip-requires-explicit-mode gate (document-only: only an explicit code/remediate keyword skips /audit-plan); its stated wraps across lines."
+    },
+    {
+      "line": "**Never skip `/audit-code`** unless explicitly in SKIP_TO_SHIP mode (not currently exposed; reserved). REMEDIATE focuses it; it never skips it.",
+      "reason": "Part of the audit-plan-skip-requires-explicit-mode gate (document-only: only an explicit code/remediate keyword skips /audit-plan); its stated wraps across lines."
     }
   ]
 }
