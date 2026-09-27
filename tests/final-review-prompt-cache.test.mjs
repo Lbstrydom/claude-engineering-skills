@@ -143,6 +143,53 @@ describe('anthropic transport — cache usage is carried, not dropped', () => {
     assert.equal(r.usage.cache_creation_input_tokens, 0);
     assert.equal(r.usage.input_tokens, 400);
   });
+
+  test('the STREAM reader takes cumulative input and the search count from message_delta', async () => {
+    // Anthropic's documented web-search stream (streaming docs, read
+    // 2026-09-26): message_start carries the prompt alone, and the final
+    // message_delta carries the whole turn, search results included.
+    const client = { messages: { create: async () => (async function* () {
+      yield { type: 'message_start', message: { usage: {
+        input_tokens: 2679, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 3,
+      } } };
+      yield { type: 'content_block_delta', delta: { type: 'text_delta', text: '{}' } };
+      yield { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: {
+        input_tokens: 10682, cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
+        output_tokens: 510, server_tool_use: { web_search_requests: 1 },
+      } };
+    })() } };
+    const r = await streamAnthropicMessage(client, {});
+    assert.equal(r.usage.input_tokens, 10682, 'message_start alone would report 2,679');
+    assert.equal(r.usage.output_tokens, 510);
+    assert.deepEqual(r.usage.server_tool_use, { web_search_requests: 1 });
+  });
+
+  test('an output-only message_delta keeps the message_start input count', async () => {
+    const client = { messages: { create: async () => (async function* () {
+      yield { type: 'message_start', message: { usage: { input_tokens: 400, cache_read_input_tokens: 80_870 } } };
+      yield { type: 'message_delta', usage: { output_tokens: 4200 }, delta: { stop_reason: 'end_turn' } };
+    })() } };
+    const r = await streamAnthropicMessage(client, {});
+    assert.equal(r.usage.input_tokens, 400);
+    assert.equal(r.usage.cache_read_input_tokens, 80_870);
+    assert.equal(r.usage.server_tool_use, undefined);
+  });
+});
+
+describe('anthropic transport — a refusal is a failed review, not an empty one', () => {
+  test('stop_reason refusal with no text throws instead of yielding "{}"', async () => {
+    const client = { messages: { create: async () => ({ content: [], usage: { input_tokens: 235, output_tokens: 900 }, stop_reason: 'refusal' }) } };
+    await assert.rejects(
+      () => callReviewer(client, { ...BASE, userPrompt: 'short' }),
+      /stop_reason: refusal/,
+    );
+  });
+
+  test('an ordinary empty answer still falls back to "{}" (unchanged)', async () => {
+    const client = { messages: { create: async () => ({ content: [], usage: { input_tokens: 5, output_tokens: 1 }, stop_reason: 'end_turn' }) } };
+    const { result } = await callReviewer(client, { ...BASE, userPrompt: 'short' });
+    assert.equal(typeof result, 'object', 'an empty end_turn answer still parses as the "{}" fallback');
+  });
 });
 
 describe('costFromUsage — a cache hit is cheap, not free', () => {

@@ -180,6 +180,24 @@ describe('normaliseCliOutput', () => {
       /failed to parse claude -p JSON output/,
     );
   });
+  it('carries the cache counts, where claude -p puts most of its prompt', () => {
+    const stdout = JSON.stringify({
+      result: 'r',
+      usage: { input_tokens: 12, output_tokens: 40, cache_creation_input_tokens: 3_000, cache_read_input_tokens: 45_000 },
+    });
+    const out = normaliseCliOutput(stdout, 'm');
+    assert.equal(out.usage.cache_creation_input_tokens, 3_000);
+    assert.equal(out.usage.cache_read_input_tokens, 45_000);
+    assert.equal(out.usage.input_tokens, 12);
+  });
+  it('reads stop_reason from the result message, so a refusal is visible', () => {
+    const out = normaliseCliOutput(JSON.stringify({ result: '', stop_reason: 'refusal' }), 'm');
+    assert.equal(out.stop_reason, 'refusal');
+  });
+  it('falls back to end_turn when the CLI reports stop_reason null', () => {
+    const out = normaliseCliOutput(JSON.stringify({ result: 'x', stop_reason: null }), 'm');
+    assert.equal(out.stop_reason, 'end_turn');
+  });
   it('uses CLI-reported model when requestedModel is undefined', () => {
     const stdout = JSON.stringify({ result: '', model: 'm-from-cli' });
     const out = normaliseCliOutput(stdout, undefined);
