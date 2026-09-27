@@ -1,6 +1,11 @@
 # Project Status Log
 
 ### Consumer Verification (previous ship)
+- **Commit**: abea5dac24d5a2dc8edbb9e5523bb05e5b69e99b on `main` (PR #118, squash-merged; the runs-findings.mjs write-boundary-hardening 5-round audit + Gemini gate, merged over a real conflict with concurrently-merged PR #117 which touched the same `projectRemediationState` function -- resolved by hand, verified with 648 tests green both before and after the merge)
+- **Retrieval**: BLOCKED -- the main checkout (`C:\GIT\claude-engineering-skills`) has a pre-existing uncommitted change to `package-lock.json` (24 deletions, not from this session) that conflicts with the incoming merge, so `git pull --ff-only origin main` refused (correctly, per AGENTS.md's scope-discipline rule -- not mine to stash/discard). Could not update the main checkout to pull the merged skill-sync source, so `sync-isolation-verify.mjs` could not be run against a current consumer bundle.
+- **Result**: unverified -- blocked on the main checkout's own pre-existing dirty `package-lock.json`, not on anything this PR changed. Re-run `sync-isolation-verify.mjs` in wine-cellar-app's MAIN checkout once that file is resolved and the main checkout is pulled to `abea5dac` or later. (Still blocked as of 2026-09-27 — same file, same block, main checkout now also 2 commits further behind at `96944c66`.)
+
+### Consumer Verification (previous ship)
 - **Commit**: 09b729d1e7c277e733b0dd4b0bf91854c69e93e0 on `main` (PR #109 merge commit; ship commit 6f853140, range `ba004598..6f853140`; branch `claude/test-skills-claude-code-4at63h`, deleted)
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: the four new `description` clauses are present in wine's synced `.claude/skills/{explain,plan,persona-test,audit-code}/SKILL.md` (grepped each clause verbatim after CRLF/indent normalisation — 4/4 found). The push's own sync summary confirmed 3/3 consumers updated (15 files).
 - **Result**: verified — the SKILL.md trigger-reliability fix (explain/plan/persona-test/audit-code descriptions) reached the consumer bundle intact.
@@ -58,6 +63,44 @@
 - **Commit**: c21ae557f02c03087f763bc2896a18ccb266d51d on `main` (pushed 2026-09-19, range `5c430d5c..c21ae557`; storyline upstream-report fixes 3e93533e/aa6469b3)
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `.claude/skills/audit-plan/references/gemini-gate.md` and `.claude/skills/cycle/SKILL.md` both carry the new prose (grep confirmed). storyline itself REFUSED this sync (27 files diverged, pre-existing committed customizations unrelated to this change) — not verified there; ai-organiser and wine-cellar-app both reached cleanly.
 - **Result**: verified — the /cycle Step 7 blocked-handoff prose and the gemini-gate.md calibration note reached the consumer bundle intact (wine-cellar-app, ai-organiser). storyline unverified — sync REFUSED on pre-existing divergence, not this change's fault.
+
+## 2026-09-27 — Opus 5.5 forced tool_choice fixed on 3 paths; retry usage summing; cli self-reported cost wired; solo-control unmeasured-stage fix; model-eval pinned to sdk; wine-cellar-app sync-override
+
+### Changes
+- **PR #121** (merged, squash `acfbf7c8`): `claude-opus-5-5` (what `latest-opus` resolves to) 400s on forced `tool_choice`. New `scripts/lib/anthropic-tool-choice.mjs` — `buildToolUseRequest(model, tool)` forces only on an allowlist of generations known to accept it (4.x, 5.0); everything else gets `auto` + `strict: true` (strict-unsupported schema keywords stripped) + a system-prompt instruction. Wired into `remediation-verification.mjs` `callVerifier`, the solo-control Claude gate, and the tiered Sonnet discovery generator. The solo-control gate's provider error / refusal / missing-tool-call now records `provider-error` (commit reads partial) instead of `{findings: []}` recorded `ok`.
+  - Retries lose billed usage: new `sumUsage` (`model-pricing.mjs`). `campaign.mjs` `callAdjudicator` sums across attempts; the final-review transport attaches `usage` to errors thrown after a billed-but-unusable response, and `runReviewWithRetry` sums it into the return or the thrown error; `shadowErrorBlock` records it as `billedUsage` (a floor).
+  - cli backend self-reported cost: `normaliseCliOutput` carries `total_cost_usd` as `usage.provider_cost_usd`; `buildUsageEvent` defaults `selfReportedCostUsd` to it. `anthropic-client.mjs` shrank 14 lines (merged docblock); ratchet baseline lowered for that file only.
+  - Merged a concurrent PR #120 (cumulative stream usage, refusal-fails-the-review, cli cache counts) into the same branch; kept both sets of changes (cli usage now carries #120's cache counts + this PR's cost field; #120's new refusal throw also carries billed usage).
+- **PR #123** (merged, squash `dd93d775`; reopened against `main` after GitHub auto-closed the original #122 when #121's branch was deleted on merge — same content plus one merge-conflict fix, a duplicate `gateCellState` the 3-way merge reintroduced): `apparatus-bc`, `sonnet-gemini-retro`, `solo-pass-retro` swallowed a thrown/skipped/unparseable review or generation-pass reply into an empty finding list and recorded the commit `ran`. New `scripts/lib/solo-control/completion.mjs` helpers (`runMeasuredReview`, `reviewCommitState`, `unmeasuredCommits`, `coveredCommits`, `resumeArmFile`, `UNMEASURED_REVIEW_STATE`; `gateCellState` moved here) record `review-unmeasured` instead. `merge` refuses a sheet with unmeasured (arm, commit)s (new `--allow-unmeasured` to drop them). Resume fix: a commit is covered only when EVERY arm file's latest entry is `ran` (`apparatus-bc` read arm B's file alone, so an unmeasured C review was never retried).
+  - `model-eval`'s native-Anthropic route (`provider-adapter.mjs`) built its client on the ambient backend; this machine's `CLAUDE_BACKEND=cli` meant an eval call went through `claude -p`, dropping `temperature` while `honoredDials.temperature` still reported it applied. Both public and Azure routes now pin `backend: 'sdk'`. Checked the one recorded verdict (experiment-3, GLM vs GPT): its judge was Gemini, never on this route.
+- **wine-cellar-app PR #681** (auto-merge enabled, pending CI): `.claude/settings.json` carries a consumer-only `SessionStart` auto-sync hook (added #659) upstream can't have; every sync since #659 refused to overwrite it and errored. Declared in wine's `.sync-overrides.json` per the sync's own contract. Root-caused after force-pushing a stale reused branch name (`chore/sync-cloud-session-hook`, its own PR #659 already merged) forward onto current `main`, then a genuine, confirmed-flaky pre-push test run (5 failed → re-run 0 failed, identical commit) before landing.
+
+### Files Affected
+- `scripts/lib/anthropic-tool-choice.mjs` (new), `scripts/lib/remediation-verification.mjs`, `scripts/solo-control-audit.mjs`, `scripts/lib/audit/tiered-provider-calls.mjs`, `scripts/lib/model-pricing.mjs`, `scripts/campaign.mjs`, `scripts/lib/final-review/transport.mjs`, `scripts/lib/final-review/shadow.mjs`, `scripts/lib/anthropic-client.mjs`, `scripts/lib/audit/usage-event.mjs` — PR #121.
+- `scripts/lib/solo-control/completion.mjs`, `scripts/solo-control-audit.mjs`, `scripts/lib/model-eval/provider-adapter.mjs` — PR #123.
+- `tests/forced-tool-choice.test.mjs`, `tests/retry-usage-summed.test.mjs`, `tests/cli-self-reported-cost.test.mjs`, `tests/solo-control-unmeasured-review.test.mjs`, `tests/model-eval-anthropic-sdk-pin.test.mjs` (all new) + `tests/solo-control-dispatch.test.mjs`, `tests/gemini-review-shadow.test.mjs` (edited) — every behavioural case run red before its fix.
+- `wine-cellar-app`: `.sync-overrides.json`, `.sync-receipt.json`.
+
+### Decisions Made
+- The forced-`tool_choice` predicate is an ALLOWLIST (generations known to accept forcing), not a denylist of rejecting ones — `auto` is accepted everywhere, so an unplaceable model id takes the side that cannot 400.
+- Solo-control's unmeasured-stage fix generalises #121's own gate fix to every review/generation call in the exp-5 retro paths — same failure shape, same remedy (`gateCellState`/`runMeasuredReview`), one shared oracle.
+- Auto-merge enabled on wine-cellar-app#681 per explicit user request (`set_auto_merge`), rather than polling CI.
+
+### Backlog
+Backlog 2026-09-27T13:13Z: Q1 82c/31p (+307 aged) · Q2 81c/42p (54 perm) · Q3 35 · debt 302 cloud/11 local (0 spilled) · upstream 1
+
+All pre-existing, none touching this session's files (dated 2026-09-02 through 2026-09-25): 82 unlocked HIGH code fixes (3 dangling regression-lock specs), 81 unremediated-acceptance HIGH code findings, 1 open upstream report (wine-cellar-app, `ux-lock-run.mjs verify` run_id uuid/text mismatch, MEDIUM, untouched this session).
+
+### Consumer Verification (this ship)
+- **Commit**: `acfbf7c8` (#121) and `dd93d775` (#123) on `main`.
+- **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green. Gate 2B correctly shows 2 held divergences: `docs/reference/consistency-contract.md` (pre-existing, unrelated) and the new `.claude/settings.json` override from this session's wine-cellar-app fix. `sync-to-repos.mjs` runs against wine-cellar-app for both the #121/#123 tooling and the settings.json override each confirmed 0 errors on disk (`git status --short` showed only the intended files).
+- **Result**: verified — this session's upstream changes and the wine-cellar-app override reached the consumer bundle intact.
+
+### Next Steps
+- Merge wine-cellar-app#681 once CI passes (auto-merge is on).
+- The B/C-retro Gemini no-key/error case is now `review-unmeasured` in `apparatus-bc`/`sonnet-gemini-retro`/`solo-pass-retro`; a future retro run against real commits will exercise the new refusal path for real (today's tests are unit-level).
+
+---
 
 ## 2026-09-25 — runs-findings.mjs write-boundary hardening: 5-round GPT audit + Gemini final gate
 
