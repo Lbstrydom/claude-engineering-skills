@@ -31,7 +31,8 @@ import { derivePairOverlapRate } from '../scripts/lib/persona-test/pair-overlap.
 const SKILL = fs.readFileSync('skills/persona-test/SKILL.md', 'utf8');
 
 const verified = { status: 'verified', unchecked: [] };
-const clean = { verdict: 'Ready for users', p0Count: 0, p1Count: 0, lifecycle: verified, terminalReason: 'goal-reached' };
+const WORK_RECORD = { terminalReason: 'goal-reached', authState: 'n/a-no-auth-encountered', originPolicyResult: 'same-origin-only' };
+const clean = { verdict: 'Ready for users', p0Count: 0, p1Count: 0, lifecycle: verified, ...WORK_RECORD };
 
 describe('capPersonaVerdict — the Ready-for-users predicate in code', () => {
   it('a verified lifecycle with no blockers keeps Ready for users', () => {
@@ -138,7 +139,7 @@ function stubDeps(overrides = {}) {
 }
 
 describe('record-persona-session — the stored verdict is the capped one', () => {
-  const base = { persona: 'p', url: 'https://x.test', browserTool: 'playwright (ok)', verdict: 'Ready for users', findings: [], p0Count: 0, p1Count: 0 };
+  const base = { persona: 'p', url: 'https://x.test', browserTool: 'playwright (ok)', verdict: 'Ready for users', findings: [], p0Count: 0, p1Count: 0, ...WORK_RECORD };
 
   it('a partial lifecycle reaches the store as Needs work and the envelope says so', async () => {
     let stored = null;
@@ -288,5 +289,21 @@ describe('prose↔code: the SKILL.md payloads match the schemas that parse them'
     assert.equal(RecordPersonaSessionRequestSchema.safeParse({
       persona: 'p', url: 'https://x.test', browserDriver: 'playwright', browserStatus: 'ok', verdict: 'Needs work',
     }).success, false);
+  });
+});
+
+// R2 M7: the three work-record conjuncts are required for Ready for users.
+describe('work-record fields are required, not optional-and-passing', () => {
+  for (const k of ['terminalReason', 'authState', 'originPolicyResult']) {
+    it(`an omitted ${k} caps Ready for users`, () => {
+      const s = { ...clean };
+      delete s[k];
+      const r = capPersonaVerdict(s);
+      assert.equal(r.capped, true);
+      assert.ok(readyForUsersBlockers(s).includes(`${k}=unreported`));
+    });
+  }
+  it('control: all three present and passing keeps Ready for users', () => {
+    assert.equal(capPersonaVerdict(clean).capped, false);
   });
 });

@@ -141,3 +141,49 @@ describe('the dead template is gone and nothing reads it', () => {
     assert.doesNotMatch(src, /artifactParts\.push\(`bootstrap:/);
   });
 });
+
+describe('R2 hardening — ambiguity, symlinks, non-UTF-8 bytes', () => {
+  it('two marker pairs are ambiguous → malformed, untouched (R2 H6)', () => {
+    const plan = planLegacyCopilotBlockRetirement(`# A\n\n${BLOCK}\n\n# B\n\n${BLOCK}\n`);
+    assert.equal(plan.action, 'malformed');
+  });
+
+  it('bytes outside the block survive even when not valid UTF-8 (R2 H4)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-copilot-bytes-'));
+    try {
+      const dir = path.join(root, '.github');
+      fs.mkdirSync(dir, { recursive: true });
+      // "# " + invalid UTF-8 (ff fe 80) + "\n\n" (the installer's separator)
+      const prefix = Buffer.from([0x23, 0x20, 0xff, 0xfe, 0x80, 0x0a, 0x0a]);
+      fs.writeFileSync(path.join(dir, 'copilot-instructions.md'), Buffer.concat([prefix, Buffer.from(`${BLOCK}\n`)]));
+      retireLegacyCopilotBlock(root);
+      const out = fs.readFileSync(path.join(dir, 'copilot-instructions.md'));
+      assert.deepEqual([...out], [0x23, 0x20, 0xff, 0xfe, 0x80, 0x0a]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('a symlinked copilot-instructions.md is refused, target untouched (R2 H3/M6)', (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-copilot-link-'));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-copilot-outside-'));
+    try {
+      const target = path.join(outside, 'victim.md');
+      fs.writeFileSync(target, `${BLOCK}\n`);
+      fs.mkdirSync(path.join(root, '.github'), { recursive: true });
+      try {
+        fs.symlinkSync(target, path.join(root, '.github', 'copilot-instructions.md'), 'file');
+      } catch (err) {
+        t.skip(`symlink creation unavailable here (${err.code})`);
+        return;
+      }
+      const lines = retireLegacyCopilotBlock(root);
+      assert.match(lines.join('\n'), /left untouched/);
+      assert.equal(fs.readFileSync(target, 'utf8'), `${BLOCK}\n`, 'the outside file must not be modified');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(outside, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});
+

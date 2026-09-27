@@ -92,9 +92,10 @@ function reportedCount(v) {
  *    unknown step id) ⇒ `lifecycle=invalid`. An unasked or unreadable question
  *    must never render as a clean answer.
  *
- * The three work-record conjuncts are checked only when the caller supplied
- * them — they are optional on the wire for callers predating this module, and
- * a missing one is not evidence either way.
+ * The three work-record conjuncts are REQUIRED for `Ready for users`: an
+ * omitted one is unreported, not passing (audit R2 M7) — the same fail-closed
+ * rule as omitted severity counts and an omitted lifecycle. A session missing
+ * them is still written; only its verdict is capped.
  *
  * @param {{p0Count?: number, p1Count?: number, lifecycle?: {status: string, unchecked?: string[]},
  *   terminalReason?: string, authState?: string, originPolicyResult?: string}} s
@@ -113,9 +114,12 @@ export function readyForUsersBlockers(s) {
     if (!lc.success) blockers.push('lifecycle=invalid');
     else if (lc.data.status === 'partial') blockers.push(`lifecycle=partial (unchecked: ${lc.data.unchecked.join(', ')})`);
   }
-  if (s?.terminalReason != null && s.terminalReason !== 'goal-reached') blockers.push(`terminalReason=${s.terminalReason}`);
-  if (s?.authState === 'auth-wall-untested') blockers.push('authState=auth-wall-untested');
-  if (s?.originPolicyResult === 'cross-origin-attempted-and-blocked') blockers.push('originPolicyResult=cross-origin-attempted-and-blocked');
+  if (s?.terminalReason == null) blockers.push('terminalReason=unreported');
+  else if (s.terminalReason !== 'goal-reached') blockers.push(`terminalReason=${s.terminalReason}`);
+  if (s?.authState == null) blockers.push('authState=unreported');
+  else if (s.authState === 'auth-wall-untested') blockers.push('authState=auth-wall-untested');
+  if (s?.originPolicyResult == null) blockers.push('originPolicyResult=unreported');
+  else if (s.originPolicyResult === 'cross-origin-attempted-and-blocked') blockers.push('originPolicyResult=cross-origin-attempted-and-blocked');
   return blockers;
 }
 

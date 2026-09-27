@@ -99,7 +99,10 @@ export function computeGateDisposition(result) {
     .map(({ id, reason }) => ({ id, reason }));
   const blockingIds = live.filter(isReleaseBlocking).map((f) => f.id ?? '?');
   const debtIds = live.filter((f) => !isReleaseBlocking(f)).map((f) => f.id ?? '?');
-  const highDismissed = dismissed.filter((d) => !isRefuted(d) && d.recommended_severity === 'HIGH');
+  // An entry whose recommended_severity is not one of the three (e.g. `{}`) is
+  // treated as HIGH: a malformed escalation must not read as a clean one (R2 H7).
+  const highDismissed = dismissed.filter((d) => !isRefuted(d)
+    && !(d?.recommended_severity === 'MEDIUM' || d?.recommended_severity === 'LOW'));
 
   const reasons = [];
   // FAIL CLOSED on a malformed result (audit H7): a missing or non-array

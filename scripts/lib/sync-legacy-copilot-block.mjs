@@ -68,6 +68,11 @@ export function planLegacyCopilotBlockRetirement(content) {
   if (start === -1 || endSearch === -1) {
     return { action: 'malformed', reason: 'only one audit-loop-bundle marker (or markers out of order) — not provably ours; left untouched' };
   }
+  // Exactly one well-ordered block, or nothing is provably ours (R2 H6).
+  const count = (m) => content.split(m).length - 1;
+  if (count(LEGACY_COPILOT_START) !== 1 || count(LEGACY_COPILOT_END) !== 1) {
+    return { action: 'malformed', reason: 'more than one audit-loop-bundle marker pair — ambiguous, not provably ours; left untouched' };
+  }
   // Exact inverse of the retired installer's append (`trimmed + '\n\n' + block
   // + '\n'`, git show b7efb9e6^:scripts/lib/install/merge.mjs): remove the
   // managed span, the one line ending closing the end-marker line, and the one
@@ -118,10 +123,19 @@ export function describeLegacyCopilotBlockRetirement(plan, { dryRun = false } = 
 export function retireLegacyCopilotBlock(repoRoot, { dryRun = false } = {}) {
   const abs = path.join(repoRoot, COPILOT_INSTRUCTIONS_PATH);
   try {
-    const content = fs.existsSync(abs) ? fs.readFileSync(abs, 'utf-8') : null;
+    // Only a regular file inside the consumer tree is ours to edit: refuse a
+    // symlinked .github/ or target, which could point outside the repo (R2 H3/M6).
+    const st = fs.existsSync(abs) ? fs.lstatSync(abs) : null;
+    if (st && !st.isFile()) return [`${COPILOT_INSTRUCTIONS_PATH}: not a regular file (symlink or other) — left untouched`];
+    if (st && fs.realpathSync(abs) !== path.join(fs.realpathSync(repoRoot), COPILOT_INSTRUCTIONS_PATH)) {
+      return [`${COPILOT_INSTRUCTIONS_PATH}: resolves outside the consumer repo (symlinked directory) — left untouched`];
+    }
+    // latin1 maps every byte to one code unit and back, so bytes outside the
+    // (ASCII) markers survive unchanged even when not valid UTF-8 (R2 H4).
+    const content = st ? fs.readFileSync(abs, 'latin1') : null;
     const plan = planLegacyCopilotBlockRetirement(content);
     const line = describeLegacyCopilotBlockRetirement(plan, { dryRun });
-    if (!dryRun && plan.action === 'remove-block') atomicWriteFileSync(abs, plan.content);
+    if (!dryRun && plan.action === 'remove-block') atomicWriteFileSync(abs, Buffer.from(plan.content, 'latin1'));
     if (!dryRun && plan.action === 'delete-file') fs.unlinkSync(abs);
     return line ? [line] : [];
   } catch (err) {

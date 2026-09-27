@@ -82,6 +82,10 @@ describe('computeGateDisposition — truth table', () => {
     ['REJECT, non-blocking only', result('REJECT', [finding()]), 'blocked'],
     ['coverage-gated (reviewer saw none of the diff)', result('CONCERNS', [], [], { _coverageGate: { downgraded: true } }), 'blocked'],
     ['unrecognised verdict', result('MAYBE'), 'blocked'],
+    // R2 H7: a malformed escalation entry must not read as a clean one.
+    ['APPROVE + wrongly_dismissed entry {} (no severity)', result('APPROVE', [], [{}]), 'blocked'],
+    ['CONCERNS + wrongly_dismissed with unknown severity', result('CONCERNS', [], [{ original_finding_id: 'X', recommended_severity: 'CRITICAL' }]), 'blocked'],
+    ['APPROVE + LOW wrongly_dismissed (control)', result('APPROVE', [], [{ original_finding_id: 'L1', recommended_severity: 'LOW' }]), 'approve'],
   ];
   for (const [name, r, expected] of cases) {
     it(`${name} → ${expected}`, () => {

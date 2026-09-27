@@ -40,12 +40,13 @@ export const LIVE_CONSTRAINT_CATEGORIES = Object.freeze(['constraints', 'indexes
 /** Constraint types an ON CONFLICT target can resolve against. */
 const KEY_CONSTRAINT_TYPES = new Set(['PRIMARY KEY', 'UNIQUE']);
 
-const IDENT_SAFE = /^[a-z_][a-z0-9_$]*$/;
 
 /** Quote a Postgres identifier only when it needs it. */
 export function quoteIdent(name) {
   const s = String(name);
-  return IDENT_SAFE.test(s) ? s : `"${s.replace(/"/g, '""')}"`;
+  // Always quoted: a lowercase reserved word (e.g. `user`, `order`) matches a
+  // safe-looking character class yet is invalid unquoted (R2 M3).
+  return `"${s.replace(/"/g, '""')}"`;
 }
 
 function project(catalog) {

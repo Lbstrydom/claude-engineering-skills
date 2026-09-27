@@ -63,7 +63,7 @@ describe('assessConstraintDrift — classification', () => {
     assert.equal(c.name, 'bandit_arms_unique');
     assert.equal(c.table, 'bandit_arms');
     assert.equal(c.repair,
-      'ALTER TABLE public.bandit_arms ADD CONSTRAINT bandit_arms_unique UNIQUE (pass_name, variant_id, context_bucket);');
+      'ALTER TABLE public."bandit_arms" ADD CONSTRAINT "bandit_arms_unique" UNIQUE (pass_name, variant_id, context_bucket);');
     // The backing index is reported but NOT given its own repair: restoring the
     // constraint recreates it, and a second CREATE INDEX would fail.
     const i = r.missing.find((f) => f.category === 'indexes');
@@ -94,8 +94,8 @@ describe('assessConstraintDrift — classification', () => {
     // Wrapped: a recreate that fails (e.g. duplicate rows under the UNIQUE)
     // must roll the DROP back, never leave the original constraint gone.
     assert.equal(r.altered[0].repair,
-      'BEGIN; ALTER TABLE public.bandit_arms DROP CONSTRAINT bandit_arms_unique; '
-      + 'ALTER TABLE public.bandit_arms ADD CONSTRAINT bandit_arms_unique UNIQUE (pass_name, variant_id, context_bucket); COMMIT;');
+      'BEGIN; ALTER TABLE public."bandit_arms" DROP CONSTRAINT "bandit_arms_unique"; '
+      + 'ALTER TABLE public."bandit_arms" ADD CONSTRAINT "bandit_arms_unique" UNIQUE (pass_name, variant_id, context_bucket); COMMIT;');
     assert.match(r.altered[0].live, /user_id/);
   });
 
@@ -104,7 +104,7 @@ describe('assessConstraintDrift — classification', () => {
     const row = live.indexes.find((i) => i.indexname === 'idx_bandit_arms_pass');
     row.indexdef = 'CREATE INDEX idx_bandit_arms_pass ON public.bandit_arms USING btree (pass_name)';
     const r = assessConstraintDrift(EXPECTED, live);
-    assert.deepEqual(r.repairs, ['BEGIN; DROP INDEX public.idx_bandit_arms_pass; '
+    assert.deepEqual(r.repairs, ['BEGIN; DROP INDEX public."idx_bandit_arms_pass"; '
       + 'CREATE INDEX idx_bandit_arms_pass ON public.bandit_arms USING btree (pass_name, user_id); COMMIT;']);
   });
 
@@ -139,8 +139,10 @@ describe('assessConstraintDrift — classification', () => {
     assert.equal(r.missing.filter((f) => f.category === 'indexes').length, EXPECTED.indexes.length);
   });
 
-  it('quoteIdent quotes only names that need it', () => {
-    assert.equal(quoteIdent('bandit_arms'), 'bandit_arms');
+  it('quoteIdent always quotes — a lowercase reserved word is not a safe bare identifier (R2 M3)', () => {
+    assert.equal(quoteIdent('bandit_arms'), '"bandit_arms"');
+    assert.equal(quoteIdent('user'), '"user"');
+    assert.equal(quoteIdent('order'), '"order"');
     assert.equal(quoteIdent('Weird"Name'), '"Weird""Name"');
   });
 });
