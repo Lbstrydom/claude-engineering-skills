@@ -243,6 +243,14 @@
     {
       "line": "typed `/ship docs/plans/<name>.md` and it completed. Never print a commit sha",
       "reason": "Agent-flow instruction for composing the Step 8 summary card (don't fabricate a shipped-commit line before /ship has actually run) — guidance for the model authoring the summary, not a mechanical check /cycle's own CLI performs. Same disposition class as the other Step 7/8 entries added for upstream report 3e93533e (2026-09-19)."
+    },
+    {
+      "line": "Usage: /cycle plan <plan-file>            — Skip /plan only; still audits the plan, then the implementation gate",
+      "reason": "Mode description, not an enforcement claim: \"implementation gate\" names the Step 3 human-pause checkpoint that SKIP_PLAN reaches, whose own contract is the existing implementation-gate entry. The line routes between modes; it enforces nothing itself."
+    },
+    {
+      "line": "| `/cycle plan <plan-file>` | **SKIP_PLAN** — plan exists; skip Step 1 only. Audit it (Step 2), then the Step 3 implementation gate (pause, or implement under `--autonomous`), audit code, ship |",
+      "reason": "Mode description, not an enforcement claim: \"implementation gate\" names the Step 3 human-pause checkpoint that SKIP_PLAN reaches, whose own contract is the existing implementation-gate entry. The line routes between modes; it enforces nothing itself."
     }
   ]
 }

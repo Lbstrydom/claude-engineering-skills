@@ -7,10 +7,12 @@ description: |
   fixes shipped) → /ship. Use when starting a new feature or non-trivial
   fix and you want the whole workflow on autopilot. Supports resuming from
   an existing plan or straight to code-audit, per-step skips, max-round
-  pass-through, and an opt-in autonomous mode that implements + audits each
-  plan cluster (the default still pauses for the human).
+  pass-through, an opt-in autonomous mode that implements + audits each
+  plan cluster (the default still pauses for the human), and a remediate
+  mode that fixes triaged persona-test/audit findings against an accepted
+  plan with a focused audit and a rerun of only the affected journeys.
   Triggers on: "run the full cycle", "do the whole flow", "plan + audit
-  + ship", "feature cycle", "/cycle".
+  + ship", "feature cycle", "remediate the persona findings", "/cycle".
   Full command syntax: see the Usage section in this skill.
 ---
 
@@ -32,8 +34,10 @@ description: |
 
 ```
 Usage: /cycle <task-description>          — Full chain from scratch
-Usage: /cycle plan <plan-file>            — Skip planning; use existing plan
-Usage: /cycle code <plan-file>            — Skip to code-audit-then-ship
+Usage: /cycle plan <plan-file>            — Skip /plan only; still audits the plan, then the implementation gate
+Usage: /cycle code <plan-file>            — Skip to code-audit-then-ship (plan accepted, code written)
+Usage: /cycle remediate <plan-file> --from persona-test <report.md> [--persona-url <url>]  — Fix triaged P0/P1s against an accepted plan; focused audit; rerun affected journeys only
+Usage: /cycle remediate <plan-file> --from audit <result.json>   — Same, sourcing HIGH findings from an audit result
 Usage: /cycle <plan-file> --no-persona    — Skip persona-test step
 Usage: /cycle <plan-file> --persona-url <url> — Explicit persona-test target (local dev server, no PERSONA_TEST_APP_URL needed)
 Usage: /cycle <plan-file> --no-uxlock     — Skip ux-lock step (no UI changes)
@@ -108,9 +112,18 @@ golden-path workflow without thinking about it.
 | Input shape | Mode |
 |---|---|
 | `/cycle <task description>` (no file path) | **FULL** — generate plan, audit it, wait for impl, audit code, ship |
-| `/cycle plan <plan-file>` | **SKIP_PLAN** — plan exists; audit it, wait for impl, audit code, ship |
-| `/cycle code <plan-file>` | **SKIP_TO_CODE** — plan + impl exist; audit code, validate UX, ship |
+| `/cycle plan <plan-file>` | **SKIP_PLAN** — plan exists; skip Step 1 only. Audit it (Step 2), then the Step 3 implementation gate (pause, or implement under `--autonomous`), audit code, ship |
+| `/cycle code <plan-file>` | **SKIP_TO_CODE** — plan accepted + impl exist; skip Steps 1–3; audit code, validate UX, ship |
+| `/cycle remediate <plan-file> --from <persona-test\|audit> <report>` | **REMEDIATE** — plan accepted; skip Steps 1–2; triage the report, focused fixes, focused audit, rerun affected journeys, ship — see Step R |
 | `/cycle <plan-file>` (no `plan`/`code` keyword) | **AUTO** — detect by checking if any new code exists since plan was written |
+
+**`/audit-plan` is never skipped by inference.** Only the explicit `code` or
+`remediate` keyword skips it — typing it is the operator's declaration that the
+plan is accepted. `/cycle` does not auto-detect "already accepted and unchanged":
+no audit record identifies the plan *content* that was approved (plan-mode
+`audit_runs` rows carry HEAD at capture, not the audited bytes), so any such
+check would read a stale approval as current. Detail:
+`references/remediate-mode.md` §"The accepted-plan skip".
 
 Optional flags:
 - `--no-persona` — skip /persona-test (use when no live URL or backend-only)
@@ -125,6 +138,7 @@ Optional flags:
 - `--baseline-ref <sha>` — audit baseline for a resume where no `clusterStartRef` was captured (work already committed).
 - `--authorize-stale-reaudit` — resume a halted autonomous run by re-processing exactly the `stale` clusters.
 - `--no-cluster` — ignore any §11 block; fall back to the single-audit path.
+- `--from persona-test <report.md>` | `--from audit <result.json>` — REMEDIATE only, required: the findings source. `--include-p2` widens the persona triage to P2.
 
 **§11 detection**: parse the target plan for an `## 11. Execution Clustering`
 block. If present (and not `--no-cluster`), set `hasClustering` and parse
@@ -142,11 +156,14 @@ Show kickoff card:
 ═══════════════════════════════════════
 ```
 
+(REMEDIATE's card reads `Steps: triage → fix → focused audit-code → rerun journeys → ux-lock → ship`
+and `Skipped: plan, audit-plan (plan declared accepted by the remediate keyword)`.)
+
 ---
 
 ## Step 0.5 — Cross-plan coordination check (nudge, not a gate)
 
-Whenever a target plan file already exists (`SKIP_PLAN`/`SKIP_TO_CODE`/`AUTO`
+Whenever a target plan file already exists (`SKIP_PLAN`/`SKIP_TO_CODE`/`REMEDIATE`/`AUTO`
 modes — anything but a fresh FULL run, where the plan doesn't exist yet), run
 it before implementation or shipping proceeds:
 
@@ -215,8 +232,11 @@ GPT + Gemini final gate. Max 3 rounds; rigor-pressure stop.
 
 **Decision table (one source of truth — the bullets below elaborate).** The gate is a
 pure function of three inputs: the parsed mode, whether the plan carries a §11 block
-(`hasClustering`), and the `--autonomous` flag. `SKIP_PLAN` / `SKIP_TO_CODE` mean the
-human already implemented, so the gate is bypassed entirely (go straight to Step 4 audit).
+(`hasClustering`), and the `--autonomous` flag. Only `SKIP_TO_CODE` means the human
+already implemented, so only it bypasses the gate (straight to Step 4 audit).
+`SKIP_PLAN` skips Step 1 alone — its plan has been audited in Step 2 but not
+implemented, so it meets this gate exactly like FULL. `REMEDIATE` never reaches
+this step; its own remediation gate is Step R.
 
 | Mode | `hasClustering` | `--autonomous` | Action |
 |---|---|---|---|
@@ -229,8 +249,8 @@ human already implemented, so the gate is bypassed entirely (go straight to Step
 - **No §11 block + default (no `--autonomous`)** → **today's behaviour, unchanged**:
   `/cycle` **pauses here** for the human to implement (or resume later via
   `/cycle code <plan>`). Output the "paused at implementation gate" card
-  below. Skipped automatically in SKIP_PLAN / SKIP_TO_CODE modes (the human
-  already implemented).
+  below. Skipped automatically only in SKIP_TO_CODE mode (the human already
+  implemented); SKIP_PLAN pauses here like FULL.
 - **No §11 block + `--autonomous`** → **degenerate single-cluster autonomous path**
   (do NOT silently fall back to the pause — that contradicts the explicit
   `--autonomous`). A plan below the §7b Gate-1 / §11 threshold is small + cohesive by
@@ -464,6 +484,31 @@ re-reviewed. Then continue to Step 5.
 
 ---
 
+## Step R — Remediation (REMEDIATE mode only)
+
+For narrow defects found **after** a ship, against a plan already accepted:
+replaying the whole chain re-plans, re-audits the plan and audits the whole
+dirty tree. REMEDIATE runs instead, in order, and nothing else:
+
+1. **R1** load the governing plan — no `/plan`, no `/audit-plan`; Step 0.5 still runs.
+2. **R2** triage the `--from` report into a fix list (persona **P0/P1**, or audit
+   **HIGH**, by default) and record it in the plan's `## Implementation Log`.
+3. **R3** implement — **pauses for the human by default**; implements only
+   under `--autonomous`. Capture the base before the first edit.
+4. **R4** focused `/audit-code` — `--files` pinned to the fix files + the plan
+   via `scripts/cycle-cluster-scope.mjs`, which exits non-zero on any edit outside
+   that set. Never a whole-dirty-tree diff. **Caps unchanged**: 6 audit rounds,
+   2 final-review rounds.
+5. **R5** rerun **only** the affected persona journey(s), exercising the stateful
+   lifecycle (act → reload → verify persisted → follow-on action → verify).
+6. **R6** update the plan's log with per-finding outcomes, Step 6 `/ux-lock`,
+   then Step 7's blocked `/ship` handoff — never autonomous.
+
+The commands, triage table, resume card, rerun verdicts and summary card are in
+`references/remediate-mode.md` — read it before R2.
+
+---
+
 ## Step 4 — Audit Code (classic path — no §11 block)
 
 Invoke `/audit-code <plan-file>` (default `--scope=diff`). Multi-pass
@@ -613,8 +658,8 @@ gate result and the preflight outcome.
   `--autonomous` mode, where the opt-in flag authorizes within-cluster fixes
   scoped to the active cluster's derived file set (summaries still surfaced;
   cross-cluster fixes and persistent non-convergence still hand back).
-- **Never skip `/audit-plan`** unless explicitly in SKIP_PLAN or SKIP_TO_CODE mode.
-- **Never skip `/audit-code`** unless explicitly in SKIP_TO_SHIP mode (not currently exposed; reserved).
+- **Never skip `/audit-plan`** unless explicitly in SKIP_TO_CODE or REMEDIATE mode. SKIP_PLAN skips `/plan`, not `/audit-plan`. Never infer "already accepted" — there is no mechanical record of which plan content was approved (Step 0).
+- **Never skip `/audit-code`** unless explicitly in SKIP_TO_SHIP mode (not currently exposed; reserved). REMEDIATE focuses it; it never skips it.
 - **Default is human-orchestrated** — `/cycle` pauses at the implementation gate (Step 3); only the **opt-in `--autonomous`** flag implements code, and it never activates silently.
 - **`/cycle` reads the §11 block; it never authors or merges clusters** — it may split-equivalent (defer oversized diffs to `/audit-code`'s map-reduce) but never merges across a declared boundary. Clustering is the plan's job.
 - **The consolidated Gemini gate is mandatory** after clustered execution, regardless of per-cluster convergence — and Step 3C.2's deferral re-check runs *before* it, so no `deferred-declared` finding survives the run.
@@ -625,7 +670,9 @@ gate result and the preflight outcome.
 
 ## Reference files
 
-This skill is a thin orchestrator — there are no references. All the
-heavy logic lives in the underlying atomic skills (`/plan`,
-`/audit-plan`, `/audit-code`, `/persona-test`, `/ux-lock`, `/ship`).
-This skill's only job is sequencing.
+This skill's canonical flow is above. The files below cover specialised
+situations — read them only when the trigger applies.
+
+| File | Summary | Read when |
+|---|---|---|
+| `references/remediate-mode.md` | REMEDIATE mode — fix triaged post-ship findings against an accepted plan without replaying the full cycle. | The mode is REMEDIATE (Step R), OR the user asks to skip /audit-plan because the plan is already accepted. |
