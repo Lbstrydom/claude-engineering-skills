@@ -1169,9 +1169,6 @@ async function runClaudeGateReview(client, model, collected, diff, { reasoningEf
   return check.success ? { findings: check.data.findings, usage, state: 'ok' } : { findings: [], usage, state: 'conformance-miss' };
 }
 
-/** A gate result's ledger cell state: any runner's `skipped` (e.g. Gemini no-key) measured nothing. */
-const gateCellState = (r) => r.state ?? (r.skipped ? 'provider-error' : 'ok');
-
 /**
  * GPT's gate-ablation counterpart (fourth candidate: Flash / Pro / Sonnet-xhigh /
  * Sol-high) — same shared prompt, GPT's own structured-output mechanism
