@@ -88,6 +88,8 @@ describe('computeGateDisposition — truth table', () => {
     ['APPROVE + LOW wrongly_dismissed (control)', result('APPROVE', [], [{ original_finding_id: 'L1', recommended_severity: 'LOW' }]), 'approve'],
     // R3 H1/H5: non-object entries are malformed, never dereferenced.
     ['APPROVE + new_findings [null]', result('APPROVE', [null]), 'blocked'],
+    // R4 M1: a finding without id/severity cannot be debt-tracked.
+    ['CONCERNS + finding with no id/severity', result('CONCERNS', [{ release_blocking: false, blocking_basis: 'none' }]), 'blocked'],
     ['APPROVE + wrongly_dismissed ["x"]', result('APPROVE', [], ['x']), 'blocked'],
   ];
   for (const [name, r, expected] of cases) {

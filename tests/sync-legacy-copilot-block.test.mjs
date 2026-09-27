@@ -194,3 +194,17 @@ describe('R3 — markers alone do not prove ownership', () => {
     assert.equal(planLegacyCopilotBlockRetirement(`# Docs\n\n${quoted}\n`).action, 'malformed');
   });
 });
+
+describe('R4 — ownership is the installer structure, not a substring', () => {
+  it('a consumer example quoting markers + the bootstrap path inline is left untouched', () => {
+    const example = `Example: ${LEGACY_COPILOT_START} run node .audit-loop/bootstrap.mjs check ${LEGACY_COPILOT_END}`;
+    assert.equal(planLegacyCopilotBlockRetirement(`# Docs\n\n${example}\n`).action, 'malformed');
+  });
+  it('markers on their own lines around consumer text mentioning the path are left untouched', () => {
+    const quoted = `${LEGACY_COPILOT_START}\nWe used to run node .audit-loop/bootstrap.mjs here.\n${LEGACY_COPILOT_END}`;
+    assert.equal(planLegacyCopilotBlockRetirement(`# Docs\n\n${quoted}\n`).action, 'malformed');
+  });
+  it('control: the real installer block (CRLF too) is still recognised', () => {
+    assert.equal(planLegacyCopilotBlockRetirement(`# A\r\n\r\n${BLOCK.replace(/\n/g, '\r\n')}\r\n`).action, 'remove-block');
+  });
+});

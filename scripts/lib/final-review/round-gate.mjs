@@ -91,11 +91,14 @@ const describeShape = (v) => (v === null ? 'null' : v === undefined ? 'missing' 
 export function computeGateDisposition(result) {
   const verdict = result?.verdict;
   const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+  // A new_finding also needs the identity debt capture keys on (R4 M1).
+  const isFinding = (x) => isObj(x) && typeof x.id === 'string' && x.id !== ''
+    && ['HIGH', 'MEDIUM', 'LOW'].includes(x.severity);
   // Non-object entries (e.g. `[null]`) are counted as malformed below, never
   // dereferenced (R3 H1/H5).
   const rawFindings = Array.isArray(result?.new_findings) ? result.new_findings : [];
   const rawDismissed = Array.isArray(result?.wrongly_dismissed) ? result.wrongly_dismissed : [];
-  const findings = rawFindings.filter(isObj);
+  const findings = rawFindings.filter(isFinding);
   const dismissed = rawDismissed.filter(isObj);
   const live = findings.filter((f) => !isRefuted(f));
   const pairViolations = live
@@ -115,7 +118,7 @@ export function computeGateDisposition(result) {
   // were none" — APPROVE with new_findings: null must not read as approve.
   if (!Array.isArray(result?.new_findings)) reasons.push(`malformed result: new_findings is ${describeShape(result?.new_findings)}, not an array`);
   if (!Array.isArray(result?.wrongly_dismissed)) reasons.push(`malformed result: wrongly_dismissed is ${describeShape(result?.wrongly_dismissed)}, not an array`);
-  if (findings.length !== rawFindings.length) reasons.push(`malformed result: ${rawFindings.length - findings.length} new_findings entr(ies) are not objects`);
+  if (findings.length !== rawFindings.length) reasons.push(`malformed result: ${rawFindings.length - findings.length} new_findings entr(ies) lack an object shape, id or severity`);
   if (dismissed.length !== rawDismissed.length) reasons.push(`malformed result: ${rawDismissed.length - dismissed.length} wrongly_dismissed entr(ies) are not objects`);
   if (verdict === 'REJECT') reasons.push('verdict REJECT');
   if (!['APPROVE', 'CONCERNS', 'CONCERNS_REMAINING', 'REJECT'].includes(verdict)) reasons.push(`unrecognised verdict "${verdict}"`);

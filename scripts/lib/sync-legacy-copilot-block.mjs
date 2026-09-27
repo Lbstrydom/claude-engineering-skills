@@ -55,6 +55,22 @@ export const COPILOT_INSTRUCTIONS_PATH = '.github/copilot-instructions.md';
 export const DOCTOR_CONSUMER_PATH = `${LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR}/doctor.mjs`;
 
 /**
+ * True only for the retired installer's block STRUCTURE (R3 H6, R4 H1): each
+ * marker alone on its line, the body opening with the installer's heading and
+ * containing its "Keeping Skills Current" section with the bootstrap command
+ * (git show b7efb9e6^:scripts/lib/install/merge.mjs). A consumer example that
+ * quotes the markers and path inline fails at least one of these.
+ */
+function isRetiredInstallerBlock(content, start, end) {
+  const onOwnLine = (i, len) => (i === 0 || content[i - 1] === '\n')
+    && /^(\r?\n|$)/.test(content.slice(i + len, i + len + 2));
+  if (!onOwnLine(start, LEGACY_COPILOT_START.length) || !onOwnLine(end, LEGACY_COPILOT_END.length)) return false;
+  const body = content.slice(start + LEGACY_COPILOT_START.length, end).replace(/\r\n/g, '\n');
+  return body.startsWith('\n## Engineering Skills Bundle\n')
+    && /\n## Keeping Skills Current\n[\s\S]*\.audit-loop\/bootstrap\.mjs/.test(body);
+}
+
+/**
  * Decide what to do with a copilot-instructions file's content.
  *
  * @param {string|null} content - file content, or null when absent
@@ -73,10 +89,13 @@ export function planLegacyCopilotBlockRetirement(content) {
   if (count(LEGACY_COPILOT_START) !== 1 || count(LEGACY_COPILOT_END) !== 1) {
     return { action: 'malformed', reason: 'more than one audit-loop-bundle marker pair — ambiguous, not provably ours; left untouched' };
   }
-  // Ownership needs the retired payload itself, not just the markers: a
-  // consumer quoting the markers in an example must not lose that text (R3 H6).
-  if (!content.slice(start, endSearch).includes('.audit-loop/bootstrap.mjs')) {
-    return { action: 'malformed', reason: 'audit-loop-bundle markers present but the block does not reference .audit-loop/bootstrap.mjs — not the retired block; left untouched' };
+  // Ownership = the retired installer's STRUCTURE, not a substring (R3 H6, R4
+  // H1): each marker alone on its line, the block opening with the installer's
+  // heading, and containing its "Keeping Skills Current" section with the
+  // bootstrap command (git show b7efb9e6^:scripts/lib/install/merge.mjs). A
+  // consumer example quoting markers + path inline fails at least one of these.
+  if (!isRetiredInstallerBlock(content, start, endSearch)) {
+    return { action: 'malformed', reason: 'audit-loop-bundle markers present but the span is not the retired installer block — left untouched' };
   }
   // Exact inverse of the retired installer's append (`trimmed + '\n\n' + block
   // + '\n'`, git show b7efb9e6^:scripts/lib/install/merge.mjs): remove the
