@@ -307,3 +307,16 @@ describe('work-record fields are required, not optional-and-passing', () => {
     assert.equal(capPersonaVerdict(clean).capped, false);
   });
 });
+
+// R3 H3: auth/origin are allow-listed, so an unknown value is not eligible.
+describe('work-record values are allow-listed', () => {
+  it('an unknown authState caps Ready for users', () => {
+    assert.equal(capPersonaVerdict({ ...clean, authState: 'something-new' }).capped, true);
+  });
+  it('an unknown originPolicyResult caps Ready for users', () => {
+    assert.equal(capPersonaVerdict({ ...clean, originPolicyResult: 'cross-origin-allowed' }).capped, true);
+  });
+  it('control: authenticated-via-bootstrap + n/a stay eligible', () => {
+    assert.equal(capPersonaVerdict({ ...clean, authState: 'authenticated-via-bootstrap', originPolicyResult: 'n/a' }).capped, false);
+  });
+});

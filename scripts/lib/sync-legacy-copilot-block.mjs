@@ -73,6 +73,11 @@ export function planLegacyCopilotBlockRetirement(content) {
   if (count(LEGACY_COPILOT_START) !== 1 || count(LEGACY_COPILOT_END) !== 1) {
     return { action: 'malformed', reason: 'more than one audit-loop-bundle marker pair — ambiguous, not provably ours; left untouched' };
   }
+  // Ownership needs the retired payload itself, not just the markers: a
+  // consumer quoting the markers in an example must not lose that text (R3 H6).
+  if (!content.slice(start, endSearch).includes('.audit-loop/bootstrap.mjs')) {
+    return { action: 'malformed', reason: 'audit-loop-bundle markers present but the block does not reference .audit-loop/bootstrap.mjs — not the retired block; left untouched' };
+  }
   // Exact inverse of the retired installer's append (`trimmed + '\n\n' + block
   // + '\n'`, git show b7efb9e6^:scripts/lib/install/merge.mjs): remove the
   // managed span, the one line ending closing the end-marker line, and the one
@@ -125,7 +130,9 @@ export function retireLegacyCopilotBlock(repoRoot, { dryRun = false } = {}) {
   try {
     // Only a regular file inside the consumer tree is ours to edit: refuse a
     // symlinked .github/ or target, which could point outside the repo (R2 H3/M6).
-    const st = fs.existsSync(abs) ? fs.lstatSync(abs) : null;
+    // Only ENOENT is "absent" — an access error must not read as a missing file (R3 H4).
+    let st = null;
+    try { st = fs.lstatSync(abs); } catch (err) { if (err?.code !== 'ENOENT') throw err; }
     if (st && !st.isFile()) return [`${COPILOT_INSTRUCTIONS_PATH}: not a regular file (symlink or other) — left untouched`];
     if (st && fs.realpathSync(abs) !== path.join(fs.realpathSync(repoRoot), COPILOT_INSTRUCTIONS_PATH)) {
       return [`${COPILOT_INSTRUCTIONS_PATH}: resolves outside the consumer repo (symlinked directory) — left untouched`];

@@ -101,6 +101,10 @@ function reportedCount(v) {
  *   terminalReason?: string, authState?: string, originPolicyResult?: string}} s
  * @returns {string[]} failing-conjunct descriptions, stable order
  */
+/** Work-record values compatible with `Ready for users` (SKILL.md work-record table). */
+const READY_AUTH_STATES = new Set(['n/a-no-auth-encountered', 'authenticated-via-bootstrap']);
+const READY_ORIGIN_RESULTS = new Set(['same-origin-only', 'n/a']);
+
 export function readyForUsersBlockers(s) {
   const blockers = [];
   const p0 = reportedCount(s?.p0Count);
@@ -116,10 +120,11 @@ export function readyForUsersBlockers(s) {
   }
   if (s?.terminalReason == null) blockers.push('terminalReason=unreported');
   else if (s.terminalReason !== 'goal-reached') blockers.push(`terminalReason=${s.terminalReason}`);
+  // Allow-lists, not deny-lists (R3 H3): an unknown value is not eligible.
   if (s?.authState == null) blockers.push('authState=unreported');
-  else if (s.authState === 'auth-wall-untested') blockers.push('authState=auth-wall-untested');
+  else if (!READY_AUTH_STATES.has(s.authState)) blockers.push(`authState=${s.authState}`);
   if (s?.originPolicyResult == null) blockers.push('originPolicyResult=unreported');
-  else if (s.originPolicyResult === 'cross-origin-attempted-and-blocked') blockers.push('originPolicyResult=cross-origin-attempted-and-blocked');
+  else if (!READY_ORIGIN_RESULTS.has(s.originPolicyResult)) blockers.push(`originPolicyResult=${s.originPolicyResult}`);
   return blockers;
 }
 

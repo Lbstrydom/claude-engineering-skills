@@ -187,3 +187,10 @@ describe('R2 hardening — ambiguity, symlinks, non-UTF-8 bytes', () => {
   });
 });
 
+
+describe('R3 — markers alone do not prove ownership', () => {
+  it('a marker pair around consumer text without the retired payload is left untouched', () => {
+    const quoted = `${LEGACY_COPILOT_START}\nOur own notes about the old bundle.\n${LEGACY_COPILOT_END}`;
+    assert.equal(planLegacyCopilotBlockRetirement(`# Docs\n\n${quoted}\n`).action, 'malformed');
+  });
+});

@@ -86,6 +86,9 @@ describe('computeGateDisposition — truth table', () => {
     ['APPROVE + wrongly_dismissed entry {} (no severity)', result('APPROVE', [], [{}]), 'blocked'],
     ['CONCERNS + wrongly_dismissed with unknown severity', result('CONCERNS', [], [{ original_finding_id: 'X', recommended_severity: 'CRITICAL' }]), 'blocked'],
     ['APPROVE + LOW wrongly_dismissed (control)', result('APPROVE', [], [{ original_finding_id: 'L1', recommended_severity: 'LOW' }]), 'approve'],
+    // R3 H1/H5: non-object entries are malformed, never dereferenced.
+    ['APPROVE + new_findings [null]', result('APPROVE', [null]), 'blocked'],
+    ['APPROVE + wrongly_dismissed ["x"]', result('APPROVE', [], ['x']), 'blocked'],
   ];
   for (const [name, r, expected] of cases) {
     it(`${name} → ${expected}`, () => {
