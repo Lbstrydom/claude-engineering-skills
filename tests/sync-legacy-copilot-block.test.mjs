@@ -208,3 +208,14 @@ describe('R4 — ownership is the installer structure, not a substring', () => {
     assert.equal(planLegacyCopilotBlockRetirement(`# A\r\n\r\n${BLOCK.replace(/\n/g, '\r\n')}\r\n`).action, 'remove-block');
   });
 });
+
+describe('R5 — a fenced example of the real block is the consumer\'s', () => {
+  it('the historical block quoted inside a ``` fence is left untouched', () => {
+    const fenced = '# How we used to install\n\n```md\n' + BLOCK + '\n```\n';
+    assert.equal(planLegacyCopilotBlockRetirement(fenced).action, 'malformed');
+  });
+  it('control: a real block AFTER a closed fence is still recognised', () => {
+    const doc = '# Notes\n\n```sh\nnpm test\n```\n\n' + BLOCK + '\n';
+    assert.equal(planLegacyCopilotBlockRetirement(doc).action, 'remove-block');
+  });
+});

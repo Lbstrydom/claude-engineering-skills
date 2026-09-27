@@ -90,6 +90,8 @@ describe('computeGateDisposition — truth table', () => {
     ['APPROVE + new_findings [null]', result('APPROVE', [null]), 'blocked'],
     // R4 M1: a finding without id/severity cannot be debt-tracked.
     ['CONCERNS + finding with no id/severity', result('CONCERNS', [{ release_blocking: false, blocking_basis: 'none' }]), 'blocked'],
+    // R5 H2: the full FinalReviewFindingSchema, not a field subset.
+    ['CONCERNS + finding with only id/severity/pair', result('CONCERNS', [{ id: 'G7', severity: 'LOW', release_blocking: false, blocking_basis: 'none' }]), 'blocked'],
     ['APPROVE + wrongly_dismissed ["x"]', result('APPROVE', [], ['x']), 'blocked'],
   ];
   for (const [name, r, expected] of cases) {

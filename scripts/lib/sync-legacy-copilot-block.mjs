@@ -65,6 +65,11 @@ function isRetiredInstallerBlock(content, start, end) {
   const onOwnLine = (i, len) => (i === 0 || content[i - 1] === '\n')
     && /^(\r?\n|$)/.test(content.slice(i + len, i + len + 2));
   if (!onOwnLine(start, LEGACY_COPILOT_START.length) || !onOwnLine(end, LEGACY_COPILOT_END.length)) return false;
+  // A block quoted inside a fenced code example is the consumer's, not the
+  // installer's: an odd number of fence lines before the marker means it sits
+  // inside an open fence (R5 H1).
+  const fencesBefore = (content.slice(0, start).match(/^[ \t]*(```|~~~)/gm) || []).length;
+  if (fencesBefore % 2 === 1) return false;
   const body = content.slice(start + LEGACY_COPILOT_START.length, end).replace(/\r\n/g, '\n');
   return body.startsWith('\n## Engineering Skills Bundle\n')
     && /\n## Keeping Skills Current\n[\s\S]*\.audit-loop\/bootstrap\.mjs/.test(body);
