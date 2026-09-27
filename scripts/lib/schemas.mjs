@@ -971,6 +971,10 @@ export const AuditRunResultSchema = z.object({
     // `skipped` = the store declined (cloud off). Counted, but NOT a failure —
     // only `lost` makes a run incomplete.
     skipped: z.number(),
+    // Failures of writers registered `telemetry: true` — counted here INSTEAD
+    // of lost/spilled, so they never make runStatus 'incomplete'. Optional:
+    // results persisted before 2026-09-27 lack it.
+    telemetryLost: z.number().optional(),
     byWriter: z.record(z.string(), z.record(z.string(), z.any())),
   }).optional(),
   // Conditional / historically-optional fields:

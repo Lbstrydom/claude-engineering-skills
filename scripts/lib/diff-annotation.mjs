@@ -30,15 +30,46 @@ export function parseDiffFile(diffPath) {
 
   let content;
   try {
-    content = fs.readFileSync(absPath, 'utf-8');
+    content = decodeDiffBytes(fs.readFileSync(absPath));
   } catch (err) {
     process.stderr.write(`  [diff] Failed to read: ${err.message}\n`);
     return new Map();
   }
 
   const diffMap = parseDiffText(content);
-  process.stderr.write(`  [diff] Parsed ${diffMap.size} files, ${[...diffMap.values()].reduce((s, d) => s + d.hunks.length, 0)} hunks\n`);
+  const hunkCount = [...diffMap.values()].reduce((s, d) => s + d.hunks.length, 0);
+  process.stderr.write(`  [diff] Parsed ${diffMap.size} files, ${hunkCount} hunks\n`);
+  if (hunkCount === 0 && looksLikeUnifiedDiff(content)) {
+    // A non-empty patch that yields nothing is a failed parse, not an empty
+    // change set — say so, rather than letting R2+ silently lose its line focus.
+    process.stderr.write(
+      `  [diff] WARNING: ${path.basename(absPath)} contains unified-diff headers but parsed to 0 hunks — `
+      + 'CHANGED/UNCHANGED annotations are OFF for this round. Regenerate it with '
+      + '`git diff --output=<file> <base> -- .` (git writes the bytes itself; no shell re-encoding).\n',
+    );
+  }
   return diffMap;
+}
+
+/**
+ * Decode a patch file's bytes whatever shell wrote it. PowerShell's `>`
+ * re-encodes native output line by line: Windows PowerShell 5.1 writes
+ * UTF-16LE with a BOM, 7.x writes UTF-8 with CRLF endings. Field report
+ * 2026-09-26: every Windows R2 logged "Parsed 0 files, 0 hunks" against a
+ * visibly non-empty patch. BOM/CRLF are folded in parseDiffText.
+ * @param {Buffer} buf
+ * @returns {string}
+ */
+export function decodeDiffBytes(buf) {
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) return buf.subarray(2).toString('utf16le');
+  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
+    return Buffer.from(buf.subarray(2)).swap16().toString('utf16le');
+  }
+  return buf.toString('utf-8');
+}
+
+function looksLikeUnifiedDiff(text) {
+  return /^(?:diff --git |\+\+\+ |@@ )/m.test(String(text));
 }
 
 /**
@@ -52,7 +83,11 @@ export function parseDiffFile(diffPath) {
 export function parseDiffText(content) {
   const diffMap = new Map();
   let currentFile = null;
-  for (const line of String(content).split('\n')) {
+  // Strip a BOM and fold CRLF: `(.+)$` cannot match `+++ b/x\r` (`.` excludes
+  // \r), so a CRLF patch dropped every file header — and every hunk with it,
+  // since a hunk only attaches to a current file.
+  const text = String(content).replace(/^﻿/, '').replace(/\r\n/g, '\n');
+  for (const line of text.split('\n')) {
     const fileMatch = line.match(/^\+\+\+ b\/(.+)$/);
     if (fileMatch) {
       currentFile = normalizePath(fileMatch[1]);

@@ -399,7 +399,7 @@ async function runLegacyProductionAuditImpl(ctx) {
   // Durable-write tally for this run (plan decision 3). Declared here so it
   // exists on EVERY exit path, including the ones that never reach the cloud
   // block — an absent tally and an all-zero tally must not be the same thing.
-  const writeOutcomes = { written: 0, spilled: 0, lost: 0, skipped: 0, byWriter: {} };
+  const writeOutcomes = { written: 0, spilled: 0, lost: 0, skipped: 0, telemetryLost: 0, byWriter: {} };
   if (!noCloudRecording && (await isCloudEnabled()) && repoProfile) {
     // Cluster A (§2.1): resolve the STABLE audit_repos.id via repo_uuid identity
     // (not the volatile content fingerprint that fragmented B1). The returned

@@ -18,52 +18,75 @@ import { many, one, insertReturning, upsert, updateWhere } from '../db/query.mjs
 import { isCloudEnabled } from './repo.mjs';
 import { ClickPathStepSchema } from '../schemas.mjs';
 import { redactSecrets } from '../secret-patterns.mjs';
+import { derivePairOverlapRate } from '../persona-test/pair-overlap.mjs';
 
 /** Max stored click-path steps (R2-M1) — truncate, never reject the session. */
 const CLICK_PATH_CAP = 40;
 
-/**
- * Does a URL/path segment or query value look like a secret/token/PII that must
- * never be stored (R1-H3/H4, R2-H1)? uuid · long hex/base64 · JWT · email · long
- * digit run. Conservative: when in doubt, collapse to `:param`.
- * @param {string} s
- * @returns {boolean}
- */
-/** Percent-decode REPEATEDLY (bounded), tolerating a malformed `%` sequence at
- *  any step (stops and returns the last successfully-decoded value). The single
- *  decode helper so EVERY secret/route heuristic sees the same decoded form —
- *  an encoded token or auth keyword can't bypass one check by matching a
- *  different one's encoding assumption (audit HIGH — encoded-auth-keyword bypass).
- *  A SINGLE decode still left a DOUBLY-encoded auth keyword unmatched
- *  (`%2572eset` → one decode → `%72eset`, which contains no literal "reset" —
- *  audit HIGH, doubly-encoded-route bypass): `%2572eset` needs two decodes to
- *  reach `reset`. Bounded at 5 iterations (arbitrary encoding depth some
- *  browser/proxy could produce is not worth chasing further) and stops as soon
- *  as a decode is a no-op, so a normal single-encoded or plain segment costs
- *  one extra no-op decodeURIComponent call, not five. */
+/** Decode ONE layer of percent-escapes, escape-by-escape (audit H4/H20).
+ *  `decodeURIComponent` is all-or-nothing: one malformed escape (`%ZZ`, a
+ *  truncated `%E0%A4`) throws for the whole string, and the old loop then
+ *  returned the RAW text — so a valid `%40` later in the same segment was never
+ *  decoded and `%ZZjane%40example.com` escaped the email check. Here each RUN of
+ *  well-formed `%XX` escapes is decoded on its own (a run, so a multi-byte
+ *  UTF-8 character decodes whole); a run that is not valid UTF-8 falls back to
+ *  decoding its ASCII-range escapes and leaving the rest literal, and anything
+ *  that is not a well-formed `%XX` is left exactly as written. */
+function decodeOnceLenient(s) {
+  return s.replace(/(?:%[0-9A-Fa-f]{2})+/g, (run) => {
+    try { return decodeURIComponent(run); } catch {
+      return run.replace(/%([0-7][0-9A-Fa-f])/g, (_m, hex) => String.fromCharCode(parseInt(hex, 16)));
+    }
+  });
+}
+
+/** Percent-decode to a FIXED POINT (bounded) — the single decode helper, so
+ *  EVERY secret/route heuristic sees the same decoded form. Iterated because a
+ *  doubly-encoded keyword (`%2572eset` → `%72eset` → `reset`) needs two
+ *  layers; bounded at 5 (an encoding depth beyond that is not worth chasing, and
+ *  every step is cheap). Each layer is `decodeOnceLenient`, so a malformed
+ *  escape no longer halts decoding of the valid ones beside it. */
 function safeDecode(s) {
   let out = s;
   for (let i = 0; i < 5; i++) {
-    let next;
-    try { next = decodeURIComponent(out); } catch { break; }
+    const next = decodeOnceLenient(out);
     if (next === out) break;
     out = next;
   }
   return out;
 }
 
-function looksSecret(s) {
-  if (typeof s !== 'string' || s.length === 0) return false;
-  // Percent-decode first so encoded secrets (`jane%40example.com`, `%2F`) can't
-  // bypass the shape checks (audit HIGH — safe-decode).
-  s = safeDecode(s);
+/** Shape test on ONE already-decoded component. */
+function componentLooksSecret(s) {
+  if (s.length === 0) return false;
   if (s.includes('@')) return true;                                  // email
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)) return true; // uuid
   if (/^[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\./.test(s)) return true; // JWT-ish
   if (/^[0-9a-f]{16,}$/i.test(s)) return true;                       // long hex
   if (/^[A-Za-z0-9+/_-]{24,}={0,2}$/.test(s) && /[0-9]/.test(s) && /[A-Za-z]/.test(s)) return true; // base64-ish token
-  if (/^\d{12,}$/.test(s)) return true;                              // long digit run (ids/cards)
+  if (/^\d{12,}$/.test(s)) return true;                             // long digit run (ids/cards)
   return false;
+}
+
+/**
+ * Does a URL/path segment or query value look like a secret/token/PII that must
+ * never be stored (R1-H3/H4, R2-H1)? uuid · long hex/base64 · JWT · email · long
+ * digit run. Conservative: when in doubt, collapse to `:param`. Tested on the
+ * fully-decoded text AND on every component a decoded separator splits it into,
+ * and a component that follows an auth keyword INSIDE the same segment is a
+ * secret whatever its shape (`reset%2F123456`).
+ * @param {string} s
+ * @returns {boolean}
+ */
+function looksSecret(s) {
+  if (typeof s !== 'string' || s.length === 0) return false;
+  const decoded = safeDecode(s);
+  if (componentLooksSecret(decoded)) return true;
+  // Decoding can introduce a separator — `reset%2F123456` is ONE raw segment
+  // and TWO decoded components — so every component is tested (audit H4/H20).
+  const comps = decoded.split(/[/\\]/);
+  return comps.some((c, j) => componentLooksSecret(c)
+    || (j > 0 && c.length > 0 && AUTH_KEYWORD.test(comps[j - 1])));
 }
 
 /**
@@ -107,7 +130,8 @@ function collapsePath(segments) {
   // token just like `/reset/123456` does (audit HIGH — encoded-auth-keyword
   // bypass: `new URL().pathname` does NOT decode, so a raw-form test missed it).
   return segments.map((seg, i) => (
-    looksSecret(seg) || (i > 0 && AUTH_KEYWORD.test(safeDecode(segments[i - 1])) && seg.length > 0) ? ':param' : seg
+    looksSecret(seg)
+    || (i > 0 && seg.length > 0 && AUTH_KEYWORD.test(safeDecode(segments[i - 1]))) ? ':param' : seg
   )).join('/');
 }
 
@@ -259,7 +283,7 @@ export async function upsertPersona(persona) {
  * Record a persona-test session + best-effort persona stats refresh.
  * Idempotent on session_id (re-posting returns the existing row).
  *
- * @returns {Promise<{sessionId: string|null, existed: boolean, statsUpdated: boolean}>}
+ * @returns {Promise<{sessionId: string|null, existed: boolean, statsUpdated: boolean, statsReason?: (null|'no-persona-id'|'persona-not-found'|'stats-write-failed')}>}
  */
 export async function recordPersonaSession(session) {
   // Discriminated since plan §2b F2 (2026-08-12). `{sessionId: null}` was
@@ -328,9 +352,16 @@ export async function recordPersonaSession(session) {
   // session-insert success, so a stats failure doesn't roll back the
   // session row (reconciler handles drift).
   let statsUpdated = false;
-  if (session.personaId) {
+  // WHY the stats were not refreshed (2026-09-27). A bare `statsUpdated:false`
+  // meant both "this was an ad-hoc persona, there was nothing to update" and
+  // "the update threw" — two situations with opposite remedies (pass the
+  // registered personaId vs. investigate a write failure). Null when updated.
+  let statsReason = null;
+  if (!session.personaId) {
+    statsReason = 'no-persona-id';
+  } else {
     try {
-      await updateWhere('personas',
+      const res = await updateWhere('personas',
         {
           last_tested_at: new Date().toISOString(),
           last_verdict: session.verdict,
@@ -338,8 +369,12 @@ export async function recordPersonaSession(session) {
         },
         { id: session.personaId }
       );
-      statsUpdated = true;
+      // Postgres reports success for an UPDATE that matched nothing — a stale
+      // or mistyped personaId must not read as "stats updated".
+      if ((res?.rowCount ?? 0) > 0) statsUpdated = true;
+      else statsReason = 'persona-not-found';
     } catch (err) {
+      statsReason = 'stats-write-failed';
       process.stderr.write(`  [persona] WARN stats update failed — session recorded at ${sessionId}: ${err.message}\n`);
     }
   }
@@ -350,10 +385,79 @@ export async function recordPersonaSession(session) {
     sessionId,
     existed: false,
     statsUpdated,
+    statsReason,
     // Structured click-path outcome so callers see partial sanitization, not just
     // a stderr line (audit MED). Absent when no clickPath was provided.
     ...(clickPathMeta ? { clickPathStored: clickPathMeta.steps.length, clickPathDropped: clickPathMeta.dropped, clickPathTruncated: clickPathMeta.truncated } : {}),
   };
+}
+
+/**
+ * Link two persona_test_sessions rows as one /persona-test --pair run
+ * (`persona_pair_sessions`, migration 20260927120000). Idempotent on the
+ * ordered pair: a re-post updates the counts.
+ *
+ * Both sessions must exist and share a repo (NULL-safe: two repo-less sessions
+ * pair). When the caller resolved a repo scope, the sessions must belong to
+ * it. The INSERT … SELECT makes all three one statement; the follow-up read
+ * only runs when it wrote nothing, to say WHICH of them refused.
+ *
+ * @param {{sessionA: string, sessionB: string, consensusCount: number, aOnlyCount: number,
+ *   bOnlyCount: number}} pair
+ * @param {{repoId?: string|null}} [opts]
+ * @returns {Promise<{ok: boolean, cloud: boolean, pairId: string|null, overlapRate: number|null,
+ *   reason?: 'invalid-input'|'cloud-off'|'session-not-found'|'cross-repo-pair'|'session-not-owned'|'write-failed',
+ *   message?: string}>}
+ */
+export async function recordPersonaPairLink(pair, opts = {}) {
+  const { sessionA, sessionB, consensusCount, aOnlyCount, bOnlyCount } = pair ?? {};
+  const counts = [consensusCount, aOnlyCount, bOnlyCount];
+  if (!sessionA || !sessionB || sessionA === sessionB || !counts.every((n) => Number.isInteger(n) && n >= 0)) {
+    return {
+      ok: false, cloud: true, pairId: null, overlapRate: null, reason: 'invalid-input',
+      message: 'two DISTINCT session ids and three non-negative integer counts are required',
+    };
+  }
+  if (!await isCloudEnabled()) {
+    return { ok: false, cloud: false, pairId: null, overlapRate: null, reason: 'cloud-off', message: 'cloud store is disabled' };
+  }
+  const overlapRate = derivePairOverlapRate({ consensusCount, aOnlyCount, bOnlyCount });
+  const repoId = opts.repoId ?? null;
+  try {
+    const row = await one(
+      `INSERT INTO persona_pair_sessions
+         (repo_id, session_a, session_b, consensus_count, a_only_count, b_only_count, overlap_rate)
+       SELECT sa.repo_id, sa.id, sb.id, $3, $4, $5, $6
+         FROM persona_test_sessions sa
+         JOIN persona_test_sessions sb ON sb.id = $2
+        WHERE sa.id = $1
+          AND sa.repo_id IS NOT DISTINCT FROM sb.repo_id
+          AND ($7::uuid IS NULL OR sa.repo_id = $7::uuid)
+       ON CONFLICT (session_a, session_b) DO UPDATE SET
+         consensus_count = EXCLUDED.consensus_count,
+         a_only_count    = EXCLUDED.a_only_count,
+         b_only_count    = EXCLUDED.b_only_count,
+         overlap_rate    = EXCLUDED.overlap_rate
+       RETURNING id`,
+      [sessionA, sessionB, consensusCount, aOnlyCount, bOnlyCount, overlapRate, repoId],
+    );
+    if (row?.id) return { ok: true, cloud: true, pairId: row.id, overlapRate };
+
+    // Nothing written — name the refusal instead of reporting a bare failure.
+    const found = await many(`SELECT id, repo_id FROM persona_test_sessions WHERE id = ANY($1::uuid[])`, [[sessionA, sessionB]]);
+    const byId = new Map(found.map((r) => [r.id, r.repo_id]));
+    const missing = [sessionA, sessionB].filter((id) => !byId.has(id));
+    if (missing.length > 0) {
+      return { ok: false, cloud: true, pairId: null, overlapRate, reason: 'session-not-found', message: `no persona_test_sessions row for ${missing.join(', ')}` };
+    }
+    if ((byId.get(sessionA) ?? null) !== (byId.get(sessionB) ?? null)) {
+      return { ok: false, cloud: true, pairId: null, overlapRate, reason: 'cross-repo-pair', message: 'the two sessions belong to different repositories — refusing to pair them' };
+    }
+    return { ok: false, cloud: true, pairId: null, overlapRate, reason: 'session-not-owned', message: 'the sessions do not belong to the resolved repository scope' };
+  } catch (err) {
+    process.stderr.write(`  [persona] recordPersonaPairLink failed: ${err.message}\n`);
+    return { ok: false, cloud: true, pairId: null, overlapRate, reason: 'write-failed', message: err.message };
+  }
 }
 
 /**

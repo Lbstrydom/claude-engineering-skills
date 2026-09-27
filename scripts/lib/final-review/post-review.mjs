@@ -34,12 +34,128 @@
  * @module scripts/lib/final-review/post-review
  */
 import { semanticId, appendOutcome, FalsePositiveTracker } from '../findings.mjs';
-import { affectedFilesOf, primaryFileOf } from '../finding-match.mjs';
+import { affectedFilesOf, primaryFileOf, structuredFilesOf, sectionLociOf } from '../finding-match.mjs';
+import { isReleaseBlocking } from './round-gate.mjs';
 import { listRepoFiles } from '../repo-inventory.mjs';
 import { verifyExistenceFindings, isRefuted } from '../audit/finding-verification.mjs';
 import { generateRepoProfile } from '../context.mjs';
 import { getActiveRevisionId } from '../prompt-registry.mjs';
 import { PromptBandit } from '../../bandit.mjs';
+// The pure primitive ledger.mjs re-exports — imported from its home so this
+// module does not pull ledger.mjs's env-reading module graph just to compare
+// two strings (the reason text-similarity.mjs was extracted in the first place).
+import { jaccardSimilarity } from '../text-similarity.mjs';
+
+/** The topic signature both post-review topic matchers compare on. */
+function findingTopicSig(f) {
+  return `${f?.category ?? ''} ${f?.section ?? ''} ${f?.detail ?? ''}`;
+}
+
+/**
+ * Best Jaccard match of `sig` among `candidates`. Both suppressions score with
+ * the same `jaccardSimilarity`, so they cannot drift into different similarity
+ * notions; each narrows its candidates by `suppressionLocusOf` first.
+ */
+function bestTopicMatch(sig, candidates, sigOf) {
+  let match = null;
+  let score = 0;
+  for (const c of candidates) {
+    const s = jaccardSimilarity(sig, sigOf(c));
+    if (s > score) { score = s; match = c; }
+  }
+  return { match, score };
+}
+
+/**
+ * The SAME-LOCUS key a suppression decision requires on top of topic
+ * similarity: the files a finding is filed under (`structuredFilesOf` — the
+ * precision key, not the recall union), or its `§`/decision-id loci when it
+ * names no file (a plan-mode finding). Prose similarity alone suppressed
+ * similarly-worded DISTINCT defects in different files (audit H5/H17): two
+ * "swallows the parse error" findings in two modules read alike and are two bugs.
+ */
+function suppressionLocusOf(f) {
+  const files = structuredFilesOf(f);
+  return files.length > 0 ? files : sectionLociOf(f);
+}
+
+/** First locus key the two sides share, or null. Either side empty ⇒ null (fail OPEN: keep the finding). */
+function sharedLocus(a, b) {
+  const bs = new Set(b);
+  return a.find((k) => bs.has(k)) ?? null;
+}
+
+/**
+ * Round >= 2: drop new_findings whose topic matches a finding the PREVIOUS
+ * final-review round already raised — those are settled (fixed, or accepted as
+ * debt). A finding the reviewer marks `is_reopened: true` survives: the prompt
+ * requires it to cite the changed line that reopened it. Deterministic backstop
+ * to the prompt's "do not re-raise" instruction, which is otherwise the only
+ * thing standing between a round-2 run and a fresh full review.
+ *
+ * 0.35 = `suppressReRaises`' threshold: both sides here are full
+ * category+section+detail signatures, the symmetric case that value was tuned
+ * for (the debt path's 0.30 compensates for an asymmetric, shorter signature).
+ *
+ * Two conditions beyond similarity, both from the 2026-09-27 code audit:
+ * - **Same locus** (H5/H17): the finding and the prior must share a file (or,
+ *   for file-less plan findings, a `§`/decision-id locus). Either side naming
+ *   none ⇒ no suppression — an extra finding is the cheap error, a vanished
+ *   distinct defect the expensive one.
+ * - **Only a NON-blocking prior settles anything** (H6): a prior finding that
+ *   was release-blocking is exactly what round 2 must re-check ("previous-round
+ *   items marked BLOCKING that remain unresolved"). Suppressing its re-raise
+ *   would turn an unfixed blocker into `approve_with_debt`. `isReleaseBlocking`
+ *   fails closed, so a prior with a missing/invalid pair counts as blocking too.
+ *
+ * Every decision that matched on similarity is recorded: drops in
+ * `_priorSuppressedFindings`, similarity matches that were KEPT (and why) in
+ * `_priorRoundKept`, so a suppression is auditable after the fact.
+ *
+ * @param {object} result - mutated in place
+ * @param {object[]} priorFindings - the previous round's new_findings
+ * @returns {{suppressed: number}}
+ */
+export function applyPriorRoundSuppression(result, priorFindings, { threshold = 0.35 } = {}) {
+  if (!Array.isArray(result?.new_findings) || !Array.isArray(priorFindings) || priorFindings.length === 0) {
+    return { suppressed: 0 };
+  }
+  const priors = priorFindings.map((p) => ({ p, locus: suppressionLocusOf(p), blocking: isReleaseBlocking(p) }));
+  const kept = [];
+  const dropped = [];
+  const keptMatches = [];
+  for (const f of result.new_findings) {
+    if (f.is_reopened === true) { kept.push(f); continue; }
+    const sig = findingTopicSig(f);
+    const locus = suppressionLocusOf(f);
+    // Similarity-qualifying priors that share this finding's locus.
+    const qualifying = priors
+      .map((c) => ({ ...c, score: jaccardSimilarity(sig, findingTopicSig(c.p)), shared: sharedLocus(locus, c.locus) }))
+      .filter((c) => c.score > threshold);
+    const sameLocus = qualifying.filter((c) => c.shared);
+    const decision = (c) => ({ id: f.id ?? null, category: f.category, matchedPriorId: c.p.id ?? null, score: Number(c.score.toFixed(2)), locus: c.shared });
+    const blockingMatch = sameLocus.find((c) => c.blocking);
+    if (blockingMatch) {
+      kept.push(f);
+      keptMatches.push({ ...decision(blockingMatch), reason: 'prior_release_blocking' });
+      continue;
+    }
+    const best = sameLocus.reduce((a, c) => (a && a.score >= c.score ? a : c), null);
+    if (best) { dropped.push(decision(best)); continue; }
+    kept.push(f);
+    const bestOther = qualifying.reduce((a, c) => (a && a.score >= c.score ? a : c), null);
+    if (bestOther) keptMatches.push({ ...decision(bestOther), reason: 'no_shared_locus' });
+  }
+  if (dropped.length > 0) {
+    process.stderr.write(`  [final-review] Prior-round suppression: ${dropped.length}/${result.new_findings.length} new_findings re-raise a settled previous-round finding (dropped)\n`);
+    for (const d of dropped.slice(0, 3)) process.stderr.write(`    [prior-settled] ~${d.matchedPriorId} score=${d.score} locus=${d.locus}\n`);
+  }
+  result.new_findings = kept;
+  result._priorSuppressedCount = dropped.length;
+  result._priorSuppressedFindings = dropped;
+  result._priorRoundKept = keptMatches;
+  return { suppressed: dropped.length };
+}
 
 export async function applyDebtSuppression(result, transcriptContent) {
   try {
@@ -49,7 +165,6 @@ export async function applyDebtSuppression(result, transcriptContent) {
       || [];
     if (!Array.isArray(suppressionCtx) || suppressionCtx.length === 0) return;
     if (!Array.isArray(result.new_findings)) return;
-    const { jaccardSimilarity } = await import('../ledger.mjs');
     // Threshold 0.30 vs suppressReRaises' 0.35 — debt envelope signatures
     // (category+section) are shorter than new_findings (which include detail
     // text), so asymmetric lengths dilute Jaccard.
@@ -57,16 +172,22 @@ export async function applyDebtSuppression(result, transcriptContent) {
     const before = result.new_findings.length;
     const kept = [];
     const debtSuppressed = [];
+    // Same-locus requirement (audit H5/H17), applied ONLY to a debt entry that
+    // carries file info (`affectedFiles`, or a file path in `section`): an entry
+    // without any keeps the pre-existing similarity-only behaviour, since there
+    // is nothing to compare against. Candidates whose files do not intersect the
+    // finding's are excluded BEFORE the best match is chosen, so a same-worded
+    // debt topic in another module cannot swallow the finding.
     for (const f of result.new_findings) {
-      const fSig = `${f.category} ${f.section} ${f.detail}`;
-      let match = null;
-      let bestScore = 0;
-      for (const d of suppressionCtx) {
-        const score = jaccardSimilarity(fSig, `${d.category} ${d.section}`);
-        if (score > bestScore) { bestScore = score; match = d; }
-      }
-      if (match && bestScore > THRESHOLD) debtSuppressed.push({ finding: f, matchedTopic: match.topicId, score: bestScore });
-      else kept.push(f);
+      const locus = suppressionLocusOf(f);
+      const eligible = suppressionCtx.filter((d) => {
+        const debtFiles = structuredFilesOf(d);
+        return debtFiles.length === 0 || sharedLocus(locus, debtFiles) !== null;
+      });
+      const { match, score } = bestTopicMatch(findingTopicSig(f), eligible, (d) => `${d.category} ${d.section}`);
+      if (match && score > THRESHOLD) {
+        debtSuppressed.push({ finding: f, matchedTopic: String(match.topicId ?? ''), score, file: sharedLocus(locus, structuredFilesOf(match)) });
+      } else kept.push(f);
     }
     if (debtSuppressed.length === 0) return;
     process.stderr.write(`  [final-review] Debt re-suppression: ${debtSuppressed.length}/${before} new_findings matched pre-filtered debt\n`);
@@ -75,6 +196,10 @@ export async function applyDebtSuppression(result, transcriptContent) {
     }
     result.new_findings = kept;
     result._debtSuppressedCount = debtSuppressed.length;
+    result._debtSuppressedFindings = debtSuppressed.map((s) => ({
+      id: s.finding.id ?? null, category: s.finding.category, matchedTopicId: s.matchedTopic,
+      score: Number(s.score.toFixed(2)), file: s.file,
+    }));
   } catch { /* transcript not JSON or no _debtMemory — skip */ }
 }
 
@@ -101,7 +226,9 @@ function projectWronglyDismissed(wd) {
     category: '',
     // `auth.js:132` → `extractCitedEntity` splits on `:` for the fromFile anchor.
     section: cited.length > 0 ? String(cited[0]) : '',
-    detail: `${wd?.reason_claude_was_wrong || ''}\n${wd?.evidence_basis || ''}`.trim(),
+    // Every cited line reaches the existence gate, not only the first (final
+    // review G2); the first stays the section's fromFile anchor.
+    detail: [wd?.reason_claude_was_wrong || '', wd?.evidence_basis || '', ...cited.slice(1).map(String)].join('\n').trim(),
     // `mk()` defaults verdictSeverity to `finding.severity`; without this the
     // projected view has no severity at all and the annotation reads undefined.
     severity: wd?.recommended_severity,
@@ -193,17 +320,21 @@ export async function applyScopeFilter(result, transcriptContent) {
     if (changedFiles.length === 0) return;
     if (!Array.isArray(result.new_findings)) return;
     // Normalise paths for comparison: trim whitespace, strip leading ./.
-    const inScope = new Set(changedFiles.map(f => f.trim().replace(/^\.\//, '')));
+    const norm = (p) => String(p).trim().replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
+    const inScope = new Set(changedFiles.map(norm));
     const before = result.new_findings.length;
     const kept = [];
     const scopeFiltered = [];
     for (const f of result.new_findings) {
-      const file = (f.file || f.location || '').trim().replace(/^\.\//, '');
-      // Empty file → keep (deliberation-level finding, not file-specific).
-      if (!file) { kept.push(f); continue; }
-      const matched = inScope.has(file) || [...inScope].some(s => file === s || file.endsWith('/' + s) || s.endsWith('/' + file));
-      if (matched) kept.push(f);
-      else scopeFiltered.push({ finding: f, file });
+      // Final-review findings carry no `file`/`location` field — reading those
+      // made this filter a no-op for its whole life (final review 2026-09-27
+      // G1). Use the shared structured-file extractor; a finding naming no file
+      // stays (deliberation-level), and one naming ANY in-scope file stays.
+      const files = structuredFilesOf(f).map(norm);
+      if (files.length === 0) { kept.push(f); continue; }
+      const inScopeFile = (file) => inScope.has(file) || [...inScope].some((s) => file.endsWith('/' + s) || s.endsWith('/' + file));
+      if (files.some(inScopeFile)) kept.push(f);
+      else scopeFiltered.push({ finding: f, file: files.join(', ') });
     }
     if (scopeFiltered.length === 0) return;
     process.stderr.write(`  [final-review] Scope filter: ${scopeFiltered.length}/${before} new_findings cited out-of-scope files (dropped)\n`);

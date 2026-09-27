@@ -239,8 +239,13 @@ export function registerAuditStoreWriters() {
   // run scope, so replaying a stale snapshot hours later would overwrite newer
   // arm statistics with older ones. "Idempotent" is not "safe to replay late" —
   // the two questions are different, and only the second one licenses a spill.
+  //
+  // `telemetry: true`: live bandit state is local (.audit/bandit-state.json);
+  // these rows are a write-only mirror no later audit reads (migration
+  // 20260718090000). Losing one must not mark a finished audit 'incomplete'.
   registerWriter('learning.banditArms', {
     schemaVersion: 1,
+    telemetry: true,
     replay: (payload) => receipt(syncBanditArms(payload.arms)),
   });
 

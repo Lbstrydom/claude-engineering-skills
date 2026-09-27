@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { openaiConfig } from './config.mjs';
+import { isTelemetryWriter } from './durable-write.mjs';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 export const MAX_REDUCE_JSON_CHARS = 120_000;
@@ -317,6 +318,11 @@ export function writeLearningState(allowed, fn) {
  * write (cloud off), which is a supported mode. Only `lost` makes a run
  * incomplete — conflating the two would mark every local-only run as broken.
  *
+ * A failure of a writer registered `telemetry: true` goes to `telemetryLost`,
+ * not `lost`/`spilled`: field report 2026-09-26, where a consumer store's
+ * missing `bandit_arms` key marked every completed audit `incomplete`. Its
+ * `byWriter` row is kept (flagged `telemetry: true`) so the loss is still named.
+ *
  * Lives here (not in legacy-production-audit.mjs) because the tally is created
  * early in the orchestration spine — before the finalization coordinator's
  * three stage modules exist — and threads through both: the spine's own
@@ -337,8 +343,14 @@ export function tallyWriteOutcomes(tally, results) {
     // ignoring it would let a future outcome name read as a clean run — the
     // false-zero shape this whole mechanism exists to remove.
     const bucket = WRITE_OUTCOMES.has(r.outcome) ? r.outcome : 'lost';
-    tally[bucket]++;
+    const telemetry = isTelemetryWriter(r.writerId);
+    if (telemetry && (bucket === 'lost' || bucket === 'spilled')) {
+      tally.telemetryLost = (tally.telemetryLost ?? 0) + 1;
+    } else {
+      tally[bucket]++;
+    }
     const w = tally.byWriter[r.writerId] ?? (tally.byWriter[r.writerId] = { written: 0, spilled: 0, lost: 0, skipped: 0 });
+    if (telemetry) w.telemetry = true;
     w[bucket]++;
     if (bucket !== 'written' && r.error && !w.lastError) w.lastError = String(r.error).slice(0, 300);
   }
@@ -406,17 +418,17 @@ export function describeLostWrites(byWriter) {
       + '--check-drift`; fix: `node scripts/setup-postgres.mjs --migrate`.');
   }
   if (conflictTarget) {
-    // `--check-drift` is NOT the diagnosis here — it compares the applied-
-    // migrations ledger to source files, and a ledger with zero pending
-    // migrations says nothing about whether a constraint's actual SHAPE still
-    // matches what those migrations declared. The upsert() error above now
-    // names the table and the expected ON CONFLICT columns directly — check
-    // that table's constraints in `pg_constraint`, not the ledger.
+    // The LEDGER check (`--check-drift`) is NOT the diagnosis here — a ledger
+    // with zero pending migrations says nothing about whether a constraint
+    // those migrations created still exists. `--check-drift --live` (added
+    // 2026-09-27) compares the live `pg_constraint`/`pg_indexes` rows against
+    // the expected schema and prints the exact repair statement.
     lines.push('      ^ the ON CONFLICT target above has no matching unique constraint. '
-      + '`--check-drift` cannot see this — it checks which migrations are applied, not whether a '
-      + 'constraint was later altered or replaced outside a migration. Check `pg_constraint` for '
-      + 'the table/columns named above; if the constraint is simply missing, `--migrate` may still '
-      + 'restore it.');
+      + 'The ledger check (`--check-drift`) cannot see this — it checks which migrations are applied, '
+      + 'not whether a constraint was later dropped or replaced outside a migration. Diagnose: '
+      + '`node scripts/setup-postgres.mjs --check-drift --live` — compares live pg_constraint / '
+      + 'pg_indexes against the expected schema and prints the exact ALTER TABLE ... ADD CONSTRAINT '
+      + 'repair (never applied for you).');
   }
   return lines;
 }

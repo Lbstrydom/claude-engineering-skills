@@ -86,9 +86,13 @@ export function canonicalise(v) {
  *
  * @param {Record<string, unknown>} expectedRaw - the committed manifest
  * @param {Record<string, unknown>} liveRaw - captured from the live DB
+ * @param {{sampleLimit?: number}} [opts] - how many item-level rows to keep per
+ *   side. 5 is the operator-summary default (--adopt); a caller that CLASSIFIES
+ *   every row (`assessConstraintDrift`) passes Infinity — a truncated list would
+ *   silently drop exactly the rows past the fifth.
  * @returns {Array<{category:string, missingInLive:unknown[], extraInLive:unknown[], missingTotal:number, extraTotal:number}>}
  */
-export function diffSchemas(expectedRaw, liveRaw) {
+export function diffSchemas(expectedRaw, liveRaw, { sampleLimit = 5 } = {}) {
   // Normalise BOTH sides before anything is compared or reported, so the
   // item-level diff below can't re-introduce the attnum on the friendly path.
   const expected = denseRankColumnPositions(expectedRaw);
@@ -107,8 +111,8 @@ export function diffSchemas(expectedRaw, liveRaw) {
       const extraInLive = [...lSet].filter((s) => !eSet.has(s));
       differences.push({
         category: k,
-        missingInLive: missingInLive.slice(0, 5).map((s) => JSON.parse(s)),
-        extraInLive: extraInLive.slice(0, 5).map((s) => JSON.parse(s)),
+        missingInLive: missingInLive.slice(0, sampleLimit).map((s) => JSON.parse(s)),
+        extraInLive: extraInLive.slice(0, sampleLimit).map((s) => JSON.parse(s)),
         missingTotal: missingInLive.length,
         extraTotal: extraInLive.length,
       });

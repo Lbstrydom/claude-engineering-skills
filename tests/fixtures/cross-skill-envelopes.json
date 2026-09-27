@@ -636,6 +636,116 @@
         "statsUpdated": false
       }
     },
+    "rec-session-lifecycle-partial-empty": {
+      "args": [
+        "record-persona-session",
+        "--json",
+        "{\"persona\":\"p\",\"url\":\"https://e.test\",\"browserTool\":\"playwright\",\"verdict\":\"Needs work\",\"lifecycle\":{\"status\":\"partial\",\"unchecked\":[]}}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "session payload failed validation",
+          "issues": [
+            {
+              "code": "custom",
+              "path": [
+                "lifecycle",
+                "unchecked"
+              ],
+              "message": "status 'partial' must name at least one unchecked step"
+            }
+          ]
+        }
+      }
+    },
+    "link-pair-missing": {
+      "args": [
+        "link-persona-pair",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "sessionA, sessionB (the two Phase 6 sessionId uuids), consensusCount, aOnlyCount, bOnlyCount are required",
+          "issues": [
+            {
+              "expected": "string",
+              "code": "invalid_type",
+              "path": [
+                "sessionA"
+              ],
+              "message": "Invalid input: expected string, received undefined"
+            },
+            {
+              "expected": "string",
+              "code": "invalid_type",
+              "path": [
+                "sessionB"
+              ],
+              "message": "Invalid input: expected string, received undefined"
+            },
+            {
+              "expected": "number",
+              "code": "invalid_type",
+              "path": [
+                "consensusCount"
+              ],
+              "message": "Invalid input: expected number, received undefined"
+            },
+            {
+              "expected": "number",
+              "code": "invalid_type",
+              "path": [
+                "aOnlyCount"
+              ],
+              "message": "Invalid input: expected number, received undefined"
+            },
+            {
+              "expected": "number",
+              "code": "invalid_type",
+              "path": [
+                "bOnlyCount"
+              ],
+              "message": "Invalid input: expected number, received undefined"
+            }
+          ]
+        }
+      }
+    },
+    "link-pair-rate-mismatch": {
+      "args": [
+        "link-persona-pair",
+        "--json",
+        "{\"sessionA\":\"a4969127-d5d0-47bb-8b2e-0acb0ed71546\",\"sessionB\":\"b4969127-d5d0-47bb-8b2e-0acb0ed71546\",\"consensusCount\":1,\"aOnlyCount\":1,\"bOnlyCount\":2,\"overlapRate\":0.9}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "overlapRate 0.9 disagrees with the counts (consensus / total = 0.25) — send the counts, the rate is derived"
+        }
+      }
+    },
+    "link-pair-cloud-off": {
+      "args": [
+        "link-persona-pair",
+        "--json",
+        "{\"sessionA\":\"a4969127-d5d0-47bb-8b2e-0acb0ed71546\",\"sessionB\":\"b4969127-d5d0-47bb-8b2e-0acb0ed71546\",\"consensusCount\":1,\"aOnlyCount\":1,\"bOnlyCount\":2}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "pairId": null
+      }
+    },
     "fr-adj-cloud-off": {
       "args": [
         "final-review-adjudicate",

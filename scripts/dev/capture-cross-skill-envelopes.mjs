@@ -106,6 +106,15 @@ export const CASES = [
   { id: 'add-persona-cloud-off', args: ['add-persona', '--json', '{"name":"n","description":"d","appUrl":"https://e.test"}'] },
   { id: 'rec-session-missing', args: ['record-persona-session', '--json', '{}'] },
   { id: 'rec-session-cloud-off', args: ['record-persona-session', '--json', '{"persona":"p","url":"https://e.test","browserTool":"playwright","verdict":"Needs work"}'] },
+  // 2026-09-27: `lifecycle` is validated at the boundary — a `partial` that
+  // names no unchecked step is a contradiction, refused before cloud state.
+  { id: 'rec-session-lifecycle-partial-empty', args: ['record-persona-session', '--json', '{"persona":"p","url":"https://e.test","browserTool":"playwright","verdict":"Needs work","lifecycle":{"status":"partial","unchecked":[]}}'] },
+  // link-persona-pair (SKILL.md Step P7) — documented for months, built
+  // 2026-09-27. Missing payload, a rate that disagrees with its own counts,
+  // and the cloud-off degrade.
+  { id: 'link-pair-missing', args: ['link-persona-pair', '--json', '{}'] },
+  { id: 'link-pair-rate-mismatch', args: ['link-persona-pair', '--json', '{"sessionA":"a4969127-d5d0-47bb-8b2e-0acb0ed71546","sessionB":"b4969127-d5d0-47bb-8b2e-0acb0ed71546","consensusCount":1,"aOnlyCount":1,"bOnlyCount":2,"overlapRate":0.9}'] },
+  { id: 'link-pair-cloud-off', args: ['link-persona-pair', '--json', '{"sessionA":"a4969127-d5d0-47bb-8b2e-0acb0ed71546","sessionB":"b4969127-d5d0-47bb-8b2e-0acb0ed71546","consensusCount":1,"aOnlyCount":1,"bOnlyCount":2}'] },
   { id: 'fr-adj-cloud-off', args: ['final-review-adjudicate', '--run-id', 'r1', '--fingerprint', 'f1', '--action', 'accepted'] },
   { id: 'fr-fix-cloud-off', args: ['final-review-record-fix', '--run-id', 'r1', '--fingerprint', 'f1'] },
   { id: 'mab-adj-cloud-off', args: ['model-ab-adjudicate', '--json'] },

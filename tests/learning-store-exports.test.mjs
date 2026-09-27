@@ -202,6 +202,9 @@ const EXPECTED_EXPORTS = [
   'getPersonaSessionsByUrl',
   'listPersonasForApp',
   'recordPersonaSession',
+  // /persona-test --pair Step P7 (2026-09-27) — documented since pair mode
+  // shipped, never built until now: persona_pair_sessions (migration 20260927120000).
+  'recordPersonaPairLink',
   'upsertPersona',
   // persona-clickpath → nav reachability seeding (reader + pure sanitize/unnest helpers)
   'getReachabilityEvidence',
@@ -610,6 +613,9 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // decision (VALID_SEVERITIES.has, not truthiness — a truthy-but-invalid
     // value used to reach the DB CHECK constraint instead) is directly
     // unit-testable, same class as buildFindingRow above.
-    assert.equal(EXPECTED_EXPORTS.length, 210);
+    // 210 → 211: +recordPersonaPairLink (2026-09-27) — the writer behind
+    // `link-persona-pair`, which SKILL.md Step P7 had named for months while
+    // no command, handler or table existed.
+    assert.equal(EXPECTED_EXPORTS.length, 211);
   });
 });

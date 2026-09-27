@@ -88,6 +88,22 @@
     {
       "line": "sentence needs the same two-part answer `/audit-code` Step 3 requires,",
       "reason": "2026-09-25 same-file independence tightening, plan-review twin of the /audit-code entry of the same name (docs/plans/triage-independence-test-and-write-boundary-fixes.md). Instructs the agent writing a defer rationale what it must truthfully claim about a plan's not-yet-built design; no CLI exit code verifies the claimed column/constraint or transaction-instance independence is actually true. Same disposition as the pre-existing document-only/judgement-call entries in this contract (round-caps, mode-plan-required) — agent judgement, not a mechanical seam. Named as a known limitation in the plan's addendum."
+    },
+    {
+      "line": "--final-review .audit/$SID-gemini-result.json`); never ask the user to override",
+      "reason": "Describes debt-auto-capture.mjs --final-review, whose refusal to capture release-blocking findings is pinned by tests/final-review-round-cap-cli.test.mjs; the skill line routes to it."
+    },
+    {
+      "line": "**Hard cap: 2 Gemini rounds** — `gemini-review.mjs` refuses `--round 3`. After",
+      "reason": "Names the final-review round cap. The cap is mechanical one layer down since 2026-09-27: scripts/lib/final-review/round-gate.mjs::validateRoundArgs refuses --round 3+ and gemini-review.mjs exits non-zero before building a provider (pinned by tests/final-review-round-cap-cli.test.mjs, spawning the real CLI, and tests/final-review-round-gate.test.mjs). This skill routes on that result and has no exit code of its own."
+    },
+    {
+      "line": "default; a concrete net-new *design* bug after round 2 goes to the user, never",
+      "reason": "Post-cap escalation policy (fix a design defect, then escalate to the user; never a third round): a judgement routed to the human, backed mechanically only by the round-3 refusal in scripts/lib/final-review/round-gate.mjs."
+    },
+    {
+      "line": "to a third round, and never for rigor pressure or implementation detail. Record the stop decision (round count +",
+      "reason": "Post-cap escalation policy (fix a design defect, then escalate to the user; never a third round): a judgement routed to the human, backed mechanically only by the round-3 refusal in scripts/lib/final-review/round-gate.mjs."
     }
   ]
 }

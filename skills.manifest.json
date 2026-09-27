@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "a4d4e3eea7c8a0fa",
+  "bundleVersion": "d4af5204b4ce2d52",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -54,14 +54,14 @@
     },
     "audit-code": {
       "path": "skills/audit-code/SKILL.md",
-      "sha": "72b4ebabcabe",
-      "size": 52205,
+      "sha": "426fda4c5d73",
+      "size": 53962,
       "summary": "Iteratively audit code against a plan with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "72b4ebabcabe",
-          "size": 52205
+          "sha": "426fda4c5d73",
+          "size": 53962
         },
         {
           "relPath": "examples/contract-test-scaffold.md",
@@ -75,8 +75,8 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "930775b5ed48",
-          "size": 15637
+          "sha": "9dc1ae3e911f",
+          "size": 18741
         },
         {
           "relPath": "references/input-acquisition.md",
@@ -107,19 +107,19 @@
     },
     "audit-plan": {
       "path": "skills/audit-plan/SKILL.md",
-      "sha": "a6bc711552e0",
-      "size": 27524,
+      "sha": "7c437d5f509e",
+      "size": 28074,
       "summary": "Iteratively audit a plan file (docs/plans/*.md) with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "a6bc711552e0",
-          "size": 27524
+          "sha": "7c437d5f509e",
+          "size": 28074
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "930775b5ed48",
-          "size": 15637
+          "sha": "9dc1ae3e911f",
+          "size": 18741
         },
         {
           "relPath": "references/input-acquisition.md",
@@ -191,14 +191,19 @@
     },
     "cycle": {
       "path": "skills/cycle/SKILL.md",
-      "sha": "2f3083679bdd",
-      "size": 42586,
+      "sha": "1ef30594f8d1",
+      "size": 46542,
       "summary": "End-to-end feature cycle orchestrator. Runs the full skill chain in",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "2f3083679bdd",
-          "size": 42586
+          "sha": "1ef30594f8d1",
+          "size": 46542
+        },
+        {
+          "relPath": "references/remediate-mode.md",
+          "sha": "070933e7d722",
+          "size": 10782
         }
       ]
     },
@@ -288,14 +293,14 @@
     },
     "persona-test": {
       "path": "skills/persona-test/SKILL.md",
-      "sha": "ea6f20542a79",
-      "size": 54346,
+      "sha": "8e8ecdedeac9",
+      "size": 59134,
       "summary": "Persona-driven exploratory browser testing against a live URL.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "ea6f20542a79",
-          "size": 54346
+          "sha": "8e8ecdedeac9",
+          "size": 59134
         },
         {
           "relPath": "examples/report-and-debrief.md",
@@ -304,8 +309,8 @@
         },
         {
           "relPath": "references/audit-correlation.md",
-          "sha": "93eb7426b86d",
-          "size": 7285
+          "sha": "3ed7e0cfdee4",
+          "size": 8225
         },
         {
           "relPath": "references/auth-bootstrap.md",

@@ -369,3 +369,27 @@ describe('buildRulingsBlock — deterministic budget + bounded omission marker',
     assert.match(block, /\[dddddd\]/, 'the dismissed entry must not be starved by the fixed group');
   });
 });
+
+// Field report 2026-09-26: ledger entries carry finding-assembly's DISPLAY
+// prefix (`Sustainability`), callers pass the canonical name (`sustainability`).
+// An exact compare gave every non-backend pass an empty rulings block in R2+.
+describe('buildRulingsBlock — pass identity is the display prefix, compared case-insensitively', () => {
+  test('a `Sustainability` entry reaches the `sustainability` pass', () => {
+    writeLedger([wellFormed({ pass: 'Sustainability', category: '[Sustainability] Duplicated section' })]);
+    const block = buildRulingsBlock(ledgerPath, 'sustainability');
+    assert.match(block, /Duplicated section/);
+  });
+
+  test('control: an entry from a different pass stays out', () => {
+    writeLedger([wellFormed({ pass: 'Structure' })]);
+    assert.equal(buildRulingsBlock(ledgerPath, 'sustainability'), '');
+  });
+
+  test('the real display-prefix list: every LLM pass name matches its own prefix', () => {
+    for (const [prefix, passName] of [['Structure', 'structure'], ['Frontend', 'frontend'],
+      ['Quickfix', 'quickfix'], ['Architecture', 'architecture'], ['be-services', 'be-services']]) {
+      writeLedger([wellFormed({ pass: prefix })]);
+      assert.notEqual(buildRulingsBlock(ledgerPath, passName), '', `${prefix} → ${passName}`);
+    }
+  });
+});

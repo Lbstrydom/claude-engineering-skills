@@ -49,7 +49,7 @@
       "kind": "document-only",
       "statedIn": "skills/persona-test/SKILL.md",
       "stated": "requires a composed eligibility predicate, not a single",
-      "reason": "Added 2026-08-20 (lens-coverage-honesty plan §3.2, R3 H1). The Phase 5 `Ready for users` eligibility predicate (terminalReason/authState/originPolicyResult conjuncts) is computed by the agent driving the MCP exploration loop from its own session work-record — exploratory mode has no CLI, so there is no exit code a cli-exit recipe can assert. Same disposition class as the already-contracted 'p0p1-shape-mismatch-never-benign' and 'finding-severity-literal-p0-p3' gates above: agent-emitted judgement over live session state, no importable seam."
+      "reason": "Added 2026-08-20 (lens-coverage-honesty plan §3.2, R3 H1). The Phase 5 `Ready for users` eligibility predicate (terminalReason/authState/originPolicyResult conjuncts) is computed by the agent driving the MCP exploration loop from its own session work-record — exploratory mode has no CLI, so there is no exit code a cli-exit recipe can assert. Same disposition class as the already-contracted 'p0p1-shape-mismatch-never-benign' and 'finding-severity-literal-p0-p3' gates above: agent-emitted judgement over live session state, no importable seam. UPDATED 2026-09-27: the lifecycle conjunct was added, and the STORED verdict is now capped in code — record-persona-session runs capPersonaVerdict (scripts/lib/persona-test/verdict-eligibility.mjs) and writes `Needs work` for a claimed `Ready for users` whose payload fails any conjunct, reporting `verdictCap` (pinned by tests/persona-session-lifecycle-contract.test.mjs). The rendered report's OVERALL line is still the agent's own text, which is why this stays document-only rather than claiming the report itself is gated."
     }
   ],
   "ignoredCandidates": [
@@ -208,6 +208,38 @@
     {
       "line": "under `.audit/`, never `/tmp/` (the two disagree on Windows — see the `.audit/`",
       "reason": "Prose using \"never\"/\"always\" as ordinary English in an explanation, not an enforcement claim about this skill's own gated behaviour. Introduced/reflowed by the 2026-09-10 PowerShell-portability pass."
+    },
+    {
+      "line": "exploring sideways — an unverified lifecycle caps the verdict (Phase 5).",
+      "reason": "The 2026-09-27 lifecycle conjunct of the `Ready for users` predicate. Its STORED half is enforced in code — record-persona-session runs capPersonaVerdict (scripts/lib/persona-test/verdict-eligibility.mjs) and pinned by tests/persona-session-lifecycle-contract.test.mjs — and is dispositioned under the overall-verdict-boundary-cap gate above; the rendered OVERALL line is agent-authored report text with no exit code to assert."
+    },
+    {
+      "line": "`lifecycle.status` is `partial` (and nothing else fails), OVERALL is",
+      "reason": "The 2026-09-27 lifecycle conjunct of the `Ready for users` predicate. Its STORED half is enforced in code — record-persona-session runs capPersonaVerdict (scripts/lib/persona-test/verdict-eligibility.mjs) and pinned by tests/persona-session-lifecycle-contract.test.mjs — and is dispositioned under the overall-verdict-boundary-cap gate above; the rendered OVERALL line is agent-authored report text with no exit code to assert."
+    },
+    {
+      "line": "then lists the unchecked steps. The cap is enforced in code too:",
+      "reason": "The 2026-09-27 lifecycle conjunct of the `Ready for users` predicate. Its STORED half is enforced in code — record-persona-session runs capPersonaVerdict (scripts/lib/persona-test/verdict-eligibility.mjs) and pinned by tests/persona-session-lifecycle-contract.test.mjs — and is dispositioned under the overall-verdict-boundary-cap gate above; the rendered OVERALL line is agent-authored report text with no exit code to assert."
+    },
+    {
+      "line": "whose payload fails any conjunct — including a MISSING `lifecycle`, which is",
+      "reason": "The 2026-09-27 lifecycle conjunct of the `Ready for users` predicate. Its STORED half is enforced in code — record-persona-session runs capPersonaVerdict (scripts/lib/persona-test/verdict-eligibility.mjs) and pinned by tests/persona-session-lifecycle-contract.test.mjs — and is dispositioned under the overall-verdict-boundary-cap gate above; the rendered OVERALL line is agent-authored report text with no exit code to assert."
+    },
+    {
+      "line": "the stored session must never disagree.",
+      "reason": "Instruction to the agent to correct its own report text when the response carries verdictCap — report prose the model authors, no exit code to assert. The stored side is the code-enforced cap above."
+    },
+    {
+      "line": "matcher v2 — it compared two identities that could never be equal.",
+      "reason": "Descriptive history of the correlator (the removed exact tier), not an enforcement claim. The matcher itself is pinned by tests/persona-correlator-route-axis.test.mjs."
+    },
+    {
+      "line": "REFUSES a supplied value that disagrees with them, so send the counts you",
+      "reason": "link-persona-pair (Step P7) behaviour. The refusal of a disagreeing overlapRate (exit 2, BAD_INPUT) and the exit-1 refusal codes are exercised in-process by tests/persona-session-lifecycle-contract.test.mjs and captured as golden envelopes (link-pair-rate-mismatch in tests/fixtures/cross-skill-envelopes.json). Not a persona-test skill gate: the enforcement lives in the cross-skill command, contracted by the registry golden suite."
+    },
+    {
+      "line": "\"overlapRate\": <n>}`. A refusal exits 1 with a code naming it:",
+      "reason": "link-persona-pair (Step P7) behaviour. The refusal of a disagreeing overlapRate (exit 2, BAD_INPUT) and the exit-1 refusal codes are exercised in-process by tests/persona-session-lifecycle-contract.test.mjs and captured as golden envelopes (link-pair-rate-mismatch in tests/fixtures/cross-skill-envelopes.json). Not a persona-test skill gate: the enforcement lives in the cross-skill command, contracted by the registry golden suite."
     }
   ]
 }

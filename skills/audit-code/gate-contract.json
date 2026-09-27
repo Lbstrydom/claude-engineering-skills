@@ -454,6 +454,30 @@
     {
       "line": "`fix-now`. Invariant: **never `defer` because",
       "reason": "Continuation of the honest-deferral-check paragraph (2026-09-25 tightening) — 'never defer because the fix is merely larger' is an instruction to the agent's triage judgement, with no CLI exit code asserting a given defer's stated reason was actually size-not-scope. Same disposition as the pre-existing Step 3.5b 'labelled: 0 is a failure to fix, never a pass' judgement-call entries in this contract."
+    },
+    {
+      "line": "Add `--round 1` to the first run. **Hard cap: 2 final-review rounds** —",
+      "reason": "Names the final-review round cap. The cap is mechanical one layer down since 2026-09-27: scripts/lib/final-review/round-gate.mjs::validateRoundArgs refuses --round 3+ and gemini-review.mjs exits non-zero before building a provider (pinned by tests/final-review-round-cap-cli.test.mjs, spawning the real CLI, and tests/final-review-round-gate.test.mjs). This skill routes on that result and has no exit code of its own."
+    },
+    {
+      "line": "`gemini-review.mjs` refuses `--round 3`; never loop past it.",
+      "reason": "Names the final-review round cap. The cap is mechanical one layer down since 2026-09-27: scripts/lib/final-review/round-gate.mjs::validateRoundArgs refuses --round 3+ and gemini-review.mjs exits non-zero before building a provider (pinned by tests/final-review-round-cap-cli.test.mjs, spawning the real CLI, and tests/final-review-round-gate.test.mjs). This skill routes on that result and has no exit code of its own."
+    },
+    {
+      "line": "stdout summary `Gate: …`) carries a code-computed `gateDisposition`; `verdict`",
+      "reason": "Describes routing on gateDisposition, which is computed in code by scripts/lib/final-review/round-gate.mjs (truth table pinned by tests/final-review-round-gate.test.mjs); the skill routes on it and enforces nothing itself."
+    },
+    {
+      "line": "| `blocked` | `gateDispositionDetail.reasons` names why (a release-blocking finding, a HIGH `wrongly_dismissed`, `REJECT`, or coverage gate). Round 1 → Step 7.1: fix the blocking items, rebuild the transcript, run round 2. Round 2 → present the named blocking items to the user; there is no round 3. |",
+      "reason": "Describes routing on gateDisposition, which is computed in code by scripts/lib/final-review/round-gate.mjs (truth table pinned by tests/final-review-round-gate.test.mjs); the skill routes on it and enforces nothing itself."
+    },
+    {
+      "line": "Capture non-blocking findings as debt from the result that closed the gate",
+      "reason": "Describes debt-auto-capture.mjs --final-review, whose refusal to capture release-blocking findings is pinned by tests/final-review-round-cap-cli.test.mjs; the skill line routes to it."
+    },
+    {
+      "line": "(`-v2` after round 2; release-blocking ones are never captured; `--dry-run`",
+      "reason": "Describes debt-auto-capture.mjs --final-review, whose refusal to capture release-blocking findings is pinned by tests/final-review-round-cap-cli.test.mjs; the skill line routes to it."
     }
   ]
 }

@@ -196,7 +196,6 @@ export const BASELINE = new Set([
   'scripts/debt-pr-comment.mjs',
   'scripts/debt-review.mjs',
   'scripts/evolve-prompts.mjs',
-  'scripts/gemini-review.mjs',
   'scripts/lib/learning/quickfix-stats.mjs',
   'scripts/lib/npm-script-enumerator.mjs',
   'scripts/meta-assess.mjs',

@@ -77,7 +77,7 @@ export const DRAIN_CAP = (() => {
   return Number.isFinite(n) && n > 0 ? n : 100;
 })();
 
-/** @type {Map<string, {schemaVersion:number, rowKey:?Function, replay:Function}>} */
+/** @type {Map<string, {schemaVersion:number, rowKey:?Function, replay:Function, telemetry:boolean}>} */
 const _registry = new Map();
 
 /**
@@ -91,6 +91,10 @@ const _registry = new Map();
  *   is `lost`, never replayed. These are BATCH writers, so the key is derived
  *   per row inside `replay`, not once per payload — a payload-level key would
  *   collapse every batch to one value.
+ * @param {boolean} [spec.telemetry] - true for a write-only telemetry mirror
+ *   whose loss says nothing about the AUDIT: it is still counted, named and
+ *   printed, but tallied as `telemetryLost` instead of `lost`, so it cannot
+ *   make `runStatus` 'incomplete'. Reserve it for writes no later audit reads.
  * @param {(payload: object) => Promise<{applied: boolean}>} spec.replay - the
  *   same code path the live write uses. MUST resolve `{applied: true}` only
  *   when the write is durably applied; a bare `undefined` (what an early
@@ -106,6 +110,9 @@ export function registerWriter(writerId, spec) {
   if (!Number.isInteger(spec.schemaVersion) || spec.schemaVersion < 1) {
     throw new TypeError(`registerWriter(${writerId}): schemaVersion must be a positive integer`);
   }
+  if (spec.telemetry !== undefined && typeof spec.telemetry !== 'boolean') {
+    throw new TypeError(`registerWriter(${writerId}): telemetry must be a boolean when present`);
+  }
   if (spec.rowKey !== undefined && typeof spec.rowKey !== 'function') {
     throw new TypeError(`registerWriter(${writerId}): rowKey must be a function when present`);
   }
@@ -113,8 +120,12 @@ export function registerWriter(writerId, spec) {
     schemaVersion: spec.schemaVersion,
     rowKey: spec.rowKey ?? null,
     replay: spec.replay,
+    telemetry: spec.telemetry === true,
   });
 }
+
+/** True only for a writer registered with `telemetry: true`; unknown ids are NOT telemetry. */
+export function isTelemetryWriter(writerId) { return _registry.get(writerId)?.telemetry === true; }
 
 /** Registered writer ids — the call-site oracle reads this. */
 export function registeredWriters() { return [..._registry.keys()]; }

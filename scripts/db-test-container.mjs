@@ -166,6 +166,11 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   'tests/on-conflict-scope-identity.test.mjs',
   'tests/persist-kept-embeddings.test.mjs',
   'tests/persona-outcomes-hash-backfill.test.mjs',
+  // Enrolled 2026-09-27 with migration 20260927120000 (persona_pair_sessions):
+  // the INSERT … SELECT refusals, NULL-safe repo match, ON CONFLICT re-post
+  // and statsReason are all properties only Postgres has. Two edits, always —
+  // this list AND postgres-parity.yml.
+  'tests/persona-pair-link-db.test.mjs',
   'tests/plans-ship-persona-correlation.test.mjs',
   'tests/record-findings-write-boundary.test.mjs',
   'tests/refresh-provenance-promotion.test.mjs',

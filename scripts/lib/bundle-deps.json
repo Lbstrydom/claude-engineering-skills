@@ -190,6 +190,7 @@
         "scripts/.claude-skills/lib/oss-structured-output.mjs",
         "scripts/.claude-skills/lib/persona-test/schemas.mjs",
         "scripts/.claude-skills/lib/persona-test/semantic-compare.mjs",
+        "scripts/.claude-skills/lib/persona-test/verdict-eligibility.mjs",
         "scripts/.claude-skills/lib/remediation-verification.mjs",
         "scripts/.claude-skills/lib/requirements/schema.mjs",
         "scripts/.claude-skills/lib/runner-inventory.mjs",

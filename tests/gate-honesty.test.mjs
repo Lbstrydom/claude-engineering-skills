@@ -183,7 +183,11 @@ const PINNED_DOCUMENT_ONLY = {
   // emits no exit code; the enforcing non-zero exit lives in
   // scripts/cycle-cluster-scope.mjs and is pinned against real git repos by
   // tests/cycle-audit-scope-contract.test.mjs.
-  cycle: ['cluster-scope-preflight-exits-nonzero', 'cluster-start-ref-validated-on-use', 'preview-gate-halt-blocks-ship', 'fix-gate-convergence-before-next-cluster', 'author-tier-never-routes', 'consolidated-gemini-gate-mandatory'],
+  // +2 remediate-focused-audit-scope, audit-plan-skip-requires-explicit-mode
+  // (REMEDIATE mode, 2026-09-27): the first reuses the cluster-scope exit via
+  // Step R4; the second is document-only BECAUSE no plan-content identity exists
+  // in the store to build an oracle on (see the gate's reason).
+  cycle: ['remediate-focused-audit-scope', 'audit-plan-skip-requires-explicit-mode', 'cluster-scope-preflight-exits-nonzero', 'cluster-start-ref-validated-on-use', 'preview-gate-halt-blocks-ship', 'fix-gate-convergence-before-next-cluster', 'author-tier-never-routes', 'consolidated-gemini-gate-mandatory'],
   plan: ['gate-1-phase-triggers', 'never-a-lone-phase-1', 'warnings-never-block-plan-generation', 'section-10-graded-by-ux-lock-verify'],
 };
 const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'audit-plan', 'brainstorm', 'click-test', 'cycle', 'explain', 'investigate', 'nav-audit', 'persona-test', 'plan', 'security-strategy', 'ship', 'skills', 'ux-lock', 'visual-audit'];
@@ -301,7 +305,12 @@ describe('gate-honesty — real skills/', () => {
     //   chain in both directions, and tests/cross-skill-store-calls.test.mjs
     //   pins that an unresolved scope makes NO store call — so `measured:false`
     //   can never be a measured zero.
-    assert.equal(totalDocOnly, 52);   // +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5); +2 ship: converged + no-tests cap (2026-09-04)
+    // 52 -> 54: +2 cycle (remediate-focused-audit-scope and
+    //   audit-plan-skip-requires-explicit-mode, REMEDIATE mode, 2026-09-27).
+    //   Document-only: /cycle emits no exit code, and the accepted-plan skip has
+    //   no content-identity oracle to bind to (plan-mode audit_runs carry HEAD,
+    //   not the audited plan bytes).
+    assert.equal(totalDocOnly, 54);   // +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5); +2 ship: converged + no-tests cap (2026-09-04)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));

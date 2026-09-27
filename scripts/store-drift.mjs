@@ -78,7 +78,10 @@ export function queryStoreDrift(store) {
   try {
     const out = execFileSync(
       process.execPath,
-      [SETUP_CLI, '--check-drift', '--format', 'json'],
+      // --live (2026-09-27): a store can have a clean ledger and still have lost
+      // a constraint out-of-band — the bandit_arms_unique incident. The live
+      // half compares key constraints/indexes against this revision's manifest.
+      [SETUP_CLI, '--check-drift', '--live', '--format', 'json'],
       {
         cwd: REPO_ROOT,
         encoding: 'utf-8',
@@ -142,19 +145,26 @@ export function collectDrift({ stores, unresolved, query }) {
     const d = res.drift.drift ?? {};
     const unapplied = Array.isArray(d.unapplied) ? d.unapplied : [];
     const shaMismatch = Array.isArray(d.shaMismatch) ? d.shaMismatch : [];
-    queried.push({ store: describeStore(store), unapplied: unapplied.length, shaMismatch: shaMismatch.length });
+    const live = res.drift.liveConstraints;
+    const liveBroken = live?.measured ? [...(live.missing || []), ...(live.altered || [])] : [];
+    queried.push({
+      store: describeStore(store), unapplied: unapplied.length, shaMismatch: shaMismatch.length,
+      liveMeasured: !!live?.measured, liveBroken: liveBroken.length,
+    });
     // `orphanLedger` is DELIBERATELY not counted as behind: it means the store
     // knows a migration this checkout does not have, which is what a stale
     // working tree looks like from the store's side — not a store that is
     // missing anything. Counting it would make every out-of-date branch report
     // its consumers as broken.
-    if (unapplied.length > 0 || shaMismatch.length > 0) {
+    if (unapplied.length > 0 || shaMismatch.length > 0 || liveBroken.length > 0) {
       behind.push({
         store: describeStore(store),
         unapplied: unapplied.slice(0, 5),
         unappliedTotal: unapplied.length,
         shaMismatch: shaMismatch.slice(0, 5),
         shaMismatchTotal: shaMismatch.length,
+        liveBroken: liveBroken.slice(0, 5).map((f) => `${f.table}.${f.name}`),
+        liveBrokenTotal: liveBroken.length,
       });
     }
   }
@@ -197,10 +207,20 @@ export function renderDrift(result) {
       if (s.shaMismatchTotal > 0) {
         lines.push(`    • ${s.store} — ${s.shaMismatchTotal} applied with a DIFFERENT sha (edited migration?)`);
       }
+      if (s.liveBrokenTotal > 0) {
+        lines.push(`    • ${s.store} — ${s.liveBrokenTotal} expected constraint/index missing or altered: ${s.liveBroken.join(', ')}`);
+        lines.push(`        ${D}repair SQL: run setup-postgres.mjs --check-drift --live with that store's DSN${X}`);
+      }
     }
     lines.push(`  ${D}That store's code and schema disagree: a feature can be fully synced and still inert there.${X}`);
     lines.push(`  ${D}Apply with that store's OWNER DSN (the runtime role usually cannot):${X}`);
     lines.push(`  ${D}  AUDIT_DB_URL=<owner dsn> node scripts/setup-postgres.mjs --migrate${X}`);
+  }
+
+  // A store whose ledger answered but whose live check could not measure is
+  // not "current" on the constraint axis — say so rather than let it pass.
+  for (const q of result.queried) {
+    if (!q.liveMeasured) lines.push(`  ${Y}live constraints NOT measured${X} ${q.store} ${D}— ledger only${X}`);
   }
 
   // Printed on EVERY path, including the clean one — a store nobody could reach

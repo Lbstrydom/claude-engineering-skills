@@ -554,7 +554,7 @@ async function main() {
         execFileSync('node', geminiArgs, { stdio: 'inherit', timeout: 300000 });
         const geminiResult = parseResults(geminiOutFile);
         if (geminiResult) {
-          banner(`FINAL REVIEW — ${geminiResult.verdict || 'UNKNOWN'}\n  Provider: ${provider}\n  New findings: ${(geminiResult.new_findings || []).length}\n  Wrongly dismissed: ${(geminiResult.wrongly_dismissed || []).length}`);
+          banner(`FINAL REVIEW — ${geminiResult.verdict || 'UNKNOWN'} (gate: ${geminiResult.gateDisposition || 'n/a'})\n  Provider: ${provider}\n  New findings: ${(geminiResult.new_findings || []).length}\n  Wrongly dismissed: ${(geminiResult.wrongly_dismissed || []).length}`);
         }
       } catch (err) {
         console.error(`${Y}Final review failed${X}: ${err.message?.slice(0, 200)}`);

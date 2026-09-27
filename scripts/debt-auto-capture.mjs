@@ -28,6 +28,15 @@
  *   node scripts/debt-auto-capture.mjs --ledger <path> --reason blocked-by --blocked-by "owner/repo#123"
  *   node scripts/debt-auto-capture.mjs --ledger <path> --dry-run
  *   node scripts/debt-auto-capture.mjs --ledger <path> --run <SID>
+ *   node scripts/debt-auto-capture.mjs --final-review <gemini-result.json> [--dry-run] [--run <SID>]
+ *
+ * `--final-review` (instead of `--ledger`) captures every NON-release-blocking
+ * `new_findings` entry of a final-review (`gemini-review.mjs --out`) result as
+ * debt — the approved-with-debt close of the final gate. Release-blocking
+ * findings are never captured (they block ship); which is which is decided by
+ * `lib/final-review/round-gate.mjs`, the same predicate the gate itself uses.
+ * The entries are projected onto the ledger-entry shape and flow through the
+ * SAME build/persist path below — there is no second debt writer.
  *
  * Exit codes:
  *   0 — COMPLETE capture: every deferred ledger entry landed in the debt
@@ -57,6 +66,7 @@ import {
 import { resolveRepoForStore, initLearningStore, isCloudEnabled } from './learning-store.mjs';
 import { generateRepoProfile } from './lib/context.mjs';
 import { finishAndExit } from './lib/cli-io.mjs';
+import { finalReviewToLedgerEntries } from './lib/final-review/round-gate.mjs';
 // Side-effecting import — populates the process-local writer registry
 // (`debt.entries` among others) the same way the orchestrator does. Without
 // it this CLI, run standalone, would find zero handlers and every write
@@ -68,6 +78,7 @@ import './lib/audit-store-writers.mjs';
 function parseArgs(argv) {
   const args = {
     ledger: null,
+    finalReview: null,          // gemini-review --out result JSON (alternative to --ledger)
     reason: 'out-of-scope',     // default deferredReason
     blockedBy: undefined,
     followupPr: undefined,
@@ -86,6 +97,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--ledger':          args.ledger         = argv[++i]; break;
+      case '--final-review':    args.finalReview    = argv[++i]; break;
       case '--reason':          args.reason         = argv[++i]; break;
       case '--blocked-by':      args.blockedBy      = argv[++i]; break;
       case '--followup-pr':     args.followupPr     = argv[++i]; break;
@@ -108,12 +120,16 @@ function parseArgs(argv) {
 function usage() {
   console.log(`
 Usage: node scripts/debt-auto-capture.mjs --ledger <path> [options]
+       node scripts/debt-auto-capture.mjs --final-review <gemini-result.json> [options]
 
 Reads an adjudication ledger and captures all ruling=defer entries to
 .audit/tech-debt.json. Run after Step 3.5 and before Step 4.
 
 Options:
-  --ledger <path>        Path to adjudication ledger JSON (required)
+  --ledger <path>        Path to adjudication ledger JSON (this or --final-review)
+  --final-review <path>  A gemini-review --out result: capture every NON-release-
+                         blocking new_finding as debt (approved-with-debt close).
+                         Release-blocking findings are listed, never captured.
   --reason <r>           deferredReason for all entries (default: out-of-scope)
                          Choices: out-of-scope | blocked-by | deferred-followup
                                   accepted-permanent | policy-exception
@@ -609,6 +625,24 @@ async function runSupersedeIfRequested(args) {
   }
 }
 
+// ── --final-review projection ────────────────────────────────────────────────
+
+/**
+ * Turn a final-review result into the `{entries}` shape the rest of main()
+ * consumes, and say — on stderr, before anything is written — which findings
+ * are release-blocking and therefore NOT captured, and which could not be
+ * keyed. Returns null for a result with no new_findings array.
+ */
+function projectFinalReview(result) {
+  if (!result || !Array.isArray(result.new_findings)) return null;
+  const { entries, skipped, blocked } = finalReviewToLedgerEntries(result);
+  if (blocked.length > 0) {
+    process.stderr.write(`  [auto-capture] NOT captured — release-blocking (they block ship, they are not debt): ${blocked.join(', ')}\n`);
+  }
+  for (const s of skipped) process.stderr.write(`  [auto-capture] Skipped ${s.id}: ${s.reason}\n`);
+  return { entries, skipped };
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -616,15 +650,15 @@ async function main() {
 
   if (args.help) { usage(); return; }
 
-  if (!args.ledger) {
-    console.error('Error: --ledger <path> is required');
+  if (!args.ledger === !args.finalReview) {
+    console.error('Error: exactly one of --ledger <path> or --final-review <path> is required');
     usage();
     process.exit(1);
   }
 
-  const ledgerPath = path.resolve(args.ledger);
+  const ledgerPath = path.resolve(args.ledger ?? args.finalReview);
   if (!fs.existsSync(ledgerPath)) {
-    console.error(`Error: ledger not found: ${ledgerPath}`);
+    console.error(`Error: ${args.finalReview ? 'final-review result' : 'ledger'} not found: ${ledgerPath}`);
     process.exit(1);
   }
 
@@ -647,14 +681,20 @@ async function main() {
     process.exit(1);
   }
 
+  if (args.finalReview) adjLedger = projectFinalReview(adjLedger);
+
   if (!adjLedger || !Array.isArray(adjLedger.entries)) {
-    console.error('Error: ledger has no entries array');
+    console.error(`Error: ${args.finalReview ? 'final-review result has no new_findings array' : 'ledger has no entries array'}`);
     process.exit(1);
   }
 
   const deferredEntries = adjLedger.entries.filter(e => e.ruling === 'defer');
   if (deferredEntries.length === 0) {
-    console.log('No deferred entries in ledger — nothing to capture.');
+    const unkeyed = adjLedger.skipped?.length ?? 0;
+    console.log(`No deferred entries in ${args.finalReview ? 'final-review result' : 'ledger'} — nothing to capture.`);
+    // A --final-review candidate that could not be keyed is a debt item that
+    // did NOT land — the same partial-capture failure as a rejected entry.
+    if (unkeyed > 0) { console.error(`PARTIAL CAPTURE: ${unkeyed} non-blocking finding(s) could not be keyed (see stderr).`); await finishAndExit(1); }
     return;
   }
 
@@ -665,12 +705,12 @@ async function main() {
   // reason; the other four deferredReason values aren't about the
   // independence test this nudge exists to catch.
   const changedFiles = args.changed ? args.changed.split(',').map((s) => s.trim()).filter(Boolean) : undefined;
-  const sameFileBatches = reason === 'out-of-scope'
-    ? detectSameFileBatchDefers(deferredEntries, { changedFiles })
-    : [];
-  const templateBatches = reason === 'out-of-scope'
-    ? detectTemplateRationales(deferredEntries)
-    : [];
+  // Both nudges audit a HUMAN's out-of-scope independence argument; a
+  // final-review capture's rationale is generated from the classification, so
+  // the template nudge would fire on its own boilerplate. Skipped there.
+  const nudge = reason === 'out-of-scope' && !args.finalReview;
+  const sameFileBatches = nudge ? detectSameFileBatchDefers(deferredEntries, { changedFiles }) : [];
+  const templateBatches = nudge ? detectTemplateRationales(deferredEntries) : [];
 
   if (args.dryRun) {
     console.log(`\n[DRY RUN] Would capture ${deferredEntries.length} deferred entries:`);
@@ -682,6 +722,7 @@ async function main() {
   }
 
   const { built, skipped } = buildEntries(deferredEntries, reason, sid, args);
+  skipped.push(...(adjLedger.skipped ?? []).map((s) => ({ topicId: s.id, reason: s.reason })));
 
   if (built.length === 0) {
     console.error(`All ${deferredEntries.length} entries failed to build. Check stderr for details.`);

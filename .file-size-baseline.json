@@ -5,7 +5,7 @@
   "files": {
     "scripts/campaign.mjs": 1019,
     "scripts/cross-skill.mjs": 1124,
-    "scripts/gemini-review.mjs": 1138,
+    "scripts/gemini-review.mjs": 1129,
     "scripts/lib/anthropic-client.mjs": 1029,
     "scripts/lib/audit/evidence-triage.mjs": 1245,
     "scripts/lib/audit/legacy-production-audit.mjs": 1702,
@@ -19,7 +19,7 @@
     "scripts/lib/sync-isolation-verify.mjs": 1032,
     "scripts/lib/upstream/commands.mjs": 1093,
     "scripts/openai-audit.mjs": 1321,
-    "scripts/setup-postgres.mjs": 1506,
+    "scripts/setup-postgres.mjs": 1372,
     "scripts/solo-control-audit.mjs": 2461,
     "scripts/symbol-index/extract.mjs": 1219,
     "scripts/sync-to-repos.mjs": 2709

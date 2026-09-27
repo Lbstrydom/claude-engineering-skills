@@ -479,7 +479,39 @@ Each step is **Plan → Act → Reflect → Record**:
 
 Record a finding only when confidence ≥0.6. Below that, note it as
 "uncertain — did not report". Every finding needs `element`, `observed`,
-`fix`, `severity`, `confidence`.
+`fix`, `severity`, `confidence` — and `step`, the 1-based Act step it was
+observed on. `step` is how the auto-correlator (Phase 6b) finds the page URL
+the finding happened on (via `clickPath`) and compares it with the audited
+file that serves that page; a finding without it correlates on its text alone.
+
+### Stateful mission checklist (REQUIRED when the goal changes state)
+
+A persona goal that **creates, submits, approves, completes, or selects an
+item and hands it to another screen** is a stateful mission. Reaching the goal
+is not the same as verifying it: a run once read `Ready for users` with 0
+P0/P1, and a deeper run of the same app found two P1s — the handover opened a
+*different* item than the one selected before navigation, and a completed item
+vanished from its queue instead of showing as completed. Both were visible
+only by checking state across the boundary, not by reaching the end.
+
+For a stateful mission, verify each of these six steps, by screenshot, and
+record which you could not:
+
+| Step id | Verify |
+|---|---|
+| `initial-state` | The state before acting — the queue/list/count as it stands |
+| `selected-identity` | The immutable identity of what was selected (id, name, row) — note it before acting |
+| `post-boundary-state` | After a rerender or a navigation boundary, the SAME identity is still the one in play |
+| `command-outcome` | The command's own outcome — the success state, not just the absence of an error |
+| `return-to-origin` | Back at the origin screen, it reflects the change |
+| `retained-history` | History/progress survives: completed items stay visible as completed, counts agree |
+
+Record the outcome as the work-record's `lifecycle`:
+`{"status": "verified" | "partial" | "not-applicable", "unchecked": [<step ids>]}` —
+`verified` (all six checked, `unchecked: []`), `partial` (at least one not
+checked — list exactly which), or `not-applicable` (the goal changes no state:
+reading, browsing, searching). Spend step budget on the checklist before
+exploring sideways — an unverified lifecycle caps the verdict (Phase 5).
 
 ### Session work-record (append-only; Phase 5 renders from this, never composes fresh)
 
@@ -491,6 +523,7 @@ Record a finding only when confidence ≥0.6. Below that, note it as
 | `originPolicyResult` | one of `same-origin-only` (default; nothing cross-origin attempted) / `cross-origin-attempted-and-blocked` (the persona tried; the safety policy above refused) / `n/a` |
 | `terminalReason` | **exhaustive, closed enum** — set once, when the loop stops: `goal-reached` / `step-budget-exhausted` / `abandonment-threshold-hit` / `auth-wall-blocked` / `tool-error` / `safety-refusal` |
 | `authState` | `n/a-no-auth-encountered` / `authenticated-via-bootstrap` / `auth-wall-untested` (the last aligns with `authWallUntested` below) |
+| `lifecycle` | `{status, unchecked}` from the stateful mission checklist above — `verified` / `partial` (+ the unchecked step ids) / `not-applicable` |
 
 Every field is a direct record of something this loop already decides — this
 adds recording discipline, not new judgement calls.
@@ -680,6 +713,7 @@ COVERAGE (relative to this persona's own session — not an inventory scan)
   Focus:          <declaredFocus>
   Origin:         <originPolicyResult>
   Auth:           <authState>
+  Lifecycle:      <verified | partial (unchecked: <step ids>) | not-applicable>
 
   Not a surface-complete scan: this persona explored as it naturally would,
   not exhaustively. For surface-complete coverage, run /nav-audit or
@@ -700,7 +734,16 @@ check** — a clean run (no P0/P1 findings) AND **every one** of:
 terminalReason      === 'goal-reached'
 authState           !== 'auth-wall-untested'
 originPolicyResult  !== 'cross-origin-attempted-and-blocked'
+lifecycle.status    in ('verified', 'not-applicable')
 ```
+
+**A reached goal with an unverified lifecycle is not a clean pass.** When
+`lifecycle.status` is `partial` (and nothing else fails), OVERALL is
+`Needs work` and the Reason line opens `Goal reached — lifecycle unverified`,
+then lists the unchecked steps. The cap is enforced in code too:
+`record-persona-session` stores `Needs work` for a claimed `Ready for users`
+whose payload fails any conjunct — including a MISSING `lifecycle`, which is
+unreported, not verified — and says so in the response's `verdictCap`.
 
 Any failing conjunct caps OVERALL at `Needs work`, and the Reason line names
 **every** failing conjunct (a run can fail more than one). This generalises
@@ -755,10 +798,13 @@ node scripts/cross-skill.mjs record-persona-session --json '{
   "persona": "<persona>",
   "url": "<url>",
   "focus": "<focus or null>",
-  "browserDriver": "<browser_driver>",
-  "browserStatus": "<ok|degraded|blocked>",
+  "browserTool": "<browser_driver> (<ok|degraded|blocked>)",
   "stepsTaken": <N>,
   "verdict": "<verdict>",
+  "lifecycle": {"status": "<verified|partial|not-applicable>", "unchecked": [<step ids>]},
+  "terminalReason": "<terminalReason>",
+  "authState": "<authState>",
+  "originPolicyResult": "<originPolicyResult>",
   "p0Count": <n>, "p1Count": <n>, "p2Count": <n>, "p3Count": <n>,
   "avgConfidence": <0-1>,
   "findings": <JSON array>,
@@ -796,13 +842,21 @@ from. Each entry:
   need to pre-trim, but keep it to the meaningful navigation steps.
 
 Response `{"ok": true, "cloud": ..., "sessionId": "<uuid>", "sessionKey":
-"<persona-test-…>", "existed": bool, "statsUpdated": bool,
-"correlationSummary": {...}}`. `sessionId` is the row's uuid PK — that is the
+"<persona-test-…>", "existed": bool, "statsUpdated": bool, "statsReason": ...,
+"correlationSummary": {...}, "verdictCap"?: {...}}`. `sessionId` is the row's uuid PK — that is the
 one later phases pass as `personaSessionId`. `sessionKey` is the minted
 `session_id` text, needed only to re-post this same session.
-If `statsUpdated: false`,
-log a stderr warning — session is preserved; stats self-heal on the next
-reconciler run.
+If `statsUpdated: false`, the session is preserved but the persona's
+`last_tested_at`/`last_verdict` were NOT updated, and `statsReason` says why:
+`no-persona-id` (an ad-hoc persona not in the registry — pass the registered
+id when one exists), `stats-write-failed` (the update threw; see stderr), or
+the rare `persona-not-found` (the persona was deleted mid-run). No reconciler
+back-fills these fields; do not report them as self-healing.
+
+If `verdictCap` is present, the store did NOT record the verdict you claimed:
+`{"claimed": "Ready for users", "stored": "Needs work", "blockers": [...],
+"label": ...}`. Correct the report's OVERALL line to match — the report and
+the stored session must never disagree.
 
 ---
 
@@ -828,13 +882,18 @@ this is the visibility the mechanism depends on). Shape:
   "attempted": true,
   "reason": null,
   "candidates": 4,
-  "exact": 0, "fuzzy": 2, "missed": 1,
+  "route": 1, "fuzzy": 1, "missed": 1,
   "skippedExisting": 0,
   "malformed": 0,
   "writeFailed": 0,
-  "matcherVersion": 1
+  "matcherVersion": 2
 }
 ```
+
+`route` counts matches whose file axis came from the finding's page URL naming
+the audited file (`/score_entry` ↔ `2_score_entry.py`); `fuzzy` counts
+matches on path/keyword token overlap alone. There is no `exact` tier since
+matcher v2 — it compared two identities that could never be equal.
 
 `attempted: false` means the correlator didn't run at all — `reason` says why
 (`disabled-by-flag`, `no-repo-identity`, `no-p0p1-findings`,
@@ -1025,9 +1084,14 @@ COVERAGE METRIC
     0.20–0.50 — Healthy mix of consensus + coverage.
     > 0.50 — High overlap. Consider picking more dissimilar personas next time.
 
-OVERALL: <Ship | Needs work | Blocked>
-  Reason: <one sentence — usually driven by max(verdict_a, verdict_b)>
+OVERALL: <Ready for users | Needs work | Blocked>
+  Reason: <one sentence — the WORSE of verdict_a and verdict_b>
 ```
+
+OVERALL uses the solo vocabulary, and is the worse of the two solo verdicts
+(`Blocked` > `Needs work` > `Ready for users`): the pair is ready for users
+only when both personas' runs independently are — including each one's
+lifecycle conjunct.
 
 ### Step P6 — Skip the secondary debrief
 
@@ -1037,13 +1101,13 @@ is about finding-level diff, not narrative synthesis.
 
 ### Step P7 — Session linkage
 
-When both `session_id_a` and `session_id_b` are non-null (memory enabled),
-record the pairing:
+When both solo runs were saved (memory enabled), record the pairing. The ids
+are each Phase 6 response's `sessionId` (the row uuid), **not** `sessionKey`:
 
 ```bash
 node scripts/cross-skill.mjs link-persona-pair --json '{
-  "sessionA": "<session_id_a>",
-  "sessionB": "<session_id_b>",
+  "sessionA": "<sessionId from persona A's Phase 6>",
+  "sessionB": "<sessionId from persona B's Phase 6>",
   "consensusCount": <n>,
   "aOnlyCount": <n>,
   "bOnlyCount": <n>,
@@ -1051,8 +1115,14 @@ node scripts/cross-skill.mjs link-persona-pair --json '{
 }'
 ```
 
-Graceful no-op if the subcommand doesn't exist yet — log one stderr line
-and continue. The pair report on stdout is the authoritative artefact.
+`overlapRate` is optional — the CLI derives it from the three counts and
+REFUSES a supplied value that disagrees with them, so send the counts you
+printed in Step P5. Response `{"ok": true, "cloud": true, "pairId": "<uuid>",
+"overlapRate": <n>}`. A refusal exits 1 with a code naming it:
+`PARENT_NOT_FOUND` (a session id matches no row) or `PARENT_NOT_OWNED` (the
+sessions belong to different repos, or not to this one). With the cloud store
+off it returns `{"ok": true, "cloud": false, "pairId": null}` — say in the
+report that the pairing was not persisted rather than implying it was.
 
 ---
 

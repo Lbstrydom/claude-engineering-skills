@@ -865,7 +865,15 @@ export function buildRulingsBlock(ledgerPath, passName, impactSet = []) {
     return '';
   }
 
-  const scoped = (Array.isArray(ledger.entries) ? ledger.entries : []).filter(e => e && e.pass === passName);
+  // Case-insensitive: entries record `pass` as finding-assembly's DISPLAY prefix
+  // (`Sustainability`, `Structure`, `Frontend`, `Quickfix`, `Architecture`),
+  // while callers pass the canonical lowercase name. An exact compare matched
+  // only the backend passes, whose prefix IS their name — every other pass ran
+  // R2+ with no rulings at all, and re-raised dismissed claims (field report
+  // 2026-09-26: a refuted "duplicated section" LOW came back in R2).
+  const wanted = String(passName).toLowerCase();
+  const scoped = (Array.isArray(ledger.entries) ? ledger.entries : [])
+    .filter(e => e && typeof e.pass === 'string' && e.pass.toLowerCase() === wanted);
   if (scoped.length === 0) return '';
 
   // Defensive: an entry missing `topicId` (its identity) can't be rendered

@@ -181,6 +181,16 @@ export const REGISTRY = Object.freeze([
     load: () => import('./commands/persona.mjs').then((m) => m.recordCorrelationCmd),
   },
   {
+    // /persona-test --pair Step P7 (2026-09-27). Documented since pair mode
+    // shipped; the command did not exist until now. A refusal (dangling or
+    // cross-repo session) throws with its own code, exit 1.
+    name: 'link-persona-pair',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop',
+    degradeShape: { pairId: null },
+    load: () => import('./commands/persona.mjs').then((m) => m.linkPersonaPairCmd),
+  },
+  {
     name: 'record-nav-audit-run',
     flags: [], positionals: 'none', payload: 'json',
     scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop',

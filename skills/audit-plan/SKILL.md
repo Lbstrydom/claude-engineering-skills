@@ -440,7 +440,7 @@ It discovers every `.audit/$SID-r<N>-result.json`, folds in
 
 ```bash
 RUN_ID=$(node -e "const fs=require('fs'); try { process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))._cloudRunId||''); } catch { process.stdout.write(''); }" ".audit/$SID-r$ROUND-result.json")
-node scripts/gemini-review.mjs review "$PLAN_FILE" .audit/$SID-transcript.json --mode plan --run-id "$RUN_ID" --out .audit/$SID-gemini-result.json 2>.audit/$SID-gemini-stderr.log
+node scripts/gemini-review.mjs review "$PLAN_FILE" .audit/$SID-transcript.json --mode plan --round 1 --run-id "$RUN_ID" --out .audit/$SID-gemini-result.json 2>.audit/$SID-gemini-stderr.log
 ```
 
 **`--mode plan` is as load-bearing here as it is in Step 2.** It defaults to
@@ -452,8 +452,14 @@ runs and simply records no verdict — measured 2026-08-14, 0 of 55 plan runs ha
 one against 45 of 178 code runs. The value is `_cloudRunId` on the last round's
 result artifact; when cloud is off it is absent and the flag is dropped.
 
-Verdict handling: `APPROVE` → done. `CONCERNS` → deliberate on findings, edit
-plan, re-run Gemini. `REJECT` → present to user with recommendation.
+Act on the result's code-computed `gateDisposition` (the `verdict` word is the
+reviewer's own): `approve` → done. `approve_with_debt` → done — every remaining
+finding is `release_blocking: false`; record each (id, severity, one line) in
+the plan's Remaining / debt section (or `node scripts/debt-auto-capture.mjs
+--final-review .audit/$SID-gemini-result.json`); never ask the user to override
+it. `blocked` → deliberate on the named blocking items, edit the plan, re-run
+as round 2 with `--round 2 --prior .audit/$SID-gemini-result.json --out
+.audit/$SID-gemini-result-v2.json`.
 
 ### Gemini round cap — **max 2 rounds** (symmetric with the GPT cap)
 
@@ -463,18 +469,19 @@ and the verdict drifts from design defects → praise + implementation-completen
 nits ("you didn't specify the store step / where the cooldown goes"). That is
 the **stop signal**, not a reason to run again.
 
-**Hard cap: 2 Gemini rounds.** After round 2, if the verdict is still `CONCERNS`:
+**Hard cap: 2 Gemini rounds** — `gemini-review.mjs` refuses `--round 3`. After
+round 2, if the disposition is still `blocked`:
 
 | Round-2 finding character | Action |
 |---|---|
-| Concrete **design** defect (wrong contract, unsafe migration, dangling FK) | One more round IS warranted — fix + re-run (rare; the genuine-bug exception) |
+| Concrete **design** defect (wrong contract, unsafe migration, dangling FK) | Fix it in the plan, then escalate to the user with the round-2 result — there is no third round |
 | **Implementation-completeness** (missing step, parameter placement, "specify X") | **STOP** — fold into the plan as captured items; hand off to `/cycle`'s **code** audit, which verifies them against real code (the right artifact) |
 | Rising **coherence/praise** + 1 nit/round | **STOP** — diminishing returns; record the nit, close the gate |
 
 This mirrors the GPT cap (3 rounds default, 5 absolute, extended only while the
 acceptance rate stays high): cap by
-default, exceed only for a concrete net-new *design* bug — never for rigor
-pressure or implementation detail. Record the stop decision (round count +
+default; a concrete net-new *design* bug after round 2 goes to the user, never
+to a third round, and never for rigor pressure or implementation detail. Record the stop decision (round count +
 why) in the plan's audit trail.
 
 Full transcript-building, verdict routing, deliberation protocol, and
