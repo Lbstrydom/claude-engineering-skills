@@ -287,6 +287,26 @@
     {
       "line": "**Never skip `/audit-code`** unless explicitly in SKIP_TO_SHIP mode (not currently exposed; reserved). REMEDIATE focuses it; it never skips it.",
       "reason": "Part of the audit-plan-skip-requires-explicit-mode gate (document-only: only an explicit code/remediate keyword skips /audit-plan); its stated wraps across lines."
+    },
+    {
+      "line": "out-of-scope stop does NOT apply here — no active cluster; touched `gate-clear`",
+      "reason": "Post-cap escalation policy (fix a design defect, then escalate to the user; never a third round): a judgement routed to the human, backed mechanically only by the round-3 refusal in scripts/lib/final-review/round-gate.mjs."
+    },
+    {
+      "line": "**Max 2 consolidated rounds — a hard cap enforced by `gemini-review.mjs`,",
+      "reason": "Names the final-review round cap. The cap is mechanical one layer down since 2026-09-27: scripts/lib/final-review/round-gate.mjs::validateRoundArgs refuses --round 3+ and gemini-review.mjs exits non-zero before building a provider (pinned by tests/final-review-round-cap-cli.test.mjs, spawning the real CLI, and tests/final-review-round-gate.test.mjs). This skill routes on that result and has no exit code of its own."
+    },
+    {
+      "line": "**design/correctness** defect: fix it, then escalate — see `gemini-gate.md`);",
+      "reason": "Post-cap escalation policy (fix a design defect, then escalate to the user; never a third round): a judgement routed to the human, backed mechanically only by the round-3 refusal in scripts/lib/final-review/round-gate.mjs."
+    },
+    {
+      "line": "implementation. Exit on `approve`/`approve_with_debt`, the capped stop, or",
+      "reason": "Describes routing on gateDisposition, which is computed in code by scripts/lib/final-review/round-gate.mjs (truth table pinned by tests/final-review-round-gate.test.mjs); the skill routes on it and enforces nothing itself."
+    },
+    {
+      "line": "explicit handback. Never replaced by GPT rebuttal.",
+      "reason": "Describes routing on gateDisposition, which is computed in code by scripts/lib/final-review/round-gate.mjs (truth table pinned by tests/final-review-round-gate.test.mjs); the skill routes on it and enforces nothing itself."
     }
   ]
 }
