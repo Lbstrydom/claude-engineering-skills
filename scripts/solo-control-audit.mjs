@@ -49,7 +49,7 @@
  *   node scripts/solo-control-audit.mjs score [--decide]   (--decide: exp-5 decision over the call ledger; drops partial commits cohort-wide)
  *   node scripts/solo-control-audit.mjs apparatus-bc --commits <sha,sha> [--max-chars N] [--force]
  *   node scripts/solo-control-audit.mjs merge [--severity high[,medium,low]] [--commits <sha,sha>]
- *                                             [--kd-candidates] [--medium-sample N] [--seed N] [--allow-apparatus-gaps]
+ *                                             [--kd-candidates] [--medium-sample N] [--seed N] [--allow-apparatus-gaps] [--allow-unmeasured]
  *   node scripts/solo-control-audit.mjs score
  *   node scripts/solo-control-audit.mjs judge-gpt [--csv <path>] [--out <name>] [--model <id>] [--batch-size N] [--max-diff-chars N]
  *   node scripts/solo-control-audit.mjs --selfcheck-relocation
@@ -108,7 +108,7 @@ import { canonicaliseRemoteUrl } from './lib/repo-identity.mjs';
 import { costFromUsage, PRICING_VERSION } from './lib/model-pricing.mjs';
 import { normalizeGeminiUsage } from './lib/gemini-usage.mjs';
 import { readLedger, aggregateBudgetSpent, aggregateCostForArm, sharedPassCreditRows } from './lib/solo-control/ledger.mjs';
-import { commitsCompleteForAllArms } from './lib/solo-control/completion.mjs';
+import { commitsCompleteForAllArms, coveredCommits, gateCellState, resumeArmFile, runMeasuredReview, reviewCommitState, unmeasuredCommits } from './lib/solo-control/completion.mjs';
 import { resolveDeepseekCreds } from './lib/model-resolver.mjs';
 
 // The generation passes an arm runs — IMPORTED from audit-shadow.mjs, never
@@ -1077,7 +1077,7 @@ async function runGptPass(client, zodTextFormat, gptModel, passName, diff, reaso
   };
   if (reasoning) params.reasoning = { effort: reasoning };
   const resp = await client.responses.parse(params);
-  return { findings: resp.output_parsed?.findings || [], usage: resp.usage || null };
+  return { findings: resp.output_parsed?.findings || [], usage: resp.usage || null, ...(resp.output_parsed ? {} : { state: 'conformance-miss' }) };
 }
 
 /**
@@ -1110,7 +1110,7 @@ async function runGeminiReview(geminiModel, collected, diff) {
     config: { responseMimeType: 'application/json', responseSchema: zodToGeminiSchema(ShadowPassSchema) },
   });
   let parsed = null; try { parsed = JSON.parse(resp.text); } catch { /* conformance miss */ }
-  return { findings: parsed?.findings || [], usage: geminiUsageOrNull(resp) };
+  return { findings: parsed?.findings || [], usage: geminiUsageOrNull(resp), ...(parsed ? {} : { state: 'conformance-miss' }) };
 }
 
 /** Gemini's `usageMetadata` → the ledger's `{input_tokens, output_tokens}`,
@@ -1169,9 +1169,6 @@ async function runClaudeGateReview(client, model, collected, diff, { reasoningEf
   return check.success ? { findings: check.data.findings, usage, state: 'ok' } : { findings: [], usage, state: 'conformance-miss' };
 }
 
-/** A gate result's ledger cell state: any runner's `skipped` (e.g. Gemini no-key) measured nothing. */
-const gateCellState = (r) => r.state ?? (r.skipped ? 'provider-error' : 'ok');
-
 /**
  * GPT's gate-ablation counterpart (fourth candidate: Flash / Pro / Sonnet-xhigh /
  * Sol-high) — same shared prompt, GPT's own structured-output mechanism
@@ -1218,7 +1215,7 @@ async function runGeminiPass(geminiModel, passName, diff) {
     config: { responseMimeType: 'application/json', responseSchema: zodToGeminiSchema(ShadowPassSchema) },
   });
   let parsed = null; try { parsed = JSON.parse(resp.text); } catch { /* conformance miss */ }
-  return { findings: parsed?.findings || [], usage: geminiUsageOrNull(resp) };
+  return { findings: parsed?.findings || [], usage: geminiUsageOrNull(resp), ...(parsed ? {} : { state: 'conformance-miss' }) };
 }
 
 /** Run the apparatus (arm A) retro over --commits. Incremental like cmdRun. */
@@ -1542,7 +1539,7 @@ async function runOssPass(client, ossModel, passName, diff, reasoning) {
     model: ossModel, system, userPrompt, schema: ShadowPassSchema, schemaName: 'shadow_pass',
     reasoningEffort: reasoning, passName: `oss-${passName}`,
   });
-  return { findings: r.result?.findings || [], usage: r.usage, conformant: r.conformant, failed: r.failed, error: r.error };
+  return { findings: r.result?.findings || [], usage: r.usage, conformant: r.conformant, failed: r.failed, error: r.error, ...(r.failed ? { state: 'provider-error' } : r.result ? {} : { state: 'conformance-miss' }) };
 }
 
 async function cmdApparatusBC() {
@@ -1568,12 +1565,12 @@ async function cmdApparatusBC() {
   const destC = sFindingsPath('C');
   const priorB = fs.existsSync(destB) ? JSON.parse(fs.readFileSync(destB, 'utf8')) : null;
   const priorC = fs.existsSync(destC) ? JSON.parse(fs.readFileSync(destC, 'utf8')) : null;
-  const covered = new Set(force || !priorB ? [] : priorB.perCommit.filter((c) => c.state === 'ran').map((c) => c.sha));
+  const covered = force ? new Set() : coveredCommits([priorB, priorC]); // BOTH arms' reviews must have run
   const commits = requested.filter((sha) => !covered.has(sha));
-  const outB = (priorB && !force) ? { ...priorB, findings: [...priorB.findings], perCommit: [...priorB.perCommit] }
-    : { armLabel: 'B', model: 'oss(pending)+gpt-round+gemini', stageType: STAGE_TYPE, generatedFor: [], findings: [], perCommit: [] };
-  const outC = (priorC && !force) ? { ...priorC, findings: [...priorC.findings], perCommit: [...priorC.perCommit] }
-    : { armLabel: 'C', model: 'oss(pending)+gemini', stageType: STAGE_TYPE, generatedFor: [], findings: [], perCommit: [] };
+  const outB = resumeArmFile(priorB, { force, rerun: commits,
+    fresh: { armLabel: 'B', model: 'oss(pending)+gpt-round+gemini', stageType: STAGE_TYPE, generatedFor: [], findings: [], perCommit: [] } });
+  const outC = resumeArmFile(priorC, { force, rerun: commits,
+    fresh: { armLabel: 'C', model: 'oss(pending)+gemini', stageType: STAGE_TYPE, generatedFor: [], findings: [], perCommit: [] } });
   outB.model = `oss(${ossModel})+gpt-round(${gptModel})+gemini(${geminiModel})`;
   outC.model = `oss(${ossModel})+gemini(${geminiModel})`;
   outB.generatedFor = [...new Set([...(outB.generatedFor || []), ...requested])];
@@ -1606,41 +1603,38 @@ async function cmdApparatusBC() {
 
     // Shared oss-gen — ONE execution serves both B and C (compute-sharing,
     // matches the live harness's own DAG — decision 1/§ generation stages).
-    const ossFindings = [];
+    const ossFindings = []; let ossMissed = 0; // a failed/unparsed generation pass leaves BOTH arms incomplete
     for (const passName of PASSES) {
       for (const chunk of chunks) {
         try {
           const r = await runOssPass(ossClient, ossModel, passName, chunk, PASS_REASONING[passName] ?? null);
-          ossFindings.push(...r.findings);
+          ossFindings.push(...r.findings); if (gateCellState(r) !== 'ok') ossMissed++;
         } catch (err) {
           if (String(err?.message).includes('[egress-gate]')) throw err;
-          log(`      ! oss ${passName} failed: ${String(err?.message).slice(0, 120)} — 0 findings`);
+          ossMissed++; log(`      ! oss ${passName} failed: ${String(err?.message).slice(0, 120)} — pass unmeasured`);
         }
       }
     }
 
     // B-only: one independent GPT round over the SAME chunks (the diversity probe).
-    const gptRoundFindings = [];
+    const gptRoundFindings = []; let gptMissed = 0; // B only
     for (const passName of PASSES) {
       for (const chunk of chunks) {
         try {
           const r = await runGptPass(gptClient, zodTextFormat, gptModel, passName, chunk, PASS_REASONING[passName] ?? null);
-          gptRoundFindings.push(...r.findings);
-        } catch (err) { log(`      ! gpt-round ${passName} failed: ${String(err?.message).slice(0, 120)} — 0 findings`); }
+          gptRoundFindings.push(...r.findings); if (gateCellState(r) !== 'ok') gptMissed++;
+        } catch (err) { gptMissed++; log(`      ! gpt-round ${passName} failed: ${String(err?.message).slice(0, 120)} — pass unmeasured`); }
       }
     }
 
     // Per-arm Gemini: B reviews oss+gpt-round union; C reviews oss-gen alone.
     const bUpstream = dedupeFindings([...ossFindings, ...gptRoundFindings]);
     const cUpstream = dedupeFindings(ossFindings);
-    let bGemini = [], cGemini = [];
-    try { bGemini = (await runGeminiReview(geminiModel, bUpstream, chunks[0] || '')).findings; }
-    catch (err) { log(`      ! gemini(B) failed: ${String(err?.message).slice(0, 120)}`); }
-    try { cGemini = (await runGeminiReview(geminiModel, cUpstream, chunks[0] || '')).findings; }
-    catch (err) { log(`      ! gemini(C) failed: ${String(err?.message).slice(0, 120)}`); }
-
-    const bAll = dedupeFindings([...ossFindings, ...gptRoundFindings, ...bGemini]);
-    const cAll = dedupeFindings([...ossFindings, ...cGemini]);
+    const bRev = await runMeasuredReview(() => runGeminiReview(geminiModel, bUpstream, chunks[0] || ''));
+    const cRev = await runMeasuredReview(() => runGeminiReview(geminiModel, cUpstream, chunks[0] || ''));
+    for (const [a, rev] of [['B', bRev], ['C', cRev]]) if (!rev.measured) log(`      ! gemini(${a}) did not review: ${rev.error}`);
+    const bAll = dedupeFindings([...ossFindings, ...gptRoundFindings, ...bRev.findings]);
+    const cAll = dedupeFindings([...ossFindings, ...cRev.findings]);
     const toRow = (f, model) => ({
       commit: sha, repo: path.basename(root), model, pass: 'apparatus-bc',
       severity: f.severity, category: f.category, section: f.section || (ext.files[0] || ''),
@@ -1650,8 +1644,8 @@ async function cmdApparatusBC() {
     for (const f of bAll) outB.findings.push(toRow(f, outB.model));
     for (const f of cAll) outC.findings.push(toRow(f, outC.model));
     log(`      → B: ${bAll.length} finding(s), C: ${cAll.length} finding(s)`);
-    outB.perCommit.push({ sha, repo: path.basename(root), state: 'ran', findings: bAll.length, chunks: chunks.length });
-    outC.perCommit.push({ sha, repo: path.basename(root), state: 'ran', findings: cAll.length, chunks: chunks.length });
+    outB.perCommit.push({ sha, repo: path.basename(root), ...reviewCommitState(ossMissed + gptMissed ? { measured: false, error: `${ossMissed + gptMissed} generation pass(es) unmeasured` } : bRev), findings: bAll.length, chunks: chunks.length });
+    outC.perCommit.push({ sha, repo: path.basename(root), ...reviewCommitState(ossMissed ? { measured: false, error: `${ossMissed} oss pass(es) unmeasured` } : cRev), findings: cAll.length, chunks: chunks.length });
     atomicWriteFileSync(destB, JSON.stringify(outB, null, 2)); // checkpoint per commit
     atomicWriteFileSync(destC, JSON.stringify(outC, null, 2));
   }
@@ -1691,10 +1685,10 @@ async function cmdSonnetGeminiRetro() {
 
   const dest = sFindingsPath('SG-gemini-only');
   const prior = fs.existsSync(dest) ? JSON.parse(fs.readFileSync(dest, 'utf8')) : null;
-  const covered = new Set(force || !prior ? [] : prior.perCommit.filter((c) => c.state === 'ran').map((c) => c.sha));
+  const covered = force ? new Set() : coveredCommits([prior]);
   const commits = requested.filter((sha) => !covered.has(sha));
-  const out = (prior && !force) ? { ...prior, findings: [...prior.findings], perCommit: [...prior.perCommit] }
-    : { armLabel: 'SG-gemini-only', model: `gemini(${geminiModel})-net-new-over-sonnet`, stageType: STAGE_TYPE, generatedFor: [], findings: [], perCommit: [] };
+  const out = resumeArmFile(prior, { force, rerun: commits,
+    fresh: { armLabel: 'SG-gemini-only', model: `gemini(${geminiModel})-net-new-over-sonnet`, stageType: STAGE_TYPE, generatedFor: [], findings: [], perCommit: [] } });
   out.model = `gemini(${geminiModel})-net-new-over-sonnet`;
   out.generatedFor = [...new Set([...(out.generatedFor || []), ...requested])];
 
@@ -1713,18 +1707,17 @@ async function cmdSonnetGeminiRetro() {
       const state = String(err?.message).includes('[egress-gate]') ? 'egress-refused' : 'diff-error';
       log(`  ${short}: ${state} — skipped`); out.perCommit.push({ sha, state }); continue;
     }
-    let geminiFindings = [];
-    try { geminiFindings = (await runGeminiReview(geminiModel, sonnetFindings, ext.diff)).findings; }
-    catch (err) { log(`      ! gemini failed: ${String(err?.message).slice(0, 120)}`); }
-    for (const f of geminiFindings) {
+    const rev = await runMeasuredReview(() => runGeminiReview(geminiModel, sonnetFindings, ext.diff));
+    if (!rev.measured) log(`      ! gemini did not review: ${rev.error} — commit recorded review-unmeasured`);
+    for (const f of rev.findings) {
       out.findings.push({
         commit: sha, repo: path.basename(root), model: out.model, pass: 'gemini-net-new',
         severity: f.severity, category: f.category, section: f.section || (ext.files[0] || ''),
         detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix,
       });
     }
-    log(`  ${short}: sonnet baseline ${sonnetFindings.length} (reused) → gemini net-new ${geminiFindings.length}`);
-    out.perCommit.push({ sha, repo: path.basename(root), state: 'ran', sonnetBaseline: sonnetFindings.length, geminiNetNew: geminiFindings.length });
+    log(`  ${short}: sonnet baseline ${sonnetFindings.length} (reused) → gemini net-new ${rev.findings.length}`);
+    out.perCommit.push({ sha, repo: path.basename(root), ...reviewCommitState(rev), sonnetBaseline: sonnetFindings.length, geminiNetNew: rev.findings.length });
     atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
   }
   atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
@@ -1770,10 +1763,10 @@ async function cmdSoloPassRetro() {
   const label = engine === 'gpt' ? 'GPT-alone' : 'Gemini-alone';
   const dest = sFindingsPath(label);
   const prior = fs.existsSync(dest) ? JSON.parse(fs.readFileSync(dest, 'utf8')) : null;
-  const covered = new Set(force || !prior ? [] : prior.perCommit.filter((c) => c.state === 'ran').map((c) => c.sha));
+  const covered = force ? new Set() : coveredCommits([prior]);
   const commits = requested.filter((sha) => !covered.has(sha));
-  const out = (prior && !force) ? { ...prior, findings: [...prior.findings], perCommit: [...prior.perCommit] }
-    : { armLabel: label, model, stageType: STAGE_TYPE, generatedFor: [], findings: [], perCommit: [] };
+  const out = resumeArmFile(prior, { force, rerun: commits,
+    fresh: { armLabel: label, model, stageType: STAGE_TYPE, generatedFor: [], findings: [], perCommit: [] } });
   out.model = model;
   out.generatedFor = [...new Set([...(out.generatedFor || []), ...requested])];
 
@@ -1800,16 +1793,17 @@ async function cmdSoloPassRetro() {
     log(`  ${short}: ${path.basename(root)} · ${ext.diff.length} chars${chunks.length > 1 ? ` · ${chunks.length} chunks` : ''}`);
 
     const collected = [];
+    let unmeasured = 0; // a skipped/failed/unparsed pass: the commit is incomplete, not "found less"
     for (const passName of PASSES) {
       for (const chunk of chunks) {
         try {
           const r = engine === 'gpt'
             ? await runGptPass(gptClient, zodTextFormat, model, passName, chunk, PASS_REASONING[passName] ?? null)
             : await runGeminiPass(model, passName, chunk);
-          collected.push(...r.findings);
+          collected.push(...r.findings); if (gateCellState(r) !== 'ok') unmeasured++;
         } catch (err) {
           if (String(err?.message).includes('[egress-gate]')) throw err;
-          log(`      ! ${passName} failed: ${String(err?.message).slice(0, 120)} — 0 findings`);
+          unmeasured++; log(`      ! ${passName} failed: ${String(err?.message).slice(0, 120)} — pass unmeasured`);
         }
       }
     }
@@ -1821,7 +1815,7 @@ async function cmdSoloPassRetro() {
       });
     }
     log(`      → ${collected.length} finding(s)`);
-    out.perCommit.push({ sha, repo: path.basename(root), state: 'ran', findings: collected.length, chunks: chunks.length });
+    out.perCommit.push({ sha, repo: path.basename(root), ...reviewCommitState({ measured: !unmeasured, error: `${unmeasured} pass call(s) unmeasured` }), findings: collected.length, chunks: chunks.length });
     atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
   }
   atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
@@ -2071,10 +2065,17 @@ async function cmdMerge() {
   const commitsFilterArg = argOption('commits');
   const allCommits = [...new Set(soloRuns.flatMap((r) => r.generatedFor))];
   const commitsFilter = commitsFilterArg ? new Set(commitsFilterArg.split(',').map((s) => s.trim())) : null;
-  const commits = commitsFilter ? allCommits.filter((c) => [...commitsFilter].some((f) => c.startsWith(f) || f.startsWith(c))) : allCommits;
-  if (commitsFilter && commits.length !== commitsFilter.size) {
-    log(`⚠ --commits requested ${commitsFilter.size} commit(s), matched ${commits.length} in the solo-run data.`);
+  const matched = commitsFilter ? allCommits.filter((c) => [...commitsFilter].some((f) => c.startsWith(f) || f.startsWith(c))) : allCommits;
+  if (commitsFilter && matched.length !== commitsFilter.size) {
+    log(`⚠ --commits requested ${commitsFilter.size} commit(s), matched ${matched.length} in the solo-run data.`);
   }
+  // A review stage that never ran would reach the sheet as "found nothing" — refuse, or drop the commit from EVERY arm.
+  const unmeasured = unmeasuredCommits(soloRuns, matched);
+  if (unmeasured.length && !hasFlag('allow-unmeasured')) {
+    log(`REFUSING: ${unmeasured.length} (arm, commit) review(s) never ran — re-run that subcommand for them (resume retries), or pass --allow-unmeasured to drop those commits from every arm:\n${unmeasured.slice(0, 14).map((u) => `  ${u.arm} ${u.commit.slice(0, 12)} — ${u.error}`).join('\n')}`);
+    process.exit(4);
+  }
+  const commits = matched.filter((c) => !unmeasured.some((u) => u.commit === c));
   const seed = Number.parseInt(argOption('seed', '20260704'), 10);
   // Severity scope — applied UNIFORMLY to S and A/B/C so it can't bias the
   // comparison. Default HIGH only: the auto-include tier. Two ADDITIVE, opt-in
@@ -2465,5 +2466,5 @@ export const _internals = {
   sha256hex, gatePath, pregatePath, extractDiff, extractAuditedDiff, locateCommit, treeExists, partitionDiscoveredRows,
   runClaudeGateReview, runGeminiReview, runGptGateReview, buildGateReviewPrompt, gateCellState,
   runPass, runDeepseekPass, REASONING_TIERS, assertReasoningTier, geminiUsageOrNull, budgetBreached, PASSES,
-  ColdPassSchema, JSON_CONTRACT, sumUsage, creditSharedPassRows, PREGATE_BASE_ARM,
+  ColdPassSchema, JSON_CONTRACT, sumUsage, creditSharedPassRows, PREGATE_BASE_ARM, runGptPass,
 };
