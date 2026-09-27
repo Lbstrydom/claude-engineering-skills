@@ -69,17 +69,31 @@ you do not execute them by hand during a normal run. Source of truth:
 
 | Persona finding | Audit candidate | Severity relation | correlation_type |
 |---|---|---|---|
-| Overlap Coefficient ≥ 0.5 (file-path + keyword tokens) OR exact `semanticId` hit | Yes | Audit severity matches persona severity | `confirmed_hit` |
+| Combined score ≥ 0.6 over the file axis (path tokens, or 1.0 on a ROUTE hit) and the keyword axis, both non-zero | Yes | Audit severity matches persona severity | `confirmed_hit` |
 | Matches a candidate | Yes | Audit was LOW/MEDIUM, persona is P0 | `severity_understated` |
 | No candidate scores ≥ threshold, but ≥1 candidate run existed | No | — | `audit_missed` |
-| Zero candidate audit runs in the last 14 days (and no exact commit match) | — | — | **nothing emitted** — not evidence of a miss |
+| Zero findings-bearing audit runs in the last 14 days AND none on the session's exact commit | — | — | **nothing emitted** — not evidence of a miss |
+
+**Matcher v2 (2026-09-27).** A ROUTE hit — the finding's step URL (path
+segment or `page=` value) naming the audited file's stem, numeric page prefix
+stripped (`/score_entry` ↔ `app/views/2_score_entry.py`) — sets the file axis
+to 1.0; it still needs keyword corroboration. It requires the finding's
+`step`. The v1 "exact `semanticId` hit" tier was removed: it compared a
+64-hex persona hash with an 8-hex audit fingerprint and could never fire. The
+session's exact-commit audit run is always a candidate, outside the 5-run
+window rather than competing for it.
 
 `severity_overstated` and `audit_false_positive` are **never auto-emitted** —
 both require human judgment (a flagged issue that couldn't be reproduced, or
 an audit finding whose severity a human judges too high) and remain
 manual-CLI-only.
 
-### Finding hash (`personaFindingHash`, matcher v1)
+### Finding hash (`personaFindingHash`)
+
+> **Superseded in part:** the hash is now v2 — a full 64-hex SHA-256 over
+> `{element, code, route, expected, observed}` (`PERSONA_FINDING_HASH_VERSION` in `audit-correlator.mjs`).
+> The v1 description below is kept for reading old rows; the rule that
+> matters is unchanged — call `personaFindingHash()`, never hand-compute it.
 
 **Corrected 2026-07-13** — the formula below replaces an earlier, never-live
 version of this doc that specified a different (and never-implemented)

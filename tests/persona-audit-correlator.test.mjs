@@ -114,8 +114,8 @@ describe('PERSONA_FINDING_HASH_VERSION / MATCHER_VERSION independence (R2 findin
   it('PERSONA_FINDING_HASH_VERSION is 2', () => {
     assert.equal(PERSONA_FINDING_HASH_VERSION, 2);
   });
-  it('MATCHER_VERSION is untouched by this plan — stays at 1, a genuinely separate concern (correlation/matching-algorithm provenance, not hash identity)', () => {
-    assert.equal(MATCHER_VERSION, 1);
+  it('MATCHER_VERSION is a separate concern from hash identity — bumped to 2 (dead exact tier removed + route axis, 2026-09-27) while PERSONA_FINDING_HASH_VERSION stayed at 2', () => {
+    assert.equal(MATCHER_VERSION, 2);
   });
   it('personaFindingHash\'s output does not depend on MATCHER_VERSION in any way (the two constants are truly decoupled, not just documented as such)', () => {
     // If personaFindingHash ever accidentally read MATCHER_VERSION, this
@@ -123,20 +123,21 @@ describe('PERSONA_FINDING_HASH_VERSION / MATCHER_VERSION independence (R2 findin
     // it does not, by construction (the source has no such reference).
     const finding = p0();
     const before = personaFindingHash(finding, noRoute());
-    assert.equal(MATCHER_VERSION, 1); // sanity: still the value fixed at module load
+    assert.equal(MATCHER_VERSION, 2); // sanity: still the value fixed at module load
     const after = personaFindingHash(finding, noRoute());
     assert.equal(before, after);
   });
 });
 
-describe('matchFinding — exact tier', () => {
-  it('byte-equality against finding_fingerprint scores 1.0', () => {
+describe('matchFinding — no exact tier (removed in MATCHER_VERSION 2)', () => {
+  it('a candidate whose finding_fingerprint equals the persona hash gets NO special treatment — the two identities were never comparable', () => {
+    // The v1 exact tier compared a 64-hex persona hash with an 8-hex audit
+    // semanticId: unreachable in production. A test that forged the equality
+    // proved only that the dead branch ran when fed an impossible input.
     const finding = p0();
     const hash = personaFindingHash(finding, noRoute());
-    const exactCandidate = auditFinding({ finding_fingerprint: hash, primary_file: 'unrelated.mjs', detail_snapshot: 'unrelated' });
-    const result = matchFinding(finding, hash, [exactCandidate], new Map());
-    assert.equal(result.tier, 'exact');
-    assert.equal(result.matchScore, 1.0);
+    const forged = auditFinding({ finding_fingerprint: hash, primary_file: 'unrelated.mjs', detail_snapshot: 'unrelated' });
+    assert.equal(matchFinding(finding, hash, [forged], new Map()), null);
   });
 });
 

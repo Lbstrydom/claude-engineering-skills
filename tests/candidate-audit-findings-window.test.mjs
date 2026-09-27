@@ -128,6 +128,28 @@ describe('getCandidateAuditFindings — the LIMIT caps runs-with-findings, not r
     assert.deepEqual(res.rows, []);
   });
 
+  it('the exact-commit run is a candidate EVEN when five newer findings-bearing runs fill the LIMIT (2026-09-27)', async () => {
+    // Pre-fix the sha match was an OR inside the same `ORDER BY created_at
+    // DESC LIMIT 5`, so five later runs pushed the one run most likely to hold
+    // the session's defect out of the window entirely.
+    const crowded = (await upsertRepoByUuid({
+      repoUuid: `test-candidate-window-crowded-${crypto.randomUUID()}`,
+      name: 'candidate-window-crowded-repo', fingerprint: null,
+    })).id;
+    const shaRun = await seedRun({ repo: crowded, agedDays: 7, nFindings: 1, commitSha: 'c0ffee1234' });
+    for (let d = 1; d <= 5; d += 1) await seedRun({ repo: crowded, agedDays: d, nFindings: 1 });
+
+    const without = await getCandidateAuditFindings({ repoId: crowded });
+    assert.equal(new Set(without.rows.map((r) => r.run_id)).has(shaRun), false,
+      'control: without the sha the older run is correctly outside the 5-run window');
+
+    const res = await getCandidateAuditFindings({ repoId: crowded, exactCommitSha: 'c0ffee1234' });
+    assert.equal(res.ok, true);
+    const runIds = new Set(res.rows.map((r) => r.run_id));
+    assert.ok(runIds.has(shaRun), 'the exact-commit run must be a candidate regardless of the LIMIT');
+    assert.equal(runIds.size, 6, 'five window runs PLUS the exact-commit run — the window is not shrunk to make room');
+  });
+
   it('honours the run limit — 5 findings-bearing runs, not 5 runs', async () => {
     const many = (await upsertRepoByUuid({
       repoUuid: `test-candidate-window-many-${crypto.randomUUID()}`,

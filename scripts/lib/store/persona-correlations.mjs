@@ -268,9 +268,9 @@ export async function retireMissedCorrelationsForHash(repoId, personaFindingHash
  * AND temporally bounded (WS1: a stale audit run must never stand in as a
  * comparison candidate for a fresh persona session — Gemini gate round-3
  * finding). Returns the last `limit` audit_runs' findings within
- * `sinceDays`, PLUS (regardless of age) the findings of the run whose
- * commit_sha exactly matches `exactCommitSha`, when given. One query, no
- * N+1. Each row carries `run_created_at` (for tie-breaking) and `run_id`.
+ * `sinceDays`, PLUS (regardless of age AND outside the `limit`) the findings
+ * of every run whose commit_sha exactly matches `exactCommitSha`, when given.
+ * Each row carries `run_created_at` (for tie-breaking) and `run_id`.
  *
  * **The `limit` counts runs that HAVE findings, not runs.** Without the
  * EXISTS predicate a run that found nothing still spent one of the five
@@ -302,16 +302,30 @@ export async function retireMissedCorrelationsForHash(repoId, personaFindingHash
 export async function getCandidateAuditFindings({ repoId, sinceDays = 14, limit = 5, exactCommitSha = null }) {
   if (!repoId || !await isCloudEnabled()) return { ok: true, rows: [] };
   try {
-    const runs = await many(
+    // TWO queries, not one `OR commit_sha = $3` inside the LIMIT (2026-09-27).
+    // The exact-commit run is the one most likely to hold the defect a session
+    // on that commit observed, and it was competing for the same `LIMIT 5`
+    // slots as every newer run — five later findings-bearing runs pushed it out
+    // entirely, which is the opposite of what "regardless of age" promised.
+    const windowRuns = await many(
       `SELECT id, created_at FROM audit_runs
         WHERE repo_id = $1
-          AND (created_at >= now() - ($2 || ' days')::interval
-               OR commit_sha = $3)
+          AND created_at >= now() - ($2 || ' days')::interval
           AND EXISTS (SELECT 1 FROM audit_findings af WHERE af.run_id = audit_runs.id)
         ORDER BY created_at DESC
-        LIMIT $4`,
-      [repoId, String(sinceDays), exactCommitSha, limit],
+        LIMIT $3`,
+      [repoId, String(sinceDays), limit],
     );
+    const exactRuns = exactCommitSha
+      ? await many(
+        `SELECT id, created_at FROM audit_runs
+          WHERE repo_id = $1
+            AND commit_sha = $2
+            AND EXISTS (SELECT 1 FROM audit_findings af WHERE af.run_id = audit_runs.id)`,
+        [repoId, exactCommitSha],
+      )
+      : [];
+    const runs = [...new Map([...windowRuns, ...exactRuns].map((r) => [r.id, r])).values()];
     if (runs.length === 0) return { ok: true, rows: [] };
     const runIds = runs.map((r) => r.id);
     const runCreatedAt = new Map(runs.map((r) => [r.id, r.created_at]));

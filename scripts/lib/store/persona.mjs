@@ -18,6 +18,7 @@ import { many, one, insertReturning, upsert, updateWhere } from '../db/query.mjs
 import { isCloudEnabled } from './repo.mjs';
 import { ClickPathStepSchema } from '../schemas.mjs';
 import { redactSecrets } from '../secret-patterns.mjs';
+import { derivePairOverlapRate } from '../persona-test/pair-overlap.mjs';
 
 /** Max stored click-path steps (R2-M1) — truncate, never reject the session. */
 const CLICK_PATH_CAP = 40;
@@ -259,7 +260,7 @@ export async function upsertPersona(persona) {
  * Record a persona-test session + best-effort persona stats refresh.
  * Idempotent on session_id (re-posting returns the existing row).
  *
- * @returns {Promise<{sessionId: string|null, existed: boolean, statsUpdated: boolean}>}
+ * @returns {Promise<{sessionId: string|null, existed: boolean, statsUpdated: boolean, statsReason?: (null|'no-persona-id'|'persona-not-found'|'stats-write-failed')}>}
  */
 export async function recordPersonaSession(session) {
   // Discriminated since plan §2b F2 (2026-08-12). `{sessionId: null}` was
@@ -328,9 +329,16 @@ export async function recordPersonaSession(session) {
   // session-insert success, so a stats failure doesn't roll back the
   // session row (reconciler handles drift).
   let statsUpdated = false;
-  if (session.personaId) {
+  // WHY the stats were not refreshed (2026-09-27). A bare `statsUpdated:false`
+  // meant both "this was an ad-hoc persona, there was nothing to update" and
+  // "the update threw" — two situations with opposite remedies (pass the
+  // registered personaId vs. investigate a write failure). Null when updated.
+  let statsReason = null;
+  if (!session.personaId) {
+    statsReason = 'no-persona-id';
+  } else {
     try {
-      await updateWhere('personas',
+      const res = await updateWhere('personas',
         {
           last_tested_at: new Date().toISOString(),
           last_verdict: session.verdict,
@@ -338,8 +346,12 @@ export async function recordPersonaSession(session) {
         },
         { id: session.personaId }
       );
-      statsUpdated = true;
+      // Postgres reports success for an UPDATE that matched nothing — a stale
+      // or mistyped personaId must not read as "stats updated".
+      if ((res?.rowCount ?? 0) > 0) statsUpdated = true;
+      else statsReason = 'persona-not-found';
     } catch (err) {
+      statsReason = 'stats-write-failed';
       process.stderr.write(`  [persona] WARN stats update failed — session recorded at ${sessionId}: ${err.message}\n`);
     }
   }
@@ -350,10 +362,79 @@ export async function recordPersonaSession(session) {
     sessionId,
     existed: false,
     statsUpdated,
+    statsReason,
     // Structured click-path outcome so callers see partial sanitization, not just
     // a stderr line (audit MED). Absent when no clickPath was provided.
     ...(clickPathMeta ? { clickPathStored: clickPathMeta.steps.length, clickPathDropped: clickPathMeta.dropped, clickPathTruncated: clickPathMeta.truncated } : {}),
   };
+}
+
+/**
+ * Link two persona_test_sessions rows as one /persona-test --pair run
+ * (`persona_pair_sessions`, migration 20260927120000). Idempotent on the
+ * ordered pair: a re-post updates the counts.
+ *
+ * Both sessions must exist and share a repo (NULL-safe: two repo-less sessions
+ * pair). When the caller resolved a repo scope, the sessions must belong to
+ * it. The INSERT … SELECT makes all three one statement; the follow-up read
+ * only runs when it wrote nothing, to say WHICH of them refused.
+ *
+ * @param {{sessionA: string, sessionB: string, consensusCount: number, aOnlyCount: number,
+ *   bOnlyCount: number}} pair
+ * @param {{repoId?: string|null}} [opts]
+ * @returns {Promise<{ok: boolean, cloud: boolean, pairId: string|null, overlapRate: number|null,
+ *   reason?: 'invalid-input'|'cloud-off'|'session-not-found'|'cross-repo-pair'|'session-not-owned'|'write-failed',
+ *   message?: string}>}
+ */
+export async function recordPersonaPairLink(pair, opts = {}) {
+  const { sessionA, sessionB, consensusCount, aOnlyCount, bOnlyCount } = pair ?? {};
+  const counts = [consensusCount, aOnlyCount, bOnlyCount];
+  if (!sessionA || !sessionB || sessionA === sessionB || !counts.every((n) => Number.isInteger(n) && n >= 0)) {
+    return {
+      ok: false, cloud: true, pairId: null, overlapRate: null, reason: 'invalid-input',
+      message: 'two DISTINCT session ids and three non-negative integer counts are required',
+    };
+  }
+  if (!await isCloudEnabled()) {
+    return { ok: false, cloud: false, pairId: null, overlapRate: null, reason: 'cloud-off', message: 'cloud store is disabled' };
+  }
+  const overlapRate = derivePairOverlapRate({ consensusCount, aOnlyCount, bOnlyCount });
+  const repoId = opts.repoId ?? null;
+  try {
+    const row = await one(
+      `INSERT INTO persona_pair_sessions
+         (repo_id, session_a, session_b, consensus_count, a_only_count, b_only_count, overlap_rate)
+       SELECT sa.repo_id, sa.id, sb.id, $3, $4, $5, $6
+         FROM persona_test_sessions sa
+         JOIN persona_test_sessions sb ON sb.id = $2
+        WHERE sa.id = $1
+          AND sa.repo_id IS NOT DISTINCT FROM sb.repo_id
+          AND ($7::uuid IS NULL OR sa.repo_id = $7::uuid)
+       ON CONFLICT (session_a, session_b) DO UPDATE SET
+         consensus_count = EXCLUDED.consensus_count,
+         a_only_count    = EXCLUDED.a_only_count,
+         b_only_count    = EXCLUDED.b_only_count,
+         overlap_rate    = EXCLUDED.overlap_rate
+       RETURNING id`,
+      [sessionA, sessionB, consensusCount, aOnlyCount, bOnlyCount, overlapRate, repoId],
+    );
+    if (row?.id) return { ok: true, cloud: true, pairId: row.id, overlapRate };
+
+    // Nothing written — name the refusal instead of reporting a bare failure.
+    const found = await many(`SELECT id, repo_id FROM persona_test_sessions WHERE id = ANY($1::uuid[])`, [[sessionA, sessionB]]);
+    const byId = new Map(found.map((r) => [r.id, r.repo_id]));
+    const missing = [sessionA, sessionB].filter((id) => !byId.has(id));
+    if (missing.length > 0) {
+      return { ok: false, cloud: true, pairId: null, overlapRate, reason: 'session-not-found', message: `no persona_test_sessions row for ${missing.join(', ')}` };
+    }
+    if ((byId.get(sessionA) ?? null) !== (byId.get(sessionB) ?? null)) {
+      return { ok: false, cloud: true, pairId: null, overlapRate, reason: 'cross-repo-pair', message: 'the two sessions belong to different repositories — refusing to pair them' };
+    }
+    return { ok: false, cloud: true, pairId: null, overlapRate, reason: 'session-not-owned', message: 'the sessions do not belong to the resolved repository scope' };
+  } catch (err) {
+    process.stderr.write(`  [persona] recordPersonaPairLink failed: ${err.message}\n`);
+    return { ok: false, cloud: true, pairId: null, overlapRate, reason: 'write-failed', message: err.message };
+  }
 }
 
 /**

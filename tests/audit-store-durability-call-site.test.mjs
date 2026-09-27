@@ -208,6 +208,7 @@ const NOT_A_DURABLE_WRITE = {
   recordPlanVerificationRun: 'Operator/ux-lock-verify CLI write. Returns {ok, reason} since §2b F2 and its handler exits 1 on a failed write.',
   recordPlanVerificationItems: 'Operator/ux-lock-verify CLI write; already reports {ok, inserted} — the row count Postgres accepted, not the count requested.',
   recordShipEvent: 'Operator /ship CLI write; discriminated since 2026-08-12 and its handler fails closed.',
+  recordPersonaPairLink: 'Operator /persona-test --pair CLI write (cross-skill.mjs link-persona-pair, SKILL.md Step P7). Awaited by its handler; returns a discriminated {ok, reason} and names WHICH refusal fired (session-not-found / cross-repo-pair / session-not-owned) when the INSERT … SELECT wrote nothing, and the handler throws with exit 1 — the failure reaches the operator synchronously. Not in the orchestrator cloud block.',
   recordPersonaSession: 'Operator /persona-test CLI write. Returns {ok, reason} since §2b F2; the envelope carries the failure (it deliberately does not throw — that would discard correlationSummary, which names why).',
   recordPersonaAuditCorrelation: 'Operator /persona-test CLI write; already discriminated so the auto-correlator can count writeFailed separately from missed.',
   retireMissedCorrelationsForHash: 'Operator /persona-test CLI write. Returns {ok, reason} since §2b F2, and its caller now ROLLS BACK the outcome upsert in the same transaction rather than leaving the two disagreeing.',

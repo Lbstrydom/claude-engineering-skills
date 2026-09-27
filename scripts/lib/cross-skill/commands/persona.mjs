@@ -14,6 +14,10 @@ import { reconcileRepoIdentity } from '../../repo-scope.mjs';
 import { decideCorrelations, isP0OrP1, MATCHER_VERSION } from '../../persona/audit-correlator.mjs';
 import { buildPersonaSessionId } from '../../persona-test/session-id.mjs';
 import { shellQuoteSingle } from '../../shell-quote.mjs';
+import {
+  PERSONA_VERDICTS, LifecycleSchema, capPersonaVerdict,
+} from '../../persona-test/verdict-eligibility.mjs';
+import { derivePairOverlapRate } from '../../persona-test/pair-overlap.mjs';
 
 const PERSONA_OUTCOME_VALUES = ['fixed', 'dismissed', 'wont_fix', 'stale'];
 
@@ -26,7 +30,15 @@ const AddPersonaRequestSchema = z.object({
   repoName: z.string().optional(),
 });
 
-const RecordPersonaSessionRequestSchema = z.object({
+/**
+ * The `record-persona-session` request contract. EXPORTED so the prose↔code
+ * contract test (tests/persona-session-payload-contract.test.mjs) can compare
+ * its emitted JSON-schema key set with the payload skills/persona-test/SKILL.md
+ * Phase 6 tells the model to send — the SKILL once sent
+ * `browserDriver`/`browserStatus` against a required `browserTool`, so every
+ * documented call failed validation and nothing on either side could see it.
+ */
+export const RecordPersonaSessionRequestSchema = z.object({
   // OPTIONAL since WS-C2 — omit it and the CLI mints a collision-resistant id
   // via buildPersonaSessionId (the single oracle). Pass one explicitly ONLY to
   // re-post an existing session: session_id is the idempotency key, so a
@@ -37,7 +49,17 @@ const RecordPersonaSessionRequestSchema = z.object({
   focus: z.string().optional(),
   browserTool: z.string().min(1),
   stepsTaken: z.number().int().nonnegative().optional(),
-  verdict: z.enum(['Ready for users', 'Needs work', 'Blocked']),
+  verdict: z.enum(PERSONA_VERDICTS),
+  // The stateful-mission checklist outcome (SKILL.md Phase 3). OPTIONAL on the
+  // wire, but ABSENT is not a pass: capPersonaVerdict treats an unreported
+  // lifecycle as a failing `Ready for users` conjunct.
+  lifecycle: LifecycleSchema.optional(),
+  // Session work-record fields (SKILL.md Phase 3). Optional for callers that
+  // predate them; when present they feed the same eligibility predicate.
+  terminalReason: z.enum(['goal-reached', 'step-budget-exhausted', 'abandonment-threshold-hit',
+    'auth-wall-blocked', 'tool-error', 'safety-refusal']).optional(),
+  authState: z.enum(['n/a-no-auth-encountered', 'authenticated-via-bootstrap', 'auth-wall-untested']).optional(),
+  originPolicyResult: z.enum(['same-origin-only', 'cross-origin-attempted-and-blocked', 'n/a']).optional(),
   p0Count: z.number().int().nonnegative().optional(),
   p1Count: z.number().int().nonnegative().optional(),
   p2Count: z.number().int().nonnegative().optional(),
@@ -282,6 +304,18 @@ export async function recordPersonaSessionCmd(ctx) {
   }
 
   const data = { ...parsed.data };
+  // The composed `Ready for users` predicate, decided in CODE (2026-09-27).
+  // The prose rule alone let a run that reached its goal without verifying the
+  // state it passed through store `Ready for users`. Only ever caps DOWN, and
+  // the envelope says so — a silent rewrite of the caller's verdict would be
+  // its own defect.
+  const cap = capPersonaVerdict(data);
+  if (cap.capped) {
+    process.stderr.write(
+      `  [persona] verdict capped: "Ready for users" → "${cap.verdict}" — ${cap.blockers.join('; ')}\n`,
+    );
+    data.verdict = cap.verdict;
+  }
   // WS-C2: mint the session_id in code when the caller omitted it, keeping the
   // weak `persona-test-<unix>` shape the LLM used to author out of the identity
   // path entirely (an explicit id passes through, so re-posts still work).
@@ -320,7 +354,10 @@ export async function recordPersonaSessionCmd(ctx) {
   //
   // `sessionKey` is the persona_test_sessions.session_id TEXT (the idempotency
   // key); `sessionId` is the row's uuid PK, which downstream correlation calls take.
-  return { cloud: true, ...result, sessionKey: data.sessionId, correlationSummary };
+  return {
+    cloud: true, ...result, sessionKey: data.sessionId, correlationSummary,
+    ...(cap.capped ? { verdictCap: { claimed: 'Ready for users', stored: cap.verdict, blockers: cap.blockers, label: cap.label } } : {}),
+  };
 }
 
 /**
@@ -334,7 +371,7 @@ export async function recordPersonaSessionCmd(ctx) {
  * store-call goldens intercept its writes like any other.
  */
 async function runAutoCorrelate(deps, data, sessionId) {
-  const base = { attempted: false, candidates: 0, exact: 0, fuzzy: 0, missed: 0, skippedExisting: 0, malformed: 0, writeFailed: 0, matcherVersion: MATCHER_VERSION };
+  const base = { attempted: false, candidates: 0, route: 0, fuzzy: 0, missed: 0, skippedExisting: 0, malformed: 0, writeFailed: 0, matcherVersion: MATCHER_VERSION };
   // A null sessionId means recordPersonaSession's OWN write failed (a genuine
   // DB error inside its catch block — cloud is already confirmed on by this
   // point) — distinct from "no repo identity", which is a resolvable-input
@@ -389,9 +426,9 @@ async function runAutoCorrelate(deps, data, sessionId) {
       process.stderr.write(`  [correlator] session ${sessionId}: ${malformed} P0/P1 finding(s) quarantined (missing element/observed) — not correlated\n`);
     }
 
-    let exact = 0, fuzzy = 0, missed = 0, writeFailed = 0;
+    let route = 0, fuzzy = 0, missed = 0, writeFailed = 0;
     for (const emission of emissions) {
-      if (emission._tier === 'exact') exact += 1;
+      if (emission._tier === 'route') route += 1;
       else if (emission._tier === 'fuzzy') fuzzy += 1;
       else missed += 1;
       const writeResult = await deps.recordPersonaAuditCorrelation(sessionId, emission);
@@ -403,7 +440,7 @@ async function runAutoCorrelate(deps, data, sessionId) {
 
     const summary = {
       attempted: true, candidates: candResult.rows.length,
-      exact, fuzzy, missed, skippedExisting, malformed, writeFailed, matcherVersion: MATCHER_VERSION,
+      route, fuzzy, missed, skippedExisting, malformed, writeFailed, matcherVersion: MATCHER_VERSION,
     };
     if (writeFailed > 0) {
       process.stderr.write(`  [correlator] session ${sessionId}: ${writeFailed}/${emissions.length} correlation writes failed\n`);
@@ -457,6 +494,58 @@ export async function recordCorrelationCmd(ctx) {
     throw new CommandError(code, result.error || 'correlation write failed', { reason: result.reason }, 1);
   }
   return { ok: true, cloud: true };
+}
+
+/**
+ * The `link-persona-pair` request contract (skills/persona-test/SKILL.md Step
+ * P7). Exported for the same prose↔code key-set test as the session schema.
+ * `sessionA`/`sessionB` are the Phase 6 response's `sessionId` — the row's
+ * uuid PK — never `sessionKey`, the minted text idempotency key.
+ * `overlapRate` is OPTIONAL: the writer derives it from the counts, and a
+ * supplied value that disagrees is refused rather than silently replaced.
+ */
+export const LinkPersonaPairRequestSchema = z.object({
+  sessionA: z.uuid(),
+  sessionB: z.uuid(),
+  consensusCount: z.number().int().nonnegative(),
+  aOnlyCount: z.number().int().nonnegative(),
+  bOnlyCount: z.number().int().nonnegative(),
+  overlapRate: z.number().min(0).max(1).optional(),
+}).refine((v) => v.sessionA !== v.sessionB, { message: 'sessionA and sessionB must be different sessions', path: ['sessionB'] });
+
+/** Tolerance for a caller-computed overlapRate: the report prints 2 decimals. */
+const OVERLAP_RATE_TOLERANCE = 0.005;
+
+/**
+ * `link-persona-pair` — persist a /persona-test --pair run as one row joining
+ * its two sessions (`persona_pair_sessions`). SKILL.md Step P7 documented this
+ * call from the day pair mode shipped; until 2026-09-27 no subcommand existed,
+ * so every pair run's linkage silently never happened.
+ */
+export async function linkPersonaPairCmd(ctx) {
+  const parsed = LinkPersonaPairRequestSchema.safeParse(ctx.payload());
+  if (!parsed.success) {
+    throw new CommandError('BAD_INPUT',
+      'sessionA, sessionB (the two Phase 6 sessionId uuids), consensusCount, aOnlyCount, bOnlyCount are required',
+      { issues: parsed.error.issues });
+  }
+  const p = parsed.data;
+  const derived = derivePairOverlapRate(p);
+  if (p.overlapRate !== undefined && Math.abs(p.overlapRate - derived) > OVERLAP_RATE_TOLERANCE) {
+    throw new CommandError('BAD_INPUT',
+      `overlapRate ${p.overlapRate} disagrees with the counts (consensus / total = ${derived}) — send the counts, the rate is derived`);
+  }
+  if (!await ctx.deps.isPersonaCloudEnabled()) return { ...ctx.degrade(), pairId: null };
+  const scope = await ctx.resolveScope();
+  const repoId = scope.kind === 'scoped' ? scope.repoId : null;
+  const res = await ctx.deps.recordPersonaPairLink(p, { repoId });
+  if (!res.ok) {
+    const code = res.reason === 'session-not-found' ? 'PARENT_NOT_FOUND'
+      : (res.reason === 'cross-repo-pair' || res.reason === 'session-not-owned') ? 'PARENT_NOT_OWNED'
+        : 'WRITE_FAILED';
+    throw new CommandError(code, res.message || 'pair link write failed', { reason: res.reason }, 1);
+  }
+  return { ok: true, cloud: true, pairId: res.pairId, overlapRate: res.overlapRate };
 }
 
 // ── Cluster D (Phase 5) — persona readers ─────────────────────────────────

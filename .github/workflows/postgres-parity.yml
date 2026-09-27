@@ -297,6 +297,7 @@ jobs:
             tests/on-conflict-scope-identity.test.mjs \
             tests/persist-kept-embeddings.test.mjs \
             tests/persona-outcomes-hash-backfill.test.mjs \
+            tests/persona-pair-link-db.test.mjs \
             tests/plans-ship-persona-correlation.test.mjs \
             tests/postgres-parity-identity-columns.test.mjs \
             tests/record-findings-write-boundary.test.mjs \

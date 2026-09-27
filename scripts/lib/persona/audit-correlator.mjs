@@ -26,7 +26,22 @@ import crypto from 'node:crypto';
 import { semanticId } from '../findings.mjs';
 import { sanitizeStepUrl } from '../store/persona.mjs';
 
-export const MATCHER_VERSION = 1;
+/**
+ * v2 (2026-09-27, field report from a Streamlit consumer):
+ *  - the `exact` tier is GONE. It compared `personaFindingHash` (64-hex, v2)
+ *    against `audit_findings.finding_fingerprint` (8-hex `semanticId`) — two
+ *    identities of different LENGTH over different payloads, so equality was
+ *    unreachable by construction and the tier never fired once. There is no
+ *    like-for-like identity shared by the two vocabularies to repair it with,
+ *    so it is removed rather than kept as a dead branch that reads as coverage.
+ *  - a ROUTE axis corroborates the file-path axis: the persona step URL's path
+ *    segments and `page=` value are compared with the audit `primary_file`
+ *    stem (numeric page prefix stripped — Streamlit's `2_score_entry.py`
+ *    serves `/score_entry`). A route hit sets the file axis to 1.0; the
+ *    keyword axis and FUZZY_THRESHOLD are unchanged, so a route alone still
+ *    cannot manufacture a match.
+ */
+export const MATCHER_VERSION = 2;
 
 /**
  * Versioned identity contract for `personaFindingHash`'s OWN payload
@@ -285,6 +300,91 @@ function personaKeywordTokens(finding) {
   return tokenize(finding?.observed ?? '');
 }
 
+// ── Route axis (MATCHER_VERSION 2) ──────────────────────────────────────────
+
+/** Stems too generic to identify a page — an index/main file serves every route. */
+const GENERIC_ROUTE_STEMS = new Set(['index', 'main', 'app', 'init', 'page', 'layout', 'route', 'routes']);
+
+/**
+ * Normalise a route segment or a file stem to one comparable key: lower-cased,
+ * every run of non-alphanumerics folded to `_`, any leading numeric
+ * page-ordering prefix removed (`2_`, `02-`, `10 `), trimmed of `_`. Emoji
+ * and other non-ASCII glyphs fold away with the punctuation, matching how
+ * Streamlit derives a page's URL path from its file name.
+ * @param {string} raw
+ * @returns {string}
+ */
+export function normalizeRouteKey(raw) {
+  return String(raw ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/^\d+_+/, '')
+    .replace(/^_+|_+$/g, '');
+}
+
+/**
+ * Route keys a persona step URL names: every non-placeholder path segment
+ * (hash-routes included) plus the value of a `page=` query parameter — the
+ * one routing key `sanitizeStepUrl` keeps whose value IS a page identity
+ * (Streamlit multipage apps address pages as `?page=` in some versions).
+ * Input is the SANITIZED step URL (`buildStepUrlLookup` already ran
+ * `sanitizeStepUrl`), so a redacted `:param` segment is skipped, never keyed.
+ * @param {string} stepUrl
+ * @returns {Set<string>}
+ */
+export function routeKeysFromStepUrl(stepUrl) {
+  const keys = new Set();
+  if (typeof stepUrl !== 'string' || !stepUrl) return keys;
+  let u;
+  try { u = new URL(stepUrl, 'http://x'); } catch { return keys; }
+  const hashPath = u.hash.startsWith('#/') ? u.hash.slice(1).split('?')[0] : '';
+  for (const seg of [...u.pathname.split('/'), ...hashPath.split('/')]) {
+    if (!seg || seg.startsWith(':')) continue;
+    const key = normalizeRouteKey(safeDecodeSegment(seg));
+    if (key.length >= MIN_TOKEN_LEN) keys.add(key);
+  }
+  const page = u.searchParams.get('page');
+  if (page && !page.startsWith(':')) {
+    const key = normalizeRouteKey(page);
+    if (key.length >= MIN_TOKEN_LEN) keys.add(key);
+  }
+  return keys;
+}
+
+function safeDecodeSegment(seg) {
+  try { return decodeURIComponent(seg); } catch { return seg; }
+}
+
+/**
+ * The page identity an audit finding's `primary_file` names: its basename
+ * without extension, normalised the same way as a route key. `''` for a
+ * generic stem (`index`, `main`, …), which names no particular page.
+ * @param {string} primaryFile
+ * @returns {string}
+ */
+export function routeKeyFromPrimaryFile(primaryFile) {
+  const base = String(primaryFile ?? '').split(/[\\/]/).pop() ?? '';
+  const stem = base.replace(/\.[^.]*$/, '');
+  const key = normalizeRouteKey(stem);
+  if (key.length < MIN_TOKEN_LEN || GENERIC_ROUTE_STEMS.has(key)) return '';
+  return key;
+}
+
+/**
+ * True when the step URL of the persona finding names the same page the audit
+ * finding's file serves. Requires the finding to carry `step` (the Act step it
+ * was observed on) — without it there is no URL to compare, and the axis
+ * abstains rather than guessing a step.
+ */
+function routeMatches(finding, auditFinding, stepUrlByNumber) {
+  const stepUrl = stepUrlByNumber?.get(finding?.step);
+  if (!stepUrl) return false;
+  const fileKey = routeKeyFromPrimaryFile(auditFinding?.primary_file);
+  if (!fileKey) return false;
+  return routeKeysFromStepUrl(stepUrl).has(fileKey);
+}
+
 /** audit_findings has a single `primary_file` column, not an array. */
 function auditFilePathTokens(auditFinding) {
   return tokenize(auditFinding.primary_file ?? '');
@@ -301,53 +401,57 @@ function auditKeywordTokens(auditFinding) {
  * a high combined total, so a candidate with zero keyword overlap can't
  * pass purely on file-path containment (a real false-ground-truth risk:
  * a UI element token can trivially appear in an unrelated file's path).
- * @returns {{score: number, fileScore: number, keywordScore: number}}
+ * The route axis (MATCHER_VERSION 2) lifts `fileScore` to 1.0 when the
+ * persona step URL and the audit file name the same page; it never touches
+ * `keywordScore`, so the dual-signal requirement still holds.
+ * @returns {{score: number, fileScore: number, keywordScore: number, routeHit: boolean}}
  */
 function scoreMatch(finding, auditFinding, stepUrlByNumber) {
-  const fileScore = overlapCoefficient(
+  const tokenFileScore = overlapCoefficient(
     personaFilePathTokens(finding, stepUrlByNumber),
     auditFilePathTokens(auditFinding),
   );
+  const routeHit = routeMatches(finding, auditFinding, stepUrlByNumber);
+  const fileScore = routeHit ? 1 : tokenFileScore;
   const keywordScore = overlapCoefficient(
     personaKeywordTokens(finding),
     auditKeywordTokens(auditFinding),
   );
-  return { score: 0.5 * fileScore + 0.5 * keywordScore, fileScore, keywordScore };
+  return { score: 0.5 * fileScore + 0.5 * keywordScore, fileScore, keywordScore, routeHit };
 }
 
 const SEVERITY_RANK = { HIGH: 3, MEDIUM: 2, LOW: 1 };
 
 /**
- * Match one persona finding against the candidate audit findings.
- * Strict precedence: exact tier (semanticId byte-equality against the
- * stored finding_fingerprint — an opportunistic fast path expected to
- * fire rarely, since the two vocabularies differ structurally) then the
- * fuzzy tier (Overlap Coefficient, threshold 0.6 + dual-signal floor —
- * see FUZZY_THRESHOLD). Ties within a tier
- * broken by newest audit run, then highest audit severity.
+ * Match one persona finding against the candidate audit findings: Overlap
+ * Coefficient over the file-path axis (optionally corroborated by the route
+ * axis) and the keyword axis, threshold FUZZY_THRESHOLD + dual-signal floor.
+ * Ties broken by newest audit run, then highest audit severity. `tier` is
+ * `'route'` when the winning candidate's file axis came from a route hit,
+ * `'fuzzy'` otherwise — provenance for the summary, not a separate
+ * precedence level.
+ *
+ * (There is no `exact` tier since MATCHER_VERSION 2 — see that constant.
+ * `_findingHash` is kept in the signature so existing callers need no change.)
  *
  * @param {object} finding - raw persona finding
- * @param {string} findingHash - personaFindingHash(finding), pre-computed
+ * @param {string} _findingHash - personaFindingHash(finding); unused since v2
  * @param {object[]} candidates - audit_findings rows (each also carries
  *   `run_created_at` from the join, for tie-breaking)
  * @param {Map<number,string>} stepUrlByNumber
- * @returns {{ auditFinding: object, matchScore: number, tier: 'exact'|'fuzzy' } | null}
+ * @returns {{ auditFinding: object, matchScore: number, tier: 'route'|'fuzzy' } | null}
  */
-export function matchFinding(finding, findingHash, candidates, stepUrlByNumber) {
+export function matchFinding(finding, _findingHash, candidates, stepUrlByNumber) {
   // Defensive: `decideCorrelations` always passes a real array (DB rows via
   // getCandidateAuditFindings), but this is an exported public function —
   // degrade to "no candidates" rather than throw on a malformed caller input.
   if (!Array.isArray(candidates)) return null;
-  const exact = candidates.filter((c) => c.finding_fingerprint === findingHash);
-  if (exact.length > 0) {
-    const best = pickBest(exact);
-    return { auditFinding: best, matchScore: 1.0, tier: 'exact' };
-  }
 
   let best = null;
   let bestScore = 0;
+  let bestRouteHit = false;
   for (const c of candidates) {
-    const { score, fileScore, keywordScore } = scoreMatch(finding, c, stepUrlByNumber);
+    const { score, fileScore, keywordScore, routeHit } = scoreMatch(finding, c, stepUrlByNumber);
     // Require BOTH signals to contribute — a candidate that only shares a
     // file-path token (or only a keyword) with zero corroboration from the
     // other axis does not clear the bar, even if the combined score would.
@@ -359,13 +463,10 @@ export function matchFinding(finding, findingHash, candidates, stepUrlByNumber) 
     ) {
       best = c;
       bestScore = score;
+      bestRouteHit = routeHit;
     }
   }
-  return best ? { auditFinding: best, matchScore: bestScore, tier: 'fuzzy' } : null;
-}
-
-function pickBest(rows) {
-  return rows.reduce((best, r) => (isNewerOrHigherSeverity(r, best) ? r : best), rows[0]);
+  return best ? { auditFinding: best, matchScore: bestScore, tier: bestRouteHit ? 'route' : 'fuzzy' } : null;
 }
 
 function isNewerOrHigherSeverity(candidate, current) {
@@ -448,7 +549,7 @@ export function decideCorrelations({ findings, clickPath, candidates, alreadyCor
         matchScore: match.matchScore,
         matchRationale: `[v${MATCHER_VERSION}] ${match.tier} tier, score ${match.matchScore.toFixed(2)}`,
         matcherVersion: MATCHER_VERSION,
-        // Caller-only bookkeeping (tallying correlationSummary.exact/fuzzy/
+        // Caller-only bookkeeping (tallying correlationSummary.route/fuzzy/
         // missed) — NOT part of the recordPersonaAuditCorrelation payload
         // shape; strip before persisting if a future write path is strict
         // about unknown keys.
