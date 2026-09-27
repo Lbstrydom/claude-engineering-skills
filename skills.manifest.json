@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "a4d4e3eea7c8a0fa",
+  "bundleVersion": "fa4936b5603f9220",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -75,8 +75,8 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "930775b5ed48",
-          "size": 15637
+          "sha": "2251db6de52f",
+          "size": 16901
         },
         {
           "relPath": "references/input-acquisition.md",
@@ -118,8 +118,8 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "930775b5ed48",
-          "size": 15637
+          "sha": "2251db6de52f",
+          "size": 16901
         },
         {
           "relPath": "references/input-acquisition.md",
@@ -288,14 +288,14 @@
     },
     "persona-test": {
       "path": "skills/persona-test/SKILL.md",
-      "sha": "ea6f20542a79",
-      "size": 54346,
+      "sha": "5355c645762c",
+      "size": 54737,
       "summary": "Persona-driven exploratory browser testing against a live URL.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "ea6f20542a79",
-          "size": 54346
+          "sha": "5355c645762c",
+          "size": 54737
         },
         {
           "relPath": "examples/report-and-debrief.md",

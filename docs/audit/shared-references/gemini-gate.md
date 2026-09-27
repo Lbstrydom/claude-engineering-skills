@@ -165,9 +165,25 @@ Studio). See `docs/runbooks/azure-work-profile.md` §Provider-agnostic final rev
 |---|---|
 | `APPROVE` | Done → final report |
 | `CONCERNS` | Step 7.1: Deliberate → fix → Gemini re-verify |
+| `CONCERNS_REMAINING` | Step 7.1 for the **new** findings only; the disputed items are already settled by your cited challenges — do not re-litigate them |
 | `REJECT` | Present to user — needs human judgement |
 
-Max 2 final-review rounds.
+Max 2 final-review rounds — a **hard** cap, not a target. Each rerun is a fresh
+full review of a scope that has grown by every fix, so a round-N reviewer will
+almost always find *something*; "the last run still found things" is expected
+behaviour, not evidence the change is unfit to ship.
+
+**Release-blocking is the only question the cap leaves open.** After round 2,
+a finding blocks ship only when it names at least one of: a violated plan
+acceptance criterion, a regression in the changed code, a security failure, a
+data-loss risk, or a runtime failure on a reachable path. Everything else —
+defensive hardening, maintainability, DRY, "track as debt", findings the
+reviewer itself calls non-blocking — is **tracked debt**: record each one (id, severity, one-line reason) in the
+plan's Remaining / debt section — automatic capture from final-review output is
+not wired yet, so this step is manual — then close the gate as
+**approved-with-debt**. Do not ask the user to override a
+`CONCERNS`/`CONCERNS_REMAINING` verdict whose remaining findings are all
+non-blocking; report it as approved-with-debt and list the debt.
 
 ## Step 7.1 — Deliberate on Gemini Findings (CONCERNS only)
 

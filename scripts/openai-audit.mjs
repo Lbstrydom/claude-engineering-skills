@@ -424,7 +424,9 @@ function printAuditResult(mergedResult, { outFile, jsonMode }) {
       for (const w of mergedResult.quick_fix_warnings) console.log(`- ${w}`);
     }
 
-    if (mergedResult.runStatus !== 'fallback_legacy' && mergedResult.runStatus !== 'complete') {
+    // Tiered results (and only they) carry `debtRoutedFiles`. Keying on
+    // runStatus printed this for a LEGACY run that was merely `incomplete`.
+    if (Array.isArray(mergedResult.debtRoutedFiles) && mergedResult.runStatus !== 'fallback_legacy') {
       console.log(`\n- **Structure/wiring/dead-code checks**: not run (tiered pipeline)`);
     }
 

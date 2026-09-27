@@ -184,11 +184,14 @@ export async function finalizeRun(data, writeOutcomes) {
   // is better than stderr, but the operator running the audit is the one who
   // can act now, and `spillSummary` is what tells them whether the backlog is
   // growing. Printed only when there is something to say.
-  if (writeOutcomes.lost > 0 || writeOutcomes.spilled > 0) {
+  const telemetryLost = writeOutcomes.telemetryLost ?? 0;
+  if (writeOutcomes.lost > 0 || writeOutcomes.spilled > 0 || telemetryLost > 0) {
     const summary = spillSummary();
     const age = summary.oldestAgeMs == null ? 'n/a' : `${Math.round(summary.oldestAgeMs / 60000)}m`;
     process.stderr.write(
-      `  [durable-write] ${writeOutcomes.written} written, ${writeOutcomes.spilled} spilled, ${writeOutcomes.lost} lost `
+      `  [durable-write] ${writeOutcomes.written} written, ${writeOutcomes.spilled} spilled, ${writeOutcomes.lost} lost`
+      + (telemetryLost > 0 ? `, ${telemetryLost} telemetry-only lost (audit unaffected; runStatus not degraded)` : '')
+      + ' '
       + `— queue: ${summary.state === 'ok' ? `${summary.spilled} pending (oldest ${age}), ${summary.lost} unreplayable` : summary.reason}\n`,
     );
     // Name the loser and the reason. A standing `1 lost` on every run with no

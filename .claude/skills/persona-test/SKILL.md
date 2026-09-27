@@ -800,9 +800,11 @@ Response `{"ok": true, "cloud": ..., "sessionId": "<uuid>", "sessionKey":
 "correlationSummary": {...}}`. `sessionId` is the row's uuid PK — that is the
 one later phases pass as `personaSessionId`. `sessionKey` is the minted
 `session_id` text, needed only to re-post this same session.
-If `statsUpdated: false`,
-log a stderr warning — session is preserved; stats self-heal on the next
-reconciler run.
+If `statsUpdated: false`, the session is preserved but the persona's
+`last_tested_at`/`last_verdict` were NOT updated. The usual cause is a null
+`personaId` (an ad-hoc persona not in the registry) — pass the registered id
+when one exists. No reconciler back-fills these fields; do not report them as
+self-healing.
 
 ---
 
@@ -1041,6 +1043,7 @@ When both `session_id_a` and `session_id_b` are non-null (memory enabled),
 record the pairing:
 
 ```bash
+# NOT YET IMPLEMENTED — no CLI subcommand, handler or table exists for this.
 node scripts/cross-skill.mjs link-persona-pair --json '{
   "sessionA": "<session_id_a>",
   "sessionB": "<session_id_b>",
@@ -1051,8 +1054,10 @@ node scripts/cross-skill.mjs link-persona-pair --json '{
 }'
 ```
 
-Graceful no-op if the subcommand doesn't exist yet — log one stderr line
-and continue. The pair report on stdout is the authoritative artefact.
+The subcommand does not exist, so this call fails; log one stderr line and
+continue. Until it ships, the two solo sessions plus the pair report on stdout
+are the authoritative artefacts — say so in the report rather than implying
+the pairing was persisted.
 
 ---
 
