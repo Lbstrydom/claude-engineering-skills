@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "6fe2e82b8b586d31",
+  "bundleVersion": "724eb5b6f6a92608",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -54,14 +54,14 @@
     },
     "audit-code": {
       "path": "skills/audit-code/SKILL.md",
-      "sha": "72b4ebabcabe",
-      "size": 52205,
+      "sha": "651b812cc718",
+      "size": 53687,
       "summary": "Iteratively audit code against a plan with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "72b4ebabcabe",
-          "size": 52205
+          "sha": "651b812cc718",
+          "size": 53687
         },
         {
           "relPath": "examples/contract-test-scaffold.md",
@@ -75,8 +75,8 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "2251db6de52f",
-          "size": 16901
+          "sha": "9dc1ae3e911f",
+          "size": 18741
         },
         {
           "relPath": "references/input-acquisition.md",
@@ -107,19 +107,19 @@
     },
     "audit-plan": {
       "path": "skills/audit-plan/SKILL.md",
-      "sha": "a6bc711552e0",
-      "size": 27524,
+      "sha": "7c437d5f509e",
+      "size": 28074,
       "summary": "Iteratively audit a plan file (docs/plans/*.md) with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "a6bc711552e0",
-          "size": 27524
+          "sha": "7c437d5f509e",
+          "size": 28074
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "2251db6de52f",
-          "size": 16901
+          "sha": "9dc1ae3e911f",
+          "size": 18741
         },
         {
           "relPath": "references/input-acquisition.md",
@@ -191,14 +191,14 @@
     },
     "cycle": {
       "path": "skills/cycle/SKILL.md",
-      "sha": "f0fc55506608",
-      "size": 46344,
+      "sha": "1ef30594f8d1",
+      "size": 46542,
       "summary": "End-to-end feature cycle orchestrator. Runs the full skill chain in",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "f0fc55506608",
-          "size": 46344
+          "sha": "1ef30594f8d1",
+          "size": 46542
         },
         {
           "relPath": "references/remediate-mode.md",

@@ -429,20 +429,22 @@ Gemini's job.
 
 After all clusters (+ close-out), run **one** Gemini review over the
 **union diff** — mandatory regardless of per-cluster GPT convergence, and a
-**closed loop**: `APPROVE` → done; `CONCERNS`/`REJECT` → deliberate, apply
-fixes scoped to the union diff (the per-cluster out-of-scope stop does NOT
-apply here — no active cluster; touched `gate-clear` clusters are flagged
-`stale` for the next run), **re-run Gemini**. **Max 2 consolidated rounds**
-(symmetric with `/audit-plan`'s Gemini cap): after round 2 with `CONCERNS`,
-triage by finding character — a concrete **design/correctness** defect earns one
-more round (meant to be occasional, not the norm — see `gemini-gate.md`'s
-calibration note on this exception before treating "rare" as an established
-fact); **implementation-completeness** nits ("specify the store
-step", parameter placement) or **rising praise + ~1 nit/round** → **STOP**, the
-classic `/audit-code` path (Step 4) already verified the code against the real
-implementation, so record + close rather than re-running the union gate. Exit on
-`APPROVE`, the capped stop, or explicit handback. Never replaced by GPT
-rebuttal.
+**closed loop** driven by the result's code-computed `gateDisposition` (not the
+verdict word): `approve` → done; `approve_with_debt` → done, capture the
+non-blocking findings with `node scripts/debt-auto-capture.mjs --final-review .audit/$SID-gemini-result.json`;
+`blocked` → deliberate, apply fixes scoped to the union diff (the per-cluster
+out-of-scope stop does NOT apply here — no active cluster; touched `gate-clear`
+clusters are flagged `stale` for the next run), **re-run as round 2** with
+`--round 2 --prior .audit/$SID-gemini-result.json` (the round-1 `--out`).
+**Max 2 consolidated rounds — a hard cap enforced by `gemini-review.mjs`,
+which refuses `--round 3`.** A round-2
+`blocked` is handed back to the user with its named blocking items (a concrete
+**design/correctness** defect: fix it, then escalate — see `gemini-gate.md`);
+**implementation-completeness** nits ("specify the store step", parameter
+placement) are non-blocking by definition and close as debt, since the classic
+`/audit-code` path (Step 4) already verified the code against the real
+implementation. Exit on `approve`/`approve_with_debt`, the capped stop, or
+explicit handback. Never replaced by GPT rebuttal.
 
 **Between consolidated rounds, apply `gemini-gate.md`'s Step 7.1 deliberation
 protocol exactly — this closed loop is the SAME one, not a second one.** For

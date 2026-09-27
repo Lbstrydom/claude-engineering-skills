@@ -897,8 +897,33 @@ Otherwise (cloud genuinely off — `RUN_ID` empty):
 node scripts/gemini-review.mjs review "$PLAN_FILE" .audit/$SID-transcript.json --out .audit/$SID-gemini-result.json 2>.audit/$SID-gemini-stderr.log
 ```
 
-Verdict handling: `APPROVE` → done. `CONCERNS` → deliberate, fix, re-run
-Gemini. `REJECT` → present to user.
+Add `--round 1` to the first run. **Hard cap: 2 final-review rounds** —
+`gemini-review.mjs` refuses `--round 3`; never loop past it.
+
+**Act on `gateDisposition`, not the verdict word.** The result JSON (and the
+stdout summary `Gate: …`) carries a code-computed `gateDisposition`; `verdict`
+stays the reviewer's own word:
+
+| `gateDisposition` | Action |
+|---|---|
+| `approve` | Done → final report. |
+| `approve_with_debt` | Done — also for `CONCERNS`/`CONCERNS_REMAINING`. Every remaining finding is `release_blocking: false`: capture them (below), list them in the report. Do **not** re-run the reviewer and do **not** ask the user to override. |
+| `blocked` | `gateDispositionDetail.reasons` names why (a release-blocking finding, a HIGH `wrongly_dismissed`, `REJECT`, or coverage gate). Round 1 → Step 7.1: fix the blocking items, rebuild the transcript, run round 2. Round 2 → present the named blocking items to the user; there is no round 3. |
+
+Round 2 takes the round-1 result as structured memory — its findings are
+settled, and a re-raise is dropped in code unless marked `is_reopened`:
+
+```bash
+node scripts/gemini-review.mjs review "$PLAN_FILE" .audit/$SID-transcript-v2.json --round 2 --prior .audit/$SID-gemini-result.json --out .audit/$SID-gemini-result-v2.json 2>.audit/$SID-gemini-stderr-v2.log
+```
+
+Capture non-blocking findings as debt from the result that closed the gate
+(`-v2` after round 2; release-blocking ones are never captured; `--dry-run`
+previews):
+
+```bash
+node scripts/debt-auto-capture.mjs --final-review .audit/$SID-gemini-result.json --run $SID
+```
 
 **Shadow A/B reviewer (optional, observation-only)**: set `FINAL_REVIEW_SHADOW`
 (e.g. `claude-opus`) to run a second blind reviewer in parallel with the
