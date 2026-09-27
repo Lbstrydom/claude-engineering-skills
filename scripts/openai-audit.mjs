@@ -68,6 +68,7 @@ import { getRequirementsContext, getPlanRequirementsRubric } from './lib/require
 import { ArchIntentPassSchema } from './lib/schemas.mjs';
 import { detectOrphansIntroduced } from './lib/audit/orphan-introduced.mjs';
 import { resolveDiffScope } from './lib/audit/diff-scope-resolver.mjs';
+import { partitionDiffScope, formatDiffScopeNotices } from './lib/diff-scope-admission.mjs';
 import { processFindings, formatAuditSummaryLine } from './lib/audit/findings-pipeline.mjs';
 import { emitOrphanRunMetrics } from './lib/audit/orphan-metrics.mjs';
 import { PlanFpTracker } from './lib/plan-fp-tracker.mjs';
@@ -852,25 +853,24 @@ async function main() {
           + `${explicitBase ? 'explicit --base' : `inferred: tree ${workingTreeDirty ? 'dirty' : 'clean'}`}; ancestry verified)\n`,
         );
 
-        // ONE call, no `..`: this diffs the base commit against the WORKING TREE,
-        // which covers committed + staged + unstaged in every clean/dirty x
-        // inferred/explicit combination. The previous three-call union
-        // (`<base>..HEAD` + a bare `git diff` + ls-files) missed a
-        // STAGED-but-uncommitted file through all three branches — measured, and
-        // pinned in tests/audit-base-ancestry.test.mjs.
+        // ONE call, no `..`: base vs WORKING TREE covers committed + staged + unstaged
+        // (the old three-call union missed STAGED files; tests/audit-base-ancestry.test.mjs).
         const diffOutput = execFileSync('git', ['diff', '--name-only', snapshot.baseSha], {
           encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000
         }).trim();
         const diffChanged = diffOutput ? diffOutput.split('\n').filter(Boolean) : [];
-        // Untracked files are still a separate question: they are in neither the
-        // index nor any commit, so no `git diff` can see them.
+        // Untracked files: in neither index nor commit, so no `git diff` sees them.
         const untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard'], {
           encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000
         }).trim();
         const untrackedFiles = untracked ? untracked.split('\n').filter(Boolean) : [];
-        let allChanged = [...new Set([...diffChanged, ...untrackedFiles])]
+        let candidates = [...new Set([...diffChanged, ...untrackedFiles])]
           .filter(f => allowInfraScope || !isAuditInfraFile(f));
-        if (excludePatterns.length > 0) allChanged = applyExclusions(allChanged, excludePatterns);
+        if (excludePatterns.length > 0) candidates = applyExclusions(candidates, excludePatterns);
+        // Non-code files never reach the count or changedFiles (lib/diff-scope-admission.mjs).
+        const admission = partitionDiffScope({ files: candidates, untracked: untrackedFiles, planText: planContent });
+        for (const line of formatDiffScopeNotices(admission)) process.stderr.write(`${line}\n`);
+        const allChanged = admission.auditable;
         if (allChanged.length > 0) {
           effectiveFileFilter = allChanged;
           // Also set changedFiles if caller didn't — enables R2+ impact scoping in R1

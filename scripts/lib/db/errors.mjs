@@ -255,7 +255,9 @@ export function describeSchemaFault(err, where) {
     if (isSchemaFaultSqlstate(code)) {
       return `  [store] ${where}: query rejected by Postgres (SQLSTATE ${code}: ${cur.message || 'no message'}). `
         + 'This is a SCHEMA fault, not an empty result — the value returned is a degraded default, not a measurement. '
-        + 'Run: node scripts/setup-postgres.mjs --check-drift\n';
+        // 42P10 is a missing/altered unique constraint — invisible to the
+        // ledger check, visible to the live one (lib/db/constraint-drift.mjs).
+        + `Run: node scripts/setup-postgres.mjs --check-drift${code === '42P10' ? ' --live' : ''}\n`;
     }
     cur = cur.cause;
   }

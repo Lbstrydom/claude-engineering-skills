@@ -210,7 +210,29 @@ AUDIT_DB_URL=… node scripts/setup-postgres.mjs --check-drift --format json # C
 ```
 
 Exit codes: `0` clean (no drift OR `AUDIT_DB_URL` unset), `1` drift, `2` hard error,
-`3` needs bootstrap (ledger table missing).
+`3` needs bootstrap (ledger table missing), `4` `--live` requested but unmeasured.
+
+### `--live` — the drift the ledger cannot see
+
+A ledger with zero pending migrations says nothing about whether an object those
+migrations created still exists. A consumer store lost `bandit_arms_unique`
+out-of-band (2026-09-26); every audit then logged a 42P10 lost write while
+`--check-drift` read clean. `--check-drift --live` additionally captures the live
+`pg_constraint` / `pg_indexes` rows (the same `captureLiveSchema` `--adopt` uses)
+and diffs them against the expected-schema manifest
+(`tests/fixtures/expected-schema.json` here, `.audit-loop/expected-schema.json`
+in a consumer):
+
+- **In scope**: PRIMARY KEY + UNIQUE constraints (what an `ON CONFLICT` resolves
+  against) and every index. FOREIGN KEY / CHECK are out of scope — their
+  definitions legitimately differ between hosted and self-hosted stores.
+- **missing / altered** expected objects → drift (exit 1), each with the exact
+  repair statement (`ALTER TABLE ... ADD CONSTRAINT ...` / `CREATE INDEX ...`)
+  derived from the expected definition. **Printed, never applied.**
+- **extra** objects (a consumer's own) → reported for context, never a failure.
+- **manifest absent** → `measured:false` + exit 4, never a clean pass.
+
+Read-only. `npm run stores:drift` passes `--live` for every store it reaches.
 
 ### Drift categories — `eol-legacy` vs `shaMismatch`
 

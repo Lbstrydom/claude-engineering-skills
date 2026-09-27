@@ -19,7 +19,7 @@
     "scripts/lib/sync-isolation-verify.mjs": 1032,
     "scripts/lib/upstream/commands.mjs": 1093,
     "scripts/openai-audit.mjs": 1321,
-    "scripts/setup-postgres.mjs": 1506,
+    "scripts/setup-postgres.mjs": 1372,
     "scripts/solo-control-audit.mjs": 2461,
     "scripts/symbol-index/extract.mjs": 1219,
     "scripts/sync-to-repos.mjs": 2709

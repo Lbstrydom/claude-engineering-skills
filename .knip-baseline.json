@@ -2,7 +2,6 @@
   "generated": "knip-gate",
   "keys": [
     "files:scripts/lib/audit-dispatch.mjs",
-    "files:scripts/lib/bootstrap-template.mjs",
     "files:scripts/lib/claudemd/step65-hook.mjs",
     "files:scripts/lib/persona-test/context.mjs",
     "files:scripts/lib/predictive-strategy.mjs",

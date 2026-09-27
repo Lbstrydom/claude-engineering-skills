@@ -233,6 +233,9 @@ describe('describeLostWrites — name the loser, not just the count', () => {
     assert.doesNotMatch(joined, /STORE SCHEMA DRIFT/);
     assert.match(joined, /--check-drift.* cannot see this|cannot see this.*--check-drift/is);
     assert.match(joined, /pg_constraint/);
+    // 2026-09-27: the diagnosis now exists — the live constraint check.
+    assert.match(joined, /setup-postgres\.mjs --check-drift --live/);
+    assert.match(joined, /never applied/);
   });
 
   it('says so when a loss carries no error at all', () => {

@@ -71,6 +71,35 @@ describe('collectDrift — a store behind this revision is NAMED, never averaged
     assert.match(renderDrift(result), /DIFFERENT sha/);
   });
 
+  it('a clean LEDGER with a missing live constraint is behind (bandit_arms_unique, 2026-09-26)', () => {
+    const result = collectDrift({
+      stores: [STORE_B],
+      unresolved: [],
+      query: () => ({
+        ok: true, reason: null,
+        drift: {
+          hasDrift: true,
+          drift: { unapplied: [], eolLegacy: [], shaMismatch: [], orphanLedger: [] },
+          liveConstraints: {
+            measured: true, hasDrift: true, altered: [], extra: [],
+            missing: [{ category: 'constraints', table: 'bandit_arms', name: 'bandit_arms_unique' }],
+          },
+        },
+      }),
+    });
+    assert.equal(result.storesBehind, 1);
+    const card = renderDrift(result);
+    assert.match(card, /bandit_arms\.bandit_arms_unique/);
+    assert.match(card, /--check-drift --live/);
+    assert.doesNotMatch(card, /all current/);
+  });
+
+  it('a store whose live check did not measure is flagged, never silently "current"', () => {
+    const result = collectDrift({ stores: [STORE_A], unresolved: [], query: clean });
+    assert.equal(result.storesBehind, 0);
+    assert.match(renderDrift(result), /live constraints NOT measured/);
+  });
+
   it('orphanLedger alone is NOT behind — that is a stale checkout, not a stale store', () => {
     // The store knows a migration this working tree does not have. Counting it
     // would make every out-of-date branch report its consumers as broken, which

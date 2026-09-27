@@ -418,17 +418,17 @@ export function describeLostWrites(byWriter) {
       + '--check-drift`; fix: `node scripts/setup-postgres.mjs --migrate`.');
   }
   if (conflictTarget) {
-    // `--check-drift` is NOT the diagnosis here — it compares the applied-
-    // migrations ledger to source files, and a ledger with zero pending
-    // migrations says nothing about whether a constraint's actual SHAPE still
-    // matches what those migrations declared. The upsert() error above now
-    // names the table and the expected ON CONFLICT columns directly — check
-    // that table's constraints in `pg_constraint`, not the ledger.
+    // The LEDGER check (`--check-drift`) is NOT the diagnosis here — a ledger
+    // with zero pending migrations says nothing about whether a constraint
+    // those migrations created still exists. `--check-drift --live` (added
+    // 2026-09-27) compares the live `pg_constraint`/`pg_indexes` rows against
+    // the expected schema and prints the exact repair statement.
     lines.push('      ^ the ON CONFLICT target above has no matching unique constraint. '
-      + '`--check-drift` cannot see this — it checks which migrations are applied, not whether a '
-      + 'constraint was later altered or replaced outside a migration. Check `pg_constraint` for '
-      + 'the table/columns named above; if the constraint is simply missing, `--migrate` may still '
-      + 'restore it.');
+      + 'The ledger check (`--check-drift`) cannot see this — it checks which migrations are applied, '
+      + 'not whether a constraint was later dropped or replaced outside a migration. Diagnose: '
+      + '`node scripts/setup-postgres.mjs --check-drift --live` — compares live pg_constraint / '
+      + 'pg_indexes against the expected schema and prints the exact ALTER TABLE ... ADD CONSTRAINT '
+      + 'repair (never applied for you).');
   }
   return lines;
 }

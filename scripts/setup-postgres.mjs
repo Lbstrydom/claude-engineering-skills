@@ -38,6 +38,8 @@ import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 import { canonicalizeEol } from './lib/file-io.mjs';
 import { withMigrationContext } from './lib/db/schema-realization.mjs';
 import { canonicalise, denseRankColumnPositions, diffSchemas } from './lib/db/schema-diff.mjs';
+import { captureLiveSchema, SHARED_CATALOG_QUERIES } from './lib/db/live-catalog.mjs';
+import { checkLiveConstraints, renderConstraintDrift } from './lib/db/constraint-drift.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -88,6 +90,7 @@ function parseArgs(argv) {
     bootstrapOnly: false,
     dryRun: false,
     format: 'human',  // 'human' | 'json' — used by --check-drift
+    live: false,      // --check-drift --live: also compare live constraints/indexes
     adoptOnly: null,  // string[] | null — scopes --adopt (item 7, sast-sandbox-backlog-hardening.md)
   };
   // Indexed loop so flags-with-value (`--format json`) can advance the
@@ -114,6 +117,7 @@ function parseArgs(argv) {
       case '--preflight-only':  args.preflightOnly = true; break;
       case '--bootstrap-only':  args.bootstrapOnly = true; break;
       case '--dry-run':         args.dryRun = true; break;
+      case '--live':            args.live = true; break;
       case '--format':          args.format = argv[++i]; break;
       case '--adopt-only': {
         // round-2 audit M1: blindly consuming argv[++i] let a following flag
@@ -147,12 +151,16 @@ function parseArgs(argv) {
   }
   if (!args.mode && !args.preflightOnly && !args.bootstrapOnly) {
     process.stderr.write(
-      `usage: setup-postgres.mjs --migrate | --adopt [--adopt-only <file[,file...]>] | --ensure-local | --check-drift | --repair-eol [--format human|json] [--dry-run | --preflight-only | --bootstrap-only]\n`
+      `usage: setup-postgres.mjs --migrate | --adopt [--adopt-only <file[,file...]>] | --ensure-local | --check-drift [--live] | --repair-eol [--format human|json] [--dry-run | --preflight-only | --bootstrap-only]\n`
     );
     process.exit(2);
   }
   if (args.format !== 'human' && args.format !== 'json') {
     process.stderr.write(`${R}error${X}: --format must be 'human' or 'json' (got: ${args.format})\n`);
+    process.exit(2);
+  }
+  if (args.live && args.mode !== 'check-drift') {
+    process.stderr.write(`${R}error${X}: --live only makes sense with --check-drift\n`);
     process.exit(2);
   }
   if (args.adoptOnly && args.mode !== 'adopt') {
@@ -504,168 +512,11 @@ async function applyBootstrap(pool, dryRun) {
   await pool.query(sql);
 }
 
-// ── Adopt-mode schema diff (plan R3/M3, R4) ────────────────────────────────
-
-/**
- * Run `generate-expected-schema.mjs`'s queries against the LIVE DB and
- * diff the result against the committed manifest. Mismatch → abort. Match
- * → return so the caller can seed the ledger.
- *
- * The actual catalog queries are re-imported from the generator module so
- * the two callers can't drift.
- */
-async function captureLiveSchema(pool) {
-  // SHARED_CATALOG_QUERIES is kept in lock-step with the generator script
-  // (see comment on the constant). Keeping adopt-mode self-contained means
-  // no module import edge to the generator's CLI; if the two ever drift,
-  // adopt-mode produces a false mismatch which the operator notices
-  // immediately. That's a much better failure than silent agreement.
-  const live = { schema: 'public' };
-  for (const [key, sql] of Object.entries(SHARED_CATALOG_QUERIES)) {
-    const r = await pool.query(sql);
-    live[key] = r.rows;
-  }
-  return live;
-}
-
-// `denseRankColumnPositions` / `canonicalise` / `diffSchemas` moved to
-// lib/db/schema-diff.mjs on 2026-09-05 — pure catalog comparison, no pool, and
-// this CLI sits over the file-size ratchet limit. Re-exported via `_internals`
-// so existing callers (db-test-container.mjs, the suites) are unchanged.
-
-// Catalog queries — kept in lock-step with generate-expected-schema.mjs.
-// (When that script grows new fields, mirror the change here.)
-//
-// `ordinal_position` is captured RAW on both sides — it is pg `attnum`, and the
-// fixture is a faithful record of the reference DB's physical layout, gaps and
-// all. It is normalised to a dense rank at comparison time by
-// `denseRankColumnPositions`; see that function for why the normalisation is
-// not pushed down into this SQL.
-const SHARED_CATALOG_QUERIES = {
-  tables: `
-    SELECT
-      table_name,
-      json_agg(json_build_object(
-        'column_name', column_name,
-        'data_type', data_type,
-        'is_nullable', is_nullable,
-        'column_default', column_default,
-        'is_identity', is_identity,
-        'identity_generation', identity_generation,
-        'ordinal_position', ordinal_position
-      ) ORDER BY ordinal_position) AS columns
-    FROM information_schema.columns
-    WHERE table_schema = 'public'
-    GROUP BY table_name
-    ORDER BY table_name
-  `,
-  functions: `
-    SELECT
-      p.proname AS function_name,
-      pg_get_function_identity_arguments(p.oid) AS args,
-      pg_get_function_result(p.oid) AS return_type,
-      p.prosecdef AS security_definer,
-      array_to_string(p.proconfig, ',') AS config
-    FROM pg_proc p
-    JOIN pg_namespace n ON n.oid = p.pronamespace
-    WHERE n.nspname = 'public'
-    ORDER BY function_name, args
-  `,
-  views: `
-    SELECT viewname AS view_name, definition
-    FROM pg_views
-    WHERE schemaname = 'public'
-    ORDER BY view_name
-  `,
-  policies: `
-    SELECT
-      schemaname || '.' || tablename AS table_ref,
-      policyname,
-      permissive,
-      roles,
-      cmd,
-      qual,
-      with_check
-    FROM pg_policies
-    WHERE schemaname = 'public'
-    ORDER BY tablename, policyname
-  `,
-  constraints: `
-    SELECT
-      tc.table_name,
-      tc.constraint_name,
-      tc.constraint_type,
-      pg_get_constraintdef(c.oid) AS definition
-    FROM information_schema.table_constraints tc
-    JOIN pg_constraint c ON c.conname = tc.constraint_name
-    JOIN pg_namespace n  ON n.oid = c.connamespace AND n.nspname = tc.constraint_schema
-    WHERE tc.constraint_schema = 'public'
-    ORDER BY tc.table_name, tc.constraint_name
-  `,
-  indexes: `
-    SELECT tablename, indexname, indexdef
-    FROM pg_indexes
-    WHERE schemaname = 'public'
-    ORDER BY tablename, indexname
-  `,
-  triggers: `
-    SELECT
-      event_object_table AS table_name,
-      trigger_name,
-      action_timing,
-      string_agg(event_manipulation, ',' ORDER BY event_manipulation) AS events,
-      action_statement
-    FROM information_schema.triggers
-    WHERE event_object_schema = 'public'
-    GROUP BY event_object_table, trigger_name, action_timing, action_statement
-    ORDER BY table_name, trigger_name
-  `,
-  sequences: `
-    SELECT
-      c.relname AS sequence_name,
-      -- deptype 'a' (auto) is a legacy serial's ownership; deptype 'i'
-      -- (internal) is what GENERATED ... AS IDENTITY uses. Both must be
-      -- checked or an identity column's owning sequence resolves to null
-      -- here (audit R1-M17, found while adding identity-column capture).
-      (SELECT attrelid::regclass::text || '.' || attname
-        FROM pg_attribute
-        WHERE attrelid = (SELECT refobjid
-                          FROM pg_depend
-                          WHERE objid = c.oid AND deptype IN ('a', 'i') LIMIT 1)
-          AND attnum = (SELECT refobjsubid
-                        FROM pg_depend
-                        WHERE objid = c.oid AND deptype IN ('a', 'i') LIMIT 1)) AS owned_by
-    FROM pg_class c
-    JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE c.relkind = 'S' AND n.nspname = 'public'
-    ORDER BY sequence_name
-  `,
-  extensions: `
-    SELECT extname AS extension_name, extversion AS version
-    FROM pg_extension
-    ORDER BY extension_name
-  `,
-  grants: `
-    SELECT
-      grantee,
-      table_schema || '.' || table_name AS object,
-      string_agg(privilege_type, ',' ORDER BY privilege_type) AS privileges
-    FROM information_schema.role_table_grants
-    WHERE table_schema = 'public'
-    GROUP BY grantee, table_schema, table_name
-    ORDER BY object, grantee
-  `,
-  owners: `
-    SELECT
-      c.relname AS object_name,
-      c.relkind AS object_kind,
-      pg_get_userbyid(c.relowner) AS owner
-    FROM pg_class c
-    JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = 'public' AND c.relkind IN ('r', 'v', 'm', 'S')
-    ORDER BY object_kind, object_name
-  `,
-};
+// `captureLiveSchema` + `SHARED_CATALOG_QUERIES` moved to lib/db/live-catalog.mjs
+// on 2026-09-27 so `--check-drift --live` reuses the one capture --adopt uses.
+// `denseRankColumnPositions` / `canonicalise` / `diffSchemas` live in
+// lib/db/schema-diff.mjs. All are re-exported via `_internals` so existing
+// callers (db-test-container.mjs, the suites) are unchanged.
 
 // ── Main flows ─────────────────────────────────────────────────────────────
 
@@ -1226,6 +1077,11 @@ async function runAdopt(pool, { adoptOnly = null } = {}) {
 //   1 — drift
 //   2 — hard error (thrown out of runCheckDrift; caught by main()'s try)
 //   3 — needs bootstrap: ledger table missing
+//   4 — --live was requested but could not measure (manifest absent/unreadable)
+//
+// `--live` adds the one check the ledger cannot make: do the expected key
+// constraints/indexes still EXIST in the live store (lib/db/constraint-drift.mjs)?
+// A missing/altered one is drift (exit 1); an extra consumer object is not.
 //
 // MUST be truly read-only — no DDL, no DML. The `ensureLedger` call from
 // runMigrate / runAdopt is deliberately NOT used here.
@@ -1237,6 +1093,9 @@ export async function runCheckDrift(pool, {
   migrationsDir = MIGRATIONS_DIR,
   stdout        = process.stdout,
   stderr        = process.stderr,
+  live          = false,
+  expectedSchemaPath = EXPECTED_SCHEMA_PATH,
+  capture       = captureLiveSchema,
 } = {}) {
   // R1-audit M1: TRULY read-only. If the table doesn't exist, exit 3
   // with an actionable bootstrap hint — never create it.
@@ -1282,20 +1141,26 @@ export async function runCheckDrift(pool, {
   }
   const orphanLedger = [...ledger.keys()].filter((f) => !sourceHashes.has(f));
 
-  const hasDrift = unapplied.length + eolLegacy.length + shaMismatch.length + orphanLedger.length > 0;
+  const ledgerDrift = unapplied.length + eolLegacy.length + shaMismatch.length + orphanLedger.length > 0;
+  const liveConstraints = live
+    ? await checkLiveConstraints({ pool, expectedSchemaPath, capture, fs })
+    : undefined;
+  const hasDrift = ledgerDrift || !!liveConstraints?.hasDrift;
   const result = {
     drift: { unapplied, eolLegacy, shaMismatch, orphanLedger },
     applied: ledger.size,
     sourceTotal: files.length,
     hasDrift,
     needsBootstrap: false,
-    exitCode: hasDrift ? 1 : 0,
+    ...(liveConstraints ? { liveConstraints } : {}),
+    exitCode: hasDrift ? 1 : (liveConstraints && !liveConstraints.measured ? 4 : 0),
   };
 
   if (format === 'json') {
     stdout.write(JSON.stringify(result, null, 2) + '\n');
   } else {
-    renderHumanDriftReport(result, stderr);
+    renderHumanDriftReport({ ...result, hasDrift: ledgerDrift }, stderr);
+    if (liveConstraints) stderr.write(renderConstraintDrift(liveConstraints).join('\n') + '\n');
   }
   return result;
 }
@@ -1434,7 +1299,7 @@ async function main() {
     // requirements) and skip the bootstrap step. Keeps the check fast for
     // pre-push use.
     if (args.mode === 'check-drift') {
-      const r = await runCheckDrift(pool, { format: args.format });
+      const r = await runCheckDrift(pool, { format: args.format, live: args.live });
       process.exit(r.exitCode);
     }
 
@@ -1502,4 +1367,5 @@ export const _internals = Object.freeze({
   runCheckDrift,
   renderHumanDriftReport,
   SHARED_CATALOG_QUERIES,
+  captureLiveSchema,
 });

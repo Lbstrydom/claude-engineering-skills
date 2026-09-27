@@ -57,6 +57,7 @@ import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { deepMerge } from './lib/json-merge.mjs';
 import { assertContainedDestination } from './lib/install/safe-destination.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
+import { retireLegacyCopilotBlock } from './lib/sync-legacy-copilot-block.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import {
   compareSkillSurfaces, listSurfaceNames, classifyOrphans, LIVE_SURFACE, SHADOWING_SURFACES,
@@ -1438,16 +1439,12 @@ async function main() {
     }
 
     // ── Pre-flight: retired skill surfaces (advisory, D6b) ────────────────
-    // A repo that still carries `~/.claude/skills/**` or `.agents/skills/**`
-    // from the pre-retirement installer has those trees SHADOWING the correct
-    // rewritten copy this sync is about to write — with undefined precedence
-    // between discovered roots. Syncing without saying so would hand the
-    // operator a fixed repo that still behaves like a broken one.
+    // A repo still carrying `~/.claude/skills/**` or `.agents/skills/**` from the
+    // pre-retirement installer has those trees SHADOWING the copy this sync writes
+    // (undefined precedence between roots) — say so, or a fixed repo still misbehaves.
     //
-    // WARN only, never act: this is a file-distribution tool and must not touch
-    // `$HOME`. The delete lives solely behind `install-skills.mjs
-    // --uninstall-legacy`. Suppressed when `install.mjs` is the parent, because
-    // it reports the same finding and can actually offer to fix it.
+    // WARN only: never touch `$HOME`; the delete lives behind `install-skills.mjs
+    // --uninstall-legacy`. Suppressed under `install.mjs`, which reports it too.
     if (!QUIET_LEGACY_CHECK) {
       try {
         const legacy = inspectLegacySurfaces({ repoRoot: repo.path });
@@ -2351,6 +2348,8 @@ async function main() {
         console.log(`  ${R}.gitignore write failed${X}: ${err.message?.slice(0, 120)}`);
       }
     }
+    // ── Retire the old installer's stale copilot-instructions block (never throws).
+    for (const note of retireLegacyCopilotBlock(repo.path, { dryRun: DRY_RUN })) console.log(`  ${Y}legacy${X} ${note}`);
 
     // ── Self-heal: untrack files now covered by a managed runtime-output
     // pattern. A .gitignore rule never untracks an already-committed file, so a

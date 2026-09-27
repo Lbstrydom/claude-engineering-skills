@@ -58,7 +58,11 @@ function resolveManifestPath(argv = process.argv) {
 }
 
 const MANIFEST_PATH = resolveManifestPath();
-const BOOTSTRAP_TEMPLATE = path.resolve('scripts/lib/bootstrap-template.mjs');
+// BOOTSTRAP_TEMPLATE ('scripts/lib/bootstrap-template.mjs') removed 2026-09-27:
+// the template was dead — its only writer was the retired installer — and this
+// hash was its only reader, so it moved bundleVersion for a file no consumer
+// receives. The stale copilot-instructions block that pointed consumers at
+// `.audit-loop/bootstrap.mjs` is retired by lib/sync-legacy-copilot-block.mjs.
 // COPILOT_BLOCK_TEMPLATE ('scripts/lib/install/copilot-block.txt') removed
 // 2026-07-30: the file has never existed, so its existsSync branch never fired
 // and it contributed nothing to bundleVersion. Its writer (install/merge.mjs)
@@ -199,9 +203,6 @@ export function buildManifest() {
     }
   }
 
-  if (fs.existsSync(BOOTSTRAP_TEMPLATE)) {
-    artifactParts.push(`bootstrap:${fileSha(BOOTSTRAP_TEMPLATE)}`);
-  }
   artifactParts.push(`manifest-schema:${MANIFEST_SCHEMA_VERSION}`);
 
   const pairs = artifactParts.sort().join('\n');
