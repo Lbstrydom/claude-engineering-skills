@@ -226,7 +226,9 @@ function projectWronglyDismissed(wd) {
     category: '',
     // `auth.js:132` → `extractCitedEntity` splits on `:` for the fromFile anchor.
     section: cited.length > 0 ? String(cited[0]) : '',
-    detail: `${wd?.reason_claude_was_wrong || ''}\n${wd?.evidence_basis || ''}`.trim(),
+    // Every cited line reaches the existence gate, not only the first (final
+    // review G2); the first stays the section's fromFile anchor.
+    detail: [wd?.reason_claude_was_wrong || '', wd?.evidence_basis || '', ...cited.slice(1).map(String)].join('\n').trim(),
     // `mk()` defaults verdictSeverity to `finding.severity`; without this the
     // projected view has no severity at all and the annotation reads undefined.
     severity: wd?.recommended_severity,
@@ -318,17 +320,21 @@ export async function applyScopeFilter(result, transcriptContent) {
     if (changedFiles.length === 0) return;
     if (!Array.isArray(result.new_findings)) return;
     // Normalise paths for comparison: trim whitespace, strip leading ./.
-    const inScope = new Set(changedFiles.map(f => f.trim().replace(/^\.\//, '')));
+    const norm = (p) => String(p).trim().replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
+    const inScope = new Set(changedFiles.map(norm));
     const before = result.new_findings.length;
     const kept = [];
     const scopeFiltered = [];
     for (const f of result.new_findings) {
-      const file = (f.file || f.location || '').trim().replace(/^\.\//, '');
-      // Empty file → keep (deliberation-level finding, not file-specific).
-      if (!file) { kept.push(f); continue; }
-      const matched = inScope.has(file) || [...inScope].some(s => file === s || file.endsWith('/' + s) || s.endsWith('/' + file));
-      if (matched) kept.push(f);
-      else scopeFiltered.push({ finding: f, file });
+      // Final-review findings carry no `file`/`location` field — reading those
+      // made this filter a no-op for its whole life (final review 2026-09-27
+      // G1). Use the shared structured-file extractor; a finding naming no file
+      // stays (deliberation-level), and one naming ANY in-scope file stays.
+      const files = structuredFilesOf(f).map(norm);
+      if (files.length === 0) { kept.push(f); continue; }
+      const inScopeFile = (file) => inScope.has(file) || [...inScope].some((s) => file.endsWith('/' + s) || s.endsWith('/' + file));
+      if (files.some(inScopeFile)) kept.push(f);
+      else scopeFiltered.push({ finding: f, file: files.join(', ') });
     }
     if (scopeFiltered.length === 0) return;
     process.stderr.write(`  [final-review] Scope filter: ${scopeFiltered.length}/${before} new_findings cited out-of-scope files (dropped)\n`);

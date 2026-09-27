@@ -222,7 +222,7 @@ describe('applyScopeFilter/recordNewFindings — called by main(), not runFinalR
       const r = await runFinalReview('claude-opus', client, '# plan', TRANSCRIPT, 'ctx', 'code');
       return { ...r, transcriptContent: TRANSCRIPT };
     })();
-    result.new_findings[0].file = 'src/OTHER.mjs';
+    result.new_findings[0].affectedFiles = ['src/OTHER.mjs'];
     await applyScopeFilter(result, transcriptContent);
     assert.equal(result.new_findings.length, 0);
     assert.equal(result._scopeFilteredCount, 1);
@@ -231,7 +231,7 @@ describe('applyScopeFilter/recordNewFindings — called by main(), not runFinalR
   it('applyScopeFilter drops out-of-scope new_findings on a result produced via runAdjudicatorOnlyReview', async () => {
     const client = mkStubClient(CONCERNS_FIXTURE);
     const { result, transcriptContent } = await runAdjudicatorOnlyReview('claude-opus', client, '# plan', TRANSCRIPT, 'ctx', 'code');
-    result.new_findings[0].file = 'src/OTHER.mjs';
+    result.new_findings[0].affectedFiles = ['src/OTHER.mjs'];
     await applyScopeFilter(result, transcriptContent);
     assert.equal(result.new_findings.length, 0);
     assert.equal(result._scopeFilteredCount, 1);
@@ -240,7 +240,7 @@ describe('applyScopeFilter/recordNewFindings — called by main(), not runFinalR
   it('applyScopeFilter KEEPS an in-scope new_findings entry regardless of which wrapper produced result', async () => {
     const client = mkStubClient(CONCERNS_FIXTURE);
     const { result, transcriptContent } = await runAdjudicatorOnlyReview('claude-opus', client, '# plan', TRANSCRIPT, 'ctx', 'code');
-    result.new_findings[0].file = REAL_CHANGED_FILE; // matches TRANSCRIPT.changed_files
+    result.new_findings[0].affectedFiles = [REAL_CHANGED_FILE]; // matches TRANSCRIPT.changed_files
     await applyScopeFilter(result, transcriptContent);
     assert.equal(result.new_findings.length, 1);
     assert.equal(result._scopeFilteredCount, undefined);
@@ -257,5 +257,29 @@ describe('applyScopeFilter/recordNewFindings — called by main(), not runFinalR
     const clientB = mkStubClient(CONCERNS_FIXTURE);
     const { result: resultB } = await runAdjudicatorOnlyReview('claude-opus', clientB, '# plan', TRANSCRIPT, 'ctx', 'code');
     assert.doesNotThrow(() => recordNewFindings(resultB, tracker, null, 'rev-test'));
+  });
+});
+
+// Final review 2026-09-27 G1: applyScopeFilter read `f.file`/`f.location`,
+// which no final-review finding carries, so it never dropped anything. These
+// drive it with the REAL shapes (section text, affectedFiles, none).
+describe('applyScopeFilter — real final-review finding shapes', () => {
+  const transcript = JSON.stringify({ changed_files: ['scripts/lib/a.mjs'] });
+  const base = { id: 'G1', severity: 'LOW', category: 'c', detail: 'd', risk: 'r', recommendation: 'x' };
+  it('a section naming only an out-of-scope file is dropped', async () => {
+    const result = { new_findings: [{ ...base, section: 'scripts/lib/other.mjs — fn()' }] };
+    await applyScopeFilter(result, transcript);
+    assert.equal(result.new_findings.length, 0);
+    assert.equal(result._scopeFilteredCount, 1);
+  });
+  it('a section naming the in-scope file is kept (case-insensitive)', async () => {
+    const result = { new_findings: [{ ...base, section: 'Scripts/Lib/A.mjs — fn()' }] };
+    await applyScopeFilter(result, transcript);
+    assert.equal(result.new_findings.length, 1);
+  });
+  it('a finding naming no file is kept (deliberation-level)', async () => {
+    const result = { new_findings: [{ ...base, section: 'overall design' }] };
+    await applyScopeFilter(result, transcript);
+    assert.equal(result.new_findings.length, 1);
   });
 });
