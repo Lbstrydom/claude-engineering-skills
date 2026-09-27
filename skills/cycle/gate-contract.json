@@ -3,6 +3,20 @@
   "skill": "cycle",
   "gates": [
     {
+      "id": "remediate-focused-audit-scope",
+      "kind": "document-only",
+      "statedIn": "skills/cycle/SKILL.md",
+      "stated": "exits non-zero on any edit outside\n   that set",
+      "reason": "REMEDIATE's 'never a whole-dirty-tree diff' is enforced one layer down, by reuse: Step R4 routes the fix-file scope through scripts/cycle-cluster-scope.mjs as a single pseudo-cluster, and that script's out-of-scope exit is the same mechanical check already recorded (document-only here for the same reason) under cluster-scope-preflight-exits-nonzero. /cycle itself emits no exit code, so there is nothing for a cli-exit oracle to assert against at this layer. Added 2026-09-27 with the remediate mode."
+    },
+    {
+      "id": "audit-plan-skip-requires-explicit-mode",
+      "kind": "document-only",
+      "statedIn": "skills/cycle/SKILL.md",
+      "stated": "Only the explicit `code` or\n`remediate` keyword skips it",
+      "reason": "Deliberately NOT mechanical, because no oracle exists: plan-mode audit_runs rows (scripts/lib/audit/plan-audit-cloud.mjs registerPlanAuditRun) record commit_sha = HEAD at capture, not the audited plan bytes; audited_tree/audited_sha are captured only on the code path; gemini_verdict is written only when --run-id is threaded. An 'accepted and unchanged' check built on any of these would report a stale approval as current. The skip is therefore the operator's typed declaration (the mode keyword), recorded in the transcript. Replace with an executable gate if plan-mode rows ever persist a content identity. Added 2026-09-27."
+    },
+    {
       "id": "cluster-start-ref-validated-on-use",
       "kind": "document-only",
       "statedIn": "skills/cycle/SKILL.md",
