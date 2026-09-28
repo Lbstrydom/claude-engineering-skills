@@ -370,7 +370,7 @@ more value here", any clear question about value/decision/direction.
 
 Attribute every bullet (`OpenAI`, `Gemini`, `Claude`, or a combination). You
 are a panelist grading a round you took part in, so a point only you raised goes
-under *one voice only*, never *agree*. A lone view is where a synthesis most
+under *one voice only* rather than *agree*. A lone view is where a synthesis most
 often loses signal, so don't drop it for being inconvenient.
 
 ### Step 4.5 — Arm-eval capture (AUTOMATIC — no action)
