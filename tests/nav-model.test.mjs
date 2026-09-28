@@ -4,7 +4,9 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { buildModel } from '../scripts/lib/nav/model.mjs';
+import { extractEdges } from '../scripts/lib/nav/extract.mjs';
 
 const contract = {
   version: 1,
@@ -85,5 +87,47 @@ export function NavItem(){ return <a href="/wines">Wines</a>; }`,
     assert.equal(d.inDegree, 2);
     assert.equal(d.affordanceTypes.has('link'), true);
     assert.equal(d.affordanceTypes.has('navigate-call'), true);
+  });
+});
+
+describe('buildModel — lexical-nesting containment (storyline nav-bar report)', () => {
+  const FIXTURE = fs.readFileSync(new URL('./fixtures/nav-static/map-callback-nav-bar.jsx', import.meta.url), 'utf-8');
+  const navContract = { version: 1, navLayers: { primary: ['AppNav'] }, personas: [] };
+
+  it('attributes a closure called via .map() to the component it is defined inside', () => {
+    const sources = [{ path: 'src/AppNav.jsx', content: FIXTURE }];
+    const model = buildModel([edge({ entryPoint: 'renderDestination', destination: 'workflow' })], { contract: navContract, sources });
+    assert.equal(model.edges[0].anchor, 'AppNav');
+    assert.equal(model.edges[0].layer, 'primary');
+    assert.equal(model.edges[0].confidence, 'high', 'one lexical hop is depth 1 — no decay');
+  });
+
+  it('end-to-end: every enumerated destination lands on the AppNav anchor', () => {
+    const sources = [{ path: 'src/AppNav.jsx', content: FIXTURE }];
+    const { edges } = extractEdges(sources, { root: '.' });
+    const model = buildModel(edges, { contract: navContract, sources });
+    for (const id of ['workflow', 'library', 'settings']) {
+      assert.ok(model.destinations.get(id)?.anchors.has('AppNav'), `${id} should attribute to AppNav`);
+    }
+  });
+
+  it('continues past the lexical hop through JSX composition', () => {
+    const sources = [{
+      path: 'shell.jsx',
+      content: `export function Shell(){ return <Inner/>; }
+export function Inner(){ const go = () => navigate('/x'); return <b onClick={go}/>; }`,
+    }];
+    const model = buildModel([edge({ entryPoint: 'go', destination: '/x' })], { contract: { version: 1, navLayers: { primary: ['Shell'] }, personas: [] }, sources });
+    assert.equal(model.edges[0].anchor, 'Shell');
+  });
+
+  it('does NOT invent a parent for a MODULE-scope helper (no lexical nesting)', () => {
+    const sources = [{
+      path: 'nav.jsx',
+      content: `const renderItem = (d) => <b onClick={() => navigate(d)}/>;
+export function AppNav(){ return ['a'].map(renderItem); }`,
+    }];
+    const model = buildModel([edge({ entryPoint: 'renderItem', destination: 'a' })], { contract: navContract, sources });
+    assert.equal(model.edges[0].anchor, null);
   });
 });

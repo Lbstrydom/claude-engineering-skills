@@ -90,9 +90,13 @@ const SKIP_KEYS = new Set(['loc', 'start', 'end', 'range', 'leadingComments', 't
 
 /**
  * Recursively walk an AST, invoking `visit(node, ctx)` for every node. `ctx`
- * carries `enclosing` — the nearest named function/class/component ancestor.
+ * carries `enclosing` — the nearest named function/class/component ancestor
+ * (the node's own name when it introduces one) — and `outer`, the name that was
+ * in effect at its PARENT. The two differ exactly on a named node, so a caller
+ * can read lexical nesting (`const helper = () => …` inside `function App`)
+ * without re-implementing the walk.
  * @param {object} ast - a File node (or any node)
- * @param {(node: object, ctx: {enclosing: string|undefined, line: number}) => void} visit
+ * @param {(node: object, ctx: {enclosing: string|undefined, outer: string|undefined, line: number}) => void} visit
  */
 export function walk(ast, visit) {
   const root = ast && ast.type === 'File' ? ast.program : ast;
@@ -102,7 +106,7 @@ export function walk(ast, visit) {
     if (!node || typeof node.type !== 'string') return;
     const named = componentNameOf(node);
     const nextEnclosing = named || enclosing;
-    visit(node, { enclosing: nextEnclosing, line: node.loc?.start?.line ?? 0 });
+    visit(node, { enclosing: nextEnclosing, outer: enclosing, line: node.loc?.start?.line ?? 0 });
     for (const key of Object.keys(node)) {
       if (SKIP_KEYS.has(key)) continue;
       const child = node[key];

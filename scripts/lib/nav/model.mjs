@@ -15,6 +15,7 @@
  * @module scripts/lib/nav/model
  */
 import { indexSymbols, enclosingSymbol } from './ast-lite.mjs';
+import { parseSource, walk, componentNameOf } from './ast.mjs';
 
 /**
  * @param {object[]} edges - from extract.mjs (anchor:null on input)
@@ -75,20 +76,36 @@ export function buildModel(edges, { contract = null, sources = [], destinations:
   return { destinations, edges: attributed, declaredAnchors, layerOfAnchor };
 }
 
-/** child→parents containment: a parent "renders" a child when the child's JSX tag
- *  appears inside the parent's body (approximated by enclosing top-level symbol). */
+/** child→parents containment, from two sources of truth:
+ *  1. JSX composition — a parent "renders" a child when the child's JSX tag
+ *     appears inside the parent's body (approximated by enclosing top-level symbol).
+ *  2. Lexical nesting — a named closure defined INSIDE a component
+ *     (`const renderItem = (d) => <li>…</li>` in `function AppNav`) is part of that
+ *     component's render even though it is called imperatively
+ *     (`ITEMS.map(renderItem)`) and never appears as a JSX tag. Without this edge
+ *     the BFS starting at the closure has nowhere to go, and a correctly-declared
+ *     anchor on the enclosing component never attributes. */
 function buildReverseContainment(sources) {
   const reverse = new Map();
+  const add = (child, parent) => {
+    if (!parent || parent === child) return;
+    if (!reverse.has(child)) reverse.set(child, new Set());
+    reverse.get(child).add(parent);
+  };
   for (const s of sources) {
     const symbols = indexSymbols(s.content);
     const usageRe = /<([A-Z][A-Za-z0-9_]*)\b/g;
     let m;
-    while ((m = usageRe.exec(s.content)) !== null) {
-      const child = m[1];
-      const parent = enclosingSymbol(symbols, m.index);
-      if (!parent || parent === child) continue;
-      if (!reverse.has(child)) reverse.set(child, new Set());
-      reverse.get(child).add(parent);
+    while ((m = usageRe.exec(s.content)) !== null) add(m[1], enclosingSymbol(symbols, m.index));
+    // Named-symbol identity matches extract.mjs's `entryPoint` exactly: both come
+    // from the shared walker's `componentNameOf`. A parse failure contributes no
+    // lexical edges (extract.mjs already warned about it).
+    const { ast } = parseSource(s.content);
+    if (ast) {
+      walk(ast, (node, c) => {
+        const own = componentNameOf(node);
+        if (own && c.outer) add(own, c.outer);
+      });
     }
   }
   return reverse;

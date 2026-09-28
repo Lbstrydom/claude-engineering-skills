@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "deea480518e0daad",
+  "bundleVersion": "30f9b46d501f96a6",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -276,8 +276,8 @@
         },
         {
           "relPath": "references/extraction-and-adapters.md",
-          "sha": "711e351dab96",
-          "size": 3048
+          "sha": "471bb47344c2",
+          "size": 5059
         },
         {
           "relPath": "references/finding-taxonomy.md",
