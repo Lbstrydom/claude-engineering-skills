@@ -361,10 +361,15 @@ more value here", any clear question about value/decision/direction.
 
 **Where we agree**: <bullets — only true convergence>
 **Where we diverge**: <bullets — and what the divergence reveals>
+**Raised by one voice only**: <bullets — each tagged with its source; keep the ones you disagree with>
 **Open questions**: <what the user still needs to decide>
 **My recommendation**: <one paragraph, opinionated>
 **Next concrete step**: <one sentence>
 ```
+
+The *one voice only* row is there because a lone view is what a synthesis
+drops first: in a 2026-09-28 A/B, the template without it silently lost 3 of
+Gemini's 5 unique points in one round.
 
 ### Step 4.5 — Arm-eval capture (AUTOMATIC — no action)
 

@@ -64,6 +64,33 @@
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `.claude/skills/audit-plan/references/gemini-gate.md` and `.claude/skills/cycle/SKILL.md` both carry the new prose (grep confirmed). storyline itself REFUSED this sync (27 files diverged, pre-existing committed customizations unrelated to this change) — not verified there; ai-organiser and wine-cellar-app both reached cleanly.
 - **Result**: verified — the /cycle Step 7 blocked-handoff prose and the gemini-gate.md calibration note reached the consumer bundle intact (wine-cellar-app, ai-organiser). storyline unverified — sync REFUSED on pre-existing divergence, not this change's fault.
 
+## 2026-09-28 (later) — /brainstorm Step 4 tweak measured; trimmed to the part that worked
+
+### Correction to the entry below
+The entry below says the new template stops Claude filing its own view as consensus. **Measured, that claim did not hold**, so the template was trimmed.
+
+- **Method**: two fresh rounds (pre-push-hook speed; regression-lock backlog; gpt-6-sol + gemini-pro-latest, ~$0.06 total). For each, two subagents wrote the synthesis from byte-identical input, one on the old template and one on the new; a third subagent built a who-said-what inventory from the raw round BEFORE reading either synthesis, then scored both (labels counterbalanced across rounds).
+- **Result (old / new)**: single-voice points retained 16/16 and 17/**21**; Claude-only points presented as agreement 0/**1** and 0/0; misattributions 1/2 and 2/1; conflicts surfaced 4/4 and 4/5; length +40% and +25%. All four recommendations adopted Claude's own take regardless of template.
+- **Read**: the *one voice only* row works: the old template dropped 3 of Gemini's 5 unique points in round 2. The per-bullet attribution rule does not stop self-grading. The real failure is an "agree" bullet that pulls a voice into a position it does not hold (the round-1 new-template synthesis credited Gemini with the opposite of its argument), and attribution added more places for that to happen. The "Nobody covered" row invited synthesiser-invented ideas that then resurfaced in the recommendation as if a voice had raised them. n=2 with the same model writing and scoring: directional only.
+- **Change**: kept only the *one voice only* row (source-tagged); reverted the agree/diverge wording, dropped *Nobody covered* and the self-grading paragraph. The recommendation's lean toward Claude's own take is untouched by any template and remains open.
+
+---
+
+## 2026-09-28 — /brainstorm synthesis attributes every point to its voice; Fusion Router evaluated and declined
+
+### Changes
+- `skills/brainstorm/SKILL.md` Step 4: the synthesis template names who holds each agree/diverge point, adds **Raised by one voice only** (source-tagged) and **Nobody covered** rows, and states that a point only Claude raised goes under *one voice only*, never *agree* — Claude is a panelist grading a round it took part in (the `self_family` shape). Regenerated `.claude/skills/brainstorm/SKILL.md` + `skills.manifest.json`.
+
+### Decisions Made
+- **OpenRouter Fusion Router — not adopted, in any form.** Brainstorm session `1790607206116` (gpt-6-sol + gemini-pro-latest, with debate, $0.08): all three voices rejected it as an `/audit-code` gate. Reason that settles it without an experiment: an analyst over reviewers adds precision, never recall — the shadow reviewer's KEEP rested on extra *real* findings (recall), and precision-by-LLM-cross-reference is exactly what the 52% re-judgement agreement and 329/331 wrong-side suppression measured as bad. Its default panel (Claude/GPT/Gemini) is the one `/brainstorm` already runs, so it adds no independence; its web-searching panelists would widen `--with-artifact` egress to unpinned backends. The one useful mechanism — a non-merging disagreement map — is `/brainstorm` Step 4, so the fix was the template, not a feature.
+
+### Backlog
+Backlog 2026-09-28T15:26Z: Q1 76c/28p (+316 aged) · Q2 101c/41p (54 perm) · Q3 35 · debt 313 cloud/59 local (0 spilled) · upstream 1
+
+All pre-existing, none touching this session's files: 76 unlocked code fixes (3 dangling regression-lock specs), 101 unremediated-acceptance code findings, 1 open upstream report (wine-cellar-app `ux-lock-run.mjs verify` run_id uuid/text mismatch, MEDIUM). storyline's store is 1 migration behind (`20260927120000_persona_pair_sessions.sql`) — operator decision, not applied here.
+
+---
+
 ## 2026-09-27 — Opus 5.5 forced tool_choice fixed on 3 paths; retry usage summing; cli self-reported cost wired; solo-control unmeasured-stage fix; model-eval pinned to sdk; wine-cellar-app sync-override
 
 ### Changes
