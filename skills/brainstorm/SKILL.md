@@ -359,12 +359,19 @@ more value here", any clear question about value/decision/direction.
 ```markdown
 ## Synthesis
 
-**Where we agree**: <bullets — only true convergence>
-**Where we diverge**: <bullets — and what the divergence reveals>
+**Where we agree**: <bullets — only true convergence; name who holds each>
+**Where we diverge**: <bullets — who holds which side, and what the divergence reveals>
+**Raised by one voice only**: <bullets — each tagged with its source; keep the ones you disagree with>
+**Nobody covered**: <gaps no voice addressed — omit the line if none>
 **Open questions**: <what the user still needs to decide>
 **My recommendation**: <one paragraph, opinionated>
 **Next concrete step**: <one sentence>
 ```
+
+Attribute every bullet (`OpenAI`, `Gemini`, `Claude`, or a combination). You
+are a panelist grading a round you took part in, so a point only you raised goes
+under *one voice only*, never *agree*. A lone view is where a synthesis most
+often loses signal, so don't drop it for being inconvenient.
 
 ### Step 4.5 — Arm-eval capture (AUTOMATIC — no action)
 
