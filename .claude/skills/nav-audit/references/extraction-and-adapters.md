@@ -21,6 +21,41 @@ Each match becomes an edge `{entryPoint, layer, anchor, affordanceType, label,
 destination, confidence, sourceLoc}`. `anchor` is left `null` here — it is
 attributed later by the model via render-containment.
 
+### Nav bars built with `.map()` over a local array
+
+The common persistent-nav shape iterates a same-file array of object literals:
+
+```jsx
+const DESTINATIONS = [{ screen: 'workflow' }, { screen: 'library' }];
+function AppNav() {
+  const renderItem = (d) => <button onClick={() => navigate(d.screen)} />;
+  return <nav>{DESTINATIONS.map(renderItem)}</nav>;
+}
+```
+
+`navigate(d.screen)` is **enumerated**, not opaque: one edge per literal value
+(`workflow`, `library`), confidence `medium`. Resolved when the callback of
+`ARR.map|flatMap|forEach(cb)` is inline or declared once in the file, and `ARR`
+is declared once in the file as an array literal (`as const` / `Object.freeze`
+unwrapped). The target may read `d.prop`, `d['prop']`, a destructured
+`{prop}` / `{prop: alias}`, or the element itself (array of strings). An element
+whose value is present but non-literal adds a `<dynamic>` edge beside the known
+ones and drops the lot to `low`: partial is reported as partial. External values
+(`https:`, `mailto:`, `#`) are dropped.
+
+**Still opaque, by design** — imported arrays, chained calls
+(`ARR.filter(…).map(cb)`), callbacks passed through props, nested paths
+(`d.meta.screen`), a name declared twice in the file, a parameter re-bound by a
+nested function. These are the same bounded `<dynamic>` degrade as genuinely
+runtime-computed nav (`el.dataset.view`, a server-driven registry).
+
+**Containment for closures.** The emitting symbol above is `renderItem`, which is
+never a JSX tag, so JSX composition alone gives it no parent. The model also adds
+**lexical nesting**: a named function defined inside another named function is
+contained by it, so a `primary: ["AppNav"]` anchor attributes. A helper declared
+at **module scope** and passed to `.map()` gets no such edge — declare the helper
+itself as the anchor, or move it inside the component.
+
 ## Adapters are discovery-only
 
 Framework knowledge is quarantined to thin adapters (`adapters/*.mjs`). The
@@ -53,7 +88,9 @@ confidence, fully-opaque targets → `<dynamic>` (excluded from hard-gates).
 - **react-router** — `<Route path>` + route-object literals (require an
   `element`/`Component`/`loader` sibling so unrelated `path:` props aren't
   captured). **Nested/relative route composition is a v1.1 bound** — relative
-  child paths are normalised standalone.
+  child paths are normalised standalone. A member-expression target
+  (`navigate(item.path)`) is declined, so it stays `<dynamic>` instead of becoming
+  a phantom destination named `item.path`.
 - **next-file** — destinations derived from file paths (`pages/**`, `app/**/page`).
   **Parallel (`@slot`) / intercepting (`(.)`) routes are a v1.1 bound.**
 

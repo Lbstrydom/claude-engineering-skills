@@ -59,9 +59,13 @@
   // the live worktree). Nothing imports them and nothing should; they are data
   // that happens to be .mjs. Ignored rather than baselined, because a baseline
   // entry says "known unused code we tolerate" and these are not code at all.
+  // tests/fixtures/nav-static/** is the same class: consumer-app source (JSX that
+  // imports react-router-dom, which this repo does not depend on) read as TEXT
+  // by the nav-extractor tests — the import is the input under test.
   "ignore": [
     "docs/plans/security/files/**",
-    "tests/fixtures/anchor-contract/files/**"
+    "tests/fixtures/anchor-contract/files/**",
+    "tests/fixtures/nav-static/**"
   ],
 
   // @stryker-mutator/core is SPAWNED, never imported: scripts/mutation-test.mjs

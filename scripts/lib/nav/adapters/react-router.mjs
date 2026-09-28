@@ -115,8 +115,12 @@ function dedupe(arr) {
   return out;
 }
 
-export function resolveDestination(raw, _ctx = {}) {
+export function resolveDestination(raw, ctx = {}) {
   if (typeof raw !== 'string') return null;
+  // A member-expression target (`item.path`) is a JS reference, not a path —
+  // normalising its spelling would mint a phantom destination named `item.path`.
+  // Declining leaves it <dynamic>, the vanilla adapter's policy for `item.view`.
+  if (ctx.targetType === 'member') return null;
   const strLit = raw.trim().match(/^['"`]([^'"`]*)['"`]$/);
   const value = strLit ? strLit[1] : raw.trim();
   if (!value) return null;

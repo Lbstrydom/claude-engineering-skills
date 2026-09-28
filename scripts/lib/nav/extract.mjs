@@ -19,7 +19,7 @@ import path from 'node:path';
 import { resolveAndClassify } from '../sensitive-paths.mjs';
 import { activeAdapters, resolveWithAdapters } from './adapters/index.mjs';
 import { normalizeDestination, namespaceId } from './normalize.mjs';
-import { parseSource, walk, classifyTarget, jsxLabel, jsxAttr, jsxTagName, calleeName, unwrapObjectExpression } from './ast.mjs';
+import { parseSource, walk, classifyTarget, jsxLabel, jsxAttr, jsxTagName, calleeName, unwrapObjectExpression, unwrapArrayExpression } from './ast.mjs';
 import { appRootForPath } from './approot.mjs';
 
 const LINK_TAGS = new Set(['a', 'Link', 'NavLink']);
@@ -110,8 +110,9 @@ export function extractEdges(sources, { root = '.', appRoots = [] } = {}) {
 
   for (const s of parseable) {
     const ns = appRootForPath(s.path, appRoots);
+    const enumerated = enumerateIterationTargets(s.ast);
     walk(s.ast, (node, c) => {
-      for (const aff of affordancesOf(node)) {
+      for (const aff of affordancesOf(node, enumerated)) {
         const resolved = resolveTarget(adapters, aff.target, ctx, aff.type);
         for (const id0 of resolved.ids) {
           const id = aff.type === 'modal-trigger' ? id0 : namespaceId(id0, ns);
@@ -147,13 +148,13 @@ export function extractEdges(sources, { root = '.', appRoots = [] } = {}) {
  *  literals can yield many (vanilla apps build HTML — including `<a href>` and
  *  inline `switchView(...)` — inside template strings, which the AST sees as
  *  opaque literals; we scan their text to recover those links). */
-function affordancesOf(node) {
+function affordancesOf(node, enumerated) {
   if (node.type === 'JSXElement') {
-    const a = jsxAffordance(node);
+    const a = jsxAffordance(node, enumerated);
     return a ? [a] : [];
   }
   if (node.type === 'CallExpression') {
-    const a = callAffordance(node);
+    const a = callAffordance(node, enumerated);
     return a ? [a] : [];
   }
   if (node.type === 'StringLiteral') return embeddedAffordances(node.value);
@@ -161,31 +162,31 @@ function affordancesOf(node) {
   return [];
 }
 
-function jsxAffordance(node) {
+function jsxAffordance(node, enumerated) {
   const tag = jsxTagName(node.openingElement);
   if (LINK_TAGS.has(tag)) {
-    const target = classifyTarget(jsxAttr(node.openingElement, ['href', 'to']));
+    const target = targetOf(jsxAttr(node.openingElement, ['href', 'to']), enumerated);
     if (isSkippable(target)) return null;
     return { type: 'link', target, label: jsxLabel(node) };
   }
   if (tag === 'Navigate') {
-    const target = classifyTarget(jsxAttr(node.openingElement, ['to', 'href']));
+    const target = targetOf(jsxAttr(node.openingElement, ['to', 'href']), enumerated);
     if (isSkippable(target)) return null;
     return { type: 'redirect', target, label: null };
   }
   return null;
 }
 
-function callAffordance(node) {
+function callAffordance(node, enumerated) {
   const name = calleeName(node);
   if (!name) return null;
   if (NAV_CALLS.has(name)) {
-    const target = classifyTarget(node.arguments?.[0]);
+    const target = targetOf(node.arguments?.[0], enumerated);
     if (isSkippable(target)) return null;
     return { type: 'navigate-call', target, label: null };
   }
   if (MODAL_CALLS.has(name)) {
-    const target = classifyTarget(node.arguments?.[0]);
+    const target = targetOf(node.arguments?.[0], enumerated);
     return { type: 'modal-trigger', target, label: null };
   }
   return null;
@@ -250,6 +251,179 @@ function templateText(node) {
   return out;
 }
 
+/** Classify a target expression, preferring a statically-enumerated binding
+ *  (see `enumerateIterationTargets`). External values are dropped from an
+ *  enumeration the same way an external literal is skipped; an enumeration left
+ *  with nothing known and nothing opaque is skippable. */
+function targetOf(node, enumerated) {
+  const expr = node?.type === 'JSXExpressionContainer' ? node.expression : node;
+  const hit = expr && enumerated?.get(expr);
+  if (!hit) return classifyTarget(node);
+  const values = hit.values.filter((v) => v !== '' && !EXTERNAL_RE.test(v));
+  if (!values.length && !hit.dynamic) return null;
+  return { ...hit, values };
+}
+
+const ITERATION_METHODS = new Set(['map', 'flatMap', 'forEach']);
+const FUNCTION_TYPES = new Set(['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration']);
+
+/**
+ * Statically enumerate nav targets inside an array-iteration callback.
+ *
+ * The persistent-nav-bar shape —
+ *   `const DESTINATIONS = [{screen: 'workflow'}, …]`
+ *   `const renderItem = (d) => <button onClick={() => navigate(d.screen)}/>`
+ *   `DESTINATIONS.map(renderItem)`
+ * — reads a literal property off a parameter bound to a same-file array of
+ * object literals, so every value it can take is known. This is NOT the
+ * runtime-computed nav (`el.dataset.view`, a server-driven registry) that
+ * correctly degrades to `<dynamic>`.
+ *
+ * Covered: `ARR.map|flatMap|forEach(cb)` where `ARR` is declared once in the
+ * file as an array literal (`as const` / `Object.freeze` unwrapped) and `cb` is
+ * an inline function or a function declared once in the file; the target reads
+ * `param.prop`, `param['prop']`, a destructured `{prop}` / `{prop: alias}`, or
+ * the element itself (an array of string literals). Deliberately NOT covered —
+ * each stays opaque: imported arrays, chained calls (`ARR.filter(…).map(cb)`),
+ * a callback passed through props, and nested property paths (`d.meta.screen`).
+ * A name declared more than once in the file, or shadowed by a nested
+ * function's parameter, is never resolved.
+ *
+ * @param {object} ast
+ * @returns {WeakMap<object, {type: 'enumerated', values: string[], dynamic: boolean}>}
+ *   keyed by the target expression node
+ */
+function enumerateIterationTargets(ast) {
+  const out = new WeakMap();
+  const declCount = new Map();
+  const arrays = new Map();
+  const fns = new Map();
+  const declare = (name) => declCount.set(name, (declCount.get(name) ?? 0) + 1);
+
+  walk(ast, (node) => {
+    if (node.type === 'VariableDeclarator') {
+      for (const n of patternNames(node.id)) declare(n);
+      if (node.id?.type !== 'Identifier') return;
+      const arr = unwrapArrayExpression(node.init);
+      if (arr) arrays.set(node.id.name, arr);
+      if (node.init && FUNCTION_TYPES.has(node.init.type)) fns.set(node.id.name, node.init);
+    } else if ((node.type === 'FunctionDeclaration' || node.type === 'ClassDeclaration') && node.id) {
+      declare(node.id.name);
+      if (node.type === 'FunctionDeclaration') fns.set(node.id.name, node);
+    }
+    if (FUNCTION_TYPES.has(node.type)) for (const p of node.params || []) for (const n of patternNames(p)) declare(n);
+  });
+  const unique = (map, name) => (declCount.get(name) === 1 ? map.get(name) : undefined);
+
+  walk(ast, (node) => {
+    if (node.type !== 'CallExpression') return;
+    const callee = node.callee;
+    if (callee?.type !== 'MemberExpression' || callee.computed || callee.object?.type !== 'Identifier') return;
+    if (!ITERATION_METHODS.has(callee.property?.name)) return;
+    const arr = unique(arrays, callee.object.name);
+    if (!arr) return;
+    const arg = node.arguments?.[0];
+    const cb = arg?.type === 'Identifier' ? unique(fns, arg.name) : (FUNCTION_TYPES.has(arg?.type) ? arg : undefined);
+    const bindings = paramBindings(cb?.params?.[0]);
+    if (!bindings) return;
+    markReads(cb.body, bindings, (prop) => enumerateProperty(arr.elements, prop), out);
+  });
+  return out;
+}
+
+/** Local names bound by the element parameter → the property each one reads
+ *  (`null` = the whole element). Null when the parameter is not a supported shape. */
+function paramBindings(param) {
+  if (param?.type === 'Identifier') return new Map([[param.name, null]]);
+  if (param?.type !== 'ObjectPattern') return null;
+  const m = new Map();
+  for (const p of param.properties) {
+    if (p.type !== 'ObjectProperty' || p.computed || p.value?.type !== 'Identifier') continue;
+    const key = propKeyName(p.key);
+    if (key) m.set(p.value.name, key);
+  }
+  return m.size ? m : null;
+}
+
+/** Record every read of a bound name inside `body` (a whole-element Identifier,
+ *  or `elem.prop` / `elem['prop']`), skipping any nested function that re-binds
+ *  one of the names. Hand-rolled rather than `walk` because `walk` cannot prune a
+ *  subtree, and a shadowed name must not resolve. */
+function markReads(node, bindings, enumerate, out) {
+  if (!node || typeof node.type !== 'string') return;
+  if (FUNCTION_TYPES.has(node.type) && node.params.some((p) => patternNames(p).some((n) => bindings.has(n)))) return;
+  if (node.type === 'MemberExpression' && node.object?.type === 'Identifier' && bindings.get(node.object.name) === null) {
+    const prop = node.computed ? (node.property?.type === 'StringLiteral' ? node.property.value : null) : node.property?.name;
+    if (prop) record(out, node, enumerate(prop));
+  } else if (node.type === 'Identifier' && bindings.has(node.name)) {
+    record(out, node, enumerate(bindings.get(node.name)));
+  }
+  for (const key of Object.keys(node)) {
+    if (key === 'loc' || key.endsWith('Comments')) continue;
+    const child = node[key];
+    if (Array.isArray(child)) for (const c of child) markReads(c, bindings, enumerate, out);
+    else if (child && typeof child.type === 'string') markReads(child, bindings, enumerate, out);
+  }
+}
+
+/** A callback shared by several arrays (`PRIMARY.map(render)` +
+ *  `SECONDARY.map(render)`) reaches the same read once per array — union them. */
+function record(out, node, e) {
+  const prev = out.get(node);
+  out.set(node, prev ? { ...e, values: [...new Set([...prev.values, ...e.values])], dynamic: prev.dynamic || e.dynamic } : e);
+}
+
+/** Every static string value `prop` takes across the array's elements (`prop`
+ *  null = the element itself). `dynamic` marks an element whose value is present
+ *  but not a literal — the enumeration is then partial, and says so. An object
+ *  element that simply lacks the property (a divider entry) contributes nothing. */
+function enumerateProperty(elements, prop) {
+  const values = [];
+  let dynamic = false;
+  for (const el of elements || []) {
+    if (prop === null) {
+      const v = staticString(el);
+      if (v === null) dynamic = true; else values.push(v);
+      continue;
+    }
+    if (el?.type !== 'ObjectExpression') { dynamic = true; continue; }
+    const p = el.properties.find((pr) => pr.type === 'ObjectProperty' && !pr.computed && propKeyName(pr.key) === prop);
+    if (!p) {
+      if (el.properties.some((pr) => pr.type === 'SpreadElement')) dynamic = true;
+      continue;
+    }
+    const v = staticString(p.value);
+    if (v === null) dynamic = true; else values.push(v);
+  }
+  return { type: 'enumerated', values: [...new Set(values)], dynamic };
+}
+
+function staticString(node) {
+  if (node?.type === 'StringLiteral') return node.value;
+  if (node?.type === 'TemplateLiteral' && node.expressions.length === 0) return node.quasis[0]?.value.cooked ?? null;
+  return null;
+}
+
+function propKeyName(key) {
+  if (key?.type === 'Identifier') return key.name;
+  if (key?.type === 'StringLiteral') return key.value;
+  return null;
+}
+
+/** Every local name a binding pattern introduces. */
+function patternNames(p) {
+  if (!p) return [];
+  switch (p.type) {
+    case 'Identifier': return [p.name];
+    case 'AssignmentPattern': return patternNames(p.left);
+    case 'RestElement': return patternNames(p.argument);
+    case 'ArrayPattern': return p.elements.flatMap(patternNames);
+    case 'ObjectPattern': return p.properties.flatMap((pr) => patternNames(pr.type === 'RestElement' ? pr : pr.value));
+    case 'TSParameterProperty': return patternNames(p.parameter);
+    default: return [];
+  }
+}
+
 function isSkippable(target) {
   if (!target) return true;
   if (target.type === 'literal' && (target.value === '' || EXTERNAL_RE.test(target.value))) return true;
@@ -258,6 +432,22 @@ function isSkippable(target) {
 
 /** Resolve a structured target to canonical id(s) + confidence. */
 function resolveTarget(adapters, target, ctx, affordanceType) {
+  if (target?.type === 'enumerated') {
+    // Each statically-known value resolves exactly as the literal it is. Capped
+    // at medium: every value is certain, but nothing proved every element renders
+    // (a conditional inside the callback can still hide one). A non-literal
+    // element keeps an explicit opaque id beside the known ones — partial
+    // knowledge is reported as partial, never rounded up to complete.
+    const ids = [];
+    let confidence = target.dynamic ? 'low' : 'medium';
+    for (const value of target.values) {
+      const r = resolveTarget(adapters, { type: 'literal', value }, ctx, affordanceType);
+      ids.push(...r.ids);
+      if (r.confidence === 'low') confidence = 'low';
+    }
+    if (target.dynamic) ids.push(affordanceType === 'modal-trigger' ? `${MODAL_PREFIX}<dynamic>` : '<dynamic>');
+    return { ids: [...new Set(ids)], confidence };
+  }
   if (affordanceType === 'modal-trigger') {
     const key = target.type === 'literal' ? target.value : '';
     return { ids: [`${MODAL_PREFIX}${key || '<dynamic>'}`], confidence: key ? 'high' : 'low' };
@@ -265,7 +455,10 @@ function resolveTarget(adapters, target, ctx, affordanceType) {
   if (!target || target.type === 'unknown') return { ids: ['<dynamic>'], confidence: 'low' };
 
   if (target.type === 'member') {
-    const id = resolveWithAdapters(adapters, target.value, ctx);
+    // `targetType` lets a path-shaped adapter decline a JS reference: `item.view`
+    // is a computed value, not a path, and must stay <dynamic> rather than become
+    // a phantom destination literally named `item.view`.
+    const id = resolveWithAdapters(adapters, target.value, { ...ctx, targetType: 'member' });
     return { ids: [id || '<dynamic>'], confidence: id ? 'medium' : 'low' };
   }
   if (target.type === 'template') {

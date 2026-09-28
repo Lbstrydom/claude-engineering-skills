@@ -31,6 +31,20 @@ export function unwrapObjectExpression(node) {
   return null;
 }
 
+/** The array twin of `unwrapObjectExpression`: `[...]`, `Object.freeze([...])`,
+ *  `[...] as const`, `[...] satisfies T`. Only `Object.freeze` is unwrapped, not
+ *  any call: `buildNav([...])` returns something else, and enumerating its
+ *  argument would invent destinations. */
+export function unwrapArrayExpression(node) {
+  if (!node) return null;
+  if (node.type === 'ArrayExpression') return node;
+  if (node.type === 'CallExpression' && calleeName(node) === 'Object.freeze') {
+    return node.arguments?.[0]?.type === 'ArrayExpression' ? node.arguments[0] : null;
+  }
+  if (node.type === 'TSAsExpression' || node.type === 'TSSatisfiesExpression') return unwrapArrayExpression(node.expression);
+  return null;
+}
+
 /**
  * Classify a navigate/href target expression into a structured form the resolver
  * understands. Handles string literals, `VIEWS.X` members, template literals

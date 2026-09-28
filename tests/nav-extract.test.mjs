@@ -2,6 +2,7 @@
  * Cluster A — extraction + normalization (plan §2.2, §4a.B/F).
  * Tier-1 deterministic seam: per-adapter fixtures + normalization edge cases.
  */
+import fs from 'node:fs';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { extractEdges, readSources } from '../scripts/lib/nav/extract.mjs';
@@ -236,5 +237,92 @@ describe('extractEdges — recall reporting', () => {
     const { recall } = extractEdges(sources, { root: '.' });
     assert.ok(recall.extracted >= 2);
     assert.ok(recall.lowConfidence >= 1);
+  });
+});
+
+describe('extractEdges — map-callback enumeration (storyline nav-bar report)', () => {
+  const FIXTURE = fs.readFileSync(new URL('./fixtures/nav-static/map-callback-nav-bar.jsx', import.meta.url), 'utf-8');
+  const destsOf = (edges) => edges.map((e) => e.destination).sort();
+
+  it('enumerates a local closure .map()-ed over a same-file array of object literals', () => {
+    const { edges, adapters, recall } = extractEdges([{ path: 'src/AppNav.jsx', content: FIXTURE }], { root: '.' });
+    assert.ok(adapters.includes('react-router'), 'fixture must exercise the react-router adapter (the phantom path)');
+    assert.deepEqual(destsOf(edges), ['library', 'settings', 'workflow']);
+    for (const e of edges) {
+      assert.equal(e.entryPoint, 'renderDestination');
+      assert.equal(e.confidence, 'medium');
+    }
+    assert.equal(recall.opaque, 0);
+  });
+
+  it('enumerates an inline callback with a destructured parameter into <Link to>', () => {
+    const content = `import {Link} from 'react-router-dom';
+const ITEMS = Object.freeze([{ path: '/a' }, { path: '/b', label: 'B' }]);
+export function Menu(){ return ITEMS.map(({ path: to }) => <Link to={to}>x</Link>); }`;
+    const { edges } = extractEdges([{ path: 'Menu.jsx', content }], { root: '.' });
+    assert.deepEqual(destsOf(edges), ['/a', '/b']);
+  });
+
+  it('enumerates an array of string literals read as the whole element', () => {
+    const content = `const TABS = ['today', 'wines'] as const;
+function Tabs(){ TABS.forEach((t) => switchView(t)); }`;
+    const { edges } = extractEdges([{ path: 'tabs.ts', content }], { root: '.' });
+    assert.deepEqual(destsOf(edges), ['today', 'wines']);
+  });
+
+  it('unions the values when one closure is mapped over two arrays', () => {
+    const content = `const PRIMARY = [{ screen: 'home' }];
+const SECONDARY = [{ screen: 'help' }];
+function Nav(){ const render = (d) => navigate(d.screen); return [PRIMARY.map(render), SECONDARY.map(render)]; }`;
+    const { edges } = extractEdges([{ path: 'nav.js', content }], { root: '.' });
+    assert.deepEqual(destsOf(edges), ['help', 'home']);
+  });
+
+  it('reports a partially-known array as partial: known ids plus <dynamic>, low confidence', () => {
+    const content = `const D = [{ screen: 'home' }, { screen: pick() }, { divider: true }];
+function Nav(){ return D.map((d) => navigate(d.screen)); }`;
+    const { edges } = extractEdges([{ path: 'nav.js', content }], { root: '.' });
+    assert.deepEqual(destsOf(edges), ['<dynamic>', 'home']);
+    assert.ok(edges.every((e) => e.confidence === 'low'));
+  });
+
+  it('drops external values from an enumeration instead of emitting edges for them', () => {
+    const content = `const LINKS = [{ href: 'https://x.test' }, { href: 'mailto:a@b.c' }];
+function Footer(){ return LINKS.map((l) => <a href={l.href}>x</a>); }`;
+    const { edges } = extractEdges([{ path: 'Footer.jsx', content }], { root: '.' });
+    assert.equal(edges.length, 0);
+  });
+
+  // Negative controls — each must stay opaque, never resolve to a guess.
+  it('does NOT enumerate an imported array (not same-file)', () => {
+    const content = `import { DESTINATIONS } from './dests';
+function Nav(){ return DESTINATIONS.map((d) => navigate(d.screen)); }`;
+    const { edges } = extractEdges([{ path: 'nav.js', content }], { root: '.' });
+    assert.deepEqual(destsOf(edges), ['<dynamic>']);
+  });
+
+  it('does NOT enumerate a name declared twice in the file', () => {
+    const content = `const D = [{ screen: 'a' }];
+function other(){ const D = [{ screen: 'z' }]; return D; }
+function Nav(){ return D.map((d) => navigate(d.screen)); }`;
+    const { edges } = extractEdges([{ path: 'nav.js', content }], { root: '.' });
+    assert.deepEqual(destsOf(edges), ['<dynamic>']);
+  });
+
+  it('does NOT resolve a read shadowed by a nested function parameter', () => {
+    const content = `const D = [{ screen: 'a' }];
+function Nav(){ return D.map((d) => (rows) => rows.forEach((d) => navigate(d.screen))); }`;
+    const { edges } = extractEdges([{ path: 'nav.js', content }], { root: '.' });
+    assert.deepEqual(destsOf(edges), ['<dynamic>']);
+  });
+
+  it('never mints a phantom destination from a member target under react-router', () => {
+    // `item` comes from props — genuinely unknown. Before the fix the react-router
+    // adapter normalised the spelling into a destination literally named `item.path`.
+    const content = `import { useNavigate } from 'react-router-dom';
+function Row({ item }){ const navigate = useNavigate(); return <b onClick={() => navigate(item.path)}/>; }`;
+    const { edges } = extractEdges([{ path: 'Row.jsx', content }], { root: '.' });
+    assert.deepEqual(destsOf(edges), ['<dynamic>']);
+    assert.equal(edges[0].confidence, 'low');
   });
 });
