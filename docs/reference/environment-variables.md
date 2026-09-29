@@ -135,3 +135,18 @@ distinct from a manager-reported failure, and adjudicated by re-probing
 |----------|----------|---------|---------|
 | `AUDIT_DEPS_INSTALL_TIMEOUT_MS` | No | `300000` | Ceiling on the REQUIRED-dep install phase. A non-integer or non-positive value falls back to the default — it never disables the cap. |
 | `AUDIT_DEPS_OPTIONAL_INSTALL_TIMEOUT_MS` | No | `600000` | Ceiling on the OPTIONAL-dep phase (`codeowners-utils`, `proper-lockfile`, `playwright`). Higher than the required phase by design. |
+
+## Architectural-memory refresh
+
+`scripts/symbol-index/refresh.mjs` (`npm run arch:refresh`) publishes only from
+the default branch: HEAD attached to it (resolved from `origin/HEAD`, falling
+back to `main`/`master`), or detached at a commit it contains. Anywhere else it
+skips the whole refresh with `{"skipped":true,"reason":"not-default-branch"}`
+and exit 0, because the next incremental refresh anchors on whatever was
+published last and copies forward the symbols of files its diff does not touch.
+A branch snapshot made that anchor a commit `main` never had, and stale symbols
+survived as false duplicate clusters. Guard: `refresh-publish-guard.mjs`.
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `ARCH_REFRESH_ALLOW_BRANCH_PUBLISH` | No | — | Set to `1` to publish a refresh from a non-default branch or an off-branch detached HEAD. Same effect as `--allow-branch-publish`. Only `1` opts in. The next incremental refresh on the default branch will anchor on this snapshot, so run `npm run arch:refresh:full` on the default branch afterwards. |
