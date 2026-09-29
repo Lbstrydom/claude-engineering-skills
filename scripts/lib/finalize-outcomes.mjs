@@ -58,6 +58,24 @@ export function parseResultPath(outPath) {
 }
 
 /**
+ * Record the round a result belongs to ON the result, so its `--out` file
+ * names its own round — the field half of the identity `parseResultPath` reads
+ * from the filename. Upstream report 01f5cfd1: openai-audit's result carried
+ * no `round`, and write-ledger-entries (which reads it) recorded every R2+
+ * triage at round 1. Only a real positive integer is stamped: a result is never
+ * given a round nobody asserted, so an unparseable `--round` leaves it absent.
+ *
+ * @template T
+ * @param {T} result — mutated and returned
+ * @param {unknown} round
+ * @returns {T}
+ */
+export function stampAuditRound(result, round) {
+  if (result && typeof result === 'object' && Number.isInteger(round) && round >= 1) result.round = round;
+  return result;
+}
+
+/**
  * Map a code-audit `--out` path to its prior-round result + the session id.
  * The SINGLE source of truth for the `…-r<N>-result.json` naming convention
  * (cited verbatim in skills/audit-code/SKILL.md). Fail-soft: a non-matching
