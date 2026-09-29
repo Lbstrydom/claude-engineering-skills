@@ -18,7 +18,13 @@ import assert from 'node:assert/strict';
 
 import {
   BASE_STATE, ACTION, classifyAgainstBase, decideAction, describeReason, eolInsensitiveEqual,
+  findUnabsorbedSyncBase, formatRefusalReport,
 } from '../scripts/lib/sync-divergence.mjs';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const HASH_A = 'a'.repeat(64);
 const HASH_B = 'b'.repeat(64);
@@ -184,6 +190,7 @@ describe('describeReason', () => {
     for (const baseState of Object.values(BASE_STATE)) {
       for (const vcs of [null, { tracked: true, matchesHead: true },
         { tracked: true, matchesHead: false }, { tracked: false, matchesHead: null },
+        { tracked: true, matchesHead: true, staleSyncRef: 'chore/sync-x' },
         { tracked: null, matchesHead: null }]) {
         for (const overrideActive of [true, false]) {
           for (const allowOverwriteDiverged of [true, false]) {
@@ -260,5 +267,113 @@ describe('eolInsensitiveEqual', () => {
     // whole target for a read that returned nothing.
     assert.equal(eolInsensitiveEqual(null, ''), true);
     assert.equal(eolInsensitiveEqual(undefined, 'x'), false);
+  });
+});
+
+// ── Stale checkout vs. consumer edit (2026-09-29, storyline) ────────────────
+//
+// sync:pr commits the sync on `chore/sync-<sha>`, switches back to main (which
+// restores the OLD committed bytes) and auto-merges on GitHub. Until someone
+// pulls, disk ≠ manifest base on every file it touched, and the classifier
+// called our own stale content "COMMITTED consumer work" and offered
+// --overwrite-diverged. 11 files, none carrying a consumer edit.
+
+describe('decideAction — stale checkout refuses with its own remedy', () => {
+  test('committed + staleSyncRef ⇒ REFUSE diverged-stale-checkout', () => {
+    const d = decideAction({
+      baseState: BASE_STATE.DIVERGED,
+      vcs: { tracked: true, matchesHead: true, staleSyncRef: 'chore/sync-e3c29944' },
+      overrideActive: false, allowOverwriteDiverged: false,
+    });
+    assert.deepEqual(d, { action: ACTION.REFUSE, reason: 'diverged-stale-checkout' });
+    assert.doesNotMatch(describeReason(d.reason), /overwrite-diverged/);
+  });
+
+  test('committed without staleSyncRef stays diverged-committed', () => {
+    const d = decideAction({
+      baseState: BASE_STATE.DIVERGED,
+      vcs: { tracked: true, matchesHead: true, staleSyncRef: null },
+      overrideActive: false, allowOverwriteDiverged: false,
+    });
+    assert.equal(d.reason, 'diverged-committed');
+  });
+
+  test('staleSyncRef on UNCOMMITTED local changes does not relabel them', () => {
+    const d = decideAction({
+      baseState: BASE_STATE.DIVERGED,
+      vcs: { tracked: true, matchesHead: false, staleSyncRef: 'chore/sync-x' },
+      overrideActive: false, allowOverwriteDiverged: false,
+    });
+    assert.equal(d.reason, 'diverged-uncommitted');
+  });
+});
+
+describe('findUnabsorbedSyncBase — real git', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'sync-stale-'));
+  const git = (...args) => execFileSync('git', ['-C', tmp, ...args], { encoding: 'utf-8' }).trim();
+  const sha = (s) => `sha256:${createHash('sha256').update(s).digest('hex')}`;
+  const OLD = 'old upstream\n';
+  const NEW = 'new upstream\n';
+  const commit = (content, msg) => {
+    writeFileSync(join(tmp, 'f.md'), content);
+    git('add', 'f.md');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--no-gpg-sign', '-m', msg);
+  };
+
+  git('init', '-q', '--initial-branch=main');
+  git('config', 'core.autocrlf', 'false');
+  commit(OLD, 'base');
+  git('switch', '-q', '-c', 'chore/sync-abcdef12');
+  commit(NEW, 'sync');
+  git('switch', '-q', 'main');
+
+  test('base only on an unmerged sync branch ⇒ that ref (the incident shape)', () => {
+    assert.equal(findUnabsorbedSyncBase(tmp, 'f.md', sha(NEW)), 'chore/sync-abcdef12');
+  });
+
+  test('a CRLF-written base still matches the LF blob', () => {
+    assert.equal(findUnabsorbedSyncBase(tmp, 'f.md', sha(NEW.replace(/\n/g, '\r\n'))), 'chore/sync-abcdef12');
+  });
+
+  test('a base on no sync branch ⇒ null (a genuine divergence stays one)', () => {
+    assert.equal(findUnabsorbedSyncBase(tmp, 'f.md', sha('something else\n')), null);
+    assert.equal(findUnabsorbedSyncBase(tmp, 'f.md', null), null);
+  });
+
+  test('after the squash-merge is pulled, a LATER consumer edit is NOT stale', () => {
+    // The branch is still unmerged by ancestry (squash) — half (2) is what
+    // stops this from being flagged forever.
+    commit(NEW, 'squash-merged sync PR');
+    commit('consumer edit\n', 'consumer edit');
+    assert.equal(findUnabsorbedSyncBase(tmp, 'f.md', sha(NEW)), null);
+    rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+});
+
+describe('formatRefusalReport', () => {
+  const ctx = { repoPath: '/c/consumer', receiptPath: '.sync-receipt.json', overridesPath: '.sync-overrides.json' };
+
+  test('all-stale: pull remedy, and --overwrite-diverged is NOT offered', () => {
+    const text = formatRefusalReport([
+      { path: 'a.md', reason: 'diverged-stale-checkout', staleSyncRef: 'chore/sync-e3c29944' },
+    ], ctx).join('\n');
+    assert.match(text, /git pull --ff-only/);
+    assert.match(text, /chore\/sync-e3c29944/);
+    assert.doesNotMatch(text, /re-run with --overwrite-diverged/);
+  });
+
+  test('no stale refusals: the original three-way remedy, no pull line', () => {
+    const text = formatRefusalReport([{ path: 'a.md', reason: 'diverged-committed' }], ctx).join('\n');
+    assert.match(text, /re-run with --overwrite-diverged/);
+    assert.doesNotMatch(text, /git pull --ff-only/);
+  });
+
+  test('mixed: both remedies, each scoped', () => {
+    const text = formatRefusalReport([
+      { path: 'a.md', reason: 'diverged-stale-checkout', staleSyncRef: 'chore/sync-x' },
+      { path: 'b.md', reason: 'diverged-committed', staleSyncRef: null },
+    ], ctx).join('\n');
+    assert.match(text, /1 of these are this checkout lagging/);
+    assert.match(text, /Resolve the rest/);
   });
 });
