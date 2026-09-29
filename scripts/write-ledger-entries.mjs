@@ -41,6 +41,7 @@
  * A dismissal whose finding carries `_priorRuling` pointing at an earlier
  * dismissal MUST decide: `sameConcernAs` or `"newConcern": true`; an undecided
  * one refuses the batch (concern-identity.mjs `findUndecidedReRaises`).
+ * A `newConcern` decision is stored as `newConcernOf: <prior topicId>`.
  * `sameConcernAs` links a re-raise to the concern it repeats — a
  * finding id in this triage, or a ledger topicId / unique 6+ char prefix (a
  * kept R2+ finding carries its nearest prior ruling as `_priorRuling.topicId`). Three dismissals of one concern hard-suppress
@@ -415,6 +416,9 @@ async function main() {
       affectedPrinciples: f.principle ? [f.principle] : [],
       ruling: t.ruling,
       rulingRationale: t.why,                      // rationale is YOURS; identity is the finding's
+      // A newConcern decision is recorded against the prior it was ruled
+      // distinct from, so it can be audited later; see LedgerCoreFields.
+      ...(t.newConcern === true && f._priorRuling?.topicId ? { newConcernOf: f._priorRuling.topicId } : {}),
       resolvedRound: round,
       pass: f._pass,                               // matches the populateFindingMetadata arg above
     });
