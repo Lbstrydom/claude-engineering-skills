@@ -314,7 +314,7 @@ describe('resolveModel', () => {
     assert.equal(resolveModel('latest-gpt'), 'gpt-6-sol');
     assert.equal(resolveModel('latest-gpt-mini'), 'gpt-6-luna');
     assert.equal(resolveModel('latest-opus'), 'claude-opus-5-5');
-    assert.equal(resolveModel('latest-sonnet'), 'claude-sonnet-5');
+    assert.equal(resolveModel('latest-sonnet'), 'claude-sonnet-5-5');
   });
 
   it('a live catalog listing astra BEFORE sol still resolves latest-gpt to sol — the incident shape (status.md 2026-09-20)', () => {

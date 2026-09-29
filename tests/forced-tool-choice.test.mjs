@@ -16,7 +16,7 @@ import { callVerifier } from '../scripts/lib/remediation-verification.mjs';
 import { _internals as soloCtl } from '../scripts/solo-control-audit.mjs';
 import { createSonnetDiscoveryCall } from '../scripts/lib/audit/tiered-provider-calls.mjs';
 
-const REJECTS_FORCED = new Set(['claude-opus-5-5', 'claude-fable-5-1', 'claude-mythos-5-1']);
+const REJECTS_FORCED = new Set(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1', 'claude-mythos-5-1']);
 
 /** The shape `@anthropic-ai/sdk` throws for a 400 (status + provider message). */
 function forcedToolChoice400() {
@@ -49,7 +49,7 @@ test('acceptsForcedToolChoice: 4.x and 5.0 accept; Opus 5.5 and every unplaceabl
     assert.equal(acceptsForcedToolChoice(m), true, m);
   }
   // Unknown ⇒ false is the fail-safe direction: `auto` is accepted by every model.
-  for (const m of ['claude-opus-5-5', 'claude-fable-5-1', 'claude-mythos-5-1', 'claude-sonnet-6', 'my-azure-deployment', '', null, undefined]) {
+  for (const m of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1', 'claude-mythos-5-1', 'claude-sonnet-6', 'my-azure-deployment', '', null, undefined]) {
     assert.equal(acceptsForcedToolChoice(m), false, String(m));
   }
 });

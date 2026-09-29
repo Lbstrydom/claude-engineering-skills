@@ -92,6 +92,7 @@ export const modelPricing = Object.freeze({
   'claude-opus-5':     { input: 5, output: 25 },
   'claude-opus-4-8':   { input: 5, output: 25 },
   'claude-opus-4-7':   { input: 5, output: 25 },
+  'claude-sonnet-5-5': { input: 2, output: 10 }, // cache read $0.20 = the standard 0.10x multiplier
   'claude-sonnet-5':   { input: 2, output: 10 }, // launch $2/$10 made permanent (the 2026-09-01 rise to $3/$15 was cancelled)
   'claude-sonnet-4-6': { input: 3, output: 15 },
   'claude-haiku-4-5':  { input: 1, output: 5  },
