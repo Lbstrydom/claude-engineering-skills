@@ -118,6 +118,13 @@ describe('buildPrText', () => {
     assert.doesNotMatch(t.body, /Left uncommitted/);
     assert.match(t.message, /never commits here/);
   });
+
+  it('declares AI-Models: none in the body (matches wine-cellar-app\'s check pattern), never as a commit trailer', () => {
+    const t = buildPrText({ repo: 'o/r', commitSha: SHA, surface: ['a.md'], leftBehind: ['x.md'], consumerName: 'c' });
+    // The consumer check greps for a line-anchored `AI-Models:` with tokens ^[a-z][a-z0-9.-]*$.
+    assert.match(t.body, /^AI-Models: none$/m);
+    assert.doesNotMatch(t.message, /AI-Models/);
+  });
 });
 
 describe('gh account fallback helpers', () => {

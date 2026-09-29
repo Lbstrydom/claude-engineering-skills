@@ -99,6 +99,12 @@ export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName
       ]
       : []),
     '_Opened by `npm run sync:pr` from the upstream repo. Squash auto-merge is armed; it lands when the required checks pass._',
+    '',
+    // A mechanical sync has no model author. Consumers that gate PRs on an
+    // AI-Models declaration (wine-cellar-app's `AI-Models trailer` check, which
+    // failed on every sync PR until 2026-09-29) accept `none` from the body.
+    // Body only: `AI-*` COMMIT trailers are reserved for ship-commit.mjs.
+    'AI-Models: none',
   ].join('\n');
   return { title, message, body };
 }
