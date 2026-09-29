@@ -92,7 +92,7 @@ describe('model pricing — STATIC_POOL coverage (2026-09-23)', () => {
     // prevent; the family row must sit at or above every current row's rate.
     for (const [family, members] of [
       ['claude-opus', ['claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8']],
-      ['claude-sonnet', ['claude-sonnet-5', 'claude-sonnet-4-6']],
+      ['claude-sonnet', ['claude-sonnet-5-5', 'claude-sonnet-5', 'claude-sonnet-4-6']],
       ['claude-haiku', ['claude-haiku-4-5']],
     ]) {
       for (const id of members) {

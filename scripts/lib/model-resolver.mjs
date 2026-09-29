@@ -92,8 +92,14 @@ export const STATIC_POOL = Object.freeze({
     // must not cap at the pricier predecessor. Same caveat as above: taken
     // from the published catalog, not live-verified in the adding session.
     // `claude-opus-4-7` pruned (two generations back).
+    //
+    // `claude-sonnet-5-5` added 2026-09-29 (Sonnet 5.5 release, same $2/$10
+    // as Sonnet 5): the live catalog already resolved `latest-sonnet` to it,
+    // but this fallback capped at `claude-sonnet-5`. Like Opus 5.5 it rejects
+    // forced `tool_choice` — `acceptsForcedToolChoice` already routes any 5.x
+    // with minor > 0 to `auto`, so no call site changes.
     'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8',
-    'claude-sonnet-5', 'claude-sonnet-4-6',
+    'claude-sonnet-5-5', 'claude-sonnet-5', 'claude-sonnet-4-6',
     'claude-haiku-4-5', 'claude-haiku-4-5-20251001',
   ]),
   google: Object.freeze([
