@@ -3,6 +3,9 @@
  * @fileoverview Phase B.4 — refresh orchestrator.
  *
  * Pipeline:
+ *   0. publish guard: skip entirely unless HEAD is the default branch, or
+ *      detached at a commit it contains (refresh-publish-guard.mjs;
+ *      override: --allow-branch-publish / ARCH_REFRESH_ALLOW_BRANCH_PUBLISH=1)
  *   1. resolve repo identity (lib/repo-identity.mjs)
  *   2. open refresh_run row (acquires the per-repo running lock)
  *   3. enumerate files based on mode:
@@ -89,6 +92,7 @@ import { resolveWalkStartCommit, acquireRefreshLock, HEARTBEAT_INTERVAL_MS } fro
 import { finalizeRefreshMode } from './refresh-mode.mjs';
 import { resolveIncrementalFileScope } from './refresh-file-scope.mjs';
 import { runExtractSummariseEmbed } from './refresh-subprocess.mjs';
+import { checkRefreshPublishEligibility, ALLOW_BRANCH_PUBLISH_ENV } from './refresh-publish-guard.mjs';
 
 function logErr(s) { process.stderr.write(`  [refresh] ${s}\n`); }
 function logOk(s) { process.stderr.write(`  [refresh] ${s}\n`); }
@@ -252,6 +256,23 @@ async function main() {
     process.stdout.write(JSON.stringify({ ok: true, cloud: true, skipped: true, reason: 'unsupported-stack', stack }) + '\n');
     await finishAndExit(0);
   }
+
+  // Default-branch publish guard (refresh-publish-guard.mjs). Checked BEFORE
+  // the lock and any store write: a refresh that may not publish is skipped
+  // whole, because the next incremental anchors on whatever was published last.
+  const eligibility = checkRefreshPublishEligibility({ repoRoot, allowBranchPublish: args.allowBranchPublish });
+  if (!eligibility.publish) {
+    logOk(`NOT publishing: ${eligibility.detail} (${eligibility.reason}). The active index must come from `
+      + `the default branch, because later incremental refreshes anchor on it. Skipping this refresh; pass `
+      + `--allow-branch-publish or set ${ALLOW_BRANCH_PUBLISH_ENV}=1 to publish anyway.`);
+    process.stdout.write(JSON.stringify({
+      ok: true, cloud: true, skipped: true, reason: 'not-default-branch',
+      publishGuard: eligibility.reason, branch: eligibility.branch, head: eligibility.head,
+      defaultBranch: eligibility.defaultBranch,
+    }) + '\n');
+    await finishAndExit(0);
+  }
+  if (eligibility.reason === 'override') logOk(`WARNING: ${eligibility.detail}`);
 
   let mode = args.full ? 'full' : 'incremental';
   let sinceCommit = args.sinceCommit;

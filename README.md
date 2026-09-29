@@ -282,6 +282,13 @@ git commit -m "feat(arch-memory): initial index"
 > with `npm run arch:render` whenever you need it. See the generated-artifact
 > policy in [AGENTS.md](AGENTS.md).
 
+> **Refreshes publish from the default branch only.** Each refresh becomes the active index, and the
+> next incremental refresh anchors on it, so a branch snapshot would make `main` diff from a commit it
+> never had and carry stale symbols forward. Off the default branch (or detached at a commit it does not
+> contain) `arch:refresh` skips and says why. Opt out with `--allow-branch-publish` or
+> `ARCH_REFRESH_ALLOW_BRANCH_PUBLISH=1`, then run `npm run arch:refresh:full` on the default branch.
+> Details: [environment-variables.md](docs/reference/environment-variables.md#architectural-memory-refresh).
+
 **Cost**: ~$0.50 for first full refresh of a 1000-symbol repo (Haiku purpose summaries + Gemini `gemini-embedding-001`). Steady-state ~$0 thanks to signature-hash caching. Per-prompt hook consultation: ~$0.0003.
 
 **Tracked in consumer repos**: `.audit-loop/repo-id`, `.audit-loop/domain-map.json` (path-based domain rules), `package.json` arch:* scripts. **Generated locally, never staged**: `docs/architecture-map.md` (see above). Synced runtime files (`scripts/lib/symbol-index/*`, `scripts/symbol-index/*`, `.claude/hooks/arch-memory-check.sh`) are gitignored — managed by `npm run sync` from the source repo.

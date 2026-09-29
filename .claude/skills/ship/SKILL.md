@@ -589,6 +589,11 @@ migration and no longer matches the code:
   does not run.
 - Non-JS/TS stack → skips silently (`reason: 'unsupported-stack'`), exit 0,
   ship continues.
+- HEAD not on the default branch (a feature branch, or detached at a commit
+  the default branch does not contain) → skips (`reason: 'not-default-branch'`),
+  status 0, ship continues. Deliberate: the next incremental refresh anchors on the
+  active snapshot, so only the default branch may publish one. The local map then
+  renders the default branch's snapshot.
 - Any other failure (DB error, embedding-provider error, repo-registration
   or refresh-lock conflict) → `refresh.mjs` exits 1 or 2 and writes a message
   to stderr; this step's own `|| true` swallows the non-zero exit so the ship

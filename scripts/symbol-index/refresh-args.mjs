@@ -21,7 +21,7 @@ import { assertKnownFlags } from '../lib/cli-io.mjs';
  * parser below does something with it.
  */
 export const KNOWN_FLAGS = Object.freeze([
-  '--full', '--since-commit', '--force', '--include-delegates',
+  '--full', '--since-commit', '--force', '--include-delegates', '--allow-branch-publish',
 ]);
 
 export function parseArgs(argv) {
@@ -33,7 +33,7 @@ export function parseArgs(argv) {
   // command and ignores it in another fails in the dangerous direction.
   assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'refresh' });
 
-  const args = { full: false, sinceCommit: null, force: false, includeDelegates: false };
+  const args = { full: false, sinceCommit: null, force: false, includeDelegates: false, allowBranchPublish: false };
   for (let i = 2; i < argv.length; i++) {
     let a = argv[i], inlineValue = null;
     // POSIX `--` terminator: assertKnownFlags above already stops validating
@@ -71,6 +71,11 @@ export function parseArgs(argv) {
       case '--include-delegates':
         if (inlineValue !== null) throw new Error(`--include-delegates does not take a value; got --include-delegates=${inlineValue}`);
         args.includeDelegates = true; break;
+      // Publishing from anywhere but the default branch poisons the next
+      // incremental's anchor (refresh-publish-guard.mjs) — explicit opt-in only.
+      case '--allow-branch-publish':
+        if (inlineValue !== null) throw new Error(`--allow-branch-publish does not take a value; got --allow-branch-publish=${inlineValue}`);
+        args.allowBranchPublish = true; break;
     }
   }
   return args;
