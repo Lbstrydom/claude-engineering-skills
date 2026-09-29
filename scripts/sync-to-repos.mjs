@@ -36,8 +36,8 @@ import { injectUpstreamBanner, BANNER_BODY } from './lib/sync-banner.mjs';
 import { classifyOwnership, describeEvidence } from './lib/sync-ownership.mjs';
 import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mjs';
 import {
-  BASE_STATE, ACTION, classifyAgainstBase, decideAction, describeReason, readVcsState,
-  eolInsensitiveEqual,
+  BASE_STATE, ACTION, classifyAgainstBase, decideAction, describeReason, readDivergenceVcs,
+  eolInsensitiveEqual, formatRefusalReport,
   isSyncBookkeeping,
 } from './lib/sync-divergence.mjs';
 import {
@@ -2017,14 +2017,15 @@ async function main() {
       // ignore the one line that matters.
       const bookkeeping = isSyncBookkeeping(dstRel);
       const override = bookkeeping ? null : matchOverride(dstRel, overridesDoc.overrides);
+      const baseHash = priorFiles[dstRel] ?? (priorLayout === 'legacy' ? priorFiles[srcRel] : undefined);
       const baseState = bookkeeping ? BASE_STATE.PRISTINE : classifyAgainstBase({
-        baseHash: priorFiles[dstRel] ?? (priorLayout === 'legacy' ? priorFiles[srcRel] : undefined),
+        baseHash,
         diskHash: dstHash,
       });
       // git is consulted ONLY for a diverged path — a handful per run in steady
       // state, so the 751-file bundle never pays for it.
       const vcs = (!override && baseState === BASE_STATE.DIVERGED)
-        ? readVcsState(repo.path, dstRel)
+        ? readDivergenceVcs(repo.path, dstRel, baseHash)
         : null;
       const decision = decideAction({
         baseState,
@@ -2052,7 +2053,7 @@ async function main() {
       }
 
       if (decision.action === ACTION.REFUSE) {
-        divergenceRefusals.push({ path: dstRel, reason: decision.reason });
+        divergenceRefusals.push({ path: dstRel, reason: decision.reason, staleSyncRef: vcs?.staleSyncRef ?? null });
         continue;
       }
 
@@ -2394,18 +2395,9 @@ async function main() {
     // still fails, because a partial sync reported as success is how the
     // silence started.
     if (divergenceRefusals.length) {
-      console.log(`  ${R}REFUSED${X} ${divergenceRefusals.length} file(s) changed in this repo since our last sync — not overwritten:`);
-      for (const { path: p, reason } of divergenceRefusals.slice(0, 20)) {
-        console.log(`    ${R}diverged${X} ${p} ${D}(${describeReason(reason)})${X}`);
-      }
-      if (divergenceRefusals.length > 20) {
-        console.log(`    ${D}... ${divergenceRefusals.length - 20} more (all listed in ${RECEIPT_PATH})${X}`);
-      }
-      console.log(`    ${D}Resolve it one of three ways:${X}`);
-      console.log(`    ${D}  • keep the divergence: declare each path in ${OVERRIDES_PATH} with a reason${X}`);
-      console.log(`    ${D}  • adopt upstream: revert your change, then re-run the sync${X}`);
-      console.log(`    ${D}  • discard the divergence deliberately: re-run with --overwrite-diverged${X}`);
-      console.log(`    ${D}  If upstream's version is WRONG for consumers, say so: cross-skill.mjs upstream report${X}`);
+      for (const line of formatRefusalReport(divergenceRefusals, {
+        repoPath: repo.path, receiptPath: RECEIPT_PATH, overridesPath: OVERRIDES_PATH, colors: { R, Y, D, X },
+      })) console.log(line);
       repoErrors++; totalErrors++;
     }
 

@@ -39,6 +39,7 @@
 import { RECEIPT_PATH } from './sync-receipt.mjs';
 import { comparisonKey } from './sync-owned-sidecar.mjs';
 import { pathspecsForCommit } from './sync-status.mjs';
+import { SYNC_BRANCH_PREFIX } from './sync-divergence.mjs';
 
 /** Every reason `planConsumerPr` can decline. Strings are the CLI's contract. */
 export const SKIP_REASON = Object.freeze({
@@ -58,7 +59,7 @@ const RECEIPT_KEY = comparisonKey(RECEIPT_PATH);
  * @returns {string}
  */
 export function branchNameFor(commitSha) {
-  return `chore/sync-${String(commitSha).slice(0, 8)}`;
+  return `${SYNC_BRANCH_PREFIX}${String(commitSha).slice(0, 8)}`;
 }
 
 /**

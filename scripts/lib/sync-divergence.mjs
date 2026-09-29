@@ -51,6 +51,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 import { LAYOUT_CONSTANTS } from './sync-path-map.mjs';
 import { canonicalizeEol } from './file-io.mjs';
@@ -204,9 +205,16 @@ export function classifyAgainstBase({ baseHash, diskHash }) {
  * documented escape hatch, and an escape hatch that still refuses is not one.
  * It stays loud, and the receipt records every path it consumed.
  *
+ * Rule 5 has one sub-case with a different REMEDY, not a different action:
+ * committed content whose base is still unabsorbed on a sync branch
+ * (`vcs.staleSyncRef`, see `findUnabsorbedSyncBase`) is a checkout that is
+ * behind its own sync PR. It still refuses — writing would leave uncommitted
+ * edits that block the very pull that fixes it — but says "pull", never
+ * "--overwrite-diverged".
+ *
  * @param {object} input
  * @param {'no-base'|'pristine'|'diverged'} input.baseState
- * @param {{tracked: boolean|null, matchesHead: boolean|null}|null} input.vcs
+ * @param {{tracked: boolean|null, matchesHead: boolean|null, staleSyncRef?: string|null}|null} input.vcs
  * @param {boolean} input.overrideActive
  * @param {boolean} input.allowOverwriteDiverged
  * @returns {{action: 'write'|'write-loud'|'hold'|'refuse', reason: string}}
@@ -224,6 +232,9 @@ export function decideAction({ baseState, vcs, overrideActive, allowOverwriteDiv
   // question about whether we are about to destroy committed work is not
   // evidence that we are not. A consumer with no git at all is the one case
   // this inconveniences, and `--overwrite-diverged` covers it.
+  if (vcs && vcs.matchesHead === true && vcs.staleSyncRef) {
+    return { action: ACTION.REFUSE, reason: 'diverged-stale-checkout' };
+  }
   return {
     action: ACTION.REFUSE,
     reason: vcs && vcs.matchesHead === true ? 'diverged-committed'
@@ -253,6 +264,8 @@ export function describeReason(reason) {
       return 'held by .sync-overrides.json';
     case 'diverged-committed':
       return 'content is COMMITTED in this repo — overwriting reverts merged work';
+    case 'diverged-stale-checkout':
+      return 'this checkout predates the last sync\'s own commit — NOT a consumer edit; merge that sync PR and pull, then re-sync';
     case 'diverged-uncommitted':
       return 'tracked, with uncommitted local changes — overwriting loses them irrecoverably';
     case 'diverged-vcs-unknown':
@@ -309,4 +322,131 @@ export function readVcsState(repoRoot, relPath) {
   const disk = git(['hash-object', '--', relPath]);
   if (disk.error || disk.status !== 0) return { tracked: true, matchesHead: null };
   return { tracked: true, matchesHead: disk.stdout.trim() === headBlob };
+}
+
+/** Branch prefix `sync:pr` commits a consumer's sync on (`branchNameFor`). */
+export const SYNC_BRANCH_PREFIX = 'chore/sync-';
+
+/**
+ * Is the recorded base still sitting UNABSORBED on a sync branch — i.e. is this
+ * checkout behind its own sync PR, rather than carrying a consumer edit? IMPURE.
+ *
+ * ## The incident
+ *
+ * 2026-09-29, `storyline`: 11 tracked files refused as "COMMITTED in this repo
+ * — overwriting reverts merged work", with `--overwrite-diverged` offered as a
+ * remedy. Every one was byte-identical to an OLDER upstream version; none
+ * carried a storyline edit. `sync:pr` had committed the newer sync onto
+ * `chore/sync-e3c29944`, switched back to `main` — which restored the old
+ * committed bytes — and auto-merged the PR on GitHub. Nobody pulled. The
+ * gitignored manifest still named the newer bytes as base, so disk ≠ base and
+ * the classifier called our own stale content consumer work.
+ *
+ * ## The signal, and why it needs both halves
+ *
+ * 1. The base bytes are the tip content of some `chore/sync-*` ref (local or
+ *    remote-tracking) — the sync's own commit holds exactly what it wrote.
+ * 2. HEAD's history for this path never contained that blob.
+ *
+ * (1) alone is wrong: after the PR squash-merges and is pulled, the sync branch
+ * is STILL "unmerged" by ancestry, so a genuine consumer edit made afterwards
+ * would match (1) forever. (2) is what separates them — once HEAD absorbed the
+ * base, any later difference is the consumer's.
+ *
+ * The base is the sha256 of the bytes the sync wrote, which may be CRLF (see
+ * `eolInsensitiveEqual`); a blob is LF-normalised, so both forms are tried.
+ *
+ * Never throws; any git failure is `null` (the caller then keeps the generic
+ * refusal, which is the fail-closed direction).
+ *
+ * @param {string} repoRoot
+ * @param {string} relPath — POSIX-separated, repo-relative
+ * @param {string|null|undefined} baseHash — manifest value, `sha256:` optional
+ * @returns {string|null} the short ref name holding the base, or null
+ */
+export function findUnabsorbedSyncBase(repoRoot, relPath, baseHash) {
+  const base = typeof baseHash === 'string' ? baseHash.replace(/^sha256:/, '') : null;
+  if (!base) return null;
+  const git = (args, opts = {}) => spawnSync('git', ['-C', repoRoot, ...args], {
+    windowsHide: true, maxBuffer: 64 * 1024 * 1024, ...opts,
+  });
+  const text = (r) => (r.error || r.status !== 0 ? null : String(r.stdout).trim());
+
+  const refs = text(git(['for-each-ref', '--format=%(refname:short)',
+    `refs/heads/${SYNC_BRANCH_PREFIX}*`, `refs/remotes/*/${SYNC_BRANCH_PREFIX}*`], { encoding: 'utf-8' }));
+  if (!refs) return null;
+
+  const sha = (buf) => createHash('sha256').update(buf).digest('hex');
+  for (const ref of refs.split('\n').filter(Boolean)) {
+    const blob = text(git(['rev-parse', '--verify', '--quiet', `${ref}:${relPath}`], { encoding: 'utf-8' }));
+    if (!blob) continue;
+    const bytes = git(['cat-file', 'blob', blob]);
+    if (bytes.error || bytes.status !== 0) continue;
+    const lf = bytes.stdout;
+    const matches = sha(lf) === base
+      || (!lf.includes(0) && sha(Buffer.from(lf.toString('latin1').replace(/\r?\n/g, '\r\n'), 'latin1')) === base);
+    if (!matches) continue;
+    // Half (2): has HEAD ever held this exact blob at this path?
+    const absorbed = git(['log', '-n', '1', '--format=%H', `--find-object=${blob}`, 'HEAD', '--', relPath],
+      { encoding: 'utf-8' });
+    if (absorbed.error || absorbed.status !== 0) return null;
+    if (String(absorbed.stdout).trim()) return null;
+    return ref;
+  }
+  return null;
+}
+
+/**
+ * `readVcsState` plus the stale-checkout question, asked only when the answer
+ * could change the remedy (committed content). IMPURE; never throws.
+ *
+ * @param {string} repoRoot
+ * @param {string} relPath
+ * @param {string|null|undefined} baseHash
+ * @returns {{tracked: boolean|null, matchesHead: boolean|null, staleSyncRef: string|null}}
+ */
+export function readDivergenceVcs(repoRoot, relPath, baseHash) {
+  const vcs = readVcsState(repoRoot, relPath);
+  return {
+    ...vcs,
+    staleSyncRef: vcs.matchesHead === true ? findUnabsorbedSyncBase(repoRoot, relPath, baseHash) : null,
+  };
+}
+
+/**
+ * The operator-facing REFUSED block for one target. PURE — returns lines.
+ *
+ * Stale-checkout refusals get their own remedy and are kept OUT of the
+ * "resolve one of three ways" list: for them `--overwrite-diverged` is the
+ * wrong answer (it leaves uncommitted edits that block the pull that fixes
+ * it), and printing it beside them is exactly what misled on 2026-09-29.
+ *
+ * @param {Array<{path: string, reason: string, staleSyncRef?: string|null}>} refusals
+ * @param {{repoPath: string, receiptPath: string, overridesPath: string,
+ *   colors?: {R?: string, Y?: string, D?: string, X?: string}}} ctx
+ * @returns {string[]}
+ */
+export function formatRefusalReport(refusals, { repoPath, receiptPath, overridesPath, colors = {} }) {
+  const { R = '', Y = '', D = '', X = '' } = colors;
+  const lines = [`  ${R}REFUSED${X} ${refusals.length} file(s) changed in this repo since our last sync — not overwritten:`];
+  for (const { path, reason, staleSyncRef } of refusals.slice(0, 20)) {
+    const where = staleSyncRef ? ` [${staleSyncRef}]` : '';
+    lines.push(`    ${R}diverged${X} ${path} ${D}(${describeReason(reason)})${where}${X}`);
+  }
+  if (refusals.length > 20) lines.push(`    ${D}... ${refusals.length - 20} more (all listed in ${receiptPath})${X}`);
+
+  const stale = refusals.filter((r) => r.staleSyncRef);
+  if (stale.length) {
+    const refs = [...new Set(stale.map((r) => r.staleSyncRef))].join(', ');
+    lines.push(`    ${Y}${stale.length} of these are this checkout lagging its own sync commit (${refs}), not consumer edits:${X}`);
+    lines.push(`    ${D}  • merge that sync PR if still open, run \`git pull --ff-only\` in ${repoPath}, then re-run the sync — NOT --overwrite-diverged${X}`);
+  }
+  if (stale.length < refusals.length) {
+    lines.push(`    ${D}Resolve ${stale.length ? 'the rest' : 'it'} one of three ways:${X}`);
+    lines.push(`    ${D}  • keep the divergence: declare each path in ${overridesPath} with a reason${X}`);
+    lines.push(`    ${D}  • adopt upstream: revert your change, then re-run the sync${X}`);
+    lines.push(`    ${D}  • discard the divergence deliberately: re-run with --overwrite-diverged${X}`);
+    lines.push(`    ${D}  If upstream's version is WRONG for consumers, say so: cross-skill.mjs upstream report${X}`);
+  }
+  return lines;
 }

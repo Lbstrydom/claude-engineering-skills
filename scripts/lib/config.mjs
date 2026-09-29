@@ -886,7 +886,7 @@ export function buildAzureConfig(env = process.env) {
       openaiEndpoint: null, aiEndpoint: null, apiKey: null,
       apiVersion: 'preview', deploymentApiVersion: DEPLOYMENT_API_VERSION_DEFAULT,
       gptDeployment: null, claudeDeployment: null,
-      summaryDeployment: 'claude-sonnet-4-6',
+      summaryDeployment: 'claude-sonnet-5-5',
       embedDeployment: 'text-embedding-3-large', claudeApiShape: 'anthropic',
       claudeRoute: null, claudeBaseUrl: null, foundryApiPath: '/openai/v1',
     });
@@ -961,7 +961,7 @@ export function buildAzureConfig(env = process.env) {
     gptDeployment,
     claudeDeployment,
     // Arch-index summariser deployment (Sonnet on Foundry by default).
-    summaryDeployment: (env.AZURE_FOUNDRY_SUMMARY_DEPLOYMENT || 'claude-sonnet-4-6').trim(),
+    summaryDeployment: (env.AZURE_FOUNDRY_SUMMARY_DEPLOYMENT || 'claude-sonnet-5-5').trim(),
     // `(env.X || '').trim() || default` — NOT `(env.X || default).trim()`: the
     // latter mapped a whitespace-only value to '' (an empty deployment name → 400),
     // a third broken outcome distinct from absent/empty (audit M6). Now absent,
