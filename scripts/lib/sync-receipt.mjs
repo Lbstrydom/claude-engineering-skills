@@ -114,12 +114,17 @@ const NOTE = 'Written by the claude-engineering-skills sync. Committed on purpos
  * @param {Array<{path: string, reason: string, upstreamMoved: boolean}>} input.overridesHeld
  * @param {Array<{path: string, reason: string}>} input.divergedOverwritten
  * @param {Array<{path: string, reason: string}>} input.divergenceRefused
+ * @param {Array<{path: string, action: 'remove-block'|'delete-file'}>} [input.legacyRetired]
+ *   — consumer files the sync EDITED to retire a legacy block it once wrote
+ *   (`sync-legacy-copilot-block.mjs`). Not `updated` (those are upstream bytes
+ *   the manifest tracks) nor `gcDeleted` (manifest-owned files): the file is the
+ *   consumer's, and only the span we can prove we wrote was removed.
  * @param {number} input.unchanged
  * @returns {object}
  */
 export function buildReceiptEntry({
   syncedAt, source, created = [], updated = [], gcDeleted = [],
-  overridesHeld = [], divergedOverwritten = [], divergenceRefused = [], unchanged = 0,
+  overridesHeld = [], divergedOverwritten = [], divergenceRefused = [], legacyRetired = [], unchanged = 0,
 }) {
   const byPath = (a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
   return {
@@ -140,6 +145,7 @@ export function buildReceiptEntry({
       overridesHeld: overridesHeld.length,
       divergedOverwritten: divergedOverwritten.length,
       divergenceRefused: divergenceRefused.length,
+      legacyRetired: legacyRetired.length,
     },
     created: [...created].sort(),
     updated: [...updated].sort(),
@@ -150,6 +156,10 @@ export function buildReceiptEntry({
     // Recorded because a partial sync is a state a reviewer must be able to see
     // from the repo alone: these destinations are deliberately behind upstream.
     divergenceRefused: [...divergenceRefused].sort(byPath),
+    // Consumer files edited to retire a legacy block (upstream report
+    // aac80849): a sync that changes a tracked consumer file must say so here,
+    // or the change reaches `git status` with nothing attributing it.
+    legacyRetired: [...legacyRetired].sort(byPath),
   };
 }
 
@@ -286,7 +296,7 @@ export function detectSourceRollback(priorEntry, incomingSha, ancestry) {
 export function receiptShouldWrite(prevEntry, nextEntry) {
   const c = nextEntry.counts || {};
   const propagated = (c.created || 0) + (c.updated || 0)
-    + (c.gcDeleted || 0) + (c.divergedOverwritten || 0);
+    + (c.gcDeleted || 0) + (c.divergedOverwritten || 0) + (c.legacyRetired || 0);
   if (propagated > 0) return true;
   if (!prevEntry || typeof prevEntry !== 'object') return true;
   const strip = (r) => JSON.stringify({
@@ -296,6 +306,7 @@ export function receiptShouldWrite(prevEntry, nextEntry) {
     overridesHeld: r.overridesHeld,
     divergedOverwritten: r.divergedOverwritten,
     divergenceRefused: r.divergenceRefused,
+    legacyRetired: r.legacyRetired ?? [],
   });
   return strip(prevEntry) !== strip(nextEntry);
 }

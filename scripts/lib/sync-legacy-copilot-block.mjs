@@ -164,9 +164,15 @@ export function describeLegacyCopilotBlockRetirement(plan, { dryRun = false } = 
  * plans, writes (unless dry-run), and returns the operator lines. Never throws —
  * a failure here must never abort a sync, so it comes back as a line.
  *
+ * `retired` is the edit ACTUALLY made, for the caller to record in
+ * `.sync-receipt.json` (upstream report aac80849: a console line was the only
+ * trace, so a tracked consumer file changed with no in-repo attribution). It is
+ * null on dry-run and on every path that left the file alone — the receipt
+ * records what a sync did, never what it would have done.
+ *
  * @param {string} repoRoot - consumer repo root
  * @param {{dryRun?: boolean}} [opts]
- * @returns {string[]}
+ * @returns {{notes: string[], retired: {path: string, action: 'remove-block'|'delete-file'}|null}}
  */
 export function retireLegacyCopilotBlock(repoRoot, { dryRun = false } = {}) {
   const abs = path.join(repoRoot, COPILOT_INSTRUCTIONS_PATH);
@@ -176,19 +182,31 @@ export function retireLegacyCopilotBlock(repoRoot, { dryRun = false } = {}) {
     // Only ENOENT is "absent" — an access error must not read as a missing file (R3 H4).
     let st = null;
     try { st = fs.lstatSync(abs); } catch (err) { if (err?.code !== 'ENOENT') throw err; }
-    if (st && !st.isFile()) return [`${COPILOT_INSTRUCTIONS_PATH}: not a regular file (symlink or other) — left untouched`];
+    if (st && !st.isFile()) return untouched(`${COPILOT_INSTRUCTIONS_PATH}: not a regular file (symlink or other) — left untouched`);
     if (st && fs.realpathSync(abs) !== path.join(fs.realpathSync(repoRoot), COPILOT_INSTRUCTIONS_PATH)) {
-      return [`${COPILOT_INSTRUCTIONS_PATH}: resolves outside the consumer repo (symlinked directory) — left untouched`];
+      return untouched(`${COPILOT_INSTRUCTIONS_PATH}: resolves outside the consumer repo (symlinked directory) — left untouched`);
     }
     // latin1 maps every byte to one code unit and back, so bytes outside the
     // (ASCII) markers survive unchanged even when not valid UTF-8 (R2 H4).
     const content = st ? fs.readFileSync(abs, 'latin1') : null;
     const plan = planLegacyCopilotBlockRetirement(content);
     const line = describeLegacyCopilotBlockRetirement(plan, { dryRun });
-    if (!dryRun && plan.action === 'remove-block') atomicWriteFileSync(abs, Buffer.from(plan.content, 'latin1'));
-    if (!dryRun && plan.action === 'delete-file') fs.unlinkSync(abs);
-    return line ? [line] : [];
+    let retired = null;
+    if (!dryRun && plan.action === 'remove-block') {
+      atomicWriteFileSync(abs, Buffer.from(plan.content, 'latin1'));
+      retired = { path: COPILOT_INSTRUCTIONS_PATH, action: plan.action };
+    }
+    if (!dryRun && plan.action === 'delete-file') {
+      fs.unlinkSync(abs);
+      retired = { path: COPILOT_INSTRUCTIONS_PATH, action: plan.action };
+    }
+    return { notes: line ? [line] : [], retired };
   } catch (err) {
-    return [`${COPILOT_INSTRUCTIONS_PATH}: retired-block check failed (${String(err?.message).slice(0, 100)}) — left untouched`];
+    return untouched(`${COPILOT_INSTRUCTIONS_PATH}: retired-block check failed (${String(err?.message).slice(0, 100)}) — left untouched`);
   }
+}
+
+/** A result that edited nothing, carrying one operator line. */
+function untouched(note) {
+  return { notes: [note], retired: null };
 }
