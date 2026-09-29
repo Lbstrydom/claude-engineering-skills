@@ -5,27 +5,6 @@
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green. Subject check: wine's `.claude/skills/brainstorm/SKILL.md` contains "Raised by one voice only" (x1) and no "Nobody covered" (x0), i.e. the trimmed final version. The branch push's sync summary reported 3/3 targets reached, 6 files updated.
 - **Result**: verified — the trimmed /brainstorm Step 4 template reached the consumer bundle intact.
 
-## 2026-09-29 — Concern-identity 7-day readout: hard-suppress fires, nothing tuned; `newConcern` now recorded
-
-### Changes
-- `docs/plans/concern-identity-suppression.md` §3.1: the pre-registered readout, scoped to the Lbstrydom/* repos (store `d5a9d07b91225a93`). Status → Complete. `docs/plans/README.md` regenerated.
-- `write-ledger-entries.mjs`: a `newConcern: true` dismissal now stores `newConcernOf: <prior topicId>` on the ledger entry. It was validated but never written, so Q2's "sample 5 newConcern rulings" could not run. `concern-identity.mjs` `resolveConcernLinks` carries it across a re-ruling (like `concernId`); `schemas.mjs` `LedgerCoreFields` declares it so a parse→persist path cannot strip it.
-- `tests/concern-identity.test.mjs`: the end-to-end newConcern case asserts the field on disk; a re-ruling case; a schema round-trip case. Both new assertions seen failing with the change disabled.
-
-### Readout (measured 2026-09-29, `npm run concern:report -- --days 7 --json` + read-only `suppression_events` queries)
-- 16 stamped R2+ rounds (this repo 9, wine-cellar-app 7, ai-organiser 0) — sample floor met.
-- Q1 firing (1 hard-suppress, via an adjudicator link). Q3 36/59 near-misses below 0.2, none ≥0.35: threshold not tuned. Q4 3 re-litigation declines, all hand-sampled: same concern reworded, no recall loss. Q5 9/59 kept rows multi-file: `[SYSTEMIC]` keying left alone. Q2 6 of 7 recurring topics sit beside *accepted* rulings, which the decision rule does not govern.
-
-### Decisions Made
-- **Work repos on the corporate store are out of scope for this readout** (storyline, gd-afeu-project-readiness; 41 unstamped R2+ rounds there). They run through Azure; their errors are not a reason to change this repo.
-
-### Backlog
-Backlog 2026-09-29T17:47Z: Q1 62c/23p (+335 aged) · Q2 101c/41p (54 perm) · Q3 35 · debt 313 cloud/11 local (0 spilled) · upstream 1
-
-All pre-existing, none touching this session's files: 3 dangling regression-lock specs (unchanged since 09-28), 1 open upstream report (wine-cellar-app `ux-lock-run.mjs verify` run_id uuid/text mismatch, MEDIUM). storyline's store still shows 6 live constraint/index drift — operator decision, not applied here.
-
----
-
 ### Consumer Verification (previous ship)
 - **Commit**: abea5dac24d5a2dc8edbb9e5523bb05e5b69e99b on `main` (PR #118, squash-merged; the runs-findings.mjs write-boundary-hardening 5-round audit + Gemini gate, merged over a real conflict with concurrently-merged PR #117 which touched the same `projectRemediationState` function -- resolved by hand, verified with 648 tests green both before and after the merge)
 - **Retrieval**: BLOCKED -- the main checkout (`C:\GIT\claude-engineering-skills`) has a pre-existing uncommitted change to `package-lock.json` (24 deletions, not from this session) that conflicts with the incoming merge, so `git pull --ff-only origin main` refused (correctly, per AGENTS.md's scope-discipline rule -- not mine to stash/discard). Could not update the main checkout to pull the merged skill-sync source, so `sync-isolation-verify.mjs` could not be run against a current consumer bundle.
@@ -89,6 +68,27 @@ All pre-existing, none touching this session's files: 3 dangling regression-lock
 - **Commit**: c21ae557f02c03087f763bc2896a18ccb266d51d on `main` (pushed 2026-09-19, range `5c430d5c..c21ae557`; storyline upstream-report fixes 3e93533e/aa6469b3)
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `.claude/skills/audit-plan/references/gemini-gate.md` and `.claude/skills/cycle/SKILL.md` both carry the new prose (grep confirmed). storyline itself REFUSED this sync (27 files diverged, pre-existing committed customizations unrelated to this change) — not verified there; ai-organiser and wine-cellar-app both reached cleanly.
 - **Result**: verified — the /cycle Step 7 blocked-handoff prose and the gemini-gate.md calibration note reached the consumer bundle intact (wine-cellar-app, ai-organiser). storyline unverified — sync REFUSED on pre-existing divergence, not this change's fault.
+
+## 2026-09-29 — Concern-identity 7-day readout: hard-suppress fires, nothing tuned; `newConcern` now recorded
+
+### Changes
+- `docs/plans/concern-identity-suppression.md` §3.1: the pre-registered readout, scoped to the Lbstrydom/* repos (store `d5a9d07b91225a93`). Status → Complete. `docs/plans/README.md` regenerated.
+- `write-ledger-entries.mjs`: a `newConcern: true` dismissal now stores `newConcernOf: <prior topicId>` on the ledger entry. It was validated but never written, so Q2's "sample 5 newConcern rulings" could not run. `concern-identity.mjs` `resolveConcernLinks` carries it across a re-ruling (like `concernId`); `schemas.mjs` `LedgerCoreFields` declares it so a parse→persist path cannot strip it.
+- `tests/concern-identity.test.mjs`: the end-to-end newConcern case asserts the field on disk; a re-ruling case; a schema round-trip case. Both new assertions seen failing with the change disabled.
+
+### Readout (measured 2026-09-29, `npm run concern:report -- --days 7 --json` + read-only `suppression_events` queries)
+- 16 stamped R2+ rounds (this repo 9, wine-cellar-app 7, ai-organiser 0) — sample floor met.
+- Q1 firing (1 hard-suppress, via an adjudicator link). Q3 36/59 near-misses below 0.2, none ≥0.35: threshold not tuned. Q4 3 re-litigation declines, all hand-sampled: same concern reworded, no recall loss. Q5 9/59 kept rows multi-file: `[SYSTEMIC]` keying left alone. Q2 6 of 7 recurring topics sit beside *accepted* rulings, which the decision rule does not govern.
+
+### Decisions Made
+- **Work repos on the corporate store are out of scope for this readout** (storyline, gd-afeu-project-readiness; 41 unstamped R2+ rounds there). They run through Azure; their errors are not a reason to change this repo.
+
+### Backlog
+Backlog 2026-09-29T17:47Z: Q1 62c/23p (+335 aged) · Q2 101c/41p (54 perm) · Q3 35 · debt 313 cloud/11 local (0 spilled) · upstream 1
+
+All pre-existing, none touching this session's files: 3 dangling regression-lock specs (unchanged since 09-28), 1 open upstream report (wine-cellar-app `ux-lock-run.mjs verify` run_id uuid/text mismatch, MEDIUM). storyline's store still shows 6 live constraint/index drift — operator decision, not applied here.
+
+---
 
 ## 2026-09-28 (later) — /brainstorm Step 4 tweak measured; trimmed to the part that worked
 
