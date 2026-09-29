@@ -536,3 +536,21 @@ describe('runMultiPassCodeAudit harness — ledger write reflects the existence 
     }
   });
 });
+
+// Upstream report 01f5cfd1: the `--out` JSON carried no `round`, so
+// write-ledger-entries (which reads it) recorded every R2+ triage at round 1.
+describe('runMultiPassCodeAudit harness — the --out result names its round', () => {
+  it('a --round 2 run writes round: 2 into the --out file and the returned result', async () => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-round-'));
+    const outFile = path.join(outDir, 'sid-r2-result.json');
+    try {
+      const result = await runMultiPassCodeAudit(makeStubClient(defaultResponses()), PLAN_CONTENT, '', false, outFile, '', {
+        ...BASE_OPTS, round: 2, noLedger: true, changedFiles: [],
+      });
+      assert.equal(result.round, 2);
+      assert.equal(JSON.parse(fs.readFileSync(outFile, 'utf-8')).round, 2);
+    } finally {
+      fs.rmSync(outDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});

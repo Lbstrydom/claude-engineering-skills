@@ -82,7 +82,7 @@ import {
   selectEventSource, loadDebtLedger, appendEvents, reconcileLocalToCloud, mergeLedgers as mergeLedgersForSuppression
 } from './lib/debt-memory.mjs';
 import { initLearningStore, isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, recordAdjudicationEvent, updatePassStatsPostDeliberation, updateRunMeta, syncBanditArms, syncFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision } from './learning-store.mjs';
-import { resolveAuditArtifacts, loadAuditInputs, finalizeRoundOutcomes, finalizePriorRoundOutcomes } from './lib/finalize-outcomes.mjs';
+import { resolveAuditArtifacts, loadAuditInputs, finalizeRoundOutcomes, finalizePriorRoundOutcomes, stampAuditRound } from './lib/finalize-outcomes.mjs';
 import { registerPlanAuditRun, completePlanAuditRun } from './lib/audit/plan-audit-cloud.mjs';
 import { recordDecision as _learningRecordDecision, flush as _learningFlush, installLifecycleHooks as _learningInstallHooks, buildDecisionKey as _learningBuildKey, reconcileOutbox as _learningReconcileOutbox } from './lib/learning/decision-logger.mjs';
 import { deriveSignals as _deriveTierSignals, buildAuthorTierObservation as _buildAuthorTierObservation } from './lib/learning/author-tier-observation.mjs';
@@ -514,7 +514,7 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
   // only by the CLI's main(). Without it, a flipped flag routed fully-mocked
   // test harnesses into real multi-provider execution.
   if (tieredAuditConfig.pipelineEnabled && ctx.allowTiered) {
-    const mergedResult = await runTieredAuditPipeline(ctx);
+    const mergedResult = stampAuditRound(await runTieredAuditPipeline(ctx), opts.round);
     printAuditResult(mergedResult, { outFile, jsonMode });
     return mergedResult;
   }
@@ -524,7 +524,7 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
     ? runTieredShadowComparison({ ctx, legacyResultPromise, runTieredAuditPipeline }).catch(() => {})
     : null;
 
-  const mergedResult = await legacyResultPromise;
+  const mergedResult = stampAuditRound(await legacyResultPromise, opts.round);
   if (shadowTask) await shadowTask;
 
   printAuditResult(mergedResult, { outFile, jsonMode });
@@ -1238,7 +1238,8 @@ async function main() {
     }
 
     if (jsonMode || outFile) {
-      const data = { ...result, _usage: usage };
+      // A rebuttal is not a round's audit and is invoked with no --round.
+      const data = stampAuditRound({ ...result, _usage: usage }, mode === 'rebuttal' ? null : round);
       if (outFile) {
         const summaryLine = mode === 'rebuttal'
           ? `Deliberation complete: ${result.resolutions?.length ?? 0} resolutions`

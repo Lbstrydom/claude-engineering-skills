@@ -57,6 +57,7 @@ import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { generateTopicId, populateFindingMetadata } from './lib/ledger.mjs';
 import { resolveConcernLinks, findUndecidedReRaises } from './lib/concern-identity.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
+import { parseResultPath } from './lib/finalize-outcomes.mjs';
 import { withFileLock } from './lib/file-lock.mjs';
 import { LedgerEntrySchema } from './lib/schemas.mjs';
 
@@ -68,6 +69,63 @@ const KNOWN_FLAGS = [
 const OUTCOMES = new Set(['accepted', 'dismissed', 'severity_adjusted']);
 const STATES = new Set(['pending', 'planned', 'fixed', 'verified', 'regressed']);
 const RULINGS = new Set(['sustain', 'overrule', 'compromise', 'defer']);
+
+/**
+ * The round these rulings belong to — never a default.
+ *
+ * Upstream report 01f5cfd1 (2026-09-29): this was `--round ?? result.round ?? 1`,
+ * while openai-audit's `--out` JSON carried no `round` and the documented call
+ * never passes `--round`, so every R2+ triage landed at `resolvedRound: 1` —
+ * which the R2+ rulings block renders as `ruled DISMISSED R1` and orders
+ * most-recent-first by. Three sources can now answer, and each is checked:
+ * the flag, the result's own `round` (openai-audit writes it since this fix),
+ * and the `<sid>-r<N>-result.json` filename every documented invocation uses
+ * (parsed by finalize-outcomes' single regex, never a second one). Any that
+ * are present must AGREE — an R1 finding recorded at round 2 was in the same
+ * report — and none present is a refusal, not round 1.
+ *
+ * @param {{flag: string|null, field: unknown, resultPath: string}} args
+ * @returns {number}
+ */
+function resolveRound({ flag, field, resultPath }) {
+  // Validate EXACTLY (a positive integer), never coerce. `Number` (not
+  // `parseInt`) also rejects trailing garbage — same contract as
+  // write-code-outcomes.mjs. Reproduced 2026-08-08: `--round nope` became NaN,
+  // LedgerEntrySchema rejected every entry and this CLI still reported success.
+  const positiveInt = (v) => Number.isInteger(v) && v >= 1;
+  const sources = [];
+  if (flag !== null) {
+    if (!positiveInt(Number(flag))) {
+      throw new ArgvError(`write-ledger-entries: --round must be a positive integer (got ${JSON.stringify(flag)}).`);
+    }
+    sources.push(['--round', Number(flag)]);
+  }
+  if (field !== undefined && field !== null) {
+    if (!positiveInt(field)) {
+      throw new ArgvError(
+        `write-ledger-entries: ${resultPath} has a "round" that is not a positive integer (got ${JSON.stringify(field)}).`,
+      );
+    }
+    sources.push(['the result\'s "round"', field]);
+  }
+  const fromName = parseResultPath(resultPath).round;
+  if (positiveInt(fromName)) sources.push([`the filename (${path.basename(resultPath)})`, fromName]);
+
+  if (sources.length === 0) {
+    throw new ArgvError(
+      `write-ledger-entries: cannot determine the round for ${resultPath} — no --round, no "round" in the `
+      + 'result, and the filename is not <sid>-r<N>-result.json. Pass --round N; refusing to record the '
+      + 'rulings at a guessed round.',
+    );
+  }
+  if (new Set(sources.map(([, n]) => n)).size > 1) {
+    throw new ArgvError(
+      `write-ledger-entries: round sources disagree — ${sources.map(([what, n]) => `${what} says ${n}`).join(', ')}. `
+      + 'Refusing to record the rulings in the wrong round; fix whichever is wrong.',
+    );
+  }
+  return sources[0][1];
+}
 
 function valueOf(argv, flag) {
   const i = argv.indexOf(flag);
@@ -298,13 +356,7 @@ async function main() {
   // one stderr line, and this CLI still printed `1/1 findings ruled ·
   // acceptance 100%` and exited 0 — with NO ledger file on disk at all. That is
   // the success-shaped-write class this whole change set exists to close.
-  const roundRaw = valueOf(argv, '--round') ?? result.round ?? 1;
-  const round = Number(roundRaw);
-  if (!Number.isInteger(round) || round < 1) {
-    throw new ArgvError(
-      `write-ledger-entries: --round must be a positive integer (got ${JSON.stringify(roundRaw)}).`,
-    );
-  }
+  const round = resolveRound({ flag: valueOf(argv, '--round'), field: result.round, resultPath });
 
   const byId = new Map(findings.map(f => [f.id, f]));
   const unknown = Object.keys(triage).filter(id => !byId.has(id));

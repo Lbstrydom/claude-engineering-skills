@@ -75,12 +75,21 @@ describe('buildReceiptEntry', () => {
       overridesHeld: [{ path: 'e', reason: 'r', upstreamMoved: false }],
       divergedOverwritten: [{ path: 'f', reason: 'diverged-overwrite-flag' }],
       divergenceRefused: [{ path: 'g', reason: 'diverged-committed' }],
+      legacyRetired: [{ path: 'h', action: 'remove-block' }],
       unchanged: 700,
     });
     assert.deepEqual(r.counts, {
       created: 1, updated: 2, unchanged: 700, gcDeleted: 1,
-      overridesHeld: 1, divergedOverwritten: 1, divergenceRefused: 1,
+      overridesHeld: 1, divergedOverwritten: 1, divergenceRefused: 1, legacyRetired: 1,
     });
+  });
+
+  test('a legacy-block retirement is recorded with its path and action (upstream aac80849)', () => {
+    // The sync edited a tracked consumer file and the receipt named neither it
+    // nor the action — the operator could not attribute the edit.
+    const r = base({ legacyRetired: [{ path: '.github/copilot-instructions.md', action: 'delete-file' }] });
+    assert.deepEqual(r.legacyRetired, [{ path: '.github/copilot-instructions.md', action: 'delete-file' }]);
+    assert.deepEqual(base().legacyRetired, [], 'absent means none retired, stated as an empty list');
   });
 
   test('refusals are recorded — a partial sync must be visible from the repo alone', () => {
@@ -225,6 +234,23 @@ describe('receiptShouldWrite', () => {
     const prev = base({ updated: ['a'] });
     const next = buildReceiptEntry({ syncedAt: '2026-09-01T00:00:00.000Z', source: SOURCE, updated: ['a'] });
     assert.equal(receiptShouldWrite(prev, next), true);
+  });
+
+  test('a run whose only edit was a legacy-block retirement is a propagation — it writes', () => {
+    // Without this the retirement-only sync (the wine-cellar-app shape once
+    // everything else is current) would be judged a no-op and leave no record.
+    const prev = base();
+    const next = buildReceiptEntry({
+      syncedAt: '2026-09-01T00:00:00.000Z', source: SOURCE,
+      legacyRetired: [{ path: '.github/copilot-instructions.md', action: 'remove-block' }],
+    });
+    assert.equal(receiptShouldWrite(prev, next), true);
+  });
+
+  test('a prior entry written before legacyRetired existed does not force a rewrite', () => {
+    const { legacyRetired: _omit, ...prev } = base();
+    const next = buildReceiptEntry({ syncedAt: '2026-09-01T00:00:00.000Z', source: SOURCE });
+    assert.equal(receiptShouldWrite(prev, next), false);
   });
 
   test('the first receipt is always written', () => {

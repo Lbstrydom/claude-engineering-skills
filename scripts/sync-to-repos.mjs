@@ -2350,7 +2350,11 @@ async function main() {
       }
     }
     // ── Retire the old installer's stale copilot-instructions block (never throws).
-    for (const note of retireLegacyCopilotBlock(repo.path, { dryRun: DRY_RUN })) console.log(`  ${Y}legacy${X} ${note}`);
+    // Its edit to a (usually tracked) consumer file is recorded in the receipt
+    // below — a console line alone left it unattributable (upstream aac80849).
+    const legacyRetirement = retireLegacyCopilotBlock(repo.path, { dryRun: DRY_RUN });
+    for (const note of legacyRetirement.notes) console.log(`  ${Y}legacy${X} ${note}`);
+    const receiptLegacyRetired = legacyRetirement.retired ? [legacyRetirement.retired] : [];
 
     // ── Self-heal: untrack files now covered by a managed runtime-output
     // pattern. A .gitignore rule never untracks an already-committed file, so a
@@ -2430,6 +2434,7 @@ async function main() {
           overridesHeld: receiptOverridesHeld,
           divergedOverwritten: receiptDivergedOverwritten,
           divergenceRefused: divergenceRefusals,
+          legacyRetired: receiptLegacyRetired,
           unchanged: repoUnchanged,
         });
         if (priorReceipt.status === 'unsupported') {

@@ -332,3 +332,71 @@ describe('--mark-fixed derives from the ledger UNDER the lock', () => {
     );
   });
 });
+
+// Upstream report 01f5cfd1 (wine-cellar-app, 2026-09-29): `--round` fell back
+// to `result.round ?? 1`, but openai-audit's `--out` JSON carried no `round`
+// and the documented call never passes `--round` — so every R2+ triage was
+// recorded at resolvedRound 1. These fixtures are shaped like the REAL
+// openai-audit output (no `round` field), not like what the reader expected.
+describe('resolvedRound comes from the round actually audited', () => {
+  const findingsOnly = () => ({ findings: [FINDING] });
+  const TRIAGE = { H1: { outcome: 'dismissed', state: 'pending', ruling: 'overrule', why: 'not applicable here' } };
+  const setup = (resultName, body) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-round-'));
+    const resultPath = path.join(dir, resultName);
+    const ledgerPath = path.join(dir, 'sid-ledger.json');
+    const triagePath = path.join(dir, 'triage.json');
+    fs.writeFileSync(resultPath, JSON.stringify(body));
+    fs.writeFileSync(triagePath, JSON.stringify(TRIAGE));
+    return { resultPath, ledgerPath, triagePath };
+  };
+  const resolvedRound = (ledgerPath) => JSON.parse(fs.readFileSync(ledgerPath, 'utf-8')).entries[0].resolvedRound;
+
+  it('R1 and R2 results with no round field → each entry records its own round (from the filename)', () => {
+    for (const n of [1, 2]) {
+      const { resultPath, ledgerPath, triagePath } = setup(`sid-r${n}-result.json`, findingsOnly());
+      run(['--result', resultPath, '--ledger', ledgerPath, '--triage', triagePath]);
+      assert.equal(resolvedRound(ledgerPath), n, `an r${n} result must record resolvedRound ${n}`);
+    }
+  });
+
+  it('a result carrying round (as openai-audit now writes) is honoured', () => {
+    const { resultPath, ledgerPath, triagePath } = setup('findings.json', { round: 6, findings: [FINDING] });
+    run(['--result', resultPath, '--ledger', ledgerPath, '--triage', triagePath]);
+    assert.equal(resolvedRound(ledgerPath), 6);
+  });
+
+  it('no round anywhere + a non-conventional filename → refuses, writes nothing', () => {
+    const { resultPath, ledgerPath, triagePath } = setup('findings.json', findingsOnly());
+    assert.throws(
+      () => run(['--result', resultPath, '--ledger', ledgerPath, '--triage', triagePath]),
+      (err) => err.status === 2 && /cannot determine the round/.test(String(err.stderr)) && /--round/.test(String(err.stderr)),
+    );
+    assert.equal(fs.existsSync(ledgerPath), false, 'no ledger may be written at a guessed round');
+  });
+
+  it('sources that DISAGREE are refused, never silently resolved', () => {
+    // An R1 finding recorded at 2 was in the report too: the operator's flag and
+    // the file's own identity must agree, or the entry lands in the wrong round.
+    const cases = [
+      { name: 'sid-r2-result.json', body: { round: 1, findings: [FINDING] }, flag: [] },
+      { name: 'sid-r1-result.json', body: findingsOnly(), flag: ['--round', '2'] },
+      { name: 'findings.json', body: { round: 3, findings: [FINDING] }, flag: ['--round', '4'] },
+    ];
+    for (const c of cases) {
+      const { resultPath, ledgerPath, triagePath } = setup(c.name, c.body);
+      assert.throws(
+        () => run(['--result', resultPath, '--ledger', ledgerPath, '--triage', triagePath, ...c.flag]),
+        (err) => err.status === 2 && /round sources disagree/.test(String(err.stderr)),
+        `${c.name} ${JSON.stringify(c.body.round)} ${c.flag.join(' ')} must be refused`,
+      );
+      assert.equal(fs.existsSync(ledgerPath), false);
+    }
+  });
+
+  it('control: an explicit --round agreeing with the filename is accepted', () => {
+    const { resultPath, ledgerPath, triagePath } = setup('sid-r3-result.json', findingsOnly());
+    run(['--result', resultPath, '--ledger', ledgerPath, '--triage', triagePath, '--round', '3']);
+    assert.equal(resolvedRound(ledgerPath), 3);
+  });
+});

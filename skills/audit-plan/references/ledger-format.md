@@ -53,6 +53,12 @@ round's own findings, so you supply only the judgement:
 node scripts/write-ledger-entries.mjs --result .audit/$SID-r1-result.json --ledger .audit/$SID-ledger.json --triage .claude/tmp/triage-r1.json
 ```
 
+Use the round's own result file (`-r2-result.json` for round 2, and so on).
+Each entry's `resolvedRound` comes from the result's `round` field and its
+`-r<N>-result.json` filename; `--round N` is needed only for a result named
+otherwise. The CLI refuses — writing nothing — when no round can be found or
+when these disagree, rather than filing the rulings under round 1.
+
 `--triage` is a JSON file keyed by the round's finding ids. **Write it with an
 editor (the `Write` tool), never as a shell string.** The payload is
 `rulingRationale`: free-form English containing apostrophes ("the plan's

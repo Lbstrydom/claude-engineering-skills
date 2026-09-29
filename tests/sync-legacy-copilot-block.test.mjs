@@ -109,27 +109,31 @@ describe('retireLegacyCopilotBlock — the sync call site, against a real temp c
   it('dry-run reports and writes nothing', () => {
     const original = `# Mine\n\n${BLOCK}\n`;
     const root = mkConsumer(original);
-    const lines = retireLegacyCopilotBlock(root, { dryRun: true });
-    assert.equal(lines.length, 1);
+    const { notes, retired } = retireLegacyCopilotBlock(root, { dryRun: true });
+    assert.equal(notes.length, 1);
+    assert.equal(retired, null, 'dry-run must not report an edit it did not make (the receipt records it)');
     assert.equal(read(root), original);
   });
 
   it('real run removes the block in place and is idempotent on the second run', () => {
     const root = mkConsumer(`# Mine\n\n${BLOCK}\n`);
-    assert.equal(retireLegacyCopilotBlock(root).length, 1);
+    const first = retireLegacyCopilotBlock(root);
+    assert.equal(first.notes.length, 1);
+    assert.deepEqual(first.retired, { path: COPILOT_INSTRUCTIONS_PATH, action: 'remove-block' });
     assert.equal(read(root), '# Mine\n');
-    assert.deepEqual(retireLegacyCopilotBlock(root), [], 'second invocation must be a silent noop');
+    assert.deepEqual(retireLegacyCopilotBlock(root), { notes: [], retired: null }, 'second invocation must be a silent noop');
   });
 
   it('a block-only file is deleted', () => {
     const root = mkConsumer(`${BLOCK}\n`);
-    retireLegacyCopilotBlock(root);
+    const { retired } = retireLegacyCopilotBlock(root);
+    assert.deepEqual(retired, { path: COPILOT_INSTRUCTIONS_PATH, action: 'delete-file' });
     assert.equal(fs.existsSync(path.join(root, COPILOT_INSTRUCTIONS_PATH)), false);
   });
 
   it('a consumer with no copilot-instructions file is untouched and silent', () => {
     const root = mkConsumer(null);
-    assert.deepEqual(retireLegacyCopilotBlock(root), []);
+    assert.deepEqual(retireLegacyCopilotBlock(root), { notes: [], retired: null });
     assert.equal(fs.existsSync(path.join(root, '.github')), false);
   });
 });
@@ -177,8 +181,9 @@ describe('R2 hardening — ambiguity, symlinks, non-UTF-8 bytes', () => {
         t.skip(`symlink creation unavailable here (${err.code})`);
         return;
       }
-      const lines = retireLegacyCopilotBlock(root);
-      assert.match(lines.join('\n'), /left untouched/);
+      const { notes, retired } = retireLegacyCopilotBlock(root);
+      assert.match(notes.join('\n'), /left untouched/);
+      assert.equal(retired, null);
       assert.equal(fs.readFileSync(target, 'utf8'), `${BLOCK}\n`, 'the outside file must not be modified');
     } finally {
       fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });

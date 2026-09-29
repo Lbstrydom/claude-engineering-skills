@@ -13,6 +13,7 @@ import path from 'node:path';
 import {
   resolveAuditArtifacts,
   parseResultPath,
+  stampAuditRound,
   loadAuditInputs,
   finalizeRoundOutcomes,
   splitPendingFindings,
@@ -198,5 +199,17 @@ describe('finalizeRoundOutcomes', () => {
     const status = await finalizeRoundOutcomes({ result, ledger, round: 2, store: null, sid: 'sid-z' });
     assert.equal(status.labelled, 0);
     assert.equal(outcomesLines().length, 0, 'pending findings produce no local outcome');
+  });
+});
+
+// Upstream report 01f5cfd1: the round field half of a result's identity.
+describe('stampAuditRound', () => {
+  it('stamps a positive integer round onto the result', () => {
+    assert.equal(stampAuditRound({ findings: [] }, 2).round, 2);
+  });
+  it('never invents a round: null / NaN / 0 leave the field absent', () => {
+    for (const bad of [null, undefined, Number.NaN, 0, -1, 1.5, '2']) {
+      assert.equal('round' in stampAuditRound({ findings: [] }, bad), false, `round ${String(bad)} must not be stamped`);
+    }
   });
 });
