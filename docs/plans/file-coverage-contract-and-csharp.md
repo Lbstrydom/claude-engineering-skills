@@ -1,6 +1,6 @@
 # Plan: File-Coverage Contract + First-Class C# Support
 - **Date**: 2026-09-30
-- **Status**: In Progress — implemented and audited in three clusters; uncommitted, awaiting `/ship`
+- **Status**: Complete — implemented, audited in three clusters and shipped; five independent follow-ups are listed in the audit trail
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI / audit tooling; no UI surface)
 - **Target domain(s)**: `audit-orchestration`, `plan`, `shared-lib`
