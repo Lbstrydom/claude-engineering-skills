@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-08-28T13:51:08.697Z",
-  "commitSha": "5b0ac6f856a8ed85aa532c5f99bb90d6e40cddc1",
-  "extractionSourceSha": "5b0ac6f856a8ed85aa532c5f99bb90d6e40cddc1",
+  "generatedAt": "2026-09-30T10:38:20.998Z",
+  "commitSha": "e73a40ee3054e16f0493e47751f7efe7069608ff",
+  "extractionSourceSha": "e73a40ee3054e16f0493e47751f7efe7069608ff",
   "coveredFiles": [
     "scripts/anthropic-ping.mjs",
     "scripts/arch-coverage-gate.mjs",
@@ -135,6 +135,7 @@
     "scripts/lib/audit/duplication-report.mjs",
     "scripts/lib/audit/event-wiring-pass.mjs",
     "scripts/lib/audit/evidence-triage.mjs",
+    "scripts/lib/audit/file-coverage.mjs",
     "scripts/lib/audit/final-adjudication.mjs",
     "scripts/lib/audit/finalization-contract.mjs",
     "scripts/lib/audit/finding-assembly.mjs",
@@ -172,6 +173,7 @@
     "scripts/lib/audit/time-utils.mjs",
     "scripts/lib/audit/transcript.mjs",
     "scripts/lib/audit/usage-event.mjs",
+    "scripts/lib/audit/wave-eligibility.mjs",
     "scripts/lib/azure-throttle.mjs",
     "scripts/lib/azure/embed-discovery.mjs",
     "scripts/lib/backfill-parser.mjs",
@@ -280,6 +282,7 @@
     "scripts/lib/dependency-identity.mjs",
     "scripts/lib/device-presets.mjs",
     "scripts/lib/diff-annotation.mjs",
+    "scripts/lib/diff-scope-admission.mjs",
     "scripts/lib/doc-citations.mjs",
     "scripts/lib/doc-sections.mjs",
     "scripts/lib/duplicate-justification-pragma.mjs",
@@ -290,6 +293,7 @@
     "scripts/lib/file-io.mjs",
     "scripts/lib/file-lock.mjs",
     "scripts/lib/file-store.mjs",
+    "scripts/lib/file-taxonomy.mjs",
     "scripts/lib/final-review-credit.mjs",
     "scripts/lib/final-review/envelope.mjs",
     "scripts/lib/final-review/gap-projection.mjs",
@@ -2143,6 +2147,36 @@
       }
     },
     {
+      "id": "REQ-behavioural-1b9721d3",
+      "assertion": "Rejected uncovered files receive coverage-gap warnings distinct from non-code exclusions, and plan references affect untracked warnings without changing admission.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/diff-scope-admission.mjs",
+          "anchor": "partitionDiffScope, planReferences, formatDiffScopeNotices"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/diff-scope-admission.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/diff-scope-admission.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-1b9721d3",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Admission-independent warning behavior lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-behavioural-1c1860bc",
       "assertion": "The duplicates CLI must exit with code 2 for invalid limits, disabled cloud access, missing repository or active snapshot state, RPC failures, and uncaught fatal errors, while zero duplicate clusters ",
       "kind": "behavioural",
@@ -2170,6 +2204,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test covers duplicates CLI exit behavior."
+      }
+    },
+    {
+      "id": "REQ-behavioural-1c7c77b9",
+      "assertion": "Exact-name classification is case-sensitive, whereas generated suffixes, compound reference suffixes, and language or declarative extensions are matched case-insensitively.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/file-taxonomy.mjs",
+          "anchor": "matchFileKind"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/file-taxonomy.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/file-taxonomy.mjs#matchFileKind"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-1c7c77b9",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Classification case sensitivity lacks linked tests."
       }
     },
     {
@@ -3648,6 +3712,36 @@
       }
     },
     {
+      "id": "REQ-behavioural-30dcdd7f",
+      "assertion": "An unavailable synchronous tool tries its configured fallback or returns no_tool with no findings.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "runTool: availability branch"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-30dcdd7f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Unavailable-tool fallback behavior lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-behavioural-3122c782",
       "assertion": "Reference dashboard validation must preserve optional navAudit, visualAudit, and campaigns payloads rather than stripping their collector-owned fields.",
       "kind": "behavioural",
@@ -4788,6 +4882,36 @@
       }
     },
     {
+      "id": "REQ-behavioural-405f8a46",
+      "assertion": "Explicitly excluded reviewable files leave the required denominator but increment excludedRequired, while not-admitted uncovered files increment required.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "denominator matrix"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#buildCoverageReport"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-405f8a46",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Required-denominator accounting lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-behavioural-428f8202",
       "assertion": "Purpose collector output ordering must be deterministic by preserving declared purpose order and sorting domain, requirement, hygiene, and inverse-index collections where constructed.",
       "kind": "behavioural",
@@ -5262,36 +5386,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This ungated reference-finding outcome rule has no linked test."
-      }
-    },
-    {
-      "id": "REQ-behavioural-47b2f430",
-      "assertion": "Applicable analysis tools must run at most once per tool id, using the union of files contributed by every matching language profile.",
-      "kind": "behavioural",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/linter.mjs",
-          "anchor": "executeTools"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/linter.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/linter.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-behavioural-47b2f430",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test evidence."
       }
     },
     {
@@ -8748,6 +8842,36 @@
       }
     },
     {
+      "id": "REQ-behavioural-8380e167",
+      "assertion": "Applicable tools are deduplicated by tool ID across language profiles, with their contributing audited files unioned.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "executeTools, executeAllTools"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-8380e167",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Tool deduplication and union lack tests."
+      }
+    },
+    {
       "id": "REQ-behavioural-8474a228",
       "assertion": "Plan discovery must scan both docs/plans and docs/completed, exclude Markdown files whose names match -audit-summary, and include a document as a plan only when it has a parseable Status-line presence",
       "kind": "behavioural",
@@ -8777,6 +8901,36 @@
           "REQ-behavioural-13429946"
         ],
         "rationale": "It excludes H1-only plans that the other requirement explicitly includes."
+      }
+    },
+    {
+      "id": "REQ-behavioural-84a8496c",
+      "assertion": "Tools are deduplicated by configured identifier across language profiles, with contributing files combined before execution.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "executeTools and executeAllTools: tool maps"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-84a8496c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Tool deduplication and union lack tests."
       }
     },
     {
@@ -8841,6 +8995,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This memory-health exit threshold has no linked test."
+      }
+    },
+    {
+      "id": "REQ-behavioural-86277b49",
+      "assertion": "Plan references affect only warnings for admitted untracked files and never change diff admission.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/diff-scope-admission.mjs",
+          "anchor": "planReferences, partitionDiffScope"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/diff-scope-admission.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/diff-scope-admission.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-86277b49",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Warning-only plan references lack linked tests."
       }
     },
     {
@@ -9560,6 +9744,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-behavioural-9041d2ca",
+      "assertion": "Unrecognized paths return uncovered classification, and an unmatched bare dotfile has a null extension.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/file-taxonomy.mjs",
+          "anchor": "matchFileKind fallback"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/file-taxonomy.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/file-taxonomy.mjs#matchFileKind"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-9041d2ca",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Unknown-path and dotfile handling lack tests."
       }
     },
     {
@@ -11181,6 +11395,36 @@
       }
     },
     {
+      "id": "REQ-behavioural-ad43aba2",
+      "assertion": "Project execution removes --no-restore only when both the tool restore toggle and the caller's restore policy are enabled.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "runProjectTool: restoreToggle"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-ad43aba2",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Dual-consent restore policy lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-behavioural-aebe33ae",
       "assertion": "The model A/B/C dashboard must present experiment output as observation-only and must not represent any arm result as gating or shipping work.",
       "kind": "behavioural",
@@ -11472,6 +11716,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This persistent Azure fallback rule has no linked test."
+      }
+    },
+    {
+      "id": "REQ-behavioural-b24c9bec",
+      "assertion": "Unavailable synchronous tools use their configured fallback or return no_tool without findings.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "runTool: availability branch"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-b24c9bec",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Unavailable-tool fallback behavior lacks linked tests."
       }
     },
     {
@@ -12463,6 +12737,36 @@
       }
     },
     {
+      "id": "REQ-behavioural-c6f4801a",
+      "assertion": "Rejected diff paths are separated into uncovered types and expected non-code exclusions, with uncovered types reported as unaudited coverage warnings.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/diff-scope-admission.mjs",
+          "anchor": "partitionDiffScope, formatDiffScopeNotices"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/diff-scope-admission.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/diff-scope-admission.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-c6f4801a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Rejected-path warning distinctions lack linked tests."
+      }
+    },
+    {
       "id": "REQ-behavioural-c7107720",
       "assertion": "Importing the RLS checker as a module must not open a database connection or call process.exit; CLI execution occurs only when the module is the invoked entrypoint.",
       "kind": "behavioural",
@@ -12494,6 +12798,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-behavioural-c85f9e56",
+      "assertion": "Unrecognized paths return uncovered rather than non-code, and bare dotfiles have no extension unless explicitly recognized by filename.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/file-taxonomy.mjs",
+          "anchor": "matchFileKind fallback"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/file-taxonomy.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/file-taxonomy.mjs#matchFileKind"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-c85f9e56",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Unknown-path and dotfile handling lack tests."
       }
     },
     {
@@ -13749,6 +14083,36 @@
       }
     },
     {
+      "id": "REQ-behavioural-df73cca1",
+      "assertion": "Classification prioritizes case-sensitive exact filenames over case-insensitive generated suffixes, compound reference suffixes, and final extensions, in that order.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/file-taxonomy.mjs",
+          "anchor": "matchFileKind"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/file-taxonomy.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/file-taxonomy.mjs#matchFileKind"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-df73cca1",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Classification precedence has no linked tests."
+      }
+    },
+    {
       "id": "REQ-behavioural-e0000c6d",
       "assertion": "Java must be detected when a Java build marker exists at repository root or when `git ls-files` finds at least one tracked or non-ignored `.java` file, including uncommitted files.",
       "kind": "behavioural",
@@ -14381,36 +14745,6 @@
         "gap": "none",
         "conflictsWith": [],
         "rationale": "This intended invariant has linked test coverage."
-      }
-    },
-    {
-      "id": "REQ-behavioural-eaacd8b8",
-      "assertion": "A linter or type-checker that exits non-zero but emits parseable stdout must produce an OK result containing its parsed, in-scope findings rather than being treated as a failed tool run.",
-      "kind": "behavioural",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/linter.mjs",
-          "anchor": "runTool catch err.stdout handling"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/linter.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/linter.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-behavioural-eaacd8b8",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test evidence."
       }
     },
     {
@@ -15587,6 +15921,36 @@
       }
     },
     {
+      "id": "REQ-behavioural-f99874a5",
+      "assertion": "Reviewer projection preserves canonical totals, status, and gate while replacing files with capped short-file records and a digest of the full ledger.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "projectCoverageForReview"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#projectCoverageForReview"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-f99874a5",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Canonical reviewer projection lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-behavioural-fa032298",
       "assertion": "Cross-file paragraph duplication checks must compare only instruction files in the same directory or ancestor-descendant directory tree.",
       "kind": "behavioural",
@@ -16052,6 +16416,36 @@
       }
     },
     {
+      "id": "REQ-correctness-0265d4ae",
+      "assertion": "Completed full renders supersede truncated renders, while truncated aggregate coverage uses the largest completed character prefix rather than summing passes.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "readEvidence"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#readEvidence"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-0265d4ae",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Render coverage aggregation lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-02c48092",
       "assertion": "For navigation edges without a preassigned DOM anchor, the model must attribute all declared-anchor component ancestors reachable through render containment, not only the nearest ancestor.",
       "kind": "correctness",
@@ -16214,6 +16608,36 @@
       }
     },
     {
+      "id": "REQ-correctness-0374d793",
+      "assertion": "Duplicate normalized changed-path identities retain only the first record and cause incomplete coverage with a failing gate.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "buildCoverageReport: seen; derivations"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#buildCoverageReport"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-0374d793",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Duplicate-path gate failure lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-039eaeb3",
       "assertion": "An OpenAI completion with finish_reason length and nonblank text must be preserved as text but classified as truncated rather than success.",
       "kind": "correctness",
@@ -16243,6 +16667,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-correctness-03b321b5",
+      "assertion": "NUL-delimited change parsing preserves embedded newlines and records rename or copy destinations with their original paths.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "parseNameStatusZ"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#parseNameStatusZ"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-03b321b5",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "NUL-delimited change parsing lacks linked tests."
       }
     },
     {
@@ -18953,6 +19407,37 @@
       }
     },
     {
+      "id": "REQ-correctness-125d0d58",
+      "assertion": "Coverage validation rejects schema violations, mismatched changed totals, duplicate normalized identities, and incorrect supplied outcome counts.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "validateCoverage"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#CoverageSchema",
+          "scripts/lib/audit/file-coverage.mjs#validateCoverage"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-125d0d58",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Coverage validation checks lack linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-126f90c2",
       "assertion": "recordFindings must collapse duplicate finding fingerprints within one input batch before issuing the multi-row insert.",
       "kind": "correctness",
@@ -19792,6 +20277,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test evidence."
+      }
+    },
+    {
+      "id": "REQ-correctness-17a47594",
+      "assertion": "File classification depends only on the basename, treats both slash styles as separators, and applies exact-name rules before compound-suffix rules before last-extension rules.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/file-taxonomy.mjs",
+          "anchor": "baseName; matchFileKind"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/file-taxonomy.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/file-taxonomy.mjs#matchFileKind"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-17a47594",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Basename classification precedence lacks linked tests."
       }
     },
     {
@@ -21179,6 +21694,36 @@
       }
     },
     {
+      "id": "REQ-correctness-1cb39ae2",
+      "assertion": "Parsed toolFault diagnostics fail the tool run before audited-file filtering, even when the fault lies outside the audited files.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "runTool, runProjectTool: toolFault checks"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-1cb39ae2",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Global tool-fault handling lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-1cbbc99d",
       "assertion": "An active prompt-evolution experiment whose parent revision is no longer the active default for its pass must be recorded as stale and excluded from convergence review.",
       "kind": "correctness",
@@ -21883,6 +22428,36 @@
       }
     },
     {
+      "id": "REQ-correctness-1ffa23e4",
+      "assertion": "Only passes explicitly marked completed contribute to aggregate full or head-cut read evidence.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "createCoverageRecorder; readEvidence"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#readEvidence"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-1ffa23e4",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Completed-pass evidence filtering lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-1ffb4377",
       "assertion": "An `AI-Gate: passed` claim with fresh evidence must be refused unless audit-run convergence and the tree that the scoped commit will produce verify successfully, and an accepted claim must persist tha",
       "kind": "correctness",
@@ -22314,36 +22889,6 @@
       "status": "inferred-only",
       "gap": {
         "requirementId": "REQ-correctness-21fc2f58",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test evidence."
-      }
-    },
-    {
-      "id": "REQ-correctness-2232a18a",
-      "assertion": "Only successful tool runs may be normalized into canonical audit findings.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/linter.mjs",
-          "anchor": "normalizeToolResults"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/linter.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/linter.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-2232a18a",
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test evidence."
@@ -23159,6 +23704,36 @@
       }
     },
     {
+      "id": "REQ-correctness-269c7dfe",
+      "assertion": "An ineligible wave record overrides its supplied execution outcome with ineligible and explicitly states that nothing was examined.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/wave-eligibility.mjs",
+          "anchor": "waveRecord, ineligibleReason"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/wave-eligibility.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/wave-eligibility.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-269c7dfe",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Ineligible-wave outcome override lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-26aa0cee",
       "assertion": "Debt-event metric derivation must process events in timestamp order, ignore reconciled events, and remove all metrics for a topic when a resolved event is encountered.",
       "kind": "correctness",
@@ -23410,36 +23985,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is present."
-      }
-    },
-    {
-      "id": "REQ-correctness-27b5b3f8",
-      "assertion": "External-tool findings must be retained only when their normalized file path belongs to the audited file set.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/linter.mjs",
-          "anchor": "runTool"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/linter.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/linter.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 2,
-      "confidence": "high",
-      "status": "active",
-      "gap": {
-        "requirementId": "REQ-correctness-27b5b3f8",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test evidence."
       }
     },
     {
@@ -23943,6 +24488,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-correctness-296005e4",
+      "assertion": "Project-tool aggregation retains individual project outcomes and derives the overall status using worstToolState.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "executeAllTools: projects and status aggregation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-296005e4",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Worst-state project aggregation lacks linked tests."
       }
     },
     {
@@ -26654,6 +27229,36 @@
       }
     },
     {
+      "id": "REQ-correctness-379414b5",
+      "assertion": "Diff admission ignores empty or non-string candidates and admits valid paths exactly when resolveReferenceExtension returns a non-null value.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/diff-scope-admission.mjs",
+          "anchor": "partitionDiffScope"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/diff-scope-admission.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/diff-scope-admission.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-379414b5",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Reference-based diff admission lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-37bfb3cf",
       "assertion": "embedText must reject provider embeddings that are empty, have a length other than the requested dimension, or contain non-finite non-numeric elements.",
       "kind": "correctness",
@@ -26841,6 +27446,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-correctness-38abaec4",
+      "assertion": "Review projection preserves canonical totals, status, and gate while replacing files with capped short-file records and a digest of the entire ledger.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "projectCoverageForReview"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#projectCoverageForReview"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-38abaec4",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Canonical review projection lacks linked tests."
       }
     },
     {
@@ -27044,6 +27679,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked tests are listed for this intended telemetry invariant."
+      }
+    },
+    {
+      "id": "REQ-correctness-39db4d63",
+      "assertion": "Parsed tool faults and nonzero exits without parseable diagnostics produce failed results without findings.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "runTool and runProjectTool: fault and nonzero-exit handling"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-39db4d63",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Tool failure-result handling lacks linked tests."
       }
     },
     {
@@ -28054,6 +28719,36 @@
       }
     },
     {
+      "id": "REQ-correctness-40e905be",
+      "assertion": "Examined counts include audited reviewable files only when fully rendered or when measured unread changed lines equal zero.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "buildCoverageReport: wholly"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#buildCoverageReport"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-40e905be",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Examined-count eligibility lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-4140ce4d",
       "assertion": "Write-side plain JavaScript arrays must be JSON-serialized by default, except arrays explicitly wrapped with pgArray() must remain raw PostgreSQL array parameters.",
       "kind": "correctness",
@@ -28533,6 +29228,36 @@
       }
     },
     {
+      "id": "REQ-correctness-4269609e",
+      "assertion": "NUL-delimited change parsing preserves path whitespace and records rename or copy destinations with their originating path in renamedFrom.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "parseNameStatusZ"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#parseNameStatusZ"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-4269609e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Whitespace-preserving change parsing lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-42835c38",
       "assertion": "Visual contracts must reject unknown fields and must reject duplicate surface ids or duplicate theme names during validation.",
       "kind": "correctness",
@@ -28564,6 +29289,36 @@
       }
     },
     {
+      "id": "REQ-correctness-4297fd26",
+      "assertion": "Duplicate normalized changed paths retain only the first record and produce an invariant violation.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "buildCoverageReport seen"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#buildCoverageReport"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-4297fd26",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Duplicate-path invariant enforcement lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-429b0b47",
       "assertion": "The Sonnet discovery provider must be constructed with the SDK backend rather than the ambient Anthropic backend configuration.",
       "kind": "correctness",
@@ -28591,6 +29346,37 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked tests are listed for this intended provider-construction invariant."
+      }
+    },
+    {
+      "id": "REQ-correctness-42d7eb34",
+      "assertion": "A reviewable file without completed render evidence is never assigned the audited outcome.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "buildCoverageReport: outcome selection"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#readEvidence",
+          "scripts/lib/audit/file-coverage.mjs#buildCoverageReport"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-42d7eb34",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Audited-outcome evidence requirements lack linked tests."
       }
     },
     {
@@ -29230,36 +30016,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test covers diff-gating line intersection."
-      }
-    },
-    {
-      "id": "REQ-correctness-460b24f1",
-      "assertion": "A non-zero linter or type-checker exit with parseable stdout must be treated as a successful finding-producing run rather than a tool failure.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/linter.mjs",
-          "anchor": "runTool"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/linter.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/linter.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-460b24f1",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test evidence."
       }
     },
     {
@@ -32326,6 +33082,36 @@
       }
     },
     {
+      "id": "REQ-correctness-528de673",
+      "assertion": "Examined totals include only audited reviewable files with full reads or head-cut reads having zero measured unread changed lines.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "buildCoverageReport wholly"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#buildCoverageReport"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-528de673",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Examined-total eligibility lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-53152e50",
       "assertion": "The reference checker must classify concrete cited `docs/**/*.md` paths against case-exact git-index paths rather than filesystem existence, except for explicitly listed generated-untracked targets an",
       "kind": "correctness",
@@ -35330,6 +36116,36 @@
       }
     },
     {
+      "id": "REQ-correctness-62b6c12d",
+      "assertion": "A reviewable file without completed render evidence cannot receive an audited outcome.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "buildCoverageReport outcome selection"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#buildCoverageReport"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-62b6c12d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Audited-outcome evidence requirements lack linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-62e60bde",
       "assertion": "A raw orphan finding is associated with suppression only when its canonical finding fingerprint is absent from survivors and present among suppressed findings.",
       "kind": "correctness",
@@ -35693,6 +36509,36 @@
       }
     },
     {
+      "id": "REQ-correctness-63a17e91",
+      "assertion": "A nonzero tool exit with no parseable diagnostics never returns ok, whereas a successful exit may return ok with zero findings.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "runTool, runProjectTool: exit handling"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-63a17e91",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Exit-status interpretation lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-640b26c4",
       "assertion": "Persisted requirement identifiers, gap references, override keys, and identity-alias keys and values must match `REQ-<security|safety|correctness|behavioural|persistence>-<8 lowercase hexadecimal char",
       "kind": "correctness",
@@ -36038,6 +36884,36 @@
         "gap": "none",
         "conflictsWith": [],
         "rationale": "A linked test supports this sound correctness invariant."
+      }
+    },
+    {
+      "id": "REQ-correctness-656a7f74",
+      "assertion": "Normalized compiler errors are HIGH-severity BUG findings, style diagnostics are LOW severity, and tool-derived findings are mechanical and never reopened.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "normalizeExternalFinding"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-656a7f74",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Diagnostic normalization rules lack linked tests."
       }
     },
     {
@@ -36729,6 +37605,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test covers normalized plan-status updates."
+      }
+    },
+    {
+      "id": "REQ-correctness-6b11c598",
+      "assertion": "Project resolution searches upward for at most 64 directories, honors marker precedence within each directory, and reports ambiguity rather than choosing among multiple matching projects.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "resolveToolProject"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-6b11c598",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Bounded project resolution lacks linked tests."
       }
     },
     {
@@ -41272,6 +42178,36 @@
       }
     },
     {
+      "id": "REQ-correctness-85abd6e6",
+      "assertion": "Project resolution selects the nearest matching directory using marker precedence and reports ambiguity rather than choosing among multiple matching projects.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "resolveToolProject"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-85abd6e6",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Nearest-project resolution lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-85ad6b46",
       "assertion": "Durable writer receipts containing an error must rethrow the original error object, while only cloud-off, no-run-id, and no-repo-identity unapplied receipts may be classified as declined.",
       "kind": "correctness",
@@ -45007,6 +45943,37 @@
       }
     },
     {
+      "id": "REQ-correctness-99873bfc",
+      "assertion": "Registered generated suffixes classify as non-code even when their final extension ordinarily identifies source or declarative content.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/file-taxonomy.mjs",
+          "anchor": "GENERATED_SUFFIXES; matchFileKind"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/file-taxonomy.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/file-taxonomy.mjs#GENERATED_SUFFIXES",
+          "scripts/lib/file-taxonomy.mjs#matchFileKind"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-99873bfc",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Generated-suffix precedence lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-99941eec",
       "assertion": "A --files-from manifest must be read as a NUL-framed file list and its unreadability must cause extraction to fail with a diagnostic rather than silently broadening or emptying the scope.",
       "kind": "correctness",
@@ -46021,6 +46988,36 @@
       }
     },
     {
+      "id": "REQ-correctness-9f57d013",
+      "assertion": "Coverage validation rejects schema violations, duplicate normalized identities, changedTotal mismatches, and mismatches in supplied byOutcome counts.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "validateCoverage"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#validateCoverage"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-9f57d013",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Coverage validation checks lack linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-9ff3b08e",
       "assertion": "Persisted requirement IDs, alias keys and values, gap references, and override keys must match `REQ-<recognized-kind>-<8-lowercase-hex-digits>`.",
       "kind": "correctness",
@@ -47000,6 +47997,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-a5b7bf9f",
+      "assertion": "Coverage counts derive from the uncapped file ledger, exclusions remove reviewable files from required counts, and short equals required minus examined.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "buildCoverageReport: denominator matrix"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#buildCoverageReport"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-a5b7bf9f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Canonical coverage arithmetic lacks linked tests."
       }
     },
     {
@@ -48443,6 +49470,36 @@
       }
     },
     {
+      "id": "REQ-correctness-af4b2905",
+      "assertion": "Wave eligibility counts unique nonempty string paths and distinguishes no changes, zero eligible files, partial eligibility, and full eligibility.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/wave-eligibility.mjs",
+          "anchor": "waveEligibility"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/wave-eligibility.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/wave-eligibility.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-af4b2905",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Unique-path wave eligibility lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-af5fc159",
       "assertion": "A detector disposition must contain a non-whitespace written reason and must be keyed by file, matched line text, and occurrence ordinal so identical lines in one file require independent dispositions",
       "kind": "correctness",
@@ -49453,36 +50510,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This preimage worktree lifecycle rule has no linked test."
-      }
-    },
-    {
-      "id": "REQ-correctness-b50f26aa",
-      "assertion": "Normalized external findings must be emitted only from tool results with status OK, with each emitted finding assigned a sequential T-prefixed identifier.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/linter.mjs",
-          "anchor": "normalizeToolResults"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/linter.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/linter.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-b50f26aa",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test evidence."
       }
     },
     {
@@ -51761,6 +52788,36 @@
       }
     },
     {
+      "id": "REQ-correctness-c32c780e",
+      "assertion": "Wave records override execution status with ineligible when nothing qualifies, but mark partial eligibility as partial only for completed executions.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/wave-eligibility.mjs",
+          "anchor": "waveRecord"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/wave-eligibility.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/wave-eligibility.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-c32c780e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Eligibility-based outcome overrides lack linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-c32f478c",
       "assertion": "A changed global stylesheet must make findings eligible only when they are attributed to a declared visual surface.",
       "kind": "correctness",
@@ -52783,6 +53840,37 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This bandit reward validation and clamping rule has no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-c8788569",
+      "assertion": "Extension alternations order longer alternatives before shorter alternatives to prevent prefix extensions from winning first-match selection.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/file-taxonomy.mjs",
+          "anchor": "toExtensionAlternation; SOURCE_CODE_EXTENSION_ALTERNATION"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/file-taxonomy.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/file-taxonomy.mjs#toExtensionAlternation",
+          "scripts/lib/file-taxonomy.mjs#SOURCE_CODE_EXTENSION_ALTERNATION"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-c8788569",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Longest-first extension matching lacks linked tests."
       }
     },
     {
@@ -56403,6 +57491,40 @@
       }
     },
     {
+      "id": "REQ-correctness-da2686fd",
+      "assertion": "Returned tool findings are restricted to the normalized audited file set.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "runTool, runProjectTool: findings filtering"
+        },
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "runTool and runProjectTool: findings filtering"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-da2686fd",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Audited-file finding filtering lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-da833faf",
       "assertion": "For round 2 and later, suppression must use only schema-valid ledger entries returned by validateLedgerForR2 and must be disabled when ledger validation fails or no ledger is supplied.",
       "kind": "correctness",
@@ -57793,6 +58915,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test evidence."
+      }
+    },
+    {
+      "id": "REQ-correctness-e1a240d6",
+      "assertion": "Completed partially eligible waves record partial coverage with eligible and changed counts, while errored or unavailable partially eligible waves retain their execution outcome.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/wave-eligibility.mjs",
+          "anchor": "waveRecord, eligibilityNote"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/wave-eligibility.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/wave-eligibility.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-e1a240d6",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Partial-wave outcome handling lacks linked tests."
       }
     },
     {
@@ -60063,6 +61215,36 @@
       }
     },
     {
+      "id": "REQ-correctness-ee108e90",
+      "assertion": "Wave eligibility counts unique nonempty string paths and distinguishes no_changes, ineligible, partial, and full according to eligible-path counts.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/wave-eligibility.mjs",
+          "anchor": "waveEligibility"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/wave-eligibility.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/wave-eligibility.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-ee108e90",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Unique-path wave eligibility lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-ee19bb1b",
       "assertion": "Extraction must emit a processed record for a file only after that file has been admitted, parsed, and classified successfully.",
       "kind": "correctness",
@@ -60130,6 +61312,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This producer classification completeness rule has no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-eeaecc6c",
+      "assertion": "Path classification depends only on the basename, treats both slash styles as separators, and requires no filesystem access.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/file-taxonomy.mjs",
+          "anchor": "baseName; matchFileKind"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/file-taxonomy.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/file-taxonomy.mjs#matchFileKind"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-eeaecc6c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Basename-only classification has no linked tests."
       }
     },
     {
@@ -61298,6 +62510,36 @@
       }
     },
     {
+      "id": "REQ-correctness-f4f1ca52",
+      "assertion": "Diff admission preserves valid candidate order and admits files exactly when resolveReferenceExtension returns a non-null value.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/diff-scope-admission.mjs",
+          "anchor": "partitionDiffScope"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/diff-scope-admission.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/diff-scope-admission.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-f4f1ca52",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Ordered diff admission lacks linked tests."
+      }
+    },
+    {
       "id": "REQ-correctness-f552d92f",
       "assertion": "Debt entries with invalid, non-positive, or non-finite TTL values must not be reported as stale, and entries with unparseable deferredAt values must be excluded from staleness results.",
       "kind": "correctness",
@@ -61325,6 +62567,66 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-correctness-f5781832",
+      "assertion": "Only completed passes contribute full or head-cut read coverage, while rendered evidence from uncompleted passes remains recorded in byPass.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "readEvidence"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#readEvidence"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-f5781832",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Completed-pass aggregation and recording lack tests."
+      }
+    },
+    {
+      "id": "REQ-correctness-f57abd5b",
+      "assertion": "Normalization preserves findings from project-bearing results despite non-ok aggregate status but excludes non-ok results without project records.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "normalizeToolResults"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-f57abd5b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Project-aware finding preservation lacks linked tests."
       }
     },
     {
@@ -84731,6 +86033,36 @@
       }
     },
     {
+      "id": "REQ-safety-052de835",
+      "assertion": "Scoped synchronous tools receive only existing audited files, skip execution when none exist, and reject more than 2000 existing files without truncation.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "runTool: scopeToFiles branch"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-052de835",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Scoped execution limits lack linked tests."
+      }
+    },
+    {
       "id": "REQ-safety-05748772",
       "assertion": "Only findings returned as `ready` by `prepareCandidates` may enter `processFindings`, while malformed and contradicted producer candidates must be excluded from later evidence triage.",
       "kind": "safety",
@@ -85339,40 +86671,6 @@
       }
     },
     {
-      "id": "REQ-safety-08c671ae",
-      "assertion": "A missing, failed, timed-out, or unparsable external analysis tool must return a non-OK status with no findings rather than blocking the audit or being treated as a clean result.",
-      "kind": "safety",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/linter.mjs",
-          "anchor": "runTool"
-        },
-        {
-          "file": "scripts/lib/linter.mjs",
-          "anchor": "normalizeToolResults"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/linter.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/linter.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-safety-08c671ae",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test evidence."
-      }
-    },
-    {
       "id": "REQ-safety-0903c5df",
       "assertion": "For round two and later, missing, corrupt, or unrun detector evidence must resolve as unknown and prevent convergence rather than being treated as an empty detector result.",
       "kind": "safety",
@@ -85717,6 +87015,40 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-safety-0bb9365d",
+      "assertion": "Outcome selection prioritizes deletion, infrastructure exclusion, user exclusion, and sensitivity before admission or successful render evidence.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "buildCoverageReport outcome selection"
+        },
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "buildCoverageReport: outcome selection"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#buildCoverageReport"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-safety-0bb9365d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Safety-first outcome precedence lacks linked tests."
       }
     },
     {
@@ -88999,6 +90331,40 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-22c5ba3e",
+      "assertion": "Project runs share a deadline established after synchronous tools finish, with each spawn timeout bounded by remaining time and its tool timeout.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "executeAllTools: deadlineAt; runProjectTool: timeoutMs"
+        },
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "executeAllTools: deadlineAt; runProjectTool: remaining and timeoutMs"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-safety-22c5ba3e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Shared project deadlines lack linked tests."
       }
     },
     {
@@ -93770,6 +95136,36 @@
       }
     },
     {
+      "id": "REQ-safety-401df6f1",
+      "assertion": "Invariant violations or wholly unmeasured present required coverage fail the gate, while partial coverage or excluded required files warn.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "status and gate derivations"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#buildCoverageReport"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-401df6f1",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Coverage gate conditions lack linked tests."
+      }
+    },
+    {
       "id": "REQ-safety-4037b600",
       "assertion": "Single-entry ledger writes must reject schema-invalid entries without modifying the ledger file.",
       "kind": "safety",
@@ -95225,6 +96621,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-safety-4834e9e8",
+      "assertion": "Project-process timeouts attempt termination of the entire process tree rather than only the direct child.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "killProcessTree, spawnWithTreeKill"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-4834e9e8",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Process-tree timeout termination lacks linked tests."
       }
     },
     {
@@ -99349,6 +100775,36 @@
       }
     },
     {
+      "id": "REQ-safety-64221ca9",
+      "assertion": "Annotation-prefix lookup returns null for Vue, Svelte, and Razor files rather than supplying a line-comment prefix.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/file-taxonomy.mjs",
+          "anchor": "LANGUAGE_DEFS; commentPrefixFor"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/file-taxonomy.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/file-taxonomy.mjs#commentPrefixFor"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-64221ca9",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Mixed-syntax annotation safeguards lack linked tests."
+      }
+    },
+    {
       "id": "REQ-safety-6438e3a6",
       "assertion": "Adjudicator manifest execution must reject a CLI tier that differs from manifest.controls.tier and must reject promotion-tier manifests because only screen-tier oracle scoring is implemented.",
       "kind": "safety",
@@ -99672,6 +101128,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-6744d538",
+      "assertion": "Coverage gates fail for none or incomplete status, warn for partial status or excluded required files, and otherwise pass.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/file-coverage.mjs",
+          "anchor": "buildCoverageReport: gate derivation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/file-coverage.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/file-coverage.mjs#buildCoverageReport"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-6744d538",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Status-based gate selection lacks linked tests."
       }
     },
     {
@@ -101553,6 +103039,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This partial-scan containment behavior has no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-71aeff25",
+      "assertion": "Project-process timeouts trigger process-tree termination, while combined captured output exceeding the buffer limit also triggers process-tree termination.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "spawnWithTreeKill and killProcessTree"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-71aeff25",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Timeout and overflow termination lack tests."
       }
     },
     {
@@ -112335,6 +113851,36 @@
       }
     },
     {
+      "id": "REQ-safety-bed6ae1b",
+      "assertion": "Annotation comment-prefix lookup returns null for Vue, Svelte, and Razor files instead of supplying a line-comment marker.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/file-taxonomy.mjs",
+          "anchor": "LANGUAGE_DEFS; commentPrefixFor"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/file-taxonomy.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/file-taxonomy.mjs#commentPrefixFor"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-bed6ae1b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Mixed-syntax annotation safeguards lack linked tests."
+      }
+    },
+    {
       "id": "REQ-safety-bee282fd",
       "assertion": "The npm-run-arguments gate must refuse to report success when file discovery yields no files and must refuse symbolic links during scanning.",
       "kind": "safety",
@@ -114167,6 +115713,40 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-cae20305",
+      "assertion": "Each project-scoped tool processes existing files by owning project, attempts each grouped project at most once serially, and records projects beyond its cap as skipped_budget.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "groupFilesByProject, executeAllTools"
+        },
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "groupFilesByProject and executeAllTools"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-safety-cae20305",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Project grouping and budgets lack tests."
       }
     },
     {
@@ -124420,18 +126000,14 @@
       }
     },
     {
-      "id": "REQ-security-2521f17d",
-      "assertion": "Tool execution must invoke configured commands through argv-based process APIs without constructing a shell command string.",
+      "id": "REQ-security-24df2e2b",
+      "assertion": "Tool commands and availability probes execute without shell interpretation, and tool executions are logged to stderr.",
       "kind": "security",
       "checkable": true,
       "provenance": [
         {
           "file": "scripts/lib/linter.mjs",
-          "anchor": "runTool"
-        },
-        {
-          "file": "scripts/lib/linter.mjs",
-          "anchor": "isToolAvailable"
+          "anchor": "isToolAvailable, runTool, spawnWithTreeKill, runProjectTool"
         }
       ],
       "appliesTo": [
@@ -124447,10 +126023,10 @@
       "confidence": "low",
       "status": "inferred-only",
       "gap": {
-        "requirementId": "REQ-security-2521f17d",
+        "requirementId": "REQ-security-24df2e2b",
         "gap": "untested",
         "conflictsWith": [],
-        "rationale": "No linked test evidence."
+        "rationale": "Shell-free execution and logging lack tests."
       }
     },
     {
@@ -124742,6 +126318,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test."
+      }
+    },
+    {
+      "id": "REQ-security-28a04dc3",
+      "assertion": "Tool commands and availability probes execute without a shell, and scoped file arguments follow an end-of-options separator.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "isToolAvailable, runTool, spawnWithTreeKill"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-28a04dc3",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Shell-free argument safeguards lack linked tests."
       }
     },
     {
@@ -137950,6 +139556,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test."
+      }
+    },
+    {
+      "id": "REQ-security-eea83385",
+      "assertion": "File-scoped tools receive only existing audited files after an end-of-options separator and reject more than 2000 existing files rather than truncating.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/linter.mjs",
+          "anchor": "runTool: scopeToFiles branch"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/linter.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/linter.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-eea83385",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Scoped argument security lacks linked tests."
       }
     },
     {

@@ -156,3 +156,12 @@ describe('formatGroundingNote', () => {
     assert.doesNotMatch(note, /dismiss|suppress|reject/i);
   });
 });
+
+import { extractPaths as _extractPathsCase } from '../scripts/lib/audit/finding-grounding.mjs';
+import { test as _testCase } from 'node:test';
+import _assertCase from 'node:assert/strict';
+
+_testCase('extractPaths is case-insensitive on the extension (a cited src/Foo.CS is a path)', () => {
+  _assertCase.ok(_extractPathsCase('The file src/Foo.CS lacks a guard.').includes('src/Foo.CS'));
+  _assertCase.ok(_extractPathsCase('see src/Bar.cs here').includes('src/Bar.cs'));
+});

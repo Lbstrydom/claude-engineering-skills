@@ -12,7 +12,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
+import { listRepoFiles } from './repo-inventory.mjs';
 
 const PYTHON_MARKERS = ['pyproject.toml', 'requirements.txt', 'Pipfile', 'setup.py', 'uv.lock'];
 const JS_MARKERS = ['package.json'];
@@ -28,7 +29,7 @@ const JAVA_ROOT_MARKERS = [
  *   stack: 'js-ts' | 'python' | 'mixed' | 'unknown',
  *   pythonFramework: 'fastapi' | 'django' | 'flask' | 'none' | null,
  *   detectedFrom: string[],
- *   stackKinds: Array<'js-ts'|'python'|'java'|'postgres'>,
+ *   stackKinds: Array<'js-ts'|'python'|'java'|'csharp'|'postgres'>,
  * }}
  *
  * Note: `stack` and `stackKinds` are intentionally different models.
@@ -80,6 +81,7 @@ export function detectRepoStack(cwd = process.cwd()) {
     // root markers present are appended unconditionally.
     detectedFrom.push(...JAVA_ROOT_MARKERS.filter(m => fs.existsSync(path.join(cwd, m))));
   }
+  if (hasCsharpSources(cwd)) stackKinds.push('csharp');
   if (hasPostgresSources(cwd)) stackKinds.push('postgres');
 
   return { stack, pythonFramework, detectedFrom, stackKinds };
@@ -168,6 +170,41 @@ export function hasJavaSources(cwd = process.cwd()) {
     return out.split('\n').some(l => l.trim().length > 0);
   } catch {
     return false; // not a git repo — fast path already returned false
+  }
+}
+
+/**
+ * C# detection: a `.csproj`, `.sln`, `.slnx` or `.cs` path anywhere under `cwd`. Read from git's own inventory —
+ * tracked AND untracked-not-ignored, minus deletions, the same population the audit's scope uses (it mirrors
+ * `repo-inventory.mjs::listRepoFiles`) — so a freshly added (uncommitted) project is detected and a deleted-but-tracked
+ * one is not. Scoped to `cwd`, unlike `listRepoFiles`, which always lists the whole repository. A non-git directory
+ * falls back to that inventory's filesystem walk. Not a root-marker probe:
+ * a monorepo's C# service (storyline's `services/template-renderer-openxml`) has no marker at the repo root.
+ *
+ * `csharp` is a stack the symbol indexer and the architecture-intent adapters do NOT cover (no adapter exists), so its
+ * presence is what makes fit-check say PARTIAL/MISMATCH and the map banner say "not indexed" instead of staying silent.
+ *
+ * @param {string} cwd
+ * @returns {boolean}
+ */
+export function hasCsharpSources(cwd = process.cwd()) {
+  const globs = ['*.csproj', '*.sln', '*.slnx', '*.cs'];
+  const run = (args) => execFileSync('git', [...args, '--', ...globs], {
+    cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024,
+  }).split('\n').filter((l) => l.trim().length > 0);
+  try {
+    // Scoped to `cwd` by git itself: a directory inside a larger repository (a fixture, a package) sees only its own files.
+    const present = new Set(run(['ls-files', '--cached', '--others', '--exclude-standard']));
+    // `--cached` still lists a tracked file that was deleted from the working tree; the deletion must win.
+    for (const gone of run(['ls-files', '--deleted'])) present.delete(gone);
+    return present.size > 0;
+  } catch {
+    // not a git work-tree: the canonical inventory's filesystem walk
+    try {
+      return listRepoFiles({ baseDir: cwd }).files.some((f) => /\.(?:csproj|sln|slnx|cs)$/i.test(f));
+    } catch {
+      return false;
+    }
   }
 }
 

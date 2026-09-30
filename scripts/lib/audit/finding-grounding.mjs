@@ -40,6 +40,9 @@
  * @module scripts/lib/audit/finding-grounding
  */
 
+import { AUDITABLE_EXTENSIONS } from '../file-taxonomy.mjs';
+import { toExtensionAlternation } from '../language-profiles.mjs';
+
 /**
  * Phrasings that assert absence. Calibrated against the real dismissal corpus
  * (2026-07-27), not invented: every pattern here fired on at least one true
@@ -119,9 +122,13 @@ function specificity(id, scope) {
 }
 
 /** File paths the finding names — the search corpus. */
+// Derived from the taxonomy (see finding-verification's EXT_RE for why single-character extensions are out).
+const PATH_EXT_ALT = toExtensionAlternation(AUDITABLE_EXTENSIONS.filter((e) => e.length > 2).map((e) => e.slice(1)));
+const PATH_RE = new RegExp(`\\b([\\w@./-]+\\.(?:${PATH_EXT_ALT}))\\b`, 'gi');
+
 export function extractPaths(s) {
   const out = new Set();
-  for (const m of String(s || '').matchAll(/\b([\w@./-]+\.(?:mjs|cjs|js|jsx|ts|tsx|sql|json|md))\b/g)) {
+  for (const m of String(s || '').matchAll(PATH_RE)) {
     out.add(m[1]);
   }
   return [...out];

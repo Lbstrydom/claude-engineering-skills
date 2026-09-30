@@ -69,6 +69,29 @@
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `.claude/skills/audit-plan/references/gemini-gate.md` and `.claude/skills/cycle/SKILL.md` both carry the new prose (grep confirmed). storyline itself REFUSED this sync (27 files diverged, pre-existing committed customizations unrelated to this change) — not verified there; ai-organiser and wine-cellar-app both reached cleanly.
 - **Result**: verified — the /cycle Step 7 blocked-handoff prose and the gemini-gate.md calibration note reached the consumer bundle intact (wine-cellar-app, ai-organiser). storyline unverified — sync REFUSED on pre-existing divergence, not this change's fault.
 
+## 2026-09-30 — File-coverage contract + first-class C# support: an unexamined file can no longer read as an audited one
+
+### Changes
+- **The defect** (storyline report): `/audit-code` skipped 12 of 68 changed files (all `.cs`) and returned APPROVE, and the four JS/TS-only waves printed `ANALYZED_CLEAN` / `clean` / `not-triggered` having read nothing. Fixed as a class, not as "add C#": plan `docs/plans/file-coverage-contract-and-csharp.md`, contract `docs/reference/file-coverage.md`.
+- **One taxonomy** (`scripts/lib/file-taxonomy.mjs`) is the only "which files are code" oracle; the profiles, the plan-path allowlist, the finding-grounding lists and the admission fence derive from it, and `tests/extension-list-drift.test.mjs` fails on a new hand-kept list (AGENTS.md "Do NOT" bullet).
+- **`_coverage` v1 ledger** (`scripts/lib/audit/file-coverage.mjs`): every changed file ends with exactly one recorded outcome, change kind from `git diff --name-status -z`, read evidence only from completed passes. A round where no required file was audited is `gate: fail` → INCOMPLETE, exit 3. Carried into the result JSON, the summary line, the CONVERGED banner and the Step 7 final-review envelope ("Audit Coverage" note).
+- **Honest waves and tools**: `INELIGIBLE — 0 of N changed file(s) are js/ts; nothing was examined` replaces the clean wording; a tool exiting non-zero with nothing parseable is `failed`, not clean; closed tool-state vocabulary with worst-first aggregation.
+- **C# profile `cs`**: lexer + scope-stack boundary scanner, `dotnet build` (serial per project, one monotonic deadline, process-tree kill, MSBuild parser, compiler error → HIGH) and `dotnet format` pre-passes; `csharp` stack kind for detect-stack / fit-check / the architecture banner.
+- **Security**: `safeReadFile` classifies the RESOLVED path (INC-001 shape); `Token.cs` / `Password.cs` are no longer swept in as secrets; dot-prefixed credential directories are.
+- Three clusters audited (A: 3 rounds converged; B and C: one round each, 8 and 26 in-cluster fixes) plus one consolidated Gemini review over the union diff: APPROVE, gate `approve`, 0 blocking / 0 debt.
+
+### Readings
+- `npm test` measured 2026-09-30: 17,017 tests, 16,971 pass, 40 skipped, 6 fail in the linked worktree — all environment artifacts of an uncommitted tree (hook tooling-layout ×2, and three tests that read committed content while the new files were still untracked).
+- Gemini's own coverage line for the union transcript: 6 of 73 changed files rendered whole — the final reviewer saw a thin view; the per-cluster GPT audits carry the depth.
+
+### Not done
+- Deferred as independent of the coverage contract (one follow-up): the diff-scope resolver's private name-status parser, the event-wiring corpus byte budget, the Java detector's deleted-file handling, `npx` probes for the JS/TS tools, the render-mermaid map/envelope transaction.
+- Base-side deletion hunks are not rendered to the audit passes (plan §8(f)).
+
+Backlog 2026-09-30T11:39Z: Q1 65c/23p (+335 aged) · Q2 101c/41p (54 perm) · Q3 35 · debt 313 cloud/11 local (0 spilled) · upstream 1
+
+---
+
 ## 2026-09-30 — Memory-health gate measures again; gpt-6.1-sol added to the offline pool
 
 ### Changes

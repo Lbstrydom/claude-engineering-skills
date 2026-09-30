@@ -117,6 +117,10 @@ export const FinalizationDataSchema = z.object({
   eventWiringState: z.string(),
   eventWiringResult: z.unknown(),
 
+  // File-coverage ledger inputs (see file-coverage.mjs). Optional: a caller with no coverage record leaves it
+  // off and the round carries no `_coverage` — absence means "not measured", never "clean".
+  coverageInput: z.unknown().nullable().optional(),
+
   // R2+ flag — spine-computed, read by 4c/4d (isR2Plus does not itself
   // compute anything; it is already final by the time the coordinator runs).
   isR2Plus: z.boolean(),
@@ -131,6 +135,8 @@ export const AssembledFindingsSchema = z.object({
   passRegistry: z.array(z.record(z.string(), z.unknown())),
   allResults: z.array(z.unknown()),
   failedPasses: z.array(z.unknown()),
+  // The file-coverage ledger built from `coverageInput` (null when the caller supplied none).
+  coverage: z.unknown().nullable().optional(),
   verdict: z.string(),
   high: z.number().int(),
   medium: z.number().int(),

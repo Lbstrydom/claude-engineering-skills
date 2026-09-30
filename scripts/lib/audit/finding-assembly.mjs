@@ -28,6 +28,7 @@
  */
 
 import { normalizeArchCategory, computeAuditVerdict } from './findings-pipeline.mjs';
+import { buildCoverageReport, formatCoverageSuffix } from './file-coverage.mjs';
 import { semanticId } from '../findings.mjs';
 import {
   populateFindingMetadata, suppressReRaises,
@@ -175,6 +176,35 @@ export async function assembleFindings(data) {
 
   const allResults = passRegistry.map(p => p._result).filter(Boolean);
   const failedPasses = passRegistry.filter(p => p.status === 'failed').map(p => p.failureReason);
+
+  // ── File-coverage ledger (docs/plans/file-coverage-contract-and-csharp.md) ─────────────────────────────
+  // Built HERE because this is the one place that knows which passes actually SUCCEEDED: a render by a pass
+  // that failed or timed out examined nothing, so the recorder's passes are completed only by the registry.
+  let coverage = null;
+  if (data.coverageInput) {
+    const ci = data.coverageInput;
+    // A map-reduce pass that completed only PART of its units cannot say which files sat in the failed ones, so it vouches
+    // for none (`_mapCompletionRate` < 1) — even when another unit produced findings and the pass itself reads `succeeded`.
+    const fullyComplete = (e) => e.status === 'succeeded' && (e._result?._mapCompletionRate ?? 1) >= 1;
+    for (const e of passRegistry) ci.recorder?.markPass?.(e.name, fullyComplete(e));
+    // shared-context files are rendered INTO other passes' prompts, so they count when a consumer succeeded
+    const sharedConsumers = new Set(['wiring', 'be-routes', 'be-services', 'backend', 'frontend']);
+    ci.recorder?.markPass?.('shared-context', passRegistry.some((e) => sharedConsumers.has(e.name) && fullyComplete(e)));
+    // The four mechanical waves read JS/TS only. Each reports how much of the change it could read (`_wave`); the rest is
+    // derived from how it finished. A wave that never ran is `unavailable`, with the state it gave as the reason.
+    const WAVE_IDS = new Set(['duplication', 'adjacency', 'orphan-introduced', 'event-wiring-symmetry']);
+    const skipReason = { 'orphan-introduced': orphanState, 'event-wiring-symmetry': eventWiringState };
+    const waves = ci.waves ?? passRegistry.filter((e) => WAVE_IDS.has(e.name)).map((e) => {
+      const w = e._result?._wave;
+      if (w) return { id: e.name, ...w };
+      if (e.status === 'failed') return { id: e.name, state: 'errored', eligible: null, changed: null, reason: String(e.failureReason ?? 'failed') };
+      if (e.status === 'skipped') return { id: e.name, state: 'unavailable', eligible: null, changed: null, reason: skipReason[e.name] ?? 'not run' };
+      return { id: e.name, state: 'completed', eligible: null, changed: null, reason: null };
+    });
+    coverage = buildCoverageReport({ ...ci, waves });
+    const suffix = formatCoverageSuffix(coverage);
+    if (suffix) process.stderr.write(`  [coverage] ${suffix}\n`);
+  }
 
   process.stderr.write(`\n── Merge (${allResults.length} passes, ${failedPasses.length} failed) ──\n`);
   if (failedPasses.length > 0) {
@@ -799,7 +829,9 @@ export async function assembleFindings(data) {
   // `computeAuditVerdict` itself only reads `.severity` verbatim.
   let verdict = computeAuditVerdict(
     countFor.map(f => ({ ...f, severity: effSeverity(f) })),
-    { incomplete: failedPasses.length > 0 },
+    // A round that measured NONE of the changed source (coverage gate `fail`) is exactly as un-evidenced as one whose
+    // passes all failed, and must not read as convergence: same INCOMPLETE, same exit code, same no-converge.
+    { incomplete: failedPasses.length > 0 || coverage?.gate === 'fail' },
   );
 
   // Fix #2: Partial MAP verdict downgrade. When any pass completed <66% of MAP
@@ -896,7 +928,7 @@ export async function assembleFindings(data) {
   }
 
   return {
-    allFindings, passRegistry, allResults, failedPasses, verdict, high, medium, low, quickFix, convergence, reopenedSet,
+    allFindings, passRegistry, allResults, failedPasses, coverage, verdict, high, medium, low, quickFix, convergence, reopenedSet,
     linterOverlapData, totalUsage, cacheMetrics, passTimings, summaryLines, fpPassSuppressedCount,
     ...(suppressionData !== undefined ? { suppressionData } : {}),
     ...(debtMemoryData !== undefined ? { debtMemoryData } : {}),

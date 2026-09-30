@@ -1433,7 +1433,7 @@ export const StackProfileSchema = z.object({
   // Architecture-intent extension: list of stack kinds for per-stack adapter
   // selection.  For non-mixed: singleton (or empty for 'unknown'). For mixed:
   // multiple entries.  Adapter selection iterates this list.
-  stackKinds: z.array(z.enum(['js-ts', 'python', 'java', 'postgres'])).default([]),
+  stackKinds: z.array(z.enum(['js-ts', 'python', 'java', 'csharp', 'postgres'])).default([]),
 });
 
 // ── Architecture-Intent Framework (PR-A) ────────────────────────────────────

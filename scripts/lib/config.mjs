@@ -473,7 +473,7 @@ export const PASS_REASONING = Object.freeze({
 });
 
 /** Normalized language enum for bandit context bucketing. */
-export const LANGUAGES = Object.freeze(['js', 'ts', 'py', 'go', 'java', 'rust', 'mixed', 'other']);
+export const LANGUAGES = Object.freeze(['js', 'ts', 'py', 'cs', 'go', 'java', 'rust', 'mixed', 'other']);
 
 /**
  * Normalize a language string to canonical enum value.
@@ -487,7 +487,7 @@ export function normalizeLanguage(lang) {
     typescript: 'ts', tsx: 'ts',
     python: 'py', python3: 'py',
     golang: 'go',
-    'c#': 'other', csharp: 'other', cpp: 'other', c: 'other',
+    'c#': 'cs', csharp: 'cs', cs: 'cs', cpp: 'other', c: 'other',
     ruby: 'other', php: 'other', swift: 'other', kotlin: 'other'
   };
   const normalized = aliases[lower] || lower;

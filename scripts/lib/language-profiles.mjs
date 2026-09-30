@@ -11,17 +11,25 @@
 
 import path from 'node:path';
 import { normalizePath } from './file-io.mjs';
+import {
+  languageById, matchFileKind, AUDITABLE_EXTENSIONS, KNOWN_EXTENSIONLESS_FILENAMES, toExtensionAlternation,
+} from './file-taxonomy.mjs';
+import { scanCsharpBoundaries, csharpBoundaryScanner } from './csharp-scanner.mjs';
 
 /**
  * Profile shape:
  *   {
- *     id: string,              // Stable identity: 'js' | 'ts' | 'py'
- *     extensions: string[],    // e.g. ['.py', '.pyi']
+ *     id: string,              // Stable identity: a language id from file-taxonomy.mjs ('js'|'ts'|'py'|'cs')
+ *     extensions: string[],    // taken from the taxonomy's language entry: a profile cannot claim an extension the taxonomy does not know
  *     importRegex: RegExp,     // Import statement matcher (STATEFUL — has 'g' flag)
  *     importExtractor: (match: RegExpMatchArray) => ImportRecord | null,
  *     exportRegex: RegExp,     // Export-line matcher (stateless — no 'g' flag)
  *     resolveImport: (record, fromFile, repoFileSet, langContext) => string[],
  *     getBoundaries: (lines: string[]) => number[],  // Boundary line indices
+ *     scanBoundaries?: (lines: string[]) => {state:'completed'|'degraded', boundaries:number[], reason:string|null},
+ *                              // optional structured form; `degraded` = the scan bailed out and the
+ *                              // chunker must fall back to whole-file chunks (never a guessed split)
+ *     tools?: ToolConfig[],    // see linter.mjs; the C# tools are PROJECT-scoped (`projectMarkers`)
  *   }
  *
  * ImportRecord (JS/TS): { kind: 'es'|'cjs', specifier: string }
@@ -83,6 +91,7 @@ const freezeProfile = (p) => Object.freeze({
   tools: p.tools ? Object.freeze(p.tools.map(t => Object.freeze({
     ...t,
     args: Object.freeze(t.args),
+    ...(t.projectMarkers ? { projectMarkers: Object.freeze([...t.projectMarkers]) } : {}),
     availabilityProbe: Object.freeze([t.availabilityProbe[0], Object.freeze(t.availabilityProbe[1])]),
     ...(t.fallback ? { fallback: Object.freeze({ ...t.fallback, args: Object.freeze(t.fallback.args), availabilityProbe: Object.freeze([t.fallback.availabilityProbe[0], Object.freeze(t.fallback.availabilityProbe[1])]) }) } : {})
   }))) : Object.freeze([])
@@ -96,7 +105,7 @@ const freezeProfile = (p) => Object.freeze({
 const PROFILES = Object.freeze({
   js: freezeProfile({
     id: 'js',
-    extensions: ['.js', '.mjs', '.cjs', '.jsx'],
+    extensions: languageById('js').extensions,
     // Covers: import x from 'y' | import {x} from 'y' | import * as x from 'y'
     //         import 'y' | export {x} from 'y' | export * from 'y'
     //         import('y') | require('y')
@@ -126,7 +135,7 @@ const PROFILES = Object.freeze({
 
   ts: freezeProfile({
     id: 'ts',
-    extensions: ['.ts', '.tsx', '.mts', '.cts'],
+    extensions: languageById('ts').extensions,
     // Supports require() since .cts is CommonJS-oriented
     importRegex: /(?:^|[\s;])(?:import|export)\s+(?:[^'";]*\s+from\s+)?['"]([^'"]+)['"]|(?:^|\W)import\s*\(\s*['"]([^'"]+)['"]\s*\)|(?:^|\W)require\s*\(\s*['"]([^'"]+)['"]\s*\)/gm,
     importExtractor: (m) => {
@@ -164,7 +173,7 @@ const PROFILES = Object.freeze({
 
   py: freezeProfile({
     id: 'py',
-    extensions: ['.py', '.pyi'],
+    extensions: languageById('py').extensions,
     // Python imports: captures module + imported names for proper resolution.
     // Matches: `from X import a, b, c` | `from .X import a` | `import X` | `from . import X`
     // NOTE: \t and spaces in imported-names group, NOT \s — \s matches newlines and
@@ -212,6 +221,63 @@ const PROFILES = Object.freeze({
       },
     }],
   }),
+
+  // C#. Deliberately the smallest profile that stops a C# change being invisible:
+  // a real lexer + scope-stack boundary scanner (csharp-scanner.mjs) and a
+  // compiler pre-pass. NOT an import graph: C# resolves by NAMESPACE, not path,
+  // so `resolveImport` returns [] (honest) rather than faking a path resolver,
+  // and `buildDependencyGraph` has no production caller today.
+  cs: freezeProfile({
+    id: 'cs',
+    extensions: languageById('cs').extensions,
+    // using System.Text; | global using Foo.Bar; | using static X.Y; | using A = X.Y;
+    importRegex: /^[ \t]*(?:global[ \t]+)?using[ \t]+(?:static[ \t]+)?(?:[A-Za-z_]\w*[ \t]*=[ \t]*)?([\w.]+)[ \t]*;/gm,
+    importExtractor: (m) => (m[1] ? { kind: 'using', namespace: m[1] } : null),
+    exportRegex: /^\s*(?:public|internal)\s+(?:(?:static|sealed|abstract|partial|readonly|unsafe|file)\s+)*(?:class|struct|record|interface|enum|delegate)\s/,
+    resolveImport: () => [],
+    getBoundaries: csharpBoundaryScanner,
+    scanBoundaries: scanCsharpBoundaries,
+    // Both tools are PROJECT-scoped: MSBuild builds a project, not a file list, so the
+    // runner resolves each changed file to its owning project (`projectMarkers`, nearest
+    // directory first) and builds that project once. Findings are then filtered to the
+    // audited files, exactly as tsc's are.
+    //
+    // --no-incremental is load-bearing: an incremental build re-emits NO warnings for an
+    // up-to-date project (measured on storyline's renderer: 0 warnings incremental, 1 with
+    // --no-incremental), so a plain build reads clean over code it never re-analysed.
+    // --no-restore keeps the audit off the NuGet network; an unrestored project fails with
+    // NETSDK1004, which the parser flags as a tool fault (failed, never clean).
+    tools: [
+      {
+        id: 'dotnet-build',
+        kind: 'typeChecker',
+        command: 'dotnet',
+        args: ['build', '{project}', '--no-incremental', '--no-restore', '-nologo', '-clp:NoSummary',
+          '-nodeReuse:false', '-m:1', '-p:UseSharedCompilation=false'],
+        scope: 'project',
+        projectMarkers: ['.csproj', '.sln', '.slnx'],
+        restoreToggle: true,
+        timeoutMs: 300_000,
+        maxProjects: 6,
+        availabilityProbe: ['dotnet', ['--version']],
+        parser: 'parseMsbuildOutput',
+      },
+      {
+        id: 'dotnet-format',
+        kind: 'linter',
+        command: 'dotnet',
+        args: ['format', '{project}', '--verify-no-changes', '--no-restore'],
+        scope: 'project',
+        projectMarkers: ['.csproj', '.sln', '.slnx'],
+        restoreToggle: true,
+        combineStderr: true,
+        timeoutMs: 300_000,
+        maxProjects: 6,
+        availabilityProbe: ['dotnet', ['--version']],
+        parser: 'parseDotnetFormatOutput',
+      },
+    ],
+  }),
 });
 
 // Explicit UNKNOWN_PROFILE for unsupported extensions — no silent JS default.
@@ -234,6 +300,23 @@ export function getAllProfiles() {
 
 export function getProfile(langId) {
   return PROFILES[langId] || UNKNOWN_PROFILE;
+}
+
+/**
+ * Coverage class for a path: the taxonomy's kind, with `source` split into
+ * `profiled` (a profile exists: boundaries, imports, tools) and `model-only`
+ * (audited by the model, no deterministic analysis). Pure; path only.
+ *
+ * @param {string} filePath
+ * @returns {{class: 'profiled'|'model-only'|'declarative'|'non-code'|'uncovered',
+ *   language: string|null, extension: string|null, rule: string}}
+ */
+export function classifyFileCoverage(filePath) {
+  const m = matchFileKind(filePath);
+  if (m.kind === 'source') {
+    return { class: PROFILES[m.language] ? 'profiled' : 'model-only', language: m.language, extension: m.extension, rule: m.rule };
+  }
+  return { class: m.kind, language: m.language, extension: m.extension, rule: m.rule };
 }
 
 export function getProfileForFile(filePath) {
@@ -270,47 +353,16 @@ export function detectDominantLanguage(files) {
 // ── Extension metadata (single source of truth) ────────────────────────────
 
 /**
- * Code extensions from registered profiles (derived at module load).
- * Any new profile automatically contributes to this list.
+ * Every extension the audit will read (source languages + declarative files),
+ * without the leading dot, derived from the taxonomy so a new language is one
+ * edit there. Feeds file-reference parsing (`buildFileReferenceRegex`).
  */
-const CODE_EXTENSIONS = [...new Set(
-  Object.values(PROFILES).flatMap(p => p.extensions.map(e => e.slice(1))) // strip leading dot
-)];
-
-/**
- * Non-code asset extensions referenced in plans/findings.
- * These are NOT language profiles, but plans commonly reference them
- * (e.g. "update src/schema.json"). Named constant for explicit ownership.
- */
-const NON_CODE_REFERENCED_EXTENSIONS = Object.freeze(['json', 'css', 'html', 'md', 'sql']);
-
-/** Union of code + non-code extensions supported for file-reference parsing. */
 export const ALL_SUPPORTED_EXTENSIONS = Object.freeze(
-  [...CODE_EXTENSIONS, ...NON_CODE_REFERENCED_EXTENSIONS]
+  [...new Set(AUDITABLE_EXTENSIONS.map((e) => e.slice(1)))]
 );
 
-/**
- * Build a pipe-joined, regex-ready extension alternation, LONGEST-FIRST.
- *
- * The ordering is load-bearing, not cosmetic: JS regex alternation is
- * first-match-wins, so a `js|…|json` list matches `config.json` as `config.js`
- * and leaves `on` behind. The caller then looks up a file that does not exist,
- * reports it MISSING, and — where the truncated form is the only match — never
- * finds the real one at all. Found live 2026-08-08 in a consumer's plan, where
- * every `.json` and `.tsx` reference inside a fenced block was mis-extracted,
- * deflating the resolvable-path count that decides whether fuzzy keyword
- * discovery fires.
- *
- * Exported so every extension list in the bundle gets the ordering from ONE
- * place rather than each hand-sorting it (plan-paths.mjs hand-maintained its
- * own and got it wrong).
- *
- * @param {Iterable<string>} extensions
- * @returns {string}
- */
-export function toExtensionAlternation(extensions) {
-  return [...extensions].sort((a, b) => b.length - a.length).join('|');
-}
+// `toExtensionAlternation` now lives in file-taxonomy.mjs (dependency-free); re-exported so the public API is unchanged.
+export { toExtensionAlternation };
 
 /** Pipe-joined regex-ready extension alternation (longest-first). */
 export const ALL_EXTENSIONS_PATTERN = toExtensionAlternation(ALL_SUPPORTED_EXTENSIONS);
@@ -327,9 +379,8 @@ export const ALL_EXTENSIONS_PATTERN = toExtensionAlternation(ALL_SUPPORTED_EXTEN
  * exact-match (no trailing extension of their own), matching the ecosystem
  * convention for each.
  */
-const KNOWN_EXTENSIONLESS_FILENAMES = Object.freeze([
-  'Dockerfile', 'Makefile', 'Rakefile', 'Gemfile', 'Vagrantfile', 'Procfile', 'Jenkinsfile',
-]);
+// KNOWN_EXTENSIONLESS_FILENAMES: imported from file-taxonomy.mjs (the one registry).
+
 
 /** Pipe-joined, longest-first alternation of the filenames above. */
 const EXTENSIONLESS_FILENAME_PATTERN = toExtensionAlternation(KNOWN_EXTENSIONLESS_FILENAMES);

@@ -26,12 +26,16 @@ describe('partitionDiffScope — the field-report shape', () => {
   });
 
   it('uses the admission allowlist, not a second list (agreement with resolveReferenceExtension)', () => {
-    const files = ['a.mjs', 'b.png', 'index.html.template', 'Dockerfile', 'pkg.json.lock', 'x.YAML', 'y.woff2'];
+    const files = ['a.mjs', 'b.png', 'index.html.template', 'Dockerfile', 'pkg.json.lock', 'x.YAML', 'y.woff2', 'NOTES'];
     const p = partitionDiffScope({ files });
     for (const f of files) {
       assert.equal(p.auditable.includes(f), resolveReferenceExtension(f) !== null, f);
     }
+    // Dockerfile is a declarative build definition and IS admitted (file-taxonomy); NOTES is an
+    // unrecognised extensionless name and is ignored — as `uncovered`, never as "non-code".
+    assert.ok(p.auditable.includes('Dockerfile'));
     assert.equal(p.ignoredByExtension['(no extension)'], 1);
+    assert.deepEqual(p.uncovered, ['NOTES']);
   });
 
   it('negative control: an all-code set ignores nothing and prints nothing', () => {

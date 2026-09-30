@@ -65,7 +65,8 @@
  * @module scripts/lib/audit/tiered-pipeline
  */
 
-import { readFilesAsContext } from '../file-io.mjs';
+import { readFilesAsContext, readFilesAsContextDetailed } from '../file-io.mjs';
+import { createCoverageRecorder, buildCoverageReport } from './file-coverage.mjs';
 import { redactSecrets } from '../sensitive-egress-gate.mjs';
 import { formatSkipLog } from '../sensitive-paths.mjs';
 import { prepareCandidates } from './diff-path-map.mjs';
@@ -163,7 +164,11 @@ export async function runTieredAuditPipeline(ctx) {
   // sensitive-egress-gated helper every other pass in
   // `legacy-production-audit.mjs` already uses) rather than inventing a
   // second context-assembly path.
-  const discoveryCode = readFilesAsContext(ctx.changedFiles || [], { maxPerFile: 8000, maxTotal: 100000 });
+  // Measured, not merely read: the SAME render (readFilesAsContext is a wrapper over the detailed reader) with its
+  // stats kept for the file-coverage ledger (`_coverage`), so a tiered run makes the same coverage claim a legacy one does.
+  const coverageRecorder = createCoverageRecorder();
+  const { context: discoveryCode, stats: discoveryReadStats } = readFilesAsContextDetailed(ctx.changedFiles || [], { maxPerFile: 8000, maxTotal: 100000 });
+  coverageRecorder.recordRead('discovery', discoveryReadStats);
 
   // The discovery payload's OTHER half. `discoveryCode` above is redacted by
   // `readFilesAsContext`'s `redact: true` default — `planContent` had NO
@@ -451,7 +456,16 @@ export async function runTieredAuditPipeline(ctx) {
 
   // ── Verdict (shared computeAuditVerdict — same function the legacy path uses) ──
   const incomplete = stage2Result.unresolved.length > 0 || stage2Result.cleanRegionFailures.length > 0;
-  const verdict = computeAuditVerdict(findings, { incomplete });
+  // The discovery pass is `completed` for coverage purposes when this point is reached: the pipeline returns a
+  // result only after discovery produced one (a required-generator failure falls back to legacy before here).
+  coverageRecorder.markPass('discovery', true);
+  const coverage = buildCoverageReport({
+    recorder: coverageRecorder,
+    changed: ctx.coverageChanged ?? (ctx.changedFiles || []),
+    excludedInfra: ctx.coverageExcluded?.infra ?? [],
+    excludedUser: ctx.coverageExcluded?.user ?? [],
+  });
+  const verdict = computeAuditVerdict(findings, { incomplete: incomplete || coverage.gate === 'fail' });
 
   // ── overall_reasoning — deterministic accounting summary, no LLM call ──
   const generatorSummary = (ctx.generatorOutcomes || [])
@@ -500,6 +514,7 @@ export async function runTieredAuditPipeline(ctx) {
     files_found: 0,
     files_missing: 0,
     code_files: ctx.changedFiles || [],
+    _coverage: coverage,
     findings,
     wiring_issues: [],
     quick_fix_warnings: findings.filter((f) => f.is_quick_fix).map((f) => f.detail).filter(Boolean),

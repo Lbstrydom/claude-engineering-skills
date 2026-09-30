@@ -430,6 +430,8 @@ const baselineKey = f => `${f.file}→${f.target}`;
 const TEXT_EXT = new Set([
   '.md', '.mjs', '.js', '.cjs', '.jsx', '.ts', '.tsx', '.json', '.sql', '.sh',
   '.yml', '.yaml', '.html', '.css', '.txt', '.py', '.toml', '.example',
+  // .cs / .out — C# fixtures and captured tool output (MSBuild logs are stored as .out because *.log is gitignored)
+  '.cs', '.out',
   // .diff — text, and classified TEXT for the same reason as .sarif below: the
   // anchor-contract fixture diff carries real repo paths in its  headers,
   // so treating it as binary would skip a file whose contents genuinely ARE

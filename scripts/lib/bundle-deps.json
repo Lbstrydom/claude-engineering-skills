@@ -157,6 +157,7 @@
         "scripts/.claude-skills/lib/audit/detector.mjs",
         "scripts/.claude-skills/lib/audit/discovery-prompts.mjs",
         "scripts/.claude-skills/lib/audit/event-wiring-corpus.mjs",
+        "scripts/.claude-skills/lib/audit/file-coverage.mjs",
         "scripts/.claude-skills/lib/audit/finalization-contract.mjs",
         "scripts/.claude-skills/lib/audit/legacy-production-audit.mjs",
         "scripts/.claude-skills/lib/audit/map-reduce-scheduler.mjs",

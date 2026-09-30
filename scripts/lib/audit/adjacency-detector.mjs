@@ -54,6 +54,11 @@ const traverse = _traverse?.default?.default ?? _traverse?.default ?? _traverse;
 /** Source extensions whose AST we can meaningfully walk. */
 const SOURCE_EXT_RE = /\.(m?[jt]sx?|c[jt]s)$/;
 
+/** Would this wave read `p` at all? (its Babel AST walks JS/TS only) — the ONE predicate wave-eligibility measures against. */
+export function isAdjacencyTarget(p) {
+  return SOURCE_EXT_RE.test(p);
+}
+
 function log(msg) { process.stderr.write(`  [adjacency] ${msg}\n`); }
 
 // incompleteness(kind, scope, detail) now imported from adjacency-state.mjs —

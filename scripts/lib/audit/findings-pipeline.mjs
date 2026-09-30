@@ -15,6 +15,7 @@ import { normalizePath } from '../file-io.mjs';
 import { semanticId } from '../findings.mjs';
 import { parseAcceptV1Markers } from './deferral-classifier.mjs';
 import { globMatch } from './glob-match.mjs';
+import { formatCoverageSuffix } from '../coverage-format.mjs';
 
 /**
  * The CLOSED set of `[Architecture]` categories the MECHANICAL architecture
@@ -384,19 +385,29 @@ export function computeAuditVerdict(findings, { incomplete = false } = {}) {
  * Pure and exported so the wording is testable without provoking a real
  * provider failure.
  *
+ * A `coverage` (the round's `_coverage`) adds the file-coverage suffix: a run that left changed source
+ * unaudited never prints a bare verdict, and a round whose coverage gate FAILED (nothing changed was
+ * measured) is INCOMPLETE and says so in those words.
+ *
  * @param {{verdict: string, high: number, medium: number, low: number,
  *          failedPasses?: string[], passesTotal?: number|null,
- *          latencyMs?: number}} input
+ *          latencyMs?: number, coverage?: object|null}} input
  * @returns {string}
  */
 export function formatAuditSummaryLine({
-  verdict, high, medium, low, failedPasses = [], passesTotal = null, latencyMs = 0,
+  verdict, high, medium, low, failedPasses = [], passesTotal = null, latencyMs = 0, coverage = null,
 }) {
   const secs = `${(Number(latencyMs || 0) / 1000).toFixed(0)}s`;
+  const cov = formatCoverageSuffix(coverage);
   if (verdict !== 'INCOMPLETE') {
-    return `Verdict: ${verdict} | H:${high} M:${medium} L:${low} | ${secs}`;
+    const base = `Verdict: ${verdict} | H:${high} M:${medium} L:${low} | ${secs}`;
+    return cov ? `${base} | ${cov}` : base;
   }
   const failed = failedPasses.length;
+  if (failed === 0 && coverage && coverage.gate === 'fail') {
+    // Every pass ran; the change itself was not measured. Say THAT, not "passes failed".
+    return `Verdict: INCOMPLETE — ${cov}; this round did not measure the change. The counts below are not evidence of cleanliness: H:${high} M:${medium} L:${low} | ${secs}`;
+  }
   // `passesTotal` is absent on results persisted before the field existed. Say
   // "unknown", never guess a denominator — a fabricated one is how the
   // original line went wrong.
@@ -406,7 +417,7 @@ export function formatAuditSummaryLine({
   const measuredNothing = Number.isFinite(passesTotal) && passesTotal > 0 && failed >= passesTotal;
   return `Verdict: INCOMPLETE — ${produced}; this round ${measuredNothing
     ? 'measured NOTHING' : 'did not measure the full change'
-  }. The counts below are not evidence of cleanliness: H:${high} M:${medium} L:${low} | ${secs}`;
+  }${cov ? ` (${cov})` : ''}. The counts below are not evidence of cleanliness: H:${high} M:${medium} L:${low} | ${secs}`;
 }
 
 export function processFindings(rawFindings, ctx = {}) {

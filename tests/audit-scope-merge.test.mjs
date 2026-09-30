@@ -22,7 +22,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { mergeScopeFiles, resolveReferenceExtension } from '../scripts/lib/plan-paths.mjs';
+import { mergeScopeFiles, resolveReferenceExtension, isUrlOrVendored } from '../scripts/lib/plan-paths.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -141,8 +141,10 @@ describe('mergeScopeFiles — changed-but-not-plan-referenced files', () => {
     assert.equal(resolveReferenceExtension('package-lock.json.lock'), null);
   });
 
-  it('mergeScopeFiles admits a real double-extension file via --files', () => {
+  it('mergeScopeFiles admits a real double-extension file via --files', (t) => {
     const templateFixture = path.resolve(REPO_ROOT, 'index.html.template');
+    // Refuse to overwrite (and later delete) a file that already exists at the repo root.
+    if (fs.existsSync(templateFixture)) { t.skip('index.html.template already exists at the repo root'); return; }
     fs.writeFileSync(templateFixture, '<html></html>\n');
     try {
       const { addedFromScope, rejected } = mergeScopeFiles([], ['index.html.template']);
@@ -153,11 +155,12 @@ describe('mergeScopeFiles — changed-but-not-plan-referenced files', () => {
     }
   });
 
-  it('package-lock.json.lock-shaped names stay rejected through mergeScopeFiles', () => {
+  it('package-lock.json.lock-shaped names stay rejected through mergeScopeFiles', (t) => {
     // Same fixture requirement as the pre-existing 'rejects a non-source
     // extension' test: existence is checked before extension, so a
     // non-existent path would be rejected for the wrong reason.
     const lockFixture = path.resolve(REPO_ROOT, 'package-lock.json.lock');
+    if (fs.existsSync(lockFixture)) { t.skip('package-lock.json.lock already exists at the repo root'); return; }
     fs.writeFileSync(lockFixture, '{}\n');
     try {
       const { addedFromScope, rejected } = mergeScopeFiles([], ['package-lock.json.lock']);
@@ -165,6 +168,20 @@ describe('mergeScopeFiles — changed-but-not-plan-referenced files', () => {
       assert.deepEqual(rejected, ['package-lock.json.lock']);
     } finally {
       fs.rmSync(lockFixture, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});
+
+
+describe('isUrlOrVendored — a real URL or vendored path, not a raw prefix (audit R1-M4)', () => {
+  it('refuses URLs and node_modules at any depth', () => {
+    for (const p of ['https://x.example/a.js', 'http://x/a.cs', 'node_modules/a/b.js', 'pkg/node_modules/a/b.js', 'pkg\\node_modules\\a.js']) {
+      assert.equal(isUrlOrVendored(p), true, p);
+    }
+  });
+  it('does NOT refuse a local file whose name merely starts with "http" or contains "node_modules"', () => {
+    for (const p of ['src/httpClient.cs', 'httpx.py', 'lib/http-utils.mjs', 'src/node_modules_helper.cs', 'docs/node_modules.md']) {
+      assert.equal(isUrlOrVendored(p), false, p);
     }
   });
 });

@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**6 active · 228 terminal · 32 audit summaries · 1 parked · 5 reference docs**
+**6 active · 229 terminal · 32 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -57,7 +57,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 225 completed plans</summary>
+<summary>Show all 226 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -145,6 +145,7 @@ source comments that no docs linter sees — stays valid.
 | [Plan-Declared Execution Clustering Across the Skill Chain](./execution-clustering-skill-chain.md) | `Complete` |  |
 | [Idle-timeout the extract subprocess (stop the coverage-sized SIGKILL truncating symbol extraction)](./extract-idle-timeout.md) | `Complete` |  |
 | [Field-Reported /plan → /audit-plan Defects](./field-report-audit-plan-defects.md) | `Complete` | shipped in `cd862249`, `3a9dde1d`, `49bef636`; this document is the retrospective spec the code audit grades… |
+| [File-Coverage Contract + First-Class C# Support](./file-coverage-contract-and-csharp.md) | `Complete` | implemented, audited in three clusters and shipped; five independent follow-ups are listed in the audit trail |
 | [Background-safe & provider-agnostic final-review gate](./final-review-background-safe-provider-agnostic.md) | `Complete` |  |
 | [Close the final-review credit loop + admit a cheap shadow](./final-review-credit-and-cheap-shadow.md) | `Complete` |  |
 | [Final-review credit — a ruling is a ruling on either axis, and a re-run must not erase it](./final-review-credit-projection.md) | `Complete` |  |

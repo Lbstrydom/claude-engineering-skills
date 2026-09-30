@@ -147,7 +147,7 @@ function findPragmaAbove(sourceText, startLine) {
   return null;
 }
 
-function isEligibleChange(entry) {
+export function isEligibleChange(entry) {
   if (entry.status === 'deleted') return false;
   const p = entry.currentPath;
   if (isDuplicationQueryExcluded(p)) return false;
@@ -167,13 +167,8 @@ export async function runDuplicationAnalysis({ repoRoot, changedFiles, auditBase
   const empty = () => ({ deterministicFindings: [], semanticCandidates: [] });
 
   try {
-    // ── Step 0: snapshot availability (soft — see plan §2 decoupling note) ──
-    const repoId = await a.getRepoId(repoRoot);
-    if (!repoId) return { state: 'unavailable', reason: 'repo not found in architectural-memory store — run `npm run arch:refresh`', ...empty() };
-    const snap = await a.getActiveSnapshot(repoId);
-    if (!snap || !snap.refreshId) return { state: 'unavailable', reason: 'no active architectural-memory snapshot — run `npm run arch:refresh`', ...empty() };
-    if (!snap.activeEmbeddingModel || !snap.activeEmbeddingDim) return { state: 'unavailable', reason: 'active snapshot has no embedding model/dim configured (EMBEDDING_MISMATCH)', ...empty() };
-
+    // ── Preflight, BEFORE any store access: an unsafe base, an oversized diff or a change with nothing eligible
+    // (empty, or C#-only) is decided from the inputs alone — a learning-store outage must not turn "not applicable" into "unavailable".
     if (!isSafeGitRevision(auditBaseCommit)) {
       return { state: 'unavailable', reason: `refusing unsafe auditBaseCommit: ${JSON.stringify(String(auditBaseCommit)).slice(0, 80)}`, ...empty() };
     }
@@ -184,6 +179,13 @@ export async function runDuplicationAnalysis({ repoRoot, changedFiles, auditBase
       return { state: 'unavailable', reason: `diff too large for duplication scan (${eligible.length} > ${symbolIndexConfig.maxDuplicationScanFiles})`, ...empty() };
     }
     if (eligible.length === 0) return { state: 'clean', ...empty() };
+
+    // ── Step 0: snapshot availability (soft — see plan §2 decoupling note) ──
+    const repoId = await a.getRepoId(repoRoot);
+    if (!repoId) return { state: 'unavailable', reason: 'repo not found in architectural-memory store — run `npm run arch:refresh`', ...empty() };
+    const snap = await a.getActiveSnapshot(repoId);
+    if (!snap || !snap.refreshId) return { state: 'unavailable', reason: 'no active architectural-memory snapshot — run `npm run arch:refresh`', ...empty() };
+    if (!snap.activeEmbeddingModel || !snap.activeEmbeddingDim) return { state: 'unavailable', reason: 'active snapshot has no embedding model/dim configured (EMBEDDING_MISMATCH)', ...empty() };
 
     // ── Step 2: extract both sides via Git (no DB) ──
     const currentPaths = eligible.map((e) => e.currentPath);

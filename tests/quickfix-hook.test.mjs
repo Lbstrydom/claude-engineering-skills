@@ -197,6 +197,7 @@ const PATTERN_LIB_CLOSURE = [
   'quickfix-patterns.mjs',
   'secret-patterns.mjs',
   'sensitive-paths.mjs',
+  'file-taxonomy.mjs', // sensitive-paths derives its code-extension carve-out from the taxonomy
   'quickfix-policy.mjs',
 ];
 

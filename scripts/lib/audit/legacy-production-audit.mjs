@@ -44,10 +44,12 @@ import { z } from 'zod';
 import { ProducerFindingSchema, WiringIssueSchema, LedgerEntrySchema, BatchLedgerEntrySchema, buildExecutionMeta } from '../schemas.mjs';
 import { classifyProviderReadiness } from './provider-readiness.mjs';
 import {
-  safeInt, readFileOrDie, readFilesAsContext, readFilesAsAnnotatedContext,
+  safeInt, readFileOrDie, readFilesAsContext, readFilesAsContextDetailed,
   writeOutput, normalizePath, parseDiffFile, extractPlanPaths, mergeScopeFiles, classifyFiles,
   isAuditInfraFile, auditSubjectFileGuard, atomicWriteFileSync
 } from '../file-io.mjs';
+import { readFilesAsAnnotatedContextDetailed } from '../diff-annotation.mjs';
+import { startCoverage, makeCoverageInput } from './file-coverage.mjs';
 import {
   generateTopicId, populateFindingMetadata, jaccardSimilarity,
   suppressReRaises, buildRulingsBlock, R2_ROUND_MODIFIER, buildR2SystemPrompt,
@@ -56,7 +58,7 @@ import {
 } from '../ledger.mjs';
 import {
   estimateTokens, chunkLargeFile, extractExportsOnly,
-  buildDependencyGraph, measureContextChars
+  buildDependencyGraph, measureContextChars, setChunkingObserver
 } from '../code-analysis.mjs';
 import { semanticId, formatFindings, appendOutcome, loadOutcomes, FalsePositiveTracker } from '../findings.mjs';
 import { estimateStablePrefixTokens } from './prompt-builder.mjs';
@@ -73,7 +75,7 @@ import {
   extractPlanForPass, buildHistoryContext, loadSessionCache, saveSessionCache
 } from '../context.mjs';
 import { buildLanguageContext } from '../language-profiles.mjs';
-import { executeTools, normalizeToolResults, formatLintSummary } from '../linter.mjs';
+import { executeAllTools, coverageToolsFrom, normalizeToolResults, formatLintSummary } from '../linter.mjs';
 import {
   selectEventSource, loadDebtLedger, appendEvents, reconcileLocalToCloud, mergeLedgers as mergeLedgersForSuppression
 } from '../debt-memory.mjs';
@@ -283,6 +285,7 @@ async function runLegacyProductionAuditImpl(ctx) {
     debtLedgerPath = undefined, debtEventsPath = undefined, escalateRecurring = null,
     sessionCacheHit = null, scopeMode = null, planFile = null, runId = null, allowInfraScope = false,
     outFile = null, providers = {}, noCloudRecording = false,
+    coverageChanged = null, coverageExcluded = null,
     // Present in ctx since buildAuditRunContext, but never destructured until
     // 2026-08-13 — which is why the orphan wave could not tell a dirty tree
     // from a clean one and hard-coded its range. See resolveOrphanScopeRefs.
@@ -670,6 +673,8 @@ async function runLegacyProductionAuditImpl(ctx) {
   // ── R2+ initialization ──────────────────────────────────────────────────────
   const isR2Plus = round >= 2;
   let ledger = null, diffMap = null, impactSet = [];
+  // Every pass's reads are measured here (`_coverage`); `renderFor` is byte-identical to the readers it replaces.
+  const { recorder: coverageRecorder, renderFor } = startCoverage({ getDiffMap: () => diffMap, plain: readFilesAsContextDetailed, annotated: readFilesAsAnnotatedContextDetailed, setChunkingObserver });
   let suppressionUnavailable = false;
   // Entries validateLedgerForR2 drops as malformed. Travels into _executionMeta
   // alongside suppressionUnavailable (see the merged-result assembly below):
@@ -856,7 +861,9 @@ async function runLegacyProductionAuditImpl(ctx) {
   if (!noTools) {
     process.stderr.write('\n── Phase 0: Tool Pre-Pass ──\n');
     const toolStart = Date.now();
-    const toolResults = executeTools(found);
+    // whole-repo tools + the PROJECT-scoped ones (dotnet); every non-clean tool state is kept for the coverage ledger
+    const toolResults = await executeAllTools(found);
+    toolCapability.coverageTools = coverageToolsFrom(toolResults);
     toolFindings = normalizeToolResults(toolResults);
     toolCapability.toolsAvailable = toolResults.filter(r => r.status === 'ok').map(r => r.toolId);
     toolCapability.toolsFailed = toolResults.filter(r => r.status !== 'ok').map(r => ({ id: r.toolId, status: r.status }));
@@ -870,7 +877,7 @@ async function runLegacyProductionAuditImpl(ctx) {
   const focusBlock = priorityBlock + classificationBlock + (lintContext ? '\n\n' + lintContext : '');
 
   // Read shared files ONCE — reuse across passes that need them
-  const sharedContext = shared.length > 0 ? readFilesAsContext(shared, { maxPerFile: 6000, maxTotal: 20000 }) : '';
+  const sharedContext = shared.length > 0 ? renderFor('shared-context', shared, { maxPerFile: 6000, maxTotal: 20000 }, false) : '';
 
   // Estimate base context size (targeted context per pass, not full CLAUDE.md)
   const baseContextChars = 2000 + fileListContext.length + historyBlock.length; // ~2000 for targeted CLAUDE.md
@@ -887,7 +894,7 @@ async function runLegacyProductionAuditImpl(ctx) {
     const structureContextChars = baseContextChars + measureContextChars(found, 2000);
     const structureLimits = computePassLimits(structureContextChars, 'low');
     process.stderr.write(`\n── Wave 1: Structure + Wiring (parallel, reasoning: low) ──\n`);
-    const structureFiles = readFilesAsContext(found, { maxPerFile: 2000, maxTotal: 30000 });
+    const structureFiles = renderFor('structure', found, { maxPerFile: 2000, maxTotal: 30000 }, false);
     wave1Promises.push(
       safeCallGPT(openai, {
         ...passPrompt({
@@ -920,7 +927,7 @@ async function runLegacyProductionAuditImpl(ctx) {
     const wiringFiles = found.filter(f => f.includes('/api/') || f.includes('/routes/'));
     const wiringContextChars = baseContextChars + measureContextChars(wiringFiles, 8000) + sharedContext.length;
     const wiringLimits = computePassLimits(wiringContextChars, 'low');
-    const wiringCode = `${readFilesAsContext(wiringFiles, { maxPerFile: 8000, maxTotal: 60000 })}\n\n## Shared Files\n${sharedContext}`;
+    const wiringCode = `${renderFor('wiring', wiringFiles, { maxPerFile: 8000, maxTotal: 60000 }, false)}\n\n## Shared Files\n${sharedContext}`;
     wave1Promises.push(
       safeCallGPT(openai, {
         ...passPrompt({
@@ -1122,7 +1129,7 @@ async function runLegacyProductionAuditImpl(ctx) {
         } else {
           const limits = computePassLimits(baseContextChars + measureContextChars(effectiveRoutes, 8000) + sharedContext.length, 'high');
           process.stderr.write(`  be-routes: ${effectiveRoutes.length} files → ${limits.maxTokens} tok / ${(limits.timeoutMs/1000).toFixed(0)}s\n`);
-          const beRoutesCode = `${isR2Plus && diffMap ? readFilesAsAnnotatedContext(effectiveRoutes, diffMap, { maxPerFile: 8000, maxTotal: 60000 }) : readFilesAsContext(effectiveRoutes, { maxPerFile: 8000, maxTotal: 60000 })}\n\n## Shared Files\n${sharedContext}`;
+          const beRoutesCode = `${renderFor('be-routes', effectiveRoutes, { maxPerFile: 8000, maxTotal: 60000 }, !!(isR2Plus && diffMap))}\n\n## Shared Files\n${sharedContext}`;
           wave2Promises.push(
             safeCallGPT(openai, {
               ...passPrompt({
@@ -1169,7 +1176,7 @@ async function runLegacyProductionAuditImpl(ctx) {
         } else {
           const limits = computePassLimits(baseContextChars + measureContextChars(effectiveServices, 8000), 'high');
           process.stderr.write(`  be-services: ${effectiveServices.length} files → ${limits.maxTokens} tok / ${(limits.timeoutMs/1000).toFixed(0)}s\n`);
-          const beServicesCode = isR2Plus && diffMap ? readFilesAsAnnotatedContext(effectiveServices, diffMap, { maxPerFile: 8000, maxTotal: 80000 }) : readFilesAsContext(effectiveServices, { maxPerFile: 8000, maxTotal: 80000 });
+          const beServicesCode = renderFor('be-services', effectiveServices, { maxPerFile: 8000, maxTotal: 80000 }, !!(isR2Plus && diffMap));
           wave2Promises.push(
             safeCallGPT(openai, {
               ...passPrompt({
@@ -1216,7 +1223,7 @@ async function runLegacyProductionAuditImpl(ctx) {
       } else {
         const limits = computePassLimits(baseContextChars + measureContextChars(effectiveBackend, 8000) + sharedContext.length, 'high');
         process.stderr.write(`  backend: ${effectiveBackend.length} files → ${limits.maxTokens} tok / ${(limits.timeoutMs/1000).toFixed(0)}s\n`);
-        const backendCode = `${isR2Plus && diffMap ? readFilesAsAnnotatedContext(effectiveBackend, diffMap, { maxPerFile: 8000, maxTotal: 80000 }) : readFilesAsContext(effectiveBackend, { maxPerFile: 8000, maxTotal: 80000 })}\n\n## Shared Files\n${sharedContext}`;
+        const backendCode = `${renderFor('backend', effectiveBackend, { maxPerFile: 8000, maxTotal: 80000 }, !!(isR2Plus && diffMap))}\n\n## Shared Files\n${sharedContext}`;
         wave2Promises.push(
           safeCallGPT(openai, {
             ...passPrompt({
@@ -1272,7 +1279,7 @@ async function runLegacyProductionAuditImpl(ctx) {
     } else {
       const limits = computePassLimits(baseContextChars + measureContextChars(effectiveFrontend, 10000) + sharedContext.length, 'high');
       process.stderr.write(`  frontend: ${effectiveFrontend.length} files → ${limits.maxTokens} tok / ${(limits.timeoutMs/1000).toFixed(0)}s\n`);
-      const frontendCode = `${isR2Plus && diffMap ? readFilesAsAnnotatedContext(effectiveFrontend, diffMap, { maxPerFile: 10000, maxTotal: 80000 }) : readFilesAsContext(effectiveFrontend, { maxPerFile: 10000, maxTotal: 80000 })}\n\n## Shared Files\n${sharedContext}`;
+      const frontendCode = `${renderFor('frontend', effectiveFrontend, { maxPerFile: 10000, maxTotal: 80000 }, !!(isR2Plus && diffMap))}\n\n## Shared Files\n${sharedContext}`;
       wave2Promises.push(
         safeCallGPT(openai, {
           ...passPrompt({
@@ -1339,7 +1346,7 @@ async function runLegacyProductionAuditImpl(ctx) {
       const sustainLimits = computePassLimits(sustainContextChars, 'medium');
       process.stderr.write(`  ${sustainFiles.length} files → ${sustainLimits.maxTokens} tok / ${(sustainLimits.timeoutMs/1000).toFixed(0)}s\n`);
 
-      const sustainCode = isR2Plus && diffMap ? readFilesAsAnnotatedContext(sustainFiles, diffMap, { maxPerFile: 4000, maxTotal: 60000 }) : readFilesAsContext(sustainFiles, { maxPerFile: 4000, maxTotal: 60000 });
+      const sustainCode = renderFor('sustainability', sustainFiles, { maxPerFile: 4000, maxTotal: 60000 }, !!(isR2Plus && diffMap));
       sustainResult = await safeCallGPT(openai, {
         ...passPrompt({
           rubric: isR2Plus ? PASS_SUSTAINABILITY_RUBRIC : PASS_SUSTAINABILITY_SYSTEM,
@@ -1380,7 +1387,7 @@ async function runLegacyProductionAuditImpl(ctx) {
     const qfContextChars = baseContextChars + measureContextChars(qfFiles, 4000);
     const qfLimits = computePassLimits(qfContextChars, 'low');
     process.stderr.write(`  ${qfFiles.length} files → ${qfLimits.maxTokens} tok / ${(qfLimits.timeoutMs/1000).toFixed(0)}s\n`);
-    const qfCode = isR2Plus && diffMap ? readFilesAsAnnotatedContext(qfFiles, diffMap, { maxPerFile: 4000, maxTotal: 60000 }) : readFilesAsContext(qfFiles, { maxPerFile: 4000, maxTotal: 60000 });
+    const qfCode = renderFor('quickfix', qfFiles, { maxPerFile: 4000, maxTotal: 60000 }, !!(isR2Plus && diffMap));
     quickfixResult = await safeCallGPT(openai, {
       ...passPrompt({
         rubric: qfRubric,
@@ -1481,7 +1488,9 @@ async function runLegacyProductionAuditImpl(ctx) {
     runDuplication, duplicationResult, runAdjacency, adjacencyResult,
     archState, archResult, orphanState, orphanResult, eventWiringState, eventWiringResult,
     isR2Plus,
+    coverageInput: makeCoverageInput({ recorder: coverageRecorder, coverageChanged, changedFiles, fileFilter, coverageExcluded, diffMap, toolCapability, noTools }),
   };
+  setChunkingObserver(null);
   const { mergedResult } = await finalizeRun(finalizationData, writeOutcomes);
   return mergedResult;
 }
@@ -1529,6 +1538,7 @@ export async function buildAuditRunContext(cliArgs) {
     debtLedgerPath = undefined, debtEventsPath = undefined, escalateRecurring = null,
     sessionCacheHit = null, scopeMode = null, planFile = null, runId = null, allowInfraScope = false,
     outFile = null, model = null, allowTiered = false, __runDuplicationAnalysis = null, __runAdjacencyAnalysis = null,
+    coverageChanged = null, coverageExcluded = null,
     // docs/plans/stage0-evidence-relevance-split.md decision #5: the tiered
     // pipeline's Stage 0 blame/impact adapters need the current HEAD sha
     // (import-graph freshness validation) and dirty-tree status (both
@@ -1663,7 +1673,7 @@ export async function buildAuditRunContext(cliArgs) {
     passFilter, fileFilter, round, ledgerFile, diffFile, diffText, changedFiles, auditBaseCommit, __runDuplicationAnalysis, __runAdjacencyAnalysis, repoProfile, bandit, fpTracker,
     noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath,
     escalateRecurring, scopeMode, planFile, runId, allowInfraScope,
-    outFile, model, sessionCacheHit, allowTiered, commitSha, workingTreeDirty,
+    outFile, model, sessionCacheHit, allowTiered, commitSha, workingTreeDirty, coverageChanged, coverageExcluded,
     generatorOutcomes: [],
     // `anthropicReadiness` travels WITH the client so a downstream consumer can
     // tell a routine keyless skip from a real construction defect, instead of

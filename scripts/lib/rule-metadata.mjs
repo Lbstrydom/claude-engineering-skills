@@ -68,6 +68,33 @@ export const RULE_METADATA = Object.freeze({
     _default: { severity: 'LOW', sonarType: 'CODE_SMELL', effort: 'EASY', isQuickFix: false },
   }),
 
+  // `dotnet build` diagnostics (compiler CSxxxx, analyzer CAxxxx/IDExxxx/xUnitxxxx). A compiler ERROR is raised to HIGH/BUG by
+  // `normalizeExternalFinding` from the diagnostic's own level, whatever this table says; these entries grade WARNINGS.
+  'dotnet-build': Object.freeze({
+    'CS8600': { severity: 'MEDIUM', sonarType: 'BUG', effort: 'EASY', isQuickFix: false },   // null literal / possible null to non-nullable
+    'CS8601': { severity: 'MEDIUM', sonarType: 'BUG', effort: 'EASY', isQuickFix: false },
+    'CS8602': { severity: 'MEDIUM', sonarType: 'BUG', effort: 'EASY', isQuickFix: false },   // dereference of a possibly null reference
+    'CS8603': { severity: 'MEDIUM', sonarType: 'BUG', effort: 'EASY', isQuickFix: false },
+    'CS8604': { severity: 'MEDIUM', sonarType: 'BUG', effort: 'EASY', isQuickFix: false },
+    'CS8618': { severity: 'LOW', sonarType: 'CODE_SMELL', effort: 'EASY', isQuickFix: false }, // non-nullable member uninitialised
+    'CS1998': { severity: 'MEDIUM', sonarType: 'BUG', effort: 'EASY', isQuickFix: false },   // async method without await
+    'CS4014': { severity: 'MEDIUM', sonarType: 'BUG', effort: 'EASY', isQuickFix: false },   // un-awaited call
+    'CS0162': { severity: 'LOW', sonarType: 'CODE_SMELL', effort: 'TRIVIAL', isQuickFix: false }, // unreachable code
+    'CS0168': { severity: 'LOW', sonarType: 'CODE_SMELL', effort: 'TRIVIAL', isQuickFix: false }, // unused variable
+    'CS0219': { severity: 'LOW', sonarType: 'CODE_SMELL', effort: 'TRIVIAL', isQuickFix: false },
+    'CA2000': { severity: 'MEDIUM', sonarType: 'BUG', effort: 'MEDIUM', isQuickFix: false },   // dispose objects before losing scope
+    'CA2100': { severity: 'HIGH', sonarType: 'VULNERABILITY', effort: 'MEDIUM', isQuickFix: false }, // SQL built from user input
+    'CA5350': { severity: 'HIGH', sonarType: 'VULNERABILITY', effort: 'MEDIUM', isQuickFix: false }, // weak crypto (SHA1)
+    'CA5351': { severity: 'HIGH', sonarType: 'VULNERABILITY', effort: 'MEDIUM', isQuickFix: false }, // broken crypto (MD5/DES)
+    'xUnit2029': { severity: 'LOW', sonarType: 'CODE_SMELL', effort: 'TRIVIAL', isQuickFix: false },
+    _default: { severity: 'LOW', sonarType: 'CODE_SMELL', effort: 'EASY', isQuickFix: false },
+  }),
+
+  // `dotnet format --verify-no-changes`: whitespace / style drift. Never above LOW (also enforced by the `style` level).
+  'dotnet-format': Object.freeze({
+    _default: { severity: 'LOW', sonarType: 'CODE_SMELL', effort: 'TRIVIAL', isQuickFix: false },
+  }),
+
   _default: Object.freeze({
     severity: 'LOW', sonarType: 'CODE_SMELL', effort: 'EASY', isQuickFix: false,
   }),
@@ -80,7 +107,8 @@ export const RULE_METADATA = Object.freeze({
  * @returns {{ severity: string, sonarType: string, effort: string, isQuickFix: boolean }}
  */
 export function getRuleMetadata(toolId, ruleId) {
-  const toolRegistry = RULE_METADATA[toolId];
+  const own = (o, k) => (o != null && Object.hasOwn(o, k) ? o[k] : undefined);
+  const toolRegistry = own(RULE_METADATA, toolId);
   if (!toolRegistry) return RULE_METADATA._default;
-  return toolRegistry[ruleId] || toolRegistry._default || RULE_METADATA._default;
+  return own(toolRegistry, ruleId) || toolRegistry._default || RULE_METADATA._default;
 }

@@ -314,7 +314,8 @@ describe('discoveryCode assembly — secret-redaction default (discovery-portfol
   // tiered-shadow observations in wine-cellar-app.
   test('static pin: the discoveryCode readFilesAsContext call does not pass redact:false', () => {
     const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf8');
-    const callMatch = src.match(/const discoveryCode = readFilesAsContext\([^;]*\);/s);
+    // `readFilesAsContextDetailed` is the SAME render with its stats kept for the coverage ledger (readFilesAsContext wraps it).
+    const callMatch = src.match(/const \{ context: discoveryCode, stats: discoveryReadStats \} = readFilesAsContext(?:Detailed)?\([^;]*\);/s);
     assert.ok(callMatch, 'expected to find the discoveryCode readFilesAsContext call');
     assert.equal(
       /redact\s*:\s*false/.test(callMatch[0]),

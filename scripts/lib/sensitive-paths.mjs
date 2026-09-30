@@ -66,6 +66,17 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { SOURCE_CODE_EXTENSION_ALTERNATION } from './file-taxonomy.mjs';
+
+/**
+ * Extensions whose files are CODE (or stylesheets), not credential data. A path like
+ * `tokens.mjs`, `Token.cs` or `Password.cs` is a code module named after a concept, not a
+ * secret file; a real secret literal inside one is still caught by the CONTENT scanner at
+ * egress. Derived from the taxonomy's source languages (+ stylesheet extensions), NOT a
+ * hand-kept list: `[jt]sx?` was the whole list until 2026-09-30, so `Token.cs` was classed
+ * sensitive and never read, and the same list had to be edited per language.
+ */
+const CODE_FILE_EXT_ALT = `${SOURCE_CODE_EXTENSION_ALTERNATION}|css|scss|less|sass|styl`;
 
 /**
  * @typedef {'sensitive' | 'generatedNoise' | 'driftExempt'} SkipCategory
@@ -100,18 +111,20 @@ export const SENSITIVE_PATTERNS = Object.freeze([
   // module whose documented contract is fail-closed. This is the general
   // class — dot + secret|credential word, optionally an `_suffix` (as in
   // `_rsaparams`) or a `.ext` — not an allowlist of those two names.
-  /(^|\/)\.(secrets?|credentials?)(?:_[\w-]+)?(\..+)?$/,       // .secrets, .credentials, .credentials_rsaparams
+  /(^|\/)\.(secrets?|credentials?)(?:_[\w-]+)?(\..+)?$/,
+  /(^|\/)\.(secrets?|credentials?)[\w-]*\//,                 // the DIRECTORY form: .secrets/key.txt, .credentials/db       // .secrets, .credentials, .credentials_rsaparams
   /\.(pem|key|crt|cer|der|p12|pfx|gpg|asc)$/i,                 // cert/key bundles
   /(^|\/)(secrets?|credentials?)[\w-]*\//,                     // sensitive dirs incl. variants (secret-keys/, credential-store/) — Gemini H4
   /(^|\/)(private|\.aws|\.ssh)\//,                              // other sensitive directories
   /(^|\/)id_rsa.*$/,                                           // ssh keys + id_rsa.pub/.bak
   /(^|\/)id_ed25519.*$/,                                       // ed25519 ssh keys
-  /(^|\/)password(?:[/.]|$)/i,                                 // password.txt + password/ dir; avoids `password-strength/`
+  // password.txt + password/ dir; avoids `password-strength/` AND code modules (Password.cs, password.mjs)
+  new RegExp(`(^|\\/)password(?:\\/|$|\\.(?!([^/]*\\.)?(?:${CODE_FILE_EXT_ALT})$))`, 'i'),
   // token.json + tokens/ dir; avoids `tokenizer/`, `detokenize`, AND code/style
   // modules (tokens.mjs, tokens.css — design-token files, not credentials).
   // Auth tokens live in data files (json/yaml/txt/…); a code file that embeds
   // a real token literal is still caught by the content scanner at egress.
-  /(^|\/)tokens?(?:\/|$|\.(?!([^/]*\.)?(?:m?[jt]sx?|c[jt]s|css|scss|less|sass|styl|vue|svelte)$))/i,
+  new RegExp(`(^|\\/)tokens?(?:\\/|$|\\.(?!([^/]*\\.)?(?:${CODE_FILE_EXT_ALT})$))`, 'i'),
 ]);
 
 /**
@@ -154,7 +167,7 @@ export const DRIFT_EXEMPT_PATTERNS = Object.freeze([
 export function normalisePath(input) {
   return String(input || '')
     .replace(/\\/g, '/')
-    .replace(/^[a-zA-Z]:\//, '')
+    .replace(/^\/?[a-zA-Z]:\//, '') // `C:/` and the slash-prefixed `/C:/` form (MSYS / file-URL paths) are the same drive
     .toLowerCase()
     .replace(/^\.\//, '');
 }

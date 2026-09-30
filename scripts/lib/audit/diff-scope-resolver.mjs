@@ -21,7 +21,7 @@ import { execFileSync } from 'node:child_process';
 import { cruise } from 'dependency-cruiser';
 
 const SOURCE_EXTENSIONS = new Set([
-  '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx',
+  '.js', '.mjs', '.cjs', '.ts', '.mts', '.cts', '.tsx', '.jsx',
 ]);
 
 function stripLeadingDotSlash(s) {
@@ -670,7 +670,9 @@ export async function resolveDiffScope({ repoPath, baseRef, headRef, diffPatch, 
     changedFiles = [...trackedParsed.records, ...untracked];
   }
 
-  // Pre-filter binary / non-source files (Gemini-R2/H1).
+  // Pre-filter binary / non-source files (Gemini-R2/H1). The count BEFORE the filter is what makes the result honest: a
+  // change that filtered to nothing was not "analysed and clean", it was never read (wave-eligibility.mjs).
+  const changedBeforeFilter = changedFiles.length;
   changedFiles = changedFiles.filter(f => {
     const sample = f.baseCallerPath || f.headCallerPath;
     if (!sample) return false;
@@ -727,6 +729,7 @@ export async function resolveDiffScope({ repoPath, baseRef, headRef, diffPatch, 
     preEdgesByBaseCaller,
     targetExistedAtBase,
     entryPoints,
+    eligibility: { changed: changedBeforeFilter, eligible: changedFiles.length },
     state: (parsePartial || entryPointDiscoveryFailure.failed) ? 'ANALYZED_PARTIAL' : 'ANALYZED_CLEAN',
   };
 }

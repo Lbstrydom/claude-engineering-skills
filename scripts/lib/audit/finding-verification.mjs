@@ -35,6 +35,7 @@ import path from 'node:path';
 import { isSensitivePath } from '../quickfix-patterns.mjs';
 import { resolveSpecifier, RESOLVABLE_EXTENSIONS } from '../module-graph.mjs';
 import { resolveUniqueSuffix } from '../repo-inventory.mjs';
+import { AUDITABLE_EXTENSIONS } from '../file-taxonomy.mjs';
 
 /** Token shape for a path/specifier/symbol cited in finding prose. */
 const TOKEN = '[\\w./@$-]{2,200}';
@@ -211,7 +212,11 @@ const QUOTED_PATH = new RegExp('[`\'"](' + TOKEN + ')[`\'"]', 'g');
  */
 const SENTENCE_GAP = /[.;!?](?:\s|$)|\n/;
 
-const EXT_RE = new RegExp(`(${RESOLVABLE_EXTENSIONS.map((e) => '\\' + e).join('|')}|\\.jsx|\\.ts|\\.tsx|\\.md)$`, 'i');
+// Derived from the taxonomy, so a cited `Foo.cs` or `x.py` is a FILE claim, not an "external package".
+// Single-character extensions (`.c`, `.h`) are left out: `obj.c` / `this.h` are member accesses far more
+// often than paths, and misreading one as a missing FILE would refute a true finding.
+const EXT_RE = new RegExp(`(${[...new Set([...RESOLVABLE_EXTENSIONS, ...AUDITABLE_EXTENSIONS.filter((e) => e.length > 2)])]
+  .sort((a, b) => b.length - a.length).map((e) => '\\' + e).join('|')})$`, 'i');
 
 /**
  * Does this finding assert that a repo entity is missing?  Pure.

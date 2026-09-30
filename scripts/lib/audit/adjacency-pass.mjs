@@ -15,6 +15,8 @@ import { adjacencyConfig } from '../config.mjs';
 import { runAdjacencyAnalysis } from './adjacency-detector.mjs';
 import { runAdjacencyBouncer, buildAdjacencyFailedFinding } from './adjacency-report.mjs';
 import { composeAdjacencyResult } from './adjacency-compose.mjs';
+import { isAdjacencyTarget } from './adjacency-detector.mjs';
+import { waveEligibility, ineligibleReason, eligibilityNote, waveRecord } from './wave-eligibility.mjs';
 
 /**
  * Containment-adjacency audit pass (Wave 6) — deterministic detector enumerates,
@@ -42,6 +44,9 @@ export async function runAdjacencyPass({
   let bouncerUsage = null;
   let adjFindings = [];
   let adjSummary = '';
+  const eligibility = waveEligibility(ctx?.changedFiles ?? [], isAdjacencyTarget);
+  let waveRan = 'completed';
+  let waveReason = null;
   try {
     // No diff contract → NOT-APPLICABLE, not a failure. The wave is
     // diff-triggered by construction (§D1), so on a `--scope full` or
@@ -105,6 +110,13 @@ export async function runAdjacencyPass({
     const { state, coverage } = composed.result;
     adjSummary = `Adjacency: ${state} — ${coverage.containersEnumerated} container(s), `
       + `${coverage.statementsJudged} statement(s) judged, ${composed.result.candidates.length} candidate(s).`;
+    if (eligibility.state === 'ineligible') {
+      // `not-triggered` is documented as "we looked; nothing changed inside a conditional" — false when every changed file
+      // was something the wave cannot read. Say so instead.
+      adjSummary = `Adjacency: INELIGIBLE — ${ineligibleReason(eligibility, 'js/ts')}`;
+    } else if (eligibility.state === 'partial') {
+      adjSummary = adjSummary.replace(/\.$/, ` (${eligibilityNote(eligibility, 'js/ts')}).`);
+    }
     process.stderr.write(`  ${adjSummary}\n`);
   } catch (err) {
     // Same reasoning as runDuplicationPass's catch above: fail-open, but name
@@ -113,9 +125,12 @@ export async function runAdjacencyPass({
     process.stderr.write(`  Adjacency: unexpected ${err?.name || 'Error'} — ${err?.message}\n${err?.stack ? `${err.stack}\n` : ''}`);
     adjFindings = [buildAdjacencyFailedFinding(`${err?.name || 'Error'}: ${err?.message}`)];
     adjSummary = `Adjacency: unexpected ${err?.name || 'Error'} — see finding.`;
+    waveRan = 'errored';
+    waveReason = `${err?.name || 'Error'}: ${err?.message}`;
   }
   return {
     result: { pass_name: 'adjacency', findings: adjFindings, summary: adjSummary },
+    _wave: waveRecord(eligibility, 'js/ts', waveRan, waveReason),
     callCount: bouncerCalls,
     usage: bouncerUsage ?? { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
     latencyMs: Date.now() - adjStart,
