@@ -236,6 +236,13 @@
         "tests/concern-identity.test.mjs"
       ],
       "proof": "process"
+    },
+    {
+      "id": "coverage-gate-fail-incomplete",
+      "kind": "document-only",
+      "statedIn": "skills/audit-code/SKILL.md",
+      "stated": "the round is already `INCOMPLETE` (exit 3) and must not be reported as converged at all.",
+      "reason": "Mechanically enforced AND wired: finding-assembly.mjs builds the `_coverage` ledger and, on `gate: fail`, forces the round `incomplete`; openai-audit.mjs maps INCOMPLETE to exit 3; findings-pipeline.mjs formatAuditSummaryLine refuses the counts-first shape for it and audit-loop.mjs prints no CONVERGED banner without a ledger. Pinned by tests/file-coverage.test.mjs (status/gate matrix), tests/coverage-orchestrator.test.mjs (the orchestrator builds and threads the ledger) and tests/coverage-surface.test.mjs (summary line and banner). Still document-only because the CLOSED oracle registry has no fit: convergence-threshold binds only finding-count params and cli-exit drives a CLI against a filesystem fixture, while this gate's subject is a per-file ledger built from a diff and completed passes, which a recipe cannot construct. Revisit if a ledger-fixture oracle is ever added."
     }
   ],
   "ignoredCandidates": [
@@ -478,6 +485,22 @@
     {
       "line": "(`-v2` after round 2; release-blocking ones are never captured; `--dry-run`",
       "reason": "Describes debt-auto-capture.mjs --final-review, whose refusal to capture release-blocking findings is pinned by tests/final-review-round-cap-cli.test.mjs; the skill line routes to it."
+    },
+    {
+      "line": "| `uncovered` | **file-level, from the result's `_coverage`, never from a pass:** changed files the audit did not (fully) examine — an unrecognised file type, an unreadable file, a deleted source file, a head-cut read. NOT `ineligible`: `ineligible` is an EXPECTED scope exclusion, and labelling a C# diff that way is exactly how twelve `.cs` files went unaudited under an APPROVE |",
+      "reason": "Describes how the round's `_coverage` ledger is worded and rendered (formatCoverageSuffix / coverageMissingNote in scripts/lib/coverage-format.mjs, wave INELIGIBLE wording in scripts/lib/audit/wave-eligibility.mjs); the wording and the ledger invariants are pinned by tests/coverage-surface.test.mjs, tests/wave-eligibility.test.mjs and tests/coverage-cluster-c-fixes.test.mjs. This skill line is a rendering instruction, not a separate gate."
+    },
+    {
+      "line": "`duplication`, `adjacency`) report `ineligible (0 of N changed files are js/ts; nothing was examined)` — never `completed`,",
+      "reason": "Describes how the round's `_coverage` ledger is worded and rendered (formatCoverageSuffix / coverageMissingNote in scripts/lib/coverage-format.mjs, wave INELIGIBLE wording in scripts/lib/audit/wave-eligibility.mjs); the wording and the ledger invariants are pinned by tests/coverage-surface.test.mjs, tests/wave-eligibility.test.mjs and tests/coverage-cluster-c-fixes.test.mjs. This skill line is a rendering instruction, not a separate gate."
+    },
+    {
+      "line": "**The `file coverage` row is rendered from the round's `_coverage` (`node -p` the result JSON; its `status`, `gate` and the",
+      "reason": "Describes how the round's `_coverage` ledger is worded and rendered (formatCoverageSuffix / coverageMissingNote in scripts/lib/coverage-format.mjs, wave INELIGIBLE wording in scripts/lib/audit/wave-eligibility.mjs); the wording and the ledger invariants are pinned by tests/coverage-surface.test.mjs, tests/wave-eligibility.test.mjs and tests/coverage-cluster-c-fixes.test.mjs. This skill line is a rendering instruction, not a separate gate."
+    },
+    {
+      "line": "Copy the suffix, never paraphrase it: it names the files.",
+      "reason": "Describes how the round's `_coverage` ledger is worded and rendered (formatCoverageSuffix / coverageMissingNote in scripts/lib/coverage-format.mjs, wave INELIGIBLE wording in scripts/lib/audit/wave-eligibility.mjs); the wording and the ledger invariants are pinned by tests/coverage-surface.test.mjs, tests/wave-eligibility.test.mjs and tests/coverage-cluster-c-fixes.test.mjs. This skill line is a rendering instruction, not a separate gate."
     }
   ]
 }
