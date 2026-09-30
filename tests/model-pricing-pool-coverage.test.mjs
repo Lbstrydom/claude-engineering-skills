@@ -36,13 +36,15 @@ describe('model pricing — STATIC_POOL coverage (2026-09-23)', () => {
     }
   });
 
-  it('the user-facing claim that motivated the refresh: gpt-6-sol is cheaper than gpt-5.6-terra, and latest-gpt now resolves to it', () => {
+  it('the user-facing claim that motivated the refresh: gpt-6-sol is cheaper than gpt-5.6-terra, and latest-gpt resolves to its 6.1 successor at the same base rate', () => {
     _resetCatalogCache();
     const sol = priceFor('gpt-6-sol', { inputTokens: 1000 });
     const terra = priceFor('gpt-5.6-terra', { inputTokens: 1000 });
     assert.equal(sol.input, terra.input, '$2 in on both');
     assert.ok(sol.output < terra.output, `$${sol.output} out on gpt-6-sol vs $${terra.output} on gpt-5.6-terra`);
-    assert.equal(resolveModel('latest-gpt', { silent: true }), 'gpt-6-sol');
+    assert.equal(resolveModel('latest-gpt', { silent: true }), 'gpt-6.1-sol');
+    const sol61 = priceFor('gpt-6.1-sol', { inputTokens: 1000 });
+    assert.deepEqual([sol61.input, sol61.output], [sol.input, sol.output], 'gpt-6.1-sol keeps gpt-6-sol base rates (2026-09-29)');
   });
 
   it('two SKUs of one family never share a rate — astra vs sol vs luna at major 6', () => {

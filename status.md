@@ -69,6 +69,21 @@
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `.claude/skills/audit-plan/references/gemini-gate.md` and `.claude/skills/cycle/SKILL.md` both carry the new prose (grep confirmed). storyline itself REFUSED this sync (27 files diverged, pre-existing committed customizations unrelated to this change) — not verified there; ai-organiser and wine-cellar-app both reached cleanly.
 - **Result**: verified — the /cycle Step 7 blocked-handoff prose and the gemini-gate.md calibration note reached the consumer bundle intact (wine-cellar-app, ai-organiser). storyline unverified — sync REFUSED on pre-existing divergence, not this change's fault.
 
+## 2026-09-30 — Memory-health gate measures again; gpt-6.1-sol added to the offline pool
+
+### Changes
+- **`memory_health_metrics` stopped producing a reading** (09-24 and 09-29, `57014` at the 240s caller bound). Measured on the NAS store, idle: >600s twice as-is, 292s with the trigram probes on `audit_findings_detail500_trgm_idx`. The LATERAL probes were Seq Scans (planner cost ~1,100 on an 11,882-row table, ~2.6s/probe). New migration `20260929120000_memory_health_trgm_seqscan_off.sql`: `ALTER FUNCTION ... SET enable_seqscan = off` (body, other SET entries and ACL untouched). Applied to store `d5a9d07b91225a93`; `tests/fixtures/expected-schema.json` regenerated from a fresh replay (one config line).
+- `memory-health.mjs` RPC bound 240s → 480s; `maintenance-checks.mjs` gains a per-step `timeoutMs` (default unchanged at 5 min), memory-health gets 10 min. `tests/maintenance-checks.test.mjs` pins step budget ≥ RPC bound + 60s (seen failing on the old values); `tests/memory-health-cluster-space.test.mjs` asserts the GUC, the surviving config and the EXECUTE revoke on a live container (5/5).
+- `gpt-6.1-sol` added to `STATIC_POOL.openai` and the rate card ($2/$10, cached $0.10, 272K tier — read from OpenAI's pricing page 2026-09-29). `latest-gpt` resolves to it offline too; models:freshness HIGH cleared. Three tests that pinned `gpt-6-sol` updated.
+
+### Readings
+- memory-health end to end: 297s, AMBER, 1 of 3 triggers (semantic same-file cluster density 10.5 ≥ 5); fuzzy re-raise 1.9%, recurrence 1.8%. One trigger needs two consecutive weeks to act on.
+
+### Not done
+- No model-eval run for gpt-6.1-sol (spend-bearing; the live catalog was already routing audits to it).
+
+---
+
 ## 2026-09-29 — Concern-identity 7-day readout: hard-suppress fires, nothing tuned; `newConcern` now recorded
 
 ### Changes

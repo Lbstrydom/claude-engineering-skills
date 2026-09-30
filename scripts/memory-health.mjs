@@ -100,19 +100,22 @@ const THRESHOLDS = {
 };
 
 // Server-side bound on the metrics RPC. Sized against the constraint that
-// actually kills this check: maintenance-checks.mjs spawns it with a 5-minute
-// per-check budget, and a spawn kill surfaces as a bare `spawn ETIMEDOUT` with
-// no measurement and no diagnosis — which is how this gate sat silently
-// degraded (the RPC ran past 15 minutes on the NAS store). 240s leaves ~60s of
-// that budget for the semantic RPC, the friction section and rendering, so a
-// runaway is reported as a loud `57014 statement_timeout` (exit 2, infra
-// error) while still using the time the check really has. The migrations'
+// actually kills this check: the spawn budget maintenance-checks.mjs gives this
+// step (10 minutes since 2026-09-29), where a spawn kill surfaces as a bare
+// `spawn ETIMEDOUT` with no measurement and no diagnosis — which is how this
+// gate sat silently degraded (the RPC ran past 15 minutes on the NAS store).
+// Measured 2026-09-29 on the NAS store: 292s with the trigram probes on their
+// index (migration 20260929120000), so the old 240s bound could never be met.
+// 480s leaves ~2 minutes of the step budget for the semantic RPC, the friction
+// section and rendering, so a runaway is reported as a loud
+// `57014 statement_timeout` (exit 2, infra error) while still using the time
+// the check really has. The migrations'
 // own `SET statement_timeout` clause is decorative and cannot do this — see
 // the note in scripts/lib/db/rpc.mjs.
 // 0 is Postgres's own sentinel for "unlimited statement timeout" — exactly
 // the runaway this constant exists to prevent (audit R1-M3), so the
 // correctness floor is 1ms, not 0.
-const RPC_TIMEOUT_MS = numEnv('MEMORY_HEALTH_RPC_TIMEOUT_MS', 240_000, { min: 1, integer: true });
+const RPC_TIMEOUT_MS = numEnv('MEMORY_HEALTH_RPC_TIMEOUT_MS', 480_000, { min: 1, integer: true });
 
 function parseArgs(argv) {
   const args = { out: null, json: false };
@@ -515,7 +518,7 @@ async function main() {
   process.exit((evaluation.firedCount > 0 || friction.hardFail || friction.errored) ? 1 : 0);
 }
 
-export const _internals = { atomicWrite, evaluateClusterDensity, capNote, THRESHOLDS, numEnv, CONFIG_ERRORS };
+export const _internals = { atomicWrite, evaluateClusterDensity, capNote, THRESHOLDS, numEnv, CONFIG_ERRORS, RPC_TIMEOUT_MS };
 
 const isMain = (() => {
   try {

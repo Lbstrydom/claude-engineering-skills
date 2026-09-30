@@ -210,7 +210,11 @@ export const CHECKS = [
     key: 'memory-health', // formerly memory-health.yml -- Actions cron deleted 2026-09-13; this is its only runner here
     label: 'Findings-memory health gate',
     requiredEnv: ['AUDIT_DB_URL'],
-    steps: [{ script: 'memory-health.mjs', args: [] }],
+    // Measured 292s on the NAS store (2026-09-29) with the trigram probes on
+    // their index: over the default 5-minute step budget. memory-health.mjs
+    // bounds its own RPC at 480s and needs headroom for the semantic RPC and
+    // rendering. The maintenance run is backgrounded, so this delays no push.
+    steps: [{ script: 'memory-health.mjs', args: [], timeoutMs: 10 * 60 * 1000 }],
   },
   {
     // Ad hoc — no dedicated workflow file; a read-only weekly report
@@ -449,6 +453,9 @@ export function positiveIntEnv(name, fallback) {
  * in via ESM import instead of spawned. Every step runs regardless of a
  * prior step's exit (matches the workflow's per-step `|| true` semantics).
  */
+/** Per-step spawn budget unless a step declares its own `timeoutMs`. */
+export const DEFAULT_STEP_TIMEOUT_MS = 5 * 60 * 1000;
+
 export function runCheck(check) {
   // Checked BEFORE requiredEnv: a source-repo-only check's script is excluded
   // from the sync manifest on purpose (see check-accepted-debt.mjs's own
@@ -463,13 +470,13 @@ export function runCheck(check) {
     return { key: check.key, label: check.label, status: 'skipped', reason: `missing env: ${missing.join(', ')}` };
   }
 
-  const stepResults = check.steps.map(({ script, args }) => {
+  const stepResults = check.steps.map(({ script, args, timeoutMs = DEFAULT_STEP_TIMEOUT_MS }) => {
     const scriptPath = path.join(SCRIPTS_DIR, script);
     const result = spawnSync(process.execPath, [scriptPath, ...args], {
       cwd: REPO_ROOT,
       encoding: 'utf-8',
       env: process.env,
-      timeout: 5 * 60 * 1000,
+      timeout: timeoutMs,
     });
     // Round-1 audit M3: capture BOTH streams (a bare `||` discarded stderr —
     // usually the actionable part — whenever stdout was non-empty), plus a

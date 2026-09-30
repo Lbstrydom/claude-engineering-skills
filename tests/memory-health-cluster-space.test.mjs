@@ -129,6 +129,19 @@ describe('memory_health_semantic_cluster — pairs are scoped to ONE vector spac
     assert.equal(Number(r.coverage.pct), 50);
   });
 
+  it('memory_health_metrics keeps its trigram probes off a Seq Scan, and the SET left the other config and ACL alone (20260929120000)', async () => {
+    // Asserted against pg_proc: the function's probes ran >600s on a Seq Scan
+    // and 292s on the GIN index (NAS store, 2026-09-29).
+    const { rows } = await pool.query(
+      `SELECT proconfig, has_function_privilege('anon', p.oid, 'EXECUTE') AS anon_exec
+         FROM pg_proc p WHERE proname = 'memory_health_metrics'`);
+    assert.equal(rows.length, 1, 'one signature');
+    assert.ok(rows[0].proconfig.includes('enable_seqscan=off'), `proconfig: ${rows[0].proconfig}`);
+    assert.ok(rows[0].proconfig.some((c) => c.startsWith('search_path=')), 'search_path pin must survive');
+    assert.ok(rows[0].proconfig.some((c) => c.startsWith('statement_timeout=')), 'statement_timeout must survive');
+    assert.equal(rows[0].anon_exec, false, 'the EXECUTE revoke must survive');
+  });
+
   it('CREATE OR REPLACE kept the search_path pin AND the ACL', async () => {
     // Postgres resets the whole proconfig array and the ACL on replacement, so
     // a migration that forgets to re-state them silently drops a security
