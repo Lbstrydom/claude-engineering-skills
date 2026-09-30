@@ -1,0 +1,5 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  renderer -> C:\repo\services\renderer\bin\Debug\net8.0-windows\renderer.dll
+C:\repo\services\renderer\tests\LayoutTests.cs(231,13): warning xUnit2029: Do not use Assert.Empty to check if a value does not exist in a collection. Use Assert.DoesNotContain instead. (https://xunit.net/xunit.analyzers/rules/xUnit2029) [C:\repo\services\renderer\tests\RendererSpecs.csproj]
+  RendererSpecs -> C:\repo\services\renderer\tests\bin\Debug\net8.0-windows\RendererSpecs.dll

@@ -25,11 +25,8 @@
 
 import path from 'node:path';
 import { resolveReferenceExtension } from './plan-paths.mjs';
-
-function extensionLabel(file) {
-  const ext = path.extname(file).replace(/^\./, '').toLowerCase();
-  return ext || '(no extension)';
-}
+import { classifyFileCoverage } from './language-profiles.mjs';
+import { extensionLabel } from './file-taxonomy.mjs';
 
 /**
  * Is an untracked file named anywhere in the plan text? Matched on the
@@ -52,25 +49,38 @@ function planReferences(planText, file) {
  * @param {string[]} [input.untracked] - which of those are untracked
  * @param {string|null} [input.planText] - the plan content, for the untracked warning
  * @returns {{auditable: string[], ignored: string[], ignoredByExtension: Record<string, number>,
+ *   nonCode: string[], uncovered: string[], uncoveredByExtension: Record<string, number>,
  *   untrackedUnreferenced: string[]}}
+ *   `ignored` = `nonCode` + `uncovered`. They are split because they mean different things:
+ *   `nonCode` is an EXPECTED exclusion (a PNG, a lockfile); `uncovered` is an UNRECOGNISED
+ *   file type that was changed and not audited, which must never read as expected.
  */
 export function partitionDiffScope({ files, untracked = [], planText = null }) {
   const auditable = [];
   const ignored = [];
+  const nonCode = [];
+  const uncovered = [];
   const ignoredByExtension = {};
+  const uncoveredByExtension = {};
   for (const f of files || []) {
     if (typeof f !== 'string' || f === '') continue;
     if (resolveReferenceExtension(f) === null) {
       ignored.push(f);
       const label = extensionLabel(f);
       ignoredByExtension[label] = (ignoredByExtension[label] || 0) + 1;
+      if (classifyFileCoverage(f).class === 'uncovered') {
+        uncovered.push(f);
+        uncoveredByExtension[label] = (uncoveredByExtension[label] || 0) + 1;
+      } else {
+        nonCode.push(f);
+      }
       continue;
     }
     auditable.push(f);
   }
   const untrackedSet = new Set(untracked);
   const untrackedUnreferenced = auditable.filter((f) => untrackedSet.has(f) && !planReferences(planText, f));
-  return { auditable, ignored, ignoredByExtension, untrackedUnreferenced };
+  return { auditable, ignored, ignoredByExtension, nonCode, uncovered, uncoveredByExtension, untrackedUnreferenced };
 }
 
 /**
@@ -81,12 +91,20 @@ export function partitionDiffScope({ files, untracked = [], planText = null }) {
  */
 export function formatDiffScopeNotices(p) {
   const lines = [];
-  if (p.ignored.length > 0) {
-    const groups = Object.entries(p.ignoredByExtension)
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .map(([ext, n]) => `${ext}: ${n}`)
-      .join(', ');
-    lines.push(`  [scope] ${p.ignored.length} non-code file(s) ignored (${groups})`);
+  const group = (byExt) => Object.entries(byExt)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([ext, n]) => `${ext}: ${n}`)
+    .join(', ');
+  const nonCodeByExt = {};
+  for (const f of p.nonCode || []) { const l = extensionLabel(f); nonCodeByExt[l] = (nonCodeByExt[l] || 0) + 1; }
+  if ((p.nonCode || []).length > 0) {
+    lines.push(`  [scope] ${p.nonCode.length} non-code file(s) ignored (${group(nonCodeByExt)})`);
+  }
+  if ((p.uncovered || []).length > 0) {
+    // NOT "non-code": an unrecognised file type is a coverage GAP, and calling it an
+    // expected exclusion is what let a consumer's C# go unaudited without a word.
+    lines.push(`  [scope] WARNING: ${p.uncovered.length} changed file(s) of unrecognised type were NOT audited (${group(p.uncoveredByExtension)}) — `
+      + 'register the type in scripts/lib/file-taxonomy.mjs (--files does not admit it)');
   }
   if (p.untrackedUnreferenced.length > 0) {
     const shown = p.untrackedUnreferenced.slice(0, 5).join(', ');

@@ -34,7 +34,7 @@ import { listOpenLifecycle, readLifecycle, reconcileLifecycle } from './event-wi
 // Cluster-B audit-code R2/M2 fix: `.jsx` was missing — a React app's JSX
 // components (exactly the shape of the wine-oracle fixture's own source
 // tree) were silently excluded from corpus selection entirely.
-const SOURCE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.html', '.template']);
+const SOURCE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.mts', '.cts', '.tsx', '.html', '.template']);
 const PER_FILE_BYTE_CAP = 1 * 1024 * 1024; // 1 MiB, matches this repo's spawnSync maxBuffer convention
 const DEFAULT_TOTAL_BUDGET_MB = 200;
 
@@ -135,6 +135,11 @@ function isGenerated(relPath) {
 function isAllowedExtension(relPath) {
   const ext = path.extname(relPath).toLowerCase();
   return SOURCE_EXTENSIONS.has(ext);
+}
+
+/** Would this wave read `relPath` at all? — the ONE predicate wave-eligibility measures against. */
+export function isEventWiringSourcePath(relPath) {
+  return isAllowedExtension(relPath);
 }
 
 /**

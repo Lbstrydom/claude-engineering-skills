@@ -23,6 +23,7 @@ import { buildAuditTranscript, readRoundResult } from './lib/audit/transcript.mj
 import { isClaudeAvailable } from './lib/anthropic-client.mjs';
 import { archiveTranscript, formatArchiveOutcome, isArchiveFailure } from './lib/audit/transcript-archive.mjs';
 import { pathToFileURL } from 'node:url';
+import { formatCoverageSuffix, coverageMissingNote } from './lib/coverage-format.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
 
@@ -87,7 +88,10 @@ function countFindings(results) {
   // audit. Folding it into the EXISTING `failed` flag rather than adding a
   // second guard keeps ONE predicate for "this round is not evidence".
   const failed = results.verdict === 'INCOMPLETE';
-  return { high, medium, low, total: findings.length, failed };
+  // The round's own coverage verdict, carried so the banner can say what was NOT audited. It never changes
+  // `failed`: a coverage gate `fail` already makes the verdict INCOMPLETE upstream (finding-assembly).
+  const coverage = results._coverage ?? null;
+  return { high, medium, low, total: findings.length, failed, coverage };
 }
 
 function isConverged(counts) {
@@ -365,6 +369,10 @@ async function main() {
 
       if (stableCount >= 1 || round >= args.maxRounds) {
         console.log(`\n${G}Converged${X} after ${round} round(s). H:${counts.high} M:${counts.medium}`);
+        // A converged run that left changed source unaudited must not read as a full audit.
+        const covSuffix = formatCoverageSuffix(counts.coverage);
+        if (covSuffix) console.log(`${Y}  NOT a full audit of the change — ${covSuffix}${X}`);
+        else if (!counts.coverage) console.log(`${Y}  ${coverageMissingNote}${X}`);
         // No `r2SkipReason` stamp here (removed 2026-09-07). Why the run stopped
         // is already recorded — durably and per-round — by
         // `durableWrite('audit.convergenceState')` in lib/audit/run-persistence.mjs,

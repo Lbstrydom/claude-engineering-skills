@@ -552,3 +552,21 @@ describe('classifyPath — anchors are load-bearing, in both directions', () => 
     assert.notEqual(classifyPath('key/index.mjs'), 'sensitive');
   });
 });
+
+import { classifyPath as _classifyDrive } from '../scripts/lib/sensitive-paths.mjs';
+import { test as _testDrive } from 'node:test';
+import _assertDrive from 'node:assert/strict';
+
+_testDrive('a slash-prefixed drive path (/C:/…) classifies the same as C:/… (audit-code cluster A R2-M7)', () => {
+  for (const p of ['C:/repo/.env', '/C:/repo/.env', 'C:\\repo\\.env', '/c:/repo/secrets/db.yaml']) {
+    _assertDrive.equal(_classifyDrive(p), 'sensitive', p);
+  }
+  _assertDrive.equal(_classifyDrive('/C:/repo/src/Token.cs'), null);
+});
+
+_testDrive('a dot-prefixed credential DIRECTORY is sensitive, not only a dot-prefixed file name (audit-code cluster A R3-H3)', () => {
+  for (const p of ['.secrets/key.txt', 'deploy/.credentials/db.yaml', '.secrets_backup/x', '.credentials/token']) {
+    _assertDrive.equal(_classifyDrive(p), 'sensitive', p);
+  }
+  _assertDrive.equal(_classifyDrive('src/.sec/notes.md'), null, 'a dot-dir that merely starts like the word');
+});

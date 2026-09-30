@@ -145,6 +145,13 @@ export async function runArchitecturePass({ openai, repoRoot, focusBlock, planCo
   const report = await runArchIntentAnalysis({ repoPath: repoRoot, stackKinds, domainMap });
   const derivedState = deriveArchState(report);
 
+  // Every detected stack unsupported (e.g. a C#-only repo: no adapter exists) means NOTHING was analysed. The inventory
+  // found no unmapped source files only because none of its extensions are ones an adapter reads — reporting that as
+  // ANALYZED_CLEAN is a clean bill of health for code nobody looked at.
+  if (derivedState === 'SKIPPED_UNSUPPORTED_STACK') {
+    return { state: 'SKIPPED_UNSUPPORTED_STACK', result: emptyResult, archReport: null };
+  }
+
   // Stderr summary so operators see the mechanical findings even when LLM
   // doesn't fire (clean) or fails (fallback).
   process.stderr.write(`  [architecture] mechanical: ${report.violations.length} violations, ${report.unmappedFiles.length} unmapped, ${report.deadIntent.length} dead, ${report.perStackResults.length} stacks\n`);

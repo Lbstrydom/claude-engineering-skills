@@ -24,6 +24,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseResultPath } from '../finalize-outcomes.mjs';
+import { projectCoverageForReview } from './file-coverage.mjs';
 
 /**
  * Modes `gemini-review.mjs --mode` accepts. A plan transcript must carry NO
@@ -103,7 +104,13 @@ export function readRoundResult(resultPath) {
   // `round` key present-but-undefined on the payload clobbered the
   // filename-derived value that the `??` chain had just computed, so the
   // precedence this line states was not the precedence it applied.
-  return { ...parsed, round: parsed.round ?? round ?? null };
+  // The round JSON reaches the final reviewer VERBATIM, so a per-file ledger of a large diff would be sent whole.
+  // The reviewer gets a projection instead (every file short of full coverage, capped, plus a digest of the full
+  // ledger); counts, status and gate are the canonical ones, computed before projection.
+  const projected = parsed._coverage && Array.isArray(parsed._coverage.files)
+    ? { ...parsed, _coverage: projectCoverageForReview(parsed._coverage) }
+    : parsed;
+  return { ...projected, round: parsed.round ?? round ?? null };
 }
 
 /**
@@ -170,9 +177,14 @@ export function buildAuditTranscript({
     : codeFiles ?? [...new Set(rounds.flatMap(r => (Array.isArray(r.code_files) ? r.code_files : [])))];
   const resolvedChanged = isPlan ? [] : [...new Set(changedFiles.filter(Boolean))];
 
+  // Project here too, not only in readRoundResult: an in-memory round handed straight to this assembler would otherwise
+  // carry its full per-file ledger to the reviewer. (Projecting a projection is a no-op.)
+  const projectedRounds = rounds.map((r) => (r && r._coverage && Array.isArray(r._coverage.files)
+    ? { ...r, _coverage: projectCoverageForReview(r._coverage) } : r));
+
   const transcript = {
     audit_mode: auditMode,
-    rounds,
+    rounds: projectedRounds,
     code_files: resolvedCodeFiles,
     changed_files: resolvedChanged,
     _note: NOTE,

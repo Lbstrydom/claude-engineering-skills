@@ -1387,6 +1387,7 @@ design + the measured reason `converged` carries no audited-tree trailer:
 - Use `require()` — project is ESM-only
 - Use `import 'dotenv/config'` — cwd-only; import `lib/load-env.mjs` instead
 - Create new Anthropic/OpenAI client instances per call — reuse the client created in `main()`
+- Hand-keep a "which files are code" extension list — derive from `file-taxonomy.mjs` ([contract](docs/reference/file-coverage.md))
 
 ## Accepted Technical Debt
 

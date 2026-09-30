@@ -70,6 +70,7 @@ import { detectOrphansIntroduced } from './lib/audit/orphan-introduced.mjs';
 import { resolveDiffScope } from './lib/audit/diff-scope-resolver.mjs';
 import { partitionDiffScope, formatDiffScopeNotices } from './lib/diff-scope-admission.mjs';
 import { processFindings, formatAuditSummaryLine } from './lib/audit/findings-pipeline.mjs';
+import { buildChangeRecord } from './lib/audit/change-record.mjs';
 import { emitOrphanRunMetrics } from './lib/audit/orphan-metrics.mjs';
 import { PlanFpTracker } from './lib/plan-fp-tracker.mjs';
 import {
@@ -374,7 +375,7 @@ function printAuditResult(mergedResult, { outFile, jsonMode }) {
   const {
     verdict, findings: allFindings = [], _pass_timings: passTimings = {},
     _usage: totalUsage = {}, _failed_passes: failedPasses = [],
-    _passes_total: passesTotal = null,
+    _passes_total: passesTotal = null, _coverage: coverage = null,
   } = mergedResult;
   const high = allFindings.filter(f => f.severity === 'HIGH').length;
   const medium = allFindings.filter(f => f.severity === 'MEDIUM').length;
@@ -382,7 +383,7 @@ function printAuditResult(mergedResult, { outFile, jsonMode }) {
   const totalLatencyMs = totalUsage.latency_ms ?? 0;
 
   const summaryLine = formatAuditSummaryLine({
-    verdict, high, medium, low, failedPasses, passesTotal, latencyMs: totalLatencyMs,
+    verdict, high, medium, low, failedPasses, passesTotal, latencyMs: totalLatencyMs, coverage,
   });
   if (outFile) {
     writeOutput(mergedResult, outFile, summaryLine);
@@ -807,6 +808,8 @@ async function main() {
       fileFilter, scopeMode, excludePatterns, applyExclusions,
     });
     let effectiveFileFilter = scopeResolution.files;
+    // VCS change record + policy exclusions for `_coverage`; stay null for an explicit --files/--changed scope (no VCS record).
+    let coverageChanged = null, coverageExcluded = null;
     if (scopeResolution.source !== 'allowlist' && scopeMode === 'diff') {
       try {
         const { execFileSync } = await import('node:child_process');
@@ -864,9 +867,9 @@ async function main() {
           encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000
         }).trim();
         const untrackedFiles = untracked ? untracked.split('\n').filter(Boolean) : [];
-        let candidates = [...new Set([...diffChanged, ...untrackedFiles])]
-          .filter(f => allowInfraScope || !isAuditInfraFile(f));
-        if (excludePatterns.length > 0) candidates = applyExclusions(candidates, excludePatterns);
+        const rec = buildChangeRecord({ diffChanged, untrackedFiles, baseSha: snapshot.baseSha, allowInfraScope, excludePatterns, applyExclusions });
+        coverageChanged = rec.changed; coverageExcluded = rec.excluded;
+        let candidates = rec.candidates;
         // Non-code files never reach the count or changedFiles (lib/diff-scope-admission.mjs).
         const admission = partitionDiffScope({ files: candidates, untracked: untrackedFiles, planText: planContent });
         for (const line of formatDiffScopeNotices(admission)) process.stderr.write(`${line}\n`);
@@ -934,7 +937,7 @@ async function main() {
       openaiConfig.reasoning === 'high' ? codeContextChars * 4 : 0);
     // allowTiered: true — main() is the ONE production CLI entrypoint allowed
     // to execute the tiered pipeline / shadow (see buildAuditRunContext).
-    const codeResult = await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { passFilter, fileFilter: effectiveFileFilter, round, ledgerFile: ledgerPath, diffFile, changedFiles, auditBaseCommit: diffBase, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, allowInfraScope, allowTiered: true, commitSha: ctxCommitSha, workingTreeDirty: ctxWorkingTreeDirty });
+    const codeResult = await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { passFilter, fileFilter: effectiveFileFilter, coverageChanged, coverageExcluded, round, ledgerFile: ledgerPath, diffFile, changedFiles, auditBaseCommit: diffBase, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, allowInfraScope, allowTiered: true, commitSha: ctxCommitSha, workingTreeDirty: ctxWorkingTreeDirty });
     // An INCOMPLETE run measured less than the change, and exiting 0 made that
     // indistinguishable from a pass to anything checking `$?` (2026-09-04
     // consumer report). 3, not 1: 1 already means "the CLI itself errored" on

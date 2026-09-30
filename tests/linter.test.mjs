@@ -460,7 +460,7 @@ describe('runTool with scopeToFiles', () => {
       return '[]';
     });
     const result = runTool(scopedEslintConfig, ['deleted.js'], 'js');
-    assert.equal(result.status, 'no_tool');
+    assert.equal(result.status, 'not_applicable');
     assert.equal(result.findings.length, 0);
     assert.equal(invoked, false, 'execFileSync must not run the tool with an empty scoped file set');
   });

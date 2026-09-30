@@ -19,6 +19,7 @@
  * @module scripts/lib/final-review/envelope
  */
 
+import { formatCoverageSuffix, shortCoverageFiles } from '../coverage-format.mjs';
 /**
  * Total ceiling for reduced envelopes, in CHARACTERS.
  *
@@ -83,6 +84,40 @@ function renderTranscript(transcript) {
 }
 
 /**
+ * The reviewer-facing coverage note, derived from the LATEST round in the transcript that carries a `_coverage`.
+ * Empty (so the envelope is byte-identical to before) when there is no coverage record, or coverage is complete
+ * and nothing was excluded: a clean, fully-covered run adds nothing. Otherwise it says, in plain words, which part
+ * of the change the audit did NOT examine, so an APPROVE cannot be read as covering it.
+ *
+ * @param {object|null} transcript
+ * @returns {string}
+ */
+export function coverageBlockFor(transcript) {
+  const rounds = transcript && typeof transcript === 'object' && Array.isArray(transcript.rounds) ? transcript.rounds : [];
+  const cov = [...rounds].reverse().map((r) => r && r._coverage).find(Boolean);
+  if (!cov) return '';
+  const suffix = formatCoverageSuffix(cov);
+  if (!suffix && cov.gate === 'pass') return '';
+  const short = shortCoverageFiles(cov);
+  const listed = short.slice(0, 25).map((f) => `- ${f.path} — ${f.outcome}${f.outcome === 'audited' ? ` (${f.read?.state ?? 'read state unknown'})` : ''}${f.class === 'uncovered' ? ' [unrecognised file type]' : ''}`);
+  // The projection holds only a CAPPED subset of the short files; the real total is what it recorded, not its length.
+  const shortTotal = cov.filesProjection?.shortTotal ?? short.length;
+  const listedCount = Math.min(25, short.length);
+  const more = shortTotal > listedCount ? [`- … and ${shortTotal - listedCount} more`] : [];
+  return [
+    '## Audit Coverage — which changed files the audit actually examined',
+    '',
+    `Coverage status: **${cov.status}** (gate: ${cov.gate}) — ${suffix || 'no gaps listed'}`,
+    `${cov.changedTotal ?? '?'} changed file(s); ${cov.counts?.required ?? '?'} changed source file(s) required review, ${cov.counts?.examined ?? '?'} examined in full.`,
+    '',
+    ...(listed.length ? ['Files the audit did NOT fully examine:', ...listed, ...more, ''] : []),
+    'Treat every file listed above as UNREVIEWED: nothing in the deliberation transcript below verifies it. Say in your',
+    'overall_reasoning which part of the change was unexamined, and do not describe unexamined code as verified.',
+    'A coverage gap is not by itself a release-blocking finding.',
+  ].join('\n');
+}
+
+/**
  * Assemble the envelope string from already-rendered blocks.
  *
  * THIS IS THE BYTE-IDENTITY SURFACE. The array below is a verbatim transcription
@@ -115,6 +150,8 @@ export function assembleEnvelope({
     repoContextBlock ? '---' : '',
     scopeBlock,
     scopeBlock ? '---' : '',
+    coverageBlockFor(transcript),
+    coverageBlockFor(transcript) ? '---' : '',
     '## Audit Transcript (Claude-GPT Deliberation)',
     renderTranscript(transcript),
     '',

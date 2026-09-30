@@ -14,6 +14,7 @@ import { detectOrphansIntroduced } from './orphan-introduced.mjs';
 import { resolveDiffScope } from './diff-scope-resolver.mjs';
 import { processFindings } from './findings-pipeline.mjs';
 import { emitOrphanRunMetrics } from './orphan-metrics.mjs';
+import { ineligibleReason, eligibilityNote, waveRecord } from './wave-eligibility.mjs';
 
 /**
  * Convert a raw orphan-introduced finding to the standard FindingSchema shape
@@ -147,6 +148,17 @@ export async function runOrphanIntroducedPass({ archReport, repoRoot, baseRef, h
     return { state: scope.state, result: emptyResult };
   }
 
+  // The resolver pre-filters to JS/TS: a change of ONLY other files reaches here with nothing to analyse. That is
+  // INELIGIBLE — never the ANALYZED_CLEAN the detector would go on to report over an empty change set.
+  const el = scope.eligibility && scope.eligibility.changed > 0
+    ? { ...scope.eligibility, state: scope.eligibility.eligible === 0 ? 'ineligible' : (scope.eligibility.eligible < scope.eligibility.changed ? 'partial' : 'full') }
+    : null;
+  if (el && el.state === 'ineligible') {
+    const summary = `INELIGIBLE — ${ineligibleReason(el, 'js/ts')}`;
+    process.stderr.write(`  [orphan-introduced] ${summary}\n`);
+    return { state: 'SKIPPED_INELIGIBLE', result: { ...emptyResult, result: { ...emptyResult.result, summary }, _wave: waveRecord(el, 'js/ts') } };
+  }
+
   // Inherit ANALYZED_PARTIAL from upstream arch state (Gemini-R2/M2 fix).
   const archDerived = deriveArchState(archReport);
   if (archDerived === 'ANALYZED_PARTIAL') scope.state = 'ANALYZED_PARTIAL';
@@ -179,10 +191,12 @@ export async function runOrphanIntroducedPass({ archReport, repoRoot, baseRef, h
     : `${findings.length} orphan-introduced finding(s) surfaced (${detector.rawFindings.length} raw, ${suppressed.length} suppressed).`;
 
   const latencyMs = Date.now() - startedAt;
+  const eNote = el ? eligibilityNote(el, 'js/ts') : '';
   return {
     state: detector.state,
     result: {
-      result: { pass_name: 'orphan-introduced', findings, summary },
+      _wave: waveRecord(el, 'js/ts'),
+      result: { pass_name: 'orphan-introduced', findings, summary: eNote ? `${summary} (${eNote})` : summary },
       usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: latencyMs },
       latencyMs,
     },

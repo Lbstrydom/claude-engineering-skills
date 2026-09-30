@@ -73,6 +73,12 @@ export const SKILLS = [
   {
     skill: '/audit-code',
     evaluate: (p) => {
+      // `stack` is the coarse 4-value enum: a C#-only repo is `unknown` there but carries `csharp` in `stackKinds`,
+      // and /audit-code reads C# (profile `cs`), so name it rather than report "no recognised stack".
+      const kinds = (p.stackKinds || []).filter((k) => k === 'csharp');
+      if (p.stack === 'unknown' && kinds.length > 0) {
+        return { label: 'FITS', reason: `Multi-pass code audit for ${kinds.join(', ')}.` };
+      }
       if (p.stack === 'unknown') {
         return {
           label: 'PARTIAL',
@@ -116,7 +122,7 @@ export const SKILLS = [
       // carries .java" — that reports plain `js-ts`, clears the gate, and has
       // its Java half dropped exactly like a mixed repo's Python half. Check
       // stackKinds so the coarser enum's blind spot doesn't read as FITS.
-      const unindexed = (p.stackKinds || []).filter(k => k === 'python' || k === 'java');
+      const unindexed = (p.stackKinds || []).filter(k => k === 'python' || k === 'java' || k === 'csharp');
       if (p.stack === 'js-ts' && unindexed.length === 0) {
         return { label: 'FITS', reason: 'Symbol extractor supports js-ts.' };
       }

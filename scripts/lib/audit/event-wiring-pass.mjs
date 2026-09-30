@@ -10,6 +10,8 @@
 
 import path from 'node:path';
 import { processFindings } from './findings-pipeline.mjs';
+import { isEventWiringSourcePath } from './event-wiring-corpus.mjs';
+import { waveEligibility, ineligibleReason, eligibilityNote, waveRecord } from './wave-eligibility.mjs';
 import {
   detectEventWiringAsymmetry, resolveEventWiringScopeRefs, buildEventWiringDiffScope, loadEventWiringConfig,
 } from './event-wiring-corpus.mjs';
@@ -104,7 +106,7 @@ export async function runEventWiringSymmetryPass({ repoRoot, auditBaseCommit, ru
     // scanning with built-ins-only, which would silently under-scan a repo
     // whose listeners are entirely behind a custom wrapper.
     process.stderr.write(`  [event-wiring] invalid config, skipping wave: ${err.message}\n`);
-    return { state: 'ERROR', result: { ...emptyResult, result: { ...emptyResult.result, summary: `invalid config: ${err.message}` } } };
+    return { state: 'ERROR', result: { ...emptyResult, result: { ...emptyResult.result, summary: `invalid config: ${err.message}` }, _wave: waveRecord(null, 'js/ts/html', 'errored', `invalid config: ${err.message}`) } };
   }
 
   const { baseRef, headRef } = resolveEventWiringScopeRefs({ auditBaseCommit });
@@ -113,7 +115,16 @@ export async function runEventWiringSymmetryPass({ repoRoot, auditBaseCommit, ru
     diffScope = buildEventWiringDiffScope({ repoPath: repoRoot, baseRef, headRef });
   } catch (err) {
     process.stderr.write(`  [event-wiring] diff-scope build error: ${err.message}\n`);
-    return { state: 'ERROR', result: { ...emptyResult, result: { ...emptyResult.result, summary: `diff-scope: ${err.message}` } } };
+    return { state: 'ERROR', result: { ...emptyResult, result: { ...emptyResult.result, summary: `diff-scope: ${err.message}` }, _wave: waveRecord(null, 'js/ts/html', 'errored', `diff-scope: ${err.message}`) } };
+  }
+
+  // Measured on the diff this wave was actually handed: a change made of files it cannot read is INELIGIBLE, not
+  // "ANALYZED_CLEAN — no asymmetries" (which is what it printed for a C#-only change, having read nothing).
+  const eligibility = waveEligibility((diffScope.changedFiles || []).map((f) => f.path), isEventWiringSourcePath);
+  if (eligibility.state === 'ineligible') {
+    const summary = `INELIGIBLE — ${ineligibleReason(eligibility, 'js/ts/html')}`;
+    process.stderr.write(`  [event-wiring] ${summary}\n`);
+    return { state: 'SKIPPED_INELIGIBLE', result: { ...emptyResult, result: { ...emptyResult.result, summary }, _wave: waveRecord(eligibility, 'js/ts/html') } };
   }
 
   const ledgerPath = path.join(repoRoot, '.audit', 'event-wiring-ledger.json');
@@ -132,7 +143,7 @@ export async function runEventWiringSymmetryPass({ repoRoot, auditBaseCommit, ru
     // against (see the try/catch around `buildEventWiringDiffScope` above).
     // A mechanical detector degrading to ERROR must never take the run down.
     process.stderr.write(`  [event-wiring] detector error: ${err.message}\n`);
-    return { state: 'ERROR', result: { ...emptyResult, result: { ...emptyResult.result, summary: `detector: ${err.message}` } } };
+    return { state: 'ERROR', result: { ...emptyResult, result: { ...emptyResult.result, summary: `detector: ${err.message}` }, _wave: waveRecord(eligibility, 'js/ts/html', 'errored', `detector: ${err.message}`) } };
   }
 
   if (detectorOut.partial) {
@@ -142,7 +153,7 @@ export async function runEventWiringSymmetryPass({ repoRoot, auditBaseCommit, ru
     // `learningWritesAllowed` this function was passed (an earlier draft
     // left this write unconditional, unlike orphan's short-circuit emit —
     // fixed so an observation-only shadow run can't double-count a commit).
-    return { state: 'ANALYZED_PARTIAL', result: { ...emptyResult, result: { ...emptyResult.result, summary: `partial scan — ${detectorOut.counters.skippedFiles} file(s) skipped` } } };
+    return { state: 'ANALYZED_PARTIAL', result: { ...emptyResult, result: { ...emptyResult.result, summary: `partial scan — ${detectorOut.counters.skippedFiles} file(s) skipped` }, _wave: waveRecord(eligibility, 'js/ts/html', 'unavailable', `partial corpus — ${detectorOut.counters.skippedFiles} file(s) skipped`) } };
   }
 
   // Post-processing pipeline (fingerprint + ledger-suppress) — same shared
@@ -159,10 +170,12 @@ export async function runEventWiringSymmetryPass({ repoRoot, auditBaseCommit, ru
     : `${findings.length} event-wiring-symmetry finding(s) surfaced (${detectorOut.findings.length} raw, ${suppressed.length} suppressed).`;
 
   const latencyMs = Date.now() - startedAt;
+  const note = eligibilityNote(eligibility, 'js/ts/html');
   return {
     state,
     result: {
-      result: { pass_name: 'event-wiring-symmetry', findings, summary },
+      _wave: waveRecord(eligibility, 'js/ts/html'),
+      result: { pass_name: 'event-wiring-symmetry', findings, summary: note ? `${summary} (${note})` : summary },
       usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: latencyMs },
       latencyMs,
     },

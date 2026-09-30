@@ -1,23 +1,23 @@
 # Requirements Map — claude-engineering-skills
 
-_Generated from `.requirements/ledger.json` — 4238 requirement(s) across 606 file(s). Do not hand-edit; regenerate with `node scripts/requirements.mjs render`._
+_Generated from `.requirements/ledger.json` — 4292 requirement(s) across 610 file(s). Do not hand-edit; regenerate with `node scripts/requirements.mjs render`._
 
 ## At a glance
 
 ```mermaid
 pie title Active invariants by kind
   "security" : 56
-  "safety" : 127
-  "correctness" : 160
+  "safety" : 130
+  "correctness" : 162
   "behavioural" : 44
   "persistence" : 66
 ```
 
 | Status | Count |
 |---|---|
-| 🟢 active — enforced by /audit-code | 453 |
+| 🟢 active — enforced by /audit-code | 458 |
 | 🟡 needs-review — awaiting your call | 33 |
-| ⚪ inferred-only — refine backlog | 3752 |
+| ⚪ inferred-only — refine backlog | 3801 |
 
 ## 🟡 Needs review (33)
 
@@ -120,7 +120,7 @@ pie title Active invariants by kind
 | `REQ-security-eaac6be2` | Persisted provider-readiness messages and codes must be redacted before classification results are returned, and redaction failure must produce the fixed [REDACTED:redaction-failed] marker rather than | scripts/lib/audit/provider-readiness.mjs |
 | `REQ-security-ec84be21` | Live navigation target normalization must exclude mailto, tel, javascript, bare same-page hash, and cross-origin absolute links from internal navigation destinations. | scripts/lib/nav/verify.mjs |
 
-### safety (127)
+### safety (130)
 
 | ID | Assertion | Governs |
 |---|---|---|
@@ -132,6 +132,7 @@ pie title Active invariants by kind
 | `REQ-safety-07cf53f7` | Failures to initialize, lock, append, or release the orphan-metrics file are reported to stderr and must not cause either metrics-emission function to reject or abort the audit. | scripts/lib/audit/orphan-metrics.mjs |
 | `REQ-safety-084f5d4e` | Network-source automatic capture wait overrides must be positive integers no greater than 30000 milliseconds. | scripts/lib/persona-test/schemas.mjs |
 | `REQ-safety-0b7d751b` | Scored manifest arms must execute sequentially rather than concurrently. | scripts/lib/model-eval/manifest-driver.mjs |
+| `REQ-safety-0bb9365d` | Outcome selection prioritizes deletion, infrastructure exclusion, user exclusion, and sensitivity before admission or successful render evidence. | scripts/lib/audit/file-coverage.mjs |
 | `REQ-safety-0d908809` | A valid Stage 1 dismissal of a HIGH-severity or omission-type candidate must be escalated for Stage 2 review rather than mechanically dismissed. | scripts/lib/audit/stage1-triage.mjs, scripts/lib/audit/final-adjudication.mjs |
 | `REQ-safety-0f44caf0` | A clean adjacency result must require at least one enumerated container, at least one judged statement, and no incompleteness records. | scripts/lib/audit/adjacency-state.mjs |
 | `REQ-safety-11516d2d` | Record-time semantic suppression failures, missing comparison text, embedding failures, and nearest-neighbour query failures must retain the candidate finding rather than suppress it. | scripts/lib/semantic-suppression.mjs |
@@ -143,6 +144,7 @@ pie title Active invariants by kind
 | `REQ-safety-1c049d78` | A delete with an expected content hash must be skipped and reported as a conflict when the existing target's first twelve SHA-256 hex characters differ from that expected hash. | scripts/lib/install/transaction.mjs |
 | `REQ-safety-2136a313` | Arm-eval sessions must refuse execution without an explicit budget cap and must skip execution when cloud storage is disabled. | scripts/lib/arm-eval/run.mjs |
 | `REQ-safety-21b4ce06` | Unsupported file extensions must resolve to the explicit "unknown" language profile rather than defaulting to JavaScript or another supported language. | scripts/lib/language-profiles.mjs |
+| `REQ-safety-22c5ba3e` | Project runs share a deadline established after synchronous tools finish, with each spawn timeout bounded by remaining time and its tool timeout. | scripts/lib/linter.mjs |
 | `REQ-safety-235e5314` | Every final-review provider call must be aborted and rejected after TIMEOUT_MS even when the provider SDK ignores the abort signal. | scripts/gemini-review.mjs |
 | `REQ-safety-23d91fd3` | Neighbourhood and duplicate-cluster RPC adapters must return empty arrays and drift-score computation must return `null` without invoking cloud RPCs when cloud support is disabled. | scripts/lib/store/arch/neighbourhood.mjs |
 | `REQ-safety-23d9728e` | A code-audit shadow pipeline failure must not alter the legacy audit result or cause the primary audit invocation to fail. | scripts/openai-audit.mjs |
@@ -228,6 +230,7 @@ pie title Active invariants by kind
 | `REQ-safety-ca17791a` | Quickfix minimum-hit values must accept only finite positive integers and otherwise fall back to the supplied default. | scripts/lib/quickfix-policy.mjs |
 | `REQ-safety-ca7a3067` | If the architecture LLM bouncer fails, every reported cross-domain violation must still yield a MEDIUM deterministic finding and no deterministic architecture finding may have HIGH severity. | scripts/lib/audit/architecture-pass.mjs |
 | `REQ-safety-cacd1ca6` | The managed `.gitignore` rules must ignore all `.audit/` runtime output while destructive post-sync untracking must remain limited to the explicit `UNTRACK_PATTERNS` allowlist and must not broadly unt | scripts/sync-to-repos.mjs |
+| `REQ-safety-cae20305` | Each project-scoped tool processes existing files by owning project, attempts each grouped project at most once serially, and records projects beyond its cap as skipped_budget. | scripts/lib/linter.mjs |
 | `REQ-safety-ccc69841` | Claiming a campaign receipt must exclusively create an intent receipt and must report an existing receipt as already claimed rather than overwrite it. | scripts/lib/campaign/lock.mjs |
 | `REQ-safety-cd571bd5` | The final-review hard deadline must be at least two Gemini per-attempt timeouts plus 60000 milliseconds, even when FINAL_REVIEW_HARD_DEADLINE_MS configures a lower value. | scripts/lib/config.mjs |
 | `REQ-safety-d003ba72` | The tiered audit pipeline and its shadow comparison must remain independently opt-in and disabled unless their respective environment variables are exactly `true`. | scripts/lib/config.mjs |
@@ -252,7 +255,7 @@ pie title Active invariants by kind
 | `REQ-safety-faca1023` | The persona outcome hash backfill must refuse to run unless the live persona finding hash version equals its fixed v2 target version and a repoId is supplied. | scripts/lib/store/persona-outcomes-hash-backfill.mjs |
 | `REQ-safety-fea6126d` | Only finding classes in the gate-eligible class set may be eligible to block the visual-audit gate. | scripts/lib/visual/schema.mjs |
 
-### correctness (160)
+### correctness (162)
 
 | ID | Assertion | Governs |
 |---|---|---|
@@ -284,7 +287,6 @@ pie title Active invariants by kind
 | `REQ-correctness-22e8721f` | Topic IDs must be deterministic 12-character hexadecimal SHA-256 prefixes derived from normalized primary file, normalized principle and category, pass, and a finding content hash. | scripts/lib/ledger.mjs |
 | `REQ-correctness-2521bb68` | A drafted container selector must not appear in both the primary and secondary navigation layers. | scripts/lib/nav/bootstrap-draft.mjs |
 | `REQ-correctness-27a76cd3` | Layout physics must not report content clipping for collapsed nodes with client width or rendered height below 4 pixels. | scripts/lib/visual/layout-physics.mjs |
-| `REQ-correctness-27b5b3f8` | External-tool findings must be retained only when their normalized file path belongs to the audited file set. | scripts/lib/linter.mjs |
 | `REQ-correctness-281b410e` | React Router destination discovery must compose relative nested JSX and route-object child paths with their parent route path, while absolute child paths remain absolute and index routes resolve to th | scripts/lib/nav/adapters/react-router.mjs |
 | `REQ-correctness-28766f6c` | A valid campaign must contain at least two non-replicate arms, no more than one primary arm, uniquely identified arms, and an incumbent model represented by exactly one non-replicate arm. | scripts/lib/campaign/config.mjs |
 | `REQ-correctness-28ffacba` | Every validated gate contract must declare a skill value identical to the directory containing its gate-contract.json or produce a ratchet divergence. | scripts/lib/gate-honesty/ratchet.mjs |
@@ -329,6 +331,7 @@ pie title Active invariants by kind
 | `REQ-correctness-6208b849` | Calibration selection must include rows whose HMAC-derived score is below the configured rate and deterministically top up each arm to at least five selected rows or all of that arm's rows when fewer | scripts/lib/store/campaign.mjs |
 | `REQ-correctness-655af727` | Architecture findings returned by the LLM must be discarded when their file-like section is not a mechanically flagged violation endpoint or unmapped file. | scripts/lib/audit/architecture-pass.mjs |
 | `REQ-correctness-655ea064` | The sync check must count bandit_arms globally without a repo_id predicate and count false_positive_patterns only for the resolved repository. | scripts/check-sync.mjs |
+| `REQ-correctness-656a7f74` | Normalized compiler errors are HIGH-severity BUG findings, style diagnostics are LOW severity, and tool-derived findings are mechanical and never reopened. | scripts/lib/linter.mjs |
 | `REQ-correctness-66bc565d` | Logical tier classification and model descriptions must canonicalize deprecated IDs before classification so a deprecated ID and its effective sentinel do not produce different logical tiers or partit | scripts/lib/model-resolver.mjs |
 | `REQ-correctness-67be5aa2` | Drafted navigation layers must include only container selectors evidenced with at least two distinct non-dynamic navigation targets. | scripts/lib/nav/bootstrap-draft.mjs |
 | `REQ-correctness-6d5224a6` | Finding clustering must return unknown coverage and no clusters when resolvable cited-file coverage is below the configured coverage floor. | scripts/lib/campaign/adjudicate.mjs |
@@ -394,6 +397,7 @@ pie title Active invariants by kind
 | `REQ-correctness-d1c3931a` | When a required discovery generator fails outside shadow mode, the returned audit result must preserve the captured discovery generator outcomes and identify itself as runStatus fallback_legacy with t | scripts/lib/audit/discovery-fallback.mjs |
 | `REQ-correctness-d28756d9` | Debt review in LLM mode must exit with code 1 when OPENAI_API_KEY is unavailable. | scripts/debt-review.mjs |
 | `REQ-correctness-d756d05e` | When no committed repository ID exists but a git origin is available, repository identity must be a UUIDv5 derived from the canonicalized origin URL rather than the checkout path. | scripts/lib/repo-identity.mjs |
+| `REQ-correctness-da2686fd` | Returned tool findings are restricted to the normalized audited file set. | scripts/lib/linter.mjs |
 | `REQ-correctness-daa9b966` | After a successful pull, dependency repair must run `npm ci` when package manifests changed or `npm ls --depth=0` reports an unhealthy dependency tree, and it must fail rather than install without `pa | scripts/update-auditloop.mjs |
 | `REQ-correctness-db28300e` | The import graph populated flag must be set only for a full refresh or for an incremental refresh whose prior active snapshot was already marked populated. | scripts/symbol-index/refresh.mjs |
 | `REQ-correctness-db53f358` | Ledger entries written from triage must derive their topic identity, semantic hash, latest finding identifier, affected files, severity, category, and pass from the round result finding rather than ac | scripts/write-ledger-entries.mjs |
@@ -412,6 +416,7 @@ pie title Active invariants by kind
 | `REQ-correctness-f1d945bd` | A cloud-enabled friction upsert that reports fewer than one written row must throw rather than report a successful mirror write. | scripts/lib/store/friction.mjs |
 | `REQ-correctness-f2c0c3c6` | Provider-facing schemas converted to JSON Schema must remain refinement-free so every producer constraint is representable to and enforceable by the provider. | scripts/lib/schemas.mjs |
 | `REQ-correctness-f3f713f6` | Structured provider responses must be schema-validated and incomplete, refused, absent, or invalid JSON outputs must not be returned as successful structured results. | scripts/lib/model-eval/provider-adapter.mjs |
+| `REQ-correctness-f57abd5b` | Normalization preserves findings from project-bearing results despite non-ok aggregate status but excludes non-ok results without project records. | scripts/lib/linter.mjs |
 | `REQ-correctness-f78d0697` | Architecture-intent drift checking must fail when any non-empty domain declared by domain-map rules lacks a backtick-quoted `###` heading inside the document's `## Domains` section, but must not fail | scripts/check-architecture-intent-drift.mjs |
 | `REQ-correctness-f9c470bf` | Cost reports with no accepted HIGH-equivalent findings must return null per-accepted-HIGH cost and operator-minute rates with reason `no-accepted-highs`. | scripts/lib/audit/cost-budget.mjs |
 | `REQ-correctness-fb77b436` | A non-finite drift score must be reported with UNKNOWN status rather than being coerced into a green or amber status. | scripts/symbol-index/drift.mjs |
@@ -673,6 +678,7 @@ pie title Active invariants by kind
 | `scripts/lib/audit/duplication-report.mjs` | 1 | 0 | 5 |
 | `scripts/lib/audit/event-wiring-pass.mjs` | 0 | 0 | 4 |
 | `scripts/lib/audit/evidence-triage.mjs` | 0 | 0 | 21 |
+| `scripts/lib/audit/file-coverage.mjs` | 1 | 0 | 19 |
 | `scripts/lib/audit/final-adjudication.mjs` | 1 | 0 | 12 |
 | `scripts/lib/audit/finalization-contract.mjs` | 0 | 0 | 0 |
 | `scripts/lib/audit/finding-assembly.mjs` | 2 | 0 | 14 |
@@ -710,6 +716,7 @@ pie title Active invariants by kind
 | `scripts/lib/audit/time-utils.mjs` | 0 | 0 | 0 |
 | `scripts/lib/audit/transcript.mjs` | 0 | 0 | 5 |
 | `scripts/lib/audit/usage-event.mjs` | 0 | 0 | 11 |
+| `scripts/lib/audit/wave-eligibility.mjs` | 0 | 0 | 5 |
 | `scripts/lib/azure-throttle.mjs` | 1 | 0 | 3 |
 | `scripts/lib/azure/embed-discovery.mjs` | 0 | 0 | 6 |
 | `scripts/lib/backfill-parser.mjs` | 0 | 0 | 3 |
@@ -818,6 +825,7 @@ pie title Active invariants by kind
 | `scripts/lib/dependency-identity.mjs` | 0 | 0 | 4 |
 | `scripts/lib/device-presets.mjs` | 0 | 0 | 5 |
 | `scripts/lib/diff-annotation.mjs` | 1 | 0 | 4 |
+| `scripts/lib/diff-scope-admission.mjs` | 0 | 0 | 5 |
 | `scripts/lib/doc-citations.mjs` | 1 | 0 | 5 |
 | `scripts/lib/doc-sections.mjs` | 0 | 0 | 6 |
 | `scripts/lib/duplicate-justification-pragma.mjs` | 0 | 0 | 6 |
@@ -828,6 +836,7 @@ pie title Active invariants by kind
 | `scripts/lib/file-io.mjs` | 0 | 0 | 3 |
 | `scripts/lib/file-lock.mjs` | 0 | 0 | 5 |
 | `scripts/lib/file-store.mjs` | 1 | 0 | 5 |
+| `scripts/lib/file-taxonomy.mjs` | 0 | 0 | 10 |
 | `scripts/lib/final-review-credit.mjs` | 0 | 0 | 7 |
 | `scripts/lib/final-review/envelope.mjs` | 0 | 0 | 10 |
 | `scripts/lib/final-review/gap-projection.mjs` | 1 | 0 | 7 |
@@ -871,7 +880,7 @@ pie title Active invariants by kind
 | `scripts/lib/learning/stats.mjs` | 0 | 0 | 1 |
 | `scripts/lib/ledger.mjs` | 4 | 0 | 17 |
 | `scripts/lib/lint/on-conflict.mjs` | 1 | 0 | 16 |
-| `scripts/lib/linter.mjs` | 1 | 0 | 7 |
+| `scripts/lib/linter.mjs` | 5 | 0 | 17 |
 | `scripts/lib/llm-auditor.mjs` | 0 | 0 | 0 |
 | `scripts/lib/llm-wrappers.mjs` | 2 | 0 | 0 |
 | `scripts/lib/load-shared-env.mjs` | 1 | 0 | 3 |

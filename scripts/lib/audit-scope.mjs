@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { classifyPath } from './sensitive-paths.mjs';
 import { scanEgressPayload, redactSecrets } from './sensitive-egress-gate.mjs';
+import { fenceLanguageFor } from './file-taxonomy.mjs';
 // normalizePath not used directly here but re-exported via file-io.mjs barrel
 
 // ── Sensitive File Filtering ────────────────────────────────────────────────
@@ -30,6 +31,9 @@ export function isSensitiveFile(relPath) {
 // than in the project being audited.
 
 export const AUDIT_INFRA_BASENAMES = new Set([
+  // file-coverage contract (docs/plans/file-coverage-contract-and-csharp.md). Only modules DIRECTLY under
+  // scripts/lib/ belong here: isAuditInfraFile ignores any deeper path, so a lib/audit/ basename would be dead.
+  'file-taxonomy.mjs', 'csharp-scanner.mjs',
   'openai-audit.mjs', 'gemini-review.mjs', 'bandit.mjs', 'learning-store.mjs',
   'phase7-check.mjs', 'shared.mjs', 'check-sync.mjs', 'check-setup.mjs',
   'refine-prompts.mjs', 'evolve-prompts.mjs', 'meta-assess.mjs',
@@ -95,8 +99,17 @@ export function safeReadFile(relPath, cwdBoundary) {
   const absPath = path.resolve(relPath);
   let realPath;
   try { realPath = fs.realpathSync(absPath); } catch { return null; }
-  const rel = path.relative(cwdBoundary, realPath);
+  // Compare like with like: `realPath` is canonical, so the boundary must be too (a checkout reached through a
+  // symlink or junction would otherwise read as "outside" itself and every file would be refused).
+  let boundary = cwdBoundary;
+  try { boundary = fs.realpathSync(cwdBoundary); } catch { /* keep the lexical boundary */ }
+  const rel = path.relative(boundary, realPath);
   if (rel.startsWith('..' + path.sep) || rel.startsWith('../') || rel === '..' || path.isAbsolute(rel)) return null;
+  // Classify the RESOLVED path as well. Containment alone does not bind the decision to what is read: a symlink
+  // `Innocent.cs -> .env` is inside the repo and passes it, and the lexical check above only ever saw the visible
+  // name. This is the same rule `resolveAndClassify` states (INC-001); admitting more extensions widens what
+  // reaches this function, so it is the one place the resolved target has to be judged.
+  if (isSensitiveFile(rel.split(path.sep).join('/'))) return null;
   try {
     // stat and read the REALPATH — the path whose containment was just verified.
     // Using `absPath` here reopened the symlink, so a link swapped between the
@@ -207,8 +220,7 @@ export function readFilesAsContextDetailed(filePaths, { maxPerFile = 10000, maxT
     const charsLost = redact ? result.content.length - raw.length : 0;
     if (charsLost > SPAN_COLLAPSE_CHARS) shortened.push({ path: relPath, charsLost });
 
-    const ext = relPath.split('.').pop();
-    const lang = { sql: 'sql', css: 'css', html: 'html', md: 'markdown', json: 'json', py: 'python', rs: 'rust', go: 'go', java: 'java', rb: 'ruby', sh: 'bash' }[ext] ?? 'js';
+    const lang = fenceLanguageFor(relPath);
     const headCut = raw.length > maxPerFile;
     const content = headCut
       ? raw.slice(0, maxPerFile) + `\n... [TRUNCATED — ${raw.length} chars total]`

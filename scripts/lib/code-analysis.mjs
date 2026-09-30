@@ -86,6 +86,27 @@ export function splitAtFunctionBoundaries(source, profile = DEFAULT_PROFILE) {
 // ── File Chunking ────────────────────────────────────────────────────────────
 
 /**
+ * Optional listener told, per chunked file, how good the structural analysis was: `completed`,
+ * `degraded` (the scanner bailed out, so a coarse whole-file line chunking was used) or
+ * `unsupported` (no profile at all). The coverage ledger reads it so "no boundaries because the lexer gave up"
+ * is never reported as "no boundaries". Module-global on purpose: one audit per process (CLI), the same accepted
+ * pattern as the other module caches.
+ * @type {((filePath: string, state: 'completed'|'degraded'|'unsupported') => void)|null}
+ */
+let _chunkingObserver = null;
+
+/** @param {typeof _chunkingObserver} fn */
+export function setChunkingObserver(fn) { _chunkingObserver = typeof fn === 'function' ? fn : null; }
+
+function reportChunking(source, filePath, profile) {
+  if (!_chunkingObserver) return;
+  if (profile.id === 'unknown') { _chunkingObserver(filePath, 'unsupported'); return; }
+  if (typeof profile.scanBoundaries === 'function') {
+    _chunkingObserver(filePath, profile.scanBoundaries(source.split('\n')).state);
+  }
+}
+
+/**
  * Chunk a large file by function boundaries, with import block prepended to each chunk.
  * Falls back to line-count splitting if no function boundaries found.
  * Profile is auto-detected from filePath when not provided.
@@ -97,13 +118,15 @@ export function splitAtFunctionBoundaries(source, profile = DEFAULT_PROFILE) {
  */
 export function chunkLargeFile(source, filePath, maxChunkTokens = 6000, profile = null) {
   const resolvedProfile = profile || getProfileForFile(filePath);
+  reportChunking(source, filePath, resolvedProfile);
   const imports = extractImportBlock(source, resolvedProfile);
   const functions = splitAtFunctionBoundaries(source, resolvedProfile);
 
   if (functions.length <= 1) {
     // No function boundaries found — line-count fallback
     const lines = source.split('\n');
-    const linesPerChunk = Math.floor(maxChunkTokens * 4 / 80); // ~80 chars per line avg
+    // At least one line per chunk: a tiny budget (`maxChunkTokens` < 20) floors to 0 and the loop below would never advance.
+    const linesPerChunk = Math.max(1, Math.floor(maxChunkTokens * 4 / 80)); // ~80 chars per line avg
     const chunks = [];
     for (let i = 0; i < lines.length; i += linesPerChunk) {
       chunks.push({

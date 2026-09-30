@@ -11,6 +11,7 @@ import path from 'node:path';
 
 import { semanticId, setRepoProfileCache } from './findings.mjs';
 import { briefConfig } from './config.mjs';
+import { SOURCE_CODE_EXTENSIONS } from './file-taxonomy.mjs';
 
 // ── Module-Level Caches ─────────────────────────────────────────────────────
 
@@ -443,7 +444,10 @@ export function generateRepoProfile() {
   if (_repoProfileCache) return _repoProfileCache;
 
   // 1. File inventory by directory pattern
-  const codeExts = ['.js', '.mjs', '.ts', '.tsx', '.jsx', '.css', '.html', '.sql', '.py', '.go', '.rs', '.java', '.rb'];
+  // Source languages from the taxonomy (+ the web declaratives that drive frontend detection). A hand-kept
+  // list here had no `.cs`, so a C#-only repo profiled as zero backend files and its passes were
+  // announced as "not relevant".
+  const codeExts = [...SOURCE_CODE_EXTENSIONS, '.css', '.html', '.sql'];
   const allFiles = [];
 
   function scanDir(dir, depth = 0) {
@@ -451,7 +455,7 @@ export function generateRepoProfile() {
     try {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
-        if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'dist' || entry.name === 'build') continue;
+        if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'dist' || entry.name === 'build' || entry.name === 'obj') continue;
         const fullPath = path.join(dir, entry.name);
         if (entry.isDirectory()) {
           scanDir(fullPath, depth + 1);

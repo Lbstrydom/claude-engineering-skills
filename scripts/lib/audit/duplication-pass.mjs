@@ -14,6 +14,8 @@ import { normalizePath } from '../file-io.mjs';
 import { computePassLimits } from '../robustness.mjs';
 import { getPassPrompt, safeCallGPT } from './llm-helpers.mjs';
 import { runDuplicationAnalysis } from './duplication-detector.mjs';
+import { isEligibleChange } from './duplication-detector.mjs';
+import { waveEligibility, ineligibleReason, eligibilityNote, waveRecord } from './wave-eligibility.mjs';
 import {
   formatCandidatesForPrompt, mapBouncerDecisionsToFindings,
   deriveFindingsFromDuplicationReport, buildDetectorFailedFinding, finalizeDeterministicFindings,
@@ -56,6 +58,11 @@ export async function runDuplicationPass({
   let bouncerUsage = null;
   let dupFindings = [];
   let dupSummary = '';
+  // How much of the change this wave could read at all (JS/TS only) — see wave-eligibility.mjs.
+  let eligibility = null;
+  let dupChangedPaths = null; // the change set the detector was actually handed (git diff ∩ scope)
+  let waveRan = 'completed';
+  let waveReason = null;
   try {
     let report = { state: 'unavailable', reason: 'no auditBaseCommit resolved for this audit run', deterministicFindings: [], semanticCandidates: [] };
     // Test-only injection point (round-1 code-audit M25/M26 fix): when set,
@@ -69,26 +76,42 @@ export async function runDuplicationPass({
     } else if (auditBaseCommit) {
       const diff = gitDiffWithWorkingTree(process.cwd(), auditBaseCommit);
       if (diff.ok) {
+        // `changedFiles == null` is a full-scope audit (unbounded); an EMPTY array means admission rejected everything, i.e. nothing.
         const scopeSet = new Set((changedFiles || []).map(normalizePath));
-        const inScope = (p) => scopeSet.size === 0 || scopeSet.has(normalizePath(p));
+        const inScope = (p) => changedFiles == null || scopeSet.has(normalizePath(p));
         const richChangedFiles = [
           ...diff.files.added.filter(inScope).map((p) => ({ status: 'added', currentPath: p })),
           ...diff.files.modified.filter(inScope).map((p) => ({ status: 'modified', currentPath: p })),
           ...diff.files.untracked.filter(inScope).map((p) => ({ status: 'added', currentPath: p })),
           ...diff.files.renamed.filter((r) => inScope(r.to)).map((r) => ({ status: 'renamed', currentPath: r.to, previousPath: r.from })),
         ];
+        dupChangedPaths = richChangedFiles.map((e) => e.currentPath);
         report = await runDuplicationAnalysis({ repoRoot: process.cwd(), changedFiles: richChangedFiles, auditBaseCommit });
       } else {
         report = { state: 'unavailable', reason: `git diff failed: ${diff.error.message}`, deterministicFindings: [], semanticCandidates: [] };
       }
     }
 
-    if (report.state === 'clean') {
-      dupSummary = 'Duplication: clean — no candidates over threshold.';
+    // Eligibility is measured on the change set the detector was actually handed (its own predicate), never assumed.
+    eligibility = waveEligibility(
+      dupChangedPaths ?? (changedFiles || []),
+      (p) => isEligibleChange({ status: 'modified', currentPath: p }),
+    );
+    if (report.state === 'clean' && eligibility.state === 'ineligible') {
+      // "clean" would be a lie: the detector reads JS/TS only and every changed file was something else.
+      dupSummary = `Duplication: INELIGIBLE — ${ineligibleReason(eligibility, 'js/ts')}`;
+      process.stderr.write(`  ${dupSummary}\n`);
+    } else if (report.state === 'clean') {
+      const note = eligibilityNote(eligibility, 'js/ts');
+      dupSummary = `Duplication: clean — no candidates over threshold${note ? ` (${note})` : ''}.`;
     } else if (report.state === 'unavailable') {
+      waveRan = 'unavailable';
+      waveReason = report.reason;
       process.stderr.write(`  Duplication: SKIPPED (unavailable — ${report.reason})\n`);
       dupSummary = `Duplication: SKIPPED (unavailable — ${report.reason})`;
     } else if (report.state === 'failed') {
+      waveRan = 'errored';
+      waveReason = report.reason;
       process.stderr.write(`  Duplication: FAILED — ${report.reason}\n`);
       dupFindings = [buildDetectorFailedFinding(report.reason)];
       dupSummary = 'Duplication: detector failed — see finding.';
@@ -153,9 +176,12 @@ export async function runDuplicationPass({
     process.stderr.write(`  Duplication: unexpected ${err?.name || 'Error'} — ${err?.message}\n${err?.stack ? `${err.stack}\n` : ''}`);
     dupFindings = [buildDetectorFailedFinding(`${err?.name || 'Error'}: ${err?.message}`)];
     dupSummary = `Duplication: unexpected ${err?.name || 'Error'} — see finding.`;
+    waveRan = 'errored';
+    waveReason = `${err?.name || 'Error'}: ${err?.message}`;
   }
   return {
     result: { pass_name: 'duplication', findings: dupFindings, summary: dupSummary },
+    _wave: waveRecord(eligibility, 'js/ts', waveRan, waveReason),
     callCount: bouncerCalls,
     usage: bouncerUsage ?? { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
     latencyMs: Date.now() - dupStart,

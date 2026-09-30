@@ -11,7 +11,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { normalizePath } from './file-io.mjs';
-import { safeReadFile } from './audit-scope.mjs';
+import { fenceLanguageFor, commentPrefixFor, SOURCE_CODE_EXTENSIONS } from './file-taxonomy.mjs';
+import { safeReadFile, isSensitiveFile } from './audit-scope.mjs';
 import { redactSecrets } from './sensitive-egress-gate.mjs';
 
 // ── Diff Parsing ────────────────────────────────────────────────────────────
@@ -88,6 +89,9 @@ export function parseDiffText(content) {
   // since a hunk only attaches to a current file.
   const text = String(content).replace(/^﻿/, '').replace(/\r\n/g, '\n');
   for (const line of text.split('\n')) {
+    // A new file section, or a deleted file's `+++ /dev/null`, ends the previous file: without this reset a
+    // deleted file's `@@ -1,5 +0,0 @@` hunk was attributed to whichever file preceded it.
+    if (line.startsWith('diff --git ') || line.startsWith('+++ /dev/null')) { currentFile = null; continue; }
     const fileMatch = line.match(/^\+\+\+ b\/(.+)$/);
     if (fileMatch) {
       currentFile = normalizePath(fileMatch[1]);
@@ -107,8 +111,13 @@ export function parseDiffText(content) {
 
 // ── Annotation Styles ─────────────────────────────────────────────────────
 
-const CODE_EXTS = new Set(['js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'py', 'go', 'rs', 'java', 'rb', 'sh', 'css', 'scss', 'c', 'cpp', 'h']);
-const HEADER_ONLY_EXTS = new Set(['json', 'yaml', 'yml', 'md', 'markdown', 'html', 'htm', 'xml', 'txt', 'toml', 'ini']);
+// Block-style (`//`-marker) annotation applies to every taxonomy SOURCE language, plus the two stylesheet
+// extensions it has always covered. Derived, so a new language is not silently a second-class citizen here.
+const CODE_EXTS = new Set([...SOURCE_CODE_EXTENSIONS.map((e) => e.slice(1)), 'css', 'scss']);
+// Annotation-style table (which COMMENT syntax is safe to inject), not a source-file predicate.
+// XML-family files take header-only annotation: a `//` marker inside a .csproj is not valid XML.
+const HEADER_ONLY_EXTS = new Set(['json', 'jsonc', 'json5', 'yaml', 'yml', 'md', 'markdown', 'html', 'htm', 'xml', 'txt', 'toml', 'ini',
+  'csproj', 'vbproj', 'fsproj', 'props', 'targets', 'slnx', 'sln', 'config', 'resx', 'xaml']);
 
 /**
  * Route a file to its annotation style based on extension.
@@ -117,6 +126,8 @@ const HEADER_ONLY_EXTS = new Set(['json', 'yaml', 'yml', 'md', 'markdown', 'html
  */
 export function getCommentStyle(relPath) {
   const ext = relPath.split('.').pop()?.toLowerCase() ?? '';
+  // A markup-embedded language (vue, svelte, razor) has no safe line comment: header-only, never a `//` marker inside markup.
+  if (commentPrefixFor(relPath) === null) return 'header-only';
   if (CODE_EXTS.has(ext)) return 'block';
   if (HEADER_ONLY_EXTS.has(ext)) return 'header-only';
   return 'block';
@@ -156,7 +167,13 @@ export const _annotationMarkers = {
   UNCHANGED_OPEN, UNCHANGED_CLOSE, CHANGED_OPEN, CHANGED_CLOSE,
 };
 
-function _annotateBlockStyle(raw, sortedHunks) {
+/** A marker line in the file's own comment syntax: `//` markers are text, not comments, in Python, shell, Ruby, Lua… */
+function _marker(marker, prefix) {
+  return prefix === '//' ? marker : `${prefix}${marker.slice(2)}`;
+}
+
+function _annotateBlockStyle(raw, sortedHunks, prefix = '//') {
+  const [UNCHANGED_OPEN_P, UNCHANGED_CLOSE_P, CHANGED_OPEN_P, CHANGED_CLOSE_P] = [UNCHANGED_OPEN, UNCHANGED_CLOSE, CHANGED_OPEN, CHANGED_CLOSE].map((m) => _marker(m, prefix));
   const lines = raw.split('\n');
   const annotated = [];
   let cursor = 0;
@@ -167,25 +184,25 @@ function _annotateBlockStyle(raw, sortedHunks) {
 
     if (cursor < hunkStart) {
       annotated.push(
-        UNCHANGED_OPEN,
+        UNCHANGED_OPEN_P,
         ...lines.slice(cursor, hunkStart),
-        UNCHANGED_CLOSE
+        UNCHANGED_CLOSE_P
       );
     }
 
     annotated.push(
-      CHANGED_OPEN,
+      CHANGED_OPEN_P,
       ...lines.slice(hunkStart, hunkEnd),
-      CHANGED_CLOSE
+      CHANGED_CLOSE_P
     );
     cursor = hunkEnd;
   }
 
   if (cursor < lines.length) {
     annotated.push(
-      UNCHANGED_OPEN,
+      UNCHANGED_OPEN_P,
       ...lines.slice(cursor),
-      UNCHANGED_CLOSE
+      UNCHANGED_CLOSE_P
     );
   }
 
@@ -224,22 +241,51 @@ function _annotateHeaderOnlyStyle(raw, sortedHunks) {
  *   doc comment, so it cannot desync them).
  * @returns {string}
  */
-export function readFilesAsAnnotatedContext(filePaths, diffMap, { maxPerFile = 10000, maxTotal = 120000, redact = true } = {}) {
+export function readFilesAsAnnotatedContext(filePaths, diffMap, opts = {}) {
+  return readFilesAsAnnotatedContextDetailed(filePaths, diffMap, opts).context;
+}
+
+/**
+ * The measured form of `readFilesAsAnnotatedContext`: the SAME render (one implementation, the string wrapper
+ * above is byte-identical), plus a stats record in the shape `audit-scope.mjs::readFilesAsContextDetailed`
+ * returns, so the coverage ledger can tell a complete render from one that head-cut the very code it was asked
+ * about. `charsRendered` for a head-cut file is expressed in ORIGINAL-file characters (the annotated text is longer
+ * than the file because of marker lines, so the raw cut point is scaled back): the ledger converts it to a line
+ * count, and overstating it would understate the changed lines that went unread.
+ *
+ * @param {string[]} filePaths
+ * @param {Map} diffMap
+ * @param {object} [opts] same as readFilesAsAnnotatedContext
+ * @returns {{context: string, stats: object}}
+ */
+export function readFilesAsAnnotatedContextDetailed(filePaths, diffMap, { maxPerFile = 10000, maxTotal = 120000, redact = true } = {}) {
   let total = '';
   let omitted = 0;
   const cwdBoundary = path.resolve('.');
+  const stats = {
+    requested: filePaths.length, maxPerFile, maxTotal,
+    full: [], headTruncated: [], budgetOmitted: [], unreadable: [], sensitiveExcluded: [], redactionShortened: [],
+    charsRendered: 0, charsOnDisk: 0,
+  };
 
   for (const relPath of filePaths) {
-    const block = _buildFileBlock(relPath, diffMap, cwdBoundary, maxPerFile, redact);
-    if (block === null) continue;
-    if (total.length + block.length > maxTotal) { omitted++; continue; }
+    if (isSensitiveFile(relPath)) { stats.sensitiveExcluded.push(relPath); continue; }
+    const built = _buildFileBlock(relPath, diffMap, cwdBoundary, maxPerFile, redact);
+    if (built === null) { stats.unreadable.push(relPath); continue; }
+    const { block, meta } = built;
+    if (total.length + block.length > maxTotal) { omitted++; stats.budgetOmitted.push(relPath); continue; }
     total += block;
+    stats.charsOnDisk += meta.charsOnDisk;
+    if (meta.headCut) stats.headTruncated.push({ path: relPath, charsOnDisk: meta.charsOnDisk, charsRendered: meta.charsRenderedOriginal });
+    else stats.full.push(relPath);
   }
 
   if (omitted > 0) total += `\n... [${omitted} file(s) omitted — context budget reached]\n`;
-  return total;
+  stats.charsRendered = total.length;
+  return { context: total, stats };
 }
 
+/** @returns {{block: string, meta: {headCut: boolean, charsOnDisk: number, charsRenderedOriginal: number}}|null} */
 function _buildFileBlock(relPath, diffMap, cwdBoundary, maxPerFile, redact = true) {
   const result = safeReadFile(relPath, cwdBoundary);
   if (!result) return null;
@@ -250,8 +296,7 @@ function _buildFileBlock(relPath, diffMap, cwdBoundary, maxPerFile, redact = tru
   // between a secret's context and its value (the failure mode when this was
   // tried the other way around during plan review).
   let raw = redact ? redactSecrets(result.content) : result.content;
-  const ext = relPath.split('.').pop();
-  const lang = { sql: 'sql', css: 'css', html: 'html', md: 'markdown', json: 'json', py: 'python', rs: 'rust', go: 'go', java: 'java', rb: 'ruby', sh: 'bash' }[ext] ?? 'js';
+  const lang = fenceLanguageFor(relPath);
 
   const diffInfo = diffMap?.get(normalizePath(relPath));
   let headerAnnotation = '';
@@ -259,15 +304,25 @@ function _buildFileBlock(relPath, diffMap, cwdBoundary, maxPerFile, redact = tru
   if (diffInfo && diffInfo.hunks.length > 0) {
     const sortedHunks = [...diffInfo.hunks].sort((a, b) => a.startLine - b.startLine);
     const { content, headerAnnotation: ha } = getCommentStyle(relPath) === 'block'
-      ? _annotateBlockStyle(raw, sortedHunks)
+      ? _annotateBlockStyle(raw, sortedHunks, commentPrefixFor(relPath))
       : _annotateHeaderOnlyStyle(raw, sortedHunks);
     raw = content;
     headerAnnotation = ha;
   }
 
-  const content = raw.length > maxPerFile
+  const headCut = raw.length > maxPerFile;
+  const content = headCut
     ? raw.slice(0, maxPerFile) + `\n... [TRUNCATED — ${raw.length} chars total]`
     : raw;
 
-  return `### ${relPath}${headerAnnotation}\n\`\`\`${lang}\n${content}\n\`\`\`\n`;
+  const charsOnDisk = result.content.length;
+  return {
+    block: `### ${relPath}${headerAnnotation}\n\`\`\`${lang}\n${content}\n\`\`\`\n`,
+    meta: {
+      headCut,
+      charsOnDisk,
+      // annotated text -> original-file characters (see readFilesAsAnnotatedContextDetailed)
+      charsRenderedOriginal: headCut ? Math.floor(maxPerFile * (charsOnDisk / raw.length)) : charsOnDisk,
+    },
+  };
 }

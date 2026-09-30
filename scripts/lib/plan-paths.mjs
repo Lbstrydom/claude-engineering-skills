@@ -9,7 +9,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { ALL_EXTENSIONS_PATTERN, toExtensionAlternation } from './language-profiles.mjs';
+import {
+  matchFileKind, SOURCE_CODE_EXTENSIONS, AUDITABLE_EXTENSIONS, COMPOUND_REFERENCE_SUFFIXES, toExtensionAlternation,
+} from './file-taxonomy.mjs';
+
+export { COMPOUND_REFERENCE_SUFFIXES };
 import { normalizePath } from './file-io.mjs';
 import { isSensitiveFile, isAuditInfraFile } from './audit-scope.mjs';
 import { listRepoFiles, resolveUniqueSuffix } from './repo-inventory.mjs';
@@ -25,65 +29,41 @@ import { listRepoFiles, resolveUniqueSuffix } from './repo-inventory.mjs';
 export const FUZZY_DISCOVERY_THRESHOLD = 5;
 
 /**
- * Extensions a PLAN may reference. Deliberately WIDER than
- * `ALL_SUPPORTED_EXTENSIONS` (which drives code parsing): a plan is prose about
- * a change and legitimately names Rust/Go/Java/Ruby/shell files in repos whose
- * code-analysis profile does not cover them. Kept as an array, never a
- * pre-joined string — the alternation ORDER is a correctness property and
- * belongs to `toExtensionAlternation`, not to whoever edits this list.
+ * Extensions a plan / audit scope may reference: every source-language and
+ * declarative extension in the taxonomy (`file-taxonomy.mjs`), without the
+ * leading dot. DERIVED, not hand-kept — until 2026-09-30 this was its own list,
+ * which admitted `go/rs/java/rb/sh` but not `cs`, and dropped `cjs`/`mts`/`cts`/
+ * `pyi`, extensions the js/ts/py profiles themselves claim. That disagreement is
+ * how a consumer's twelve C# files were silently never audited.
+ *
+ * Kept as an array, never a pre-joined string: the alternation ORDER is a
+ * correctness property and belongs to `toExtensionAlternation`.
  */
-export const PLAN_REFERENCE_EXTENSIONS = Object.freeze([
-  'js', 'mjs', 'ts', 'tsx', 'jsx', 'sql', 'css', 'html', 'json', 'md',
-  'py', 'rs', 'go', 'java', 'rb', 'sh',
-  // YAML, added 2026-09-04. A consumer's plan had a GitHub Actions workflow as
-  // its load-bearing deliverable and `cycle-cluster-scope.mjs` refused it in
-  // BOTH directions — as a declared scope path ("would not be admitted
-  // (extension)") and as an undeclared edit ("out-of-scope edit") — so a
-  // cluster that changes CI could not be audited at all. Given how much of
-  // what this bundle polices IS CI configuration (five weekly maintenance
-  // workflows, the drift workflow, the Postgres-parity matrix), a plan that
-  // cannot name a workflow file is a scope hole, not a safety property. It
-  // sits alongside `sql`/`json` — declarative, non-executing-in-review, and
-  // already the kind of file a plan legitimately names.
-  'yml', 'yaml',
-]);
-
-/**
- * Known FILE-NAME suffixes where the outermost `.segment` is not itself a
- * `PLAN_REFERENCE_EXTENSIONS` member but the tail of an established
- * double-extension convention (`index.html.template`, a template source that
- * generates an `.html` file). Checked as a literal string suffix, BEFORE the
- * single-extension fallback in `resolveReferenceExtension` — deliberately
- * NOT a general "strip the last segment and retry" rule, which would also
- * admit `package-lock.json.lock` as `.json` (a case `mergeScopeFiles`'s own
- * tests pin as REJECTED: a `.lock` file is not source, whatever precedes the
- * final segment). Keep this list short and literal — an entry here changes
- * admission for every plan/audit surface built on `PLAN_REFERENCE_EXTENSIONS`,
- * so widening it should be as deliberate as widening that list itself.
- */
-export const COMPOUND_REFERENCE_SUFFIXES = Object.freeze({
-  'html.template': 'html',
-});
+// Everything here reads the dependency-free taxonomy and NOT language-profiles: file-io re-exports this module
+// and language-profiles imports file-io, so any import of language-profiles from here re-creates a cycle whose
+// failure is a temporal-dead-zone ReferenceError at module load (hit 2026-09-30).
+export const PLAN_REFERENCE_EXTENSIONS = Object.freeze([...new Set(AUDITABLE_EXTENSIONS.map((e) => e.slice(1)))]);
+const ALL_EXTENSIONS_PATTERN = toExtensionAlternation(PLAN_REFERENCE_EXTENSIONS);
 
 /**
  * The `PLAN_REFERENCE_EXTENSIONS` entry `filePath` should be treated as, or
- * null if none applies. The single oracle for "is this extension approved" —
+ * null if none applies. The single oracle for "is this path approved for audit" —
  * use this instead of a bare `path.extname()` / last-dot split, both of which
  * truncate a double-extension name to its outer, unregistered segment
  * (`index.html.template` → `template`, matching nothing).
  *
+ * Delegates to the taxonomy's ordered precedence (exact names, then generated /
+ * compound suffixes, then the last extension), so a lockfile, a generated
+ * `.g.cs` and a `package-lock.json.lock` are all refused for the same reason
+ * they are classified `non-code`, not by a second list.
+ *
  * @param {string} filePath
- * @returns {string|null} extension WITHOUT leading dot, or null.
+ * @returns {string|null} extension WITHOUT leading dot (or the lower-cased name
+ *   for an exact-name match such as `dockerfile`), or null.
  */
 export function resolveReferenceExtension(filePath) {
-  const lower = filePath.toLowerCase();
-  for (const suffix of Object.keys(COMPOUND_REFERENCE_SUFFIXES)) {
-    if (lower.endsWith(`.${suffix}`)) return COMPOUND_REFERENCE_SUFFIXES[suffix];
-  }
-  const dot = filePath.lastIndexOf('.');
-  if (dot === -1) return null;
-  const ext = filePath.slice(dot + 1).toLowerCase();
-  return PLAN_REFERENCE_EXTENSIONS.includes(ext) ? ext : null;
+  const m = matchFileKind(filePath);
+  return (m.kind === 'source' || m.kind === 'declarative') ? m.extension : null;
 }
 
 // ── Plan Path Extraction ──────────────────────────────────────────────────
@@ -144,16 +124,28 @@ export function resolveReferenceExtension(filePath) {
  * @param {string[]} planFound - `extractPlanPaths(...).found`
  * @param {string[]|null|undefined} scopeFiles - the effective file filter
  * @param {{allowInfraFiles?: boolean}} [opts]
- * @returns {{files: string[], addedFromScope: string[], rejected: string[]}}
+ * @returns {{files: string[], addedFromScope: string[], rejected: string[],
+ *   rejectedDetail: Array<{path: string, reason: 'url-or-vendored'|'infra'|'extension'|'not-on-disk'}>}}
  */
+/**
+ * A URL or a vendored path — NOT a raw `startsWith('http')`, which refused a local file named `httpClient.cs`
+ * (and `http-utils.mjs`) as if it were a URL, and matched `node_modules` only at the very start.
+ */
+export function isUrlOrVendored(p) {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(p) || /(^|[\\/])node_modules([\\/]|$)/.test(p);
+}
+
 export function mergeScopeFiles(planFound, scopeFiles, { allowInfraFiles = false } = {}) {
   const base = Array.isArray(planFound) ? planFound : [];
   if (!Array.isArray(scopeFiles) || scopeFiles.length === 0) {
-    return { files: [...base], addedFromScope: [], rejected: [] };
+    return { files: [...base], addedFromScope: [], rejected: [], rejectedDetail: [] };
   }
   const already = new Set(base.map(p => normalizePath(p)));
   const addedFromScope = [];
   const rejected = [];
+  /** `rejected`, with WHY: the four reasons used to fold into one stderr line. */
+  const rejectedDetail = [];
+  const reject = (p, reason) => { rejected.push(p); rejectedDetail.push({ path: p, reason }); };
   const seen = new Set();
 
   for (const raw of scopeFiles) {
@@ -162,13 +154,13 @@ export function mergeScopeFiles(planFound, scopeFiles, { allowInfraFiles = false
     const key = normalizePath(p);
     if (already.has(key) || seen.has(key)) continue;
     seen.add(key);
-    if (p.startsWith('http') || p.startsWith('node_modules')) { rejected.push(p); continue; }
-    if (!allowInfraFiles && isAuditInfraFile(p)) { rejected.push(p); continue; }
-    if (resolveReferenceExtension(p) === null) { rejected.push(p); continue; }
-    if (!fs.existsSync(path.resolve(p))) { rejected.push(p); continue; }
+    if (isUrlOrVendored(p)) { reject(p, 'url-or-vendored'); continue; }
+    if (!allowInfraFiles && isAuditInfraFile(p)) { reject(p, 'infra'); continue; }
+    if (resolveReferenceExtension(p) === null) { reject(p, 'extension'); continue; }
+    if (!fs.existsSync(path.resolve(p))) { reject(p, 'not-on-disk'); continue; }
     addedFromScope.push(p);
   }
-  return { files: [...base, ...addedFromScope], addedFromScope, rejected };
+  return { files: [...base, ...addedFromScope], addedFromScope, rejected, rejectedDetail };
 }
 
 export function extractPlanPaths(planContent, { allowInfraFiles = false, repoFiles = null } = {}) {
@@ -348,7 +340,9 @@ function _extractPlanKeywords(planContent) {
 }
 
 function _scanRepoFiles({ allowInfraFiles = false } = {}) {
-  const EXT_SET = new Set(['.js', '.mjs', '.ts', '.tsx', '.jsx', '.sql', '.css', '.html', '.json', '.py', '.rs', '.go', '.java', '.rb', '.sh', '.vue', '.svelte']);
+  // Fuzzy keyword discovery walks CODE files (+ the four declaratives it always did), from the
+  // taxonomy — not markdown/yaml, which would widen fuzzy matches to READMEs and workflows.
+  const EXT_SET = new Set([...SOURCE_CODE_EXTENSIONS, '.sql', '.css', '.html', '.json']);
   const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', '__pycache__', '.tox', 'coverage', '.nyc_output', 'vendor', '.venv', 'venv', '.claude', '.github', 'docs']);
   const results = [];
 

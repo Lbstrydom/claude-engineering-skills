@@ -125,6 +125,11 @@ export async function finalizeRun(data, writeOutcomes) {
   // Phase C: surface tool-pre-pass capability state
   mergedResult._toolCapability = toolCapability;
 
+  // The per-file coverage ledger. It rides the round JSON so every consumer of the round — the stdout summary,
+  // audit-loop, and (verbatim, via the transcript) the final reviewer — sees which changed files were and were
+  // not audited. Absent means "not measured", never "clean".
+  if (assembled.coverage) mergedResult._coverage = assembled.coverage;
+
   // 4d then 4c, in that fixed order — preserves the ORIGINAL source order.
   // A 4d failure is best-effort/swallowed internally and never propagates
   // here; a 4c failure that escapes its own internal try/catch would abort

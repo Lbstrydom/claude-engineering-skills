@@ -93,3 +93,20 @@ test('a non-empty diff that parses to 0 hunks warns loudly; an empty file does n
   assert.equal(warnings.length, 1, writes.join(''));
   assert.match(warnings[0], /git diff --output=/);
 });
+
+// audit-code cluster A R2-H4/M6: a deleted file's `+++ /dev/null` header and every `diff --git` boundary must end the previous file
+import { parseDiffText as _parseDiffTextForReset } from '../scripts/lib/diff-annotation.mjs';
+import { test as _testForReset } from 'node:test';
+import _assertForReset from 'node:assert/strict';
+
+_testForReset('parseDiffText: a deleted file does not leak its hunk onto the preceding file', () => {
+  const patch = [
+    'diff --git a/a.mjs b/a.mjs', '--- a/a.mjs', '+++ b/a.mjs', '@@ -1,2 +1,3 @@', ' x', '+y',
+    'diff --git a/b.mjs b/b.mjs', 'deleted file mode 100644', '--- a/b.mjs', '+++ /dev/null', '@@ -1,5 +0,0 @@', '-gone',
+    'diff --git a/c.cs b/c.cs', '--- a/c.cs', '+++ b/c.cs', '@@ -4,1 +4,2 @@', '+z',
+  ].join('\n');
+  const m = _parseDiffTextForReset(patch);
+  _assertForReset.deepEqual(m.get('a.mjs').hunks, [{ startLine: 1, lineCount: 3 }], 'a.mjs keeps only its own hunk');
+  _assertForReset.deepEqual(m.get('c.cs').hunks, [{ startLine: 4, lineCount: 2 }]);
+  _assertForReset.equal(m.has('b.mjs'), false, 'a deleted file has no new-side hunks to annotate');
+});

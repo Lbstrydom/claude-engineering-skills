@@ -695,6 +695,7 @@ failed is a different thing from never-attempted (`references/verification-disci
 | `ineligible` | does not apply to this repo's resolved language/scope (e.g. a frontend-specific pass on a backend-only diff) |
 | `unavailable` | a concrete missing prerequisite — e.g. `AUDIT_DB_URL` unset for the architectural-memory catalogue |
 | `not-reached` | the round's control flow did not get to this pass/wave before stopping (rare — see below) |
+| `uncovered` | **file-level, from the result's `_coverage`, never from a pass:** changed files the audit did not (fully) examine — an unrecognised file type, an unreadable file, a deleted source file, a head-cut read. NOT `ineligible`: `ineligible` is an EXPECTED scope exclusion, and labelling a C# diff that way is exactly how twelve `.cs` files went unaudited under an APPROVE |
 
 **A per-round execution record.** `arch-memory` is resolved **once**, by
 Step 0.5, before any round's Step 2 begins, and is never re-seeded — Step 0.5
@@ -734,14 +735,26 @@ appears, it signals an aborted run (killed process, hard timeout).
     duplication (wave)  completed
     adjacency (wave)    completed
     arch-memory         unavailable  (AUDIT_DB_URL unset)
+    file coverage       uncovered    (PARTIAL — 3 of 12 changed source file(s) not fully audited; 2 unrecognised file type(s): xyz ×2)
 ═══════════════════════════════════════
 ```
+
+**A wave row over a change it could not read says so.** The four JS/TS-only waves (`orphan-introduced`, `event-wiring-symmetry`,
+`duplication`, `adjacency`) report `ineligible (0 of N changed files are js/ts; nothing was examined)` — never `completed`,
+`ANALYZED_CLEAN`, `clean` or `not-triggered` — when none of the changed files is one they can read; a partial one adds
+`examined k of n`. The tool pre-pass likewise names each project's state (`ok` / `failed` / `timeout` / `deadline_exceeded` /
+`ambiguous_project` / `no_project` / `skipped_budget` / `no_tool`) in `_coverage.tools`; none of them is a clean lint.
 
 Identifiers are the real ones — `structure`/`wiring`/`backend`/`frontend`/
 `sustainability` (`scripts/lib/prompt-seeds.mjs`), `quickfix`/`duplication`/
 `adjacency` (`scripts/lib/audit-shadow.mjs`'s `MECHANICAL_WAVES`) — not
 invented labels. Every non-`completed` row carries a mandatory concrete
 reason in parentheses.
+
+**The `file coverage` row is rendered from the round's `_coverage` (`node -p` the result JSON; its `status`, `gate` and the
+one-line suffix the summary already printed).** `complete` → `completed`; `partial` → `uncovered` with the suffix as its
+reason; `none`/`incomplete` → the round is already `INCOMPLETE` (exit 3) and must not be reported as converged at all.
+Copy the suffix, never paraphrase it: it names the files.
 
 **A round with any non-`completed` row cannot print a bare `CONVERGED`.**
 The suffix names **every kind present, with its own count** — never
@@ -846,6 +859,11 @@ the "two surfaces must show the same number" check.
 ---
 
 ## Step 7 — Gemini Independent Review (MANDATORY)
+
+> **Coverage rides into the review automatically.** The transcript builder projects each round's `_coverage` (every file
+> short of full coverage, capped, plus a digest of the full ledger), and the review envelope opens with an **Audit Coverage**
+> note naming what was NOT examined. Do not summarise it away in `--summary`; if the note is present the reviewer was told,
+> and an APPROVE over it is an APPROVE of the examined files only. A coverage gap is not itself release-blocking.
 
 Run Gemini 3.1 Pro as the final gate. Falls back to Claude Opus when
 `GEMINI_API_KEY` is absent.
