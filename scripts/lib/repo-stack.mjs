@@ -163,11 +163,14 @@ export function hasJavaSources(cwd = process.cwd()) {
     // how adapter-contract.mjs::inventoryFiles enumerates source files.
     // maxBuffer raised to 64 MiB: the default 1 MiB overflows in large
     // monorepos (>~12k .java files) and would throw maxBuffer-exceeded.
-    const out = execSync('git ls-files --cached --others --exclude-standard -- "*.java"', {
+    const list = (args) => execSync(`git ls-files ${args}`, {
       cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'],
       maxBuffer: 64 * 1024 * 1024,
-    });
-    return out.split('\n').some(l => l.trim().length > 0);
+    }).split('\n').filter(l => l.trim().length > 0);
+    const present = new Set(list('--cached --others --exclude-standard -- "*.java"'));
+    // `--cached` still lists a tracked file deleted from the working tree; the deletion must win (same as hasCsharpSources).
+    for (const gone of list('--deleted -- "*.java"')) present.delete(gone);
+    return present.size > 0;
   } catch {
     return false; // not a git repo — fast path already returned false
   }

@@ -191,14 +191,29 @@ function parseNameStatusZ(buf) {
   //   - R<score> / C<score>: 3 tokens — status, oldPath, newPath
   // The parser must peek at the status letter and consume the matching number
   // of tokens (Gemini-R5/M1 — variable-width records).
-  const parts = buf.toString('utf-8').split('\0').filter(p => p.length > 0);
+  const text = buf.toString('utf-8');
+  // Every field is NUL-TERMINATED. Splitting and dropping empty fields (the old shape) erased exactly the evidence that
+  // distinguishes a complete stream from a truncated or mis-framed one, so framing is checked here instead.
+  if (!text.endsWith('\0')) {
+    process.stderr.write('  [orphan] ABORT --name-status parse: output is not NUL-terminated (truncated); diff ignored to avoid a silently shorter change set\n');
+    return { records: [], partial: true };
+  }
+  const parts = text.slice(0, -1).split('\0');
   let i = 0;
   while (i < parts.length) {
     const rawStatus = parts[i];
+    if (!rawStatus) {
+      process.stderr.write(`  [orphan] ABORT --name-status parse: empty status field at token ${i}; remainder of diff ignored\n`);
+      return { records: out, partial: true };
+    }
     const statusLetter = rawStatus[0]; // strip score suffix on R/C
     if (statusLetter === 'R' || statusLetter === 'C') {
-      const oldPath = parts[i + 1] || '';
-      const newPath = parts[i + 2] || '';
+      const oldPath = parts[i + 1];
+      const newPath = parts[i + 2];
+      if (!oldPath || !newPath) {
+        process.stderr.write(`  [orphan] ABORT --name-status parse: '${rawStatus}' record at token ${i} is missing a path; remainder of diff ignored\n`);
+        return { records: out, partial: true };
+      }
       out.push({
         status: statusLetter,
         baseCallerPath: statusLetter === 'C' ? null : oldPath, // copy has no preimage at new path
@@ -206,7 +221,11 @@ function parseNameStatusZ(buf) {
       });
       i += 3;
     } else if (statusLetter === 'A' || statusLetter === 'M' || statusLetter === 'D' || statusLetter === 'T') {
-      const filePath = parts[i + 1] || '';
+      const filePath = parts[i + 1];
+      if (!filePath) {
+        process.stderr.write(`  [orphan] ABORT --name-status parse: '${rawStatus}' record at token ${i} is missing a path; remainder of diff ignored\n`);
+        return { records: out, partial: true };
+      }
       out.push({
         status: statusLetter === 'T' ? 'M' : statusLetter, // type-change behaves like modify for our purposes
         baseCallerPath: statusLetter === 'A' ? null : filePath,
@@ -733,3 +752,6 @@ export async function resolveDiffScope({ repoPath, baseRef, headRef, diffPatch, 
     state: (parsePartial || entryPointDiscoveryFailure.failed) ? 'ANALYZED_PARTIAL' : 'ANALYZED_CLEAN',
   };
 }
+
+/** Test seam (project convention: underscore-prefixed, mirrors file-io.mjs / vcs.mjs). */
+export const _internals = Object.freeze({ parseNameStatusZ });

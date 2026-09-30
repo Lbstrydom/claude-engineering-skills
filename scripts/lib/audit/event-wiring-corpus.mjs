@@ -37,6 +37,8 @@ import { listOpenLifecycle, readLifecycle, reconcileLifecycle } from './event-wi
 const SOURCE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.mts', '.cts', '.tsx', '.html', '.template']);
 const PER_FILE_BYTE_CAP = 1 * 1024 * 1024; // 1 MiB, matches this repo's spawnSync maxBuffer convention
 const DEFAULT_TOTAL_BUDGET_MB = 200;
+// Hard ceiling: the whole `git cat-file --batch` response is buffered in memory, so a configurable budget must not be unbounded.
+const MAX_TOTAL_BUDGET_MB = 1024;
 
 // ---------------------------------------------------------------------------
 // Config loader/validator (R5/M2) — the single owner for both the Phase-0
@@ -60,7 +62,7 @@ const WrapperEntrySchema = z.object({
 const ConfigFileSchema = z.object({
   version: z.literal(1),
   wrappers: z.array(WrapperEntrySchema).max(32).default([]),
-  totalByteBudgetMb: z.number().int().nonnegative().default(DEFAULT_TOTAL_BUDGET_MB),
+  totalByteBudgetMb: z.number().int().nonnegative().max(MAX_TOTAL_BUDGET_MB).default(DEFAULT_TOTAL_BUDGET_MB),
 }).strict();
 
 function assertNoDuplicateWrappers(wrappers) {
@@ -307,7 +309,8 @@ export function buildCorpus({ repoPath, wrappers = [], ref, totalByteBudgetMb = 
   let skippedFiles = 0;
   let excludedFiles = 0;
   let totalBytesRead = 0;
-  const totalBudgetBytes = totalByteBudgetMb > 0 ? totalByteBudgetMb * 1024 * 1024 : Infinity;
+  // 0 has always meant "no configured limit"; it now means the hard ceiling, because the whole batch response is buffered in memory.
+  const totalBudgetBytes = Math.min(totalByteBudgetMb > 0 ? totalByteBudgetMb : MAX_TOTAL_BUDGET_MB, MAX_TOTAL_BUDGET_MB) * 1024 * 1024;
   const hashParts = [];
   let budgetExhausted = false;
 
