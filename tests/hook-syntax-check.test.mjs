@@ -169,6 +169,8 @@ describe('syntax-check hook', () => {
         const libDir = path.join(root, ...libRelDir);
         fs.mkdirSync(libDir, { recursive: true });
         fs.copyFileSync(LIB_SRC, path.join(libDir, 'sensitive-paths.mjs'));
+        // sensitive-paths imports the taxonomy for its code-extension carve-out
+        fs.copyFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'file-taxonomy.mjs'), path.join(libDir, 'file-taxonomy.mjs'));
       }
       const target = path.join(root, 'broken.mjs');
       fs.writeFileSync(target, BROKEN_MJS);

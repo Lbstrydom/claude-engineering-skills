@@ -111,7 +111,7 @@ const PINNED_DOCUMENT_ONLY = {
   // audit. The rule constrains what the AGENT writes into the invocation, so there
   // is no /audit-code exit code to bind — same shape as ship/category-a-never-staged.
   // The skill TEXT is guarded by tests/skill-staging-instructions.test.mjs.
-  'audit-code': ['mechanical-vs-architectural-label', 'rigor-pressure-stop', 'detector-blocks-convergence', 'convergence-census-and-label', 'round-1-passes-the-selected-scope'],
+  'audit-code': ['mechanical-vs-architectural-label', 'rigor-pressure-stop', 'detector-blocks-convergence', 'convergence-census-and-label', 'round-1-passes-the-selected-scope', 'coverage-gate-fail-incomplete'],
   'visual-audit': ['partial-matrix-refusal', 'vlm-advisory-only'],
   'ai-context-management': ['never-write-without-confirmation'],
   explain: [],
@@ -310,7 +310,7 @@ describe('gate-honesty — real skills/', () => {
     //   Document-only: /cycle emits no exit code, and the accepted-plan skip has
     //   no content-identity oracle to bind to (plan-mode audit_runs carry HEAD,
     //   not the audited plan bytes).
-    assert.equal(totalDocOnly, 54);   // +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5); +2 ship: converged + no-tests cap (2026-09-04)
+    assert.equal(totalDocOnly, 55);   // +1 audit-code coverage-gate-fail-incomplete (file-coverage contract, 2026-09-30); +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5); +2 ship: converged + no-tests cap (2026-09-04)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));
