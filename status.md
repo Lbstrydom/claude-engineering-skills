@@ -69,6 +69,30 @@
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green (1 pre-declared held divergence, unrelated: docs/reference/consistency-contract.md). Subject check: `.claude/skills/audit-plan/references/gemini-gate.md` and `.claude/skills/cycle/SKILL.md` both carry the new prose (grep confirmed). storyline itself REFUSED this sync (27 files diverged, pre-existing committed customizations unrelated to this change) — not verified there; ai-organiser and wine-cellar-app both reached cleanly.
 - **Result**: verified — the /cycle Step 7 blocked-handoff prose and the gemini-gate.md calibration note reached the consumer bundle intact (wine-cellar-app, ai-organiser). storyline unverified — sync REFUSED on pre-existing divergence, not this change's fault.
 
+### Consumer Verification (previous ship)
+- **Commit**: e73a40ee on `main` (PR #135, squash-merged; branch `claude/concern-identity-suppression-readout-abde9c`, deleted)
+- **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green. Subject check: wine's synced `scripts/.claude-skills/write-ledger-entries.mjs` contains `newConcernOf` (x2). The branch push's sync summary reported 3/3 targets reached (Created 5, Updated 33).
+- **Result**: verified — the newConcernOf ledger field and the memory-health budget changes reached the consumer bundle intact.
+- **Commit**: 7de59ecd4d0414e2f224d8604383c833424a54a9 on `main` (PR #136, squash-merged; branch `claude/audit-csharp-support-a5971f`, deleted) — file-coverage contract + C# support.
+- **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
+- **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
+
+## 2026-09-30 — Follow-ups from the coverage audit: local-only JS/TS tools, strict diff framing, bounded corpus budget
+
+### Changes
+- **JS/TS tools no longer acquire packages**: eslint and tsc (probe AND run) now go through `npx --no-install --offline`. Measured on npm 10.11: `--no-install` alone still makes a registry metadata GET for a package missing from the tree (`http fetch GET 404 registry.npmjs.org/...` in the npm debug log); adding `--offline` exits 1 with no request and runs an installed tool normally. A consumer that leaned on the auto-fetch now gets a visible `no_tool` in the coverage ledger — install the project's dev dependencies before auditing. Decided by a /brainstorm round (OpenAI: resolve binaries directly; Gemini: `--no-install`); the measurement is what neither voice had.
+- diff-scope resolver `parseNameStatusZ` checks NUL framing: a truncated stream, an empty field or a record missing a path is a PARTIAL parse (the existing downgrade path), not a silently shorter change set. Exposed as `_internals` for the test.
+- event-wiring corpus: `totalByteBudgetMb` is capped at 1024 MB in the schema, and 0 (formerly unbounded) means the ceiling, because the whole `git cat-file --batch` response is buffered.
+- `hasJavaSources` subtracts `git ls-files --deleted`, matching the C# detector.
+- `tests/audit-followups.test.mjs` (16 cases; 8 fail against the previous sources).
+
+### Not done
+- render-mermaid map/envelope transaction — no incident, regenerable local artefacts.
+- Yarn PnP repos have no `node_modules`, so their JS/TS tools now report `no_tool`; a resolver adapter is only worth building if one appears.
+- No final audit pass for this small change (gate `not-run`); the tests carry negative controls instead.
+
+---
+
 ## 2026-09-30 — File-coverage contract + first-class C# support: an unexamined file can no longer read as an audited one
 
 ### Changes
