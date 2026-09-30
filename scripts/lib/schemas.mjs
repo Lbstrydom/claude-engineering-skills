@@ -1064,6 +1064,12 @@ const LedgerCoreFields = {
   // `sameConcernAs` (concern-identity.mjs). Declared so no parse→persist path
   // strips it — the latestFindingId lesson above. Absent = its own concern.
   concernId: z.string().optional(),
+  // The prior ruling's topicId this entry was declared DISTINCT from via triage
+  // `newConcern: true`. Without it a newConcern ruling left no trace, so the
+  // observation plan's "sample 5 newConcern rulings" could not be run
+  // (concern-identity-suppression.md §3, readout 2026-09-29). Absent = no
+  // such declaration, or no prior ruling to be distinct from.
+  newConcernOf: z.string().optional(),
   semanticHash: z.string(),
   severity: z.enum(['HIGH', 'MEDIUM', 'LOW']),
   category: z.string(),

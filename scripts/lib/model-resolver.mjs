@@ -64,6 +64,10 @@ export const STATIC_POOL = Object.freeze({
     // reason to move. 5.6 kept one generation back; 5.5/5.5-pro removed —
     // strictly dominated, never selectable (5.5 keeps its price row for
     // operator pins).
+    // GPT-6.1 (added 2026-09-29): sol only — no 6.1 astra/luna on the pricing
+    // page. The live catalog already resolved `latest-gpt` to it; this keeps
+    // offline resolution in step (models:freshness HIGH sentinel-drift).
+    'gpt-6.1-sol',
     'gpt-6-sol', 'gpt-6-astra', 'gpt-6-luna',
     'gpt-5.6-terra', 'gpt-5.6-sol', 'gpt-5.6-luna',
   ]),

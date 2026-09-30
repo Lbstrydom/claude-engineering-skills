@@ -14,6 +14,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "01f5cfd1-b2d8-4412-b10b-c856650ebb1e",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/write-ledger-entries.test.mjs"
+      },
+      "recordedAt": "2026-09-29T12:07:15.496Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "08b4f5fc-1de9-4a78-8094-25589100b774",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
@@ -443,6 +454,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "94345e35-f43b-4028-9144-0b5311734047",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/ship-pushed-commit-verification.test.mjs"
+      },
+      "recordedAt": "2026-09-29T12:07:14.762Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "96a829f8-d2b9-457a-b5ab-530b5530dad8",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
@@ -495,6 +517,17 @@
         "value": "prose-only calibration note in docs/audit/shared-references/gemini-gate.md (synced into audit-plan/audit-code, mirrored in cycle/SKILL.md); softens a framing claim, no mechanism change pending a broader sample"
       },
       "recordedAt": "2026-09-19T12:06:21.308Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "aac80849-55af-4376-84ec-fadd0b017fc7",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/sync-legacy-copilot-receipt-e2e.test.mjs"
+      },
+      "recordedAt": "2026-09-29T12:07:13.805Z"
     },
     {
       "schemaVersion": 1,

@@ -188,9 +188,14 @@ export function resolveConcernLinks(pending, refsByTopic, topicByFindingId, ledg
   const entries = pending.map((e) => {
     if (!refsByTopic.has(e.topicId)) {
       // The triage path REPLACES an entry by topicId; keep a link made in an
-      // earlier round rather than silently unlinking on a re-ruling.
-      const stored = ledgerByTopic.get(e.topicId)?.concernId;
-      return stored ? { ...e, concernId: stored } : e;
+      // earlier round rather than silently unlinking on a re-ruling. The same
+      // holds for an earlier newConcern declaration.
+      const prev = ledgerByTopic.get(e.topicId);
+      return {
+        ...e,
+        ...(prev?.concernId ? { concernId: prev.concernId } : {}),
+        ...(prev?.newConcernOf && !e.newConcernOf ? { newConcernOf: prev.newConcernOf } : {}),
+      };
     }
     const root = rootOf(e.topicId, new Set());
     if (typeof root !== 'string') {

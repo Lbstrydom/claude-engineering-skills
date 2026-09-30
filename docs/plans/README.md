@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**7 active · 227 terminal · 32 audit summaries · 1 parked · 5 reference docs**
+**6 active · 228 terminal · 32 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -21,7 +21,6 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
-| [Concern identity for re-raise suppression, and a one-week observation window](./concern-identity-suppression.md) | `In Progress` | fix shipped; observation window running, readout due 2026-09-29 |
 | [Enforce the debt ledger's persisted-record contract (§2 of aged-out-acceptance-remainder.md)](./debt-ledger-persisted-record-contract.md) | `Approved` | GPT plan audit converged after 3 rounds (9→3→2 findings, 100% acceptance throughout); Gemini final gate… |
 | [Decompose `gemini-review.mjs`](./gemini-review-decomposition.md) | `Approved` | GPT: 2 rounds, 100% acceptance both rounds, H:0 M:0 L:0 at R2; Gemini: 2 rounds, CONCERNS → APPROVE after… |
 | [`runs-findings.mjs` Identity & Write-Boundary Hardening](./runs-findings-write-boundary-hardening.md) | `Approved` |  |
@@ -58,7 +57,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 224 completed plans</summary>
+<summary>Show all 225 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -108,6 +107,7 @@ source comments that no docs linter sees — stays valid.
 | [Campaign Arm-State and Snapshot-Identity Integrity](./campaign-arm-state-and-identity-integrity.md) | `Complete` | implemented via `/cycle --autonomous` (3 clusters, each audited to convergence), consolidated Gemini gate… |
 | [Wire the Cloud FP-Pattern Read Loop into Audit Suppression](./cloud-fp-suppression-read-loop.md) | `Complete` | implemented + audited. Plan audit: 5 GPT + 2 Gemini rounds. Code audit: 5 GPT rounds + 1 deliberation + 3… |
 | [Comparison-Tooling Consolidation](./comparison-tooling-consolidation.md) | `Complete` | all clusters (A/A′, B, C, D) implemented, individually audited to convergence, and the mandatory… |
+| [Concern identity for re-raise suppression, and a one-week observation window](./concern-identity-suppression.md) | `Complete` | readout done 2026-09-29 (§3.1): hard-suppress fires, no tuning |
 | [Consumer corpus honesty — the index, the round, and the ownership seam](./consumer-corpus-and-honesty-2026-09-04.md) | `Complete` | implemented and audited. GPT `/audit-code` ×5 rounds (H:6→2→3→3→4), 27 findings accepted and fixed, 49… |
 | [Bound and adjudicate the consumer dependency install](./consumer-dep-install-bounding.md) | `Complete` | implemented, verified, and audited 2026-09-04; `/audit-code` 6 rounds + Gemini APPROVE |
 | [Harden consumer deployment — prevent silent local-patching of synced tooling](./consumer-deployment-hardening.md) | `Complete` | all three phases built, tested, and deployed (the "Draft" label was stale). Phase 1 banner:… |

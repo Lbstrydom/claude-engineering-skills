@@ -92,7 +92,7 @@ a supported state, not a misconfiguration.
 | `MEMORY_HEALTH_CLUSTER_MEDIAN` | No | `5` | Cluster density trigger threshold (median similar pairs/repo) |
 | `MEMORY_HEALTH_RECURRENCE_RATE` | No | `0.10` | Fixed-finding recurrence rate trigger threshold |
 | `MEMORY_HEALTH_MIN_FINDINGS` | No | `50` | Minimum findings in window to report a trigger (below → INSUFFICIENT_DATA) |
-| `MEMORY_HEALTH_RPC_TIMEOUT_MS` | No | `240000` | Caller-side bound on `memory_health_metrics` (the function's own `SET statement_timeout` is inert). Sized under the maintenance runner's 300s spawn budget so a runaway is a loud `57014`, not a silent kill. |
+| `MEMORY_HEALTH_RPC_TIMEOUT_MS` | No | `480000` | Caller-side bound on `memory_health_metrics` (the function's own `SET statement_timeout` is inert). Sized under the maintenance runner's 600s spawn budget for this check so a runaway is a loud `57014`, not a silent kill. Measured 292s on the NAS store (2026-09-29). |
 
 See [`memory-health-gate.md`](memory-health-gate.md) for what these thresholds
 govern.

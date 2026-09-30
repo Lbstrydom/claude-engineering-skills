@@ -310,16 +310,18 @@ describe('resolveModel', () => {
     assert.equal(resolveModel('latest-opus'), 'claude-opus-6-0');
   });
 
-  it('offline (STATIC_POOL only): latest-gpt → gpt-6-sol, latest-gpt-mini → gpt-6-luna, latest-opus → claude-opus-5-5 (2026-09-23 refresh)', () => {
-    assert.equal(resolveModel('latest-gpt'), 'gpt-6-sol');
+  it('offline (STATIC_POOL only): latest-gpt → gpt-6.1-sol, latest-gpt-mini → gpt-6-luna, latest-opus → claude-opus-5-5 (2026-09-29 refresh)', () => {
+    assert.equal(resolveModel('latest-gpt'), 'gpt-6.1-sol');
     assert.equal(resolveModel('latest-gpt-mini'), 'gpt-6-luna');
     assert.equal(resolveModel('latest-opus'), 'claude-opus-5-5');
     assert.equal(resolveModel('latest-sonnet'), 'claude-sonnet-5-5');
   });
 
   it('a live catalog listing astra BEFORE sol still resolves latest-gpt to sol — the incident shape (status.md 2026-09-20)', () => {
-    setCatalog('openai', ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol']);
-    assert.equal(resolveModel('latest-gpt'), 'gpt-6-sol');
+    // A hypothetical 6.2 pair, strictly newer than the static head (gpt-6.1-sol
+    // since 2026-09-29), so the astra/sol tiebreak at major 6 is what decides.
+    setCatalog('openai', ['gpt-6.2-astra', 'gpt-6.2-sol', 'gpt-6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol']);
+    assert.equal(resolveModel('latest-gpt'), 'gpt-6.2-sol');
   });
 
   it('end-to-end: a live catalog one generation ahead of STATIC_POOL resolves latest-gpt to its balanced SKU and latest-gpt-mini to its lite SKU — regression for the sol/terra/luna naming + mini-generalization fixes together', () => {

@@ -30,6 +30,7 @@ import {
   resolveConcernLinks, buildConcernIndex, summariseConcernRound, CONCERN_TELEMETRY_EPOCH,
   findUndecidedReRaises,
 } from '../scripts/lib/concern-identity.mjs';
+import { LedgerEntrySchema } from '../scripts/lib/schemas.mjs';
 
 const APIM = 'src/services/azure-apim-base-provider.ts';
 const EGRESS = 'src/services/dataset-egress-serializer.ts';
@@ -471,7 +472,33 @@ describe('a dismissal beside an earlier dismissal must decide: same concern or n
 
     fs.writeFileSync(triage, JSON.stringify({ M1: overrule('different defect, same file', { newConcern: true }) }));
     cli(['--result', r2, '--ledger', ledgerPath, '--triage', triage, '--round', '2']);
-    assert.equal(JSON.parse(fs.readFileSync(ledgerPath, 'utf-8')).entries.length, 2);
+    const entries = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8')).entries;
+    assert.equal(entries.length, 2);
+    // The decision is recorded against the prior it was ruled distinct from, so
+    // a later readout can sample newConcern rulings (it previously left no trace).
+    const second = entries.find((e) => e.topicId !== prior.topicId);
+    assert.equal(second.newConcernOf, prior.topicId);
+    assert.equal(second.concernId, undefined);
+    assert.equal(entries.find((e) => e.topicId === prior.topicId).newConcernOf, undefined);
+  });
+
+  it('keeps an earlier newConcern declaration when the entry is re-ruled without one', () => {
+    const prev = { topicId: 't2', newConcernOf: 'abc123000000' };
+    const { entries, errors } = resolveConcernLinks([{ topicId: 't2' }], new Map(), new Map(), new Map([['t2', prev]]));
+    assert.deepEqual(errors, []);
+    assert.equal(entries[0].newConcernOf, 'abc123000000');
+    const fresh = resolveConcernLinks([{ topicId: 't2', newConcernOf: 'def456000000' }], new Map(), new Map(), new Map([['t2', prev]]));
+    assert.equal(fresh.entries[0].newConcernOf, 'def456000000', 'a new declaration replaces the old one');
+  });
+
+  it('the ledger schema keeps newConcernOf (a z.object strips undeclared keys on any parse→persist path)', () => {
+    const entry = {
+      topicId: 't2', semanticHash: 'h', severity: 'LOW', category: 'c', section: 's', detailSnapshot: 'd',
+      affectedFiles: [APIM], affectedPrinciples: [], pass: 'sustainability', adjudicationOutcome: 'dismissed',
+      remediationState: 'pending', originalSeverity: 'LOW', ruling: 'overrule', rulingRationale: 'r', resolvedRound: 2,
+      newConcernOf: 'abc123000000',
+    };
+    assert.equal(LedgerEntrySchema.parse(entry).newConcernOf, 'abc123000000');
   });
 
   it('refuses both decisions at once', () => {

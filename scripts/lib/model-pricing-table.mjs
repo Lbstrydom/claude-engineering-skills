@@ -36,6 +36,14 @@
 // tokens, which none does today.
 
 export const modelPricing = Object.freeze({
+  // OpenAI — GPT-6.1 (sol only; read 2026-09-29 from the same pricing page).
+  // Same base rates as gpt-6-sol; cached input is halved.
+  'gpt-6.1-sol': {
+    tiers: [
+      { maxInputTokens: 272_000, input: 2.00, output: 10.00, cachedInput: 0.10 },
+      { maxInputTokens: Infinity, input: 4.00, output: 15.00, cachedInput: 0.20 },
+    ],
+  },
   // OpenAI — GPT-6 (astra = premium, sol = balanced, luna = lite)
   'gpt-6-astra': {
     tiers: [

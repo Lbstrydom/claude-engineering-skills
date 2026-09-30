@@ -177,6 +177,19 @@ describe('maintenance-checks — CHECKS manifest', () => {
     const c = CHECKS.find((c) => c.key === 'model-freshness');
     assert.deepEqual(c.requiredEnv, []);
   });
+
+  // The two budgets are coupled: if the spawn kill lands first, a slow RPC reads
+  // as a bare `killed by signal` with no measurement (how this gate sat degraded
+  // before). 2026-09-29: the RPC measured 292s against a 240s bound inside a
+  // 300s step budget, so both had to move together.
+  it('memory-health: the step budget outlasts its own RPC bound, with a minute to render', async () => {
+    const { _internals } = await import('../scripts/memory-health.mjs');
+    const step = CHECKS.find((c) => c.key === 'memory-health').steps[0];
+    assert.equal(typeof step.timeoutMs, 'number', 'memory-health declares its own step budget');
+    assert.ok(step.timeoutMs >= _internals.RPC_TIMEOUT_MS + 60_000,
+      `step ${step.timeoutMs}ms vs RPC ${_internals.RPC_TIMEOUT_MS}ms`);
+    assert.ok(_internals.RPC_TIMEOUT_MS > 292_000, 'the RPC bound admits the measured 292s run');
+  });
 });
 
 describe('maintenance-checks — missingEnv', () => {

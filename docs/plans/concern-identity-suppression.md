@@ -1,7 +1,7 @@
 # Plan: Concern identity for re-raise suppression, and a one-week observation window
 
 - **Date**: 2026-09-22
-- **Status**: In Progress — fix shipped; observation window running, readout due 2026-09-29
+- **Status**: Complete — readout done 2026-09-29 (§3.1): hard-suppress fires, no tuning
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
 
@@ -72,6 +72,32 @@ extend by a week; do not conclude.
 **Store coverage.** A store with no stamped rounds reads `UNMEASURED`. That is
 not a clean result. The corporate consumer that filed the report may be on a
 different store from this repo's maintainer.
+
+### 3.1 Readout (2026-09-29)
+
+**Scope.** Lbstrydom/* repos only: this repo, wine-cellar-app and ai-organiser,
+all on store `d5a9d07b91225a93`. The work repos on store `c7177057dcafa55d`
+(storyline, gd-afeu-project-readiness) run through Azure and were excluded by
+decision: their 41 unstamped R2+ rounds are not a reason to change this repo.
+Their numbers stay in the raw readout, not in the verdict.
+
+**Sample floor: met.** 16 stamped R2+ rounds (this repo 9, wine-cellar-app 7,
+ai-organiser 0: no audits ran there). 0 unstamped R2+ rounds on the store.
+Measured with `npm run concern:report -- --days 7 --json`, plus read-only
+queries over `suppression_events` for the hand samples.
+
+| Q | Measured | Reading |
+|---|---|---|
+| Q1 | 1 hard-suppress (2026-09-25, round 6, `linked=yes`, 3 dismissals). The only other round with a concern at threshold had `nearMissInConcern = 0`, so no raise in that concern was missed | Firing. No action |
+| Q2 | Linked concern in 4/16 rounds. 7 recurring topics, 6 of them beside **accepted** rulings (fix iterations on one file), which the decision rule does not govern; the one beside a dismissal (`16d5c7a3`) is already linked | No sign of wrong `newConcern` answers. The hand sample could not run: `newConcern` was validated but never stored. Fixed the same day (`newConcernOf` on the ledger entry) |
+| Q3 | Near-miss bands <.1: 6, <.2: 30, <.35: 23, >=.35: 0 (36/59 below 0.2). Recurring-topic rows: 11/19 below 0.2, max 0.298 | Threshold out of reach by construction. Not tuned; §4's no-fuzzy-matching stands |
+| Q4 | 3 re-litigation declines, all sampled from the ledger by hand: each was the same concern reworded (swallowed `rmSync` cleanup twice, a cloud-off test once) against a dismissal with a stated rationale | No recall loss |
+| Q5 | 9/59 kept rows multi-file (15%). 4/7 recurring topics contain a multi-file row; 1/7 is mostly multi-file | Not a large share on the row count the report computes. Left alone. The rule never defined "large share" or its unit; next window should |
+
+**Instrument notes for a next window.** `recurringMissedTopics` counts topics
+beside accepted rulings too; for Q2 only dismissed priors matter, so filter or
+split it before reading Q2 again. Q2's sample now reads `newConcernOf` from the
+session ledgers.
 
 ## 4. Deliberately not done
 
