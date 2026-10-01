@@ -1,6 +1,11 @@
 # Project Status Log
 
 ### Consumer Verification (previous ship)
+- **Commit**: 9892fc795218f54ecbbcd521b84c7f42a3aa059f on `main` (PR #143, squash-merged; branch `claude/azure-claude-thinking-config-c27d33`, deleted; branch commit 1f7e949d synced)
+- **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in storyline's MAIN checkout (C:\GIT\storyline) — exit 0, gates 1..9 green. Subject check in storyline's synced `scripts/.claude-skills/lib/brainstorm/`: `CLAUDE_DEPTH_EFFORT` in depth-config.mjs (x2), `output_config` in azure-claude-adapter.mjs (x5), `thinkingTokens` in schemas.mjs (x2). The push's sync reported 3/3 targets reached, 36 updated, 1 error: ai-organiser REFUSED `.audit-loop/expected-schema.json` (pre-existing — its sync PR `chore/sync-e73a40ee` is unmerged; same block as the 2026-09-30 note).
+- **Result**: verified for storyline (the reporting consumer) — the explicit-effort / per-provider-ceiling / thinking-token fix reached its bundle intact. Not yet confirmed on a real Foundry deployment: the next deep `/brainstorm` round in storyline should show `thinkingTokens` in the ledger and finish below the 6,000 ceiling.
+
+### Consumer Verification (previous ship)
 - **Commit**: 9c45ce09b2c27ae037262230b36e21fa6517ff38 on `main` (PR #127, squash-merged; branch `claude/repo-comparison-06959f`, deleted)
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green. Subject check: wine's `.claude/skills/brainstorm/SKILL.md` contains "Raised by one voice only" (x1) and no "Nobody covered" (x0), i.e. the trimmed final version. The branch push's sync summary reported 3/3 targets reached, 6 files updated.
 - **Result**: verified — the trimmed /brainstorm Step 4 template reached the consumer bundle intact.
@@ -96,6 +101,31 @@ Backlog 2026-10-02T04:10Z: Q1 65c/22p (+338 aged) · Q2 101c/41p (54 perm) · Q3
 ### Not done
 - `executors.mjs`'s auditor arm still reports `usage: null` to the manifest driver; the child's `--out` now carries `cost`, but mapping promotion's multi-arm `byRow` to one arm is not done (docstring updated).
 - No audit loop ran (gate `not-run`).
+
+---
+
+## 2026-10-01 — GPT auditor → gpt-6.1-sol (experiment 7: cost-only switch)
+
+### Changes
+- `docs/research/experiment-7-gpt-sol-auditor-swap.md`: gpt-6.1-sol vs gpt-6-sol vs gpt-5.6-sol, auditor role. Verdict: **switch to gpt-6.1-sol on cost; comparative quality unmeasured.** Includes a rollback trigger (§6) and a per-case output appendix.
+- AGENTS.md verdict line updated (net −8 chars; 91,945 / 92,000).
+- `skills/ship/SKILL.md` MODELS example `gpt-5.6` → `gpt-6.1-sol` (+ generated copy, manifest).
+
+### Readings
+- Harness screen tier, 3 runs of record (`7e24cec7` / `301c77c9` / `a0364be0`): recall 0, FPR 1.0 for every arm. A Tier C probe over 11 cases reproduced this exactly. All outputs were well-formed real-file findings, so the cause is the oracle ceiling, not an instrument fault. Same-file agreement across all 3 arms on 6/11 cases.
+- Identical input (166,133 tok): gpt-6.1-sol $0.357, gpt-6-sol $0.391, gpt-5.6-sol $0.885 (2.5x). Reasoning tokens 1,213 / 4,863 / 9,863 at default effort.
+- Hand spot-check at the buggy commits: KD-026 all three real; KD-020 gpt-6.1-sol real (npm vs npm.cmd), the other two false (dry-run exits before the install).
+- GPT-vs-GPT promotion is always Tier C (`route-catalog.mjs:360`, same independence group). Its baseline `latest-gpt` = the candidate.
+- Request shape: no GPT call site sends effort `none`/`minimal` or Chat Completions `tools`. No change needed. The pricing row already includes the $0.10 cached rate.
+- Spend ≈ $2.20.
+
+### Corrections
+- The 2026-09-30 entry's "the live catalog was already routing audits to it" was wrong for this machine. The main checkout's `.env` pins `OPENAI_AUDIT_MODEL=gpt-5.6-sol` (set 2026-09-30), and a concrete id wins over the sentinel. `openaiConfig.model` resolved to `gpt-5.6-sol` today.
+
+### Not done
+- Operator `.env` pins (`OPENAI_AUDIT_MODEL=gpt-5.6-sol`) moved on 2026-10-02 at the operator's request: here and wine-cellar-app → `gpt-6.1-sol`; storyline (Azure) → `gpt-6-sol`, because its tenant 404s on `gpt-6.1-sol` (and on `gpt-6.1-terra`, which does not exist on either route) but serves `gpt-6-sol`.
+- Left pinned on purpose: `solo-control-audit.mjs --gpt-model` default `gpt-5.6-terra` (experiment-5 provenance; changing it breaks comparability) and `defaults/work-profile.env.example` `AZURE_OPENAI_GPT_DEPLOYMENT` (tenant-dependent; no Azure endpoint here to probe).
+- Harness defects (repo resolution in linked worktrees, Tier C discarding raw outputs, screen `cost: null`): fixed in #145.
 
 ---
 
