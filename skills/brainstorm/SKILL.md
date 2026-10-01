@@ -245,7 +245,7 @@ provider):
 | `timeout` | `### <Provider> (<resolved-model>)`<br>`⚠ Timeout after <latencyMs>ms. Try again or lower --max-tokens.` |
 | `http_error` | `### <Provider> (<resolved-model>)`<br>`⚠ HTTP <httpStatus>: <errorMessage>` |
 | `empty` | `### <Provider> (<resolved-model>)`<br>`⚠ Empty response (<errorMessage>).` |
-| `truncated` | `### <Provider> (<resolved-model>)`<br>`⚠ INCOMPLETE — hit the output-token ceiling; retry with a higher --depth.`<br>then the partial `<text>` verbatim. **Render the warning ABOVE the text, never below** — a fragment read as a finished view is the bug this state exists to prevent. Treat it as a partial view in any synthesis, and say so. |
+| `truncated` | `### <Provider> (<resolved-model>)`<br>`⚠ INCOMPLETE — <errorMessage>`<br>then the partial `<text>` verbatim. The errorMessage names the ceiling, how much of it thinking spent (when the provider reports it), and the remedy for this tier — at `deep` that is `--max-tokens`, not `--depth`; don't substitute your own. **Render the warning ABOVE the text, never below** — a fragment read as a finished view is the bug this state exists to prevent. Treat it as a partial view in any synthesis, and say so. |
 | `malformed` | `### <Provider> (<resolved-model>)`<br>`⚠ Malformed response: <errorMessage>` (path is in errorMessage) |
 | `blocked` | `### <Provider> (<resolved-model>)`<br>`⚠ Blocked by safety filter: <errorMessage>` |
 

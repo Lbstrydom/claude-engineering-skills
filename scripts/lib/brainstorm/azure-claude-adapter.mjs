@@ -3,6 +3,7 @@ import { azureConfig } from '../config.mjs';
 import { BRAINSTORM_SYSTEM_PROMPT } from './prompt.mjs';
 import { estimateCostUsd } from './pricing.mjs';
 import { isAbortFailure, abortMessage } from './error-classify.mjs';
+import { truncatedMessage } from './depth-config.mjs';
 
 /**
  * /brainstorm's Azure second voice — Claude on Azure AI Foundry.
@@ -58,6 +59,12 @@ export function _resetClient() { _client = null; }
  * @param {number} args.maxTokens  Cap for output tokens
  * @param {number} [args.timeoutMs]
  * @param {string} [args.systemPrompt]
+ * @param {string|null} [args.reasoningEffort] Anthropic `output_config.effort`
+ *   (depth-config `CLAUDE_DEPTH_EFFORT`). null ⇒ omitted, i.e. the provider
+ *   default — which on Opus 5 is `high` thinking, the cause of the storyline
+ *   truncations, so the CLI always passes one.
+ * @param {string|null} [args.truncationRemedy] What a truncated result should
+ *   tell the user to do; depends on the tier, which this adapter cannot see.
  * @param {object|null} [args._clientOptions] Test-only overrides merged into
  *   `createAnthropicClient` (e.g. a synthetic `azureRoute` + an injected
  *   `fetch`). Present ⇒ the memoised client is bypassed, so an injected
@@ -67,7 +74,7 @@ export function _resetClient() { _client = null; }
  *   afterwards observes nothing and the request escapes to the network.
  * @returns {Promise<object>} ProviderResult
  */
-export async function callAzureClaude({ topic, model, maxTokens, timeoutMs = 60000, systemPrompt = BRAINSTORM_SYSTEM_PROMPT, _clientOptions = null }) {
+export async function callAzureClaude({ topic, model, maxTokens, timeoutMs = 60000, systemPrompt = BRAINSTORM_SYSTEM_PROMPT, reasoningEffort = null, truncationRemedy = null, _clientOptions = null }) {
   const startMs = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -76,12 +83,25 @@ export async function callAzureClaude({ topic, model, maxTokens, timeoutMs = 600
     const anthropic = _clientOptions
       ? await createAnthropicClient({ ...clientOptions(), ..._clientOptions })
       : await client();
-    const response = await anthropic.messages.create({
+    const request = {
       model,
       max_tokens: maxTokens,
       system: systemPrompt,
       messages: [{ role: 'user', content: topic }],
-    }, { signal: controller.signal });
+    };
+    if (reasoningEffort) request.output_config = { effort: reasoningEffort };
+    let response;
+    try {
+      response = await anthropic.messages.create(request, { signal: controller.signal });
+    } catch (err) {
+      // A deployment whose model predates effort (Sonnet/Haiku 4.5 reject it)
+      // 400s on the field. Retry once without it rather than failing the whole
+      // leg on a tuning hint — the same shape as the OpenAI adapter's
+      // reasoning_effort fallback. Any other error propagates unchanged.
+      if (!request.output_config || !isEffortRejection(err)) throw err;
+      const { output_config: _dropped, ...bare } = request;
+      response = await anthropic.messages.create(bare, { signal: controller.signal });
+    }
     clearTimeout(timer);
     const latencyMs = Date.now() - startMs;
 
@@ -94,6 +114,11 @@ export async function callAzureClaude({ topic, model, maxTokens, timeoutMs = 600
     const usage = {
       inputTokens: response?.usage?.input_tokens ?? 0,
       outputTokens: response?.usage?.output_tokens ?? 0,
+      // The thinking share WITHIN outputTokens (billed there already). READ,
+      // never assumed: null when the route reports no count, never a
+      // hardcoded 0 — a zero would claim "no thinking" on exactly the
+      // truncated responses where the split is the diagnosis.
+      thinkingTokens: readThinkingTokens(response?.usage),
     };
     const estimatedCostUsd = estimateCostUsd({
       modelId: model,
@@ -103,7 +128,13 @@ export async function callAzureClaude({ topic, model, maxTokens, timeoutMs = 600
 
     return {
       provider: 'azure-claude',
-      ..._classifyCompletion({ text, stopReason: response?.stop_reason ?? null }),
+      ..._classifyCompletion({
+        text,
+        stopReason: response?.stop_reason ?? null,
+        maxTokens,
+        thinkingTokens: usage.thinkingTokens,
+        truncationRemedy,
+      }),
       httpStatus: null,
       usage,
       latencyMs,
@@ -125,10 +156,11 @@ export async function callAzureClaude({ topic, model, maxTokens, timeoutMs = 600
  * complete answer reads as a finished peer view; the partial text is kept
  * because it is still worth reading, only the label was wrong.
  *
- * @param {{text: string|null, stopReason: string|null}} args
+ * @param {{text: string|null, stopReason: string|null, maxTokens?: number|null,
+ *          thinkingTokens?: number|null, truncationRemedy?: string|null}} args
  * @returns {{state: string, text: string|null, errorMessage: string|null}}
  */
-export function _classifyCompletion({ text, stopReason }) {
+export function _classifyCompletion({ text, stopReason, maxTokens = null, thinkingTokens = null, truncationRemedy = null }) {
   if (stopReason === 'refusal') {
     return { state: 'blocked', text: null, errorMessage: 'Content declined by the model (stop_reason: refusal)' };
   }
@@ -139,10 +171,22 @@ export function _classifyCompletion({ text, stopReason }) {
     return {
       state: 'truncated',
       text,
-      errorMessage: 'Response hit the output-token ceiling and is incomplete — raise --depth for a full answer.',
+      errorMessage: truncatedMessage({ maxTokens, thinkingTokens, remedy: truncationRemedy }),
     };
   }
   return { state: 'success', text, errorMessage: null };
+}
+
+/** `usage.output_tokens_details.thinking_tokens`, or null when absent/unreadable. */
+export function readThinkingTokens(usage) {
+  const v = usage?.output_tokens_details?.thinking_tokens;
+  return Number.isInteger(v) && v >= 0 ? v : null;
+}
+
+/** A 400 naming the effort field — the only error the no-effort retry answers. */
+function isEffortRejection(err) {
+  const status = err?.status ?? err?.response?.status ?? null;
+  return status === 400 && /effort|output_config/i.test(String(err?.message ?? ''));
 }
 
 function classifyError({ err, latencyMs, signal = null, timeoutMs = null }) {

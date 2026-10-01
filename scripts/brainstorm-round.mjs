@@ -22,7 +22,7 @@ import { callAzureClaude } from './lib/brainstorm/azure-claude-adapter.mjs';
 import { resolveProviderAvailability, defaultProviders } from './lib/brainstorm/provider-availability.mjs';
 import { azureConfig } from './lib/config.mjs';
 import { preflightEstimateUsd } from './lib/brainstorm/pricing.mjs';
-import { resolveOutputBudget, resolveTimeoutMs, DEPTH_TOKENS } from './lib/brainstorm/depth-config.mjs';
+import { resolveOutputBudget, resolveProviderCall, DEPTH_TOKENS } from './lib/brainstorm/depth-config.mjs';
 import { assembleResumeContext } from './lib/brainstorm/resume-context.mjs';
 import { loadArchSection, shouldAttachArch } from './lib/brainstorm/arch-context.mjs';
 import { buildBrainstormSystemPrompt, DEFAULT_WORD_TARGET } from './lib/brainstorm/prompt.mjs';
@@ -70,6 +70,8 @@ FLAGS — brainstorm-round mode
   --depth <tier>         shallow|standard|deep — sets the prose length asked for
                          (150–250 / 250–500 / 600–1000 words) and the output
                          ceiling that holds it plus reasoning headroom
+                         (azure-claude: its own, larger ceiling for denser
+                         prose, plus an explicit effort per tier)
   --debate               Run a second round where each model reacts to the other's response
   --continue-from <sid>  Resume from prior session id (loads prior rounds as context)
   --with-context "<txt>" Additional context (repeatable, max 8000 chars per flag, 24000 total)
@@ -392,16 +394,29 @@ async function runBrainstormMode(args) {
     explicitMaxTokens: args.explicitMaxTokens,
     maxTokens: args.maxTokens,
   });
-  const { maxTokens, reasoningEffort: depEffort, wordTarget: depWordTarget } = dep;
-  const reasoningEffort = depEffort ?? null;
+  const { maxTokens, wordTarget: depWordTarget } = dep;
   const wordTarget = depWordTarget ?? DEFAULT_WORD_TARGET;
 
-  // Timeout scales with the ceiling this run actually asked for (see
-  // depth-config.mjs) unless the operator pinned an exact value.
-  const timeoutMs = resolveTimeoutMs({ explicit: args.explicitTimeoutMs, timeoutMs: args.timeoutMs, maxTokens });
-  if (timeoutMs !== args.timeoutMs) {
-    process.stderr.write(`  [brainstorm] scaled timeout → ${timeoutMs}ms for a ${maxTokens}-token ceiling (pass --timeout-ms to pin an exact value)\n`);
+  // Ceiling, effort, timeout and truncation remedy are resolved PER PROVIDER
+  // (depth-config resolveProviderCall): azure-claude writes denser prose and
+  // takes its own effort knob, and each timeout scales with that provider's
+  // own ceiling unless the operator pinned an exact value. Round 1 and the
+  // debate round both read this one table.
+  const providerCalls = Object.fromEntries(args.models.map(p => [p, resolveProviderCall({
+    budget: dep,
+    provider: p,
+    explicitTimeoutMs: args.explicitTimeoutMs,
+    timeoutMs: args.timeoutMs,
+  })]));
+  for (const [p, c] of Object.entries(providerCalls)) {
+    if (c.timeoutMs !== args.timeoutMs || c.maxTokens !== maxTokens) {
+      process.stderr.write(
+        `  [brainstorm] ${p}: ${c.maxTokens}-token ceiling${c.reasoningEffort ? `, effort ${c.reasoningEffort}` : ''}, ` +
+        `timeout ${c.timeoutMs}ms (pass --timeout-ms to pin an exact value)\n`
+      );
+    }
   }
+  const maxProviderTokens = Math.max(...Object.values(providerCalls).map(c => c.maxTokens));
 
   if (dep.autoPromoted) {
     process.stderr.write(`  [brainstorm] auto-promoted depth → ${dep.depth} (${dep.tierMaxTokens} tokens)\n`);
@@ -518,19 +533,19 @@ async function runBrainstormMode(args) {
   const round1Cost = args.models.reduce((sum, p) => sum + preflightEstimateUsd({
     modelId: resolvedModels[p],
     inputChars: totalInputChars,
-    maxOutputTokens: maxTokens,
+    maxOutputTokens: providerCalls[p].maxTokens,
   }), 0);
   const debateRunsForBudget = (args.debate && args.models.length === 2) ? 2 : 0;
   const debateCost = debateRunsForBudget > 0
     ? args.models.reduce((sum, p) => sum + preflightEstimateUsd({
         modelId: resolvedModels[p],
-        inputChars: totalInputChars + maxTokens * 4,  // peer's response added to input
-        maxOutputTokens: maxTokens,
+        inputChars: totalInputChars + maxProviderTokens * 4,  // peer's response added to input
+        maxOutputTokens: providerCalls[p].maxTokens,
       }), 0)
     : 0;
   const preflightTotal = round1Cost + debateCost;
   process.stderr.write(`  [brainstorm] Calling: ${args.models.join(', ')} | Resolved: ${JSON.stringify(resolvedModels)}\n`);
-  process.stderr.write(`  [brainstorm] Pre-call cost ceiling: ~$${preflightTotal.toFixed(4)} (${args.models.length} round-1${args.debate && args.models.length === 2 ? ' + 2 debate' : ''} calls; total input ~${totalInputChars} chars; max-out=${maxTokens})\n`);
+  process.stderr.write(`  [brainstorm] Pre-call cost ceiling: ~$${preflightTotal.toFixed(4)} (${args.models.length} round-1${args.debate && args.models.length === 2 ? ' + 2 debate' : ''} calls; total input ~${totalInputChars} chars; max-out=${args.models.map(p => `${p}:${providerCalls[p].maxTokens}`).join(',')})\n`);
 
   // Dispatch round 1
   const composedSystemPreface = assembledContext.systemPreface;
@@ -541,7 +556,7 @@ async function runBrainstormMode(args) {
     provider: p,
     topic: composedTopic,
     systemPreface: composedSystemPreface,
-    args: { ...args, maxTokens, timeoutMs, reasoningEffort, wordTarget },
+    args: { ...args, providerCalls, wordTarget },
     resolvedModels,
   }));
   const settled = await Promise.all(tasks);
@@ -555,7 +570,7 @@ async function runBrainstormMode(args) {
     const outcome = await runDebateRound({
       providers: args.models,
       round1: settled,
-      args: { ...args, maxTokens, timeoutMs, reasoningEffort, wordTarget },
+      args: { ...args, providerCalls, wordTarget },
       resolvedModels,
       assembledContext,
       withContextText: assembledContext.withContextEffective,
@@ -772,7 +787,15 @@ async function dispatchDebateCall({ provider, reactingTo, systemPrompt, userMess
   // string today — we concatenate system+user for compatibility.
   const fn = ADAPTERS[provider];
   const debateTopic = `${systemPrompt}\n\n---\n\n${userMessage}`;
-  const r1 = await fn({ topic: debateTopic, model, maxTokens: args.maxTokens, timeoutMs: args.timeoutMs, reasoningEffort: args.reasoningEffort ?? null });
+  const call = args.providerCalls[provider];
+  const r1 = await fn({
+    topic: debateTopic,
+    model,
+    maxTokens: call.maxTokens,
+    timeoutMs: call.timeoutMs,
+    reasoningEffort: call.reasoningEffort,
+    truncationRemedy: call.truncationRemedy,
+  });
   // r1 has the ProviderResultSchema shape; project the fields the DebateRoundSchema expects
   return {
     provider, reactingTo,
@@ -813,6 +836,7 @@ async function dispatchProvider({ provider, topic, systemPreface = '', args, res
 
   const model = resolvedModels[provider];
   const fn = ADAPTERS[provider];
+  const call = args.providerCalls[provider];
   // The adapters take a single `topic` string. We prepend the resume
   // context inline so the round-1 prompt = preface + topic + with-context.
   const composedTopic = systemPreface
@@ -821,14 +845,16 @@ async function dispatchProvider({ provider, topic, systemPreface = '', args, res
   const result = await fn({
     topic: composedTopic,
     model,
-    maxTokens: args.maxTokens,
-    timeoutMs: args.timeoutMs,
+    maxTokens: call.maxTokens,
+    timeoutMs: call.timeoutMs,
     // Depth's real lever: the prose length the prompt asks for. Without
     // this, every tier requested the same 250–500 words and `--depth`
     // only moved where truncation landed.
     systemPrompt: buildBrainstormSystemPrompt({ wordTarget: args.wordTarget ?? DEFAULT_WORD_TARGET }),
-    // OpenAI-only depth hint; callGemini's destructuring ignores it.
-    reasoningEffort: args.reasoningEffort ?? null,
+    // Each provider's own effort knob (OpenAI reasoning_effort, Claude
+    // output_config.effort); null for Gemini.
+    reasoningEffort: call.reasoningEffort,
+    truncationRemedy: call.truncationRemedy,
   });
 
   // For malformed responses, save raw payload to repo-local debug dir

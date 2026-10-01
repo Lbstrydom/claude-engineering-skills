@@ -3,6 +3,7 @@ import { azureConfig } from '../config.mjs';
 import { BRAINSTORM_SYSTEM_PROMPT } from './prompt.mjs';
 import { estimateCostUsd } from './pricing.mjs';
 import { isAbortFailure, abortMessage } from './error-classify.mjs';
+import { truncatedMessage } from './depth-config.mjs';
 
 // Routed through the shared Azure-aware seam, not a raw `new OpenAI()` —
 // the 2026-07-14 fresh-installer audit found this adapter was the one
@@ -38,7 +39,7 @@ function wireModel(model) {
  *   when null. A model that rejects the param (400) is retried once without.
  * @returns {Promise<ProviderResult>}
  */
-export async function callOpenAI({ topic, model, maxTokens, timeoutMs = 60000, reasoningEffort = null, systemPrompt = BRAINSTORM_SYSTEM_PROMPT }) {
+export async function callOpenAI({ topic, model, maxTokens, timeoutMs = 60000, reasoningEffort = null, systemPrompt = BRAINSTORM_SYSTEM_PROMPT, truncationRemedy = null }) {
   const startMs = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -80,7 +81,12 @@ export async function callOpenAI({ topic, model, maxTokens, timeoutMs = 60000, r
       // is the diagnostic half. A reasoning model that returns a thin answer
       // under a small depth budget is indistinguishable from a model with
       // little to say unless the split is recorded.
-      reasoningTokens: response.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
+      // Named `thinkingTokens` on every adapter so ONE ledger field answers
+      // "did reasoning or prose spend the budget". null when the model reports
+      // no split (a non-reasoning model) — never a hardcoded 0.
+      thinkingTokens: Number.isInteger(response.usage?.completion_tokens_details?.reasoning_tokens)
+        ? response.usage.completion_tokens_details.reasoning_tokens
+        : null,
     };
     const latencyMs = Date.now() - startMs;
     const estimatedCostUsd = estimateCostUsd({
@@ -91,7 +97,7 @@ export async function callOpenAI({ topic, model, maxTokens, timeoutMs = 60000, r
 
     return {
       provider: 'openai',
-      ..._classifyCompletion({ text, finishReason }),
+      ..._classifyCompletion({ text, finishReason, maxTokens, thinkingTokens: usage.thinkingTokens, truncationRemedy }),
       httpStatus: null,
       usage,
       latencyMs,
@@ -115,7 +121,7 @@ export async function callOpenAI({ topic, model, maxTokens, timeoutMs = 60000, r
  * @param {{text: string|null, finishReason: string|null}} args
  * @returns {{state: string, text: string|null, errorMessage: string|null}}
  */
-export function _classifyCompletion({ text, finishReason }) {
+export function _classifyCompletion({ text, finishReason, maxTokens = null, thinkingTokens = null, truncationRemedy = null }) {
   if (finishReason === 'content_filter') {
     return { state: 'blocked', text: null, errorMessage: 'Content blocked by safety filter' };
   }
@@ -126,7 +132,7 @@ export function _classifyCompletion({ text, finishReason }) {
     return {
       state: 'truncated',
       text,
-      errorMessage: 'Response hit the output-token ceiling and is incomplete — raise --depth for a full answer.',
+      errorMessage: truncatedMessage({ maxTokens, thinkingTokens, remedy: truncationRemedy }),
     };
   }
   return { state: 'success', text, errorMessage: null };

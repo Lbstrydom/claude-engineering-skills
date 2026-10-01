@@ -13,6 +13,8 @@ import assert from 'node:assert/strict';
 
 import { callAzureClaude, _classifyCompletion, _resetClient } from '../scripts/lib/brainstorm/azure-claude-adapter.mjs';
 import { buildAzureConfig } from '../scripts/lib/config.mjs';
+import { resolveOutputBudget, resolveProviderCall } from '../scripts/lib/brainstorm/depth-config.mjs';
+import { ProviderResultSchema } from '../scripts/lib/brainstorm/schemas.mjs';
 
 const AOAI = 'https://unit-test-aoai.openai.azure.com';
 const AIF = 'https://unit-test-foundry.services.ai.azure.com';
@@ -131,7 +133,9 @@ describe('azure-claude adapter — emitted request', () => {
       topic: 't', model: 'claude-opus-4-7', maxTokens: 64,
       _clientOptions: { azureRoute: route, fetch: fetchImpl, redactor: null },
     });
-    assert.deepEqual(r.usage, { inputTokens: 120, outputTokens: 40 });
+    // thinkingTokens null, not 0: OK_REPLY reports no split, and an absent
+    // count must not be recorded as a measured zero.
+    assert.deepEqual(r.usage, { inputTokens: 120, outputTokens: 40, thinkingTokens: null });
     // claude-opus-4-7 at its own published rate ($5/$25 — the old $15/$75
     // `claude-opus` family row was Opus 4.1's, retired 2026-09-23):
     // 120 * 5/1M + 40 * 25/1M = 0.0006 + 0.001
@@ -175,5 +179,103 @@ describe('azure-claude adapter — completion classifier', () => {
     const r = _classifyCompletion({ text: 'a view', stopReason: 'end_turn' });
     assert.equal(r.state, 'success');
     assert.equal(r.errorMessage, null);
+  });
+});
+
+// Storyline field report (2026-10-01): with no effort sent, Opus 5 thought at
+// its API default and deep rounds ran out of a 4,600 ceiling. The adapter
+// discarded the thinking count, so a truncation could not say whether thinking
+// or prose spent the budget, and the remedy it named ("raise --depth") does not
+// exist at the top tier.
+describe('azure-claude adapter — thinking budget', () => {
+  const route = () => buildAzureConfig({ ...BASE_ENV, AZURE_AI_ENDPOINT: AIF }).claudeRoute;
+  const deepCall = resolveProviderCall({ budget: resolveOutputBudget({ explicitDepth: 'deep' }), provider: 'azure-claude' });
+
+  it('a max_tokens stop with heavy thinking is truncated, records the thinking, and names --max-tokens at deep', async () => {
+    _resetClient();
+    const { seen, fetchImpl } = captureTransport({
+      ...OK_REPLY,
+      content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: 'The answer begins and then' }],
+      stop_reason: 'max_tokens',
+      usage: { input_tokens: 900, output_tokens: deepCall.maxTokens, output_tokens_details: { thinking_tokens: 3100 } },
+    });
+    const r = await callAzureClaude({
+      topic: 't', model: 'claude-opus-5', ...deepCall,
+      _clientOptions: { azureRoute: route(), fetch: fetchImpl, redactor: null },
+    });
+
+    assert.equal(r.state, 'truncated');
+    assert.equal(r.text, 'The answer begins and then', 'only text blocks reach the user — never thinking');
+    assert.equal(r.usage.thinkingTokens, 3100);
+    assert.match(r.errorMessage, /3100 of it spent on thinking/);
+    assert.match(r.errorMessage, /--max-tokens above 6000/, 'deep is the top tier — the remedy must be --max-tokens');
+    assert.doesNotMatch(r.errorMessage, /--depth/, '"raise --depth" is unactionable at deep');
+    // And the request that produced it carried an explicit effort, so the
+    // provider default can no longer decide how much of the ceiling thinking eats.
+    assert.deepEqual(seen[0].body.output_config, { effort: 'medium' });
+    assert.equal(seen[0].body.max_tokens, 6000);
+    // The count must survive the write boundary, not just the adapter.
+    assert.equal(ProviderResultSchema.parse(r).usage.thinkingTokens, 3100);
+  });
+
+  it('below the top tier, the remedy is the next --depth', async () => {
+    _resetClient();
+    const standard = resolveProviderCall({ budget: resolveOutputBudget({ explicitDepth: 'standard' }), provider: 'azure-claude' });
+    const { fetchImpl } = captureTransport({ ...OK_REPLY, stop_reason: 'max_tokens' });
+    const r = await callAzureClaude({
+      topic: 't', model: 'claude-opus-5', ...standard,
+      _clientOptions: { azureRoute: route(), fetch: fetchImpl, redactor: null },
+    });
+    assert.equal(r.state, 'truncated');
+    assert.match(r.errorMessage, /--depth deep/);
+    assert.doesNotMatch(r.errorMessage, /spent on thinking/, 'no count reported ⇒ no thinking claim');
+  });
+
+  it('retries once WITHOUT effort when the deployment rejects the field', async () => {
+    _resetClient();
+    const seen = [];
+    const fetchImpl = async (url, init) => {
+      const body = JSON.parse(init?.body ?? '{}');
+      seen.push(body);
+      if (body.output_config) {
+        return new Response(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'output_config.effort: Extra inputs are not permitted' } }),
+          { status: 400, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response(JSON.stringify(OK_REPLY), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const r = await callAzureClaude({
+      topic: 't', model: 'claude-sonnet-4-5', maxTokens: 64, reasoningEffort: 'medium',
+      _clientOptions: { azureRoute: route(), fetch: fetchImpl, redactor: null, maxRetries: 0 },
+    });
+    assert.equal(r.state, 'success');
+    assert.equal(seen.length, 2);
+    assert.ok(seen[0].output_config, 'first attempt must carry the effort');
+    assert.equal(seen[1].output_config, undefined, 'the retry must drop it');
+  });
+
+  it('does NOT retry an unrelated 400', async () => {
+    _resetClient();
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls++;
+      return new Response(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'messages: roles must alternate' } }),
+        { status: 400, headers: { 'content-type': 'application/json' } });
+    };
+    const r = await callAzureClaude({
+      topic: 't', model: 'claude-opus-5', maxTokens: 64, reasoningEffort: 'medium',
+      _clientOptions: { azureRoute: route(), fetch: fetchImpl, redactor: null, maxRetries: 0 },
+    });
+    assert.equal(r.state, 'http_error');
+    assert.equal(calls, 1);
+  });
+
+  it('omits output_config when no effort is given (byte-identical request)', async () => {
+    _resetClient();
+    const { seen, fetchImpl } = captureTransport(OK_REPLY);
+    await callAzureClaude({
+      topic: 't', model: 'claude-opus-5', maxTokens: 64,
+      _clientOptions: { azureRoute: route(), fetch: fetchImpl, redactor: null },
+    });
+    assert.equal(seen[0].body.output_config, undefined);
   });
 });
