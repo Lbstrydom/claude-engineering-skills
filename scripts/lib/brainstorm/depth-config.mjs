@@ -81,6 +81,80 @@ export const DEPTH_REASONING_EFFORT = Object.freeze({
 });
 
 /**
+ * Per-depth Anthropic `output_config.effort` for the azure-claude voice.
+ *
+ * **Why explicit** (storyline field report, 2026-10-01): the adapter sent no
+ * effort, so Claude thought at its API default — `high` on Opus 5, which
+ * thinks whenever `thinking` is omitted (Opus 5.5 defaults to `medium`). Five
+ * deep rounds hit 4,310–4,600 of a 4,600 ceiling, two of them truncated, while
+ * GPT in the same rounds used 1,507–2,195. A provider default is also a
+ * default that can move under us; stating it puts this voice on a known dial,
+ * the same reasoning as `final-review/transport.mjs`.
+ *
+ * Measured 2026-10-01 against the public API with the brainstorm prompt
+ * (output tokens incl. thinking, worst case per cell, 3–15 calls each):
+ *
+ *   tier      model    default(omitted)  low     medium
+ *   deep      opus-5   4,421 (2,187 th)  3,155   4,423 (1,990 th)
+ *   deep      opus-5.5 3,186             2,661   3,440 (1,216 th)
+ *   standard  opus-5   2,625 (1,266 th)  1,230   2,081
+ *   shallow   opus-5   1,244               868   —
+ *
+ * `low` for shallow (a 150–250-word take needs little deliberation and low
+ * thinks ~0–200 tokens); `medium` above it, where the point of the tier is a
+ * considered view. Effort alone does not make deep safe — across 29 medium
+ * deep calls the worst reached 4,423, 96% of the old 4,600 ceiling — which is
+ * why `CLAUDE_VISIBLE_TOKENS` below exists too.
+ *
+ * A deployment that rejects effort (Sonnet/Haiku 4.5 do) is retried once
+ * without it by the adapter, mirroring the OpenAI adapter's reasoning_effort
+ * fallback.
+ */
+export const CLAUDE_DEPTH_EFFORT = Object.freeze({
+  shallow: 'low',
+  standard: 'medium',
+  deep: 'medium',
+});
+
+/**
+ * Tokens Claude's prose occupies per tier. `DEPTH_VISIBLE_TOKENS` assumes
+ * ~1.33–1.6 tokens/word, which is right for the OpenAI/Gemini tokenizers and
+ * wrong for Claude: measured 2026-10-01, a 958-word deep answer with 14 tokens
+ * of thinking cost 2,208 output tokens — ~2.3 tokens/word in the markdown-heavy
+ * style brainstorm answers take. At that density the shared deep budget (1,600)
+ * holds ~700 words, below the tier's own 1,000-word target, BEFORE any
+ * thinking. Sized here at ~2.3 tokens/word on the upper target plus the
+ * ~30% overshoot storyline observed on deep (1,000–1,300 words).
+ *
+ * Reasoning headroom is unchanged (`REASONING_HEADROOM_TOKENS`) — the ceiling
+ * grows because the PROSE is denser, not to buy more thinking.
+ */
+export const CLAUDE_VISIBLE_TOKENS = Object.freeze({
+  shallow: 800,
+  standard: 1400,
+  deep: 3000,
+});
+
+/**
+ * The azure-claude per-tier ceiling. Deep: 3000 + 3000 = 6000, where the worst
+ * measured medium-effort deep call (4,423) sits at 74% and the median (~3,100)
+ * near 52%. Worst latency in that run was 70s against the 120s timeout this
+ * ceiling scales to.
+ *
+ * Upper bound to respect if these ever grow: the adapter calls the
+ * NON-streaming `messages.create()`, which the SDK refuses above its
+ * non-streaming max_tokens ceiling (`final-review/transport.mjs` streams for
+ * exactly that reason), and the per-call timeout scales with the ceiling at
+ * `TIMEOUT_MS_PER_TOKEN` (6000 → 120s). Both are far off today; a ceiling in
+ * the tens of thousands would need the adapter moved to streaming first.
+ */
+export const CLAUDE_DEPTH_TOKENS = Object.freeze({
+  shallow: CLAUDE_VISIBLE_TOKENS.shallow + REASONING_HEADROOM_TOKENS.shallow,
+  standard: CLAUDE_VISIBLE_TOKENS.standard + REASONING_HEADROOM_TOKENS.standard,
+  deep: CLAUDE_VISIBLE_TOKENS.deep + REASONING_HEADROOM_TOKENS.deep,
+});
+
+/**
  * Wall-clock floor for a provider call, unchanged from the CLI's historical
  * flat default — shallow/standard asks (≤3300 ceiling tokens) fit inside it
  * on every provider observed so far.
@@ -239,4 +313,71 @@ export function resolveOutputBudget(args = {}) {
     // finish — the ceiling must never be the truncator (REASONING_HEADROOM_TOKENS).
     ceilingBelowProseBudget: Number.isFinite(maxTokens) && maxTokens < tier.visibleTokens,
   };
+}
+
+/** Tier order, shallowest first — the ladder `truncationRemedy` climbs. */
+const DEPTH_ORDER = Object.freeze(['shallow', 'standard', 'deep']);
+
+/**
+ * Resolve ONE provider's call parameters from the run's output budget. Round 1
+ * and the debate round both go through here, so a per-provider setting cannot
+ * be wired into one and forgotten in the other.
+ *
+ * - Ceiling: azure-claude takes its own tier table (`CLAUDE_DEPTH_TOKENS` —
+ *   denser prose); everyone else the shared tier ceiling. An explicit
+ *   `--max-tokens` is honoured verbatim for every provider.
+ * - Effort: each provider's own knob, or null. Gemini has none here.
+ * - Timeout: scaled from THIS provider's ceiling, so a larger Claude ceiling
+ *   is not cut off by a timeout sized for a smaller one; `--timeout-ms` wins.
+ *
+ * @param {{budget: ReturnType<typeof resolveOutputBudget>, provider: string,
+ *          explicitTimeoutMs?: boolean, timeoutMs?: number}} args
+ * @returns {{maxTokens: number, reasoningEffort: string|null, timeoutMs: number,
+ *   truncationRemedy: string}}
+ */
+export function resolveProviderCall({ budget, provider, explicitTimeoutMs = false, timeoutMs } = {}) {
+  const claude = provider === 'azure-claude';
+  const maxTokens = (claude && !budget.ceilingOverridden) ? CLAUDE_DEPTH_TOKENS[budget.depth] : budget.maxTokens;
+  const reasoningEffort = claude ? CLAUDE_DEPTH_EFFORT[budget.depth]
+    : provider === 'openai' ? (budget.reasoningEffort ?? null)
+      : null;
+  return {
+    maxTokens,
+    reasoningEffort,
+    timeoutMs: resolveTimeoutMs({ explicit: explicitTimeoutMs, timeoutMs, maxTokens }),
+    truncationRemedy: truncationRemedy({ depth: budget.depth, ceilingOverridden: budget.ceilingOverridden, maxTokens }),
+  };
+}
+
+/**
+ * The remedy a truncated response should name. "Raise --depth" was the only
+ * advice every adapter gave, and it is unactionable at the top tier — which is
+ * where every storyline truncation happened. Below deep, the next tier; at
+ * deep, or once the ceiling was set by hand, `--max-tokens` is the only lever
+ * left, so name it with the number to beat.
+ *
+ * @param {{depth: string, ceilingOverridden?: boolean, maxTokens: number}} args
+ * @returns {string}
+ */
+export function truncationRemedy({ depth, ceilingOverridden = false, maxTokens }) {
+  if (ceilingOverridden) {
+    return `re-run with a --max-tokens above ${maxTokens} for a full answer`;
+  }
+  const next = DEPTH_ORDER[DEPTH_ORDER.indexOf(depth) + 1];
+  if (next) return `re-run with --depth ${next} for a full answer`;
+  return `${depth} is already the top tier — re-run with --max-tokens above ${maxTokens} for a full answer`;
+}
+
+/**
+ * The truncated-state message every adapter shows. `thinkingTokens` (null when
+ * the provider reported none) is named so a cut-off answer says whether
+ * reasoning or prose spent the budget.
+ *
+ * @param {{maxTokens?: number|null, thinkingTokens?: number|null, remedy?: string|null}} args
+ * @returns {string}
+ */
+export function truncatedMessage({ maxTokens = null, thinkingTokens = null, remedy = null } = {}) {
+  const ceiling = Number.isFinite(maxTokens) ? `the ${maxTokens}-token output ceiling` : 'the output-token ceiling';
+  const spent = Number.isFinite(thinkingTokens) ? ` (${thinkingTokens} of it spent on thinking)` : '';
+  return `Response hit ${ceiling}${spent} and is incomplete — ${remedy ?? 'raise --depth or --max-tokens for a full answer'}.`;
 }

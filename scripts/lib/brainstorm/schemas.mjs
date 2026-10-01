@@ -39,18 +39,33 @@ export const PROVIDER_STATES = [
  */
 export const BRAINSTORM_PROVIDERS = ['openai', 'gemini', 'azure-claude'];
 
+/**
+ * Token usage for one provider call.
+ *
+ * `thinkingTokens` is the reasoning share WITHIN `outputTokens` (every
+ * provider already bills it there — never add the two). It is what makes a
+ * `truncated` result diagnosable: whether thinking or prose spent the
+ * ceiling. null = the provider reported no split; optional so ledger rows
+ * written before it existed still parse.
+ *
+ * It has to be DECLARED: this is a plain `z.object`, which STRIPS unknown
+ * keys, and both writers emit the parsed data — so until this field existed
+ * the OpenAI adapter's reasoning count and the Gemini adapter's thinking count
+ * were computed and then silently dropped at the write boundary.
+ */
+export const ProviderUsageSchema = z.object({
+  inputTokens: z.number().int().min(0),
+  outputTokens: z.number().int().min(0),
+  thinkingTokens: z.number().int().min(0).nullable().optional(),
+});
+
 export const ProviderResultSchema = z.object({
   provider: z.enum(BRAINSTORM_PROVIDERS),
   state: z.enum(PROVIDER_STATES),
   text: z.string().nullable(),
   errorMessage: z.string().nullable(),
   httpStatus: z.number().int().nullable(),
-  usage: z
-    .object({
-      inputTokens: z.number().int().min(0),
-      outputTokens: z.number().int().min(0),
-    })
-    .nullable(),
+  usage: ProviderUsageSchema.nullable(),
   latencyMs: z.number().int().min(0),
   estimatedCostUsd: z.number().nullable(),
 });
@@ -78,12 +93,7 @@ export const DebateRoundSchema = z.object({
   text: z.string().nullable(),
   errorMessage: z.string().nullable(),
   httpStatus: z.number().int().nullable(),
-  usage: z
-    .object({
-      inputTokens: z.number().int().min(0),
-      outputTokens: z.number().int().min(0),
-    })
-    .nullable(),
+  usage: ProviderUsageSchema.nullable(),
   latencyMs: z.number().int().min(0),
   estimatedCostUsd: z.number().nullable(),  // Plan §15.C — restored after R3
 });

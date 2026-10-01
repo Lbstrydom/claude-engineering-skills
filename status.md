@@ -77,6 +77,29 @@
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
 
+## 2026-10-01 — /brainstorm azure-claude: explicit effort, per-provider ceiling, thinking tokens recorded
+
+Backlog 2026-10-01T11:32Z: Q1 63c/22p (+338 aged) · Q2 101c/41p (54 perm) · Q3 35 · debt 313 cloud/11 local (0 spilled) · upstream 1
+
+### Changes
+- **Cause (storyline field report)**: the azure-claude brainstorm voice sent no effort, so Opus 5 thought at its API default (`high`) — 5 deep rounds hit 4,310–4,600 of a 4,600 ceiling, 2 truncated, while GPT used 1,507–2,195. Reproduced against the public API: Opus 5 default effort, deep = 3,811–4,421 output tokens, 1,846–2,187 of them thinking.
+- **Second, independent cause found while measuring**: Claude's brainstorm prose runs ~2.3 tokens/word (958 words with 14 thinking tokens = 2,208 output tokens); `DEPTH_VISIBLE_TOKENS.deep` (1,600) assumes ~1.6, so it held ~700 Claude words before any thinking. Effort alone did not fix deep: at `medium`, the worst of 29 deep calls reached 4,423 (96% of the old ceiling).
+- `depth-config.mjs`: `CLAUDE_DEPTH_EFFORT` (shallow `low`, standard/deep `medium`), `CLAUDE_VISIBLE_TOKENS` / `CLAUDE_DEPTH_TOKENS` (deep ceiling 4,600 → 6,000), `resolveProviderCall` (one per-provider plan — ceiling, effort, timeout scaled from THAT provider's ceiling, truncation remedy — read by round 1 AND the debate round), `truncationRemedy` / `truncatedMessage`. Measured table recorded in the module comment.
+- `azure-claude-adapter.mjs`: sends `output_config.effort`; retries once without it on a 400 naming effort (Sonnet/Haiku 4.5 reject the field); reads `usage.output_tokens_details.thinking_tokens` (null when absent, never 0).
+- **Schema strip found**: `ProviderResultSchema`/`DebateRoundSchema` `usage` was a plain `z.object`, so the OpenAI adapter's reasoning count and the Gemini adapter's thinking count were computed and then silently dropped at the write boundary. New shared `ProviderUsageSchema` declares `thinkingTokens` (nullable, optional for legacy rows); all three adapters emit it under one name (OpenAI's `reasoningTokens ?? 0` → `thinkingTokens ?? null`).
+- Truncated message names the ceiling, the thinking share, and a tier-correct remedy: next `--depth` below deep; `--max-tokens above N` at deep or after an override (was "raise --depth" at every tier, unactionable at deep — where every storyline truncation happened). `skills/brainstorm/SKILL.md` renders the errorMessage instead of a hardcoded remedy.
+- Tests: `tests/brainstorm-provider-call.test.mjs` (new, 14), `tests/brainstorm-azure-claude-adapter.test.mjs` (+5; 4 fail against the previous adapter, 2 are must-not-fire controls).
+
+### Measured after the change
+- Deep, effort `medium`, 6,000 ceiling, 6 topics × Opus 5/5.5: 12/12 `end_turn`, worst 4,423 (74%, 1,990 thinking), slowest 70s against a 120s scaled timeout. Measured on the public Anthropic API with the brainstorm request shape — no Azure tenant on this machine, so storyline should confirm on its Foundry deployment.
+
+### Not done
+- Prose overshoot (storyline saw 1,000–1,300 words on deep): my runs gave 870–1,076, so the word instruction mostly holds without large attached context; the larger ceiling absorbs the rest. Not separately fixed.
+- The adapter still calls non-streaming `messages.create()`; the bound (SDK non-streaming max_tokens ceiling, 20 ms/token timeout) is documented on `CLAUDE_DEPTH_TOKENS` — irrelevant until ceilings reach the tens of thousands.
+- No audit loop ran (gate `not-run`).
+
+---
+
 ## 2026-09-30 — Follow-ups from the coverage audit: local-only JS/TS tools, strict diff framing, bounded corpus budget
 
 ### Changes

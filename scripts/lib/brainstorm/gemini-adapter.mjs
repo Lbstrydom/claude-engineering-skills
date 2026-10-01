@@ -3,6 +3,7 @@ import { BRAINSTORM_SYSTEM_PROMPT } from './prompt.mjs';
 import { estimateCostUsd } from './pricing.mjs';
 import { normalizeGeminiUsage } from '../gemini-usage.mjs';
 import { isAbortFailure, abortMessage } from './error-classify.mjs';
+import { truncatedMessage } from './depth-config.mjs';
 
 let _client = null;
 function client() {
@@ -15,7 +16,7 @@ function client() {
  * Always returns a ProviderResult — never throws to the caller (Plan v6
  * §2.1 / R2-H4 total output contract).
  */
-export async function callGemini({ topic, model, maxTokens, timeoutMs = 60000, systemPrompt = BRAINSTORM_SYSTEM_PROMPT }) {
+export async function callGemini({ topic, model, maxTokens, timeoutMs = 60000, systemPrompt = BRAINSTORM_SYSTEM_PROMPT, truncationRemedy = null }) {
   const startMs = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -45,7 +46,9 @@ export async function callGemini({ topic, model, maxTokens, timeoutMs = 60000, s
     const usage = {
       inputTokens: g.input_tokens,
       outputTokens: g.output_tokens,      // BILLED: candidates + thoughts
-      thinkingTokens: g.thinking_tokens,  // the reasoning share WITHIN the above
+      // The reasoning share WITHIN the above. null when usage is unmeterable:
+      // the normaliser's 0 there is a sanitised absence, not a measured zero.
+      thinkingTokens: g.usageMissing ? null : g.thinking_tokens,
       usageMissing: g.usageMissing,
     };
     // NULL cost when the usage is unmeterable (audit H1). Costing the zeros
@@ -63,7 +66,7 @@ export async function callGemini({ topic, model, maxTokens, timeoutMs = 60000, s
     const finishReason = response?.candidates?.[0]?.finishReason ?? null;
     return {
       provider: 'gemini',
-      ..._classifyCompletion({ text, finishReason }),
+      ..._classifyCompletion({ text, finishReason, maxTokens, thinkingTokens: usage.thinkingTokens, truncationRemedy }),
       httpStatus: null,
       usage,
       latencyMs,
@@ -96,7 +99,7 @@ const BLOCKED_REASONS = new Set(['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'S
  * @param {{text: string|null, finishReason: string|null}} args
  * @returns {{state: string, text: string|null, errorMessage: string|null}}
  */
-export function _classifyCompletion({ text, finishReason }) {
+export function _classifyCompletion({ text, finishReason, maxTokens = null, thinkingTokens = null, truncationRemedy = null }) {
   if (finishReason && BLOCKED_REASONS.has(finishReason)) {
     return { state: 'blocked', text: null, errorMessage: `Blocked by safety filter: ${finishReason}` };
   }
@@ -107,7 +110,7 @@ export function _classifyCompletion({ text, finishReason }) {
     return {
       state: 'truncated',
       text,
-      errorMessage: 'Response hit the output-token ceiling and is incomplete — raise --depth for a full answer.',
+      errorMessage: truncatedMessage({ maxTokens, thinkingTokens, remedy: truncationRemedy }),
     };
   }
   return { state: 'success', text, errorMessage: null };
