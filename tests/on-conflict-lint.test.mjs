@@ -656,3 +656,23 @@ test('the live store tree has zero unrecognized-upsert-like-callee diagnostics (
   const hits = diagnostics.filter((d) => d.kind === 'unrecognized-upsert-like-callee');
   assert.deepEqual(hits, [], `unrecognized upsert-like callee(s) in the live store tree: ${JSON.stringify(hits)}`);
 });
+
+// A Babel-RECOVERED parse is a partial tree (scripts/lib/ast.mjs: "indistinguishable
+// from a clean one" unless the caller reads recoveredErrors). This lint's whole
+// thesis is that an undecidable input never launders into a clean result, so a
+// recovered file must carry an unsuppressible parse-error diagnostic — while the
+// sites it DID find are still analysed (final-review shadow finding 21d7acd6).
+test('a recovered (partial) parse surfaces a parse-error diagnostic and keeps its sites', () => {
+  const src = "let a = 1; let a = 2;\nupsert('t', [{ k: 1 }], { onConflict: ['k'] });\n";
+  const { sites, parseError } = extractUpsertSites(src);
+  assert.equal(sites.length, 1, 'the sites found in the partial tree are still analysed');
+  assert.match(parseError || '', /recovered/i);
+  const { diagnostics } = lintSource('x.mjs', src);
+  assert.ok(diagnostics.some((d) => d.kind === 'parse-error' && /already been declared/.test(d.message)),
+    `expected a parse-error diagnostic naming the recovered error, got ${JSON.stringify(diagnostics)}`);
+});
+
+test('a clean parse carries no parse-error (negative control)', () => {
+  const src = "upsert('t', [{ k: 1 }], { onConflict: ['k'] });\n";
+  assert.equal(extractUpsertSites(src).parseError, null);
+});

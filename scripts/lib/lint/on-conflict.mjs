@@ -490,8 +490,16 @@ function findSuppressions(sourceLines, callLine) {
  * @returns {{sites: Array<object>, diagnostics: Array<object>, parseError: string|null}}
  */
 export function extractUpsertSites(source) {
-  const { ast, error } = parseSource(source);
-  if (!ast) return { sites: [], diagnostics: [], parseError: error };
+  const { ast, error: hardError, recoveredErrors } = parseSource(source);
+  if (!ast) return { sites: [], diagnostics: [], parseError: hardError };
+  // A RECOVERED parse is a partial tree: sites past the damage may be missing,
+  // and analysing it as if clean would report fewer upserts than exist — a
+  // false green from the module whose thesis is that an undecidable input is
+  // never laundered into a clean result. Keep the sites it did find, and make
+  // the partiality an (unsuppressible) parse-error.
+  const error = recoveredErrors.length
+    ? `partial parse — Babel recovered from ${recoveredErrors.length} syntax error(s), so upsert sites may be missing: ${recoveredErrors.slice(0, 3).join('; ')}`
+    : null;
   const program = ast.type === 'File' ? ast.program : ast;
   // Split on \r?\n, NOT '\n'. On a CRLF working tree a bare-'\n' split leaves a
   // trailing '\r' on every line, and SUPPRESSION_RE's `(.*)$` cannot match it —
