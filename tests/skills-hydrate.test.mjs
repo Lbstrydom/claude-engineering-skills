@@ -16,6 +16,8 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { gitFixtureEnv } from './helpers/fixtures.mjs';
 
 import {
   planHydration, resolveMainWorktree, resolveExplicitSource, pruneStale,
@@ -449,5 +451,66 @@ describe('pruneStale — topicIds 7949a7c28e1c, a1b7f50d0277, d19c7f929169, f19a
     fs.cpSync(src, dest, { recursive: true });
     pruneStale(src, dest);
     assert.deepEqual(fs.readdirSync(dest).sort(), ['a.mjs'], 'b.mjs must not survive a re-hydration after upstream deletion');
+  });
+});
+
+describe('CONSUMER_HYDRATE_NPM_SCRIPT — the one-liner /ship documents, run for real', () => {
+  // `pruneStale` above pins the repo's own `skills-hydrate.mjs`. A consumer
+  // never runs that: /ship's Worktree preflight hands them this inline
+  // `node -e` one-liner (checkDocumentedRecipes pins the SKILL.md copy to the
+  // constant). Audit finding 4bb97a47 (2026-09-13): the one-liner was a bare
+  // recursive overlay, so a file deleted upstream survived every re-hydration,
+  // and the manifest was copied only when present, silently. Execute the
+  // constant itself in a real linked worktree, so dropping `prune` from it
+  // fails here rather than in a consumer.
+  const tmpDirs = [];
+  afterEach(() => {
+    while (tmpDirs.length) {
+      const dir = tmpDirs.pop();
+      try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best-effort */ }
+    }
+  });
+
+  function hydrateCode() {
+    const cmd = JSON.parse(`{${CONSUMER_HYDRATE_NPM_SCRIPT}}`)['skills:hydrate'];
+    const m = cmd.match(/^node -e "([\s\S]*)"$/);
+    assert.ok(m, `unexpected one-liner shape: ${cmd.slice(0, 60)}`);
+    return m[1];
+  }
+
+  it('converges the worktree mirror: an upstream deletion is pruned, and a missing manifest is named', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hydrate-oneliner-'));
+    tmpDirs.push(root);
+    const main = path.join(root, 'main');
+    const wt = path.join(root, 'wt');
+    const env = gitFixtureEnv();
+    const git = (cwd, ...args) => execFileSync('git', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    fs.mkdirSync(main);
+    git(main, 'init', '-q');
+    fs.writeFileSync(path.join(main, 'README.md'), 'x\n');
+    git(main, 'add', 'README.md');
+    git(main, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init');
+    git(main, 'worktree', 'add', '-q', '--detach', wt);
+
+    const tooling = path.join(main, 'scripts', '.claude-skills');
+    fs.mkdirSync(path.join(tooling, 'lib'), { recursive: true });
+    fs.writeFileSync(path.join(tooling, 'a.mjs'), 'a');
+    fs.writeFileSync(path.join(tooling, 'lib', 'b.mjs'), 'b');
+    const run = () => execFileSync(process.execPath, ['-e', hydrateCode()], { cwd: wt, env, encoding: 'utf8' });
+
+    const first = run();
+    const mirror = path.join(wt, 'scripts', '.claude-skills');
+    assert.ok(fs.existsSync(path.join(mirror, 'lib', 'b.mjs')), 'first hydration copies the tree');
+    assert.match(first, /copied 1\/2 items/);
+    assert.match(first, /NOT scripts\/\.sync-manifest\.json/, 'an absent manifest must be named, not skipped silently');
+
+    fs.rmSync(path.join(tooling, 'lib'), { recursive: true, force: true });
+    fs.writeFileSync(path.join(main, 'scripts', '.sync-manifest.json'), '{}');
+    const second = run();
+    assert.equal(fs.existsSync(path.join(mirror, 'lib')), false,
+      'a directory deleted upstream must not survive re-hydration (overlay-only copy)');
+    assert.ok(fs.existsSync(path.join(mirror, 'a.mjs')));
+    assert.match(second, /copied 2\/2 items/);
+    assert.ok(fs.existsSync(path.join(wt, 'scripts', '.sync-manifest.json')), 'the manifest travels with the tree');
   });
 });
