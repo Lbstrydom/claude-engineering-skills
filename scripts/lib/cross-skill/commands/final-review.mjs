@@ -28,14 +28,14 @@ export function encodeQueueCursor({ severityRank, createdAt, fingerprint, runId,
 }
 
 const PG_TIMESTAMPTZ_TEXT = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}(:?\d{2})?)?$/;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /**
  * Shape AND semantics (audit-code cluster B R2 M1 / R3 M1): `2026-13-01 …`
  * matches the shape and is not a date; `2026-02-30 …` is NORMALISED by
  * Date.parse to March 2nd rather than rejected, so the calendar date is
  * checked by round-trip — the parsed instant must report the same Y-M-D.
  */
-const isPgTimestamptzText = (s) => {
+export const isPgTimestamptzText = (s) => {
   if (!PG_TIMESTAMPTZ_TEXT.test(s)) return false;
   const iso = s.replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00');
   const ms = Date.parse(iso);

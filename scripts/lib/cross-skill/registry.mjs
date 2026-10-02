@@ -545,7 +545,7 @@ export const REGISTRY = Object.freeze([
   // ── Cohort: nudge readers, learning, durability, friction (Cluster D) ────
   {
     name: 'list-unlocked-fixes',
-    flags: ['repo', 'repo-id', 'limit', 'offset', 'group-by', 'work-unit',
+    flags: ['repo', 'repo-id', 'limit', 'offset', 'after', 'group-by', 'work-unit',
       { name: 'all-repos', kind: 'boolean' }, { name: 'all-ages', kind: 'boolean' },
       { name: 'no-llm-labels', kind: 'boolean' }],
     positionals: 'none', payload: 'none',
@@ -559,7 +559,7 @@ export const REGISTRY = Object.freeze([
   },
   {
     name: 'list-unremediated-acceptances',
-    flags: ['repo', 'repo-id', 'limit', 'offset', 'group-by', 'work-unit',
+    flags: ['repo', 'repo-id', 'limit', 'offset', 'after', 'group-by', 'work-unit',
       { name: 'all-repos', kind: 'boolean' }, { name: 'all-ages', kind: 'boolean' },
       { name: 'no-llm-labels', kind: 'boolean' }],
     positionals: 'none', payload: 'none',
