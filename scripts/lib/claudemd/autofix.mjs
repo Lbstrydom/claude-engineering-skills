@@ -141,6 +141,7 @@ export function applyFixes(findings, repoRoot, options = {}) {
     // dry-run-mode-dependent (a later, valid line number could exceed an
     // already-shrunk length in real-run but not in dry-run).
     const originalLength = lines.length;
+    const groupAppliedStart = applied.length;
     let modified = false;
     let lastProcessedLine = null;
 
@@ -209,7 +210,19 @@ export function applyFixes(findings, repoRoot, options = {}) {
     }
 
     if (modified && !dryRun) {
-      atomicWriteFileSync(canonical, lines.join('\n'));
+      // Guarded per group, like the read above. Unguarded, a throw here
+      // (EROFS/ENOSPC/EACCES, a Windows rename race) escaped applyFixes after
+      // earlier groups were already on disk, so the caller reported "the
+      // linter failed" while an unknown subset of files had been mutated. The
+      // atomic write leaves THIS file untouched, so its entries move from
+      // applied to skipped and later groups still run.
+      try {
+        atomicWriteFileSync(canonical, lines.join('\n'));
+      } catch (err) {
+        for (const a of applied.splice(groupAppliedStart)) {
+          skipped.push({ file: a.file, line: a.line, reason: `write failed: ${err.code || err.message}` });
+        }
+      }
     }
   }
 

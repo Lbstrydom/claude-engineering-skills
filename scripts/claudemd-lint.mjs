@@ -129,8 +129,14 @@ function main() {
         }
 
         if (args.yes) {
-          applyFixes(findings, repoRoot, { dryRun: false });
-          process.stderr.write(`${G}Applied ${preview.applied.length} fixes${X}\n`);
+          // Report what the REAL run did, not the preview: a write can fail
+          // (or the file change) between the two, and the preview count would
+          // then claim fixes that never reached disk.
+          const done = applyFixes(findings, repoRoot, { dryRun: false });
+          process.stderr.write(`${G}Applied ${done.applied.length} fixes${X}\n`);
+          const writeFailed = done.skipped.filter((s) => String(s.reason).startsWith('write failed'));
+          for (const s of writeFailed) process.stderr.write(`  NOT applied ${s.file}:${s.line} — ${s.reason}\n`);
+          if (writeFailed.length) process.exitCode ||= 1;
         } else {
           process.stderr.write(`\nRun with --fix --yes to apply.\n`);
         }

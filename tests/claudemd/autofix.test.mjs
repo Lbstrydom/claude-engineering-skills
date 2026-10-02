@@ -387,6 +387,36 @@ describe('applyFixes — defect #3: silent I/O failure', () => {
   });
 });
 
+describe('applyFixes — a WRITE failure is reported per group, never a mid-run abort (final-review shadow 54dc1016)', () => {
+  it('the failing group is moved to skipped, earlier AND later groups are still written and reported', (t) => {
+    // The write was unguarded: a throw on group N propagated out of applyFixes
+    // after groups 1..N-1 were already on disk, so the caller saw only "the
+    // linter failed" while an unknown subset of instruction files had mutated.
+    const repoRoot = mkTmpRepo();
+    for (const f of ['A.md', 'FAIL.md', 'Z.md']) {
+      fs.writeFileSync(path.join(repoRoot, f), `line one\n[link](docs/${f}-missing.md)\n`);
+    }
+    const failCanonical = path.resolve(fs.realpathSync(path.join(repoRoot, 'FAIL.md')));
+    const realRename = fs.renameSync.bind(fs);
+    t.mock.method(fs, 'renameSync', (from, to) => {
+      if (path.resolve(String(to)) === failCanonical) throw Object.assign(new Error('read-only fs'), { code: 'EROFS' });
+      return realRename(from, to);
+    });
+
+    const findings = ['A.md', 'FAIL.md', 'Z.md'].map((file) => ({ file, line: 2, fixable: true, ruleId: 'stale/file-ref' }));
+    let result;
+    assert.doesNotThrow(() => { result = applyFixes(findings, repoRoot, { dryRun: false }); });
+
+    assert.deepEqual(result.applied.map((a) => a.file).sort(), ['A.md', 'Z.md'],
+      'the groups that WERE written must be reported as applied — and only those');
+    const failSkip = result.skipped.find((s) => s.file === 'FAIL.md');
+    assert.ok(failSkip, 'the group whose write failed must be reported, not dropped');
+    assert.match(failSkip.reason, /^write failed: EROFS/);
+    assert.match(fs.readFileSync(path.join(repoRoot, 'FAIL.md'), 'utf-8'), /\[link\]/, 'the failed file is untouched');
+    assert.doesNotMatch(fs.readFileSync(path.join(repoRoot, 'Z.md'), 'utf-8'), /\[link\]/, 'a LATER group still ran');
+  });
+});
+
 describe('applyFixes — dry-run/real-run partition consistency', () => {
   it('produces identical applied/skipped counts and reasons whether dryRun is true or false, over a fixture combining a same-file duplicate and a cross-alias duplicate', (t) => {
     const content = 'header\n[a](docs/a.md)\n[b](docs/b.md)\n[c](docs/c.md)\n';
