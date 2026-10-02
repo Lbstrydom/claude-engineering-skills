@@ -40,7 +40,7 @@ const NOTE =
 
 /**
  * Infer the audit mode from a session id when `--mode` was not given.
- * The skills mint `SID=audit-plan-<epoch>` / `audit-code-<epoch>`, so the
+ * The skills mint `SID=audit-plan-<epoch-ms>-<pid>` / `audit-code-…`, so the
  * prefix is authoritative in the documented flow. Anything else → null
  * (the caller decides; it must never silently guess `code` for a plan).
  *
