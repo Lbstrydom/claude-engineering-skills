@@ -135,7 +135,7 @@ describe('findOutOfSkillRefs — the detector fires, and only where it should', 
         '4:names-sibling-skill-file',
       ]);
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -150,7 +150,7 @@ describe('findOutOfSkillRefs — the detector fires, and only where it should', 
       ].join('\n');
       assert.deepEqual(findOutOfSkillRefs(dir, text, names).violations, []);
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
