@@ -638,6 +638,9 @@ export async function assembleFindings(data) {
           topicId,
           category: entry.category,
           section: entry.section,
+          // The deferred CLAIM: the final review's debt re-suppression compares
+          // it, so a finding is dropped only as the SAME defect, not same topic.
+          detailSnapshot: entry.detailSnapshot,
           affectedFiles: entry.affectedFiles,
           deferredReason: entry.deferredReason,
         });

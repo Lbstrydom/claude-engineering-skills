@@ -265,9 +265,13 @@ describe('applyPriorRoundSuppression — round 2 does not re-raise settled items
 });
 
 describe('applyDebtSuppression — file overlap required when the debt entry carries files (H5/H17)', () => {
+  // The ledger's real shape: `section` a locus, `detailSnapshot` the deferred
+  // CLAIM (finding-assembly.mjs projects both into the suppression context).
   const debt = (o = {}) => ({
     topicId: 'debt0001aaaa', category: 'Missing Error Handling',
-    section: 'readConfig swallows the parse error and returns an empty object', ...o,
+    section: 'readConfig swallows the parse error and returns an empty object',
+    detailSnapshot: 'readConfig swallows the parse error and returns an empty object, hiding a corrupt config file',
+    ...o,
   });
   const transcript = (entries) => JSON.stringify({ _debtMemory: { suppressionContext: entries } });
 
@@ -289,7 +293,7 @@ describe('applyDebtSuppression — file overlap required when the debt entry car
     assert.equal(r._debtSuppressedCount, undefined);
   });
 
-  it('pre-existing behaviour: a debt entry with NO file info still suppresses on similarity alone', async () => {
+  it('a debt entry with NO file info suppresses on its CLAIM alone', async () => {
     const r = { new_findings: [finding({ id: 'N1' })] };
     await applyDebtSuppression(r, transcript([debt()]));
     assert.equal(r.new_findings.length, 0);
@@ -302,6 +306,51 @@ describe('applyDebtSuppression — file overlap required when the debt entry car
     });
     const r = { new_findings: [other] };
     await applyDebtSuppression(r, transcript([debt({ affectedFiles: ['scripts/lib/foo.mjs'] })]));
+    assert.equal(r.new_findings.length, 1);
+  });
+
+  // ── Same DEFECT, not same topic (final-review cluster, 2026-10) ──────────
+  it('same file + same category but a DIFFERENT deferred claim does not suppress the finding', async () => {
+    // The topic matches (category, file) — the defect does not. Comparing the
+    // finding's claim against only the topic's category+section deleted it.
+    // Measured: the old topic-only signature scored this pair 0.36 (> its 0.30)
+    // because a short claim is dominated by the shared category and locus.
+    const deferred = debt({ section: 'scripts/lib/foo.mjs:10', affectedFiles: ['scripts/lib/foo.mjs'] });
+    const r = { new_findings: [finding({ id: 'N1', detail: 'empty catch in loadPlugins hides import failures' })] };
+    await applyDebtSuppression(r, transcript([deferred]));
+    assert.equal(r.new_findings.length, 1, 'a distinct defect in a deferred topic must survive');
+  });
+
+  it('a debt entry carrying no claim cannot establish sameness — it suppresses nothing', async () => {
+    const { detailSnapshot: _omit, ...noClaim } = debt({ affectedFiles: ['scripts/lib/foo.mjs'] });
+    const r = { new_findings: [finding({ id: 'N1' })] };
+    await applyDebtSuppression(r, transcript([noClaim]));
+    assert.equal(r.new_findings.length, 1);
+  });
+
+  it('only a non-JSON transcript is a silent skip; a failure while MATCHING propagates', async () => {
+    const r = { new_findings: [finding()] };
+    await applyDebtSuppression(r, '# a markdown transcript');
+    assert.equal(r.new_findings.length, 1, 'non-JSON is the documented skip');
+    const exploding = { get category() { throw new Error('matcher bug'); }, section: 'scripts/lib/foo.mjs:1', detail: 'd' };
+    await assert.rejects(
+      applyDebtSuppression({ new_findings: [exploding] }, transcript([debt()])),
+      /matcher bug/,
+      'a bug in suppression must not be reported as "transcript not JSON"',
+    );
+  });
+});
+
+describe('applyScopeFilter — only a non-JSON transcript is a silent skip', () => {
+  it('a failure while filtering propagates instead of reading as an unscoped transcript', async () => {
+    const { applyScopeFilter } = await import('../scripts/lib/final-review/post-review.mjs');
+    const exploding = { get section() { throw new Error('extractor bug'); }, category: 'c', detail: 'd' };
+    await assert.rejects(
+      applyScopeFilter({ new_findings: [exploding] }, JSON.stringify({ changed_files: ['scripts/lib/foo.mjs'] })),
+      /extractor bug/,
+    );
+    const r = { new_findings: [finding()] };
+    await applyScopeFilter(r, 'not json');
     assert.equal(r.new_findings.length, 1);
   });
 });

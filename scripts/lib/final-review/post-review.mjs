@@ -157,50 +157,75 @@ export function applyPriorRoundSuppression(result, priorFindings, { threshold = 
   return { suppressed: dropped.length };
 }
 
-export async function applyDebtSuppression(result, transcriptContent) {
+/**
+ * The transcript as an object, or null when it is not JSON (a markdown
+ * transcript — the one documented skip). The ONLY thing the post-review
+ * filters catch: a failure in matching, logging or mutation is a bug, and a
+ * catch around all of it reported every such bug as "transcript not JSON".
+ */
+function parseTranscriptObject(transcriptContent) {
   try {
-    const transcriptObj = JSON.parse(transcriptContent);
-    const suppressionCtx = transcriptObj._debtMemory?.suppressionContext
-      || transcriptObj.debt_memory?.suppressionContext
-      || [];
-    if (!Array.isArray(suppressionCtx) || suppressionCtx.length === 0) return;
-    if (!Array.isArray(result.new_findings)) return;
-    // Threshold 0.30 vs suppressReRaises' 0.35 — debt envelope signatures
-    // (category+section) are shorter than new_findings (which include detail
-    // text), so asymmetric lengths dilute Jaccard.
-    const THRESHOLD = 0.3;
-    const before = result.new_findings.length;
-    const kept = [];
-    const debtSuppressed = [];
-    // Same-locus requirement (audit H5/H17), applied ONLY to a debt entry that
-    // carries file info (`affectedFiles`, or a file path in `section`): an entry
-    // without any keeps the pre-existing similarity-only behaviour, since there
-    // is nothing to compare against. Candidates whose files do not intersect the
-    // finding's are excluded BEFORE the best match is chosen, so a same-worded
-    // debt topic in another module cannot swallow the finding.
-    for (const f of result.new_findings) {
-      const locus = suppressionLocusOf(f);
-      const eligible = suppressionCtx.filter((d) => {
-        const debtFiles = structuredFilesOf(d);
-        return debtFiles.length === 0 || sharedLocus(locus, debtFiles) !== null;
-      });
-      const { match, score } = bestTopicMatch(findingTopicSig(f), eligible, (d) => `${d.category} ${d.section}`);
-      if (match && score > THRESHOLD) {
-        debtSuppressed.push({ finding: f, matchedTopic: String(match.topicId ?? ''), score, file: sharedLocus(locus, structuredFilesOf(match)) });
-      } else kept.push(f);
-    }
-    if (debtSuppressed.length === 0) return;
-    process.stderr.write(`  [final-review] Debt re-suppression: ${debtSuppressed.length}/${before} new_findings matched pre-filtered debt\n`);
-    for (const s of debtSuppressed.slice(0, 3)) {
-      process.stderr.write(`    [debt-suppressed] ${s.matchedTopic.slice(0, 8)} score=${s.score.toFixed(2)}\n`);
-    }
-    result.new_findings = kept;
-    result._debtSuppressedCount = debtSuppressed.length;
-    result._debtSuppressedFindings = debtSuppressed.map((s) => ({
-      id: s.finding.id ?? null, category: s.finding.category, matchedTopicId: s.matchedTopic,
-      score: Number(s.score.toFixed(2)), file: s.file,
-    }));
-  } catch { /* transcript not JSON or no _debtMemory — skip */ }
+    const obj = JSON.parse(transcriptContent);
+    return obj && typeof obj === 'object' ? obj : null;
+  } catch {
+    return null; // not JSON — a markdown transcript carries no structured context
+  }
+}
+
+/** A debt entry's deferred CLAIM, as the finding-shaped signature `findingTopicSig` reads. */
+const debtClaimSig = (d) => findingTopicSig({ category: d.category, section: d.section, detail: d.detailSnapshot });
+const carriesClaim = (d) => typeof d?.detailSnapshot === 'string' && d.detailSnapshot.trim() !== '';
+
+export async function applyDebtSuppression(result, transcriptContent) {
+  const transcriptObj = parseTranscriptObject(transcriptContent);
+  if (!transcriptObj) return;
+  const suppressionCtx = transcriptObj._debtMemory?.suppressionContext
+    || transcriptObj.debt_memory?.suppressionContext
+    || [];
+  if (!Array.isArray(suppressionCtx) || suppressionCtx.length === 0) return;
+  if (!Array.isArray(result.new_findings)) return;
+  // SAME DEFECT, not same topic. The deferred entry's own claim
+  // (`detailSnapshot`) is compared, so both sides are full category+section+
+  // detail signatures — the symmetric case `applyPriorRoundSuppression`'s 0.35
+  // was tuned for. Matching a finding's claim against only a topic's
+  // category+section (the old 0.30 path) deleted distinct defects that merely
+  // shared a location or a category word. An entry that does not carry its
+  // claim cannot establish sameness, so it suppresses nothing (said aloud).
+  const THRESHOLD = 0.35;
+  const withClaim = suppressionCtx.filter(carriesClaim);
+  if (withClaim.length < suppressionCtx.length) {
+    process.stderr.write(`  [final-review] Debt re-suppression: ${suppressionCtx.length - withClaim.length}/${suppressionCtx.length} debt topic(s) carry no deferred claim (detailSnapshot) — not eligible to suppress\n`);
+  }
+  const before = result.new_findings.length;
+  const kept = [];
+  const debtSuppressed = [];
+  // Same-locus requirement (audit H5/H17), applied ONLY to a debt entry that
+  // carries file info (`affectedFiles`, or a file path in `section`): an entry
+  // without any is compared on its claim alone. Candidates whose files do not
+  // intersect the finding's are excluded BEFORE the best match is chosen, so a
+  // same-worded debt topic in another module cannot swallow the finding.
+  for (const f of result.new_findings) {
+    const locus = suppressionLocusOf(f);
+    const eligible = withClaim.filter((d) => {
+      const debtFiles = structuredFilesOf(d);
+      return debtFiles.length === 0 || sharedLocus(locus, debtFiles) !== null;
+    });
+    const { match, score } = bestTopicMatch(findingTopicSig(f), eligible, debtClaimSig);
+    if (match && score > THRESHOLD) {
+      debtSuppressed.push({ finding: f, matchedTopic: String(match.topicId ?? ''), score, file: sharedLocus(locus, structuredFilesOf(match)) });
+    } else kept.push(f);
+  }
+  if (debtSuppressed.length === 0) return;
+  process.stderr.write(`  [final-review] Debt re-suppression: ${debtSuppressed.length}/${before} new_findings matched pre-filtered debt\n`);
+  for (const s of debtSuppressed.slice(0, 3)) {
+    process.stderr.write(`    [debt-suppressed] ${s.matchedTopic.slice(0, 8)} score=${s.score.toFixed(2)}\n`);
+  }
+  result.new_findings = kept;
+  result._debtSuppressedCount = debtSuppressed.length;
+  result._debtSuppressedFindings = debtSuppressed.map((s) => ({
+    id: s.finding.id ?? null, category: s.finding.category, matchedTopicId: s.matchedTopic,
+    score: Number(s.score.toFixed(2)), file: s.file,
+  }));
 }
 
 /**
@@ -314,37 +339,36 @@ export function applyExistenceGate(result, { listFiles = listRepoFiles } = {}) {
 }
 
 export async function applyScopeFilter(result, transcriptContent) {
-  try {
-    const transcriptObj = JSON.parse(transcriptContent);
-    const changedFiles = Array.isArray(transcriptObj.changed_files) ? transcriptObj.changed_files : [];
-    if (changedFiles.length === 0) return;
-    if (!Array.isArray(result.new_findings)) return;
-    // Normalise paths for comparison: trim whitespace, strip leading ./.
-    const norm = (p) => String(p).trim().replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
-    const inScope = new Set(changedFiles.map(norm));
-    const before = result.new_findings.length;
-    const kept = [];
-    const scopeFiltered = [];
-    for (const f of result.new_findings) {
-      // Final-review findings carry no `file`/`location` field — reading those
-      // made this filter a no-op for its whole life (final review 2026-09-27
-      // G1). Use the shared structured-file extractor; a finding naming no file
-      // stays (deliberation-level), and one naming ANY in-scope file stays.
-      const files = structuredFilesOf(f).map(norm);
-      if (files.length === 0) { kept.push(f); continue; }
-      const inScopeFile = (file) => inScope.has(file) || [...inScope].some((s) => file.endsWith('/' + s) || s.endsWith('/' + file));
-      if (files.some(inScopeFile)) kept.push(f);
-      else scopeFiltered.push({ finding: f, file: files.join(', ') });
-    }
-    if (scopeFiltered.length === 0) return;
-    process.stderr.write(`  [final-review] Scope filter: ${scopeFiltered.length}/${before} new_findings cited out-of-scope files (dropped)\n`);
-    for (const s of scopeFiltered.slice(0, 3)) {
-      process.stderr.write(`    [scope-dropped] ${s.finding.id || '?'} → ${s.file}\n`);
-    }
-    result.new_findings = kept;
-    result._scopeFilteredCount = scopeFiltered.length;
-    result._scopeFilteredFindings = scopeFiltered.map(s => ({ id: s.finding.id, file: s.file, hash: s.finding._hash }));
-  } catch { /* transcript not JSON or no changed_files — skip */ }
+  const transcriptObj = parseTranscriptObject(transcriptContent);
+  if (!transcriptObj) return;
+  const changedFiles = Array.isArray(transcriptObj.changed_files) ? transcriptObj.changed_files : [];
+  if (changedFiles.length === 0) return;
+  if (!Array.isArray(result.new_findings)) return;
+  // Normalise paths for comparison: trim whitespace, strip leading ./.
+  const norm = (p) => String(p).trim().replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
+  const inScope = new Set(changedFiles.map(norm));
+  const before = result.new_findings.length;
+  const kept = [];
+  const scopeFiltered = [];
+  for (const f of result.new_findings) {
+    // Final-review findings carry no `file`/`location` field — reading those
+    // made this filter a no-op for its whole life (final review 2026-09-27
+    // G1). Use the shared structured-file extractor; a finding naming no file
+    // stays (deliberation-level), and one naming ANY in-scope file stays.
+    const files = structuredFilesOf(f).map(norm);
+    if (files.length === 0) { kept.push(f); continue; }
+    const inScopeFile = (file) => inScope.has(file) || [...inScope].some((s) => file.endsWith('/' + s) || s.endsWith('/' + file));
+    if (files.some(inScopeFile)) kept.push(f);
+    else scopeFiltered.push({ finding: f, file: files.join(', ') });
+  }
+  if (scopeFiltered.length === 0) return;
+  process.stderr.write(`  [final-review] Scope filter: ${scopeFiltered.length}/${before} new_findings cited out-of-scope files (dropped)\n`);
+  for (const s of scopeFiltered.slice(0, 3)) {
+    process.stderr.write(`    [scope-dropped] ${s.finding.id || '?'} → ${s.file}\n`);
+  }
+  result.new_findings = kept;
+  result._scopeFilteredCount = scopeFiltered.length;
+  result._scopeFilteredFindings = scopeFiltered.map(s => ({ id: s.finding.id, file: s.file, hash: s.finding._hash }));
 }
 
 export function addSemanticIds(result, provider) {
