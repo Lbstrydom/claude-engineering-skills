@@ -137,9 +137,16 @@ fi
 
 PUSH_BASE=""
 PUSH_HEAD=""
+PUBLISHED_REFS=0   # ref updates that send commits — anything but a deletion
+DELETED_REFS=0
 while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
   [ -z "$LOCAL_SHA" ] && continue
-  [ "$LOCAL_SHA" = "$ZERO_SHA" ] && continue   # branch deletion — nothing pushed
+  if [ "$LOCAL_SHA" = "$ZERO_SHA" ]; then
+    DELETED_REFS=$((DELETED_REFS + 1))   # branch deletion — nothing pushed
+    continue
+  fi
+  PUBLISHED_REFS=$((PUBLISHED_REFS + 1))
+  [ -n "$PUSH_BASE" ] && continue   # range already taken from an earlier ref
   if [ -z "$REMOTE_SHA" ] || [ "$REMOTE_SHA" = "$ZERO_SHA" ]; then
     # New branch on the remote: the range is everything since it diverged from
     # the default branch. NOT HEAD~1 — that would scope a multi-commit branch
@@ -149,13 +156,30 @@ while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
     CANDIDATE_BASE="$REMOTE_SHA"
   fi
   if [ -n "$CANDIDATE_BASE" ]; then
+    # First pushed ref wins; a multi-ref push is checked at its first ref. No
+    # `break` — the loop must see every line to count the deletions below.
     PUSH_BASE="$CANDIDATE_BASE"
     PUSH_HEAD="$LOCAL_SHA"
-    break   # first pushed ref wins; a multi-ref push is checked at its first ref
   fi
 done <<EOF
 $PUSH_STDIN
 EOF
+
+# ── 0.5 Delete-only push: nothing published, nothing to check ────────────
+# A push whose EVERY ref update is a deletion sends no commits, so there is no
+# artifact for `npm run check` to verify. Before 2026-10-02 it ran anyway with
+# an empty range: in a worktree detached at origin/main the drift gates'
+# fork-point inference resolved to HEAD itself, and after ~10 minutes
+# status:integrity:gate failed closed on `base == HEAD` and blocked
+# `git push origin --delete <branch>`. Both conjuncts are load-bearing:
+# DELETED_REFS > 0 keeps empty stdin (no push info at all — a tty, a manual
+# run) from skipping vacuously, and PUBLISHED_REFS == 0 keeps a mixed push
+# checked at its real update. Exits before sync/maintenance too: a deletion
+# changes nothing they act on, and both re-run on the next real push.
+if [ "$PUBLISHED_REFS" -eq 0 ] && [ "$DELETED_REFS" -gt 0 ]; then
+  echo "→ pre-push: delete-only push ($DELETED_REFS ref(s)) publishes no commits — checks skipped." >&2
+  exit 0
+fi
 
 # ── 0.9 Working-tree-only checks (blocking) ─────────────────────────────
 # Checks whose subject is UNTRACKED working-tree debris cannot run in the
