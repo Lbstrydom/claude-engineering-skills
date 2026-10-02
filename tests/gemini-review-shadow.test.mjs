@@ -341,33 +341,26 @@ describe('resolveModelEvalShadowOverride — discovery is unconditional, never r
 // `claude -p`. This transport's JSON contract is a prompt instruction with no
 // provider-side enforcement, so a conversational backend silently voids it.
 //
-// A source-level pin (not a behavioural mock) because the failure is a MISSING
-// ARGUMENT: there is no return value to assert on, and constructing the real
-// client would either spawn the CLI or need an API key. This mirrors the
-// existing `tests/tiered-pipeline-wiring.test.mjs` static pin guarding the same
-// invariant for the discovery generator.
+// BEHAVIOURAL since 2026-10 (it was a source regex over buildShadowClient, which
+// now delegates to the provider catalog): the client is BUILT under
+// CLAUDE_BACKEND=cli and must still be the sdk wrapper — which exposes `baseURL`,
+// where the cli adapter does not. Constructing it makes no network call; a dummy
+// key satisfies the sdk constructor. Both arms + the Azure half + negative
+// controls: tests/shadow-gateway-provider.test.mjs.
 describe('buildShadowClient pins backend:sdk — a conversational backend silently voids the JSON contract', () => {
-  it('passes backend:"sdk" explicitly rather than inheriting the ambient CLAUDE_BACKEND', async () => {
-    // Target path updated for the Phase 3 relocation
-    // (docs/plans/gemini-review-decomposition.md) — buildShadowClient moved
-    // to lib/final-review/shadow.mjs; same pin, new location.
-    const fs = await import('node:fs');
-    const src = fs.readFileSync('scripts/lib/final-review/shadow.mjs', 'utf8');
-    const fn = src.slice(src.indexOf('async function buildShadowClient'));
-    const body = fn.slice(0, fn.indexOf('\n}'));
-    assert.match(
-      body,
-      // `backend:'sdk'` as an OPTION, not the sole option — the call also pins
-      // `azureRoute: null` since 2026-08-30 (asserted in shadow-gateway-provider).
-      /return createAnthropicClient\(\{[^)]*backend:\s*'sdk'/,
-      'the claude-opus shadow branch must pin backend:sdk — a bare createAnthropicClient() '
-      + 'inherits CLAUDE_BACKEND=cli and returns markdown prose, which drops every observation',
-    );
-    assert.doesNotMatch(
-      body,
-      /return createAnthropicClient\(\)\s*;/,
-      'a bare, argument-less createAnthropicClient() in this function is the exact 2026-07-26 defect',
-    );
+  it('builds the sdk client for claude-opus even when the ambient CLAUDE_BACKEND is cli', async () => {
+    const { buildShadowClient } = _internals;
+    const saved = { b: process.env.CLAUDE_BACKEND, k: process.env.ANTHROPIC_API_KEY };
+    process.env.CLAUDE_BACKEND = 'cli';
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test-not-a-real-key';
+    try {
+      const client = await buildShadowClient('claude-opus');
+      assert.equal('baseURL' in client, true,
+        'a cli adapter came back — it returns markdown prose, which drops every shadow observation');
+    } finally {
+      if (saved.b === undefined) delete process.env.CLAUDE_BACKEND; else process.env.CLAUDE_BACKEND = saved.b;
+      if (saved.k === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = saved.k;
+    }
   });
 });
 

@@ -22,15 +22,9 @@ import url from 'node:url';
 
 import { applyExistenceGate } from '../scripts/gemini-review.mjs';
 
-// Two source files since the Phase 3 relocation (docs/plans/gemini-review-decomposition.md):
-// the primary reviewer's filter chain (applyScopeFilter/applyExistenceGate in
-// runFinalReview) stays in gemini-review.mjs; the shadow reviewer's identical
-// chain (in runShadowReview) moved to lib/final-review/shadow.mjs. "Every
-// chain, wherever it lives" is the invariant below actually checks — so the
-// haystack is both files concatenated, not gemini-review.mjs alone.
+// The report renderer (formatReviewResult) is CLI-internal to gemini-review.mjs.
 const REPO_ROOT = path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..');
-const REVIEW_SRC = fs.readFileSync(path.join(REPO_ROOT, 'scripts/gemini-review.mjs'), 'utf-8')
-  + fs.readFileSync(path.join(REPO_ROOT, 'scripts/lib/final-review/shadow.mjs'), 'utf-8');
+const REVIEW_SRC = fs.readFileSync(path.join(REPO_ROOT, 'scripts/gemini-review.mjs'), 'utf-8');
 
 /** A stub inventory. `complete: true` ⇒ absence is provable. */
 const inventory = (files, complete = true) => () => ({ files: new Set(files), complete });
@@ -141,14 +135,57 @@ describe('applyExistenceGate — new_findings', () => {
 // gemini-review.mjs that defines `applyExistenceGate` and never runs it, so the
 // call sites need an assertion of their own.
 describe('applyExistenceGate — is actually WIRED into the review path', () => {
-  test('every post-parse filter chain invokes the gate', () => {
-    // `applyScopeFilter` is the last filter before findings are finalised; the
-    // gate must run alongside it at each site, not at one of them.
-    const scopeCalls = (REVIEW_SRC.match(/^\s*await applyScopeFilter\(result, usedTranscript\);$/gm) || []).length;
-    const gateCalls = (REVIEW_SRC.match(/^\s*applyExistenceGate\(result\);$/gm) || []).length;
-    assert.ok(scopeCalls >= 2, `expected the known filter chains (found ${scopeCalls})`);
-    assert.equal(gateCalls, scopeCalls,
-      'a chain that filters findings but skips the existence gate is the hole this closed');
+  // BEHAVIOURAL since 2026-10. This used to count `applyExistenceGate(result);`
+  // lines against `applyScopeFilter` lines across two source files — a test that
+  // passes for any spelling that keeps the counts equal, and fails on a harmless
+  // rename. Every path now runs ONE chain (applyReviewFilters); each test below
+  // drives a real path and reads the gate's own stamp or verdict off its output.
+  const INCIDENT = {
+    id: 'X1', severity: 'HIGH', category: 'Missing Module', section: 'scripts/lib/glob-match.mjs',
+    detail: 'The module `scripts/lib/glob-match.mjs` does not exist in the repository, so the import cannot resolve.',
+    risk: 'r', recommendation: 'x', is_quick_fix: false, is_mechanical: false, is_reopened: false, principle: 'p',
+    release_blocking: false, blocking_basis: 'none',
+  };
+
+  test('the shared chain runs the gate and refutes a claim about a tracked file', async () => {
+    const { applyReviewFilters } = await import('../scripts/lib/final-review/post-review.mjs');
+    const result = { new_findings: [{ ...INCIDENT }], wrongly_dismissed: [] };
+    await applyReviewFilters(result, '{}', 'gemini');
+    assert.ok(result._existenceGate, 'the chain must stamp the gate tally');
+    assert.equal(result.new_findings[0].verification?.verification, 'refuted');
+  });
+
+  test('the SHADOW path runs it: a persisted shadow finding carries the refutation', async () => {
+    const { _internals } = await import('../scripts/gemini-review.mjs');
+    const READY = { repoId: null, modelEvalRunId: null, shadow: { state: 'ready', provider: 'gemini', model: 'gemini-test' } };
+    const persisted = [];
+    await _internals.runShadowAndPersist({ verdict: 'APPROVE', new_findings: [] }, 'gpt-5.6', 'run-1',
+      { planContent: 'p', transcriptContent: '{}', projectContext: '', auditMode: 'code' }, {
+        modelEvalOverride: READY,
+        buildShadowClientFn: async () => ({}),
+        runReviewWithRetry: async () => ({ result: { verdict: 'CONCERNS', new_findings: [{ ...INCIDENT }] }, usage: {}, latencyMs: 1, transcriptContent: '{}' }),
+        persistFn: async (_runId, payload) => { persisted.push(payload); },
+      });
+    assert.equal(persisted[0]?.shadow?.[0]?.verification?.verification, 'refuted');
+  });
+
+  test('the PRIMARY CLI path runs it: the --out artifact carries the gate tally', async () => {
+    const { spawnSync } = await import('node:child_process');
+    const os = await import('node:os');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'existence-gate-cli-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'plan.md'), '# plan\n');
+      fs.writeFileSync(path.join(dir, 't.json'), JSON.stringify({ changed_files: ['scripts/lib/glob-match.mjs'], rounds: [], _fixtureVerdict: 'missed_candidate' }));
+      const out = path.join(dir, 'r.json');
+      const r = spawnSync(process.execPath, [path.join(REPO_ROOT, 'scripts', 'gemini-review.mjs'), 'review',
+        path.join(dir, 'plan.md'), path.join(dir, 't.json'), '--provider', 'fixture', '--out', out], {
+        cwd: REPO_ROOT, encoding: 'utf-8', env: { ...process.env, NODE_ENV: 'test', AUDIT_DB_URL: '' },
+      });
+      assert.equal(r.status, 0, r.stderr);
+      assert.deepEqual(JSON.parse(fs.readFileSync(out, 'utf-8'))._existenceGate, { checked: 1, refuted: 0 });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test('the refuted verdict reaches the human-readable report, not just stderr', () => {

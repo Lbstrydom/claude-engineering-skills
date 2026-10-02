@@ -371,6 +371,31 @@ export async function applyScopeFilter(result, transcriptContent) {
   result._scopeFilteredFindings = scopeFiltered.map(s => ({ id: s.finding.id, file: s.file, hash: s.finding._hash }));
 }
 
+/**
+ * THE post-review chain, in its one order, for EVERY reviewer path — the
+ * primary CLI review, the shadow reviewer, and the test fixture.
+ *
+ * Each path used to spell the sequence out itself, and a working filter that
+ * one path forgot is how the existence gate shipped correct-but-uncalled; the
+ * only guard was a source-text count of call sites. One function means one
+ * list to forget from, and its tests run the real thing.
+ *
+ * `priorFindings` drives the round-2 settled-items suppression; the shadow
+ * passes none (it is observation-only), which makes that step a no-op.
+ *
+ * @param {object} result - parsed review, mutated in place
+ * @param {string} transcriptContent - the transcript the review actually used
+ * @param {string} provider - stamps the `G`/`C` id prefix and `_source`
+ * @param {{priorFindings?: object[]}} [opts]
+ */
+export async function applyReviewFilters(result, transcriptContent, provider, { priorFindings = [] } = {}) {
+  await applyDebtSuppression(result, transcriptContent);
+  await applyScopeFilter(result, transcriptContent);
+  applyPriorRoundSuppression(result, priorFindings);
+  applyExistenceGate(result);
+  addSemanticIds(result, provider);
+}
+
 export function addSemanticIds(result, provider) {
   if (!result.new_findings) return;
   for (let i = 0; i < result.new_findings.length; i++) {

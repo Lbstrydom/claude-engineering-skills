@@ -90,7 +90,9 @@ export const PROVIDERS = {
       if (!env.ANTHROPIC_API_KEY) { throw new ProviderNotReadyError('provider "anthropic" requires ANTHROPIC_API_KEY'); }
     },
     buildClient: async () => {
-      process.stderr.write(`  [final-review] GEMINI_API_KEY missing; using Claude Opus fallback (${CLAUDE_OPUS_MODEL}).\n`);
+      // Neutral wording: this builds the explicit `anthropic` choice and the
+      // shadow arm too, not only the no-Gemini-key fallback it used to announce.
+      process.stderr.write('  [final-review] Claude Opus via the public Anthropic API (sdk backend).\n');
       // `backend:'sdk'` PINNED, exactly as buildShadowClient does — the PRIMARY
       // path was left on the ambient CLAUDE_BACKEND and is broken twice over
       // under `cli`: that transport silently drops tools/tool_choice (so the

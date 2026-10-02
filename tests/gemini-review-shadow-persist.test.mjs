@@ -172,4 +172,28 @@ describe('runShadowAndPersist — the ran block carries the shadow request ident
     assert.equal(result._shadow.requestFingerprint, 'fp00000000000001');
     assert.equal(result._shadow.requestIdentity, 'ri1:0000000000000001');
   });
+
+  it('an azure-claude model-eval override REACHES the shadow client — the Azure guard does not swallow it', async () => {
+    // resolveShadow's early `azureActive` return skips every FINAL_REVIEW_SHADOW
+    // provider on an Azure machine (Claude/Fable are not on Foundry for the
+    // operator's own shadow). An adjudicator Tier A/B eval on Azure arrives as
+    // an `azure-claude` override instead, and must bypass that guard, or the
+    // Azure shadow-client path is unreachable on the only machines it exists for.
+    const { resolveShadow } = _internals;
+    assert.equal(
+      resolveShadow({ shadowConfig: { provider: 'claude-opus', model: null }, env: { ANTHROPIC_API_KEY: 'k' }, azureActive: true }).state,
+      'skipped-azure', 'precondition: the operator path IS guarded on Azure',
+    );
+    const AZURE_OVERRIDE = { repoId: null, modelEvalRunId: null, shadow: { state: 'ready', provider: 'azure-claude', model: 'claude-deploy' } };
+    const built = [];
+    const result = { verdict: 'APPROVE', new_findings: [] };
+    await runShadowAndPersist(result, 'gpt-5.6', null, ctx, {
+      modelEvalOverride: AZURE_OVERRIDE,
+      buildShadowClientFn: async (p) => { built.push(p); return {}; },
+      runReviewWithRetry: async () => ({ result: { verdict: 'CONCERNS', new_findings: [] }, usage: {}, latencyMs: 1, transcriptContent: '{}' }),
+    });
+    assert.deepEqual(built, ['azure-claude'], 'the azure-claude client was built');
+    assert.equal(result._shadow.state, 'ran');
+    assert.ok(_internals.PROVIDERS['azure-claude'], 'and the real builder has a descriptor to delegate to');
+  });
 });

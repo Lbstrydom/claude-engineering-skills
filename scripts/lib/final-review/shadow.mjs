@@ -42,15 +42,12 @@
  *
  * @module scripts/lib/final-review/shadow
  */
-import { GoogleGenAI } from '@google/genai';
-import { createOpenAIClient } from '../openai-client.mjs';
-import { createAnthropicClient } from '../anthropic-client.mjs';
-import { resolveModel, resolveXaiCreds, resolveAlibabaCreds, resolveDeepseekCreds } from '../model-resolver.mjs';
+import { resolveModel } from '../model-resolver.mjs';
 import { azureConfig, shadowReviewConfig, findingMatchConfig, FINDING_MATCH_SCHEMA_VERSION } from '../config.mjs';
 import { SHADOW_PROVIDER_SPECS, shadowModelMatchesFamily } from './provider-specs.mjs';
-import { resolveOpenRouterCreds } from './providers.mjs';
+import { PROVIDERS } from './providers.mjs';
 import { resolveEnvelopeScope, isNonBlindScope } from './scope.mjs';
-import { applyDebtSuppression, applyScopeFilter, applyExistenceGate, addSemanticIds } from './post-review.mjs';
+import { applyReviewFilters } from './post-review.mjs';
 import { dedupByHash } from '../findings.mjs';
 // Re-exported: gemini-review.mjs's _internals has always reached it through here.
 export { dedupByHash };
@@ -111,73 +108,30 @@ export function resolveShadow({
 }
 
 /**
- * Build a provider-appropriate client for the shadow reviewer.
- * `'azure-claude'` (model-swap-eval-harness Phase 4) mirrors buildClient's
- * existing azure-claude branch exactly (below, the PRIMARY reviewer's
- * client builder) — this was the actual "no-op under Azure" gap the plan's
- * round-1 audit M3 fix closes: the shadow path never had ANY Azure support
- * before this, unlike the primary reviewer path which already did.
+ * Build the shadow reviewer's client — by DELEGATING to the canonical
+ * provider's own `PROVIDERS[...].buildClient`, never a second branch table.
+ *
+ * This used to re-spell construction for every provider (gemini, openrouter,
+ * azure-claude, xai, alibaba, deepseek, claude-opus) beside the catalog that
+ * already owned it, so acceptance (`SHADOW_PROVIDER_SPECS`) and construction
+ * were two lists that had to agree by hand. Every spec's `canonical` IS a
+ * PROVIDERS key (that is how the shadow inherits a descriptor's request
+ * extras), so the same key now selects its client too.
+ *
+ * Only `buildClient` is delegated, never `assertReady`: the openrouter
+ * descriptor's readiness demands FINAL_REVIEW_MODEL (the PRIMARY's model),
+ * which a shadow run has no reason to set; shadow readiness is
+ * `resolveShadow`'s credential + explicit-model checks.
+ *
+ * The claude-opus descriptor pins `backend:'sdk'` and `azureRoute:null` — both
+ * load-bearing here too: a conversational `cli` backend returns markdown (the
+ * 2026-07-26 dead-shadow incident), and the arm named `claude-opus` must stay
+ * the public service on an Azure machine.
  */
 export async function buildShadowClient(canonicalProvider) {
-  if (canonicalProvider === 'gemini') {
-    return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  }
-  if (canonicalProvider === 'openrouter') {
-    // Delegates to the PRIMARY route's own credential resolver rather than
-    // re-deriving the baseURL/key here — one definition of "how do we reach
-    // OpenRouter", so the shadow can never drift onto a different endpoint than
-    // the primary. Note `buildShadowClient` deliberately does NOT call
-    // `PROVIDERS[...].buildClient`/`assertReady`; the openrouter descriptor's
-    // assertReady demands FINAL_REVIEW_MODEL (the PRIMARY's model), which a
-    // shadow run has no reason to set. Readiness for this path is enforced in
-    // resolveShadow instead — see its credential + explicit-model checks.
-    const c = resolveOpenRouterCreds();
-    return createOpenAIClient({ oss: { baseURL: c.baseUrl, apiKey: c.apiKey } });
-  }
-  if (canonicalProvider === 'azure-claude') {
-    if (azureConfig.claudeApiShape === 'anthropic') {
-      return createAnthropicClient({ azureRoute: azureConfig.claudeRoute });
-    }
-    return createOpenAIClient({ purpose: 'foundry-claude' });
-  }
-  if (canonicalProvider === 'xai') {
-    // Same non-delegation note as openrouter above: buildShadowClient does NOT
-    // call PROVIDERS.xai.assertReady/buildClient — that descriptor's assertReady
-    // is a plain env check the shadow path duplicates in resolveShadow's own
-    // hasCredential, so calling both would just be two places to keep in sync.
-    const c = resolveXaiCreds();
-    return createOpenAIClient({ oss: { baseURL: c.baseUrl, apiKey: c.apiKey } });
-  }
-  if (canonicalProvider === 'alibaba') {
-    // Same non-delegation note as openrouter/xai above.
-    const c = resolveAlibabaCreds();
-    return createOpenAIClient({ oss: { baseURL: c.baseUrl, apiKey: c.apiKey } });
-  }
-  if (canonicalProvider === 'deepseek') {
-    // Same non-delegation note as openrouter/xai/alibaba above.
-    const c = resolveDeepseekCreds();
-    return createOpenAIClient({ oss: { baseURL: c.baseUrl, apiKey: c.apiKey } });
-  }
-  // `backend:'sdk'` PINNED, never the ambient CLAUDE_BACKEND (found live
-  // 2026-07-26 on the shadow's first real run). This transport gets its JSON
-  // contract from a PROMPT INSTRUCTION ("Output strictly valid JSON") with no
-  // provider-side enforcement — Gemini has `responseSchema`, Anthropic here has
-  // nothing. Under `CLAUDE_BACKEND=cli` the call is served by a conversational
-  // `claude -p`, which returned a markdown report ("# Final Gate Review … ##
-  // Verdict: **APPROVE**") — no JSON object anywhere, so `parseReviewJson`
-  // threw and the observation was dropped as `error-unavailable`. The shadow
-  // stayed enabled and silently recorded NOTHING: precisely the dead-experiment
-  // failure mode the A/B exists to avoid, and the same class as the tiered
-  // pipeline's discovery generator (AGENTS.md: any call needing a structured
-  // response must pin the sdk backend explicitly).
-  //
-  // Cost note: this bills ANTHROPIC_API_KEY rather than drawing Max-20x Agent
-  // SDK credit. Accepted deliberately — the pre-registered window is ~20 runs,
-  // and a shadow that produces no parseable verdict has zero value at any price.
-  // `azureRoute: null` keeps that cost note TRUE on an Azure machine: the shadow
-  // arm is named `claude-opus`, so it must stay the public service rather than
-  // adopting the tenant's route and quietly changing what the A/B compares.
-  return createAnthropicClient({ backend: 'sdk', azureRoute: null });
+  const descriptor = PROVIDERS[canonicalProvider];
+  if (!descriptor) throw new Error(`[shadow-review] no provider descriptor for "${canonicalProvider}"`);
+  return descriptor.buildClient();
 }
 
 // ── Model-eval adjudicator Tier A/B override (model-swap-eval-harness
@@ -270,10 +224,7 @@ async function runShadowReview(shadow, planContent, transcriptContent, projectCo
     shadow.provider, client, planContent, transcriptContent, projectContext, auditMode, shadow.model, retryOptions
   );
   const { result, usage, latencyMs, requestFingerprint, requestIdentity, transcriptContent: usedTranscript } = r;
-  await applyDebtSuppression(result, usedTranscript);
-  await applyScopeFilter(result, usedTranscript);
-  applyExistenceGate(result);
-  addSemanticIds(result, shadow.provider);
+  await applyReviewFilters(result, usedTranscript, shadow.provider);
   // requestIdentity is projected EXPLICITLY: this return is hand-built, and the
   // caller's `sr.requestIdentity` read null on every run while it was omitted.
   return { result, usage, latencyMs, requestFingerprint, requestIdentity };

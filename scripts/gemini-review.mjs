@@ -213,13 +213,9 @@ export {
   recordNewFindings,
 } from './lib/final-review/post-review.mjs';
 import {
-  applyDebtSuppression,
-  applyExistenceGate,
-  applyScopeFilter,
-  addSemanticIds,
+  applyReviewFilters,
   recordNewFindings,
   recordGeminiOutcomes,
-  applyPriorRoundSuppression,
 } from './lib/final-review/post-review.mjs';
 // Round cap + code-computed gate disposition (field report 2026-09-26).
 import { parseReviewArgs, REVIEW_FLAGS } from './lib/final-review/review-args.mjs';
@@ -795,10 +791,11 @@ function emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile,
  * repo already uses for provider stubbing elsewhere, just crossing a
  * subprocess boundary instead of a function-call boundary.
  */
-function runFixtureReview({ transcriptFile, outFile, jsonMode, round = null, prior = null }) {
+async function runFixtureReview({ transcriptFile, outFile, jsonMode, round = null, prior = null }) {
+  const transcriptText = readFileOrDie(transcriptFile);
   let transcript = {};
   try {
-    transcript = JSON.parse(readFileOrDie(transcriptFile));
+    transcript = JSON.parse(transcriptText);
   } catch { /* malformed/non-JSON transcript — fixture still returns a canned result */ }
 
   const findingId = transcript?.rounds?.[0]?.findings?.[0]?.id ?? null;
@@ -825,8 +822,9 @@ function runFixtureReview({ transcriptFile, outFile, jsonMode, round = null, pri
     architectural_coherence: 'Adequate',
     overall_reasoning: 'fixture canned result — no live model call made (NODE_ENV=test, --provider fixture).',
   });
-  applyPriorRoundSuppression(result, priorFindingsOf(prior));
-  addSemanticIds(result, 'gemini');
+  // The SAME post-review chain a real review runs, so the fixture CLI is a
+  // behavioural witness that the primary path filters and gates its findings.
+  await applyReviewFilters(result, transcriptText, 'gemini', { priorFindings: priorFindingsOf(prior) });
   const gateSummary = stampGateDisposition(result, round);
   const data = { ...result, _model: 'fixture', _provider: 'fixture', _usage: { input_tokens: 0, output_tokens: 0, thinking_tokens: 0 } };
   const summaryLine = `Verdict: ${result.verdict} | ${gateSummary} | New: ${result.new_findings.length} | Wrongly dismissed: ${result.wrongly_dismissed.length} | fixture (no live call)`;
@@ -928,11 +926,7 @@ async function main() {
       ? await runAdjudicatorOnlyReview(provider, client, planContent, transcriptContent, projectContext, auditMode)
       : await runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode, null, roundOpts);
     const { result, usage, latencyMs, transcriptContent: usedTranscript } = r;
-    await applyDebtSuppression(result, usedTranscript);
-    await applyScopeFilter(result, usedTranscript);
-    applyPriorRoundSuppression(result, priorFindingsOf(prior));
-    applyExistenceGate(result);
-    addSemanticIds(result, provider);
+    await applyReviewFilters(result, usedTranscript, provider, { priorFindings: priorFindingsOf(prior) });
     const gateSummary = stampGateDisposition(result, round);
     // Primary reviewer's resolved concrete model id (for source_model attribution)
     // — the descriptor's own, so every provider is named, not just three.

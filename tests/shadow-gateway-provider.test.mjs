@@ -23,7 +23,6 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { _internals } from '../scripts/gemini-review.mjs';
 
 import { finalReviewConfig } from '../scripts/lib/config.mjs';
@@ -120,28 +119,39 @@ describe('gateway shadow — the existing providers are untouched', () => {
 });
 
 describe('gateway shadow — the OpenRouter routing pins are inherited, not re-plumbed', () => {
-  it('the canonical provider name matches a PROVIDERS descriptor that supplies the pins', async () => {
+  it('the canonical provider name selects a PROVIDERS descriptor whose extras carry the pins', () => {
     // This is the whole mechanism: runFinalReview does
     // `PROVIDERS[provider].requestExtras?.()`, and the shadow supplies its
     // CANONICAL name. If that name stopped matching, the shadow would silently
     // run unpinned and measure OpenRouter's router instead of the model.
-    //
-    // Target path updated for the Phase 2 relocation
-    // (docs/plans/gemini-review-decomposition.md) — the PROVIDERS catalog
-    // moved to lib/final-review/providers.mjs; same pin, new location.
-    const src = await import('node:fs').then((fs) =>
-      fs.readFileSync(new URL('../scripts/lib/final-review/providers.mjs', import.meta.url), 'utf-8'));
-
+    // Asserted on the EVALUATED extras (a source regex matched comments too).
     const canonical = shadow({ provider: 'openrouter', model: KIMI }, { OPENROUTER_API_KEY: 'k' }).provider;
     assert.equal(canonical, 'openrouter');
+    const d = _internals.PROVIDERS[canonical];
+    const extras = d.requestExtras();
+    assert.equal(extras.provider?.require_parameters, true, 'require_parameters pin missing from the inherited descriptor');
+    assert.match(String(extras.provider?.sort), /^[a-z]+$/, 'provider sort pin missing from the inherited descriptor');
+    assert.equal(extras.reasoning?.effort, finalReviewConfig.reasoningEffort, 'reasoning-effort pin missing — reasoning tokens count against max_tokens');
+    assert.equal(d.structuredOutput, true, 'the shadow needs the JSON schema, not prose');
+  });
 
-    // The descriptor keyed by that canonical name must still declare both pins.
-    const descriptor = src.slice(src.indexOf('  openrouter: {'));
-    const body = descriptor.slice(0, descriptor.indexOf('\n  },'));
-    assert.match(body, /require_parameters:\s*true/, 'require_parameters pin missing from the inherited descriptor');
-    assert.match(body, /sort:\s*'[a-z]+'/, 'provider sort pin missing from the inherited descriptor');
-    assert.match(body, /reasoning:\s*\{\s*effort:/, 'reasoning-effort pin missing — reasoning tokens count against max_tokens');
-    assert.match(body, /structuredOutput:\s*true/, 'the shadow needs the JSON schema, not prose');
+  it('the pins reach the WIRE on the shadow path (runFinalReview with the canonical name)', async () => {
+    const { runFinalReview } = await import('../scripts/gemini-review.mjs');
+    let body = null;
+    const client = { chat: { completions: { create: async (b) => {
+      body = b;
+      return { choices: [{ message: { content: JSON.stringify({
+        verdict: 'APPROVE',
+        deliberation_quality: { claude_bias_detected: false, gpt_false_positive_count: 0, deliberation_was_fair: true, quality_summary: 'q' },
+        new_findings: [], wrongly_dismissed: [], over_engineering_flags: [], architectural_coherence: 'Strong', overall_reasoning: 'r',
+      }) }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } };
+    } } } };
+    const canonical = shadow({ provider: 'openrouter', model: KIMI }, { OPENROUTER_API_KEY: 'k' }).provider;
+    await runFinalReview(canonical, client, '# plan', JSON.stringify({ rounds: [] }), 'ctx', 'code', KIMI, { envelopeScope: 'thin' });
+    assert.equal(body.model, KIMI);
+    assert.equal(body.provider?.require_parameters, true);
+    assert.equal(body.reasoning?.effort, finalReviewConfig.reasoningEffort);
+    assert.equal(body.response_format?.type, 'json_schema');
   });
 });
 
@@ -192,24 +202,18 @@ describe('xAI shadow — the descriptor is DELIBERATELY NOT the OpenRouter shape
     // is the "accepted but inert" failure class the Grok pre-flight (plan §8)
     // exists to catch — this test catches it earlier, for free.
     //
-    // Target path updated for the Phase 2 relocation — PROVIDERS moved to
-    // lib/final-review/providers.mjs.
-    const src = readFileSync(new URL('../scripts/lib/final-review/providers.mjs', import.meta.url), 'utf-8');
-
+    // Asserted on the EVALUATED descriptor (2026-10), not its source text: the
+    // old regex needed field-with-value shapes precisely because this
+    // descriptor's own comment names the excluded fields in prose.
     const canonical = shadow({ provider: 'xai', model: null }, { XAI_API_KEY: 'k' }).provider;
     assert.equal(canonical, 'xai');
 
-    const descriptor = src.slice(src.indexOf('  xai: {'));
-    const body = descriptor.slice(0, descriptor.indexOf('\n  },'));
-    assert.match(body, /reasoning_effort:\s*finalReviewConfig\.reasoningEffort/, 'flat reasoning_effort pin missing');
-    assert.match(body, /structuredOutput:\s*true/, 'the shadow needs the JSON schema, not prose');
-    // Field-WITH-VALUE shape, not the bare word — this descriptor's own
-    // explanatory comment names `require_parameters`/`sort`/`reasoning.effort`
-    // in prose (to say why they're excluded), so a bare-word regex would match
-    // the comment explaining the absence and fail the very test asserting it.
-    assert.doesNotMatch(body, /require_parameters:\s*true/, 'require_parameters is OpenRouter-only — xai has one endpoint, nothing to require');
-    assert.doesNotMatch(body, /sort:\s*'[a-z]+'/, 'sort is OpenRouter-only routing — meaningless for a direct endpoint');
-    assert.doesNotMatch(body, /reasoning:\s*\{\s*effort:/, 'must NOT use OpenRouter\'s NESTED shape — xai would silently ignore it');
+    const d = _internals.PROVIDERS[canonical];
+    const extras = d.requestExtras();
+    assert.equal(extras.reasoning_effort, finalReviewConfig.reasoningEffort, 'flat reasoning_effort pin missing');
+    assert.equal(d.structuredOutput, true, 'the shadow needs the JSON schema, not prose');
+    assert.equal(extras.provider, undefined, 'require_parameters/sort are OpenRouter-only — xai has one endpoint');
+    assert.equal(extras.reasoning, undefined, 'must NOT use OpenRouter\'s NESTED shape — xai would silently ignore it');
   });
 
   // Asserted on the IMPORTED table, not on source text. The table moved to
@@ -279,28 +283,22 @@ describe('Alibaba shadow — resolution states (native replacement for the qwen 
 
 describe('Alibaba shadow — the descriptor is a direct endpoint, not an OpenRouter-style router', () => {
   it('carries no OpenRouter routing pins, and sends enable_thinking EXPLICITLY TRUE — reasoning parity is the whole point of a comparison arm', () => {
-    // Target path updated for the Phase 2 relocation — PROVIDERS moved to
-    // lib/final-review/providers.mjs.
-    const src = readFileSync(new URL('../scripts/lib/final-review/providers.mjs', import.meta.url), 'utf-8');
-
+    // Asserted on the EVALUATED descriptor (2026-10), not its source text.
     const canonical = shadow({ provider: 'alibaba', model: 'qwen3.8-max' }, { ALIBABA_CLOUD_API_KEY: 'k', ALIBABA_CLOUD_BASE_URL: 'https://example.invalid/v1' }).provider;
     assert.equal(canonical, 'alibaba');
 
-    const descriptor = src.slice(src.indexOf('  alibaba: {'));
-    const body = descriptor.slice(0, descriptor.indexOf('\n  },'));
-    assert.match(body, /structuredOutput:\s*true/, 'the shadow needs the JSON schema, not prose');
-    assert.doesNotMatch(body, /require_parameters:\s*true/, 'OpenRouter-only — alibaba is one workspace endpoint, nothing to require');
-    assert.doesNotMatch(body, /sort:\s*'[a-z]+'/, 'sort is OpenRouter-only routing — meaningless for a direct endpoint');
+    const d = _internals.PROVIDERS[canonical];
+    const extras = d.requestExtras();
+    assert.equal(d.structuredOutput, true, 'the shadow needs the JSON schema, not prose');
+    assert.equal(extras.provider, undefined, 'OpenRouter routing (require_parameters/sort) — alibaba is one workspace endpoint');
     // Set at all: Alibaba documents enable_thinking as required top-level for
     // non-streaming calls to thinking models, and leaving it unset is what
-    // correlated with the observed stalls.
-    assert.match(body, /enable_thinking:\s*true/, 'must send enable_thinking explicitly — unset is the state that stalled');
-    // And TRUE specifically. `false` would be faster and cheaper and would
-    // WRECK the comparison: reasoningEffort:'high' binds every arm and is
-    // hashed into the cohort digest, so an arm with reasoning off measures
-    // the dial rather than the model (the campaign's own measured lesson:
-    // 0 findings at `low` vs 3 at `high` on one identical transcript).
-    assert.doesNotMatch(body, /enable_thinking:\s*false/, 'reasoning must NOT be disabled on a comparison arm — that measures the setting, not the model');
+    // correlated with the observed stalls. And TRUE specifically: `false`
+    // would be faster and cheaper and would WRECK the comparison —
+    // reasoningEffort:'high' binds every arm and is hashed into the cohort
+    // digest, so an arm with reasoning off measures the dial rather than the
+    // model (0 findings at `low` vs 3 at `high` on one identical transcript).
+    assert.equal(extras.enable_thinking, true, 'must send enable_thinking:true explicitly — unset stalled, false measures the setting');
   });
 
   it('the alibaba requestExtras actually EMITS enable_thinking:true at runtime, not just in source text', () => {
@@ -362,16 +360,12 @@ describe('DeepSeek shadow — resolution states (direct API, replaces the Alibab
 
 describe('DeepSeek shadow — the descriptor degrades gracefully on this provider\'s json_schema rejection', () => {
   it('carries no OpenRouter routing pins, and requestExtras is empty', () => {
-    // Target path updated for the Phase 2 relocation — PROVIDERS moved to
-    // lib/final-review/providers.mjs.
-    const src = readFileSync(new URL('../scripts/lib/final-review/providers.mjs', import.meta.url), 'utf-8');
+    // Asserted on the EVALUATED descriptor (2026-10), not its source text.
     const canonical = shadow({ provider: 'deepseek', model: 'deepseek-v4-pro' }, { DEEPSEEK_API_KEY: 'k' }).provider;
     assert.equal(canonical, 'deepseek');
-    const descriptor = src.slice(src.indexOf('  deepseek: {'));
-    const body = descriptor.slice(0, descriptor.indexOf('\n  },'));
-    assert.match(body, /structuredOutput:\s*true/, 'the shadow needs the JSON schema, not prose — the openai transport degrades to prompt-only automatically if DeepSeek rejects it');
-    assert.doesNotMatch(body, /require_parameters:\s*true/, 'OpenRouter-only — deepseek is one direct endpoint');
-    assert.match(body, /requestExtras:\s*\(\)\s*=>\s*\(\{\}\)/, 'no reasoning field is claimed until verified live');
+    const d = _internals.PROVIDERS[canonical];
+    assert.equal(d.structuredOutput, true, 'the shadow needs the JSON schema, not prose — the openai transport degrades to prompt-only automatically if DeepSeek rejects it');
+    assert.deepEqual(d.requestExtras(), {}, 'no routing pin and no reasoning field is claimed until verified live');
   });
 
   // Imported-table assertion, same reasoning as the xai/alibaba cases above.
@@ -404,51 +398,75 @@ describe('reasoning-effort dial (apples-to-apples arms)', () => {
   });
 });
 
+describe('shadow acceptance and client construction are ONE provider list', () => {
+  // SHADOW_PROVIDER_SPECS decides what the shadow ACCEPTS; buildShadowClient
+  // used to decide what it can BUILD with its own name-by-name branch table —
+  // two lists agreeing by hand. It now delegates to PROVIDERS[canonical].
+  it('every accepted canonical provider has a PROVIDERS descriptor to build from', () => {
+    for (const [raw, spec] of Object.entries(_internals.SHADOW_PROVIDER_SPECS)) {
+      assert.equal(typeof _internals.PROVIDERS[spec.canonical]?.buildClient, 'function', `${raw} -> ${spec.canonical} has no builder`);
+    }
+  });
+
+  it('a provider with no descriptor is refused, never silently built as Anthropic', async () => {
+    // The old table's fall-through returned an Anthropic client for ANY
+    // unrecognised name — a mislabelled arm, not an error.
+    await assert.rejects(_internals.buildShadowClient('llama-farm'), /no provider descriptor for "llama-farm"/);
+  });
+});
+
 describe('Anthropic reviewer transports pin the sdk backend', () => {
   // Both Anthropic paths need a transport that supports tools/tool_choice AND
   // can carry a ~50K-token prompt. The `cli` backend does neither: it silently
   // drops tools (so provider-side schema enforcement vanishes) and passes the
   // prompt as a process argument, which overflows the Windows command line.
   // The shadow path was pinned 2026-07-26; the PRIMARY path was missed until
-  // 2026-08-03 because it is only reached when GEMINI_API_KEY is absent —
-  // meaning the final gate's own fallback reviewer was dead on any machine
-  // running CLAUDE_BACKEND=cli. A source assertion, because reproducing it
-  // needs a real CLI spawn and a 50K-token payload.
+  // 2026-08-03 because it is only reached when GEMINI_API_KEY is absent.
   //
-  // Two source files since the Phase 2/3 relocation (docs/plans/gemini-review-decomposition.md):
-  // `buildShadowClient` moved to lib/final-review/shadow.mjs (Phase 3); the
-  // `claude-opus` PROVIDERS descriptor moved to providers.mjs (Phase 2).
-  const SHADOW_SRC = readFileSync(new URL('../scripts/lib/final-review/shadow.mjs', import.meta.url), 'utf-8');
-  const PROVIDERS_SRC = readFileSync(new URL('../scripts/lib/final-review/providers.mjs', import.meta.url), 'utf-8');
+  // BEHAVIOURAL since 2026-10: the clients are BUILT under a hostile ambient
+  // env and inspected. The source regexes this replaces matched a call shape in
+  // one file — and the shadow builder now delegates to the catalog, so a
+  // per-file pin would have been checking a function that no longer builds.
+  // `baseURL` is the observable: the sdk wrapper exposes it, the cli adapter
+  // does not; and an adopted Azure route moves it to the tenant host.
+  const { buildShadowClient, PROVIDERS: P } = _internals;
+  const withEnv = async (vars, fn) => {
+    const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, vars);
+    try { return await fn(); } finally {
+      for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  };
+  const KEY = { ANTHROPIC_API_KEY: 'sk-ant-test-not-a-real-key' };
+  const AZURE = { AZURE_OPENAI_ENDPOINT: 'https://tenant-pin-test.example.invalid', AZURE_OPENAI_API_KEY: 'az-test-not-real' };
 
-  // `backend: 'sdk'` as an OPTION, not as the sole option: since 2026-08-30
-  // both sites also pass `azureRoute: null`, pinned separately below. Requiring
-  // the exact two-character call shape would make every future option a false
-  // failure while proving nothing extra.
-  const PINS_SDK = /createAnthropicClient\(\{[^)]*backend:\s*'sdk'/;
-
-  it('the shadow builder pins backend sdk', () => {
-    const fn = SHADOW_SRC.slice(SHADOW_SRC.indexOf('async function buildShadowClient'));
-    assert.match(fn.slice(0, fn.indexOf('\n}\n')), PINS_SDK);
+  it('NEGATIVE CONTROL: an unpinned client under CLAUDE_BACKEND=cli IS the cli adapter (the observable can tell)', async () => {
+    const { createAnthropicClient } = await import('../scripts/lib/anthropic-client.mjs');
+    await withEnv({ ...KEY, CLAUDE_BACKEND: 'cli' }, async () => {
+      assert.equal('baseURL' in await createAnthropicClient(), false);
+    });
   });
 
-  it('the PRIMARY claude-opus provider pins backend sdk — never the ambient env', () => {
-    const block = PROVIDERS_SRC.slice(PROVIDERS_SRC.indexOf("'claude-opus': {"));
-    const body = block.slice(0, block.indexOf("'azure-claude': {"));
-    assert.match(body, PINS_SDK);
-    assert.doesNotMatch(body, /createAnthropicClient\(\s*\)/, 'ambient-backend construction reintroduced');
-  });
+  for (const [arm, build] of [['shadow', () => buildShadowClient('claude-opus')], ['PRIMARY claude-opus', () => P['claude-opus'].buildClient()]]) {
+    it(`the ${arm} builder is the sdk client under CLAUDE_BACKEND=cli — never the ambient backend`, async () => {
+      await withEnv({ ...KEY, CLAUDE_BACKEND: 'cli' }, async () => {
+        assert.equal('baseURL' in await build(), true, 'cli adapter returned — tools/tool_choice would be dropped');
+      });
+    });
 
-  it('both Anthropic arms pin azureRoute:null — they MEAN the public service', () => {
-    // `claude-opus` is a different provider id from `azure-claude`, and the
-    // shadow's cost note says it bills ANTHROPIC_API_KEY. Since an OMITTED
-    // route now adopts the tenant's Azure Claude, dropping this pin would make
-    // both arms silently become `azure-claude` on any Azure machine — the A/B
-    // would then compare a provider against itself and read as agreement.
-    const shadow = SHADOW_SRC.slice(SHADOW_SRC.indexOf('async function buildShadowClient'));
-    assert.match(shadow.slice(0, shadow.indexOf('\n}\n')), /azureRoute:\s*null/);
-    const block = PROVIDERS_SRC.slice(PROVIDERS_SRC.indexOf("'claude-opus': {"));
-    assert.match(block.slice(0, block.indexOf("'azure-claude': {")), /azureRoute:\s*null/);
+    it(`the ${arm} builder stays the PUBLIC service on an Azure machine (azureRoute:null)`, async () => {
+      await withEnv({ ...KEY, ...AZURE, CLAUDE_BACKEND: 'sdk' }, async () => {
+        assert.doesNotMatch(String((await build()).baseURL), /tenant-pin-test/,
+          'an omitted route adopts the tenant — claude-opus would silently become azure-claude');
+      });
+    });
+  }
+
+  it('NEGATIVE CONTROL: an omitted route DOES adopt the tenant on that same env', async () => {
+    const { createAnthropicClient } = await import('../scripts/lib/anthropic-client.mjs');
+    await withEnv({ ...KEY, ...AZURE, CLAUDE_BACKEND: 'sdk' }, async () => {
+      assert.match(String((await createAnthropicClient({ backend: 'sdk' })).baseURL), /tenant-pin-test/);
+    });
   });
 });
 
