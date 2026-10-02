@@ -23,7 +23,8 @@ const TEST_URL = process.env.AUDIT_DB_TEST_URL;
 const skip = TEST_URL ? false : 'AUDIT_DB_TEST_URL not set (integration block)';
 
 describe('write-boundary transaction abort (DB integration)', { skip }, () => {
-  let q, withTx, applyFindingWrite, persistKeptEmbeddings, applyRemediationVerificationResults, recordFindings, markFindingsRemediation, updateRunMeta;
+  let q, withTx, applyFindingWrite, persistKeptEmbeddings, applyRemediationVerificationResults, recordFindings, markFindingsRemediation, updateRunMeta, recordAdjudicationEvent;
+  let recordRunStart, reconcileRemediationProjection, _resetRunReadColumnCache, columnExists;
   let repoId, runId, otherRepoId;
 
   before(async () => {
@@ -34,7 +35,8 @@ describe('write-boundary transaction abort (DB integration)', { skip }, () => {
     q = await import('../scripts/lib/db/query.mjs');
     withTx = q.withTx;
     ({ applyFindingWrite } = await import('../scripts/lib/store/finding-write.mjs'));
-    ({ persistKeptEmbeddings, applyRemediationVerificationResults, recordFindings, markFindingsRemediation, updateRunMeta } = await import('../scripts/lib/store/runs-findings.mjs'));
+    ({ persistKeptEmbeddings, applyRemediationVerificationResults, recordFindings, markFindingsRemediation, updateRunMeta, recordAdjudicationEvent, recordRunStart, reconcileRemediationProjection, _resetRunReadColumnCache } = await import('../scripts/lib/store/runs-findings.mjs'));
+    ({ columnExists } = await import('../scripts/lib/store/column-probes.mjs'));
 
     repoId = crypto.randomUUID();
     runId = crypto.randomUUID();
@@ -322,6 +324,228 @@ describe('write-boundary transaction abort (DB integration)', { skip }, () => {
     assert.equal(res.updated, 0, 'a fingerprint mismatch must block the write even with a valid, repo-owned id');
     const row = await q.one(`SELECT remediation_state FROM audit_findings WHERE id = $1`, [ins.id]);
     assert.equal(row.remediation_state, null, 'the mismatched-fingerprint row must be untouched');
+  });
+
+  // ── queue burn-down 2026-10-02 (store cluster) ────────────────────────────
+
+  /** A merged-pass finding with a pending adjudication event, owned by `runId`. */
+  async function seedFindingWithEvent(prefix) {
+    const fp = `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
+    const ins = await q.one(
+      `INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category, adjudication_outcome)
+       VALUES ($1, $2, 'merged', 'HIGH', 'test', 'accepted') RETURNING id`, [runId, fp]);
+    await q.query(
+      `INSERT INTO finding_adjudication_events (finding_id, adjudication_outcome, remediation_state, round) VALUES ($1, 'accepted', 'pending', 1)`,
+      [ins.id]);
+    return { fp, id: ins.id };
+  }
+
+  const vec768 = (x) => Array.from({ length: 768 }, (_, i) => (i === 0 ? x : 0.001));
+
+  /** Run `fn` with a test-only trigger installed on audit_findings, always dropping it. */
+  async function withTrigger(name, timing, whenSql, fn) {
+    await q.query(`CREATE OR REPLACE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $f$
+      BEGIN IF ${whenSql} THEN ${timing === 'skip' ? 'RETURN NULL' : `RAISE EXCEPTION '${name} fired'`}; END IF; RETURN NEW; END $f$`);
+    await q.query(`CREATE TRIGGER ${name} BEFORE ${timing === 'skip' ? 'INSERT' : 'UPDATE'} ON audit_findings
+      FOR EACH ROW EXECUTE FUNCTION ${name}()`);
+    try { return await fn(); } finally {
+      await q.query(`DROP TRIGGER IF EXISTS ${name} ON audit_findings`);
+      await q.query(`DROP FUNCTION IF EXISTS ${name}()`);
+    }
+  }
+
+  test('round-6 H3: a malformed vector (toVectorLiteral throws) inside a caller tx costs one embedding, not the transaction', async () => {
+    const fp = `pke-nan-${crypto.randomUUID().slice(0, 8)}`;
+    let embedResult;
+    await withTx(async (client) => {
+      const ins = await client.query(
+        `INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category)
+         VALUES ($1, $2, 'merged', 'HIGH', 'test') RETURNING id`, [runId, fp]);
+      const f = { _hash: fp, detail: 'x' };
+      embedResult = await persistKeptEmbeddings(
+        client, [f], new Map([[f, [0.1, Number.NaN]]]), new Map([[findingKeyString({ fingerprint: fp }), ins.rows[0].id]]),
+        runId, { provenanceId: 'test-model', dim: 768 }, true);
+    });
+    assert.deepEqual(embedResult, { persisted: 0, failed: 1 });
+    assert.ok(await q.one(`SELECT id FROM audit_findings WHERE run_id = $1 AND finding_fingerprint = $2`, [runId, fp]),
+      'the sibling INSERT must commit — a synchronous throw must not escape the per-embedding guard');
+  });
+
+  test('round-6 H1: the savepoint write goes through the client withTx hands back, not the outer exec', async () => {
+    const fp = `pke-sp-${crypto.randomUUID().slice(0, 8)}`;
+    const poisoned = { query: async () => { throw new Error('the outer exec must not be used for the savepoint write'); } };
+    let embedResult, id;
+    await withTx(async (client) => {
+      id = (await client.query(
+        `INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category)
+         VALUES ($1, $2, 'merged', 'HIGH', 'test') RETURNING id`, [runId, fp])).rows[0].id;
+      const f = { _hash: fp, detail: 'x' };
+      embedResult = await persistKeptEmbeddings(
+        poisoned, [f], new Map([[f, vec768(0.5)]]), new Map([[findingKeyString({ fingerprint: fp }), id]]),
+        runId, { provenanceId: 'test-model', dim: 768 }, true);
+    });
+    assert.deepEqual(embedResult, { persisted: 1, failed: 0 });
+    assert.ok(await q.one(`SELECT finding_id FROM finding_embeddings WHERE finding_id = $1`, [id]));
+  });
+
+  test('round-2 H4: two same-fingerprint findings in different buckets each get THEIR OWN embedding', async () => {
+    const fp = `pke-bucket-${crypto.randomUUID().slice(0, 8)}`;
+    const both = await q.one(`INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category, bucket)
+      VALUES ($1, $2, 'final-review-shadow', 'HIGH', 'test', 'both') RETURNING id`, [runId, fp]);
+    const only = await q.one(`INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category, bucket)
+      VALUES ($1, $2, 'final-review-shadow', 'HIGH', 'test', 'shadow-only') RETURNING id`, [runId, fp]);
+    const fBoth = { _hash: fp, _bucket: 'both', detail: 'b' };
+    const fOnly = { _hash: fp, _bucket: 'shadow-only', detail: 'o' };
+    const idByKey = new Map([
+      [findingKeyString({ fingerprint: fp, bucket: 'both' }), both.id],
+      [findingKeyString({ fingerprint: fp, bucket: 'shadow-only' }), only.id],
+    ]);
+    const pool = await (await import('../scripts/lib/db/client.mjs')).getPool();
+    const res = await persistKeptEmbeddings(pool, [fBoth, fOnly], new Map([[fBoth, vec768(0.25)], [fOnly, vec768(0.75)]]),
+      idByKey, runId, { provenanceId: 'test-model', dim: 768 }, false, true);
+    assert.deepEqual(res, { persisted: 2, failed: 0 });
+    const lead = async (id) => Number((await q.one(
+      `SELECT (embedding::real[])[1] AS v FROM finding_embeddings WHERE finding_id = $1`, [id])).v);
+    assert.equal(await lead(both.id), 0.25);
+    assert.equal(await lead(only.id), 0.75, 'a fingerprint-only id map would have attached both vectors to ONE finding');
+  });
+
+  test('recordFindings: a row the database silently did not write (trigger) is a failed write, not applied:true', async () => {
+    const ok = `trigger-keep-${crypto.randomUUID().slice(0, 8)}`;
+    const skipped = `trigger-skip-${crypto.randomUUID().slice(0, 8)}`;
+    const res = await withTrigger('test_skip_finding', 'skip', `NEW.finding_fingerprint LIKE 'trigger-skip-%'`, () =>
+      recordFindings(runId, [
+        { _hash: ok, severity: 'HIGH', category: 'test', section: 'x', detail: 'lands' },
+        { _hash: skipped, severity: 'HIGH', category: 'test', section: 'x', detail: 'skipped by trigger' },
+      ], 'merged', 1));
+    assert.equal(res.applied, false, 'RETURNING named 1 of 2 rows — the receipt must not claim both landed');
+    assert.equal(res.reason, 'write-failed');
+  });
+
+  test('Phase 8: a failing throttle stamp rolls back the terminal "verified" write it accompanies', async () => {
+    const { id } = await seedFindingWithEvent('throttle-atomic');
+    const res = await withTrigger('test_fail_throttle', 'raise', `NEW.remediation_last_checked_commit = 'boom-throttle'`, () =>
+      applyRemediationVerificationResults(repoId, [{ findingId: id, outcome: 'resolved', checkedAtCommit: 'boom-throttle' }]));
+    assert.equal(res.updated, 0);
+    const row = await q.one(`SELECT remediation_state FROM audit_findings WHERE id = $1`, [id]);
+    assert.equal(row.remediation_state, null, 'verified must not land without its throttle stamp — one transaction');
+  });
+
+  test('round-4 H1: an UNRESOLVED throttle-column probe is reported as such, not read as an un-migrated store', async () => {
+    const { id } = await seedFindingWithEvent('throttle-probe');
+    _resetRunReadColumnCache();
+    const transient = async (sql) => {
+      if (/remediation_last_checked_at/.test(sql)) { const e = new Error('connection terminated'); e.code = '57P01'; throw e; }
+      return q.many(sql);
+    };
+    const logged = [];
+    const write = process.stderr.write;
+    process.stderr.write = (m, ...rest) => { logged.push(String(m)); return write.call(process.stderr, m, ...rest); };
+    let res;
+    try {
+      res = await applyRemediationVerificationResults(repoId, [{ findingId: id, outcome: 'resolved', checkedAtCommit: 'c0ffee' }], { many: transient });
+    } finally { process.stderr.write = write; _resetRunReadColumnCache(); }
+    assert.equal(res.updated, 1, 'the terminal write still lands');
+    assert.ok(logged.some((m) => /probe failed transiently — treating throttle columns as unavailable for THIS batch only/.test(m)),
+      'an unresolved probe must say so — silently degrading reads exactly like a store that lacks the columns');
+  });
+
+  test('a capability probe of an ABSENT column inside a caller transaction does not abort that transaction', async () => {
+    // db/query.mjs binds `many` to the active tx client, so a probe that fails
+    // (an un-migrated store's probe) used to abort the caller's transaction.
+    _resetRunReadColumnCache();
+    const fp = `probe-tx-${crypto.randomUUID().slice(0, 8)}`;
+    await withTx(async (client) => {
+      assert.equal(await columnExists('audit_findings', 'no_such_column_probe', q.many, async () => true), false);
+      await client.query(`INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category)
+        VALUES ($1, $2, 'merged', 'HIGH', 'test')`, [runId, fp]);
+    });
+    _resetRunReadColumnCache();
+    assert.ok(await q.one(`SELECT id FROM audit_findings WHERE run_id = $1 AND finding_fingerprint = $2`, [runId, fp]));
+  });
+
+  test('Phase 5: reconciliation writes the SPECIFIC divergent row, not the newest row sharing its fingerprint', async () => {
+    const fp = `reconcile-${crypto.randomUUID().slice(0, 8)}`;
+    const olderRun = crypto.randomUUID();
+    const newerRun = crypto.randomUUID();
+    await q.query(`INSERT INTO audit_runs (id, repo_id, plan_file, mode) VALUES ($1, $3, 'p.md', 'code'), ($2, $3, 'p.md', 'code')`,
+      [olderRun, newerRun, repoId]);
+    try {
+      const older = await q.one(`INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category, adjudication_outcome, remediation_state, created_at)
+        VALUES ($1, $2, 'merged', 'HIGH', 'test', 'accepted', 'pending', now() - interval '1 hour') RETURNING id`, [olderRun, fp]);
+      await q.query(`INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category, adjudication_outcome, remediation_state)
+        VALUES ($1, $2, 'merged', 'HIGH', 'test', 'accepted', 'fixed')`, [newerRun, fp]);
+      const res = await reconcileRemediationProjection(repoId, { entries: [{ semanticHash: fp, remediationState: 'fixed' }] });
+      assert.equal(res.reconciled, 1);
+      const row = await q.one(`SELECT remediation_state FROM audit_findings WHERE id = $1`, [older.id]);
+      assert.equal(row.remediation_state, 'fixed', 'the divergent (older) row is the one that must be healed');
+    } finally {
+      await q.query('DELETE FROM audit_findings WHERE run_id = ANY($1)', [[olderRun, newerRun]]);
+      await q.query('DELETE FROM audit_runs WHERE id = ANY($1)', [[olderRun, newerRun]]);
+    }
+  });
+
+  test('a reconciliation whose per-row write FAILS reports the shortfall (attempted > reconciled), not a bare ok', async () => {
+    const fp = `reconcile-fail-${crypto.randomUUID().slice(0, 8)}`;
+    await q.query(`INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category, adjudication_outcome, remediation_state)
+      VALUES ($1, $2, 'merged', 'HIGH', 'test', 'accepted', 'pending')`, [runId, fp]);
+    const res = await withTrigger('test_fail_reconcile', 'raise', `NEW.finding_fingerprint LIKE 'reconcile-fail-%' AND NEW.remediation_state = 'fixed'`, () =>
+      reconcileRemediationProjection(repoId, { entries: [{ semanticHash: fp, remediationState: 'fixed' }] }));
+    assert.equal(res.reconciled, 0);
+    assert.equal(res.attempted, 1, 'the caller must be able to see that 1 was attempted and 0 landed');
+  });
+
+  test('Phase 6: run-id reuse is refused when exactly ONE side carries a repo id', async () => {
+    assert.equal(await recordRunStart(null, 'p.md', 'code', { runId }), null,
+      'a caller that omits repoId must not attach to a run owned by a repo');
+    assert.equal(await recordRunStart(repoId, 'p.md', 'code', { runId }), runId, 'positive control: the owning repo reuses it');
+  });
+
+  test('Phase 4: recordAdjudicationEvent names a missing finding instead of resolving to undefined', async () => {
+    const res = await recordAdjudicationEvent(runId, `nosuch-${crypto.randomUUID().slice(0, 8)}`, {
+      adjudicationOutcome: 'accepted', remediationState: 'fixed', ruling: 'sustain', round: 1,
+    });
+    assert.deepEqual(res, { ok: false, reason: 'no-match' });
+  });
+
+  test('a "resolved" verdict does not overwrite a remediation state that moved on after the row was selected', async () => {
+    // The reconciler selects pending/planned rows, asks an LLM, then writes
+    // 'verified'. A finding recorded as REGRESSED in that window must not be
+    // silently flipped back to verified by a verdict about an older commit.
+    const { id } = await seedFindingWithEvent('stale-verify');
+    await q.query(`UPDATE audit_findings SET remediation_state = 'regressed' WHERE id = $1`, [id]);
+    const res = await applyRemediationVerificationResults(repoId, [
+      { findingId: id, outcome: 'resolved', checkedAtCommit: 'cafef00d' },
+    ]);
+    assert.equal(res.updated, 0, 'a write against a row that is no longer open must not be counted');
+    const row = await q.one(`SELECT remediation_state FROM audit_findings WHERE id = $1`, [id]);
+    assert.equal(row.remediation_state, 'regressed');
+  });
+
+  test('lock order: an adjudication racing a remediation projection of the SAME finding does not deadlock', async () => {
+    // projectRemediationState locks audit_findings, then finding_adjudication_events.
+    // recordAdjudicationEvent used to take them in the OPPOSITE order (delete the
+    // event, then update the finding) — two transactions each holding the lock the
+    // other needs, which Postgres breaks by aborting one of them (40P01).
+    const { fp, id } = await seedFindingWithEvent('lockorder');
+    const { getPool } = await import('../scripts/lib/db/client.mjs');
+    const t1 = await (await getPool()).connect();
+    let adjudication;
+    try {
+      await t1.query('BEGIN');
+      await t1.query(`UPDATE audit_findings SET remediation_state = 'fixed' WHERE id = $1`, [id]); // projection, statement 1
+      adjudication = recordAdjudicationEvent(runId, fp, {
+        adjudicationOutcome: 'accepted', remediationState: 'fixed', ruling: 'sustain', round: 1,
+      });
+      await new Promise((r) => setTimeout(r, 400)); // let the adjudication reach its first blocking lock
+      await t1.query(`UPDATE finding_adjudication_events SET remediation_state = 'fixed' WHERE finding_id = $1`, [id]); // statement 2
+      await t1.query('COMMIT');
+    } finally {
+      t1.release();
+    }
+    assert.deepEqual(await adjudication, { ok: true }, 'the adjudication must not be the deadlock victim');
+    const ev = await q.many(`SELECT remediation_state FROM finding_adjudication_events WHERE finding_id = $1`, [id]);
+    assert.deepEqual(ev, [{ remediation_state: 'fixed' }]);
   });
 
   test('H2/H3 (positive control): the SAME row-id path succeeds when repo AND fingerprint both match', async () => {

@@ -27,6 +27,8 @@ import { getPool } from '../db/client.mjs';
 import { isCloudEnabled, getRepoIdByName } from './repo.mjs';
 import { findingKeyString, selectFindingRow } from './finding-identity.mjs';
 import { applyFindingWrite } from './finding-write.mjs';
+import { detectClassificationColumns, detectPassStatsRoundColumn, probeColumnExistence, columnExists } from './column-probes.mjs';
+export { _resetClassificationColumnCache, _resetPassStatsRoundColumnCache, _resetRunReadColumnCache } from './column-probes.mjs';
 // Imported, never re-exported (learning-store.mjs does `export *` from here).
 import { CREDIT_BRANCH_SHADOW_WHERE, CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE, pendingQueueSql, UNRULED_WHERE } from './final-review-credit-population.mjs';
 import crypto from 'node:crypto';
@@ -223,98 +225,6 @@ export async function persistKeptEmbeddings(exec, keptFindings, vectorByFinding,
     result.persisted++;
   }
   return result;
-}
-
-/**
- * True only for PostgreSQL `undefined_column` (SQLSTATE 42703) — the one error
- * that genuinely means "this column is absent" (an un-migrated store). Every
- * other failure (connection refused, permission, pool exhaustion, statement
- * timeout) is transient/unexpected and must NOT be cached as "column missing":
- * a migration capability probe has to distinguish a real schema gap from a DB
- * blip, or one transient error poisons the columnless fallback for the whole
- * process (M3/M5).
- */
-function isUndefinedColumnError(err) {
-  // 42703 undefined_column AND 42P01 undefined_table both mean the probed
-  // column is definitively unavailable (a missing table can't have the column)
-  // — either is an authoritative "absent", distinct from a transient blip.
-  return !!err && (
-    err.code === '42703' || err.code === '42P01'
-    || /column .* does not exist|relation .* does not exist/i.test(err.message || '')
-  );
-}
-
-// Cached classification-column probe (column shape doesn't change mid-run).
-let _hasClassificationColumns = null;
-
-/** Test-only reset for the probe cache (mirrors legacy export). */
-export function _resetClassificationColumnCache() {
-  _hasClassificationColumns = null;
-}
-
-/**
- * Run a 0-row column probe with ONE retry on a transient error. Returns
- * `{ present, definitive }`: `definitive` is true only when the result is
- * authoritative — the column was confirmed present (probe succeeded) OR a
- * `42703` confirmed it absent. A transient/unexpected failure (after the
- * retry) yields `{ present:false, definitive:false }`, so the caller falls
- * back columnless for THIS call WITHOUT caching the negative — one DB blip can
- * never poison the cached column state for the process, and the retry absorbs
- * most blips before they degrade a single write (M3/M5/M6).
- */
-async function probeColumn(sql) {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      await many(sql);
-      return { present: true, definitive: true };
-    } catch (err) {
-      if (isUndefinedColumnError(err)) return { present: false, definitive: true };
-      if (attempt === 0) continue; // transient — retry once before degrading
-      process.stderr.write(`  [learning] column probe failed transiently (${err.code || err.message}); columnless for this call\n`);
-      return { present: false, definitive: false };
-    }
-  }
-  return { present: false, definitive: false };
-}
-
-async function detectClassificationColumns() {
-  if (_hasClassificationColumns !== null) return _hasClassificationColumns;
-  if (!await isCloudEnabled()) {
-    _hasClassificationColumns = false;
-    return false;
-  }
-  const { present, definitive } = await probeColumn(`SELECT sonar_type FROM audit_findings LIMIT 0`);
-  if (definitive) {
-    _hasClassificationColumns = present; // cache only an authoritative result
-    if (!present) process.stderr.write('  [learning] classification columns not present — run migration to enable\n');
-  }
-  return present;
-}
-
-// Cached probe for the run-unification `audit_pass_stats.round` column
-// (migration 20260605120000). Mirrors the classification probe so the round
-// code degrades to the columnless path on an un-migrated store (WS1 §1.3a —
-// defense-in-depth: the shared store has it applied, but air-gapped / fresh
-// self-hosted stores may not).
-let _hasPassStatsRoundColumn = null;
-
-/** Test-only reset for the round-column probe cache. */
-export function _resetPassStatsRoundColumnCache() {
-  _hasPassStatsRoundColumn = null;
-}
-
-async function detectPassStatsRoundColumn() {
-  if (_hasPassStatsRoundColumn !== null) return _hasPassStatsRoundColumn;
-  if (!await isCloudEnabled()) {
-    _hasPassStatsRoundColumn = false;
-    return false;
-  }
-  const { present, definitive } = await probeColumn(`SELECT round FROM audit_pass_stats LIMIT 0`);
-  if (definitive) {
-    _hasPassStatsRoundColumn = present; // cache only an authoritative result
-    if (!present) process.stderr.write('  [learning] audit_pass_stats.round not present — run migration 20260605120000 for per-round pass telemetry\n');
-  }
-  return present;
 }
 
 // ── audit_runs ─────────────────────────────────────────────────────────────
@@ -1059,6 +969,9 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
                  ${conflict}
                  RETURNING id, finding_fingerprint${hasBucket ? ', bucket' : ''}`;
     const inserted = await exec.query(sql, params);
+    // RETURNING is the only witness that a row landed (a BEFORE trigger or a
+    // policy can skip one without an error) — a short count is a failed write.
+    if ((inserted.rowCount ?? 0) !== rows.length) throw new Error(`${inserted.rowCount} of ${rows.length} row(s) landed`);
     // Persist embeddings for the kept findings so they become future dedup
     // targets. Best-effort; keyed by (fingerprint,bucket) via findingKeyString,
     // NOT fingerprint alone (round-2 audit H4) — a bare Map keyed by
@@ -1907,7 +1820,7 @@ export async function getFinalReviewStats(repoName, { queueLimit = 50, after = n
 export async function recordPassStats(runId, passName, stats, round) {
   if (!runId) return { applied: false, rows: 0, reason: 'no-run-id' };
   if (!await isCloudEnabled()) return { applied: false, rows: 0, reason: 'cloud-off' };
-  const hasRound = await detectPassStatsRoundColumn();
+  const { present: hasRound } = await detectPassStatsRoundColumn();
   // Model-A/B/C per-arm-execution columns (migration 20260701120000): written
   // only when present AND the caller supplied them, so the normal audit path is
   // byte-identical on an un-migrated store or when not shadowing.
@@ -1948,38 +1861,46 @@ export async function recordPassStats(runId, passName, stats, round) {
 /**
  * After deliberation, update findings_accepted / findings_dismissed /
  * findings_compromised on each pass's stats row. Called by outcome-sync.
+ *
+ * Post-deliberation counts are run-FINAL (canonical adjudication truth lives in
+ * audit_findings.adjudication_outcome; these are denormalized telemetry). Under
+ * run-unification one run_id spans many per-round pass_stats rows, so matching
+ * on (run_id, pass_name) alone overwrites EVERY round's row. Scope to the LATEST
+ * round's row per pass (WS1 §1.3a / Gemini-R2-H1); on a store CONFIRMED to lack
+ * the `round` column fall back to the original match. An UNRESOLVED probe is
+ * not that store — it refuses the fallback rather than overwrite every round.
+ *
+ * @param {{many?: Function, one?: Function, updateWhere?: Function, isCloudEnabled?: Function}} [deps] test seam
+ * @returns {Promise<{updated: number, attempted: number, reason?: string}|undefined>}
+ *   `undefined` only when nothing was attempted (no runId / cloud off).
  */
-export async function updatePassStatsPostDeliberation(runId, passCounts) {
-  if (!runId || !await isCloudEnabled()) return;
-  // Post-deliberation counts are run-FINAL (canonical adjudication truth lives in
-  // audit_findings.adjudication_outcome; these are denormalized telemetry). Under
-  // run-unification one run_id spans many per-round pass_stats rows, so matching
-  // on (run_id, pass_name) alone overwrites EVERY round's row. Scope to the LATEST
-  // round's row per pass so the final counts land unambiguously on the
-  // convergence-round row (WS1 §1.3a / Gemini-R2-H1). On an un-migrated store
-  // (no `round` column) fall back to the original match — today's behaviour.
-  const hasRound = await detectPassStatsRoundColumn();
-  for (const [passName, counts] of Object.entries(passCounts)) {
+export async function updatePassStatsPostDeliberation(runId, passCounts, deps = {}) {
+  const { many: manyFn = many, one: oneFn = one, updateWhere: updateWhereFn = updateWhere, isCloudEnabled: cloudFn = isCloudEnabled } = deps;
+  if (!runId || !await cloudFn()) return;
+  const entries = Object.entries(passCounts || {});
+  const { present: hasRound, definitive } = await detectPassStatsRoundColumn(manyFn, cloudFn);
+  if (!definitive) {
+    process.stderr.write(`  [learning] updatePassStats: audit_pass_stats.round probe unresolved — refusing the all-rounds fallback; ${entries.length} pass row(s) not updated\n`);
+    return { updated: 0, attempted: entries.length, reason: 'round-probe-unresolved' };
+  }
+  let updated = 0;
+  for (const [passName, counts] of entries) {
     try {
-      const patch = {
-        findings_accepted: counts.accepted,
-        findings_dismissed: counts.dismissed,
-        findings_compromised: counts.compromised || 0,
-      };
+      const patch = { findings_accepted: counts.accepted, findings_dismissed: counts.dismissed, findings_compromised: counts.compromised || 0 };
+      const where = { run_id: runId, pass_name: passName };
       if (hasRound) {
-        const maxRow = await one(
-          `SELECT max(round) AS r FROM audit_pass_stats WHERE run_id = $1 AND pass_name = $2`,
-          [runId, passName]
-        );
-        if (maxRow?.r == null) continue; // no row for this pass under the run
-        await updateWhere('audit_pass_stats', patch, { run_id: runId, pass_name: passName, round: maxRow.r });
-      } else {
-        await updateWhere('audit_pass_stats', patch, { run_id: runId, pass_name: passName });
+        const maxRow = await oneFn(`SELECT max(round) AS r FROM audit_pass_stats WHERE run_id = $1 AND pass_name = $2`, [runId, passName]);
+        where.round = maxRow?.r ?? null; // null: no stats row for this pass — matches nothing
       }
+      // An UPDATE that matched nothing is not a write, however cleanly it returned.
+      const { rowCount } = where.round === null ? { rowCount: 0 } : await updateWhereFn('audit_pass_stats', patch, where);
+      if (rowCount > 0) updated += 1;
+      else process.stderr.write(`  [learning] updatePassStats(${passName}): no audit_pass_stats row for run ${runId} — not written\n`);
     } catch (err) {
       process.stderr.write(`  [learning] updatePassStats(${passName}) failed: ${err.message}\n`);
     }
   }
+  return { updated, attempted: entries.length };
 }
 
 /**
@@ -2041,33 +1962,32 @@ export async function getAuditRunConvergence(runId) {
 }
 
 /**
- * Aggregate average pass timing/token data across all rows where
- * input_tokens > 0. In-memory aggregation matches the legacy approach.
+ * Average pass timing/token data per pass_name across all rows where
+ * input_tokens > 0. Aggregated IN SQL — this used to ship every historical
+ * stats row into Node to compute a handful of averages. A NULL output/latency
+ * counts as 0 (sum() skips it; the row still counts), as the JS loop did.
+ * @param {{many?: Function, isCloudEnabled?: Function}} [deps] test seam
  */
-export async function getPassTimings() {
-  if (!await isCloudEnabled()) return [];
+export async function getPassTimings(deps = {}) {
+  const { many: manyFn = many, isCloudEnabled: cloudFn = isCloudEnabled } = deps;
+  if (!await cloudFn()) return [];
   try {
-    const rows = await many(
-      `SELECT pass_name, input_tokens, output_tokens, latency_ms
-         FROM audit_pass_stats
-        WHERE input_tokens > 0`
+    const rows = await manyFn(
+      `SELECT pass_name, count(*) AS n, sum(input_tokens) AS total_in,
+              coalesce(sum(output_tokens), 0) AS total_out, coalesce(sum(latency_ms), 0) AS total_lat
+         FROM audit_pass_stats WHERE input_tokens > 0
+        GROUP BY pass_name ORDER BY pass_name`
     );
-    const byPass = {};
-    for (const row of rows) {
-      if (!byPass[row.pass_name]) byPass[row.pass_name] = { totalIn: 0, totalOut: 0, totalLat: 0, count: 0 };
-      const p = byPass[row.pass_name];
-      p.totalIn += row.input_tokens || 0;
-      p.totalOut += row.output_tokens || 0;
-      p.totalLat += row.latency_ms || 0;
-      p.count++;
-    }
-    return Object.entries(byPass).map(([passName, p]) => ({
-      passName,
-      avgInputTokens: Math.round(p.totalIn / p.count),
-      avgOutputTokens: Math.round(p.totalOut / p.count),
-      avgLatencyMs: Math.round(p.totalLat / p.count),
-      runCount: p.count,
-    }));
+    return rows.map((r) => {
+      const n = Number(r.n);
+      return {
+        passName: r.pass_name,
+        avgInputTokens: Math.round(Number(r.total_in) / n),
+        avgOutputTokens: Math.round(Number(r.total_out) / n),
+        avgLatencyMs: Math.round(Number(r.total_lat) / n),
+        runCount: n,
+      };
+    });
   } catch (err) {
     process.stderr.write(`  [learning] getPassTimings failed: ${err.message}\n`);
     return [];
@@ -2075,96 +1995,6 @@ export async function getPassTimings() {
 }
 
 // ── audit-run read queries (dashboard findings viewer, plan §7.0) ───────────
-
-// Generic cached optional-column probe for the read path. The two existing
-// probes above (detectClassificationColumns / detectPassStatsRoundColumn) are
-// column-specific booleans; the dashboard read-query needs to probe a DIFFERENT
-// set of later-migration columns (adjudication_outcome / remediation_state on
-// audit_findings; round_converged_after / commit_sha / branch / plan_id on
-// audit_runs). This follows the SAME cached `SELECT col … LIMIT 0` pattern,
-// generalised so an un-migrated store still returns rows (just without the
-// optional columns). Keyed `<table>.<col>`.
-const _runReadColumnCache = new Map();
-
-/** Test-only reset for the read-path column probe cache. */
-export function _resetRunReadColumnCache() {
-  _runReadColumnCache.clear();
-}
-
-/**
- * @param {string} table  hardcoded table literal (never user input)
- * @param {string} col    hardcoded column literal (never user input)
- * @param {(sql:string, params?:unknown[]) => Promise<unknown[]>} manyFn
- * @param {() => Promise<boolean>} cloudFn
- * @returns {Promise<boolean>}
- */
-/**
- * round-3 audit H2 (GPT deliberation: compromise, MEDIUM): the boolean
- * `columnExists` below cannot distinguish "confirmed absent" from "an
- * exhausted transient probe" — both read `false` to every one of its ~25
- * boolean-context call sites, and GPT's own ruling was explicit that widening
- * ALL of them to a tri-state contract is disproportionate (it would risk
- * aborting whole batches for the sake of one optional field, the exact
- * failure mode this file's NOT-NULL/domain guards exist to prevent). This
- * helper is the one exception: it exposes the `definitive` bit for the ONE
- * write site that persists a REPORTED OUTCOME a caller trusts — `updateRunMeta`,
- * which backs verdict persistence — so a transient probe there can produce an
- * honest `partial` result instead of silently dropping a supplied value while
- * reporting `{ok:true}`. `columnExists` itself is now a thin wrapper that
- * discards `definitive` and keeps its existing boolean contract byte-for-byte
- * for every other caller.
- * @returns {Promise<{present: boolean, definitive: boolean}>}
- */
-async function probeColumnExistence(table, col, manyFn, cloudFn) {
-  const key = `${table}.${col}`;
-  if (_runReadColumnCache.has(key)) return { present: _runReadColumnCache.get(key), definitive: true };
-  if (!await cloudFn()) {
-    _runReadColumnCache.set(key, false);
-    return { present: false, definitive: true };
-  }
-  // Retry once before degrading (round-1 audit H8/H17, mirroring `probeColumn`'s
-  // established pattern — and its own `isUndefinedColumnError` oracle instead of
-  // a second, drifting inline `42703`/`42P01` check): the cache was already
-  // correctly never poisoned by a transient failure, but a single blip still
-  // silently omitted the probed column from THIS one call with no retry —
-  // load-bearing for Phase 3, whose intra-batch dedup key depends on `hasBucket`
-  // being accurate for the batch it is actually probed for.
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      await manyFn(`SELECT "${col}" FROM ${table} LIMIT 0`);
-      _runReadColumnCache.set(key, true);
-      return { present: true, definitive: true };
-    } catch (err) {
-      // Only a genuine "absent" signal is a STABLE capability fact worth
-      // caching. A transient connectivity/auth/timeout error must NOT poison
-      // the cache: caching `false` there would permanently omit a column that
-      // actually exists, silently dropping adjudication/remediation data for
-      // the whole process. On a transient error, retry once; if it persists,
-      // omit the column for THIS call only and leave the cache unset so the
-      // next call re-probes.
-      if (isUndefinedColumnError(err)) {
-        _runReadColumnCache.set(key, false);
-        return { present: false, definitive: true };
-      }
-      if (attempt === 0) continue;
-      // round-2 audit H5: both retries failed on a NON-definitive error (not
-      // `isUndefinedColumnError` — a real schema gap would have returned
-      // above). This is an exhausted transient probe, not a confirmed-absent
-      // column, and previously returned bare `false` with no signal — making
-      // it silently indistinguishable from genuine absence. Mirrors
-      // `probeColumn`'s own log line for the same case. The cache is
-      // deliberately left unset (see the comment above the loop) so the next
-      // call re-probes instead of being poisoned by this one blip.
-      process.stderr.write(`  [learning] columnExists(${key}) probe failed transiently (${err.code || err.message}); treating as absent for this call only\n`);
-    }
-  }
-  return { present: false, definitive: false };
-}
-
-async function columnExists(table, col, manyFn, cloudFn) {
-  const { present } = await probeColumnExistence(table, col, manyFn, cloudFn);
-  return present;
-}
 
 /**
  * Read all findings for one audit run as domain rows (plan §7.0). Pure
@@ -2455,9 +2285,10 @@ export function buildFindingAdjudicationPatch(event, decidedAt) {
  *      `ORDER BY`, and a missing/ambiguous/db-error outcome is now
  *      distinguishable to the caller instead of a uniform `undefined`.
  *   2. Inside a transaction:
+ *        - UPDATE audit_findings.adjudication_outcome + remediation_state (denormalised),
+ *          asserting exactly one row
  *        - DELETE any prior adjudication events on this finding (idempotent re-record)
  *        - INSERT the new event
- *        - UPDATE audit_findings.adjudication_outcome + remediation_state (denormalised)
  *
  * @returns {Promise<{ok: true} | {ok: false, reason: 'no-match'|'ambiguous'|'db-error', detail?: string}>}
  */
@@ -2476,6 +2307,10 @@ export async function recordAdjudicationEvent(runId, findingFingerprint, event) 
     const finding = { id: resolved.id };
 
     await withTx(async () => {
+      // audit_findings FIRST, then the event: the lock order projectRemediationState
+      // takes. The reverse order deadlocked against a concurrent projection (40P01).
+      const { rowCount } = await updateWhere('audit_findings', buildFindingAdjudicationPatch(event, new Date()), { id: finding.id });
+      if (rowCount !== 1) throw new Error(`audit_findings ${finding.id}: ${rowCount} row(s) updated, expected 1`);
       await deleteWhere('finding_adjudication_events', { finding_id: finding.id });
       await insertReturning('finding_adjudication_events', {
         finding_id: finding.id,
@@ -2485,7 +2320,6 @@ export async function recordAdjudicationEvent(runId, findingFingerprint, event) 
         ruling_rationale: event.rulingRationale,
         round: event.round,
       });
-      await updateWhere('audit_findings', buildFindingAdjudicationPatch(event, new Date()), { id: finding.id });
     });
     return { ok: true };
   } catch (err) {
@@ -2644,11 +2478,16 @@ export function normalizeRemediationUpdates(updates) {
  * @param {string} repoId - audit_repos.id; the finding must belong to it
  * @param {string} findingId - audit_findings.id, already resolved by the caller
  * @param {string} state - a member of TERMINAL_REMEDIATION
- * @param {{resolvedRound?: number|null, throttleStamp?: {checkedAtCommit: string}|null, fingerprint?: string|null}} [opts]
+ * `fromOpenOnly` (optional): write only while the row is still NULL/pending/planned
+ * (or already `state` — a re-application stays idempotent) — the verification
+ * reconciler's eligibility, re-asserted in the predicate so a state recorded
+ * after the row was selected is never overwritten.
+ *
+ * @param {{resolvedRound?: number|null, throttleStamp?: {checkedAtCommit: string}|null, fingerprint?: string|null, fromOpenOnly?: boolean}} [opts]
  * @returns {Promise<{affected: number, throttleStamped: boolean|null}>} `throttleStamped`
  *   is `null` when no `throttleStamp` was requested.
  */
-async function projectRemediationState(repoId, findingId, state, { resolvedRound = null, throttleStamp = null, fingerprint = null } = {}) {
+async function projectRemediationState(repoId, findingId, state, { resolvedRound = null, throttleStamp = null, fingerprint = null, fromOpenOnly = false } = {}) {
   if (!repoId) throw new Error('projectRemediationState requires repoId');
   return withTx(async () => {
     // `user_action` is filled here, and ONLY out of an undecided state.
@@ -2688,8 +2527,9 @@ async function projectRemediationState(repoId, findingId, state, { resolvedRound
         WHERE id = $2
           AND EXISTS (SELECT 1 FROM audit_runs r WHERE r.id = audit_findings.run_id AND r.repo_id = $3)
           AND ($4::text IS NULL OR finding_fingerprint = $4)
+          AND (NOT $5::boolean OR remediation_state IS NULL OR remediation_state IN ('pending', 'planned', $1))
         RETURNING id`,
-      [state, findingId, repoId, fingerprint]
+      [state, findingId, repoId, fingerprint, fromOpenOnly]
     );
     // 0-row → do not write a phantom event. Indistinguishable here between
     // "no such row" and "row exists but failed the repoId/fingerprint
@@ -2832,9 +2672,10 @@ const VALID_VERIFICATION_OUTCOMES = new Set(['resolved', 'still-present', 'uncer
  * @param {string} repoId
  * @param {Array<{findingId: string, outcome: 'resolved'|'still-present'|'uncertain',
  *                 checkedAtCommit: string, rationale?: string}>} actions
+ * @param {{many?: Function}} [deps] test seam for the throttle-column probe only
  * @returns {Promise<{updated: number, attempted: number}>}
  */
-export async function applyRemediationVerificationResults(repoId, actions) {
+export async function applyRemediationVerificationResults(repoId, actions, { many: probeMany = many } = {}) {
   if (!repoId || !await isCloudEnabled()) return { updated: 0, attempted: 0 };
   const valid = (Array.isArray(actions) ? actions : []).filter(
     (a) => a && typeof a.findingId === 'string' && a.findingId
@@ -2860,7 +2701,7 @@ export async function applyRemediationVerificationResults(repoId, actions) {
   // unresolved probe now logs loudly and is NOT silently treated the same as
   // confirmed absence.
   const { present: hasThrottleColumns, definitive: throttleColumnsDefinitive } =
-    await probeColumnExistence('audit_findings', 'remediation_last_checked_at', many, isCloudEnabled);
+    await probeColumnExistence('audit_findings', 'remediation_last_checked_at', probeMany, isCloudEnabled);
   if (!hasThrottleColumns && !throttleColumnsDefinitive) {
     process.stderr.write(`  [lifecycle] applyRemediationVerificationResults: remediation_last_checked_at probe failed transiently — treating throttle columns as unavailable for THIS batch only (not a confirmed un-migrated store); re-verification may fire sooner than intended for these ${valid.length} action(s)\n`);
   }
@@ -2881,12 +2722,15 @@ export async function applyRemediationVerificationResults(repoId, actions) {
         // statements/transactions; a failure of the second discounted a
         // `verified` state that had already landed. Now either both land or
         // neither does.
+        // fromOpenOnly: the verdict is about the row as SELECTED (pending/planned);
+        // a state recorded since (e.g. regressed) is newer evidence, not overwritten.
         const { affected } = await projectRemediationState(repoId, findingId, 'verified', {
           resolvedRound: null,
           throttleStamp: hasThrottleColumns ? { checkedAtCommit } : null,
+          fromOpenOnly: true,
         });
         if (affected === 0) {
-          process.stderr.write(`  [lifecycle] applyRemediationVerificationResults(${findingId}): 0-row update on the terminal write (not found, or not owned by repo ${repoId}) — not counted\n`);
+          process.stderr.write(`  [lifecycle] applyRemediationVerificationResults(${findingId}): 0-row update on the terminal write (not found, not owned by repo ${repoId}, or no longer pending/planned) — not counted\n`);
           continue;
         }
         // round-3 audit M1: the throttle-stamp/terminal-write invariant is now
