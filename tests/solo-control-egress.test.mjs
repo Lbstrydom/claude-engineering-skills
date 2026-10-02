@@ -183,6 +183,9 @@ test('cmdRun proceeds past the policy gate for the same commit once the repo IS 
   // state is NOT what this test is about — asserting one specific value
   // couples the test to incidental diff content (which commit HEAD happens to
   // be) rather than the property under test: did the POLICY gate pass.
+  // 'no-clean-files' is the third such state: a merge commit, or one touching
+  // only excluded files, extracts an empty diff — still after the gate and
+  // before any provider call (this failed every push whose HEAD was a merge).
   const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   const identity = canonicaliseRemoteUrl(execFileSync('git', ['config', '--get', 'remote.origin.url'], { encoding: 'utf8' }).trim());
   fs.rmSync(S_FINDINGS_PATH, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
@@ -193,7 +196,7 @@ test('cmdRun proceeds past the policy gate for the same commit once the repo IS 
       const written = JSON.parse(fs.readFileSync(S_FINDINGS_PATH, 'utf8'));
       const record = written.perCommit.find((c) => c.sha === sha);
       assert.notEqual(record.state, 'policy-refused', 'the policy gate itself must have passed for this authorized repo');
-      assert.ok(['diff-too-large', 'egress-refused'].includes(record.state), `expected a network-free short-circuit state, got "${record.state}"`);
+      assert.ok(['diff-too-large', 'egress-refused', 'no-clean-files'].includes(record.state), `expected a network-free short-circuit state, got "${record.state}"`);
     });
   } finally {
     fs.rmSync(S_FINDINGS_PATH, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });

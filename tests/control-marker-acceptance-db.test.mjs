@@ -8,7 +8,7 @@
  * bypassed that split entirely: `recordAdjudicationEvent` wrote
  * `adjudication_outcome = 'accepted'`, and it surfaced in
  * `unremediated_acceptances_all` as something owed a fix. Measured on the live
- * store 2026-10-02: 34 control markers carried `accepted`, 3 of them still
+ * store 2026-10-02: 30 control markers carried `accepted`, 3 of them still
  * open in the view.
  *
  * Two halves, both needing a real schema:

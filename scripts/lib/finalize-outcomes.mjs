@@ -158,9 +158,10 @@ export async function finalizeRoundOutcomes({ result, ledger, round, store, sid 
 
   // A control marker is not a claim about the code, so a ledger may dismiss it
   // but never accept it: an honoured `accepted` bypassed the split below and
-  // surfaced in `unremediated_acceptances` as an obligation (34 such rows on
-  // the live store, 2026-10-02). Refused, it stays pending and is
-  // auto-dismissed like any un-ruled marker.
+  // surfaced in `unremediated_acceptances` as an obligation (live store
+  // 2026-10-02: 30 control markers carried `accepted`, 3 still open in the
+  // view). Refused, it stays pending and is auto-dismissed like any un-ruled
+  // marker.
   const { enriched, cloudOk, localSkipped } = await recordTriageOutcomes(
     store, cloudRunId, findings, ledger,
     { round, idempotencyKey, cannotAccept: f => isControlMarkerDetail(f.detail) },
