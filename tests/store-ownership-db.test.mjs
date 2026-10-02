@@ -166,4 +166,45 @@ describe('D7 parent-ownership — the refusals, against Postgres', { skip }, () 
 
     await (await getPool()).query('DELETE FROM plan_verification_items WHERE run_id = $1', [parentRun.id]);
   });
+
+  it('a MULTI-row write lands with typed (uuid/int/boolean) columns — upstream 512cf1c9', async () => {
+    // Every single-row case above passed while every real `/ux-lock verify`
+    // failed with `column "run_id" is of type uuid but expression is of type
+    // text`: a real plan has many criteria, and the rows were joined with
+    // UNION ALL, whose type resolution turns each untyped placeholder into
+    // text BEFORE the INSERT target can type it. One row never reached it.
+    const parentRun = await one(
+      'SELECT id FROM plan_verification_runs WHERE plan_id = $1 LIMIT 1', [PLAN_A]);
+    assert.ok(parentRun?.id, 'the control write above must have produced a parent run');
+    const row = (i, passed) => [parentRun.id, null, `hash-multi-${i}`, i, 'P1', 'other', `multi-row criterion ${i}`, passed];
+    const q = buildOwnedInsert({
+      parentTable: 'plan_verification_runs',
+      childTable: 'plan_verification_items',
+      columns: ['run_id', 'plan_id', 'criterion_hash', 'criterion_index', 'severity', 'category', 'description', 'passed'],
+      rows: [row(0, true), row(1, false), row(2, true)],
+      parentId: parentRun.id,
+      repoId: REPO_A,
+      fromParent: { plan_id: 'plan_id' },
+    });
+    const res = classifyOwnedWrite(await one(q.text, q.values), 3);
+    assert.equal(res.ok, true, `a 3-row owned write must land — got ${res.reason}: ${res.message}`);
+    const n = await one('SELECT count(*)::int AS n FROM plan_verification_items WHERE run_id = $1', [parentRun.id]);
+    assert.equal(n.n, 3, 'all three rows must be in the table');
+
+    // The refusal must still hold for every row of a multi-row write.
+    const bad = buildOwnedInsert({
+      parentTable: 'plan_verification_runs',
+      childTable: 'plan_verification_items',
+      columns: ['run_id', 'plan_id', 'criterion_hash', 'criterion_index', 'severity', 'category', 'description', 'passed'],
+      rows: [row(3, true), row(4, true)],
+      parentId: parentRun.id,
+      repoId: REPO_B,
+      fromParent: { plan_id: 'plan_id' },
+    });
+    assert.equal(classifyOwnedWrite(await one(bad.text, bad.values), 2).reason, 'parent-not-owned');
+    const after = await one('SELECT count(*)::int AS n FROM plan_verification_items WHERE run_id = $1', [parentRun.id]);
+    assert.equal(after.n, 3, 'a refused multi-row write must add nothing');
+
+    await (await getPool()).query('DELETE FROM plan_verification_items WHERE run_id = $1', [parentRun.id]);
+  });
 });

@@ -496,7 +496,14 @@ async function cmdVerify() {
         verifyPersistFailed = runRes.reason;
         process.stderr.write(`  [ux-lock-run] plan verification run NOT recorded (${runRes.reason}): ${runRes.message}\n`);
       } else {
-        await recordPlanVerificationItems(runId, planId, items);
+        // The result was discarded, so a run whose per-criterion rows ALL
+        // failed to write (upstream 512cf1c9 — every multi-row write, for
+        // weeks) still reported a clean verify. Surface it like a run failure.
+        const itemsRes = await recordPlanVerificationItems(runId, planId, items);
+        if (!itemsRes.ok) {
+          verifyPersistFailed = `items: ${itemsRes.reason}`;
+          process.stderr.write(`  [ux-lock-run] plan verification run recorded, but its ${items.length} criterion row(s) were NOT (${itemsRes.reason})\n`);
+        }
       }
     } else {
       process.stderr.write('  [ux-lock-run] no --plan-id — recorded nothing (plan_verification_* require a plan id)\n');

@@ -107,6 +107,10 @@ describe('the emitted statement keeps BOTH guarantees visible', () => {
     assert.equal((text.match(/FROM parent WHERE/g) || []).length, 3,
       'every row must go through the parent — one unjoined row is an unowned write');
     assert.equal(values.length, 2 + 6);
+    // One INSERT per row: rows UNION ALL'd under a single INSERT typed every
+    // placeholder as text and failed on uuid/int/boolean columns (upstream
+    // 512cf1c9; the real-Postgres proof is store-ownership-db.test.mjs).
+    assert.equal((text.match(/INSERT INTO regression_spec_runs/g) || []).length, 3);
   });
 
   it('reaches the tenant through the declared hop when the parent has no repo_id', () => {

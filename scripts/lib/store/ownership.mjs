@@ -144,10 +144,22 @@ export function buildOwnedInsert({
     return `SELECT ${exprs.join(', ')} FROM parent WHERE ($2::uuid IS NULL OR parent.repo_id = $2)`;
   });
 
+  // ONE INSERT per row, never `SELECT … UNION ALL SELECT …` under one INSERT.
+  // UNION type resolution runs before the INSERT target is consulted, so every
+  // untyped placeholder resolved to `text` and a uuid/int/boolean column
+  // refused it (`column "run_id" is of type uuid but expression is of type
+  // text`) — on every multi-row write, i.e. every real `/ux-lock verify`
+  // (upstream 512cf1c9). A lone `INSERT … SELECT $n` types $n from the target
+  // column, which is why every single-row write and test passed throughout.
+  const insertInto = `INSERT INTO ${childTable} (${columns.map((c) => `"${c}"`).join(', ')}) `;
+  const insCtes = rows.length === 1
+    ? `ins AS (${insertInto}${rowSelects[0]} RETURNING id)`
+    : `${rowSelects.map((sel, i) => `ins_${i} AS (${insertInto}${sel} RETURNING id)`).join(', ')}, `
+      + `ins AS (${rowSelects.map((_, i) => `SELECT id FROM ins_${i}`).join(' UNION ALL ')})`;
+
   const text =
     `WITH parent AS (${parentCte}), `
-    + `ins AS (INSERT INTO ${childTable} (${columns.map((c) => `"${c}"`).join(', ')}) `
-    + `${rowSelects.join(' UNION ALL ')} RETURNING id) `
+    + `${insCtes} `
     + 'SELECT (SELECT count(*) FROM parent)::int AS parent_found, '
     + '(SELECT count(*) FROM ins)::int AS inserted, '
     // The inserted id comes OUT of the CTE. The first version read it back with
