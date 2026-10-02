@@ -10,7 +10,8 @@
  * author's expectations, which is the assumption under test; the
  * `severity`-vs-`code` incident is the canonical case).
  *
- * Hermetic means: no AUDIT_DB_URL, HOME/USERPROFILE redirected to a temp dir
+ * Hermetic means: no AUDIT_DB_URL, no provider credentials (API keys, AZURE_*,
+ * AWS_*), HOME/USERPROFILE redirected to a temp dir
  * (so `~/.audit-loop.env` cannot leak cloud config in), shared-config load
  * disabled, and cwd set to a NON-git temp directory so `currentCommitSha()`
  * degrades to null deterministically. The golden test replays each case with
@@ -75,9 +76,9 @@ export const CASES = [
   // hermetic env, so every "happy" row here is the documented degrade path.
   //
   // SPEND SAFETY: `arm-eval-run` has NO cloud gate — it proceeds straight to
-  // runArmEvalSession, which makes paid LLM calls, and the hermetic env still
-  // inherits the API keys. Only its input-refusal (which returns before any
-  // provider call) is capturable; its degrade path is deliberately uncovered
+  // runArmEvalSession, which makes paid LLM calls. The hermetic env scrubs
+  // provider keys (hermeticEnv), so a slip fails instead of spending. Only its
+  // input-refusal (which returns before any provider call) is capturable; its degrade path is deliberately uncovered
   // and named as such in the plan's coverage note rather than captured by
   // spending money in a test.
   { id: 'upsert-plan-missing', args: ['upsert-plan', '--json', '{}'] },
@@ -245,14 +246,30 @@ export const CASES = [
   { id: 'learning-replay-no-type', args: ['learning-replay'] },
 ];
 
+/**
+ * Provider credentials and routes. A case that reaches a provider must fail for
+ * want of a credential, never spend: `arm-eval-run` has no cloud gate (see the
+ * SPEND SAFETY note on CASES), so the CASES table's discipline was the only
+ * thing between this suite and a billed call until the keys were scrubbed here.
+ */
+const PROVIDER_CREDENTIAL_RE = /^(?:AZURE_|AWS_|OPENROUTER_)|_API_KEY$|^(?:OPENAI|ANTHROPIC|GEMINI|GOOGLE|XAI)_/;
+
+/** The hermetic env for one case. Pure; exported for its test. */
+export function hermeticEnv(dir, base = process.env) {
+  const env = { ...base, HOME: dir, USERPROFILE: dir, AUDIT_LOOP_DISABLE_SHARED: '1' };
+  delete env.DOTENV_CONFIG_PATH;
+  delete env.AUDIT_DB_URL;
+  delete env.AUDIT_POSTGRES_URL;
+  delete env.PERSONA_TEST_REPO_NAME;
+  delete env.LEARNING_REPO_NAME;
+  for (const k of Object.keys(env)) if (PROVIDER_CREDENTIAL_RE.test(k)) delete env[k];
+  return env;
+}
+
 /** Run one case hermetically. Shared by capture (here) and replay (the test). */
 export function runCase(c, { tmpRoot }) {
   const dir = fs.mkdtempSync(path.join(tmpRoot, `${c.id.slice(0, 20)}-`));
-  const env = { ...process.env, HOME: dir, USERPROFILE: dir, AUDIT_LOOP_DISABLE_SHARED: '1' };
-  delete env.DOTENV_CONFIG_PATH;
-  delete env.AUDIT_DB_URL;
-  delete env.PERSONA_TEST_REPO_NAME;
-  delete env.LEARNING_REPO_NAME;
+  const env = hermeticEnv(dir);
   const r = spawnSync(process.execPath, [CLI_PATH, ...c.args], {
     encoding: 'utf8', env, cwd: dir, timeout: 60_000,
   });
