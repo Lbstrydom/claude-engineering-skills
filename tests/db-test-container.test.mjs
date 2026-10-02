@@ -25,6 +25,8 @@ import {
   classifyRunFailure,
   createLifecycle,
   decideImagePull,
+  describeExecFailure,
+  DOCKER_CLI_TIMEOUT_MS,
   IMAGE_MAX_AGE_MS,
   _internals,
 } from '../scripts/db-test-container.mjs';
@@ -238,6 +240,28 @@ describe('DB_SEAM_PREFIXES', () => {
   });
 });
 
+// ── describeExecFailure ──────────────────────────────────────────────────
+
+describe('describeExecFailure', () => {
+  it('a timeout is named as a timeout, with the budget, and never as "null"', () => {
+    const s = describeExecFailure({ code: null, signal: 'SIGKILL', stderr: '', timedOut: true }, 10000);
+    assert.match(s, /timed out/);
+    assert.match(s, /within 10s/);
+    assert.doesNotMatch(s, /null/);
+  });
+  it('a timeout wins over stderr text the killed process happened to emit', () => {
+    assert.match(describeExecFailure({ code: null, stderr: 'partial', timedOut: true }), /timed out/);
+  });
+  it('stderr is preferred for an ordinary failure', () => {
+    assert.equal(describeExecFailure({ code: 1, stderr: ' permission denied\n', timedOut: false }), 'permission denied');
+  });
+  it('no stderr: names the exit code, or the signal, or the spawn failure — never "null"', () => {
+    assert.equal(describeExecFailure({ code: 125, stderr: '' }), 'exit 125');
+    assert.equal(describeExecFailure({ code: null, signal: 'SIGTERM', stderr: '' }), 'killed by SIGTERM');
+    assert.match(describeExecFailure({ code: null, signal: null, stderr: '' }), /could not be spawned/);
+  });
+});
+
 // ── --selfcheck-relocation smoke ─────────────────────────────────────────
 
 describe('--selfcheck-relocation', () => {
@@ -372,6 +396,80 @@ describe('createLifecycle — injectable-exec state machine (regen-schema mode)'
     const code = await lifecycle.run('regen-schema', { port: 5433 });
     assert.equal(code, 4);
     assert.equal(rmCallCount, 1);
+  });
+
+  describe('a docker call that TIMES OUT is not reported as a bare failure', () => {
+    const timedOut = async () => ({ code: null, stdout: '', stderr: '', signal: 'SIGKILL', timedOut: true });
+    const capture = () => { const out = []; return { out, stream: { write: (s) => out.push(s) } }; };
+
+    /** inspect: 1st call (stale-container reconcile) = absent; later calls = `later`. */
+    const inspectThen = (later) => { let n = 0; return async (...a) => (++n === 1 ? fail('No such object', 1)() : later(...a)); };
+
+    const base = (over) => createFakeExec({
+      version: ok('25.0.0'), pull: ok(), run: ok('deadbeef0010\n'), node: ok(), ...over,
+    });
+
+    it('rm times out but the container is verifiably gone -> clean exit 0, no failure message', async () => {
+      const { out, stream } = capture();
+      const exec = base({ rm: timedOut, inspect: inspectThen(fail('Error: No such object: deadbeef0010', 1)) });
+      const code = await createLifecycle({ exec, stderr: stream, waitForReady: async () => ({ ok: true }) })
+        .run('regen-schema', { port: 5433 });
+      assert.equal(code, 0, 'the container was removed — reporting teardown failure is a false alarm');
+      assert.doesNotMatch(out.join(''), /teardown failed/);
+    });
+
+    it('rm times out and the container is STILL there -> exit 4, with a reason that is not "null"', async () => {
+      const { out, stream } = capture();
+      const exec = base({ rm: timedOut, inspect: inspectThen(ok('true')) });
+      const code = await createLifecycle({ exec, stderr: stream, waitForReady: async () => ({ ok: true }) })
+        .run('regen-schema', { port: 5433 });
+      assert.equal(code, 4);
+      const text = out.join('');
+      assert.match(text, /teardown failed/);
+      assert.match(text, /timed out — docker did not answer within 60s/);
+      assert.doesNotMatch(text, /: null\b/, 'a null exit code must never be the whole explanation');
+    });
+
+    it('rm times out and the verification inspect ALSO times out -> exit 4 (unobservable is not "gone")', async () => {
+      const { stream } = capture();
+      const exec = base({ rm: timedOut, inspect: inspectThen(timedOut) });
+      const code = await createLifecycle({ exec, stderr: stream, waitForReady: async () => ({ ok: true }) })
+        .run('regen-schema', { port: 5433 });
+      assert.equal(code, 4);
+    });
+
+    it('an ordinary non-zero rm failure does NOT trigger the verification inspect', async () => {
+      let inspects = 0;
+      const exec = base({
+        rm: fail('permission denied', 1),
+        inspect: async () => { inspects += 1; return fail('No such object', 1)(); },
+      });
+      const code = await createLifecycle({ exec, stderr: capture().stream, waitForReady: async () => ({ ok: true }) })
+        .run('regen-schema', { port: 5433 });
+      assert.equal(code, 4);
+      assert.equal(inspects, 1, 'only the pre-start reconcile inspects; a real failure needs no second opinion');
+    });
+
+    it('preflight timeout -> exit 2 naming a daemon that did not answer, not "returned exit null"', async () => {
+      const { out, stream } = capture();
+      const exec = createFakeExec({ version: timedOut });
+      const code = await createLifecycle({ exec, stderr: stream }).run('suites', { port: 5433 });
+      assert.equal(code, 2);
+      const text = out.join('');
+      assert.match(text, /did not answer/);
+      assert.doesNotMatch(text, /exit null/);
+    });
+
+    it('the budget the real calls use is the one the message reports', async () => {
+      const exec = base({ rm: ok(), inspect: fail('No such object', 1) });
+      await createLifecycle({ exec, stderr: capture().stream, waitForReady: async () => ({ ok: true }) })
+        .run('regen-schema', { port: 5433 });
+      const rm = exec.calls.find((c) => c.args[0] === 'rm');
+      const ver = exec.calls.find((c) => c.args[0] === 'version');
+      assert.equal(rm.opts.timeoutMs, DOCKER_CLI_TIMEOUT_MS);
+      assert.equal(ver.opts.timeoutMs, DOCKER_CLI_TIMEOUT_MS);
+      assert.ok(DOCKER_CLI_TIMEOUT_MS >= 60000, 'measured 46s on a busy daemon (2026-10-02)');
+    });
   });
 
   it('workload fails and teardown also fails -> exit 1 wins (workload failure has precedence)', async () => {

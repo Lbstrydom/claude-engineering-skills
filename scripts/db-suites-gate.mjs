@@ -106,7 +106,10 @@ export function repoRoot() {
  * shape it exists to remove.
  *
  * @param {object} io
- * @param {() => boolean} io.dockerAvailable  probe for a reachable daemon
+ * @param {() => (boolean|{state: 'up'|'absent'|'unresponsive', detail?: string, timeoutMs?: number, attempts?: number})} io.dockerAvailable
+ *   probe for a reachable daemon. A bare boolean is `up`/`absent`; the object form
+ *   adds `unresponsive` — the daemon exists but did not answer in time — which is
+ *   NOT the same finding as a daemon that is absent (see `probeDocker`).
  * @param {() => {status: number|null, error?: Error}} io.runSuites  run the suites
  * @param {(s: string) => void} io.write  stderr sink
  * @param {Record<string, string|undefined>} io.env
@@ -136,7 +139,16 @@ export function decide({ dockerAvailable, runSuites, write, env, now = Date.now 
   // defeat the strictness flag, and "required" would not mean required.
   if (optedOut && !required) return skip('AUDIT_LOOP_DB_TESTS_SKIP=1 (operator opt-out)');
 
-  if (!dockerAvailable()) return skip('no reachable Docker daemon (`docker info` failed)');
+  const probe = normaliseProbe(dockerAvailable());
+  if (probe.state === 'unresponsive') {
+    return skip(
+      `Docker daemon did not answer \`docker info\` within ${fmtMs(probe.timeoutMs)}` +
+      `${probe.attempts > 1 ? ` (${probe.attempts} attempts)` : ''} — busy or wedged, not known to be absent`,
+    );
+  }
+  if (probe.state !== 'up') {
+    return skip(`no reachable Docker daemon (\`docker info\` failed${probe.detail ? `: ${probe.detail}` : ''})`);
+  }
 
   const startedAt = now();
   const res = runSuites();
@@ -166,13 +178,45 @@ export function decide({ dockerAvailable, runSuites, write, env, now = Date.now 
 }
 
 /**
+ * Per-attempt budget for `docker info`. **`measured` 2026-10-02: 46s** against a
+ * daemon busy tearing down another session's container — more than twice the
+ * 20s this probe used to allow, so a live daemon was reported as absent and the
+ * whole DB seam skipped. 60s clears that with margin; a daemon that is genuinely
+ * down fails in well under a second, so a generous budget costs nothing there.
+ */
+export const DOCKER_PROBE_TIMEOUT_MS = 60_000;
+/** Attempts, retried ONLY after a timeout — a fast failure is an answer, not noise. */
+export const DOCKER_PROBE_ATTEMPTS = 2;
+
+/** @param {boolean|object} v @returns {{state: string, detail?: string, timeoutMs?: number, attempts?: number}} */
+function normaliseProbe(v) {
+  if (v && typeof v === 'object') return v;
+  return { state: v ? 'up' : 'absent' };
+}
+
+/**
  * `docker info`, not `docker --version`: the CLI is routinely installed while
  * the daemon is down (the common Windows case), and reporting "docker present"
  * then failing to run is a lying diagnostic.
+ *
+ * Three outcomes, not two. `spawnSync` reports a timeout as `status: null` with
+ * `error.code === 'ETIMEDOUT'`; collapsing that into "no daemon" is a probe that
+ * went quiet when it could not tell — the same defect the gate exists to remove,
+ * one layer down. A timeout is retried and, if it persists, reported as
+ * `unresponsive` with its own reason. Any non-timeout failure is `absent`.
+ *
+ * @param {{spawn?: Function, timeoutMs?: number, attempts?: number}} [o]
  */
-function realDockerAvailable() {
-  const r = spawnSync('docker', ['info'], { stdio: 'ignore', timeout: 20000 });
-  return r.status === 0;
+export function probeDocker({ spawn = spawnSync, timeoutMs = DOCKER_PROBE_TIMEOUT_MS, attempts = DOCKER_PROBE_ATTEMPTS } = {}) {
+  for (let i = 0; i < attempts; i += 1) {
+    const r = spawn('docker', ['info'], { stdio: 'ignore', timeout: timeoutMs });
+    if (r.status === 0) return { state: 'up' };
+    if (r.error?.code !== 'ETIMEDOUT') {
+      const detail = r.error?.code || (r.status == null ? undefined : `exit ${r.status}`);
+      return { state: 'absent', detail };
+    }
+  }
+  return { state: 'unresponsive', timeoutMs, attempts };
 }
 
 function realRunSuites() {
@@ -190,7 +234,7 @@ function main() {
   assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'db-suites-gate' });
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); return 0; }
   return decide({
-    dockerAvailable: realDockerAvailable,
+    dockerAvailable: () => probeDocker(),
     runSuites: realRunSuites,
     write: (s) => process.stderr.write(s),
     env: process.env,

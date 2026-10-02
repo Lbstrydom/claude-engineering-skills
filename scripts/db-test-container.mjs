@@ -445,6 +445,38 @@ export function classifyRunFailure(stderrText, port) {
   return { exitCode: 2, message: `docker run failed:\n${text}` };
 }
 
+// ── Failure description ─────────────────────────────────────────────────────
+
+/**
+ * Budget for the docker CLI calls whose failure is reported to the operator
+ * (preflight, teardown). **`measured` 2026-10-02:** `docker info` took 46s
+ * against a daemon busy tearing down another session's container, so the former
+ * flat 10s killed calls that would have succeeded — and teardown then reported a
+ * failure for a container that WAS removed.
+ */
+export const DOCKER_CLI_TIMEOUT_MS = 60000;
+
+/**
+ * Say WHY an exec failed. A timeout surfaces from `realExec` as `code: null`
+ * with empty stderr, which `${res.stderr || res.code}` rendered as the literal
+ * word "null" — a failure with no reason. A timeout is a different finding from
+ * a non-zero exit: the command may have completed; we never saw it finish.
+ *
+ * @param {{code: number|null, signal?: string|null, stderr?: string, timedOut?: boolean}} res
+ * @param {number} [timeoutMs]
+ * @returns {string}
+ */
+export function describeExecFailure(res, timeoutMs) {
+  if (res.timedOut) {
+    const budget = timeoutMs ? ` within ${Math.round(timeoutMs / 1000)}s` : '';
+    return `timed out — docker did not answer${budget} (daemon busy or wedged; the command's outcome is unknown)`;
+  }
+  const text = (res.stderr || '').trim();
+  if (text) return text;
+  if (res.code == null) return res.signal ? `killed by ${res.signal}` : 'no exit code (process could not be spawned)';
+  return `exit ${res.code}`;
+}
+
 // ── Real (non-injected) primitives ──────────────────────────────────────────
 
 /** Tracks the most recently spawned inherited-stdio child, for signal cleanup. */
@@ -536,19 +568,31 @@ export function createLifecycle(deps = {}) {
   let tornDown = false;
   let runTmpDir = null;
 
+  /** True only when `docker inspect` positively says the container does not exist. */
+  async function containerAbsent(id) {
+    const insp = await exec('docker', ['inspect', id, '--format', '{{.State.Running}}'], { timeoutMs: DOCKER_CLI_TIMEOUT_MS, capture: true });
+    return insp.code !== 0 && !insp.timedOut && /no such (object|container)/i.test(insp.stderr || '');
+  }
+
   /** Idempotent — safe to call from both the run() epilogue and a signal handler. */
   async function teardown() {
     if (tornDown) return { ok: true, skipped: true };
     tornDown = true;
     let ok = true;
     if (ownedContainerId) {
-      const res = await exec('docker', ['rm', '-f', '-v', ownedContainerId], { timeoutMs: 10000, capture: true });
+      const res = await exec('docker', ['rm', '-f', '-v', ownedContainerId], { timeoutMs: DOCKER_CLI_TIMEOUT_MS, capture: true });
       if (res.code !== 0) {
-        ok = false;
-        stderr.write(
-          `[db-test-container] teardown failed (docker rm -f -v ${ownedContainerId}): ${res.stderr || res.code}\n` +
-          `  container may still be running — check \`docker ps\` / \`npm run db:local down\`\n`,
-        );
+        // A timeout says we stopped waiting, not that the removal failed. Ask
+        // the daemon, so "failed" is reserved for a container observably still
+        // there (or unobservable).
+        const gone = res.timedOut && await containerAbsent(ownedContainerId);
+        if (!gone) {
+          ok = false;
+          stderr.write(
+            `[db-test-container] teardown failed (docker rm -f -v ${ownedContainerId}): ${describeExecFailure(res, DOCKER_CLI_TIMEOUT_MS)}\n` +
+            `  container may still be running — check \`docker ps\` / \`npm run db:local down\`\n`,
+          );
+        }
       }
     }
     if (runTmpDir) {
@@ -641,11 +685,11 @@ export function createLifecycle(deps = {}) {
     const port = opts.port || DEFAULT_PORT;
 
     // ── preflight ──
-    const v = await exec('docker', ['version', '--format', '{{.Server.Version}}'], { timeoutMs: 10000, capture: true });
+    const v = await exec('docker', ['version', '--format', '{{.Server.Version}}'], { timeoutMs: DOCKER_CLI_TIMEOUT_MS, capture: true });
     if (v.code !== 0) {
       stderr.write(
-        `[db-test-container] Docker preflight failed — is Docker Desktop running?\n` +
-        `  ${v.stderr || 'docker version returned exit ' + v.code}\n` +
+        `[db-test-container] Docker preflight failed — ${v.timedOut ? 'the daemon did not answer' : 'is Docker Desktop running?'}\n` +
+        `  ${describeExecFailure(v, DOCKER_CLI_TIMEOUT_MS)}\n` +
         `  If Docker/WSL is wedged, see the 2026-07-16 recovery note in project memory ` +
         `(taskkill wsl.exe zombies, cycle WSLService, restart com.docker.service).\n`,
       );
@@ -658,7 +702,7 @@ export function createLifecycle(deps = {}) {
       if (insp.code !== 0) return 0; // absent — idempotent
       const rm = await exec('docker', ['rm', '-f', '-v', CONTAINER_NAME], { timeoutMs: 10000, capture: true });
       if (rm.code !== 0) {
-        stderr.write(`[db-test-container] down failed: ${rm.stderr || rm.code}\n`);
+        stderr.write(`[db-test-container] down failed: ${describeExecFailure(rm, 10000)}\n`);
         return 1;
       }
       return 0;
@@ -707,7 +751,7 @@ export function createLifecycle(deps = {}) {
       }
       const rmStale = await exec('docker', ['rm', '-f', '-v', CONTAINER_NAME], { timeoutMs: 10000, capture: true });
       if (rmStale.code !== 0) {
-        stderr.write(`[db-test-container] failed to remove stale container: ${rmStale.stderr || rmStale.code}\n`);
+        stderr.write(`[db-test-container] failed to remove stale container: ${describeExecFailure(rmStale, 10000)}\n`);
         return 2;
       }
     }

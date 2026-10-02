@@ -16,7 +16,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { decide } from '../scripts/db-suites-gate.mjs';
+import { decide, probeDocker, DOCKER_PROBE_TIMEOUT_MS } from '../scripts/db-suites-gate.mjs';
 
 /** A clock that returns each value in turn, so elapsed time is exact and instant. */
 function stubClock(...values) {
@@ -107,6 +107,81 @@ describe('db-suites-gate — environment problems degrade, never silently', () =
       assert.match(out, /FAIL/);
     });
   }
+});
+
+describe('db-suites-gate — a daemon that does not ANSWER is not a daemon that is ABSENT', () => {
+  const unresponsive = { dockerAvailable: () => ({ state: 'unresponsive', timeoutMs: 60_000, attempts: 2 }) };
+
+  test('unresponsive → loud skip with its own reason, never "no reachable Docker daemon"', () => {
+    const { code, out } = run(unresponsive);
+    assert.equal(code, 0);
+    assert.match(out, /did not answer `docker info` within 60\.0s/);
+    assert.match(out, /2 attempts/);
+    assert.doesNotMatch(out, /no reachable Docker daemon/);
+    assert.match(out, /UNVERIFIED/);
+  });
+
+  test('unresponsive + REQUIRED → hard failure (a timed-out probe cannot go green having checked nothing)', () => {
+    const { code, out } = run({ ...unresponsive, env: { AUDIT_LOOP_DB_TESTS_REQUIRED: '1' } });
+    assert.equal(code, 1);
+    assert.match(out, /FAIL/);
+  });
+
+  test('absent carries its detail; a bare `false` still means absent', () => {
+    assert.match(run({ dockerAvailable: () => ({ state: 'absent', detail: 'ENOENT' }) }).out, /no reachable Docker daemon \(`docker info` failed: ENOENT\)/);
+    assert.match(run({ dockerAvailable: () => false }).out, /no reachable Docker daemon/);
+  });
+
+  test('an object probe in state `up` runs the suites', () => {
+    assert.equal(run({ dockerAvailable: () => ({ state: 'up' }) }).code, 0);
+  });
+});
+
+describe('probeDocker — classifies the spawnSync result', () => {
+  const timeout = () => ({ status: null, signal: 'SIGTERM', error: Object.assign(new Error('spawnSync docker ETIMEDOUT'), { code: 'ETIMEDOUT' }) });
+  const seq = (...results) => { const calls = []; const f = (cmd, args, opts) => { calls.push({ cmd, args, opts }); return results[Math.min(calls.length - 1, results.length - 1)](); }; f.calls = calls; return f; };
+
+  test('exit 0 → up, one call', () => {
+    const spawn = seq(() => ({ status: 0 }));
+    assert.deepEqual(probeDocker({ spawn }), { state: 'up' });
+    assert.equal(spawn.calls.length, 1);
+    assert.deepEqual(spawn.calls[0].args, ['info']);
+  });
+
+  test('a FAST non-zero exit → absent immediately, NOT retried (it is an answer)', () => {
+    const spawn = seq(() => ({ status: 1 }));
+    assert.deepEqual(probeDocker({ spawn }), { state: 'absent', detail: 'exit 1' });
+    assert.equal(spawn.calls.length, 1);
+  });
+
+  test('missing docker binary (ENOENT) → absent, not unresponsive', () => {
+    const spawn = seq(() => ({ status: null, error: Object.assign(new Error('x'), { code: 'ENOENT' }) }));
+    assert.deepEqual(probeDocker({ spawn }), { state: 'absent', detail: 'ENOENT' });
+  });
+
+  test('timeout then success → up (the 46s busy-daemon case recovers on retry)', () => {
+    const spawn = seq(timeout, () => ({ status: 0 }));
+    assert.deepEqual(probeDocker({ spawn }), { state: 'up' });
+    assert.equal(spawn.calls.length, 2);
+  });
+
+  test('timeout on every attempt → unresponsive, carrying budget and attempt count', () => {
+    const spawn = seq(timeout);
+    assert.deepEqual(probeDocker({ spawn, timeoutMs: 1234, attempts: 3 }), { state: 'unresponsive', timeoutMs: 1234, attempts: 3 });
+    assert.equal(spawn.calls.length, 3);
+  });
+
+  test('timeout then a fast failure → absent (the daemon answered "no")', () => {
+    const spawn = seq(timeout, () => ({ status: 1 }));
+    assert.equal(probeDocker({ spawn }).state, 'absent');
+  });
+
+  test('the per-attempt budget clears the measured 46s busy-daemon response', () => {
+    assert.ok(DOCKER_PROBE_TIMEOUT_MS > 46_000, 'measured 2026-10-02: docker info took 46s');
+    const spawn = seq(() => ({ status: 0 }));
+    probeDocker({ spawn });
+    assert.equal(spawn.calls[0].opts.timeout, DOCKER_PROBE_TIMEOUT_MS);
+  });
 });
 
 describe('db-suites-gate — the opt-out cannot defeat the strictness flag', () => {
