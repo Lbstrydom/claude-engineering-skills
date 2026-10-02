@@ -112,6 +112,25 @@ describe('keyFor — reordering is not drift, weakening a claim is', () => {
     assert.notEqual(keyFor(strong), keyFor(weak),
       'a silently weakened claim must surface as drift, not slip through on an old baseline entry');
   });
+
+  // The key joins patterns with `,` and fields with `|`; both are legal literal
+  // characters in a .gitignore pattern. Unescaped, a NEW group could collide
+  // with a baselined one and inherit its acceptance — the gate failing to fire.
+  test('distinct groups never share a key, even when a pattern contains a separator', () => {
+    const split = parseGroups('a\nb\n')[0];          // two patterns: a, b
+    const joined = parseGroups('a,b\n')[0];          // one pattern:  a,b
+    assert.notEqual(keyFor(split), keyFor(joined), 'a comma inside a pattern must not read as a pattern boundary');
+    // A `|` in a pattern must not read as a field boundary: unescaped, both of
+    // these keyed as `a|b|-|-|-|-`.
+    const pipeInPattern = parseGroups('a|b\n')[0];
+    const pipeInField = parseGroups('# Category: b\n# Recoverable: -|-\na\n')[0];
+    assert.notEqual(keyFor(pipeInPattern), keyFor(pipeInField));
+  });
+
+  test('escaping is invisible for patterns with no separator — the committed baseline keys are unchanged', () => {
+    assert.equal(keyFor(parseGroups('.audit-loop/cache/\n')[0]), '.audit-loop/cache/|-|-|-|-');
+    assert.equal(keyFor(parseGroups('x.json\ny.json\n')[0]), 'x.json,y.json|-|-|-|-');
+  });
 });
 
 describe('analyse — over the real .gitignore', () => {
