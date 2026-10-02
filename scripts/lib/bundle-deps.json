@@ -34,7 +34,6 @@
         "scripts/.claude-skills/lib/brainstorm/gemini-adapter.mjs",
         "scripts/.claude-skills/lib/context.mjs",
         "scripts/.claude-skills/lib/final-review/providers.mjs",
-        "scripts/.claude-skills/lib/final-review/shadow.mjs",
         "scripts/.claude-skills/lib/llm-wrappers.mjs",
         "scripts/.claude-skills/meta-assess.mjs",
         "scripts/.claude-skills/refine-prompts.mjs"
