@@ -4,6 +4,9 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   citationsInLine,
@@ -13,6 +16,7 @@ import {
   isGeneratedDoc,
   unverifiableReason,
   DEFAULT_THRESHOLD_DAYS,
+  parseThresholdDays,
 } from '../scripts/lib/context-staleness.mjs';
 
 const KNOWN = new Set([
@@ -295,4 +299,39 @@ describe('gate honesty — a run that checked nothing must not read clean', () =
 
 test('the default threshold is the documented 60 days', () => {
   assert.equal(DEFAULT_THRESHOLD_DAYS, 60);
+});
+
+// ── --threshold validation ──────────────────────────────────────────────────
+// `Number('nope')` is NaN, and `driftDays >= NaN` is false for every row, so an
+// unparseable threshold used to print "no line over the threshold" — a clean
+// verdict produced by comparing nothing.
+describe('parseThresholdDays', () => {
+  test('absent flag → the documented default', () => {
+    assert.deepEqual(parseThresholdDays(['--json']), { ok: true, value: DEFAULT_THRESHOLD_DAYS });
+  });
+  test('a finite non-negative number is accepted', () => {
+    assert.deepEqual(parseThresholdDays(['--threshold', '90']), { ok: true, value: 90 });
+    assert.deepEqual(parseThresholdDays(['--threshold', '0']), { ok: true, value: 0 });
+  });
+  for (const bad of ['nope', '-5', 'Infinity', ' ', '1e400']) {
+    test(`rejects ${JSON.stringify(bad)}`, () => {
+      const r = parseThresholdDays(['--threshold', bad]);
+      assert.equal(r.ok, false);
+      assert.match(r.error, /--threshold/);
+    });
+  }
+  test('a missing value (next token is a flag, or nothing) is rejected, not defaulted', () => {
+    assert.equal(parseThresholdDays(['--threshold']).ok, false);
+    assert.equal(parseThresholdDays(['--threshold', '--json']).ok, false);
+  });
+});
+
+test('CLI: an unparseable --threshold exits 2 and never prints a verdict', () => {
+  const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const r = spawnSync(process.execPath,
+    ['scripts/context-staleness.mjs', '--agents-only', '--json', '--threshold', 'nope'],
+    { cwd: repo, encoding: 'utf8' });
+  assert.equal(r.status, 2, `stdout: ${r.stdout.slice(0, 200)}`);
+  assert.equal(r.stdout, '', 'no verdict may be printed for a run that cannot compare');
+  assert.match(r.stderr, /--threshold/);
 });
