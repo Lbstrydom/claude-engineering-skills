@@ -266,3 +266,59 @@ export function armBudgetStop({ spendSoFarUsd, budgetUsdPerArm, costEvidence = '
   }
   return { stop: false, reason: null, remainingUsd: remaining };
 }
+
+/**
+ * D6's billable unit, per role — **only roles with a real check site**.
+ *
+ * An entry here is a claim that a budget declared for that role is ENFORCED,
+ * so it lists where the meter actually runs, not where the plan says it
+ * eventually should. `comparison/manifest.mjs` refuses `budgetUsdPerArm` for
+ * any role absent here: a ceiling that is configured but unenforced reads as
+ * protection (INC-002).
+ *
+ *   - `auditor` — one corpus case, metered inside `model-eval-auditor.mjs`'s
+ *     case loops (screen, promotion A/B, promotion C).
+ *   - `adjudicator` — absent: its executor scores the whole ground-truth page
+ *     in one call, so there is no unit to stop between.
+ *   - `final_review_shadow` — absent: its collector (`bakeoff-collect.mjs`) is
+ *     a separate path with no meter yet.
+ *
+ * Null-prototype, same reason as `CONTROLS_BY_ROLE`: a role lookup must not
+ * answer for `toString`.
+ */
+export const BUDGET_UNIT_BY_ROLE = Object.freeze(Object.assign(Object.create(null), {
+  auditor: 'corpus-case',
+}));
+
+/**
+ * A running per-arm spend total, checked after each billable unit — the one
+ * mechanism every case loop uses, so there are not three copies of "add the
+ * cost, compare with the budget".
+ *
+ * `record(costUsd)` takes one unit's cost; anything that is not a finite,
+ * non-negative number (unpriced route, missing provider usage, corrupt value)
+ * makes the evidence `unknown` rather than being added or skipped — never a
+ * fabricated $0 and never a negative that would widen the headroom.
+ * `check()` is `armBudgetStop` over the running total, so the stop semantics
+ * (at-or-over, unpriced ⇒ stop, malformed budget ⇒ stop) live in one place.
+ *
+ * `budgetUsdPerArm` is what REMAINS for this attempt — the driver has already
+ * subtracted the arm's spend on earlier attempts (retries are paid calls).
+ *
+ * @param {{budgetUsdPerArm: number|null|undefined}} args
+ */
+export function createArmBudgetMeter({ budgetUsdPerArm }) {
+  let spent = 0;
+  let costEvidence = 'known';
+  return {
+    record(costUsd) {
+      if (Number.isFinite(costUsd) && costUsd >= 0) spent += costUsd;
+      else costEvidence = 'unknown';
+    },
+    check() {
+      return armBudgetStop({ spendSoFarUsd: round6(spent), budgetUsdPerArm, costEvidence });
+    },
+    get spentUsd() { return round6(spent); },
+    get costEvidence() { return costEvidence; },
+  };
+}

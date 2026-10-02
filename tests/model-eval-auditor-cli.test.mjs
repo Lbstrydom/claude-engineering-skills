@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { stratifiedSelectKDs, _internals as auditorInternals } from '../scripts/model-eval-auditor.mjs';
 import { resolveCandidateRoute } from '../scripts/lib/model-eval/route-catalog.mjs';
 import { isPriced } from '../scripts/lib/model-eval/cost.mjs';
+import { createArmBudgetMeter } from '../scripts/lib/comparison/spend.mjs';
 import { gitFixtureEnv } from './helpers/fixtures.mjs';
 
 const FIXTURE_DEFECTS = [
@@ -178,6 +179,37 @@ describe('model-eval-auditor.mjs — Tier C keeps per-case outputs and usage (20
     });
     assert.ok(out.perCase.every((p) => p.usage.usageStatus === 'missing' && p.usage.costUsd === null));
     assert.equal(auditorInternals.costFromEvents(out.usageEvents).totalUsd, null);
+  });
+
+  test('D6: a budget meter stops BETWEEN cases — the next case is never sent, partial outputs are kept', async () => {
+    let calls = 0;
+    const counting = async () => { calls += 1; return fakeExtract({ input_tokens: 1000, output_tokens: 200 })(); };
+    assert.ok(isPriced(route.pricingModel), `precondition: ${route.pricingModel} must be priced`);
+    // A budget smaller than one case's cost: exhausted after the first unit.
+    const meter = createArmBudgetMeter({ budgetUsdPerArm: 1e-9 });
+    const out = await auditorInternals.scoreArmTierC({ route, cases, runId: 'run-b', armLabel: 'CAND', meter, _extractStructured: counting });
+    assert.equal(calls, 1, 'the second case must not be sent once the budget is reached');
+    assert.equal(out.budgetStop.reason, 'budget-exhausted');
+    assert.equal(out.budgetStop.casesCompleted, 1);
+    assert.equal(out.budgetStop.casesPlanned, 2);
+    assert.equal(out.perCase.length, 1);
+    assert.equal(out.metrics, null, 'a partial corpus must never be scored');
+  });
+
+  test('NEGATIVE CONTROL: an ample budget runs every case and reports no stop', async () => {
+    const meter = createArmBudgetMeter({ budgetUsdPerArm: 1000 });
+    const out = await auditorInternals.scoreArmTierC({ route, cases, runId: 'run-c', armLabel: 'CAND', meter, _extractStructured: fakeExtract({ input_tokens: 1000, output_tokens: 200 }) });
+    assert.equal(out.budgetStop, null);
+    assert.equal(out.perCase.length, 2);
+    assert.ok(out.metrics);
+    assert.ok(meter.spentUsd > 0, 'the meter saw the spend it is guarding');
+  });
+
+  test('missing usage under a budget stops as unenforceable after the first case', async () => {
+    const meter = createArmBudgetMeter({ budgetUsdPerArm: 1000 });
+    const out = await auditorInternals.scoreArmTierC({ route, cases, runId: 'run-d', armLabel: 'CAND', meter, _extractStructured: fakeExtract(null) });
+    assert.equal(out.budgetStop.reason, 'budget-unenforceable-unpriced');
+    assert.equal(out.perCase.length, 1);
   });
 
   test('no usage events → cost null (nothing ran, nothing to price)', () => {

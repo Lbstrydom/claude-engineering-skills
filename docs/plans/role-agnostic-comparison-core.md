@@ -1,7 +1,7 @@
 # Plan: Role-Agnostic Model-Comparison Core
 
 - **Date**: 2026-08-14
-- **Status**: Complete — all three clusters shipped (`916147a0..a0c72290`) and the mandatory consolidated Gemini gate returned **APPROVE** (0 new findings, coherence Strong). §9a rows 1, 2, 6, 7 executed and green; **rows 3–4 were NOT run** — they are spend-bearing live collection runs against a real campaign, an operator action rather than an implementation step. Follow-on module-size debt is carried by [`comparison-tooling-consolidation.md`](./comparison-tooling-consolidation.md).
+- **Status**: Complete — all three clusters shipped (`916147a0..a0c72290`) and the mandatory consolidated Gemini gate returned **APPROVE** (0 new findings, coherence Strong). §9a rows 1, 2, 6, 7 executed and green; **rows 3–4 were NOT run** — they are spend-bearing live collection runs against a real campaign, an operator action rather than an implementation step. Follow-on module-size debt is carried by [`comparison-tooling-consolidation.md`](./comparison-tooling-consolidation.md). **Corrected 2026-10-02:** "Complete" overstated it. D5a's `maxAttemptsPerArm` and D6's per-arm budget were never built: `armBudgetStop` had no caller, and the manifest driver re-ran every arm without a live success on each re-invocation. Both are now built for the manifest driver; see the "Implemented 2026-10-02" notes under D5a and D6.
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI + store + one generated dashboard readout line)
 - **Target domain(s)**: `scripts`, `shared-lib`, `model-eval`, `dashboard`
@@ -578,6 +578,24 @@ Completeness (§2.5b-i) therefore reads *live* attempts only, while spend reads
 *all* of them — the same split as D5's first two bullets, applied one level
 down.
 
+> **Implemented 2026-10-02 (manifest driver only).** `comparison/attempts.mjs`
+> `decideArmAttempt` makes one decision per arm before anything is spent:
+> resume on a live success, refuse once `maxAttemptsPerArm` is reached
+> (`permanently-failed`, reason `max-attempts-exhausted`), or run as attempt
+> N+1. It reads `store/model-eval.mjs::getComparisonArmAttempts`, which returns
+> every recorded row, superseded ones included. That replaced
+> `maxComparisonArmAttempt` (a bare `MAX(attempt)`), which could not carry the
+> per-attempt cost D6 needs.
+> - **Attempt count** = the highest recorded `attempt`. A crashed attempt left
+>   `running` counts, because it was claimed and may have been paid for.
+> - **Unreadable history** refuses the arm. The old read was swallowed into
+>   "attempt 0", which re-ran the arm.
+> - **Where the field lives:** `maxAttemptsPerArm` is a top-level manifest
+>   field (int 1–10, default 2), outside `configDigest`. Raising it resumes the
+>   same cohort.
+> - **Not built:** the `rule_changed` watermark. That is campaign-side
+>   machinery, and the passive campaign collector still has no attempt cap.
+
 > **`maxAttemptsPerArm` has exactly one home: analysis-time (R2/H2).** R1 gave
 > it two. D5a put it in `controls` — locked, unraisable mid-cohort, so a flaky
 > arm could not be rescued — while D2a listed it as analysis-time, append-only
@@ -669,6 +687,42 @@ configured value as a safety property. The enforceable contract:
   aggregates while remaining visible as a row**. It is never coerced to 0, and
   the readout prints the word `unknown` — the anti-green rule, and the one the
   original NULL-cost incident violated.
+
+> **Implemented 2026-10-02, auditor role only. Two corrections to the text above.**
+>
+> **Where the field lives:** it is top-level `budgetUsdPerArm`, not
+> `controls.budgetUsdPerArm`. D2a's membership rule decides it the same way it
+> decided `maxAttemptsPerArm`: a spend ceiling changes what the operator will
+> pay, not what collected evidence means. In the lock, raising it would mint a
+> new cohort and re-run (and re-pay for) every arm that already succeeded.
+>
+> **The new run status:** a budget-stopped run is `stopped_budget`
+> (migration `20261002120000`). It is terminal, carries its partial `cost`,
+> and has no verdict. It is not a live success, so raising the budget resumes
+> the arm.
+>
+> How it works:
+> - **Before each attempt,** `decideArmAttempt` totals the arm's spend over all
+>   of its attempts (`armSpend`) and calls `armBudgetStop`. A retry is
+>   therefore charged against the same budget. If any earlier attempt has no
+>   recorded cost, it refuses with `budget-unenforceable-unpriced`.
+> - **Within an attempt,** the driver passes the remaining budget to the child
+>   as `--budget-remaining-usd`. `createArmBudgetMeter` is checked after every
+>   corpus case in all three auditor loops: screen, promotion A/B and
+>   promotion C. Candidate, baseline and judge calls all count. On a stop the
+>   run keeps its partial outputs, records `stopped_budget`, and exits
+>   `BUDGET_STOPPED_EXIT_CODE` (4).
+> - **Load-time refusal:** `EXECUTORS.auditor.preflightManifest` refuses an
+>   unpriced candidate route before any store write.
+>
+> Not built:
+> - `final_review_shadow`, whose meter would go in the `bakeoff-collect.mjs`
+>   loop.
+> - The adjudicator, whose executor scores the whole ground-truth page in one
+>   call, so there is no unit to stop between.
+>
+> `comparison/manifest.mjs` refuses a budget on either role at load.
+> `BUDGET_UNIT_BY_ROLE` lists only the roles that are actually metered.
 
 ### Right-sizing gate
 

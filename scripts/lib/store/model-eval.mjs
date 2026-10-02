@@ -470,26 +470,48 @@ export async function upsertComparison(rawArgs) {
 }
 
 /**
- * Highest attempt RECORDED for one (comparison, arm) — the resume-safety
- * read. D5a's reducer applied at the auditor role: a re-invocation of the
- * same manifest must know whether an arm already has a live success before
- * deciding to spawn it again.
+ * Every RECORDED attempt for one (comparison, arm) — superseded ones included,
+ * oldest first. The one read behind D5a's reducer and D6's spend, so the
+ * attempt cap and the per-arm budget can never disagree about what happened:
+ * `comparison/attempts.mjs::summarizeArmAttempts` derives the attempt count,
+ * the live-success flag and the all-attempts spend from these same rows.
+ *
+ * Rows, not a pre-aggregated `MAX(attempt)`: a superseded attempt was still
+ * paid for, so its cost belongs in the spend sum, and an aggregate that only
+ * carried the max could not say so.
+ *
+ * `costUsd` is `cost.totalUsd` — a jsonb number, so it arrives as a JS number
+ * (unlike a `numeric` column). Absent or non-numeric ⇒ `null`, which
+ * `armSpend` reads as unpriced, never as $0.
+ *
+ * `ok:false` is returned, never swallowed into "no attempts": an unreadable
+ * history and an empty one must not leave here as the same value, or a caller
+ * would re-run (and re-pay for) an arm whose cap it could not evaluate.
  *
  * @param {{comparisonId: string, armId: string}} args
- * @returns {Promise<{ok: boolean, cloud: boolean, attempt: number, hasLiveSuccess: boolean}>}
+ * @returns {Promise<{ok: boolean, cloud: boolean, error?: string,
+ *   rows: Array<{attempt: number, status: string, supersededAt: string|null, costUsd: number|null}>}>}
  */
-export async function maxComparisonArmAttempt({ comparisonId, armId }) {
-  if (!await isCloudEnabled()) return { ok: true, cloud: false, attempt: 0, hasLiveSuccess: false };
+export async function getComparisonArmAttempts({ comparisonId, armId }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, rows: [] };
   try {
-    const row = await one(
-      `SELECT COALESCE(MAX(attempt), 0) AS attempt,
-              BOOL_OR(status = 'completed' AND superseded_at IS NULL) AS has_live_success
-         FROM model_eval_runs WHERE comparison_id = $1 AND arm_id = $2`,
+    const rows = await many(
+      `SELECT attempt, status, superseded_at, cost
+         FROM model_eval_runs WHERE comparison_id = $1 AND arm_id = $2
+        ORDER BY attempt`,
       [comparisonId, armId],
     );
-    return { ok: true, cloud: true, attempt: Number(row?.attempt ?? 0), hasLiveSuccess: row?.has_live_success === true };
+    return {
+      ok: true, cloud: true,
+      rows: rows.map((r) => ({
+        attempt: Number(r.attempt),
+        status: r.status,
+        supersededAt: r.superseded_at == null ? null : new Date(r.superseded_at).toISOString(),
+        costUsd: typeof r.cost?.totalUsd === 'number' ? r.cost.totalUsd : null,
+      })),
+    };
   } catch (err) {
-    return { ok: false, cloud: true, error: err.message, attempt: 0, hasLiveSuccess: false };
+    return { ok: false, cloud: true, error: err.message, rows: [] };
   }
 }
 

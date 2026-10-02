@@ -38,9 +38,17 @@ export const JudgeTierSchema = z.enum(JUDGE_TIERS);
 
 // Process-state statuses (see store/model-eval.mjs — `running`/`pending_shadow`
 // are the two non-terminal states for checkpointed runs).
-export const RUN_STATUSES = Object.freeze(['completed', 'failed_preflight', 'failed_egress', 'failed_provider', 'running', 'pending_shadow']);
+//
+// `stopped_budget` (D6, role-agnostic-comparison-core.md): the per-arm budget
+// stopped the run between billable units. Its own status because it is
+// neither of the two it could be mistaken for — `completed` would count as a
+// live success, so D5a's resume would never re-run the arm even after the
+// operator raised the budget; `failed_provider` would name a cause that did
+// not happen. Terminal, carries the partial `cost`, never a verdict.
+// Mirrored by the CHECK in 20261002120000_model_eval_run_stopped_budget.sql.
+export const RUN_STATUSES = Object.freeze(['completed', 'failed_preflight', 'failed_egress', 'failed_provider', 'stopped_budget', 'running', 'pending_shadow']);
 export const RunStatusSchema = z.enum(RUN_STATUSES);
-export const TERMINAL_RUN_STATUSES = Object.freeze(['completed', 'failed_preflight', 'failed_egress', 'failed_provider']);
+export const TERMINAL_RUN_STATUSES = Object.freeze(['completed', 'failed_preflight', 'failed_egress', 'failed_provider', 'stopped_budget']);
 export const TerminalRunStatusSchema = z.enum(TERMINAL_RUN_STATUSES);
 export const NON_TERMINAL_RUN_STATUSES = Object.freeze(['running', 'pending_shadow']);
 export const NonTerminalRunStatusSchema = z.enum(NON_TERMINAL_RUN_STATUSES);
