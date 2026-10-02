@@ -18,7 +18,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { diffAgainstBaseline, LIMIT_LINES, TOLERANCE_LINES } from '../scripts/file-size-ratchet.mjs';
+import { diffAgainstBaseline, updatedBaseline, LIMIT_LINES, TOLERANCE_LINES } from '../scripts/file-size-ratchet.mjs';
 
 describe('diffAgainstBaseline — growth', () => {
   test('a baselined file that grows beyond tolerance FAILS', () => {
@@ -78,6 +78,28 @@ describe('the ratchet actually tightens', () => {
     assert.equal(r.grew.length, 0);
     assert.equal(r.shrank.length, 1,
       'which is why a shrink FAILS asking to be locked in, rather than passing silently');
+  });
+});
+
+describe('--update-baseline only ratchets DOWN', () => {
+  // It used to write every file's CURRENT count. A file that grew within the
+  // tolerance passes the gate, so re-baselining one shrunk file also raised
+  // the high-water mark of every file that had crept — two agents fixing
+  // runs-findings.mjs and gemini-review.mjs each saw seven unrelated files
+  // ratchet UP (legacy-production-audit.mjs 1702 -> 1712) on 2026-10-02.
+  test('within-tolerance growth is NOT absorbed into the baseline', () => {
+    const next = updatedBaseline({ 'crept.mjs': 1712, 'shrunk.mjs': 900 + LIMIT_LINES }, { 'crept.mjs': 1702, 'shrunk.mjs': 2000 });
+    assert.equal(next['crept.mjs'], 1702, 'a crept file keeps its old mark');
+    assert.equal(next['shrunk.mjs'], 900 + LIMIT_LINES, 'a shrunk file is locked in at its new count');
+  });
+
+  test('a file now under the limit leaves the baseline; a newly-oversized one is not admitted', () => {
+    const next = updatedBaseline({ 'grown-new.mjs': LIMIT_LINES + 5 }, { 'gone.mjs': 1500 });
+    assert.deepEqual(next, {}, 'admitting a new oversized file is a decision, not a side effect of locking in a shrink');
+  });
+
+  test('an absent baseline is created from current sizes (bootstrap)', () => {
+    assert.deepEqual(updatedBaseline({ 'a.mjs': 1200 }, null), { 'a.mjs': 1200 });
   });
 });
 

@@ -105,6 +105,29 @@ export function collectSizes(repoRoot = REPO, dirs = SCAN_DIRS) {
  * the baseline would make it fail immediately as an unbaselined file over the
  * limit.
  */
+/**
+ * The baseline `--update-baseline` writes. It only ever RATCHETS DOWN: each
+ * baselined file keeps `min(old mark, current)`, a file now under the limit
+ * leaves, and a file newly over the limit is NOT admitted. Writing every
+ * file's current count (the previous behaviour) silently raised the mark of
+ * any file that had grown within the tolerance — locking in one shrink
+ * re-baselined unrelated creep upward. Accepting growth, or a new oversized
+ * file, is a reviewed hand edit of that one entry, never a side effect.
+ * With no baseline at all, the current sizes ARE the baseline (bootstrap).
+ *
+ * @param {Record<string, number>} current
+ * @param {Record<string, number>|null} baseline
+ * @returns {Record<string, number>}
+ */
+export function updatedBaseline(current, baseline) {
+  if (!baseline) return { ...current };
+  const next = {};
+  for (const [file, was] of Object.entries(baseline)) {
+    if (file in current) next[file] = Math.min(was, current[file]);
+  }
+  return Object.fromEntries(Object.entries(next).sort(([a], [b]) => a.localeCompare(b)));
+}
+
 export function diffAgainstBaseline(current, baseline, tolerance = TOLERANCE_LINES) {
   const grew = [];
   const newOver = [];
@@ -174,6 +197,8 @@ Exit codes: 0=clean, 1=drift, 2=no baseline / bad flag
   const current = collectSizes();
 
   if (update) {
+    const prior = readBaseline(baselinePath);
+    const files = updatedBaseline(current, prior);
     // Atomic: a truncate-then-write interrupted midway would leave an
     // unparseable baseline, and readBaseline() maps a parse failure to null —
     // which this gate treats as 'cannot say' and exits 2 on. Recoverable, but
@@ -183,9 +208,13 @@ Exit codes: 0=clean, 1=drift, 2=no baseline / bad flag
         + 'see scripts/file-size-ratchet.mjs. Regenerate deliberately with --update-baseline.',
       limitLines: LIMIT_LINES,
       toleranceLines: TOLERANCE_LINES,
-      files: current,
+      files,
     }, null, 2)}\n`, 'utf-8');
-    process.stdout.write(`file-size-ratchet: baseline updated — ${Object.keys(current).length} file(s) over ${LIMIT_LINES} lines.\n`);
+    process.stdout.write(`file-size-ratchet: baseline updated (ratchet-down only) — ${Object.keys(files).length} file(s) baselined.\n`);
+    const { grew, newOver } = prior ? diffAgainstBaseline(current, files) : { grew: [], newOver: [] };
+    for (const g of [...grew, ...newOver]) {
+      process.stdout.write(`  NOT absorbed: ${g.file} (${g.now ?? g.lines} lines) — split it, or hand-edit its entry in a reviewed commit.\n`);
+    }
     process.exit(0);
   }
 
@@ -211,7 +240,8 @@ Exit codes: 0=clean, 1=drift, 2=no baseline / bad flag
 
   process.stdout.write(`file-size-ratchet: ${lines.length} change(s)\n${lines.join('\n')}\n\n`);
   if (grew.length || newOver.length) {
-    process.stdout.write('  A file over the limit may not grow. Split it, or justify and re-baseline.\n');
+    process.stdout.write('  A file over the limit may not grow. Split it, or justify it and hand-edit its baseline entry\n'
+      + '  (--update-baseline only ratchets down, so it never absorbs growth).\n');
   }
   if (shrank.length || dropped.length) {
     process.stdout.write('  Improvements must be locked in, or the ratchet stays at the old high-water mark:\n');
