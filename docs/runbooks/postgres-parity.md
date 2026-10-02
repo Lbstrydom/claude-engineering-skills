@@ -161,8 +161,8 @@ difference by regenerating the fixture against the store that differs.
 ## Local disposable test container
 
 `scripts/db-test-container.mjs` runs an ephemeral local Docker Postgres
-(`pgvector/pgvector:pg16`, mirroring `.github/workflows/postgres-parity.yml`'s
-`db-suite` service container) so the destructive DB integration suites and
+(`DB_TEST_IMAGE`, a digest-pinned `pgvector/pgvector` pg16 image, identical to
+`.github/workflows/postgres-parity.yml`'s `db-suite` service container) so the destructive DB integration suites and
 `tests/fixtures/expected-schema.json` regeneration are runnable locally —
 not just in CI. Root cause: after the 2026-07-14 production wipe (INC-002),
 `assertDisposableDbUrl` refuses to run these suites against anything but a
@@ -179,6 +179,26 @@ node scripts/db-test-container.mjs down  # idempotent teardown
 
 Flags: `--keep` (skip teardown after `suites`/`regen-schema`), `--port <n>`
 (default `5433` — escape hatch for a local port conflict).
+
+**The test image is pinned by digest — upgrade it deliberately.** On
+2026-10-01 the floating `pgvector/pgvector:pg16` tag moved from pgvector 0.8.6
+to 0.8.7; every CI run then failed "Verify schema matches the committed
+manifest" on `extensions` (so no DB suite ran), while `db:local` stayed green
+on a cached 0.8.6. The fixture records `pg_extension.extversion`, so it is a
+pure function of committed source only if the image is too. Exact tags such as
+`0.8.7-pg16` are themselves republished on Postgres minor rebuilds, so only a
+digest is immutable. `tests/db-test-container.test.mjs` enforces both the
+digest shape and that the workflow's service `image:` equals `DB_TEST_IMAGE`.
+Do **not** relax `diffSchemas` to ignore extension versions — a patch bump
+ships an upgrade script that can change the extension's SQL surface, which is
+exactly what the fixture exists to record. To upgrade:
+
+1. Resolve the new index digest: `docker buildx imagetools inspect pgvector/pgvector:0.8.8-pg16`
+   (substitute the real tag).
+2. Set it in **both** `DB_TEST_IMAGE` (`scripts/db-test-container.mjs`) and the
+   `db-suite` service `image:` in `postgres-parity.yml`.
+3. `docker pull` that reference, then `npm run db:local:regen`, and commit the
+   regenerated fixture in the same PR.
 
 **Why `AUDIT_DB_URL` is absent from the destructive step.** The container's
 DSN (`postgresql://postgres:postgres@127.0.0.1:<port>/postgres`) always

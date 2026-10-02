@@ -195,8 +195,19 @@ describe('CI parity with .github/workflows/postgres-parity.yml', () => {
   const DB_SUITE_TEXT = extractJobBlock(WORKFLOW_TEXT, 'db-suite');
   assert.ok(DB_SUITE_TEXT, 'workflow must contain a db-suite: job');
 
-  it('the db-suite job contains DB_TEST_IMAGE verbatim', () => {
-    assert.ok(DB_SUITE_TEXT.includes(DB_TEST_IMAGE), `db-suite job must reference ${DB_TEST_IMAGE}`);
+  it('the db-suite service image IS DB_TEST_IMAGE (the `image:` value, not a mention)', () => {
+    // A substring check passed on a comment naming the image while the
+    // service ran something else; compare the value Actions actually pulls.
+    const images = [...DB_SUITE_TEXT.matchAll(/^\s+image:\s*(\S+)\s*$/gm)].map((m) => m[1]);
+    assert.deepEqual(images, [DB_TEST_IMAGE], 'db-suite must declare exactly one service image, equal to DB_TEST_IMAGE');
+  });
+
+  it('DB_TEST_IMAGE is pinned by digest, never a floating tag', () => {
+    // 2026-10-01: `pgvector/pgvector:pg16` moved 0.8.6 → 0.8.7 under us; CI's
+    // schema-diff went red on `extensions` while a cached local image stayed
+    // green. The committed fixture is only a function of committed source if
+    // the image is too — and exact `0.8.x-pg16` tags are republished as well.
+    assert.match(DB_TEST_IMAGE, /^pgvector\/pgvector:[\w.-]+@sha256:[0-9a-f]{64}$/);
   });
 
   it('every exported suite-file list member appears in the db-suite job', () => {
@@ -630,7 +641,7 @@ describe('createLifecycle — image pull is conditional, and reuse is visible', 
     const { exec, lifecycle } = lifecycleWith(ok(`${new Date().toISOString()}\n`), out);
     assert.equal(await lifecycle.run('regen-schema', { port: 5433 }), 0);
     assert.equal(pulls(exec), 0, 'the whole 1.77s saving is this call not happening');
-    assert.match(out.join(''), /using local pgvector\/pgvector:pg16/,
+    assert.ok(out.join('').includes(`using local ${DB_TEST_IMAGE}`),
       'a skipped pull must SAY so — silence is indistinguishable from a pull that happened');
     assert.match(out.join(''), /AUDIT_LOOP_DB_IMAGE_PULL=always/, 'and must name the way to force one');
   });
