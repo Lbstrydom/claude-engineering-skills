@@ -240,6 +240,10 @@
     {
       "line": "\"overlapRate\": <n>}`. A refusal exits 1 with a code naming it:",
       "reason": "link-persona-pair (Step P7) behaviour. The refusal of a disagreeing overlapRate (exit 2, BAD_INPUT) and the exit-1 refusal codes are exercised in-process by tests/persona-session-lifecycle-contract.test.mjs and captured as golden envelopes (link-pair-rate-mismatch in tests/fixtures/cross-skill-envelopes.json). Not a persona-test skill gate: the enforcement lives in the cross-skill command, contracted by the registry golden suite."
+    },
+    {
+      "line": "| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Phase 3 Record step / Phase 5 — rendering the COVERAGE block, to apply §7's reciprocal warning (it renders only from the session work-record). |",
+      "reason": "Reference-index row for the shared verification-discipline copy (the Summary column must byte-match the file's summary frontmatter). Points at the same session-work-record instruction already dispositioned above; adds no gate."
     }
   ]
 }

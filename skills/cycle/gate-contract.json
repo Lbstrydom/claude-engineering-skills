@@ -307,6 +307,14 @@
     {
       "line": "explicit handback. Never replaced by GPT rebuttal.",
       "reason": "Describes routing on gateDisposition, which is computed in code by scripts/lib/final-review/round-gate.mjs (truth table pinned by tests/final-review-round-gate.test.mjs); the skill routes on it and enforces nothing itself."
+    },
+    {
+      "line": "`references/gemini-gate.md`** (the same contract /audit-code's Step 7 follows) — when no provider key is present, run the",
+      "reason": "Pointer to cycle's own generated copy of the shared gemini-gate.md degradation ladder; the mandatory consolidated gate itself is dispositioned by consolidated-gemini-gate-mandatory. This line adds no new gate."
+    },
+    {
+      "line": "| `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Autonomous mode's consolidated Gemini gate — building the transcript, OR no `GEMINI_API_KEY` and the degradation ladder decides the substitute. |",
+      "reason": "Reference-index row (the Summary column must byte-match the file's summary frontmatter). Verb match is the gate's NAME, not an enforcement claim."
     }
   ]
 }
