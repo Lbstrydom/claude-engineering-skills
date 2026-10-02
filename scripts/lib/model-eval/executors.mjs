@@ -50,6 +50,9 @@ import { resolveCandidateRoute } from './route-catalog.mjs';
 import { createEvalRun, updateEvalRunTerminal } from '../store/model-eval.mjs';
 import { parseThresholdConfig } from './config/schema.mjs';
 import { computeVerdict } from './verdict.mjs';
+import { isPriced } from './cost.mjs';
+import { RunPreflightError, BUDGET_STOPPED_EXIT_CODE } from './cli-shared.mjs';
+import { isScoredArm } from '../comparison/arms.mjs';
 
 /** The auditor role's default corpus — moved here (from
  *  `scripts/model-eval-auditor.mjs`) so this lib module and that entry
@@ -66,6 +69,42 @@ export const DEFAULT_CORPUS_PATH = path.join('docs', 'experiments', 'audit-effec
 // did before this lift. No `prepareContext` is needed beyond bundling the
 // driver's own CLI args + resolved subject paths into one object `executeArm`
 // can read — the existing per-arm spawn needs no OTHER run-level setup.
+
+/**
+ * D6's load-time half: a budget on an arm whose route has no price cannot be
+ * enforced (every unit would record `unknown` and stop after one case), so it
+ * is refused BEFORE any store write or provider call rather than discovered
+ * after the first paid case. Runs only when a budget is declared.
+ *
+ * Only the CANDIDATE routes are checked here. Promotion tier also pays for a
+ * baseline (and, on a --candidate run, a judge) whose routes are chosen inside
+ * the child; an unpriced one there still stops the arm at the first case, as
+ * `budget-unenforceable-unpriced`, by the per-case meter.
+ *
+ * A route that fails to RESOLVE is left alone: that is the arm's own failure,
+ * reported per-arm by `executeArm` exactly as it is without a budget.
+ *
+ * `_resolveRoute`/`_isPriced` are test seams (every registered sentinel is
+ * priced today, so the refusal has no live fixture); production passes none.
+ */
+function auditorPreflightManifest(manifest, { _resolveRoute = resolveCandidateRoute, _isPriced = isPriced } = {}) {
+  if (manifest.budgetUsdPerArm === undefined) return;
+  const unpriced = [];
+  for (const arm of manifest.arms.filter(isScoredArm)) {
+    let route;
+    try {
+      route = _resolveRoute({ role: 'auditor', candidateSpec: { kind: 'sentinel', value: arm.model } });
+    } catch {
+      continue;
+    }
+    if (!_isPriced(route.pricingModel)) unpriced.push(`${arm.id} (${route.pricingModel})`);
+  }
+  if (unpriced.length > 0) {
+    throw new RunPreflightError('budget_unenforceable',
+      `--manifest: budgetUsdPerArm is declared but these arms have no price, so their spend cannot be measured against it: ${unpriced.join(', ')}. `
+      + 'Price the route in model-pricing.mjs, or remove budgetUsdPerArm. A ceiling nothing can measure is not enforced.');
+  }
+}
 
 async function auditorPrepareContext(manifest, _repoIdentity, driverArgs) {
   const { resolvedPaths, tier, corpusFlagPath, thresholdsPath, repoRoots } = driverArgs;
@@ -103,12 +142,12 @@ async function auditorPrepareContext(manifest, _repoIdentity, driverArgs) {
  * @param {{model: string}} arm
  * @param {object} controls
  * @param {{tier: string, thresholdsPath: string, corpusPath: string, repoRoots: string[]}} context
- * @param {{comparisonId?: string, armId?: string, attempt?: number, supersedePrior?: boolean}} driverAttempt
+ * @param {{comparisonId?: string, armId?: string, attempt?: number, supersedePrior?: boolean, remainingBudgetUsd?: number|null}} driverAttempt
  * @param {string} armOutFile
  * @returns {string[]}
  */
 function buildAuditorSpawnArgs(arm, controls, context, driverAttempt, armOutFile) {
-  const { comparisonId, armId, attempt, supersedePrior } = driverAttempt;
+  const { comparisonId, armId, attempt, supersedePrior, remainingBudgetUsd } = driverAttempt;
   // A bare model name/sentinel is the only thing an arm declares — the
   // general mapping onto CandidateSpecSchema's discriminated union.
   const candidateSpec = { kind: 'sentinel', value: arm.model };
@@ -119,6 +158,9 @@ function buildAuditorSpawnArgs(arm, controls, context, driverAttempt, armOutFile
   if (context.repoRoots.length > 1) args.push('--repo-roots', context.repoRoots.slice(1).join(','));
   if (comparisonId) args.push('--comparison-id', comparisonId, '--arm-id', armId, '--attempt', String(attempt));
   if (supersedePrior) args.push('--supersede-prior');
+  // D6: what is left of this arm's budget after its earlier attempts. Absent
+  // (null/undefined) means no ceiling; the driver never spawns at zero.
+  if (remainingBudgetUsd != null) args.push('--budget-remaining-usd', String(remainingBudgetUsd));
   // controls.scope/controls.passes (Phase 2) — Tier-A/B-only, `.optional()`
   // on AuditorControlsSchema, so conditionally passed like the pre-existing
   // flags above.
@@ -155,9 +197,37 @@ async function auditorExecuteArm(arm, controls, context, driverAttempt) {
   const spawned = spawnSync(process.execPath, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   let armResult = null;
   try { armResult = JSON.parse(fs.readFileSync(armOutFile, 'utf8')); } catch { /* the arm may have failed before writing --out */ }
+  return classifyAuditorChildResult({ status: spawned.status, stderr: spawned.stderr, armResult, armOutFile, arm, controls });
+}
 
-  if (spawned.status !== 0) {
-    return { outcome: 'terminal', reason: `exit ${spawned.status}${spawned.stderr ? `: ${String(spawned.stderr).slice(-400)}` : ''}` };
+/**
+ * Pure: the child's exit status + `--out` body → an `ExecutorAttempt`.
+ * Extracted so each outcome is testable without spawning.
+ *
+ * `budget-stopped` (D6) needs BOTH halves of its contract: exit
+ * `BUDGET_STOPPED_EXIT_CODE` AND a `budgetStop` body. Either alone is a
+ * contract break and reads as `terminal`, never as a stop: an exit code with
+ * no body is a crash that happens to share the number, and a body on exit 0
+ * would let a scored-looking run carry a stop it never reported.
+ *
+ * @param {{status: number|null, stderr?: string, armResult: object|null, armOutFile: string,
+ *   arm?: {model: string}, controls?: object}} args
+ */
+function classifyAuditorChildResult({ status, stderr, armResult, armOutFile, arm, controls }) {
+  const hasBudgetStop = armResult != null && typeof armResult === 'object' && armResult.budgetStop != null;
+  if (status === BUDGET_STOPPED_EXIT_CODE && hasBudgetStop) {
+    const b = armResult.budgetStop;
+    return {
+      outcome: 'budget-stopped',
+      reason: `${b.reason} after ${b.casesCompleted}/${b.casesPlanned} case(s), spent ${b.spentUsd ?? 'unknown'} USD`,
+      result: { role: 'auditor', budgetStop: b, cost: armResult.cost ?? null, controlsApplied: armResult.controlsApplied ?? null },
+    };
+  }
+  if (status !== 0) {
+    return { outcome: 'terminal', reason: `exit ${status}${stderr ? `: ${String(stderr).slice(-400)}` : ''}` };
+  }
+  if (hasBudgetStop) {
+    return { outcome: 'terminal', reason: `exit 0 but --out at ${armOutFile} carries a budgetStop; a stopped run must exit ${BUDGET_STOPPED_EXIT_CODE}` };
   }
   // A zero exit code alone is not "ok" (round-4 gate H8) — the child could
   // exit 0 without writing --out, or write malformed JSON, or write a JSON
@@ -184,7 +254,7 @@ async function auditorExecuteArm(arm, controls, context, driverAttempt) {
       controlsApplied: armResult.controlsApplied ?? null,
     },
     usage: null, // see module docstring — not tracked by the spawn mechanism today
-    provenance: { model: arm.model, route: 'openai-compatible', promptTemplateId: controls?.promptTemplateId ?? null, capturedAt: new Date().toISOString() },
+    provenance: { model: arm?.model ?? null, route: 'openai-compatible', promptTemplateId: controls?.promptTemplateId ?? null, capturedAt: new Date().toISOString() },
   };
 }
 
@@ -312,7 +382,7 @@ async function adjudicatorExecuteArm(arm, controls, context, driverAttempt) {
   // createEvalRun/updateEvalRunTerminal when handed --comparison-id/--arm-id/
   // --attempt); the adjudicator executor runs IN-PROCESS, so it must call the
   // SAME store functions itself, or D5a's resume mechanism
-  // (maxComparisonArmAttempt reads model_eval_runs) can never see a prior
+  // (getComparisonArmAttempts reads model_eval_runs) can never see a prior
   // adjudicator attempt and would re-run every arm on every resume.
   const { comparisonId, armId, attempt, supersedePrior } = driverAttempt ?? {};
   const created = await createEvalRun({
@@ -392,16 +462,17 @@ async function adjudicatorExecuteArm(arm, controls, context, driverAttempt) {
 // later.
 
 /**
- * role → `{prepareContext?, executeArm?}`. `Object.create(null)`, matching
+ * role → `{preflightManifest?, prepareContext?, executeArm?}`. `preflightManifest`
+ * runs before any store write (refuse-at-load); it throws `RunPreflightError`. `Object.create(null)`, matching
  * `CONTROLS_BY_ROLE`'s own null-prototype convention (controls.mjs) — a
  * dispatch table over role names must not answer for `toString`.
  */
 export const EXECUTORS = Object.freeze(Object.assign(Object.create(null), {
-  auditor: Object.freeze({ prepareContext: auditorPrepareContext, executeArm: auditorExecuteArm }),
+  auditor: Object.freeze({ preflightManifest: auditorPreflightManifest, prepareContext: auditorPrepareContext, executeArm: auditorExecuteArm }),
   adjudicator: Object.freeze({ prepareContext: adjudicatorPrepareContext, executeArm: adjudicatorExecuteArm }),
   final_review_shadow: Object.freeze({}),
 }));
 
 // Exported for direct testing (mirrors arm-generation.mjs's / provider-
 // adapter.mjs's own `_internals` pattern).
-export const _internals = { buildAuditorSpawnArgs };
+export const _internals = { buildAuditorSpawnArgs, classifyAuditorChildResult, auditorPreflightManifest };

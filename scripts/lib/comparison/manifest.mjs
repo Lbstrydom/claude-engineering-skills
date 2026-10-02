@@ -29,6 +29,8 @@ import { ROLES } from './roles.mjs';
 import { ArmSchema, checkArmSetSemantics } from './arms.mjs';
 import { controlsSchemaForRole, isRoleSupported, SUPPORTED_ROLES, checkFinalReviewShadowControls } from './controls.mjs';
 import { resolveLocalPath } from './paths.mjs';
+import { MAX_ATTEMPTS_PER_ARM_LIMIT } from './attempts.mjs';
+import { BUDGET_UNIT_BY_ROLE } from './spend.mjs';
 import { isXaiModel } from '../model-resolver.mjs';
 
 /** Manifest ids become path components, same reason as arm ids. */
@@ -69,6 +71,18 @@ export function manifestSchemaForRole(role) {
     arms: z.array(ArmSchema).min(1),
     controls: controlsSchemaForRole(role),
     subject: SubjectSchema.optional(),
+    // ANALYSIS-TIME, deliberately top-level and outside `controls`: the lock
+    // (`configDigest`) reads only role/decision/arms/controls, so neither of
+    // these can split a cohort. D2a's membership rule decides it — a retry
+    // cap or a spend ceiling changes how much the operator will pay, never
+    // what collected evidence means, and locking either would orphan a paid
+    // cohort (and re-run every succeeded arm) just to raise a ceiling. D6's
+    // text said `controls.budgetUsdPerArm`; the plan's own D5a note applies
+    // the same rule to `maxAttemptsPerArm`, and the two are the same kind.
+    // Default for the cap lives in comparison/attempts.mjs, not here, so an
+    // absent key stays absent in the parsed manifest.
+    maxAttemptsPerArm: z.number().int().min(1).max(MAX_ATTEMPTS_PER_ARM_LIMIT).optional(),
+    budgetUsdPerArm: z.number().finite().positive().optional(),
   }).strict().superRefine(manifestSemanticRules);
 }
 
@@ -83,6 +97,17 @@ function manifestSemanticRules(cfg, ctx) {
   // manifest drift apart — the control arm type landed in one of them
   // first, and only a mechanical check found the other.
   checkArmSetSemantics(cfg, issue);
+
+  // D6 — a budget is accepted only for a role whose billable unit is actually
+  // metered. Anywhere else it would parse, run, and never stop anything: a
+  // configured ceiling mistaken for an enforced one (INC-002).
+  if (cfg.budgetUsdPerArm !== undefined && !BUDGET_UNIT_BY_ROLE[cfg.role]) {
+    issue(
+      `budgetUsdPerArm is not enforceable for role "${cfg.role}" — no billable-unit check site exists for it `
+      + `(metered roles: ${Object.keys(BUDGET_UNIT_BY_ROLE).join(', ')}). Remove the budget rather than run under a ceiling nothing checks.`,
+      ['budgetUsdPerArm'],
+    );
+  }
 
   // final_review_shadow-ONLY: `envelopeScope`/`preflight` exist solely on
   // that role's controls shape (`AuditorControlsSchema` has neither field),

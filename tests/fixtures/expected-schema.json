@@ -11994,7 +11994,7 @@
       "table_name": "model_eval_runs",
       "constraint_name": "model_eval_runs_status_check",
       "constraint_type": "CHECK",
-      "definition": "CHECK ((status = ANY (ARRAY['completed'::text, 'failed_preflight'::text, 'failed_egress'::text, 'failed_provider'::text, 'running'::text, 'pending_shadow'::text])))"
+      "definition": "CHECK ((status = ANY (ARRAY['completed'::text, 'failed_preflight'::text, 'failed_egress'::text, 'failed_provider'::text, 'stopped_budget'::text, 'running'::text, 'pending_shadow'::text])))"
     },
     {
       "table_name": "model_eval_runs",

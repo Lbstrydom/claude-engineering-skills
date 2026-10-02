@@ -48,7 +48,8 @@ import { createEvalRun, updateEvalRunTerminal, EvalRunAlreadyActiveError } from 
 import { resolveRepoIdentity } from './lib/repo-identity.mjs';
 import { writeOutput } from './lib/file-io.mjs';
 import { argOption } from './lib/cli-io.mjs';
-import { RunPreflightError, parseJsonArg } from './lib/model-eval/cli-shared.mjs';
+import { RunPreflightError, parseJsonArg, BUDGET_STOPPED_EXIT_CODE } from './lib/model-eval/cli-shared.mjs';
+import { createArmBudgetMeter } from './lib/comparison/spend.mjs';
 // D7a layering fix — runManifestDriver moved to a lib module (was defined
 // here); this entry point is now a thin shim calling it, same shape D2's
 // bakeoff-collect.mjs/campaign.mjs reduction already establishes elsewhere in
@@ -176,9 +177,16 @@ export function stratifiedSelectKDs(defects, { seed, n }) {
  * not something the persisted bundle has ever carried.
  * `_extractStructured` is a test seam (same convention as arm-generation's
  * `_runMultiPassCodeAudit`); production never passes it.
- * @param {{route: object, cases: Array<object>, role?: string, dials?: object, runId: string, armLabel: string, _extractStructured?: Function}} args
+ *
+ * `meter` (D6): checked after every case, the auditor's billable unit. On a
+ * stop the loop ends BEFORE the next case is sent, the partial `perCase`/
+ * `usageEvents` are kept (they were paid for), and `metrics` is `null`: a
+ * score over however many cases happened to fit is the partial-denominator
+ * result the comparison plan exists to prevent.
+ * @param {{route: object, cases: Array<object>, role?: string, dials?: object, runId: string, armLabel: string,
+ *   meter?: ReturnType<typeof createArmBudgetMeter>|null, _extractStructured?: Function}} args
  */
-async function scoreArmTierC({ route, cases, role = 'auditor', dials, runId, armLabel, _extractStructured = extractStructured }) {
+async function scoreArmTierC({ route, cases, role = 'auditor', dials, runId, armLabel, meter = null, _extractStructured = extractStructured }) {
   const candidateOutputs = [];
   const expectedRubrics = [];
   const perCase = [];
@@ -211,9 +219,35 @@ async function scoreArmTierC({ route, cases, role = 'auditor', dials, runId, arm
       expectedFiles: hiddenGroundTruth.files,
       usage: { usageStatus: usageEvent.usageStatus, inputTokens: usageEvent.inputTokens, outputTokens: usageEvent.outputTokens, costUsd: usageEvent.costUsd },
     });
+    if (meter) {
+      meter.record(usageEvent.costUsd);
+      const stop = meter.check();
+      if (stop.stop) {
+        return {
+          metrics: null, raw: null, honoredDials, perCase, usageEvents,
+          budgetStop: { reason: stop.reason, casesCompleted: perCase.length, casesPlanned: cases.length },
+        };
+      }
+    }
   }
   const scored = scoreDefectLocalization(candidateOutputs, expectedRubrics);
-  return { metrics: { recall: scored.recall, falsePositiveRate: scored.falsePositiveRate, f1: scored.f1 }, raw: scored, honoredDials, perCase, usageEvents };
+  return { metrics: { recall: scored.recall, falsePositiveRate: scored.falsePositiveRate, f1: scored.f1 }, raw: scored, honoredDials, perCase, usageEvents, budgetStop: null };
+}
+
+/**
+ * The result for a run the budget stopped (D6), shared by both tiers so a
+ * stopped run looks the same wherever it stopped. No verdict, no metrics: it
+ * scored nothing. `cost` is what the run actually spent, which is exactly what
+ * the next attempt's budget check must subtract.
+ */
+function budgetStoppedResult({ budgetStop, usageEvents, perCaseOutputs, honoredDials, evidence, meter }) {
+  return {
+    verdict: null, nextAction: null, metrics: null, honoredDials,
+    budgetStop: { ...budgetStop, spentUsd: meter.costEvidence === 'known' ? meter.spentUsd : null },
+    evidence: { ...evidence, budgetStop },
+    cost: costFromEvents(usageEvents),
+    perCaseOutputs,
+  };
 }
 
 /**
@@ -231,9 +265,15 @@ function costFromEvents(usageEvents) {
 
 // ── Screening tier (oracle mode, Tier C) ────────────────────────────────
 
-async function runScreenTier({ runId, candidateRoute, cases, corpusVersion, selectedKdIds, thresholds, dials }) {
-  const { metrics, honoredDials, perCase, usageEvents } = await scoreArmTierC({ route: candidateRoute, cases, dials, runId, armLabel: 'CAND' });
+async function runScreenTier({ runId, candidateRoute, cases, corpusVersion, selectedKdIds, thresholds, dials, meter }) {
+  const { metrics, honoredDials, perCase, usageEvents, budgetStop } = await scoreArmTierC({ route: candidateRoute, cases, dials, runId, armLabel: 'CAND', meter });
   const routeEvidence = routeCatalogInternals.toRouteEvidence(candidateRoute);
+  if (budgetStop) {
+    return budgetStoppedResult({
+      budgetStop, usageEvents, honoredDials, meter, perCaseOutputs: { candidate: perCase },
+      evidence: { mode: 'oracle', selectedKdIds, corpusVersion, corpusLoaderVersion: CORPUS_LOADER_VERSION, routeEvidence },
+    });
+  }
   const { verdict, nextAction, reasons } = computeVerdict({
     mode: 'oracle', role: 'auditor', tier: 'screen', routeEvidence,
     candidateMetrics: metrics, sampleSize: cases.length, minSampleSize: thresholds.screen.minSampleSize,
@@ -251,11 +291,15 @@ async function runScreenTier({ runId, candidateRoute, cases, corpusVersion, sele
 
 async function runPromotionTier({
   runId, repoId, candidateRoute, baselineRoute, judgeRoute, cases, corpusVersion, selectedKdIds, thresholds, repoRoots,
-  scope, passes, dials,
+  scope, passes, dials, meter,
 }) {
   const { computedJudgeTier } = resolveEvaluationTier({ mode: 'comparative', candidateRoute, baselineRoute, judgeRoute });
   const usageEvents = [];
   let candidateMetrics, baselineMetrics, honoredDials, perCaseOutputs = null;
+  // D6: set when the per-arm budget stops this run between billable units.
+  // Every call this run makes (candidate, baseline, judge) is paid for on this
+  // arm's behalf, so all of them are metered.
+  let budgetStop = null;
 
   if (computedJudgeTier === 'A' || computedJudgeTier === 'B') {
     // Generate candidate + baseline findings for every KD case, then blind-judge each.
@@ -299,12 +343,23 @@ async function runPromotionTier({
         commitSha: kdId, diff: kdCase.visibleInput.diff,
         candidateRoute, baselineRoute, judgeRoute,
       });
+      let judgeEvent = null;
       if (judgeResult.usage) {
-        usageEvents.push(buildUsageEvent({
+        judgeEvent = buildUsageEvent({
           runId, role: 'auditor', phase: 'judge', armId: null, candidateRef: judgeRoute.deploymentId ?? judgeRoute.resolvedModel,
           resolvedModel: judgeRoute.resolvedModel, pricingModel: judgeRoute.pricingModel, deploymentId: judgeRoute.deploymentId,
           provider: judgeRoute.provider, usage: judgeResult.usage, capturedAt: new Date().toISOString(),
-        }));
+        });
+        usageEvents.push(judgeEvent);
+      }
+      if (meter) {
+        meter.record(candGen.usageEvent.costUsd);
+        meter.record(baseGen.usageEvent.costUsd);
+        // A resumed judge batch made no new call (blind-judge returns usage
+        // null for it), so there is nothing to record. A FRESH judge call
+        // with no usage was paid for at an unknown price: unknown, not skipped.
+        if (judgeEvent) meter.record(judgeEvent.costUsd);
+        else if (!judgeResult.resumed) meter.record(null);
       }
 
       // Round-1 audit H6 fix — "recall" must be PER-KNOWN-DEFECT (did the
@@ -322,6 +377,11 @@ async function runPromotionTier({
         const isFalse = g.label === 'false' || g.label === 'plausible';
         if (g.bucket === 'candidate') { candidateFindingsTotal++; if (isFalse) candidateFalseCount++; }
         else if (g.bucket === 'baseline') { baselineFindingsTotal++; if (isFalse) baselineFalseCount++; }
+      }
+      const stop = meter?.check();
+      if (stop?.stop) {
+        budgetStop = { reason: stop.reason, casesCompleted: cases.indexOf(kdCase) + 1, casesPlanned: cases.length };
+        break;
       }
     }
     // recall = fraction of KD cases caught (the correct denominator — known
@@ -353,13 +413,29 @@ async function runPromotionTier({
     // is a fixed reference point, not itself a scored arm in the
     // manifest-driven n-arm sense) — candScore's honoredDials is what
     // `deriveControlsApplied` in main() needs.
-    const candScore = await scoreArmTierC({ route: candidateRoute, cases, dials, runId, armLabel: 'CAND' });
-    const baseScore = await scoreArmTierC({ route: baselineRoute, cases, dials, runId, armLabel: BASELINE_ARM.id });
+    // One meter across both passes: the baseline pass is paid for on this
+    // arm's behalf too. A candidate-pass stop skips the baseline pass.
+    const candScore = await scoreArmTierC({ route: candidateRoute, cases, dials, runId, armLabel: 'CAND', meter });
+    const baseScore = candScore.budgetStop
+      ? { metrics: null, usageEvents: [], perCase: [], budgetStop: null }
+      : await scoreArmTierC({ route: baselineRoute, cases, dials, runId, armLabel: BASELINE_ARM.id, meter });
     candidateMetrics = candScore.metrics;
     baselineMetrics = baseScore.metrics;
     honoredDials = candScore.honoredDials;
     usageEvents.push(...candScore.usageEvents, ...baseScore.usageEvents);
     perCaseOutputs = { candidate: candScore.perCase, baseline: baseScore.perCase };
+    if (candScore.budgetStop) budgetStop = { ...candScore.budgetStop, phase: 'candidate' };
+    else if (baseScore.budgetStop) budgetStop = { ...baseScore.budgetStop, phase: 'baseline' };
+  }
+
+  if (budgetStop) {
+    return {
+      ...budgetStoppedResult({
+        budgetStop, usageEvents, perCaseOutputs, honoredDials, meter,
+        evidence: { mode: 'comparative', selectedKdIds, corpusVersion, corpusLoaderVersion: CORPUS_LOADER_VERSION, computedJudgeTier },
+      }),
+      computedJudgeTier,
+    };
   }
 
   const costRows = usageEvents.length > 0 ? assembleCostRows(usageEvents) : [];
@@ -520,6 +596,21 @@ async function main() {
     }
     const dials = { reasoningEffort, temperature, maxOutputTokens };
 
+    // D6: what remains of this arm's budget for THIS attempt. Set by the
+    // manifest driver, which has already subtracted the arm's spend on every
+    // earlier attempt; an operator may also pass it on a plain --candidate run.
+    // Absent means no ceiling, not a zero one.
+    const budgetRaw = argOption('budget-remaining-usd');
+    let budgetRemainingUsd = null;
+    if (budgetRaw !== null) {
+      const n = Number(budgetRaw);
+      if (!Number.isFinite(n) || n <= 0) {
+        throw new RunPreflightError('invalid_budget', `--budget-remaining-usd must be a finite number > 0, got "${budgetRaw}" (an exhausted budget is refused by the driver before spawning, never passed as 0)`);
+      }
+      budgetRemainingUsd = n;
+    }
+    const meter = createArmBudgetMeter({ budgetUsdPerArm: budgetRemainingUsd });
+
     // controls.promptTemplateId/outputSchemaId/toolPolicy/rounds (Phase 3) —
     // always-required on a manifest (Bucket 2), but stay OPTIONAL at this
     // CLI's own boundary: a bare --candidate invocation predates this plan
@@ -618,12 +709,12 @@ async function main() {
     let result;
     let branch;
     if (tier === 'screen') {
-      result = await runScreenTier({ runId, candidateRoute, cases, corpusVersion, selectedKdIds: selectedKds.map((k) => k.id), thresholds, dials });
+      result = await runScreenTier({ runId, candidateRoute, cases, corpusVersion, selectedKdIds: selectedKds.map((k) => k.id), thresholds, dials, meter });
       branch = 'tier-c';
     } else {
       const baselineRoute = resolveCandidateRoute({ role: 'auditor', candidateSpec: { kind: 'sentinel', value: BASELINE_ARM.generation.modelSentinel } });
       const judgeRoute = judgeRaw ? resolveCandidateRoute({ role: 'auditor', candidateSpec: parseJsonArg(judgeRaw, '--judge') }) : null;
-      result = await runPromotionTier({ runId, repoId: repoIdentity.repoUuid, candidateRoute, baselineRoute, judgeRoute, cases, corpusVersion, selectedKdIds: selectedKds.map((k) => k.id), thresholds, repoRoots, scope, passes, dials });
+      result = await runPromotionTier({ runId, repoId: repoIdentity.repoUuid, candidateRoute, baselineRoute, judgeRoute, cases, corpusVersion, selectedKdIds: selectedKds.map((k) => k.id), thresholds, repoRoots, scope, passes, dials, meter });
       branch = result.computedJudgeTier === 'A' || result.computedJudgeTier === 'B' ? 'tier-a-b' : 'tier-c';
     }
 
@@ -639,15 +730,21 @@ async function main() {
     };
     const controlsApplied = deriveControlsApplied(reconstructedControls, { branch, honoredDials: result.honoredDials, liveHashes });
 
+    // A budget stop is `stopped_budget`: terminal but not a success (so a
+    // raised budget can resume the arm), carrying the cost it actually spent.
+    const terminalBundle = result.budgetStop
+      ? { status: 'stopped_budget', verdict: null, nextAction: null, metrics: null, cost: result.cost, evidence: result.evidence }
+      : { status: 'completed', verdict: result.verdict, nextAction: result.nextAction, metrics: result.metrics, cost: result.cost, evidence: result.evidence };
     if (created.runId) {
-      await updateEvalRunTerminal({
-        repoId: repoIdentity.repoUuid, runId: created.runId, expectedStatus: 'running',
-        terminalBundle: { status: 'completed', verdict: result.verdict, nextAction: result.nextAction, metrics: result.metrics, cost: result.cost, evidence: result.evidence },
-      });
+      await updateEvalRunTerminal({ repoId: repoIdentity.repoUuid, runId: created.runId, expectedStatus: 'running', terminalBundle });
     }
 
-    const summaryLine = `[model-eval-auditor] tier=${tier} verdict=${result.verdict} nextAction=${result.nextAction} runId=${runId}`;
+    const summaryLine = result.budgetStop
+      ? `[model-eval-auditor] tier=${tier} BUDGET-STOPPED (${result.budgetStop.reason}) after ${result.budgetStop.casesCompleted}/${result.budgetStop.casesPlanned} case(s), spent=${result.budgetStop.spentUsd ?? 'unknown'}: INCONCLUSIVE, not scored runId=${runId}`
+      : `[model-eval-auditor] tier=${tier} verdict=${result.verdict} nextAction=${result.nextAction} runId=${runId}`;
     writeOutput({ runId, tier, ...result, controlsApplied }, outFile, summaryLine);
+    // exitCode, not process.exit(): the stdout above must drain first.
+    if (result.budgetStop) process.exitCode = BUDGET_STOPPED_EXIT_CODE;
   } catch (err) {
     if (err instanceof EvalRunAlreadyActiveError) {
       console.error(`[model-eval-auditor] ${err.message}`);

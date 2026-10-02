@@ -37,7 +37,8 @@ import { RunPreflightError } from './cli-shared.mjs';
 import { parseComparisonManifest, resolveManifestPaths } from '../comparison/manifest.mjs';
 import { isScoredArm } from '../comparison/arms.mjs';
 import { configDigest as manifestConfigDigest, LOCK_SCHEMA_VERSION } from '../comparison/lock.mjs';
-import { upsertComparison, maxComparisonArmAttempt } from '../store/model-eval.mjs';
+import { upsertComparison, getComparisonArmAttempts } from '../store/model-eval.mjs';
+import { decideArmAttempt, DEFAULT_MAX_ATTEMPTS_PER_ARM } from '../comparison/attempts.mjs';
 import { resolveRepoIdentity } from '../repo-identity.mjs';
 import { writeOutput } from '../file-io.mjs';
 import { EXECUTORS } from './executors.mjs';
@@ -57,6 +58,13 @@ import { EXECUTORS } from './executors.mjs';
  * **Per-arm failure is terminal for that arm only.** A failed arm's outcome is
  * recorded in the aggregate `--out`, not thrown — the cohort's other arms still
  * run (D6's no-silent-zero rule, applied to execution).
+ *
+ * **Bounded re-spend (D5a + D6).** Before each arm, `decideArmAttempt` reads
+ * the arm's recorded attempts and decides: resume (a live success is never
+ * re-run), refuse (attempt cap `maxAttemptsPerArm` reached; spend across all
+ * attempts at the `budgetUsdPerArm` ceiling; or the history could not be
+ * read), or run as attempt N+1 with whatever budget remains. Without this a
+ * deterministically failing arm re-spent on every re-invocation.
  *
  * @param {{manifestPath: string, tier: string, corpusFlagPath: string|null,
  *   thresholdsPath: string, outFile: string|null, repoRoots: string[]}} args
@@ -98,6 +106,11 @@ export async function runManifestDriver({ manifestPath, tier, corpusFlagPath, th
     throw new RunPreflightError('manifest_path_refused', `--manifest: ${err.message}`);
   }
 
+  // Role-specific refuse-at-load checks (e.g. a budget on an unpriced route),
+  // BEFORE the comparison row is minted: a manifest that cannot run as
+  // declared should cost nothing, store writes included.
+  executor.preflightManifest?.(manifest);
+
   const digest = manifestConfigDigest(manifest);
   const repoIdentity = resolveRepoIdentity();
   const ensured = await upsertComparison({
@@ -110,6 +123,14 @@ export async function runManifestDriver({ manifestPath, tier, corpusFlagPath, th
   // null only when cloud is off — every arm still runs; the cohort is simply
   // unlinked, same graceful-degradation posture as the rest of this harness.
   const comparisonId = ensured.id;
+  // Analysis-time (D2a): read from the manifest, never part of its digest.
+  const maxAttemptsPerArm = manifest.maxAttemptsPerArm ?? DEFAULT_MAX_ATTEMPTS_PER_ARM;
+  const budgetUsdPerArm = manifest.budgetUsdPerArm ?? null;
+  if (!comparisonId) {
+    process.stderr.write(`  [manifest-driver] manifest: cloud store off: no attempt history exists, so maxAttemptsPerArm (${maxAttemptsPerArm}) `
+      + 'cannot bound RE-invocations of this manifest; each arm runs once per invocation'
+      + `${budgetUsdPerArm != null ? ', and budgetUsdPerArm applies to this invocation only' : ''}\n`);
+  }
 
   const scoredArms = manifest.arms.filter(isScoredArm);
   const unscoredArms = manifest.arms.filter((a) => !isScoredArm(a));
@@ -136,22 +157,17 @@ export async function runManifestDriver({ manifestPath, tier, corpusFlagPath, th
 
   const results = [];
   for (const arm of scoredArms) {
-    // Resume (D5a's reducer, role-generic — `maxComparisonArmAttempt` is keyed
-    // on comparisonId+armId, not role): an arm with a live success is never
-    // re-run — re-invoking the driver resumes the cohort by running only the
-    // arms without one.
-    let nextAttempt = 1;
-    let supersede = false;
-    if (comparisonId) {
-      const existing = await maxComparisonArmAttempt({ comparisonId, armId: arm.id });
-      if (existing.hasLiveSuccess) {
-        process.stderr.write(`  [manifest-driver] manifest: arm "${arm.id}" already has a live success — skipping (resume)\n`);
-        results.push({ armId: arm.id, skipped: true, ok: true, attempt: existing.attempt });
-        continue;
-      }
-      nextAttempt = existing.attempt + 1;
-      supersede = existing.attempt > 0;
+    // D5a's reducer + cap and D6's across-attempt budget, role-generic (the
+    // history is keyed on comparisonId+armId, not role). One decision, made
+    // before anything is spent.
+    const history = comparisonId ? await getComparisonArmAttempts({ comparisonId, armId: arm.id }) : null;
+    const decision = decideArmAttempt({ history, maxAttemptsPerArm, budgetUsdPerArm });
+    if (decision.action === 'skip') {
+      process.stderr.write(`  [manifest-driver] manifest: arm "${arm.id}" not run: ${describeSkip(decision)}\n`);
+      results.push({ armId: arm.id, skipped: true, ok: decision.outcome === 'ok', outcome: decision.outcome, reason: decision.reason, attempt: decision.attempts ?? null, decision });
+      continue;
     }
+    const nextAttempt = decision.attempt;
 
     process.stderr.write(`  [manifest-driver] manifest: running arm "${arm.id}" (model ${arm.model})…\n`);
     // Per-arm error boundary (round-4 gate H5/H20) — every current executor
@@ -165,7 +181,8 @@ export async function runManifestDriver({ manifestPath, tier, corpusFlagPath, th
     let attempt;
     try {
       attempt = await executor.executeArm(arm, manifest.controls, context, {
-        comparisonId, armId: arm.id, attempt: nextAttempt, supersedePrior: supersede,
+        comparisonId, armId: arm.id, attempt: nextAttempt, supersedePrior: decision.supersedePrior,
+        remainingBudgetUsd: decision.remainingBudgetUsd,
       });
     } catch (err) {
       attempt = { outcome: 'terminal', reason: `executeArm threw: ${err.message}` };
@@ -177,7 +194,10 @@ export async function runManifestDriver({ manifestPath, tier, corpusFlagPath, th
     results.push({ armId: arm.id, ok, attempt: nextAttempt, outcome: attempt.outcome, result: attempt });
   }
 
-  const failedArms = results.filter((r) => !r.ok && !r.skipped).map((r) => r.armId);
+  // Every non-ok arm, skipped or run: a permanently-failed, budget-stopped or
+  // refused arm is INCONCLUSIVE for this comparison exactly as a failed run is.
+  // (A resumed live success is a skip with ok:true and is not counted.)
+  const failedArms = results.filter((r) => !r.ok).map((r) => r.armId);
   // controlsDivergence (auditor-controls-execution-wiring.md, round-4 H1 fix)
   // — `configDigest` hashes the manifest's REQUESTED controls (its correct,
   // unchanged meaning); this is the one place that already sees every arm's
@@ -188,9 +208,38 @@ export async function runManifestDriver({ manifestPath, tier, corpusFlagPath, th
   // digest implying uniform governance) at the level it actually surfaces.
   const controlsDivergence = computeControlsDivergence(results);
   const summaryLine = `[manifest-driver] manifest=${manifest.id} role=${manifest.role} comparisonId=${comparisonId ?? '(cloud off)'} arms=${scoredArms.length} failed=${failedArms.length}`;
-  writeOutput({ manifestId: manifest.id, role: manifest.role, comparisonId, tier, arms: results, controlsDivergence }, outFile, summaryLine);
+  // `analysis` names the analysis-time values this run applied, so a reader
+  // can tell which ceiling produced a skip without re-deriving the default.
+  writeOutput({
+    manifestId: manifest.id, role: manifest.role, comparisonId, tier,
+    analysis: { maxAttemptsPerArm, budgetUsdPerArm },
+    arms: results, controlsDivergence,
+  }, outFile, summaryLine);
   if (failedArms.length > 0) {
     process.stderr.write(`  [manifest-driver] manifest: arm(s) failed: ${failedArms.join(', ')} — INCONCLUSIVE for those; siblings recorded normally\n`);
+  }
+}
+
+/**
+ * One line naming WHY an arm was not run, and the lever that changes it — a
+ * skip without its reason reads the same as a bug.
+ * @param {object} d - a `decideArmAttempt` skip decision
+ * @returns {string}
+ */
+function describeSkip(d) {
+  switch (d.reason) {
+    case 'live-success':
+      return `already has a live success (resume; attempt ${d.attempts})`;
+    case 'max-attempts-exhausted':
+      return `PERMANENTLY-FAILED: ${d.attempts} attempt(s) recorded, maxAttemptsPerArm is ${d.maxAttemptsPerArm} (raise it in the manifest to retry; the cohort is kept)`;
+    case 'attempt-history-unreadable':
+      return `REFUSED: could not read its attempt history (${d.detail}); not guessing attempt 1, which would re-spend`;
+    case 'budget-exhausted':
+      return `BUDGET-STOPPED: ${d.spendUsd} USD recorded across ${d.attempts} attempt(s) >= budgetUsdPerArm ${d.budgetUsdPerArm} (raise it to resume; the cohort is kept)`;
+    case 'budget-unenforceable-unpriced':
+      return `BUDGET-STOPPED: ${d.unpricedAttempts} earlier attempt(s) have no recorded cost, so spend against budgetUsdPerArm ${d.budgetUsdPerArm} cannot be measured (remove the budget to retry without one)`;
+    default:
+      return `${String(d.outcome).toUpperCase()} (${d.reason})`;
   }
 }
 
@@ -224,4 +273,4 @@ function computeControlsDivergence(results) {
 }
 
 // Exported for direct testing (mirrors this repo's established _internals pattern).
-export const _internals = { computeControlsDivergence };
+export const _internals = { computeControlsDivergence, describeSkip };

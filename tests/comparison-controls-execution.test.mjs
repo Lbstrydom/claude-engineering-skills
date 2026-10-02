@@ -20,7 +20,7 @@ import {
 import { _internals as executorInternals } from '../scripts/lib/model-eval/executors.mjs';
 import { buildAuditorPrompt, AuditorExtractionSchema } from '../scripts/lib/model-eval/structured-extractor.mjs';
 
-const { buildAuditorSpawnArgs } = executorInternals;
+const { buildAuditorSpawnArgs, classifyAuditorChildResult, auditorPreflightManifest } = executorInternals;
 
 const VALID_PROMPT_ID = AUDITOR_TIER_C_PROMPT_IDS[AUDITOR_TIER_C_PROMPT_IDS.length - 1];
 const VALID_SCHEMA_ID = AUDITOR_TIER_C_SCHEMA_IDS[AUDITOR_TIER_C_SCHEMA_IDS.length - 1];
@@ -196,5 +196,79 @@ describe('auditorExecuteArm spawn-argv construction (buildAuditorSpawnArgs)', ()
     assert.equal(args[args.indexOf('--output-schema-id') + 1], 'auditor-extraction-v1-def');
     assert.equal(args[args.indexOf('--tool-policy') + 1], 'none');
     assert.equal(args[args.indexOf('--rounds') + 1], '1');
+  });
+});
+
+describe('per-arm budget reaches the auditor child (D6)', () => {
+  it('a remaining budget is passed as --budget-remaining-usd with the exact value', () => {
+    const args = buildAuditorSpawnArgs(ARM, REQUIRED_CONTROLS, CONTEXT, { remainingBudgetUsd: 3.75 }, '/out.json');
+    assert.equal(args[args.indexOf('--budget-remaining-usd') + 1], '3.75');
+  });
+
+  it('NEGATIVE CONTROL: no budget → no flag (an absent ceiling is not a zero ceiling)', () => {
+    for (const remainingBudgetUsd of [null, undefined]) {
+      const args = buildAuditorSpawnArgs(ARM, REQUIRED_CONTROLS, CONTEXT, { remainingBudgetUsd }, '/out.json');
+      assert.equal(args.includes('--budget-remaining-usd'), false);
+    }
+  });
+});
+
+describe('classifyAuditorChildResult — a budget stop is its own outcome, never ok and never a crash', () => {
+  const budgetOut = { verdict: null, budgetStop: { reason: 'budget-exhausted', casesCompleted: 2, casesPlanned: 5 } };
+
+  it('exit 4 + a budgetStop --out → budget-stopped, carrying the reason', () => {
+    const r = classifyAuditorChildResult({ status: 4, stderr: '', armResult: budgetOut, armOutFile: '/o.json' });
+    assert.equal(r.outcome, 'budget-stopped');
+    assert.match(r.reason, /budget-exhausted/);
+    assert.equal(r.result.budgetStop.casesCompleted, 2);
+  });
+
+  it('exit 4 WITHOUT a budgetStop body is terminal — the exit code alone is not evidence', () => {
+    assert.equal(classifyAuditorChildResult({ status: 4, stderr: 'x', armResult: null, armOutFile: '/o.json' }).outcome, 'terminal');
+  });
+
+  it('a budgetStop body on exit 0 is terminal — the two halves of the contract must agree', () => {
+    assert.equal(classifyAuditorChildResult({ status: 0, stderr: '', armResult: budgetOut, armOutFile: '/o.json' }).outcome, 'terminal');
+  });
+
+  it('NEGATIVE CONTROL: an ordinary exit-0 result with a verdict is still ok', () => {
+    const r = classifyAuditorChildResult({ status: 0, stderr: '', armResult: { verdict: 'keep', nextAction: 'none', metrics: {} }, armOutFile: '/o.json' });
+    assert.equal(r.outcome, 'ok');
+  });
+});
+
+describe('auditorPreflightManifest — a budget on an unpriced route is refused at load (D6)', () => {
+  const manifest = (extra = {}) => ({
+    role: 'auditor',
+    arms: [{ id: 'priced', model: 'latest-gpt', mode: 'primary' }, { id: 'mystery', model: 'latest-mystery', mode: 'shadow' }],
+    ...extra,
+  });
+  const resolve = ({ candidateSpec }) => ({ pricingModel: candidateSpec.value === 'latest-gpt' ? 'gpt-x' : 'mystery-model' });
+  const isPricedStub = (m) => m === 'gpt-x';
+
+  it('names the unpriced arm and its pricing model, with a stable reason code', () => {
+    assert.throws(
+      () => auditorPreflightManifest(manifest({ budgetUsdPerArm: 5 }), { _resolveRoute: resolve, _isPriced: isPricedStub }),
+      (err) => {
+        assert.equal(err.reason, 'budget_unenforceable');
+        assert.match(err.message, /mystery \(mystery-model\)/);
+        assert.doesNotMatch(err.message, /priced \(gpt-x\)/);
+        return true;
+      },
+    );
+  });
+
+  it('NEGATIVE CONTROL: the same arms with no budget are not refused (nothing to enforce)', () => {
+    assert.doesNotThrow(() => auditorPreflightManifest(manifest(), { _resolveRoute: resolve, _isPriced: isPricedStub }));
+  });
+
+  it('a route that fails to resolve is left to the per-arm path, not turned into a budget refusal', () => {
+    const throwing = () => { throw new Error('not a registered sentinel'); };
+    assert.doesNotThrow(() => auditorPreflightManifest(manifest({ budgetUsdPerArm: 5 }), { _resolveRoute: throwing, _isPriced: isPricedStub }));
+  });
+
+  it('control/replicate arms are not checked — they are never executed', () => {
+    const m = manifest({ budgetUsdPerArm: 5, arms: [{ id: 'priced', model: 'latest-gpt', mode: 'primary' }, { id: 'ctl', model: 'latest-mystery', mode: 'shadow', type: 'control' }] });
+    assert.doesNotThrow(() => auditorPreflightManifest(m, { _resolveRoute: resolve, _isPriced: isPricedStub }));
   });
 });

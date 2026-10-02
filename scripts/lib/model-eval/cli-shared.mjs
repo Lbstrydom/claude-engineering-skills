@@ -7,6 +7,16 @@
  * @module scripts/lib/model-eval/cli-shared
  */
 
+/**
+ * Exit code for a run the per-arm budget stopped between billable units (D6,
+ * role-agnostic-comparison-core.md). Distinct from 0 (a scored result), 1
+ * (crash), 2 (preflight) and 3 (an active run already exists): a budget stop
+ * scored nothing, and a caller checking `$?` must not read it as success. The
+ * `--out` JSON carries `budgetStop`; `executors.mjs` requires BOTH halves
+ * before reporting the arm as budget-stopped.
+ */
+export const BUDGET_STOPPED_EXIT_CODE = 4;
+
 /** Thrown when a CLI-level precondition fails (bad arg, missing config,
  *  insufficient ground truth, …). Carries a stable `reason` code so the
  *  caller can map it to a specific exit path / message. */

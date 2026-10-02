@@ -1,7 +1,7 @@
 /**
  * D3a cohort persistence — the LIVE half against a real, disposable schema.
  *
- * `upsertComparison`/`createEvalRun`'s cohort fields/`maxComparisonArmAttempt`/
+ * `upsertComparison`/`createEvalRun`'s cohort fields/`getComparisonArmAttempts`/
  * `getComparisonCohort` all depend on real constraints (the composite unique
  * key, the partial "one live attempt" index, the migration's new columns) that
  * a mock cannot exercise — this is the DB-suite half AGENTS.md requires for
@@ -17,6 +17,7 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { summarizeArmAttempts, decideArmAttempt } from '../scripts/lib/comparison/attempts.mjs';
 
 const TEST_URL = process.env.AUDIT_DB_TEST_URL;
 const skip = TEST_URL ? false : 'AUDIT_DB_TEST_URL not set (runs under npm run db:suites:gate)';
@@ -41,7 +42,7 @@ describe('model-eval comparison cohort against a live schema', { skip }, () => {
   // status at creation — 'completed' is reached only via updateEvalRunTerminal,
   // never in one call. This helper models exactly what a real cohort arm-run
   // does: create running, then finalize — never a shortcut through the schema.
-  async function createAndFinalizeArmRun({ armId, comparisonId, attempt, supersedePrior = false, status = 'completed' }) {
+  async function createAndFinalizeArmRun({ armId, comparisonId, attempt, supersedePrior = false, status = 'completed', cost }) {
     const created = await store.createEvalRun({
       repoId, role: 'auditor', tier: 'screen',
       candidateRef: { candidateSpec: { kind: 'sentinel', value: 'latest-gpt' } },
@@ -50,6 +51,7 @@ describe('model-eval comparison cohort against a live schema', { skip }, () => {
     const terminalBundle = status === 'completed'
       ? { status: 'completed', verdict: 'keep', nextAction: 'none' } // a real DECISION_TABLE pair, not a guess
       : { status };
+    if (cost !== undefined) terminalBundle.cost = cost;
     await store.updateEvalRunTerminal({ repoId, runId: created.runId, expectedStatus: 'running', terminalBundle });
     return created;
   }
@@ -342,8 +344,8 @@ describe('model-eval comparison cohort against a live schema', { skip }, () => {
       comparisonId: cohort.id, armId: 'flaky-arm', attempt: 1, status: 'failed_provider',
     });
 
-    const before1 = await store.maxComparisonArmAttempt({ comparisonId: cohort.id, armId: 'flaky-arm' });
-    assert.equal(before1.attempt, 1);
+    const before1 = summarizeArmAttempts((await store.getComparisonArmAttempts({ comparisonId: cohort.id, armId: 'flaky-arm' })).rows);
+    assert.equal(before1.attempts, 1);
     assert.equal(before1.hasLiveSuccess, false, 'a failed attempt is not a live SUCCESS');
 
     const retry = await createAndFinalizeArmRun({
@@ -351,14 +353,61 @@ describe('model-eval comparison cohort against a live schema', { skip }, () => {
     });
     assert.ok(retry.runId);
 
-    const after1 = await store.maxComparisonArmAttempt({ comparisonId: cohort.id, armId: 'flaky-arm' });
-    assert.equal(after1.attempt, 2);
+    const after1 = summarizeArmAttempts((await store.getComparisonArmAttempts({ comparisonId: cohort.id, armId: 'flaky-arm' })).rows);
+    assert.equal(after1.attempts, 2);
     assert.equal(after1.hasLiveSuccess, true, 'the retry succeeded and is now the live attempt');
 
     // The failed attempt stays READABLE, stamped superseded — never deleted.
     const failedRow = await client.query('SELECT superseded_at, status FROM model_eval_runs WHERE run_id = $1', [failed.runId]);
     assert.notEqual(failedRow.rows[0].superseded_at, null, 'the earlier failed attempt must be superseded, not erased');
     assert.equal(failedRow.rows[0].status, 'failed_provider', 'the evidence of what the earlier attempt produced survives unchanged');
+  });
+
+  it('D5a CAP against real rows: two failed attempts (one superseded) exhaust the default cap — the third invocation does not re-spend', async () => {
+    const cohort = await store.upsertComparison({
+      repoId, comparisonKey: 'live-cap', configDigest: 'd1', lockSchemaVersion: 1, role: 'auditor',
+    });
+    await createAndFinalizeArmRun({ comparisonId: cohort.id, armId: 'always-fails', attempt: 1, status: 'failed_provider' });
+    await createAndFinalizeArmRun({ comparisonId: cohort.id, armId: 'always-fails', attempt: 2, supersedePrior: true, status: 'failed_provider' });
+
+    const read = await store.getComparisonArmAttempts({ comparisonId: cohort.id, armId: 'always-fails' });
+    assert.equal(read.ok, true);
+    assert.deepEqual(read.rows.map((r) => [r.attempt, r.status, r.supersededAt != null]), [[1, 'failed_provider', true], [2, 'failed_provider', false]],
+      'the superseded attempt must come back — it counts toward the cap and its cost toward spend');
+    const decision = decideArmAttempt({ history: read });
+    assert.equal(decision.action, 'skip');
+    assert.equal(decision.reason, 'max-attempts-exhausted');
+  });
+
+  it('D6 against real rows: stopped_budget is accepted by the status CHECK, its partial cost is read back, and retries count against the budget', async () => {
+    const cohort = await store.upsertComparison({
+      repoId, comparisonKey: 'live-budget', configDigest: 'd1', lockSchemaVersion: 1, role: 'auditor',
+    });
+    await createAndFinalizeArmRun({
+      comparisonId: cohort.id, armId: 'pricey', attempt: 1, status: 'stopped_budget',
+      cost: { totalUsd: 1.25, byRow: [] },
+    });
+    const read = await store.getComparisonArmAttempts({ comparisonId: cohort.id, armId: 'pricey' });
+    assert.deepEqual(read.rows.map((r) => [r.status, r.costUsd]), [['stopped_budget', 1.25]]);
+    assert.equal(typeof read.rows[0].costUsd, 'number', 'a jsonb number must arrive as a number, not a string');
+
+    const summary = summarizeArmAttempts(read.rows);
+    assert.equal(summary.hasLiveSuccess, false, 'a budget stop is not a success — raising the budget must be able to resume it');
+    assert.deepEqual(decideArmAttempt({ history: read, maxAttemptsPerArm: 3, budgetUsdPerArm: 1.25 }).reason, 'budget-exhausted');
+    const raised = decideArmAttempt({ history: read, maxAttemptsPerArm: 3, budgetUsdPerArm: 5 });
+    assert.equal(raised.action, 'run');
+    assert.equal(raised.attempt, 2);
+    assert.equal(raised.remainingBudgetUsd, 3.75);
+  });
+
+  it('DB-LEVEL NEGATIVE CONTROL: a status outside the widened CHECK is still refused', async () => {
+    await assert.rejects(
+      () => client.query(
+        `INSERT INTO model_eval_runs (repo_id, role, tier, candidate_ref, status) VALUES ($1, 'auditor', 'screen', '{}', 'stopped_for_lunch')`,
+        [repoId],
+      ),
+      (err) => err.code === '23514',
+    );
   });
 
   it('getComparisonCohort includes a FAILED arm, never hides it — D3a: a half-collected cohort must not look complete', async () => {
@@ -381,9 +430,10 @@ describe('model-eval comparison cohort against a live schema', { skip }, () => {
     });
     const cohortRead = await store.getComparisonCohort({ comparisonId: cohort.id });
     assert.deepEqual(cohortRead.rows, []);
-    const attempt = await store.maxComparisonArmAttempt({ comparisonId: cohort.id, armId: 'never-run' });
-    assert.equal(attempt.attempt, 0);
-    assert.equal(attempt.hasLiveSuccess, false);
+    const attemptRead = await store.getComparisonArmAttempts({ comparisonId: cohort.id, armId: 'never-run' });
+    assert.equal(attemptRead.ok, true);
+    assert.deepEqual(attemptRead.rows, []);
+    assert.equal(summarizeArmAttempts(attemptRead.rows).attempts, 0);
   });
 
   // 20260816090000_model_eval_comparison_integrity.sql, Gap 1 — before this

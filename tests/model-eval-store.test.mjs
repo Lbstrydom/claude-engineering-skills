@@ -31,6 +31,16 @@ describe('store/model-eval.mjs — persisted verdict/nextAction bounded to the r
     assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, status: 'running' }).success, true);
   });
 
+  test('stopped_budget (D6) is a TERMINAL status with no decision — never creatable directly, never carrying a verdict', () => {
+    const base = { repoId: 'r1', runId: 'run-x', expectedStatus: 'running' };
+    const T = storeModelEvalInternals.UpdateEvalRunTerminalArgsSchema;
+    assert.equal(T.safeParse({ ...base, terminalBundle: { status: 'stopped_budget', cost: { totalUsd: 1.2 }, evidence: { budgetStop: { reason: 'budget-exhausted' } } } }).success, true);
+    assert.equal(T.safeParse({ ...base, terminalBundle: { status: 'stopped_budget', verdict: 'inconclusive', nextAction: 'reject' } }).success, false,
+      'a budget stop scored nothing — a verdict on it would be a score over however many cases happened to fit');
+    const create = { repoId: 'r1', role: 'auditor', tier: 'screen', candidateRef: { spec: 'x' } };
+    assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...create, status: 'stopped_budget' }).success, false);
+  });
+
   test('status:"pending_shadow" is rejected for a non-adjudicator role (round-14 M1 regression guard)', () => {
     const base = { repoId: 'r1', tier: 'screen', candidateRef: { spec: 'x' }, status: 'pending_shadow' };
     assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, role: 'auditor' }).success, false);
