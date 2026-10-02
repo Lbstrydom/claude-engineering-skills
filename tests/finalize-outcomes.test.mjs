@@ -193,6 +193,78 @@ describe('finalizeRoundOutcomes', () => {
     assert.equal(status.labelled, 1);
   });
 
+  // A ledger that rules a control marker `accepted` turned a machine coverage
+  // notice into an obligation in `unremediated_acceptances` (3 live rows,
+  // 2026-10-02) — and into a positive bandit reward and a run acceptedCount.
+  // A control marker may be DISMISSED by a ledger, never accepted.
+  describe('control markers cannot be accepted by a ledger', () => {
+    const CONTROL_DETAIL = 'ADJACENCY_INCOMPLETE (enumeration-bound): maxContainers=20 reached — remaining files not enumerated';
+    function controlPair(id, outcome) {
+      const finding = {
+        id, severity: 'MEDIUM', category: '[Adjacency] coverage incomplete — control did not fully run',
+        section: 'diff', detail: CONTROL_DETAIL, _pass: 'adjacency', _primaryFile: 'diff', _hash: `hash-${id}`,
+      };
+      const entry = {
+        topicId: generateTopicId(finding), findingId: id,
+        adjudicationOutcome: outcome, remediationState: 'pending', ruling: 'sustain',
+      };
+      return { finding, entry };
+    }
+    function mockStore() {
+      const calls = [];
+      const runMeta = [];
+      const store = {
+        recordAdjudicationEvent: async (runId, fp, ev) => { calls.push({ fp, ev }); return { ok: true }; },
+        updatePassStatsPostDeliberation: async () => true,
+        updateRunMeta: async (runId, meta) => { runMeta.push(meta); return true; },
+      };
+      return { store, calls, runMeta };
+    }
+
+    for (const outcome of ['accepted', 'severity_adjusted']) {
+      it(`a ledger ruling of '${outcome}' on a control marker is refused — no adjudication event, stays pending`, async () => {
+        const { store, calls, runMeta } = mockStore();
+        const { finding, entry } = controlPair('C', outcome);
+        const status = await finalizeRoundOutcomes({
+          result: { findings: [finding], _cloudRunId: 'run-c' }, ledger: { entries: [entry] },
+          round: 2, store, sid: 'run-c',
+        });
+        assert.equal(calls.length, 0, 'no adjudication event may be written for a control marker the ledger accepted');
+        assert.equal(status.enriched[0].adjudicationOutcome, 'pending',
+          'pending is what routes it to auto_dismissed in splitPendingFindings');
+        assert.equal(status.labelled, 0);
+        assert.equal(runMeta[0].acceptedCount, 0, 'the run must not count a control marker as accepted');
+        assert.equal(outcomesLines().length, 0, 'no bandit reward for a control marker');
+        assert.deepEqual(splitPendingFindings(status.enriched).autoDismissFps, ['hash-C']);
+      });
+    }
+
+    it('a ledger DISMISSAL of a control marker is still honoured', async () => {
+      const { store, calls } = mockStore();
+      const { finding, entry } = controlPair('D', 'dismissed');
+      const status = await finalizeRoundOutcomes({
+        result: { findings: [finding], _cloudRunId: 'run-d' }, ledger: { entries: [entry] },
+        round: 2, store, sid: 'run-d',
+      });
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].ev.adjudicationOutcome, 'dismissed');
+      assert.equal(status.labelled, 1);
+    });
+
+    it('a real finding the ledger accepts is unaffected (negative control)', async () => {
+      const { store, calls, runMeta } = mockStore();
+      const { finding, entry } = ruledPair('R', 'accepted');
+      const status = await finalizeRoundOutcomes({
+        result: { findings: [finding], _cloudRunId: 'run-r' }, ledger: { entries: [entry] },
+        round: 2, store, sid: 'run-r',
+      });
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].ev.adjudicationOutcome, 'accepted');
+      assert.equal(status.labelled, 1);
+      assert.equal(runMeta[0].acceptedCount, 1);
+    });
+  });
+
   it('un-ruled findings stay pending (not labelled)', async () => {
     const result = { findings: [{ id: 'Z', severity: 'LOW', category: 'X', section: 'z.js', _pass: 'backend' }] };
     const ledger = { entries: [] };
