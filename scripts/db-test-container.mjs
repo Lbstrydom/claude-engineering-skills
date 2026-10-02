@@ -39,7 +39,19 @@ import { fmtMs } from './lib/cli-io.mjs';
 
 // ── CI-parity constants (single source; guarded by tests/db-test-container.test.mjs) ──
 
-export const DB_TEST_IMAGE = 'pgvector/pgvector:pg16';
+// Pinned by DIGEST, not by the `pg16` tag. `tests/fixtures/expected-schema.json`
+// records the `vector` extension version (and every pgvector function), so it
+// is a function of the image as much as of the migrations — and `pg16` is a
+// mutable tag. On 2026-10-02 upstream republished it with pgvector 0.8.7, the
+// fixture still said 0.8.6, and every push from main failed `db:suites:gate`
+// on an extensions drift no commit had caused. The `<version>-pg16` tag is
+// documentation only (Docker resolves `tag@digest` by the digest); the digest
+// is what makes the fixture reproducible. Bumping it is deliberate and is ONE
+// commit: change this constant AND `.github/workflows/postgres-parity.yml`'s
+// service image, then `npm run db:local:regen` — `npm test` fails until the
+// fixture's `vector` version matches the tag here.
+export const DB_TEST_IMAGE =
+  'pgvector/pgvector:0.8.7-pg16@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a';
 export const CONTAINER_NAME = 'ces-db-test';
 export const DEFAULT_PORT = 5433;
 
@@ -386,6 +398,12 @@ export const IMAGE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
  * false here. Skipping unconditionally would freeze every developer on whatever
  * they happened to pull first, permanently and silently, which is the failure
  * shape this repo keeps finding rather than a saving.
+ *
+ * **Since 2026-10-02 the ref is digest-pinned** (see `DB_TEST_IMAGE`), so a
+ * re-pull can no longer change what runs: it re-confirms the same digest, one
+ * ~1.8 s registry round-trip a week. The window is kept because it is harmless
+ * and still correct for a mutable ref; it is no longer what keeps the image
+ * honest — the pin is.
  *
  * So: **bounded staleness, not none and not unbounded.** Re-pull when the local
  * tag is older than `IMAGE_MAX_AGE_MS`, otherwise trust it. The freshness

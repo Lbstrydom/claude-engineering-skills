@@ -179,7 +179,10 @@ jobs:
         # pgvector base image — Postgres 16 with the `vector` extension
         # pre-installed. `pg_trgm` ships with stock Postgres; `pgcrypto`
         # is added by the compat-bootstrap.
-        image: pgvector/pgvector:pg16
+        # Digest-pinned, verbatim DB_TEST_IMAGE (scripts/db-test-container.mjs):
+        # tests/fixtures/expected-schema.json records the pgvector version, so a
+        # mutable tag drifts the fixture with no commit (2026-10-02, 0.8.6→0.8.7).
+        image: pgvector/pgvector:0.8.7-pg16@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres

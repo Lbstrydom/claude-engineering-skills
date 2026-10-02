@@ -161,10 +161,19 @@ difference by regenerating the fixture against the store that differs.
 ## Local disposable test container
 
 `scripts/db-test-container.mjs` runs an ephemeral local Docker Postgres
-(`pgvector/pgvector:pg16`, mirroring `.github/workflows/postgres-parity.yml`'s
+(`DB_TEST_IMAGE`, mirroring `.github/workflows/postgres-parity.yml`'s
 `db-suite` service container) so the destructive DB integration suites and
 `tests/fixtures/expected-schema.json` regeneration are runnable locally —
-not just in CI. Root cause: after the 2026-07-14 production wipe (INC-002),
+not just in CI.
+
+**The image is pinned by digest** (`pgvector/pgvector:<pgvector>-pg16@sha256:…`)
+because the fixture records the `vector` extension version: on 2026-10-02 the
+mutable `pg16` tag moved to pgvector 0.8.7 and every push failed
+`db:suites:gate` on an `extensions` drift no commit caused. To bump it, change
+`DB_TEST_IMAGE` and the workflow's service `image:` together (a test requires
+them verbatim-equal), then `npm run db:local:regen` in the same commit —
+`npm test` fails until the fixture's `vector` version matches the tag. Get the
+digest with `docker buildx imagetools inspect pgvector/pgvector:<version>-pg16`. Root cause: after the 2026-07-14 production wipe (INC-002),
 `assertDisposableDbUrl` refuses to run these suites against anything but a
 genuinely disposable DSN, so in practice they only ran in CI before this
 existed. See the `local-db-test-container` plan under `docs/plans/` or

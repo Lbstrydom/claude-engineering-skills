@@ -225,6 +225,31 @@ describe('CI parity with .github/workflows/postgres-parity.yml', () => {
   });
 });
 
+describe('DB_TEST_IMAGE is immutable, and the schema fixture was captured from it', () => {
+  // 2026-10-02: `pgvector/pgvector:pg16` was republished with pgvector 0.8.7
+  // while expected-schema.json said 0.8.6, and every push failed
+  // db:suites:gate on drift no commit caused. These two run in plain `npm test`
+  // (no Docker), so a bump that forgets the regen fails before the DB gate.
+  const DIGEST_PINNED = /^pgvector\/pgvector:(\d+\.\d+\.\d+)-pg\d+@sha256:[0-9a-f]{64}$/;
+
+  it('is pinned by digest, with a <pgvector-version>-pg<major> tag naming what the digest holds', () => {
+    assert.match(DB_TEST_IMAGE, DIGEST_PINNED,
+      'a tag-only ref lets upstream change the fixture\'s inputs without a commit');
+  });
+
+  it('the fixture\'s `vector` extension version is the version the image tag names', () => {
+    const tagVersion = DB_TEST_IMAGE.match(DIGEST_PINNED)?.[1];
+    assert.ok(tagVersion, 'precondition: DB_TEST_IMAGE parses (see the test above)');
+    const fixture = JSON.parse(
+      fs.readFileSync(path.join(REPO_ROOT, 'tests', 'fixtures', 'expected-schema.json'), 'utf-8'),
+    );
+    const vector = (fixture.extensions ?? []).find((e) => e.extension_name === 'vector');
+    assert.ok(vector, 'expected-schema.json must record the vector extension — an absent row would pass vacuously');
+    assert.equal(vector.version, tagVersion,
+      'image and fixture disagree — after changing DB_TEST_IMAGE run `npm run db:local:regen`');
+  });
+});
+
 // ── hook-seam parity ─────────────────────────────────────────────────────
 
 describe('DB_SEAM_PREFIXES', () => {
@@ -630,7 +655,7 @@ describe('createLifecycle — image pull is conditional, and reuse is visible', 
     const { exec, lifecycle } = lifecycleWith(ok(`${new Date().toISOString()}\n`), out);
     assert.equal(await lifecycle.run('regen-schema', { port: 5433 }), 0);
     assert.equal(pulls(exec), 0, 'the whole 1.77s saving is this call not happening');
-    assert.match(out.join(''), /using local pgvector\/pgvector:pg16/,
+    assert.ok(out.join('').includes(`using local ${DB_TEST_IMAGE}`),
       'a skipped pull must SAY so — silence is indistinguishable from a pull that happened');
     assert.match(out.join(''), /AUDIT_LOOP_DB_IMAGE_PULL=always/, 'and must name the way to force one');
   });
