@@ -114,17 +114,50 @@ describe('discovery census — no second place may decide what billed output mea
     assert.deepEqual(offenders, [], 'these decode Gemini usage themselves instead of via normalizeGeminiUsage()');
   });
 
-  it('any file that touches usageMetadata must route it through the oracle', () => {
+  /**
+   * Every READ of `.usageMetadata`, line by line — not "does the file mention
+   * the oracle somewhere". A file-level co-occurrence check let a second
+   * function in an already-compliant file return Google's raw object unseen.
+   * A read is routed iff its line hands it to `normalizeGeminiUsage(`, or
+   * assigns it to a local the file then passes to `normalizeGeminiUsage(local)`
+   * (the streaming accumulator shape).
+   */
+  function unroutedUsageReads(code) {
+    const out = [];
+    code.split('\n').forEach((line, i) => {
+      if (!/\.usageMetadata\b/.test(line)) return;
+      if (line.includes('normalizeGeminiUsage(')) return;
+      const assigned = line.match(/\b([A-Za-z_$][\w$]*)\s*=\s*[\w$.?[\]]*\.usageMetadata\b\s*;?\s*$/);
+      if (assigned && new RegExp(`normalizeGeminiUsage\\(\\s*${assigned[1]}\\s*\\)`).test(code)) return;
+      out.push(`${i + 1}: ${line.trim()}`);
+    });
+    return out;
+  }
+
+  it('every read of usageMetadata is routed through the oracle — per read, not per file', () => {
     // Closes the pass-through hole: handing callers Google's raw object (what
     // llm-wrappers.mjs did) mentions no field name at all, so the field rule
     // alone would miss it.
     const offenders = [];
     for (const f of walk('scripts')) {
       if (ALLOWLIST.has(f)) continue;
-      const src = codeOf(f, fs.readFileSync(f, 'utf8'));
-      if (src.includes('usageMetadata') && !src.includes('normalizeGeminiUsage')) offenders.push(f);
+      const bad = unroutedUsageReads(codeOf(f, fs.readFileSync(f, 'utf8')));
+      if (bad.length > 0) offenders.push(`${f} -> ${bad.join(' | ')}`);
     }
-    assert.deepEqual(offenders, [], 'these see usageMetadata without importing the oracle');
+    assert.deepEqual(offenders, [], 'these hand out usageMetadata without the oracle');
+  });
+
+  it('NEGATIVE CONTROL: a raw pass-through in a file that ALSO uses the oracle is caught', () => {
+    // The exact shape the file-level rule could not see.
+    const code = [
+      "import { normalizeGeminiUsage } from './gemini-usage.mjs';",
+      'export function good(resp) { return normalizeGeminiUsage(resp.usageMetadata); }',
+      'export function bad(resp) { return { usage: resp.usageMetadata }; }',
+      'let acc = null;',
+      'for (const c of chunks) if (c.usageMetadata) acc = c.usageMetadata;',
+      'const g = normalizeGeminiUsage(acc);',
+    ].join('\n');
+    assert.deepEqual(unroutedUsageReads(code), ['3: export function bad(resp) { return { usage: resp.usageMetadata }; }']);
   });
 
   it('the census actually SCANS something — a vacuous pass is a failing census', () => {
@@ -153,9 +186,8 @@ describe('call sites map the oracle into their OWN shape, and keep usageMissing'
     ['scripts/lib/audit-shadow.mjs', /output_tokens: g\.output_tokens/, /usageMissing: g\.usageMissing/],
     ['scripts/lib/brainstorm/gemini-adapter.mjs', /outputTokens: g\.output_tokens/, /usageMissing: g\.usageMissing/],
     ['scripts/lib/arm-eval/producers/model-call.mjs', /output_tokens: g\.output_tokens/, /usageMissing: g\.usageMissing/],
-    // Relocated from scripts/gemini-review.mjs (docs/plans/gemini-review-decomposition.md
-    // Phase 2) — the gemini transport adapter now lives in transport.mjs.
-    ['scripts/lib/final-review/transport.mjs', /output_tokens: g\.output_tokens/, /usageMissing: g\.usageMissing/],
+    // scripts/lib/final-review/transport.mjs is pinned BEHAVIOURALLY below
+    // (its adapter is reachable through _internals), not by a source regex.
   ];
 
   /**
@@ -179,6 +211,19 @@ describe('call sites map the oracle into their OWN shape, and keep usageMissing'
       assert.match(src, missingRe, 'dropping usageMissing here reconciles an unmeterable call to a fake €0');
     });
   }
+
+  it('the final-review gemini transport bills candidates+thoughts and carries usageMissing (behavioural)', async () => {
+    const { _internals } = await import('../scripts/gemini-review.mjs');
+    const IN = { model: 'm', maxTokens: 10, systemPrompt: 's', userPrompt: 'u', signal: new AbortController().signal };
+    const stream = (usageMetadata) => ({ models: { generateContentStream: async () => (async function* () {
+      yield { text: '{}', ...(usageMetadata ? { usageMetadata } : {}) };
+    })() } });
+    const billed = await _internals.REVIEW_TRANSPORTS.gemini(stream({ promptTokenCount: 1, candidatesTokenCount: 310, thoughtsTokenCount: 17792 }), IN);
+    assert.equal(billed.usage.output_tokens, 18102, 'thoughts are billed output');
+    assert.equal(billed.usage.usageMissing, false);
+    const absent = await _internals.REVIEW_TRANSPORTS.gemini(stream(null), IN);
+    assert.equal(absent.usage.usageMissing, true, 'an unmeterable call must not reconcile to a fake zero');
+  });
 
   it('provider-adapter preserves its null-usage contract while using the oracle', () => {
     // This one legitimately returns `null` (not a zeroed object) when metadata
