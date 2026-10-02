@@ -41,6 +41,9 @@ const SHAPE_A_TARGETS = [
   { file: 'scripts/lib/learning/quickfix-stats.mjs', fn: 'writeAtomic' },
   { file: 'scripts/memory-health.mjs', fn: 'atomicWrite' },
   { file: 'scripts/symbol-index/drift.mjs', fn: 'atomicWrite' },
+  // `--out` report (final-review shadow 7be4d860): a bare writeFileSync left a
+  // partial file for automation to consume if the process died mid-write.
+  { file: 'scripts/check-accepted-debt.mjs', fn: 'main' },
 ];
 
 describe('atomic-write-adoption guard — Rule 1: Shape-A delegation', () => {
