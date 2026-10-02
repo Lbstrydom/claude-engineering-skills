@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "01f8c5ef9f9c6771",
+  "bundleVersion": "540d80d53a256a3b",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -163,14 +163,19 @@
     },
     "click-test": {
       "path": "skills/click-test/SKILL.md",
-      "sha": "b4c27a2d1ed2",
-      "size": 45000,
+      "sha": "46a303059d88",
+      "size": 45355,
       "summary": "Structural DOM audit of a live app — walk every interactive element and",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "b4c27a2d1ed2",
-          "size": 45000
+          "sha": "46a303059d88",
+          "size": 45355
+        },
+        {
+          "relPath": "references/auth-bootstrap.md",
+          "sha": "d81d101bc808",
+          "size": 8856
         },
         {
           "relPath": "references/browser-tool-detection.md",
@@ -191,14 +196,29 @@
     },
     "cycle": {
       "path": "skills/cycle/SKILL.md",
-      "sha": "1ef30594f8d1",
-      "size": 46542,
+      "sha": "f5c9bb6302a5",
+      "size": 47448,
       "summary": "End-to-end feature cycle orchestrator. Runs the full skill chain in",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "1ef30594f8d1",
-          "size": 46542
+          "sha": "f5c9bb6302a5",
+          "size": 47448
+        },
+        {
+          "relPath": "references/gemini-gate.md",
+          "sha": "9dc1ae3e911f",
+          "size": 18741
+        },
+        {
+          "relPath": "references/input-acquisition.md",
+          "sha": "f06498645f4c",
+          "size": 4436
+        },
+        {
+          "relPath": "references/prerequisite-ladder.md",
+          "sha": "cf253db9f6fa",
+          "size": 6202
         },
         {
           "relPath": "references/remediate-mode.md",
@@ -293,14 +313,14 @@
     },
     "persona-test": {
       "path": "skills/persona-test/SKILL.md",
-      "sha": "8e8ecdedeac9",
-      "size": 59134,
+      "sha": "f5a6888ed0d2",
+      "size": 59449,
       "summary": "Persona-driven exploratory browser testing against a live URL.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "8e8ecdedeac9",
-          "size": 59134
+          "sha": "f5a6888ed0d2",
+          "size": 59449
         },
         {
           "relPath": "examples/report-and-debrief.md",
@@ -314,8 +334,8 @@
         },
         {
           "relPath": "references/auth-bootstrap.md",
-          "sha": "1e8194447e08",
-          "size": 7922
+          "sha": "d81d101bc808",
+          "size": 8856
         },
         {
           "relPath": "references/browser-tool-detection.md",
@@ -346,6 +366,11 @@
           "relPath": "references/session-history.md",
           "sha": "d347492a76fc",
           "size": 2349
+        },
+        {
+          "relPath": "references/verification-discipline.md",
+          "sha": "315040cd5903",
+          "size": 28199
         }
       ]
     },

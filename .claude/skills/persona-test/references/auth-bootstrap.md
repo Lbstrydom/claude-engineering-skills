@@ -4,8 +4,22 @@ summary: Sanctioned auth-gated exploratory-testing pattern via MCP-server storag
 
 # Auth Bootstrap — Exploratory Mode
 
+> **GENERATED COPY — do not edit.** The canonical is
+> [`docs/audit/shared-references/auth-bootstrap.md`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/docs/audit/shared-references/auth-bootstrap.md).
+> Regenerate with `node scripts/sync-shared-audit-refs.mjs`; `npm run check`
+> fails on drift. Links above were re-spelled for this location — a target
+> outside `skills/` becomes an absolute upstream URL, because this copy is
+> copied again into `.claude/skills/` and then into consumer repos, where no
+> relative path reaches it. So this file is NOT byte-identical to the
+> canonical by design.
+
 Loaded when Phase 1's target app sits behind a login wall and the persona
 needs to reach authenticated surfaces (not just the public shell).
+
+> **Phase numbers below are `/persona-test`'s.** `/click-test` never logs in
+> itself and needs only "The sanctioned pattern": pre-authenticate the shared
+> connection before scanning. Its own `auth-required` coverage classification
+> stands in for persona-test's Phase 3 login-wall branches.
 
 ## Why this exists
 
@@ -93,7 +107,7 @@ login wall mid-run, and they mean very different things:
   path in `.mcp.json`. **This is a genuine setup regression.**
 
 Do not assume a login wall is the second one. See Phase 3's login-wall
-special case in `SKILL.md` for the decision order that tells them apart
+special case in `/persona-test`'s `SKILL.md` for the decision order that tells them apart
 before anything gets reported.
 
 ## Escape hatch — in-session recovery from the connect-time race

@@ -82,6 +82,25 @@
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
 
+## 2026-10-02 — control markers can no longer become accepted obligations
+
+### Changes
+- **Defect**: a ledger that ruled an `ADJACENCY_INCOMPLETE` control marker `accepted` bypassed `splitPendingFindings` (which only routes UN-ruled markers to `auto_dismissed`), so `recordAdjudicationEvent` wrote `adjudication_outcome='accepted'` and the notice surfaced in `unremediated_acceptances_all` as an obligation. Measured on the live store (read-only, 2026-10-02): 34 control markers carry `accepted` (31 already marked fixed/verified), 3 open in the view — primary_file `diff`, `scripts/lib/skill-frontmatter-layout.mjs`, `tests/audit-base-ancestry.test.mjs`.
+- **Fix point — write time, not the view**: `finalize-outcomes.mjs` passes `isControlMarkerDetail` to `recordTriageOutcomes` as `cannotAccept`; outcome-sync's `enrichFindings` (the one place a ruling attaches to a finding) honours only `dismissed` for such a finding, otherwise leaves it `pending` → the existing auto-dismiss route. Chosen over a view filter because the same accepted marker also fed the run's `acceptedCount`, pass stats and a positive bandit reward, which a view filter leaves wrong; and because it reuses the one JS oracle, where the view would need a fourth SQL copy of the prefix. Injected rather than imported: outcome-sync is `shared-lib`, and importing `audit/` broke the layering test.
+- **Repair**: migration `20261002120000_control_marker_accepted_obligation_repair.sql` — data only, idempotent — turns the pre-fix rows in the obligation set (accepted/severity_adjusted, remediation NULL/pending/planned, no human `user_action`) into exactly what the fixed writer produces: event deleted, outcome/remediation NULL, `user_action='auto_dismissed'`. Rows already fixed/verified and human-set `user_action`s are left as history.
+- Tests: `tests/finalize-outcomes.test.mjs` (+4: accepted and severity_adjusted refused, dismissal still honoured, real finding unaffected). New DB suite `tests/control-marker-acceptance-db.test.mjs` (real finalize write path + view; migration repair, idempotence, human-`user_action` and real-finding controls), enrolled in `db-test-container.mjs` and `postgres-parity.yml`.
+
+### Verification
+- Red-then-green: both new test files failed before the fix; removing `cannotAccept` again fails 2 unit tests.
+- `npm run db:local`: all steps green (migrate 136, schema-diff, isolated incl. the new suite 2/2, destructive, contract). `setup-postgres.mjs --check-drift` against the local container: 136/136, no drift.
+- `npm test`: 17,021 pass / 2 fail on the first run — both mine (layering, `rmSync` retry), fixed and the affected files re-run green (1,746/1,746).
+
+### Not done
+- The migration has NOT been applied to the live store — run `node scripts/setup-postgres.mjs --migrate` to clear the 3 open rows.
+- The 31 fixed/verified accepted control markers still count in accepted-based metrics (conversion rate); left as history.
+
+---
+
 ## 2026-10-02 — model-eval harness: linked-worktree repo identity, Tier C per-case outputs + cost
 
 Backlog 2026-10-02T04:10Z: Q1 65c/22p (+338 aged) · Q2 101c/41p (54 perm) · Q3 35 · debt unmeasured · upstream 1

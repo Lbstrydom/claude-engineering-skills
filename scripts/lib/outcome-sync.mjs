@@ -84,17 +84,41 @@ export async function writeLocalOutcomesOnce(enriched, { key = null, round = 1 }
 }
 
 /**
- * Enrich findings with adjudication outcomes from the ledger.
+ * Can this finding carry this ledger ruling? A finding `cannotAccept` flags
+ * may be DISMISSED by a ledger but never accepted. This is the one place a
+ * ruling attaches to a finding, so a refusal here keeps it out of the cloud
+ * event, pass stats, run `acceptedCount` and bandit reward alike. Fail-closed:
+ * only `dismissed` is honoured for such a finding, so a future accepting
+ * outcome cannot slip past an allowlist.
+ * @param {object} f
+ * @param {object|undefined} entry
+ * @param {(f: object) => boolean} cannotAccept
+ * @returns {boolean}
+ */
+function isHonourableRuling(f, entry, cannotAccept) {
+  if (!entry) return false;
+  return entry.adjudicationOutcome === 'dismissed' || !cannotAccept(f);
+}
+
+/**
+ * Enrich findings with adjudication outcomes from the ledger. A refused
+ * ruling leaves the finding `pending`, exactly as if the ledger never ruled.
  * @param {object[]} findings
  * @param {object} ledger - { entries: [...] }
+ * @param {(f: object) => boolean} [cannotAccept] - findings no ledger may accept
  * @returns {object[]} Enriched findings
  */
-function enrichFindings(findings, ledger) {
+function enrichFindings(findings, ledger, cannotAccept = () => false) {
   return findings.map(f => {
     const topicId = generateTopicId(f);
-    const entry = (ledger?.entries || []).find(e =>
+    const matched = (ledger?.entries || []).find(e =>
       e.topicId === topicId || e.latestFindingId === f.id
     );
+    const honoured = isHonourableRuling(f, matched, cannotAccept);
+    if (matched && !honoured) {
+      process.stderr.write(`  [outcome-sync] ${f.id}: ledger ruling '${matched.adjudicationOutcome}' refused for a finding that cannot be accepted — left pending\n`);
+    }
+    const entry = honoured ? matched : undefined;
     return {
       ...f,
       _topicId: topicId,
@@ -204,12 +228,14 @@ async function writeCloudOutcomes(store, runId, enriched, passCounts, round) {
  * @param {object} ledger - Adjudication ledger { entries: [...] }
  * @param {object} [opts]
  * @param {number} [opts.round=1] - Current round number
+ * @param {(f: object) => boolean} [opts.cannotAccept] - findings a ledger may
+ *   dismiss but never accept (finalize-outcomes passes control markers)
  * @returns {{ enriched: object[], passCounts: object, cloudOk: boolean }}
  */
 export async function recordTriageOutcomes(store, runId, findings, ledger, opts = {}) {
   const { round = 1 } = opts;
 
-  const enriched = enrichFindings(findings, ledger);
+  const enriched = enrichFindings(findings, ledger, opts.cannotAccept);
   const passCounts = computePassCounts(enriched);
 
   // Cloud writes (graceful degradation)

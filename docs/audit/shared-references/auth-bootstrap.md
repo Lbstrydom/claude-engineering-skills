@@ -4,14 +4,10 @@ summary: Sanctioned auth-gated exploratory-testing pattern via MCP-server storag
 
 # Auth Bootstrap — Exploratory Mode
 
-> **GENERATED COPY — do not edit.** The canonical is
-> [`docs/audit/shared-references/auth-bootstrap.md`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/docs/audit/shared-references/auth-bootstrap.md).
-> Regenerate with `node scripts/sync-shared-audit-refs.mjs`; `npm run check`
-> fails on drift. Links above were re-spelled for this location — a target
-> outside `skills/` becomes an absolute upstream URL, because this copy is
-> copied again into `.claude/skills/` and then into consumer repos, where no
-> relative path reaches it. So this file is NOT byte-identical to the
-> canonical by design.
+This is the canonical copy. Generated copies live at
+`skills/<skill>/references/auth-bootstrap.md` for every skill that drives the
+shared browser connection (`/persona-test`, `/click-test`).
+**Edit this file, never a copy.**
 
 Loaded when Phase 1's target app sits behind a login wall and the persona
 needs to reach authenticated surfaces (not just the public shell).

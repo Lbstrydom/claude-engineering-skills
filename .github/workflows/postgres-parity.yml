@@ -286,6 +286,7 @@ jobs:
             tests/campaign-promote.test.mjs \
             tests/campaign-quarantine.test.mjs \
             tests/candidate-audit-findings-window.test.mjs \
+            tests/control-marker-acceptance-db.test.mjs \
             tests/db-schema-realization-live.test.mjs \
             tests/debt-alias-integration.test.mjs \
             tests/final-review-adjudicate.test.mjs \
