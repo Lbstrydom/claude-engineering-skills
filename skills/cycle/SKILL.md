@@ -102,7 +102,7 @@ golden-path workflow without thinking about it.
 > /cycle spends real money on /plan before it ever reaches an audit step, so
 > resolve the audit prerequisites HERE — the helper scripts, and a GPT route
 > (`OPENAI_API_KEY` **or** an active Azure profile). If one is absent, the
-> ladder in /audit-code's `references/prerequisite-ladder.md` decides what
+> ladder in `references/prerequisite-ladder.md` (the one /audit-code follows) decides what
 > happens: hydrate and retry, run the labelled adversarial-agent substitute, or
 > report `AUDIT_NOT_RUN` and stop. Whichever rung applies, say so before
 > generating the plan rather than after paying for it, and carry the same
@@ -473,7 +473,7 @@ other cluster's resolutions from the `claude_resolutions` trail the reviewer
 sees. **Concrete transcript
 shape + the no-`GEMINI_API_KEY` degradation ladder (Opus fallback → independent
 adversarial agent over the union diff → only-then skip) are in
-`audit-code/references/gemini-gate.md`** — when no provider key is present, run the
+`references/gemini-gate.md`** (the same contract /audit-code's Step 7 follows) — when no provider key is present, run the
 independent-agent substitute rather than skipping the mandatory gate. Generated
 `.claude/skills/**` copies are byte-verified by `skills:check`, not
 re-reviewed. Then continue to Step 5.
@@ -571,8 +571,8 @@ persona, collects P0–P3 findings.
 **On verdict**:
 - 0 P0 findings AND OVERALL is `Ready for users` → proceed to Step 6
 - 0 P0 findings AND OVERALL is `Needs work` because of `authWallUntested`
-  (persona-test hit a login wall with no auth bootstrap configured — see
-  `/persona-test`'s `references/auth-bootstrap.md`) → this is **not** a
+  (persona-test hit a login wall with no auth bootstrap configured — the
+  remedy is /persona-test's auth-bootstrap setup, not a /cycle step) → this is **not** a
   clean pass; it means the run never reached the app's primary
   authenticated surfaces. Surface this explicitly in the Step 8 summary
   (don't silently read "0 P0" as "proceed") and proceed only as a WARN,
@@ -677,4 +677,7 @@ situations — read them only when the trigger applies.
 
 | File | Summary | Read when |
 |---|---|---|
+| `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | The no-dispatch fallback — passing an inlined skill its plan path, sub-command and flags as orchestrator-supplied input (rule 0). |
+| `references/prerequisite-ladder.md` | Step 0 prerequisite ladder — absent helper bundle or auditor route, and reporting a run that did not happen. | Step 0 — an audit prerequisite did not resolve (helper scripts missing, no GPT route), OR about to report a run that degraded or did not happen. |
+| `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Autonomous mode's consolidated Gemini gate — building the transcript, OR no `GEMINI_API_KEY` and the degradation ladder decides the substitute. |
 | `references/remediate-mode.md` | REMEDIATE mode — fix triaged post-ship findings against an accepted plan without replaying the full cycle. | The mode is REMEDIATE (Step R), OR the user asks to skip /audit-plan because the plan is already accepted. |

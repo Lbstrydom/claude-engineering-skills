@@ -140,7 +140,23 @@ describe('sync-shared-audit-refs', () => {
 
     it('EXPECTED_CONSUMERS lists audit-plan and audit-code for both shared refs', () => {
       assert.deepEqual([...EXPECTED_CONSUMERS['ledger-format.md']].sort(), ['audit-code', 'audit-plan']);
-      assert.deepEqual([...EXPECTED_CONSUMERS['gemini-gate.md']].sort(), ['audit-code', 'audit-plan']);
+      assert.deepEqual([...EXPECTED_CONSUMERS['gemini-gate.md']].sort(), ['audit-code', 'audit-plan', 'cycle']);
+    });
+
+    // Each skill that CITES a shared contract must own a copy of it — a packaged
+    // skill ships only its own directory. These four used to point across skill
+    // boundaries instead (tests/skill-md-own-closure.test.mjs is the general gate).
+    it('skills that cite a shared contract are registered for their own copy', () => {
+      const pins = [
+        ['auth-bootstrap.md', 'click-test'], ['auth-bootstrap.md', 'persona-test'],
+        ['input-acquisition.md', 'cycle'], ['prerequisite-ladder.md', 'cycle'],
+        ['gemini-gate.md', 'cycle'], ['verification-discipline.md', 'persona-test'],
+      ];
+      for (const [basename, skill] of pins) {
+        assert.ok(EXPECTED_CONSUMERS[basename]?.includes(skill), `${skill} must be registered for ${basename}`);
+        assert.ok(fs.existsSync(path.join(REPO_ROOT, 'skills', skill, 'references', basename)),
+          `skills/${skill}/references/${basename} must exist`);
+      }
     });
   });
 
