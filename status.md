@@ -77,6 +77,28 @@
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
 
+## 2026-10-02 — model-eval harness: linked-worktree repo identity, Tier C per-case outputs + cost
+
+Backlog 2026-10-02T04:10Z: Q1 65c/22p (+338 aged) · Q2 101c/41p (54 perm) · Q3 35 · debt unmeasured · upstream 1
+
+### Changes
+- **Found while running experiment 7 (2026-10-01)**: two harness defects. (1) `loadCorpusCase` matched a KD's `repo` by `path.basename(root)`, so from a linked worktree (`.claude/worktrees/<name>`) every KD for this repo failed preflight `corpus_case_unavailable … repo_not_found` unless `--repo-roots C:/GIT/claude-engineering-skills` was passed — AGENTS.md consumer shape (4). (2) `scoreArmTierC` kept only `{file, description}` for scoring and dropped the extraction and its usage; screen tier returned `cost: null`, so the runbook's "read the raw per-case extraction output" was impossible from a harness run.
+- `known-defect-corpus.mjs`: a root answers to its own basename OR its main checkout's (`resolveMainRoot`, `--git-common-dir`, reused from `pinned-worktree/paths.mjs`, which gained an optional `env` so fixtures can scrub `GIT_DIR`). `loadCorpusCase` returns `repoRoot`; the auditor CLI's second basename-only matcher is deleted. The adjudicator CLI and `executors.mjs` only forward `repoRoots`, so they inherit the fix.
+- `model-eval-auditor.mjs`: `scoreArmTierC` returns `perCase` (`kdId`, extracted `file`/`description`, `expectedFiles`, `requiredRetry`, per-call `usage`/`costUsd`) and one `buildUsageEvent` per extraction. Screen and promotion (Tier C) write `perCaseOutputs` to `--out` only; the store row's `evidence` is unchanged. `cost` is `{totalUsd, byRow}` on both tiers (`costFromEvents`), `totalUsd` null when any call is unpriced/missing usage.
+- **Fixed in passing (same path)**: promotion's cost lookup keyed on `candidateRef`, so a candidate resolving to the `latest-gpt` baseline's model got the candidate's row on both sides — now keyed on arm id (`CAND` / `A`). Promotion `cost.totalUsd` summed with `?? 0` (a half-priced run read as complete) and omitted judge calls — now the whole-run total, null when partial.
+- **Behaviour change**: Tier C promotion now passes a real `costDelta` to `verdict.mjs`, so a priced run no longer reads `inconclusive` / "cost data unavailable". `switch` is still capped to `manual_review_required` at Tier C.
+- Runbook (`model-eval-harness.md` Step 2): where `perCaseOutputs`/`cost` live; GPT-vs-GPT promotion always falls to Tier C (`resolveEvaluationTier`: same `independenceGroup`) and its baseline is `latest-gpt`, so a candidate equal to the resolved sentinel is compared with itself; worktree runs no longer need `--repo-roots`.
+- Tests: `tests/known-defect-corpus.test.mjs` (+1, linked worktree + must-not-match control; fails against the previous loader), `tests/model-eval-auditor-cli.test.mjs` (+3, injected extractor via a `_extractStructured` test seam).
+
+### Verification
+- 222/222 across `tests/model-eval-*`, `known-defect-corpus`, `pinned-worktree*`, `arm-vocabulary-layering`, `relocation-guard`; size-ratchet, stdout-flush, synced-links, knip, bundle-deps gates clean. Full `npm test` runs in the pre-push hook. No live provider run.
+
+### Not done
+- `executors.mjs`'s auditor arm still reports `usage: null` to the manifest driver; the child's `--out` now carries `cost`, but mapping promotion's multi-arm `byRow` to one arm is not done (docstring updated).
+- No audit loop ran (gate `not-run`).
+
+---
+
 ## 2026-10-01 — /brainstorm azure-claude: explicit effort, per-provider ceiling, thinking tokens recorded
 
 Backlog 2026-10-01T11:32Z: Q1 63c/22p (+338 aged) · Q2 101c/41p (54 perm) · Q3 35 · debt 313 cloud/11 local (0 spilled) · upstream 1

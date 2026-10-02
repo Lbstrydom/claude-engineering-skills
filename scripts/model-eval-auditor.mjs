@@ -164,9 +164,26 @@ export function stratifiedSelectKDs(defects, { seed, n }) {
 // promotion-tier's dual-arm comparative path — the mechanism is identical,
 // only the caller decides how many times to run it). ────────────────────
 
-async function scoreArmTierC({ route, cases, role = 'auditor', dials }) {
+/**
+ * One Tier-C arm: extract per KD case, score deterministically.
+ *
+ * Returns the raw per-case extraction (`perCase`) and one usage event per
+ * extraction call alongside the metrics. Both used to be dropped here, which
+ * made the runbook's "read the raw per-case extraction output before
+ * believing any low recall" impossible from a harness run, and left
+ * screen-tier `cost` permanently null (2026-10-01, experiment 7). They reach
+ * the `--out` JSON, never the store row's `evidence` — per-case model text is
+ * not something the persisted bundle has ever carried.
+ * `_extractStructured` is a test seam (same convention as arm-generation's
+ * `_runMultiPassCodeAudit`); production never passes it.
+ * @param {{route: object, cases: Array<object>, role?: string, dials?: object, runId: string, armLabel: string, _extractStructured?: Function}} args
+ */
+async function scoreArmTierC({ route, cases, role = 'auditor', dials, runId, armLabel, _extractStructured = extractStructured }) {
   const candidateOutputs = [];
   const expectedRubrics = [];
+  const perCase = [];
+  const usageEvents = [];
+  const candidateRef = route.deploymentId ?? route.resolvedModel;
   // honoredDials captured from the FIRST call only (Gemini-gate round-1 G2
   // fix) — dials are constant per arm (every KD case in this loop shares the
   // same `controls`), so the first call's honoredDials is representative of
@@ -174,21 +191,48 @@ async function scoreArmTierC({ route, cases, role = 'auditor', dials }) {
   // out to the caller that needs a second capture.
   let honoredDials;
   for (const { visibleInput, hiddenGroundTruth } of cases) {
-    const { data, honoredDials: hd } = await extractStructured({
+    const { data, usage, requiredRetry, honoredDials: hd } = await _extractStructured({
       role, route, rawContext: { evidenceHunk: visibleInput.diff, filePaths: visibleInput.files }, dials,
     });
     if (honoredDials === undefined) honoredDials = hd;
-    candidateOutputs.push({ file: data.defectLocation.file, description: data.defectLocation.description });
+    const output = { file: data.defectLocation.file, description: data.defectLocation.description };
+    candidateOutputs.push(output);
     expectedRubrics.push({ files: hiddenGroundTruth.files, expectedFindingRubric: hiddenGroundTruth.expectedFindingRubric });
+    // buildUsageEvent tags an absent/one-sided usage object `usageStatus:
+    // 'missing'` with `costUsd: null` — never a fabricated $0.
+    const usageEvent = buildUsageEvent({
+      runId, role, phase: 'extraction', armId: armLabel, candidateRef,
+      resolvedModel: route.resolvedModel, pricingModel: route.pricingModel, deploymentId: route.deploymentId ?? null,
+      provider: route.provider, usage, capturedAt: new Date().toISOString(),
+    });
+    usageEvents.push(usageEvent);
+    perCase.push({
+      kdId: hiddenGroundTruth.kdId, ...output, requiredRetry: requiredRetry === true,
+      expectedFiles: hiddenGroundTruth.files,
+      usage: { usageStatus: usageEvent.usageStatus, inputTokens: usageEvent.inputTokens, outputTokens: usageEvent.outputTokens, costUsd: usageEvent.costUsd },
+    });
   }
   const scored = scoreDefectLocalization(candidateOutputs, expectedRubrics);
-  return { metrics: { recall: scored.recall, falsePositiveRate: scored.falsePositiveRate, f1: scored.f1 }, raw: scored, honoredDials };
+  return { metrics: { recall: scored.recall, falsePositiveRate: scored.falsePositiveRate, f1: scored.f1 }, raw: scored, honoredDials, perCase, usageEvents };
+}
+
+/**
+ * `{totalUsd, byRow}` — the SAME cost shape promotion tier already persists.
+ * `totalUsd` is null when any row is unpriced or missing usage: a partial sum
+ * would read as the whole spend.
+ * @param {Array<object>} usageEvents
+ */
+function costFromEvents(usageEvents) {
+  if (usageEvents.length === 0) return null;
+  const byRow = assembleCostRows(usageEvents);
+  const totalUsd = byRow.every((r) => r.totalUsd != null) ? byRow.reduce((acc, r) => acc + r.totalUsd, 0) : null;
+  return { totalUsd, byRow };
 }
 
 // ── Screening tier (oracle mode, Tier C) ────────────────────────────────
 
-async function runScreenTier({ candidateRoute, cases, corpusVersion, selectedKdIds, thresholds, dials }) {
-  const { metrics, honoredDials } = await scoreArmTierC({ route: candidateRoute, cases, dials });
+async function runScreenTier({ runId, candidateRoute, cases, corpusVersion, selectedKdIds, thresholds, dials }) {
+  const { metrics, honoredDials, perCase, usageEvents } = await scoreArmTierC({ route: candidateRoute, cases, dials, runId, armLabel: 'CAND' });
   const routeEvidence = routeCatalogInternals.toRouteEvidence(candidateRoute);
   const { verdict, nextAction, reasons } = computeVerdict({
     mode: 'oracle', role: 'auditor', tier: 'screen', routeEvidence,
@@ -198,7 +242,8 @@ async function runScreenTier({ candidateRoute, cases, corpusVersion, selectedKdI
   return {
     verdict, nextAction, metrics, honoredDials,
     evidence: { mode: 'oracle', selectedKdIds, corpusVersion, corpusLoaderVersion: CORPUS_LOADER_VERSION, routeEvidence, reasons },
-    cost: null,
+    cost: costFromEvents(usageEvents),
+    perCaseOutputs: { candidate: perCase },
   };
 }
 
@@ -210,7 +255,7 @@ async function runPromotionTier({
 }) {
   const { computedJudgeTier } = resolveEvaluationTier({ mode: 'comparative', candidateRoute, baselineRoute, judgeRoute });
   const usageEvents = [];
-  let candidateMetrics, baselineMetrics, honoredDials;
+  let candidateMetrics, baselineMetrics, honoredDials, perCaseOutputs = null;
 
   if (computedJudgeTier === 'A' || computedJudgeTier === 'B') {
     // Generate candidate + baseline findings for every KD case, then blind-judge each.
@@ -308,16 +353,21 @@ async function runPromotionTier({
     // is a fixed reference point, not itself a scored arm in the
     // manifest-driven n-arm sense) — candScore's honoredDials is what
     // `deriveControlsApplied` in main() needs.
-    const candScore = await scoreArmTierC({ route: candidateRoute, cases, dials });
-    const baseScore = await scoreArmTierC({ route: baselineRoute, cases, dials });
+    const candScore = await scoreArmTierC({ route: candidateRoute, cases, dials, runId, armLabel: 'CAND' });
+    const baseScore = await scoreArmTierC({ route: baselineRoute, cases, dials, runId, armLabel: BASELINE_ARM.id });
     candidateMetrics = candScore.metrics;
     baselineMetrics = baseScore.metrics;
     honoredDials = candScore.honoredDials;
+    usageEvents.push(...candScore.usageEvents, ...baseScore.usageEvents);
+    perCaseOutputs = { candidate: candScore.perCase, baseline: baseScore.perCase };
   }
 
   const costRows = usageEvents.length > 0 ? assembleCostRows(usageEvents) : [];
-  const candidateCostRow = costRows.find((r) => r.candidateRef === (candidateRoute.deploymentId ?? candidateRoute.resolvedModel));
-  const baselineCostRow = costRows.find((r) => r.candidateRef === (baselineRoute.deploymentId ?? baselineRoute.resolvedModel));
+  // Keyed by ARM, not candidateRef alone: a candidate that resolves to the
+  // same model as the `latest-gpt` baseline shares its candidateRef, and a
+  // candidateRef-only lookup handed both sides the candidate's row.
+  const candidateCostRow = costRows.find((r) => r.armId === 'CAND');
+  const baselineCostRow = costRows.find((r) => r.armId === BASELINE_ARM.id);
   const costDelta = (candidateCostRow || baselineCostRow) ? {
     candidateCostUsd: candidateCostRow?.totalUsd ?? null,
     baselineCostUsd: baselineCostRow?.totalUsd ?? null,
@@ -345,7 +395,11 @@ async function runPromotionTier({
       baselineRef: baselineRoute.deploymentId ?? baselineRoute.resolvedModel,
       judgeRef: judgeRoute ? (judgeRoute.deploymentId ?? judgeRoute.resolvedModel) : null,
     },
-    cost: costDelta ? { totalUsd: (costDelta.candidateCostUsd ?? 0) + (costDelta.baselineCostUsd ?? 0), byRow: costRows } : null,
+    // Whole-run spend (candidate + baseline + judge), null when any row is
+    // unpriced — the earlier `?? 0` sum read a half-priced run as complete.
+    cost: costFromEvents(usageEvents),
+    // --out only (main() persists named fields, never this one).
+    perCaseOutputs,
   };
 }
 
@@ -521,9 +575,8 @@ async function main() {
     const unavailable = [];
     for (const kd of selectedKds) {
       try {
-        const { visibleInput, hiddenGroundTruth } = loadCorpusCase({ kdEntry: kd, repoRoots });
-        const root = repoRoots.find((r) => fs.existsSync(r) && path.basename(r) === kd.repo);
-        cases.push({ visibleInput, hiddenGroundTruth, repoRoot: root });
+        const { visibleInput, hiddenGroundTruth, repoRoot } = loadCorpusCase({ kdEntry: kd, repoRoots });
+        cases.push({ visibleInput, hiddenGroundTruth, repoRoot });
       } catch (err) {
         if (err instanceof CorpusCaseUnavailable) unavailable.push({ kdId: kd.id, reason: err.reason, message: err.message });
         // An egress-gate refusal (sensitive path mention / secret pattern in
@@ -565,7 +618,7 @@ async function main() {
     let result;
     let branch;
     if (tier === 'screen') {
-      result = await runScreenTier({ candidateRoute, cases, corpusVersion, selectedKdIds: selectedKds.map((k) => k.id), thresholds, dials });
+      result = await runScreenTier({ runId, candidateRoute, cases, corpusVersion, selectedKdIds: selectedKds.map((k) => k.id), thresholds, dials });
       branch = 'tier-c';
     } else {
       const baselineRoute = resolveCandidateRoute({ role: 'auditor', candidateSpec: { kind: 'sentinel', value: BASELINE_ARM.generation.modelSentinel } });
@@ -615,3 +668,6 @@ async function main() {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }
+
+/** Test-only surface — underscore signals private (mirrors file-io.mjs). */
+export const _internals = { scoreArmTierC, costFromEvents };

@@ -22,6 +22,7 @@ import { parseDiffFile } from '../diff-annotation.mjs';
 import { atomicWriteFileSync, normalizePath } from '../file-io.mjs';
 import { assertEgressSafe, isPathSensitive } from '../sensitive-egress-gate.mjs';
 import { findSensitivePathMentions, EgressGateError } from './egress-path-scan.mjs';
+import { resolveMainRoot } from '../pinned-worktree/paths.mjs';
 
 export const CORPUS_LOADER_VERSION = 'v1';
 
@@ -87,24 +88,49 @@ function tryGit(root, args, opts = {}) {
  * caller-supplied `repoRoots` list of absolute local checkout paths — the
  * SAME "cwd + extra roots" shape `/audit-code`'s own multi-repo tooling uses
  * (solo-control-audit.mjs's `SOLO_CONTROL_REPO_ROOTS` convention), forked as
- * a fresh implementation here rather than importing the frozen file. Matches
- * by directory basename — this corpus's 3 repos are checked out under their
- * own repo-named directories, no package.json lookup needed.
+ * a fresh implementation here rather than importing the frozen file.
+ *
+ * A root's identity is its own directory basename OR its MAIN checkout's
+ * basename (`resolveMainRoot`, via `--git-common-dir`). The basename alone was
+ * blind to a linked worktree (2026-10-01, experiment 7): run from
+ * `.claude/worktrees/<name>`, `process.cwd()`'s basename is the worktree name,
+ * so every KD for the current repo failed preflight `repo_not_found` unless
+ * the operator also passed the main checkout via `--repo-roots`. The root
+ * RETURNED is still the one supplied — a linked worktree shares the main
+ * checkout's object store, so `cat-file`/`diff` resolve the KD commit there.
  * @param {string} repoName
  * @param {string[]} repoRoots
+ * @param {NodeJS.ProcessEnv} [env]
  * @returns {string|null}
  */
-function resolveRepoRoot(repoName, repoRoots) {
+function resolveRepoRoot(repoName, repoRoots, env) {
   for (const root of repoRoots) {
     if (!fs.existsSync(root)) continue;
-    if (path.basename(root) === repoName) return root;
+    if (repoRootNames(root, env).includes(repoName)) return root;
   }
   return null;
 }
 
 /**
+ * Every name `root` answers to: its basename, plus its main checkout's
+ * basename when `root` is inside a git repository. Not a repo (or git
+ * unavailable) → the basename alone, the pre-fix behaviour.
+ * @param {string} root
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string[]}
+ */
+function repoRootNames(root, env) {
+  const names = [path.basename(path.resolve(root))];
+  try {
+    const main = path.basename(resolveMainRoot(root, env ? { env } : {}));
+    if (!names.includes(main)) names.push(main);
+  } catch { /* not a git checkout — basename is the only identity it has */ }
+  return names;
+}
+
+/**
  * @param {{kdEntry: {id:string, repo:string, buggyCommit:string, files:string[], defectDesc:string, expectedFindingRubric:string, severity:string}, repoRoots: string[]}} args
- * @returns {{visibleInput: {diff:string, files:string[]}, hiddenGroundTruth: {files:string[], defectDesc:string, expectedFindingRubric:string, severity:string, kdId:string}}}
+ * @returns {{repoRoot: string, visibleInput: {diff:string, files:string[]}, hiddenGroundTruth: {files:string[], defectDesc:string, expectedFindingRubric:string, severity:string, kdId:string}}}
  * @throws {CorpusCaseUnavailable}
  */
 // Round-2 (Cluster B) audit M3 fix — kdEntry.id is interpolated directly
@@ -132,9 +158,9 @@ export function loadCorpusCase({ kdEntry, repoRoots, env }) {
   if (typeof kdEntry.id !== 'string' || !SAFE_KD_ID_RE.test(kdEntry.id)) {
     throw new CorpusCaseUnavailable('invalid_kd_id', `loadCorpusCase: kdEntry.id "${kdEntry.id}" is not a safe identifier (expected [A-Za-z0-9_-]+) — refusing to use it in a scratch filename`);
   }
-  const root = resolveRepoRoot(kdEntry.repo, repoRoots);
+  const root = resolveRepoRoot(kdEntry.repo, repoRoots, env);
   if (!root) {
-    throw new CorpusCaseUnavailable('repo_not_found', `loadCorpusCase: no repo root named "${kdEntry.repo}" found among [${repoRoots.join(', ')}] for ${kdEntry.id}`);
+    throw new CorpusCaseUnavailable('repo_not_found', `loadCorpusCase: no repo root named "${kdEntry.repo}" (by directory or main-checkout basename) found among [${repoRoots.join(', ')}] for ${kdEntry.id}`);
   }
 
   const gitOpts = env ? { env } : {};
@@ -214,6 +240,10 @@ export function loadCorpusCase({ kdEntry, repoRoots, env }) {
   }
 
   return {
+    // The root the case resolved against — callers that need it (promotion
+    // tier's generation arm) read it here rather than re-deriving it with a
+    // second, divergent matcher.
+    repoRoot: root,
     visibleInput: { diff, files },
     hiddenGroundTruth: {
       // `files` — the KD's OWN declared defect-location files (known-defects.json's

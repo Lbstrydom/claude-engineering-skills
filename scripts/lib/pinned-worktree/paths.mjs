@@ -76,13 +76,18 @@ export function assertFixtureName(name) {
  * is explicit rather than relying on git's default, which is relative in some
  * invocations and would resolve against the wrong base here.
  *
+ * `opts.env`, when supplied, REPLACES the inherited environment — a caller
+ * running against a throwaway fixture repo passes a GIT_DIR-scrubbed env so a
+ * leaked `GIT_DIR` cannot redirect the lookup to a different repository.
+ *
  * @param {string} [cwd]
+ * @param {{env?: NodeJS.ProcessEnv}} [opts]
  * @returns {string}
  */
-export function resolveMainRoot(cwd = process.cwd()) {
+export function resolveMainRoot(cwd = process.cwd(), opts = {}) {
   const commonDir = execFileSync(
     'git', ['rev-parse', '--path-format=absolute', '--git-common-dir'],
-    { cwd, encoding: 'utf-8' },
+    { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], ...(opts.env ? { env: opts.env } : {}) },
   ).trim();
   return path.resolve(path.dirname(commonDir));
 }

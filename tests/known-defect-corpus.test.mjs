@@ -153,3 +153,44 @@ describe('known-defect-corpus.mjs — hardening (throwaway git repo)', () => {
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });
+
+describe('known-defect-corpus.mjs — linked-worktree identity', () => {
+  // 2026-10-01 (experiment 7): run from `.claude/worktrees/<name>`, the cwd's
+  // basename is the worktree name, so a basename-only match failed every KD
+  // for the current repo with repo_not_found. A root's identity now includes
+  // its MAIN checkout's basename (`--git-common-dir`).
+  test('a linked worktree resolves a KD naming its MAIN checkout, and the worktree root is what is returned', () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'kd-wt-'));
+    const mainDir = path.join(parent, 'kd-main-repo');
+    const wtDir = path.join(parent, 'some-worktree-name');
+    fs.mkdirSync(mainDir);
+    const env = gitFixtureEnv();
+    const g = (args, cwd = mainDir) => execFileSync('git', args, { cwd, encoding: 'utf8', env });
+    try {
+      g(['init', '-q']);
+      g(['config', 'user.email', 'test@test.com']);
+      g(['config', 'user.name', 'test']);
+      fs.writeFileSync(path.join(mainDir, 'a.txt'), 'line1\n');
+      g(['add', '.']);
+      g(['commit', '-q', '-m', 'initial']);
+      fs.writeFileSync(path.join(mainDir, 'a.txt'), 'line1\nline2\n');
+      g(['commit', '-q', '-am', 'second']);
+      const sha = g(['rev-parse', 'HEAD']).trim();
+      g(['worktree', 'add', '-q', '--detach', wtDir, 'HEAD']);
+
+      const kd = { id: 'KD-WT-001', repo: 'kd-main-repo', buggyCommit: sha, files: ['a.txt'], defectDesc: 'x', expectedFindingRubric: 'y', severity: 'LOW' };
+      const { repoRoot, visibleInput } = loadCorpusCase({ kdEntry: kd, repoRoots: [wtDir], env });
+      assert.equal(repoRoot, wtDir);
+      assert.deepEqual(visibleInput.files, ['a.txt']);
+
+      // Negative control: the worktree must not answer to a name that is
+      // neither its own basename nor its main checkout's.
+      assert.throws(
+        () => loadCorpusCase({ kdEntry: { ...kd, repo: 'unrelated-repo' }, repoRoots: [wtDir], env }),
+        (err) => err instanceof CorpusCaseUnavailable && err.reason === 'repo_not_found',
+      );
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});
