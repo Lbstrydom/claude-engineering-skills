@@ -218,6 +218,12 @@ export async function upsertDebtEntries(repoId, entries, { embeddingsByTopicId =
  * Read all debt entries for a repo. Returns PersistedDebtEntry-shaped
  * objects (no derived fields — derive via events).
  *
+ * **Throws on a query failure.** `[]` means exactly "not asked" (no repo id,
+ * cloud off) or "asked, and there are none". A failed read used to return `[]`
+ * as well, so a store outage read as "there is no debt" — and every caller
+ * (`loadAuthoritativeDebt`, `debt-ledger-claims-check`) was already written to
+ * catch a throw and report `unavailable`, a branch the swallow made dead.
+ *
  * @param {string|null} repoId
  */
 export async function readDebtEntriesCloud(repoId) {
@@ -259,7 +265,7 @@ export async function readDebtEntriesCloud(repoId) {
     }));
   } catch (err) {
     process.stderr.write(`  [learning] readDebtEntriesCloud failed: ${err.message}\n`);
-    return [];
+    throw err;
   }
 }
 
@@ -385,6 +391,9 @@ export async function appendDebtEventsCloud(repoId, events) {
 /**
  * Read all debt events for a repo, ordered chronologically.
  *
+ * **Throws on a query failure** — same contract and reason as
+ * `readDebtEntriesCloud`: `[]` is "not asked" or "none", never "the read failed".
+ *
  * @param {string|null} repoId
  */
 export async function readDebtEventsCloud(repoId) {
@@ -406,7 +415,7 @@ export async function readDebtEventsCloud(repoId) {
     }));
   } catch (err) {
     process.stderr.write(`  [learning] readDebtEventsCloud failed: ${err.message}\n`);
-    return [];
+    throw err;
   }
 }
 

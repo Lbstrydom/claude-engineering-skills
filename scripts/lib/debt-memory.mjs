@@ -100,7 +100,9 @@ export function selectEventSource({ noDebtLedger = false, readOnly = false, repo
  * @param {object} [opts]
  * @param {string} [opts.ledgerPath=DEFAULT_DEBT_LEDGER_PATH]
  * @param {string} [opts.eventsPath=DEFAULT_DEBT_EVENTS_PATH]
- * @returns {Promise<{ version: 1, entries: object[], eventSource: string }>}
+ * @returns {Promise<{ version: 1, entries: object[], eventSource: string, eventsUnavailable?: string }>}
+ *   `eventsUnavailable` is set (to the failure reason) when the cloud events
+ *   read failed and the entries are hydrated with no events.
  */
 export async function loadDebtLedger(context, {
   ledgerPath = DEFAULT_DEBT_LEDGER_PATH,
@@ -111,14 +113,24 @@ export async function loadDebtLedger(context, {
   }
 
   let events = [];
+  let eventsUnavailable = null;
   if (context.source === EventSource.CLOUD) {
-    events = await readDebtEventsCloud(context.repoId);
+    // A failed cloud read must not abort the audit that loads this, and must
+    // not pass for "no events" either: hydrate with none, but SAY so, so the
+    // round's escalation counts are not read as measured (AGENTS.md: a schema
+    // error is not an empty result).
+    try {
+      events = await readDebtEventsCloud(context.repoId);
+    } catch (err) {
+      eventsUnavailable = `cloud-read-failed:${err?.code || 'unknown'}`;
+      process.stderr.write(`  [debt] debt events could not be read (${eventsUnavailable}) — recurrence/escalation counts are UNMEASURED this run\n`);
+    }
   } else {
     events = readDebtEventsLocal(eventsPath);
   }
 
   const ledger = readDebtLedger({ ledgerPath, events });
-  return { ...ledger, eventSource: context.source };
+  return { ...ledger, eventSource: context.source, ...(eventsUnavailable ? { eventsUnavailable } : {}) };
 }
 
 /**
