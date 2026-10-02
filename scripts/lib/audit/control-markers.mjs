@@ -6,6 +6,11 @@
  * that treats them as an ordinary finding (similarity clustering,
  * needs-triage routing) misreads control state as duplicated signal.
  *
+ * finalize-outcomes.mjs consumes it twice: an un-ruled marker goes to
+ * `auto_dismissed`, never `needs_triage`; and a ledger may dismiss a marker
+ * but never accept it (passed to outcome-sync as `cannotAccept`), so it can
+ * never become an `unremediated_acceptances` obligation.
+ *
  * Mirrors `control_marker_prefixes` in
  * supabase/migrations/20260720210000_memory_health_control_markers.sql
  * (the cluster-density metric's exclusion list). The two lists are not

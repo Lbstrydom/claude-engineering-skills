@@ -83,6 +83,13 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // intact; its pure half runs everywhere and is a no-op here.
   'tests/campaign-adjudication.test.mjs',
   'tests/candidate-audit-findings-window.test.mjs',
+  // Enrolled 2026-10-02 with migration 20261002120000: a ledger-ACCEPTED
+  // control marker (ADJACENCY_INCOMPLETE) bypassed the pending-split and
+  // surfaced in unremediated_acceptances as an obligation. Drives the real
+  // finalize write path and the repair migration against a real view — a
+  // mock store cannot show what the view selects. Two edits, always — this
+  // list AND postgres-parity.yml.
+  'tests/control-marker-acceptance-db.test.mjs',
   // Enrolled 2026-09-07 with `assertRepoRowId`: the two repo id spaces are
   // both uuid-shaped, so the wrong one produced an EMPTY result rather than
   // an error and kept the adjudicator eval unrunnable since it was built.
