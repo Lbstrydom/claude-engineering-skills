@@ -258,6 +258,15 @@ describe('dedupByHash — no count inflation (R3 M2)', () => {
     assert.equal(out._hash, semanticId(f));
   });
 
+  it('is THE shared findings.mjs implementation, not a per-shadow copy (the two copies had diverged)', async () => {
+    const findings = await import('../scripts/lib/findings.mjs');
+    assert.equal(dedupByHash, findings.dedupByHash, 'the final-review shadow must use the one shared dedup');
+    // The divergence that made two copies a defect: the audit-shadow copy
+    // neither skipped a null entry nor wrote the fallback back onto _hash.
+    const f = { severity: 'LOW', category: 'c', section: 's', detail: 'd' };
+    assert.deepEqual(findings.dedupByHash([null, f]).map((x) => x._hash), [semanticId(f)]);
+  });
+
   it('two DISTINCT hash-less findings each get their OWN identity, not undefined for both', () => {
     const a = { severity: 'HIGH', category: 'x', section: 'a.mjs', detail: 'first' };
     const b = { severity: 'HIGH', category: 'x', section: 'b.mjs', detail: 'second' };

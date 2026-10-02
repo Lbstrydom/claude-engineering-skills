@@ -51,7 +51,9 @@ import { SHADOW_PROVIDER_SPECS, shadowModelMatchesFamily } from './provider-spec
 import { resolveOpenRouterCreds } from './providers.mjs';
 import { resolveEnvelopeScope, isNonBlindScope } from './scope.mjs';
 import { applyDebtSuppression, applyScopeFilter, applyExistenceGate, addSemanticIds } from './post-review.mjs';
-import { semanticId } from '../findings.mjs';
+import { dedupByHash } from '../findings.mjs';
+// Re-exported: gemini-review.mjs's _internals has always reached it through here.
+export { dedupByHash };
 import { matchFindings } from '../finding-match.mjs';
 import { classifyLlmError } from '../robustness.mjs';
 import { isCloudEnabled } from '../store/repo.mjs';
@@ -275,30 +277,6 @@ async function runShadowReview(shadow, planContent, transcriptContent, projectCo
   // requestIdentity is projected EXPLICITLY: this return is hand-built, and the
   // caller's `sr.requestIdentity` read null on every run while it was omitted.
   return { result, usage, latencyMs, requestFingerprint, requestIdentity };
-}
-
-/**
- * Dedup a reviewer's findings by semantic hash (R3 M2 — no count inflation).
- * A finding is normally pre-stamped with `_hash` by addSemanticIds(); if one
- * arrives without it (defensive — a programming error upstream), we compute
- * semanticId(f) as a fallback rather than SILENTLY DROPPING it (cluster-A R2 H1
- * — silent data loss). Only a truly empty/nullish entry is skipped.
- */
-export function dedupByHash(findings) {
-  const seen = new Map();
-  for (const f of (findings || [])) {
-    if (!f) continue;
-    const key = f._hash || semanticId(f);
-    // The fallback must be written BACK onto the finding, not just used as the
-    // Map key (audit-code cluster A R3 M1): diffFindingBuckets reads `f._hash`
-    // directly to build its both/primary-only/shadow-only Sets, so a
-    // hash-less finding that survived dedup via its semantic-id fallback would
-    // otherwise contribute `undefined` to that Set — colliding with every
-    // OTHER hash-less finding rather than being classified on its own identity.
-    if (!f._hash) f._hash = key;
-    if (!seen.has(key)) seen.set(key, f);
-  }
-  return [...seen.values()];
 }
 
 /**

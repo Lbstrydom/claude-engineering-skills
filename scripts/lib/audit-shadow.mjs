@@ -32,7 +32,7 @@
 import { z } from 'zod';
 import { ProducerFindingSchema } from './schemas.mjs';
 import { PASS_PROMPTS } from './prompt-seeds.mjs';
-import { semanticId } from './findings.mjs';
+import { semanticId, dedupByHash } from './findings.mjs';
 import { resolveModel } from './model-resolver.mjs';
 import { costForBudget, toEur } from './model-pricing.mjs';
 import { executionPlan } from './audit-arms.mjs';
@@ -62,21 +62,6 @@ export function seededShuffle(arr, seed) {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
-}
-
-/** Canonical-dedup a finding list by semantic hash (within-assignment cross-stage
- * union — plan §7 Gemini R2: an arm's gemini reviews the DEDUPED union of its
- * upstream stages so a finding both stages raised isn't double-fed). */
-function dedupByHash(findings) {
-  const seen = new Set();
-  const out = [];
-  for (const f of findings) {
-    const h = f._hash || semanticId(f);
-    if (seen.has(h)) continue;
-    seen.add(h);
-    out.push(f);
-  }
-  return out;
 }
 
 /**

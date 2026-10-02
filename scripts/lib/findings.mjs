@@ -39,6 +39,30 @@ export function semanticId(f) {
   return crypto.createHash('sha256').update(content).digest('hex').slice(0, 8);
 }
 
+/**
+ * Dedup findings by semantic identity, first occurrence wins (no count
+ * inflation). THE one copy — the final-review shadow and the audit model-A/B
+ * shadow each carried their own, and they had already diverged.
+ *
+ * A finding without `_hash` is keyed by `semanticId(f)` — never silently
+ * dropped — and that fallback is written BACK onto `f._hash`: consumers build
+ * Sets from `f._hash` directly, where every hash-less finding would otherwise
+ * collapse onto one `undefined` element. Only a nullish entry is skipped.
+ *
+ * @param {object[]|null|undefined} findings
+ * @returns {object[]}
+ */
+export function dedupByHash(findings) {
+  const seen = new Map();
+  for (const f of (findings || [])) {
+    if (!f) continue;
+    const key = f._hash || semanticId(f);
+    if (!f._hash) f._hash = key;
+    if (!seen.has(key)) seen.set(key, f);
+  }
+  return [...seen.values()];
+}
+
 // ── Barrel Re-exports (backward compat) ─────────────────────────────────────
 // All 14+ importers of findings.mjs continue working unchanged.
 
