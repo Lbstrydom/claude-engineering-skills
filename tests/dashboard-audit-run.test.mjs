@@ -201,6 +201,29 @@ describe('getRunFindings — store read-query contract', () => {
     assert.equal(adjProbes, 2, 'adjudication_outcome was re-probed rather than cached false after a transient error');
   });
 
+  it('round-1 H8/H17: ONE transient blip is retried inside the same call, so this call still selects the column', async () => {
+    _resetRunReadColumnCache();
+    let adjProbes = 0;
+    const calls = [];
+    const probeRe = /SELECT\s+"?(\w+)"?\s+FROM\s+(\w+)\s+LIMIT 0/i;
+    const deps = {
+      isCloudEnabled: async () => true,
+      many: async (sql) => {
+        calls.push(sql);
+        const m = probeRe.exec(sql);
+        if (m && m[1] === 'adjudication_outcome' && ++adjProbes === 1) {
+          const err = new Error('connection terminated unexpectedly');
+          err.code = '57P01';
+          throw err;
+        }
+        return [];
+      },
+    };
+    await getRunFindings('run-1', deps);
+    const dataCall = calls.find((s) => !/LIMIT 0/i.test(s));
+    assert.match(dataCall, /adjudication_outcome/, 'without the retry a single blip silently drops the column from THIS read');
+  });
+
   it('domain rows still carry null adjudication/remediation when columns absent', async () => {
     const fake = makeFakeClient({
       presentColumns: new Set(),
