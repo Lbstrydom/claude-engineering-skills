@@ -273,17 +273,19 @@ export async function resolveModelEvalShadowOverride() {
  * forwards the one it received from `gemini-review.mjs`.
  */
 async function runShadowReview(shadow, planContent, transcriptContent, projectContext, auditMode, options = {}) {
-  const { runReviewWithRetry, ...retryOptions } = options;
-  const client = await buildShadowClient(shadow.provider);
+  const { runReviewWithRetry, buildClient = buildShadowClient, ...retryOptions } = options;
+  const client = await buildClient(shadow.provider);
   const r = await runReviewWithRetry(
     shadow.provider, client, planContent, transcriptContent, projectContext, auditMode, shadow.model, retryOptions
   );
-  const { result, usage, latencyMs, requestFingerprint, transcriptContent: usedTranscript } = r;
+  const { result, usage, latencyMs, requestFingerprint, requestIdentity, transcriptContent: usedTranscript } = r;
   await applyDebtSuppression(result, usedTranscript);
   await applyScopeFilter(result, usedTranscript);
   applyExistenceGate(result);
   addSemanticIds(result, shadow.provider);
-  return { result, usage, latencyMs, requestFingerprint };
+  // requestIdentity is projected EXPLICITLY: this return is hand-built, and the
+  // caller's `sr.requestIdentity` read null on every run while it was omitted.
+  return { result, usage, latencyMs, requestFingerprint, requestIdentity };
 }
 
 /**
@@ -476,7 +478,7 @@ export function buildFinalReviewPersistPayload({ result, diff, primaryModel, sha
  *   (`modelEvalOverride` with `shadow.state !== 'ready'`) never reach the
  *   code path that calls it, so they may omit it.
  */
-export async function runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent, projectContext, auditMode }, { modelEvalOverride = null, envelopeScopeCli = null, campaignDigest = null, persistFn = recordFinalReviewFindings, runReviewWithRetry, appendModelEvalShadowObservationFn = appendModelEvalShadowObservation } = {}) {
+export async function runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent, projectContext, auditMode }, { modelEvalOverride = null, envelopeScopeCli = null, campaignDigest = null, persistFn = recordFinalReviewFindings, runReviewWithRetry, appendModelEvalShadowObservationFn = appendModelEvalShadowObservation, buildShadowClientFn = buildShadowClient } = {}) {
   // `persistFn` is a test seam ONLY, same shape as `modelEvalOverride` above —
   // production always takes the default (the real store writer). Lets the
   // producer→store contract test capture the payload this function builds
@@ -484,7 +486,9 @@ export async function runShadowAndPersist(result, primaryModel, runId, { planCon
   // or a real database. `appendModelEvalShadowObservationFn` is the same seam
   // shape, for the Gemini final-gate G1 regression (round-6 Step 7): lets a
   // test capture the `findingRefs` this function builds without a live
-  // model-eval store.
+  // model-eval store. `buildShadowClientFn` is the same seam for the ready
+  // path: with it and `runReviewWithRetry` injected, the 'ran' block is
+  // exercised without constructing a real SDK client.
   // modelEvalOverride (Phase 4) takes priority over the ordinary
   // FINAL_REVIEW_SHADOW-derived resolution — resolveModelEvalShadowOverride()
   // itself only returns non-null when an adjudicator Tier A/B eval run is
@@ -555,6 +559,7 @@ export async function runShadowAndPersist(result, primaryModel, runId, { planCon
         envelopeScope,
         primaryResult: isNonBlindScope(envelopeScope) ? result : null,
         runReviewWithRetry,
+        buildClient: buildShadowClientFn,
       });
       diff = diffFindingBuckets(result, sr.result);
       for (const f of diff.primary) f._sourceModel = primaryModel;
