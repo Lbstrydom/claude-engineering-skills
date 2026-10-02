@@ -81,8 +81,8 @@
       "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
     },
     {
-      "line": "consumers). Edit the canonical, never a copy. It used to be cited across skill",
-      "reason": "Describes the browser-tool-detection.md shared-reference authoring convention (edit the canonical, not the generated copy) — enforced by sync-shared-audit-refs.mjs drift detection, not by this skill's own execution."
+      "line": "consumers). Edit the canonical, never a copy. Both used to be cited across skill",
+      "reason": "Describes the shared-reference authoring convention for browser-tool-detection.md and auth-bootstrap.md (edit the canonical, not the generated copy) — enforced by sync-shared-audit-refs.mjs drift detection, not by this skill's own execution."
     }
   ]
 }

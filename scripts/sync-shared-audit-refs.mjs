@@ -51,8 +51,16 @@ const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', X = '\x1b[0m', B = '\x1b[1
  */
 export const EXPECTED_CONSUMERS = Object.freeze({
   'ledger-format.md': ['audit-plan', 'audit-code'],
-  'gemini-gate.md': ['audit-plan', 'audit-code'],
-  'prerequisite-ladder.md': ['audit-plan', 'audit-code'],
+  // /cycle runs the consolidated Gemini gate itself (autonomous mode) and
+  // resolves the audit prerequisites at its own Step 0, so it needs its own
+  // copy of both contracts rather than a pointer into /audit-code's directory.
+  'gemini-gate.md': ['audit-plan', 'audit-code', 'cycle'],
+  'prerequisite-ladder.md': ['audit-plan', 'audit-code', 'cycle'],
+  // The storageState pre-authentication pattern. click-test drives the same
+  // browser connection as persona-test and must pre-authenticate it the same
+  // way; it used to link ../persona-test/references/, which a click-test
+  // package does not contain (tests/skill-md-own-closure.test.mjs).
+  'auth-bootstrap.md': ['persona-test', 'click-test'],
   // The browser-driver contract. BOTH host-driven browser skills resolve their
   // driver from it, and a packaged skill contains only its OWN directory — so a
   // click-test package citing ../persona-test/references/ would ship without the
@@ -62,11 +70,11 @@ export const EXPECTED_CONSUMERS = Object.freeze({
   // needs it, and the token is Claude-Code idiom no other host substitutes.
   'input-acquisition.md': [
     'persona-test', 'ship', 'click-test', 'ux-lock', 'audit-code', 'audit-plan',
-    'brainstorm', 'ai-context-management',
+    'brainstorm', 'ai-context-management', 'cycle',
   ],
   'verification-discipline.md': [
     'investigate', 'audit-code', 'ux-lock', 'ship', 'explain', 'plan', 'audit-plan',
-    'nav-audit',
+    'nav-audit', 'persona-test',
   ],
 });
 
