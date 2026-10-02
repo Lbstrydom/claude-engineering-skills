@@ -184,7 +184,7 @@ describe('applyExistenceGate — is actually WIRED into the review path', () => 
       assert.equal(r.status, 0, r.stderr);
       assert.deepEqual(JSON.parse(fs.readFileSync(out, 'utf-8'))._existenceGate, { checked: 1, refuted: 0 });
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
