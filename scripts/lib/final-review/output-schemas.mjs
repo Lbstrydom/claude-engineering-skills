@@ -18,7 +18,9 @@ import { ProducerFindingSchema, zodToGeminiSchema } from '../schemas.mjs';
 import { zodToOpenAiJsonSchema } from '../oss-structured-output.mjs';
 
 const WronglyDismissedSchema = z.object({
-  original_finding_id: z.string().max(10).describe('The GPT finding ID that was dismissed (e.g. H3, M5)'),
+  // 64, not 10: ids are not only `H3`/`M5` — the tiered adjudicator joins on
+  // `envelope:<fingerprint>` (final-adjudication.mjs), which a 10-char bound cut.
+  original_finding_id: z.string().max(64).describe('The GPT finding ID that was dismissed (e.g. H3, M5)'),
   reason_claude_was_wrong: z.string().max(800).describe('Why Claude should not have dismissed this'),
   recommended_severity: z.enum(['HIGH', 'MEDIUM', 'LOW']),
   evidence_basis: z.string().max(600).optional().describe(
@@ -111,8 +113,9 @@ export const GeminiFinalReviewJsonSchema = zodToGeminiSchema(GeminiFinalReviewSc
 // `{file,title,description,evidence}` and glm-5.2 returned
 // `{title,description,evidence_basis,cited_lines}`, neither carrying the
 // `category`/`section`/`risk`/`recommendation` the finding taxonomy and R2+
-// suppression ledger key on — and Zod validation here is warn-and-keep, so
-// those degraded rows flow into the store silently.
+// suppression ledger key on — and Zod validation was then warn-and-keep, so
+// those degraded rows flowed into the store silently (callReviewer now fails
+// a structurally invalid review).
 export const OpenAiFinalReviewJsonSchema = zodToOpenAiJsonSchema(GeminiFinalReviewSchema);
 
 /**
@@ -169,6 +172,19 @@ function _collectMaxLengths(schema, path, map, defs) {
   }
 }
 
+/**
+ * Paths whose strings are IDENTITY or EVIDENCE, never prose — slicing one does
+ * not shorten it, it changes what it points at: `envelope:9f3a…` cut to ten
+ * characters joins no finding, and `auth.js:137` cut to `auth.js:13` is a
+ * different, false citation. An over-long identifier is kept verbatim (schema
+ * validation then decides); an over-long citation is DROPPED from its array —
+ * omitted evidence, never corrupted evidence.
+ */
+const VERBATIM_PATHS = new Set([
+  'wrongly_dismissed[].original_finding_id',
+  'wrongly_dismissed[].cited_lines[]',
+]);
+
 const _rawGeminiReviewSchema = z.toJSONSchema(GeminiFinalReviewSchema);
 const _maxLengthMap = new Map();
 _collectMaxLengths(_rawGeminiReviewSchema, '', _maxLengthMap, _rawGeminiReviewSchema.$defs);
@@ -185,13 +201,26 @@ export function truncateToSchema(obj, path, truncated) {
   if (typeof obj === 'string') {
     const max = _maxLengthMap.get(path);
     if (max && obj.length > max) {
+      if (VERBATIM_PATHS.has(path)) {
+        truncated.push(`${path} (${obj.length} > ${max}, identifier kept verbatim)`);
+        return obj;
+      }
       truncated.push(`${path} (${obj.length} → ${max})`);
       return obj.slice(0, max);
     }
     return obj;
   }
   if (Array.isArray(obj)) {
-    return obj.map(item => truncateToSchema(item, `${path}[]`, truncated));
+    const itemPath = `${path}[]`;
+    const max = VERBATIM_PATHS.has(itemPath) ? _maxLengthMap.get(itemPath) : undefined;
+    const kept = max
+      ? obj.filter((item) => {
+        if (typeof item !== 'string' || item.length <= max) return true;
+        truncated.push(`${itemPath} (${item.length} > ${max}, evidence dropped, never shortened)`);
+        return false;
+      })
+      : obj;
+    return kept.map(item => truncateToSchema(item, itemPath, truncated));
   }
   if (obj && typeof obj === 'object') {
     const out = {};
