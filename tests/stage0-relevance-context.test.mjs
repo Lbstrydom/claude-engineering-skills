@@ -143,6 +143,46 @@ test('fewer items than the concurrency cap spawns only as many workers as items'
     assert.doesNotThrow(() => adapter('target.mjs', 1, 1, 'x'));
   });
 
+  // final-review shadow fd93a4c7: the pool swallowed every impact-lookup throw
+  // with a bare catch and no log, so a systemic outage produced an all-null
+  // impactCache indistinguishable from a repo with no import graph. The
+  // degrade-to-null CONTRACT stays (null = unknown); the silence does not.
+  itFor('an impact-lookup THROW degrades to null but is reported once, with a count', async () => {
+    const envelopes = ['a.mjs', 'b.mjs', 'c.mjs'].map((f) => ({ canonicalFinding: { anchor: { side: 'head', newFile: f } } }));
+    const ctx = { auditBaseCommit: null, commitSha: 'abc', workingTreeDirty: false, changedFiles: [] };
+    const writes = [];
+    const realWrite = process.stderr.write;
+    process.stderr.write = (s) => { writes.push(String(s)); return true; };
+    let result;
+    try {
+      result = await buildStage0RelevanceContext(ctx, envelopes, {
+        repoRoot,
+        getImporters: async () => { throw new Error('connection terminated unexpectedly'); },
+      });
+    } finally {
+      process.stderr.write = realWrite;
+    }
+    assert.deepEqual([...result.impactCache.values()], [null, null, null], 'unknown, never a guess');
+    const notes = writes.filter((w) => /impact-lookup failure/i.test(w));
+    assert.equal(notes.length, 1, `one aggregated line, not one per file: ${JSON.stringify(writes)}`);
+    assert.match(notes[0], /3 of 3/);
+    assert.match(notes[0], /connection terminated unexpectedly/);
+  });
+
+  itFor('a lookup that RETURNS null (unknown) is not reported as a failure (negative control)', async () => {
+    const envelopes = [{ canonicalFinding: { anchor: { side: 'head', newFile: 'a.mjs' } } }];
+    const ctx = { auditBaseCommit: null, commitSha: 'abc', workingTreeDirty: false, changedFiles: [] };
+    const writes = [];
+    const realWrite = process.stderr.write;
+    process.stderr.write = (s) => { writes.push(String(s)); return true; };
+    try {
+      await buildStage0RelevanceContext(ctx, envelopes, { repoRoot, getImporters: async () => null });
+    } finally {
+      process.stderr.write = realWrite;
+    }
+    assert.equal(writes.filter((w) => /impact-lookup failure/i.test(w)).length, 0);
+  });
+
   itFor('STAGE0_IMPACT_CONCURRENCY (fp=1cc508ab) is env-tunable, not a hardcoded literal', async () => {
     const saved = process.env.STAGE0_IMPACT_CONCURRENCY;
     try {
