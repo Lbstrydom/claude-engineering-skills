@@ -130,8 +130,21 @@ export function reconcile({
   const newCovered = new Set(coveredFiles);
   const inNewScope = (req) => (req.provenance || []).some((p) => newCovered.has(p.file));
 
-  // (1) Prior requirements outside the new extraction scope — retained as-is.
-  const retained = prior.requirements.filter((r) => !inNewScope(r));
+  // (1) Prior requirements outside the new extraction scope — retained, with
+  // the CURRENT overrides applied. Applying them only to fresh candidates left
+  // a retained requirement's correction unreachable until its file happened to
+  // be re-extracted: the committed REQ-persistence-7bc1224d correction never
+  // reached ledger.json, and /audit-code kept auditing against the stale text.
+  const retained = prior.requirements
+    .filter((r) => !inNewScope(r))
+    .filter((r) => overrides[r.id]?.decision !== 'reject')
+    .map((r) => {
+      const override = overrides[r.id];
+      if (!override) return r;
+      const req = { ...r, assertion: (override.assertion || r.assertion).slice(0, 200) };
+      req.status = override.decision === 'accept' ? 'active' : r.status;
+      return req;
+    });
   const priorInScope = prior.requirements.filter((r) => inNewScope(r));
   const priorById = new Map(priorInScope.map((r) => [r.id, r]));
   const aliases = { ...(prior.identityAliases || {}) };
