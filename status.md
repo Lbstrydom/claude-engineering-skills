@@ -82,6 +82,20 @@
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
 
+## 2026-10-02 — Azure tenant serves gpt-6.1-sol: template, runbook and consumer envs follow
+
+### Changes
+- `defaults/work-profile.env.example` example deployment `gpt-5.6-terra` → `gpt-6.1-sol`. `docs/runbooks/azure-work-profile.md`: tenant history, examples, and the `--target gpt` ladder (now `gpt-6.1-sol` → `gpt-6-sol` → `gpt-5.6-terra`, matching `STATIC_GPT_CANDIDATES`).
+
+### Readings
+- Work tenant probe (Responses API, 16-token ping each): `gpt-6.1-sol`, `gpt-6-luna` and `gpt-5.6-terra` answer. **`gpt-6-sol` and `gpt-5.6-sol` now 404** — both were serving on 2026-10-01.
+- Local consumer envs (operator-owned, not committed): storyline and ai-organiser `AZURE_OPENAI_GPT_DEPLOYMENT` + `OPENAI_AUDIT_MODEL` → `gpt-6.1-sol`. storyline was on `gpt-6-sol` (broken by the 404); ai-organiser was on Azure `gpt-5.5`. Both resolve `latest-gpt-mini` (meta-assess fallback) to `gpt-6-luna`, which is deployed.
+
+### Not done
+- No audit loop (12-line docs change; gate `not-run`).
+
+---
+
 ## 2026-10-02 — control markers can no longer become accepted obligations
 
 ### Changes
