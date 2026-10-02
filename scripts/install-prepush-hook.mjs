@@ -100,7 +100,21 @@ const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush
 // AUDIT_PUSH_RANGE_BASE/_HEAD from the real range git handed it — the same
 // fix this repo's own dogfooded .githooks/pre-push already applies. Re-install
 // to pick it up.
-const HOOK_VERSION    = 7;
+// v8 (2026-10-02): a DELETE-ONLY push (`git push origin --delete x`, every
+// stdin line carrying an all-zero local sha) now exits after the maintenance
+// block instead of running the plan-status gate with an empty range. With no
+// local sha there is no range to export, so AUDIT_PUSH_RANGE_BASE/_HEAD stayed
+// empty and check-plan-status.mjs fell back to stale inference, which could
+// block a push that sends no commits. The skip needs BOTH conjuncts
+// (published == 0 AND deleted > 0) counted over EVERY stdin line: empty stdin
+// is not "all deletions", and a mixed push is still checked at its real
+// update. To make that true the stdin read became a loop (first PUBLISHED ref
+// wins the range, as in this repo's own .githooks/pre-push), so a deletion
+// listed first no longer leaves a mixed push on stale inference either. The
+// skip exits directly rather than through `finish`, so the consumer's
+// .githooks/pre-push.local (typically a whole test suite) does not run for a
+// push with nothing to test. Re-install to pick it up.
+const HOOK_VERSION    = 8;
 const HOOK_VERSION_MARKER = `# hook-version: ${HOOK_VERSION}`;
 // Accept the legacy marker too so existing installs (pre-rename) can be
 // upgraded in place by `npm run hooks:install` without manual cleanup.
@@ -148,21 +162,33 @@ ${HOOK_VERSION_MARKER}
 # same stdin protocol; this brings the generated consumer hook up to the same
 # standard.
 #
-# ONE \`read\`, not a \`while\` loop over every ref: nothing below this point in
+# ONE reader, a loop only to see every ref (v8): nothing below this point in
 # the hook re-runs per ref — the plan-status gate, the code-audit and the
 # maintenance sweep each execute exactly once per hook invocation regardless of
-# how many refs are pushed — so looping here would not check more refs, only
-# run those SAME downstream commands more than once for a multi-ref push,
-# which is a different change and not this fix's job. The first ref is
-# representative for the single-branch pushes this hook is built around,
-# matching the "first pushed ref wins" simplification already documented in
-# the dogfooded hook this mirrors.
+# how many refs are pushed — and this loop launches none of them; it only
+# tallies refs and picks ONE range. The first PUBLISHED ref wins that range
+# (a deletion has no local sha to build one from), matching the "first pushed
+# ref wins" simplification of the dogfooded hook this mirrors. Counting every
+# line is what lets the delete-only skip below tell "every ref is a deletion"
+# from "the first ref is".
 ZERO_SHA="0000000000000000000000000000000000000000"
 PUSH_BASE=""
 PUSH_HEAD=""
+PUBLISHED_REFS=0   # ref updates that send commits — anything but a deletion
+DELETED_REFS=0
 if [ ! -t 0 ]; then
-  read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA
-  if [ -n "$LOCAL_SHA" ] && [ "$LOCAL_SHA" != "$ZERO_SHA" ]; then
+  # \`|| [ -n "$LOCAL_SHA" ]\` keeps a final line with no trailing newline: read
+  # fails on it but has already filled the variables, and clears them again on
+  # the next (EOF) call, which ends the loop.
+  while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA || [ -n "$LOCAL_SHA" ]; do
+    [ -z "$LOCAL_SHA" ] && continue
+    if [ "$LOCAL_SHA" = "$ZERO_SHA" ]; then
+      # Branch deletion — nothing was pushed, so no range comes from it.
+      DELETED_REFS=$((DELETED_REFS + 1))
+      continue
+    fi
+    PUBLISHED_REFS=$((PUBLISHED_REFS + 1))
+    [ -n "$PUSH_BASE" ] && continue   # range already taken from an earlier ref
     if [ -n "$REMOTE_SHA" ] && [ "$REMOTE_SHA" != "$ZERO_SHA" ]; then
       PUSH_BASE="$REMOTE_SHA"
       PUSH_HEAD="$LOCAL_SHA"
@@ -176,10 +202,7 @@ if [ ! -t 0 ]; then
         PUSH_HEAD="$LOCAL_SHA"
       fi
     fi
-  fi
-  # LOCAL_SHA = all-zero is a branch deletion — nothing was pushed, so
-  # PUSH_BASE/_HEAD stay empty and downstream gates fall back to their own
-  # inference, unchanged from before this fix.
+  done
 fi
 export AUDIT_PUSH_RANGE_BASE="$PUSH_BASE"
 export AUDIT_PUSH_RANGE_HEAD="$PUSH_HEAD"
@@ -246,6 +269,24 @@ MAINT_SCRIPT="scripts/.claude-skills/maintenance-checks.mjs"
 if [ -f "$MAINT_SCRIPT" ]; then
   mkdir -p .audit-loop 2>/dev/null
   ( node "$MAINT_SCRIPT" --opportunistic > .audit-loop/last-maintenance.log 2>&1 < /dev/null & ) 2>/dev/null
+fi
+
+# ── Delete-only push: nothing published, nothing to check (v8) ───────────────
+# A push whose EVERY ref update is a deletion sends no commits, so there is no
+# range to export and nothing for the plan-status gate or the code audit to
+# judge; with an empty range the gate inferred a stale base and could block it.
+# Both conjuncts are load-bearing: DELETED_REFS > 0 keeps empty stdin (a tty, a
+# manual run) from skipping vacuously, and PUBLISHED_REFS == 0 keeps a mixed
+# push checked at its real update. A NEW branch (zero REMOTE sha) is a publish,
+# not a deletion — only a zero LOCAL sha counts.
+#
+# POSITION: after the maintenance block, which must run before any early exit,
+# and a bare \`exit 0\` rather than \`finish\`: the consumer's local hook is the
+# expensive gate for COMMITS being pushed and a deletion sends none. Announced
+# on stderr so the skip never reads as a pass.
+if [ "$PUBLISHED_REFS" -eq 0 ] && [ "$DELETED_REFS" -gt 0 ]; then
+  echo "[prepush-hook] delete-only push ($DELETED_REFS ref(s)) publishes no commits — checks skipped." >&2
+  exit 0
 fi
 
 PLANS_DIR="docs/plans"
