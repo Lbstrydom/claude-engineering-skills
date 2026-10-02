@@ -3,9 +3,9 @@
  * openai-compatible / openrouter routes + the G1 no-silent-egress invariant.
  *
  * Deterministic seam (Tier 1). Env is set BEFORE the dynamic import so the frozen
- * finalReviewConfig picks up the review-scoped gateway credentials. We only assert
- * return-value paths — assertReady's missing-config branch calls process.exit and
- * is intentionally not exercised in-process.
+ * finalReviewConfig picks up the review-scoped gateway credentials. Readiness
+ * failures THROW (ProviderNotReadyError) since 2026-10, so the missing-config
+ * branches are exercised in-process too — no process.exit stub.
  */
 process.env.FINAL_REVIEW_MODEL = 'anthropic/claude-opus-4';
 process.env.FINAL_REVIEW_API_KEY = 'test-frk';
@@ -79,27 +79,49 @@ describe('G1 — no silent egress via auto-fallback', () => {
     );
   });
 
-  test('ONLY OPENROUTER_API_KEY present → hits the no-provider exit, never returns a gateway route', () => {
+  test('ONLY OPENROUTER_API_KEY present → the no-provider refusal, never a gateway route', () => {
     // The security-critical case: no first-party credential at all. Auto-detect
     // must NOT fall through to openrouter/openai-compatible on the shared key —
-    // it must hit the "no provider available" exit. We stub process.exit so the
-    // exit path is observable in-process instead of killing the runner.
-    const origExit = process.exit;
-    const origErr = console.error;
-    let exitCode = null;
-    process.exit = (code) => { exitCode = code; throw new Error(`__exit__${code}`); };
-    console.error = () => {};
-    try {
-      assert.throws(
-        () => selectProvider(null, { env: { OPENROUTER_API_KEY: 'sk-or' }, azureActive: false }),
-        /__exit__1/,
-        'must exit(1), never return a gateway route',
-      );
-    } finally {
-      process.exit = origExit;
-      console.error = origErr;
-    }
-    assert.equal(exitCode, 1, 'no-provider path exits(1) rather than silently egressing to OpenRouter');
+    // it must refuse. A structured throw now, so no process.exit stub is needed.
+    assert.throws(
+      () => selectProvider(null, { env: { OPENROUTER_API_KEY: 'sk-or' }, azureActive: false }),
+      (err) => err.providerNotReady === true && /requires GEMINI_API_KEY, ANTHROPIC_API_KEY/.test(err.message),
+      'must refuse, never return a gateway route',
+    );
+  });
+});
+
+describe('readiness is a THROW the CLI handles — the catalog never ends the process', () => {
+  // Provider validation called console.error + process.exit(1) inside the
+  // shared catalog, so no caller could recover (or test) a not-ready provider.
+  const exitTrap = () => {
+    const orig = process.exit;
+    const calls = [];
+    process.exit = (code) => { calls.push(code); throw new Error('process.exit called'); };
+    return { calls, restore: () => { process.exit = orig; } };
+  };
+
+  for (const [id, env] of [['gemini', {}], ['claude-opus', {}], ['xai', {}], ['alibaba', {}], ['deepseek', {}]]) {
+    test(`PROVIDERS["${id}"].assertReady throws ProviderNotReadyError on a missing key`, () => {
+      const trap = exitTrap();
+      try {
+        assert.throws(() => PROVIDERS[id].assertReady(env), (err) => err.name === 'ProviderNotReadyError' && err.providerNotReady === true);
+      } finally { trap.restore(); }
+      assert.deepEqual(trap.calls, [], 'readiness must not terminate the process');
+    });
+  }
+
+  test('selectProvider refuses an unknown provider by throwing, naming it', () => {
+    assert.throws(() => selectProvider('frobnicator', { env: {}, azureActive: false }), /Unknown provider "frobnicator"/);
+  });
+});
+
+describe('attribution names the provider that actually ran', () => {
+  test('reviewerModelOf derives from each descriptor — an OpenRouter review is not filed under Opus', async () => {
+    const { reviewerModelOf, CLAUDE_OPUS_MODEL } = await import('../scripts/lib/final-review/providers.mjs');
+    for (const [id, d] of Object.entries(PROVIDERS)) assert.equal(reviewerModelOf(id), d.resolveModel(), id);
+    assert.equal(reviewerModelOf('openrouter'), 'anthropic/claude-opus-4', 'FINAL_REVIEW_MODEL, verbatim');
+    assert.notEqual(reviewerModelOf('xai'), CLAUDE_OPUS_MODEL, 'the old ternary filed every unknown provider as Opus');
   });
 });
 

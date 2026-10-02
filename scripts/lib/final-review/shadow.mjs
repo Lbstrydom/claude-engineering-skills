@@ -450,6 +450,54 @@ export function buildFinalReviewPersistPayload({ result, diff, primaryModel, sha
 }
 
 /**
+ * Resolve the shadow envelope scope, REFUSING a campaign-unsafe one. Pure.
+ *
+ * A config-level refusal must propagate as a genuine error ("exit non-zero
+ * before any client is constructed" is the plan's own test), never be
+ * relabelled `error-unavailable` by the provider-failure catch — which is why
+ * `main()` calls this BEFORE building the primary client and running the
+ * primary review: refusing only inside `runShadowAndPersist` meant the arm had
+ * already been billed for a result it then threw away.
+ *
+ * Campaign identity is `--campaign-digest`'s PRESENCE, never how scope was
+ * supplied (KD-6: gap via env vs gap via CLI must not behave differently).
+ * Scope resolution has ONE home (scope.mjs); precedence --envelope-scope >
+ * FINAL_REVIEW_SHADOW_SCOPE > 'full'.
+ *
+ * @param {{envelopeScopeCli?: string|null, campaignDigest?: string|null, envScope?: string|null}} args
+ * @returns {{scope: string, warning: string|null}} `warning` is the interactive
+ *   invalid-scope notice, returned rather than written so a preflight call
+ *   does not print it twice.
+ */
+export function resolveShadowEnvelopeScope({ envelopeScopeCli = null, campaignDigest = null, envScope = shadowReviewConfig.scope } = {}) {
+  const campaignActive = campaignDigest !== null;
+  const scopeRes = resolveEnvelopeScope({ cliScope: envelopeScopeCli, envScope });
+  if (campaignActive && scopeRes.scope === 'gap') {
+    // Zero-latency failure — the tell that nothing was billed.
+    throw new Error(
+      '[shadow-review] --envelope-scope gap is campaign-ineligible (plan KD-5): a gap '
+      + 'shadow is conditioned on its own arm\'s primary result, so gap arms are not '
+      + 'comparable across a cohort. Refusing before any provider call.',
+    );
+  }
+  if (scopeRes.invalid === null) return { scope: scopeRes.scope, warning: null };
+  // Interactive: loud warning, proceed on 'full' (the most expensive envelope,
+  // so a typo cannot silently buy the cheap behaviour). Campaign: hard reject —
+  // an unattended run has nobody to read the warning.
+  if (campaignActive) {
+    throw new Error(
+      `[shadow-review] invalid --envelope-scope "${scopeRes.invalid}" under an active campaign `
+      + '(--campaign-digest present) — refusing before any provider call. Campaign scope must be valid.',
+    );
+  }
+  return {
+    scope: scopeRes.scope,
+    warning: `  [shadow-review] WARNING: FINAL_REVIEW_SHADOW_SCOPE="${scopeRes.invalid}" is not one of `
+      + 'full|thin|gap — falling back to "full" (the most expensive envelope). Fix the value or unset it.\n',
+  };
+}
+
+/**
  * Run the shadow reviewer (when enabled) and persist both reviewers' findings.
  * Mutates `result` to add `result._shadow`. Returns nothing — observation only.
  *
@@ -486,53 +534,12 @@ export async function runShadowAndPersist(result, primaryModel, runId, { planCon
   const shadow = modelEvalOverride ? modelEvalOverride.shadow : resolveShadow();
   let diff = null;
 
-  // Campaign identity + scope resolution happen HERE, unconditionally and
-  // BEFORE the shadow.state check — never inside the try/catch below, whose
-  // only job is making an ACTUAL PROVIDER CALL failure non-fatal. A
-  // config-level refusal must propagate as a genuine uncaught error ("exit
-  // non-zero before any client is constructed" is the plan's own test for
-  // this); relabelling it 'error-unavailable' via the catch would silently
-  // turn a campaign-safety refusal into the same non-fatal shrug a network
-  // timeout gets, which defeats the entire point of refusing early.
-  //
-  // Campaign identity is `--campaign-digest`'s PRESENCE, never how scope was
-  // supplied (KD-6's correction: an earlier draft used "was --envelope-scope
-  // given" as the campaign signal, which made identical `gap` intent behave
-  // differently by transport — gap via env was fine, gap via CLI was a
-  // violation, for no reason a caller could predict).
-  //
-  // Scope resolution has ONE home (scope.mjs). Precedence: --envelope-scope
-  // (campaign) > FINAL_REVIEW_SHADOW_SCOPE (operator) > 'full' (default) —
-  // resolveEnvelopeScope's own cli-then-env precedence gives this for free.
-  const campaignActive = campaignDigest !== null;
-  const scopeRes = resolveEnvelopeScope({ cliScope: envelopeScopeCli, envScope: shadowReviewConfig.scope });
-  if (campaignActive && scopeRes.scope === 'gap') {
-    // Zero-latency failure — the tell that nothing was billed.
-    throw new Error(
-      '[shadow-review] --envelope-scope gap is campaign-ineligible (plan KD-5): a gap '
-      + 'shadow is conditioned on its own arm\'s primary result, so gap arms are not '
-      + 'comparable across a cohort. Refusing before any provider call.',
-    );
-  }
-  if (scopeRes.invalid !== null) {
-    // Disposition differs by whether a campaign is watching. Interactive:
-    // loud warning, proceed on 'full' (the most expensive envelope, so a
-    // typo cannot silently buy the cheap behaviour). Campaign: hard reject
-    // before any billed call — an unattended run has nobody to read the
-    // warning, and the operator-approved plan explicitly requires this.
-    if (campaignActive) {
-      throw new Error(
-        `[shadow-review] invalid --envelope-scope "${scopeRes.invalid}" under an active campaign `
-        + '(--campaign-digest present) — refusing before any provider call. Campaign scope must be valid.',
-      );
-    }
-    process.stderr.write(
-      `  [shadow-review] WARNING: FINAL_REVIEW_SHADOW_SCOPE="${scopeRes.invalid}" is not one of `
-      + `full|thin|gap — falling back to "full" (the most expensive envelope). `
-      + 'Fix the value or unset it.\n',
-    );
-  }
-  const envelopeScope = scopeRes.scope;
+  // Campaign-safety refusals first, unconditionally — see resolveShadowEnvelopeScope.
+  // gemini-review.mjs's main() ALSO calls it before any client is built (the
+  // refusal's whole point); this second call is what makes the function
+  // self-guarding for any other caller. It is pure, so asking twice is free.
+  const { scope: envelopeScope, warning } = resolveShadowEnvelopeScope({ envelopeScopeCli, campaignDigest });
+  if (warning) process.stderr.write(warning);
 
   if (shadow.state !== 'ready') {
     result._shadow = shadowSkipBlock(shadow);

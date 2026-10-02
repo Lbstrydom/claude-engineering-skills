@@ -559,7 +559,7 @@ describe('recoverRunIdFromMarker — the id the audit already wrote to disk', ()
   };
 
   it('recovers the run id from the real marker that was on disk during the incident', () => {
-    const got = recoverRunIdFromMarker({ marker: REAL_MARKER, nowMs: NOW });
+    const got = recoverRunIdFromMarker({ marker: REAL_MARKER, nowMs: NOW, transcriptRunId: REAL_MARKER.runId });
     assert.deepEqual(got, { runId: '94a2676f-ed92-40f1-abce-251310eacfdd', reason: 'recovered' });
   });
 
@@ -575,11 +575,11 @@ describe('recoverRunIdFromMarker — the id the audit already wrote to disk', ()
   it('accepts a marker right at the age boundary and refuses one just past it', () => {
     const base = Date.parse(FRESH_TS);
     assert.equal(
-      recoverRunIdFromMarker({ marker: REAL_MARKER, nowMs: base + RUN_ID_MARKER_MAX_AGE_MS }).reason,
+      recoverRunIdFromMarker({ marker: REAL_MARKER, nowMs: base + RUN_ID_MARKER_MAX_AGE_MS, transcriptRunId: REAL_MARKER.runId }).reason,
       'recovered'
     );
     assert.equal(
-      recoverRunIdFromMarker({ marker: REAL_MARKER, nowMs: base + RUN_ID_MARKER_MAX_AGE_MS + 1 }).reason,
+      recoverRunIdFromMarker({ marker: REAL_MARKER, nowMs: base + RUN_ID_MARKER_MAX_AGE_MS + 1, transcriptRunId: REAL_MARKER.runId }).reason,
       'stale'
     );
   });
@@ -606,6 +606,61 @@ describe('recoverRunIdFromMarker — the id the audit already wrote to disk', ()
       recoverRunIdFromMarker({ marker: { ...REAL_MARKER, ts: 'not-a-date' }, nowMs: NOW }).reason,
       'malformed'
     );
+  });
+});
+
+// Syntax + freshness say the marker is A recent audit, not THE audit under
+// review: any later audit on the same disk (another session, another sid)
+// overwrites it. Recovery is therefore bound to the transcript being reviewed.
+describe('recoverRunIdFromMarker — bound to the transcript under review', () => {
+  const NOW = Date.parse('2026-07-26T17:46:00.000Z');
+  const MARKER = { runId: '94a2676f-ed92-40f1-abce-251310eacfdd', ts: '2026-07-26T17:44:54.387Z' };
+
+  it('a fresh, well-formed marker for ANOTHER run is refused (transcript-mismatch)', () => {
+    assert.deepEqual(
+      recoverRunIdFromMarker({ marker: MARKER, nowMs: NOW, transcriptRunId: '11111111-2222-3333-4444-555555555555' }),
+      { runId: null, reason: 'transcript-mismatch' },
+    );
+  });
+
+  it('a transcript that names no run cannot vouch for the marker (unbound)', () => {
+    assert.deepEqual(recoverRunIdFromMarker({ marker: MARKER, nowMs: NOW, transcriptRunId: null }), { runId: null, reason: 'unbound' });
+  });
+
+  it('transcriptRunIdOf reads the LATEST round that carries a cloud run id', async () => {
+    const { transcriptRunIdOf } = await import('../scripts/lib/final-review/run-id-recovery.mjs');
+    const t = JSON.stringify({ rounds: [
+      { round: 1, _cloudRunId: 'aaaaaaaa-0000-0000-0000-000000000001' },
+      { round: 2, _cloudRunId: 'bbbbbbbb-0000-0000-0000-000000000002' },
+      { round: 3 },
+    ] });
+    assert.equal(transcriptRunIdOf(t), 'bbbbbbbb-0000-0000-0000-000000000002');
+    assert.equal(transcriptRunIdOf('# markdown transcript'), null);
+    assert.equal(transcriptRunIdOf(JSON.stringify({ rounds: [{ _cloudRunId: 'bad id' }] })), null, 'a malformed id is not a binding');
+  });
+
+  it('resolveReviewRunId persists only to the run BOTH the marker and the transcript name', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { resolveReviewRunId } = await import('../scripts/lib/final-review/run-id-recovery.mjs');
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'runid-bind-'));
+    try {
+      fs.mkdirSync(path.join(repoRoot, '.audit'));
+      fs.writeFileSync(path.join(repoRoot, '.audit', 'last-audit-run.json'), JSON.stringify({ ...MARKER, ts: new Date().toISOString() }));
+      const transcriptFor = (id) => JSON.stringify({ rounds: [{ round: 1, _cloudRunId: id }] });
+      const quiet = { log: () => {} };
+      const base = { cliRunId: null, auditMode: 'code', cloudEnabled: true, repoRoot, ...quiet };
+      assert.equal(resolveReviewRunId({ ...base, transcriptContent: transcriptFor(MARKER.runId) }), MARKER.runId);
+      assert.equal(
+        resolveReviewRunId({ ...base, transcriptContent: transcriptFor('11111111-2222-3333-4444-555555555555') }), null,
+        'the marker belongs to a different audit than the transcript under review',
+      );
+      assert.equal(resolveReviewRunId({ ...base, cliRunId: 'explicit-run-id-0001', transcriptContent: '{}' }), 'explicit-run-id-0001');
+      assert.equal(resolveReviewRunId({ ...base, auditMode: 'plan', transcriptContent: transcriptFor(MARKER.runId) }), null);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
   });
 });
 
