@@ -210,6 +210,23 @@ describe('CI parity with .github/workflows/postgres-parity.yml', () => {
     assert.match(DB_TEST_IMAGE, /^pgvector\/pgvector:[\w.-]+@sha256:[0-9a-f]{64}$/);
   });
 
+  it('the fixture\'s `vector` version is the pgvector version DB_TEST_IMAGE\'s tag names', () => {
+    // The pin makes the fixture reproducible; it does not make a BUMP complete.
+    // Changing the digest without `npm run db:local:regen` otherwise surfaces
+    // only at the Docker-gated schema-diff step — this catches it in plain
+    // `npm test`. The tag is only documentation to Docker, so this is also
+    // what keeps the tag honest about the digest it sits beside.
+    const tagVersion = DB_TEST_IMAGE.match(/^pgvector\/pgvector:(\d+\.\d+\.\d+)-pg\d+@/)?.[1];
+    assert.ok(tagVersion, `DB_TEST_IMAGE tag must be <pgvector-version>-pg<major>, got ${DB_TEST_IMAGE}`);
+    const fixture = JSON.parse(
+      fs.readFileSync(path.join(REPO_ROOT, 'tests', 'fixtures', 'expected-schema.json'), 'utf-8'),
+    );
+    const vector = (fixture.extensions ?? []).find((e) => e.extension_name === 'vector');
+    assert.ok(vector, 'expected-schema.json must record the vector extension; an absent row would pass vacuously');
+    assert.equal(vector.version, tagVersion,
+      'DB_TEST_IMAGE and the fixture disagree: after changing the image run `npm run db:local:regen`');
+  });
+
   it('every exported suite-file list member appears in the db-suite job', () => {
     for (const f of [...DESTRUCTIVE_SUITE_FILES, ...ISOLATED_SUITE_FILES, ...CONTRACT_SUITE_FILES]) {
       assert.ok(DB_SUITE_TEXT.includes(f), `db-suite job must reference ${f}`);
