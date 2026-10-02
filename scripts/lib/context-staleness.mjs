@@ -37,7 +37,7 @@ export const DEFAULT_THRESHOLD_DAYS = 60;
  * false for every row, so an unchecked bad value printed a clean verdict having
  * compared nothing.
  *
- * @param {string[]} argv - process.argv.slice(2)
+ * @param {string[]} argv - the CLI's arguments, script path already removed
  * @returns {{ok: true, value: number} | {ok: false, error: string}}
  */
 export function parseThresholdDays(argv) {
