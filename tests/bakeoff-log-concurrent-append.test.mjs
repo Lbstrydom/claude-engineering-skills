@@ -19,6 +19,14 @@
  * `spawn()` returns immediately, so both children are genuinely running
  * before this file awaits their exits.
  *
+ * **Spawned is not overlapping: workers wait on a start barrier.** Under the
+ * full parallel suite one child's Node startup can outlast the other child's
+ * entire run, so the two loops never overlap and the unlocked control kept
+ * every line — failing as "the race was not exercised" with nothing wrong
+ * (2 of 60 runs at 12-way parallelism, 2026-10-02). Each worker prints
+ * `READY` and blocks on stdin; `runRacing` releases them together only once
+ * all are ready.
+ *
  * @module tests/bakeoff-log-concurrent-append
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
@@ -46,18 +54,48 @@ afterEach(() => {
   catch { /* best effort */ }
 });
 
-/** Spawn `worker args...` and resolve when it exits, rejecting on a non-zero code. */
-function runAsync(worker, args) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [worker, ...args], { timeout: 60_000 });
+/**
+ * Worker prelude, interpolated into BOTH workers: announce readiness, then
+ * block until the parent writes the start signal. Shared on purpose — the
+ * control only vouches for the positive test while both run one harness.
+ */
+const START_BARRIER = [
+  "process.stdout.write('READY\\n');",
+  'await new Promise((resolve) => process.stdin.once(\'data\', resolve));',
+  'process.stdin.pause();',
+].join('\n');
+
+/**
+ * Spawn `worker` once per tag, release all of them together once every one
+ * has printed READY, and resolve with each worker's stdout after all exit
+ * (rejecting on any non-zero code).
+ */
+async function runRacing(worker, tags, argsFor) {
+  const children = tags.map((tag) => {
+    const child = spawn(process.execPath, [worker, ...argsFor(tag)], { timeout: 60_000 });
+    let stdout = '';
     let stderr = '';
     child.stderr.on('data', (d) => { stderr += d; });
-    child.on('error', reject);
-    child.on('exit', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`worker exited ${code}: ${stderr}`));
+    const ready = new Promise((resolve, reject) => {
+      child.stdout.on('data', (d) => {
+        stdout += d;
+        if (stdout.includes('READY\n')) resolve();
+      });
+      child.on('error', reject);
+      child.on('exit', (code) => reject(new Error(`worker exited ${code} before READY: ${stderr}`)));
     });
+    const done = new Promise((resolve, reject) => {
+      child.on('error', reject);
+      child.on('exit', (code) => {
+        if (code === 0) resolve(stdout);
+        else reject(new Error(`worker exited ${code}: ${stderr}`));
+      });
+    });
+    return { child, ready, done };
   });
+  await Promise.all(children.map((c) => c.ready));
+  for (const { child } of children) child.stdin.end('go\n');
+  return Promise.all(children.map((c) => c.done));
 }
 
 describe('bakeoff-collect.mjs LOG_PATH append — locked, no lost updates under concurrency', () => {
@@ -76,6 +114,7 @@ import { withFileLockSync } from ${JSON.stringify(url.pathToFileURL(FILE_LOCK_MO
 import { atomicWriteFileSync } from ${JSON.stringify(url.pathToFileURL(FILE_IO_MODULE).href)};
 const [logPath, tag, countStr] = process.argv.slice(2);
 const count = Number(countStr);
+${START_BARRIER}
 for (let i = 0; i < count; i++) {
   const r = withFileLockSync(\`\${logPath}.lock\`, { attempts: 40 }, () => {
     fs.mkdirSync(path.dirname(logPath), { recursive: true });
@@ -91,7 +130,7 @@ for (let i = 0; i < count; i++) {
 `);
 
     const COUNT = 25;
-    await Promise.all(['a', 'b'].map((tag) => runAsync(worker, [logPath, tag, String(COUNT)])));
+    await runRacing(worker, ['a', 'b'], (tag) => [logPath, tag, String(COUNT)]);
 
     const lines = fs.readFileSync(logPath, 'utf-8').split('\n').filter(Boolean);
     const entries = lines.map((l) => JSON.parse(l));
@@ -106,6 +145,14 @@ for (let i = 0; i < count; i++) {
     // Proves the test itself is a real positive control, not a vacuous pass:
     // the identical shape, minus withFileLockSync, must demonstrably lose
     // lines under this exact harness.
+    //
+    // The unlocked race surfaces in one of TWO ways, both the defect the lock
+    // prevents. POSIX rename always replaces, so it shows as a silently lost
+    // update. Windows' MoveFileEx refuses to replace a file another process
+    // has open — EPERM/EBUSY that can outlast atomicWriteFileSync's own
+    // retries under load — so it shows as a REFUSED write. Letting that crash
+    // the worker made this control flake under the parallel pre-push suite
+    // (3 blocked pushes, 2026-10-02); the worker counts it instead.
     const worker = path.join(tmpDir, 'worker-unlocked.mjs');
     fs.writeFileSync(worker, `
 import fs from 'node:fs';
@@ -113,22 +160,43 @@ import path from 'node:path';
 import { atomicWriteFileSync } from ${JSON.stringify(url.pathToFileURL(FILE_IO_MODULE).href)};
 const [logPath, tag, countStr] = process.argv.slice(2);
 const count = Number(countStr);
+const CONTENTION = new Set(['EPERM', 'EBUSY', 'EACCES']);
+let refused = 0;
+${START_BARRIER}
 for (let i = 0; i < count; i++) {
-  fs.mkdirSync(path.dirname(logPath), { recursive: true });
-  const prior = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : '';
-  // Widen the read-then-write window deliberately, same technique as the
-  // locked worker above — without it the two processes rarely land in the
-  // same instant and the race is not exercised.
-  for (let s = 0; s < 50000; s++) { /* burn */ }
-  atomicWriteFileSync(logPath, prior + JSON.stringify({ tag, i }) + '\\n');
+  try {
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    const prior = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : '';
+    // Widen the read-then-write window deliberately, same technique as the
+    // locked worker above — without it the two processes rarely land in the
+    // same instant and the race is not exercised.
+    for (let s = 0; s < 50000; s++) { /* burn */ }
+    atomicWriteFileSync(logPath, prior + JSON.stringify({ tag, i }) + '\\n');
+  } catch (err) {
+    if (!CONTENTION.has(err.code)) throw err;
+    refused += 1;
+  }
 }
+process.stdout.write('REFUSED ' + refused + '\\n');
 `);
     const COUNT = 25;
-    await Promise.all(['a', 'b'].map((tag) => runAsync(worker, [logPath, tag, String(COUNT)])));
+    const outputs = await runRacing(worker, ['a', 'b'], (tag) => [logPath, tag, String(COUNT)]);
 
-    const lines = fs.readFileSync(logPath, 'utf-8').split('\n').filter(Boolean);
-    assert.ok(lines.length < COUNT * 2,
-      `expected the unlocked race to lose at least one of ${COUNT * 2} lines, but all survived — `
+    const refused = outputs.reduce((sum, out) => {
+      const m = /^REFUSED (\d+)$/m.exec(out);
+      assert.ok(m, `worker did not report its refused-write count; stdout: ${out}`);
+      return sum + Number(m[1]);
+    }, 0);
+    const lines = fs.existsSync(logPath)
+      ? fs.readFileSync(logPath, 'utf-8').split('\n').filter(Boolean)
+      : [];
+    const lost = COUNT * 2 - lines.length;
+    // A refused write never reaches the file, so each one is a missing line;
+    // more refusals than missing lines means the accounting itself is wrong.
+    assert.ok(refused <= lost,
+      `${refused} refused writes but only ${lost} lines missing — refusal accounting is broken`);
+    assert.ok(lost >= 1,
+      `expected the unlocked race to lose or refuse at least one of ${COUNT * 2} lines, but all survived — `
       + 'this platform/timing did not exercise the race; strengthen the control rather than trust the positive test alone');
   });
 });
