@@ -83,8 +83,7 @@ entry per KD: `kdId`, the extracted `file` + `description`, `expectedFiles`,
 a partial sum, when any call was unpriced or reported no usage. Per-case text
 goes to `--out` only — the store row's `evidence` is unchanged. Before this,
 both were dropped and screen-tier `cost` was always `null`
-(found in experiment 7,
-`docs/research/experiment-7-gpt-sol-auditor-swap.md`, on branch
+(found in experiment 7, whose write-up was still on branch
 `claude/upgrade-gpt-6-1-sol-01bb98` at time of writing). A consequence for
 promotion verdicts: Tier C now hands `verdict.mjs` a real cost delta, so a
 priced Tier C run no longer reads `inconclusive` with *"cost data
