@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "540d80d53a256a3b",
+  "bundleVersion": "629a6452c722889c",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -54,14 +54,14 @@
     },
     "audit-code": {
       "path": "skills/audit-code/SKILL.md",
-      "sha": "873d932ac416",
-      "size": 56022,
+      "sha": "274d40379897",
+      "size": 56309,
       "summary": "Iteratively audit code against a plan with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "873d932ac416",
-          "size": 56022
+          "sha": "274d40379897",
+          "size": 56309
         },
         {
           "relPath": "examples/contract-test-scaffold.md",
@@ -95,8 +95,8 @@
         },
         {
           "relPath": "references/r2-plus-mode.md",
-          "sha": "c741c0a1ff53",
-          "size": 5726
+          "sha": "446859b3e5db",
+          "size": 5825
         },
         {
           "relPath": "references/verification-discipline.md",
@@ -107,14 +107,14 @@
     },
     "audit-plan": {
       "path": "skills/audit-plan/SKILL.md",
-      "sha": "7c437d5f509e",
-      "size": 28074,
+      "sha": "aa25cdde8b71",
+      "size": 28361,
       "summary": "Iteratively audit a plan file (docs/plans/*.md) with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "7c437d5f509e",
-          "size": 28074
+          "sha": "aa25cdde8b71",
+          "size": 28361
         },
         {
           "relPath": "references/gemini-gate.md",
