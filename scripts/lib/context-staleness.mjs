@@ -31,6 +31,29 @@ import crypto from 'node:crypto';
 /** Default drift, in days, above which a line is worth a human glance. */
 export const DEFAULT_THRESHOLD_DAYS = 60;
 
+/**
+ * Parse `--threshold <days>` out of argv. Absent → the default; present → must
+ * be a finite number >= 0. `Number('nope')` is NaN and `driftDays >= NaN` is
+ * false for every row, so an unchecked bad value printed a clean verdict having
+ * compared nothing.
+ *
+ * @param {string[]} argv - process.argv.slice(2)
+ * @returns {{ok: true, value: number} | {ok: false, error: string}}
+ */
+export function parseThresholdDays(argv) {
+  const i = argv.indexOf('--threshold');
+  if (i === -1) return { ok: true, value: DEFAULT_THRESHOLD_DAYS };
+  const raw = argv[i + 1];
+  if (raw === undefined || raw.startsWith('--')) {
+    return { ok: false, error: '--threshold requires a number of days' };
+  }
+  const value = raw.trim() === '' ? NaN : Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    return { ok: false, error: `--threshold must be a finite number of days >= 0 (got ${JSON.stringify(raw)})` };
+  }
+  return { ok: true, value };
+}
+
 const DAY_MS = 86400000;
 
 /**
