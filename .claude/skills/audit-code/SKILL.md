@@ -213,7 +213,7 @@ cat .audit/$SID-untracked-diff-stderr.log   # non-empty = a real failure occurre
 
 ```bash
 # CHANGED = the exact files you edited this round, comma-separated, no globs:
-# the CLI splits on commas and never expands a pattern.
+# the CLI splits on commas, so a pattern reaches it literally.
 CHANGED="scripts/lib/foo.mjs,tests/foo.test.mjs"
 FILES="$CHANGED"                            # + any dependent you also want in scope
 PASSES="sustainability"                     # e.g. sustainability,backend — per r2-plus-mode.md
