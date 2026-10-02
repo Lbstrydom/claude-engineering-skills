@@ -87,6 +87,25 @@ describe('emit — the envelope and the exit code must agree', () => {
     );
   });
 
+  it('a missing reason throws BEFORE anything reaches stdout (validate, then write)', () => {
+    // emit() used to write the envelope first and validate second, so the
+    // throw left a complete envelope on stdout — and a caller's top-level catch
+    // then wrote a SECOND one, breaking the one-line machine-readable contract.
+    assert.throws(() => emit({ ok: false }, { softFail: true }), /requires a written `reason`/);
+    assert.deepEqual(written, [], 'a refused emit must not have written anything');
+  });
+
+  it('the reason is required on EVERY call that declares softFail, not only the failure branch', () => {
+    // Checked only inside `ok === false`, the requirement fired on the rarest
+    // branch of any CLI, so a reasonless opt-out passed every green test that
+    // never drove the failure path. The declaration is static; so is its check.
+    assert.throws(() => emit({ ok: true }, { softFail: true }), /requires a written `reason`/);
+    assert.throws(() => emit({ ok: true }, { softFail: true, reason: '  ' }), /requires a written `reason`/);
+    assert.deepEqual(written, []);
+    emit({ ok: true }, { softFail: true, reason: 'a declined run is not a process failure' });
+    assert.equal(written.join(''), '{"ok":true}\n');
+  });
+
   it('softFail:false is not an opt-out (only an explicit true is)', () => {
     emit({ ok: false }, { softFail: false });
     assert.equal(process.exitCode, 1);

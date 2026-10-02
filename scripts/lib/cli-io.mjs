@@ -57,20 +57,22 @@ export function emit(obj, opts = {}) {
       + 'stdout is the machine-readable channel — writing "undefined" there is invalid JSON a consumer cannot parse.',
     );
   }
+  // The softFail declaration is validated BEFORE the write and on EVERY call,
+  // not only when `ok === false`. Validated after the write, a refusal left a
+  // complete envelope on stdout and a caller's top-level catch emitted a second
+  // one; validated only on the failure branch — the rarest branch of any CLI —
+  // a reasonless opt-out passed every test that never drove that branch.
+  // A non-empty STRING, not any truthy value: `{}`, `[]` and `'   '` all pass a
+  // bare `!opts.reason` while explaining nothing, which is the silencer this
+  // requirement exists to prevent.
+  if (opts.softFail === true && (typeof opts.reason !== 'string' || !opts.reason.trim())) {
+    throw new Error(
+      'emit({ok:false}, {softFail:true}) requires a written `reason` — an unexplained '
+      + 'exemption from the exit-code coupling is exactly the silence §2b F4 removes.',
+    );
+  }
   process.stdout.write(`${line}\n`);
-  if (obj && typeof obj === 'object' && obj.ok === false) {
-    if (opts.softFail === true) {
-      // A non-empty STRING, not any truthy value: `{}`, `[]` and `'   '` all
-      // pass a bare `!opts.reason` while explaining nothing, which is the
-      // silencer this requirement exists to prevent.
-      if (typeof opts.reason !== 'string' || !opts.reason.trim()) {
-        throw new Error(
-          'emit({ok:false}, {softFail:true}) requires a written `reason` — an unexplained '
-          + 'exemption from the exit-code coupling is exactly the silence §2b F4 removes.',
-        );
-      }
-      return;
-    }
+  if (obj && typeof obj === 'object' && obj.ok === false && opts.softFail !== true) {
     process.exitCode ||= 1;
   }
 }
@@ -228,17 +230,32 @@ export function hasFlag(name, { short } = {}) {
   // pre-`--`-terminator bug this file exists to fix, just for the one-letter
   // spelling instead of the long one. Folding it in here means there is exactly
   // one place that decides where flags end.
+  //
+  // A value in NEITHER spelling list is refused. It used to read as ON — so a
+  // mistyped brake (`--apply=fasle`) silently became the mutation it meant to
+  // stop, the polarity hazard `check-cli-flags.mjs` exists to flag.
   const stop = process.argv.indexOf('--');
   const region = stop < 0 ? process.argv : process.argv.slice(0, stop);
   let present = false;
   for (const a of region) {
     if (a === `--${name}`) present = true;
     else if (a.startsWith(`--${name}=`)) {
-      present = !['false', '0', 'no', 'off', ''].includes(a.slice(name.length + 3).toLowerCase());
+      const v = a.slice(name.length + 3).toLowerCase();
+      if (FALSY_FLAG_VALUES.has(v)) present = false;
+      else if (TRUTHY_FLAG_VALUES.has(v)) present = true;
+      else {
+        throw new ArgvError(
+          `--${name}=${a.slice(name.length + 3)} is neither a true (${[...TRUTHY_FLAG_VALUES].join('/')}) `
+          + `nor a false (${[...FALSY_FLAG_VALUES].filter(Boolean).join('/')}/empty) spelling — refusing to guess.`,
+        );
+      }
     } else if (short && a === `-${short}`) present = true;
   }
   return present;
 }
+
+const FALSY_FLAG_VALUES = new Set(['false', '0', 'no', 'off', '']);
+const TRUTHY_FLAG_VALUES = new Set(['true', '1', 'yes', 'on']);
 
 /**
  * Write a message to stderr with a trailing newline — the standard

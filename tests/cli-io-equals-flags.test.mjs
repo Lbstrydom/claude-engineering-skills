@@ -77,6 +77,23 @@ describe('hasFlag reads both spellings, and an explicit falsy value means OFF', 
     argv('--other');
     assert.equal(hasFlag('dry-run'), false);
   });
+
+  for (const v of ['1', 'yes', 'on', 'TRUE']) {
+    it(`--name=${v} is present (an explicit truthy spelling)`, () => {
+      argv(`--apply=${v}`);
+      assert.equal(hasFlag('apply'), true);
+    });
+  }
+
+  for (const v of ['fasle', 'nope', 'n', 'flase', '2']) {
+    it(`--name=${v} is REFUSED, never read as ON`, () => {
+      // Everything outside the falsy list used to read as ON, so a mistyped
+      // brake (`--apply=fasle`) silently became the mutation it meant to stop.
+      // Neither list matches, so neither interpretation is honest: refuse.
+      argv(`--apply=${v}`);
+      assert.throws(() => hasFlag('apply'), (err) => err.code === 'ARGV_ERROR' && err.message.includes('--apply'));
+    });
+  }
 });
 
 describe('the guard and the readers agree — that is the whole point', () => {
