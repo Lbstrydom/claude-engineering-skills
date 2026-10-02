@@ -76,6 +76,33 @@ describe('model-eval comparison cohort against a live schema', { skip }, () => {
     assert.equal(a.id, b.id, 're-running the SAME manifest/digest must resume the same cohort, never create a duplicate');
   });
 
+  it('the SAME key+digest against a DIFFERENT subject is refused, never merged into (or relabelling) the existing cohort', async () => {
+    // final-review shadow 1c42936f. subject_ref is outside both the digest and
+    // the unique key, and the conflict arm was `DO UPDATE SET subject_ref =
+    // EXCLUDED.subject_ref` — so re-running a manifest against another corpus
+    // revision silently REUSED the cohort and OVERWROTE its subject: two
+    // subjects' runs aggregated as one, with the label of the last.
+    const a = await store.upsertComparison({
+      repoId, comparisonKey: 'live-subject', configDigest: 'd1', lockSchemaVersion: 1, role: 'auditor',
+      subjectRef: { auditedSha: 'aaaa' },
+    });
+    assert.ok(a.ok && a.id);
+    const b = await store.upsertComparison({
+      repoId, comparisonKey: 'live-subject', configDigest: 'd1', lockSchemaVersion: 1, role: 'auditor',
+      subjectRef: { auditedSha: 'bbbb' },
+    });
+    assert.equal(b.ok, false, 'a different subject must not resume this cohort');
+    assert.match(b.error, /subject/);
+    const row = await client.query('SELECT subject_ref FROM model_eval_comparisons WHERE id = $1', [a.id]);
+    assert.deepEqual(row.rows[0].subject_ref, { auditedSha: 'aaaa' }, 'the existing cohort keeps its own subject');
+    // The same subject still resumes (negative control).
+    const c = await store.upsertComparison({
+      repoId, comparisonKey: 'live-subject', configDigest: 'd1', lockSchemaVersion: 1, role: 'auditor',
+      subjectRef: { auditedSha: 'aaaa' },
+    });
+    assert.equal(c.id, a.id);
+  });
+
   it('a config digest change creates a genuinely NEW cohort — D2a: prior evidence is never silently relabelled', async () => {
     const a = await store.upsertComparison({
       repoId, comparisonKey: 'live-digest-bump', configDigest: 'd1', lockSchemaVersion: 1, role: 'auditor',
