@@ -62,6 +62,32 @@ export function retainCarriedRows(rows, { pathOf = (r) => r.file_path, touchedFi
 }
 
 /**
+ * The retention rule for import EDGES: `retainCarriedRows` on the importer,
+ * plus the two checks the importer cannot answer for the TARGET.
+ *
+ * Keyed on the importer alone, an edge `a -> b` with `a` untouched and `b`
+ * deleted was carried verbatim — an edge into a file that no longer exists,
+ * which a full walk drops (dep-cruiser reports it `couldNotResolve`). And
+ * extraction drops an edge when EITHER endpoint is disowned
+ * (`symbol-index/extract.mjs`), so a carry that checks only the importer
+ * re-admits exactly the edges extraction refused.
+ *
+ * `importedStillExists` is nullable like the other gates: absent means "not
+ * checked", and the target is carried — the pre-fix behaviour.
+ *
+ * @param {object[]} rows `{importer_path, imported_path}`
+ * @param {{touchedFileSet: Set<string>, fileStillExists?: ((p: string) => boolean)|null,
+ *   isDisowned?: ((p: string) => boolean)|null,
+ *   importedStillExists?: ((p: string) => boolean)|null}} opts
+ * @returns {object[]}
+ */
+export function retainCarriedEdges(rows, { touchedFileSet, fileStillExists = null, isDisowned = null, importedStillExists = null } = {}) {
+  return retainCarriedRows(rows, { pathOf: (r) => r.importer_path, touchedFileSet, fileStillExists, isDisowned })
+    .filter((r) => !(isDisowned && isDisowned(r.imported_path)))
+    .filter((r) => !importedStillExists || importedStillExists(r.imported_path));
+}
+
+/**
  * Format a JS number[] as a pgvector literal `[0.1,0.2,...]`. The generic
  * `upsert()` helper serialises arrays as Postgres text-arrays `{"0.1",...}`
  * which pgvector rejects (`invalid input syntax for type vector`). Inline

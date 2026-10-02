@@ -14,7 +14,7 @@
 import { many, one, updateWhere, upsert } from '../../db/query.mjs';
 import { isCloudEnabled } from '../repo.mjs';
 import { describeSchemaFault } from '../../db/errors.mjs';
-import { UPSERT_CHUNK_SIZE, IN_CHUNK, chunk, retainCarriedRows } from './_shared.mjs';
+import { UPSERT_CHUNK_SIZE, IN_CHUNK, chunk, retainCarriedEdges } from './_shared.mjs';
 
 /**
  * Persist a snapshot's file-import edges.
@@ -92,8 +92,12 @@ export async function recordSymbolFileImports(refreshId, edges) {
  *   optional on-disk gate, mirroring copyForwardUntouchedFiles. Passed only by
  *   the timed-out-full recovery so a deleted importer's edges are not
  *   resurrected; incremental passes null (deletions are already in touchedFileSet).
+ * @param {((filePath: string) => boolean)|null} [args.importedStillExists] -
+ *   on-disk gate for the TARGET. touchedFileSet only removes edges whose
+ *   IMPORTER changed, so without it an untouched importer's edge into a deleted
+ *   file is carried forever — an edge a full walk would drop.
  */
-export async function copyForwardImports({ repoId, fromRefreshId, toRefreshId, touchedFileSet, fileStillExists = null, isDisowned = null }) {
+export async function copyForwardImports({ repoId, fromRefreshId, toRefreshId, touchedFileSet, fileStillExists = null, isDisowned = null, importedStillExists = null }) {
   // `repoId` binds the SOURCE read. `symbol_file_imports` has no `repo_id`
   // column, so ownership comes from the `refresh_runs` FK (`repo_id UUID NOT
   // NULL REFERENCES audit_repos(id)`) — a join, not a migration.
@@ -123,10 +127,10 @@ export async function copyForwardImports({ repoId, fromRefreshId, toRefreshId, t
       [fromRefreshId, offset, pageSize, repoId]
     );
     if (rows.length === 0) break;
-    // ONE rule, shared with symbols.mjs — keyed on importer_path here, because
-    // the importer is the file whose ownership decides whether this edge is
-    // ours to record. See `retainCarriedRows` for why `isDisowned` is nullable.
-    const keep = retainCarriedRows(rows, { pathOf: (r) => r.importer_path, touchedFileSet, fileStillExists, isDisowned });
+    // ONE rule, shared with symbols.mjs — keyed on importer_path, plus the
+    // target-side checks (deleted or disowned imported_path) the importer
+    // cannot answer. See `retainCarriedEdges` / `retainCarriedRows`.
+    const keep = retainCarriedEdges(rows, { touchedFileSet, fileStillExists, isDisowned, importedStillExists });
     if (keep.length > 0) {
       const payload = keep.map((r) => ({
         refresh_id: toRefreshId,

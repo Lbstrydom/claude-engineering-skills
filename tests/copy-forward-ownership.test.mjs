@@ -119,18 +119,23 @@ test('imports use the SAME retention rule as symbols', async () => {
   // and a test seam is not public API. Checking both halves — that each imports
   // the rule AND that neither carries its own copy — is what makes "they share
   // it" a checked property instead of a comment.
+  // imports.mjs takes `retainCarriedEdges`, which IS `retainCarriedRows` on the
+  // importer plus the target-side checks — asserted below on _shared's source.
   const fs = await import('node:fs');
-  for (const f of ['symbols.mjs', 'imports.mjs']) {
+  for (const [f, rule] of [['symbols.mjs', 'retainCarriedRows'], ['imports.mjs', 'retainCarriedEdges']]) {
     const src = fs.readFileSync(new URL(`../scripts/lib/store/arch/${f}`, import.meta.url), 'utf-8');
     assert.ok(
-      /import \{[^}]*\bretainCarriedRows\b[^}]*\} from '\.\/_shared\.mjs'/.test(src),
+      new RegExp(`import \\{[^}]*\\b${rule}\\b[^}]*\\} from '\\./_shared\\.mjs'`).test(src),
       `${f} must import the retention rule from _shared.mjs`,
     );
     assert.ok(
-      !/function retainCarriedRows/.test(src),
+      !/function retainCarried(Rows|Edges)/.test(src),
       `${f} must not carry its own copy of the retention rule`,
     );
   }
+  const shared = fs.readFileSync(new URL('../scripts/lib/store/arch/_shared.mjs', import.meta.url), 'utf-8');
+  const edgesBody = shared.slice(shared.indexOf('export function retainCarriedEdges'));
+  assert.match(edgesBody.slice(0, 600), /retainCarriedRows\(/, 'the edge rule must BUILD ON the row rule, not restate it');
 });
 
 test('an edge is dropped when EITHER endpoint file is disowned as an importer', () => {
@@ -197,4 +202,40 @@ test('copy-forward refuses a call missing any of its scoping ids', async () => {
     assert.equal(await copyForwardUntouchedFiles(args), 0,
       `a missing ${missing} must copy NOTHING — degrade to a full re-walk, never to foreign data`);
   }
+});
+
+// ── Import EDGES: both endpoints, not just the importer (final-review shadow e0239fe2) ──
+//
+// copyForwardImports keyed every predicate on importer_path only. An edge
+// a.mjs => b.mjs with a.mjs untouched and b.mjs DELETED was carried verbatim, so
+// the incremental graph kept an edge into a file that no longer exists — one a
+// full walk drops (dep-cruiser marks it couldNotResolve). And extraction drops an
+// edge when EITHER endpoint is disowned, while the carry checked only the importer.
+const edge = (importer_path, imported_path) => ({ importer_path, imported_path });
+
+test('an edge INTO a deleted file is not carried, though its importer is untouched', async () => {
+  const { retainCarriedEdges } = await import('../scripts/lib/store/arch/_shared.mjs');
+  const keep = retainCarriedEdges([edge('src/a.mjs', 'src/b.mjs'), edge('src/a.mjs', 'src/c.mjs')], {
+    touchedFileSet: new Set(['src/b.mjs']),          // b deleted this run
+    importedStillExists: (p) => p !== 'src/b.mjs',
+  });
+  assert.deepEqual(keep.map((r) => r.imported_path), ['src/c.mjs']);
+});
+
+test('an edge INTO a changed-but-present file IS carried (negative control)', async () => {
+  const { retainCarriedEdges } = await import('../scripts/lib/store/arch/_shared.mjs');
+  const keep = retainCarriedEdges([edge('src/a.mjs', 'src/b.mjs')], {
+    touchedFileSet: new Set(['src/b.mjs']),          // b modified, still on disk
+    importedStillExists: () => true,
+  });
+  assert.equal(keep.length, 1, 'a untouched still imports b; the edge is still true');
+});
+
+test('an edge into a DISOWNED target is not carried — the same both-ends rule extraction applies', async () => {
+  const { retainCarriedEdges } = await import('../scripts/lib/store/arch/_shared.mjs');
+  const keep = retainCarriedEdges([edge('src/a.mjs', 'scripts/.claude-skills/v.mjs'), edge('src/a.mjs', 'src/c.mjs')], {
+    touchedFileSet: new Set(),
+    isDisowned: (p) => p.startsWith('scripts/.claude-skills/'),
+  });
+  assert.deepEqual(keep.map((r) => r.imported_path), ['src/c.mjs']);
 });

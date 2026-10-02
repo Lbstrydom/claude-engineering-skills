@@ -608,6 +608,10 @@ async function main() {
             // carrying its edges leaves `symbol_file_imports` still attributing
             // another codebase's imports to this repo.
             isDisowned,
+            // On EVERY scope-limited run, not only the timeout case: an
+            // untouched importer's edge into a file deleted this run is not in
+            // touchedFileSet's reach (that set keys the importer).
+            importedStillExists: (filePath) => fs.existsSync(path.join(repoRoot, filePath)),
           });
           if (imp.copied > 0) logOk(`copy-forward ${imp.copied} ${timeoutRecovery ? 'un-reached' : 'untouched'}-file import edges`);
           // Coverage is a FULL-RUN measurement (§2.1.3 row 4). An incremental
