@@ -38,6 +38,12 @@ const TIMEOUT_MS = geminiConfig.timeoutMs;
 const MAX_OUTPUT_TOKENS = geminiConfig.maxOutputTokens;
 
 /**
+ * Each transport's spelling of "stopped at the output-token ceiling":
+ * OpenAI-shaped `length`, Anthropic `max_tokens`, Gemini `MAX_TOKENS`.
+ */
+const TRUNCATION_FINISH_REASONS = new Set(['length', 'max_tokens', 'MAX_TOKENS']);
+
+/**
  * Anthropic's minimum cacheable prefix for the Opus/Sonnet tiers. A
  * `cache_control` marker on a shorter prefix is accepted, billed at the write
  * premium, and never read back — the "provably inert" class `efficacy-lints`
@@ -130,9 +136,13 @@ export const REVIEW_TRANSPORTS = {
     });
     const textParts = [];
     let usageMetadata = null;
+    // READ, never a literal null: `MAX_TOKENS` here is the same cut-off the
+    // other two transports report, and callReviewer fails the review on it.
+    let finishReason = null;
     for await (const chunk of stream) {
       if (chunk.text) textParts.push(chunk.text);
       if (chunk.usageMetadata) usageMetadata = chunk.usageMetadata;
+      finishReason = chunk.candidates?.[0]?.finishReason ?? finishReason;
     }
     // Delegated to the shared oracle (gemini-usage.mjs). The inline fix that
     // landed in 1a89c1ac was correct but was a SECOND place that knew what
@@ -159,7 +169,7 @@ export const REVIEW_TRANSPORTS = {
         thinking_tokens: g.thinking_tokens,
         usageMissing: g.usageMissing,
       },
-      finishReason: null,
+      finishReason,
     };
   },
 
@@ -168,7 +178,8 @@ export const REVIEW_TRANSPORTS = {
     // `responseSchema`; this transport used to get only "Output strictly valid
     // JSON", which enforces nothing. Opus duly returned a review whose finding
     // objects were missing the REQUIRED `category`/`section` and had an empty
-    // `detail`. Zod here is warn-and-keep (see callReviewer), so the malformed
+    // `detail`. Zod was then warn-and-keep (callReviewer now fails a review with a
+    // structural violation), so the malformed
     // object flowed downstream and the DB INSERT hit `category NOT NULL`,
     // rolling back the whole persistence tx — losing the PRIMARY reviewer's
     // findings too. Tool-use makes the provider enforce object shape, which is
@@ -337,17 +348,12 @@ export const REVIEW_TRANSPORTS = {
       delete body.response_format;
       r = await azureThrottle(() => client.chat.completions.create(body, { signal }));
     }
-    // TRUNCATION IS SILENT OTHERWISE. `finish_reason:'length'` means the model
-    // was cut off mid-answer; the JSON that survives may still parse, so the
-    // caller sees a short but well-formed review and reads it as "found little"
-    // rather than "was stopped". Reasoning tokens are billed INSIDE this budget
-    // on OpenRouter, so a high effort setting makes the cut-off likelier, not
-    // just the answer better.
+    // `finish_reason:'length'` means the model was cut off mid-answer; the JSON
+    // that survives may still parse. Returned, never only logged — callReviewer
+    // fails the review on it (see TRUNCATION_FINISH_REASONS). Reasoning tokens
+    // are billed INSIDE this budget on OpenRouter, so a high effort setting makes
+    // the cut-off likelier, not just the answer better.
     const finish = r.choices?.[0]?.finish_reason ?? null;
-    if (finish === 'length') {
-      process.stderr.write(`  [final-review] WARNING: "${model}" hit max_tokens (finish_reason=length) — `
-        + 'the review is TRUNCATED. Findings after the cut are lost, not absent.\n');
-    }
     return {
       text: r.choices?.[0]?.message?.content?.trim() || '{}',
       usage: {
@@ -417,18 +423,30 @@ export async function callReviewer(client, { transportKind, model, systemPrompt,
       timeoutPromise,
     ]);
     const latencyMs = Date.now() - startMs;
+    const billed = () => ({ ...raw.usage, latency_ms: latencyMs });
+
+    // A response the provider CUT OFF is not a short review. Its JSON may still
+    // parse (an OSS router's `{…}` span recovery, a closed tool call), and the
+    // surviving prefix then reads as "the reviewer found little" rather than
+    // "the reviewer was stopped". `truncated` lets runReviewWithRetry retry it
+    // with its conciseness hint; the response was billed, so usage rides along.
+    if (TRUNCATION_FINISH_REASONS.has(raw.finishReason)) {
+      throw Object.assign(new Error(
+        `${transportKind} response was truncated at the output-token ceiling (finish reason: ${raw.finishReason}) — `
+        + 'findings after the cut are lost, not absent',
+      ), { usage: billed(), truncated: true });
+    }
 
     // Shared post-step: fence-strip + parse (G2 — OSS models via OpenRouter
     // routinely wrap output in a ```json fence despite the instruction) →
-    // truncate over-long fields → Zod validate (warn-and-keep; truncateToSchema
-    // already coerces the common overflow case).
+    // truncate over-long fields → Zod validate.
     let result;
     try {
       result = parseReviewJson(raw.text);
     } catch (parseErr) {
       // The response arrived and was billed: its usage rides out on the error
       // so the retry loop can sum it (a truncated first attempt is not free).
-      throw Object.assign(new Error(`Failed to parse ${transportKind} JSON response: ${parseErr.message}\nRaw: ${String(raw.text).slice(0, 500)}`), { usage: { ...raw.usage, latency_ms: latencyMs } });
+      throw Object.assign(new Error(`Failed to parse ${transportKind} JSON response: ${parseErr.message}\nRaw: ${String(raw.text).slice(0, 500)}`), { usage: billed() });
     }
     const truncated = [];
     result = truncateToSchema(result, '', truncated);
@@ -437,11 +455,26 @@ export async function callReviewer(client, { transportKind, model, systemPrompt,
     }
     if (zodSchema) {
       const validated = zodSchema.safeParse(result);
-      if (validated.success) result = validated.data;
-      else process.stderr.write(`  [${label}] Zod validation warning: ${validated.error.message.slice(0, 200)}\n`);
+      if (validated.success) {
+        result = validated.data;
+      } else {
+        // Only an OVER-LIMIT issue is survivable: Gemini's dialect strips
+        // `maxItems`, so an 11th finding is extra evidence, not a broken review.
+        // Anything else — a missing verdict, a wrong type, an unknown enum — is
+        // not a review at all, and returning it through the success contract
+        // let `{verdict:'APPROVE'}` alone read as a clean gate.
+        const structural = validated.error.issues.filter((i) => i.code !== 'too_big');
+        if (structural.length > 0) {
+          const named = structural.slice(0, 5).map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ');
+          throw Object.assign(new Error(
+            `${transportKind} response failed schema validation — not a usable review (${structural.length} issue(s): ${named})`,
+          ), { usage: billed() });
+        }
+        process.stderr.write(`  [${label}] Schema over-limit kept (${validated.error.issues.length} issue(s)): ${validated.error.message.slice(0, 200)}\n`);
+      }
     }
 
-    const usage = { ...raw.usage, latency_ms: latencyMs };
+    const usage = billed();
     process.stderr.write(`  [${label}] Done in ${(latencyMs / 1000).toFixed(1)}s (${usage.input_tokens} in / ${usage.output_tokens} out / ${usage.thinking_tokens} thinking)\n`);
     return { result, usage, latencyMs };
   } catch (err) {
@@ -459,6 +492,7 @@ export async function callReviewer(client, { transportKind, model, systemPrompt,
     const wrapped = new Error(msg);
     if (err.status) wrapped.status = err.status; // preserve for classifyLlmError (404 → non-retryable)
     if (err.usage) wrapped.usage = err.usage; // billed-but-unusable response (see runReviewWithRetry)
+    if (err.truncated) wrapped.truncated = true; // structured, so the retry never matches on prose
     // A timeout must stay classifiable AFTER the wrap. `classifyLlmError` reads
     // `name`/`code` to reach its `timeout` branch, and both are lost here — the
     // wrapped error carries only a message, so every abort was classified

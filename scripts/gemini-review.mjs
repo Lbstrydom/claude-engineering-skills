@@ -682,7 +682,7 @@ async function runPing(args = []) {
 }
 
 function isJsonTruncationError(err) {
-  return err.message?.includes('Unterminated string')
+  return err.truncated === true || err.message?.includes('Unterminated string')
     || err.message?.includes('JSON')
     || err.message?.includes('parse');
 }
