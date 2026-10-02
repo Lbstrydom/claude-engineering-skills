@@ -82,6 +82,19 @@ describe('click-test perceivability — drift', () => {
     );
   });
 
+  it('the fence defines the predicate EXACTLY ONCE — containment cannot see a shadowing copy', () => {
+    // Containment proves the canonical text is present, not that it is the
+    // definition that RUNS: a second `function __isPerceivable` later in the
+    // fence would win by hoisting while the canonical copy sat inert above it,
+    // and the containment assertion would still pass (final-review shadow
+    // 1cbe9071). Count the bindings, in any declaration form.
+    const defs = scannerSrc.match(
+      new RegExp(`(?:function\\s+${PERCEIVABLE_FN_NAME}\\s*\\(|(?:const|let|var)\\s+${PERCEIVABLE_FN_NAME}\\s*=|\\b${PERCEIVABLE_FN_NAME}\\s*=(?!=))`, 'g'),
+    ) || [];
+    assert.equal(defs.length, 1,
+      `expected exactly one ${PERCEIVABLE_FN_NAME} binding in the scanner fence, found ${defs.length}: ${JSON.stringify(defs)}`);
+  });
+
   it('push() applies the predicate and preserves the pre-cap severity', () => {
     assert.match(scannerSrc, /const perceivable = __isPerceivable\(el\)/,
       'push() must call __isPerceivable — it is the single call site that tags every kind');
