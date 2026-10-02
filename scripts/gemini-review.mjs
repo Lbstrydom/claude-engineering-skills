@@ -214,6 +214,7 @@ export {
 } from './lib/final-review/post-review.mjs';
 import {
   applyReviewFilters,
+  debtSuppressionContextOf,
   recordNewFindings,
   recordGeminiOutcomes,
 } from './lib/final-review/post-review.mjs';
@@ -313,9 +314,7 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
   // Phase D.4: extract debt-suppression context from transcript envelope.
   // When the upstream audit already filtered debt, tell the reviewer so they
   // don't re-surface the same topics.
-  const suppressionContext = transcript._debtMemory?.suppressionContext
-    || transcript.debt_memory?.suppressionContext
-    || [];
+  const suppressionContext = debtSuppressionContextOf(transcript);
   let debtBlock = '';
   if (Array.isArray(suppressionContext) && suppressionContext.length > 0) {
     const lines = suppressionContext.slice(0, 50).map(s =>

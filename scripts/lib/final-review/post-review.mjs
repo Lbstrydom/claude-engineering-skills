@@ -176,12 +176,37 @@ function parseTranscriptObject(transcriptContent) {
 const debtClaimSig = (d) => findingTopicSig({ category: d.category, section: d.section, detail: d.detailSnapshot });
 const carriesClaim = (d) => typeof d?.detailSnapshot === 'string' && d.detailSnapshot.trim() !== '';
 
+/**
+ * Every debt-suppression entry a transcript carries — the ONE reader, used by
+ * both the reviewer prompt's "pre-filtered debt" block and
+ * `applyDebtSuppression`. `run-finalization.mjs` writes `_debtMemory` onto each
+ * ROUND result and `buildAuditTranscript` nests those under `rounds[]`; both
+ * readers used to look only at the top level, so for every script-built
+ * transcript final-review debt re-suppression never ran. Reads the top level
+ * (hand-built transcripts) and every round, one entry per `topicId` with the
+ * latest round winning.
+ * @param {object|null} transcriptObj
+ * @returns {object[]}
+ */
+export function debtSuppressionContextOf(transcriptObj) {
+  if (!transcriptObj || typeof transcriptObj !== 'object') return [];
+  const ctxOf = (o) => {
+    const c = o?._debtMemory?.suppressionContext || o?.debt_memory?.suppressionContext;
+    return Array.isArray(c) ? c : [];
+  };
+  const sources = [transcriptObj, ...(Array.isArray(transcriptObj.rounds) ? transcriptObj.rounds : [])];
+  const byTopic = new Map();
+  const untopiced = [];
+  for (const entry of sources.flatMap(ctxOf)) {
+    if (entry?.topicId) { byTopic.delete(entry.topicId); byTopic.set(entry.topicId, entry); } else untopiced.push(entry);
+  }
+  return [...byTopic.values(), ...untopiced];
+}
+
 export async function applyDebtSuppression(result, transcriptContent) {
   const transcriptObj = parseTranscriptObject(transcriptContent);
   if (!transcriptObj) return;
-  const suppressionCtx = transcriptObj._debtMemory?.suppressionContext
-    || transcriptObj.debt_memory?.suppressionContext
-    || [];
+  const suppressionCtx = debtSuppressionContextOf(transcriptObj);
   if (!Array.isArray(suppressionCtx) || suppressionCtx.length === 0) return;
   if (!Array.isArray(result.new_findings)) return;
   // SAME DEFECT, not same topic. The deferred entry's own claim
