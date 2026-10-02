@@ -312,6 +312,7 @@ jobs:
             tests/repo-last-audited-at.test.mjs \
             tests/setup-postgres-surface-precondition.test.mjs \
             tests/ship-nudge-keyset-db.test.mjs \
+            tests/finding-disposition-db.test.mjs \
             tests/store-debt-cloud-validation.test.mjs \
             tests/store-finding-write-db.test.mjs \
             tests/store-ownership-db.test.mjs \

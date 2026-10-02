@@ -1081,6 +1081,23 @@
         "deleted": false
       }
     },
+    "close-finding-cloud-off": {
+      "args": [
+        "close-finding",
+        "--finding",
+        "a4969127-d5d0-47bb-8b2e-0acb0ed71546",
+        "--as",
+        "fixed",
+        "--commit",
+        "abc1234"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "closed": false
+      }
+    },
     "plan-satisfaction-no-id": {
       "args": [
         "plan-satisfaction"

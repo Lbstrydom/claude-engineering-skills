@@ -286,8 +286,11 @@ LATER session is unreachable by a fresh `/audit-code` too — the remediation
 transition is driven by the finding appearing in the ledger, and the defect no
 longer reproduces, so "fixed" was unreachable *because the fix worked*.
 Reported from a consumer as `da67a8c1` after two HIGH findings sat `pending`
-for 10 days having been genuinely fixed and merged. `final-review-record-fix`
-is generic despite its name — it takes `--run-id` + `--fingerprint` with an
+for 10 days having been genuinely fixed and merged. *(Superseded 2026-10-02:
+`final-review-record-fix` was later scoped to final-review passes, so what
+follows no longer holds for ordinary findings — `close-finding` is the command.
+Kept for the incident history.)* `final-review-record-fix`
+was generic despite its name — it takes `--run-id` + `--fingerprint` with an
 OPTIONAL `--bucket`, so it is not shadow-only. Both keys come from the row:
 `audit_run_id` and `finding_fingerprint` are projected by the
 `unremediated_acceptances` view — the fingerprint only since migration

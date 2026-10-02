@@ -127,6 +127,7 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // only real Postgres can show it. Two edits, always — this list AND
   // postgres-parity.yml.
   'tests/ship-nudge-keyset-db.test.mjs',
+  'tests/finding-disposition-db.test.mjs',
   'tests/symbol-index-drift-justification.test.mjs',
   // Enrolled 2026-08-15 with D3a's cohort persistence (role-agnostic-
   // comparison-core.md Phase 4). Needs the model_eval_comparisons table and

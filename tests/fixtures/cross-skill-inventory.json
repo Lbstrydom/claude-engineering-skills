@@ -11,6 +11,7 @@
     "arm-eval-stats",
     "arm-eval-toggle",
     "audit-effectiveness",
+    "close-finding",
     "compute-drift-score",
     "compute-target-domains",
     "detect-stack",
