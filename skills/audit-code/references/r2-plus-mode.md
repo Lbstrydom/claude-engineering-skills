@@ -26,7 +26,7 @@ with `T`-prefixed IDs (`T1`, `T2`, ...).
 
 **Trust boundary**: running repo-configured linters executes code the repo
 owner controls, equivalent to running `npm test`. Every invocation is
-logged to stderr. See [scripts/lib/linter.mjs](scripts/lib/linter.mjs) for
+logged to stderr. See [`scripts/lib/linter.mjs`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/scripts/lib/linter.mjs) for
 full security notes.
 
 **Advisory-by-default rationale**: tool availability varies across

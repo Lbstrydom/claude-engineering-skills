@@ -1,6 +1,6 @@
 {
   "$comment": "Declared unreachable pointers in synced skill content. See scripts/check-skill-consumer-refs.mjs. Every entry needs a disposition and a real reason; new entries default to a TODO reason that the gate rejects.",
-  "totalSites": 210,
+  "totalSites": 216,
   "refs": {
     "doc docs/architecture-map.md": {
       "disposition": "consumer-authored",
@@ -40,7 +40,7 @@
     "doc docs/audit/shared-references/verification-discipline.md": {
       "disposition": "provenance",
       "reason": "The synced copy names its own canonical upstream path so an editor fixes the source, not the copy. Pointing at the source repo is the intent.",
-      "sites": 9
+      "sites": 10
     },
     "doc docs/plans/architectural-memory.md": {
       "disposition": "provenance",
@@ -115,7 +115,7 @@
     "doc docs/plans/verification-discipline-cluster.md": {
       "disposition": "provenance",
       "reason": "Provenance header of the canonical verification-discipline reference, same block as the field report above.",
-      "sites": 9
+      "sites": 10
     },
     "doc docs/plans/visual-audit-theme-safety-v1.md": {
       "disposition": "provenance",
@@ -160,7 +160,7 @@
     "doc docs/upstream-issues/claude-engineering-skills-feedback-2026-08-07.md": {
       "disposition": "provenance",
       "reason": "Provenance header of the canonical verification-discipline reference: names the field report the rules came from. Never an instruction to open it.",
-      "sites": 9
+      "sites": 10
     },
     "npm arch:refresh": {
       "disposition": "consumer-wired",
@@ -180,7 +180,7 @@
     "npm check": {
       "disposition": "source-repo-only",
       "reason": "The source repo pre-push aggregate. A consumer has its own test/verify entry point; the skills never depend on the aggregate existing.",
-      "sites": 32
+      "sites": 33
     },
     "npm dashboard:setup": {
       "disposition": "source-repo-only",
@@ -205,7 +205,7 @@
     "npm docs:citations": {
       "disposition": "source-repo-only",
       "reason": "Already written as \"source repo: npm run docs:citations -- <doc>\" in the canonical verification-discipline reference.",
-      "sites": 9
+      "sites": 10
     },
     "npm fixture:create": {
       "disposition": "source-repo-only",
@@ -250,7 +250,7 @@
     "npm sync:dry": {
       "disposition": "source-repo-only",
       "reason": "Source-repo drift probe over every consumer. Meaningless in a consumer, which cannot see the other consumers.",
-      "sites": 10
+      "sites": 11
     },
     "npm upstream:queues": {
       "disposition": "source-repo-only",
