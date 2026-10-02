@@ -212,7 +212,9 @@ cat .audit/$SID-untracked-diff-stderr.log   # non-empty = a real failure occurre
 ```
 
 ```bash
-CHANGED="scripts/*.mjs,tests/*.test.mjs"   # files with real diff content this round
+# CHANGED = the exact files you edited this round, comma-separated, no globs:
+# the CLI splits on commas and never expands a pattern.
+CHANGED="scripts/lib/foo.mjs,tests/foo.test.mjs"
 FILES="$CHANGED"                            # + any dependent you also want in scope
 PASSES="sustainability"                     # e.g. sustainability,backend — per r2-plus-mode.md
 node scripts/openai-audit.mjs code "$PLAN_FILE" --round 2 --ledger .audit/$SID-ledger.json --diff .audit/$SID-diff.patch --changed "$CHANGED" --files "$FILES" --passes "$PASSES" --out .audit/$SID-r2-result.json 2>.audit/$SID-r2-stderr.log

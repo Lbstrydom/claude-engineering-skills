@@ -67,6 +67,16 @@ describe('audit skill shell recipes', () => {
       'PLAN_FILE assigned a glob: "$PLAN_FILE" passes the literal pattern to the CLI');
   });
 
+  test('CHANGED/FILES lists are explicit paths - openai-audit splits --changed on commas, never expands a glob', () => {
+    // Same class as PLAN_FILE above: `CHANGED="scripts/*.mjs,…"` reached the
+    // CLI as the literal pattern, so the R2+ impact set matched no file.
+    const lines = bashFenceLines();
+    assert.ok(lines.some((l) => l.text.includes('--changed "$CHANGED"')), 'no recipe passes --changed "$CHANGED" any more');
+    const globbed = lines.filter((l) => /^\s*(CHANGED|FILES)=\S*[*?[]/.test(l.text));
+    assert.deepEqual(globbed.map((l) => `${l.rel}:${l.line}`), [],
+      'CHANGED/FILES assigned a glob: the CLI receives the literal pattern');
+  });
+
   for (const skill of SID_SKILLS) {
     test(`${skill}: two concurrent SID mints never collide`, async () => {
       const src = fs.readFileSync(path.join(SKILLS, skill, 'SKILL.md'), 'utf-8');
