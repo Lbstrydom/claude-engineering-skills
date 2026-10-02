@@ -62,7 +62,7 @@ PASSES="sustainability"  # always include
 # Add backend if any backend file changed, frontend if frontend changed, etc.
 
 # PLAN_FILE = the ONE plan path /audit-code was invoked with, assigned verbatim.
-# Never a glob: an assignment does not expand it, so the CLI would get the pattern itself.
+# Not a glob: an assignment does not expand it, so the CLI would get the pattern itself.
 node scripts/openai-audit.mjs code "$PLAN_FILE" --round 2 --ledger .audit/$SID-ledger.json --diff .audit/$SID-diff.patch --changed $CHANGED --files $FILES --passes $PASSES --out .audit/$SID-r2-result.json 2>.audit/$SID-r2-stderr.log
 ```
 
