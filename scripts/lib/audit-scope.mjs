@@ -113,18 +113,36 @@ export function safeReadFile(relPath, cwdBoundary) {
   // name. This is the same rule `resolveAndClassify` states (INC-001); admitting more extensions widens what
   // reaches this function, so it is the one place the resolved target has to be judged.
   if (isSensitiveFile(rel.split(path.sep).join('/'))) return null;
+  // Open the REALPATH — the path whose containment was just verified — ONCE, and
+  // check and read through that descriptor. Using `absPath` reopened the symlink,
+  // and even on `realPath`, `statSync(path)` + `readFileSync(path)` re-resolved
+  // the name for each call, so a file swapped in between was read without ever
+  // being checked. An open descriptor's target cannot change, so the type/size
+  // check (`fstat`) and the read are about the same file.
+  //
+  // What remains is the gap between `realpathSync` above and this open — the
+  // same residual `readClassifiedFile` (path-validation.mjs) documents: closing
+  // it needs "what does this fd point at", which plain Node `fs` cannot answer
+  // portably. O_NONBLOCK so a FIFO planted at the path is refused by the fstat
+  // rather than blocking the audit on open (it was refused before opening by the
+  // old stat-first order); 0 on Windows, where the constant does not exist.
+  //
+  // `absPath` is still returned as the caller-facing identity: it is the path
+  // the audit was asked about, and callers use it for display and dedup.
+  let fd;
   try {
-    // stat and read the REALPATH — the path whose containment was just verified.
-    // Using `absPath` here reopened the symlink, so a link swapped between the
-    // realpathSync above and these calls resolved somewhere else entirely and the
-    // containment check governed a different file than the one read (TOCTOU).
-    // `absPath` is still returned as the caller-facing identity: it is the path
-    // the audit was asked about, and callers use it for display and dedup.
-    const stat = fs.statSync(realPath);
-    if (!stat.isFile() || stat.size > MAX_FILE_SIZE) return null;
-    return { content: fs.readFileSync(realPath, 'utf-8'), absPath };
+    fd = fs.openSync(realPath, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
   } catch {
     return null;
+  }
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_FILE_SIZE) return null;
+    return { content: fs.readFileSync(fd, 'utf-8'), absPath };
+  } catch {
+    return null;
+  } finally {
+    try { fs.closeSync(fd); } catch { /* already closed — nothing held */ }
   }
 }
 
