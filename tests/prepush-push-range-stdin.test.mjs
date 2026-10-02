@@ -166,9 +166,19 @@ function buildStaleCheckoutFixture(workspace) {
 }
 
 describe('HOOK_BODY threads git\'s own stdin push range through — static shape', () => {
-  it('reads exactly one line of stdin (single `read`, not a `while` loop)', () => {
-    assert.match(HOOK_BODY, /read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA/);
-    assert.doesNotMatch(HOOK_BODY, /while read -r LOCAL_REF/);
+  it('has exactly ONE stdin reader, and its loop launches no downstream command', () => {
+    // v8: the read is a loop so the delete-only skip can see every ref. The
+    // invariant the old "single `read`" pin protected is that nothing downstream
+    // runs once per ref — so the loop body may tally and pick a range, nothing else.
+    const readers = HOOK_BODY.match(/\bread -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA/g) ?? [];
+    assert.equal(readers.length, 1, 'stdin must be read by exactly one `read`');
+    const start = HOOK_BODY.indexOf('while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA');
+    const end = HOOK_BODY.indexOf('export AUDIT_PUSH_RANGE_BASE=');
+    assert.ok(start > 0 && end > start);
+    const loop = HOOK_BODY.slice(start, end);
+    for (const downstream of ['STATUS_CLI', 'AUDIT_SCRIPT', 'MAINT_SCRIPT', 'finish']) {
+      assert.ok(!loop.includes(downstream), `the stdin loop must not invoke ${downstream}`);
+    }
   });
 
   it('exports AUDIT_PUSH_RANGE_BASE/_HEAD from the parsed stdin line', () => {
@@ -188,13 +198,13 @@ describe('HOOK_BODY threads git\'s own stdin push range through — static shape
   it('positions the stdin read before it could be starved by any other read of stdin', () => {
     // The kill switch is the only thing allowed ahead of it.
     const disableAt = HOOK_BODY.indexOf('[ "$AUDIT_PREPUSH_DISABLE" = "1" ] && exit 0');
-    const readAt = HOOK_BODY.indexOf('read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA');
+    const readAt = HOOK_BODY.indexOf('while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA');
     assert.ok(disableAt > 0 && readAt > disableAt);
   });
 
   it('treats an all-zero local sha (branch deletion) as "nothing pushed", not a literal range', () => {
     assert.match(HOOK_BODY, /ZERO_SHA="0{40}"/);
-    assert.match(HOOK_BODY, /"\$LOCAL_SHA" != "\$ZERO_SHA"/);
+    assert.match(HOOK_BODY, /"\$LOCAL_SHA" = "\$ZERO_SHA"/);
   });
 
   it('bumped the version so consumers re-install', () => {
@@ -285,31 +295,31 @@ describe('the full generated hook, fed git\'s real stdin protocol, on the same s
     });
   });
 
-  it('a branch-deletion push (all-zero local sha) is a KNOWN, documented non-fix — still falls back to stale inference', (t) => {
+  it('a branch-deletion push (all-zero local sha) is skipped — it never reaches the stale-inference gate', (t) => {
     if (!HAS_GIT || !HAS_BASH) return t.skip('git and bash are both required');
     withWorkspace((ws) => {
       const { local } = buildStaleCheckoutFixture(ws);
       const script = path.join(local, '.hook.sh');
       fs.writeFileSync(script, HOOK_BODY);
       const zero = '0'.repeat(40);
-      const stdin = `refs/heads/doomed ${zero} refs/heads/doomed deadbeef${'0'.repeat(32)}\n`;
+      const stdin = `refs/heads/doomed ${zero} refs/heads/doomed deadbeef${'0'.repeat(32)}
+`;
       const r = spawnSync('bash', [script, 'origin', 'https://example.invalid'], {
         cwd: local,
         encoding: 'utf-8',
         input: stdin,
         env: { ...process.env, CLAUDE_AUDIT_LOOP_DIR: REPO_ROOT, ...SANDBOX_REQUIRE_SCRUB },
       });
-      // Nothing was pushed, so there is no local_sha to build a corrected
-      // range from — PUSH_BASE/_HEAD stay empty by design (see the HOOK_BODY
-      // comment above the read) and the gate falls back to this checkout's
-      // own (stale) inference, UNCHANGED from before this fix. This is the
-      // deletion case named in the incident report: still blocked. Fixing it
-      // would mean skipping the plan-status gate whenever nothing was pushed,
-      // which interacts with the maintenance block's "must run before any
-      // early exit" ordering invariant (maintenance-hook-snippet.test.mjs) —
-      // deliberately left out of this change's scope.
-      assert.equal(r.status, 1, `expected the deletion push to still hit the stale-inference block; stderr:\n${r.stderr}`);
-      assert.match(r.stderr, /non-conforming Status/);
+      // Nothing was pushed, so there is no local_sha to build a range from. Before
+      // hook-version 8 PUSH_BASE/_HEAD stayed empty and the gate fell back to this
+      // checkout's own (stale) inference — the red control above proves that
+      // inference misattributes other sessions' plans — and blocked a push that
+      // sent no commits. v8 skips the gate for a delete-only push instead; the
+      // must-NOT-skip directions are pinned in prepush-consumer-delete-only-push.test.mjs.
+      assert.equal(r.status, 0, `expected the deletion push to pass; stderr:
+${r.stderr}`);
+      assert.match(r.stderr, /delete-only push/);
+      assert.doesNotMatch(r.stderr, /non-conforming Status/);
     });
   });
 });
