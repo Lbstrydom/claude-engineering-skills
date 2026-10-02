@@ -243,8 +243,10 @@ describe('request identity — "are these two arms different?" is a comparison',
   const TRANSCRIPT = JSON.stringify({ mode: 'code', rounds: [] });
   const client = () => ({ messages: { create: async () => ({
     content: [{ type: 'tool_use', name: 'submit_review', input: {
-      verdict: 'APPROVE', deliberation_quality: 'x', new_findings: [], wrongly_dismissed: [],
-      over_engineering_flags: [], architectural_coherence: 'x', overall_reasoning: 'x',
+      verdict: 'APPROVE',
+      deliberation_quality: { claude_bias_detected: false, gpt_false_positive_count: 0, deliberation_was_fair: true, quality_summary: 'x' },
+      new_findings: [], wrongly_dismissed: [],
+      over_engineering_flags: [], architectural_coherence: 'Strong', overall_reasoning: 'x',
     } }],
     usage: { input_tokens: 1, output_tokens: 1 },
   }) } });

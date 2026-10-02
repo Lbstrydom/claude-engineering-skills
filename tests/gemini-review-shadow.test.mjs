@@ -80,32 +80,22 @@ describe('shadowErrorBlock — a failed shadow carries its classification, not j
   });
 
   it('callReviewer’s wrap PRESERVES the abort classification the block above depends on', async () => {
-    // The other half of the same defect, and the reason the test above hands in
-    // an error carrying `llmCategory`: `callReviewer` catches the provider
-    // error and re-throws a NEW Error with only the message and `status`, so an
-    // AbortError's `name`/`code` — the fields `classifyLlmError` reaches
-    // `timeout` through — do not survive. Every timeout was therefore
-    // classified `permanent`, and the automatic retry could never fire.
-    //
-    // A source-level pin, deliberately and with its limitation stated: driving
-    // the real function to a timeout means waiting out TIMEOUT_MS against a
-    // live transport. It proves the assignment is PRESENT, not that it runs —
-    // `shadowErrorBlock`'s own tests above cover the behaviour once an error
-    // with these fields exists. (Same shape as the buildShadowClient pin below.)
-    //
-    // Target path updated for the Phase 2 relocation
-    // (docs/plans/gemini-review-decomposition.md) — callReviewer moved to
-    // lib/final-review/transport.mjs; same pin, new location.
-    const fs = await import('node:fs');
-    const src = fs.readFileSync('scripts/lib/final-review/transport.mjs', 'utf8');
-    const fn = src.slice(src.indexOf('async function callReviewer'));
-    const body = fn.slice(0, fn.indexOf('\n}\n'));
-    assert.match(
-      body,
-      /isAbort\s*\)\s*\{\s*wrapped\.llmCategory\s*=\s*'timeout';\s*wrapped\.llmRetryable\s*=\s*true;/,
-      'the abort branch must stamp the structured classification onto the wrapped error — '
-      + 'without it every timeout reads as `permanent` and no arm is ever retried',
-    );
+    // The other half of the same defect: `callReviewer` catches the provider
+    // error and re-throws a NEW Error, so an AbortError's `name`/`code` — the
+    // fields `classifyLlmError` reaches `timeout` through — do not survive the
+    // wrap unless it stamps the structured verdict. BEHAVIOURAL end to end: a
+    // real AbortError through the real wrap into the real block. (This was a
+    // source-regex pin until 2026-10; an AbortError needs no wait on TIMEOUT_MS.)
+    const { callReviewer } = _internals;
+    const aborting = { chat: { completions: { create: async () => {
+      throw Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
+    } } } };
+    const err = await callReviewer(aborting, { transportKind: 'openai', model: 'm', systemPrompt: 's', userPrompt: 'u' })
+      .then(() => null, (e) => e);
+    assert.ok(err, 'precondition: the aborted call rejects');
+    const b = shadowErrorBlock(SHADOW, err);
+    assert.equal(b.errorCategory, 'timeout', 'without the stamp every timeout reads as `permanent`');
+    assert.equal(b.errorRetryable, true, 'and no arm is ever retried');
   });
 
   it('keeps the fields the completeness check reads absent — a failed shadow never counts as having run', () => {

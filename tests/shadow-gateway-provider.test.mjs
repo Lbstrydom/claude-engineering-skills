@@ -461,29 +461,43 @@ describe('final-review transports READ reasoning tokens, never fabricate them', 
   // budget reasoning while the log reported none. A fabricated zero cannot show
   // you when it stops being true, which is the whole failure.
   //
-  // Asserted at source because reproducing it needs three live providers.
-  //
-  // Target path updated for the Phase 2 relocation — REVIEW_TRANSPORTS and
-  // callReviewer both moved to lib/final-review/transport.mjs.
-  const SRC = readFileSync(new URL('../scripts/lib/final-review/transport.mjs', import.meta.url), 'utf-8');
-  const transports = SRC.slice(SRC.indexOf('export const REVIEW_TRANSPORTS'), SRC.indexOf('export async function callReviewer'));
+  // BEHAVIOURAL, through the real adapters with a canned SDK response each. The
+  // source-regex version it replaces passed its gemini arm on a COMMENT naming
+  // `thoughtsTokenCount` after the adapter had moved to the shared oracle.
+  const { REVIEW_TRANSPORTS } = _internals;
+  const IN = { model: 'm', maxTokens: 10, systemPrompt: 's', userPrompt: 'u', signal: new AbortController().signal };
 
-  it('no transport assigns a literal zero to thinking_tokens', () => {
-    assert.doesNotMatch(transports, /thinking_tokens:\s*0\s*[,}]/,
-      'a literal thinking_tokens: 0 is back — read it from the provider response instead');
+  it('anthropic reads output_tokens_details.thinking_tokens', async () => {
+    const client = { messages: { create: async () => ({
+      content: [{ type: 'text', text: '{}' }], stop_reason: 'end_turn',
+      usage: { input_tokens: 1, output_tokens: 90, output_tokens_details: { thinking_tokens: 61 } },
+    }) } };
+    assert.equal((await REVIEW_TRANSPORTS.anthropic(client, IN)).usage.thinking_tokens, 61);
   });
 
-  it('each provider shape reads its own reasoning field', () => {
-    assert.match(transports, /thoughtsTokenCount/, 'gemini');                          // Gemini
-    assert.match(transports, /output_tokens_details\?\.thinking_tokens/, 'anthropic');  // Anthropic
-    assert.match(transports, /completion_tokens_details\?\.reasoning_tokens/, 'openai'); // OpenAI/OpenRouter
+  it('openai-shaped reads completion_tokens_details.reasoning_tokens', async () => {
+    const client = { chat: { completions: { create: async () => ({
+      choices: [{ message: { content: '{}' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 1, completion_tokens: 90, completion_tokens_details: { reasoning_tokens: 67 } },
+    }) } } };
+    assert.equal((await REVIEW_TRANSPORTS.openai(client, IN)).usage.thinking_tokens, 67);
   });
 
-  it('the OpenAI-shaped transport surfaces max_tokens truncation', () => {
-    // finish_reason 'length' yields JSON that may still parse, so a truncated
-    // review reads as a short one. Silence here is indistinguishable from a
-    // model that found little.
-    assert.match(transports, /finish_reason/);
-    assert.match(transports, /TRUNCATED/);
+  it('gemini reads thoughtsTokenCount (via the shared oracle)', async () => {
+    const client = { models: { generateContentStream: async () => (async function* () {
+      yield { text: '{}', usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 5, thoughtsTokenCount: 44 } };
+    })() } };
+    assert.equal((await REVIEW_TRANSPORTS.gemini(client, IN)).usage.thinking_tokens, 44);
+  });
+
+  it('every transport RETURNS its finish reason, so callReviewer can fail a cut-off review', async () => {
+    const openai = { chat: { completions: { create: async () => ({ choices: [{ message: { content: '{}' }, finish_reason: 'length' }], usage: {} }) } } };
+    const anthropic = { messages: { create: async () => ({ content: [{ type: 'text', text: '{}' }], stop_reason: 'max_tokens', usage: {} }) } };
+    const gemini = { models: { generateContentStream: async () => (async function* () {
+      yield { text: '{}', candidates: [{ finishReason: 'MAX_TOKENS' }], usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 } };
+    })() } };
+    assert.equal((await REVIEW_TRANSPORTS.openai(openai, IN)).finishReason, 'length');
+    assert.equal((await REVIEW_TRANSPORTS.anthropic(anthropic, IN)).finishReason, 'max_tokens');
+    assert.equal((await REVIEW_TRANSPORTS.gemini(gemini, IN)).finishReason, 'MAX_TOKENS');
   });
 });
