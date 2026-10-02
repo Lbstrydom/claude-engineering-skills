@@ -14,7 +14,7 @@ drifting from the work repo.
 
 | Role | Public profile | Azure work profile |
 |---|---|---|
-| GPT auditor | `api.openai.com` | Azure OpenAI, deployment-qualified (`AZURE_OPENAI_ENDPOINT/openai/deployments/<deployment>/…`), deployment `AZURE_OPENAI_GPT_DEPLOYMENT` — tenant-chosen name, discover yours with `npm run azure:doctor -- --target gpt --fix` (e.g. `gpt-5.6-terra`) |
+| GPT auditor | `api.openai.com` | Azure OpenAI, deployment-qualified (`AZURE_OPENAI_ENDPOINT/openai/deployments/<deployment>/…`), deployment `AZURE_OPENAI_GPT_DEPLOYMENT` — tenant-chosen name, discover yours with `npm run azure:doctor -- --target gpt --fix` (e.g. `gpt-6.1-sol`) |
 | Final reviewer | Gemini (→ Claude Opus fallback) | **Claude Opus on Azure Foundry** (`AZURE_AI_ENDPOINT`), deployment `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` — **your tenant's own deployment name, never a default** (this repo's work tenant happens to name it `claude-opus-4-7`; see the verified-contract note below) — opt in with `set-provider azure-claude` (no longer automatic; see Provider precedence below) |
 | Embeddings | Gemini `gemini-embedding-001` | Azure OpenAI `text-embedding-3-large` (`dimensions: 768`) |
 | Author (coding) | your choice in the IDE | Sonnet 4.6 in VS Code (unchanged; out of the bundle's scope) |
@@ -204,8 +204,8 @@ static, offline list of model ids the public-profile `latest-gpt`/`latest-opus`
 sentinels already resolve from (`model-resolver.mjs`'s `STATIC_POOL`) — a
 narrowing hint only, since an Azure deployment NAME is tenant-chosen and need
 not match a catalog model id. The ladder is tier-aware and newest-first:
-`--target gpt` probes only the balanced SKUs (`gpt-6-sol`, then
-`gpt-5.6-terra`), never guessing a premium (`gpt-6-astra`) or lite
+`--target gpt` probes only the balanced SKUs (`gpt-6.1-sol`, then `gpt-6-sol`,
+then `gpt-5.6-terra`), never guessing a premium (`gpt-6-astra`) or lite
 (`gpt-6-luna`) deployment for the auditor slot; `--target claude` probes Opus
 newest-first (`claude-opus-5-5` first), then Sonnet, then Haiku. Pass
 `--candidate <your-deployment-name>` for a custom alias the pool can't guess,
@@ -300,7 +300,9 @@ embedding routing changed 2026-08-12, see below):
 - Deployments: the GPT auditor deployment is **tenant-chosen, not a fixed
   name** — Azure gateways rename/retire model families over time (this repo's
   own work tenant moved `gpt-5.5` → `gpt-5.6-terra` on 2026-08-21 when the
-  gateway began serving the `gpt-5.6-*` family). Don't hardcode a literal;
+  gateway began serving the `gpt-5.6-*` family, then to `gpt-6.1-sol` on
+  2026-10-02, when it served `gpt-6.1-sol` / `gpt-6-luna` / `gpt-5.6-terra` and
+  404'd `gpt-6-sol` / `gpt-5.6-sol`). Don't hardcode a literal;
   discover your tenant's real name with `npm run azure:doctor -- --target gpt --fix`.
   The rest of that verification: `claude-opus-4-7` (reviewer — 100K TPM, holds
   a full audit transcript; the older `claude-opus-4-6` at 10K TPM can 429
@@ -528,7 +530,7 @@ plain `messages.create()` throws "Streaming is required…". Deployments: `claud
 10K TPM 429s unrecoverably on big audits), `claude-sonnet-5-5` (summaries). GPT auditor
 deployment falls back to a concrete `OPENAI_AUDIT_MODEL` when `AZURE_OPENAI_GPT_DEPLOYMENT`
 is unset — either way the value is your tenant's own deployment name (e.g.
-`gpt-5.6-terra`), not a fixed id; run `npm run azure:doctor -- --target gpt --fix`
+`gpt-6.1-sol`), not a fixed id; run `npm run azure:doctor -- --target gpt --fix`
 to discover and lock in the real one.
 
 **Arch-index summaries route to Sonnet** via Foundry (`summarise.mjs` /
@@ -544,7 +546,7 @@ command if missing (never auto-installs), then chains `--migrate`.
 
 **Rate limits**: fresh Azure deployments often ship tiny default quotas; the
 `contoso-ai-dev` workhorses sit at **100K TPM / 100 RPM** (the GPT auditor
-deployment — a tenant-chosen name, e.g. `gpt-5.6-terra`, see above — and
+deployment — a tenant-chosen name, e.g. `gpt-6.1-sol`, see above — and
 `claude-opus-4-7`), `claude-sonnet-5-5` at ~4.97M/4,968 (`claude-sonnet-4-6`: 200K/200), `text-embedding-3-large`
 at 100K/600. `npm run
 azure:limits` probes each deployment's live TPM/RPM + reset window. Management (opt-in,

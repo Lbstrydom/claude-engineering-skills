@@ -85,11 +85,25 @@
 ## 2026-10-02 — correction: accepted control-marker count (PR #147)
 
 ### Correction
-- The entry below, PR #147's description, its squash commit `1497b2df` and migration `20261002120000`'s header all say **34** control markers carried `accepted`, **31** of them fixed/verified. Both figures were mis-summed from the 2026-10-02 grouped query (measured, read-only, NAS store): the `accepted` groups are 18 + 4 + 3 + 2 + 1 + 1 + 1 = **30**, of which **27** are fixed/verified and 3 were open in `unremediated_acceptances_all`. The 3 open rows (the only ones the fix and the repair acted on) were correct throughout.
+- The "control markers can no longer become accepted obligations" entry further down, PR #147's description, its squash commit `1497b2df` and migration `20261002120000`'s header all say **34** control markers carried `accepted`, **31** of them fixed/verified. Both figures were mis-summed from the 2026-10-02 grouped query (measured, read-only, NAS store): the `accepted` groups are 18 + 4 + 3 + 2 + 1 + 1 + 1 = **30**, of which **27** are fixed/verified and 3 were open in `unremediated_acceptances_all`. The 3 open rows (the only ones the fix and the repair acted on) were correct throughout.
 - Corrected in `scripts/lib/finalize-outcomes.mjs`'s comment and `tests/control-marker-acceptance-db.test.mjs`'s docstring. The migration file is left unchanged: it is applied to the live store (ledger 136/136), and its comment does not affect behaviour.
 
 ### Verification
 - After applying `20261002120000` to the live store: 0 control markers in `unremediated_acceptances_all`, 27 control markers still `accepted` (the fixed/verified history, deliberately left), and `--check-drift` 136/136 with no drift. Read-only `SELECT count(*) FROM audit_findings WHERE adjudication_outcome='accepted' AND detail_snapshot LIKE 'ADJACENCY\_INCOMPLETE%' ESCAPE '\'` → 27.
+
+---
+
+## 2026-10-02 — Azure tenant serves gpt-6.1-sol: template, runbook and consumer envs follow
+
+### Changes
+- `defaults/work-profile.env.example` example deployment `gpt-5.6-terra` → `gpt-6.1-sol`. `docs/runbooks/azure-work-profile.md`: tenant history, examples, and the `--target gpt` ladder (now `gpt-6.1-sol` → `gpt-6-sol` → `gpt-5.6-terra`, matching `STATIC_GPT_CANDIDATES`).
+
+### Readings
+- Work tenant probe (Responses API, 16-token ping each): `gpt-6.1-sol`, `gpt-6-luna` and `gpt-5.6-terra` answer. **`gpt-6-sol` and `gpt-5.6-sol` now 404** — both were serving on 2026-10-01.
+- Local consumer envs (operator-owned, not committed): storyline and ai-organiser `AZURE_OPENAI_GPT_DEPLOYMENT` + `OPENAI_AUDIT_MODEL` → `gpt-6.1-sol`. storyline was on `gpt-6-sol` (broken by the 404); ai-organiser was on Azure `gpt-5.5`. Both resolve `latest-gpt-mini` (meta-assess fallback) to `gpt-6-luna`, which is deployed.
+
+### Not done
+- No audit loop (12-line docs change; gate `not-run`).
 
 ---
 
