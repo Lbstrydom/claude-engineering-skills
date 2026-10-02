@@ -31,6 +31,7 @@ import * as armEval from '../store/arm-eval.mjs';
 import * as upstreamIssues from '../store/upstream-issues.mjs';
 import * as skillCensus from '../store/skill-census.mjs';
 import * as fleetEvents from '../store/fleet-events.mjs';
+import * as findingDisposition from '../store/finding-disposition.mjs';
 import { getCloudState, getCloudInitFailure } from '../store/client-state.mjs';
 
 function compose(...modules) {
@@ -58,5 +59,6 @@ export const STORE_PORT = compose(
   upstreamIssues,
   skillCensus,
   fleetEvents,
+  findingDisposition,
   { getCloudState, getCloudInitFailure },
 );

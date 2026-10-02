@@ -103,7 +103,7 @@ const STORE_MODULES = (function listStoreModules(rel = STORE_DIR) {
  * both stores. Widening the census is what made it visible; the honest
  * outcome was removal, not hardening.
  */
-const WRITER_NAME = /^(record|sync|upsert|save|persist|write|delete|retire|mark|insert|create|update|remove|set|repoint)[A-Z]/;
+const WRITER_NAME = /^(record|sync|upsert|save|persist|write|delete|retire|mark|insert|create|update|remove|set|repoint|close)[A-Z]/;
 
 /**
  * Exports that are write-shaped but are NOT durable audit-store writes, each
@@ -202,6 +202,7 @@ const NOT_A_DURABLE_WRITE = {
   markRunFindingsAutoDismissed: 'finalize-outcomes CLI; same ledger-on-disk reasoning as markRunFindingsNeedsTriage.',
   persistKeptEmbeddings: 'Semantic-suppression side table. Fail-open by design (AUDIT_SEMANTIC_SUPPRESS_ENABLED) — a missing embedding costs a re-raise, never a lost finding.',
   recordRegressionSpec: 'Operator/ux-lock CLI write. Returns {ok, reason} since §2b F2 and its handler exits 1 on a failed write, so the failure reaches the caller synchronously.',
+  closeFindingById: 'Operator CLI write (cross-skill.mjs close-finding), repo-scoped by row id. Delegates the fixed/dismissed states to markFindingsRemediation and recordAdjudicationEvent (each already on this list) and returns a discriminated {ok, reason}; a 0-row write is write-failed, never ok. Synchronous to the operator who ran it, so a lost write is loud, not spilled.',
   repointRegressionSpec: 'Operator CLI write (cross-skill.mjs repoint-regression-spec). Awaited, returns a discriminated {ok, reason}, and an UPDATE that matched no row is reported as write-failed rather than ok — Postgres reports success for an UPDATE affecting nothing. Same class as recordRegressionSpec beside it.',
   deleteRegressionSpec: 'Operator CLI write (cross-skill.mjs repoint-regression-spec --delete). Same discriminated-result contract as repointRegressionSpec; a DELETE matching no row is write-failed, not ok. Removing a lock is the honest outcome when no test discharges the finding, so a lost delete leaves a FALSE claim standing and must be loud — which it is, synchronously, to the operator who ran it.',
   recordRegressionSpecRun: 'Operator/ux-lock CLI write; discriminated since 2026-08-12 and its caller counts persist failures into the run summary.',
