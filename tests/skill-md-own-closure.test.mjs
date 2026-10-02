@@ -200,7 +200,7 @@ describe('findOutOfSkillRefs — the detector fires, and only where it should', 
       const kinds = findOutOfSkillRefs(dir, text, names, refs).violations.map(v => v.kind);
       assert.deepEqual(kinds, ['link-escapes-skill', 'names-sibling-skill-file']);
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -213,7 +213,7 @@ describe('findOutOfSkillRefs — the detector fires, and only where it should', 
       const bare = findOutOfSkillRefs(dir, 'per `skills/beta/references/theirs.md`', names);
       assert.deepEqual(bare.violations.map(v => v.kind), ['names-sibling-skill-file']);
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -225,7 +225,7 @@ describe('findOutOfSkillRefs — the detector fires, and only where it should', 
       const got = findOutOfSkillRefs(dir, text, names).violations.map(v => `${v.line}:${v.kind}`);
       assert.deepEqual(got, ['3:mention-missing', '5:link-missing']);
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
