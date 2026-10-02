@@ -640,3 +640,75 @@ describe('D12 — dismissLifecycle', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// computeAncestryDecisions — a record must not be pinned to a ref no later run
+// can descend from (final-review shadow 87a434bc). Every non-descendant used to
+// be dropped, so after a squash-merge (main never descends from the PR commit)
+// or a GC'd / shallow-missing ref (exit 128) the record's stored ref could never
+// be satisfied again and every later observation was dropped, forever. Only a
+// PROVABLY OLDER head (an ancestor of the stored ref) is stale.
+// ---------------------------------------------------------------------------
+describe('computeAncestryDecisions — only a provably older head is stale (87a434bc)', () => {
+  const rev = (repo, r = 'HEAD') => execFileSync('git', ['rev-parse', r], { cwd: repo, env: gitFixtureEnv() }).toString('utf8').trim();
+
+  it('a stored ref that is UNREACHABLE (gc / shallow / force-push) does not pin the record — the observation applies', async () => {
+    const { computeAncestryDecisions } = await import('../scripts/lib/audit/event-wiring-corpus.mjs');
+    const repo = newRepo();
+    try {
+      const gone = 'deadbeef'.repeat(5);
+      const d = computeAncestryDecisions(repo, rev(repo), [{ lastObservedRef: gone }], gitFixtureEnv());
+      assert.equal(d.get(gone), true);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('a DIVERGENT stored ref (squash-merged PR commit) does not pin the record — the observation applies', async () => {
+    const { computeAncestryDecisions } = await import('../scripts/lib/audit/event-wiring-corpus.mjs');
+    const repo = newRepo();
+    try {
+      const base = rev(repo);
+      sh(repo, 'checkout', '-q', '-b', 'pr');
+      writeFile(repo, 'a.js', 'export const a = 1;\n');
+      commit(repo, 'pr work');
+      const prSha = rev(repo);
+      sh(repo, 'checkout', '-q', base);
+      writeFile(repo, 'a.js', 'export const a = 1;\n');
+      commit(repo, 'squash of pr');
+      const d = computeAncestryDecisions(repo, rev(repo), [{ lastObservedRef: prSha }], gitFixtureEnv());
+      assert.equal(d.get(prSha), true);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('a head that is an ANCESTOR of the stored ref (an older checkout) is still dropped — the stale guard holds', async () => {
+    const { computeAncestryDecisions } = await import('../scripts/lib/audit/event-wiring-corpus.mjs');
+    const repo = newRepo();
+    try {
+      const older = rev(repo);
+      writeFile(repo, 'b.js', 'export const b = 1;\n');
+      commit(repo, 'newer');
+      const newer = rev(repo);
+      const d = computeAncestryDecisions(repo, older, [{ lastObservedRef: newer }], gitFixtureEnv());
+      assert.equal(d.get(newer), false);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('a stored ref that is an ancestor of head applies, as before', async () => {
+    const { computeAncestryDecisions } = await import('../scripts/lib/audit/event-wiring-corpus.mjs');
+    const repo = newRepo();
+    try {
+      const older = rev(repo);
+      writeFile(repo, 'b.js', 'export const b = 1;\n');
+      commit(repo, 'newer');
+      const d = computeAncestryDecisions(repo, rev(repo), [{ lastObservedRef: older }], gitFixtureEnv());
+      assert.equal(d.get(older), true);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});

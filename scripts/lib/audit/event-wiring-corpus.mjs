@@ -697,24 +697,49 @@ export async function detectEventWiringAsymmetry({
   return { findings, counters: merged, partial: false };
 }
 
-function computeAncestryDecisions(repoPath, headRef, openRecords, env) {
+/**
+ * Per stored ref: may an observation at `headRef` be applied to a record last
+ * observed at that ref? (true = apply, false = drop as stale.)
+ *
+ * Dropped ONLY when `headRef` is PROVABLY OLDER — an ancestor of the stored
+ * ref — or when git itself cannot answer. Every non-descendant used to be
+ * dropped, and two ordinary histories made that permanent: after a
+ * squash-merge, main never descends from the PR commit a record was last seen
+ * at (exit 1 forever), and a GC'd / shallow-missing / force-pushed-away ref
+ * cannot be resolved at all (exit 128 forever). Either way every later
+ * observation was dropped and the record could never move again
+ * (final-review shadow 87a434bc). A ref that no reachable history can descend
+ * from cannot be "newer" than the head, so pinning the record to it protects
+ * nothing.
+ *
+ * Exported for its test; the caller is detectEventWiringAsymmetry.
+ */
+export function computeAncestryDecisions(repoPath, headRef, openRecords, env) {
   const decisions = new Map();
   const distinctStoredRefs = new Set(openRecords.map(r => r.lastObservedRef).filter(Boolean));
+  const git = (args) => execFileSync('git', args, {
+    cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}),
+  });
+  const succeeds = (args) => { try { git(args); return true; } catch { return false; } };
   for (const storedRef of distinctStoredRefs) {
     if (storedRef === headRef) { decisions.set(storedRef, true); continue; }
-    try {
-      // "is storedRef an ancestor of headRef" — i.e. is headRef newer-or-equal.
-      execFileSync('git', ['merge-base', '--is-ancestor', storedRef, headRef], {
-        cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}),
-      });
-      decisions.set(storedRef, true);
-    } catch (err) {
-      // Fail closed on ANY failure — a real "not an ancestor" (exit 1) and an
-      // unreachable-commit error (exit 128, shallow clone / gc / force-push)
-      // are handled identically: drop the observation, never throw
-      // (Gemini round-3 G2).
+    // "is storedRef an ancestor of headRef" — i.e. is headRef newer-or-equal.
+    if (succeeds(['merge-base', '--is-ancestor', storedRef, headRef])) { decisions.set(storedRef, true); continue; }
+    const storedResolves = succeeds(['cat-file', '-e', `${storedRef}^{commit}`]);
+    const headResolves = succeeds(['cat-file', '-e', `${headRef}^{commit}`]);
+    if (!headResolves) {
+      // git cannot evaluate this run's own head — fail closed (Gemini
+      // round-3 G2: never throw, never apply on an unanswered question).
       decisions.set(storedRef, false);
-      void err;
+    } else if (!storedResolves) {
+      // The stored ref is gone (gc / shallow / force-push): unanswerable
+      // forever, so it must not pin the record.
+      decisions.set(storedRef, true);
+    } else {
+      // Both exist and storedRef is not an ancestor of head: stale only if
+      // head is an ancestor of storedRef (an older checkout); divergent
+      // history (squash-merge, a deleted PR branch) applies.
+      decisions.set(storedRef, !succeeds(['merge-base', '--is-ancestor', headRef, storedRef]));
     }
   }
   return decisions;

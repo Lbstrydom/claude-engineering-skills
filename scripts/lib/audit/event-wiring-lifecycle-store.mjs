@@ -278,10 +278,10 @@ export function reconcileLifecycle(ledgerPath, { kind, observations, now, ancest
       const fingerprint = `${kind}|${obs.eventName}`;
       const existing = ledger.lifecycle[fingerprint] ?? null;
       // Stale-observation guard: an observation for an EXISTING record is
-      // only applied when its ref is the record's stored ref or a
-      // descendant of it. A non-descendant (or a ref with no entry in the
-      // precomputed map — e.g. the ancestry check itself failed/was
-      // unreachable) is dropped, fail-closed, never applied.
+      // applied only when the precomputed map says so for the record's stored
+      // ref — `computeAncestryDecisions` answers true unless this run's head
+      // is PROVABLY OLDER than that ref (or git cannot evaluate the head). A
+      // ref with no entry in the map is dropped, fail-closed, never applied.
       if (existing && existing.lastObservedRef && existing.lastObservedRef !== obs.ref) {
         if (ancestryDecisions?.get(existing.lastObservedRef) !== true) continue;
       }
