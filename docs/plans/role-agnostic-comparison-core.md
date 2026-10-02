@@ -697,7 +697,7 @@ configured value as a safety property. The enforceable contract:
 > new cohort and re-run (and re-pay for) every arm that already succeeded.
 >
 > **The new run status:** a budget-stopped run is `stopped_budget`
-> (migration `20261002120000`). It is terminal, carries its partial `cost`,
+> (migration `20261002130000`). It is terminal, carries its partial `cost`,
 > and has no verdict. It is not a live success, so raising the budget resumes
 > the arm.
 >

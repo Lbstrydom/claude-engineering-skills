@@ -45,7 +45,7 @@ export const JudgeTierSchema = z.enum(JUDGE_TIERS);
 // live success, so D5a's resume would never re-run the arm even after the
 // operator raised the budget; `failed_provider` would name a cause that did
 // not happen. Terminal, carries the partial `cost`, never a verdict.
-// Mirrored by the CHECK in 20261002120000_model_eval_run_stopped_budget.sql.
+// Mirrored by the CHECK in 20261002130000_model_eval_run_stopped_budget.sql.
 export const RUN_STATUSES = Object.freeze(['completed', 'failed_preflight', 'failed_egress', 'failed_provider', 'stopped_budget', 'running', 'pending_shadow']);
 export const RunStatusSchema = z.enum(RUN_STATUSES);
 export const TERMINAL_RUN_STATUSES = Object.freeze(['completed', 'failed_preflight', 'failed_egress', 'failed_provider', 'stopped_budget']);
