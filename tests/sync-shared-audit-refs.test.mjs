@@ -138,6 +138,49 @@ describe('sync-shared-audit-refs', () => {
       assert.ok(Object.isFrozen(EXPECTED_CONSUMERS));
     });
 
+    it('THE REAL REPO: a skill cites a shared contract from its OWN references/, never another skill\'s', () => {
+      // Audit finding 5feee36b: the browser-driver contract lived only in
+      // persona-test/references/, and click-test was told to resolve its driver
+      // from it via ../persona-test/references/. A packaged skill contains only
+      // its own directory, so click-test could ship without the contract it
+      // obeys. Fixed in 4ee0721e by a canonical + per-consumer generated copy;
+      // this pins both halves: no cross-skill citation of a shared contract,
+      // and every skill citing one is a REGISTERED consumer holding its copy.
+      const sharedDir = path.join(REPO_ROOT, 'docs', 'audit', 'shared-references');
+      const shared = fs.readdirSync(sharedDir).filter((f) => f.endsWith('.md'));
+      assert.ok(shared.includes('browser-tool-detection.md'), 'vacuous-pass guard: the driver contract is a shared canonical');
+      const skillsDir = path.join(REPO_ROOT, 'skills');
+      const problems = [];
+      let citations = 0;
+      for (const skill of fs.readdirSync(skillsDir)) {
+        const skillMd = path.join(skillsDir, skill, 'SKILL.md');
+        if (!fs.existsSync(skillMd)) continue;
+        const body = fs.readFileSync(skillMd, 'utf-8');
+        for (const name of shared) {
+          const esc = name.replace(/[.]/g, '\\.');
+          for (const m of body.matchAll(new RegExp(`\\.\\./([a-z0-9-]+)/references/${esc}`, 'g'))) {
+            problems.push(`skills/${skill}/SKILL.md cites ${m[0]} - another skill's copy, absent from a packaged ${skill}`);
+          }
+          // The registered-copy half is pinned for the driver contract only —
+          // the finding's subject. (Measured 2026-10-02: cycle cites
+          // input-acquisition/prerequisite-ladder and persona-test cites
+          // verification-discipline with no copy of their own; same class,
+          // reported separately rather than widened into this lock.)
+          if (name !== 'browser-tool-detection.md') continue;
+          if (!new RegExp(`(^|[^./\\w-])references/${esc}`).test(body)) continue;
+          citations += 1;
+          if (!fs.existsSync(path.join(skillsDir, skill, 'references', name))) {
+            problems.push(`skills/${skill} cites references/${name} but has no copy`);
+          }
+          if (!(EXPECTED_CONSUMERS[name] || []).includes(skill)) {
+            problems.push(`skills/${skill} cites references/${name} but is not in EXPECTED_CONSUMERS['${name}'] - a deleted copy would not be re-bootstrapped`);
+          }
+        }
+      }
+      assert.ok(citations > 0, 'vacuous-pass guard: no skill cites a shared contract');
+      assert.deepEqual(problems, []);
+    });
+
     it('EXPECTED_CONSUMERS lists audit-plan and audit-code for both shared refs', () => {
       assert.deepEqual([...EXPECTED_CONSUMERS['ledger-format.md']].sort(), ['audit-code', 'audit-plan']);
       assert.deepEqual([...EXPECTED_CONSUMERS['gemini-gate.md']].sort(), ['audit-code', 'audit-plan', 'cycle']);
