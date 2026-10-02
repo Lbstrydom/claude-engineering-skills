@@ -39,7 +39,15 @@ import { fmtMs } from './lib/cli-io.mjs';
 
 // ── CI-parity constants (single source; guarded by tests/db-test-container.test.mjs) ──
 
-export const DB_TEST_IMAGE = 'pgvector/pgvector:pg16';
+// Pinned by DIGEST, never by tag (2026-10-02). The floating `pg16` tag moved to
+// pgvector 0.8.7 on 2026-10-01 and every CI run failed the schema-diff step on
+// `extensions` (fixture 0.8.6), while local runs kept passing on a cached
+// 0.8.6 — two environments, one name, different bytes. An exact tag is not
+// enough either: `0.8.x-pg16*` tags are republished on Postgres minor rebuilds.
+// The `0.8.7-pg16` part is for humans; Docker resolves by the digest.
+// Must equal the db-suite service image in postgres-parity.yml (test-enforced).
+// To upgrade: bump both, `docker pull`, `npm run db:local:regen`, commit the fixture.
+export const DB_TEST_IMAGE = 'pgvector/pgvector:0.8.7-pg16@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a';
 export const CONTAINER_NAME = 'ces-db-test';
 export const DEFAULT_PORT = 5433;
 
@@ -378,6 +386,13 @@ export const IMAGE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
  * against **0.19 s** for a local `docker image inspect`. `db:suites:gate` runs on
  * every push, so that was ~7% of the gate spent re-learning something it already
  * knew.
+ *
+ * **Superseded premise (2026-10-02).** Everything below was written when
+ * `DB_TEST_IMAGE` was the floating `pgvector/pgvector:pg16`. It is now pinned by
+ * digest (see the constant), so a re-pull can no longer change what runs; the
+ * window still costs one ~1.8 s no-op pull a week and is kept because the
+ * requirements ledger anchors it. The freshness problem it addressed is now
+ * solved by bumping the pin deliberately, never by a pull.
  *
  * **Why not simply skip when present.** `pgvector/pgvector:pg16` is a MUTABLE
  * tag: upstream can republish it. And this pull is the ONLY thing that ever
