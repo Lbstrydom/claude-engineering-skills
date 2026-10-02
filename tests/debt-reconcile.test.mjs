@@ -239,7 +239,7 @@ describe('debt-reconcile CLI — an unreachable store is not an identity problem
       assert.equal(out.reason, 'repo-identity-error', JSON.stringify(out));
       assert.match(out.error, /ECONNREFUSED/);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });

@@ -46,7 +46,7 @@ test('happy path: archive, manifest and the truncated root log are all written',
     const manifest = JSON.parse(fs.readFileSync(path.join(repo, 'docs/status/rotation-manifest.json'), 'utf-8'));
     assert.equal(manifest.archives['2026-08'].entries, 1);
   } finally {
-    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 
@@ -58,7 +58,7 @@ test('an existing archive with different content is refused before anything is w
     assert.deepEqual(applyRotation(args(repo)), { ok: false, collisions: ['docs/status/2026-08.md'] });
     assert.equal(fs.readFileSync(path.join(repo, 'status.md'), 'utf-8'), ROOT_OLD, 'root log untouched');
   } finally {
-    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 
@@ -96,7 +96,7 @@ describe('a write that dies partway leaves no torn file', () => {
         assert.ok(root === ROOT_OLD || archive === ARCHIVE_BODY, 'the archived entry exists whole in at least one file');
       } finally {
         t.mock.restoreAll();
-        fs.rmSync(repo, { recursive: true, force: true });
+        fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       }
     });
   }
