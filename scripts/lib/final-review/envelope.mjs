@@ -209,6 +209,40 @@ export function codeRenderTruncation(stats) {
 }
 
 /**
+ * The in-scope code a REDUCED envelope did not show, said to the reviewer.
+ *
+ * Under `thin`/`gap` the "Files In Scope" block lists every changed path while
+ * the Code Files block withholds some — head-cut, budget-omitted, unreadable
+ * or deleted, sensitive, or dropped to fit the envelope — and those counts
+ * reached only the operator's `_envelope` telemetry (finding 30482f25). A
+ * listed file with no code reads as a file with nothing to report. Sensitive
+ * paths are counted, never itemised. `full` does not call this: its bytes are
+ * a separate contract, and its coverage gate already refuses a verdict over
+ * unseen code.
+ *
+ * @param {object|null} stats - the render record (`readFilesAsContextDetailed().stats`)
+ * @param {string[]} droppedPaths - in-scope paths the envelope budget removed before rendering
+ * @returns {string} '' when nothing was withheld
+ */
+export function withheldCodeNote(stats, droppedPaths = []) {
+  const lines = [
+    ...(stats?.headTruncated ?? []).map((t) => `- ${t.path} — head-cut: first ${t.charsRendered} of ${t.charsOnDisk} chars shown`),
+    ...(stats?.budgetOmitted ?? []).map((p) => `- ${p} — not shown: context budget reached`),
+    ...(stats?.unreadable ?? []).map((p) => `- ${p} — not shown: missing, deleted or unreadable`),
+    ...droppedPaths.map((p) => `- ${p} — not shown: dropped to fit the review envelope`),
+  ];
+  const sensitive = stats?.sensitiveExcluded?.length ?? 0;
+  if (sensitive > 0) lines.push(`- ${sensitive} sensitive file(s) withheld by policy (names not shown)`);
+  if (lines.length === 0) return '';
+  return [
+    '',
+    '### In-scope code NOT shown above',
+    'Treat these as UNSEEN: do not describe them as verified, and do not infer their content.',
+    ...lines,
+  ].join('\n');
+}
+
+/**
  * Build the final-review envelope.
  *
  * @param {object} input
@@ -291,6 +325,9 @@ export function buildReviewEnvelope(input) {
       codeContext = rendered.text;
       lastCodeStats = rendered.stats;
     }
+    // Inside render(), so the note is part of what the budget measures.
+    const kept = new Set(paths);
+    codeContext += withheldCodeNote(lastCodeStats, codePaths.filter((p) => !kept.has(p)));
     return assembleEnvelope({
       projectContext, planContent, repoContextBlock: repo, scopeBlock,
       transcript: tx, debtBlock: debt, codeContext,

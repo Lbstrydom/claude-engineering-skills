@@ -169,10 +169,13 @@ describe('readFilesAsAnnotatedContext — unchanged files (no diff entry)', () =
     assert.ok(!result.includes('| '), 'no line number margins when not in diff');
   });
 
-  it('handles missing file gracefully — omits from output', () => {
-    // No file written, just reference it
+  it('handles missing file gracefully — no code block, but says it was not readable', () => {
+    // No file written, just reference it. It used to vanish without a word, so
+    // the reviewer could not tell a deleted file from one never asked for
+    // (finding 30482f25).
     const result = readFilesAsAnnotatedContext(['missing.js'], new Map());
-    assert.equal(result.trim(), '');
+    assert.ok(!result.includes('### missing.js'), 'no code block for a missing file');
+    assert.match(result, /\[1 file\(s\) not readable — missing, deleted or unreadable\]/);
   });
 });
 
@@ -348,14 +351,14 @@ describe('readFilesAsContext — safety', () => {
     fs.writeFileSync('legit.js', 'ok');
     const result = readFilesAsContext(['legit.js', '../escape.js']);
     assert.ok(result.includes('legit.js'), 'legit file included');
-    assert.ok(result.includes('omitted'), 'escape path omitted');
+    assert.ok(result.includes('not readable'), 'escape path reported as not readable, not as a budget omission');
   });
 
   it('skips non-existent files without aborting', () => {
     fs.writeFileSync('a.js', 'aaa');
     const result = readFilesAsContext(['a.js', 'ghost.js', 'phantom.js']);
     assert.ok(result.includes('a.js'), 'existing file included');
-    assert.ok(result.includes('omitted'), 'missing files omitted');
+    assert.match(result, /\[2 file\(s\) not readable/, 'missing files reported as not readable');
   });
 
   it('skips directories in file list', () => {
@@ -363,7 +366,7 @@ describe('readFilesAsContext — safety', () => {
     fs.writeFileSync('ok.js', 'content');
     const result = readFilesAsContext(['ok.js', 'subdir']);
     assert.ok(result.includes('ok.js'), 'regular file included');
-    assert.ok(result.includes('omitted'), 'directory omitted');
+    assert.ok(result.includes('not readable'), 'directory reported as not readable');
   });
 
   it('excludes sensitive files by full path', () => {

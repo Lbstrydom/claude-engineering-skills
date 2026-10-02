@@ -83,6 +83,19 @@ describe('readFilesAsContextDetailed — reports what it dropped', () => {
     } finally { teardown(); }
   });
 
+  it('the rendered trailer says the same thing the stats do (finding 30482f25)', () => {
+    // The trailer lumped unreadable files into "context budget reached", so the
+    // model was told a missing/deleted file had merely not fit.
+    setup();
+    try {
+      const { context } = readFilesAsContextDetailed([BIG, SMALL, 'does/not/exist.mjs'], { maxPerFile: 200, maxTotal: 260 });
+      assert.match(context, /\[1 file\(s\) omitted — context budget reached\]/);
+      assert.match(context, /\[1 file\(s\) not readable — missing, deleted or unreadable\]/);
+      const onlyMissing = readFilesAsContextDetailed(['does/not/exist.mjs'], {}).context;
+      assert.ok(!onlyMissing.includes('context budget reached'), 'a missing file is not a budget omission');
+    } finally { teardown(); }
+  });
+
   it('mergeCodeRenderStats keeps an unmeasured render unmeasured', () => {
     assert.equal(mergeCodeRenderStats(null, null), null);
     const a = readFilesAsContextDetailed([], {}).stats;

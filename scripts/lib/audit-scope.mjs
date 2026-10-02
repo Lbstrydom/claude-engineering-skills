@@ -212,7 +212,7 @@ export function readFilesAsContextDetailed(filePaths, { maxPerFile = 10000, maxT
     if (isSensitiveFile(relPath)) { sensitive++; stats.sensitiveExcluded.push(relPath); continue; }
 
     const result = safeReadFile(relPath, cwdBoundary);
-    if (!result) { omitted++; stats.unreadable.push(relPath); continue; }
+    if (!result) { stats.unreadable.push(relPath); continue; }
     // Redact BEFORE truncating: truncation can otherwise cut a secret's
     // match mid-way, leaving an un-matchable (and un-redacted) partial
     // fragment in the retained prefix.
@@ -259,6 +259,9 @@ export function readFilesAsContextDetailed(filePaths, { maxPerFile = 10000, maxT
   }
 
   if (omitted > 0) total += `\n... [${omitted} file(s) omitted — context budget reached]\n`;
+  // Separate from the budget line (finding 30482f25): a missing or deleted file
+  // is not one that merely did not fit, and the reviewer reads the difference.
+  if (stats.unreadable.length > 0) total += `\n... [${stats.unreadable.length} file(s) not readable — missing, deleted or unreadable]\n`;
   if (sensitive > 0) total += `\n... [${sensitive} sensitive file(s) excluded (.env, secrets, keys)]\n`;
   if (shortened.length > 0) {
     // Operator-facing as well as model-facing: the inline note reaches the model,

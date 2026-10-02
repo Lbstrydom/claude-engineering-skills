@@ -281,6 +281,7 @@ export function readFilesAsAnnotatedContextDetailed(filePaths, diffMap, { maxPer
   }
 
   if (omitted > 0) total += `\n... [${omitted} file(s) omitted — context budget reached]\n`;
+  if (stats.unreadable.length > 0) total += `\n... [${stats.unreadable.length} file(s) not readable — missing, deleted or unreadable]\n`;
   stats.charsRendered = total.length;
   return { context: total, stats };
 }

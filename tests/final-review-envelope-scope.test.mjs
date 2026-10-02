@@ -506,3 +506,53 @@ describe('redactSecretsWithCount', () => {
     assert.equal(r.redacted, null);
   });
 });
+
+describe('reduced scopes name the in-scope code the reviewer did NOT see (finding 30482f25)', () => {
+  // Under thin, "Files In Scope" listed every changed path while the Code Files
+  // block silently withheld some: head-cut, budget-omitted, unreadable or
+  // deleted, sensitive, or dropped to fit the envelope. The counts reached only
+  // the operator's telemetry, so the reviewer read a listed file's absence as
+  // nothing to say about it.
+  const stats = {
+    requested: 5, maxPerFile: 100, maxTotal: 1000,
+    full: ['a.mjs'],
+    headTruncated: [{ path: 'b.mjs', charsOnDisk: 5000, charsRendered: 100 }],
+    budgetOmitted: ['c.mjs'], unreadable: ['gone.mjs'], sensitiveExcluded: ['.env'],
+    redactionShortened: [], charsRendered: 200, charsOnDisk: 5100,
+  };
+  const withStats = (paths) => ({ text: paths.map((f) => `=== ${f} ===`).join('\n'), stats });
+  const base = { ...BLOCKS, codePaths: ['a.mjs', 'b.mjs', 'c.mjs', 'gone.mjs', '.env'], renderCode: withStats };
+
+  it('thin lists each withheld path with its reason; sensitive files by count only', () => {
+    const out = buildReviewEnvelope({ ...base, scope: 'thin' }).userPrompt;
+    assert.match(out, /In-scope code NOT shown/);
+    assert.match(out, /- b\.mjs — head-cut: first 100 of 5000 chars shown/);
+    assert.match(out, /- c\.mjs — not shown: context budget reached/);
+    assert.match(out, /- gone\.mjs — not shown: missing, deleted or unreadable/);
+    assert.match(out, /1 sensitive file\(s\) withheld by policy/);
+    assert.ok(!/- \.env —/.test(out), 'a sensitive path is counted, never itemised');
+    assert.ok(!/- a\.mjs —/.test(out), 'a fully rendered file is not listed as withheld');
+  });
+
+  it('a file the envelope budget DROPPED is named too', () => {
+    const big = 'x'.repeat(2_000);
+    const out = buildReviewEnvelope({
+      ...BLOCKS, scope: 'thin', transcript: { raw: 'r' },
+      codePaths: ['keep.mjs', 'drop.mjs'],
+      renderCode: (p) => ({ text: p.map((f) => `=== ${f} ===\n${big}`).join('\n'), stats: { ...stats, full: p, headTruncated: [], budgetOmitted: [], unreadable: [], sensitiveExcluded: [] } }),
+      maxChars: BLOCKS.projectContext.length + BLOCKS.planContent.length + 4_000,
+    }).userPrompt;
+    assert.match(out, /- drop\.mjs — not shown: dropped to fit the review envelope/);
+  });
+
+  it('nothing withheld → no section at all', () => {
+    const clean = { ...stats, full: ['a.mjs'], headTruncated: [], budgetOmitted: [], unreadable: [], sensitiveExcluded: [] };
+    const out = buildReviewEnvelope({ ...BLOCKS, scope: 'thin', codePaths: ['a.mjs'], renderCode: () => ({ text: '=== a.mjs ===', stats: clean }) }).userPrompt;
+    assert.ok(!out.includes('In-scope code NOT shown'));
+  });
+
+  it('full is untouched — its bytes are a separate contract', () => {
+    const out = buildReviewEnvelope({ ...base, scope: 'full' }).userPrompt;
+    assert.ok(!out.includes('In-scope code NOT shown'));
+  });
+});
