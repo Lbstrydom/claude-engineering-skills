@@ -159,6 +159,7 @@ Resulting `authLiveness`, and what it does:
 | yes | declared | yes | `live` | Full authoritative verdicts |
 | yes | declared | no | `dead` | Degraded; refresh the token and re-run |
 | yes | declared | selector error | `unverified` | Authoring bug — never reported as `dead` |
+| yes | declared | only matches of unknown rendered state | `unverified` | The predicate returned `null` — unknown, not `dead` |
 
 **Degradation** replaces authoritative `misplaced`/`missing` verdicts with
 `unverified` (reusing the v1.4 `unverifiableLayers` path) — the run reports that

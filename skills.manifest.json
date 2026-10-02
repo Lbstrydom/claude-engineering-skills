@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "cbda4632b8b94873",
+  "bundleVersion": "30ec8fb063107c23",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -270,14 +270,14 @@
     },
     "nav-audit": {
       "path": "skills/nav-audit/SKILL.md",
-      "sha": "df53c58ab755",
-      "size": 16513,
+      "sha": "53a66581c2e1",
+      "size": 16644,
       "summary": "Static, code-derived navigation / information-architecture audit — the",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "df53c58ab755",
-          "size": 16513
+          "sha": "53a66581c2e1",
+          "size": 16644
         },
         {
           "relPath": "examples/example-report.md",

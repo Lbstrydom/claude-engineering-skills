@@ -117,6 +117,34 @@ const ACTIVATION_CAP = 8;        // max collapsible-nav activations per viewport
 const ACTIVATE_MS = 1500;        // settle budget after an activation click
 const ACTIVATION_FAIL_STOP = 3;  // consecutive unactionable triggers → abort the pass (v1.4)
 
+/**
+ * The auth-liveness truth table (v1.5). Pure, so each arm is testable without a
+ * browser. `sentinelUnknown` counts sentinel matches whose perceivability the
+ * predicate could NOT establish (`null`): those never certify `live`, and when
+ * they are all there is, the honest verdict is `unverified` — an unevaluated
+ * predicate reported as `dead` reads as "your token expired".
+ *
+ * @returns {{authLiveness: 'n/a'|'unverified'|'live'|'dead', warning: string|null}}
+ */
+export function decideAuthLiveness({ storageState, authSentinel, sentinelSeen, sentinelError, sentinelUnknown = 0 }) {
+  // No authentication was attempted, so there is nothing to vouch for. A
+  // sentinel may still be declared and even observed — recorded, not asserted.
+  if (!storageState) return { authLiveness: 'n/a', warning: null };
+  if (!authSentinel) return { authLiveness: 'unverified', warning: null };   // nothing to check against
+  if (sentinelError) {
+    // authoring bug — never `dead`
+    return { authLiveness: 'unverified', warning: `authSentinel selector failed to evaluate: ${sentinelError}` };
+  }
+  if (sentinelSeen) return { authLiveness: 'live', warning: null };
+  if (sentinelUnknown > 0) {
+    return {
+      authLiveness: 'unverified',
+      warning: `authSentinel matched ${sentinelUnknown} element(s) whose rendered state the predicate could not establish — liveness unknown, not dead`,
+    };
+  }
+  return { authLiveness: 'dead', warning: null };
+}
+
 export async function runVerify({ url, model, contract, breakpoints = ['mobile', 'desktop'], storageState = null, timeoutMs = 30000, hydrateMs = 6000, activate = true }) {
   const selLayers = selectorLayers(contract);
   const declaredSelectors = selLayers.map((s) => s.selector);
@@ -135,6 +163,7 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
   const authSentinel = contract?.authSentinel ?? null;
   let sentinelSeen = false;
   let sentinelError = null;
+  let sentinelUnknown = 0;     // matches whose perceivability came back null (UNKNOWN)
 
   let chromium;
   try { ({ chromium } = await import('playwright')); }
@@ -262,16 +291,22 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
                 const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
                 const want = norm(expectText);
                 const matches = Array.from(document.querySelectorAll(selector));
+                let unknown = 0;
                 for (const el of matches) {
-                  if (fn(el) !== true) continue;                    // strict: null (unknown) does not qualify
-                  if (!want) return true;
-                  if (norm(el.textContent).includes(want)) return true;
+                  const textOk = !want || norm(el.textContent).includes(want);
+                  const p = fn(el);
+                  // strict: null (unknown) does not qualify — but it is COUNTED,
+                  // so an all-unknown sentinel reads `unverified`, not `dead`.
+                  if (p === null && textOk) { unknown += 1; continue; }
+                  if (p !== true) continue;
+                  if (textOk) return { hit: true, unknown };
                 }
-                return false;
+                return { hit: false, unknown };
               },
               { src: PERCEIVABLE_SOURCE, fnName: PERCEIVABLE_FN_NAME, selector: authSentinel.selector, expectText: authSentinel.expectText || '' },
             );
-            if (hit) sentinelSeen = true;
+            if (hit?.hit) sentinelSeen = true;
+            sentinelUnknown += hit?.unknown || 0;
           } catch (err) {
             // An invalid CSS selector is an AUTHORING bug and must never be
             // reported as `dead` — that would read as "your token expired" and
@@ -355,19 +390,10 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
   // Auth-liveness truth table (v1.5). The `n/a` ⟺ no-storage-state invariant is
   // enforced downstream by composeCaptureVerdict, which THROWS on the impossible
   // pair rather than silently defaulting to `live`.
-  let authLiveness;
-  if (!storageState) {
-    // No authentication was attempted, so there is nothing to vouch for. A
-    // sentinel may still be declared and even observed — recorded, not asserted.
-    authLiveness = 'n/a';
-  } else if (!authSentinel) {
-    authLiveness = 'unverified';        // authed run, nothing to check against
-  } else if (sentinelError) {
-    authLiveness = 'unverified';        // authoring bug — never `dead`
-    stateWarnings.push(`authSentinel selector failed to evaluate: ${sentinelError}`);
-  } else {
-    authLiveness = sentinelSeen ? 'live' : 'dead';
-  }
+  const { authLiveness, warning: livenessWarning } = decideAuthLiveness({
+    storageState, authSentinel, sentinelSeen, sentinelError, sentinelUnknown,
+  });
+  if (livenessWarning) stateWarnings.push(livenessWarning);
 
   return {
     ok: true,
