@@ -9,7 +9,7 @@
  *     [--baseline <module-path>] default: historical-choice baseline
  *     [--since <duration>]       default: 30d (e.g. 7d, 14d, 90d)
  *     [--repo-id <uuid>]         filter by repo UUID (audit_repos.id)
- *     [--repo <uuid>]            alias for --repo-id (NOT a name lookup)
+ *     [--repo <uuid>]            alias for --repo-id (NOT a name lookup; a name is refused)
  *     [--format json|markdown]   default: json
  *
  * CLI output contract (per master plan §6):
@@ -23,7 +23,7 @@
  */
 import '../lib/load-env.mjs';
 import path from 'node:path';
-import { assertKnownFlags, ArgvError } from '../lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, emit, finishAndExit } from '../lib/cli-io.mjs';
 import { pathToFileURL } from 'node:url';
 
 import {
@@ -134,6 +134,24 @@ const VALUED_FLAGS = new Set(['policy', 'baseline', 'since', 'repo', 'repo-id', 
 /** Accepted flags — refused rather than ignored (assertKnownFlags at the entry). */
 const KNOWN_FLAGS = [...VALUED_FLAGS].map((f) => `--${f}`).concat(['--help', '--selfcheck-relocation']);
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A valued flag's value from `args`, in BOTH spellings, last occurrence wins
+ * (cli-io's argOption convention). `assertKnownFlags` accepts `--repo=<id>`, so
+ * a reader matching only the bare token silently dropped that filter.
+ */
+export function replayOption(args, name) {
+  let found = null;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--') break;
+    if (a.startsWith(`--${name}=`)) found = a.slice(name.length + 3);
+    else if (a === `--${name}` && args[i + 1] !== undefined && !args[i + 1].startsWith('--')) found = args[i + 1];
+  }
+  return found;
+}
+
 /** Positionals, skipping each valued flag's value. `--name=value` consumes nothing extra. */
 export function replayPositionals(args) {
   const out = [];
@@ -155,12 +173,11 @@ export async function runReplayCli(args) {
   const positional = replayPositionals(args);
   const decisionType = positional[0];
   if (!decisionType) {
-    process.stderr.write('Usage: replay <decision_type> [--policy <path>] [--baseline <path>] [--since 30d] [--repo <name>] [--format json|markdown]\n');
+    process.stderr.write('Usage: replay <decision_type> [--policy <path>] [--baseline <path>] [--since 30d] [--repo <uuid>] [--format json|markdown]\n');
     return { ok: false, error: 'missing-decision-type' };
   }
 
-  const optIdx = (name) => args.indexOf(`--${name}`);
-  const optVal = (name) => { const i = optIdx(name); return i >= 0 ? args[i + 1] : null; };
+  const optVal = (name) => replayOption(args, name);
 
   const policyPath   = optVal('policy');
   const baselinePath = optVal('baseline');
@@ -170,6 +187,12 @@ export async function runReplayCli(args) {
   // --repo-id was wired — fix the inconsistency at the CLI surface.
   const repoId       = optVal('repo-id') || optVal('repo');
   const format       = optVal('format') || 'json';
+
+  // UUID-only, refused before any read. A NAME here matched no rows and came
+  // back as a `sampleSize: 0` comparison at exit 0 — a false zero.
+  if (repoId && !UUID_RE.test(repoId)) {
+    return { ok: false, error: `invalid-repo-id: --repo/--repo-id takes an audit_repos.id UUID, not a name (got '${repoId}')` };
+  }
 
   const sinceMs = parseDuration(sinceStr, 30 * 24 * 60 * 60 * 1000);
 
@@ -195,10 +218,21 @@ export async function runReplayCli(args) {
     repoId,
   });
 
+  // An empty window is an UNMEASURED replay, not a zero delta: cloud off, an
+  // unknown repo id and a quiet decision type all land here, and a report of
+  // zero deltas would read as "the candidate changes nothing".
+  if (!result.sampleSize) {
+    return {
+      ok: false,
+      error: `empty-window: no learning_decisions for '${decisionType}' in the last ${sinceStr}`
+        + `${repoId ? ` for repo ${repoId}` : ''} — cloud store off, unknown repo id, or none recorded; nothing was measured`,
+    };
+  }
+
   if (format === 'markdown') {
     process.stdout.write(renderMarkdownReport(result) + '\n');
   } else {
-    process.stdout.write(JSON.stringify(result) + '\n');
+    emit(result);
   }
   return result;
 }
@@ -217,5 +251,10 @@ if (isMain) {
     throw err;
   }
   const result = await runReplayCli(process.argv.slice(2));
-  process.exit(result.ok === false ? 1 : 0);
+  // runReplayCli writes stdout only on success (the cross-skill bridge relies
+  // on that and emits the failure itself), so the direct CLI emits the failure
+  // envelope here — through emit(), which owns the ok:false ⇒ exit 1 coupling —
+  // and drains stdout before exiting rather than truncating the report.
+  if (result.ok === false) emit({ ok: false, error: result.error });
+  await finishAndExit(result.ok === false ? 1 : 0);
 }
