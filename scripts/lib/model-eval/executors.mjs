@@ -26,11 +26,11 @@
  * 2. **`usage` is nullable on the `'ok'` branch, not unconditional.** The
  *    adjudicator's `scoreAgainstGroundTruth` (D7a/D7c) DOES bubble up real
  *    per-arm usage. The auditor's mechanism — a spawned child process running
- *    the single-`--candidate` CLI path — does NOT: screen tier never
- *    instruments token usage at all, and promotion tier's `cost.byRow` is an
- *    aggregate across BOTH candidate+baseline generation/judge calls, not
- *    cleanly attributable to "this one arm's usage" without deeper parsing
- *    this cluster's scope does not require. `usage: null` on the auditor
+ *    the single-`--candidate` CLI path — does NOT relay it: the child's
+ *    `--out` carries `cost: {totalUsd, byRow}` (screen tier since
+ *    2026-10-01), but promotion tier's `byRow` spans candidate, baseline AND
+ *    judge calls, so mapping it onto "this one arm's usage" is a parse this
+ *    executor does not yet do. `usage: null` on the auditor
  *    executor's `'ok'` branch means "not tracked by this mechanism today" —
  *    distinct from `{inputTokens:0,…}`, which would be a false zero
  *    (AGENTS.md's "a hardcoded 0 in telemetry reads as a measurement" rule,

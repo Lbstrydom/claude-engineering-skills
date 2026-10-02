@@ -74,6 +74,39 @@ real bug scores 0. The verdict rides on **false-positive rate and cost**; that
 is what actually decided GLM-5.2 vs GPT-5.6. Before believing any low recall,
 read the raw per-case extraction output.
 
+**Where it is (since 2026-10-01):** pass `--out <file>`. Any Tier C run
+(`screen`, or `promotion` that fell to Tier C) writes `perCaseOutputs` there —
+`{candidate: [...]}` for screen, `{candidate, baseline}` for promotion — one
+entry per KD: `kdId`, the extracted `file` + `description`, `expectedFiles`,
+`requiredRetry`, and that call's `usage` (`usageStatus`, tokens, `costUsd`).
+`cost: {totalUsd, byRow}` is priced from those calls; `totalUsd` is `null`, not
+a partial sum, when any call was unpriced or reported no usage. Per-case text
+goes to `--out` only — the store row's `evidence` is unchanged. Before this,
+both were dropped and screen-tier `cost` was always `null`
+(found in experiment 7,
+`docs/research/experiment-7-gpt-sol-auditor-swap.md`, on branch
+`claude/upgrade-gpt-6-1-sol-01bb98` at time of writing). A consequence for
+promotion verdicts: Tier C now hands `verdict.mjs` a real cost delta, so a
+priced Tier C run no longer reads `inconclusive` with *"cost data
+unavailable"* — that reason was false, the cost had simply not been captured.
+Its verdict is still capped (`switch` → `manual_review_required`).
+
+**GPT-vs-GPT promotion always falls to Tier C.** The baseline is arm A's
+sentinel, **`latest-gpt`**, and `resolveEvaluationTier`
+(`route-catalog.mjs`) refuses Tier A/B whenever candidate and baseline share an
+`independenceGroup` — every GPT model does. So a GPT candidate is scored by the
+single-shot Tier C extractor, never the 5-pass generation + blind judge, with
+the ceiling §"Screen-tier oracle matching" describes. And if the candidate
+**is** what `latest-gpt` currently resolves to, the run compares the model with
+itself: check `evidence.candidateRef` vs `evidence.baselineRef` in the output
+before reading any delta as a signal.
+
+**Running from a linked worktree** (`.claude/worktrees/<name>`, a pinned
+fixture) needs no `--repo-roots` for this repo's own KDs since 2026-10-01: a
+root matches a KD's `repo` by its own basename OR its main checkout's
+(`--git-common-dir`). `--repo-roots` is still how you supply *other* repos'
+checkouts.
+
 ### Step 3 — adjudicate in the same sitting
 
 Anything needing a human call gets rendered as a worksheet, never raw JSON:

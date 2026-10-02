@@ -5,7 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-import { stratifiedSelectKDs } from '../scripts/model-eval-auditor.mjs';
+import { stratifiedSelectKDs, _internals as auditorInternals } from '../scripts/model-eval-auditor.mjs';
+import { resolveCandidateRoute } from '../scripts/lib/model-eval/route-catalog.mjs';
+import { isPriced } from '../scripts/lib/model-eval/cost.mjs';
 import { gitFixtureEnv } from './helpers/fixtures.mjs';
 
 const FIXTURE_DEFECTS = [
@@ -134,5 +136,51 @@ describe('model-eval-auditor.mjs — CLI preflight', () => {
       assert.match(stderr, /KD-TEST-EGRESS/);
       assert.doesNotMatch(stderr, /at loadCorpusCase/, 'must not leak a raw stack trace for a classified preflight condition');
     });
+  });
+});
+
+describe('model-eval-auditor.mjs — Tier C keeps per-case outputs and usage (2026-10-01)', () => {
+  // The runbook says to read the raw per-case extraction before believing a
+  // low recall; scoreArmTierC used to drop it, and screen-tier cost was null.
+  const route = resolveCandidateRoute({ role: 'auditor', candidateSpec: { kind: 'sentinel', value: 'latest-gpt' } });
+  const cases = ['KD-1', 'KD-2'].map((kdId) => ({
+    visibleInput: { diff: 'diff --git a/x.mjs b/x.mjs\n', files: ['x.mjs'] },
+    hiddenGroundTruth: { kdId, files: ['x.mjs'], expectedFindingRubric: 'r', defectDesc: 'd', severity: 'HIGH' },
+  }));
+  const fakeExtract = (usage) => async () => ({
+    data: { defectLocation: { file: 'x.mjs', description: 'the defect' } },
+    usage, requiredRetry: false, honoredDials: {},
+  });
+
+  test('perCase carries kdId/file/description and per-call usage; cost is priced from usage', async () => {
+    const out = await auditorInternals.scoreArmTierC({
+      route, cases, runId: 'run-1', armLabel: 'CAND',
+      _extractStructured: fakeExtract({ input_tokens: 1000, output_tokens: 200 }),
+    });
+    assert.deepEqual(out.perCase.map((p) => [p.kdId, p.file, p.description]), [['KD-1', 'x.mjs', 'the defect'], ['KD-2', 'x.mjs', 'the defect']]);
+    assert.equal(out.usageEvents.length, 2);
+    assert.ok(out.perCase.every((p) => p.usage.usageStatus === 'captured' && p.usage.inputTokens === 1000));
+    const cost = auditorInternals.costFromEvents(out.usageEvents);
+    assert.equal(cost.byRow.length, 1);
+    assert.equal(cost.byRow[0].armId, 'CAND');
+    // Precondition, not a branch: an unpriced route would make every
+    // assertion below vacuous.
+    assert.ok(isPriced(route.pricingModel), `precondition: ${route.pricingModel} must be priced`);
+    assert.equal(cost.byRow[0].costStatus, 'available');
+    assert.ok(cost.totalUsd > 0);
+    const perCallSum = out.perCase.reduce((acc, p) => acc + p.usage.costUsd, 0);
+    assert.ok(Math.abs(cost.totalUsd - perCallSum) < 1e-9);
+  });
+
+  test('missing provider usage yields a null total, never a fabricated $0', async () => {
+    const out = await auditorInternals.scoreArmTierC({
+      route, cases, runId: 'run-2', armLabel: 'CAND', _extractStructured: fakeExtract(null),
+    });
+    assert.ok(out.perCase.every((p) => p.usage.usageStatus === 'missing' && p.usage.costUsd === null));
+    assert.equal(auditorInternals.costFromEvents(out.usageEvents).totalUsd, null);
+  });
+
+  test('no usage events → cost null (nothing ran, nothing to price)', () => {
+    assert.equal(auditorInternals.costFromEvents([]), null);
   });
 });
