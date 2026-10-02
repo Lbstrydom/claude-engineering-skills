@@ -866,8 +866,8 @@ worth switching to?" for the **auditor** (currently GPT) or **adjudicator**
 - **Egress-gate prose/diff false positives: fixed 2026-07-12** — historical recall
   is the contract; don't re-add trailing-punctuation stripping (tried, reverted:
   it re-blocked valid entries).
-- **Verdict of record (2026-07-13): GLM-5.2 vs GPT-5.6 → `keep` GPT-5.6** (real
-  Tier A, $1.87; FP-rate drove it, the recall column being untrustworthy above).
+- **Verdicts**: GPT auditor `gpt-6.1-sol` (10-01, cost only,
+  [exp-7](docs/research/experiment-7-gpt-sol-auditor-swap.md)); GLM-5.2 → keep GPT (07-13).
 - **A model swap is SYNCHRONOUS, never a background window**: run it when the model
   ships, adjudicate in the same sitting, verdict → `docs/research/`. Passive
   collection killed arm-eval and produced five false "window met" reads. Only
