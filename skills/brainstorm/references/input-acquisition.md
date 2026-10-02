@@ -8,10 +8,11 @@ summary: Where a skill's arguments come from on any host, and what to do when th
 > [`docs/audit/shared-references/input-acquisition.md`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/docs/audit/shared-references/input-acquisition.md).
 > Regenerate with `node scripts/sync-shared-audit-refs.mjs`; `npm run check`
 > fails on drift. Links above were re-spelled for this location — a target
-> outside `skills/` becomes an absolute upstream URL, because this copy is
-> copied again into `.claude/skills/` and then into consumer repos, where no
-> relative path reaches it. So this file is NOT byte-identical to the
-> canonical by design.
+> outside this skill's own directory becomes an absolute upstream URL,
+> because this copy is copied again into `.claude/skills/`, then into
+> consumer repos, and a packaged skill ships only its own directory — no
+> relative path reaches anything else. So this file is NOT byte-identical
+> to the canonical by design.
 
 `$ARGUMENTS` names *what the user asked this skill to act on*. It is Claude Code
 slash-command idiom, and **no other host substitutes it** — VS Code Copilot

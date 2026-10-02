@@ -33,10 +33,19 @@
  * an author has open. Measured: 47 links, 35 of them emitted by this renderer.
  *
  * So the test is not "is this relative path right where I am writing it" but
- * "does it stay right after another move". Only a target inside `skills/`
- * survives, because `.claude/skills/**` mirrors `skills/**` at the same relative
- * offset; everything else gets an absolute upstream URL. Both branches are
- * asserted below, and the standing gate is `npm run docs:synced-links:gate`.
+ * "does it stay right after another move". `.claude/skills/**` mirrors
+ * `skills/**` at the same relative offset, so a `skills/` target survives that
+ * move — and the 2026-09-04 fix stopped there.
+ *
+ * ## The third hop (2026-10-02)
+ *
+ * A packaged skill ships only its OWN directory. Every non-audit-code copy of
+ * verification-discipline.md linked `../../audit-code/examples/…` — inside
+ * `skills/`, so kept relative, and dead in any install of that skill alone. Only
+ * a target inside the copy's own skill directory survives every move; a sibling
+ * skill's file gets the upstream URL like everything else. All three branches
+ * are asserted below; the standing gates are `npm run docs:synced-links:gate`
+ * (second hop) and tests/skill-md-own-closure.test.mjs (third hop).
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -105,26 +114,40 @@ describe('renderForTarget — the rewrite itself', () => {
     assert.equal(relativeLinks(out).length, 0, 'nothing relative may survive for an out-of-skills target');
   });
 
-  it('a link INTO skills/ stays relative, because .claude/skills mirrors skills', () => {
-    // The one target that survives the SECOND copy: skills:regenerate puts this
-    // file at .claude/skills/audit-code/references/x.md, and `.claude/skills/**`
-    // mirrors `skills/**` at the same relative offset — so the same `../` count
-    // is correct in both. Everything else is why the URL branch exists.
-    const src = 'See [s](../../../skills/ship/examples/e.md).';
+  it("a link into the copy's OWN skill stays relative, because .claude/skills mirrors skills", () => {
+    // The one target that survives every copy: skills:regenerate puts this file
+    // at .claude/skills/audit-code/references/x.md, `.claude/skills/**` mirrors
+    // `skills/**` at the same relative offset, and a packaged audit-code ships
+    // its own examples/ — so the same `../` count is correct everywhere.
+    const src = 'See [s](../../../skills/audit-code/examples/e.md).';
     const out = renderForTarget(src, CANON, TARGET, REPO_ROOT);
     const link = relativeLinks(out)[0];
-    assert.ok(link, 'an intra-skills target must not be URL-ified');
-    assert.equal(
-      path.resolve(path.dirname(TARGET), link),
-      path.join(REPO_ROOT, 'skills', 'ship', 'examples', 'e.md'),
-    );
+    assert.equal(link, '../examples/e.md', 'an own-skill target must not be URL-ified');
     // And the same string, read one level deeper, still lands on the mirror.
     const deeper = path.join(REPO_ROOT, '.claude', 'skills', 'audit-code', 'references', 'x.md');
     assert.equal(
       path.resolve(path.dirname(deeper), link),
-      path.join(REPO_ROOT, '.claude', 'skills', 'ship', 'examples', 'e.md'),
+      path.join(REPO_ROOT, '.claude', 'skills', 'audit-code', 'examples', 'e.md'),
       'the whole point of keeping this one relative: it survives the copy into .claude/skills/',
     );
+  });
+
+  it('a link into a SIBLING skill becomes an absolute upstream URL', () => {
+    // Relative would survive .claude/skills/ but not packaging: ship's package
+    // has no audit-code/ beside it. This is the verification-discipline.md
+    // `../../audit-code/examples/contract-test-scaffold.md` defect.
+    const src = 'See [s](../../../skills/audit-code/examples/e.md).';
+    const shipTarget = path.join(REPO_ROOT, 'skills', 'ship', 'references', 'x.md');
+    const out = renderForTarget(src, CANON, shipTarget, REPO_ROOT);
+    assert.equal(out, `See [s](${upstreamUrlFor('skills/audit-code/examples/e.md')}).`);
+    assert.equal(relativeLinks(out).length, 0, 'nothing relative may cross a skill boundary');
+  });
+
+  it('a skill whose name PREFIXES another is still a sibling, not its own skill', () => {
+    // `skills/audit-code` must not claim `skills/audit-code-extra/…` by string prefix.
+    const src = 'See [s](../../../skills/audit-code-extra/examples/e.md).';
+    const out = renderForTarget(src, CANON, TARGET, REPO_ROOT);
+    assert.equal(out, `See [s](${upstreamUrlFor('skills/audit-code-extra/examples/e.md')}).`);
   });
 
   it('leaves URLs, absolute paths and anchors alone', () => {
@@ -168,7 +191,7 @@ describe('renderForTarget — the rewrite itself', () => {
       'a re-render from the target location must be stable, or repeated syncs would walk the link',
     );
     // The relative branch has to be idempotent too — it is the one that can walk.
-    const relOnce = renderForTarget('See [s](../../../skills/ship/examples/e.md).', CANON, TARGET, REPO_ROOT);
+    const relOnce = renderForTarget('See [s](../../../skills/audit-code/examples/e.md).', CANON, TARGET, REPO_ROOT);
     const relTwice = renderForTarget(relOnce, TARGET, TARGET, REPO_ROOT);
     assert.equal(relTwice, relOnce);
   });

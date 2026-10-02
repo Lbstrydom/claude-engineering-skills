@@ -72,9 +72,10 @@ export const EXPECTED_CONSUMERS = Object.freeze({
     'persona-test', 'ship', 'click-test', 'ux-lock', 'audit-code', 'audit-plan',
     'brainstorm', 'ai-context-management', 'cycle',
   ],
+  // cycle's own prerequisite-ladder.md copy cites references/verification-discipline.md §7.
   'verification-discipline.md': [
     'investigate', 'audit-code', 'ux-lock', 'ship', 'explain', 'plan', 'audit-plan',
-    'nav-audit', 'persona-test',
+    'nav-audit', 'persona-test', 'cycle',
   ],
 });
 
@@ -229,10 +230,15 @@ const KNOWN_FLAGS = ['--check', '--dry-run', '--selfcheck-relocation'];
  * perfectly from the `skills/` file an author reads.
  *
  * So the test is not "is this relative path right where I am writing it" but
- * "does it stay right after another move". Only a target inside `skills/`
- * survives, because `.claude/skills/**` mirrors `skills/**` at the same relative
- * offset. Everything else gets the absolute upstream URL — the one spelling
- * correct in this repo and in a consumer at once.
+ * "does it stay right after another move". `.claude/skills/**` mirrors
+ * `skills/**` at the same relative offset, so a target inside `skills/` survives
+ * THAT move — but not the next one: a packaged skill ships only its OWN
+ * directory, so `../../audit-code/examples/x.md` written into ship's copy is
+ * dead the moment ship is installed or loaded without audit-code (found
+ * 2026-10-02 in all eight non-audit-code copies of verification-discipline.md).
+ * Only a target inside the copy's own skill directory survives every move.
+ * Everything else gets the absolute upstream URL — the one spelling correct in
+ * this repo and in a consumer at once.
  *
  * @param {string} abs absolute path the link resolves to
  * @param {string} toDir absolute directory the copy is written to
@@ -241,7 +247,8 @@ const KNOWN_FLAGS = ['--check', '--dry-run', '--selfcheck-relocation'];
  */
 function linkForTarget(abs, toDir, repoRoot) {
   const repoRel = path.relative(repoRoot, abs).replaceAll('\\', '/');
-  if (!repoRel.startsWith('skills/')) return upstreamUrlFor(repoRel);
+  const ownSkill = /^skills\/[^/]+\//.exec(`${path.relative(repoRoot, toDir).replaceAll('\\', '/')}/`)?.[0];
+  if (!ownSkill || !repoRel.startsWith(ownSkill)) return upstreamUrlFor(repoRel);
   const rel = path.relative(toDir, abs).replaceAll('\\', '/');
   // path.relative drops the leading `./` for a sibling; markdown is happier
   // with it present and it keeps the link visibly relative.
@@ -271,10 +278,11 @@ export function renderForTarget(srcText, canonicalPath, targetPath, repoRoot) {
     + `> [\`${canonRel}\`](${linkForTarget(canonicalPath, toDir, repoRoot)}).\n`
     + `> Regenerate with \`node scripts/sync-shared-audit-refs.mjs\`; \`npm run check\`\n`
     + `> fails on drift. Links above were re-spelled for this location — a target\n`
-    + `> outside \`skills/\` becomes an absolute upstream URL, because this copy is\n`
-    + `> copied again into \`.claude/skills/\` and then into consumer repos, where no\n`
-    + `> relative path reaches it. So this file is NOT byte-identical to the\n`
-    + `> canonical by design.`;
+    + `> outside this skill's own directory becomes an absolute upstream URL,\n`
+    + `> because this copy is copied again into \`.claude/skills/\`, then into\n`
+    + `> consumer repos, and a packaged skill ships only its own directory — no\n`
+    + `> relative path reaches anything else. So this file is NOT byte-identical\n`
+    + `> to the canonical by design.`;
 
   // Pure transform: substitute when the sentence is there, otherwise leave the
   // text alone. It deliberately does NOT refuse a canonical that lacks the

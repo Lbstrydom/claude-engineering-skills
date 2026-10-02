@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "540d80d53a256a3b",
+  "bundleVersion": "1a568a43c9b625c3",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -42,8 +42,8 @@
         },
         {
           "relPath": "references/input-acquisition.md",
-          "sha": "f06498645f4c",
-          "size": 4436
+          "sha": "e1c5ebe67558",
+          "size": 4511
         },
         {
           "relPath": "references/reconcile-playbook.md",
@@ -75,33 +75,33 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "9dc1ae3e911f",
-          "size": 18741
+          "sha": "8a441bbce10d",
+          "size": 18816
         },
         {
           "relPath": "references/input-acquisition.md",
-          "sha": "f06498645f4c",
-          "size": 4436
+          "sha": "e1c5ebe67558",
+          "size": 4511
         },
         {
           "relPath": "references/ledger-format.md",
-          "sha": "295adf92ed5a",
-          "size": 9327
+          "sha": "c8dd2fcc8918",
+          "size": 9402
         },
         {
           "relPath": "references/prerequisite-ladder.md",
-          "sha": "cf253db9f6fa",
-          "size": 6202
+          "sha": "37216f3ba44b",
+          "size": 6277
         },
         {
           "relPath": "references/r2-plus-mode.md",
-          "sha": "c741c0a1ff53",
-          "size": 5726
+          "sha": "ad8c74a67075",
+          "size": 5793
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "ff747bb792b3",
-          "size": 28185
+          "sha": "338a4eb40b02",
+          "size": 28260
         }
       ]
     },
@@ -118,28 +118,28 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "9dc1ae3e911f",
-          "size": 18741
+          "sha": "8a441bbce10d",
+          "size": 18816
         },
         {
           "relPath": "references/input-acquisition.md",
-          "sha": "f06498645f4c",
-          "size": 4436
+          "sha": "e1c5ebe67558",
+          "size": 4511
         },
         {
           "relPath": "references/ledger-format.md",
-          "sha": "295adf92ed5a",
-          "size": 9327
+          "sha": "c8dd2fcc8918",
+          "size": 9402
         },
         {
           "relPath": "references/prerequisite-ladder.md",
-          "sha": "cf253db9f6fa",
-          "size": 6202
+          "sha": "37216f3ba44b",
+          "size": 6277
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "315040cd5903",
-          "size": 28199
+          "sha": "e703fcd49347",
+          "size": 28340
         }
       ]
     },
@@ -156,8 +156,8 @@
         },
         {
           "relPath": "references/input-acquisition.md",
-          "sha": "f06498645f4c",
-          "size": 4436
+          "sha": "e1c5ebe67558",
+          "size": 4511
         }
       ]
     },
@@ -174,13 +174,13 @@
         },
         {
           "relPath": "references/auth-bootstrap.md",
-          "sha": "d81d101bc808",
-          "size": 8856
+          "sha": "f351400d66af",
+          "size": 8931
         },
         {
           "relPath": "references/browser-tool-detection.md",
-          "sha": "a960ce776666",
-          "size": 20635
+          "sha": "1dd46e022591",
+          "size": 20710
         },
         {
           "relPath": "references/dom-scanner.md",
@@ -189,41 +189,46 @@
         },
         {
           "relPath": "references/input-acquisition.md",
-          "sha": "f06498645f4c",
-          "size": 4436
+          "sha": "e1c5ebe67558",
+          "size": 4511
         }
       ]
     },
     "cycle": {
       "path": "skills/cycle/SKILL.md",
-      "sha": "f5c9bb6302a5",
-      "size": 47448,
+      "sha": "c993a366b507",
+      "size": 47732,
       "summary": "End-to-end feature cycle orchestrator. Runs the full skill chain in",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "f5c9bb6302a5",
-          "size": 47448
+          "sha": "c993a366b507",
+          "size": 47732
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "9dc1ae3e911f",
-          "size": 18741
+          "sha": "8a441bbce10d",
+          "size": 18816
         },
         {
           "relPath": "references/input-acquisition.md",
-          "sha": "f06498645f4c",
-          "size": 4436
+          "sha": "e1c5ebe67558",
+          "size": 4511
         },
         {
           "relPath": "references/prerequisite-ladder.md",
-          "sha": "cf253db9f6fa",
-          "size": 6202
+          "sha": "37216f3ba44b",
+          "size": 6277
         },
         {
           "relPath": "references/remediate-mode.md",
           "sha": "070933e7d722",
           "size": 10782
+        },
+        {
+          "relPath": "references/verification-discipline.md",
+          "sha": "e703fcd49347",
+          "size": 28340
         }
       ]
     },
@@ -240,8 +245,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "315040cd5903",
-          "size": 28199
+          "sha": "e703fcd49347",
+          "size": 28340
         }
       ]
     },
@@ -263,8 +268,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "315040cd5903",
-          "size": 28199
+          "sha": "e703fcd49347",
+          "size": 28340
         }
       ]
     },
@@ -306,8 +311,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "315040cd5903",
-          "size": 28199
+          "sha": "e703fcd49347",
+          "size": 28340
         }
       ]
     },
@@ -334,13 +339,13 @@
         },
         {
           "relPath": "references/auth-bootstrap.md",
-          "sha": "d81d101bc808",
-          "size": 8856
+          "sha": "f351400d66af",
+          "size": 8931
         },
         {
           "relPath": "references/browser-tool-detection.md",
-          "sha": "a960ce776666",
-          "size": 20635
+          "sha": "1dd46e022591",
+          "size": 20710
         },
         {
           "relPath": "references/consistency-mode.md",
@@ -349,8 +354,8 @@
         },
         {
           "relPath": "references/input-acquisition.md",
-          "sha": "f06498645f4c",
-          "size": 4436
+          "sha": "e1c5ebe67558",
+          "size": 4511
         },
         {
           "relPath": "references/interop.md",
@@ -369,8 +374,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "315040cd5903",
-          "size": 28199
+          "sha": "e703fcd49347",
+          "size": 28340
         }
       ]
     },
@@ -417,8 +422,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "315040cd5903",
-          "size": 28199
+          "sha": "e703fcd49347",
+          "size": 28340
         }
       ]
     },
@@ -458,8 +463,8 @@
         },
         {
           "relPath": "references/input-acquisition.md",
-          "sha": "f06498645f4c",
-          "size": 4436
+          "sha": "e1c5ebe67558",
+          "size": 4511
         },
         {
           "relPath": "references/migration-credentials.md",
@@ -488,8 +493,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "315040cd5903",
-          "size": 28199
+          "sha": "e703fcd49347",
+          "size": 28340
         }
       ]
     },
@@ -519,8 +524,8 @@
         },
         {
           "relPath": "references/input-acquisition.md",
-          "sha": "f06498645f4c",
-          "size": 4436
+          "sha": "e1c5ebe67558",
+          "size": 4511
         },
         {
           "relPath": "references/lock-mode-spec-generation.md",
@@ -534,8 +539,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "315040cd5903",
-          "size": 28199
+          "sha": "e703fcd49347",
+          "size": 28340
         },
         {
           "relPath": "references/verify-mode-generation.md",

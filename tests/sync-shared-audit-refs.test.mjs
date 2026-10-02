@@ -151,6 +151,7 @@ describe('sync-shared-audit-refs', () => {
         ['auth-bootstrap.md', 'click-test'], ['auth-bootstrap.md', 'persona-test'],
         ['input-acquisition.md', 'cycle'], ['prerequisite-ladder.md', 'cycle'],
         ['gemini-gate.md', 'cycle'], ['verification-discipline.md', 'persona-test'],
+        ['verification-discipline.md', 'cycle'],
       ];
       for (const [basename, skill] of pins) {
         assert.ok(EXPECTED_CONSUMERS[basename]?.includes(skill), `${skill} must be registered for ${basename}`);
