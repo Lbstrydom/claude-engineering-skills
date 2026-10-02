@@ -99,6 +99,45 @@ test('safeReadFile fail-closed: rejects a symlink whose realpath escapes the bou
   assert.equal(result, null, 'a symlink resolving outside the boundary must be rejected (null)');
 });
 
+// The size/type check and the read must be about the SAME file. `statSync(path)`
+// followed by `readFileSync(path)` re-resolved the path for each call, so a file
+// swapped in between was read without ever being checked (audit finding
+// 8a383246). Holding one descriptor binds them: the check is `fstat` of that
+// descriptor and the read is from it. The swap is injected exactly between the
+// two, at whichever stat call the implementation makes.
+test('safeReadFile reads the file it checked: a swap after the stat is never read', (t) => {
+  const dir = mkdtemp('audit-scope-toctou-');
+  const prevCwd = process.cwd();
+  t.after(() => {
+    t.mock.restoreAll();
+    process.chdir(prevCwd);
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+  fs.writeFileSync(path.join(dir, 'notes.txt'), BENIGN_MARKER);
+  fs.writeFileSync(path.join(dir, 'swap.txt'), SECRET_MARKER);
+  process.chdir(dir);
+  const target = fs.realpathSync(path.join(dir, 'notes.txt'));
+
+  let swapped = 0;
+  const swapAfter = (orig) => (...a) => {
+    const result = orig(...a);
+    if (swapped === 0) {
+      swapped = 1;
+      // POSIX: replaces the name while an open descriptor keeps the original.
+      // Windows: refuses (EPERM) while the file is held open — equally safe.
+      try { fs.renameSync(path.join(dir, 'swap.txt'), target); swapped = 2; } catch { /* refused */ }
+    }
+    return result;
+  };
+  t.mock.method(fs, 'statSync', swapAfter(fs.statSync.bind(fs)));
+  t.mock.method(fs, 'fstatSync', swapAfter(fs.fstatSync.bind(fs)));
+
+  const result = safeReadFile('notes.txt', dir);
+  assert.equal(swapped > 0, true, 'the swap hook must have fired (vacuous-pass guard)');
+  assert.ok(result, 'the checked file is still read');
+  assert.equal(result.content, BENIGN_MARKER, 'content must come from the file that was checked, not the swapped-in one');
+});
+
 test('readFilesAsContext (end-to-end chain) excludes a symlink escaping cwd', (t) => {
   // Covers the full assembly chain — readFilesAsContext → safeReadFile →
   // realpath containment — not just safeReadFile in isolation. A regression
