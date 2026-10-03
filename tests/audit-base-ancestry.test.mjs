@@ -24,12 +24,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { initTempRepo, cleanupTempRepo } from './helpers/worktree-guard-args.mjs';
-import { git as sharedGit } from './helpers/git.mjs';
+import { git } from './helpers/git.mjs';
 
 import { resolveRangeSnapshot, makeGitRunner } from '../scripts/lib/worktree-identity.mjs';
 
 let repo;
-const git = (args, cwd = repo) => sharedGit(args, cwd);
 
 before(() => {
   repo = initTempRepo('wt-ancestry-');
@@ -41,10 +40,10 @@ const write = (rel, body) => fs.writeFileSync(path.join(repo, rel), body);
 
 describe('resolveRangeSnapshot against a real repository', () => {
   test('an explicit ancestor base resolves both ends to OIDs', () => {
-    write('a.txt', 'a1\n'); git(['add', '.']); git(['commit', '-qm', 'c1']);
-    const base = git(['rev-parse', 'HEAD']);
-    write('b.txt', 'b1\n'); git(['add', '.']); git(['commit', '-qm', 'c2']);
-    const head = git(['rev-parse', 'HEAD']);
+    write('a.txt', 'a1\n'); git(['add', '.'], repo); git(['commit', '-qm', 'c1'], repo);
+    const base = git(['rev-parse', 'HEAD'], repo);
+    write('b.txt', 'b1\n'); git(['add', '.'], repo); git(['commit', '-qm', 'c2'], repo);
+    const head = git(['rev-parse', 'HEAD'], repo);
 
     const r = resolveRangeSnapshot({ explicitBase: base, workingTreeDirty: false, run: makeGitRunner(repo) });
     assert.equal(r.ok, true);
@@ -54,12 +53,12 @@ describe('resolveRangeSnapshot against a real repository', () => {
   });
 
   test('a base on a DIVERGED ref is refused — incident 3\'s shape', () => {
-    const mainHead = git(['rev-parse', 'HEAD']);
-    git(['checkout', '-q', '-b', 'sidebranch', 'HEAD~1']);
-    write('side.txt', 's\n'); git(['add', '.']); git(['commit', '-qm', 'side']);
-    const sideHead = git(['rev-parse', 'HEAD']);
-    git(['checkout', '-q', '-']);              // back to the original ref
-    assert.equal(git(['rev-parse', 'HEAD']), mainHead, 'precondition: we are back on the first line of history');
+    const mainHead = git(['rev-parse', 'HEAD'], repo);
+    git(['checkout', '-q', '-b', 'sidebranch', 'HEAD~1'], repo);
+    write('side.txt', 's\n'); git(['add', '.'], repo); git(['commit', '-qm', 'side'], repo);
+    const sideHead = git(['rev-parse', 'HEAD'], repo);
+    git(['checkout', '-q', '-'], repo);              // back to the original ref
+    assert.equal(git(['rev-parse', 'HEAD'], repo), mainHead, 'precondition: we are back on the first line of history');
 
     const r = resolveRangeSnapshot({ explicitBase: sideHead, workingTreeDirty: false, run: makeGitRunner(repo) });
     assert.equal(r.ok, false);
@@ -81,20 +80,20 @@ describe('resolveRangeSnapshot against a real repository', () => {
     assert.equal(r.ok, true);
     assert.equal(r.baseSha, r.headSha);
     assert.equal(r.relation, 'identical');
-    git(['checkout', '--', 'a.txt']);
+    git(['checkout', '--', 'a.txt'], repo);
   });
 });
 
 // ── The two measurements the design rests on ────────────────────────────────
 describe('git diff semantics — why the `..` form was removed', () => {
   test('`<base>..<head>` DROPS uncommitted work; `<base>` alone does not', () => {
-    const base = git(['rev-parse', 'HEAD~1']);
-    const head = git(['rev-parse', 'HEAD']);
+    const base = git(['rev-parse', 'HEAD~1'], repo);
+    const head = git(['rev-parse', 'HEAD'], repo);
     write('a.txt', 'unstaged-edit\n');           // unstaged
-    write('staged.txt', 'new\n'); git(['add', 'staged.txt']);  // STAGED, uncommitted
+    write('staged.txt', 'new\n'); git(['add', 'staged.txt'], repo);  // STAGED, uncommitted
 
-    const twoDot = git(['diff', '--name-only', `${base}..${head}`]).split('\n').filter(Boolean);
-    const noDot = git(['diff', '--name-only', base]).split('\n').filter(Boolean);
+    const twoDot = git(['diff', '--name-only', `${base}..${head}`], repo).split('\n').filter(Boolean);
+    const noDot = git(['diff', '--name-only', base], repo).split('\n').filter(Boolean);
 
     assert.equal(twoDot.includes('staged.txt'), false, 'the `..` form cannot see staged work');
     assert.equal(twoDot.includes('a.txt'), false, 'nor unstaged work');
@@ -103,20 +102,20 @@ describe('git diff semantics — why the `..` form was removed', () => {
   });
 
   test('the OLD three-call union missed a staged-but-uncommitted file (the live bug)', () => {
-    const head = git(['rev-parse', 'HEAD']);
+    const head = git(['rev-parse', 'HEAD'], repo);
     // Reproduce the shipped pre-fix computation exactly.
-    const oldRange = git(['diff', '--name-only', `${head}..${head}`]).split('\n').filter(Boolean);
-    const oldBare = git(['diff', '--name-only']).split('\n').filter(Boolean);
-    const oldUntracked = git(['ls-files', '--others', '--exclude-standard']).split('\n').filter(Boolean);
+    const oldRange = git(['diff', '--name-only', `${head}..${head}`], repo).split('\n').filter(Boolean);
+    const oldBare = git(['diff', '--name-only'], repo).split('\n').filter(Boolean);
+    const oldUntracked = git(['ls-files', '--others', '--exclude-standard'], repo).split('\n').filter(Boolean);
     const oldUnion = new Set([...oldRange, ...oldBare, ...oldUntracked]);
 
     assert.equal(oldUnion.has('staged.txt'), false,
       'pins the defect: staged.txt is in the index, so it is not "other", not in HEAD..HEAD, and not in the bare worktree-vs-index diff');
 
-    const fixed = new Set(git(['diff', '--name-only', head]).split('\n').filter(Boolean));
+    const fixed = new Set(git(['diff', '--name-only', head], repo).split('\n').filter(Boolean));
     assert.ok(fixed.has('staged.txt'), 'the single-call form is what closes it');
 
-    git(['reset', '-q']); git(['checkout', '--', '.']);
+    git(['reset', '-q'], repo); git(['checkout', '--', '.'], repo);
     try { fs.rmSync(path.join(repo, 'staged.txt'), { recursive: true, maxRetries: 3, retryDelay: 50 }); } catch { /* already gone */ }
   });
 });

@@ -32,7 +32,7 @@ import path from 'node:path';
 import os from 'node:os';
 
 import { PersistedDebtEntrySchema } from '../scripts/lib/schemas.mjs';
-import { writeRoundLedger as writeRoundLedgerAt } from './helpers/fixtures.mjs';
+import { writeRoundLedger } from './helpers/fixtures.mjs';
 import { makeRunCli } from './helpers/run-cli.mjs';
 
 let tmpDir;
@@ -52,10 +52,6 @@ function realisticRationale(len) {
     + 'Independence: the code shipped here never calls the resolver on that path; it '
     + 'fails identically with or without this change. ';
   return head.repeat(Math.ceil(len / head.length)).slice(0, len);
-}
-
-function writeRoundLedger(name, entries) {
-  return writeRoundLedgerAt(auditDir, name, entries);
 }
 
 function makeDeferEntry(topicId, rulingRationale, extra = {}) {
@@ -138,7 +134,7 @@ describe('PersistedDebtEntrySchema.deferredRationale — cap accommodates its pr
 describe('debt-auto-capture.mjs — a partial capture must not read as a complete one', () => {
   test('captures a HIGH defer whose rationale states all four Step 3 components', () => {
     // Pre-fix: rejected with Zod `too_big`, absent from the ledger, exit 0.
-    const ledger = writeRoundLedger('sid1-ledger.json', [
+    const ledger = writeRoundLedger(auditDir, 'sid1-ledger.json', [
       makeDeferEntry('well-reasoned-high', realisticRationale(900)),
     ]);
     const r = runCli(['--ledger', ledger, '--run', 'sid1']);
@@ -148,7 +144,7 @@ describe('debt-auto-capture.mjs — a partial capture must not read as a complet
 
   test('exits non-zero and says PARTIAL CAPTURE when only some entries land', () => {
     // Pre-fix: exit 0, because not ALL entries were rejected.
-    const ledger = writeRoundLedger('sid2-ledger.json', [
+    const ledger = writeRoundLedger(auditDir, 'sid2-ledger.json', [
       makeDeferEntry('lands', realisticRationale(500)),
       makeDeferEntry('rejected-too-long', realisticRationale(4500)),
     ]);
@@ -165,7 +161,7 @@ describe('debt-auto-capture.mjs — a partial capture must not read as a complet
 
   test('negative control — a fully clean multi-entry capture still exits 0', () => {
     // The direction the new non-zero exit must NOT fire.
-    const ledger = writeRoundLedger('sid3-ledger.json', [
+    const ledger = writeRoundLedger(auditDir, 'sid3-ledger.json', [
       makeDeferEntry('a', realisticRationale(120)),
       makeDeferEntry('b', realisticRationale(1400)),
       makeDeferEntry('c', realisticRationale(60)),
@@ -177,7 +173,7 @@ describe('debt-auto-capture.mjs — a partial capture must not read as a complet
   });
 
   test('re-running after fixing the cause is idempotent and then exits 0', () => {
-    const bad = writeRoundLedger('sid4-ledger.json', [
+    const bad = writeRoundLedger(auditDir, 'sid4-ledger.json', [
       makeDeferEntry('lands', realisticRationale(500)),
       makeDeferEntry('over-cap', realisticRationale(4500)),
     ]);
@@ -185,7 +181,7 @@ describe('debt-auto-capture.mjs — a partial capture must not read as a complet
 
     // Operator shortens the offending rationale (still well over the 400 the
     // old cap allowed) and re-runs the same command.
-    writeRoundLedger('sid4-ledger.json', [
+    writeRoundLedger(auditDir, 'sid4-ledger.json', [
       makeDeferEntry('lands', realisticRationale(500)),
       makeDeferEntry('over-cap', realisticRationale(1500)),
     ]);

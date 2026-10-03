@@ -29,7 +29,6 @@ const { gate2B, gate2C } = _internals;
 const TOOL_DIR = LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR;
 
 let root;
-const write = (rel, body) => writeFile(root, rel, body);
 
 beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'iso-orphan-')); });
 afterEach(() => { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
@@ -43,9 +42,9 @@ function manifestFor(rels) {
 
 describe('gate 2C — disk → manifest orphan detection', () => {
   it('FINDS a file the manifest does not claim', () => {
-    write(`${TOOL_DIR}/claimed.mjs`, 'export const a = 1;\n');
+    writeFile(root, `${TOOL_DIR}/claimed.mjs`, 'export const a = 1;\n');
     const manifest = manifestFor([`${TOOL_DIR}/claimed.mjs`]);
-    write(`${TOOL_DIR}/orphan.mjs`, 'export const b = 2;\n');
+    writeFile(root, `${TOOL_DIR}/orphan.mjs`, 'export const b = 2;\n');
 
     const res = gate2C(root, manifest);
     assert.equal(res.pass, false);
@@ -55,18 +54,18 @@ describe('gate 2C — disk → manifest orphan detection', () => {
 
   it('gate 2B is BLIND to that same orphan (the two directions differ)', () => {
     // Without this, 2C could be redundant and nobody would know.
-    write(`${TOOL_DIR}/claimed.mjs`, 'export const a = 1;\n');
+    writeFile(root, `${TOOL_DIR}/claimed.mjs`, 'export const a = 1;\n');
     const manifest = manifestFor([`${TOOL_DIR}/claimed.mjs`]);
-    write(`${TOOL_DIR}/orphan.mjs`, 'export const b = 2;\n');
+    writeFile(root, `${TOOL_DIR}/orphan.mjs`, 'export const b = 2;\n');
 
     assert.equal(gate2B(root, manifest).pass, true,
       'gate 2B must still pass — it iterates the manifest, so it cannot see an unclaimed file');
   });
 
   it('finds orphans nested at depth', () => {
-    write(`${TOOL_DIR}/claimed.mjs`, 'x\n');
+    writeFile(root, `${TOOL_DIR}/claimed.mjs`, 'x\n');
     const manifest = manifestFor([`${TOOL_DIR}/claimed.mjs`]);
-    write(`${TOOL_DIR}/lib/deep/stale.mjs`, 'y\n');
+    writeFile(root, `${TOOL_DIR}/lib/deep/stale.mjs`, 'y\n');
 
     const res = gate2C(root, manifest);
     assert.equal(res.pass, false);
@@ -74,8 +73,8 @@ describe('gate 2C — disk → manifest orphan detection', () => {
   });
 
   it('PASSES when every file on disk is claimed (no false positive)', () => {
-    write(`${TOOL_DIR}/a.mjs`, '1\n');
-    write(`${TOOL_DIR}/lib/b.mjs`, '2\n');
+    writeFile(root, `${TOOL_DIR}/a.mjs`, '1\n');
+    writeFile(root, `${TOOL_DIR}/lib/b.mjs`, '2\n');
     const manifest = manifestFor([`${TOOL_DIR}/a.mjs`, `${TOOL_DIR}/lib/b.mjs`]);
 
     assert.equal(gate2C(root, manifest).pass, true);
@@ -85,18 +84,18 @@ describe('gate 2C — disk → manifest orphan detection', () => {
     // The manifest also governs .claude/skills/ etc., but those hold
     // consumer-owned files too — reverse-walking them would report the
     // consumer's own work as orphaned and earn the gate a bypass.
-    write(`${TOOL_DIR}/a.mjs`, '1\n');
+    writeFile(root, `${TOOL_DIR}/a.mjs`, '1\n');
     const manifest = manifestFor([`${TOOL_DIR}/a.mjs`]);
-    write('.claude/skills/my-own-skill/SKILL.md', '# mine\n');
+    writeFile(root, '.claude/skills/my-own-skill/SKILL.md', '# mine\n');
 
     assert.equal(gate2C(root, manifest).pass, true);
   });
 
   it('does not report the manifest itself as an orphan', () => {
     // It cannot record its own hash, so 2B carves it out; 2C must match.
-    write(`${TOOL_DIR}/a.mjs`, '1\n');
+    writeFile(root, `${TOOL_DIR}/a.mjs`, '1\n');
     const manifest = manifestFor([`${TOOL_DIR}/a.mjs`]);
-    write(LAYOUT_CONSTANTS.MANIFEST_PATH, '{}\n');
+    writeFile(root, LAYOUT_CONSTANTS.MANIFEST_PATH, '{}\n');
 
     assert.equal(gate2C(root, manifest).pass, true);
   });

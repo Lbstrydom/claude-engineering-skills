@@ -11,30 +11,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { writeRoundLedger as writeRoundLedgerAt } from './helpers/fixtures.mjs';
+import { makeDeferEntry, writeRoundLedger } from './helpers/fixtures.mjs';
 import { makeRunCli } from './helpers/run-cli.mjs';
 
 let tmpDir;
 let auditDir;
 const scriptPath = path.resolve('scripts/debt-auto-capture.mjs');
-
-function writeRoundLedger(name, entries) {
-  return writeRoundLedgerAt(auditDir, name, entries);
-}
-
-function makeDeferEntry(topicId, extra = {}) {
-  return {
-    topicId,
-    ruling: 'defer',
-    severity: 'MEDIUM',
-    category: 'god-module',
-    section: 'src/x.js:1',
-    detailSnapshot: 'a sufficiently descriptive detail snapshot',
-    rulingRationale: 'independent of this change — out of scope for the current fix',
-    affectedFiles: ['src/x.js'],
-    ...extra,
-  };
-}
 
 // Cloud disabled deliberately (no AUDIT_DB_URL) — syncToCloud() is
 // non-blocking on failure, matching the CLI's own graceful-degradation
@@ -52,7 +34,7 @@ afterEach(() => {
 
 describe('debt-auto-capture.mjs — capture-trail WARN', () => {
   test('no WARN when this is the only round ledger and it captures cleanly', () => {
-    const ledgerPath = writeRoundLedger('sid1-ledger.json', [makeDeferEntry('a')]);
+    const ledgerPath = writeRoundLedger(auditDir, 'sid1-ledger.json', [makeDeferEntry('a')]);
     const r = runCli(['--ledger', ledgerPath, '--run', 'sid1']);
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /WARN:/);
@@ -62,8 +44,8 @@ describe('debt-auto-capture.mjs — capture-trail WARN', () => {
     // Simulates the reported failure mode: an EARLIER round's debt-auto-capture
     // invocation never ran, so 'earlier-topic' was never written to
     // tech-debt.json. THIS run only processes sid2's ledger.
-    writeRoundLedger('sid1-ledger.json', [makeDeferEntry('earlier-topic')]);
-    const sid2Ledger = writeRoundLedger('sid2-ledger.json', [makeDeferEntry('this-run-topic')]);
+    writeRoundLedger(auditDir, 'sid1-ledger.json', [makeDeferEntry('earlier-topic')]);
+    const sid2Ledger = writeRoundLedger(auditDir, 'sid2-ledger.json', [makeDeferEntry('this-run-topic')]);
 
     const r = runCli(['--ledger', sid2Ledger, '--run', 'sid2']);
     assert.equal(r.status, 0, r.stderr); // this run's own capture succeeded — must not fail on the OTHER gap
@@ -77,7 +59,7 @@ describe('debt-auto-capture.mjs — capture-trail WARN', () => {
 
   test('WARNs about a round ledger that failed to parse', () => {
     fs.writeFileSync(path.join(auditDir, 'sid-bad-ledger.json'), '{not json');
-    const sidLedger = writeRoundLedger('sid-good-ledger.json', [makeDeferEntry('a')]);
+    const sidLedger = writeRoundLedger(auditDir, 'sid-good-ledger.json', [makeDeferEntry('a')]);
     const r = runCli(['--ledger', sidLedger, '--run', 'sid-good']);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /WARN:.*could not be parsed/i);

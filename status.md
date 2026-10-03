@@ -1,6 +1,11 @@
 # Project Status Log
 
 ### Consumer Verification (previous ship)
+- **Commit**: f26da22b8ae32de3a071bfeeeb7e9631eced45e4 on `main` (PR #145, squash-merged; branch `claude/clever-kilby-250c6f`, deleted). Merge tree 21473ffe == pushed branch tip 56c8228e's tree — the pre-push clean-checkout `check` ran on exactly this tree.
+- **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green. `scripts/lib/model-eval/**` is source-only, so the consumer-visible surface was `lib/pinned-worktree/paths.mjs`'s optional `env` on `resolveMainRoot`. The branch push's sync reached 3/3 targets (9 files updated, 1 error: ai-organiser's `.audit-loop/expected-schema.json` refused as diverged because that checkout predates its own open sync PR `chore/sync-e73a40ee`).
+- **Result**: verified for wine-cellar-app; ai-organiser unverified — blocked on its unmerged sync PR `chore/sync-e73a40ee` (merge it, `git pull --ff-only`, re-sync).
+
+### Consumer Verification (previous ship)
 - **Commit**: 9892fc795218f54ecbbcd521b84c7f42a3aa059f on `main` (PR #143, squash-merged; branch `claude/azure-claude-thinking-config-c27d33`, deleted; branch commit 1f7e949d synced)
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in storyline's MAIN checkout (C:\GIT\storyline) — exit 0, gates 1..9 green. Subject check in storyline's synced `scripts/.claude-skills/lib/brainstorm/`: `CLAUDE_DEPTH_EFFORT` in depth-config.mjs (x2), `output_config` in azure-claude-adapter.mjs (x5), `thinkingTokens` in schemas.mjs (x2). The push's sync reported 3/3 targets reached, 36 updated, 1 error: ai-organiser REFUSED `.audit-loop/expected-schema.json` (pre-existing — its sync PR `chore/sync-e73a40ee` is unmerged; same block as the 2026-09-30 note).
 - **Result**: verified for storyline (the reporting consumer) — the explicit-effort / per-provider-ceiling / thinking-token fix reached its bundle intact. Not yet confirmed on a real Foundry deployment: the next deep `/brainstorm` round in storyline should show `thinkingTokens` in the ledger and finish below the 6,000 ceiling.
@@ -81,6 +86,28 @@
 - **Commit**: 7de59ecd4d0414e2f224d8604383c833424a54a9 on `main` (PR #136, squash-merged; branch `claude/audit-csharp-support-a5971f`, deleted) — file-coverage contract + C# support.
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
+
+## 2026-10-03 — backlog + arch-drift sweep: verified debt fixes, test-helper dedup, ledger single-writer
+
+### Changes
+- **Debt ledger (91 → 67 open).** 24 entries verified against current code (executed, not read) and resolved with per-entry evidence in the `resolved` event: 12 not-real, 9 fixed/moot, 3 fixed-forward by PR #108. New `debt-resolve --accept-permanent --approver` upserts an entry IN PLACE to `accepted-permanent` (keeps it in debt memory so audits do not re-raise it; writes no event — the entry's own approver/approvedAt are the record). 22 real-but-accepted entries are deliberately NOT yet converted: they need an approver named by the owner.
+- `scripts/lib/ledger.mjs` single writer: `writeSingleLedgerEntry` now takes the same `<ledger>.lock` as `batchWriteLedger` (3 procs x 40 writes left 40 of 120 entries before, 120 of 120 after) and a corrupt ledger THROWS and is left untouched instead of being truncated to one entry. File is net -1 line.
+- `scripts/lib/cli-io.mjs`: `requiredFlagValue` consolidated from two identical copies in the event-wiring CLIs.
+- Seven small defects fixed with tests: claudemd autofix partial multi-group write (and the CLI printing the dry-run count), on-conflict `recoveredErrors` ignored, `check-accepted-debt --out` non-atomic, capture-cross-skill-envelopes leaving provider keys in the child env, nav-verify sentinel `null` read as `dead` session, incremental import copy-forward keeping edges to deleted files, two unpinned learning-write gating sites.
+- arch:drift test-helper dedup (9 of 12 duplicate clusters): shared `makeDeferEntry`, `withCwd`, `unitVectorAt`, `stubDeps`; local `write`/`git`/`seedLedger`/`sha12` wrappers replaced by the shared helpers.
+- `AGENTS.md` 91,945 → 85,568 characters (6,432 headroom). Detail relocated, not deleted: new `docs/reference/architecture-index.md`, `docs/reference/ratchet-gates.md`, `docs/runbooks/mcp-tooling.md`, plus sections appended to `gitignore-policy.md` and `audit-internals.md`.
+
+### Verification
+- Full `npm test` on the tree: 17,325 tests, 1 failure — `duplicate-justification-pragma.test.mjs`'s live guard named a pragma the dedup removed; repointed at another real pragma (45/45). The fast gates (context, docs, skills, cli-flags, emit-exit, stdout-flush, knip, size-ratchet, gitignore-policy, on-conflict, bundle-deps) pass; `stdout:flush:gate` caught one net-new exit site in `debt-resolve` mid-session, fixed with `finishAndExit`.
+- Negative control for the ledger fix: the same concurrency test against a copy of the pre-fix `ledger.mjs` fails 8 of 10.
+
+### Not done
+- No audit loop on these direct fixes (gate `not-run`). Two other cycles ran the full chain in their own worktrees (CLI contract hardening; final-review debt-suppression revival) and ship as separate PRs.
+- A third cycle (`ship/SKILL.md` size) was stopped: its plan shipped 2026-09-16 and the ≤3K-token target is not reachable by moving content alone. `f7aa386c9937` stays open pending a decision.
+
+Backlog 2026-10-03T12:42Z: Q1 68c/23p (+338 aged) · Q2 101c/60p (54 perm) · Q3 35 · debt unmeasured · upstream 1
+
+---
 
 ## 2026-10-02 — correction: accepted control-marker count (PR #147)
 

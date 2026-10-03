@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { z } from 'zod';
 import { dispatch } from '../scripts/lib/cross-skill/dispatch.mjs';
-import { argv } from './helpers/cross-skill-argv.mjs';
+import { argv, stubDeps } from './helpers/cross-skill-argv.mjs';
 import {
   RecordPersonaSessionRequestSchema, LinkPersonaPairRequestSchema,
 } from '../scripts/lib/cross-skill/commands/persona.mjs';
@@ -124,19 +124,6 @@ describe('LifecycleSchema — partial must name what it skipped', () => {
 });
 
 // ── dispatch-level ─────────────────────────────────────────────────────────
-
-function stubDeps(overrides = {}) {
-  return {
-    initLearningStore: async () => true,
-    isCloudEnabled: async () => true,
-    isPersonaCloudEnabled: async () => true,
-    resolveRepoForStoreResult: async () => ({ kind: 'resolved', repoRowId: 'repo-1', repoUuid: 'uuid-1', name: 'o/r' }),
-    getRepoIdByName: async () => 'repo-1',
-    getRepoIdByUuid: async () => ({ id: 'repo-1', name: 'o/r' }),
-    listRepoIds: async () => ['repo-1'],
-    ...overrides,
-  };
-}
 
 describe('record-persona-session — the stored verdict is the capped one', () => {
   const base = { persona: 'p', url: 'https://x.test', browserTool: 'playwright (ok)', verdict: 'Ready for users', findings: [], p0Count: 0, p1Count: 0, ...WORK_RECORD };

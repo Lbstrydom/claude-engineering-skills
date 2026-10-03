@@ -29,7 +29,6 @@ const { gate5 } = _internals;
 const TOOL_DIR = LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR;
 
 let root;
-const write = (rel, body) => writeFile(root, rel, body);
 
 beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'iso-npmtarget-')); });
 afterEach(() => { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
@@ -40,8 +39,8 @@ afterEach(() => { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3,
  */
 function consumer(script, body) {
   const skillRel = '.claude/skills/ship/SKILL.md';
-  write(skillRel, `Then run **\`npm run ${script}\`** — it enforces the topology.\n`);
-  write('package.json', JSON.stringify({ scripts: { [script]: body } }, null, 2));
+  writeFile(root, skillRel, `Then run **\`npm run ${script}\`** — it enforces the topology.\n`);
+  writeFile(root, 'package.json', JSON.stringify({ scripts: { [script]: body } }, null, 2));
   return { files: { [skillRel]: 'sha-not-read-by-gate5' } };
 }
 
@@ -61,7 +60,7 @@ describe('gate 5 — npm scripts must resolve to a shipped tool', () => {
 
   it('PASSES once that same tool is shipped (not a gate that always fires)', () => {
     const manifest = consumer('context:check', `node ${TOOL_DIR}/check-context-drift.mjs --strict`);
-    write(`${TOOL_DIR}/check-context-drift.mjs`, '// shipped\n');
+    writeFile(root, `${TOOL_DIR}/check-context-drift.mjs`, '// shipped\n');
 
     assert.equal(gate5(root, manifest).pass, true);
   });
@@ -93,7 +92,7 @@ describe('gate 5 — npm scripts must resolve to a shipped tool', () => {
     // strength of a path prefix — and gate 3 had had the ownership test all
     // along.
     const manifest = consumer('ux:driver', 'node scripts/ux/ux-driver.mjs');
-    write('scripts/ux/ux-driver.mjs', '// the consumer\'s own driver\n');
+    writeFile(root, 'scripts/ux/ux-driver.mjs', '// the consumer\'s own driver\n');
 
     const res = gate5(root, manifest);
     assert.equal(res.pass, true, 'a consumer-owned script is not a stale upstream path');
@@ -111,19 +110,19 @@ describe('gate 5 — npm scripts must resolve to a shipped tool', () => {
     // solely by what the manifest claims.
     const owned = consumer('audit', 'node scripts/openai-audit.mjs');
     owned.files[`${TOOL_DIR}/openai-audit.mjs`] = 'x';
-    write('scripts/openai-audit.mjs', '// present on disk\n');
+    writeFile(root, 'scripts/openai-audit.mjs', '// present on disk\n');
     assert.equal(gate5(root, owned).pass, false, 'upstream tail at the legacy path is stale');
 
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'iso-npmtarget-b-'));
     const theirs = consumer('audit', 'node scripts/openai-audit.mjs');
-    write('scripts/openai-audit.mjs', '// present on disk\n');
+    writeFile(root, 'scripts/openai-audit.mjs', '// present on disk\n');
     assert.equal(gate5(root, theirs).pass, true, 'an undeclared tail is the consumer\'s own');
   });
 
   it('ignores an `npm run X` the consumer never wired', () => {
     const skillRel = '.claude/skills/ship/SKILL.md';
-    write(skillRel, 'Run `npm run context:check`.\n');
-    write('package.json', JSON.stringify({ scripts: {} }, null, 2));
+    writeFile(root, skillRel, 'Run `npm run context:check`.\n');
+    writeFile(root, 'package.json', JSON.stringify({ scripts: {} }, null, 2));
 
     assert.equal(gate5(root, { files: { [skillRel]: 'x' } }).pass, true);
   });

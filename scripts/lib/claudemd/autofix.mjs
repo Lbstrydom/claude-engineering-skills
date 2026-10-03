@@ -50,12 +50,20 @@ function normalizeLineNumber(value) {
  * @param {string} repoRoot
  * @param {object} [options]
  * @param {boolean} [options.dryRun=true] - If true, report but don't modify
- * @returns {{ applied: Array<{ file: string, line: number, action: string }>, skipped: Array<{ file: string, line: number, reason: string }> }}
+ * @param {(canonicalPath: string, content: string) => void} [options.writeFile] -
+ *   test seam replacing the atomic write; a throw is handled like a real write failure
+ * @returns {{ applied: Array<{ file: string, line: number, action: string }>, skipped: Array<{ file: string, line: number, reason: string }>, writeFailures: number }}
+ *   A group whose write throws moves its entries from `applied` to `skipped`
+ *   (`write failed: <code>`) and bumps `writeFailures`; earlier groups stay applied.
  */
 export function applyFixes(findings, repoRoot, options = {}) {
   const dryRun = options.dryRun !== false;
   const applied = [];
   const skipped = [];
+  // Canonical groups whose write threw (real-run only). Their entries are in
+  // `skipped` with a `write failed:` reason; this count lets a CLI exit non-zero
+  // without parsing reason prose.
+  let writeFailures = 0;
 
   // A null/non-object array entry has no `file` to report against by its own
   // shape, but silently dropping it recreates the exact observability gap
@@ -87,7 +95,7 @@ export function applyFixes(findings, repoRoot, options = {}) {
     for (const f of fixable) {
       skipped.push({ file: f.file, line: f.line, reason: 'repoRoot could not be resolved' });
     }
-    return { applied, skipped };
+    return { applied, skipped, writeFailures };
   }
 
   // Per finding (not yet grouped): gate before grouping, so aliased paths
@@ -136,6 +144,9 @@ export function applyFixes(findings, repoRoot, options = {}) {
     }
 
     const lines = content.split('\n');
+    // Where this group's entries begin in the shared `applied` list — a failed
+    // write below moves exactly the entries from here on out of `applied`.
+    const groupStart = applied.length;
     // Captured once, before any splice — a live lines.length shrinks on
     // every real-run splice, which would make the bounds check below
     // dry-run-mode-dependent (a later, valid line number could exceed an
@@ -209,9 +220,25 @@ export function applyFixes(findings, repoRoot, options = {}) {
     }
 
     if (modified && !dryRun) {
-      atomicWriteFileSync(canonical, lines.join('\n'));
+      // A write can fail per group (EPERM / EROFS / ENOSPC) AFTER earlier
+      // groups were already written. Letting it propagate would discard the
+      // `applied` list — the caller could no longer say which files changed —
+      // so this group's would-be applied entries are reported as skipped and
+      // the remaining groups still run. `options.writeFile` is a test seam;
+      // the production path stays a DIRECT atomicWriteFileSync call (what
+      // atomic-write-adoption-guard.test.mjs resolves by import binding).
+      try {
+        if (typeof options.writeFile === 'function') options.writeFile(canonical, lines.join('\n'));
+        else atomicWriteFileSync(canonical, lines.join('\n'));
+      } catch (err) {
+        const reason = `write failed: ${err.code || err.message}`;
+        for (const a of applied.splice(groupStart)) {
+          skipped.push({ file: a.file, line: a.line, reason });
+        }
+        writeFailures++;
+      }
     }
   }
 
-  return { applied, skipped };
+  return { applied, skipped, writeFailures };
 }

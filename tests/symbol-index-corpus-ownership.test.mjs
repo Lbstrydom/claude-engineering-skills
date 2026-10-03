@@ -49,7 +49,6 @@ const EXTRACT = path.resolve(import.meta.dirname, '..', 'scripts', 'symbol-index
 
 let repo;
 const git = (args) => execFileSync('git', args, { cwd: repo, encoding: 'utf-8' }).trim();
-const write = (rel, body) => writeFile(repo, rel, body);
 const rel = (abs) => path.relative(repo, abs).split(path.sep).join('/');
 
 before(() => {
@@ -60,10 +59,10 @@ before(() => {
   git(['config', 'user.email', 'test@example.com']);
   git(['config', 'user.name', 'test']);
 
-  write('.gitignore', 'vendored/\nscripts/.claude-skills/\n');
+  writeFile(repo, '.gitignore', 'vendored/\nscripts/.claude-skills/\n');
   // Owned source, with a real internal import between two files.
-  write('src/owned.mjs', "import { helper } from './helper.mjs';\nexport function owned() { return helper(); }\n");
-  write('src/helper.mjs', 'export function helper() { return 1; }\n');
+  writeFile(repo, 'src/owned.mjs', "import { helper } from './helper.mjs';\nexport function owned() { return helper(); }\n");
+  writeFile(repo, 'src/helper.mjs', 'export function helper() { return 1; }\n');
   // A gitignored, vendored tree that looks exactly like source and imports
   // within itself — the shape that produced 1,508 intra-bundle edges. It lives
   // under `scripts/` on purpose: `scripts` is one of extract.mjs's cruise
@@ -71,15 +70,15 @@ before(() => {
   // (Placed outside a target dir it proves nothing about edges, because the
   // cruise never reaches it — an earlier draft of this test made exactly that
   // mistake and passed vacuously.)
-  write('scripts/.claude-skills/tool.mjs', "import { dep } from './dep.mjs';\nexport function vendoredOnly() { return dep(); }\n");
-  write('scripts/.claude-skills/dep.mjs', 'export function dep() { return 2; }\n');
+  writeFile(repo, 'scripts/.claude-skills/tool.mjs', "import { dep } from './dep.mjs';\nexport function vendoredOnly() { return dep(); }\n");
+  writeFile(repo, 'scripts/.claude-skills/dep.mjs', 'export function dep() { return 2; }\n');
   // Owned code in the same target dir — the graph must keep these.
-  write('scripts/owned-script.mjs', "import { helper } from '../src/helper.mjs';\nexport function script() { return helper(); }\n");
-  write('vendored/blob.mjs', 'export function vendoredOnly() { return 4; }\n');
+  writeFile(repo, 'scripts/owned-script.mjs', "import { helper } from '../src/helper.mjs';\nexport function script() { return helper(); }\n");
+  writeFile(repo, 'vendored/blob.mjs', 'export function vendoredOnly() { return 4; }\n');
   // Ignored by pattern but TRACKED anyway: the repo owns it, and the filter
   // must not take it. This is the direction a check-ignore-only predicate
   // gets wrong.
-  write('vendored/kept.mjs', 'export function deliberatelyTracked() { return 3; }\n');
+  writeFile(repo, 'vendored/kept.mjs', 'export function deliberatelyTracked() { return 3; }\n');
 
   git(['add', '.gitignore', 'src/owned.mjs', 'src/helper.mjs', 'scripts/owned-script.mjs']);
   git(['add', '-f', 'vendored/kept.mjs']);

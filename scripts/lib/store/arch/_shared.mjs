@@ -45,18 +45,30 @@ export function chunk(arr, n) {
  * answer the ownership question passes `null` and gets the pre-fix carry —
  * deleting index rows on an unanswered question is worse than the bug.
  *
+ * **An edge row has a SECOND endpoint, and `pathOf` only keys the first.**
+ * `touchedFileSet` / `isDisowned` decide whether the IMPORTER's edges are still
+ * ours, but an edge `a -> b` can go stale while `a` is untouched: `b` was deleted
+ * or renamed. A full refresh drops it (`extract.mjs` counts an unresolved import
+ * as `unresolved`, never persisting it), so an incremental that carried it on the
+ * importer key alone diverged from the full one. `targetPathOf` names the second
+ * endpoint; it is gated by `fileStillExists` ONLY — a TOUCHED target that still
+ * exists leaves the edge valid (the importer's text still imports it), so
+ * `touchedFileSet` deliberately does not apply to it.
+ *
  * @param {object[]} rows
- * @param {{pathOf?: (r: object) => string, touchedFileSet: Set<string>,
+ * @param {{pathOf?: (r: object) => string, targetPathOf?: ((r: object) => string)|null,
+ *   touchedFileSet: Set<string>,
  *   fileStillExists?: ((p: string) => boolean)|null,
  *   isDisowned?: ((p: string) => boolean)|null}} opts
  * @returns {object[]} the rows to carry (input not mutated)
  */
-export function retainCarriedRows(rows, { pathOf = (r) => r.file_path, touchedFileSet, fileStillExists = null, isDisowned = null } = {}) {
+export function retainCarriedRows(rows, { pathOf = (r) => r.file_path, targetPathOf = null, touchedFileSet, fileStillExists = null, isDisowned = null } = {}) {
   return rows.filter((r) => {
     const p = pathOf(r);
     if (touchedFileSet.has(p)) return false;
     if (fileStillExists && !fileStillExists(p)) return false;
     if (isDisowned && isDisowned(p)) return false;
+    if (targetPathOf && fileStillExists && !fileStillExists(targetPathOf(r))) return false;
     return true;
   });
 }

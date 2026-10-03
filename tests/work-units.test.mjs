@@ -11,10 +11,9 @@ import {
   deriveCutoff, pairwiseSimilarities, workUnitKey, clusterWorkUnits,
   CUTOFF_FLOOR, DEFAULT_CUTOFF_SIGMA,
 } from '../scripts/lib/work-units.mjs';
+import { unitVectorAt } from './helpers/fixtures.mjs';
 
-/** Unit vectors in the plane — cosine is exactly cos(theta). */
-const at = (deg) => [Math.cos((deg * Math.PI) / 180), Math.sin((deg * Math.PI) / 180)];
-const f = (id, deg, extra = {}) => ({ id, embedding: at(deg), createdAt: `2026-07-${String(10 + Number(id.slice(1))).padStart(2, '0')}`, ...extra });
+const f = (id, deg, extra = {}) => ({ id, embedding: unitVectorAt(deg), createdAt: `2026-07-${String(10 + Number(id.slice(1))).padStart(2, '0')}`, ...extra });
 
 describe('the cutoff is derived from the population, never a constant', () => {
   test('cutoff is mean + k*stdev over the observed similarities', () => {

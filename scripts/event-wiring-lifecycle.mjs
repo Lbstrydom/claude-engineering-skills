@@ -21,7 +21,7 @@
  *   2 — invalid invocation (unknown flag, missing/conflicting mode, missing value)
  *   3 — dismissal refused (no such record, or it isn't currently open)
  */
-import { assertKnownFlags, emit } from './lib/cli-io.mjs';
+import { assertKnownFlags, emit, requiredFlagValue } from './lib/cli-io.mjs';
 import { listOpenLifecycle, dismissLifecycle } from './lib/audit/event-wiring-lifecycle-store.mjs';
 
 const KIND = 'event-wiring-symmetry';
@@ -44,23 +44,12 @@ if (isMain) {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 }
 
-/** Same "a terminal flag or the next flag masquerading as a value is an error" contract as event-wiring-scan.mjs. */
-function requiredValue(argv, flag, cli) {
-  const idx = argv.indexOf(flag);
-  if (idx === -1) return null;
-  const value = argv[idx + 1];
-  if (value === undefined || value.startsWith('--')) {
-    throw new Error(`${cli}: ${flag} requires a value`);
-  }
-  return value;
-}
-
 function parseArgs(argv) {
   return {
-    ledger: requiredValue(argv, '--ledger', 'event-wiring-lifecycle'),
+    ledger: requiredFlagValue(argv, '--ledger', 'event-wiring-lifecycle'),
     listOpen: argv.includes('--list-open'),
-    dismiss: requiredValue(argv, '--dismiss', 'event-wiring-lifecycle'),
-    reason: requiredValue(argv, '--reason', 'event-wiring-lifecycle'),
+    dismiss: requiredFlagValue(argv, '--dismiss', 'event-wiring-lifecycle'),
+    reason: requiredFlagValue(argv, '--reason', 'event-wiring-lifecycle'),
     json: argv.includes('--json'),
   };
 }
@@ -131,6 +120,6 @@ function main() {
 }
 
 /** Internal seams for tests. Underscore-prefixed per repo convention (audit-clean.mjs). */
-export const _internals = { parseArgs, requiredValue };
+export const _internals = { parseArgs };
 
 if (isMain) main();

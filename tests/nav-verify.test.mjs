@@ -5,7 +5,8 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { reconcile, normalizeLiveTarget } from '../scripts/lib/nav/verify.mjs';
+import { reconcile, normalizeLiveTarget, sentinelProbeInPage, resolveAuthLiveness } from '../scripts/lib/nav/verify.mjs';
+import { PERCEIVABLE_SOURCE, PERCEIVABLE_FN_NAME } from '../scripts/lib/browser/perceivable.mjs';
 import { composeCaptureVerdict, buildDraftCaptureWarning } from '../scripts/lib/nav/bootstrap-draft.mjs';
 
 describe('normalizeLiveTarget', () => {
@@ -111,5 +112,97 @@ describe('buildDraftCaptureWarning — mode selects the REMEDY only', () => {
     assert.ok(buildDraftCaptureWarning({ emptyNavShells: ['#n'], hasStorageState: true, mode: 'verify' }));
     assert.ok(buildDraftCaptureWarning({ emptyNavShells: ['#n'], hasStorageState: true, mode: 'bootstrap' }));
     assert.equal(buildDraftCaptureWarning({ emptyNavShells: [], hasStorageState: true, mode: 'verify' }), null);
+  });
+});
+
+/**
+ * authSentinel tri-state. `PERCEIVABLE_SOURCE` returns `null` ("could not
+ * establish") only when getBoundingClientRect/getComputedStyle throws. The probe
+ * used to flatten that into "not rendered", so a sentinel whose EVERY match was
+ * unestablishable read `dead` ("your token expired") — the opposite of the
+ * file's own rule that unknown must never read as an expired session.
+ *
+ * The probe runs the REAL PERCEIVABLE_SOURCE; only the DOM elements are stubs.
+ */
+describe('authSentinel probe — unknown is not dead', () => {
+  const rendered = (text = '') => ({ nodeType: 1, isConnected: true, textContent: text, getBoundingClientRect: () => ({ width: 10, height: 10 }), checkVisibility: () => true });
+  const notRendered = (text = '') => ({ nodeType: 1, isConnected: true, textContent: text, getBoundingClientRect: () => ({ width: 0, height: 0 }) });
+  const unestablishable = (text = '') => ({ nodeType: 1, isConnected: true, textContent: text, getBoundingClientRect: () => { throw new Error('detached mid-read'); } });
+
+  const probe = (els, expectText = '') => {
+    const prev = globalThis.document;
+    globalThis.document = { querySelectorAll: () => els };
+    try {
+      return sentinelProbeInPage({ src: PERCEIVABLE_SOURCE, fnName: PERCEIVABLE_FN_NAME, selector: '#acct', expectText });
+    } finally {
+      if (prev === undefined) delete globalThis.document; else globalThis.document = prev;
+    }
+  };
+  const resolve = (probed, over = {}) => resolveAuthLiveness({
+    storageState: 'state.json', authSentinel: { selector: '#acct' },
+    sentinelSeen: probed.hit, sentinelError: null, sentinelUnknown: probed.unknown, ...over,
+  });
+
+  it('subject probe: the stubs really exercise all three predicate outcomes', () => {
+    assert.deepEqual(probe([rendered()]), { hit: true, unknown: 0 });
+    assert.deepEqual(probe([notRendered()]), { hit: false, unknown: 0 });
+    assert.deepEqual(probe([unestablishable()]), { hit: false, unknown: 1 });
+  });
+
+  it('every match unestablishable -> unverified with a warning naming the count, NOT dead', () => {
+    const r = resolve(probe([unestablishable(), unestablishable()]));
+    assert.equal(r.authLiveness, 'unverified');
+    assert.match(r.warning, /2 element\(s\)/);
+    assert.match(r.warning, /not reported as dead/);
+  });
+
+  it('negative control: every match established not-rendered still reads dead', () => {
+    const r = resolve(probe([notRendered(), notRendered()]));
+    assert.equal(r.authLiveness, 'dead');
+    assert.equal(r.warning, null);
+  });
+
+  it('negative control: no match at all still reads dead', () => {
+    assert.equal(resolve(probe([])).authLiveness, 'dead');
+  });
+
+  it('a mix of not-rendered and unestablishable is unknown (a null is a null, even beside falses)', () => {
+    const r = resolve(probe([notRendered(), unestablishable()]));
+    assert.equal(r.authLiveness, 'unverified');
+    assert.match(r.warning, /1 element\(s\)/);
+  });
+
+  it('one rendered match wins over unestablishable ones -> live, no warning', () => {
+    const r = resolve(probe([unestablishable(), rendered()]));
+    assert.equal(r.authLiveness, 'live');
+    assert.equal(r.warning, null);
+  });
+
+  it('a null on an element whose text can never match expectText is not counted', () => {
+    // It would not have qualified even if rendered, so it says nothing about liveness.
+    assert.equal(resolve(probe([unestablishable('Sign in')], 'my account')).authLiveness, 'dead');
+    assert.equal(resolve(probe([unestablishable('My Account')], 'my account')).authLiveness, 'unverified');
+  });
+
+  it('expectText still gates a rendered match', () => {
+    assert.deepEqual(probe([rendered('Sign in')], 'my account'), { hit: false, unknown: 0 });
+    assert.deepEqual(probe([rendered('My  Account')], 'my account'), { hit: true, unknown: 0 });
+  });
+
+  it('the rest of the truth table is unchanged', () => {
+    const base = { storageState: 'state.json', authSentinel: { selector: '#a' }, sentinelSeen: false, sentinelError: null };
+    assert.equal(resolveAuthLiveness({ ...base, storageState: null }).authLiveness, 'n/a');
+    assert.equal(resolveAuthLiveness({ ...base, authSentinel: null }).authLiveness, 'unverified');
+    const bad = resolveAuthLiveness({ ...base, sentinelError: 'bad selector' });
+    assert.equal(bad.authLiveness, 'unverified');
+    assert.match(bad.warning, /selector failed to evaluate: bad selector/);
+    assert.equal(resolveAuthLiveness({ ...base, sentinelSeen: true }).authLiveness, 'live');
+    assert.equal(resolveAuthLiveness(base).authLiveness, 'dead');
+  });
+
+  it('the unknown outcome composes into a degraded (unverified) capture, never auth-dead', () => {
+    const v = composeCaptureVerdict({ authLiveness: resolve(probe([unestablishable()])).authLiveness, hasStorageState: true });
+    assert.equal(v.status, 'auth-unverified');
+    assert.ok(!/AUTH SESSION DEAD/.test(v.warnings.join('\n')));
   });
 });

@@ -31,14 +31,13 @@ const poison = fs.readFileSync(path.join(REPO_ROOT, 'tests', 'fixtures', 'poison
 const dedented = poison.replace(/^ {2}disable-model-invocation: true$/m, 'disable-model-invocation: true');
 
 let root;
-const write = (rel, body) => writeFile(root, rel, body);
 const manifestFor = (rels) => {
   const files = {};
   for (const rel of rels) files[rel] = hashFile(path.join(root, rel));
   return { files };
 };
 const ownedSkill = (name, body) => {
-  write(`.claude/skills/${name}/SKILL.md`, body);
+  writeFile(root, `.claude/skills/${name}/SKILL.md`, body);
   return `.claude/skills/${name}/SKILL.md`;
 };
 const goodSkill = (name) => `---\nname: ${name}\ndescription: |\n  Fine.\ndisable-model-invocation: true\n---\n\n# ${name}\n`;
@@ -49,7 +48,7 @@ afterEach(() => { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3,
 describe('gate 9 — inert frontmatter declaration in .claude/skills/', () => {
   it('FAILS on a retired, consumer-resident skill carrying the real inert fixture (the measured case)', () => {
     const manifest = manifestFor([ownedSkill('ship', goodSkill('ship'))]);
-    write('.claude/skills/audit/SKILL.md', poison);        // not in the manifest — retired upstream
+    writeFile(root, '.claude/skills/audit/SKILL.md', poison);        // not in the manifest — retired upstream
 
     const res = gate9(root, manifest);
     assert.equal(res.pass, false);
@@ -66,7 +65,7 @@ describe('gate 9 — inert frontmatter declaration in .claude/skills/', () => {
 
   it('gates 2B and 8 are BLIND to that same file (the gate is not redundant)', () => {
     const manifest = manifestFor([ownedSkill('ship', goodSkill('ship'))]);
-    write('.claude/skills/audit/SKILL.md', poison);
+    writeFile(root, '.claude/skills/audit/SKILL.md', poison);
     assert.equal(gate2B(root, manifest).pass, true, '2B iterates manifest entries; audit is not one');
     assert.equal(gate8(root, manifest).pass, true, '8 asks about .github/.agents roots, not .claude/skills content');
   });
@@ -82,7 +81,7 @@ describe('gate 9 — inert frontmatter declaration in .claude/skills/', () => {
 
   it('PASSES the same tree once the key is dedented (positive control on the fix)', () => {
     const manifest = manifestFor([ownedSkill('ship', goodSkill('ship'))]);
-    write('.claude/skills/audit/SKILL.md', dedented);
+    writeFile(root, '.claude/skills/audit/SKILL.md', dedented);
     const res = gate9(root, manifest);
     assert.equal(res.pass, true, res.error);
     assert.deepEqual(res.details, { checked: 2, ownedSkills: 1, owned: [], foreign: [], unverifiable: [] });
@@ -90,7 +89,7 @@ describe('gate 9 — inert frontmatter declaration in .claude/skills/', () => {
 
   it('a frontmatter-less CONSUMER skill is unverifiable, reported, and does not fail the gate', () => {
     const manifest = manifestFor([ownedSkill('ship', goodSkill('ship'))]);
-    write('.claude/skills/their-tool/SKILL.md', '# Their skill, no frontmatter\n');
+    writeFile(root, '.claude/skills/their-tool/SKILL.md', '# Their skill, no frontmatter\n');
     const res = gate9(root, manifest);
     assert.equal(res.pass, true, res.error);
     assert.deepEqual(res.details.unverifiable.map((f) => [f.skill, f.kind]), [['their-tool', 'no-frontmatter']]);
@@ -106,7 +105,7 @@ describe('gate 9 — inert frontmatter declaration in .claude/skills/', () => {
   it('says what it checked when .claude/skills/ is absent or holds no skills — never a silent green', () => {
     const manifest = { files: {} };
     assert.deepEqual(gate9(root, manifest), { gate: '9', pass: true, details: { checked: 0, ownedSkills: 0, note: '.claude/skills/ absent' } });
-    write('.claude/skills/.keep', '');
+    writeFile(root, '.claude/skills/.keep', '');
     assert.equal(gate9(root, manifest).details.note, '.claude/skills/ holds no <name>/SKILL.md');
   });
 
@@ -123,9 +122,9 @@ describe('gate 9 wiring', () => {
   it('is in ALL_GATES and dispatched by runGates', () => {
     assert.ok(ALL_GATES.includes('9'));
     const manifestRel = 'scripts/.sync-manifest.json';
-    write('.claude/skills/audit/SKILL.md', poison);
+    writeFile(root, '.claude/skills/audit/SKILL.md', poison);
     const files = { '.claude/skills/audit/SKILL.md': hashFile(path.join(root, '.claude/skills/audit/SKILL.md')) };
-    write(manifestRel, JSON.stringify({ schemaVersion: 1, layout: 'isolated', files }));
+    writeFile(root, manifestRel, JSON.stringify({ schemaVersion: 1, layout: 'isolated', files }));
     const results = runGates({ consumerRoot: root, gates: ['9'] });
     // Either the manifest schema accepted the minimal stub (gate 9 ran and failed
     // on the fixture) or it refused it (preflight). Both are a non-pass; what must

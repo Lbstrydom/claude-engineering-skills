@@ -24,7 +24,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { assertKnownFlags, emit } from './lib/cli-io.mjs';
+import { assertKnownFlags, emit, requiredFlagValue } from './lib/cli-io.mjs';
 import { buildCorpus, loadEventWiringConfig } from './lib/audit/event-wiring-corpus.mjs';
 import { resolveSymmetry } from './lib/audit/event-wiring.mjs';
 
@@ -55,30 +55,13 @@ if (isMain) {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 }
 
-// audit-code R1/M7 fix: a value-taking flag with no following token (a
-// terminal `--oracle`) or whose "value" is really the next flag (`--oracle
-// --json`) must be an invocation error, not a silently-absent option — the
-// prior version read `argv[idx+1]` unconditionally, so `--oracle` at the end
-// of argv resolved to `undefined`, which is indistinguishable from "no
-// --oracle flag at all" and made an intended oracle-gated run execute as an
-// ungated scan that exits 0.
-function requiredValue(argv, flag, cli) {
-  const idx = argv.indexOf(flag);
-  if (idx === -1) return null;
-  const value = argv[idx + 1];
-  if (value === undefined || value.startsWith('--')) {
-    throw new Error(`${cli}: ${flag} requires a value`);
-  }
-  return value;
-}
-
 function parseArgs(argv) {
   // Flags already validated at module top (before the --selfcheck-relocation
   // check) — not re-validated here to avoid a confusing double-check.
   return {
-    repo: requiredValue(argv, '--repo', 'event-wiring-scan'),
+    repo: requiredFlagValue(argv, '--repo', 'event-wiring-scan'),
     json: argv.includes('--json'),
-    oracle: requiredValue(argv, '--oracle', 'event-wiring-scan'),
+    oracle: requiredFlagValue(argv, '--oracle', 'event-wiring-scan'),
   };
 }
 
@@ -266,6 +249,6 @@ function compareOracle(expected, coverage, findings) {
 }
 
 /** Internal seams for tests. Underscore-prefixed per repo convention (audit-clean.mjs). */
-export const _internals = { compareOracle, validateOracleShape, requiredValue };
+export const _internals = { compareOracle, validateOracleShape };
 
 if (isMain) main();

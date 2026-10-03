@@ -495,3 +495,80 @@ describe('applyFixes — defect a33dad5b16d0: content identity, not just line nu
     assert.equal(after, 'line one\n[external now](https://example.com/docs)\nline three\n');
   });
 });
+
+describe('applyFixes — defect c28c2850: a failed group write must not lose the applied list', () => {
+  function twoFileFixture() {
+    const repoRoot = mkTmpRepo();
+    fs.writeFileSync(path.join(repoRoot, 'A.md'), 'a one\n[a](docs/a.md)\na three\n');
+    fs.writeFileSync(path.join(repoRoot, 'B.md'), 'b one\n[b](docs/b.md)\nb three\n');
+    const findings = [
+      { file: 'A.md', line: 2, fixable: true, ruleId: 'stale/file-ref' },
+      { file: 'B.md', line: 2, fixable: true, ruleId: 'stale/file-ref' },
+    ];
+    return { repoRoot, findings };
+  }
+
+  it('the second group write throws: group A stays applied, group B is skipped with the code, nothing throws', () => {
+    const { repoRoot, findings } = twoFileFixture();
+    let calls = 0;
+    const writeFile = (p, data) => {
+      calls++;
+      if (calls === 2) throw Object.assign(new Error('read-only'), { code: 'EPERM' });
+      fs.writeFileSync(p, data);
+    };
+
+    let result;
+    assert.doesNotThrow(() => { result = applyFixes(findings, repoRoot, { dryRun: false, writeFile }); });
+
+    assert.equal(calls, 2, 'both groups attempted a write — the failure did not stop the loop');
+    assert.equal(result.applied.length, 1);
+    assert.equal(result.applied[0].file, 'A.md');
+    assert.match(result.applied[0].action, /^removed:/);
+    assert.equal(result.skipped.length, 1);
+    assert.equal(result.skipped[0].file, 'B.md');
+    assert.equal(result.skipped[0].line, 2);
+    assert.equal(result.skipped[0].reason, 'write failed: EPERM');
+    assert.equal(result.writeFailures, 1);
+    assert.equal(fs.readFileSync(path.join(repoRoot, 'A.md'), 'utf-8'), 'a one\na three\n', 'A was written');
+    assert.equal(fs.readFileSync(path.join(repoRoot, 'B.md'), 'utf-8'), 'b one\n[b](docs/b.md)\nb three\n', 'B was not');
+  });
+
+  it('a failure in the FIRST group does not stop a later group, and only that group is reclassified', () => {
+    const { repoRoot, findings } = twoFileFixture();
+    let calls = 0;
+    const writeFile = (p, data) => {
+      calls++;
+      if (calls === 1) throw Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+      fs.writeFileSync(p, data);
+    };
+
+    const result = applyFixes(findings, repoRoot, { dryRun: false, writeFile });
+
+    assert.deepEqual(result.applied.map((a) => a.file), ['B.md']);
+    assert.deepEqual(result.skipped.map((s) => [s.file, s.reason]), [['A.md', 'write failed: ENOSPC']]);
+    assert.equal(result.writeFailures, 1);
+  });
+
+  it('an error with no .code reports its message in the reason', () => {
+    const { repoRoot, findings } = twoFileFixture();
+    const writeFile = () => { throw new Error('mystery'); };
+    const result = applyFixes(findings.slice(0, 1), repoRoot, { dryRun: false, writeFile });
+    assert.equal(result.skipped[0].reason, 'write failed: mystery');
+  });
+
+  it('negative control: when no write throws, writeFailures is 0 and nothing is reclassified', () => {
+    const { repoRoot, findings } = twoFileFixture();
+    const result = applyFixes(findings, repoRoot, { dryRun: false, writeFile: (p, d) => fs.writeFileSync(p, d) });
+    assert.equal(result.applied.length, 2);
+    assert.equal(result.skipped.length, 0);
+    assert.equal(result.writeFailures, 0);
+  });
+
+  it('a throwing writeFile is never called on a dry run (no write happens, nothing fails)', () => {
+    const { repoRoot, findings } = twoFileFixture();
+    const writeFile = () => { throw new Error('must not be called'); };
+    const result = applyFixes(findings, repoRoot, { dryRun: true, writeFile });
+    assert.equal(result.applied.length, 2);
+    assert.equal(result.writeFailures, 0);
+  });
+});

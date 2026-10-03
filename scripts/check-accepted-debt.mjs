@@ -46,6 +46,7 @@ import { assertKnownFlags, ArgvError, argOption, hasFlag, finishAndExit, safeErr
 import { checkAll, parseAgentsDebtTable } from './lib/accepted-debt-check.mjs';
 import { loadRegistry } from './lib/accepted-debt-registry.mjs';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
+import { atomicWriteFileSync } from './lib/file-io.mjs';
 
 // No --selfcheck-relocation handler: this script is never relocated (it's
 // deliberately excluded from the sync manifest — see the module header), so
@@ -322,7 +323,7 @@ async function main() {
   if (opts.outFile) {
     try {
       fs.mkdirSync(path.dirname(path.resolve(opts.outFile)), { recursive: true });
-      fs.writeFileSync(opts.outFile, `${outputText}\n`, 'utf-8');
+      atomicWriteFileSync(opts.outFile, `${outputText}\n`);
     } catch (err) {
       process.stderr.write(`check-accepted-debt: failed to write --out: ${err.message}\n`);
       await finishAndExit(2);
