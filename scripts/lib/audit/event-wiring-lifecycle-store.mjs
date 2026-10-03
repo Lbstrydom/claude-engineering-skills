@@ -87,7 +87,7 @@ export function upsertLifecycle(ledgerPath, record) {
       try {
         const parsed = JSON.parse(fs.readFileSync(absPath, 'utf-8'));
         if (parsed && typeof parsed === 'object') ledger = { entries: [], lifecycle: {}, ...parsed };
-      } catch { /* start fresh on corruption, same posture as writeSingleLedgerEntry */ }
+      } catch { /* start fresh on corruption — NOTE writeSingleLedgerEntry no longer does this (it throws and leaves the file); this site still overwrites a corrupt ledger, dropping its entries */ }
     }
     if (!ledger.lifecycle || typeof ledger.lifecycle !== 'object') ledger.lifecycle = {};
     ledger.lifecycle[record.fingerprint] = record;

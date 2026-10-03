@@ -19,20 +19,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { selectStage1TriagerCall } from '../scripts/lib/audit/tiered-model-selection.mjs';
-
-// @duplicate-justification: target=tests/tiered-pipeline-stage0-wiring.test.mjs:withCwd reason=a tiny per-file cwd-swap helper duplicated across test files matching this repo's established local-helper convention (AGENTS.md: "three similar lines is better than a premature abstraction") — a shared fixture module for one 8-line helper is the over-engineered extreme, not the right-sized one.
-async function withCwd(dir, fn) {
-  const saved = process.cwd();
-  process.chdir(dir);
-  try {
-    // MUST await here — `return fn()` alone returns fn's pending promise
-    // before entering `finally`, so any code in `fn` AFTER its first `await`
-    // would see cwd already restored to `saved` (audit-code fix M6).
-    return await fn();
-  } finally {
-    process.chdir(saved);
-  }
-}
+import { withCwd } from './helpers/fixtures.mjs';
 
 // @duplicate-justification: target=tests/config-shared-env.test.mjs:mkdtemp reason=a 2-line temp-dir helper duplicated across test files matching this repo's established per-file local-helper convention (AGENTS.md: "three similar lines is better than a premature abstraction") — a shared fixture module for one trivial helper is the over-engineered extreme, not the right-sized one.
 function mkdtemp() {

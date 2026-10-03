@@ -245,14 +245,54 @@ export const CASES = [
   { id: 'learning-replay-no-type', args: ['learning-replay'] },
 ];
 
+// Provider credentials/routing the child must never inherit (9f722c58). The
+// header calls the run hermetic, but `arm-eval-run` has no cloud gate and goes
+// straight to paid LLM calls, so a future case with VALID args would have billed
+// whoever's shell ran the capture. This is a copy of
+// tests/helpers/provider-env.mjs::PROVIDER_ENV_VARS — scripts/ must not import
+// from tests/ (a dev script is not a test layer), so the copy is held in step by
+// tests/cross-skill-capture-hermetic-env.test.mjs, which asserts every name in
+// that list is scrubbed here. The prefixes/suffix catch a provider knob added
+// to neither list yet (OPENROUTER_API_KEY, AZURE_* of any spelling).
+const SCRUBBED_PROVIDER_ENV = new Set([
+  'CLAUDE_BACKEND', 'CLAUDE_BIN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL',
+  'OPENAI_API_KEY', 'OPENAI_BASE_URL',
+  'AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_GPT_DEPLOYMENT',
+  'AZURE_OPENAI_EMBED_DEPLOYMENT', 'AZURE_AI_ENDPOINT', 'AZURE_AI_API_KEY',
+  'AZURE_FOUNDRY_CLAUDE_DEPLOYMENT', 'AZURE_FOUNDRY_SUMMARY_DEPLOYMENT',
+  'AZURE_OPENAI_API_VERSION', 'AZURE_CLAUDE_API_SHAPE', 'AZURE_FOUNDRY_API_PATH',
+  'AZURE_CLAUDE_ROUTE', 'GEMINI_API_KEY',
+  'FINAL_REVIEW_PROVIDER', 'FINAL_REVIEW_BASE_URL', 'FINAL_REVIEW_API_KEY',
+  'FINAL_REVIEW_MODEL', 'FINAL_REVIEW_SHADOW', 'FINAL_REVIEW_SHADOW_MODEL',
+  // Hermetic-store/identity vars, scrubbed since the first version of this file.
+  'DOTENV_CONFIG_PATH', 'AUDIT_DB_URL', 'PERSONA_TEST_REPO_NAME', 'LEARNING_REPO_NAME',
+]);
+const SCRUBBED_PROVIDER_ENV_RE = /^(AZURE_|OPENAI_|ANTHROPIC_|GEMINI_|OPENROUTER_|FINAL_REVIEW_)|_API_KEY$/i;
+
+/**
+ * The hermetic environment for one case: `baseEnv` minus every provider
+ * credential/routing var, with HOME/USERPROFILE pointed at `home` when given.
+ * Names are matched case-insensitively (a Windows env is, and `{...process.env}`
+ * keeps the original spelling). Pure — never mutates `baseEnv`.
+ * @param {NodeJS.ProcessEnv} baseEnv
+ * @param {string} [home]
+ * @returns {Record<string, string|undefined>}
+ */
+export function buildCaseEnv(baseEnv, home) {
+  const env = {};
+  for (const [name, value] of Object.entries(baseEnv)) {
+    if (SCRUBBED_PROVIDER_ENV.has(name.toUpperCase()) || SCRUBBED_PROVIDER_ENV_RE.test(name)) continue;
+    env[name] = value;
+  }
+  if (home !== undefined) { env.HOME = home; env.USERPROFILE = home; }
+  env.AUDIT_LOOP_DISABLE_SHARED = '1';
+  return env;
+}
+
 /** Run one case hermetically. Shared by capture (here) and replay (the test). */
 export function runCase(c, { tmpRoot }) {
   const dir = fs.mkdtempSync(path.join(tmpRoot, `${c.id.slice(0, 20)}-`));
-  const env = { ...process.env, HOME: dir, USERPROFILE: dir, AUDIT_LOOP_DISABLE_SHARED: '1' };
-  delete env.DOTENV_CONFIG_PATH;
-  delete env.AUDIT_DB_URL;
-  delete env.PERSONA_TEST_REPO_NAME;
-  delete env.LEARNING_REPO_NAME;
+  const env = buildCaseEnv(process.env, dir);
   const r = spawnSync(process.execPath, [CLI_PATH, ...c.args], {
     encoding: 'utf8', env, cwd: dir, timeout: 60_000,
   });

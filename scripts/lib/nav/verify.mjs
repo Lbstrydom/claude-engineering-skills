@@ -97,6 +97,61 @@ export function selectorLayers(contract) {
 }
 
 /**
+ * The in-page `authSentinel` probe, as a SELF-CONTAINED function: Playwright
+ * serialises it with `toString()`, so it may reference nothing outside its own
+ * body (hence the arguments, not closure variables). Exported only so it can be
+ * driven in Node against a stubbed `document`.
+ *
+ * Returns `{hit, unknown}`. `PERCEIVABLE_SOURCE` is tri-state, and `null` (could
+ * not establish — a `getBoundingClientRect`/`getComputedStyle` throw) must not be
+ * flattened into `false`: it does not qualify a match, but it IS counted, so the
+ * caller can tell "no element rendered" from "could not tell if one rendered".
+ * A null on an element whose text could never match `expectText` is not counted —
+ * it would not have qualified even if rendered.
+ *
+ * @param {{src: string, fnName: string, selector: string, expectText: string}} arg
+ * @returns {{hit: boolean, unknown: number}}
+ */
+export const sentinelProbeInPage = ({ src, fnName, selector, expectText }) => {
+  // eslint-disable-next-line no-new-func
+  const fn = new Function(`${src}; return ${fnName};`)();
+  const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const want = norm(expectText);
+  let unknown = 0;
+  for (const el of Array.from(document.querySelectorAll(selector))) {
+    const v = fn(el);
+    if (v === false) continue;                                        // established: not rendered
+    if (want && !norm(el.textContent).includes(want)) continue;       // would not qualify even if rendered
+    if (v === true) return { hit: true, unknown };                    // strict: only `true` qualifies
+    unknown++;                                                        // null/other: could not establish
+  }
+  return { hit: false, unknown };
+};
+
+/**
+ * Auth-liveness truth table (v1.5). Pure. `dead` means the sentinel was
+ * established ABSENT everywhere; "could not tell" (an authoring error, or every
+ * match's rendered state unestablishable) is `unverified` and never `dead`,
+ * because `dead` tells the operator to go refresh a session that may be fine.
+ * @returns {{authLiveness: 'live'|'dead'|'unverified'|'n/a', warning: string|null}}
+ */
+export function resolveAuthLiveness({ storageState, authSentinel, sentinelSeen, sentinelError, sentinelUnknown = 0 }) {
+  // No authentication was attempted, so there is nothing to vouch for. A
+  // sentinel may still be declared and even observed — recorded, not asserted.
+  if (!storageState) return { authLiveness: 'n/a', warning: null };
+  if (!authSentinel) return { authLiveness: 'unverified', warning: null };   // authed run, nothing to check against
+  if (sentinelError) return { authLiveness: 'unverified', warning: `authSentinel selector failed to evaluate: ${sentinelError}` };
+  if (sentinelSeen) return { authLiveness: 'live', warning: null };
+  if (sentinelUnknown > 0) {
+    return {
+      authLiveness: 'unverified',
+      warning: `authSentinel matched ${sentinelUnknown} element(s) whose rendered state could not be established — session liveness unknown, not reported as dead`,
+    };
+  }
+  return { authLiveness: 'dead', warning: null };
+}
+
+/**
  * Drive the live app across multiple states (viewports × optional auth) and
  * produce a verify report WITH per-occurrence container attribution (plan v1.1).
  * Library function — NEVER calls process.exit; returns {ok:false,...} on failure.
@@ -135,6 +190,7 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
   const authSentinel = contract?.authSentinel ?? null;
   let sentinelSeen = false;
   let sentinelError = null;
+  let sentinelUnknown = 0;   // matches whose rendered state could not be established (tri-state null)
 
   let chromium;
   try { ({ chromium } = await import('playwright')); }
@@ -255,23 +311,12 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
         const probeSentinel = async () => {
           if (!authSentinel || sentinelSeen) return;   // one positive is enough
           try {
-            const hit = await page.evaluate(
-              ({ src, fnName, selector, expectText }) => {
-                // eslint-disable-next-line no-new-func
-                const fn = new Function(`${src}; return ${fnName};`)();
-                const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
-                const want = norm(expectText);
-                const matches = Array.from(document.querySelectorAll(selector));
-                for (const el of matches) {
-                  if (fn(el) !== true) continue;                    // strict: null (unknown) does not qualify
-                  if (!want) return true;
-                  if (norm(el.textContent).includes(want)) return true;
-                }
-                return false;
-              },
+            const { hit, unknown } = await page.evaluate(
+              sentinelProbeInPage,
               { src: PERCEIVABLE_SOURCE, fnName: PERCEIVABLE_FN_NAME, selector: authSentinel.selector, expectText: authSentinel.expectText || '' },
             );
             if (hit) sentinelSeen = true;
+            sentinelUnknown += unknown;
           } catch (err) {
             // An invalid CSS selector is an AUTHORING bug and must never be
             // reported as `dead` — that would read as "your token expired" and
@@ -355,19 +400,8 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
   // Auth-liveness truth table (v1.5). The `n/a` ⟺ no-storage-state invariant is
   // enforced downstream by composeCaptureVerdict, which THROWS on the impossible
   // pair rather than silently defaulting to `live`.
-  let authLiveness;
-  if (!storageState) {
-    // No authentication was attempted, so there is nothing to vouch for. A
-    // sentinel may still be declared and even observed — recorded, not asserted.
-    authLiveness = 'n/a';
-  } else if (!authSentinel) {
-    authLiveness = 'unverified';        // authed run, nothing to check against
-  } else if (sentinelError) {
-    authLiveness = 'unverified';        // authoring bug — never `dead`
-    stateWarnings.push(`authSentinel selector failed to evaluate: ${sentinelError}`);
-  } else {
-    authLiveness = sentinelSeen ? 'live' : 'dead';
-  }
+  const { authLiveness, warning: livenessWarning } = resolveAuthLiveness({ storageState, authSentinel, sentinelSeen, sentinelError, sentinelUnknown });
+  if (livenessWarning) stateWarnings.push(livenessWarning);
 
   return {
     ok: true,

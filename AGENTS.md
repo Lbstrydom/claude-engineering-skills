@@ -13,12 +13,10 @@
 > messy middle" discipline as the generated-artifact policy below, applied to this
 > file itself. **Enforced since 2026-07-13**: `npm run context:check` (run by
 > the pre-push hook and `/ship` Step 4) fails on `ctx/oversized-agents-md`
-> when this file exceeds **92000 characters** — condense a dossier section to a
-> stub + `docs/<topic>.md` rather than raising the cap. **Characters, not lines,
-> since 2026-08-01**: the two costliest bullets here were ONE line each (~2.5K
-> chars), so the old line cap was blind to its own worst case. 92K is the same
-> strictness, not a new budget — this file measured 91,201 chars sitting exactly
-> at the old 1200-line cap.
+> when this file exceeds **92000 characters** (characters, not lines, since
+> 2026-08-01 — rationale at `DEFAULT_MAX_AGENTS_MD_CHARS` in
+> `scripts/check-context-drift.mjs`) — condense a dossier section to a stub +
+> `docs/<topic>.md` rather than raising the cap.
 
 <!-- arch-map-discoverability:start -->
 > **Architecture map**: [`docs/architecture-map.md`](docs/architecture-map.md)
@@ -31,71 +29,47 @@
 > that the two agree. `npm run docs:architecture-intent:check` (in the pre-push
 > `check`) fails when the map declares a domain the doc never documents — the
 > reverse is never flagged, since the doc may retain retired domains as
-> rationale. It landed 2026-08-02 after sitting unmerged for 110 commits, during
-> which the doc drifted to 12 headings against a 36-domain map.
+> rationale.
 >
 > **Bootstrap / refresh order** — when the map is stale, missing, or after
 > editing [`.audit-loop/domain-map.json`](.audit-loop/domain-map.json):
 > `npm run dashboard:setup` (chains `arch:refresh` → `arch:render` →
-> `dashboard:build`). Domain re-tagging happens in `arch:refresh` against
-> the symbol_index table — editing `domain-map.json` alone does not retag
-> existing DB rows; always start with `arch:refresh` after a rename.
-> **Ownership is the same shape and is now automatic**: a plain incremental
-> re-asks the ownership oracle about the rows it CARRIES (not `args.files` — a
-> gitignored-and-untracked file can never appear in a git diff), and a change to
-> `OWNERSHIP_RULE_EPOCH` promotes the next run to a full walk, because dropping
-> a row is expressible from the index and re-admitting one is not.
+> `dashboard:build`). Editing `domain-map.json` alone does not retag existing DB
+> rows (re-tagging happens in `arch:refresh` against the symbol_index table) —
+> always start with `arch:refresh` after a rename. **Ownership is automatic**: an
+> incremental re-asks the ownership oracle about the rows it CARRIES, and an
+> `OWNERSHIP_RULE_EPOCH` change promotes the next run to a full walk.
 >
-> **Two-layer dependency model** (Architecture tab tiers):
-> - **Observed** — DB import graph from `symbol_file_imports`, written
->   to [`.audit-loop/domain-deps-observed.json`](.audit-loop/domain-deps-observed.json)
->   by `arch:render`, regenerated every render, gitignored. Evidence
->   layer: this is what code *actually* imports.
-> - **Manual** — `allowedDeps` block inside `domain-map.json`, committed.
->   Intent layer: architectural rules the import graph cannot see
->   (dynamic imports, intentionally-forbidden edges, framework wiring).
->
-> The dashboard reader merges both with per-edge provenance (`source ∈
-> {observed, manual, both}`). Manual entries are NOT a fallback — they
-> add architectural intent the import graph misses. The reader Zod-
-> validates the observed envelope and rejects it as stale when the
-> domain-map rules digest changes without a fresh `arch:render`.
-> **Coverage honesty**: the envelope also carries a `coverage` verdict counting what
-> the graph DROPPED; absent reads `unknown`, never clean. `npm run arch:coverage-gate`
-> owns the exit code — in `check`, NOT `dashboard:setup`. [Design](docs/plans/observed-graph-coverage-honesty.md)
+> **Two-layer dependency model**: **Observed** (DB import graph →
+> `.audit-loop/domain-deps-observed.json`, regenerated each `arch:render`,
+> gitignored — what code *actually* imports) + **Manual** (`allowedDeps` in the
+> committed `domain-map.json` — intent the graph cannot see). The dashboard merges
+> both with per-edge provenance; manual entries are NOT a fallback, and a stale
+> observed envelope is rejected. **Coverage honesty**: the envelope carries a
+> `coverage` verdict counting what the graph DROPPED; absent reads `unknown`,
+> never clean. `npm run arch:coverage-gate` owns the exit code — in `check`, NOT
+> `dashboard:setup`. [Detail](docs/reference/architecture-index.md) ·
+> [Design](docs/plans/observed-graph-coverage-honesty.md)
 >
 > **THE CORPUS IS THE REPO, NOT THE DISK — and dep-cruiser's extension list is a
-> QUESTION, not a constant.** Two ways the index measured the wrong thing, both
-> measured in a consumer 2026-09-04 and both invisible here (this repo vendors
-> nothing and is all `.mjs`). *(1)* The walker enumerated the filesystem against a
-> fixed `SKIP_DIRS` list and never asked git: **3,963 of 5,158 walked files (76.8%)
-> were gitignored-and-untracked**, the largest contributor being
-> `scripts/.claude-skills/` — this bundle — indexed as the consumer's code and then
-> counted against them by the duplication score, leaving GREEN unreachable.
-> `enumerateFilesWithOwnership` now filters through the one oracle
-> ([disowned-paths.mjs](scripts/lib/disowned-paths.mjs)) — **ignored AND untracked**,
-> asked of the CANDIDATES, fail-open and loud — and edges touching a disowned path
-> get their own bucket. *(2)* `CRUISABLE_EXTENSIONS` **claimed** `.ts`/`.vue` were
-> parseable; dep-cruiser parses `.ts` only when it can resolve `typescript`, which
-> pnpm's strict layout does not hoist. **522 of 675 eligible files were unreadable**
-> while the graph reported `outcome: 'ok'` and `arch:drift` printed
-> `Layering violations: 0` — a sentence that reads as *no violations* and means
-> *nothing measured*. `assessParserAvailability` asks dep-cruiser's own
-> `allExtensions` instead, and `extraction.parser` names the gap with its remedy.
-> **Generalise both: before a walk or an allowlist decides what a repo contains,
-> ask what already knows — git for ownership, the parser for its own capability.**
+> QUESTION, not a constant.** The index walked the filesystem against a fixed
+> `SKIP_DIRS` and never asked git, so gitignored-and-untracked files (this
+> bundle's own `scripts/.claude-skills/` among them) were indexed as a consumer's
+> code; and `CRUISABLE_EXTENSIONS` *claimed* `.ts`/`.vue` parseable when
+> dep-cruiser could not resolve `typescript`, so `arch:drift` printed
+> `Layering violations: 0` — *nothing measured*, worded as *no violations*.
+> `enumerateFilesWithOwnership` now asks the one oracle
+> ([disowned-paths.mjs](scripts/lib/disowned-paths.mjs): **ignored AND untracked**,
+> of the CANDIDATES, fail-open and loud) and `assessParserAvailability` asks the
+> parser. **Generalise: before a walk or an allowlist decides what a repo
+> contains, ask what already knows — git for ownership, the parser for its own
+> capability.** Measurements: [architecture-index.md](docs/reference/architecture-index.md).
 >
 > **RETAGGING A MODULE CHANGES EVERY EDGE *INTO* IT — re-baseline BOTH
 > directions.** Moving a file to another domain changes the `from` domain of
-> everything it imports *and* the `to` domain of everything that imports it. The
-> second half is the one that gets forgotten, because it is invisible from the
-> file you are editing. **Three retags in four days made this exact error**:
-> `d5e66d35` (2026-08-10) cleared `shared-lib`'s outbound grant and created four
-> inbound violations, its own commit message showing the one-sided check
-> (*"adds no new edge: model-eval → audit-orchestration was already declared"* —
-> that is what the file IMPORTS, never who imports IT); `a146bb7b` (08-12)
-> repeated it, retagging `lib/cross-skill/**` and creating four
-> `tests → cross-skill-bridge` violations. Do not verify this by grep — a
+> everything it imports *and* the `to` domain of everything that imports it — the
+> second half is invisible from the file you are editing, and three retags in four
+> days (`d5e66d35` and `a146bb7b` among them) forgot it. Do not verify by grep — a
 > docstring mention reads as an import. Run the mechanical check:
 > `tests/arm-vocabulary-layering.test.mjs` re-derives the whole violation set and
 > is in `npm test`, so a retag that breaks the inbound half fails at push.
@@ -105,53 +79,42 @@
 > it durably lives.** The two categories below cover *generated* files. A third,
 > **P — private and load-bearing**, covers what is neither generated nor
 > publishable: it must never be public, cannot be regenerated, and therefore
-> owes a `Durable home:`. Skipping that question cost **37 tech-debt entries
-> living on exactly one disk** until 2026-09-04, while the owning module called
-> the ignored file "the durable, human-approved state". Declared in
-> `.gitignore`'s own comment blocks (`Category: A|B|P`, plus `Durable home:` /
-> `Recoverable:` / `Disposable:` for P), gated drift-only by
-> `npm run gitignore:policy:gate`. Policy + the per-rule table:
+> owes a `Durable home:` (skipping that question left 37 tech-debt entries on
+> exactly one disk). Declared in `.gitignore`'s own comment blocks
+> (`Category: A|B|P`, plus `Durable home:` / `Recoverable:` / `Disposable:` for P),
+> gated drift-only by `npm run gitignore:policy:gate`. Policy + the per-rule table:
 > [`docs/reference/gitignore-policy.md`](docs/reference/gitignore-policy.md).
 >
 > **An exit that stdout can reach must drain first.** On Windows a piped
 > `process.stdout` is asynchronous — `npm run x`, `x | tee` and every CI capture
-> are pipes — so `process.exit()` **discards whatever has not flushed**. Use
-> **`await finishAndExit(code)`** ([cli-io.mjs](scripts/lib/cli-io.mjs)) after
-> writing to stdout. In a **synchronous** function it cannot be awaited: hand
+> are pipes — so `process.exit()` **discards whatever has not flushed**, and a
+> truncated JSON envelope a caller parses reads as a parse error blamed on the
+> wrong thing. Use **`await finishAndExit(code)`** ([cli-io.mjs](scripts/lib/cli-io.mjs))
+> after writing to stdout. In a **synchronous** function it cannot be awaited: hand
 > the decision to the async caller, and never fire `void finishAndExit(code)`
 > and fall through — that returns immediately and the exit still truncates.
 > `npm run stdout:flush:gate` ratchets the population drift-only (growth AND
-> unrecorded shrink fail); `--report` for the triaged census, 221 sites at
-> 2026-09-04, 108 carrying a **JSON envelope a caller parses** — where a
-> truncation is a parse error blamed on the wrong thing, not merely a lost tail.
-> Deliberate non-findings: a `stderr` write before an exit, and the
-> `--selfcheck-relocation` smoke contract's exact two-statement body.
-> [Plan](docs/plans/stdout-flush-drain-gate.md)
+> unrecorded shrink fail; `--report` for the triaged census). Deliberate
+> non-findings: a `stderr` write before an exit, and the `--selfcheck-relocation`
+> smoke contract's exact two-statement body.
+> [Census](docs/reference/ratchet-gates.md) · [Plan](docs/plans/stdout-flush-drain-gate.md)
 >
 > **Oversized files may not grow.** `npm run size:ratchet:gate` ratchets every
 > `scripts/**` file already over 1000 lines against `.file-size-baseline.json`,
 > drift-only in knip-gate's shape. **A shrink fails too** — asking you to
 > re-baseline — because a baseline pinned at the historical high-water mark lets
-> a file grow back unchallenged. Measured over the 60 days to 2026-09-04: two
-> decompositions removed 3,652 lines and were outpaced by 4,551 lines of
-> unmanaged growth across 11 other files.
+> a file grow back unchallenged. [Measurement](docs/reference/ratchet-gates.md).
 >
 > **Generated-artifact policy (invariant — avoid the "messy middle").** Every
 > generated file lands in exactly ONE of two categories; never tracked-but-
 > unverified-and-volatile:
 > - **A — derived from external/mutable state OR carrying volatile provenance
 >   (timestamps, HEAD shas) → gitignored.** It is not source and cannot be a
->   pure function of committed source. Examples: `.audit-loop/domain-deps-observed.json`
->   (DB import graph), `.audit-loop/cache/`, **`dashboard/index.html` +
->   `dashboard/telemetry.html`** (local-only, rebuilt by `npm run dashboard`),
->   `.audit-loop/repo-alias-map.json` (spent reconcile intermediate), **the
->   `scripts/.sync-manifest.json`** (timestamp + HEAD sha ⇒ per-push churn;
->   gitignored in BOTH source and consumers since 2026-07-21 — Feature B of
->   `sync-ownership-from-content.md`, once ownership moved to content banners and
->   `sync-isolation-verify` read it from disk), **`docs/architecture-map.md`** (reclassified B → A
->   2026-07-20: header carries a timestamp + commit sha + refresh_id, the body
->   carries 33 LLM-written domain summaries, and it renders from the CLOUD
->   symbol_index — three independent reasons two renders of one commit differ;
+>   pure function of committed source. Examples: `.audit-loop/domain-deps-observed.json`,
+>   `.audit-loop/cache/`, `dashboard/index.html` + `dashboard/telemetry.html`
+>   (rebuilt by `npm run dashboard`), `scripts/.sync-manifest.json` (timestamp +
+>   HEAD sha ⇒ per-push churn), `docs/architecture-map.md` (timestamp + commit
+>   sha + LLM-written summaries, rendered from the CLOUD symbol_index;
 >   regenerate with `npm run arch:render`).
 > - **B — a pure, deterministic function of committed source → committed AND
 >   freshness-verified in the pre-push `check`.** Regeneration must be byte-
@@ -159,16 +122,14 @@
 >   `skills:regenerate`, enforced by `skills:check`); `docs/plans/README.md`, the
 >   status-bucketed plans index (`plans:index` / `plans:index:check`);
 >   `docs/requirements-map.md` (`requirements:map` / `requirements:map:check`);
->   **`scripts/lib/bundle-deps.json`**, every npm package the synced bundle
->   imports plus its importers, derived from the import graph so a consumer can
->   verify its install and build a knip ignore list without hydrating the tree
->   (`npm run bundle:deps` / `bundle:deps:check`).
+>   `scripts/lib/bundle-deps.json`, the synced bundle's npm deps derived from the
+>   import graph (`npm run bundle:deps` / `bundle:deps:check`).
 >
 > The test for a tracked generated file: *would two regenerations on the same
 > commit be byte-identical, and does a check enforce it?* If no → it belongs in
 > A (gitignore it), not committed. A committed artifact whose dirtiness carries
-> no information is churn, not a reference. (The dashboard reference page lived
-> in the messy middle until 2026-06 — see `docs/plans/local-dashboard.md` §2.1.)
+> no information is churn, not a reference. Per-example history:
+> [gitignore-policy.md](docs/reference/gitignore-policy.md).
 <!-- arch-map-discoverability:end -->
 
 > **Design right-sizing — the simplest structurally-honest solution.** At any
@@ -267,22 +228,16 @@ skills:check`/`gates:check` validate it; details: `docs/reference/gate-honesty.m
 Each skill is a sibling — they share env vars and the cloud audit store but have
 distinct scopes.
 
-> **AN UNMEASURED ROUND MUST NOT WEAR A CLEAN ROUND'S CLOTHES.** A consumer's
-> round lost every pass to Azure 429s and timeouts and printed
-> `Verdict: INCOMPLETE | H:0 M:0 L:0`, exit 0 (2026-09-04) — one word from a
-> clean audit, and `audit-loop.mjs`'s convergence test reads only those three
-> numbers, so `/cycle` converges and ships. Three separable fixes, all now
-> pinned: `formatAuditSummaryLine` refuses the counts-first shape for
-> INCOMPLETE and says *how many of how many passes produced output*;
-> `openai-audit.mjs` sets **exit 3** (not 1, which already means "the CLI
-> errored"); and `countFindings` folds INCOMPLETE into its existing `failed`
-> flag, so ONE predicate still answers "is this round evidence". Separately,
-> **429 is budgeted apart from a generic transient** — one retry at an 8s
-> ceiling cannot succeed against a provider saying *high demand* — via
-> `retryAttemptsFor`/`nextRetryDelayMs` (exponential + FULL jitter, `Retry-After`
-> wins, clamped). And `describeLostWrites` names the writer behind a standing
-> `N lost`, flagging a `42P10`-shaped error as **store schema drift** with
-> `setup-postgres.mjs --check-drift`.
+> **AN UNMEASURED ROUND MUST NOT WEAR A CLEAN ROUND'S CLOTHES.** A round that
+> lost every pass to Azure 429s printed `Verdict: INCOMPLETE | H:0 M:0 L:0`,
+> exit 0 — one word from a clean audit, and the convergence test reads only those
+> three numbers, so `/cycle` converges and ships. Pinned: `formatAuditSummaryLine`
+> refuses the counts-first shape for INCOMPLETE; `openai-audit.mjs` sets **exit 3**
+> (1 already means "the CLI errored"); `countFindings` folds INCOMPLETE into its
+> existing `failed` flag, so ONE predicate answers "is this round evidence". 429 is
+> budgeted apart from a generic transient (`retryAttemptsFor`/`nextRetryDelayMs`),
+> and `describeLostWrites` flags a `42P10`-shaped error as **store schema drift**
+> (`setup-postgres.mjs --check-drift`). [Detail](docs/reference/audit-internals.md)
 
 **Four imperatives the roster is too late to tell you.** **(1)** A new mechanical
 wave must be declared in `MECHANICAL_WAVES` ([audit-shadow.mjs](scripts/lib/audit-shadow.mjs)),
@@ -313,13 +268,12 @@ consumer instead of the named one. Verified 2026-07-20.)
 > [consumer-adoption.md](docs/runbooks/consumer-adoption.md).
 >
 > **Consumers are not all on ONE store**, so **an unasked question must never
-> render as an empty result** — a single-store read is blind to a consumer and
-> renders that blindness as good news (`/ship` printed `0 open` against 8). Fan
-> out with `npm run upstream:queues` / `stores:drift`; name a store by
-> `storeDescriptor` (fingerprint + consumers, never a hostname — this repo is
-> public and one consumer's store is corporate). **An EMPTY DSN env var is the
-> AIR-GAP signal** (`airGapDbUrl`, 20 suites, some `DROP SCHEMA`) — never "fix"
-> it to fall through to `~/.audit-loop.env`. [Detail](docs/reference/consumer-repo-layout.md)
+> render as an empty result** — a single-store read is blind to a consumer (`/ship`
+> printed `0 open` against 8). Fan out with `npm run upstream:queues` /
+> `stores:drift`; name a store by `storeDescriptor` (fingerprint + consumers, never
+> a hostname — this repo is public). **An EMPTY DSN env var is the AIR-GAP
+> signal** (`airGapDbUrl`) — never "fix" it to fall through to `~/.audit-loop.env`.
+> [Detail](docs/reference/consumer-repo-layout.md)
 >
 > **File the report, don't paste it.** Consumer: `cross-skill.mjs upstream report
 > --affected-path <synced path>`; here: `npm run upstream:issues` →
@@ -349,11 +303,11 @@ consumer instead of the named one. Verified 2026-07-20.)
 > answers it — git-ignore state, the content banner and the sync manifest each
 > have a hole. The one predicate is `createUpstreamOwnershipOracle`, unioning
 > git-ignore state with the **committed** `scripts/.sync-owned.json`; compare
-> **case-insensitively**. `debt:review` partitions on it, LISTING upstream-owned
-> entries but never leverage-ranking them (`debt-resolve.mjs` *deletes* the record
-> of a still-open defect). **`skills:hydrate` cannot run in CI by construction**
-> and now FAILS there instead of exiting 0 having copied nothing. Both, with the
-> holes and the measurements: [consumer-repo-layout.md](docs/reference/consumer-repo-layout.md)
+> **case-insensitively**. `debt:review` LISTS upstream-owned entries but never
+> leverage-ranks them (`debt-resolve.mjs` *deletes* the record of a still-open
+> defect). **`skills:hydrate` cannot run in CI by construction** and FAILS there
+> rather than exiting 0 having copied nothing. Holes + measurements:
+> [consumer-repo-layout.md](docs/reference/consumer-repo-layout.md)
 
 > **Upstream bug, but you're blocked?** Patching upstream-owned *source* stays
 > forbidden; a **runtime/env/DB** unblock is OK if you report it, label it
@@ -367,12 +321,11 @@ consumer instead of the named one. Verified 2026-07-20.)
 > (`--overwrite-diverged` consents), untracked ⇒ overwrite loudly. **(2)** Standing
 > divergence lives in the committed `.sync-overrides.json` (`reason` required,
 > malformed ⇒ ABORT, `scripts/.claude-skills/**` never claimable — that is an
-> upstream report), and an `upstreamMoved` report means review it, not ignore it:
-> an override whose justification was fixed upstream is one a `/ship` should
-> retire. **(3)** Every sync writes the committed, **append-only**
-> `.sync-receipt.json` — a deliberate generated-artifact-policy exception, its
-> dirtiness being the only evidence a sync ran.
-> [Why each shape](docs/reference/consumer-repo-layout.md) · [Plan](docs/plans/consumer-sync-durability.md).
+> upstream report); review an `upstreamMoved` report, never ignore it. **(3)** Every
+> sync writes the committed, **append-only** `.sync-receipt.json` — a deliberate
+> generated-artifact-policy exception (its dirtiness is the only evidence a sync
+> ran). [Why each shape](docs/reference/consumer-repo-layout.md) ·
+> [Plan](docs/plans/consumer-sync-durability.md).
 
 ### Sync mechanics — pointer
 
@@ -407,35 +360,11 @@ See [`docs/runbooks/consumer-adoption.md`](docs/runbooks/consumer-adoption.md) �
 
 ## Browser Tool Setup (persona-test)
 
-`/persona-test` drives a real browser. **Playwright MCP is the preferred tool** — it's free, no credentials needed, works on your own apps.
-
-`.mcp.json` is included in this repo. Claude Code auto-discovers it and prompts you to enable Playwright MCP on first open. Just click **Allow** when prompted.
-
-**First-time setup — install the browser:**
-```bash
-npx playwright install chromium
-```
-This is required before the MCP server will start. Without it, the server crashes silently and no tools appear.
-
-**Verify it's working:**
-```bash
-npx @playwright/mcp@latest --version   # should print a version number
-```
-
-**Windows users** — Claude Code may need an MCP override; see [CLAUDE.md](./CLAUDE.md#claude-code-only-notes).
-
-BrightData Scraping Browser is also supported (handles anti-bot/CAPTCHA) but requires a paid account and KYC approval. Playwright is preferred for testing your own apps.
+`/persona-test` drives a real browser. **Playwright MCP is the preferred tool** — free, no credentials, works on your own apps. `.mcp.json` registers it and Claude Code prompts to enable it on first open (click **Allow**). **First-time setup: `npx playwright install chromium`** — without it the server crashes silently and no tools appear. Windows may need an MCP override: [CLAUDE.md](./CLAUDE.md#claude-code-only-notes). Verify command + BrightData alternative: [mcp-tooling.md](docs/runbooks/mcp-tooling.md).
 
 ## Mermaid validation (for plan diagrams)
 
-Two surfaces for catching broken Mermaid before it ships:
-
-- **Interactive (during plan generation)** — `.mcp.json` registers `mcp-mermaid`. Claude Code prompts to enable on first open (same flow as Playwright MCP). VS Code registers the same server from `.vscode/mcp.json`. The tool is **`mcp__mermaid__generate_mermaid_diagram`** (server name `mermaid` ⇒ that prefix); call it with `outputType: "mermaid"` to validate without rendering — invalid syntax returns an MCP error with the parser's line/column. No API key needed. It complements `plans:lint`, which catches renderer-strictness bugs the parser accepts (measured: the MCP passes `SG1 -.- B`). This bullet said `mcp__claude_ai_Mermaid_*` until 2026-09-02 — a server this repo never registered, so `/plan`'s validation step had never run.
-- **Pre-push (static lint)** — `npm run plans:lint` scans `docs/plans/*.md` for two classes of bugs that GitHub renders leniently but VS Code preview / stricter renderers reject:
-  - **ERROR `subgraph-as-edge-endpoint`** — using a `subgraph` ID as an edge endpoint (`SG1 -.- other`). Mermaid graph syntax doesn't allow this; anchor the edge to a node *inside* the subgraph.
-  - **WARN `unquoted-special-chars-in-label`** — node label brackets containing `<br/>` or non-ASCII chars (em-dash, etc.) without surrounding quotes. The bracketed-but-unquoted form parses in current Mermaid but breaks in older bundled versions. Always use `ID["..."]` when the label has special chars.
-
-Runs as part of `npm run check` (the pre-push hook). ERRORs block; WARNs are advisory. Why narrow rule coverage: the full Mermaid parser is in the 76MB `mermaid` package, too heavy for one lint. `@mermaid-js/parser` (lightweight alternative) doesn't yet handle flowchart/graph — we'll switch when it does. Until then, this regex linter + the MCP cover the gap.
+Two surfaces catch broken Mermaid before it ships. **Interactive**: `.mcp.json` registers `mcp-mermaid` (VS Code: `.vscode/mcp.json`); call **`mcp__mermaid__generate_mermaid_diagram`** with `outputType: "mermaid"` to validate without rendering — invalid syntax returns an MCP error with line/column, no API key. **Pre-push**: `npm run plans:lint` (part of `npm run check`) scans `docs/plans/*.md` for what the parser accepts but stricter renderers reject — **ERROR `subgraph-as-edge-endpoint`** (anchor the edge to a node *inside* the subgraph) blocks; **WARN `unquoted-special-chars-in-label`** (write `ID["..."]` when a label has `<br/>` or non-ASCII) is advisory. History and rule-coverage rationale: [mcp-tooling.md](docs/runbooks/mcp-tooling.md).
 
 ---
 
@@ -496,15 +425,14 @@ bake-off log**, which reads near-zero and looks like lost progress.
 - **A DB suite no runner names has never run.** Without a disposable DSN it skips
   itself, and node reports a never-run suite as a clean pass — so enrolment in
   `db-test-container.mjs`'s `*_SUITE_FILES` (**and**, in lockstep,
-  `postgres-parity.yml`) is the only thing that makes it coverage. A 2026-08-11
-  census found **15 enrolled nowhere**; six failed the moment they ran.
-  `npm run db:enrolment:gate` iterates the FILESYSTEM — the only side that can see
-  a file no list mentions. **Adding a DB-gated suite is two edits, never one.**
-  Run them locally via `npm run db:local` (mirrors CI: `--test-concurrency=1`,
-  isolated→destructive→contract) — never by setting `AUDIT_DB_TEST_URL` globally
-  for an unscoped `npm test`, which throws every enrolled file at one container
-  concurrently and times out (`cancelledByParent`), reading as failures that are
-  pure contention, not regressions (measured 2026-09-25).
+  `postgres-parity.yml`) is the only thing that makes it coverage (a 2026-08-11
+  census found 15 enrolled nowhere). `npm run db:enrolment:gate` iterates the
+  FILESYSTEM — the only side that can see a file no list mentions. **Adding a
+  DB-gated suite is two edits, never one.** Run them locally via `npm run db:local`
+  (mirrors CI: `--test-concurrency=1`, isolated→destructive→contract) — never by
+  setting `AUDIT_DB_TEST_URL` globally for an unscoped `npm test`: every enrolled
+  file hits one container concurrently and times out (`cancelledByParent`),
+  reading as regressions that are pure contention.
 - **Sandbox-honesty rule.** A fresh worktree has no gitignored inputs, so a check
   that *skips* on a missing input passes having read nothing. **Adding a check? Ask
   whether it can go green in a clean checkout having checked nothing — if so it
@@ -608,9 +536,8 @@ the thresholds, the `memory_health_metrics(window_days)` RPC and the
 0/1/2-trigger decision rule live in
 [`docs/reference/memory-health-gate.md`](docs/reference/memory-health-gate.md).
 Weekly via the local maintenance replica (`maintenance-checks.mjs` `memory-health`);
-ad hoc `npm run memory:health`. The Actions cron was **deleted 2026-09-13**: it
-had been green-and-skipping since at least June (no store reachable from a
-GitHub-hosted runner).
+ad hoc `npm run memory:health`. The Actions cron was **deleted 2026-09-13** (no
+store reachable from a GitHub-hosted runner — see Local Weekly Maintenance Checks).
 
 Three obligations stay resident; the incidents, query mechanics and thresholds are
 in [`docs/reference/memory-health-gate.md`](docs/reference/memory-health-gate.md):
@@ -626,13 +553,11 @@ in [`docs/reference/memory-health-gate.md`](docs/reference/memory-health-gate.md
   (44% of the raw signal on 2026-07-20). Matched on the detail-snapshot **prefix**,
   never the category — a wave emits both control state and real findings.
 - **Bound an RPC at the CALLER** — `SET statement_timeout` inside a function is
-  decorative. **Corrected 2026-09-05 (measured):** `CREATE OR REPLACE FUNCTION`
-  resets **`proconfig`** — restate `SET search_path` — but PRESERVES the ACL, so
-  a same-signature replacement does *not* drop an EXECUTE revoke. The privilege
-  hazard is the other shape: **changing the argument list makes a DIFFERENT
-  function**, whose default ACL is `EXECUTE` to `PUBLIC` and which the old
-  `REVOKE` does not name. Verify by `has_function_privilege`, never by review or
-  by a `proacl` that reads `NULL`. Both traps: the reference above.
+  decorative. `CREATE OR REPLACE FUNCTION` resets **`proconfig`** (restate `SET
+  search_path`) but PRESERVES the ACL; **changing the argument list makes a
+  DIFFERENT function**, whose default ACL is `EXECUTE` to `PUBLIC` and which the
+  old `REVOKE` does not name. Verify by `has_function_privilege`, never by review
+  or by a `proacl` that reads `NULL`. Both traps: the reference above.
 
 > **pgvector promoted (2026-07-21):** semantic cosine catches reworded re-raises that
 > trigram under-counts. Record-time hook in `recordFindings`, **default-ON**, fail-open,
@@ -706,12 +631,12 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
   [Plan](docs/plans/audit-target-identity-commit-sha-correction.md).
 - **jsonb-safe write seam — do NOT hand-`JSON.stringify` a jsonb column.** The
   db-layer write builders (`serializeWriteParam`) auto-serialize a plain array
-  bound to ANY column on the write path, because node-postgres binds one as a
-  Postgres ARRAY literal that jsonb rejects (`22P02`) or silently stores as `{}`.
-  **Pass jsonb values raw**; a real `text[]`/`int[]` column opts OUT with
-  **`pgArray(value)`**. The asymmetry is the thing to remember: a jsonb writer
-  that forgets is safe, a `text[]` writer that forgets fails LOUDLY.
-  [postgres-parity.md](docs/runbooks/postgres-parity.md) §jsonb write seam.
+  bound to ANY column on the write path (node-postgres otherwise binds an ARRAY
+  literal that jsonb rejects with `22P02` or silently stores as `{}`). **Pass
+  jsonb values raw**; a real `text[]`/`int[]` column opts OUT with
+  **`pgArray(value)`** — a jsonb writer that forgets is safe, a `text[]` writer
+  that forgets fails LOUDLY. [postgres-parity.md](docs/runbooks/postgres-parity.md)
+  §jsonb write seam.
 - **Migrations stay schema-portable**: `parity:check-coupling` fails on any `<schema>.`
   qualification or non-core reference outside the recorded baseline.
 - **Every audit-store write in `legacy-production-audit.mjs`'s cloud block goes
@@ -739,17 +664,16 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
   read-path catch **degrade loudly**, naming the SQLSTATE and the remedy. Testing
   the pure decision is not enough — **split the decision out AND put one assertion
   on a real Postgres**; the pure tests passed throughout the entire period a
-  freshness cache was dead. The 2026-09-05 incident (42703 on a column that never
-  existed, a `getRefreshRun` allowlist naming eight phantom columns, a cache that
-  never hit once in its history): [postgres-parity.md](docs/runbooks/postgres-parity.md).
+  freshness cache was dead. Incident (2026-09-05):
+  [postgres-parity.md](docs/runbooks/postgres-parity.md).
 - **"Disposable" is an ALLOWLIST of loopback hosts, and it fails CLOSED.**
   `isDisposableDbHost` / `assertDisposableDbUrl` (`scripts/lib/db/client.mjs`)
   guard the suites that `DROP SCHEMA public CASCADE` and the schema fixture.
-  **Never re-express this as "not $VENDOR"** — the denylist it replaced went
-  inert the day the store moved, and a denylist is only as current as the last
-  infra change. Same reason production identity is compared as host+port+database,
-  never as a DSN string. No env escape hatch, deliberately, and **regenerate the
-  fixture only from a fresh replay** (`npm run db:local:regen`).
+  **Never re-express this as "not $VENDOR"** — a denylist is only as current as
+  the last infra change (the one it replaced went inert the day the store moved);
+  production identity is likewise compared as host+port+database, never as a DSN
+  string. No env escape hatch, deliberately, and **regenerate the fixture only
+  from a fresh replay** (`npm run db:local:regen`).
   [postgres-parity.md](docs/runbooks/postgres-parity.md) §Incident + §Correction.
 
 → **Design** (no-adapter `pg`-direct decision, schema scope, privilege model, file plan): [`docs/plans/postgres-parity.md`](docs/plans/postgres-parity.md) + [`postgres-parity-schema-coupling.md`](docs/plans/postgres-parity-schema-coupling.md). **Operations** (setup recipe, migration-drift CLI + exit codes, pre-push snippet, break-glass atomic-apply, shared-cloud-config, prerequisites): [`docs/runbooks/postgres-parity.md`](docs/runbooks/postgres-parity.md).
@@ -832,8 +756,7 @@ CLI/dashboard surfaces and full incident history: plan doc, pointer below):
   callers can never spend. Both must hold before a provider is constructed.
 - **The discovery generator needs forced `tool_choice`, so it pins
   `{backend:'sdk'}` explicitly** — never the ambient `CLAUDE_BACKEND` (see the
-  Anthropic Backend Routing gotcha above); silently produced 20
-  all-`fallback_legacy` runs before 2026-07-14.
+  Anthropic Backend Routing gotcha above).
 - **"Window met" is now epoch-gated, not eyeballed** (2026-07-26, after the 5th
   false green): `comparedRuns` counts only rows the collector stamped with the
   current `TIERED_SHADOW_CONTRACT_EPOCH`. All pre-stamp rows are ineligible and
@@ -900,22 +823,17 @@ GitHub, never the local service manager, [detail](docs/runbooks/actions-runner-d
 and `npm run cadence:doctor`. **A cron that stops firing produces no run, no
 failure and no notification — nothing, which looks exactly like a quiet week**,
 so a cadence is OBSERVED, never trusted for having been configured. **The event
-filter is the load-bearing part**: against a consumer whose nightly had been red
-four straight days, unfiltered read `OK` (20 runs/11 successes) while
-`event=schedule` read `NEVER-RAN` (4/0). Watch list: committed
-`.workflow-cadence.json`. **Every non-OK outcome warns — including its own API
-call failing, and its watch list being ABSENT while the repo has crons**; a
-checker that goes quiet when it cannot tell reproduces the defect it detects, so
-`never-ran` carries `vacuous` to separate a finding from a query that matched
-nothing. **`ok` means "the run did not fail", not "the thing it measures is
-current"** — a fail-open branch exiting 0 is `success`, and 5 of THIS repo's 6
-watched crons were green-and-skipping (`AUDIT_DB_URL not set`) for months
-(2026-09-13). A skip branch therefore emits
-`::notice title=audit-loop-no-measurement::<reason>` (`lib/measurement-marker.mjs`),
-and a watch with `requireMeasurement: true` reads it back from the run's
-check-run annotations (needs `checks: read`) → verdict `unmeasured`. Never grep
-the job log for it: Actions echoes the script body BEFORE running it, so the
-branch that did not fire still matches. [Detail](docs/reference/workflow-cadence-doctor.md).
+filter is the load-bearing part** (unfiltered read `OK` where `event=schedule`
+read `NEVER-RAN`). Watch list: committed `.workflow-cadence.json`. **Every non-OK
+outcome warns — including its own API call failing, and its watch list being
+ABSENT while the repo has crons**; a checker that goes quiet when it cannot tell
+reproduces the defect it detects. **`ok` means "the run did not fail", not "the
+thing it measures is current"** — a fail-open branch exiting 0 is `success` (5 of
+THIS repo's 6 watched crons were green-and-skipping for months, 2026-09-13). A skip
+branch therefore emits `::notice title=audit-loop-no-measurement::<reason>`
+(`lib/measurement-marker.mjs`), and a watch with `requireMeasurement: true` reads
+it back from check-run annotations → verdict `unmeasured`; never grep the job log
+for it. [Detail](docs/reference/workflow-cadence-doctor.md).
 
 ## Azure AI Foundry Work Profile
 
@@ -1078,15 +996,14 @@ numbers — the cutoff is computed per repo** (see "Why no fixed numbers" below)
   and rejected".
 
 **Why no fixed numbers.** The old `reuse ≥0.90 / extend ≥0.85 / justify-divergence
-≥0.75` bands fired **zero times in 1,763 consultations** — the pipeline tops out near
-0.83, so they were mathematically unreachable and the feature was inert for its whole
-history. The cutoff is now `μ + 3σ` over the repo's OWN symbol-embedding background,
-computed at `arch:refresh`, because a threshold is a property of *corpus × summary
-style × embedding model × compose template × normalizer*, not of the tool — and this
-tooling syncs elsewhere, so a constant would repeat the defect there. **An
-uncalibrated repo bands `review` only**: honest, not degraded; run
-`npm run arch:refresh`. The three old band names are **retired** — seeing them means
-stale tooling.
+≥0.75` bands fired **zero times in 1,763 consultations** (the pipeline tops out near
+0.83 — mathematically unreachable). The cutoff is now `μ + 3σ` over the repo's OWN
+symbol-embedding background, computed at `arch:refresh`, because a threshold is a
+property of *corpus × summary style × embedding model × compose template ×
+normalizer*, not of the tool — and this tooling syncs elsewhere. **An uncalibrated
+repo bands `review` only**: honest, not degraded; run `npm run arch:refresh`. The
+three old band names are **retired** — seeing them means stale tooling. History:
+[arch-memory-band-recalibration.md](docs/plans/arch-memory-band-recalibration.md).
 
 **When NOT to consult**:
 
@@ -1192,13 +1109,8 @@ codebase's de-facto requirements — the behavioural / safety / security /
 correctness / persistence invariants the code already enforces.
 
 - **`scripts/requirements.mjs`** — CLI: `extract --files <a,b,…> [--runs N]`
-  → `reconcile` → `index`. `extract` runs the LLM extractor 2× and merges;
-  `reconcile` folds candidates + gap assessments + hand-curated
-  `overrides.json` into the ledger; both hold a repo-scoped `withFileLock`.
-- **`scripts/lib/requirements/`** — `schema.mjs` (Zod contracts, shared
-  `RequirementIdSchema`), `extract.mjs`, `gap-challenge.mjs` (advisory),
-  `ledger.mjs` (pure `reconcile`), `context.mjs` (`getRequirementsContext`),
-  `llm-json.mjs`.
+  → `reconcile` → `index`; modules under `scripts/lib/requirements/`
+  (per-module detail: the plan above).
 - **`.requirements/`** — `README.md` + the **committed** `ledger.json` (the
   shared, diffable rubric) are tracked; `candidates.json` / `gaps.json` are
   gitignored extraction intermediates; `overrides.json` is user-curated
@@ -1206,8 +1118,8 @@ correctness / persistence invariants the code already enforces.
   the index is derived in-memory.
 - **`/audit-code` consumption** — when `.requirements/ledger.json` exists,
   `runMultiPassCodeAudit` injects a `<requirements_rubric>` block (in-scope
-  `active` invariants enforced, the rest indexed) through the shared
-  `buildAuditPassPrompt`. Non-blocking: ledger absent → audit unaffected.
+  `active` invariants enforced, the rest indexed). Non-blocking: ledger absent →
+  audit unaffected.
 - **Egress safety** — `extract --files` is user-supplied: every path is
   repo-root-contained AND symlink-resolved before read; sensitive paths
   (and sensitive symlink targets) are refused; bodies are secret-redacted.
@@ -1356,18 +1268,15 @@ git trailers written ONLY by `scripts/ship-commit.mjs` (`/ship` Step 6.3) —
 never hand-typed; the `AI-*` namespace is reserved. `AI-Gate` has **four**
 values, two verified against the store's `audit_runs` row and two declared:
 `passed` (converged AND the committed tree IS the audited tree) · **`converged`**
-(converged AND the tree DIFFERS — the audited-then-**remediated** ship, added
-2026-09-04) · `waived` (declared, unverified) · `not-run` (no fresh evidence).
-Both verified values are fail-closed and clear the **same** store bar, so
-neither is cheaper; they are the equal/differing halves of one comparison, and
-each refusal names the other — you may not over- *or* under-claim.
-**`passed` is rare by design**: `/ship`'s own Steps 2–5 move the tree after the
-audit, so even a zero-finding converged audit lands on `converged` (measured at
-that date: 647 `not-run`, 86 `waived`, 2 `passed`). Never hand-write
-`.audit/last-audit-run.json` or reorder a ship to chase it — the value worth
-investigating is a `passed` that should not be there. Applies from tag
-`provenance-v1` forward; absence
-after that = "not mechanically produced". Schema, query cookbook, failure
+(converged AND the tree DIFFERS — the audited-then-**remediated** ship) ·
+`waived` (declared, unverified) · `not-run` (no fresh evidence). Both verified
+values are fail-closed and clear the **same** store bar, so neither is cheaper;
+each refusal names the other — you may not over- *or* under-claim. **`passed` is
+rare by design** (`/ship`'s own Steps 2–5 move the tree after the audit): never
+hand-write `.audit/last-audit-run.json` or reorder a ship to chase it — the value
+worth investigating is a `passed` that should not be there. Applies from tag
+`provenance-v1` forward; absence after that = "not mechanically produced".
+Schema, measured counts, query cookbook, failure
 contract: [`docs/reference/commit-provenance.md`](docs/reference/commit-provenance.md);
 design + the measured reason `converged` carries no audited-tree trailer:
 [`docs/plans/gate-taxonomy-remediated-ships.md`](docs/plans/gate-taxonomy-remediated-ships.md).

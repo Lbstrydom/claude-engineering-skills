@@ -334,6 +334,65 @@ export function writeRoundLedger(auditDir, name, entries) {
   return p;
 }
 
+/**
+ * A `ruling: 'defer'` round-ledger entry, `extra` spread last so a caller can
+ * override any field. Consolidated here (arch:drift duplication cleanup) —
+ * `debt-auto-capture-same-file-nudge`, `-trail-warn-cli` and `-supersedes`
+ * each had their own byte-identical copy. (`-partial-capture-cli` keeps its
+ * own: it defaults `severity` to HIGH and takes `rulingRationale` positionally.)
+ * @param {string} topicId
+ * @param {object} [extra]
+ */
+export function makeDeferEntry(topicId, extra = {}) {
+  return {
+    topicId,
+    ruling: 'defer',
+    severity: 'MEDIUM',
+    category: 'god-module',
+    section: 'src/x.js:1',
+    detailSnapshot: 'a sufficiently descriptive detail snapshot',
+    rulingRationale: 'independent of this change — out of scope for the current fix',
+    affectedFiles: ['src/x.js'],
+    ...extra,
+  };
+}
+
+/**
+ * Run `fn` with `process.cwd()` switched to `dir`, restoring it afterwards.
+ * Consolidated here (arch:drift duplication cleanup) —
+ * `tiered-model-selection.test.mjs` and `tiered-pipeline-stage0-wiring.test.mjs`
+ * each had their own byte-identical copy.
+ *
+ * MUST `await` `fn()` — `return fn()` alone returns fn's pending promise before
+ * `finally` runs, so any code in `fn` AFTER its first `await` would see cwd
+ * already restored (audit-code fix M6).
+ * @template T
+ * @param {string} dir
+ * @param {() => T | Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+export async function withCwd(dir, fn) {
+  const saved = process.cwd();
+  process.chdir(dir);
+  try {
+    return await fn();
+  } finally {
+    process.chdir(saved);
+  }
+}
+
+/**
+ * A unit vector in the plane at `deg` degrees — cosine between two of them is
+ * exactly cos(angle between). Consolidated here (arch:drift duplication
+ * cleanup) — `backlog-work-unit-grouping.test.mjs` and `work-units.test.mjs`
+ * each had their own identical copy (named `at`).
+ * @param {number} deg
+ * @returns {[number, number]}
+ */
+export function unitVectorAt(deg) {
+  return [Math.cos((deg * Math.PI) / 180), Math.sin((deg * Math.PI) / 180)];
+}
+
 /** Retry-hardened rm — a concurrent AV/indexer can hold a handle briefly on Windows. */
 export function rmrf(p) {
   fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });

@@ -405,13 +405,19 @@ describe('findRepoPragmas — untracked files + strict mode (round-2 M7 / H8)', 
 });
 
 describe('findRepoPragmas — this repo\'s own tests/** pragmas are no longer hidden', () => {
-  it('finds real pragmas nested under tests/install/** — a live regression guard for the removed tests/* exclusion', () => {
+  // The live instance used to be tests/install/legacy-uninstall.test.mjs (a pragma
+  // nested under tests/install/). That duplicate was consolidated onto cli-io's
+  // `sha`, so its pragma went with it — which is what a pragma is for. The NESTED
+  // shape stays covered by the synthetic "tests/unit/**" case above; this live
+  // guard needs only one real pragma under tests/ in THIS repo to prove the
+  // removed `tests/*` pathspec exclusion has not come back.
+  it('finds this repo\'s real tests/** pragmas — a live regression guard for the removed tests/* exclusion', () => {
     const repoRoot = process.cwd();
     const pragmas = findRepoPragmas(repoRoot);
-    const nested = pragmas.find((p) => p.pragmaFile === 'tests/install/legacy-uninstall.test.mjs');
-    assert.ok(nested, 'expected a real pragma nested under tests/install/ to be found');
-    assert.equal(nested.targetFile, 'tests/install/lifecycle.test.mjs');
-    assert.equal(nested.targetSymbol, 'sha12');
+    const real = pragmas.find((p) => p.pragmaFile === 'tests/vcs-blame.test.mjs');
+    assert.ok(real, 'expected a real pragma under tests/ to be found');
+    assert.equal(real.targetFile, 'tests/vcs.test.mjs');
+    assert.equal(real.targetSymbol, 'mkdtemp');
   });
 
   it('does not false-positive on this repo\'s own pragma-shaped test fixture STRINGS (protected by PRAGMA_RE\'s ^\\s* anchor, not by a directory exclusion)', () => {

@@ -30,7 +30,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 
-import { seedInstalledDeps, runSyncCli, whySyncFailed, git as sharedGit } from './helpers/consumer-fixture.mjs';
+import { seedInstalledDeps, runSyncCli, whySyncFailed, git } from './helpers/consumer-fixture.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs');
@@ -42,10 +42,6 @@ const MCP = '.vscode/mcp.json';
 
 let tmp;
 let consumer;
-
-function git(args, cwd = consumer) {
-  return sharedGit(args, cwd);
-}
 
 async function sync(extra = [], root = consumer) {
   return runSyncCli(['--target-path', root, '--no-prompt', ...extra]);
@@ -65,8 +61,8 @@ before(async () => {
   consumer = path.join(tmp, 'consumer');
   fs.mkdirSync(consumer, { recursive: true });
   git(['init', '--initial-branch=main'], consumer);
-  git(['config', 'user.email', 'test@example.invalid']);
-  git(['config', 'user.name', 'Sync Divergence Test']);
+  git(['config', 'user.email', 'test@example.invalid'], consumer);
+  git(['config', 'user.name', 'Sync Divergence Test'], consumer);
   fs.writeFileSync(
     path.join(consumer, 'package.json'),
     JSON.stringify({ name: 'divergence-fixture', type: 'module' }, null, 2),
@@ -78,8 +74,8 @@ before(async () => {
   // hand-picked number here) is sized around the no-install case by default.
   seedInstalledDeps(consumer);
   fs.writeFileSync(path.join(consumer, '.gitignore'), '');
-  git(['add', '-A']);
-  git(['commit', '-m', 'init', '--no-gpg-sign']);
+  git(['add', '-A'], consumer);
+  git(['commit', '-m', 'init', '--no-gpg-sign'], consumer);
 });
 
 after(() => { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
@@ -134,16 +130,16 @@ describe('a consumer diverges on a tracked synced file, and commits it', () => {
   let result;
 
   it('the sync REFUSES to overwrite it and fails', async () => {
-    git(['add', '-A']);
-    git(['commit', '-m', 'adopt bundle', '--no-gpg-sign']);
+    git(['add', '-A'], consumer);
+    git(['commit', '-m', 'adopt bundle', '--no-gpg-sign'], consumer);
     const original = read(SUBJECT);
     write(SUBJECT, original.replace(
       /> \*\*Worktree preflight\*\*/,
       '> **Worktree preflight** — CONSUMER FORM, deliberately condensed.\n> <!-- was: -->\n> **Worktree preflight**',
     ));
     assert.notEqual(read(SUBJECT), original, 'fixture did not actually diverge');
-    git(['add', '--', SUBJECT]);
-    git(['commit', '-m', 'condense the preflight block', '--no-gpg-sign']);
+    git(['add', '--', SUBJECT], consumer);
+    git(['commit', '-m', 'condense the preflight block', '--no-gpg-sign'], consumer);
 
     result = await sync();
     assert.notEqual(result.code, 0, 'a refusal must fail the run');
@@ -157,7 +153,7 @@ describe('a consumer diverges on a tracked synced file, and commits it', () => {
 
   it('leaves the consumer content on disk — nothing was reverted', () => {
     assert.match(read(SUBJECT), /CONSUMER FORM, deliberately condensed/);
-    assert.equal(git(['status', '--porcelain', '--', SUBJECT]).trim(), '',
+    assert.equal(git(['status', '--porcelain', '--', SUBJECT], consumer).trim(), '',
       'the subject file should be clean at HEAD, i.e. untouched');
   });
 
@@ -217,8 +213,8 @@ describe('the consumer declares the divergence', () => {
       version: 1,
       overrides: [{ path: SUBJECT, reason: 'condensed preflight block; upstream report 5b1a121e' }],
     }, null, 2)}\n`);
-    git(['add', '-A']);
-    git(['commit', '-m', 'declare the override', '--no-gpg-sign']);
+    git(['add', '-A'], consumer);
+    git(['commit', '-m', 'declare the override', '--no-gpg-sign'], consumer);
 
     result = await sync();
     assert.equal(result.code, 0, whySyncFailed(result));
@@ -238,11 +234,11 @@ describe('the consumer declares the divergence', () => {
   });
 
   it('a re-sync is idempotent — the hold does not churn the receipt', async () => {
-    git(['add', '-A']);
-    git(['commit', '-m', 'receipt', '--no-gpg-sign']);
+    git(['add', '-A'], consumer);
+    git(['commit', '-m', 'receipt', '--no-gpg-sign'], consumer);
     const again = await sync();
     assert.equal(again.code, 0, whySyncFailed(again));
-    assert.equal(git(['status', '--porcelain', '--', '.sync-receipt.json']).trim(), '',
+    assert.equal(git(['status', '--porcelain', '--', '.sync-receipt.json'], consumer).trim(), '',
       'a no-op sync re-dirtied the receipt');
   });
 });
@@ -269,8 +265,8 @@ describe('pinned launchers survive the JSON merge', () => {
     };
     write(MCP, `${JSON.stringify(pinned, null, 2)}
 `);
-    git(['add', '-A']);
-    git(['commit', '-m', 'pin the mcp servers', '--no-gpg-sign']);
+    git(['add', '-A'], consumer);
+    git(['commit', '-m', 'pin the mcp servers', '--no-gpg-sign'], consumer);
 
     const result = await sync(['--overwrite-diverged']);
     assert.equal(result.code, 0, whySyncFailed(result));

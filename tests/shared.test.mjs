@@ -350,13 +350,15 @@ describe('writeLedgerEntry', () => {
     assert.equal(fs.existsSync(ledgerPath), false);
   });
 
-  it('backs up corrupted ledger files', () => {
+  // Was 'backs up corrupted ledger files': it asserted the fail-open "back up and start
+  // fresh", which replaced every other ruling with the one in hand. Now refused and
+  // untouched — full coverage in tests/ledger-single-writer.test.mjs.
+  it('refuses a corrupted ledger file and leaves it untouched', () => {
     const ledgerPath = path.join(tmpDir, 'ledger.json');
     fs.writeFileSync(ledgerPath, 'not json', 'utf-8');
-    writeLedgerEntry(ledgerPath, makeLedgerEntry());
-    assert.ok(fs.existsSync(`${ledgerPath}.bak`));
-    const ledger = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
-    assert.equal(ledger.entries.length, 1);
+    assert.throws(() => writeLedgerEntry(ledgerPath, makeLedgerEntry()), /unreadable/);
+    assert.equal(fs.readFileSync(ledgerPath, 'utf-8'), 'not json');
+    assert.equal(fs.existsSync(`${ledgerPath}.bak`), false);
   });
 });
 

@@ -58,7 +58,7 @@ import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-import { seedInstalledDeps, runSyncCli, whySyncFailed, git as sharedGit } from './helpers/consumer-fixture.mjs';
+import { seedInstalledDeps, runSyncCli, whySyncFailed, git } from './helpers/consumer-fixture.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs');
@@ -68,10 +68,6 @@ const RECEIPT = '.sync-receipt.json';
 
 let tmp;
 let consumer;
-
-function git(args, cwd = consumer) {
-  return sharedGit(args, cwd);
-}
 
 async function sync(extra = []) {
   return runSyncCli(['--target-path', consumer, '--no-prompt', ...extra]);
@@ -109,12 +105,12 @@ before(async () => {
   consumer = path.join(tmp, 'consumer');
   fs.mkdirSync(consumer, { recursive: true });
   git(['init', '--initial-branch=main'], consumer);
-  git(['config', 'user.email', 'test@example.invalid']);
-  git(['config', 'user.name', 'Sync EOL Test']);
+  git(['config', 'user.email', 'test@example.invalid'], consumer);
+  git(['config', 'user.name', 'Sync EOL Test'], consumer);
   // The consumer-side condition the report describes: a Windows checkout that
   // would rewrite LF to CRLF. Set explicitly so the test exercises the same
   // configuration on every platform rather than only on Windows.
-  git(['config', 'core.autocrlf', 'true']);
+  git(['config', 'core.autocrlf', 'true'], consumer);
   fs.writeFileSync(
     path.join(consumer, 'package.json'),
     JSON.stringify({ name: 'eol-fixture', type: 'module' }, null, 2),
@@ -126,8 +122,8 @@ before(async () => {
   // hand-picked number here) is sized around the no-install case by default.
   seedInstalledDeps(consumer);
   fs.writeFileSync(path.join(consumer, '.gitignore'), '');
-  git(['add', '-A']);
-  git(['commit', '-m', 'init', '--no-gpg-sign']);
+  git(['add', '-A'], consumer);
+  git(['commit', '-m', 'init', '--no-gpg-sign'], consumer);
 });
 
 after(() => {
@@ -147,8 +143,8 @@ describe('sync outbound EOL', () => {
     subject = pickTrackedSubject();
     assert.ok(subject, 'no tracked .claude/ destination was delivered — nothing to assert on');
 
-    git(['add', '-A']);
-    git(['commit', '-m', 'adopt sync', '--no-gpg-sign']);
+    git(['add', '-A'], consumer);
+    git(['commit', '-m', 'adopt sync', '--no-gpg-sign'], consumer);
 
     // `pickTrackedSubject` runs BEFORE this commit, so its name states an
     // intent the filesystem cannot confirm. Ask git whether the add actually
@@ -157,12 +153,12 @@ describe('sync outbound EOL', () => {
     // below — is vacuous for a file git is ignoring (round-1 code audit M3,
     // 2026-09-04). `ls-files` prints the path when tracked and nothing when not.
     assert.equal(
-      git(['ls-files', '--error-unmatch', '--', subject]).trim().replaceAll(path.sep, '/'),
+      git(['ls-files', '--error-unmatch', '--', subject], consumer).trim().replaceAll(path.sep, '/'),
       subject.replaceAll(path.sep, '/'),
       `subject ${subject} is not tracked — the EOL assertions below would be vacuous`,
     );
 
-    const dirty = git(['status', '--porcelain']).trim();
+    const dirty = git(['status', '--porcelain'], consumer).trim();
     assert.equal(dirty, '', `tree should be clean after committing the first sync, got:\n${dirty}`);
   });
 
@@ -192,7 +188,7 @@ describe('sync outbound EOL', () => {
     // report `M <path>` — but asserting it here, rather than assuming it, is
     // what makes this test's precondition provable instead of merely plausible.
     assert.match(
-      git(['status', '--porcelain', '--', subject]), /^ M /,
+      git(['status', '--porcelain', '--', subject], consumer), /^ M /,
       `seeding failed: git does not see ${subject} as dirty under its eol=lf attribute — the repair below would prove nothing`,
     );
 
@@ -208,7 +204,7 @@ describe('sync outbound EOL', () => {
   });
 
   it('leaves nothing dirty but the receipt, which is dirty by design', async () => {
-    const dirty = git(['status', '--porcelain'])
+    const dirty = git(['status', '--porcelain'], consumer)
       .split('\n')
       .map((l) => l.trim())
       .filter(Boolean);
@@ -221,13 +217,13 @@ describe('sync outbound EOL', () => {
   });
 
   it('a second consecutive sync is idempotent — no new churn', async () => {
-    git(['add', '-A']);
-    git(['commit', '-m', 'adopt receipt', '--no-gpg-sign']);
+    git(['add', '-A'], consumer);
+    git(['commit', '-m', 'adopt receipt', '--no-gpg-sign'], consumer);
 
     const third = await sync();
     assert.equal(third.code, 0, whySyncFailed(third));
 
-    const dirty = git(['status', '--porcelain'])
+    const dirty = git(['status', '--porcelain'], consumer)
       .split('\n')
       .map((l) => l.trim())
       .filter(Boolean)

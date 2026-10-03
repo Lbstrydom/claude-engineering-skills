@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { seedLedger as seedLedgerAt } from './helpers/fixtures.mjs';
+import { seedLedger } from './helpers/fixtures.mjs';
 
 let tmpDir;
 let ledgerPath;
@@ -27,10 +27,6 @@ function makeEntry(topicId, { file = 'src/x.js', severity = 'MEDIUM', deferredAt
     deferredRationale: 'a sufficiently long testing rationale',
     contentAliases: [], sensitive: false,
   };
-}
-
-function seedLedger(entries, budgets = {}) {
-  seedLedgerAt(ledgerPath, entries, budgets);
 }
 
 function runCli(args, env = {}) {
@@ -70,7 +66,7 @@ describe('debt-health-check CLI', () => {
   });
 
   test('exit 0 when ledger has entries but nothing stale/recurring/over-budget', () => {
-    seedLedger([makeEntry('a', { deferredAt: new Date().toISOString() })]);
+    seedLedger(ledgerPath, [makeEntry('a', { deferredAt: new Date().toISOString() })]);
     const r = runCli(['--ledger', ledgerPath]);
     assert.equal(r.status, 0);
     assert.match(r.stdout, /1 open entries/);
@@ -78,7 +74,7 @@ describe('debt-health-check CLI', () => {
 
   test('exit 1 when a stale entry is present', () => {
     const old = new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString();
-    seedLedger([makeEntry('a', { deferredAt: old })]);
+    seedLedger(ledgerPath, [makeEntry('a', { deferredAt: old })]);
     const r = runCli(['--ledger', ledgerPath]);
     assert.equal(r.status, 1);
     assert.match(r.stdout, /Stale \(>180d\): 1/);
@@ -86,7 +82,7 @@ describe('debt-health-check CLI', () => {
 
   test('DEBT_HEALTH_TTL_DAYS overrides the staleness threshold', () => {
     const old = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
-    seedLedger([makeEntry('a', { deferredAt: old })]);
+    seedLedger(ledgerPath, [makeEntry('a', { deferredAt: old })]);
     const r = runCli(['--ledger', ledgerPath], { DEBT_HEALTH_TTL_DAYS: '5' });
     assert.equal(r.status, 1);
     assert.match(r.stdout, /Stale \(>5d\): 1/);
@@ -94,6 +90,7 @@ describe('debt-health-check CLI', () => {
 
   test('exit 1 when a budget is violated', () => {
     seedLedger(
+      ledgerPath,
       [makeEntry('a', { file: 'src/big.js', deferredAt: new Date().toISOString() }),
         makeEntry('b', { file: 'src/big.js', deferredAt: new Date().toISOString() })],
       { 'src/big.js': 1 },
@@ -104,7 +101,7 @@ describe('debt-health-check CLI', () => {
   });
 
   test('--json mode reports triggered=false on a healthy ledger', () => {
-    seedLedger([makeEntry('a', { deferredAt: new Date().toISOString() })]);
+    seedLedger(ledgerPath, [makeEntry('a', { deferredAt: new Date().toISOString() })]);
     const r = runCli(['--ledger', ledgerPath, '--json']);
     assert.equal(r.status, 0);
     const data = JSON.parse(r.stdout);
@@ -115,7 +112,7 @@ describe('debt-health-check CLI', () => {
 
   test('--json mode reports stale topicIds on an unhealthy ledger', () => {
     const old = new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString();
-    seedLedger([makeEntry('a', { deferredAt: old })]);
+    seedLedger(ledgerPath, [makeEntry('a', { deferredAt: old })]);
     const r = runCli(['--ledger', ledgerPath, '--json']);
     assert.equal(r.status, 1);
     const data = JSON.parse(r.stdout);
@@ -124,7 +121,7 @@ describe('debt-health-check CLI', () => {
   });
 
   test('exit 1 when a topicId is duplicated', () => {
-    seedLedger([makeEntry('dup'), makeEntry('dup'), makeEntry('unique')]);
+    seedLedger(ledgerPath, [makeEntry('dup'), makeEntry('dup'), makeEntry('unique')]);
     const r = runCli(['--ledger', ledgerPath]);
     assert.equal(r.status, 1);
     assert.match(r.stdout, /Duplicate topicIds: 1/);
@@ -132,7 +129,7 @@ describe('debt-health-check CLI', () => {
   });
 
   test('--json mode reports duplicate topicIds on an unhealthy ledger', () => {
-    seedLedger([makeEntry('dup'), makeEntry('dup')]);
+    seedLedger(ledgerPath, [makeEntry('dup'), makeEntry('dup')]);
     const r = runCli(['--ledger', ledgerPath, '--json']);
     assert.equal(r.status, 1);
     const data = JSON.parse(r.stdout);
@@ -153,7 +150,7 @@ describe('debt-health-check CLI', () => {
       // bomb against the 180-day TTL — this test's own claim ("no other
       // attention triggers") would silently go false once real time passes it.
       const now = new Date().toISOString();
-      seedLedger([makeEntry('dup', { deferredAt: now }), makeEntry('dup', { deferredAt: now })]);
+      seedLedger(ledgerPath, [makeEntry('dup', { deferredAt: now }), makeEntry('dup', { deferredAt: now })]);
       const r = runCli(['--ledger', ledgerPath, '--fail-on-duplicates'], DEFAULT_ENV);
       assert.equal(r.status, 1);
     });
@@ -171,6 +168,7 @@ describe('debt-health-check CLI', () => {
       // code path, not a separate branch to prove separately.
       const old = new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString();
       seedLedger(
+        ledgerPath,
         [makeEntry('a', { file: 'src/big.js', deferredAt: old }),
           makeEntry('b', { file: 'src/big.js', deferredAt: new Date().toISOString() })],
         { 'src/big.js': 1 },
@@ -221,7 +219,7 @@ describe('debt-health-check CLI', () => {
     // through argOption and correctly stop at `--`. A literal `--json` after
     // `--` is a positional, not a flag; it must not turn JSON mode on.
     test('a literal --json after -- does not enable JSON mode', () => {
-      seedLedger([makeEntry('a', { deferredAt: new Date().toISOString() })]);
+      seedLedger(ledgerPath, [makeEntry('a', { deferredAt: new Date().toISOString() })]);
       const r = runCli(['--ledger', ledgerPath, '--', '--json']);
       assert.equal(r.status, 0);
       assert.doesNotMatch(r.stdout, /^\{/, 'must render human text, not a JSON envelope');
@@ -229,14 +227,14 @@ describe('debt-health-check CLI', () => {
     });
 
     test('a literal --help after -- does not print usage', () => {
-      seedLedger([makeEntry('a', { deferredAt: new Date().toISOString() })]);
+      seedLedger(ledgerPath, [makeEntry('a', { deferredAt: new Date().toISOString() })]);
       const r = runCli(['--ledger', ledgerPath, '--', '--help']);
       assert.equal(r.status, 0);
       assert.doesNotMatch(r.stderr, /Usage:/);
     });
 
     test('a literal -h after -- does not print usage', () => {
-      seedLedger([makeEntry('a', { deferredAt: new Date().toISOString() })]);
+      seedLedger(ledgerPath, [makeEntry('a', { deferredAt: new Date().toISOString() })]);
       const r = runCli(['--ledger', ledgerPath, '--', '-h']);
       assert.equal(r.status, 0);
       assert.doesNotMatch(r.stderr, /Usage:/);

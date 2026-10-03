@@ -547,9 +547,8 @@ async function main() {
         // Gate copy-forward on on-disk existence for the timeout case so a
         // deleted file is not resurrected. Incremental keeps its git-detected
         // deletions in touchedSet and needs no on-disk check (null gate).
-        const fileStillExists = timeoutRecovery
-          ? (filePath => fs.existsSync(path.join(repoRoot, filePath)))
-          : null;
+        const onDisk = (filePath => fs.existsSync(path.join(repoRoot, filePath)));
+        const fileStillExists = timeoutRecovery ? onDisk : null;
         if (prior?.refreshId) {
           // Ownership is re-asked of the CARRIED paths, not of `args.files`.
           // That is the whole fix: `args.files` is the git-diff scope, and a
@@ -603,7 +602,10 @@ async function main() {
             fromRefreshId: prior.refreshId,
             toRefreshId: refreshId,
             touchedFileSet: touchedSet,
-            fileStillExists,
+            // EVERY mode, unlike the symbols above: an edge's TARGET can be
+            // deleted while its importer is untouched, which touchedSet (keyed
+            // on the importer) cannot see. A full refresh drops that edge.
+            fileStillExists: onDisk,
             // The SAME classification: dropping a disowned file's symbols while
             // carrying its edges leaves `symbol_file_imports` still attributing
             // another codebase's imports to this repo.

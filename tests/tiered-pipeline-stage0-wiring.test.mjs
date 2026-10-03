@@ -21,7 +21,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { gitInit, commit } from './helpers/fixtures.mjs';
+import { gitInit, commit, withCwd } from './helpers/fixtures.mjs';
 import {
   collectCandidateAnchorFiles, buildStage0RelevanceContext,
   makeHeadContentAdapter, makeImpactAdapter, makeBlameAdapter,
@@ -132,21 +132,6 @@ function mkdtemp() {
 // fixtures module meant standing one up for these helpers alone (the
 // over-engineered extreme the pragmas correctly rejected); that module now
 // exists for many other helpers, so the calculus has changed.
-
-async function withCwd(dir, fn) {
-  const saved = process.cwd();
-  process.chdir(dir);
-  try {
-    // MUST await here — `return fn()` alone returns fn's pending promise
-    // before entering `finally`, so any code in `fn` AFTER its first `await`
-    // would see cwd already restored to `saved` (audit-code fix M6, drive-by
-    // fix of this pre-existing helper for consistency with its sibling copy
-    // in tests/tiered-model-selection.test.mjs).
-    return await fn();
-  } finally {
-    process.chdir(saved);
-  }
-}
 
 const HEAD_ANCHOR = (overrides = {}) => ({
   diffPathId: 'a.txt', newFile: 'a.txt', oldFile: 'a.txt', fileStatus: 'modified',

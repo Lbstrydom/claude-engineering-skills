@@ -15,13 +15,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import crypto from 'node:crypto';
 
 import { inspectLegacySurfaces, describeLegacySurfaces, CLEANABLE_LEGACY_SURFACES }
   from '../../scripts/lib/install/legacy-surfaces.mjs';
-
-// @duplicate-justification: target=tests/install/lifecycle.test.mjs:sha12 reason=deliberate test-local fixture helper. The production digest is conflict-detector.mjs::computeFileSha, which takes a PATH and returns null on any read error; these suites need the digest of an in-memory STRING before the file exists, so they cannot call it. Extracting a shared test util for a one-line expression would couple two otherwise-independent suites' fixtures — and the value it computes is pinned by the production code both suites assert against, so a drift would fail them, not hide in them.
-const sha12 = (s) => crypto.createHash('sha256').update(s).digest('hex').slice(0, 12);
+import { sha } from '../../scripts/lib/cli-io.mjs';
 
 let tmp, homeRoot, repoRoot;
 
@@ -40,7 +37,7 @@ function seedGlobal(relUnderSkills, content) {
   const abs = path.join(homeRoot, '.claude', 'skills', relUnderSkills);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, content);
-  return { path: abs, sha: sha12(content), skill: relUnderSkills.split(/[\\/]/)[0], scope: 'global' };
+  return { path: abs, sha: sha(content), skill: relUnderSkills.split(/[\\/]/)[0], scope: 'global' };
 }
 
 function seedAgents(relUnderSkills, content) {
@@ -48,7 +45,7 @@ function seedAgents(relUnderSkills, content) {
   const abs = path.join(repoRoot, rel);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, content);
-  return { path: rel.replaceAll('\\', '/'), sha: sha12(content), skill: relUnderSkills.split(/[\\/]/)[0], scope: 'repo' };
+  return { path: rel.replaceAll('\\', '/'), sha: sha(content), skill: relUnderSkills.split(/[\\/]/)[0], scope: 'repo' };
 }
 
 function writeReceiptRaw(target, managedFiles) {
@@ -172,7 +169,7 @@ describe('inspectLegacySurfaces — fails closed', () => {
     // An unrelated managed file recorded in the repo receipt (not a skill file).
     const stray = path.join(repoRoot, 'somewhere-else.txt');
     fs.writeFileSync(stray, 'x');
-    writeReceiptRaw('repo', [{ path: 'somewhere-else.txt', sha: sha12('x'), scope: 'repo' }]);
+    writeReceiptRaw('repo', [{ path: 'somewhere-else.txt', sha: sha('x'), scope: 'repo' }]);
     const r = inspectLegacySurfaces({ homeRoot, repoRoot });
     assert.deepEqual(r.deletable, [], 'only files under a retired surface root are deletable');
     assert.equal(r.overall, 'absent');

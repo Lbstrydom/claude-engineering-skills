@@ -35,7 +35,6 @@ import { writeFile } from './helpers/fixtures.mjs';
 const { gate2B } = _internals;
 
 let root;
-const write = (rel, body) => writeFile(root, rel, body);
 const sha = (s) => `sha256:${crypto.createHash('sha256').update(Buffer.from(s)).digest('hex')}`;
 
 beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'iso-held-')); });
@@ -45,7 +44,7 @@ const SKILL = '.claude/skills/nav-audit/SKILL.md';
 
 /** A consumer whose SKILL.md on disk differs from what the manifest records. */
 function divergedConsumer() {
-  write(SKILL, 'upstream body\n<!-- repo-electron-target -->\nconsumer block\n');
+  writeFile(root, SKILL, 'upstream body\n<!-- repo-electron-target -->\nconsumer block\n');
   return { files: { [SKILL]: sha('upstream body\n') } };
 }
 
@@ -55,7 +54,7 @@ function divergedConsumer() {
  * expanded. Modelling that here rather than assuming one key does both is what
  * caught this test asserting glob behaviour against a literal declaration.
  */
-const declare = (entries) => write('.sync-overrides.json', JSON.stringify({
+const declare = (entries) => writeFile(root, '.sync-overrides.json', JSON.stringify({
   version: 1,
   overrides: entries.map((e) => (typeof e === 'string'
     ? { path: e, reason: 'carries this repo\'s Electron adapter block' }
@@ -128,7 +127,7 @@ describe('gate 2B — declared overrides', () => {
     // declared path, and the sync itself aborts on a malformed overrides file —
     // a verifier that shrugged at one would disagree with the tool it verifies.
     const manifest = divergedConsumer();
-    write('.sync-overrides.json', '{ not json');
+    writeFile(root, '.sync-overrides.json', '{ not json');
     const res = gate2B(root, manifest);
     assert.equal(res.pass, false);
     assert.match(res.error, /unusable/);
@@ -136,13 +135,13 @@ describe('gate 2B — declared overrides', () => {
   });
 
   it('no overrides file at all is the ordinary case, not an error', () => {
-    write(SKILL, 'body\n');
+    writeFile(root, SKILL, 'body\n');
     const manifest = { files: { [SKILL]: sha('body\n') } };
     assert.equal(gate2B(root, manifest).pass, true);
   });
 
   it('a matching hash needs no override and reports nothing held', () => {
-    write(SKILL, 'body\n');
+    writeFile(root, SKILL, 'body\n');
     declare([SKILL]);
     const res = gate2B(root, { files: { [SKILL]: sha('body\n') } });
     assert.equal(res.pass, true);

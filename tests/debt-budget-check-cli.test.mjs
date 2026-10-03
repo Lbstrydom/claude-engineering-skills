@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { seedLedger as seedLedgerAt } from './helpers/fixtures.mjs';
+import { seedLedger } from './helpers/fixtures.mjs';
 
 let tmpDir;
 let ledgerPath;
@@ -28,10 +28,6 @@ function makeEntry(topicId, file) {
   };
 }
 
-function seedLedger(entries, budgets = {}) {
-  seedLedgerAt(ledgerPath, entries, budgets);
-}
-
 function runCli(args) {
   return spawnSync('node', [scriptPath, ...args], { encoding: 'utf-8', cwd: path.resolve('.') });
 }
@@ -46,7 +42,7 @@ afterEach(() => {
 
 describe('debt-budget-check CLI', () => {
   test('exit 0 with no budgets configured', () => {
-    seedLedger([makeEntry('a', 'src/x.js')], {});
+    seedLedger(ledgerPath, [makeEntry('a', 'src/x.js')], {});
     const r = runCli(['--ledger', ledgerPath]);
     assert.equal(r.status, 0);
     assert.match(r.stdout, /No budgets configured/);
@@ -54,6 +50,7 @@ describe('debt-budget-check CLI', () => {
 
   test('exit 0 when within budget', () => {
     seedLedger(
+      ledgerPath,
       [makeEntry('a', 'src/x.js'), makeEntry('b', 'src/y.js')],
       { 'src/**': 5 }
     );
@@ -64,6 +61,7 @@ describe('debt-budget-check CLI', () => {
 
   test('exit 2 when glob budget exceeded', () => {
     seedLedger(
+      ledgerPath,
       [
         makeEntry('a', 'src/x.js'),
         makeEntry('b', 'src/y.js'),
@@ -79,6 +77,7 @@ describe('debt-budget-check CLI', () => {
 
   test('exit 2 when exact path budget exceeded', () => {
     seedLedger(
+      ledgerPath,
       [makeEntry('a', 'src/big.js'), makeEntry('b', 'src/big.js')],
       { 'src/big.js': 1 }
     );
@@ -89,6 +88,7 @@ describe('debt-budget-check CLI', () => {
 
   test('--json mode outputs machine-readable JSON on violation', () => {
     seedLedger(
+      ledgerPath,
       [makeEntry('a', 'src/x.js'), makeEntry('b', 'src/y.js')],
       { 'src/**': 0 }
     );
@@ -103,7 +103,7 @@ describe('debt-budget-check CLI', () => {
   });
 
   test('--json mode on clean ledger', () => {
-    seedLedger([makeEntry('a', 'src/x.js')], { 'src/**': 10 });
+    seedLedger(ledgerPath, [makeEntry('a', 'src/x.js')], { 'src/**': 10 });
     const r = runCli(['--ledger', ledgerPath, '--json']);
     assert.equal(r.status, 0);
     const data = JSON.parse(r.stdout);
@@ -113,6 +113,7 @@ describe('debt-budget-check CLI', () => {
 
   test('--budgets-file overrides ledger budgets', () => {
     seedLedger(
+      ledgerPath,
       [makeEntry('a', 'src/x.js'), makeEntry('b', 'src/y.js')],
       { 'src/**': 10 }  // ledger says OK
     );
@@ -123,7 +124,7 @@ describe('debt-budget-check CLI', () => {
   });
 
   test('exit 1 on missing budgets file', () => {
-    seedLedger([makeEntry('a', 'src/x.js')]);
+    seedLedger(ledgerPath, [makeEntry('a', 'src/x.js')]);
     const r = runCli([
       '--ledger', ledgerPath,
       '--budgets-file', path.join(tmpDir, 'missing.json'),
@@ -168,7 +169,7 @@ describe('debt-budget-check CLI', () => {
     // which scans the ENTIRE argv unlike the value-flag `get()` helper — a
     // literal `--json` after the POSIX `--` terminator is a positional, not
     // a flag, and must not turn JSON mode on.
-    seedLedger([makeEntry('a', 'src/x.js')], {});
+    seedLedger(ledgerPath, [makeEntry('a', 'src/x.js')], {});
     const r = runCli(['--ledger', ledgerPath, '--', '--json']);
     assert.equal(r.status, 0);
     assert.doesNotMatch(r.stdout, /^\{/, 'must render human text, not a JSON envelope');

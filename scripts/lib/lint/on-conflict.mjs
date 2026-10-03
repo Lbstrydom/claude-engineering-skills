@@ -490,8 +490,16 @@ function findSuppressions(sourceLines, callLine) {
  * @returns {{sites: Array<object>, diagnostics: Array<object>, parseError: string|null}}
  */
 export function extractUpsertSites(source) {
-  const { ast, error } = parseSource(source);
+  const { ast, error, recoveredErrors } = parseSource(source);
   if (!ast) return { sites: [], diagnostics: [], parseError: error };
+  // A RECOVERED parse (parseSource's outcome 2) yields a partial tree with
+  // `error: null` — without this, a syntactically broken file lints exactly like
+  // a clean one. Sites are still analysed below (a provable finding in the
+  // readable part stays a finding); the caller just must not read the file as
+  // fully covered, so the recovery is surfaced as the same `parse-error` kind a
+  // hard failure gets.
+  const parseError = error
+    ?? (recoveredErrors?.length ? `recovered parse (${recoveredErrors.length}): ${recoveredErrors[0]}` : null);
   const program = ast.type === 'File' ? ast.program : ast;
   // Split on \r?\n, NOT '\n'. On a CRLF working tree a bare-'\n' split leaves a
   // trailing '\r' on every line, and SUPPRESSION_RE's `(.*)$` cannot match it —
@@ -557,7 +565,7 @@ export function extractUpsertSites(source) {
   };
   recur(program, [moduleFrame]);
 
-  return { sites, diagnostics, parseError: error };
+  return { sites, diagnostics, parseError };
 }
 
 /** Analyze one `upsert(table, rows, opts)` CallExpression node. */
@@ -637,6 +645,18 @@ function processUpsertCall(node, resolver, sites, diagnostics, sourceLines) {
   }
 
   sites.push({ table, columns, columnExprs, conflictTarget, hasSpread, line, endLine, callId, suppressions });
+}
+
+/**
+ * The diagnostics `--strict` must refuse to certify past: a site or file the
+ * lint could NOT read (`unresolved-*`), or a file whose parse failed or only
+ * partially recovered (`parse-error`). One predicate, so the CLI's gate and its
+ * tests cannot disagree about which kinds mean "unread".
+ * @param {{kind?: string}} d
+ * @returns {boolean}
+ */
+export function isStrictFailureDiagnostic(d) {
+  return Boolean(d?.kind?.startsWith('unresolved')) || d?.kind === 'parse-error';
 }
 
 /** The only diagnostic kind a pragma may silence — the author holds knowledge

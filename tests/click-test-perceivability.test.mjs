@@ -82,6 +82,21 @@ describe('click-test perceivability — drift', () => {
     );
   });
 
+  it('the fence declares the predicate exactly ONCE — a second, shadowing declaration passes the containment check above (10464c27)', () => {
+    // Containment proves the canonical text is PRESENT, not that it is the ONE in
+    // effect: a later `function __isPerceivable(` in the fence would hoist over
+    // (or shadow) the canonical one and the scanner would run the wrong
+    // predicate while the drift test stayed green.
+    const decl = `function ${PERCEIVABLE_FN_NAME}(`;
+    const countDecls = (s) => s.split(decl).length - 1;
+    assert.equal(
+      countDecls(scannerSrc), 1,
+      `the scanner fence must contain exactly one "${decl}" — found ${countDecls(scannerSrc)}`,
+    );
+    // Instrument check: the same count flags a fence carrying a second declaration.
+    assert.equal(countDecls(`${scannerSrc}\n${decl}el) { return true; }`), 2);
+  });
+
   it('push() applies the predicate and preserves the pre-cap severity', () => {
     assert.match(scannerSrc, /const perceivable = __isPerceivable\(el\)/,
       'push() must call __isPerceivable — it is the single call site that tags every kind');

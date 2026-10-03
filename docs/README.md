@@ -40,6 +40,8 @@ usually because something enforces them. Durable; no `Status:` line.
 | `commit-provenance.md` | `scripts/ship-commit.mjs` (the `AI-*` trailers) |
 | `model-resolution.md` | `scripts/lib/model-resolver.mjs` |
 | `reference-integrity.md` | `scripts/check-docs-refs.mjs` (`npm run docs:refs`) |
+| `architecture-index.md` | `scripts/check-architecture-intent-drift.mjs` + `npm run arch:coverage-gate` (refresh order, dependency model, corpus + retag incidents) |
+| `ratchet-gates.md` | `scripts/check-stdout-flush.mjs` + `scripts/file-size-ratchet.mjs` (the drift-only ratchets) |
 
 ## `docs/runbooks/` — operator how-to
 
@@ -49,7 +51,7 @@ matching "**Design:**" half is the plan in `completed/`.
 
 `postgres-parity.md` · `learning-system.md` · `consumer-adoption.md` ·
 `azure-work-profile.md` · `local-maintenance-checks.md` ·
-`model-eval-harness.md` · `pre-ship-empirical-verify.md`
+`model-eval-harness.md` · `pre-ship-empirical-verify.md` · `mcp-tooling.md`
 
 > Named for the subsystem, not `<x>-runbook.md` — the folder already says
 > "runbook".
