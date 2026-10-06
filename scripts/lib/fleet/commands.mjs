@@ -34,17 +34,38 @@ const refused = (reason, extra = {}) => ({ ok: false, code: 'refused', reason, t
 const failed = (reason, extra = {}) => ({ ok: false, code: 'error', reason, text: `ERROR: ${reason}`, ...extra });
 const lockFailed = () => failed('could not acquire fleet/.lock (contention) — nothing was changed; retry');
 
-/** Current branch name, or null when detached. */
-export function currentBranch(cwd) {
+/**
+ * What HEAD is, with a detached HEAD and a FAILED `git` call kept apart: a branch
+ * name, `{detached:true}` (git answered: no branch), or `{ok:false, reason}` (git did
+ * not answer, so nothing is known about HEAD).
+ * @returns {{ok: true, branch: string|null, detached: boolean} | {ok: false, reason: string}}
+ */
+export function headState(cwd) {
   const r = runGit(['branch', '--show-current'], cwd);
-  return r.ok && r.stdout.trim() ? r.stdout.trim() : null;
+  if (!r.ok) return { ok: false, reason: r.reason ?? 'git branch failed' };
+  const branch = r.stdout.trim();
+  return branch ? { ok: true, branch, detached: false } : { ok: true, branch: null, detached: true };
+}
+
+/** Current branch name, or null when detached OR when git failed — use `headState` where the two differ. */
+export function currentBranch(cwd) {
+  const h = headState(cwd);
+  return h.ok ? h.branch : null;
+}
+
+/** `git` could not answer a question the command needs (exit 1, unlike a bad argument, exit 2). */
+export class GitUnavailableError extends Error {
+  constructor(message) { super(message); this.name = 'GitUnavailableError'; }
 }
 
 /** The participant identity: `--id`, else the current branch. */
 function selfId(ctx, flags) {
-  const id = flags['--id'] ?? currentBranch(ctx.cwd);
-  if (!id) throw new ArgvError('fleet: HEAD is detached — pass --id <name>');
-  return id;
+  if (flags['--id'] !== undefined) return flags['--id'];
+  const h = headState(ctx.cwd);
+  // A failed `git` call is an operational error, not "you are on a detached HEAD" (which `--id` cures).
+  if (!h.ok) throw new GitUnavailableError(`could not determine the current branch (${h.reason}); pass --id <name> to proceed without it`);
+  if (!h.branch) throw new ArgvError('fleet: HEAD is detached — pass --id <name>');
+  return h.branch;
 }
 
 const leaseIso = (ctx) => new Date(ctx.now.getTime() + leaseMsFrom(ctx.env)).toISOString();
@@ -173,7 +194,7 @@ export function cmdClaim(ctx, flags) {
   if (!tx.ok) return lockFailed();
   const v = tx.value;
   if (v.code === 'argv') throw new ArgvError(v.reason);
-  const text = renderClaimVerdict(v.verdict, { id })
+  const text = renderClaimVerdict(v.verdict, { id, cmd: ctx.cmd })
     + (!start.ok && v.mode === 'new' && v.record ? `
 warning: startOid not recorded — ${start.reason}` : '')
     + (v.record ? `\n${v.mode === 'new' ? 'registered' : 'updated'} ${id} (gen ${v.record.gen}, rev ${v.record.rev}): ${v.record.intent}${v.verdict.overridden ? '\n  --override: recorded as a known overlap on both sessions' : ''}` : '');

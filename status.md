@@ -87,6 +87,18 @@
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
 
+## 2026-10-06 — /fleet hardening: tier process trees, repair hint, HEAD state
+
+Follow-up to the storyline-feedback change; fixes three items its code audit recorded in untouched code. Not run through the audit loop (gate `not-run`).
+
+- **Tier timeouts kill the whole process tree** (`scripts/lib/fleet/tier-supervisor.mjs`): a tier timeout used to kill only the process spawned, leaving descendants running in the integration worktree. A hook that exits no longer leaks a pipe-less descendant on POSIX, and the win32 kill calls have timeouts.
+- **`fleet repair` hint** uses the operator's own invocation (`node scripts/fleet.mjs repair ...`); the registry error carries the file name instead of a baked-in command.
+- **`headState`** separates a detached HEAD (argument error, exit 2) from a failed `git` call (operational error, exit 1).
+- **Verification (measured)**: 11 hardening tests green on Linux (Docker node:22); removing the new reaping fails exactly the two POSIX tests. On this Windows host the old-behaviour control does not reproduce (node reaps its own grandchild) and is skipped. 235 fleet unit tests + relocation/layering guards green on Windows.
+- **Still open**: win32 strays after a normally-exited hook or tier; branch-name evidence capture in `gatherFacts`; claim-grammar recursion bounds.
+
+---
+
 ## 2026-10-06 — /fleet: four fixes from the storyline consumer's first real use
 
 Plan: `docs/plans/fleet-storyline-feedback.md`. Built by `/cycle --autonomous` as one unit.

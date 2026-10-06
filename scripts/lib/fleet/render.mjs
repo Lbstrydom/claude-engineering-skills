@@ -106,7 +106,7 @@ export function renderStatus(status, { hidden } = {}) {
  */
 export function renderClaimVerdict(v, ctx = {}) {
   const who = ctx.id ? ` for ${ctx.id}` : '';
-  if (v.verdict === 'refused') return `REFUSED${who}: ${v.reason}. Run \`fleet repair --quarantine <file>\` after reading the invalid record.`;
+  if (v.verdict === 'refused') return `REFUSED${who}: ${v.reason}. Run \`${ctx.cmd ?? 'fleet'} repair --quarantine <file>\` after reading the invalid record.`;
   const lines = [];
   const head = { ok: `OK${who}`, warn: `WARN${who}: overlapping live work (advisory)`, blocked: `BLOCKED${who}: overlapping live work — stop and report` }[v.verdict];
   lines.push(head ?? `${v.verdict}${who}`);

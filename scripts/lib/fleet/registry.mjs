@@ -131,7 +131,10 @@ const APPEND_ONLY_TRAIN_FIELDS = new Set(['tierResults']);
 
 export class RegistryError extends Error {
   /** @param {string} code @param {string} message */
-  constructor(code, message) { super(message); this.name = 'RegistryError'; this.code = code; }
+  constructor(code, message, { repairFile } = {}) {
+    super(message); this.name = 'RegistryError'; this.code = code;
+    if (repairFile) this.repairFile = repairFile;
+  }
 }
 
 // ── Keys and paths ─────────────────────────────────────────────────────────
@@ -254,7 +257,9 @@ export function writeSession(dir, record) {
   const target = sessionPath(dir, rec.id);
   if (fs.existsSync(target)) {
     const cur = parseSessionFile(path.basename(target), fs.readFileSync(target, 'utf-8'));
-    if (!cur.record) throw new RegistryError('TARGET_INVALID', `refusing to overwrite an invalid record (${cur.reason}); run \`fleet repair --quarantine ${path.basename(target)}\``);
+    // The library cannot know how the operator invokes the CLI (`node scripts/fleet.mjs`, a synced
+    // path, ...), so it names the file and the CLI entry point renders the exact repair command.
+    if (!cur.record) throw new RegistryError('TARGET_INVALID', `refusing to overwrite an invalid record (${cur.reason})`, { repairFile: path.basename(target) });
     if (rec.rev <= cur.record.rev) {
       throw new RegistryError('REV_STALE', `stale write for ${rec.id}: rev ${rec.rev} does not exceed on-disk rev ${cur.record.rev}`);
     }
