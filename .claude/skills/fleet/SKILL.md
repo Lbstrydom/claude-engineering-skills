@@ -108,7 +108,7 @@ A monorepo with a long chain:
     { "name": "fast", "command": ["npm", "run", "test:unit"], "stage": "pre-land" },
     { "name": "full", "command": ["npm", "test"], "stage": "pre-land", "timeoutMs": 3600000 },
     { "name": "packaged", "command": ["npm", "run", "test:packaged"], "stage": "post-merge" } ] },
-  "checks": [ { "name": "semantic-collisions", "script": "scripts/fleet-semantic-check.mjs",
+  "checks": [ { "name": "semantic-collisions", "script": "scripts/<your-check>.mjs",
                 "runIn": ["status", "land"], "severity": "block" } ] }
 ```
 
