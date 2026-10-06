@@ -73,7 +73,7 @@ async function main() {
     let cached;
     Object.defineProperty(ctx, 'config', { enumerable: true, get() { cached ??= resolveConfig(cwd, { env }); return cached; } });
     switch (verb) {
-      case 'status': result = cmdStatus(ctx); break;
+      case 'status': result = cmdStatus(ctx, flags); break;
       case 'add': result = cmdAdd(ctx, flags, positionals); break;
       case 'claim': result = cmdClaim(ctx, flags); break;
       case 'ready': result = cmdReady(ctx, flags); break;

@@ -163,7 +163,14 @@ if (/^gh(\\.exe)?$/i.test(path.basename(process.execPath))) {
   const req = ji < 0 ? [] : String(args[ji + 1]).split(',');
   for (const f of req) if (!fields.includes(f)) fail('Unknown JSON field: "' + f + '"');
   if (state.authFail) fail('To get started with GitHub CLI, please run:  gh auth login');
-  if (args[0] === 'pr' && args[1] === 'list') out(JSON.stringify(state.list ?? []));
+  if (args[0] === 'pr' && args[1] === 'list') {
+    // Like real gh: only the requested fields come back, and a token that cannot read
+    // check rollups fails ONLY the call that asks for statusCheckRollup.
+    if (req.includes('statusCheckRollup') && state.checksFail) fail(state.checksFail);
+    const omit = new Set(state.checksOmit ?? []);
+    const rows = (state.list ?? []).filter((r) => !(req.includes('statusCheckRollup') && omit.has(r.number)));
+    out(JSON.stringify(req.length ? rows.map((r) => { const o = {}; for (const f of req) if (f in r) o[f] = r[f]; return o; }) : rows));
+  }
   else if (args[0] === 'pr' && args[1] === 'view') {
     const row = (state.view ?? {})[args[2]];
     if (!row) fail('no pull requests found for ' + args[2]);

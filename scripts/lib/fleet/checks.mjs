@@ -192,6 +192,7 @@ function runOne({ cwd, check, payload, exec }) {
   const h = checkScriptHash(cwd, check.script);
   const base = {
     name: check.name, severity: check.severity ?? 'warn', argv, scriptHash: h.hash,
+    ...(check.note ? { note: check.note } : {}),
     ...(h.hash === null ? { scriptHashReason: h.reason } : {}),
   };
   const failed = (reason) => ({ ...base, status: 'check-failed', findings: [], reason });
@@ -234,7 +235,7 @@ export function runChecks({ cwd, checks, phase, payload, exec = spawnExec }) {
     try {
       out.push(runOne({ cwd, check, payload: { ...payload, schemaVersion: 1, phase }, exec }));
     } catch (e) {
-      out.push({ name: check.name, severity: check.severity ?? 'warn', status: 'check-failed', findings: [], reason: `internal error: ${e.message}`, argv: [], scriptHash: null });
+      out.push({ name: check.name, severity: check.severity ?? 'warn', ...(check.note ? { note: check.note } : {}), status: 'check-failed', findings: [], reason: `internal error: ${e.message}`, argv: [], scriptHash: null });
     }
   }
   return out;

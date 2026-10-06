@@ -26,7 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { runGit, gitCommonDir, repoToplevel } from './git-facts.mjs';
-import { MERGE_METHODS, TIER_NAME_RE, TierSchema as PersistedTierSchema, argvSchema, isInside } from './contracts.mjs';
+import { MERGE_METHODS, NoteSchema, TIER_NAME_RE, TierSchema as PersistedTierSchema, argvSchema, isInside } from './contracts.mjs';
 
 export { MERGE_METHODS };
 const SAFE_TOKEN = /^[A-Za-z0-9_@%+=:,./\\-]+$/;
@@ -54,6 +54,7 @@ const CheckSchema = z.strictObject({
   runIn: z.array(z.enum(['status', 'land'])).min(1).default(['status', 'land']),
   severity: z.enum(['block', 'warn']).default('warn'),
   timeoutMs: timeout().default(60_000),
+  note: NoteSchema.optional(),
 });
 
 const TierListSchema = z.strictObject({ tiers: z.array(TierSchema).min(1) });
