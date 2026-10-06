@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**6 active · 231 terminal · 32 audit summaries · 1 parked · 5 reference docs**
+**6 active · 232 terminal · 32 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -57,7 +57,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 228 completed plans</summary>
+<summary>Show all 229 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
