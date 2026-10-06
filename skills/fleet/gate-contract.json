@@ -13,6 +13,18 @@
       "reason": "Describes behaviour of the fleet CLI (pinned by tests/fleet-cli.test.mjs) or is an instruction to the AGENT; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
     },
     {
+      "line": "base that moved on never makes a branch look like it touched those files.",
+      "reason": "Describes the fleet CLI's three-dot changedFiles behaviour, pinned by tests/fleet-storyline-feedback.test.mjs (with a two-dot control); the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound. Not an enforcement claim about this skill file itself."
+    },
+    {
+      "line": "sessions are never hidden, and anything not proven stale stays visible.",
+      "reason": "Describes the fleet CLI's status hiding rule, pinned by tests/fleet-storyline-feedback.test.mjs (isStaleUntracked table); the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound. Not an enforcement claim about this skill file itself."
+    },
+    {
+      "line": "`PR checks: not queried`, never a missing PR list.",
+      "reason": "Describes the fleet CLI's checks-column degradation, pinned by tests/fleet-gh-facts.test.mjs; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound. Not an enforcement claim about this skill file itself."
+    },
+    {
       "line": "`<git-common-dir>/fleet` that every linked worktree shares and that is never",
       "reason": "Describes behaviour of the fleet CLI (pinned by tests/fleet-cli.test.mjs) or is an instruction to the AGENT; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
     },
