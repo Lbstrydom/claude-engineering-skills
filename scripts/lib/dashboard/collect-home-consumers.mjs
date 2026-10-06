@@ -158,8 +158,13 @@ function isSourceRepoRoot(root) {
 }
 
 async function defaultConsumers() {
-  const { CONSUMER_REPOS } = await import('../consumer-repos.mjs');
-  return CONSUMER_REPOS.map((c) => ({ name: c.name, path: c.path }));
+  // consumer-repos.mjs is SOURCE-REPO-ONLY tooling (its repo-root derivation breaks once relocated
+  // into a consumer, and its private half is gitignored). A literal specifier here would make the
+  // sync's import-closure walker ship it to every consumer; a COMPUTED specifier is not followed
+  // (the same idiom collect-telemetry.mjs uses). Callers only reach this when running in the source
+  // repo, and a failure to load it is reported by the caller as an absent registry.
+  const mod = await import(new URL('../consumer-repos.mjs', import.meta.url).href);
+  return mod.CONSUMER_REPOS.map((c) => ({ name: c.name, path: c.path }));
 }
 
 /**
