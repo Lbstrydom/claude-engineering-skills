@@ -10,6 +10,7 @@
  * @module scripts/lib/dashboard/schema
  */
 import { z } from 'zod';
+import { MAX_NEEDS_ROWS, NOTHING_NEEDS_YOU } from './home-model.mjs';
 
 /** A discrete, non-negative count — not any float (boundary validation). */
 const count = z.number().int().nonnegative();
@@ -178,6 +179,163 @@ export const PurposesSchema = z.object({
   }),
 });
 
+// ── Home (docs/plans/dashboard-home-summary.md §2) ───────────────────────
+//
+// The CONTRACT between collect-home.mjs (which emits it) and sections/home.mjs
+// (which renders what survives parsing). Strict throughout: Zod strips unknown
+// keys silently, so a non-strict object here would DELETE a field a collector
+// added and the section would render without it and without an error. `.strict`
+// turns that into a loud build failure instead.
+//
+// Deliberately NOT capped per string: the collectors clip at storage and the
+// section truncates at display (`bound()`); a schema max that rejected real
+// data would take the whole page down. List lengths ARE capped — they are the
+// payload bound the < 100 KB budget rests on.
+
+const iso = z.string().nullable();
+const SourceStatusEnum = SourceStatusSchema.shape.status;
+
+/** The list caps — the payload bound the < 100 KB budget rests on. The ONE place they live: the section and the tests import them. */
+export const HOME_CAPS = Object.freeze({ shipped: 10, merges: 10, inflight: 15 });
+
+const ShippedLogValue = z.strictObject({
+  entries: z.array(z.strictObject({
+    date: z.string(),
+    title: z.string(),
+    // The exact pattern status-entries.mjs extracts: escape-free by construction.
+    planPath: z.string().regex(/^docs\/plans\/[A-Za-z0-9][A-Za-z0-9._-]*\.md$/).nullable(),
+  })).max(HOME_CAPS.shipped),
+  skippedHeadings: count,
+  partial: z.boolean(),
+});
+
+const ShippedMergesValue = z.strictObject({
+  branch: z.string(),
+  subjects: z.array(z.strictObject({
+    sha7: z.string().regex(/^[0-9a-f]{4,64}$/),
+    subject: z.string(),
+  })).max(HOME_CAPS.merges),
+});
+
+const InflightValue = z.strictObject({
+  baseBranch: z.string(),
+  rows: z.array(z.strictObject({
+    id: z.string(),
+    kind: z.string(),
+    label: z.string(),
+    ahead: z.number().nullable(),
+    behind: z.number().nullable(),
+    state: z.string(),
+    overlaps: count,
+  })).max(HOME_CAPS.inflight),
+  more: count,
+  total: count,
+  notAnalysed: z.strictObject({ count }).nullable(),
+  prs: z.string(),
+});
+
+/**
+ * Every measurement id the collectors emit, with the schema of its value when the SECTION renders it in full
+ * (the rest feed chips via the model, value `null` here = not validated further). A Map, never a plain object:
+ * an id of 'constructor' / 'toString' / '__proto__' must not resolve an inherited property. An id that is neither
+ * here nor a `consumer:<name>` row is REFUSED: a new measurement is a contract change, made here on purpose.
+ */
+const MEASUREMENT_IDS = new Map([
+  ['queue-q1', null], ['queue-q2', null], ['queue-q3', null], ['queue-debt', null], ['queue-upstream', null],
+  ['agents-size', null], ['plans', null], ['skills', null], ['maintenance', null], ['consumers', null],
+  ['shipped-log', ShippedLogValue], ['shipped-merges', ShippedMergesValue], ['inflight', InflightValue],
+]);
+/** Per-consumer rows: the validated consumer name (isConsumerName's pattern), or the collector's invalid-name placeholder. */
+const CONSUMER_ROW_ID = /^consumer:(?:[A-Za-z0-9._-]+|\(invalid-name\))$/;
+
+const HomeMeasurementSchema = z.strictObject({
+  id: z.string(),
+  label: z.string(),
+  card: z.string(),
+  value: z.unknown(),
+  status: SourceStatusEnum,
+  asOf: iso,
+  source: z.string(),
+  detail: z.string(),
+  // Queue measurements only.
+  kind: z.string().optional(),
+  previous: z.strictObject({ total: z.number(), code: z.number().optional(), partial: z.boolean().optional() }).nullable().optional(),
+  previousAt: iso.optional(),
+  repo: z.string().nullable().optional(),
+}).superRefine((m, ctx) => {
+  if (!MEASUREMENT_IDS.has(m.id) && !CONSUMER_ROW_ID.test(m.id)) {
+    ctx.addIssue({ code: 'custom', message: `unknown measurement id ${JSON.stringify(String(m.id).slice(0, 60))}: register it in MEASUREMENT_IDS`, path: ['id'] });
+    return;
+  }
+  const vs = MEASUREMENT_IDS.get(m.id);
+  if (!vs || m.status !== 'ok') return;
+  const r = vs.safeParse(m.value);
+  if (r.success) return;
+  for (const issue of r.error.issues) ctx.addIssue({ code: 'custom', message: issue.message, path: ['value', ...issue.path] });
+});
+
+const HomeCardSchema = z.strictObject({
+  id: z.string(),
+  label: z.string(),
+  measurements: z.array(HomeMeasurementSchema),
+  status: SourceStatusEnum,
+  warning: z.strictObject({ status: SourceStatusEnum, detail: z.string() }).nullable(),
+});
+
+const HomeChipSchema = z.strictObject({
+  id: z.string(),
+  label: z.string(),
+  tab: z.string().nullable(),
+  command: z.string().nullable(),
+  state: z.enum(['ok', 'warn', 'bad', 'neutral', 'unmeasured']),
+  value: z.string(),
+  detail: z.string(),
+  measured: z.boolean(),
+  source: z.string(),
+  asOf: iso,
+}).refine((c) => c.measured === (c.state !== 'unmeasured'), {
+  message: 'a chip is measured exactly when its state is not "unmeasured" (an unmeasured source must never grade)',
+});
+
+const HomeNeedRowSchema = z.strictObject({
+  ruleId: z.string(),
+  severity: z.number().int().min(1).max(3),
+  command: z.string().nullable(),
+  tab: z.string().nullable(),
+  commandNote: z.string().nullable(),
+  text: z.string(),
+  anchor: iso.optional(),
+  // N01 only (one row may stand for several measurements that share a cause).
+  card: z.string().optional(),
+  measurementId: z.string().optional(),
+  measurementIds: z.array(z.string()).optional(),
+});
+
+const HomeNeedsSchema = z.strictObject({
+  rows: z.array(HomeNeedRowSchema).max(MAX_NEEDS_ROWS),
+  total: count,
+  more: count,
+  unmeasured: count,
+  headline: z.literal(NOTHING_NEEDS_YOU).nullable(),
+}).refine((n) => n.more === n.total - n.rows.length, { message: '"+N more" must be the true overflow (total - rows shown)' })
+  .refine((n) => n.headline === null || (n.total === 0 && n.unmeasured === 0), {
+    message: '"Nothing needs you" is only legal when no rule fired and nothing is unmeasured',
+  });
+
+export const HomeSchema = z.strictObject({
+  builtAt: z.string(),
+  cards: z.strictObject({
+    queues: HomeCardSchema,
+    vitals: HomeCardSchema,
+    consumers: HomeCardSchema,
+    shipped: HomeCardSchema,
+    inflight: HomeCardSchema,
+  }),
+  health: z.array(HomeChipSchema),
+  needs: HomeNeedsSchema,
+  durations: z.record(z.string(), z.number()),
+});
+
 export const ReferenceDataSchema = z.object({
   kind: z.literal('reference'),
   provenance: z.object({
@@ -211,6 +369,9 @@ export const ReferenceDataSchema = z.object({
   navAudit: z.object({}).passthrough().nullable().optional(),
   visualAudit: z.object({}).passthrough().nullable().optional(),
   campaigns: z.object({}).passthrough().nullable().optional(),
+  // Home: strict (see above). Optional/nullable so a pre-Home snapshot, and a
+  // build whose collector threw, still parse — `sources.home` says which.
+  home: HomeSchema.nullable().optional(),
   architecture: z.object({
     domains: z.array(DomainSchema),
     // Flat domain → allowed-dependency domains. Merged from observed

@@ -180,7 +180,12 @@ audit store's writer-registry bootstrap, not a store module.
 `scripts/build-dashboard.mjs`, `scripts/lib/dashboard/**`, `dashboard/**` —
 the local reference + telemetry dashboard (gitignored HTML output, Category A
 per the generated-artifact policy). Collects from most other domains to
-render a single operator-facing view.
+render a single operator-facing view. The **Home** tab (the default landing page) is the one
+section that also reads *live repo state* — queue envelopes through the shared
+`lib/store/backlog-gather.mjs` readers, git, and consumer sync receipts — so it carries two
+declared edges: `dashboard → fleet` (git/worktree facts for the in-flight card) and
+`dashboard → claudemd-management` (the shared AGENTS.md size measure). Both are one-way; neither
+domain imports `dashboard`.
 
 ### `nav-audit`, `visual-audit`, `persona-test`, `ux-lock`
 The four UX-lens skills' backends (`scripts/lib/nav/**` + `nav-audit.mjs`;

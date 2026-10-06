@@ -26,9 +26,14 @@ import { collectReference } from '../scripts/lib/dashboard/collect-reference.mjs
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 
+// This suite is about SKILLS. The real Home collector reads the audit store (when a machine has one) and spawns
+// workers: slow and not hermetic. A stub keeps it off both; the one deliberately REAL collectReference call lives in
+// tests/dashboard-home-section.test.mjs, with the store air-gapped.
+const stubHome = async () => ({ home: null, sources: { home: { status: 'missing-optional', detail: 'stubbed: this suite does not exercise Home' } } });
+
 describe('collectReference — skills source (consumer path)', () => {
   it('loads skills through lib/skills-index.mjs without degrading', async () => {
-    const ref = await collectReference();
+    const ref = await collectReference({ collectHome: stubHome });
 
     // The try/catch cannot mask a broken import behind an empty list.
     assert.equal(
@@ -61,7 +66,7 @@ describe('collectReference — skills source (consumer path)', () => {
       + 'this test roots itself at process.cwd().',
     );
 
-    const ref = await collectReference();
+    const ref = await collectReference({ collectHome: stubHome });
     const ship = ref.skills.find((s) => s.name === 'ship');
 
     for (const key of ['name', 'oneLiner', 'triggers', 'usage', 'disableModelInvocation', 'path']) {

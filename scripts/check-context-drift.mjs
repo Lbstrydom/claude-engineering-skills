@@ -32,23 +32,13 @@ import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { z } from 'zod';
 
 import { scanInstructionFiles } from './lib/claudemd/file-scanner.mjs';
 import { toSarif } from './lib/claudemd/sarif-formatter.mjs';
 import { makeFenceTracker } from './lib/markdown-fence-tracker.mjs';
+import { readContextConfig, DEFAULT_MAX_AGENTS_MD_CHARS, agentsMdCharCount } from './lib/claudemd/context-size.mjs';
 
-// ── Config schema ───────────────────────────────────────────────────────────
-
-const ConfigSchema = z.object({
-  allowlist: z.array(z.string().min(1)).optional(),
-  maxClaudeMdLines: z.number().int().positive().optional(),
-  maxAgentsMdChars: z.number().int().positive().optional(),
-  // Retired 2026-08-01 in favour of maxAgentsMdChars. Kept in the schema ONLY
-  // so a config still carrying it gets a rename message instead of `.strict()`'s
-  // generic "unrecognized key" — a silently-ignored cap is worse than no cap.
-  maxAgentsMdLines: z.number().int().positive().optional(),
-}).strict();
+// Config schema + the AGENTS.md cap live in lib/claudemd/context-size.mjs (shared with the dashboard).
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 
@@ -64,29 +54,6 @@ const DEFAULT_ALLOWLIST = [
 
 const DEFAULT_MAX_CLAUDE_MD_LINES = 80;
 
-// AGENTS.md is loaded into EVERY session of every agent that reads it — size
-// is a per-session cost, and long dossier-grade files degrade LLM recall of
-// the load-bearing invariants buried in them. The file's own preamble sets the
-// policy (invariants + what-it-is/when/pointer stubs; operational depth in
-// docs/); this cap is the enforcement the policy previously lacked (sections
-// silently sprawled past 1400 lines before 2026-07-13). Generous by design: it
-// catches sprawl-by-accretion, not normal growth.
-//
-// Measured in CHARACTERS, not lines — switched 2026-08-01.
-//
-// Lines are a broken proxy for the thing this cap protects. The two largest
-// per-session costs in this repo's own AGENTS.md (the nav-audit and
-// visual-audit bullets, ~2.5K chars each) were ONE line apiece: condensing
-// them by ~45% moved the line count by zero, while a 15-line table of
-// one-word rows would have counted 15x more. The cap was blind to its own
-// worst case.
-//
-// The number preserves the previous strictness rather than inventing a new
-// budget: AGENTS.md sitting exactly AT the old 1200-line cap measured 91,201
-// characters, so ~92K is the same policy expressed in the unit that actually
-// costs something. Raise it only for a deliberate, justified exception — the
-// intended remedy is still "move a dossier to docs/<topic>.md".
-const DEFAULT_MAX_AGENTS_MD_CHARS = 92000;
 
 // ── Config loader ───────────────────────────────────────────────────────────
 
@@ -101,42 +68,29 @@ function loadConfig(repoRoot, { strict = false } = {}) {
     maxClaudeMdLines: DEFAULT_MAX_CLAUDE_MD_LINES,
     maxAgentsMdChars: DEFAULT_MAX_AGENTS_MD_CHARS,
   };
-  const cfgPath = path.join(repoRoot, '.claude-context-allowlist.json');
-  if (!fs.existsSync(cfgPath)) return defaults;
+  const cfg = readContextConfig(repoRoot);
+  if (!cfg.present) return defaults;
+  const problem = cfg.problem;
 
-  let raw;
-  try {
-    raw = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-  } catch (err) {
-    const msg = `Failed to parse ${cfgPath}: ${err.message}`;
-    if (strict) throw new Error(msg);
-    process.stderr.write(`[check-context-drift] WARN: ${msg} — using defaults\n`);
+  if (problem?.kind === 'parse') {
+    if (strict) throw new Error(problem.message);
+    process.stderr.write(`[check-context-drift] WARN: ${problem.message} — using defaults\n`);
     return defaults;
   }
-
-  const parsed = ConfigSchema.safeParse(raw);
-  if (!parsed.success) {
-    const issues = parsed.error.issues.map(i => `  ${i.path.join('.')}: ${i.message}`).join('\n');
-    const msg = `Invalid config at ${cfgPath}:\n${issues}`;
-    if (strict) throw new Error(msg);
-    process.stderr.write(`[check-context-drift] WARN: ${msg}\n  using defaults\n`);
+  if (problem?.kind === 'invalid') {
+    if (strict) throw new Error(problem.message);
+    process.stderr.write(`[check-context-drift] WARN: ${problem.message}\n  using defaults\n`);
     return defaults;
   }
-
-  if (parsed.data.maxAgentsMdLines !== undefined) {
-    // Loud, not ignored. Honouring it is impossible (the cap is no longer a
-    // line count) and dropping it silently would leave an operator believing
-    // they had configured a limit that does nothing.
-    const msg = `${cfgPath}: "maxAgentsMdLines" was retired 2026-08-01 — the AGENTS.md cap is now `
-      + `measured in characters. Use "maxAgentsMdChars" (the old 1200-line cap was ~92000 chars).`;
-    if (strict) throw new Error(msg);
-    process.stderr.write(`[check-context-drift] WARN: ${msg}\n`);
+  if (problem?.kind === 'retired') {
+    if (strict) throw new Error(problem.message);
+    process.stderr.write(`[check-context-drift] WARN: ${problem.message}\n`);
   }
 
   return {
-    allowlist: parsed.data.allowlist ?? DEFAULT_ALLOWLIST,
-    maxClaudeMdLines: parsed.data.maxClaudeMdLines ?? DEFAULT_MAX_CLAUDE_MD_LINES,
-    maxAgentsMdChars: parsed.data.maxAgentsMdChars ?? DEFAULT_MAX_AGENTS_MD_CHARS,
+    allowlist: cfg.data.allowlist ?? DEFAULT_ALLOWLIST,
+    maxClaudeMdLines: cfg.data.maxClaudeMdLines ?? DEFAULT_MAX_CLAUDE_MD_LINES,
+    maxAgentsMdChars: cfg.data.maxAgentsMdChars ?? DEFAULT_MAX_AGENTS_MD_CHARS,
   };
 }
 
@@ -284,7 +238,7 @@ function checkAgentsSize(agentsPath, agentsContent, config) {
   const agentsLines = agentsContent.split('\n');
   // The measured quantity is characters; the line number is carried only so the
   // finding can anchor to the end of the file in an editor.
-  const total = agentsContent.length;
+  const total = agentsMdCharCount(agentsContent);
   const lineCount = agentsLines.length;
   const cap = config.maxAgentsMdChars;
 

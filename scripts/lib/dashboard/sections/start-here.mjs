@@ -24,6 +24,8 @@ export default function sectionStartHere(_data, ui) {
     and ship code with real quality gates. Everything on these pages is built from this repo and
     its private learning store; the pages are static, local files — nothing here talks to the network.</p>
 
+    <p>Want the quick answer — is it healthy, what needs you, what changed? Open ${tabLink('home', 'Home')}.</p>
+
     <div class="starthere-pages">
       <div class="card">
         <h3>📖 Reference <span class="muted">(this page)</span></h3>
