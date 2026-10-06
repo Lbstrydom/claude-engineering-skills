@@ -22,8 +22,18 @@ import { runGit, headOf } from './git-facts.mjs';
 export const PR_LIST_FIELDS = Object.freeze([
   'number', 'title', 'url', 'state', 'isDraft', 'isCrossRepository',
   'headRefName', 'headRefOid', 'headRepository', 'headRepositoryOwner',
-  'baseRefName', 'baseRefOid', 'statusCheckRollup', 'updatedAt',
+  'baseRefName', 'baseRefOid', 'updatedAt',
 ]);
+
+/**
+ * Fields of the SECOND, optional `gh pr list` call. `statusCheckRollup` lives
+ * apart from the PR list because a token that cannot read check rollups 403s the
+ * whole call it rides in — one column's fault must not cost the table.
+ */
+export const PR_CHECK_FIELDS = Object.freeze(['number', 'headRefOid', 'statusCheckRollup']);
+
+/** Checks state of a PR whose rollup was not (or could not be) matched. Never a pass. */
+export const UNKNOWN_CHECKS = Object.freeze({ state: 'unknown', total: null });
 
 /** Fields `land --confirm` requests from `gh pr view` (§2: not `baseRepository`). */
 export const PR_VIEW_FIELDS = Object.freeze([
@@ -47,6 +57,13 @@ export function classifyGhFailure(stderr) {
   if (/could not resolve host|network|timed out|dial tcp|connection/i.test(s)) return 'gh offline';
   const first = s.trim().split('\n')[0];
   return `gh failed: ${first || 'no output'}`;
+}
+
+const CHECKS_FORBIDDEN_RE = /HTTP 403|Resource not accessible|insufficient (?:scope|permission)/i;
+
+/** Reason for a failed CHECKS call: a 403 names the token, anything else is the generic reason. */
+export function classifyChecksFailure(stderr) {
+  return CHECKS_FORBIDDEN_RE.test(String(stderr)) ? 'checks not readable with this token (403)' : classifyGhFailure(stderr);
 }
 
 /**
@@ -95,13 +112,6 @@ export function summariseChecks(rollup) {
 export function validatePrRow(raw) {
   if (!isObj(raw)) return 'row is not an object';
   if (!Number.isInteger(raw.number) || raw.number <= 0) return 'missing or invalid number';
-  if (raw.statusCheckRollup !== null && raw.statusCheckRollup !== undefined) {
-    if (!Array.isArray(raw.statusCheckRollup)) return 'statusCheckRollup is not an array';
-    if (raw.statusCheckRollup.some((c) => !isObj(c))) return 'statusCheckRollup contains a non-object record';
-    for (const c of raw.statusCheckRollup) {
-      for (const k of ['conclusion', 'state', 'status']) if (!strOrAbsent(c[k])) return `check ${k} is not a string`;
-    }
-  }
   if (!strOrAbsent(raw.state) || !strOrAbsent(raw.updatedAt)) return 'state/updatedAt is not a string';
   for (const k of ['isDraft', 'isCrossRepository']) {
     if (raw[k] !== undefined && raw[k] !== null && typeof raw[k] !== 'boolean') return `${k} is not a boolean`;
@@ -124,7 +134,26 @@ export function validatePrRow(raw) {
 }
 
 /**
+ * Why a raw checks row cannot be trusted, or null. A PR whose row fails this is
+ * left `unknown` — a malformed rollup is never a pass and never `none`.
+ * @returns {string|null}
+ */
+export function validateChecksRow(raw) {
+  if (!isObj(raw)) return 'row is not an object';
+  if (!Number.isInteger(raw.number) || raw.number <= 0) return 'missing or invalid number';
+  const r = raw.statusCheckRollup;
+  if (r === null || r === undefined) return 'statusCheckRollup is absent';
+  if (!Array.isArray(r)) return 'statusCheckRollup is not an array';
+  if (r.some((c) => !isObj(c))) return 'statusCheckRollup contains a non-object record';
+  for (const c of r) {
+    for (const k of ['conclusion', 'state', 'status']) if (!strOrAbsent(c[k])) return `check ${k} is not a string`;
+  }
+  return null;
+}
+
+/**
  * Normalise one raw `gh pr list --json` row (call `validatePrRow` first).
+ * `checks` starts `unknown`; `attachChecks` upgrades it from a matching row.
  * @param {object} raw
  */
 export function normalisePr(raw) {
@@ -143,7 +172,7 @@ export function normalisePr(raw) {
     state: str(raw.state).toLowerCase(),
     isDraft: Boolean(raw.isDraft),
     isCrossRepository: Boolean(raw.isCrossRepository),
-    checks: summariseChecks(raw.statusCheckRollup),
+    checks: UNKNOWN_CHECKS,
     updatedAt: raw.updatedAt ?? null,
   };
 }
@@ -180,6 +209,44 @@ export function parsePrList(text, { limit = PR_LIMIT, observedAt = nowIso() } = 
 }
 
 /**
+ * Join the checks listing onto `prs` BY NUMBER (mutates the PR objects).
+ * The two listings are separate bounded snapshots, so success of the second call
+ * proves nothing about a PR it does not mention: `none` only when a matching,
+ * valid row reports an empty rollup; every other PR stays `unknown`.
+ * @param {Array<object>} prs
+ * @param {string} text - stdout of the checks call
+ * @returns {{queried: boolean, missing: number, reason?: string}}
+ */
+export function attachChecks(prs, text) {
+  let rows;
+  try { rows = JSON.parse(String(text)); } catch { return { queried: false, missing: prs.length, reason: 'gh returned unparseable checks JSON' }; }
+  if (!Array.isArray(rows)) return { queried: false, missing: prs.length, reason: 'gh returned a non-list of checks' };
+  const byNumber = new Map();
+  for (const row of rows) { if (isObj(row) && Number.isInteger(row.number)) byNumber.set(row.number, row); }
+  let missing = 0; let malformed = 0; let moved = 0;
+  for (const pr of prs) {
+    const row = byNumber.get(pr.number);
+    if (!row) { missing += 1; continue; }
+    if (validateChecksRow(row)) { missing += 1; malformed += 1; continue; }
+    // A force-push between the two calls would attach another revision's checks to this head.
+    if (pr.headOid && row.headRefOid !== pr.headOid) { missing += 1; moved += 1; continue; }
+    pr.checks = summariseChecks(row.statusCheckRollup);
+  }
+  const reasons = [];
+  if (missing) reasons.push(`${missing} PR${missing === 1 ? '' : 's'} without usable checks${malformed ? ` (${malformed} malformed)` : ''}${moved ? ` (${moved} head moved between queries)` : ''}`);
+  return { queried: true, missing, ...(reasons.length ? { reason: reasons.join('; ') } : {}) };
+}
+
+function runGh(cwd, ghBin, env, fields) {
+  return spawnSync(ghBin, [
+    'pr', 'list', '--state', 'open', '--limit', String(PR_LIMIT), '--json', fields.join(','),
+  ], {
+    cwd, encoding: 'utf-8', timeout: GH_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...(env ?? process.env), GH_PROMPT_DISABLED: '1', NO_COLOR: '1' },
+  });
+}
+
+/**
  * Open PRs for the repo at `cwd`.
  * @param {string} cwd
  * @param {{ghBin?: string, env?: NodeJS.ProcessEnv}} [opts] - `env` lets a test scrub PATH
@@ -187,19 +254,26 @@ export function parsePrList(text, { limit = PR_LIMIT, observedAt = nowIso() } = 
  */
 export function listPullRequests(cwd, { ghBin = 'gh', env } = {}) {
   const observedAt = nowIso();
-  const res = spawnSync(ghBin, [
-    'pr', 'list', '--state', 'open', '--limit', String(PR_LIMIT), '--json', PR_LIST_FIELDS.join(','),
-  ], {
-    cwd, encoding: 'utf-8', timeout: GH_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...(env ?? process.env), GH_PROMPT_DISABLED: '1', NO_COLOR: '1' },
-  });
+  const res = runGh(cwd, ghBin, env, PR_LIST_FIELDS);
   const no = (reason) => ({ queried: false, complete: false, limit: PR_LIMIT, observedAt, reason, prs: [] });
   if (res.error) {
     return no(res.error.code === 'ENOENT' ? 'gh not installed'
       : res.error.code === 'ETIMEDOUT' ? 'gh timed out' : `gh failed to run: ${res.error.message}`);
   }
   if (res.status !== 0) return no(classifyGhFailure(res.stderr));
-  return parsePrList(res.stdout, { observedAt });
+  const core = parsePrList(res.stdout, { observedAt });
+  if (!core.queried) return core;
+  // Optional second column; its failure never touches the PR list above.
+  const cres = runGh(cwd, ghBin, env, PR_CHECK_FIELDS);
+  let field;
+  if (cres.error) {
+    field = { queried: false, missing: core.prs.length, reason: cres.error.code === 'ETIMEDOUT' ? 'gh timed out (checks)' : `gh failed to run (checks): ${cres.error.message}` };
+  } else if (cres.status !== 0) {
+    field = { queried: false, missing: core.prs.length, reason: classifyChecksFailure(cres.stderr) };
+  } else {
+    field = attachChecks(core.prs, cres.stdout);
+  }
+  return { ...core, fields: { checks: field } };
 }
 
 /**

@@ -17,6 +17,7 @@ import {
 import {
   listPullRequests, PR_LIST_FIELDS, PR_VIEW_FIELDS, summariseChecks, repoFromPrUrl,
   normalisePr, prSourceIdentity, prLocalRef, classifyGhFailure, parsePrList, validatePrRow, PR_LIMIT,
+  validateChecksRow,
 } from '../scripts/lib/fleet/gh-facts.mjs';
 
 const roots = [];
@@ -375,10 +376,10 @@ describe('gh list robustness', () => {
     }
     assert.deepEqual([t({ number: 1 }).queried, t({ number: 1 }).reason], [false, 'gh returned a non-list']);
     assert.equal(parsePrList('not json').queried, false);
-    const nullCheck = t([row({ statusCheckRollup: [null] })]);
-    assert.equal(nullCheck.complete, false);
-    assert.match(nullCheck.invalid[0].reason, /non-object/);
-    assert.equal(t([row({ statusCheckRollup: 'x' })]).invalid.length, 1);
+    // the rollup is no longer part of the core row: malformed rollups degrade ONLY the checks column
+    assert.match(validateChecksRow({ number: 1, statusCheckRollup: [null] }), /non-object/);
+    assert.match(validateChecksRow({ number: 1, statusCheckRollup: 'x' }), /not an array/);
+    assert.equal(t([row({ statusCheckRollup: [null] })]).prs.length, 1, 'a hostile rollup cannot cost the PR row');
     assert.equal(t([row({ number: 'one' })]).invalid.length, 1);
     assert.equal(validatePrRow(row()), null);
     const mixed = t([row(), null]);

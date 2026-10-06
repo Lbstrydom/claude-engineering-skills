@@ -44,10 +44,25 @@ export const argvSchema = ({ min = 0 } = {}) => z.array(z.string(), { error: 'mu
   .min(min)
   .refine((a) => a.length === 0 || NON_BLANK(a[0]), 'the executable (first element) must be a non-empty, non-whitespace string');
 
+/**
+ * Optional operator-facing explanation attached to a tier or a check ("why is this
+ * deferred?"). Printed beside the output it explains and recorded in the manifest.
+ * Single-line and bounded: it is rendered verbatim into terminal output, so a
+ * newline would let a note forge a line of fleet output.
+ */
+export const NOTE_MAX = 300;
+const CONTROL_CHARS_RE = /[\u0000-\u001f\u007f]/;
+// Control characters are checked on the RAW input, before `trim()` normalises: "\nreview\n"
+// must be rejected, not quietly accepted as "review". Plain spaces are still trimmed.
+export const NoteSchema = z.string()
+  .refine((s) => !CONTROL_CHARS_RE.test(s), 'note must be a single line without control characters')
+  .pipe(z.string().trim().min(1, 'note must not be blank').max(NOTE_MAX, `note must be at most ${NOTE_MAX} characters`));
+
 export const TierSchema = z.strictObject({
   name: z.string().regex(TIER_NAME_RE, 'must match [a-z0-9][a-z0-9_-]*'),
   command: argvSchema({ min: 1 }),
   stage: z.enum(['pre-land', 'post-merge']).default('pre-land'),
   timeoutMs: z.number().int().positive().optional(),
   shell: z.boolean().optional(),
+  note: NoteSchema.optional(),
 });

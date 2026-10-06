@@ -528,6 +528,7 @@ export function buildStatus(facts) {
     items.push({
       id: b.name, tracked: false, kind: 'branch', branch: b.name, oid: b.oid, worktree: wt?.path ?? null, worktreeState: wtState(wt),
       intent: null, paths: [], state: 'untracked', display: 'untracked', live: live.live, liveReason: live.reason, stale: false,
+      worktreeClean: wt ? (facts.worktreeClean?.[wt.path] ?? null) : null,
       gen: null, rev: null, ready: null, readyStale: false, ahead: b.ahead, behind: b.behind, pr,
       notes: live.futureDatedTipIgnored ? ['future-dated commit ignored'] : [], waitingOn: [], overlaps: [], duplicates: [], findings: [],
     });
@@ -601,7 +602,7 @@ export function buildStatus(facts) {
       worktrees: { queried: Boolean(facts.worktrees?.queried), reason: facts.worktrees?.reason },
       branches: { queried: Boolean(facts.branches?.queried), partial: Boolean(facts.branches?.partial), reason: facts.branches?.reason },
       // `complete:false` = queried but possibly truncated/partly malformed; never read as a full list.
-      prs: { queried: Boolean(facts.prs?.queried), complete: Boolean(facts.prs?.queried) && facts.prs?.complete !== false, limit: facts.prs?.limit, reason: facts.prs?.reason },
+      prs: { queried: Boolean(facts.prs?.queried), complete: Boolean(facts.prs?.queried) && facts.prs?.complete !== false, limit: facts.prs?.limit, reason: facts.prs?.reason, ...(facts.prs?.fields ? { fields: facts.prs.fields } : {}) },
     },
     hold: facts.hold ?? null,
     items,
@@ -609,5 +610,49 @@ export function buildStatus(facts) {
     cycles,
     duplicates: dupGroups,
     trains: trains.filter((t) => !['landed', 'abandoned'].includes(t.phase)).map((t) => ({ trainId: t.trainId, phase: t.phase, result: t.result ?? null })),
+  };
+}
+
+/**
+ * Is this an untracked branch whose work is provably over? Hidden from the
+ * DEFAULT `fleet status` view only, and only on sufficient evidence — every
+ * unknown keeps the item visible:
+ *   - `ahead === 0`: the tip is contained in base (commit containment, a git fact;
+ *     `null` = counts unavailable = not stale);
+ *   - no open PR, AND the PR lookup was complete (`pr === null` only means "no
+ *     open PR" when the list was queried and not truncated);
+ *   - an attached worktree must be provably CLEAN (`worktreeClean === true`):
+ *     ahead 0 is containment, not inactivity.
+ * Registered sessions, detached worktrees and remote-only PRs are never stale.
+ * @param {object} item a status item
+ * @param {{prsComplete: boolean}} ctx
+ */
+export function isStaleUntracked(item, { prsComplete }) {
+  return item.tracked === false && item.kind === 'branch' && item.ahead === 0
+    && item.pr === null && prsComplete === true
+    && (item.worktree === null || item.worktreeClean === true);
+}
+
+/**
+ * The `status` verb's presentation boundary: split a COMPLETE `buildStatus`
+ * result into the visible items and what the default view hides. `buildStatus`
+ * itself stays complete (land and train-approve depend on that). Overlaps are
+ * untouched by hiding: a hidden item is ahead-0, so it has no changed files and
+ * no declared paths and can be on neither side of an overlap.
+ * @param {ReturnType<typeof buildStatus>} status
+ * @param {{all?: boolean}} [opts]
+ * @returns {{items: object[], hidden: {count: number, ids: string[], unchecked: number}}}
+ */
+export function splitHidden(status, { all = false } = {}) {
+  const prsComplete = status.sources?.prs?.complete === true;
+  const stale = (i) => isStaleUntracked(i, { prsComplete });
+  // ahead-0 candidates whose cleanliness could not be established stay visible, and are counted.
+  const unchecked = status.items.filter((i) => i.tracked === false && i.kind === 'branch' && i.ahead === 0
+    && i.pr === null && prsComplete && i.worktree !== null && i.worktreeClean === null).length;
+  if (all) return { items: status.items, hidden: { count: 0, ids: [], unchecked } };
+  const hiddenItems = status.items.filter(stale);
+  return {
+    items: status.items.filter((i) => !stale(i)),
+    hidden: { count: hiddenItems.length, ids: hiddenItems.map((i) => i.id), unchecked },
   };
 }

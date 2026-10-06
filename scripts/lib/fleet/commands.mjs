@@ -20,7 +20,7 @@ import {
   runGit, headOf, tipSubject, repoToplevel,
 } from './git-facts.mjs';
 import { listPullRequests, materializePrRef, prSourceIdentity } from './gh-facts.mjs';
-import { claimMode, decideClaim, isTerminalState, validateClaimPatterns } from './overlap.mjs';
+import { claimMode, decideClaim, isTerminalState, splitHidden, validateClaimPatterns } from './overlap.mjs';
 import { renderClaimVerdict, renderStatus } from './render.mjs';
 import { renderChipPrompt, renderOpenTrains } from './render-train.mjs';
 import { WaitingOnSchema, quarantine, transact } from './registry.mjs';
@@ -99,7 +99,7 @@ export function startOidFor(ctx, branch, { git = runGit } = {}) {
 // ── status ──────────────────────────────────────────────────────────────────
 
 /** `fleet status` — strictly read-only: no lock, no registry write, no lease renewal. */
-export function cmdStatus(ctx) {
+export function cmdStatus(ctx, flags = {}) {
   const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, cmd: ctx.cmd });
   let status = buildStatusFrom(facts);
   const hook = statusChecks({ cwd: ctx.cwd, config: ctx.config, status });
@@ -108,12 +108,14 @@ export function cmdStatus(ctx) {
   if (facts.hold?.invalid) warnings.push(`hold.json unreadable (${facts.hold.invalid})`);
   for (const t of facts.trainsInvalid) warnings.push(`train record unreadable: ${t.file} (${t.reason})`);
   const general = hook.findings.filter((f) => !f.sessions?.length);
-  const lines = [renderStatus(status)];
+  // The ONE place the default view hides stale untracked items; `status` itself stays complete.
+  const view = splitHidden(status, { all: Boolean(flags['--all']) });
+  const lines = [renderStatus({ ...status, items: view.items }, { hidden: view.hidden })];
   if (general.length) lines.push('', 'checks:', ...general.map((f) => `  ${f.level}: ${f.message}`));
   const todo = renderOpenTrains(facts.trains, ctx.cmd);
   if (todo) lines.push('', todo);
   if (warnings.length) lines.push('', ...warnings.map((w) => `warning: ${w}`));
-  return ok({ status, checks: hook.results, warnings, text: lines.join('\n') });
+  return ok({ status: { ...status, items: view.items, hidden: view.hidden }, checks: hook.results, warnings, text: lines.join('\n') });
 }
 
 // ── claim ───────────────────────────────────────────────────────────────────

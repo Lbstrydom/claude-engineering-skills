@@ -14,7 +14,7 @@ import { ArgvError } from '../cli-io.mjs';
 
 /** Per-verb flag tables. `bool` takes no value, `value` takes one, `repeat` may recur. */
 export const VERBS = Object.freeze({
-  status: { bool: ['--json'], value: [], repeat: [], positionals: [0, 0] },
+  status: { bool: ['--json', '--all'], value: [], repeat: [], positionals: [0, 0] },
   add: { bool: ['--json', '--all'], value: ['--id'], repeat: [], positionals: [0, 1] },
   claim: { bool: ['--json', '--override', '--clear-waiting'], value: ['--id', '--intent', '--paths'], repeat: ['--waiting-on'], positionals: [0, 0] },
   ready: { bool: ['--json', '--clear-waiting'], value: ['--id'], repeat: ['--waiting-on'], positionals: [0, 0] },

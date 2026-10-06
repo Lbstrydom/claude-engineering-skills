@@ -438,7 +438,7 @@ function runOneTier({ tier, train, dir, deps }) {
   const wt = train.worktree; const cand = train.candidate;
   const logPath = trainLogPath(dir, train.trainId, tier.name);
   const startedAt = iso(deps);
-  const done = (result, extra = {}) => ({ name: tier.name, stage: 'pre-land', result, startedAt, endedAt: iso(deps), logPath, ...extra });
+  const done = (result, extra = {}) => ({ name: tier.name, stage: 'pre-land', ...(tier.note ? { note: tier.note } : {}), result, startedAt, endedAt: iso(deps), logPath, ...extra });
   const attempt = (n) => {
     fs.mkdirSync(path.dirname(logPath), { recursive: true });
     fs.appendFileSync(logPath, `\n--- fleet: tier ${tier.name} attempt ${n} at ${iso(deps)} ---\n`);
