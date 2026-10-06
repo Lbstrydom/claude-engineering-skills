@@ -34,6 +34,7 @@ import {
 } from './git-facts.mjs';
 import { materializePrRef } from './gh-facts.mjs';
 import { runChecks, buildCheckPayload } from './checks.mjs';
+import { superviseTier } from './tier-supervisor.mjs';
 import { approvable, tiersOf, worstResult } from './overlap.mjs';
 import { assertManaged, fleetDir, newTrainId, readTrain, writeTrain } from './registry.mjs';
 
@@ -102,16 +103,8 @@ export function spawnTier({ tier, cwd, logPath, timeoutMs, platform = process.pl
   const plan = resolveTierSpawn({ tier, platform });
   if (plan.refuse) return { exitCode: null, timedOut: false, error: null, signal: null, refused: plan.refuse };
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
-  const fd = fs.openSync(logPath, 'a');
-  try {
-    const { file, args: argv, shell } = plan;
-    const res = spawnSync(file, argv, {
-      cwd, stdio: ['ignore', fd, fd], shell, windowsHide: true, killSignal: 'SIGKILL', env: process.env,
-      ...(timeoutMs ? { timeout: timeoutMs } : {}),
-    });
-    const timedOut = res.error?.code === 'ETIMEDOUT';
-    return { exitCode: res.status, timedOut, error: res.error && !timedOut ? res.error.message : null, signal: res.signal ?? null };
-  } finally { fs.closeSync(fd); }
+  // A timeout must end the tier's whole process tree, not just the process spawned (see tier-supervisor.mjs).
+  return superviseTier({ file: plan.file, args: plan.args, shell: plan.shell, cwd, logPath, timeoutMs });
 }
 
 /** The main checkout (node_modules owner): the parent of `.git` when the common dir is one, else the toplevel. */

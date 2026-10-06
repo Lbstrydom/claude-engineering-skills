@@ -94,9 +94,10 @@ const STDERR_CAP = 64 * 1024; // only the TAIL of stderr matters (see stderrTail
 /**
  * The supervisor runs the hook in its OWN PROCESS GROUP (POSIX) / job tree (win32).
  *  - On timeout, or when stdout overflows its cap, it kills the whole tree.
- *  - A hook that has EXITED is done: anything it left running that still holds the
- *    pipes is a leak, which is terminated (group kill on POSIX; on win32 its
- *    orphaned descendants are found by ParentProcessId) - never waited on.
+ *  - A hook that has EXITED is done: anything it left running is a leak, which is
+ *    terminated - never waited on. On POSIX the group is always killed once the hook
+ *    has exited (a descendant holding no pipe is reaped too); on win32 orphaned
+ *    descendants holding the pipes are found by ParentProcessId (a quiet one is not).
  *  - Output is kept as Buffers, bounded, and decoded ONCE at the end, so a
  *    multi-byte character split across chunks survives.
  * It is a tiny node program run via process.execPath that relays stdin and prints
@@ -126,7 +127,7 @@ process.stdin.pipe(child.stdin);
 // result does not depend on it: output is bounded and the supervisor finishes on a bounded timer.
 function killTree() {
   try {
-    if (win) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, shell: false });
+    if (win) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, shell: false, timeout: 10000 });
     else process.kill(-child.pid, 'SIGKILL');
   } catch { /* nothing left to kill */ }
 }
@@ -135,7 +136,7 @@ function killLeftovers() {
   try {
     if (win) {
       const ps = 'function K($p){ Get-CimInstance Win32_Process -Filter "ParentProcessId=$p" | ForEach-Object { K $_.ProcessId; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }; K ' + child.pid;
-      spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, shell: false });
+      spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, shell: false, timeout: 10000 });
     } else process.kill(-child.pid, 'SIGKILL');
   } catch { /* nothing left to kill */ }
 }
@@ -150,7 +151,13 @@ function finish() {
 }
 const timer = setTimeout(() => { timedOut = true; killTree(); }, cfg.timeoutMs);
 child.on('error', (e) => { spawnErr = { code: e.code, message: e.message }; finish(); });
-child.on('close', () => { closed = true; finish(); });
+child.on('close', () => {
+  closed = true;
+  // The pipes closing says nothing about descendants that do not hold them (ignored stdio, unref'd):
+  // reap the group on POSIX regardless. (win32: the parent link is gone once the hook exited.)
+  if (!win) killLeftovers();
+  finish();
+});
 child.on('exit', (status, signal) => {
   exitInfo = [status, signal];
   // Normally the pipes close right away. If they do not, a descendant is holding them: kill it.

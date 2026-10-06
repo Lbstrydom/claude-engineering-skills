@@ -157,7 +157,9 @@ describe('transactions', () => {
     const dir = freshDir();
     transact(dir, (ctx) => { ctx.writeSession(rec('a')); });
     fs.writeFileSync(sessionFile(dir, 'a'), 'garbage');
-    assert.throws(() => writeSession(dir, rec('a', { rev: 9 })), (e) => e.code === 'TARGET_INVALID');
+    assert.throws(() => writeSession(dir, rec('a', { rev: 9 })), (e) => e.code === 'TARGET_INVALID'
+      && e.repairFile === path.basename(sessionFile(dir, 'a')) && !/fleet repair/.test(e.message),
+    'the library names the file; the CLI entry point renders the exact repair command');
     assert.equal(fs.readFileSync(sessionFile(dir, 'a'), 'utf-8'), 'garbage');
   });
 

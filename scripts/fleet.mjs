@@ -32,7 +32,7 @@ import { ArgvError, assertKnownFlags, emit, finishAndExit } from './lib/cli-io.m
 import { VERBS, knownFlagsFor, parseVerbArgs } from './lib/fleet/argv.mjs';
 import { ConfigError, resolveConfig } from './lib/fleet/config.mjs';
 import {
-  cmdAdd, cmdClaim, cmdHold, cmdReady, cmdRepair, cmdStart, cmdStatus, cmdTouch,
+  GitUnavailableError, cmdAdd, cmdClaim, cmdHold, cmdReady, cmdRepair, cmdStart, cmdStatus, cmdTouch,
 } from './lib/fleet/commands.mjs';
 import { leaseMsFrom, resolveNow } from './lib/fleet/facts.mjs';
 import { renderCommand } from './lib/fleet/shell-quote.mjs';
@@ -94,8 +94,13 @@ async function main() {
     return finishAndExit(code);
   } catch (err) {
     if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); return finishAndExit(2); }
+    if (err instanceof GitUnavailableError) { process.stderr.write(`fleet: ${err.message}\n`); return finishAndExit(1); }
     if (err instanceof ConfigError) { process.stderr.write(`fleet: ${err.message}\n`); return finishAndExit(1); }
-    if (err instanceof RegistryError) { process.stderr.write(`fleet: ${err.message}\n`); return finishAndExit(1); }
+    if (err instanceof RegistryError) {
+      const hint = err.repairFile ? `; run \`${selfCommand(process.cwd())} repair --quarantine ${err.repairFile}\`` : '';
+      process.stderr.write(`fleet: ${err.message}${hint}\n`);
+      return finishAndExit(1);
+    }
     process.stderr.write(`fleet: unexpected error: ${err?.stack ?? err}\n`);
     return finishAndExit(1);
   }
