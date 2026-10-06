@@ -1,6 +1,6 @@
 {
   "$comment": "Declared unreachable pointers in synced skill content. See scripts/check-skill-consumer-refs.mjs. Every entry needs a disposition and a real reason; new entries default to a TODO reason that the gate rejects.",
-  "totalSites": 216,
+  "totalSites": 218,
   "refs": {
     "doc docs/architecture-map.md": {
       "disposition": "consumer-authored",
@@ -140,7 +140,7 @@
     "doc docs/runbooks/consumer-adoption.md": {
       "disposition": "provenance",
       "reason": "The worktree-preflight marker cites it as rationale and already labels it \"source repo only — docs/runbooks/ is not synced\". The remedy beside it is a bare node bootstrap that depends on nothing.",
-      "sites": 16
+      "sites": 17
     },
     "doc docs/runbooks/local-maintenance-checks.md": {
       "disposition": "provenance",
@@ -230,7 +230,7 @@
     "npm skills:hydrate": {
       "disposition": "consumer-wired",
       "reason": "The worktree-hydration alias. Every site already says \"if this repo defines no such script, add this entry\" and inlines a bare node+git bootstrap, so the text works with or without it.",
-      "sites": 19
+      "sites": 20
     },
     "npm skills:regenerate": {
       "disposition": "source-repo-only",

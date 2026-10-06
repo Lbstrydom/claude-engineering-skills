@@ -49,6 +49,7 @@ Which lens, not how it works — every mode, flag and mechanism is in the roster
 - **nav-audit** — the **system** lens (persona=journey, click=page, nav=system): is what's OFFERED what's NEEDED?
 - **visual-audit** — the **paint** lens: math-first, deterministic; the VLM never gates.
 - **ship** — packaging and delivery.
+- **fleet** — beside the chain, not in it: coordinates CONCURRENT sessions (who is doing what, no duplicate work, one combined test run before landing). It does not plan, audit or ship.
 
 ## `plan`
 
@@ -212,6 +213,18 @@ in, affordance judgments out (those are persona-test's). Plan:
 
 Packaging and delivery. (Step 5.6 promoted consistency candidates into locked
 Playwright specs; it was removed 2026-08-11 with the rest of that path.)
+
+## `fleet`
+
+Coordinates several concurrent AI sessions (chips, linked worktrees, a shared
+tree). Verbs: `status` (read-only, derived from git + the registry under
+`<git-common-dir>/fleet`), `add`/`claim`/`ready`/`touch`/`hold`/`start`/`repair`,
+and `land` (one combined test run, then a human-approved landing). **Cooperative,
+not enforced** — a session that ignores a block duplicates work anyway; `status`
+still surfaces it afterwards. `land --approve` is the one outward action and is
+never run without the user's explicit go-ahead in chat. Consumer config is an
+optional `.fleet.json` (`baseBranch`, `testCommand` incl. tiers, `mergeMethod`,
+`checks`). Plan: [`fleet-multi-session-coordination.md`](../plans/fleet-multi-session-coordination.md).
 
 ---
 

@@ -311,6 +311,9 @@ const CORE_ENTRY = [
   // (lib/claudemd/*, lib/markdown-fence-tracker.mjs) is walked automatically.
   'scripts/check-context-drift.mjs',
   'scripts/brainstorm-round.mjs',
+  // /fleet — multi-session coordination CLI (status/claim/land). Walker pulls
+  // the lib/fleet/ closure automatically; the skill names it by this path.
+  'scripts/fleet.mjs',
   'scripts/explain-history.mjs',
   'scripts/skills-help.mjs',
   // One-shot fit-check diagnostic — labels each skill FITS/PARTIAL/MISMATCH

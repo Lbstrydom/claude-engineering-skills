@@ -26,6 +26,10 @@
       "domain": "brainstorm"
     },
     {
+      "pattern": "scripts/lib/fleet/**",
+      "domain": "fleet"
+    },
+    {
       "pattern": "scripts/lib/install/**",
       "domain": "install"
     },
@@ -214,6 +218,10 @@
     {
       "pattern": "scripts/brainstorm-round.mjs",
       "domain": "brainstorm"
+    },
+    {
+      "pattern": "scripts/fleet.mjs",
+      "domain": "fleet"
     },
     {
       "_comment": "Phase A (domain-map-reconciliation): these subsystems each own a scripts/lib/<name>/ directory and a top-level CLI, and were silently pooled into the shared-lib catch-all below because no rule claimed them (70 of shared-lib's 156 files). shared-lib is the SECOND-TO-LAST rule — anything added under scripts/lib/ without a rule here lands in it and its deps get attributed to 'shared-lib', which is how shared-lib came to appear to import 9 feature domains. When you add a new scripts/lib/<subsystem>/, add a rule here too; tests/domain-map-dead-intent.test.mjs cannot catch this (the rule isn't dead — it's absent).",
@@ -488,6 +496,9 @@
     "fit-check": [
       "shared-lib"
     ],
+    "fleet": [
+      "shared-lib"
+    ],
     "friction": [
       "security",
       "shared-lib",
@@ -598,6 +609,7 @@
       "explain",
       "findings",
       "fit-check",
+      "fleet",
       "friction",
       "gate-honesty",
       "install",
@@ -755,6 +767,9 @@
       "preserve-trust-safety"
     ],
     "fit-check": [
+      "ship-and-sync"
+    ],
+    "fleet": [
       "ship-and-sync"
     ],
     "stores": [

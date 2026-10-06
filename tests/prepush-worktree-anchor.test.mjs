@@ -346,6 +346,10 @@ describe('main-checkout derivation population', () => {
       + 'would restore the second spawn it removed.'],
     ['scripts/install-prepush-hook.mjs',
       'Emits a POSIX sh hook body into a consumer repo. It is bash, not JS — it cannot import a module.'],
+    ['scripts/lib/fleet/git-facts.mjs',
+      'Needs the git COMMON DIRECTORY itself — the shared registry lives inside it so every linked worktree '
+      + 'sees one state — not the main checkout root. resolveMainRoot returns the root, and deriving the '
+      + 'directory back from it breaks for bare repositories and relocated git dirs.'],
     ['scripts/skills-hydrate.mjs',
       'Bootstraps the tooling tree; it runs where scripts/lib may not be hydrated yet, so it '
       + 'cannot depend on a lib module to find the checkout it is about to populate.'],

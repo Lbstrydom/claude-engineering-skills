@@ -73,6 +73,7 @@ const PINNED_EXECUTABLE = {
   'ai-context-management': ['ctx-exit-clean', 'ctx-exit-high'],
   // Phase C — empty-gates declarations (no mechanical gate; see each contract's reason).
   explain: [],
+  fleet: [],
   // 2026-08-04: /investigate ships with gates: [] — 'this measurement was honest'
   // has no oracle in the closed registry (see its contract's reason).
   investigate: [],
@@ -115,6 +116,7 @@ const PINNED_DOCUMENT_ONLY = {
   'visual-audit': ['partial-matrix-refusal', 'vlm-advisory-only'],
   'ai-context-management': ['never-write-without-confirmation'],
   explain: [],
+  fleet: [],
   investigate: [],
   skills: [],
   // Phase C — mostly-document-only skills (agent-enforced caps / write-gate /
@@ -190,7 +192,7 @@ const PINNED_DOCUMENT_ONLY = {
   cycle: ['remediate-focused-audit-scope', 'audit-plan-skip-requires-explicit-mode', 'cluster-scope-preflight-exits-nonzero', 'cluster-start-ref-validated-on-use', 'preview-gate-halt-blocks-ship', 'fix-gate-convergence-before-next-cluster', 'author-tier-never-routes', 'consolidated-gemini-gate-mandatory'],
   plan: ['gate-1-phase-triggers', 'never-a-lone-phase-1', 'warnings-never-block-plan-generation', 'section-10-graded-by-ux-lock-verify'],
 };
-const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'audit-plan', 'brainstorm', 'click-test', 'cycle', 'explain', 'investigate', 'nav-audit', 'persona-test', 'plan', 'security-strategy', 'ship', 'skills', 'ux-lock', 'visual-audit'];
+const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'audit-plan', 'brainstorm', 'click-test', 'cycle', 'explain', 'fleet', 'investigate', 'nav-audit', 'persona-test', 'plan', 'security-strategy', 'ship', 'skills', 'ux-lock', 'visual-audit'];
 
 describe('gate-honesty — real skills/', () => {
   it('loads the current repo contracts and runs every oracle clean, printing the coverage report', async () => {

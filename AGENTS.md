@@ -162,21 +162,21 @@
 
 ## Project Overview
 
-**Purpose**: A bundle of 16 AI-pair-programming skills covering the full development quality lifecycle — from planning through code audit to live UX testing and shipping.
+**Purpose**: A bundle of 17 AI-pair-programming skills covering the full development quality lifecycle — from planning through code audit to live UX testing and shipping.
 **Runtime**: Node.js (ESM modules, `"type": "module"`)
 **Deployment**: CLI scripts + skill files, invoked by AI coding assistants (Claude Code, Copilot, Cursor, Windsurf)
 **Repo**: Renamed from `claude-audit-loop` to `claude-engineering-skills` (Phase E)
 
 ## Skill Chain
 
-16 skills, run in this order: **plan → audit-plan → *(implement)* → audit-code
+17 skills; 16 run in this order: **plan → audit-plan → *(implement)* → audit-code
 → ux-lock → deploy → the four UI lenses → ship**, with `/cycle` driving the whole
 chain and pausing for human implementation. The four lenses are **disjoint** and
 run together on a UI PR — click-test (page DOM) ∥ persona-test (journey) ∥
-nav-audit (system IA) ∥ visual-audit (paint).
+nav-audit (system IA) ∥ visual-audit (paint). `/fleet` sits beside the chain: it coordinates concurrent sessions, cooperatively.
 
-Diagram, one-line scope per skill, and per-skill depth (modes, flags, the design
-invariants of each wave and lens) + the naming convention:
+Diagram, per-skill scope and depth (modes, flags, wave/lens design invariants)
+and the naming convention:
 [`docs/reference/skill-roster.md`](docs/reference/skill-roster.md) — read it before
 renaming a skill or "simplifying" a wave.
 

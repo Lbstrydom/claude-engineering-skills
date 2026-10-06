@@ -44,6 +44,7 @@ const CORE_ENTRY = [
   'scripts/check-npm-run-args.mjs',
   'scripts/check-context-drift.mjs',
   'scripts/brainstorm-round.mjs',
+  'scripts/fleet.mjs',
   'scripts/explain-history.mjs',
   'scripts/skills-help.mjs',
   'scripts/skills-fit-check.mjs',
