@@ -142,6 +142,9 @@ Run in the operator's session, not in the audit pipeline.
 `scripts/brainstorm-*` + `scripts/lib/brainstorm/**` — the /brainstorm skill's
 back-end.
 
+### `fleet`
+`scripts/fleet.mjs` + `scripts/lib/fleet/**` — the /fleet skill's back-end: git facts, a per-session registry under the git common dir, pure overlap/landing decisions, and the train that builds one combined test run. Cooperative coordination, not enforcement; it depends on `shared-lib` only.
+
 ### `plan`
 `scripts/lib/plan-*` — plan-audit specific helpers (path extraction, fingerprinting).
 

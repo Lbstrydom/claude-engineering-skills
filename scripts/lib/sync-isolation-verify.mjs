@@ -75,6 +75,7 @@ const CLI_SMOKE_SET = [
   'reconcile-repo-identity.mjs',
   'ux-lock-run.mjs', // WS2 deterministic /ux-lock runner
   'nav-audit.mjs',   // /nav-audit CLI orchestrator
+  'fleet.mjs',       // /fleet coordination CLI; declared in sync-to-repos.mjs (verified before adding)
   'visual-audit.mjs',// /visual-audit CLI orchestrator
   'persona-consistency-run.mjs', // Phase 4 consistency-mode runner; declared in
                                  // sync-to-repos.mjs (verified before adding —

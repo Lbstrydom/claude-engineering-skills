@@ -69,6 +69,7 @@
       "name": "micromatch",
       "required": true,
       "importers": [
+        "scripts/.claude-skills/lib/fleet/overlap.mjs",
         "scripts/.claude-skills/openai-audit.mjs"
       ]
     },
@@ -178,6 +179,10 @@
         "scripts/.claude-skills/lib/efficacy-lints.mjs",
         "scripts/.claude-skills/lib/final-review/output-schemas.mjs",
         "scripts/.claude-skills/lib/finalize-outcomes.mjs",
+        "scripts/.claude-skills/lib/fleet/checks.mjs",
+        "scripts/.claude-skills/lib/fleet/config.mjs",
+        "scripts/.claude-skills/lib/fleet/contracts.mjs",
+        "scripts/.claude-skills/lib/fleet/registry.mjs",
         "scripts/.claude-skills/lib/learning/author-tier-observation.mjs",
         "scripts/.claude-skills/lib/llm-wrappers.mjs",
         "scripts/.claude-skills/lib/memory-paths.mjs",

@@ -82,6 +82,27 @@
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
 
+## 2026-10-06 — /fleet: coordinate concurrent AI coding sessions (17th skill)
+
+Plan: `docs/plans/fleet-multi-session-coordination.md`. Built by `/cycle --autonomous`; brainstorm sessions `1791174530024` and `1791184884943` decided the shape.
+
+### What shipped
+- **`/fleet`** — `status` (read-only; git is the source of truth, unqueried facts read "not queried"), `add`/`claim`/`ready`/`touch`/`hold`/`repair`, `start` (atomic batch of chips with the participant rules embedded) and `land` (one combined test run in a disposable worktree, human-approved landing, recovery via `--reconcile`/`--confirm`/`--abandon`/`--resume`). Cooperative, not enforced: a new chip is BLOCKED on an overlapping live claim, a running session only gets a warning.
+- **Consumer extensions requested for storyline** (§2b): a `checks` hook in `.fleet.json`, tiered `testCommand` (a `post-merge` tier never runs in `land` and is always disclosed as uncovered), and a `waitingOn` field on session records.
+- Code: `scripts/fleet.mjs`, `scripts/lib/fleet/**` (17 modules), `skills/fleet/**`; wired into the sync entry list, `CLI_SMOKE_SET`, the skill census (17), the domain map (`fleet`), architecture-intent and the skill roster.
+- Liveness is a **lease**, not pid + start time (a one-shot CLI cannot know its session's pid) — recorded in the plan §1.
+
+### Verification
+- **Plan**: 3 GPT rounds (26 findings, all accepted) + Gemini R1 CONCERNS -> fixed -> R2 APPROVE.
+- **Code**: Cluster A 3 rounds, Cluster B 6 rounds (every finding fixed with a mutation-proven test, or dismissed with a stated rationale), Cluster C 1 round. Consolidated Gemini over the union diff: APPROVE, 0 findings.
+- **Tests (measured, this session)**: 319 fleet tests; 2,156 across the fleet + affected invariant suites, 0 fail. Full `npm test` before the invariant fixes: 17,606 tests, 9 fail — all fixed except 3 that need the files committed (manifest-vs-COMMITTED-bytes), re-checked below.
+- **Known limits**: GPT audit coverage of Cluster B was PARTIAL (changed lines past its read window in 12 of 13 files) and the last fix round got no seventh audit (6-round cap). A hook descendant that deliberately escapes its process group is not killed (documented). Windows-only paths (PowerShell quoting, the process-tree kill) were only partly exercised on this machine.
+
+### Backlog
+Backlog 2026-10-06T04:56Z: Q1 68c/8p (+353 aged) · Q2 89c/42p (54 perm) · Q3 35 · debt 303 cloud/67 local (0 spilled) · upstream 1
+
+---
+
 ## 2026-10-02 — correction: accepted control-marker count (PR #147)
 
 ### Correction

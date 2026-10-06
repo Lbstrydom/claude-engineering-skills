@@ -1,0 +1,109 @@
+#!/usr/bin/env node
+/**
+ * @fileoverview /fleet — coordinate several concurrent AI coding sessions.
+ *
+ * A thin dispatcher: argv → one verb in `lib/fleet/` → text (or the `--json`
+ * envelope) → exit code. fleet is COOPERATIVE, not enforcing: every rule (stop on
+ * `blocked`, hold heavy runs) is honoured by the participants, not by this CLI.
+ *
+ *   status                          read-only join of git, gh, registry, trains
+ *   add <branch|#PR|--all>          adopt work that already exists (advisory)
+ *   claim --id --intent --paths     register a NEW session (blocking gate) or update one
+ *   ready | touch                   record the head as ready / renew the lease
+ *   hold on|off [--reason]          "hold heavy runs"
+ *   start --task … [--paths …]…     atomic all-or-nothing batch of chip worktrees
+ *   repair --quarantine <file>      move one invalid record aside (human-run)
+ *   land [--select a,b] [--dry-run] build + test one combined train
+ *   land --approve|--confirm|--reconcile|--resume|--abandon <trainId>
+ *
+ * Exit codes: 0 ok · 1 error (incl. lock not acquired) · 2 argv · 3 blocked/refused.
+ * `FLEET_NOW` (ISO or epoch ms) pins the clock for tests; `FLEET_LEASE_HOURS`
+ * (default 4) sets the lease; `FLEET_WORKTREE_ROOT` moves the integration
+ * worktrees.
+ *
+ * Plan: docs/plans/fleet-multi-session-coordination.md §2, §7.
+ *
+ * @module scripts/fleet
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { ArgvError, assertKnownFlags, emit, finishAndExit } from './lib/cli-io.mjs';
+import { VERBS, knownFlagsFor, parseVerbArgs } from './lib/fleet/argv.mjs';
+import { ConfigError, resolveConfig } from './lib/fleet/config.mjs';
+import {
+  cmdAdd, cmdClaim, cmdHold, cmdReady, cmdRepair, cmdStart, cmdStatus, cmdTouch,
+} from './lib/fleet/commands.mjs';
+import { leaseMsFrom, resolveNow } from './lib/fleet/facts.mjs';
+import { renderCommand } from './lib/fleet/shell-quote.mjs';
+import { cmdLand } from './lib/fleet/land.mjs';
+import { fleetDir, RegistryError } from './lib/fleet/registry.mjs';
+
+const EXIT = { ok: 0, error: 1, argv: 2, refused: 3, pending: 3 };
+const USAGE = `usage: fleet <verb> [flags]\nverbs: ${Object.keys(VERBS).join(', ')}\n`;
+
+/** How this CLI is invoked, for the commands it prints (relative when inside the repo). */
+function selfCommand(cwd) {
+  const self = path.resolve(process.argv[1]);
+  const rel = path.relative(cwd, self);
+  return renderCommand(['node', rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel.split(path.sep).join('/') : self]);
+}
+
+async function main() {
+  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+  const verb = process.argv[2];
+  if (!verb || verb === '--help' || verb === '-h' || verb === 'help') {
+    process.stdout.write(USAGE);
+    return finishAndExit(verb ? 0 : 2);
+  }
+  if (!VERBS[verb]) {
+    process.stderr.write(`fleet: unknown verb ${JSON.stringify(verb)}\n${USAGE}`);
+    return finishAndExit(2);
+  }
+
+  let result;
+  try {
+    assertKnownFlags(process.argv, knownFlagsFor(verb), { cli: `fleet ${verb}` });
+    const { flags, positionals, tasks } = parseVerbArgs(verb, process.argv.slice(3));
+    const cwd = process.cwd();
+    const env = process.env;
+    leaseMsFrom(env); // an invalid FLEET_LEASE_HOURS is a config error up front, never a silent default
+    const ctx = { cwd, env, now: resolveNow(env), dir: fleetDir(cwd), cmd: selfCommand(cwd) };
+    // Config is LOADED LAZILY: manifest-driven recovery (--reconcile/--confirm/--abandon) must work with a malformed .fleet.json.
+    let cached;
+    Object.defineProperty(ctx, 'config', { enumerable: true, get() { cached ??= resolveConfig(cwd, { env }); return cached; } });
+    switch (verb) {
+      case 'status': result = cmdStatus(ctx); break;
+      case 'add': result = cmdAdd(ctx, flags, positionals); break;
+      case 'claim': result = cmdClaim(ctx, flags); break;
+      case 'ready': result = cmdReady(ctx, flags); break;
+      case 'touch': result = cmdTouch(ctx, flags); break;
+      case 'hold': result = cmdHold(ctx, flags, positionals); break;
+      case 'start': result = cmdStart(ctx, tasks); break;
+      case 'repair': result = cmdRepair(ctx, flags); break;
+      case 'land': result = cmdLand(ctx, flags); break;
+      default: throw new ArgvError(`fleet: unhandled verb ${verb}`);
+    }
+    const code = EXIT[result.code] ?? 1;
+    process.exitCode = code;
+    if (flags['--json']) {
+      emit({ verb, ...result, ok: result.ok });
+    } else {
+      process.stdout.write(`${result.text}\n`);
+    }
+    return finishAndExit(code);
+  } catch (err) {
+    if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); return finishAndExit(2); }
+    if (err instanceof ConfigError) { process.stderr.write(`fleet: ${err.message}\n`); return finishAndExit(1); }
+    if (err instanceof RegistryError) { process.stderr.write(`fleet: ${err.message}\n`); return finishAndExit(1); }
+    process.stderr.write(`fleet: unexpected error: ${err?.stack ?? err}\n`);
+    return finishAndExit(1);
+  }
+}
+
+// Direct-run guard. BOTH sides are canonicalised before comparing: a symlinked entry path (or
+// --preserve-symlinks-main, which leaves import.meta.url unresolved) must never turn a mutating
+// command into a silent no-op. (--selfcheck-relocation stays the first statement of main().)
+const canon = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
+const here = canon(fileURLToPath(import.meta.url));
+if (process.argv[1] && here === canon(path.resolve(process.argv[1]))) await main();

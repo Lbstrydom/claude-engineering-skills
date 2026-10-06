@@ -119,6 +119,8 @@ const CAPABILITY_BOUND = {
   // tables that are not source-file predicates
   'scripts/lib/config.mjs': { max: 1, reason: 'LANGUAGES bandit-bucket enum (learning context), not a file predicate' },
   'scripts/lib/context.mjs': { max: 1, reason: 'TypeScript stack detection (a .ts file implies typescript)' },
+  // a runner decision, not a file predicate
+  'scripts/lib/fleet/checks.mjs': { max: 1, reason: 'default runner for a /fleet check script: node can only execute .mjs/.cjs/.js; any other extension must name its own runner or be executable' },
   // repo-internal tooling that scans THIS repo's own files
   'scripts/check-emit-exit-agreement.mjs': { max: 1, reason: 'repo-internal gate over this repo\'s own .mjs/.js sources' },
   'scripts/check-stdout-flush.mjs': { max: 1, reason: 'repo-internal gate over this repo\'s own .mjs/.js sources' },

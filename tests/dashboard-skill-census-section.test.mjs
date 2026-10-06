@@ -19,9 +19,9 @@ import { collectTelemetry } from '../scripts/lib/dashboard/collect-telemetry.mjs
 const ui = buildUi();
 
 describe('censusAllSkills (producer)', () => {
-  it('produces exactly 16 rows without throwing, cloud on or off', async () => {
+  it('produces exactly 17 rows without throwing, cloud on or off', async () => {
     const result = await censusAllSkills({ root: process.cwd() });
-    assert.equal(result.rows.length, 16, `expected 16 skill rows, got ${result.rows.length}`);
+    assert.equal(result.rows.length, 17, `expected 17 skill rows, got ${result.rows.length}`);
     assert.deepEqual(
       result.rows.map((r) => r.skill).sort(),
       [...ALL_SKILLS].sort(),
@@ -46,7 +46,7 @@ describe('collectTelemetry -> skillCensus (consumer path)', () => {
     assert.ok('skillCensus' in data, 'collectTelemetry must include a skillCensus key');
     assert.ok('skillCensus' in data.sources, 'collectTelemetry must include a sources.skillCensus status');
     assert.ok(Array.isArray(data.skillCensus.rows), 'skillCensus.rows must be an array');
-    assert.equal(data.skillCensus.rows.length, 16);
+    assert.equal(data.skillCensus.rows.length, 17);
     assert.notEqual(data.sources.skillCensus.status, 'unexpected-error',
       `skillCensus degraded: ${data.sources.skillCensus.detail}`);
   });
@@ -63,8 +63,12 @@ describe('sectionSkillCensus — rendering contract', () => {
 
   it('renders a table row per skill, never dropping a zero-count row (state 4)', () => {
     const html = sectionSkillCensus({ src: { status: 'ok' }, skillCensus: census([sampleRow({ window: { current: 0, prior: 0 }, allTimeCount: 0 })]) }, ui);
-    assert.match(html, /audit-code/);
     assert.match(html, /<table/);
+    // The row for the skill must exist AND show its zero counts — a bare
+    // "audit-code appears somewhere" would pass if the row were dropped.
+    const row = html.match(/<tr[^>]*>(?:(?!<\/tr>)[\s\S])*audit-code(?:(?!<\/tr>)[\s\S])*<\/tr>/);
+    assert.ok(row, 'a table row naming audit-code must be rendered');
+    assert.match(row[0], /(^|[^\d])0([^\d]|$)/, 'the zero counts must be displayed, not dropped');
   });
 
   it('a skill with no conversion-rate metric renders "n/a", never a blank cell (state 3)', () => {
