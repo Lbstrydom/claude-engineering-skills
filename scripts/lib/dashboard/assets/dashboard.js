@@ -208,4 +208,44 @@
     apply();
   }
   initAuditRunFilters(document.querySelector('[data-dashboard-kind="audit-run"]'));
+
+  // ── Home freshness (docs/plans/dashboard-home-summary.md §2) ─────────
+  // A static page cannot know how old it will be when opened, so the age is
+  // computed HERE, in the browser, from the build time the Home panel carries in
+  // data-built-at. Past 24 h the (server-rendered, hidden) stale banner is
+  // revealed. A missing or unparseable stamp shows nothing — an unknown age is
+  // not a stale one, and a freshness line must never throw into the tabs above.
+  var HOME_STALE_MS = 24 * 60 * 60 * 1000;
+
+  /**
+   * Pure. builtAt: the ISO string from data-built-at; nowMs: epoch ms.
+   * Returns { ageMs, stale, label } or null when the stamp is absent/invalid.
+   * Stale means STRICTLY older than 24 h; a stamp in the future (clock skew) is age 0.
+   */
+  function homeFreshness(builtAt, nowMs) {
+    if (typeof builtAt !== 'string' || !builtAt) return null;
+    var t = Date.parse(builtAt);
+    if (isNaN(t) || typeof nowMs !== 'number' || !isFinite(nowMs)) return null;
+    var ageMs = Math.max(0, nowMs - t);
+    var hours = Math.floor(ageMs / 3600000);
+    var label = hours >= 48 ? Math.floor(hours / 24) + ' days'
+      : hours === 1 ? '1 hour'
+        : hours + ' hours';
+    return { ageMs: ageMs, stale: ageMs > HOME_STALE_MS, label: label };
+  }
+
+  function initHomeFreshness() {
+    var root = document.querySelector('.home[data-built-at]');
+    if (!root) return;
+    var banner = root.querySelector('[data-testid="home-stale-banner"]');
+    var f = homeFreshness(root.getAttribute('data-built-at'), Date.now());
+    if (!banner || !f || !f.stale) return;
+    var age = banner.querySelector('[data-role="home-age"]');
+    if (age) age.textContent = f.label;
+    banner.hidden = false;
+  }
+  try { initHomeFreshness(); } catch (err) { /* freshness is advisory */ }
+
+  // Test seam only: a browser has no `module`, so this is inert in the page.
+  if (typeof module !== 'undefined' && module.exports) module.exports = { homeFreshness: homeFreshness };
 })();

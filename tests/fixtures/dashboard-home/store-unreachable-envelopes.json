@@ -1,0 +1,166 @@
+{
+  "capturedAt": "2026-10-06T08:24:54.763Z",
+  "node": "v22.23.2",
+  "note": "REAL capture (not hand-written): each of the five queue readers run in a hermetic env with AUDIT_DB_URL aimed at a closed loopback port (closed-port) and set to the empty string (empty-dsn, the air-gap signal). envelope = last JSON line on stdout; stderrClass is a bounded label, never stderr text. Re-capture by re-running the readers the same way; never hand-edit.",
+  "captures": [
+    {
+      "reader": "q1",
+      "mode": "closed-port",
+      "exitCode": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "REPO_RESOLVE_FAILED",
+          "message": "ambient repo identity lookup failed (connect ECONNREFUSED 127.0.0.1:1) — the store was unreachable; nothing was measured (this is NOT an empty backlog and NOT a repo without identity)."
+        }
+      },
+      "stderrClass": "store-unreachable-notice"
+    },
+    {
+      "reader": "q2",
+      "mode": "closed-port",
+      "exitCode": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "REPO_RESOLVE_FAILED",
+          "message": "ambient repo identity lookup failed (connect ECONNREFUSED 127.0.0.1:1) — the store was unreachable; nothing was measured (this is NOT an empty backlog and NOT a repo without identity)."
+        }
+      },
+      "stderrClass": "store-unreachable-notice"
+    },
+    {
+      "reader": "q3",
+      "mode": "closed-port",
+      "exitCode": 0,
+      "envelope": {
+        "schemaVersion": 1,
+        "state": "unavailable",
+        "diagnostic": "CLOUD_UNREACHABLE"
+      },
+      "stderrClass": "store-unreachable-notice"
+    },
+    {
+      "reader": "upstream",
+      "mode": "closed-port",
+      "exitCode": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "LIST_FAILED",
+          "message": "connect ECONNREFUSED 127.0.0.1:1",
+          "ok": false,
+          "cloud": true,
+          "rows": [],
+          "nextCursor": null,
+          "error": "connect ECONNREFUSED 127.0.0.1:1",
+          "items": []
+        }
+      },
+      "stderrClass": "store-unreachable-notice"
+    },
+    {
+      "reader": "debt",
+      "mode": "closed-port",
+      "exitCode": 2,
+      "envelope": {
+        "ok": false,
+        "verdict": "unverifiable",
+        "reason": "repo-identity-unresolved",
+        "action": "refused",
+        "localEntries": 67
+      },
+      "stderrClass": "store-unreachable-notice"
+    },
+    {
+      "reader": "q1",
+      "mode": "empty-dsn",
+      "exitCode": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "scope": {
+          "mode": "unresolved",
+          "repoId": null,
+          "slug": null
+        },
+        "measured": false,
+        "reason": "cloud-off",
+        "rows": [],
+        "shown": 0,
+        "total": 0,
+        "byMode": {
+          "total": 0,
+          "code": 0,
+          "plan": 0
+        },
+        "danglingLocks": {
+          "count": null,
+          "reason": "cloud-off",
+          "rows": []
+        }
+      },
+      "stderrClass": "cloud-off-notice"
+    },
+    {
+      "reader": "q2",
+      "mode": "empty-dsn",
+      "exitCode": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "scope": {
+          "mode": "unresolved",
+          "repoId": null,
+          "slug": null
+        },
+        "measured": false,
+        "reason": "cloud-off",
+        "rows": []
+      },
+      "stderrClass": "cloud-off-notice"
+    },
+    {
+      "reader": "q3",
+      "mode": "empty-dsn",
+      "exitCode": 0,
+      "envelope": {
+        "schemaVersion": 1,
+        "state": "disabled"
+      },
+      "stderrClass": "cloud-off-notice"
+    },
+    {
+      "reader": "upstream",
+      "mode": "empty-dsn",
+      "exitCode": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "rows": [],
+        "nextCursor": null,
+        "items": [],
+        "drain": {
+          "drained": 0,
+          "rejected": 0,
+          "failed": 0,
+          "skipped": "cloud-off"
+        }
+      },
+      "stderrClass": "cloud-off-notice"
+    },
+    {
+      "reader": "debt",
+      "mode": "empty-dsn",
+      "exitCode": 2,
+      "envelope": {
+        "ok": false,
+        "verdict": "unverifiable",
+        "reason": "repo-identity-unresolved",
+        "action": "refused",
+        "localEntries": 67
+      },
+      "stderrClass": "cloud-off-notice"
+    }
+  ]
+}

@@ -42,6 +42,7 @@ import sectionAuthorTier from './sections/author-tier.mjs';
 import sectionModelAb from './sections/model-ab.mjs';
 import sectionTieredShadow from './sections/tiered-shadow.mjs';
 import sectionStartHere from './sections/start-here.mjs';
+import sectionHome from './sections/home.mjs';
 import sectionPersonaTests from './sections/persona-tests.mjs';
 
 // Backward-compat: existing callers import these from render.mjs.
@@ -75,6 +76,10 @@ const SLICERS = {
   security:     (d) => ({ src: d.sources.security || { status: 'ok', detail: '' }, security: d.security || { cloud: false, totalIncidents: 0, embedded: 0, byStatus: [], eventCounts: [], lastRefreshAt: null, recentEvents: [] } }),
   purposeHealth:(d) => ({ src: d.sources.purposeHealth || { status: 'ok', detail: '' }, purposeHealth: d.purposeHealth || { asOf: '', windowDays: 30, repoWide: { recentHighFindings: null, plansWithFailingCriteria: null, refusedSecrets: null }, purposeBadges: [] } }),
   tieredShadow: (d) => ({ src: d.sources.tieredShadow || { status: 'missing-optional', detail: '' }, tieredShadow: d.tieredShadow || null }),
+  // Home: the measured landing summary (docs/plans/dashboard-home-summary.md). `home` is
+  // null when the collector threw or the snapshot predates Home; the section says so.
+  // An absent `sources.home` is NEVER read as success: it is missing-optional and says so.
+  home:         (d) => ({ src: d.sources.home || { status: 'missing-optional', detail: 'no Home source was recorded for this build' }, home: d.home || null }),
   // Start Here is pure orientation prose — no collected data.
   startHere:    () => ({}),
   // audit-run uses a top-level `src` (discriminated collector status code), NOT
@@ -89,6 +94,8 @@ const SLICERS = {
 // builder clusters consecutive same-group entries.
 const REGISTRY = {
   reference: [
+    { id: 'home',         title: 'Home',           group: 'Orientation', build: sectionHome, slice: SLICERS.home,
+      desc: 'Is the project healthy, what needs you, and what changed lately — a snapshot taken when this page was built.' },
     { id: 'startHere',    title: 'Start Here',     group: 'Orientation', build: sectionStartHere, slice: SLICERS.startHere,
       desc: 'New to this dashboard? What everything is, in plain English, and where to find it.' },
     { id: 'skills',       title: 'Skills',         group: 'Understand the toolkit', build: sectionSkills,       slice: SLICERS.skills,
@@ -116,7 +123,7 @@ const REGISTRY = {
     { id: 'auditEffectiveness',title: 'Audit Effectiveness', group: 'Audit pipeline', build: sectionAuditEffectiveness, slice: SLICERS.auditEffectiveness,
       desc: 'Is the audit worth it? Precision and recall of audit findings measured against real user-visible impact.' },
     { id: 'skillCensus',  title: 'Skill Census',   group: 'Audit pipeline', build: sectionSkillCensus,  slice: SLICERS.skillCensus,
-      desc: 'Which of the 16 bundled skills actually get invoked, how often, and whether their findings get fixed.' },
+      desc: (d) => { const n = d.skillCensus?.rows?.length; return `Which of the ${n ? `${n} ` : ''}bundled skills actually get invoked, how often, and whether their findings get fixed.`; } },
     { id: 'promptVariants',title: 'Prompt Variants', group: 'Audit pipeline', build: sectionPromptVariants, slice: SLICERS.promptVariants,
       desc: 'Which audit prompt wordings are winning — the bandit that learns from your accept/dismiss decisions.' },
     { id: 'authorTier',   title: 'Author Tier',    group: 'Audit pipeline', build: sectionAuthorTier,   slice: SLICERS.authorTier,
@@ -242,8 +249,11 @@ export function renderDocument(data, kind, assets) {
     }
     // Plain-English subtitle (signifier for new users) — group crumb + one
     // sentence on what the tab shows and why you'd look at it.
-    const desc = s.desc
-      ? `<p class="panel-desc">${s.group ? `<span class="panel-crumb">${escapeHtml(s.group)}</span> · ` : ''}${escapeHtml(s.desc)}</p>`
+    // `desc` may be a function of the validated data (the census interpolates its roster count).
+    let descText;
+    try { descText = typeof s.desc === 'function' ? s.desc(validated) : s.desc; } catch { descText = ''; } // a subtitle must never take its panel down
+    const desc = descText
+      ? `<p class="panel-desc">${s.group ? `<span class="panel-crumb">${escapeHtml(s.group)}</span> · ` : ''}${escapeHtml(descText)}</p>`
       : '';
     return panel(s.id, i === 0, desc + inner);
   }).join('');

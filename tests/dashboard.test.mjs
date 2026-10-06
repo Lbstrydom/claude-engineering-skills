@@ -73,6 +73,49 @@ function telData(overrides = {}) {
   };
 }
 
+// ── Home tab: first, and the census roster count ────────────────────────
+
+test('the first tab is Home: selected, controlling a visible panel; Start Here follows in the same group', () => {
+  const html = renderDocument(refData(), 'reference', ASSETS);
+  const tabs = [...html.matchAll(/<button role="tab" id="tab-(\w+)"[^>]*aria-selected="(true|false)"/g)];
+  assert.deepEqual(tabs.slice(0, 2).map((m) => [m[1], m[2]]), [['home', 'true'], ['startHere', 'false']]);
+  assert.ok(html.includes('<div role="tabpanel" id="panel-home" aria-labelledby="tab-home">'), 'Home panel is not hidden');
+  assert.ok(html.includes('<div role="tabpanel" id="panel-startHere" aria-labelledby="tab-startHere" hidden>'), 'Start Here is hidden');
+  // A registry smoke check: Home is registered first, under Orientation.
+  assert.deepEqual(renderTest.REGISTRY.reference.slice(0, 2).map((s) => [s.id, s.group]), [['home', 'Orientation'], ['startHere', 'Orientation']]);
+});
+
+const censusRow = (skill) => ({
+  skill, signalSource: 's', signalQuality: 'caller-checked', effectiveSince: null,
+  window: { current: 1, prior: 0 }, allTimeCount: 1, trend: { delta: null, pct: null }, conversionRate: null, lastRunAt: null, caveat: 'c',
+});
+const censusDesc = (html) => /id="panel-skillCensus"[^>]*>(<p class="panel-desc">.*?<\/p>)/.exec(html)[1];
+
+test('the Skill Census description interpolates the roster count from its rows', () => {
+  const rows = Array.from({ length: 17 }, (_, i) => censusRow(`skill-${i}`));
+  const html = renderDocument(telData({
+    skillCensus: { cloud: true, repoId: 'r', repoName: 'o/r', windowDays: 14, rows },
+    sources: { ...telData().sources, skillCensus: { status: 'ok', detail: '' } },
+  }), 'telemetry', ASSETS);
+  const d = censusDesc(html);
+  assert.match(d, /Which of the 17 bundled skills/);
+  assert.doesNotMatch(d, /\b16\b/, 'the stale hard-coded number is gone');
+});
+
+test('the Skill Census description DROPS the number when there are no rows — never a wrong one', () => {
+  for (const skillCensus of [undefined, { cloud: false, repoId: null, repoName: null, windowDays: 14, rows: [] }]) {
+    const html = renderDocument(telData(skillCensus ? { skillCensus } : {}), 'telemetry', ASSETS);
+    const d = censusDesc(html);
+    assert.match(d, /Which of the bundled skills actually get invoked/);
+    assert.doesNotMatch(d, /\d/, 'no count is printed without rows');
+  }
+});
+
+test('a Home source note or panel never needs a wall-clock stamp on a build WITHOUT Home (the committed page stays timestamp-free)', () => {
+  const html = renderDocument(refData(), 'reference', ASSETS);
+  assert.ok(!html.includes('data-built-at'), 'no Home collected, no stamp');
+});
+
 // ── Output encoding — the security boundary ─────────────────────────────
 
 test('escapeHtml neutralises HTML metacharacters', () => {

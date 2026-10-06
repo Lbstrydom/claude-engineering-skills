@@ -75,6 +75,7 @@ import { resolveMainRoot } from './lib/pinned-worktree/paths.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { withFileLock, LockTimeoutError } from './lib/file-lock.mjs';
 import { isSourceRepo } from './lib/is-source-repo.mjs';
+import { loadHeartbeat as readHeartbeat, isOverdue as heartbeatOverdue, DEFAULT_INTERVAL_DAYS, HEARTBEAT_FILE } from './lib/maintenance-heartbeat.mjs';
 
 if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
@@ -134,7 +135,7 @@ try {
  * and a normal invocation separate locks.
  */
 const STATE_DIR = process.env.AUDIT_LOOP_STATE_DIR || path.join(MAIN_WORKTREE_ROOT, '.audit-loop');
-const HEARTBEAT_PATH = path.join(STATE_DIR, 'last-maintenance.json');
+const HEARTBEAT_PATH = path.join(STATE_DIR, HEARTBEAT_FILE);
 const LOCK_PATH = path.join(STATE_DIR, '.maintenance.lock');
 
 // The override moves BOTH the single-instance lock and the heartbeat, so an
@@ -155,7 +156,6 @@ if (process.env.AUDIT_LOOP_STATE_DIR) {
     `  [maintenance] AUDIT_LOOP_STATE_DIR override active (${STATE_DIR}) — this run does NOT share the repo's lock or heartbeat\n`,
   );
 }
-const DEFAULT_INTERVAL_DAYS = 7;
 
 /**
  * One entry per replicated workflow. `requiredEnv` gates the whole check —
@@ -499,16 +499,7 @@ export function runCheck(check) {
 }
 
 export function loadHeartbeat(heartbeatPath = HEARTBEAT_PATH) {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(heartbeatPath, 'utf-8'));
-    // Round-1 audit L1: a shape-valid-but-incomplete file (or a future
-    // timestamp, which would suppress opportunistic work indefinitely) is
-    // treated as "never run" rather than trusted or crashing `--status`.
-    if (!parsed || typeof parsed.lastRunAt !== 'string' || !Array.isArray(parsed.results)) return null;
-    const last = Date.parse(parsed.lastRunAt);
-    if (Number.isNaN(last) || last > Date.now()) return null;
-    return parsed;
-  } catch { return null; }
+  return readHeartbeat(heartbeatPath);
 }
 
 export function writeHeartbeat(results, mode, heartbeatPath = HEARTBEAT_PATH) {
@@ -520,10 +511,7 @@ export function writeHeartbeat(results, mode, heartbeatPath = HEARTBEAT_PATH) {
 }
 
 export function isOverdue(heartbeat, intervalDays) {
-  if (!heartbeat || !heartbeat.lastRunAt) return true;
-  const last = Date.parse(heartbeat.lastRunAt);
-  if (Number.isNaN(last)) return true;
-  return (Date.now() - last) > intervalDays * 24 * 60 * 60 * 1000;
+  return heartbeatOverdue(heartbeat, intervalDays);
 }
 
 /**

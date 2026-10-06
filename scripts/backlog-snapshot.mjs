@@ -11,9 +11,10 @@
  * ship. Reading here instead makes all of that vanish, and every field is read
  * by ONE process in a single pass rather than mixing pre- and post-push
  * values under a single misleading date. The timestamp is that pass's start:
- * the five reads are sequential child processes, so they are close together,
- * NOT simultaneous — close enough for a per-ship trend line, and not claimed
- * as more than that.
+ * the five reads are child processes started together and finish at different
+ * moments, so they are close, NOT simultaneous — close enough for a per-ship
+ * trend line, and not claimed as more than that. The reads themselves live in
+ * lib/store/backlog-gather.mjs, shared with the dashboard Home card.
  *
  * **It never writes `status.md`.** It prints one line; the agent pastes it into
  * the entry it is already authoring. PR #87 destroyed 19,257 lines of that file
@@ -35,43 +36,15 @@
 
 import './lib/load-env.mjs';
 
-import { execFileSync } from 'node:child_process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { renderBacklogSnapshot } from './lib/store/backlog-snapshot.mjs';
+import { gatherBacklogEnvelopes } from './lib/store/backlog-gather.mjs';
 
-// Siblings are resolved relative to THIS FILE, never to a computed repo root.
-// In a consumer the bundle lives at `scripts/.claude-skills/`, so a
-// `<repoRoot>/scripts/<name>.mjs` join would look in the consumer's own
-// `scripts/` and find nothing. Deriving the layout from `import.meta.url`
-// works unchanged in both.
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-// The repo root is still needed as the child's cwd, so the readers resolve the
-// repo they are reporting on rather than the bundle directory.
+// The repo root is the readers' cwd, so they resolve the repo they are reporting on
+// rather than the bundle directory. The readers themselves are resolved relative to
+// `backlog-gather.mjs` (see there), which works unchanged in a consumer layout.
 const REPO = process.cwd();
 const KNOWN_FLAGS = ['--json', '--help', '-h', '--selfcheck-relocation'];
-
-/**
- * Run one reader and parse its JSON envelope.
- *
- * A reader that fails, times out, or prints unparseable output yields `null`,
- * which the formatter renders as `unmeasured`. It must NEVER yield an empty
- * envelope — that would render as `0` and read as good news.
- */
-function readEnvelope(scriptName, args) {
-  try {
-    const stdout = execFileSync(
-      process.execPath, [path.join(HERE, scriptName), ...args],
-      { cwd: REPO, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: 120_000 },
-    );
-    // These CLIs print a JSON envelope on stdout; stderr carries progress.
-    const line = stdout.trim().split('\n').filter((l) => l.trim().startsWith('{')).pop();
-    return line ? JSON.parse(line) : null;
-  } catch {
-    return null;
-  }
-}
 
 function printUsage() {
   process.stderr.write(`Usage: node scripts/backlog-snapshot.mjs [--json]
@@ -105,13 +78,10 @@ async function main() {
   const repoSlug = process.env.LEARNING_REPO_NAME || '';
   const at = new Date();
 
-  const q1 = readEnvelope('cross-skill.mjs', ['list-unlocked-fixes']);
-  const q2 = readEnvelope('cross-skill.mjs', ['list-unremediated-acceptances']);
-  const q3 = repoSlug
-    ? readEnvelope('cross-skill.mjs', ['final-review-pending', '--repo', repoSlug])
-    : null;
-  const upstream = readEnvelope('cross-skill.mjs', ['upstream', 'list']);
-  const debt = readEnvelope('debt-reconcile.mjs', ['--json']);
+  // The five reads run in parallel under a 120 s cap each. The CLI passes ONLY the
+  // envelopes to the formatter; `outcomes` (the failure kinds) is for the dashboard.
+  const { envelopes } = await gatherBacklogEnvelopes({ repo: repoSlug, cwd: REPO, timeoutMs: 120_000 });
+  const { q1, q2, q3, upstream, debt } = envelopes;
 
   const line = renderBacklogSnapshot({ q1, q2, q3, debt, upstream, at });
 

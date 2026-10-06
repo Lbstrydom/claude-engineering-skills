@@ -26,24 +26,9 @@ const SECTIONS_DIR = path.join(REPO_ROOT, 'scripts/lib/dashboard/sections');
 const HELPERS_PATH = path.join(REPO_ROOT, 'scripts/lib/dashboard/helpers.mjs');
 const RENDER_PATH = path.join(REPO_ROOT, 'scripts/lib/dashboard/render.mjs');
 
-const SECTION_FILES = [
-  'skills.mjs',
-  'cli.mjs',
-  'flows.mjs',
-  'architecture.mjs',
-  'plans.mjs',
-  'audit-runs.mjs',
-  'requirements.mjs',
-  'learning.mjs',
-  'prompt-variants.mjs',
-  'audit-effectiveness.mjs',
-  'skill-census.mjs',
-  'ship-health.mjs',
-  'security.mjs',
-  'purpose.mjs',
-  'purpose-health.mjs',
-  'persona-tests.mjs',
-];
+// DERIVED from the directory, never hand-kept: a hand-kept subset goes stale the day a section is added (it had
+// silently omitted start-here, nav-audit, campaigns, tiered-shadow, ...), and the contract below then covers nothing new.
+const SECTION_FILES = fs.readdirSync(SECTIONS_DIR).filter((f) => f.endsWith('.mjs')).sort();
 
 const FORBIDDEN_IN_SECTIONS = [
   "from '../render.mjs'",
@@ -66,6 +51,17 @@ const EXPECTED_UI_KEYS = [
 ];
 
 // ── 1. Import direction — sections/*.mjs DO NOT import render or helpers ────
+
+describe('section modules — discovery', () => {
+  test('the directory is non-empty and every section file is imported by render.mjs (an orphan section is dead code the contract cannot see)', () => {
+    const src = fs.readFileSync(RENDER_PATH, 'utf-8');
+    const imported = [...src.matchAll(/from '\.\/sections\/([\w-]+\.mjs)'/g)].map((m) => m[1]);
+    assert.ok(SECTION_FILES.length > 0, 'the directory read is vacuous');
+    assert.deepEqual([...SECTION_FILES].sort(), [...imported].sort(), 'the section directory and render.mjs imports must name the same set');
+    const orphans = SECTION_FILES.filter((f) => !src.includes(`./sections/${f}`));
+    assert.deepEqual(orphans, [], `section file(s) not imported by render.mjs: ${orphans.join(', ')}`);
+  });
+});
 
 describe('section modules — one-way import direction', () => {
   for (const file of SECTION_FILES) {

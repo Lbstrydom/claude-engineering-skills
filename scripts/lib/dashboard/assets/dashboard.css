@@ -370,3 +370,61 @@ summary:hover { color: var(--accent); }
 .filter-file { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; font-size: 12px; color: var(--text); }
 .filter-reset { background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 2px 10px; font-size: 12px; color: var(--muted); cursor: pointer; }
 .filter-nomatch { color: var(--warn); font-size: 13px; margin: 0 0 12px; }
+
+/* ── Home (docs/plans/dashboard-home-summary.md) ──────────────────────
+   State is NEVER colour-only: each chip draws its state as a glyph AND a text
+   label; the colour below is a third, redundant channel (WCAG 1.4.1). */
+.home { max-width: 1180px; }
+.home-built { font-size: 12px; margin: 0 0 12px; }
+.home-stale { background: var(--panel-2); border: 1px solid var(--warn); border-radius: var(--radius); color: var(--warn); padding: 8px 12px; margin: 0 0 12px; }
+.home-stale[hidden] { display: none; }
+.home-source-note { font-size: 12px; margin: 0 0 12px; overflow-wrap: anywhere; }
+.home-grid { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); align-items: start; }
+.home-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; min-width: 0; }
+.home-card h3 { margin: 0 0 10px; font-size: 15px; }
+.home-sub { margin: 12px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
+.home-card p { margin: 6px 0; overflow-wrap: anywhere; }
+.home-list, .home-needs, .home-chips { margin: 0; padding: 0; list-style: none; }
+.home-list li, .home-needs li { padding: 6px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.home-list li:last-child, .home-needs li:last-child { border-bottom: 0; }
+.home-chips { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr); }
+/* Health spans the grid so its chips can sit in columns: 1 column below 640 px, 2+ from 640 px. */
+.home-card[data-testid="home-card-health"] { grid-column: 1 / -1; }
+.home-chip { background: var(--panel-2); border: 1px solid var(--border); border-left-width: 4px; border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.home-chip[data-state="ok"] { border-left-color: var(--ok); }
+.home-chip[data-state="warn"] { border-left-color: var(--warn); }
+.home-chip[data-state="bad"] { border-left-color: var(--err); }
+.home-chip[data-state="neutral"] { border-left-color: var(--muted); }
+.home-chip[data-state="unmeasured"] { border-left-style: dashed; border-left-color: var(--muted); }
+.chip-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.chip-glyph { display: inline-block; min-width: 1em; text-align: center; font-weight: 700; }
+.chip-state { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; border: 1px solid currentColor; border-radius: 100px; padding: 0 7px; }
+.home-chip[data-state="ok"] .chip-glyph, .home-chip[data-state="ok"] .chip-state { color: var(--ok); }
+.home-chip[data-state="warn"] .chip-glyph, .home-chip[data-state="warn"] .chip-state { color: var(--warn); }
+.home-chip[data-state="bad"] .chip-glyph, .home-chip[data-state="bad"] .chip-state { color: var(--err); }
+.home-chip[data-state="neutral"] .chip-glyph, .home-chip[data-state="neutral"] .chip-state,
+.home-chip[data-state="unmeasured"] .chip-glyph, .home-chip[data-state="unmeasured"] .chip-state { color: var(--muted); }
+.chip-label { font-weight: 600; }
+.chip-value { font-size: 18px; font-weight: 600; }
+.chip-detail { color: var(--muted); font-size: 12px; }
+.chip-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.chip-actions:empty { display: none; }
+.home-cmd { user-select: all; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; color: var(--accent); overflow-wrap: anywhere; }
+/* Targets >= 44 px: every link/button inside Home. */
+.home a.home-link { display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px; }
+.need-sev { display: inline-block; font-size: 11px; font-weight: 700; border: 1px solid var(--border); border-radius: 100px; padding: 0 7px; margin-right: 6px; color: var(--warn); }
+.need-text { font-weight: 600; }
+.home-allclear { color: var(--ok); font-weight: 600; }
+.home-more { color: var(--muted); font-size: 13px; }
+.home-warning { border: 1px solid var(--warn); border-radius: 6px; padding: 8px 10px; margin: 0 0 10px; color: var(--warn); overflow-wrap: anywhere; }
+.home-warning-detail { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.home-unavailable { color: var(--muted); }
+.home .sha { color: var(--accent); }
+.ship-date { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
+@media (min-width: 640px) {
+  .home-chips { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+}
+@media (max-width: 640px) {
+  .home-grid { grid-template-columns: minmax(0, 1fr); }
+  .home-card { padding: 12px; }
+}

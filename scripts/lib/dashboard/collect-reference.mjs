@@ -17,6 +17,7 @@ import { collectCli } from './collect-cli.mjs';
 import { collectNav } from './collect-nav.mjs';
 import { collectCampaigns } from './collect-campaigns.mjs';
 import { collectVisual } from './collect-visual.mjs';
+import { collectHome, homeContentProjection } from './collect-home.mjs';
 import { FlowManifestSchema } from './schema.mjs';
 import {
   OBSERVED_FILE,
@@ -436,8 +437,24 @@ function collectFlows(skillNames, skillsOk) {
 }
 
 /**
+ * The reference page's content hash: everything but provenance. `home` is folded in
+ * THROUGH `projectHome` (default `homeContentProjection`), which strips only
+ * collection-time provenance (asOf / builtAt / durations) and keeps every measurement,
+ * state and decision — so two builds of identical content hash identically while a
+ * changed queue count does not (REQ-persistence-c1ec5078; plan §2 'Content hash').
+ * `projectHome` is a parameter only so a test can substitute a mutant projection.
+ *
+ * @param {object} content - skills, plans, architecture, flows, cli, sources, purposes, navAudit, visualAudit, home
+ * @param {(home: unknown) => unknown} [projectHome]
+ * @returns {string}
+ */
+export function referenceSourceHash({ home, ...rest }, projectHome = homeContentProjection) {
+  return sha(JSON.stringify({ ...rest, home: projectHome(home ?? null) }), 8);
+}
+
+/**
  * Collect the full reference-data object.
- * @param {{git?: {baseSha: string, dirty: boolean}}} [opts]
+ * @param {{git?: {baseSha: string, dirty: boolean}, collectHome?: typeof collectHome}} [opts] - `collectHome` is a test seam: a suite that is not about Home passes a stub so it never reads the store or spawns workers
  * @returns {Promise<object>} a ReferenceData object (validate via schema before render)
  */
 export async function collectReference(opts = {}) {
@@ -550,6 +567,18 @@ export async function collectReference(opts = {}) {
     detail: ledger.note ? `${purposes.detail}${purposes.detail ? '; ' : ''}${ledger.note}` : purposes.detail,
   };
 
+  // Home — its own try/catch like every sibling: a throw is a VISIBLE unexpected-error with
+  // no `home` payload (the section says so), never a silently empty tab. collectHome itself
+  // isolates each card, so this guards only the composer.
+  let home = null;
+  try {
+    const res = await (opts.collectHome ?? collectHome)(root, { plans, skills, sourceStatus: { plans: sources.plans, skills: sources.skills } });
+    home = res.home;
+    sources.home = res.sources.home;
+  } catch (err) {
+    sources.home = { status: 'unexpected-error', detail: `collectHome failed: ${String(err?.message ?? err).split('\n')[0]}` };
+  }
+
   const data = {
     kind: 'reference',
     provenance: { baseSha: git.baseSha, dirty: git.dirty, sourceHash: '' },
@@ -573,12 +602,13 @@ export async function collectReference(opts = {}) {
     purposes,
     navAudit,
     visualAudit,
+    ...(home ? { home } : {}),
   };
   // sourceHash over content (everything but provenance) — committed-page
   // determinism (no timestamp; plan §8 / M3). `purposes` is a pure function of
   // committed files, so folding it in keeps the page byte-reproducible.
-  data.provenance.sourceHash = sha(JSON.stringify({
-    skills, plans, architecture: data.architecture, flows: data.flows, cli, sources, purposes, navAudit, visualAudit,
-  }), 8);
+  data.provenance.sourceHash = referenceSourceHash({
+    skills, plans, architecture: data.architecture, flows: data.flows, cli, sources, purposes, navAudit, visualAudit, home,
+  });
   return data;
 }

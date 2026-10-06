@@ -32,7 +32,9 @@ import {
   renderApprove, renderBuilt, renderChipPrompt, renderDryRun, renderOpenTrains, renderParticipantRules, renderReconcile,
 } from '../scripts/lib/fleet/render-train.mjs';
 import { startOidFor } from '../scripts/lib/fleet/commands.mjs';
-import { leaseMsFrom, needsEvidenceKey, resolveUpstream } from '../scripts/lib/fleet/facts.mjs';
+import {
+  buildStatusFrom, gatherFacts, leaseMsFrom, needsEvidenceKey, resolveUpstream, statusChecks,
+} from '../scripts/lib/fleet/facts.mjs';
 
 after(cleanupFleetRoots);
 
@@ -1815,6 +1817,69 @@ describe('round 6: ONE evidence predicate, per-session distrust, async runner li
     await assert.rejects(() => runFleetAsync(['status'], { cwd: path.join(s.fx.root, 'no-such-dir'), env: s.env }), /could not run/);
     const ok = await runFleetAsync(['status', '--json'], { cwd: s.fx.repo, env: s.env });
     assert.equal(ok.status, 0);
+  });
+});
+
+describe('gatherFacts options for a read-only caller (dashboard Home)', () => {
+  it('checks:false makes statusChecks skip the consumer hook; the default runs it (positive control)', () => {
+    const s = setup({ fleetConfig: { checks: [{ name: 'mark', script: 'hook.mjs', runner: ['node'], runIn: ['status'], severity: 'warn' }] } });
+    const marker = path.join(s.fx.root, 'hook-ran.txt');
+    writeFile(s.fx.repo, 'hook.mjs', `let b='';process.stdin.on('data',d=>b+=d);process.stdin.on('end',()=>{process.getBuiltinModule('node:fs').writeFileSync(${JSON.stringify(marker)},'ran');process.stdout.write('{"schemaVersion":1,"findings":[]}');});`);
+    const config = s.config();
+    const args = { cwd: s.fx.repo, config, now: new Date(), env: s.env, prs: false };
+
+    const skipped = gatherFacts({ ...args, checks: false });
+    assert.deepEqual(skipped.checks, { queried: false, reason: 'not requested' });
+    const none = statusChecks({ cwd: s.fx.repo, config, status: buildStatusFrom(skipped), facts: skipped });
+    assert.deepEqual(none, { results: [], findings: [] });
+    assert.equal(fs.existsSync(marker), false, 'checks:false must never spawn the hook');
+
+    const facts = gatherFacts(args);
+    assert.equal('checks' in facts, false, 'the default facts object is unchanged');
+    const ran = statusChecks({ cwd: s.fx.repo, config, status: buildStatusFrom(facts), facts });
+    assert.equal(ran.results.length, 1);
+    assert.equal(fs.existsSync(marker), true, 'positive control: without checks:false the hook DOES run');
+  });
+
+  it('maxBranches bounds the per-branch git calls and LISTS the overflow (never silently skipped)', () => {
+    const s = setup();
+    for (let i = 1; i <= 6; i += 1) addBranch(s.fx.repo, `feat-${i}`, { [`f${i}.txt`]: `${i}\n` });
+    const args = { cwd: s.fx.repo, config: s.config(), now: new Date(), env: s.env, prs: false };
+
+    const unbounded = gatherFacts(args);
+    assert.equal(Object.keys(unbounded.changed).length, 6);
+    assert.equal('branchesNotAnalysed' in unbounded, false, 'default facts are unchanged');
+
+    const capped = gatherFacts({ ...args, maxBranches: 4 });
+    assert.equal(Object.keys(capped.changed).length, 4, 'one changedFiles call per analysed branch only');
+    assert.equal(Object.keys(capped.patchIds).length, 4);
+    assert.equal(capped.branchesNotAnalysed.count, 2);
+    assert.equal(capped.branchesNotAnalysed.names.length, 2);
+    for (const n of capped.branchesNotAnalysed.names) assert.equal(n in capped.changed, false);
+    assert.equal(capped.branches.branches.filter((b) => b.name.startsWith('feat-')).length, 6, 'the branches are still listed');
+
+    const exact = gatherFacts({ ...args, maxBranches: 6 });
+    assert.equal('branchesNotAnalysed' in exact, false, 'a cap that is not exceeded reports nothing');
+  });
+
+  it('M2: a materialised PR ref counts against maxBranches; the overflow is listed as not analysed (never silently analysed past the budget)', () => {
+    const s = setup({ gh: true });
+    const base = git(['rev-parse', 'main'], s.fx.repo);
+    const oid = addBranch(s.fx.repo, 'fork-src', { 'p.txt': 'p\n' });
+    git(['push', '-q', 'origin', `${oid}:refs/pull/9/head`], s.fx.repo);
+    git(['branch', '-D', 'fork-src'], s.fx.repo);
+    s.fake.setState({ list: [{ ...prRow({ number: 9, branch: 'fork-src', headOid: oid, baseOid: base }), isCrossRepository: true }] });
+    assert.equal(s.f(['add', '#9']).status, 0);
+    assert.equal(s.f(['ready', '--id', 'pr-9']).status, 0);
+    const args = { cwd: s.fx.repo, config: s.config(), now: new Date(), env: s.env };
+
+    const open = gatherFacts(args);
+    assert.deepEqual(open.changed['pr:9'].files, ['p.txt'], 'positive control: unbounded, the PR ref IS analysed');
+
+    const capped = gatherFacts({ ...args, maxBranches: 0 });
+    assert.equal(capped.changed['pr:9'], undefined, 'the budget covers the PR-backed loop too');
+    assert.deepEqual(capped.branchesNotAnalysed, { count: 1, names: ['pr:9'] });
+    assert.ok(capped.findings.some((f) => /maxBranches budget is spent/.test(f.message)));
   });
 });
 

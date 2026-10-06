@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**6 active · 231 terminal · 32 audit summaries · 1 parked · 5 reference docs**
+**6 active · 232 terminal · 32 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -57,7 +57,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 228 completed plans</summary>
+<summary>Show all 229 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -123,6 +123,7 @@ source comments that no docs linter sees — stays valid.
 | [cross-skill CLI — declarative command registry](./cross-skill-command-registry.md) | `Complete` | shipped 2026-08-12 across six clusters… |
 | [/cycle's per-cluster audit must name the flag that actually scopes](./cycle-cluster-audit-scope.md) | `Complete` |  |
 | [Read-only Audit-Run Findings Viewer (dashboard module)](./dashboard-audit-run-viewer.md) | `Complete` | implemented + audited — see Implementation Log |
+| [Dashboard Home summary — what changed, is it healthy, what needs me](./dashboard-home-summary.md) | `Complete` |  |
 | [Dashboard "Purpose" view — v2 (coverage, reverse-link, live health)](./dashboard-purpose-view-v2.md) | `Complete` |  |
 | [Dashboard "Purpose" view — v3 (per-domain health + outcome×domain matrix)](./dashboard-purpose-view-v3.md) | `Complete` |  |
 | [Dashboard "Purpose" view — outcome/requirement map](./dashboard-purpose-view.md) | `Complete` | v1 shipped — `purpose.mjs` renders the Purpose tab; extended by `dashboard-purpose-view-v2.md` + `-v3.md`,… |

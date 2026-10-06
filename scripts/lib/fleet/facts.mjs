@@ -85,9 +85,16 @@ export function resolveUpstream(cwd, base, trains = []) {
  * @param {boolean} [args.prs=true]     query `gh`
  * @param {boolean} [args.patches=true] per-branch patch-ids
  * @param {boolean} [args.worktrees=true]
+ * @param {boolean} [args.checks=true]  `false` records `facts.checks = {queried:false}`, which makes
+ *   `statusChecks({..., facts})` skip the consumer-owned extension hook. `gatherFacts` never runs the hook
+ *   itself (`statusChecks` does); the option exists so a read-only caller (the dashboard build) can say, in
+ *   the facts it hands on, that consumer code must not run. Omitted ⇒ `facts` is unchanged.
+ * @param {number} [args.maxBranches]  upper bound on branches analysed (one `changedFiles` + one
+ *   `patchId` git call each). The overflow is LISTED in `facts.branchesNotAnalysed`, never silently
+ *   skipped. Omitted ⇒ unbounded and `facts` is unchanged.
  * @returns {object} facts for `buildStatus`, plus `dir`
  */
-export function gatherFacts({ cwd, config, now, env = process.env, prs = true, patches = true, worktrees = true, cmd = 'fleet' }) {
+export function gatherFacts({ cwd, config, now, env = process.env, prs = true, patches = true, worktrees = true, cmd = 'fleet', checks = true, maxBranches }) {
   const dir = fleetDir(cwd);
   const base = config.baseBranch;
   const registry = readSessions(dir);
@@ -98,8 +105,21 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
   const names = new Set();
   for (const s of registry.sessions) if (s.source?.branch && s.source.kind === 'branch') names.add(s.source.branch);
   for (const b of branches.branches ?? []) if (b.name !== base && b.ahead > 0) names.add(b.name);
+  let branchesNotAnalysed = null;
+  const analyse = new Set(names);
+  if (Number.isInteger(maxBranches) && maxBranches >= 0 && names.size > maxBranches) {
+    // Registered sessions first (they are the ones someone is waiting on), then the most recently touched.
+    const sessionNames = new Set(registry.sessions.map((x) => x.source?.branch).filter((n) => names.has(n)));
+    const tip = new Map((branches.branches ?? []).map((b) => [b.name, b.tipTime ?? 0]));
+    const rest = [...names].filter((n) => !sessionNames.has(n)).sort((a, b) => (tip.get(b) - tip.get(a)) || (a < b ? -1 : 1));
+    const ordered = [...sessionNames, ...rest];
+    branchesNotAnalysed = { count: ordered.length - maxBranches, names: ordered.slice(maxBranches) };
+    for (const n of branchesNotAnalysed.names) analyse.delete(n);
+  }
+  // The budget covers EVERY per-ref analysis: the branches above AND the materialised PR refs in the loop below.
+  let budget = Number.isInteger(maxBranches) && maxBranches >= 0 ? maxBranches - analyse.size : Infinity;
   const changed = {}; const patchIds = {}; const findings = []; const evidenceNotes = {}; const prTrusted = new Set();
-  for (const n of names) {
+  for (const n of analyse) {
     changed[n] = changedFiles(cwd, base, n);
     if (patches) patchIds[n] = patchId(cwd, base, n);
   }
@@ -125,6 +145,12 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
     if (!prFacts.queried) { noFiles(s, `the PR head cannot be verified: PRs not queried (${prFacts.reason})`); continue; }
     if (!pr?.headOid) { noFiles(s, `PR #${s.source.prNumber} is not in the open PR list; its head cannot be verified`); continue; }
     if (pr.headOid !== have.oid) { noFiles(s, `materialised ref is stale (${have.oid.slice(0, 12)} != ${pr.headOid.slice(0, 12)}); run ${cmd} ready to refetch`); continue; }
+    if (budget <= 0) {
+      branchesNotAnalysed = { count: (branchesNotAnalysed?.count ?? 0) + 1, names: [...(branchesNotAnalysed?.names ?? []), prKey(s)] };
+      noFiles(s, 'not analysed: the maxBranches budget is spent');
+      continue;
+    }
+    budget -= 1;
     const files = changedFiles(cwd, base, ref);
     if (!files.queried) { noFiles(s, files.reason); continue; }
     changed[prKey(s)] = files;
@@ -138,6 +164,8 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
     registry, hold: readHold(dir), trains: trainsRead.trains, trainsInvalid: trainsRead.invalid,
     worktrees: worktreeList,
     branches, prs: prFacts, changed, patchIds,
+    ...(branchesNotAnalysed ? { branchesNotAnalysed } : {}),
+    ...(checks === false ? { checks: { queried: false, reason: 'not requested' } } : {}),
   };
 }
 
@@ -182,8 +210,12 @@ export function payloadFromStatus(status) {
   return { sessions, overlaps };
 }
 
-/** Run the status-phase hook over the joined status; returns results + advisory findings. */
-export function statusChecks({ cwd, config, status }) {
+/**
+ * Run the status-phase hook over the joined status; returns results + advisory findings.
+ * Pass the `facts` it was built from: facts gathered with `checks:false` skip the hook.
+ */
+export function statusChecks({ cwd, config, status, facts }) {
+  if (facts?.checks?.queried === false) return { results: [], findings: [] };
   const checks = (config.checks ?? []).filter((c) => (c.runIn ?? ['status', 'land']).includes('status'));
   if (!checks.length) return { results: [], findings: [] };
   const payload = buildCheckPayload({ phase: 'status', baseOid: status.baseOid ?? null, ...payloadFromStatus(status) });

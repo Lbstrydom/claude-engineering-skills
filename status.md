@@ -108,6 +108,32 @@ Backlog 2026-10-06T13:09Z: Q1 71c/9p (+353 aged) · Q2 89c/42p (54 perm) · Q3 3
 
 ---
 
+## 2026-10-06 — dashboard Home: what changed, is it healthy, what needs me
+
+Plan: `docs/plans/dashboard-home-summary.md`. Evidence: a `/persona-test` of the local dashboard (store session `d53c9c25-a8d6-40d2-8822-2f701d27bcc6`) found no view of recent change or health although the data existed as CLIs and files. Built by `/cycle --autonomous`.
+
+### What shipped
+- **Home**, the new default tab of the Reference page: a Health grid (queues Q1/Q2/Q3/debt/upstream with trend against the previous `Backlog` line, AGENTS.md size, plans, consumers, maintenance, skills), a ranked **Needs you** list with the exact command per row, **Recently shipped** (status-log entries and merge subjects) and **In flight** (worktrees/branches and overlaps from the fleet facts).
+- **Unmeasured never reads OK.** Every figure is one measurement with its own status, source and observation time; a store that is off, unreachable or slow degrades only its own measurements; the page is read-only and offline-capable; the freshness line is computed in the browser.
+- The queue reads were **extracted from the `backlog-snapshot` CLI** into `scripts/lib/store/backlog-gather.mjs` (one definition shared by the CLI and Home; the CLI's output line is byte-identical and pinned by a golden test). The AGENTS.md size measure moved into `scripts/lib/claudemd/context-size.mjs` (characters, as the gate counts them) and the maintenance heartbeat reader into `scripts/lib/maintenance-heartbeat.mjs`.
+- Synchronous cards run in a `worker_threads` worker so the deadline can actually terminate them; `Promise.race` cannot interrupt `spawnSync`.
+- The hard-coded "16 bundled skills" in the Skill Census description now follows the roster.
+- New declared edges `dashboard → fleet` and `dashboard → claudemd-management`.
+
+### Verification
+- **Plan**: 3 GPT rounds (20 findings accepted) + Gemini APPROVE. **Code**: Cluster A 4 rounds, Cluster B 2, every real finding fixed with a mutation-proven test or dismissed with a stated independence rationale; consolidated Gemini review of the union diff: APPROVE.
+- **Empirical (Playwright, the real built page)**: Home is the default tab; with the store reachable it renders queue counts with trend, ranked actions, 10 shipped entries and 10 merges; air-gapped, every queue chip is `unmeasured` and nothing reads OK; 390 px has no horizontal overflow and no target under 44 px; panel ≈ 16 KB.
+- **Tests (measured)**: 500 across the dashboard, backlog-gather and context-size set, 251 across fleet, layering, maintenance and backlog-snapshot; knip, size-ratchet, cli-flags, emit-exit and stdout-flush gates clean.
+- Found on the live page and fixed in-cycle: the same "store not configured" line repeated 5× (now grouped), stacked chips filling a screen (now a grid), and the Consumers chip warning permanently because every real receipt records a pre-squash branch commit (now neutral, with the reason).
+
+### Known limits and follow-ups (not built)
+Sync receipts carry no bundle hash, so consumer currency cannot be judged by content; the In-flight card lists many stale untracked branches; `index.html` is still ~26 MB (Plans panel); CLI tab omits alias-less CLIs (`scripts/fleet.mjs`); Architecture tab reads the generated map; empty Nav/Visual tabs; duplicated DESIGN & PLANS group label; Telemetry freshness stamps.
+
+### Backlog
+Backlog 2026-10-06T11:23Z: Q1 71c/8p (+353 aged) · Q2 89c/42p (54 perm) · Q3 35 · debt 303 cloud/67 local (0 spilled) · upstream 1
+
+---
+
 ## 2026-10-06 — /fleet: coordinate concurrent AI coding sessions (17th skill)
 
 Plan: `docs/plans/fleet-multi-session-coordination.md`. Built by `/cycle --autonomous`; brainstorm sessions `1791174530024` and `1791184884943` decided the shape.
