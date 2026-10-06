@@ -1450,3 +1450,56 @@ describe('noCloudRecording gates the session-ledger counter AND the session-mani
     assert.equal(calledWhenAllowed, true, 'a normal (non-shadow) run must still execute the callback — the gate must not become a permanent no-op');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// 76b61cba: the two gated call sites in legacy-production-audit.mjs's own body
+// — finalizePriorRoundOutcomes (062e1be1) and the audit.diffComplexity write
+// (656f6586) — were fixed to route through writeLearningState but were never
+// pinned: the block above pins only the generic wrapper, the fp-pattern site
+// and the two run-persistence.mjs sites, so un-gating either of these two would
+// have passed every test. Each pin carries a negative control proving the same
+// predicate FAILS on the pre-fix (bare call) shape.
+// ═══════════════════════════════════════════════════════════════════════
+describe('finalizePriorRoundOutcomes and audit.diffComplexity stay behind writeLearningState (static regression guard)', () => {
+  const SRC = fs.readFileSync('scripts/lib/audit/legacy-production-audit.mjs', 'utf-8');
+
+  const finalizeGated =
+    /await writeLearningState\(learningWritesAllowed,\s*\(\)\s*=>\s*finalizePriorRoundOutcomes\(\s*\{\s*outFile,\s*round,\s*ledgerFile\s*\}\s*\)\s*\)/;
+
+  /** True when the durableWrite('audit.diffComplexity') call sits inside a
+   *  writeLearningState(learningWritesAllowed, …) wrapper opened shortly before it. */
+  function diffComplexityIsGated(src) {
+    const siteIdx = src.indexOf("durableWrite('audit.diffComplexity'");
+    if (siteIdx < 0) return null;
+    const before = src.slice(Math.max(0, siteIdx - 250), siteIdx);
+    return /writeLearningState\(learningWritesAllowed,\s*async\s*\(\)\s*=>\s*\{/.test(before);
+  }
+
+  it('the finalizePriorRoundOutcomes call is wrapped in writeLearningState(learningWritesAllowed, …)', () => {
+    assert.match(
+      SRC, finalizeGated,
+      'finalizePriorRoundOutcomes writes learning-outcome state — it must be gated by writeLearningState(learningWritesAllowed, …) or a noCloudRecording (shadow) run persists it',
+    );
+    // Instrument check: the predicate rejects the pre-fix, unwrapped call.
+    const ungated = SRC.replace(
+      /await writeLearningState\(learningWritesAllowed,\s*\(\)\s*=>\s*finalizePriorRoundOutcomes\(\{ outFile, round, ledgerFile \}\)\);/,
+      'await finalizePriorRoundOutcomes({ outFile, round, ledgerFile });',
+    );
+    assert.notEqual(ungated, SRC, 'the negative-control rewrite must actually change the source');
+    assert.doesNotMatch(ungated, finalizeGated, 'the pin must fail on the unwrapped (pre-062e1be1) call');
+  });
+
+  it('the audit.diffComplexity durableWrite is wrapped in writeLearningState(learningWritesAllowed, …)', () => {
+    assert.equal(
+      diffComplexityIsGated(SRC), true,
+      "the audit.diffComplexity durableWrite must sit inside writeLearningState(learningWritesAllowed, async () => {…}) — it used to run unconditionally, so a noCloudRecording (shadow) run recorded diff-complexity telemetry",
+    );
+    // Instrument check: strip the wrapper and the same predicate must flip.
+    const ungated = SRC.replace(
+      /await writeLearningState\(learningWritesAllowed,\s*async\s*\(\)\s*=>\s*\{(\s*tallyWriteOutcomes\(writeOutcomes,\s*\[await durableWrite\('audit\.diffComplexity')/,
+      '{$1',
+    );
+    assert.notEqual(ungated, SRC, 'the negative-control rewrite must actually change the source');
+    assert.equal(diffComplexityIsGated(ungated), false, 'the pin must fail when the write is no longer inside the wrapper');
+  });
+});

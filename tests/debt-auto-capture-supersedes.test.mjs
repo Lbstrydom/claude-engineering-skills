@@ -12,30 +12,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { writeRoundLedger as writeRoundLedgerAt } from './helpers/fixtures.mjs';
+import { makeDeferEntry, writeRoundLedger } from './helpers/fixtures.mjs';
 import { makeRunCli } from './helpers/run-cli.mjs';
 
 let tmpDir;
 let auditDir;
 const scriptPath = path.resolve('scripts/debt-auto-capture.mjs');
-
-function writeRoundLedger(name, entries) {
-  return writeRoundLedgerAt(auditDir, name, entries);
-}
-
-function makeDeferEntry(topicId, extra = {}) {
-  return {
-    topicId,
-    ruling: 'defer',
-    severity: 'MEDIUM',
-    category: 'god-module',
-    section: 'src/x.js:1',
-    detailSnapshot: 'a sufficiently descriptive detail snapshot',
-    rulingRationale: 'independent of this change — out of scope for the current fix',
-    affectedFiles: ['src/x.js'],
-    ...extra,
-  };
-}
 
 function readTechDebt() {
   return JSON.parse(fs.readFileSync(path.join(auditDir, 'tech-debt.json'), 'utf-8'));
@@ -54,21 +36,21 @@ afterEach(() => {
 
 describe('debt-auto-capture.mjs — --supersedes/--supersedes-with', () => {
   test('--supersedes without --supersedes-with is refused (round-3 GPT audit H6)', () => {
-    const ledgerPath = writeRoundLedger('sid1-ledger.json', [makeDeferEntry('new1')]);
+    const ledgerPath = writeRoundLedger(auditDir, 'sid1-ledger.json', [makeDeferEntry('new1')]);
     const r = runCli(['--ledger', ledgerPath, '--run', 'sid1', '--supersedes', 'old1']);
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /--supersedes.*--supersedes-with/);
   });
 
   test('--supersedes-with without --supersedes is refused', () => {
-    const ledgerPath = writeRoundLedger('sid1-ledger.json', [makeDeferEntry('new1')]);
+    const ledgerPath = writeRoundLedger(auditDir, 'sid1-ledger.json', [makeDeferEntry('new1')]);
     const r = runCli(['--ledger', ledgerPath, '--run', 'sid1', '--supersedes-with', 'new1']);
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /--supersedes.*--supersedes-with/);
   });
 
   test('naming the same topicId for both flags is refused', () => {
-    const ledgerPath = writeRoundLedger('sid1-ledger.json', [makeDeferEntry('t1')]);
+    const ledgerPath = writeRoundLedger(auditDir, 'sid1-ledger.json', [makeDeferEntry('t1')]);
     const r = runCli(['--ledger', ledgerPath, '--run', 'sid1', '--supersedes', 't1', '--supersedes-with', 't1']);
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /different topicIds/);
@@ -76,12 +58,12 @@ describe('debt-auto-capture.mjs — --supersedes/--supersedes-with', () => {
 
   test('links an existing entry to a newly-captured one, end to end', () => {
     // First capture: seed the "old" entry.
-    const seedLedger = writeRoundLedger('seed-ledger.json', [makeDeferEntry('old1')]);
+    const seedLedger = writeRoundLedger(auditDir, 'seed-ledger.json', [makeDeferEntry('old1')]);
     const seed = runCli(['--ledger', seedLedger, '--run', 'seed']);
     assert.equal(seed.status, 0, seed.stderr);
 
     // Second capture: the "new" entry, explicitly superseding the old one.
-    const newLedger = writeRoundLedger('new-ledger.json', [makeDeferEntry('new1')]);
+    const newLedger = writeRoundLedger(auditDir, 'new-ledger.json', [makeDeferEntry('new1')]);
     const r = runCli(['--ledger', newLedger, '--run', 'sid2', '--supersedes', 'old1', '--supersedes-with', 'new1']);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /Local: ok/);
@@ -92,7 +74,7 @@ describe('debt-auto-capture.mjs — --supersedes/--supersedes-with', () => {
   });
 
   test('a non-existent old topicId is refused non-fatally — the capture itself still succeeds', () => {
-    const newLedger = writeRoundLedger('new-ledger.json', [makeDeferEntry('new1')]);
+    const newLedger = writeRoundLedger(auditDir, 'new-ledger.json', [makeDeferEntry('new1')]);
     const r = runCli(['--ledger', newLedger, '--run', 'sid1', '--supersedes', 'missing-old', '--supersedes-with', 'new1']);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /Local: failed \(old-topic-not-found\)/);
@@ -109,10 +91,10 @@ describe('debt-auto-capture.mjs — --supersedes/--supersedes-with', () => {
     // pin the absence: naming a topicId that is NOT in this batch at all
     // must fail on existence, never silently link to whichever entry
     // actually did persist.
-    const seedLedger = writeRoundLedger('seed-ledger.json', [makeDeferEntry('old1')]);
+    const seedLedger = writeRoundLedger(auditDir, 'seed-ledger.json', [makeDeferEntry('old1')]);
     runCli(['--ledger', seedLedger, '--run', 'seed']);
 
-    const newLedger = writeRoundLedger('new-ledger.json', [makeDeferEntry('unrelated-survivor')]);
+    const newLedger = writeRoundLedger(auditDir, 'new-ledger.json', [makeDeferEntry('unrelated-survivor')]);
     const r = runCli(['--ledger', newLedger, '--run', 'sid2', '--supersedes', 'old1', '--supersedes-with', 'never-captured']);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /Local: failed \(new-topic-not-found\)/);

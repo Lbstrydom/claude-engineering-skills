@@ -72,3 +72,28 @@ about, which is part of why it was the one condensed. Both are marked
   seam (previously described as "synced to Supabase").
 - **Closed Gemini loop** — Step 7.1: Claude deliberates on Gemini findings, fixes,
   then **Gemini** re-verifies (not GPT).
+
+## An unmeasured round must not wear a clean round's clothes
+
+Relocated from AGENTS.md (Skill Chain) on 2026-10-03, verbatim apart from
+formatting, under that file's progressive-disclosure rule. AGENTS.md keeps the
+rule and the three pinned fixes; the incident narrative lives here.
+
+A consumer's round lost every pass to Azure 429s and timeouts and printed
+`Verdict: INCOMPLETE | H:0 M:0 L:0`, exit 0 (2026-09-04) — one word from a clean
+audit, and `audit-loop.mjs`'s convergence test reads only those three numbers, so
+`/cycle` converges and ships. Three separable fixes, all now pinned:
+
+- `formatAuditSummaryLine` refuses the counts-first shape for INCOMPLETE and says
+  *how many of how many passes produced output*;
+- `openai-audit.mjs` sets **exit 3** (not 1, which already means "the CLI
+  errored");
+- `countFindings` folds INCOMPLETE into its existing `failed` flag, so ONE
+  predicate still answers "is this round evidence".
+
+Separately, **429 is budgeted apart from a generic transient** — one retry at an
+8s ceiling cannot succeed against a provider saying *high demand* — via
+`retryAttemptsFor`/`nextRetryDelayMs` (exponential + FULL jitter, `Retry-After`
+wins, clamped). And `describeLostWrites` names the writer behind a standing
+`N lost`, flagging a `42P10`-shaped error as **store schema drift** with
+`setup-postgres.mjs --check-drift`.

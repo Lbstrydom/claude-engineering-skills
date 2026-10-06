@@ -196,6 +196,35 @@ export function arg(argv, name, dflt = null) {
 }
 
 /**
+ * Read a `--flag value` pair out of an explicit `argv`, treating a flag that is
+ * present WITHOUT a usable value as an invocation error. Returns `null` when the
+ * flag is absent altogether.
+ *
+ * A terminal `--oracle`, or one whose "value" is really the next flag
+ * (`--oracle --json`), must not read as an absent option: `argv[idx + 1]` is
+ * `undefined` there, indistinguishable from "no --oracle at all", which made an
+ * intended oracle-gated run execute as an ungated scan that exits 0 (audit-code
+ * R1/M7). Distinct from `arg()` (no guard, returns the next token verbatim) and
+ * `argOption()` (guarded, but silently falls back to the default instead of
+ * failing). Consolidated here (arch:drift duplication cleanup) —
+ * `event-wiring-scan.mjs` and `event-wiring-lifecycle.mjs` each had an
+ * identical copy.
+ * @param {string[]} argv
+ * @param {string} flag flag including its leading `--`
+ * @param {string} cli CLI name for the error message
+ * @returns {string|null}
+ */
+export function requiredFlagValue(argv, flag, cli) {
+  const idx = argv.indexOf(flag);
+  if (idx === -1) return null;
+  const value = argv[idx + 1];
+  if (value === undefined || value.startsWith('--')) {
+    throw new Error(`${cli}: ${flag} requires a value`);
+  }
+  return value;
+}
+
+/**
  * Whether a bare `--flag` is present anywhere in `process.argv`.
  *
  * @param {string} name

@@ -89,9 +89,12 @@ export async function recordSymbolFileImports(refreshId, edges) {
  * `touchedFileSet` into the new snapshot.
  *
  * @param {((filePath: string) => boolean)|null} [args.fileStillExists] -
- *   optional on-disk gate, mirroring copyForwardUntouchedFiles. Passed only by
- *   the timed-out-full recovery so a deleted importer's edges are not
- *   resurrected; incremental passes null (deletions are already in touchedFileSet).
+ *   optional on-disk gate, applied to BOTH ends of an edge. The importer end
+ *   mirrors copyForwardUntouchedFiles (a deleted importer's edges are not
+ *   resurrected); the imported end drops an edge to a deleted/renamed target
+ *   whose importer is untouched — an edge keyed on importer_path alone survives
+ *   that, and a full refresh would not have produced it. The caller passes it in
+ *   EVERY mode; null (the default) carries edges unfiltered.
  */
 export async function copyForwardImports({ repoId, fromRefreshId, toRefreshId, touchedFileSet, fileStillExists = null, isDisowned = null }) {
   // `repoId` binds the SOURCE read. `symbol_file_imports` has no `repo_id`
@@ -126,7 +129,7 @@ export async function copyForwardImports({ repoId, fromRefreshId, toRefreshId, t
     // ONE rule, shared with symbols.mjs — keyed on importer_path here, because
     // the importer is the file whose ownership decides whether this edge is
     // ours to record. See `retainCarriedRows` for why `isDisowned` is nullable.
-    const keep = retainCarriedRows(rows, { pathOf: (r) => r.importer_path, touchedFileSet, fileStillExists, isDisowned });
+    const keep = retainCarriedRows(rows, { pathOf: (r) => r.importer_path, targetPathOf: (r) => r.imported_path, touchedFileSet, fileStillExists, isDisowned });
     if (keep.length > 0) {
       const payload = keep.map((r) => ({
         refresh_id: toRefreshId,

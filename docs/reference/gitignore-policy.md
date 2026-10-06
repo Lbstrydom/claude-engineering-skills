@@ -103,3 +103,41 @@ Ask, in order:
 
 The third branch is the one that matters. It is not paperwork — it is the
 question nobody asked about `.audit/tech-debt.json` for five months.
+
+## Category A and B examples — the history AGENTS.md used to carry
+
+AGENTS.md states the generated-artifact policy as two categories and a test, and
+keeps only a short example list. The longer per-example history was relocated here
+on 2026-10-03, verbatim apart from link paths, under that file's own
+progressive-disclosure rule (AGENTS.md is loaded every session and capped at
+92,000 characters).
+
+**A — derived from external/mutable state OR carrying volatile provenance
+(timestamps, HEAD shas) → gitignored.** It is not source and cannot be a pure
+function of committed source. Examples: `.audit-loop/domain-deps-observed.json`
+(DB import graph), `.audit-loop/cache/`, **`dashboard/index.html` +
+`dashboard/telemetry.html`** (local-only, rebuilt by `npm run dashboard`),
+`.audit-loop/repo-alias-map.json` (spent reconcile intermediate), **the
+`scripts/.sync-manifest.json`** (timestamp + HEAD sha ⇒ per-push churn;
+gitignored in BOTH source and consumers since 2026-07-21 — Feature B of
+[sync-ownership-from-content.md](../plans/sync-ownership-from-content.md), once
+ownership moved to content banners and `sync-isolation-verify` read it from
+disk), **`docs/architecture-map.md`** (reclassified B → A 2026-07-20: header
+carries a timestamp + commit sha + refresh_id, the body carries 33 LLM-written
+domain summaries, and it renders from the CLOUD symbol_index — three independent
+reasons two renders of one commit differ; regenerate with `npm run arch:render`).
+
+**B — a pure, deterministic function of committed source → committed AND
+freshness-verified in the pre-push `check`.** Regeneration must be byte-identical
+(no clocks/shas/network). Examples: `.claude/skills/**` (regen by
+`skills:regenerate`, enforced by `skills:check`); `docs/plans/README.md`, the
+status-bucketed plans index (`plans:index` / `plans:index:check`);
+`docs/requirements-map.md` (`requirements:map` / `requirements:map:check`);
+**`scripts/lib/bundle-deps.json`**, every npm package the synced bundle imports
+plus its importers, derived from the import graph so a consumer can verify its
+install and build a knip ignore list without hydrating the tree (`npm run
+bundle:deps` / `bundle:deps:check`).
+
+**The messy middle.** The dashboard reference page lived in the messy middle
+(tracked, yet unverified and volatile) until 2026-06 — see
+[local-dashboard.md](../plans/local-dashboard.md) §2.1.

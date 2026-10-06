@@ -20,25 +20,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { dispatch } from '../scripts/lib/cross-skill/dispatch.mjs';
-import { argv } from './helpers/cross-skill-argv.mjs';
-
-/** The minimum store surface these five commands touch. */
-function stubDeps(overrides = {}) {
-  return {
-    initLearningStore: async () => true,
-    isCloudEnabled: async () => true,
-    // record-persona-session gates on its OWN cloud check, not the shared one.
-    // Omitting it silently routed every persona case to the degrade envelope,
-    // where `reason` is absent — a stub gap that reads exactly like a handler
-    // that stopped reporting.
-    isPersonaCloudEnabled: async () => true,
-    resolveRepoForStoreResult: async () => ({ kind: 'resolved', repoRowId: 'repo-1', repoUuid: 'uuid-1', name: 'o/r' }),
-    getRepoIdByName: async () => 'repo-1',
-    getRepoIdByUuid: async () => ({ id: 'repo-1', name: 'o/r' }),
-    listRepoIds: async () => ['repo-1'],
-    ...overrides,
-  };
-}
+import { argv, stubDeps } from './helpers/cross-skill-argv.mjs';
 
 const WRITE_FAILED = {
   ok: false, cloud: true, reason: 'write-failed',

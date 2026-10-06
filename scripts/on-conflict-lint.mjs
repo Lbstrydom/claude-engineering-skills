@@ -14,20 +14,20 @@
  * Exit codes:
  *   0 — clean (no gating findings)
  *   1 — at least one gating finding
- *   3 — --strict and at least one unresolved-* diagnostic (a site the lint
- *       could not read; refuse to certify clean)
+ *   3 — --strict and at least one unresolved-* or parse-error diagnostic (a
+ *       site or file the lint could not read; refuse to certify clean)
  *
  * Flags:
  *   --all       lint the whole store tree (default is drift vs the base)
  *   --base <r>  drift base override (default: the resolved push range)
  *   --json      machine-readable output
- *   --strict    treat unresolved-* diagnostics as failures (exit 3)
+ *   --strict    treat unresolved-* and parse-error diagnostics as failures (exit 3)
  *
  * @module scripts/on-conflict-lint
  */
 import { execFileSync } from 'node:child_process';
 import { resolvePushRange } from './lib/push-range.mjs';
-import { lintStoreTree, filterFindingsToDiff } from './lib/lint/on-conflict.mjs';
+import { lintStoreTree, filterFindingsToDiff, isStrictFailureDiagnostic } from './lib/lint/on-conflict.mjs';
 import { parseDiffText } from './lib/diff-annotation.mjs';
 import { normalizePath } from './lib/file-io.mjs';
 
@@ -86,7 +86,10 @@ function main() {
   const baseArg = baseIdx >= 0 ? process.argv[baseIdx + 1] : undefined;
 
   const { findings: allFindings, suppressed, diagnostics, filesScanned } = lintStoreTree();
-  const unresolved = diagnostics.filter((d) => d.kind?.startsWith('unresolved'));
+  // `--strict` fails on anything the lint could not READ: unresolved sites AND
+  // parse-error (a hard failure or a partially-recovered tree) — the latter was
+  // emitted but never gated, so a broken file exited 0.
+  const unresolved = diagnostics.filter(isStrictFailureDiagnostic);
 
   let gating = allFindings;
   let base, rangeSource, rangeTrusted, driftFellBack = false;

@@ -11,6 +11,7 @@ import path from 'node:path';
 import lockfile from 'proper-lockfile';
 
 import { normalizePath, atomicWriteFileSync } from './file-io.mjs';
+import { retrySync } from './retry-transient-fs.mjs';
 import { LedgerEntrySchema, BatchLedgerEntrySchema, Stage1MechanicalLedgerEntrySchema } from './schemas.mjs';
 import { semanticId } from './findings.mjs';
 // The rulings block is an outbound provider payload and the GPT audit pass path
@@ -70,14 +71,21 @@ export function generateTopicId(finding) {
  * (tiered-recall pipeline Phase 8) so `writeStage1MechanicalLedgerEntry`
  * doesn't duplicate `writeLedgerEntry`'s read/upsert/write logic verbatim.
  *
+ * Runs under the same `<ledger>.lock` as `batchWriteLedger` (unlocked, 3 processes
+ * x 40 calls left 49 of 120 entries). An invalid entry is refused (stderr +
+ * return); an unreadable ledger, a lock held past ~5s, or a write failure THROWS,
+ * like every other ledger path. It used to "back up and start fresh" on
+ * corruption — dropping every other ruling, exit 0, and a 2nd corruption then
+ * overwrote the `.bak` — so a damaged ledger is now left byte-for-byte as found.
+ *
  * @param {string} ledgerPath
  * @param {object} entry
  * @param {import('zod').ZodType} schema
  * @param {string} logLabel - prefixes stderr diagnostics (e.g. '[ledger]')
+ * @throws {Error} unreadable ledger, lock not acquired in time, or a write failure
  */
 function writeSingleLedgerEntry(ledgerPath, entry, schema, logLabel) {
   const absPath = path.resolve(ledgerPath);
-  let ledger = { version: 1, entries: [] };
 
   const validated = schema.safeParse(entry);
   if (!validated.success) {
@@ -86,48 +94,39 @@ function writeSingleLedgerEntry(ledgerPath, entry, schema, logLabel) {
   }
   const validEntry = validated.data;
 
-  // Read existing — fail loudly on corruption rather than silently overwriting
-  if (fs.existsSync(absPath)) {
-    try {
-      const raw = JSON.parse(fs.readFileSync(absPath, 'utf-8'));
-      // Structural check only — strict schema validation rejects batch entries with
-      // adjudicationOutcome:'pending' (pre-adjudication state), causing false warnings.
-      // We only need version + entries array to be present; individual entry shape is
-      // validated at write time by the schema passed in.
-      if (raw && typeof raw === 'object' && Array.isArray(raw.entries)) {
-        ledger = raw;
-      } else {
-        process.stderr.write(`  ${logLabel} WARNING: ${absPath} has invalid structure — backing up and starting fresh\n`);
-        fs.copyFileSync(absPath, `${absPath}.bak`);
-      }
-    } catch (err) {
-      process.stderr.write(`  ${logLabel} WARNING: ${absPath} corrupted — backing up and starting fresh: ${err.message}\n`);
-      try { fs.copyFileSync(absPath, `${absPath}.bak`); } catch { /* ignore */ }
-    }
+  // lockSync realpath()s its target, so the ledger must exist: seed it with an exclusive
+  // (EEXIST-atomic) write — exists-then-write could replace a ledger a peer just filled.
+  if (!fs.existsSync(absPath)) {
+    try { atomicWriteFileSync(absPath, JSON.stringify({ version: 1, entries: [] }), { exclusive: true }); }
+    catch (err) { if (err.code !== 'EEXIST') throw err; }
   }
 
-  // Upsert by topicId
-  const idx = ledger.entries.findIndex(e => e.topicId === validEntry.topicId);
-  if (idx >= 0) {
-    ledger.entries[idx] = validEntry;
-  } else {
-    ledger.entries.push(validEntry);
-  }
-
-  // Atomic write — temp file + rename for crash safety
+  let release;
   try {
-    atomicWriteFileSync(absPath, JSON.stringify(ledger, null, 2));
-    // Echo the RESOLVED absolute path (A3) — on Windows git-bash a `/tmp/...` argv is
-    // MSYS-rewritten to %LOCALAPPDATA%\Temp, so the literal path the caller typed is
-    // NOT where the file lands; the resolved path is the one to read back.
+    // lockSync throws at once and takes no `retries`: wait 100 x 50ms (withFileLock's 5s). Contention is
+    // ELOCKED, or EPERM/EBUSY on Windows (a lost mkdir race — measured; file-lock.mjs saw the same).
+    release = retrySync(() => lockfile.lockSync(absPath, { stale: 10000 }),
+      { maxRetries: 100, retryDelayMs: 50, retryableCodes: ['ELOCKED', 'EPERM', 'EBUSY'] });
+
+    let ledger;
+    try { ledger = readLedgerJson(absPath); } catch (err) { // callers print only err.message — name the file
+      throw new Error(`${logLabel} refusing to write ${absPath}: ledger unreadable (${err.message}) — left untouched`, { cause: err });
+    }
+
+    const idx = ledger.entries.findIndex(e => e.topicId === validEntry.topicId);
+    if (idx >= 0) ledger.entries[idx] = validEntry;
+    else ledger.entries.push(validEntry);
+
+    atomicWriteFileSync(absPath, JSON.stringify(ledger, null, 2)); // temp file + rename for crash safety
+    // Echo the RESOLVED path (A3): git-bash MSYS-rewrites a `/tmp/...` argv, so it is not where the file lands.
     process.stderr.write(`  ${logLabel} wrote ${ledger.entries.length} entr${ledger.entries.length === 1 ? 'y' : 'ies'} → ${absPath}\n`);
-  } catch (err) {
-    process.stderr.write(`  ${logLabel} Failed to write ${absPath}: ${err.message}\n`);
+  } finally {
+    if (release) release();
   }
 }
 
 /**
- * Upsert a ledger entry by topicId. Read-modify-write (not append).
+ * Upsert a ledger entry by topicId (locked read-modify-write; throws per `writeSingleLedgerEntry`).
  * @param {string} ledgerPath - Path to ledger JSON file
  * @param {object} entry - LedgerEntry-shaped object
  */
@@ -408,8 +407,9 @@ export function batchWriteLedger(ledgerPath, entries, { meta = null, targetMetaP
     // repos that can run an OLDER bundle than the one that wrote the file: to a
     // stale reader, an entry written by a newer schema is indistinguishable from
     // corruption. A destructive prune would make that version skew silent and
-    // permanent. `.bak` on the file-level path (`writeSingleLedgerEntry`) is the
-    // same instinct one granularity up.
+    // permanent. The file-level path (`writeSingleLedgerEntry`) takes the same
+    // instinct one granularity up: it refuses a damaged ledger and leaves it
+    // byte-for-byte as found, rather than rewriting it.
     const prunedResident = [];
     const survivors = [];
     for (const e of ledger.entries) {

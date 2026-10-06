@@ -12,7 +12,7 @@
  *   0: all rules pass (or only INFO findings)
  *   1: at least one ERROR finding
  *   2: at least one WARN finding (no ERRORs)
- *   3: linter itself failed (bad config, scan error)
+ *   3: linter itself failed (bad config, scan error, or a --fix write failed)
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -109,6 +109,7 @@ function main() {
   };
 
   // Auto-fix mode
+  let fixWriteFailed = false;
   if (args.fix) {
     const fixable = findings.filter(f => f.fixable);
     if (fixable.length === 0) {
@@ -129,8 +130,23 @@ function main() {
         }
 
         if (args.yes) {
-          applyFixes(findings, repoRoot, { dryRun: false });
-          process.stderr.write(`${G}Applied ${preview.applied.length} fixes${X}\n`);
+          // The real run's result is the truth — the dry-run preview above cannot
+          // know a write failed (or that a concurrent edit changed what applies).
+          const real = applyFixes(findings, repoRoot, { dryRun: false });
+          process.stderr.write(`${G}Applied ${real.applied.length} fixes${X}\n`);
+          if (real.skipped.length > 0) {
+            process.stderr.write(`Skipped (${real.skipped.length}):\n`);
+            for (const s of real.skipped) {
+              process.stderr.write(`  ${s.file}:${s.line} — ${s.reason}\n`);
+            }
+          }
+          if (real.writeFailures > 0) {
+            process.stderr.write(`${R}Error${X}: ${real.writeFailures} file write(s) failed — those fixes were NOT applied\n`);
+            // Exit code, not process.exit(): the summary below still prints and
+            // a natural exit drains a piped stdout (see the return after it).
+            process.exitCode = 3;
+            fixWriteFailed = true;
+          }
         } else {
           process.stderr.write(`\nRun with --fix --yes to apply.\n`);
         }
@@ -164,6 +180,12 @@ function main() {
   // Summary to stdout
   const s = report.summary;
   console.log(`claudemd-lint: ${files.length} files, ${findings.length} findings (${s.error} error, ${s.warn} warn, ${s.info} info)`);
+
+  // A failed --fix write is exit 3 (the linter itself failed), whatever the
+  // findings say. Returning — not process.exit(3) — lets the process end
+  // naturally with the exitCode set above, so the summary line is not dropped
+  // from a piped stdout on Windows.
+  if (fixWriteFailed) return;
 
   // Exit code
   if (s.error > 0) process.exit(1);

@@ -29,7 +29,6 @@ import { writeFile } from '../helpers/fixtures.mjs';
 
 let repo;
 const git = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf-8', windowsHide: true });
-const write = (rel, body) => writeFile(repo, rel, body);
 
 beforeEach(() => {
   repo = fs.mkdtempSync(path.join(os.tmpdir(), 'scanner-gi-'));
@@ -41,10 +40,10 @@ afterEach(() => { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3,
 
 describe('scanInstructionFiles — files the repo does not own', () => {
   it('skips a vendored, gitignored instruction file (the reported case)', () => {
-    write('CLAUDE.md', '# thin addendum\n@./AGENTS.md\n');
-    write('AGENTS.md', '# canonical\n');
-    write('.gitignore', '.agents/skills/\n');
-    write('.agents/skills/supabase-postgres-best-practices/CLAUDE.md', 'AGENTS.md');
+    writeFile(repo, 'CLAUDE.md', '# thin addendum\n@./AGENTS.md\n');
+    writeFile(repo, 'AGENTS.md', '# canonical\n');
+    writeFile(repo, '.gitignore', '.agents/skills/\n');
+    writeFile(repo, '.agents/skills/supabase-postgres-best-practices/CLAUDE.md', 'AGENTS.md');
     git('add', 'CLAUDE.md', 'AGENTS.md', '.gitignore');
     git('commit', '-qm', 'init');
 
@@ -59,8 +58,8 @@ describe('scanInstructionFiles — files the repo does not own', () => {
   it('STILL judges a tracked file that matches an ignore pattern', () => {
     // The ignored-AND-untracked half. A repo may track a file whose path also
     // matches .gitignore; it is committed, so the repo owns it and it counts.
-    write('.gitignore', 'vendored-docs/\n');
-    write('vendored-docs/CLAUDE.md', '# tracked despite the pattern\n');
+    writeFile(repo, '.gitignore', 'vendored-docs/\n');
+    writeFile(repo, 'vendored-docs/CLAUDE.md', '# tracked despite the pattern\n');
     git('add', '-f', '.gitignore', 'vendored-docs/CLAUDE.md');
     git('commit', '-qm', 'init');
 
@@ -93,10 +92,10 @@ describe('scanInstructionFiles — files the repo does not own', () => {
     // set, and the ownership filter was silently OFF — 28,193 such paths in the
     // source repo, 49,768 in the reporting consumer, meaning the "fixed" gate
     // had never once worked in a repo with dependencies installed.
-    write('CLAUDE.md', '# thin addendum\n@./AGENTS.md\n');
-    write('AGENTS.md', '# canonical\n');
-    write('.gitignore', '.agents/skills/\nbulk/\n');
-    write('.agents/skills/supabase-postgres-best-practices/CLAUDE.md', 'AGENTS.md');
+    writeFile(repo, 'CLAUDE.md', '# thin addendum\n@./AGENTS.md\n');
+    writeFile(repo, 'AGENTS.md', '# canonical\n');
+    writeFile(repo, '.gitignore', '.agents/skills/\nbulk/\n');
+    writeFile(repo, '.agents/skills/supabase-postgres-best-practices/CLAUDE.md', 'AGENTS.md');
     git('add', 'CLAUDE.md', 'AGENTS.md', '.gitignore');
     git('commit', '-qm', 'init');
 
@@ -126,8 +125,8 @@ describe('scanInstructionFiles — files the repo does not own', () => {
   });
 
   it('respectGitignore:false restores the raw walk (explicit opt-out)', () => {
-    write('.gitignore', '.agents/skills/\n');
-    write('.agents/skills/v/CLAUDE.md', 'AGENTS.md');
+    writeFile(repo, '.gitignore', '.agents/skills/\n');
+    writeFile(repo, '.agents/skills/v/CLAUDE.md', 'AGENTS.md');
     git('add', '.gitignore');
     git('commit', '-qm', 'init');
 

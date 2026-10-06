@@ -36,6 +36,7 @@ const SHAPE_A_TARGETS = [
   // boundaries, so it must target the function that OWNS the write rather
   // than the one that wraps it in a lock.
   { file: 'scripts/lib/brainstorm/session-store.mjs', fn: 'writeQuarantineLocked' },
+  { file: 'scripts/check-accepted-debt.mjs', fn: 'main' }, // --out report (38b00c82)
   { file: 'scripts/lib/claudemd/autofix.mjs', fn: 'applyFixes' },
   { file: 'scripts/lib/learning/decision-logger.mjs', fn: 'writeOutbox' },
   { file: 'scripts/lib/learning/quickfix-stats.mjs', fn: 'writeAtomic' },

@@ -11,30 +11,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { writeRoundLedger as writeRoundLedgerAt } from './helpers/fixtures.mjs';
+import { makeDeferEntry, writeRoundLedger } from './helpers/fixtures.mjs';
 import { makeRunCli } from './helpers/run-cli.mjs';
 
 let tmpDir;
 let auditDir;
 const scriptPath = path.resolve('scripts/debt-auto-capture.mjs');
-
-function writeRoundLedger(name, entries) {
-  return writeRoundLedgerAt(auditDir, name, entries);
-}
-
-function makeDeferEntry(topicId, extra = {}) {
-  return {
-    topicId,
-    ruling: 'defer',
-    severity: 'MEDIUM',
-    category: 'god-module',
-    section: 'src/x.js:1',
-    detailSnapshot: 'a sufficiently descriptive detail snapshot',
-    rulingRationale: 'independent of this change — out of scope for the current fix',
-    affectedFiles: ['src/x.js'],
-    ...extra,
-  };
-}
 
 const runCli = makeRunCli(scriptPath, { cwd: () => tmpDir, buildEnv: () => ({ ...process.env, AUDIT_DB_URL: '' }) });
 
@@ -50,7 +32,7 @@ afterEach(() => {
 describe('debt-auto-capture.mjs — same-file-batch nudge', () => {
   test('5 same-file out-of-scope defers → WARN naming the file and count', () => {
     const entries = Array.from({ length: 5 }, (_, i) => makeDeferEntry(`t${i}`));
-    const ledgerPath = writeRoundLedger('sid1-ledger.json', entries);
+    const ledgerPath = writeRoundLedger(auditDir, 'sid1-ledger.json', entries);
     const r = runCli(['--ledger', ledgerPath, '--run', 'sid1']);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /WARN: 5 out-of-scope defers in this batch cite src\/x\.js/);
@@ -58,7 +40,7 @@ describe('debt-auto-capture.mjs — same-file-batch nudge', () => {
 
   test('4 same-file entries (under threshold) → no WARN', () => {
     const entries = Array.from({ length: 4 }, (_, i) => makeDeferEntry(`t${i}`));
-    const ledgerPath = writeRoundLedger('sid1-ledger.json', entries);
+    const ledgerPath = writeRoundLedger(auditDir, 'sid1-ledger.json', entries);
     const r = runCli(['--ledger', ledgerPath, '--run', 'sid1']);
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /out-of-scope defers in this batch cite/);
@@ -66,7 +48,7 @@ describe('debt-auto-capture.mjs — same-file-batch nudge', () => {
 
   test('5 same-file entries but --reason blocked-by → no WARN (reason gate)', () => {
     const entries = Array.from({ length: 5 }, (_, i) => makeDeferEntry(`t${i}`));
-    const ledgerPath = writeRoundLedger('sid1-ledger.json', entries);
+    const ledgerPath = writeRoundLedger(auditDir, 'sid1-ledger.json', entries);
     const r = runCli(['--ledger', ledgerPath, '--run', 'sid1', '--reason', 'blocked-by', '--blocked-by', 'owner/repo#1']);
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /out-of-scope defers in this batch cite/);
@@ -76,7 +58,7 @@ describe('debt-auto-capture.mjs — same-file-batch nudge', () => {
     const entries = Array.from({ length: 5 }, (_, i) => makeDeferEntry(`t${i}`, {
       affectedFiles: [`src/file-${i}.js`], section: `src/file-${i}.js:1`,
     }));
-    const ledgerPath = writeRoundLedger('sid1-ledger.json', entries);
+    const ledgerPath = writeRoundLedger(auditDir, 'sid1-ledger.json', entries);
     const r = runCli(['--ledger', ledgerPath, '--run', 'sid1']);
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /out-of-scope defers in this batch cite/);
@@ -87,7 +69,7 @@ describe('debt-auto-capture.mjs — same-file-batch nudge', () => {
       affectedFiles: [`src/unique-${i}.js`, 'src/shared.js'],
       section: `src/unique-${i}.js:1`,
     }));
-    const ledgerPath = writeRoundLedger('sid1-ledger.json', entries);
+    const ledgerPath = writeRoundLedger(auditDir, 'sid1-ledger.json', entries);
     const r = runCli(['--ledger', ledgerPath, '--run', 'sid1']);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /WARN: 5 out-of-scope defers in this batch cite src\/shared\.js/);
@@ -95,7 +77,7 @@ describe('debt-auto-capture.mjs — same-file-batch nudge', () => {
 
   test('--changed given and the file is NOT in it → no WARN', () => {
     const entries = Array.from({ length: 5 }, (_, i) => makeDeferEntry(`t${i}`));
-    const ledgerPath = writeRoundLedger('sid1-ledger.json', entries);
+    const ledgerPath = writeRoundLedger(auditDir, 'sid1-ledger.json', entries);
     const r = runCli(['--ledger', ledgerPath, '--run', 'sid1', '--changed', 'src/unrelated.js,src/other.js']);
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /out-of-scope defers in this batch cite/);
@@ -103,14 +85,14 @@ describe('debt-auto-capture.mjs — same-file-batch nudge', () => {
 
   test('--changed given and the file IS in it → WARN fires with assertive (not hedged) wording, distinct from the no-`--changed` case', () => {
     const entries = Array.from({ length: 5 }, (_, i) => makeDeferEntry(`t${i}`));
-    const ledgerPathA = writeRoundLedger('sidA-ledger.json', entries);
+    const ledgerPathA = writeRoundLedger(auditDir, 'sidA-ledger.json', entries);
     const withChanged = runCli(['--ledger', ledgerPathA, '--run', 'sidA', '--changed', 'src/x.js']);
     assert.equal(withChanged.status, 0, withChanged.stderr);
     assert.match(withChanged.stderr, /which is in your diff/);
     assert.doesNotMatch(withChanged.stderr, /may be in your diff/);
 
     const entries2 = Array.from({ length: 5 }, (_, i) => makeDeferEntry(`u${i}`));
-    const ledgerPathB = writeRoundLedger('sidB-ledger.json', entries2);
+    const ledgerPathB = writeRoundLedger(auditDir, 'sidB-ledger.json', entries2);
     const noChanged = runCli(['--ledger', ledgerPathB, '--run', 'sidB']);
     assert.equal(noChanged.status, 0, noChanged.stderr);
     assert.match(noChanged.stderr, /may be in your diff — verify/);
@@ -124,7 +106,7 @@ describe('debt-auto-capture.mjs — template-rationale nudge', () => {
       affectedFiles: [`src/file-${i}.js`], section: `src/file-${i}.js:1`,
       rulingRationale: `unrelated to \`${fn}\` — verified zero coupling to \`${fn}\`, the only function this plan modifies in this file.`,
     }));
-    const ledgerPath = writeRoundLedger('sid1-ledger.json', entries);
+    const ledgerPath = writeRoundLedger(auditDir, 'sid1-ledger.json', entries);
     const r = runCli(['--ledger', ledgerPath, '--run', 'sid1']);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /WARN: 3 out-of-scope defers in this batch share near-identical rationale wording/);
@@ -136,7 +118,7 @@ describe('debt-auto-capture.mjs — template-rationale nudge', () => {
       affectedFiles: [`src/file-${i}.js`], section: `src/file-${i}.js:1`,
       rulingRationale: `unrelated to \`${fn}\` — verified zero coupling to \`${fn}\`.`,
     }));
-    const ledgerPath = writeRoundLedger('sid1-ledger.json', entries);
+    const ledgerPath = writeRoundLedger(auditDir, 'sid1-ledger.json', entries);
     const r = runCli(['--ledger', ledgerPath, '--run', 'sid1']);
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /near-identical rationale wording/);
@@ -151,7 +133,7 @@ describe('debt-auto-capture.mjs — template-rationale nudge', () => {
     const entries = rationales.map((rationale, i) => makeDeferEntry(`t${i}`, {
       affectedFiles: [`src/file-${i}.js`], section: `src/file-${i}.js:1`, rulingRationale: rationale,
     }));
-    const ledgerPath = writeRoundLedger('sid1-ledger.json', entries);
+    const ledgerPath = writeRoundLedger(auditDir, 'sid1-ledger.json', entries);
     const r = runCli(['--ledger', ledgerPath, '--run', 'sid1']);
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /near-identical rationale wording/);
@@ -164,7 +146,7 @@ describe('debt-auto-capture.mjs — template-rationale nudge', () => {
       affectedFiles: [`src/totally-different-${i}.js`], section: `src/totally-different-${i}.js:1`,
       rulingRationale: `unrelated to \`${fn}\` — verified zero coupling to \`${fn}\`, the only function this plan modifies in this file.`,
     }));
-    const ledgerPath = writeRoundLedger('sid1-ledger.json', entries);
+    const ledgerPath = writeRoundLedger(auditDir, 'sid1-ledger.json', entries);
     const r = runCli(['--ledger', ledgerPath, '--run', 'sid1']);
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /out-of-scope defers in this batch cite/, 'same-file WARN must NOT fire — different files');
@@ -175,7 +157,7 @@ describe('debt-auto-capture.mjs — template-rationale nudge', () => {
     const entries = Array.from({ length: 5 }, (_, i) => makeDeferEntry(`t${i}`, {
       rulingRationale: 'unrelated to `x` — verified zero coupling to `x`, the only function this plan modifies in this file.',
     }));
-    const ledgerPath = writeRoundLedger('sid1-ledger.json', entries);
+    const ledgerPath = writeRoundLedger(auditDir, 'sid1-ledger.json', entries);
     const r = runCli(['--ledger', ledgerPath, '--run', 'sid1', '--reason', 'blocked-by', '--blocked-by', 'owner/repo#1']);
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /near-identical rationale wording/);

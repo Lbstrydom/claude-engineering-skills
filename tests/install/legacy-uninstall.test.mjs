@@ -20,17 +20,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { sha } from '../../scripts/lib/cli-io.mjs';
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CLI = path.join(REPO_ROOT, 'scripts', 'install-skills.mjs');
 const execFileAsync = promisify(execFile);
-
-// @duplicate-justification: target=tests/install/lifecycle.test.mjs:sha12 reason=deliberate test-local fixture helper. Production digest conflict-detector.mjs::computeFileSha takes a PATH and returns null on any read error; these suites need the digest of an in-memory STRING before the file exists. A shared util for a one-line expression would couple otherwise-independent suites' fixtures, and the value is pinned by the production code both suites assert against.
-const sha12 = (s) => crypto.createHash('sha256').update(s).digest('hex').slice(0, 12);
 
 let tmp, home, repo;
 
@@ -48,7 +46,7 @@ function seedGlobal(rel, content) {
   const abs = path.join(home, '.claude', 'skills', rel);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, content);
-  return { path: abs, sha: sha12(content), skill: rel.split(/[\\/]/)[0], scope: 'global' };
+  return { path: abs, sha: sha(content), skill: rel.split(/[\\/]/)[0], scope: 'global' };
 }
 
 function writeGlobalReceipt(managedFiles) {
@@ -262,7 +260,7 @@ describe('--uninstall-legacy is bounded by the receipt, not by the directory', (
     fs.writeFileSync(path.join(ambient, '.audit-loop-install-receipt.json'), JSON.stringify({
       receiptVersion: 1, bundleVersion: 'test', sourceUrl: 'test', surface: 'claude',
       installedAt: new Date(0).toISOString(),
-      managedFiles: [{ path: decoy, sha: sha12('a'), skill: 'plan', scope: 'global' }],
+      managedFiles: [{ path: decoy, sha: sha('a'), skill: 'plan', scope: 'global' }],
     }, null, 2));
 
     const target = seedGlobal('plan/SKILL.md', 'a');

@@ -24,14 +24,12 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { initTempRepo, cleanupTempRepo } from './helpers/worktree-guard-args.mjs';
 import { writeFile } from './helpers/fixtures.mjs';
-import { git as sharedGit } from './helpers/git.mjs';
+import { git } from './helpers/git.mjs';
 
 const CLI = fileURLToPath(new URL('../scripts/ship-commit.mjs', import.meta.url));
 const SKILLS_DIR = fileURLToPath(new URL('../skills', import.meta.url));
 
 let repo;
-const git = (args, cwd = repo) => sharedGit(args, cwd);
-const write = (rel, body) => writeFile(repo, rel, body);
 
 /** Run the real CLI in the fixture repo. Returns {status, stderr}. */
 function ship(args) {
@@ -52,19 +50,19 @@ before(() => {
   for (const d of fs.readdirSync(SKILLS_DIR, { withFileTypes: true })) {
     if (d.isDirectory()) fs.mkdirSync(path.join(repo, 'skills', d.name), { recursive: true });
   }
-  write('seed.txt', 'seed\n');
-  git(['add', '.']);
-  git(['commit', '-qm', 'seed']);
+  writeFile(repo, 'seed.txt', 'seed\n');
+  git(['add', '.'], repo);
+  git(['commit', '-qm', 'seed'], repo);
 });
 
 after(() => cleanupTempRepo(repo));
 
-const head = () => git(['rev-parse', 'HEAD']);
-const branch = () => git(['symbolic-ref', '--quiet', '--short', 'HEAD']);
+const head = () => git(['rev-parse', 'HEAD'], repo);
+const branch = () => git(['symbolic-ref', '--quiet', '--short', 'HEAD'], repo);
 
 describe('Guard B — identity is a precondition', () => {
   test('NO expectation refuses (exit 2) — absence must not pass', () => {
-    write('a.txt', 'a\n');
+    writeFile(repo, 'a.txt', 'a\n');
     const r = ship(['--path', 'a.txt']);
     assert.equal(r.status, 2, 'omitting the identity bundle must fail closed');
     assert.match(r.stderr, /no-expectation/);
@@ -103,47 +101,47 @@ describe('Guard B — identity is a precondition', () => {
     const r = ship(['--path', 'a.txt', '--expect-head', before, '--expect-branch', branch()]);
     assert.equal(r.status, 0, `expected success, got ${r.status}: ${r.stderr}`);
     assert.match(r.stderr, /\[worktree\] identity verified \(source: flag\)/);
-    assert.equal(git(['rev-parse', 'HEAD^']), before, 'the new commit sits on the verified base');
-    assert.ok(git(['show', '--stat', '--format=', 'HEAD']).includes('a.txt'));
+    assert.equal(git(['rev-parse', 'HEAD^'], repo), before, 'the new commit sits on the verified base');
+    assert.ok(git(['show', '--stat', '--format=', 'HEAD'], repo).includes('a.txt'));
   });
 });
 
 describe('Guard A — an unscoped commit is refused', () => {
   test('a staged index with NO --path refuses (exit 2)', () => {
-    write('staged.txt', 's\n');
-    git(['add', 'staged.txt']);
+    writeFile(repo, 'staged.txt', 's\n');
+    git(['add', 'staged.txt'], repo);
     const r = ship(['--expect-head', head(), '--expect-branch', branch()]);
     assert.equal(r.status, 2, 'committing the bare index must fail closed');
     assert.match(r.stderr, /refusing to commit the whole index/);
     assert.match(r.stderr, /staged\.txt/, 'the refusal names what it saw');
     assert.match(r.stderr, /--path staged\.txt/, 'and prints the exact remedy');
-    git(['reset', '-q']);
+    git(['reset', '-q'], repo);
   });
 
   test('--path leaves a FOREIGN staged entry untouched (the isolation property)', () => {
-    write('mine.txt', 'm\n');
-    write('theirs.txt', 't\n');
-    git(['add', 'theirs.txt']);           // another session's in-flight work
+    writeFile(repo, 'mine.txt', 'm\n');
+    writeFile(repo, 'theirs.txt', 't\n');
+    git(['add', 'theirs.txt'], repo);           // another session's in-flight work
     const r = ship(['--path', 'mine.txt', '--expect-head', head(), '--expect-branch', branch()]);
     assert.equal(r.status, 0, r.stderr);
-    const committed = git(['show', '--stat', '--format=', 'HEAD']);
+    const committed = git(['show', '--stat', '--format=', 'HEAD'], repo);
     assert.ok(committed.includes('mine.txt'));
     assert.ok(!committed.includes('theirs.txt'), "another session's work must not be absorbed");
-    assert.ok(git(['diff', '--cached', '--name-only']).includes('theirs.txt'), 'and must remain staged');
-    git(['reset', '-q']);
+    assert.ok(git(['diff', '--cached', '--name-only'], repo).includes('theirs.txt'), 'and must remain staged');
+    git(['reset', '-q'], repo);
   });
 });
 
 describe('Guard A — a directory silently widens, so it is refused', () => {
   test('an EXISTING directory refuses, with a bounded sample', () => {
-    write('sub/a.txt', '1\n');
-    write('sub/b.txt', '2\n');
-    git(['add', 'sub']); git(['commit', '-qm', 'sub']);
+    writeFile(repo, 'sub/a.txt', '1\n');
+    writeFile(repo, 'sub/b.txt', '2\n');
+    git(['add', 'sub'], repo); git(['commit', '-qm', 'sub'], repo);
     fs.writeFileSync(path.join(repo, 'sub', 'a.txt'), 'changed\n');
     const r = ship(['--path', 'sub', '--expect-head', head(), '--expect-branch', branch()]);
     assert.equal(r.status, 2);
     assert.match(r.stderr, /is a directory, and git would expand it/);
-    git(['checkout', '--', '.']);
+    git(['checkout', '--', '.'], repo);
   });
 
   // lstat throws ENOENT for a deleted directory, and `cat-file -e` exits 0 for
@@ -153,13 +151,13 @@ describe('Guard A — a directory silently widens, so it is refused', () => {
     const r = ship(['--path', 'sub', '--expect-head', head(), '--expect-branch', branch()]);
     assert.equal(r.status, 2, 'a deleted directory must not pass as a deletion');
     assert.match(r.stderr, /DELETED directory/);
-    git(['checkout', '--', '.']);
+    git(['checkout', '--', '.'], repo);
   });
 
   test('a deleted FILE is still a legitimate scoped deletion', () => {
     fs.rmSync(path.join(repo, 'sub', 'b.txt'), { recursive: true, maxRetries: 3, retryDelay: 50 });
     const r = ship(['--path', 'sub/b.txt', '--expect-head', head(), '--expect-branch', branch()]);
     assert.equal(r.status, 0, `deletions must still work: ${r.stderr}`);
-    assert.ok(git(['show', '--stat', '--format=', 'HEAD']).includes('sub/b.txt'));
+    assert.ok(git(['show', '--stat', '--format=', 'HEAD'], repo).includes('sub/b.txt'));
   });
 });

@@ -14,12 +14,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { unitVectorAt } from './helpers/fixtures.mjs';
 import { groupIntoWorkUnits, wantsWorkUnits, WORK_UNIT_DATE_KEYS } from '../scripts/lib/cross-skill/work-unit-grouping.mjs';
 import { listUnlockedFixesCmd, listUnremediatedAcceptancesCmd } from '../scripts/lib/cross-skill/commands/ship.mjs';
 import { finalReviewPendingCmd } from '../scripts/lib/cross-skill/commands/final-review.mjs';
-
-/** Unit vectors in the plane — cosine is exactly cos(theta). */
-const at = (deg) => [Math.cos((deg * Math.PI) / 180), Math.sin((deg * Math.PI) / 180)];
 
 /**
  * Five rows: A/B/C share a vector (one unit of 3), D is orthogonal (a
@@ -38,7 +36,7 @@ const ROWS = (dateKey, salt = '') => ['A', 'B', 'C', 'D', 'E'].map((id) => ({
   detail_snapshot: `AKIAIOSFODNN7EXAMPLE secret-looking prose for ${id}`,
   [dateKey]: `2026-09-0${['A', 'B', 'C', 'D', 'E'].indexOf(id) + 1}T00:00:00Z`,
 }));
-const VECTORS = { get: (id) => ({ A: at(0), B: at(0), C: at(0), D: at(90) }[id.replace(/^id-/, '')[0]] ) };
+const VECTORS = { get: (id) => ({ A: unitVectorAt(0), B: unitVectorAt(0), C: unitVectorAt(0), D: unitVectorAt(90) }[id.replace(/^id-/, '')[0]] ) };
 
 function makeCtx({ flags = {}, labeller = undefined, deps = {} } = {}) {
   const seen = [];

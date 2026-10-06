@@ -110,6 +110,58 @@ describe('debt-resolve CLI', () => {
     assert.match(r.stderr, /Usage:/);
   });
 
+  describe('--accept-permanent (in-place disposition, keeps debt memory)', () => {
+    const accept = (extra = []) => runCli([
+      'existing1',
+      '--accept-permanent',
+      '--rationale', 'deliberate: the override seam is announced and pinned by a test',
+      '--ledger', ledgerPath,
+      '--events', eventsPath,
+      '--no-cloud',
+      ...extra,
+    ]);
+    const readLedger = () => JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+
+    test('upserts the entry IN PLACE to accepted-permanent — never removes it', () => {
+      const r = accept(['--approver', '@owner (documented decision)']);
+      assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+      assert.equal(JSON.parse(r.stdout).action, 'accepted-permanent');
+
+      const ledger = readLedger();
+      assert.equal(ledger.entries.length, 2, 'accepting must not remove a row — that would drop it from debt memory');
+      const e = ledger.entries.find((x) => x.topicId === 'existing1');
+      assert.equal(e.deferredReason, 'accepted-permanent');
+      assert.equal(e.approver, '@owner (documented decision)');
+      assert.match(e.approvedAt, /^\d{4}-\d\d-\d\dT/);
+      // The original deferral is history, not rewritten.
+      assert.equal(e.deferredAt, '2026-04-05T10:00:00.000Z');
+      assert.equal(e.deferredRun, 'r1');
+      assert.match(e.deferredRationale, /^deliberate: the override seam/);
+      assert.match(e.deferredRationale, /Prior deferral \(out-of-scope\): a sufficiently long testing rationale/);
+      // Negative control: the sibling row is untouched.
+      assert.equal(ledger.entries.find((x) => x.topicId === 'existing2').deferredReason, 'out-of-scope');
+      // No event is written: there is no "accepted" event kind, the entry is the record.
+      assert.equal(fs.existsSync(eventsPath), false);
+    });
+
+    test('exit 1 and the ledger is untouched when --approver is missing', () => {
+      const before = fs.readFileSync(ledgerPath, 'utf-8');
+      const r = accept();
+      assert.equal(r.status, 1);
+      assert.match(r.stderr, /requires --approver/);
+      assert.equal(fs.readFileSync(ledgerPath, 'utf-8'), before);
+    });
+
+    test('exit 2 when the topicId is not in the ledger', () => {
+      const r = runCli([
+        'nonexistent', '--accept-permanent', '--approver', '@owner',
+        '--rationale', 'this is a long enough rationale for testing',
+        '--ledger', ledgerPath, '--no-cloud',
+      ]);
+      assert.equal(r.status, 2);
+    });
+  });
+
   test('a literal --help after -- does not print usage — the resolve proceeds normally', () => {
     // help/noCloud used to be read via a bare `args.includes(...)`, which
     // scans the ENTIRE argv. A literal `--help` after the POSIX `--`
