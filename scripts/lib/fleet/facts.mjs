@@ -119,9 +119,17 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
   // The budget covers EVERY per-ref analysis: the branches above AND the materialised PR refs in the loop below.
   let budget = Number.isInteger(maxBranches) && maxBranches >= 0 ? maxBranches - analyse.size : Infinity;
   const changed = {}; const patchIds = {}; const findings = []; const evidenceNotes = {}; const prTrusted = new Set();
+  // Evidence is computed from the commit ids `listBranches` captured, not by re-resolving the NAMES: another
+  // session can commit between the two reads, and the PR-trust comparison below uses the captured tip, so
+  // evidence for a newer tip would be attributed to the older one. A name with no captured oid (a registered
+  // branch that is not local) falls back to the name, which simply fails to resolve and says so.
+  const tipOid = new Map((branches.branches ?? []).map((b) => [b.name, b.oid]));
+  const baseOidSnap = tipOid.get(base) ?? null;
+  const baseRev = baseOidSnap ?? base;
   for (const n of analyse) {
-    changed[n] = changedFiles(cwd, base, n);
-    if (patches) patchIds[n] = patchId(cwd, base, n);
+    const rev = tipOid.get(n) ?? n;
+    changed[n] = changedFiles(cwd, baseRev, rev);
+    if (patches) patchIds[n] = patchId(cwd, baseRev, rev);
   }
   // PR-backed sessions: their evidence is only trusted while it IS the PR's current head. A session whose
   // evidence cannot be established gets a per-SESSION note + warning; the shared per-branch evidence in
@@ -151,7 +159,7 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
       continue;
     }
     budget -= 1;
-    const files = changedFiles(cwd, base, ref);
+    const files = changedFiles(cwd, baseRev, have.oid); // the oid just verified against the PR head, not the ref name
     if (!files.queried) { noFiles(s, files.reason); continue; }
     changed[prKey(s)] = files;
   }
@@ -159,7 +167,7 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
   const worktreeList = worktrees ? listWorktrees(cwd) : { queried: false, reason: 'not requested', worktrees: [] };
   return {
     worktreeClean: probeWorktreeCleanliness({ branches, worktreeList, base, registry }),
-    findings, evidenceNotes, prTrusted, dir, now, leaseMs: leaseMsFrom(env), baseOid: (() => { const h = headOf(cwd, `refs/heads/${base}`); return h.ok ? h.oid : null; })(),
+    findings, evidenceNotes, prTrusted, dir, now, leaseMs: leaseMsFrom(env), baseOid: baseOidSnap ?? (() => { const h = headOf(cwd, `refs/heads/${base}`); return h.ok ? h.oid : null; })(),
     base: { name: base, upstream: up.upstream, freshness: baseFreshness(cwd, { base, upstream: up.upstream }) },
     registry, hold: readHold(dir), trains: trainsRead.trains, trainsInvalid: trainsRead.invalid,
     worktrees: worktreeList,

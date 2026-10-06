@@ -8,7 +8,7 @@ import micromatch from 'micromatch';
 import {
   validateClaimPattern, validateClaimPatterns, patternsIntersect, fileOverlap, duplicatePatches,
   liveness, isLive, decideClaim, claimMode, approvable, proposeLandingOrder, buildStatus,
-  worstResult, checkBlocksApproval, deriveDone,
+  worstResult, checkBlocksApproval, deriveDone, MAX_SEGMENT_CHARS, MAX_PATTERN_SEGMENTS,
 } from '../scripts/lib/fleet/overlap.mjs';
 import { renderStatus, renderClaimVerdict, renderApprovable } from '../scripts/lib/fleet/render.mjs';
 
@@ -530,15 +530,25 @@ describe('claim grammar is an allowlist shared with micromatch', () => {
   });
 });
 
-describe('DP memo keys are collision-free beyond 1024', () => {
-  it('a 1100-char segment: the match sits at offset >= 1024 (old i*1024+j key aliased (1,0) onto (0,1024))', () => {
-    assert.equal(patternsIntersect('*abc', `${'z'.repeat(1100)}abc`), 'intersect');
-    assert.equal(patternsIntersect('*abc', `${'z'.repeat(1100)}abd`), 'disjoint');
-    assert.equal(patternsIntersect(`${'a'.repeat(1100)}*`, `${'a'.repeat(1200)}b`), 'intersect');
+// History: the DP memo key was `i*1024+j`, which aliased (1,0) onto (0,1024) for a segment past 1024
+// characters. The keys are now `"i,j"` strings (collision-free by construction), and since the size
+// bounds (MAX_SEGMENT_CHARS / MAX_PATTERN_SEGMENTS) no pattern that large reaches the DP at all: it is
+// refused at claim time and answers 'unknown' here. The correctness checks therefore run AT the limits.
+describe('DP correctness at the size limits (memo keys, and the old >1024 sizes now refused)', () => {
+  it('the old >1024-character / >1024-segment inputs are refused as "unknown", not computed', () => {
+    assert.equal(patternsIntersect('*abc', `${'z'.repeat(1100)}abc`), 'unknown');
+    assert.equal(patternsIntersect('**/x', `${'z/'.repeat(1100)}x`), 'unknown');
   });
-  it('a path of >1024 segments with ** at the front', () => {
-    assert.equal(patternsIntersect('**/x', `${'z/'.repeat(1100)}x`), 'intersect');
-    assert.equal(patternsIntersect('**/x', `${'z/'.repeat(1100)}y`), 'disjoint');
+  it('a segment at the limit: the match sits near the far end of the segment', () => {
+    const n = MAX_SEGMENT_CHARS - 3;
+    assert.equal(patternsIntersect('*abc', `${'z'.repeat(n)}abc`), 'intersect');
+    assert.equal(patternsIntersect('*abc', `${'z'.repeat(n)}abd`), 'disjoint');
+    assert.equal(patternsIntersect(`${'a'.repeat(n - 10)}*`, `${'a'.repeat(n)}b`), 'intersect');
+  });
+  it('a path at the segment limit with ** at the front', () => {
+    const n = MAX_PATTERN_SEGMENTS - 1;
+    assert.equal(patternsIntersect('**/x', `${'z/'.repeat(n - 1)}x`), 'intersect');
+    assert.equal(patternsIntersect('**/x', `${'z/'.repeat(n - 1)}y`), 'disjoint');
   });
 });
 
