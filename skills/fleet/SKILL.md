@@ -32,7 +32,7 @@ description: |
 
 ```
 Usage:
-  /fleet status [--json]                         # morning view; read-only
+  /fleet status [--json] [--all]                 # morning view; read-only
   /fleet start --task "..." [--paths a,b] [--task "..." [--paths c]]...
   /fleet claim --id <id> --intent "..." --paths "a/**,b.mjs" [--override]
   /fleet add <branch|#PR> | --all [--id <id>]    # adopt work that already exists
@@ -65,7 +65,12 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
    chip prompt per task. `--paths` binds to the `--task` before it.
 2. **Go away** — each chip registers itself, works, marks `ready`.
 3. **Status** — show the user the table: intent, state, WAITING column (human
-   items first), overlaps, duplicate patches, proposed landing order.
+   items first), overlaps, duplicate patches, proposed landing order. Overlap by
+   files is **three-dot** (`base...branch`, changes since the merge-base), so a
+   base that moved on never makes a branch look like it touched those files.
+   Untracked branches already merged into base (ahead 0, no open PR, clean or no
+   worktree) are hidden with one `N hidden` line; `--all` shows them. Registered
+   sessions are never hidden, and anything not proven stale stays visible.
 4. **Land** — `land` builds an integration worktree off the base, applies every
    ready head, runs the configured test command once (rerun once if red) and
    prints the result plus the exact approve command. It never touches the base.
@@ -111,6 +116,13 @@ A monorepo with a long chain:
   "checks": [ { "name": "semantic-collisions", "script": "scripts/<your-check>.mjs",
                 "runIn": ["status", "land"], "severity": "block" } ] }
 ```
+
+A tier or a check may carry an optional `"note"` (one line, at most 300
+characters) saying why it is shaped that way, e.g. why a tier is `post-merge`.
+fleet prints it beside the deferred-tier, tier-result and check lines and records
+it in the train manifest. Check rollups (`statusCheckRollup`) are fetched apart
+from the PR list: a token that cannot read them shows `checks:unknown` and
+`PR checks: not queried`, never a missing PR list.
 
 ---
 

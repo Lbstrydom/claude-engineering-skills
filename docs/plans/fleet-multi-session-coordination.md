@@ -544,6 +544,22 @@ session waiting for" is a column, not a paragraph:
   same rules as storage keys / train ids); free text lives only in `note` and is
   length-capped (500 chars).
 
+### Amendment 2026-10-06 (storyline feedback; plan `fleet-storyline-feedback.md`)
+
+- **`changedFiles` is three-dot, deliberately.** `changedFiles(cwd, base, branch)`
+  is `git diff --name-only <base>...<branch>`: the changes on the branch since the
+  merge-base. A two-dot diff would also list every file the base gained after the
+  fork and make each branch look like it touched them, flooding overlap-by-files
+  with false positives. Pinned by `tests/fleet-storyline-feedback.test.mjs`.
+- **PR check rollups are fetched apart from the PR list**; a 403 on
+  `statusCheckRollup` yields `checks:unknown` for that column only, with per-field
+  provenance (`prs.fields.checks`), never a lost PR list. `unknown` is never a pass.
+- **`status` hides untracked ahead-0 branches by default** on sufficient evidence
+  (no open PR, complete PR lookup, clean-or-absent worktree); `--all` shows them.
+- **Optional single-line `note` (at most 300 chars) on a tier and on a check**,
+  printed beside the deferred-tier / tier-result / check lines and recorded in the
+  manifest.
+
 ## 6. Sustainability Notes
 
 - **Assumption that may change: one host, one machine.** State lives in the local

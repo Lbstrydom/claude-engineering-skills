@@ -154,6 +154,7 @@ source comments that no docs linter sees — stays valid.
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `Complete` | VERDICT: KEEP opus (SELECT opus, the incumbent; no challenger cleared the relative floor). N reached 12/12… |
 | [Shadow Final-Review Reviewer (A/B test final-gate effectiveness)](./final-review-shadow-reviewer.md) | `Complete` | verified built; status corrected from Approved during archive triage 2026-06-27 |
 | [/fleet — coordinating several concurrent AI coding sessions](./fleet-multi-session-coordination.md) | `Complete` |  |
+| [/fleet — four fixes from the storyline consumer's first real use](./fleet-storyline-feedback.md) | `Complete` |  |
 | [Friction-Feedback Loop (recurrence-aware quality signal)](./friction-feedback-loop.md) | `Complete` | built Clusters A–C 2026-06-28; `/audit-code` R1 found 8 genuine in-scope bugs — all fixed; consolidated… |
 | [Friction Log + Weekly Digest Surface (v1)](./friction-log-and-digest-v1.md) | `Complete` | shipped 2026-05-09; schema applied to live Supabase; auto-archived via `/ship` Step 5.5 |
 | [Gate-contract authoring — bind the surveyed gates, ratchet the rest](./gate-contract-authoring.md) | `Complete` |  |

@@ -11,6 +11,15 @@
 
 const BANNER = (inv) => `registry incomplete: ${inv.length} record${inv.length === 1 ? '' : 's'} unreadable — claims may be missing`;
 
+/** The optional PR-checks column's provenance line, or null when it is complete. */
+function checksLine(prs) {
+  const f = prs?.fields?.checks;
+  if (!prs?.queried || !f) return null;
+  if (!f.queried) return `PR checks: not queried (${f.reason ?? 'unknown reason'})`;
+  if (f.missing > 0) return `PR checks: partial (${f.missing} unknown)`;
+  return null;
+}
+
 function sourceLine(label, src) {
   if (!src?.queried) return `${label}: not queried (${src?.reason ?? 'unknown reason'})`;
   if (src.complete === false) return `${label}: ${src.reason ?? 'list may be incomplete'}`;
@@ -25,6 +34,7 @@ export function incompleteSources(status) {
   if (!worktrees.queried) out.push('worktrees');
   if (!branches.queried) out.push('branches'); else if (branches.partial) out.push('branches (partial counts)');
   if (!prs.queried) out.push('PRs'); else if (prs.complete === false) out.push(`PRs (may be truncated at ${prs.limit ?? '?'})`);
+  if (checksLine(prs)) out.push('PR checks');
   if (!status.registry.complete) out.push('registry');
   return out;
 }
@@ -59,7 +69,7 @@ function itemBlock(it) {
  * @param {ReturnType<import('./overlap.mjs').buildStatus>} status
  * @returns {string}
  */
-export function renderStatus(status) {
+export function renderStatus(status, { hidden } = {}) {
   const out = [];
   if (!status.registry.complete) {
     out.push(BANNER(status.registry.invalid));
@@ -68,7 +78,7 @@ export function renderStatus(status) {
   const fr = status.base.freshness?.freshness;
   const baseNote = !fr ? 'freshness unknown' : fr.state === 'behind' ? `local base is ${fr.behindBy} behind ${fr.upstream} (since last fetch)` : fr.state;
   out.push(`base: ${status.base.name ?? '?'} — ${baseNote} · observed ${status.observedAt}`);
-  for (const l of [sourceLine('worktrees', status.sources.worktrees), sourceLine('branches', status.sources.branches), sourceLine('PRs', status.sources.prs)]) {
+  for (const l of [sourceLine('worktrees', status.sources.worktrees), sourceLine('branches', status.sources.branches), sourceLine('PRs', status.sources.prs), checksLine(status.sources.prs)]) {
     if (l) out.push(l);
   }
   if (status.hold?.held) out.push(`HOLD on heavy runs${status.hold.by ? ` by ${status.hold.by}` : ''}${status.hold.reason ? `: ${status.hold.reason}` : ''}`);
@@ -81,6 +91,8 @@ export function renderStatus(status) {
     else out.push(`(nothing found — but ${missing.length} source${missing.length === 1 ? ' was' : 's were'} not fully queried: ${missing.join(', ')})`);
   }
   for (const it of status.items) out.push(itemBlock(it));
+  if (hidden?.count) out.push(`${hidden.count} hidden (stale / merged) — use --all`);
+  if (hidden?.unchecked) out.push(`${hidden.unchecked} merged-looking worktree${hidden.unchecked === 1 ? '' : 's'} shown: cleanliness unchecked`);
   if (status.landingOrder.length) out.push('', `proposed landing order: ${status.landingOrder.join(' → ')}`);
   for (const c of status.cycles) out.push(`waiting cycle: ${c.join(' ↔ ')} (ordered by id for display only)`);
   for (const t of status.trains) out.push(`train ${t.trainId}: ${t.phase}${t.result ? ` (${t.result})` : ''}`);

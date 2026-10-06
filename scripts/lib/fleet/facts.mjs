@@ -156,15 +156,47 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
     changed[prKey(s)] = files;
   }
   const up = resolveUpstream(cwd, base, trainsRead.trains);
+  const worktreeList = worktrees ? listWorktrees(cwd) : { queried: false, reason: 'not requested', worktrees: [] };
   return {
+    worktreeClean: probeWorktreeCleanliness({ branches, worktreeList, base, registry }),
     findings, evidenceNotes, prTrusted, dir, now, leaseMs: leaseMsFrom(env), baseOid: (() => { const h = headOf(cwd, `refs/heads/${base}`); return h.ok ? h.oid : null; })(),
     base: { name: base, upstream: up.upstream, freshness: baseFreshness(cwd, { base, upstream: up.upstream }) },
     registry, hold: readHold(dir), trains: trainsRead.trains, trainsInvalid: trainsRead.invalid,
-    worktrees: worktrees ? listWorktrees(cwd) : { queried: false, reason: 'not requested', worktrees: [] },
+    worktrees: worktreeList,
     branches, prs: prFacts, changed, patchIds,
     ...(branchesNotAnalysed ? { branchesNotAnalysed } : {}),
     ...(checks === false ? { checks: { queried: false, reason: 'not requested' } } : {}),
   };
+}
+
+/** Bounds of the cleanliness probe (plan §2.2): per process, candidate cap, aggregate. */
+export const CLEAN_PROBE = Object.freeze({ timeoutMs: 5_000, maxCandidates: 20, deadlineMs: 15_000 });
+
+/**
+ * For each UNTRACKED ahead-0 branch that has a worktree, is that worktree clean?
+ * `{[path]: true|false|null}`; `null` = could not be established (probe failed,
+ * timed out, over the cap, or past the aggregate deadline) and keeps the item
+ * visible. Sequential probes through `runGit`, the deadline checked before each,
+ * so the worst case is deadline + one timeout — never N x timeout.
+ * @param {{branches: object, worktreeList: object, registry: object, base: string, clock?: () => number}} a
+ */
+export function probeWorktreeCleanliness({ branches, worktreeList, registry, base, clock = Date.now, probe = (p) => runGit(['status', '--porcelain', '--untracked-files=normal'], p, { timeoutMs: CLEAN_PROBE.timeoutMs }) }) {
+  const out = {};
+  if (!branches?.queried || !worktreeList?.queried) return out;
+  const tracked = new Set((registry?.sessions ?? []).map((s) => s.source?.branch).filter(Boolean));
+  const candidates = [];
+  for (const b of branches.branches ?? []) {
+    if (b.name === base || tracked.has(b.name) || b.ahead !== 0) continue;
+    const wt = (worktreeList.worktrees ?? []).find((w) => w.branch === b.name && !w.bare);
+    if (wt) candidates.push(wt.path);
+  }
+  const start = clock();
+  candidates.forEach((p, i) => {
+    if (i >= CLEAN_PROBE.maxCandidates || clock() - start > CLEAN_PROBE.deadlineMs) { out[p] = null; return; }
+    const r = probe(p);
+    out[p] = r.ok ? r.stdout.trim() === '' : null;
+  });
+  return out;
 }
 
 /** The hook's session/overlap payload, derived from a joined status. */

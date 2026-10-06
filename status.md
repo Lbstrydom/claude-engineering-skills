@@ -87,6 +87,27 @@
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
 
+## 2026-10-06 — /fleet: four fixes from the storyline consumer's first real use
+
+Plan: `docs/plans/fleet-storyline-feedback.md`. Built by `/cycle --autonomous` as one unit.
+
+### What shipped
+- **PR checks are fetched apart from the PR list.** A token that cannot read `statusCheckRollup` (HTTP 403) now costs only that column: the PR list and evidence survive, checks read `unknown` (never a pass), status prints `PR checks: not queried (...)`. A checks row attaches only when its `headRefOid` matches the PR list's, and a PR missing from the checks listing is `unknown`, not `none`.
+- **`fleet status` hides stale untracked branches by default** (ahead 0, no open PR, complete PR lookup, clean-or-absent worktree; bounded cleanliness probes: 5 s each, 20 candidates, 15 s total) with one `N hidden` line; `--all` shows them. `buildStatus` stays complete, so `land` and `train-approve` are unaffected.
+- **Optional `note`** (single line, 300 chars max, validated before trim) on tiers and checks, printed beside deferred-tier / tier-result / check lines and recorded in the manifest.
+- **Three-dot `changedFiles` documented** (plan §2b amendment, SKILL.md) and pinned by a test whose two-dot control proves it can fail.
+
+### Verification
+- **Plan**: GPT R1 (H1 M2) + R2 (M2), all 5 accepted; Gemini APPROVE.
+- **Code**: GPT R1 H3 M9, acceptance 17% (2 real, fixed with tests; 10 dismissed as pre-existing/independent or a tool bound); Gemini APPROVE, 0 blocking. Mutation check: restoring the single-call field list fails 5 of 8 new gh-facts tests.
+- **Tests (measured)**: `fleet-cli` 129/129; new + affected fleet unit suites 150+ pass, 0 fail. Full `npm test` is the pre-push `check`.
+- **Recorded, not fixed (independent of this change)**: hook/tier descendant-process cleanup, hard-coded `fleet repair` hint in `renderClaimVerdict`, `currentBranch` null-vs-failure, branch-name evidence capture in `gatherFacts`, claim-grammar recursion bounds.
+
+### Backlog
+Backlog 2026-10-06T13:09Z: Q1 71c/9p (+353 aged) · Q2 89c/42p (54 perm) · Q3 35 · debt 303 cloud/67 local (0 spilled) · upstream 1
+
+---
+
 ## 2026-10-06 — dashboard Home: what changed, is it healthy, what needs me
 
 Plan: `docs/plans/dashboard-home-summary.md`. Evidence: a `/persona-test` of the local dashboard (store session `d53c9c25-a8d6-40d2-8822-2f701d27bcc6`) found no view of recent change or health although the data existed as CLIs and files. Built by `/cycle --autonomous`.
