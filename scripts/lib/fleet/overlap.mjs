@@ -42,10 +42,19 @@ export function isTerminalState(state) { return TERMINAL_STATES.includes(state);
 // is rejected at claim time, naming the character.
 const ALLOWED_SEGMENT_CHAR = /^[\p{L}\p{N}_.\-@+=,~#%* ?]$/u;
 
+// Size bounds. `charsIntersect` and `patternsIntersect` recurse once per character / segment step, so
+// unbounded input is a stack overflow (an unexpected-error trace) rather than a refusal, and the DP is
+// O(chars x chars) per segment pair. `patternsIntersect` validates first, so no recursion ever runs on
+// an over-limit pattern: it answers `'unknown'`, which every caller treats as overlap. Real claims are
+// nowhere near these (a path is rarely over ~12 segments, a name rarely over ~60 characters).
+export const MAX_PATTERN_SEGMENTS = 24;
+export const MAX_SEGMENT_CHARS = 100;
+
 /**
  * Validate one `paths` entry against the closed grammar: literals, `*`, `?`,
- * and `**` as a WHOLE segment. Rejection names the offending character — a
- * refusal at claim time beats an unsound guess at overlap time.
+ * and `**` as a WHOLE segment, within the size bounds above. Rejection names the
+ * offending character or limit — a refusal at claim time beats an unsound guess
+ * (or a stack overflow) at overlap time.
  * @param {unknown} p
  * @returns {{ok: true} | {ok: false, reason: string}}
  */
@@ -58,7 +67,9 @@ export function validateClaimPattern(p) {
   }
   if (p.startsWith('/')) return { ok: false, reason: `pattern "${p}" must be repo-relative (leading "/")` };
   const segs = p.split('/');
+  if (segs.length > MAX_PATTERN_SEGMENTS) return { ok: false, reason: `pattern is too long: ${segs.length} segments (at most ${MAX_PATTERN_SEGMENTS})` };
   for (const s of segs) {
+    if ([...s].length > MAX_SEGMENT_CHARS) return { ok: false, reason: `pattern has a segment of ${[...s].length} characters (at most ${MAX_SEGMENT_CHARS})` };
     if (s === '') return { ok: false, reason: `pattern "${p}" has an empty segment ("//" or trailing "/")` };
     if (s === '..') return { ok: false, reason: `pattern "${p}" contains ".." (must stay inside the repo)` };
     if (s === '.') return { ok: false, reason: `pattern "${p}" contains "." segment` };

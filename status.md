@@ -87,6 +87,17 @@
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
 
+## 2026-10-06 — /fleet: claim-pattern bounds + evidence from captured commit ids
+
+Closes two of the three items the hardening entry below left open. Not run through the audit loop (gate `not-run`).
+
+- **Claim patterns are size-bounded** (`MAX_PATTERN_SEGMENTS` 24, `MAX_SEGMENT_CHARS` 100): the overlap DP recurses per character/segment, so an unbounded `--paths` pattern was a stack overflow with an unexpected-error trace. It is now a claim-time refusal naming the limit, and an over-limit stored pattern answers `unknown` (treated as overlap), never a throw.
+- **`gatherFacts` evidence comes from captured commit ids**, not branch NAMES re-resolved after `listBranches`: another session committing in between (or a same-named tag) could attribute a newer tip's files to the older tip used for the PR-trust comparison. The base is captured the same way.
+- **Verification (measured)**: 6 new tests; red-then-green both ways (old `gatherFacts` fails the tag-shadowing test; removing the limit checks fails 4 of the 5 bounds tests); fleet suites green.
+- **Left as a documented limit**: quiet strays after a normally exited hook/tier on Windows (needs a PowerShell walk per run; the timeout path is covered).
+
+---
+
 ## 2026-10-06 — /fleet hardening: tier process trees, repair hint, HEAD state
 
 Follow-up to the storyline-feedback change; fixes three items its code audit recorded in untouched code. Not run through the audit loop (gate `not-run`).
