@@ -59,9 +59,9 @@ export function renderBuilt({ train, approvability, cmd }) {
   if (train.candidate) L.push(`  candidate ${o12(train.candidate.oid)} (tree ${o12(train.candidate.tree)})`);
   if (train.conflict) L.push(`  CONFLICT at ${train.conflict.sourceId}: ${train.conflict.reason}${train.conflict.files?.length ? ` — ${train.conflict.files.join(', ')}` : ''} (worktree left for inspection: ${train.worktree})`);
   if (train.depsChanged !== null && train.depsChanged !== undefined) L.push(`  dependencies changed vs base: ${train.depsChanged}`);
-  for (const t of train.tierResults ?? []) L.push(`  tier ${t.name}: ${t.result}${t.reason ? ` (${t.reason})` : ''}${t.reran ? ' [after rerun]' : ''}  log ${t.logPath ?? '-'}${t.note ? `\n    note: ${t.note}` : ''}`);
+  for (const t of train.tierResults ?? []) L.push(`  tier ${t.name}: ${t.result}${t.reason ? ` (${t.reason})` : ''}${t.reran ? ' [after rerun]' : ''}  log ${t.logPath ?? '-'}${t.note ? `\n    note: ${t.note}` : ''}${t.cleanupWarning ? `\n    warn: cleanup after the tier exited failed (${t.cleanupWarning}) — a process it started may still be running` : ''}`);
   for (const c of train.checkResults ?? []) {
-    L.push(`  check ${c.name} [${c.severity}]: ${c.status}${c.reason ? ` (${c.reason})` : ''}${c.note ? `\n    note: ${c.note}` : ''}${(c.findings ?? []).map((f) => `\n    ${f.level}: ${f.message}`).join('')}`);
+    L.push(`  check ${c.name} [${c.severity}]: ${c.status}${c.reason ? ` (${c.reason})` : ''}${c.note ? `\n    note: ${c.note}` : ''}${(c.findings ?? []).map((f) => `\n    ${f.level}: ${f.message}`).join('')}${c.cleanupWarning ? `\n    warn: cleanup after the hook exited failed (${c.cleanupWarning}) — a process it started may still be running` : ''}`);
   }
   const blocked = checkBlocksApproval(train.checkResults);
   if (blocked) L.push(`  BLOCKED BY CHECKS: ${blocked}`);

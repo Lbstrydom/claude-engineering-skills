@@ -99,7 +99,7 @@ describe('a tier timeout ends the whole process tree', () => {
     assert.ok(r.error, 'the failure to start must be reported');
   });
 
-  it('POSIX: a tier that EXITS leaving a quiet descendant does not leak it', { skip: IS_WIN && 'win32 cannot find strays once the parent has exited (documented limit)' }, async () => {
+  it('a tier that EXITS leaving a quiet descendant does not leak it (win32: found by ParentProcessId)', async () => {
     const dir = tmpRoot('fleet-tier-stray-');
     const pidFile = path.join(dir, 'pid');
     const r = superviseTier({ file: process.execPath, args: [launcher(dir, { exitNow: true }), pidFile], shell: false, cwd: dir, logPath: path.join(dir, 'log.txt'), timeoutMs: 20000 });
@@ -111,8 +111,8 @@ describe('a tier timeout ends the whole process tree', () => {
   });
 });
 
-describe('a check hook that exits does not leak quiet descendants (POSIX)', () => {
-  it('reaps a descendant that holds no pipe', { skip: IS_WIN && 'win32 cannot find strays once the parent has exited (documented limit)' }, async () => {
+describe('a check hook that exits does not leak quiet descendants', () => {
+  it('reaps a descendant that holds no pipe (win32: found by ParentProcessId)', async () => {
     const dir = tmpRoot('fleet-hook-stray-');
     const pidFile = path.join(dir, 'pid');
     const r = spawnExec([process.execPath, launcher(dir, { exitNow: true }), pidFile], { cwd: dir, input: '{}', timeoutMs: 20000 });

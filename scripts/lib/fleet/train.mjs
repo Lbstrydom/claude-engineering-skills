@@ -431,11 +431,15 @@ function runOneTier({ tier, train, dir, deps }) {
   const wt = train.worktree; const cand = train.candidate;
   const logPath = trainLogPath(dir, train.trainId, tier.name);
   const startedAt = iso(deps);
-  const done = (result, extra = {}) => ({ name: tier.name, stage: 'pre-land', ...(tier.note ? { note: tier.note } : {}), result, startedAt, endedAt: iso(deps), logPath, ...extra });
+  // A failed reap after ANY attempt is recorded on the result: a leftover process is not a clean run.
+  let cleanupWarning = null;
+  const done = (result, extra = {}) => ({ name: tier.name, stage: 'pre-land', ...(tier.note ? { note: tier.note } : {}), result, startedAt, endedAt: iso(deps), logPath, ...(cleanupWarning ? { cleanupWarning } : {}), ...extra });
   const attempt = (n) => {
     fs.mkdirSync(path.dirname(logPath), { recursive: true });
     fs.appendFileSync(logPath, `\n--- fleet: tier ${tier.name} attempt ${n} at ${iso(deps)} ---\n`);
-    return deps.runTier({ tier, cwd: wt, logPath, timeoutMs: tier.timeoutMs });
+    const r = deps.runTier({ tier, cwd: wt, logPath, timeoutMs: tier.timeoutMs });
+    if (r?.cleanup && r.cleanup.ok === false) cleanupWarning = cleanupWarning ? `${cleanupWarning}; ${r.cleanup.reason}` : r.cleanup.reason;
+    return r;
   };
   const verdict = (r) => (r.refused ? { result: 'red', reason: r.refused } : r.timedOut ? { result: 'red', reason: 'timeout' }
     : r.error ? { result: 'red', reason: `could not start: ${r.error}` }
