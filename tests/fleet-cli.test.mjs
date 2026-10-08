@@ -1524,13 +1524,16 @@ describe('round 2: lease floor, PowerShell quoting, start baseline, PR evidence,
       if (args[0] === 'rev-parse') return table[args[3].replace(/\^\{commit\}$/, '')] ?? { ok: true, status: 0, stdout: `${'a'.repeat(40)}\n` };
       return table.mergeBase;
     };
+    // The base arrives MEASURED (`resolveMeasurementBase`, which keeps "absent" and "git failed" apart).
+    const measured = { ok: true, oid: 'b'.repeat(40), ref: 'main', source: 'local', relation: 'same', behindBy: 0 };
     it('unit: each failure kind is distinguished', () => {
-      assert.equal(startOidFor(ctx, 'b', { git: fake({ 'refs/heads/main': { ok: false, status: 1, reason: 'x' } }) }).kind, 'base-unresolvable');
-      assert.equal(startOidFor(ctx, 'b', { git: fake({ mergeBase: { ok: false, status: 1, reason: 'x' } }) }).kind, 'no-merge-base');
-      assert.equal(startOidFor(ctx, 'b', { git: fake({ mergeBase: { ok: false, status: 128, reason: 'fatal' } }) }).kind, 'git-error');
-      assert.equal(startOidFor(ctx, 'b', { git: fake({ 'refs/heads/main': { ok: false, status: 128, reason: 'fatal' } }) }).kind, 'git-error');
-      assert.equal(startOidFor(ctx, 'b', { git: fake({ 'refs/heads/b': { ok: false, status: 1, reason: 'x' } }) }).kind, 'git-error', 'an unresolvable head is not a baseline either');
-      assert.deepEqual(startOidFor(ctx, 'b', { git: fake({ mergeBase: { ok: true, status: 0, stdout: `${'c'.repeat(40)}\n` } }) }), { ok: true, oid: 'c'.repeat(40) });
+      assert.equal(startOidFor(ctx, 'b', { ok: false, kind: 'base-unresolvable', reason: 'x' }, { git: fake({}) }).kind, 'base-unresolvable');
+      assert.equal(startOidFor(ctx, 'b', { ok: false, kind: 'git-error', reason: 'fatal' }, { git: fake({}) }).kind, 'git-error');
+      assert.equal(startOidFor(ctx, 'b', undefined, { git: fake({}) }).kind, 'base-unresolvable', 'an unmeasured base is not a baseline');
+      assert.equal(startOidFor(ctx, 'b', measured, { git: fake({ mergeBase: { ok: false, status: 1, reason: 'x' } }) }).kind, 'no-merge-base');
+      assert.equal(startOidFor(ctx, 'b', measured, { git: fake({ mergeBase: { ok: false, status: 128, reason: 'fatal' } }) }).kind, 'git-error');
+      assert.equal(startOidFor(ctx, 'b', measured, { git: fake({ 'refs/heads/b': { ok: false, status: 1, reason: 'x' } }) }).kind, 'git-error', 'an unresolvable head is not a baseline either');
+      assert.deepEqual(startOidFor(ctx, 'b', measured, { git: fake({ mergeBase: { ok: true, status: 0, stdout: `${'c'.repeat(40)}\n` } }) }), { ok: true, oid: 'c'.repeat(40) });
     });
 
     it('add refuses (exit 1, nothing adopted) when the base is not resolvable', () => {

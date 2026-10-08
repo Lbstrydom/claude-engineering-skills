@@ -176,6 +176,65 @@ export function mergeBase(cwd, a, b) {
 }
 
 /**
+ * The commit every "what did this branch change" question is measured against:
+ * the FRESHER of the local base branch and its remote-tracking upstream.
+ *
+ * Why not just the local branch: three-dot (`base...branch`) only discounts commits
+ * that landed on base AFTER the fork. When the local base TRAILS the upstream a
+ * branch was cut from, the merge-base IS the stale local tip, so every commit the
+ * upstream gained since reads as the branch's own change - phantom overlaps that
+ * block a legitimate claim. Measuring from the upstream removes them.
+ *
+ *  `relation` says how the two stand, and which one was picked:
+ *  - `same` / `local-ahead` (upstream is an ancestor: unpushed base commits) / `local-only` -> local;
+ *  - `local-trails` (local is an ancestor of upstream; `behindBy` = by how much) / `upstream-only` -> upstream;
+ *  - `diverged` or `unknown` (git could not answer) -> local, and overlaps measured from it
+ *    may be phantom: callers must say so rather than present them as fact.
+ *  Neither resolves -> `{ok:false}`. Never fetches: "fresher" means as of your last fetch.
+ *
+ * @param {string} cwd
+ * @param {{base: string, upstream: string|null}} refs - base is a branch NAME, upstream e.g. `origin/main`
+ * @param {{git?: typeof runGit}} [opts]
+ * @returns {{ok: true, oid: string, ref: string, source: 'local'|'upstream', behindBy: number|null,
+ *   relation: 'same'|'local-ahead'|'local-only'|'local-trails'|'upstream-only'|'diverged'|'unknown'}
+ *   | {ok: false, kind: 'base-unresolvable'|'git-error', reason: string}}
+ */
+export function resolveMeasurementBase(cwd, { base, upstream }, { git = runGit } = {}) {
+  // `rev-parse --verify --quiet`: exit 1 = the ref does not exist; anything else = git failed, which is
+  // NOT an absence and must not quietly select the other ref.
+  let failure = null;
+  const oidOf = (ref) => {
+    const r = git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], cwd);
+    if (r.ok) return r.stdout.trim();
+    if (r.status !== 1 && !failure) failure = `cannot resolve ${ref}: ${r.reason ?? `git exited ${r.status}`}`;
+    return null;
+  };
+  const localRef = `refs/heads/${base}`;
+  const upRef = upstream ? (upstream.startsWith('refs/') ? upstream : `refs/remotes/${upstream}`) : null;
+  const local = oidOf(localRef);
+  const up = upRef ? oidOf(upRef) : null;
+  if (failure) return { ok: false, kind: 'git-error', reason: failure };
+  const pick = (source, relation, extra = {}) => ({
+    ok: true, oid: source === 'local' ? local : up, ref: source === 'local' ? base : upstream, source, relation, behindBy: 0, ...extra,
+  });
+  if (!local && !up) return { ok: false, kind: 'base-unresolvable', reason: `base branch ${base} is not resolvable (neither ${localRef}${upRef ? ` nor ${upRef}` : ''} exists)` };
+  if (!up) return pick('local', 'local-only');
+  if (!local) return pick('upstream', 'upstream-only');
+  if (local === up) return pick('local', 'same');
+  // `merge-base --is-ancestor`: exit 0 = yes, 1 = no, anything else = git could not tell.
+  const anc = (a, b) => git(['merge-base', '--is-ancestor', a, b], cwd).status;
+  const trails = anc(local, up);
+  if (trails === 0) {
+    const n = git(['rev-list', '--count', `${local}..${up}`], cwd);
+    const behindBy = n.ok ? Number.parseInt(n.stdout.trim(), 10) : Number.NaN;
+    return pick('upstream', 'local-trails', { behindBy: Number.isFinite(behindBy) ? behindBy : null });
+  }
+  const ahead = trails === 1 ? anc(up, local) : null;
+  if (ahead === 0) return pick('local', 'local-ahead');
+  return pick('local', trails === 1 && ahead === 1 ? 'diverged' : 'unknown');
+}
+
+/**
  * Every worktree git knows, with directories that vanished flagged `missing`
  * (git still lists them as `prunable`) — never dropped.
  */

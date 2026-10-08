@@ -478,8 +478,10 @@ two sessions both bumping a contract hash, both claiming a migration number).
   (which already forces a new train).
 - Validation is strict (`.strict()` Zod): unknown check keys, a missing `script`,
   a `script` that is absolute or escapes the repo (`..`), a `runner`/`args`
-  that is not an array of strings, or a `runIn` value outside `status|land` is a
-  config error naming the key.
+  that is not an array of strings, or a `runIn` value outside `status|ready|land` is a
+  config error naming the key. (`ready` added 2026-10-08 after a consumer report:
+  opt-in, it lets a `block` check refuse `fleet ready` with the same predicate that
+  makes a train non-approvable; the default stays `["status","land"]`.)
 
 ### Tiered `testCommand`
 
