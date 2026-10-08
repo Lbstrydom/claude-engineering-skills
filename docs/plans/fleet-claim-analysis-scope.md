@@ -46,3 +46,10 @@ variables): a claim over 8 untracked branches + 1 session makes exactly 1; the c
 (`status` on the same repo) makes 9. The claim gate still blocks on a session's CHANGED file
 (declared paths deliberately disjoint). Red-then-green: restoring the full analysis on claim,
 ignoring `untracked:false`, and dropping the not-queried record each fail a test.
+
+## Audit trail
+
+- **/audit-code (session audit-code-1791464484, 2026-10-08)**: GPT R1 PASS (H:0 M:0 L:0) —
+  but it head-cut `facts.mjs` and `commands.mjs`, so that round is not evidence about the
+  change. Gemini final gate (gemini-flash-latest), scoped to the three changed source/test
+  files, read all three in full: **APPROVE** (blocking 0, new 0).
