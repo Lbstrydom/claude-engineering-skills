@@ -117,7 +117,13 @@ ${KILL_LINUX_HOLDERS_JS}
 const { spawn, spawnSync } = require('node:child_process');
 const win = process.platform === 'win32';
 const child = spawn(cfg.argv[0], cfg.argv.slice(1), { cwd: cfg.cwd, shell: false, windowsHide: true, detached: !win, stdio: ['pipe', 'pipe', 'pipe'] });
+const spawnAt = Date.now();
 const childEnds = linuxStdioEnds(child.pid); // the hook's own stdio ends, read while it is certainly alive
+let cleanup = null; // a reap that failed is REPORTED in the envelope, never read as a clean one
+function noteCleanup(o) {
+  if (!o || o.ok) return;
+  cleanup = { ok: false, reason: cleanup ? cleanup.reason + '; ' + o.reason : o.reason };
+}
 const outChunks = []; let outLen = 0; let outOver = false;
 let errChunks = []; let errLen = 0;
 let done = false, closed = false, timedOut = false, spawnErr = null, exitInfo = null;
@@ -143,7 +149,7 @@ function killTree() {
 }
 // Applied after the hook itself has exited: its group (POSIX) / its orphaned descendants (win32).
 function killLeftovers() {
-  if (win) { reapWinOrphans(child.pid, 10000); return; }
+  if (win) { noteCleanup(reapWinOrphans(child.pid, spawnAt, 10000)); return; }
   try { process.kill(-child.pid, 'SIGKILL'); } catch { /* nothing left to kill */ }
 }
 function finish() {
@@ -153,7 +159,7 @@ function finish() {
   // must not keep this process alive (see the header).
   for (const s of [child.stdout, child.stderr, child.stdin]) { try { s && s.destroy(); } catch { /* closed */ } }
   process.stdout.write(JSON.stringify({
-    status: exitInfo ? exitInfo[0] : null, signal: exitInfo ? exitInfo[1] : null, timedOut, outOver, error: spawnErr,
+    status: exitInfo ? exitInfo[0] : null, signal: exitInfo ? exitInfo[1] : null, timedOut, outOver, error: spawnErr, cleanup,
     stdout: Buffer.concat(outChunks).toString('utf8'),
     stderr: (tail.length > cfg.stderrCap ? tail.subarray(tail.length - cfg.stderrCap) : tail).toString('utf8'),
   }), () => process.exit(0));
@@ -169,8 +175,11 @@ child.on('close', () => {
 });
 child.on('exit', (status, signal) => {
   exitInfo = [status, signal];
+  // The hook has finished: its execution deadline no longer applies. Cleanup is bounded on its own
+  // (the reaper's spawnSync timeout, the 1 s finish delay), and must never read as a hook timeout.
+  clearTimeout(timer);
   // Normally the pipes close right away. If they do not, a descendant is holding them: kill it.
-  setTimeout(() => { if (!closed) { killLeftovers(); killLinuxHolders(childEnds); setTimeout(finish, 1000); } }, 150).unref();
+  setTimeout(() => { if (!closed) { killLeftovers(); noteCleanup(killLinuxHolders(childEnds)); setTimeout(finish, 1000); } }, 150).unref();
 });
 `;
 
@@ -192,7 +201,7 @@ export function spawnExec(argv, { cwd, input, timeoutMs }) {
   const error = env.timedOut ? Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })
     : env.outOver ? Object.assign(new Error(`hook output exceeded ${STDOUT_CAP} bytes`), { code: 'EOUTPUT' })
       : env.error ? Object.assign(new Error(env.error.message), { code: env.error.code }) : undefined;
-  return { status: env.status, stdout: String(env.stdout ?? ''), stderr: String(env.stderr ?? ''), error, signal: env.signal };
+  return { status: env.status, stdout: String(env.stdout ?? ''), stderr: String(env.stderr ?? ''), error, signal: env.signal, cleanup: env.cleanup ?? null };
 }
 
 /** Build the stdin document (§2b contract). */
@@ -219,6 +228,12 @@ function runOne({ cwd, check, payload, exec }) {
   const timeoutMs = check.timeoutMs ?? 60_000;
   let res;
   try { res = exec(execArgv, { cwd, input: JSON.stringify(payload), timeoutMs }); } catch (e) { return failed(`could not run: ${e.message}`); }
+  const r = classifyRun({ res, failed, base, timeoutMs });
+  return res.cleanup && res.cleanup.ok === false ? { ...r, cleanupWarning: res.cleanup.reason } : r;
+}
+
+/** One check's outcome from its supervised run. */
+function classifyRun({ res, failed, base, timeoutMs }) {
   if (res.error) {
     return failed(res.error.code === 'ETIMEDOUT' ? `timed out after ${timeoutMs}ms` : res.error.code === 'EOUTPUT' ? res.error.message : `could not run: ${res.error.message}`);
   }
@@ -274,6 +289,7 @@ export function checksBlockApproval(results) {
 export function resultsToFindings(results) {
   const out = [];
   for (const r of results) {
+    if (r.cleanupWarning) out.push({ level: 'warn', message: `check "${r.name}": cleanup after the hook exited failed (${r.cleanupWarning}) — a process it started may still be running` });
     if (r.status === 'check-failed') {
       out.push({ level: 'warn', message: `check "${r.name}" failed to run (${r.reason})` });
       continue;

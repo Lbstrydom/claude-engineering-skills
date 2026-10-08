@@ -106,3 +106,89 @@ describe('win32 reaper: the pid-reuse guard', () => {
     } finally { killQuietly(childPid); }
   });
 });
+
+// ── /audit-code round-1 fixes (session audit-code-1791467919) ───────────────
+describe('R1 fixes', () => {
+  const reapWith = (fakeSpawnSync) => new Function('spawnSync', `${REAP_WIN_ORPHANS_JS}; return reapWinOrphans;`)(fakeSpawnSync);
+
+  it('M2/H6: every way the win32 reap can fail is REPORTED, never read as a clean reap', () => {
+    const cases = [
+      [() => ({ error: Object.assign(new Error('spawn powershell.exe ENOENT'), { code: 'ENOENT' }) }), /could not start powershell/],
+      [() => ({ error: Object.assign(new Error('t'), { code: 'ETIMEDOUT' }) }), /timed out/],
+      [() => ({ status: 1, stdout: 'garbage' }), /printed no result/],
+      [() => ({ status: 1, stdout: '{"error":"Access denied"}' }), /query failed: Access denied/],
+      [() => ({ status: 0, stdout: '{"guarded":false,"killed":1,"failed":2}' }), /2 descendant\(s\) could not be stopped/],
+    ];
+    for (const [fake, why] of cases) {
+      const o = reapWith(fake)(1234, Date.now(), 1000);
+      assert.equal(o.ok, false, String(why));
+      assert.match(o.reason, why);
+    }
+    assert.deepEqual(reapWith(() => ({ status: 0, stdout: '{"guarded":false,"killed":2,"failed":0}' }))(1, 0, 1000), { ok: true, killed: 2 }, 'control: a clean reap is ok');
+  });
+
+  it('M2/H6: a failed cleanup reaches the check result, the status findings and the train render', async () => {
+    const { runChecks, resultsToFindings } = await import('../scripts/lib/fleet/checks.mjs');
+    const { renderBuilt } = await import('../scripts/lib/fleet/render-train.mjs');
+    const dir = tmpRoot('fleet-cleanup-warn-');
+    fs.writeFileSync(path.join(dir, 'c.mjs'), '');
+    const exec = () => ({ status: 0, stdout: FINDINGS, stderr: '', cleanup: { ok: false, reason: '1 descendant(s) could not be stopped' } });
+    const [r] = runChecks({ cwd: dir, phase: 'status', payload: {}, exec, checks: [{ name: 'c', script: 'c.mjs', severity: 'warn', runIn: ['status'] }] });
+    assert.equal(r.status, 'ok', 'the hook\'s own result is unchanged');
+    assert.equal(r.cleanupWarning, '1 descendant(s) could not be stopped');
+    assert.match(resultsToFindings([r]).map((f) => `${f.level}: ${f.message}`).join('\n'), /^warn: check "c": cleanup after the hook exited failed/m);
+    const [clean] = runChecks({ cwd: dir, phase: 'status', payload: {}, exec: () => ({ status: 0, stdout: FINDINGS, stderr: '', cleanup: null }), checks: [{ name: 'c', script: 'c.mjs', severity: 'warn', runIn: ['status'] }] });
+    assert.equal(clean.cleanupWarning, undefined, 'control: no warning when cleanup did not fail');
+    const train = { trainId: 't', phase: 'tested', result: 'green', mergeMethod: 'pr', baseOid: 'a'.repeat(40), destination: { remote: 'origin', ref: 'refs/heads/main' }, sources: [],
+      tierResults: [{ name: 'unit', result: 'green', cleanupWarning: 'the orphan query timed out after 10000ms' }], checkResults: [r] };
+    const text = renderBuilt({ train, approvability: { ok: true, reason: 'green' }, cmd: 'fleet' });
+    assert.match(text, /tier unit: green[^\n]*\n {4}warn: cleanup after the tier exited failed \(the orphan query timed out/);
+    assert.match(text, /check c \[warn\]: ok\n {4}warn: cleanup after the hook exited failed/);
+  });
+
+  it('H2: only descendants created at/after the hook\'s spawn are reaped (an older orphan of a dead same-pid parent is not ours)', { skip: !IS_WIN && 'win32 only' }, async () => {
+    const reap = reapWith(spawnSync);
+    const dir = tmpRoot('fleet-since-');
+    const pidFile = path.join(dir, 'child.pid');
+    const parent = spawn(process.execPath, ['-e', `
+      const c = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore', detached: true });
+      require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(c.pid));
+      setTimeout(() => {}, 60000);`], { stdio: 'ignore' });
+    const childPid = await waitFor(pidFile);
+    try {
+      parent.kill(); await settle(parent.pid);
+      const later = reap(parent.pid, Date.now() + 60_000, 10000); // "the hook spawned AFTER this orphan existed"
+      assert.equal(later.ok, true);
+      assert.equal(alive(childPid), true, 'an orphan older than the hook must not be touched');
+      const o = reap(parent.pid, Date.now() - 60_000, 10000); // control: created after the (earlier) spawn — ours
+      assert.equal(o.ok, true, o.reason);
+      assert.equal(await settle(childPid), false, 'control: the same orphan IS reaped when it postdates the spawn');
+    } finally { killQuietly(childPid); }
+  });
+
+  it('H4: a hook that exits near its deadline is not reported "timed out" while cleanup waits', { skip: !IS_WIN && 'win32: on Linux the stdio-ends scan always finds such a holder' }, async () => {
+    // The helper is started through an intermediate that exits at once (a double fork). The win32 reaper walks
+    // ParentProcessId through LIVE processes only, so it cannot reach the helper (a documented limit), the helper
+    // keeps the hook's pipes, and the supervisor waits out its 1 s finish delay — which spans the 3 s deadline.
+    // Pre-fix the deadline then fired on a hook that had already exited; measured with the fix reverted.
+    const dir = tmpRoot('fleet-near-deadline-');
+    const pidFile = path.join(dir, 'pid');
+    const hook = path.join(dir, 'hook.cjs');
+    const helper = 'setTimeout(() => {}, 60000)';
+    const intermediate = `const g = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(helper)}], { stdio: ['ignore', 'inherit', 'inherit'], detached: true }); g.unref(); require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(g.pid));`;
+    fs.writeFileSync(hook, `
+      setTimeout(() => {
+        require('node:child_process').spawnSync(process.execPath, ['-e', ${JSON.stringify(intermediate)}], { stdio: ['ignore', 'inherit', 'inherit'] });
+        process.stdout.write(${JSON.stringify(FINDINGS)});
+      }, 2300);
+    `);
+    const r = spawnExec([process.execPath, hook], { cwd: dir, input: '{}', timeoutMs: 3000 });
+    const pid = await waitFor(pidFile);
+    try {
+      assert.ok(pid > 0, 'the helper really started');
+      assert.equal(r.error, undefined, `got ${r.error?.code} — the hook had already exited`);
+      assert.equal(r.status, 0);
+      assert.equal(r.stdout, FINDINGS);
+    } finally { if (pid) killQuietly(pid); }
+  });
+});

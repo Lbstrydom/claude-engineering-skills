@@ -37,7 +37,7 @@ const fs = require('node:fs');
 const { spawn, spawnSync } = require('node:child_process');
 ${REAP_WIN_ORPHANS_JS}
 const win = process.platform === 'win32';
-let fd = null, child = null, done = false, timedOut = false, spawnErr = null, exitInfo = null, timer = null;
+let fd = null, child = null, done = false, timedOut = false, spawnErr = null, exitInfo = null, timer = null, spawnAt = 0, cleanup = null;
 function killTree() {
   if (!child || child.pid === undefined) return;
   try {
@@ -48,19 +48,28 @@ function killTree() {
 function finish() {
   if (done) return; done = true; clearTimeout(timer);
   if (fd !== null) { try { fs.closeSync(fd); } catch { /* already closed */ } }
-  process.stdout.write(JSON.stringify({ status: exitInfo ? exitInfo[0] : null, signal: exitInfo ? exitInfo[1] : null, timedOut, error: spawnErr }));
+  process.stdout.write(JSON.stringify({ status: exitInfo ? exitInfo[0] : null, signal: exitInfo ? exitInfo[1] : null, timedOut, error: spawnErr, cleanup }));
 }
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { killTree(); process.exit(130); });
 try {
   fd = fs.openSync(cfg.logPath, 'a');
   child = spawn(cfg.file, cfg.args, { cwd: cfg.cwd, shell: cfg.shell, windowsHide: true, detached: !win, stdio: ['ignore', fd, fd], env: process.env });
+  spawnAt = Date.now();
 } catch (e) { spawnErr = { code: e.code, message: e.message }; finish(); }
 if (child) {
   if (cfg.timeoutMs) timer = setTimeout(() => { timedOut = true; killTree(); }, cfg.timeoutMs);
   child.on('error', (e) => { spawnErr = { code: e.code, message: e.message }; finish(); });
   child.on('exit', (status, signal) => {
     exitInfo = [status, signal];
-    if (win) reapWinOrphans(child.pid, cfg.killTimeoutMs); else killTree(); // reap what the tier left behind
+    clearTimeout(timer); // the tier has finished; its deadline no longer applies to the cleanup below
+    if (win) {
+      const c = reapWinOrphans(child.pid, spawnAt, cfg.killTimeoutMs);
+      if (!c.ok) {
+        cleanup = { ok: false, reason: c.reason };
+        // The log is what the operator reads for a tier: say it there, as well as in the result.
+        try { fs.writeSync(fd, '\\n[fleet] cleanup after the tier exited failed: ' + c.reason + ' — a process it started may still be running\\n'); } catch { /* log closed */ }
+      }
+    } else killTree(); // reap what the tier left in its group
     finish();
   });
 }
@@ -69,7 +78,7 @@ if (child) {
 /**
  * Run a resolved tier spawn plan and wait for it. Never throws.
  * @param {{file: string, args: string[], shell: boolean|string, cwd: string, logPath: string, timeoutMs?: number}} p
- * @returns {{exitCode: number|null, timedOut: boolean, error: string|null, signal: string|null}}
+ * @returns {{exitCode: number|null, timedOut: boolean, error: string|null, signal: string|null, cleanup: {ok: false, reason: string}|null}}
  */
 export function superviseTier({ file, args, shell, cwd, logPath, timeoutMs }) {
   const cfg = { file, args, shell, cwd, logPath, timeoutMs: timeoutMs ?? 0, killTimeoutMs: KILL_TIMEOUT_MS };
@@ -91,5 +100,6 @@ export function superviseTier({ file, args, shell, cwd, logPath, timeoutMs }) {
     timedOut: Boolean(env.timedOut),
     error: env.error && !env.timedOut ? String(env.error.message) : null,
     signal: env.signal ?? null,
+    cleanup: env.cleanup ?? null,
   };
 }
