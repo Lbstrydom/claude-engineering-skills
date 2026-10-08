@@ -54,7 +54,7 @@ describe('splitHidden — presentation boundary over a COMPLETE status', () => {
     const s = status(items);
     const v = splitHidden(s);
     assert.deepEqual(v.items.map((i) => i.id), ['live', 'sess']);
-    assert.deepEqual(v.hidden, { count: 2, ids: ['old1', 'old2'], unchecked: 0 });
+    assert.deepEqual(v.hidden, { count: 2, ids: ['old1', 'old2'], unchecked: 0, merged: 2, idle: 0, idleDays: 14 });
     assert.equal(splitHidden(s, { all: true }).items.length, 4);
     assert.equal(s.items.length, 4, 'the input status is never mutated');
   });
@@ -73,7 +73,7 @@ describe('splitHidden — presentation boundary over a COMPLETE status', () => {
     };
     assert.match(renderStatus(base, { hidden: { count: 3, ids: [], unchecked: 0 } }), /3 hidden \(stale \/ merged\) — use --all/);
     assert.doesNotMatch(renderStatus(base, { hidden: { count: 0, ids: [], unchecked: 0 } }), /hidden/);
-    assert.match(renderStatus(base, { hidden: { count: 0, ids: [], unchecked: 2 } }), /2 merged-looking worktrees shown: cleanliness unchecked/);
+    assert.match(renderStatus(base, { hidden: { count: 0, ids: [], unchecked: 2 } }), /2 merged- or idle-looking worktrees shown: cleanliness unchecked/);
   });
 });
 

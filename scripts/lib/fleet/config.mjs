@@ -1,5 +1,5 @@
 /**
- * @fileoverview /fleet configuration: five optional keys in a consumer-owned
+ * @fileoverview /fleet configuration: optional keys in a consumer-owned
  * `.fleet.json` at the repo root, each reported with where it came from.
  *
  *  - `baseBranch`   config > origin/HEAD > fallback `main`
@@ -8,6 +8,11 @@
  *                   real `scripts.test`, else none (`land` refuses)
  *  - `mergeMethod`  `pr` (default) | `direct-squash` | `direct-merge`
  *  - `checks`       the extension hook (§2b)
+ *  - `hotFiles`     claim-grammar patterns for files nearly every branch touches
+ *                   (ratchet baselines, debt ledgers): overlaps made only of them
+ *                   are disclosed, never counted as conflicts, never blocking
+ *  - `hideIdleAfterDays` the default `status` view hides an untracked branch with
+ *                   no commit for this many days (default 14; `--all` shows it)
  *
  * Validation is strict (`z.strictObject`): an unknown key is an error NAMING it.
  * Commands are argv arrays only — a shell string in a tier or a check is a
@@ -26,6 +31,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { runGit, gitCommonDir, repoToplevel } from './git-facts.mjs';
+import { DEFAULT_IDLE_DAYS, validateClaimPattern } from './overlap.mjs';
 import { MERGE_METHODS, NoteSchema, TIER_NAME_RE, TierSchema as PersistedTierSchema, argvSchema, isInside } from './contracts.mjs';
 
 export { MERGE_METHODS };
@@ -42,6 +48,7 @@ export class ConfigError extends Error {
 }
 
 const timeout = () => z.number().int().positive();
+export const MAX_HOT_FILES = 200;
 
 /** User-facing tier: the persisted tier minus `shell` (only a string testCommand may set it). */
 const TierSchema = PersistedTierSchema.omit({ shell: true });
@@ -65,6 +72,10 @@ const FleetFileSchema = z.strictObject({
   testCommand: z.unknown().optional(),
   mergeMethod: z.enum(MERGE_METHODS).optional(),
   checks: z.array(CheckSchema).optional(),
+  // Each entry is validated against the claim grammar below (bounded, repo-relative), so hot-file
+  // matching and claim matching share one semantics.
+  hotFiles: z.array(z.string(), { error: 'must be an array of path patterns' }).max(MAX_HOT_FILES).optional(),
+  hideIdleAfterDays: z.number().int('must be a whole number of days').min(1).max(3650).optional(),
 });
 
 const issuePath = (i) => i.path.length ? i.path.join('.') : '(root)';
@@ -99,7 +110,8 @@ export function stringToTier(str) {
  * @param {unknown} raw - parsed file contents (`{}` / undefined when no file)
  * @param {{hasPackageTest?: boolean}} [ctx]
  * @returns {{ok: true, value: {baseBranch: string|null, testCommand: object[], testCommandSource: 'config'|'package.json'|'unset',
- *   mergeMethod: string, mergeMethodSource: 'config'|'default', checks: object[]}} | {ok: false, errors: string[]}}
+ *   mergeMethod: string, mergeMethodSource: 'config'|'default', checks: object[], hotFiles: string[], hideIdleAfterDays: number}}
+ *   | {ok: false, errors: string[]}}
  */
 export function parseFleetConfig(raw, { hasPackageTest = false } = {}) {
   const parsed = FleetFileSchema.safeParse(raw ?? {});
@@ -138,6 +150,10 @@ export function parseFleetConfig(raw, { hasPackageTest = false } = {}) {
     if (bad) errors.push(`checks.${i}.script: ${bad}`);
     return { ...c, script: c.script.replace(/\\/g, '/') };
   });
+  (cfg.hotFiles ?? []).forEach((p, i) => {
+    const r = validateClaimPattern(p);
+    if (!r.ok) errors.push(`hotFiles.${i}: ${r.reason}`);
+  });
   const cnames = checks.map((c) => c.name);
   const cdup = cnames.find((n, i) => cnames.indexOf(n) !== i);
   if (cdup) errors.push(`checks: duplicate check name "${cdup}"`);
@@ -148,6 +164,7 @@ export function parseFleetConfig(raw, { hasPackageTest = false } = {}) {
     value: {
       baseBranch: cfg.baseBranch ?? null, testCommand: tiers, testCommandSource,
       mergeMethod: cfg.mergeMethod ?? 'pr', mergeMethodSource: cfg.mergeMethod ? 'config' : 'default', checks,
+      hotFiles: cfg.hotFiles ?? [], hideIdleAfterDays: cfg.hideIdleAfterDays ?? DEFAULT_IDLE_DAYS,
     },
   };
 }
@@ -190,7 +207,9 @@ function readJsonFile(file) {
  * @param {string} cwd
  * @param {{env?: NodeJS.ProcessEnv}} [opts]
  * @returns {{baseBranch: string, testCommand: object[], mergeMethod: string, checks: object[], worktreeRoot: string,
- *   sources: {baseBranch: string, testCommand: string, mergeMethod: string, checks: string, worktreeRoot: string}}}
+ *   hotFiles: string[], hideIdleAfterDays: number,
+ *   sources: {baseBranch: string, testCommand: string, mergeMethod: string, checks: string, worktreeRoot: string,
+ *     hotFiles: string, hideIdleAfterDays: string}}}
  * @throws {ConfigError}
  */
 export function resolveConfig(cwd, { env = process.env } = {}) {
@@ -217,9 +236,11 @@ export function resolveConfig(cwd, { env = process.env } = {}) {
 
   return {
     baseBranch: base.baseBranch, testCommand: v.testCommand, mergeMethod: v.mergeMethod, checks: v.checks, worktreeRoot,
+    hotFiles: v.hotFiles, hideIdleAfterDays: v.hideIdleAfterDays,
     sources: {
       baseBranch: base.source, testCommand: v.testCommandSource, mergeMethod: v.mergeMethodSource,
       checks: file.value?.checks ? 'config' : 'default', worktreeRoot: fromEnv ? 'env' : 'default',
+      hotFiles: file.value?.hotFiles ? 'config' : 'default', hideIdleAfterDays: file.value?.hideIdleAfterDays ? 'config' : 'default',
     },
   };
 }

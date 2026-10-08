@@ -59,7 +59,7 @@ export function cmdLand(ctx, flags, deps = defaultDeps({ now: () => ctx.now })) 
     const r = resumeTrain({
       cwd, trainId, deps,
       getChecks: () => ctx.config.checks ?? [],
-      checkPayload: () => payloadFromStatus(buildStatusFrom(gatherFacts({ cwd, config: { baseBranch: branchOfRef(t.train.destination.ref) }, now: ctx.now, env: ctx.env, prs: false, patches: false }))),
+      checkPayload: () => payloadFromStatus(buildStatusFrom(gatherFacts({ cwd, config: { baseBranch: branchOfRef(t.train.destination.ref), hotFiles: ctx.config.hotFiles }, now: ctx.now, env: ctx.env, prs: false, patches: false }))),
     });
     return r.train ? finishBuilt(r, cmd) : withText(r, `REFUSED: ${r.reason}`);
   }

@@ -187,9 +187,9 @@ export function spawnExec(argv, { cwd, input, timeoutMs }) {
 }
 
 /** Build the stdin document (§2b contract). */
-export function buildCheckPayload({ phase, baseOid = null, sessions = [], overlaps = [], trainSources }) {
+export function buildCheckPayload({ phase, baseOid = null, sessions = [], overlaps = [], hotOverlaps = [], trainSources }) {
   return {
-    schemaVersion: 1, phase, baseOid, sessions, overlaps,
+    schemaVersion: 1, phase, baseOid, sessions, overlaps, hotOverlaps,
     ...(trainSources ? { trainSources } : {}),
   };
 }

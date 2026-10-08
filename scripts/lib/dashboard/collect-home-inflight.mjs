@@ -36,8 +36,8 @@ export function collectInflight(root, { now = new Date(), env = process.env } = 
   const base = { id: 'inflight', label: 'In flight', card: 'inflight', asOf: now.toISOString(), source: 'git worktree/branch facts (fleet gatherFacts, PRs and checks off)' };
   try {
     const cfg = resolveConfig(root, { env });
-    // Only `baseBranch` crosses: the consumer-owned `checks` hook list must not.
-    const config = { baseBranch: cfg.baseBranch };
+    // Only `baseBranch` and the `hotFiles` patterns (data) cross: the consumer-owned `checks` hook list must not.
+    const config = { baseBranch: cfg.baseBranch, hotFiles: cfg.hotFiles };
     const facts = gatherFacts({ cwd: root, config, now, env, prs: false, checks: false, maxBranches: INFLIGHT_MAX_BRANCHES });
     const status = buildStatusFrom(facts);
     const baseName = cfg.baseBranch;

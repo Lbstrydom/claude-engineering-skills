@@ -560,6 +560,17 @@ session waiting for" is a column, not a paragraph:
   printed beside the deferred-tier / tier-result / check lines and recorded in the
   manifest.
 
+### Amendment 2026-10-08 (capstone feedback; plan `fleet-capstone-feedback.md`)
+
+- **`status` also hides IDLE untracked branches** (known ahead count, tip commit
+  older than `.fleet.json` `hideIdleAfterDays`, default 14), on the same
+  sufficient-evidence terms as the merged rule; overlaps into a hidden item fold
+  to one count line on the visible item.
+- **`.fleet.json` `hotFiles`**: overlaps made only of hot files are reported apart
+  (`hotOverlaps`) and are not conflicts — they do not count toward landing order
+  and do **not** block or warn at the claim gate, but are always disclosed
+  (`[hot]`). Mixed evidence, identical intent and wildcard claim pairs still block.
+
 ## 6. Sustainability Notes
 
 - **Assumption that may change: one host, one machine.** State lives in the local

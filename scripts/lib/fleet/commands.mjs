@@ -20,7 +20,9 @@ import {
   runGit, headOf, tipSubject, repoToplevel,
 } from './git-facts.mjs';
 import { listPullRequests, materializePrRef, prSourceIdentity } from './gh-facts.mjs';
-import { claimMode, decideClaim, isTerminalState, splitHidden, validateClaimPatterns } from './overlap.mjs';
+import {
+  claimMode, decideClaim, idleMsFrom, isBlockingConflict, isTerminalState, splitHidden, validateClaimPatterns,
+} from './overlap.mjs';
 import { renderClaimVerdict, renderStatus } from './render.mjs';
 import { renderChipPrompt, renderOpenTrains } from './render-train.mjs';
 import { WaitingOnSchema, quarantine, transact } from './registry.mjs';
@@ -130,7 +132,7 @@ export function cmdStatus(ctx, flags = {}) {
   for (const t of facts.trainsInvalid) warnings.push(`train record unreadable: ${t.file} (${t.reason})`);
   const general = hook.findings.filter((f) => !f.sessions?.length);
   // The ONE place the default view hides stale untracked items; `status` itself stays complete.
-  const view = splitHidden(status, { all: Boolean(flags['--all']) });
+  const view = splitHidden(status, { all: Boolean(flags['--all']), idleMs: idleMsFrom(ctx.config) });
   const lines = [renderStatus({ ...status, items: view.items }, { hidden: view.hidden })];
   if (general.length) lines.push('', 'checks:', ...general.map((f) => `  ${f.level}: ${f.message}`));
   const todo = renderOpenTrains(facts.trains, ctx.cmd);
@@ -163,9 +165,9 @@ export function cmdClaim(ctx, flags) {
     const claimPaths = hasPaths || mode === 'new' ? paths : cur.paths;
     const verdict = decideClaim({
       claim: { id, intent, paths: claimPaths, knownOverlaps: mode === 'adopt' ? cur.knownOverlaps : [] },
-      mode, others: othersFor(facts, id, ctx.now, t.sessions), complete: t.complete,
+      mode, others: othersFor(facts, id, ctx.now, t.sessions), complete: t.complete, hotFiles: ctx.config.hotFiles ?? [],
     });
-    const blocking = verdict.conflicts.filter((c) => !c.known);
+    const blocking = verdict.conflicts.filter(isBlockingConflict);
     const overriding = Boolean(flags['--override']) && blocking.length > 0 && verdict.verdict !== 'refused';
     if (verdict.verdict === 'refused' || (verdict.verdict === 'blocked' && !overriding)) return { verdict, mode };
 
@@ -254,7 +256,7 @@ export function cmdAdd(ctx, flags, positionals) {
     for (const t of targets) {
       const cur = tr.sessions.find((s) => s.id === t.id) ?? null;
       if (cur && !isTerminalState(cur.state)) { skipped.push({ id: t.id, reason: 'already tracked' }); continue; }
-      const v = decideClaim({ claim: { id: t.id, intent: t.intent, paths: [], knownOverlaps: [] }, mode: 'adopt', others: othersFor(facts, t.id, ctx.now, tr.sessions), complete: tr.complete });
+      const v = decideClaim({ claim: { id: t.id, intent: t.intent, paths: [], knownOverlaps: [] }, mode: 'adopt', others: othersFor(facts, t.id, ctx.now, tr.sessions), complete: tr.complete, hotFiles: ctx.config.hotFiles ?? [] });
       if (v.verdict === 'refused') return { verdict: v };
       if (v.verdict === 'warn') warnings.push({ id: t.id, conflicts: v.conflicts });
       const stamp = nowIso(ctx);
@@ -274,7 +276,7 @@ export function cmdAdd(ctx, flags, positionals) {
   const lines = [];
   if (added.length) lines.push(`adopted: ${added.join(', ')}`);
   for (const s of skipped) lines.push(`skipped ${s.id}: ${s.reason}`);
-  for (const w of warnings) lines.push(`WARN ${w.id}: overlaps ${w.conflicts.map((c) => c.with).join(', ')} (advisory)`);
+  for (const w of warnings) lines.push(`WARN ${w.id}: overlaps ${w.conflicts.filter((c) => !c.hotOnly).map((c) => c.with).join(', ')} (advisory)`);
   return ok({ added, skipped, warnings, text: lines.join('\n') || 'nothing to adopt' });
 }
 
@@ -395,11 +397,11 @@ export function cmdStart(ctx, tasks) {
     const batch = []; const blocked = [];
     for (const p of plan) {
       const verdict = decideClaim({
-        claim: { id: p.branch, intent: p.task, paths: p.paths, knownOverlaps: [] }, mode: 'new', complete: t.complete,
+        claim: { id: p.branch, intent: p.task, paths: p.paths, knownOverlaps: [] }, mode: 'new', complete: t.complete, hotFiles: ctx.config.hotFiles ?? [],
         others: [...othersFor(facts, p.branch, ctx.now, t.sessions), ...batch.map((b) => ({ session: b, live: true, changedFiles: [] }))],
       });
       if (verdict.verdict === 'refused') return { verdict, refusedAll: true };
-      if (verdict.verdict === 'blocked') blocked.push({ task: p, conflicts: verdict.conflicts.filter((c) => !c.known) });
+      if (verdict.verdict === 'blocked') blocked.push({ task: p, conflicts: verdict.conflicts.filter(isBlockingConflict) });
       batch.push({ id: p.branch, intent: p.task, paths: p.paths, state: 'working', knownOverlaps: [] });
     }
     if (blocked.length) return { blocked };
