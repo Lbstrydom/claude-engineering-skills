@@ -17,8 +17,16 @@
       "reason": "Describes the fleet CLI's three-dot changedFiles behaviour, pinned by tests/fleet-storyline-feedback.test.mjs (with a two-dot control); the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound. Not an enforcement claim about this skill file itself."
     },
     {
-      "line": "sessions are never hidden, and anything not proven stale stays visible.",
-      "reason": "Describes the fleet CLI's status hiding rule, pinned by tests/fleet-storyline-feedback.test.mjs (isStaleUntracked table); the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound. Not an enforcement claim about this skill file itself."
+      "line": "`--all` shows them. Registered sessions are never hidden, and anything not",
+      "reason": "Describes the fleet CLI's status hiding rule (merged or idle untracked branches), pinned by tests/fleet-storyline-feedback.test.mjs and tests/fleet-capstone-feedback.test.mjs (hideReason table, each with a must-not-hide control); the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound. Not an enforcement claim about this skill file itself."
+    },
+    {
+      "line": "listed apart (`hot files shared with N items`, `[hot]` on a claim) and never",
+      "reason": "Describes the fleet CLI's hotFiles classification at the status join and the claim gate, pinned by tests/fleet-capstone-feedback.test.mjs (the same claim BLOCKS without hotFiles; mixed and wildcard evidence still blocks); the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound. Not an enforcement claim about this skill file itself."
+    },
+    {
+      "line": "counts as a conflict or blocks a claim; mixed evidence still blocks. A wildcard",
+      "reason": "Describes the fleet CLI's hotFiles classification at the status join and the claim gate, pinned by tests/fleet-capstone-feedback.test.mjs (the same claim BLOCKS without hotFiles; mixed and wildcard evidence still blocks); the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound. Not an enforcement claim about this skill file itself."
     },
     {
       "line": "`PR checks: not queried`, never a missing PR list.",
