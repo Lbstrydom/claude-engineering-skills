@@ -1356,12 +1356,16 @@ repo-specific gate appended to that file therefore works until the next sync
 and is then silently gone — the "your fix is lost, and it's invisible to
 review because the hook isn't tracked" failure mode, applied to hooks.
 
-The managed hook's last step is the sanctioned extension point:
+The managed hook's last step (`finish`, reached from every success path) is the
+sanctioned extension point:
 
 ```sh
 LOCAL_HOOK=".githooks/pre-push.local"
 if [ "$PREPUSH_LOCAL_DISABLE" != "1" ] && [ -f "$LOCAL_HOOK" ]; then
-  sh "$LOCAL_HOOK" || exit $?
+  (
+    unset $GIT_LOCAL_ENV_BASELINE $(git rev-parse --local-env-vars 2>/dev/null)
+    exec sh "$LOCAL_HOOK"
+  ) || exit $?
 fi
 ```
 
@@ -1376,6 +1380,14 @@ Properties that make this the right seam:
   upstream tooling.
 - **Bypassable the same way as everything else**: `PREPUSH_LOCAL_DISABLE=1`, or
   `git push --no-verify` for the whole chain.
+- **Runs without git's repo-pointing env** (hook v9, 2026-10-08). Git exports
+  `GIT_DIR` into a hook when you push from a linked worktree (measured, git
+  2.54), and `GIT_DIR` beats cwd — so a test suite here that `git init`s a
+  throwaway repo would write into YOUR `.git/config` (a consumer got
+  `core.bare=true` and a fake identity that way). The local hook starts with
+  `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, … unset and cwd at the checkout
+  root, so `git` still finds this repo by discovery. A workaround that unsets
+  them inside your own `pre-push.local` is now redundant but harmless.
 
 Make it executable (`chmod +x`) and keep it `sh`-compatible — it is invoked via
 `sh`, not bash, so it runs identically under Git Bash on Windows.
