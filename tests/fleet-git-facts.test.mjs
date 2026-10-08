@@ -305,20 +305,47 @@ describe('listBranches: one process on the fast path, honest fallback, per-branc
     return dir;
   }
   const counting = () => { const calls = []; return { calls, exec: (args, cwd, o) => { calls.push(args); return runGit(args, cwd, o); } }; };
+  /**
+   * Does THIS git honour `%(ahead-behind:<base>)` (git >= 2.41)? Asked the way
+   * listBranches' own probe asks — run the atom, require a count on every record —
+   * through the same exported runGit/parseBranchRefs, never by parsing a version
+   * string. Independent of listBranches, so a regressed probe there cannot make
+   * this test assert whichever path it happened to take.
+   */
+  function gitHasAheadBehindAtom() {
+    const dir = manyBranches(1);
+    const r = runGit(['for-each-ref', '--format=%(refname)%00%(objectname)%00%(committerdate:unix)%00%(ahead-behind:main)', 'refs/heads'], dir);
+    const refs = r.ok ? parseBranchRefs(r.stdout) : [];
+    if (refs.length > 0 && refs.every((b) => /^\d+\s+\d+$/.test(String(b.counts).trim()))) return true;
+    // "Unsupported" must mean the ATOM was rejected, not that git could not run at all.
+    assert.equal(runGit(['for-each-ref', '--format=%(refname)', 'refs/heads'], dir).ok, true, 'plain for-each-ref must work for the probe to mean anything');
+    return false;
+  }
 
-  it('spawns a constant number of git processes for 30 branches (ahead-behind atom)', () => {
+  it('spawns a constant number of git processes for 30 branches (ahead-behind atom; per-branch fallback on git < 2.41)', () => {
+    const atom = gitHasAheadBehindAtom();
     const dir = manyBranches(30);
     const many = counting();
     const r = listBranches(dir, 'main', { exec: many.exec });
     assert.equal(r.queried, true);
     assert.equal(r.partial, undefined);
     assert.equal(r.branches.length, 31);
-    assert.equal(many.calls.length, 1, `expected one for-each-ref, got ${JSON.stringify(many.calls.map((c) => c[0]))}`);
     const b7 = r.branches.find((b) => b.name === 'b7');
     assert.deepEqual([b7.ahead, b7.behind], [1, 1]);
     const small = counting();
     listBranches(manyBranches(3), 'main', { exec: small.exec });
-    assert.equal(small.calls.length, many.calls.length, 'process count must not grow with branch count');
+    const verbs = (c) => JSON.stringify(c.calls.map((a) => a[0]));
+    if (atom) {
+      assert.equal(many.calls.length, 1, `expected one for-each-ref, got ${verbs(many)}`);
+      assert.equal(small.calls.length, many.calls.length, 'process count must not grow with branch count');
+    } else {
+      // Documented fallback: the rejected atom call, one plain for-each-ref, then
+      // exactly one rev-list per branch — linear and bounded, never more.
+      for (const [c, n] of [[many, 31], [small, 4]]) {
+        assert.equal(c.calls.length, 2 + n, `expected 2 + ${n} processes, got ${verbs(c)}`);
+        assert.equal(c.calls.filter((a) => a[0] === 'rev-list').length, n, verbs(c));
+      }
+    }
   });
   it('the per-branch fallback yields the same counts', () => {
     const dir = manyBranches(5);
