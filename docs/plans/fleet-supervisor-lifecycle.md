@@ -47,7 +47,7 @@ existing lifecycle tests then "fail" on a correct implementation (measured: 6 fa
 - Check supervisor: the close path reaps on every platform; the held-pipes path also kills
   escaped holders on Linux. Tier supervisor: reaps orphans on win32 after a normal exit.
 - **Cost, stated:** on win32 every check/tier now spawns one PowerShell CIM query after the
-  child exits — measured ~1.3–2.3 s per check on this host (was ~0.12 s).
+  child exits — measured ~1.3–2.3 s per check on this host before the H2 filter, ~2.4–4.6 s after (was ~0.12 s).
 - **Still not guaranteed (documented):** on POSIX, a descendant that escaped the group and holds
   none of the child's stdio; on macOS, any escaped descendant (no `/proc`).
 
@@ -62,3 +62,25 @@ finish + two ~10-line platform snippets in one module.
 BOTH platforms: Windows host, and Linux via `docker run --init node:22`. Red-then-green: each fix
 reverted in turn (exit-on-finish, Linux holder kill, win32 close-path reap, win32 tier reap,
 pid-reuse guard) must turn a test red on the platform it protects.
+
+## Audit trail
+
+- **Measured before the change (2026-10-08):** Linux (`docker run --init node:22`) — the existing
+  `fleet-checks` H1/H3 test fails: `check-failed: timed out after 30000ms` at 45 s though the hook
+  printed valid findings. Windows — a `detached` child of a node hook and a `Start-Process` child of
+  a PowerShell hook both survive a normally-exited check.
+- **Red-then-green, both platforms:** reverting the Linux holder-kill, the win32 close-path reap,
+  the win32 tier reap, the pid-reuse guard, the CreationDate filter, the cleanup reporting (both
+  halves) and the clear-deadline-on-exit each fails a test on the platform it protects.
+  Exit-on-finish is MASKED on Linux by the holder-kill (both fix the same path): isolated by
+  reverting the holder-kill alone, the result still returns promptly and only "helper terminated"
+  fails; its sole-protection platform is macOS, not available here.
+- **/audit-code (session audit-code-1791467919):** GPT R1 H:6 M:2 — 4 fixed (H2 CreationDate
+  filter; M2/H6 reported cleanup; H4 deadline cleared at exit), 4 deferred as documented residuals
+  (H5 pid race, H3/M1 stdio-capture race, H1 pre-existing missing signal handlers). GPT R2 PASS
+  but with changed lines unread in all 5 files (not evidence). Gemini final gate
+  (gemini-flash-latest) read all 6 changed source/test files in full: **APPROVE** (blocking 0,
+  wrongly dismissed 0).
+- **Suites:** Windows 483 pass / 0 fail; Linux 426 pass / 1 fail — `fleet-git-facts` "ahead-behind
+  atom", which needs git ≥ 2.41 (the image has 2.39.5); unrelated, fixed separately.
+- **Cost after the H2 filter:** ~2.4–4.6 s per check on this Windows host (was ~0.12 s).
