@@ -81,6 +81,27 @@ function itemBlock(it) {
 }
 
 /**
+ * What the overlap evidence was measured against, as one line - or null when
+ * there is nothing to add (the local base is current, or ahead of its upstream).
+ * The phantom-overlap caveat appears exactly when the measurement could not use
+ * the fresher base (diverged, or git could not compare the two).
+ * @param {object|null|undefined} m - `resolveMeasurementBase` result
+ * @param {string} [name] - the base branch name
+ * @returns {string|null}
+ */
+export function describeMeasurement(m, name = 'base') {
+  if (!m) return null;
+  if (!m.ok) return `overlaps by files not measurable: ${m.reason}`;
+  switch (m.relation) {
+    case 'local-trails': return `overlaps measured from ${m.ref} @ ${String(m.oid).slice(0, 12)} (local ${name} trails it${m.behindBy === null ? '' : ` by ${m.behindBy}`})`;
+    case 'upstream-only': return `overlaps measured from ${m.ref} @ ${String(m.oid).slice(0, 12)} (no local ${name})`;
+    case 'diverged': return `local ${name} has DIVERGED from its upstream; overlaps measured from local ${name} may be phantom — sync ${name}, then re-check`;
+    case 'unknown': return `could not compare local ${name} with its upstream; overlaps measured from local ${name} may be phantom`;
+    default: return null;
+  }
+}
+
+/**
  * Render the `buildStatus` result.
  * @param {ReturnType<import('./overlap.mjs').buildStatus>} status
  * @returns {string}
@@ -94,6 +115,8 @@ export function renderStatus(status, { hidden } = {}) {
   const fr = status.base.freshness?.freshness;
   const baseNote = !fr ? 'freshness unknown' : fr.state === 'behind' ? `local base is ${fr.behindBy} behind ${fr.upstream} (since last fetch)` : fr.state;
   out.push(`base: ${status.base.name ?? '?'} — ${baseNote} · observed ${status.observedAt}`);
+  const measured = describeMeasurement(status.base.measure, status.base.name ?? 'base');
+  if (measured) out.push(`  ${measured}`);
   for (const l of [sourceLine('worktrees', status.sources.worktrees), sourceLine('branches', status.sources.branches), sourceLine('PRs', status.sources.prs), checksLine(status.sources.prs)]) {
     if (l) out.push(l);
   }
@@ -118,7 +141,7 @@ export function renderStatus(status, { hidden } = {}) {
 /**
  * Render a `decideClaim` verdict.
  * @param {{ok: boolean, verdict: string, conflicts: object[], reason?: string}} v
- * @param {{id?: string}} [ctx]
+ * @param {{id?: string, cmd?: string, measure?: object|null, baseName?: string}} [ctx]
  */
 export function renderClaimVerdict(v, ctx = {}) {
   const who = ctx.id ? ` for ${ctx.id}` : '';
@@ -126,6 +149,9 @@ export function renderClaimVerdict(v, ctx = {}) {
   const lines = [];
   const head = { ok: `OK${who}`, warn: `WARN${who}: overlapping live work (advisory)`, blocked: `BLOCKED${who}: overlapping live work — stop and report` }[v.verdict];
   lines.push(head ?? `${v.verdict}${who}`);
+  // Only worth saying beside a conflict: it is what tells a reader whether the overlap is real.
+  const measured = v.conflicts.length ? describeMeasurement(ctx.measure, ctx.baseName) : null;
+  if (measured) lines.push(`  (${measured})`);
   for (const c of v.conflicts) {
     const detail = [];
     if (c.paths?.length) detail.push(`paths ${c.paths.slice(0, 3).map(([a, b]) => `${a} ~ ${b}`).join(', ')}`);

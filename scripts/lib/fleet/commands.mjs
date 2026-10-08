@@ -27,7 +27,7 @@ import { renderClaimVerdict, renderStatus } from './render.mjs';
 import { renderChipPrompt, renderOpenTrains } from './render-train.mjs';
 import { WaitingOnSchema, quarantine, transact } from './registry.mjs';
 import {
-  buildStatusFrom, gatherFacts, leaseMsFrom, othersFor, statusChecks,
+  buildStatusFrom, gatherFacts, leaseMsFrom, othersFor, readyChecks, statusChecks,
 } from './facts.mjs';
 import { parseWaitingOn, splitPaths } from './argv.mjs';
 
@@ -90,32 +90,25 @@ function applyWaiting(existing, w) {
   return list;
 }
 
-const baseRefOf = (config) => `refs/heads/${config.baseBranch}`;
-
 /**
- * The commit a session began from: the merge-base of the base branch and the
- * session's head. A baseline that cannot be established is REPORTED, never
- * substituted (a branch HEAD is not a start point).
+ * The commit a session began from: the merge-base of the MEASURED base (the fresher
+ * of the local base and its upstream - `facts.base.measure`) and the session's head.
+ * A baseline that cannot be established is REPORTED, never substituted (a branch
+ * HEAD is not a start point).
  * @param {{cwd: string, config: {baseBranch: string}}} ctx
  * @param {string|null} branch
+ * @param {ReturnType<typeof import('./git-facts.mjs').resolveMeasurementBase>} measure
  * @param {{git?: typeof runGit}} [opts] - injectable for tests
  * @returns {{ok: true, oid: string} | {ok: false, kind: 'base-unresolvable'|'no-merge-base'|'git-error', reason: string}}
  */
-export function startOidFor(ctx, branch, { git = runGit } = {}) {
-  const baseRef = baseRefOf(ctx.config);
-  const resolve = (ref) => git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], ctx.cwd);
-  const base = resolve(baseRef);
-  if (!base.ok) {
-    return base.status === 1
-      ? { ok: false, kind: 'base-unresolvable', reason: `base branch ${ctx.config.baseBranch} is not resolvable (${baseRef} does not exist)` }
-      : { ok: false, kind: 'git-error', reason: `cannot resolve ${baseRef}: ${base.reason}` };
-  }
+export function startOidFor(ctx, branch, measure, { git = runGit } = {}) {
+  if (!measure?.ok) return { ok: false, kind: measure?.kind ?? 'base-unresolvable', reason: measure?.reason ?? `base branch ${ctx.config.baseBranch} was not measured` };
   const headRef = branch ? `refs/heads/${branch}` : 'HEAD';
-  const head = resolve(headRef);
+  const head = git(['rev-parse', '--verify', '--quiet', `${headRef}^{commit}`], ctx.cwd);
   if (!head.ok) return { ok: false, kind: 'git-error', reason: `cannot resolve ${headRef}: ${head.reason ?? 'not found'}` };
-  const mb = git(['merge-base', base.stdout.trim(), head.stdout.trim()], ctx.cwd);
+  const mb = git(['merge-base', measure.oid, head.stdout.trim()], ctx.cwd);
   if (mb.ok) return { ok: true, oid: mb.stdout.trim() };
-  if (mb.status === 1) return { ok: false, kind: 'no-merge-base', reason: `${headRef} and ${ctx.config.baseBranch} have no common ancestor (unrelated histories)` };
+  if (mb.status === 1) return { ok: false, kind: 'no-merge-base', reason: `${headRef} and ${measure.ref} have no common ancestor (unrelated histories)` };
   return { ok: false, kind: 'git-error', reason: `git merge-base failed: ${mb.reason}` };
 }
 
@@ -153,9 +146,9 @@ export function cmdClaim(ctx, flags) {
   const waiting = waitingFromFlags(flags, ctx);
   const branch = currentBranch(ctx.cwd);
   const top = repoToplevel(ctx.cwd);
-  const start = startOidFor(ctx, branch);
-  const startOid = start.ok ? start.oid : null; // claim stays lenient but never substitutes; the reason is surfaced below
   const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: false });
+  const start = startOidFor(ctx, branch, facts.base.measure);
+  const startOid = start.ok ? start.oid : null; // claim stays lenient but never substitutes; the reason is surfaced below
 
   const tx = transact(ctx.dir, (t) => {
     const cur = t.sessions.find((s) => s.id === id) ?? null;
@@ -196,7 +189,7 @@ export function cmdClaim(ctx, flags) {
   if (!tx.ok) return lockFailed();
   const v = tx.value;
   if (v.code === 'argv') throw new ArgvError(v.reason);
-  const text = renderClaimVerdict(v.verdict, { id, cmd: ctx.cmd })
+  const text = renderClaimVerdict(v.verdict, { id, cmd: ctx.cmd, measure: facts.base.measure, baseName: ctx.config.baseBranch })
     + (!start.ok && v.mode === 'new' && v.record ? `
 warning: startOid not recorded — ${start.reason}` : '')
     + (v.record ? `\n${v.mode === 'new' ? 'registered' : 'updated'} ${id} (gen ${v.record.gen}, rev ${v.record.rev}): ${v.record.intent}${v.verdict.overridden ? '\n  --override: recorded as a known overlap on both sessions' : ''}` : '');
@@ -244,7 +237,7 @@ export function cmdAdd(ctx, flags, positionals) {
       t.intent = s.ok && s.subject ? s.subject : t.branch;
     }
     if (t.kind === 'branch') {
-      const so = startOidFor(ctx, t.branch);
+      const so = startOidFor(ctx, t.branch, facts.base.measure);
       // Adoption without a known start is unsafe for the new-vs-adopt contract: refuse, naming the branch and why.
       if (!so.ok) return failed(`cannot adopt ${t.branch}: ${so.reason} (${so.kind}) — nothing was adopted`, { kind: so.kind });
       t.startOid = so.oid;
@@ -286,7 +279,8 @@ export function cmdAdd(ctx, flags, positionals) {
 export function cmdReady(ctx, flags) {
   const id = selfId(ctx, flags);
   const waiting = waitingFromFlags(flags, ctx);
-  const peek = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: false }).registry.sessions.find((s) => s.id === id);
+  const readyFacts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: false });
+  const peek = readyFacts.registry.sessions.find((s) => s.id === id);
   if (!peek || isTerminalState(peek.state)) return refused(`no live session ${id} — run \`${ctx.cmd} claim\` first`);
   let oid;
   if (peek.source.kind === 'pr') {
@@ -302,6 +296,13 @@ export function cmdReady(ctx, flags) {
     if (!h.ok) return refused(`cannot resolve the head of ${peek.source.branch ?? 'HEAD'}: ${h.reason}`);
     oid = h.oid;
   }
+  // Checks opted into `runIn: ["ready"]` run BEFORE the mark, outside the lock (slow, consumer-owned).
+  const gate = readyChecks({ cwd: ctx.cwd, config: ctx.config, session: peek, oid, baseOid: readyFacts.base.measure.ok ? readyFacts.base.measure.oid : null });
+  const gateLines = gate.findings.map((f) => `  ${f.level}: ${f.message}`);
+  if (gate.blocks) {
+    const reason = `${gate.blocks} — ${id} was NOT marked ready`;
+    return refused(reason, { checks: gate.results, text: [`REFUSED: ${reason}`, ...gateLines].join('\n') });
+  }
   const tx = transact(ctx.dir, (t) => {
     const cur = t.sessions.find((s) => s.id === id);
     if (!cur || isTerminalState(cur.state)) return { gone: true };
@@ -313,7 +314,7 @@ export function cmdReady(ctx, flags) {
   });
   if (!tx.ok) return lockFailed();
   if (tx.value.gone) return refused(`session ${id} is no longer live`);
-  return ok({ id, record: tx.value.record, text: `ready: ${id} @ ${oid.slice(0, 12)} (lease renewed)` });
+  return ok({ id, record: tx.value.record, checks: gate.results, text: [`ready: ${id} @ ${oid.slice(0, 12)} (lease renewed)`, ...gateLines].join('\n') });
 }
 
 /** `fleet touch` — explicit heartbeat. */
@@ -382,10 +383,10 @@ export function cmdStart(ctx, tasks) {
     const pv = validateClaimPatterns(t.paths);
     if (!pv.ok) throw new ArgvError(`fleet start: task ${JSON.stringify(t.task)}: ${pv.errors.join('; ')}`);
   }
-  let base = headOf(ctx.cwd, baseRefOf(ctx.config));
-  if (!base.ok) base = headOf(ctx.cwd, `origin/${ctx.config.baseBranch}`);
-  if (!base.ok) return failed(`cannot resolve the base branch ${ctx.config.baseBranch}: ${base.reason}`);
   const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: false });
+  // Chips start from the base the overlaps were measured against: the fresher of local and upstream.
+  const base = facts.base.measure;
+  if (!base.ok) return failed(`cannot resolve the base branch ${ctx.config.baseBranch}: ${base.reason}`);
   const plan = tasks.map((t, i) => {
     const name = chipNameFor(t.task, i);
     const branch = `fleet/${name}`;

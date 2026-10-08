@@ -669,7 +669,7 @@ export function buildStatus(facts) {
 
   return {
     observedAt: new Date(nowMs).toISOString(),
-    base: { name: baseName, freshness: facts.base?.freshness ?? null },
+    base: { name: baseName, freshness: facts.base?.freshness ?? null, measure: facts.base?.measure ?? null },
     registry: { complete: facts.registry?.complete !== false, invalid: facts.registry?.invalid ?? [] },
     sources: {
       worktrees: { queried: Boolean(facts.worktrees?.queried), reason: facts.worktrees?.reason },

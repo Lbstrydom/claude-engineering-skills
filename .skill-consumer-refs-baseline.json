@@ -229,8 +229,8 @@
     },
     "npm skills:hydrate": {
       "disposition": "consumer-wired",
-      "reason": "The worktree-hydration alias. Every site already says \"if this repo defines no such script, add this entry\" and inlines a bare node+git bootstrap, so the text works with or without it.",
-      "sites": 20
+      "reason": "The worktree-hydration alias. Every site already says \"if this repo defines no such script, add this entry\" and inlines a bare node+git bootstrap, so the text works with or without it. The two in fleet/references/participant-rules.md (the chip participant block, 2026-10-08) point at that inlined entry in the same skill's SKILL.md preflight rather than repeating it.",
+      "sites": 22
     },
     "npm skills:regenerate": {
       "disposition": "source-repo-only",

@@ -66,8 +66,10 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
 2. **Go away** — each chip registers itself, works, marks `ready`.
 3. **Status** — show the user the table: intent, state, WAITING column (human
    items first), overlaps, duplicate patches, proposed landing order. Overlap by
-   files is **three-dot** (`base...branch`, changes since the merge-base), so a
-   base that moved on never makes a branch look like it touched those files.
+   files is **three-dot** (`base...branch`, changes since the merge-base), measured
+   from the FRESHER of the local base and its upstream, so neither a base that moved
+   on nor a local base that trails `origin` makes a branch look like it touched
+   files it did not. A diverged base is named, with overlaps flagged maybe-phantom.
    Untracked branches already merged into base (ahead 0) or idle (no commit for
    `hideIdleAfterDays`, default 14) with no open PR and a clean or no worktree
    are hidden with one `N hidden` line, and overlaps into them fold to a count;
@@ -102,11 +104,14 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
 
 ## Config — optional `.fleet.json` at the repo root
 
-Never synced; every key optional. `baseBranch` (default origin/HEAD, else main),
+Never synced; read from the checkout you run in, so commit it — an untracked copy
+in one worktree changes behaviour there only. Every key optional. `baseBranch` (a
+branch name — `origin/main` is refused; default origin/HEAD, else main),
 `mergeMethod` (`pr` default, `direct-squash`, `direct-merge`; fixed into the
 train when built), `testCommand` (a string, or ordered tiers; `post-merge` tiers
 never run in `land` and are listed as deferred), and `checks` (repo-owned
-collision scripts; a failing `block` check makes a train non-approvable; on a timeout fleet terminates the hook's process group/tree, but a descendant that deliberately escapes it via `setsid`/detached/a job object is not terminated).
+collision scripts; a failing `block` check makes a train non-approvable, and one
+listed with `"runIn": [..., "ready"]` (opt-in) refuses `ready` too; on a timeout fleet terminates the hook's process group/tree, but a descendant that deliberately escapes it via `setsid`/detached/a job object is not terminated).
 A monorepo with a long chain:
 
 ```json

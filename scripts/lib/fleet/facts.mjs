@@ -13,13 +13,13 @@
  * @module scripts/lib/fleet/facts
  */
 import {
-  listWorktrees, listBranches, changedFiles, patchId, baseFreshness, headOf, runGit,
+  listWorktrees, listBranches, changedFiles, patchId, baseFreshness, headOf, runGit, resolveMeasurementBase,
 } from './git-facts.mjs';
 import { listPullRequests, prLocalRef } from './gh-facts.mjs';
 import { ConfigError } from './config.mjs';
 import { fleetDir, readSessions, readHold, listTrains } from './registry.mjs';
 import {
-  DEFAULT_LEASE_MS, buildStatus, idleMsFrom, isIdleTip, liveness,
+  DEFAULT_LEASE_MS, buildStatus, checkBlocksApproval, idleMsFrom, isIdleTip, liveness,
 } from './overlap.mjs';
 import { buildCheckPayload, resultsToFindings, runChecks } from './checks.mjs';
 
@@ -101,7 +101,12 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
   const base = config.baseBranch;
   const registry = readSessions(dir);
   const trainsRead = listTrains(dir);
-  const branches = listBranches(cwd, base);
+  const up = resolveUpstream(cwd, base, trainsRead.trains);
+  // Every ahead/behind count and changed-file set is measured from the FRESHER of the local base and its
+  // upstream (see resolveMeasurementBase): a local base that trails would make each branch cut from the
+  // upstream look like it changed everything the upstream gained since.
+  const measure = resolveMeasurementBase(cwd, { base, upstream: up.upstream });
+  const branches = listBranches(cwd, measure.ok ? measure.oid : base);
   const anyPr = registry.sessions.some((x) => x.source?.kind === 'pr' && !['done', 'abandoned'].includes(x.state));
   const prFacts = prs || anyPr ? listPullRequests(cwd, { env }) : { queried: false, complete: false, reason: 'not requested', prs: [] };
   const names = new Set();
@@ -126,7 +131,7 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
   // evidence for a newer tip would be attributed to the older one. A name with no captured oid (a registered
   // branch that is not local) falls back to the name, which simply fails to resolve and says so.
   const tipOid = new Map((branches.branches ?? []).map((b) => [b.name, b.oid]));
-  const baseOidSnap = tipOid.get(base) ?? null;
+  const baseOidSnap = measure.ok ? measure.oid : tipOid.get(base) ?? null;
   const baseRev = baseOidSnap ?? base;
   for (const n of analyse) {
     const rev = tipOid.get(n) ?? n;
@@ -165,13 +170,12 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
     if (!files.queried) { noFiles(s, files.reason); continue; }
     changed[prKey(s)] = files;
   }
-  const up = resolveUpstream(cwd, base, trainsRead.trains);
   const worktreeList = worktrees ? listWorktrees(cwd) : { queried: false, reason: 'not requested', worktrees: [] };
   return {
     worktreeClean: probeWorktreeCleanliness({ branches, worktreeList, base, registry, now, idleMs: idleMsFrom(config) }),
     hotFiles: config.hotFiles ?? [],
     findings, evidenceNotes, prTrusted, dir, now, leaseMs: leaseMsFrom(env), baseOid: baseOidSnap ?? (() => { const h = headOf(cwd, `refs/heads/${base}`); return h.ok ? h.oid : null; })(),
-    base: { name: base, upstream: up.upstream, freshness: baseFreshness(cwd, { base, upstream: up.upstream }) },
+    base: { name: base, upstream: up.upstream, freshness: baseFreshness(cwd, { base, upstream: up.upstream }), measure },
     registry, hold: readHold(dir), trains: trainsRead.trains, trainsInvalid: trainsRead.invalid,
     worktrees: worktreeList,
     branches, prs: prFacts, changed, patchIds,
@@ -238,6 +242,31 @@ export function statusChecks({ cwd, config, status, facts }) {
   const payload = buildCheckPayload({ phase: 'status', baseOid: status.baseOid ?? null, ...payloadFromStatus(status) });
   const results = runChecks({ cwd, checks, phase: 'status', payload });
   return { results, findings: resultsToFindings(results) };
+}
+
+/**
+ * The ready-phase hook: runs every check whose `runIn` includes `ready` over the ONE
+ * session being marked, at the oid `ready` is about to record. A `severity:'block'`
+ * check that reports a block-level finding, or that fails or times out, refuses the
+ * mark - `checkBlocksApproval`, the predicate that makes a train non-approvable, so
+ * the two cannot disagree. Everything else is disclosed and does not refuse.
+ * @param {{cwd: string, config: {checks?: object[]}, session: object, oid: string, baseOid: string|null}} a
+ * @returns {{results: object[], findings: object[], blocks: string|null}}
+ */
+export function readyChecks({ cwd, config, session, oid, baseOid, exec }) {
+  const checks = (config.checks ?? []).filter((c) => (c.runIn ?? ['status', 'land']).includes('ready'));
+  if (!checks.length) return { results: [], findings: [], blocks: null };
+  // Measured like status measures it; an unmeasured diff is sent as `changedFiles: []` plus the reason.
+  const diff = baseOid ? changedFiles(cwd, baseOid, oid) : { queried: false, files: [], reason: 'base not measured' };
+  const changed = diff.queried ? diff.files : [];
+  const payload = buildCheckPayload({
+    phase: 'ready', baseOid,
+    sessions: [{ id: session.id, branch: session.source?.branch ?? null, oid, paths: session.paths ?? [], changedFiles: changed, state: 'ready',
+      ...(diff.queried ? {} : { changedFilesUnknown: diff.reason }),
+      waitingOn: (session.waitingOn ?? []).map(({ kind, ref, note, since }) => ({ kind, ref, note, since })) }],
+  });
+  const results = runChecks({ cwd, checks, phase: 'ready', payload, ...(exec ? { exec } : {}) });
+  return { results, findings: resultsToFindings(results), blocks: checkBlocksApproval(results) };
 }
 
 /** Build status and attach `changedFiles` to each item (the hook's payload needs them). */

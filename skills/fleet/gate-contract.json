@@ -13,10 +13,6 @@
       "reason": "Describes behaviour of the fleet CLI (pinned by tests/fleet-cli.test.mjs) or is an instruction to the AGENT; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
     },
     {
-      "line": "base that moved on never makes a branch look like it touched those files.",
-      "reason": "Describes the fleet CLI's three-dot changedFiles behaviour, pinned by tests/fleet-storyline-feedback.test.mjs (with a two-dot control); the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound. Not an enforcement claim about this skill file itself."
-    },
-    {
       "line": "`--all` shows them. Registered sessions are never hidden, and anything not",
       "reason": "Describes the fleet CLI's status hiding rule (merged or idle untracked branches), pinned by tests/fleet-storyline-feedback.test.mjs and tests/fleet-capstone-feedback.test.mjs (hideReason table, each with a must-not-hide control); the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound. Not an enforcement claim about this skill file itself."
     },
@@ -69,16 +65,20 @@
       "reason": "Describes behaviour of the fleet CLI (pinned by tests/fleet-cli.test.mjs) or is an instruction to the AGENT; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
     },
     {
-      "line": "Never synced; every key optional. `baseBranch` (default origin/HEAD, else main),",
-      "reason": "Describes behaviour of the fleet CLI (pinned by tests/fleet-cli.test.mjs) or is an instruction to the AGENT; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
+      "line": "Never synced; read from the checkout you run in, so commit it — an untracked copy",
+      "reason": "Describes where the fleet CLI reads .fleet.json (resolveConfig reads the current checkout's working tree) and advises the AGENT to commit it; \"never synced\" is a fact about the consumer sync, which does not ship .fleet.json. Not an enforcement claim about this skill file itself; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason."
     },
     {
       "line": "never run in `land` and are listed as deferred), and `checks` (repo-owned",
       "reason": "Describes behaviour of the fleet CLI (pinned by tests/fleet-cli.test.mjs) or is an instruction to the AGENT; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
     },
     {
-      "line": "collision scripts; a failing `block` check makes a train non-approvable; on a timeout fleet terminates the hook's process group/tree, but a descendant that deliberately escapes it via `setsid`/detached/a job object is not terminated).",
-      "reason": "Describes behaviour of the fleet CLI (pinned by tests/fleet-cli.test.mjs) or is an instruction to the AGENT; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
+      "line": "collision scripts; a failing `block` check makes a train non-approvable, and one",
+      "reason": "Describes the fleet CLI's check predicate (checkBlocksApproval), pinned by tests/fleet-checks.test.mjs. Not an enforcement claim about this skill file itself; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason."
+    },
+    {
+      "line": "listed with `\"runIn\": [..., \"ready\"]` (opt-in) refuses `ready` too; on a timeout fleet terminates the hook's process group/tree, but a descendant that deliberately escapes it via `setsid`/detached/a job object is not terminated).",
+      "reason": "Describes the fleet CLI: the ready-phase refusal is pinned by tests/fleet-base-measurement.test.mjs (block refuses, warn and an unlisted check do not), the process-tree kill by tests/fleet-checks.test.mjs. Not an enforcement claim about this skill file itself; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason."
     },
     {
       "line": "\"runIn\": [\"status\", \"land\"], \"severity\": \"block\" } ] }",

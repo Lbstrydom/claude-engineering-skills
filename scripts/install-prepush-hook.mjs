@@ -32,6 +32,8 @@ import path from 'node:path';
 import { CONSUMER_REPOS, resolveTargets } from './lib/consumer-repos.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+// The generated hook's static unset list IS this baseline — one list, not two.
+import { GIT_LOCAL_ENV_VARS } from './lib/git-env-sanitize.mjs';
 
 // Every accepted flag. `--target` and `--format` TAKE A VALUE (both the
 // `--flag value` and `--flag=value` forms are accepted by the guard).
@@ -114,7 +116,14 @@ const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush
 // skip exits directly rather than through `finish`, so the consumer's
 // .githooks/pre-push.local (typically a whole test suite) does not run for a
 // push with nothing to test. Re-install to pick it up.
-const HOOK_VERSION    = 8;
+// v9 (2026-10-08): `finish` runs .githooks/pre-push.local with git's
+// repo-pointing variables (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, ... — the
+// GIT_LOCAL_ENV_VARS baseline plus `git rev-parse --local-env-vars`) unset.
+// Reported by a consumer: pushing from a linked worktree exports GIT_DIR into
+// the hook, their pre-push.local test suite inherited it, and its throwaway
+// fixture repos wrote core.bare=true and a fake user identity into the SHARED
+// .git/config. Re-install to pick it up.
+const HOOK_VERSION    = 9;
 const HOOK_VERSION_MARKER = `# hook-version: ${HOOK_VERSION}`;
 // Accept the legacy marker too so existing installs (pre-rename) can be
 // upgraded in place by `npm run hooks:install` without manual cleanup.
@@ -232,10 +241,25 @@ export AUDIT_PUSH_RANGE_HEAD="$PUSH_HEAD"
 # which is authoritative and propagated unchanged.
 #
 # Bypass: PREPUSH_LOCAL_DISABLE=1 or \`git push --no-verify\`.
+#
+# GIT-LOCAL ENV IS STRIPPED for the local hook (v9). Git exports repo-pointing
+# variables into a hook (measured, git 2.54: GIT_DIR from a linked worktree or
+# --git-dir, GIT_WORK_TREE with --work-tree, GIT_PREFIX always), and GIT_DIR
+# beats cwd. So a consumer test suite that builds a throwaway repo in a tmp dir
+# ran its \`git init\` / \`git config\` against THIS repo: core.bare=true and a fake
+# identity landed in the shared .git/config. The subshell unsets git's own list
+# (\`rev-parse --local-env-vars\`, evaluated BEFORE the unset) unioned with the
+# baseline shared with lib/git-env-sanitize.mjs, then discovers the repo from cwd
+# — the checkout root, since \`-f "$LOCAL_HOOK"\` just found the file relative to
+# it. The subshell's status is the local hook's, still authoritative.
 LOCAL_HOOK=".githooks/pre-push.local"
+GIT_LOCAL_ENV_BASELINE="${GIT_LOCAL_ENV_VARS.join(' ')}"
 finish() {
   if [ "$PREPUSH_LOCAL_DISABLE" != "1" ] && [ -f "$LOCAL_HOOK" ]; then
-    sh "$LOCAL_HOOK" || exit $?
+    (
+      unset $GIT_LOCAL_ENV_BASELINE $(git rev-parse --local-env-vars 2>/dev/null)
+      exec sh "$LOCAL_HOOK"
+    ) || exit $?
   fi
   exit 0
 }

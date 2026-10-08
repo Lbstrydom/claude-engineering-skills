@@ -230,7 +230,7 @@ function runOne({ cwd, check, payload, exec }) {
  * @param {object} args
  * @param {string} args.cwd - repo root
  * @param {Array<object>} args.checks - validated config checks
- * @param {'status'|'land'} args.phase
+ * @param {'status'|'ready'|'land'} args.phase
  * @param {object} args.payload - see `buildCheckPayload`
  * @param {typeof spawnExec} [args.exec] - injectable for tests
  * @returns {Array<{name: string, severity: string, status: 'ok'|'findings'|'check-failed', findings: object[], reason?: string, argv: string[], scriptHash: string|null}>}
