@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**6 active · 232 terminal · 32 audit summaries · 1 parked · 5 reference docs**
+**6 active · 233 terminal · 32 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -57,7 +57,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 229 completed plans</summary>
+<summary>Show all 230 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -153,6 +153,7 @@ source comments that no docs linter sees — stays valid.
 | [Reduced-Scope Second Final Reviewer + 4-Arm Cost/Yield Campaign](./final-review-scoped-second-reviewer.md) | `Complete` | Clusters A–C implemented via `/cycle --autonomous`, consolidated Gemini gate APPROVE in 2 rounds (§10b),… |
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `Complete` | VERDICT: KEEP opus (SELECT opus, the incumbent; no challenger cleared the relative floor). N reached 12/12… |
 | [Shadow Final-Review Reviewer (A/B test final-gate effectiveness)](./final-review-shadow-reviewer.md) | `Complete` | verified built; status corrected from Approved during archive triage 2026-06-27 |
+| [/fleet — idle-branch hiding and hot files (capstone consumer feedback)](./fleet-capstone-feedback.md) | `Complete` |  |
 | [/fleet — coordinating several concurrent AI coding sessions](./fleet-multi-session-coordination.md) | `Complete` |  |
 | [/fleet — four fixes from the storyline consumer's first real use](./fleet-storyline-feedback.md) | `Complete` |  |
 | [Friction-Feedback Loop (recurrence-aware quality signal)](./friction-feedback-loop.md) | `Complete` | built Clusters A–C 2026-06-28; `/audit-code` R1 found 8 genuine in-scope bugs — all fixed; consolidated… |

@@ -39,6 +39,14 @@ export function incompleteSources(status) {
   return out;
 }
 
+/** "2 merged into base, 5 idle > 14 days" — the reasons `splitHidden` counted. */
+function hiddenWhy(h) {
+  const parts = [];
+  if (h.merged) parts.push(`${h.merged} merged into base`);
+  if (h.idle) parts.push(`${h.idle} idle > ${h.idleDays ?? '?'} day${h.idleDays === 1 ? '' : 's'}`);
+  return parts.length ? parts.join(', ') : 'stale / merged';
+}
+
 /** @param {object} it a status item */
 function itemBlock(it) {
   const lines = [];
@@ -57,6 +65,14 @@ function itemBlock(it) {
   for (const o of it.overlaps) {
     const what = o.files.length ? ` on ${o.files.join(', ')}` : '';
     lines.push(`    overlaps ${o.with} (${o.via.join('+')})${what}${o.known ? ' [known]' : ''}`);
+  }
+  if (it.overlapsWithHidden?.length) {
+    lines.push(`    + overlaps ${it.overlapsWithHidden.length} hidden item${it.overlapsWithHidden.length === 1 ? '' : 's'} — use --all`);
+  }
+  if (it.hotOverlaps?.length) {
+    const files = [...new Set(it.hotOverlaps.flatMap((o) => o.files))];
+    const n = it.hotOverlaps.length;
+    lines.push(`    hot files shared with ${n} item${n === 1 ? '' : 's'}: ${files.slice(0, 5).join(', ')}${files.length > 5 ? ` +${files.length - 5} more` : ''} (not counted as conflicts)`);
   }
   if (it.duplicates.length) lines.push(`    DUPLICATE patch with ${it.duplicates.join(', ')}`);
   for (const f of it.findings) lines.push(`    ${f.level}: ${f.message}`);
@@ -114,8 +130,8 @@ export function renderStatus(status, { hidden } = {}) {
     else out.push(`(nothing found — but ${missing.length} source${missing.length === 1 ? ' was' : 's were'} not fully queried: ${missing.join(', ')})`);
   }
   for (const it of status.items) out.push(itemBlock(it));
-  if (hidden?.count) out.push(`${hidden.count} hidden (stale / merged) — use --all`);
-  if (hidden?.unchecked) out.push(`${hidden.unchecked} merged-looking worktree${hidden.unchecked === 1 ? '' : 's'} shown: cleanliness unchecked`);
+  if (hidden?.count) out.push(`${hidden.count} hidden (${hiddenWhy(hidden)}) — use --all`);
+  if (hidden?.unchecked) out.push(`${hidden.unchecked} merged- or idle-looking worktree${hidden.unchecked === 1 ? '' : 's'} shown: cleanliness unchecked`);
   if (status.landingOrder.length) out.push('', `proposed landing order: ${status.landingOrder.join(' → ')}`);
   for (const c of status.cycles) out.push(`waiting cycle: ${c.join(' ↔ ')} (ordered by id for display only)`);
   for (const t of status.trains) out.push(`train ${t.trainId}: ${t.phase}${t.result ? ` (${t.result})` : ''}`);
@@ -141,7 +157,8 @@ export function renderClaimVerdict(v, ctx = {}) {
     if (c.paths?.length) detail.push(`paths ${c.paths.slice(0, 3).map(([a, b]) => `${a} ~ ${b}`).join(', ')}`);
     if (c.files?.length) detail.push(`files ${c.files.slice(0, 5).join(', ')}`);
     if (c.via.includes('intent')) detail.push('identical intent');
-    lines.push(`  ${c.known ? '[known] ' : ''}${c.with}: ${c.via.join('+')}${detail.length ? ` — ${detail.join('; ')}` : ''}`);
+    if (c.hotFiles?.length) detail.push(`hot files ${c.hotFiles.slice(0, 5).join(', ')} (${c.hotOnly ? 'disclosed, not blocking' : 'not counted'})`);
+    lines.push(`  ${c.known ? '[known] ' : ''}${c.hotOnly ? '[hot] ' : ''}${c.with}: ${c.via.join('+')}${detail.length ? ` — ${detail.join('; ')}` : ''}`);
   }
   return lines.join('\n');
 }

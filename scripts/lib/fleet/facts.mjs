@@ -18,7 +18,9 @@ import {
 import { listPullRequests, prLocalRef } from './gh-facts.mjs';
 import { ConfigError } from './config.mjs';
 import { fleetDir, readSessions, readHold, listTrains } from './registry.mjs';
-import { DEFAULT_LEASE_MS, buildStatus, checkBlocksApproval, liveness } from './overlap.mjs';
+import {
+  DEFAULT_LEASE_MS, buildStatus, checkBlocksApproval, idleMsFrom, isIdleTip, liveness,
+} from './overlap.mjs';
 import { buildCheckPayload, resultsToFindings, runChecks } from './checks.mjs';
 
 /**
@@ -170,7 +172,8 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
   }
   const worktreeList = worktrees ? listWorktrees(cwd) : { queried: false, reason: 'not requested', worktrees: [] };
   return {
-    worktreeClean: probeWorktreeCleanliness({ branches, worktreeList, base, registry }),
+    worktreeClean: probeWorktreeCleanliness({ branches, worktreeList, base, registry, now, idleMs: idleMsFrom(config) }),
+    hotFiles: config.hotFiles ?? [],
     findings, evidenceNotes, prTrusted, dir, now, leaseMs: leaseMsFrom(env), baseOid: baseOidSnap ?? (() => { const h = headOf(cwd, `refs/heads/${base}`); return h.ok ? h.oid : null; })(),
     base: { name: base, upstream: up.upstream, freshness: baseFreshness(cwd, { base, upstream: up.upstream }), measure },
     registry, hold: readHold(dir), trains: trainsRead.trains, trainsInvalid: trainsRead.invalid,
@@ -185,20 +188,23 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
 export const CLEAN_PROBE = Object.freeze({ timeoutMs: 5_000, maxCandidates: 20, deadlineMs: 15_000 });
 
 /**
- * For each UNTRACKED ahead-0 branch that has a worktree, is that worktree clean?
+ * For each UNTRACKED branch the default view could hide (ahead 0, or a known ahead
+ * count with a tip older than `idleMs`) that has a worktree, is that worktree clean?
  * `{[path]: true|false|null}`; `null` = could not be established (probe failed,
  * timed out, over the cap, or past the aggregate deadline) and keeps the item
  * visible. Sequential probes through `runGit`, the deadline checked before each,
  * so the worst case is deadline + one timeout — never N x timeout.
- * @param {{branches: object, worktreeList: object, registry: object, base: string, clock?: () => number}} a
+ * @param {{branches: object, worktreeList: object, registry: object, base: string, now?: Date|number|null,
+ *   idleMs?: number, clock?: () => number}} a - without `now`/`idleMs` only ahead-0 branches are candidates
  */
-export function probeWorktreeCleanliness({ branches, worktreeList, registry, base, clock = Date.now, probe = (p) => runGit(['status', '--porcelain', '--untracked-files=normal'], p, { timeoutMs: CLEAN_PROBE.timeoutMs }) }) {
+export function probeWorktreeCleanliness({ branches, worktreeList, registry, base, now = null, idleMs = 0, clock = Date.now, probe = (p) => runGit(['status', '--porcelain', '--untracked-files=normal'], p, { timeoutMs: CLEAN_PROBE.timeoutMs }) }) {
   const out = {};
   if (!branches?.queried || !worktreeList?.queried) return out;
   const tracked = new Set((registry?.sessions ?? []).map((s) => s.source?.branch).filter(Boolean));
   const candidates = [];
   for (const b of branches.branches ?? []) {
-    if (b.name === base || tracked.has(b.name) || b.ahead !== 0) continue;
+    const hideable = b.ahead === 0 || (Number.isInteger(b.ahead) && isIdleTip(b.tipTime, now, idleMs));
+    if (b.name === base || tracked.has(b.name) || !hideable) continue;
     const wt = (worktreeList.worktrees ?? []).find((w) => w.branch === b.name && !w.bare);
     if (wt) candidates.push(wt.path);
   }
@@ -219,7 +225,10 @@ export function payloadFromStatus(status) {
   }));
   const overlaps = [];
   for (const i of status.items) for (const o of i.overlaps) if (i.id < o.with) overlaps.push({ a: i.id, b: o.with, via: o.via, files: o.files, known: o.known });
-  return { sessions, overlaps };
+  // Hot-files-only evidence is NOT in `overlaps` (it is not a conflict) but stays visible to the hook.
+  const hotOverlaps = [];
+  for (const i of status.items) for (const o of i.hotOverlaps ?? []) if (i.id < o.with) hotOverlaps.push({ a: i.id, b: o.with, files: o.files });
+  return { sessions, overlaps, hotOverlaps };
 }
 
 /**

@@ -6,7 +6,7 @@
  *   - `prs:false` — no `gh` call; the card says "PRs: not queried".
  *   - `checks:false` — the `.fleet.json` extension hook is CONSUMER code and a
  *     dashboard build must not execute it. The config handed to `gatherFacts` also
- *     carries only `baseBranch`, never the hook list.
+ *     carries only `baseBranch` and the `hotFiles` patterns (data), never the hook list.
  *   - `maxBranches: 30` — bounds the per-branch git calls; the overflow is listed as
  *     "+N not analysed", never silently skipped.
  * Rows are capped at 15 with a true "+N more".
@@ -25,6 +25,16 @@ export const INFLIGHT_ROW_CAP = 15;
 export const INFLIGHT_MAX_BRANCHES = 30;
 export const PRS_NOTE = 'PRs: not queried (not requested for the dashboard build)';
 
+/**
+ * Is a status item "in flight" for the card? The integration checkout itself is not, and
+ * neither is a branch MEASURED to have nothing ahead. An unknown count (`ahead: null`) is
+ * not "nothing ahead" — it stays, the same unknown-keeps-visible rule `fleet status` uses.
+ */
+export function isInFlight(item, baseName) {
+  if (item.branch === baseName && item.kind === 'worktree') return false;
+  return !(item.kind === 'branch' && item.ahead === 0);
+}
+
 /** A readable, bounded label for a row: the branch, else the worktree path. */
 const labelOf = (i) => clip(i.branch ?? i.worktree ?? i.id, 400);
 
@@ -36,13 +46,12 @@ export function collectInflight(root, { now = new Date(), env = process.env } = 
   const base = { id: 'inflight', label: 'In flight', card: 'inflight', asOf: now.toISOString(), source: 'git worktree/branch facts (fleet gatherFacts, PRs and checks off)' };
   try {
     const cfg = resolveConfig(root, { env });
-    // Only `baseBranch` crosses: the consumer-owned `checks` hook list must not.
-    const config = { baseBranch: cfg.baseBranch };
+    // Only `baseBranch` and the `hotFiles` patterns (data) cross: the consumer-owned `checks` hook list must not.
+    const config = { baseBranch: cfg.baseBranch, hotFiles: cfg.hotFiles };
     const facts = gatherFacts({ cwd: root, config, now, env, prs: false, checks: false, maxBranches: INFLIGHT_MAX_BRANCHES });
     const status = buildStatusFrom(facts);
     const baseName = cfg.baseBranch;
-    // The integration checkout itself, and branches with nothing ahead, are not "in flight".
-    const items = status.items.filter((i) => !(i.branch === baseName && i.kind === 'worktree') && !(i.kind === 'branch' && !(i.ahead > 0)));
+    const items = status.items.filter((i) => isInFlight(i, baseName));
     const rows = items.slice(0, INFLIGHT_ROW_CAP).map((i) => ({
       id: clip(i.id), kind: i.kind, label: labelOf(i), ahead: i.ahead ?? null, behind: i.behind ?? null,
       state: clip(i.display ?? i.state ?? ''), overlaps: (i.overlaps ?? []).length,

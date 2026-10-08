@@ -70,9 +70,11 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
    from the FRESHER of the local base and its upstream, so neither a base that moved
    on nor a local base that trails `origin` makes a branch look like it touched
    files it did not. A diverged base is named, with overlaps flagged maybe-phantom.
-   Untracked branches already merged into base (ahead 0, no open PR, clean or no
-   worktree) are hidden with one `N hidden` line; `--all` shows them. Registered
-   sessions are never hidden, and anything not proven stale stays visible.
+   Untracked branches already merged into base (ahead 0) or idle (no commit for
+   `hideIdleAfterDays`, default 14) with no open PR and a clean or no worktree
+   are hidden with one `N hidden` line, and overlaps into them fold to a count;
+   `--all` shows them. Registered sessions are never hidden, and anything not
+   proven stale (unknown tip time, PRs not queried) stays visible.
 4. **Land** — `land` builds an integration worktree off the base, applies every
    ready head, runs the configured test command once (rerun once if red) and
    prints the result plus the exact approve command. It never touches the base.
@@ -121,6 +123,12 @@ A monorepo with a long chain:
   "checks": [ { "name": "semantic-collisions", "script": "scripts/<your-check>.mjs",
                 "runIn": ["status", "land"], "severity": "block" } ] }
 ```
+
+`hotFiles` (claim-grammar patterns, e.g. `["domainBudgets.json", "**/tech-debt.json"]`)
+declares files nearly every branch touches. An overlap made ONLY of hot files is
+listed apart (`hot files shared with N items`, `[hot]` on a claim) and never
+counts as a conflict or blocks a claim; mixed evidence still blocks. A wildcard
+claim pair stays a conflict even when it covers a hot file. Relay `[hot]` lines.
 
 A tier or a check may carry an optional `"note"` (one line, at most 300
 characters) saying why it is shaped that way, e.g. why a tier is `post-merge`.

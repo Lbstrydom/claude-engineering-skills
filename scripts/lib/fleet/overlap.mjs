@@ -26,7 +26,7 @@ export const DEFAULT_SKEW_MS = 5 * 60 * 1000;
 export function toMs(v) {
   if (v === null || v === undefined) return null;
   if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-  if (v instanceof Date) return v.getTime();
+  if (v instanceof Date) return Number.isFinite(v.getTime()) ? v.getTime() : null;
   const t = Date.parse(String(v));
   return Number.isFinite(t) ? t : null;
 }
@@ -158,6 +158,46 @@ export function fileOverlap(files, patterns) {
   return files.filter((f) => micromatch.isMatch(f, patterns, { dot: true, nocase: false }));
 }
 
+// ── Hot files (`.fleet.json` `hotFiles`) ────────────────────────────────────
+
+/**
+ * Hot files are files nearly every branch legitimately touches (ratchet
+ * baselines, debt ledgers). An overlap made ONLY of hot files is disclosed, never
+ * counted as a conflict and never blocking. Soundness: a changed FILE is hot when
+ * a hot pattern matches it; a claim PATTERN pair is hot-only only when one side is
+ * a LITERAL path (no `*`/`?`) that is itself hot — the pair's intersection is then
+ * at most that one file. A wildcard pair stays a real conflict even if it also
+ * covers a hot file, because it may cover non-hot files too.
+ */
+export function isHotFile(file, hotFiles) {
+  return Boolean(hotFiles?.length) && micromatch.isMatch(file, hotFiles, { dot: true, nocase: false });
+}
+
+const isLiteralPattern = (p) => typeof p === 'string' && !/[*?]/.test(p);
+
+/** @returns {string|null} the hot literal path when the pair `pa ~ pb` can only meet on it, else null */
+function hotLiteralOf(pa, pb, hotFiles) {
+  if (isLiteralPattern(pa) && isHotFile(pa, hotFiles)) return pa;
+  if (isLiteralPattern(pb) && isHotFile(pb, hotFiles)) return pb;
+  return null;
+}
+
+/** Partition files into real and hot. @returns {{real: string[], hot: string[]}} */
+export function splitHotFiles(files, hotFiles) {
+  const real = []; const hot = [];
+  for (const f of files ?? []) (isHotFile(f, hotFiles) ? hot : real).push(f);
+  return { real, hot };
+}
+
+/**
+ * Does a `decideClaim` conflict stop a new claim (and need an override)? A known
+ * overlap and a hot-files-only overlap do not; everything else does. The one
+ * predicate `claim`, `start` and the verdict itself use.
+ */
+export function isBlockingConflict(c) {
+  return !c.known && !c.hotOnly;
+}
+
 // ── Duplicates and liveness ─────────────────────────────────────────────────
 
 /**
@@ -227,9 +267,11 @@ export function claimMode(existing) {
  * @param {'new'|'adopt'} args.mode
  * @param {Array<{session: object, live: boolean, changedFiles?: string[]}>} args.others
  * @param {boolean} args.complete - registry completeness; false refuses for BOTH modes
+ * @param {string[]} [args.hotFiles] - `.fleet.json` `hotFiles`: evidence made only of these is disclosed
+ *   on the conflict (`hotFiles`, `hotOnly:true`) and never blocks; mixed evidence blocks as before
  * @returns {{ok: boolean, verdict: 'ok'|'warn'|'blocked'|'refused', conflicts: object[], reason?: string}}
  */
-export function decideClaim({ claim, mode, others, complete }) {
+export function decideClaim({ claim, mode, others, complete, hotFiles = [] }) {
   if (mode !== 'new' && mode !== 'adopt') throw new Error(`decideClaim: unknown mode ${JSON.stringify(mode)}`);
   if (!complete) return { ok: false, verdict: 'refused', conflicts: [], reason: 'registry incomplete' };
   const myIntent = normIntent(claim.intent);
@@ -240,21 +282,26 @@ export function decideClaim({ claim, mode, others, complete }) {
     if (!o.live || isTerminalState(s.state) || s.id === claim.id) continue;
     const via = [];
     const hit = { with: s.id, via, paths: [], files: [], known: false };
+    const hot = new Set();
     for (const pa of myPaths) {
       for (const pb of s.paths ?? []) {
-        if (patternsIntersect(pa, pb) !== 'disjoint') { hit.paths.push([pa, pb]); }
+        if (patternsIntersect(pa, pb) === 'disjoint') continue;
+        const lit = hotLiteralOf(pa, pb, hotFiles);
+        if (lit) hot.add(lit); else hit.paths.push([pa, pb]);
       }
     }
     if (hit.paths.length) via.push('paths');
     if (myIntent && myIntent === normIntent(s.intent)) via.push('intent');
-    const files = fileOverlap(o.changedFiles ?? [], myPaths);
-    if (files.length) { via.push('files'); hit.files = files; }
+    const { real, hot: hotChanged } = splitHotFiles(fileOverlap(o.changedFiles ?? [], myPaths), hotFiles);
+    if (real.length) { via.push('files'); hit.files = real; }
+    for (const f of hotChanged) hot.add(f);
+    if (hot.size) { via.push('hot-files'); hit.hotFiles = [...hot]; hit.hotOnly = via.length === 1; }
     if (!via.length) continue;
     hit.known = (claim.knownOverlaps ?? []).some((k) => k.with === s.id)
       || (s.knownOverlaps ?? []).some((k) => k.with === claim.id);
     conflicts.push(hit);
   }
-  const blocking = conflicts.filter((c) => !c.known);
+  const blocking = conflicts.filter(isBlockingConflict);
   if (mode === 'new' && blocking.length) return { ok: false, verdict: 'blocked', conflicts };
   if (mode === 'adopt' && blocking.length) return { ok: true, verdict: 'warn', conflicts };
   return { ok: true, verdict: 'ok', conflicts };
@@ -524,7 +571,7 @@ export function buildStatus(facts) {
       gen: s.gen, rev: s.rev, ready: s.ready ?? null, readyStale: display.startsWith('ready (stale'),
       ahead: b?.ahead ?? null, behind: b?.behind ?? null, pr, notes,
       waitingOn: (s.waitingOn ?? []).map((w) => waitingView(w, { byId, trains })),
-      overlaps: [], duplicates: [], findings: [],
+      overlaps: [], hotOverlaps: [], duplicates: [], findings: [],
     });
   }
 
@@ -538,10 +585,10 @@ export function buildStatus(facts) {
     const live = liveness({ state: 'working', leaseExpiresAt: null }, { now: nowMs, leaseMs, tipCommitAt: b.tipTime, skewMs });
     items.push({
       id: b.name, tracked: false, kind: 'branch', branch: b.name, oid: b.oid, worktree: wt?.path ?? null, worktreeState: wtState(wt),
-      intent: null, paths: [], state: 'untracked', display: 'untracked', live: live.live, liveReason: live.reason, stale: false,
+      intent: null, paths: [], state: 'untracked', display: 'untracked', live: live.live, liveReason: live.reason, stale: false, tipTime: b.tipTime ?? null,
       worktreeClean: wt ? (facts.worktreeClean?.[wt.path] ?? null) : null,
       gen: null, rev: null, ready: null, readyStale: false, ahead: b.ahead, behind: b.behind, pr,
-      notes: live.futureDatedTipIgnored ? ['future-dated commit ignored'] : [], waitingOn: [], overlaps: [], duplicates: [], findings: [],
+      notes: live.futureDatedTipIgnored ? ['future-dated commit ignored'] : [], waitingOn: [], overlaps: [], hotOverlaps: [], duplicates: [], findings: [],
     });
   }
   for (const w of worktrees) {
@@ -551,7 +598,7 @@ export function buildStatus(facts) {
       id: w.path, tracked: false, kind: 'worktree', branch: null, oid: w.head, worktree: w.path, worktreeState: wtState(w),
       intent: null, paths: [], state: 'untracked', display: 'untracked (detached worktree)', live: false, liveReason: 'stale', stale: false,
       gen: null, rev: null, ready: null, readyStale: false, ahead: null, behind: null, pr: null, notes: [], waitingOn: [],
-      overlaps: [], duplicates: [], findings: [],
+      overlaps: [], hotOverlaps: [], duplicates: [], findings: [],
     });
   }
   // Open PRs with no local counterpart: shown, never dropped.
@@ -561,22 +608,37 @@ export function buildStatus(facts) {
       id: `#${p.number}`, tracked: false, kind: 'remote-only', branch: p.headRef, oid: p.headOid, worktree: null, worktreeState: null,
       intent: p.title, paths: [], state: 'remote-only', display: 'remote-only — not landable by fleet', live: false, liveReason: 'stale',
       stale: false, gen: null, rev: null, ready: null, readyStale: false, ahead: null, behind: null, pr: p,
-      notes: [], waitingOn: [], overlaps: [], duplicates: [], findings: [],
+      notes: [], waitingOn: [], overlaps: [], hotOverlaps: [], duplicates: [], findings: [],
     });
   }
 
-  // Overlaps among non-terminal local items: shared changed files, or declared paths.
+  // Overlaps among non-terminal local items: shared changed files, or declared paths. Evidence made
+  // only of `hotFiles` goes to `hotOverlaps` (disclosed, not counted as a conflict anywhere).
+  const hotFiles = facts.hotFiles ?? [];
   const active = items.filter((i) => i.branch && i.kind !== 'remote-only' && !isTerminalState(i.state));
   const changedOf = (i) => (facts.changed?.[i.branch]?.queried ? facts.changed[i.branch].files ?? [] : []);
   for (let x = 0; x < active.length; x += 1) {
     for (let y = x + 1; y < active.length; y += 1) {
       const a = active[x]; const b = active[y];
-      const via = []; let files = [];
+      const via = [];
       const setB = new Set(changedOf(b));
-      files = changedOf(a).filter((f) => setB.has(f));
+      const { real: files, hot: hotShared } = splitHotFiles(changedOf(a).filter((f) => setB.has(f)), hotFiles);
       if (files.length) via.push('files');
-      const declared = a.paths.some((pa) => b.paths.some((pb) => patternsIntersect(pa, pb) !== 'disjoint'));
+      const hot = new Set(hotShared);
+      let declared = false;
+      for (const pa of a.paths) {
+        for (const pb of b.paths) {
+          if (patternsIntersect(pa, pb) === 'disjoint') continue;
+          const lit = hotLiteralOf(pa, pb, hotFiles);
+          if (lit) hot.add(lit); else declared = true;
+        }
+      }
       if (declared) via.push('paths');
+      if (hot.size) {
+        const hf = [...hot].slice(0, 5);
+        a.hotOverlaps.push({ with: b.id, files: hf });
+        b.hotOverlaps.push({ with: a.id, files: hf });
+      }
       if (!via.length) continue;
       const sa = byId.get(a.id); const sb = byId.get(b.id);
       const known = (sa?.knownOverlaps ?? []).some((k) => k.with === b.id) || (sb?.knownOverlaps ?? []).some((k) => k.with === a.id);
@@ -624,46 +686,88 @@ export function buildStatus(facts) {
   };
 }
 
+// ── The default view's hiding rule ──────────────────────────────────────────
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** `.fleet.json` `hideIdleAfterDays` default: an untracked branch with no commit for this long reads as abandoned. */
+export const DEFAULT_IDLE_DAYS = 14;
+
+/** The idle window in ms from a resolved config (`hideIdleAfterDays`, else the default). */
+export const idleMsFrom = (config) => (config?.hideIdleAfterDays ?? DEFAULT_IDLE_DAYS) * DAY_MS;
+
 /**
- * Is this an untracked branch whose work is provably over? Hidden from the
- * DEFAULT `fleet status` view only, and only on sufficient evidence — every
- * unknown keeps the item visible:
- *   - `ahead === 0`: the tip is contained in base (commit containment, a git fact;
- *     `null` = counts unavailable = not stale);
+ * Is a branch tip older than the idle window? Every unknown answers false: a
+ * missing tip time or clock, a non-positive window, and a FUTURE-dated tip (the
+ * age is negative) all keep the branch visible.
+ */
+export function isIdleTip(tipTime, now, idleMs) {
+  const tip = toMs(tipTime); const n = toMs(now);
+  return tip !== null && n !== null && Number.isFinite(idleMs) && idleMs > 0 && n - tip > idleMs;
+}
+
+/**
+ * Why the DEFAULT `fleet status` view may hide an item — `'merged'`, `'idle'` —
+ * or null when it must stay visible. Only on sufficient evidence; every unknown
+ * keeps the item visible. Common to both reasons:
+ *   - untracked (no registration), a local branch (never a detached worktree or a
+ *     remote-only PR);
  *   - no open PR, AND the PR lookup was complete (`pr === null` only means "no
  *     open PR" when the list was queried and not truncated);
  *   - an attached worktree must be provably CLEAN (`worktreeClean === true`):
- *     ahead 0 is containment, not inactivity.
- * Registered sessions, detached worktrees and remote-only PRs are never stale.
+ *     neither containment nor an old tip says nobody is editing it.
+ * Then either:
+ *   - `merged`: `ahead === 0` — the tip is contained in base (`null` = counts
+ *     unavailable = not hidden);
+ *   - `idle`: ahead count KNOWN and the tip commit older than `idleMs`
+ *     (squash-merged or abandoned work still reads as ahead). A tip time that is
+ *     missing or future-dated is not idle.
  * @param {object} item a status item
- * @param {{prsComplete: boolean}} ctx
+ * @param {{prsComplete: boolean, now?: number|string|Date|null, idleMs?: number}} ctx
+ * @returns {'merged'|'idle'|null}
  */
-export function isStaleUntracked(item, { prsComplete }) {
-  return item.tracked === false && item.kind === 'branch' && item.ahead === 0
-    && item.pr === null && prsComplete === true
-    && (item.worktree === null || item.worktreeClean === true);
+export function hideReason(item, { prsComplete, now = null, idleMs = DEFAULT_IDLE_DAYS * DAY_MS }) {
+  if (!(item.tracked === false && item.kind === 'branch' && item.pr === null && prsComplete === true)) return null;
+  if (!(item.worktree === null || item.worktreeClean === true)) return null;
+  if (item.ahead === 0) return 'merged';
+  if (Number.isInteger(item.ahead) && isIdleTip(item.tipTime, now, idleMs)) return 'idle';
+  return null;
 }
+
+/** Back-compatible boolean form of `hideReason`. */
+export function isStaleUntracked(item, ctx) { return hideReason(item, ctx) !== null; }
 
 /**
  * The `status` verb's presentation boundary: split a COMPLETE `buildStatus`
  * result into the visible items and what the default view hides. `buildStatus`
- * itself stays complete (land and train-approve depend on that). Overlaps are
- * untouched by hiding: a hidden item is ahead-0, so it has no changed files and
- * no declared paths and can be on neither side of an overlap.
+ * itself stays complete (land and train-approve depend on that), and the input is
+ * never mutated. An IDLE hidden branch is ahead of base, so it can overlap a
+ * visible item: on the visible copy those overlaps (and hot overlaps) are folded
+ * into `overlapsWithHidden` (ids), rendered as one count line, never dropped.
  * @param {ReturnType<typeof buildStatus>} status
- * @param {{all?: boolean}} [opts]
- * @returns {{items: object[], hidden: {count: number, ids: string[], unchecked: number}}}
+ * @param {{all?: boolean, idleMs?: number}} [opts]
+ * @returns {{items: object[], hidden: {count: number, ids: string[], unchecked: number, merged: number, idle: number, idleDays: number}}}
  */
-export function splitHidden(status, { all = false } = {}) {
-  const prsComplete = status.sources?.prs?.complete === true;
-  const stale = (i) => isStaleUntracked(i, { prsComplete });
-  // ahead-0 candidates whose cleanliness could not be established stay visible, and are counted.
-  const unchecked = status.items.filter((i) => i.tracked === false && i.kind === 'branch' && i.ahead === 0
-    && i.pr === null && prsComplete && i.worktree !== null && i.worktreeClean === null).length;
-  if (all) return { items: status.items, hidden: { count: 0, ids: [], unchecked } };
-  const hiddenItems = status.items.filter(stale);
-  return {
-    items: status.items.filter((i) => !stale(i)),
-    hidden: { count: hiddenItems.length, ids: hiddenItems.map((i) => i.id), unchecked },
-  };
+export function splitHidden(status, { all = false, idleMs = DEFAULT_IDLE_DAYS * DAY_MS } = {}) {
+  const ctx = { prsComplete: status.sources?.prs?.complete === true, now: status.observedAt ?? null, idleMs };
+  const idleDays = Math.round((idleMs / DAY_MS) * 100) / 100;
+  // Candidates that would be hidden but for an attached worktree of unknown cleanliness: visible, and counted.
+  const unchecked = status.items.filter((i) => i.worktree !== null && i.worktreeClean === null
+    && hideReason({ ...i, worktreeClean: true }, ctx) !== null).length;
+  if (all) return { items: status.items, hidden: { count: 0, ids: [], unchecked, merged: 0, idle: 0, idleDays } };
+  const reasons = new Map();
+  for (const i of status.items) { const r = hideReason(i, ctx); if (r) reasons.set(i.id, r); }
+  const items = status.items.filter((i) => !reasons.has(i.id)).map((i) => {
+    const toHidden = (i.overlaps ?? []).filter((o) => reasons.has(o.with));
+    const hotToHidden = (i.hotOverlaps ?? []).filter((o) => reasons.has(o.with));
+    if (!toHidden.length && !hotToHidden.length) return i;
+    return {
+      ...i,
+      overlaps: i.overlaps.filter((o) => !reasons.has(o.with)),
+      hotOverlaps: i.hotOverlaps.filter((o) => !reasons.has(o.with)),
+      overlapsWithHidden: [...new Set([...toHidden, ...hotToHidden].map((o) => o.with))],
+    };
+  });
+  const ids = [...reasons.keys()];
+  const count = (r) => ids.filter((id) => reasons.get(id) === r).length;
+  return { items, hidden: { count: ids.length, ids, unchecked, merged: count('merged'), idle: count('idle'), idleDays } };
 }
