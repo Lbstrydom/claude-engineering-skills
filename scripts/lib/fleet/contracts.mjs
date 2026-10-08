@@ -58,6 +58,14 @@ export const NoteSchema = z.string()
   .refine((s) => !CONTROL_CHARS_RE.test(s), 'note must be a single line without control characters')
   .pipe(z.string().trim().min(1, 'note must not be blank').max(NOTE_MAX, `note must be at most ${NOTE_MAX} characters`));
 
+/**
+ * The largest delay Node's timers honour (2^31 - 1 ms, ~24.8 days). A larger value is not
+ * clamped: Node warns and fires after 1 ms, so a "very long" timeout would time out at once.
+ * Enforced on USER config only — the persisted manifest schema stays as it was, so a train
+ * written before the bound still reads.
+ */
+export const MAX_TIMER_MS = 2_147_483_647;
+
 export const TierSchema = z.strictObject({
   name: z.string().regex(TIER_NAME_RE, 'must match [a-z0-9][a-z0-9_-]*'),
   command: argvSchema({ min: 1 }),

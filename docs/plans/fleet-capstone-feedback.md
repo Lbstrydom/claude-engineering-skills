@@ -129,3 +129,16 @@ weighting of overlaps.
   `pkg/?.json` case was added); dropping the status hot split fails 4; dropping the
   overlap fold fails 2. Restored: 43/43 pass. The existing fleet suites: 362 pass, the
   2 storyline assertions on the old `hidden` shape/wording updated.
+- **/audit-code (session audit-code-1791459567, 2026-10-08, after merging main/#168)**: GPT R1
+  H:3 M:5 L:1 → 4 fixed (H1 timer-limit bound on both user-config timeout sites with the
+  persisted manifest schema left unbounded; H2/H3 Home in-flight kept an UNKNOWN ahead count,
+  via an extracted `isInFlight`; L1 `toMs(invalid Date)` → null), 5 deferred to the debt
+  ledger as independent pre-existing debt (claim-path branch analysis cost, non-transactional
+  hydrate recipe, win32 stray descendants, `gatherFacts` length, adjacency-wave cap). R2 (full
+  PR diff): H:1, pre-existing supervisor lifecycle in `checks.mjs`, deferred (independent; this
+  PR only adds a payload key there). Each fix proven red-then-green by reverting it.
+  **Coverage, stated:** every GPT pass head-cuts a file at 2–8k characters, so neither round
+  read the bulk of the `overlap.mjs` change. The Gemini final gate (gemini-flash-latest) R1 read
+  commands/config/contracts/Home in full but budget-omitted the rest; R2 was narrowed to the five
+  unread source files and read all five in full. Both rounds **APPROVE** (blocking 0, new 0,
+  wrongly dismissed 0).

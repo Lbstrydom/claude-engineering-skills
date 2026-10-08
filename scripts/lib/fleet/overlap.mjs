@@ -26,7 +26,7 @@ export const DEFAULT_SKEW_MS = 5 * 60 * 1000;
 export function toMs(v) {
   if (v === null || v === undefined) return null;
   if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-  if (v instanceof Date) return v.getTime();
+  if (v instanceof Date) return Number.isFinite(v.getTime()) ? v.getTime() : null;
   const t = Date.parse(String(v));
   return Number.isFinite(t) ? t : null;
 }

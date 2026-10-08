@@ -374,3 +374,33 @@ describe('fleet CLI — idle hiding and hot files, end to end', () => {
     assert.match(r.stdout, /BLOCKED for b/);
   });
 });
+
+// ── /audit-code round-1 fixes (session audit-code-1791459567) ───────────────
+describe('audit R1 fixes', () => {
+  it('H2/H3 Home in-flight: an UNKNOWN ahead count stays; a measured zero is dropped (control)', async () => {
+    const { isInFlight } = await import('../scripts/lib/dashboard/collect-home-inflight.mjs');
+    assert.equal(isInFlight({ kind: 'branch', branch: 'x', ahead: null }, 'main'), true, 'unknown is not "nothing ahead"');
+    assert.equal(isInFlight({ kind: 'branch', branch: 'x', ahead: 0 }, 'main'), false);
+    assert.equal(isInFlight({ kind: 'branch', branch: 'x', ahead: 3 }, 'main'), true);
+    assert.equal(isInFlight({ kind: 'worktree', branch: 'main', ahead: null }, 'main'), false, 'the integration checkout itself');
+  });
+  it('L1 toMs: an invalid Date is null like every other invalid input, so isIdleTip reads it as unknown', async () => {
+    const { toMs } = await import('../scripts/lib/fleet/overlap.mjs');
+    assert.equal(toMs(new Date('nope')), null);
+    assert.equal(toMs(new Date(NOW)), NOW, 'control: a valid Date passes through');
+    assert.equal(isIdleTip(new Date('nope'), NOW, IDLE_MS), false);
+  });
+  it('H1 a user-config timeout above Node\'s timer limit is refused (check and tier); the limit itself is accepted', async () => {
+    const { MAX_TIMER_MS, TierSchema } = await import('../scripts/lib/fleet/contracts.mjs');
+    const check = (t) => parseFleetConfig({ checks: [{ name: 'c', script: 'scripts/c.mjs', timeoutMs: t }] });
+    const tier = (t) => parseFleetConfig({ testCommand: { tiers: [{ name: 'u', command: ['npm', 'test'], timeoutMs: t }] } });
+    for (const p of [check, tier]) {
+      assert.equal(p(MAX_TIMER_MS).ok, true);
+      const r = p(MAX_TIMER_MS + 1);
+      assert.equal(r.ok, false);
+      assert.match(r.errors.join('\n'), /timer limit/);
+    }
+    // The PERSISTED tier schema is deliberately unbounded, so a manifest written before the bound still reads.
+    assert.equal(TierSchema.safeParse({ name: 'u', command: ['x'], timeoutMs: MAX_TIMER_MS + 1 }).success, true);
+  });
+});

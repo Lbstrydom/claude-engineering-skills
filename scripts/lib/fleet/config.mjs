@@ -33,7 +33,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { runGit, gitCommonDir, repoToplevel } from './git-facts.mjs';
 import { DEFAULT_IDLE_DAYS, validateClaimPattern } from './overlap.mjs';
-import { MERGE_METHODS, NoteSchema, TIER_NAME_RE, TierSchema as PersistedTierSchema, argvSchema, isInside } from './contracts.mjs';
+import { MAX_TIMER_MS, MERGE_METHODS, NoteSchema, TIER_NAME_RE, TierSchema as PersistedTierSchema, argvSchema, isInside } from './contracts.mjs';
 
 export { MERGE_METHODS };
 const SAFE_TOKEN = /^[A-Za-z0-9_@%+=:,./\\-]+$/;
@@ -48,11 +48,11 @@ export class ConfigError extends Error {
   }
 }
 
-const timeout = () => z.number().int().positive();
+const timeout = () => z.number().int().positive().max(MAX_TIMER_MS, `must be at most ${MAX_TIMER_MS} ms (Node's timer limit)`);
 export const MAX_HOT_FILES = 200;
 
 /** User-facing tier: the persisted tier minus `shell` (only a string testCommand may set it). */
-const TierSchema = PersistedTierSchema.omit({ shell: true });
+const TierSchema = PersistedTierSchema.omit({ shell: true }).extend({ timeoutMs: timeout().optional() });
 
 const CheckSchema = z.strictObject({
   name: z.string().regex(TIER_NAME_RE, 'must match [a-z0-9][a-z0-9_-]*'),
