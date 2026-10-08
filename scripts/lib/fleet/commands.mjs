@@ -146,7 +146,7 @@ export function cmdClaim(ctx, flags) {
   const waiting = waitingFromFlags(flags, ctx);
   const branch = currentBranch(ctx.cwd);
   const top = repoToplevel(ctx.cwd);
-  const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: false });
+  const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: false, untracked: false });
   const start = startOidFor(ctx, branch, facts.base.measure);
   const startOid = start.ok ? start.oid : null; // claim stays lenient but never substitutes; the reason is surfaced below
 
@@ -208,7 +208,7 @@ export function cmdAdd(ctx, flags, positionals) {
   if (flags['--all'] && positionals.length) throw new ArgvError('fleet add: pass a branch/#PR OR --all, not both');
   if (!flags['--all'] && !positionals.length) throw new ArgvError('fleet add: pass a branch, #<PR> or --all');
   if (flags['--all'] && flags['--id']) throw new ArgvError('fleet add: --id cannot be combined with --all');
-  const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: Boolean(positionals[0]?.startsWith('#')), patches: false, worktrees: false });
+  const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: Boolean(positionals[0]?.startsWith('#')), patches: false, worktrees: false, untracked: false });
   const targets = [];
   const base = ctx.config.baseBranch;
   if (flags['--all']) {
@@ -279,7 +279,7 @@ export function cmdAdd(ctx, flags, positionals) {
 export function cmdReady(ctx, flags) {
   const id = selfId(ctx, flags);
   const waiting = waitingFromFlags(flags, ctx);
-  const readyFacts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: false });
+  const readyFacts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: false, untracked: false });
   const peek = readyFacts.registry.sessions.find((s) => s.id === id);
   if (!peek || isTerminalState(peek.state)) return refused(`no live session ${id} — run \`${ctx.cmd} claim\` first`);
   let oid;
@@ -383,7 +383,7 @@ export function cmdStart(ctx, tasks) {
     const pv = validateClaimPatterns(t.paths);
     if (!pv.ok) throw new ArgvError(`fleet start: task ${JSON.stringify(t.task)}: ${pv.errors.join('; ')}`);
   }
-  const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: false });
+  const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: false, untracked: false });
   // Chips start from the base the overlaps were measured against: the fresher of local and upstream.
   const base = facts.base.measure;
   if (!base.ok) return failed(`cannot resolve the base branch ${ctx.config.baseBranch}: ${base.reason}`);
