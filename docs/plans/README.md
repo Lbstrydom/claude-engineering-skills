@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**6 active · 233 terminal · 32 audit summaries · 1 parked · 5 reference docs**
+**6 active · 234 terminal · 32 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -57,7 +57,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 230 completed plans</summary>
+<summary>Show all 231 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -156,6 +156,7 @@ source comments that no docs linter sees — stays valid.
 | [/fleet — idle-branch hiding and hot files (capstone consumer feedback)](./fleet-capstone-feedback.md) | `Complete` |  |
 | [/fleet — coordinating several concurrent AI coding sessions](./fleet-multi-session-coordination.md) | `Complete` |  |
 | [/fleet — four fixes from the storyline consumer's first real use](./fleet-storyline-feedback.md) | `Complete` |  |
+| [/fleet — supervisors end promptly and reap what an exited hook/tier left behind](./fleet-supervisor-lifecycle.md) | `Complete` |  |
 | [Friction-Feedback Loop (recurrence-aware quality signal)](./friction-feedback-loop.md) | `Complete` | built Clusters A–C 2026-06-28; `/audit-code` R1 found 8 genuine in-scope bugs — all fixed; consolidated… |
 | [Friction Log + Weekly Digest Surface (v1)](./friction-log-and-digest-v1.md) | `Complete` | shipped 2026-05-09; schema applied to live Supabase; auto-archived via `/ship` Step 5.5 |
 | [Gate-contract authoring — bind the surveyed gates, ratchet the rest](./gate-contract-authoring.md) | `Complete` |  |
