@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "9c7d57202c665616",
+  "bundleVersion": "1497cbe8899c28e6",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -263,8 +263,8 @@
         },
         {
           "relPath": "references/participant-rules.md",
-          "sha": "e41b84390ad2",
-          "size": 1939
+          "sha": "692a155a6751",
+          "size": 2152
         }
       ]
     },
