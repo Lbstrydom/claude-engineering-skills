@@ -30,6 +30,7 @@ import { z } from 'zod';
 import { canonicalizeEol } from '../file-io.mjs';
 import { isInside } from './contracts.mjs';
 import { checkBlocksApproval } from './overlap.mjs';
+import { KILL_LINUX_HOLDERS_JS, REAP_WIN_ORPHANS_JS } from './reap.mjs';
 
 const FindingSchema = z.strictObject({
   level: z.enum(['info', 'warn', 'block']),
@@ -96,8 +97,14 @@ const STDERR_CAP = 64 * 1024; // only the TAIL of stderr matters (see stderrTail
  *  - On timeout, or when stdout overflows its cap, it kills the whole tree.
  *  - A hook that has EXITED is done: anything it left running is a leak, which is
  *    terminated - never waited on. On POSIX the group is always killed once the hook
- *    has exited (a descendant holding no pipe is reaped too); on win32 orphaned
- *    descendants holding the pipes are found by ParentProcessId (a quiet one is not).
+ *    has exited (a descendant holding no pipe is reaped too); on win32 the exited
+ *    hook's descendants are found by ParentProcessId, which Windows keeps after the
+ *    parent dies (`reap.mjs`, pid-reuse guarded) - quiet ones included. On Linux a
+ *    descendant that ESCAPED the group but still holds the hook's pipes is found
+ *    through /proc and killed.
+ *  - Once its result is written the supervisor EXITS: a leftover still holding the
+ *    hook's pipes can never keep it (and so the check) running until the outer
+ *    spawnSync timeout turns a finished check into "timed out".
  *  - Output is kept as Buffers, bounded, and decoded ONCE at the end, so a
  *    multi-byte character split across chunks survives.
  * It is a tiny node program run via process.execPath that relays stdin and prints
@@ -105,9 +112,12 @@ const STDERR_CAP = 64 * 1024; // only the TAIL of stderr matters (see stderrTail
  */
 const SUPERVISOR = `
 const cfg = JSON.parse(process.argv[1]);
+${REAP_WIN_ORPHANS_JS}
+${KILL_LINUX_HOLDERS_JS}
 const { spawn, spawnSync } = require('node:child_process');
 const win = process.platform === 'win32';
 const child = spawn(cfg.argv[0], cfg.argv.slice(1), { cwd: cfg.cwd, shell: false, windowsHide: true, detached: !win, stdio: ['pipe', 'pipe', 'pipe'] });
+const childEnds = linuxStdioEnds(child.pid); // the hook's own stdio ends, read while it is certainly alive
 const outChunks = []; let outLen = 0; let outOver = false;
 let errChunks = []; let errLen = 0;
 let done = false, closed = false, timedOut = false, spawnErr = null, exitInfo = null;
@@ -131,37 +141,36 @@ function killTree() {
     else process.kill(-child.pid, 'SIGKILL');
   } catch { /* nothing left to kill */ }
 }
-// Same guarantee and limit as killTree, applied after the hook itself has exited.
+// Applied after the hook itself has exited: its group (POSIX) / its orphaned descendants (win32).
 function killLeftovers() {
-  try {
-    if (win) {
-      const ps = 'function K($p){ Get-CimInstance Win32_Process -Filter "ParentProcessId=$p" | ForEach-Object { K $_.ProcessId; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }; K ' + child.pid;
-      spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, shell: false, timeout: 10000 });
-    } else process.kill(-child.pid, 'SIGKILL');
-  } catch { /* nothing left to kill */ }
+  if (win) { reapWinOrphans(child.pid, 10000); return; }
+  try { process.kill(-child.pid, 'SIGKILL'); } catch { /* nothing left to kill */ }
 }
 function finish() {
   if (done) return; done = true; clearTimeout(timer);
   const tail = Buffer.concat(errChunks);
+  // Release the hook's pipes and END once the result has drained: anything still holding them
+  // must not keep this process alive (see the header).
+  for (const s of [child.stdout, child.stderr, child.stdin]) { try { s && s.destroy(); } catch { /* closed */ } }
   process.stdout.write(JSON.stringify({
     status: exitInfo ? exitInfo[0] : null, signal: exitInfo ? exitInfo[1] : null, timedOut, outOver, error: spawnErr,
     stdout: Buffer.concat(outChunks).toString('utf8'),
     stderr: (tail.length > cfg.stderrCap ? tail.subarray(tail.length - cfg.stderrCap) : tail).toString('utf8'),
-  }));
+  }), () => process.exit(0));
 }
 const timer = setTimeout(() => { timedOut = true; killTree(); }, cfg.timeoutMs);
 child.on('error', (e) => { spawnErr = { code: e.code, message: e.message }; finish(); });
 child.on('close', () => {
   closed = true;
-  // The pipes closing says nothing about descendants that do not hold them (ignored stdio, unref'd):
-  // reap the group on POSIX regardless. (win32: the parent link is gone once the hook exited.)
-  if (!win) killLeftovers();
+  // The pipes closing says nothing about descendants that do not hold them (ignored stdio, unref'd,
+  // detached): reap them on every platform.
+  killLeftovers();
   finish();
 });
 child.on('exit', (status, signal) => {
   exitInfo = [status, signal];
   // Normally the pipes close right away. If they do not, a descendant is holding them: kill it.
-  setTimeout(() => { if (!closed) { killLeftovers(); setTimeout(finish, 1000); } }, 150).unref();
+  setTimeout(() => { if (!closed) { killLeftovers(); killLinuxHolders(childEnds); setTimeout(finish, 1000); } }, 150).unref();
 });
 `;
 

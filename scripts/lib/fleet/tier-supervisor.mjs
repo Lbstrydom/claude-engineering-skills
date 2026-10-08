@@ -15,17 +15,19 @@
  *
  * GUARANTEE (and its limits):
  *  - on timeout, the tier's process group (POSIX) / process tree (win32) is killed;
- *  - on POSIX, anything the tier left running in its group after it EXITED is
- *    killed too (a daemon in a verification worktree is a leak, not a result);
+ *  - anything the tier left running after it EXITED is killed too (a daemon in a
+ *    verification worktree is a leak, not a result): its group on POSIX, its
+ *    orphaned descendants on win32 (found by ParentProcessId, which Windows keeps
+ *    after the parent dies; pid-reuse guarded — `reap.mjs`);
  *  - SIGINT/SIGTERM/SIGHUP to the supervisor kill the tier first, so Ctrl-C on
  *    `fleet land` does not orphan a running test run;
- *  - NOT guaranteed: a descendant that deliberately escapes the group
- *    (`setsid`/detached/a job object), and on win32 strays left after a tier
- *    that exited normally (the parent link is gone once it exits).
+ *  - NOT guaranteed: on POSIX, a descendant that deliberately escapes the group
+ *    (`setsid`/detached).
  *
  * @module scripts/lib/fleet/tier-supervisor
  */
 import { spawnSync } from 'node:child_process';
+import { REAP_WIN_ORPHANS_JS } from './reap.mjs';
 
 const KILL_TIMEOUT_MS = 10_000; // a hung `taskkill` must not hang the supervisor
 
@@ -33,6 +35,7 @@ const SUPERVISOR = `
 const cfg = JSON.parse(process.argv[1]);
 const fs = require('node:fs');
 const { spawn, spawnSync } = require('node:child_process');
+${REAP_WIN_ORPHANS_JS}
 const win = process.platform === 'win32';
 let fd = null, child = null, done = false, timedOut = false, spawnErr = null, exitInfo = null, timer = null;
 function killTree() {
@@ -57,7 +60,7 @@ if (child) {
   child.on('error', (e) => { spawnErr = { code: e.code, message: e.message }; finish(); });
   child.on('exit', (status, signal) => {
     exitInfo = [status, signal];
-    if (!win) killTree(); // reap anything the tier left in its group
+    if (win) reapWinOrphans(child.pid, cfg.killTimeoutMs); else killTree(); // reap what the tier left behind
     finish();
   });
 }
