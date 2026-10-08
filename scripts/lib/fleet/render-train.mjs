@@ -143,6 +143,9 @@ export function renderAbandon(r) {
 export function renderParticipantRules(cmd) {
   return [
     'You are one of several concurrent sessions. fleet is COOPERATIVE: nothing enforces these rules but you.',
+    // A linked worktree has no gitignored tooling tree, so in a consumer repo the very first command dies on
+    // MODULE_NOT_FOUND unless the session hydrates first (a no-op in the main checkout and the source repo).
+    `  0. In a fresh worktree, first run: npm run skills:hydrate (it copies the gitignored tooling in; ${cmd} is absent until you do).`,
     `  1. Register first: ${cmd} claim --id <your branch> --intent "..." --paths "a/**,b.mjs" (start already did this for you).`,
     '  2. If any fleet command says BLOCKED or REFUSED: STOP and report it to the user. Never use --override yourself.',
     `  3. When your work is done and committed: ${cmd} ready. Renew your lease with ${cmd} touch on long tasks.`,

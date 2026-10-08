@@ -2,7 +2,8 @@
  * @fileoverview /fleet configuration: five optional keys in a consumer-owned
  * `.fleet.json` at the repo root, each reported with where it came from.
  *
- *  - `baseBranch`   config > origin/HEAD > fallback `main`
+ *  - `baseBranch`   config > origin/HEAD > fallback `main`; a BRANCH name (a
+ *                   remote-tracking name like `origin/main` is refused)
  *  - `testCommand`  a string (sugar for ONE pre-land tier named `default`) or
  *                   `{tiers:[...]}`; default `npm test` when package.json has a
  *                   real `scripts.test`, else none (`land` refuses)
@@ -51,7 +52,8 @@ const CheckSchema = z.strictObject({
   script: z.string().min(1, 'script is required').refine((v) => v.trim() !== '', 'script must not be blank'),
   runner: argvSchema().optional(),
   args: z.array(z.string(), { error: 'must be an argv array of strings' }).optional(),
-  runIn: z.array(z.enum(['status', 'land'])).min(1).default(['status', 'land']),
+  // `ready` is opt-in: a check listed for it can refuse `fleet ready` (default stays status+land).
+  runIn: z.array(z.enum(['status', 'ready', 'land'])).min(1).default(['status', 'land']),
   severity: z.enum(['block', 'warn']).default('warn'),
   timeoutMs: timeout().default(60_000),
   note: NoteSchema.optional(),
@@ -172,8 +174,25 @@ export function defaultWorktreeRoot(mainRoot) {
   return path.join(path.dirname(resolved), '.fleet-wt', path.basename(resolved));
 }
 
+/**
+ * `baseBranch` names a BRANCH: `land` pushes to `refs/heads/<baseBranch>`, and the
+ * overlap measurement already reads its remote-tracking upstream on its own (the
+ * fresher of the two). A remote-tracking name such as `origin/main` is therefore
+ * refused, naming the branch to write instead - never half-accepted, where one
+ * verb would resolve it and another would look for `refs/heads/origin/main`.
+ */
+function remoteTrackingBaseError(cwd, configured) {
+  const exists = (ref) => runGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], cwd).ok;
+  if (exists(`refs/heads/${configured}`) || !exists(`refs/remotes/${configured}`)) return null;
+  const branch = configured.slice(configured.indexOf('/') + 1);
+  return `.fleet.json baseBranch: ${JSON.stringify(configured)} is a remote-tracking ref, not a branch — set it to ${JSON.stringify(branch)}; fleet already measures overlaps from whichever of ${branch} and ${configured} is fresher`;
+}
+
 function resolveBaseBranch(cwd, configured) {
-  if (configured) return { baseBranch: configured, source: 'config' };
+  if (configured) {
+    const err = remoteTrackingBaseError(cwd, configured);
+    return err ? { error: err } : { baseBranch: configured, source: 'config' };
+  }
   const r = runGit(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], cwd);
   const m = r.ok ? /^origin\/(.+)$/.exec(r.stdout.trim()) : null;
   return m ? { baseBranch: m[1], source: 'origin/HEAD' } : { baseBranch: 'main', source: 'fallback' };
@@ -208,6 +227,7 @@ export function resolveConfig(cwd, { env = process.env } = {}) {
   if (!parsed.ok) throw new ConfigError(parsed.errors.map((e) => `.fleet.json ${e}`));
   const v = parsed.value;
   const base = resolveBaseBranch(cwd, v.baseBranch);
+  if (base.error) throw new ConfigError([base.error]);
 
   const mainRoot = path.basename(common.dir) === '.git' ? path.dirname(common.dir) : top.dir;
   const fromEnv = typeof env.FLEET_WORKTREE_ROOT === 'string' && env.FLEET_WORKTREE_ROOT.trim() !== '';
