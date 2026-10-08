@@ -94,9 +94,13 @@ export function resolveUpstream(cwd, base, trains = []) {
  * @param {number} [args.maxBranches]  upper bound on branches analysed (one `changedFiles` + one
  *   `patchId` git call each). The overflow is LISTED in `facts.branchesNotAnalysed`, never silently
  *   skipped. Omitted ⇒ unbounded and `facts` is unchanged.
+ * @param {boolean} [args.untracked=true] analyse UNTRACKED branches too. A verb that only ever compares
+ *   against registered sessions (claim, add, ready, start — `othersFor` reads sessions only) passes
+ *   `false`: each skipped branch is recorded in `changed` as `{queried:false, reason}`, never as an
+ *   empty change set, and costs no git call.
  * @returns {object} facts for `buildStatus`, plus `dir`
  */
-export function gatherFacts({ cwd, config, now, env = process.env, prs = true, patches = true, worktrees = true, cmd = 'fleet', checks = true, maxBranches }) {
+export function gatherFacts({ cwd, config, now, env = process.env, prs = true, patches = true, worktrees = true, cmd = 'fleet', checks = true, maxBranches, untracked = true }) {
   const dir = fleetDir(cwd);
   const base = config.baseBranch;
   const registry = readSessions(dir);
@@ -109,23 +113,7 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
   const branches = listBranches(cwd, measure.ok ? measure.oid : base);
   const anyPr = registry.sessions.some((x) => x.source?.kind === 'pr' && !['done', 'abandoned'].includes(x.state));
   const prFacts = prs || anyPr ? listPullRequests(cwd, { env }) : { queried: false, complete: false, reason: 'not requested', prs: [] };
-  const names = new Set();
-  for (const s of registry.sessions) if (s.source?.branch && s.source.kind === 'branch') names.add(s.source.branch);
-  for (const b of branches.branches ?? []) if (b.name !== base && b.ahead > 0) names.add(b.name);
-  let branchesNotAnalysed = null;
-  const analyse = new Set(names);
-  if (Number.isInteger(maxBranches) && maxBranches >= 0 && names.size > maxBranches) {
-    // Registered sessions first (they are the ones someone is waiting on), then the most recently touched.
-    const sessionNames = new Set(registry.sessions.map((x) => x.source?.branch).filter((n) => names.has(n)));
-    const tip = new Map((branches.branches ?? []).map((b) => [b.name, b.tipTime ?? 0]));
-    const rest = [...names].filter((n) => !sessionNames.has(n)).sort((a, b) => (tip.get(b) - tip.get(a)) || (a < b ? -1 : 1));
-    const ordered = [...sessionNames, ...rest];
-    branchesNotAnalysed = { count: ordered.length - maxBranches, names: ordered.slice(maxBranches) };
-    for (const n of branchesNotAnalysed.names) analyse.delete(n);
-  }
-  // The budget covers EVERY per-ref analysis: the branches above AND the materialised PR refs in the loop below.
-  let budget = Number.isInteger(maxBranches) && maxBranches >= 0 ? maxBranches - analyse.size : Infinity;
-  const changed = {}; const patchIds = {}; const findings = []; const evidenceNotes = {}; const prTrusted = new Set();
+  const sel = selectBranchesToAnalyse({ registry, branches, base, maxBranches, untracked });
   // Evidence is computed from the commit ids `listBranches` captured, not by re-resolving the NAMES: another
   // session can commit between the two reads, and the PR-trust comparison below uses the captured tip, so
   // evidence for a newer tip would be attributed to the older one. A name with no captured oid (a registered
@@ -133,14 +121,83 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
   const tipOid = new Map((branches.branches ?? []).map((b) => [b.name, b.oid]));
   const baseOidSnap = measure.ok ? measure.oid : tipOid.get(base) ?? null;
   const baseRev = baseOidSnap ?? base;
+  const { changed, patchIds } = branchEvidence({ cwd, analyse: sel.analyse, tipOid, baseRev, patches });
+  for (const n of sel.skippedUntracked) changed[n] = { queried: false, files: [], reason: 'not requested: untracked branches are not analysed by this command' };
+  // The budget covers EVERY per-ref analysis: the branches above AND the materialised PR refs below.
+  const budget = Number.isInteger(maxBranches) && maxBranches >= 0 ? maxBranches - sel.analyse.size : Infinity;
+  const pr = prSessionEvidence({ cwd, registry, prFacts, names: sel.names, branches, baseRev, budget, cmd });
+  Object.assign(changed, pr.changed);
+  const branchesNotAnalysed = mergeNotAnalysed(sel.branchesNotAnalysed, pr.notAnalysed);
+  const worktreeList = worktrees ? listWorktrees(cwd) : { queried: false, reason: 'not requested', worktrees: [] };
+  return {
+    worktreeClean: probeWorktreeCleanliness({ branches, worktreeList, base, registry, now, idleMs: idleMsFrom(config) }),
+    hotFiles: config.hotFiles ?? [],
+    findings: pr.findings, evidenceNotes: pr.evidenceNotes, prTrusted: pr.prTrusted, dir, now, leaseMs: leaseMsFrom(env), baseOid: baseOidSnap ?? (() => { const h = headOf(cwd, `refs/heads/${base}`); return h.ok ? h.oid : null; })(),
+    base: { name: base, upstream: up.upstream, freshness: baseFreshness(cwd, { base, upstream: up.upstream }), measure },
+    registry, hold: readHold(dir), trains: trainsRead.trains, trainsInvalid: trainsRead.invalid,
+    worktrees: worktreeList,
+    branches, prs: prFacts, changed, patchIds,
+    ...(branchesNotAnalysed ? { branchesNotAnalysed } : {}),
+    ...(checks === false ? { checks: { queried: false, reason: 'not requested' } } : {}),
+  };
+}
+
+/**
+ * Which branches get per-branch evidence (`changedFiles`, `patchId`). Candidates (`names`): every
+ * registered `branch` session's branch, plus every branch ahead of base — but with `untracked:false`
+ * only those some registered session (of ANY kind) points at, so a PR session's local branch is still
+ * a candidate. Over `maxBranches`: registered sessions first (they are the ones someone is waiting on),
+ * then the most recently touched; the overflow is LISTED, never silently dropped.
+ * @returns {{names: Set<string>, analyse: Set<string>, branchesNotAnalysed: {count: number, names: string[]}|null, skippedUntracked: string[]}}
+ */
+export function selectBranchesToAnalyse({ registry, branches, base, maxBranches, untracked = true }) {
+  const names = new Set();
+  const sessionBranches = new Set(registry.sessions.map((x) => x.source?.branch).filter(Boolean));
+  const skippedUntracked = [];
+  for (const s of registry.sessions) if (s.source?.branch && s.source.kind === 'branch') names.add(s.source.branch);
+  for (const b of branches.branches ?? []) {
+    if (b.name === base || !(b.ahead > 0)) continue;
+    if (untracked || sessionBranches.has(b.name)) names.add(b.name);
+    else skippedUntracked.push(b.name);
+  }
+  const analyse = new Set(names);
+  let branchesNotAnalysed = null;
+  if (Number.isInteger(maxBranches) && maxBranches >= 0 && names.size > maxBranches) {
+    const sessionNames = new Set([...sessionBranches].filter((n) => names.has(n)));
+    const tip = new Map((branches.branches ?? []).map((b) => [b.name, b.tipTime ?? 0]));
+    const rest = [...names].filter((n) => !sessionNames.has(n)).sort((a, b) => (tip.get(b) - tip.get(a)) || (a < b ? -1 : 1));
+    const ordered = [...sessionNames, ...rest];
+    branchesNotAnalysed = { count: ordered.length - maxBranches, names: ordered.slice(maxBranches) };
+    for (const n of branchesNotAnalysed.names) analyse.delete(n);
+  }
+  return { names, analyse, branchesNotAnalysed, skippedUntracked };
+}
+
+/** One `changedFiles` (and, with `patches`, one `patchId`) per analysed branch, at its captured tip. */
+function branchEvidence({ cwd, analyse, tipOid, baseRev, patches }) {
+  const changed = {}; const patchIds = {};
   for (const n of analyse) {
     const rev = tipOid.get(n) ?? n;
     changed[n] = changedFiles(cwd, baseRev, rev);
     if (patches) patchIds[n] = patchId(cwd, baseRev, rev);
   }
-  // PR-backed sessions: their evidence is only trusted while it IS the PR's current head. A session whose
-  // evidence cannot be established gets a per-SESSION note + warning; the shared per-branch evidence in
-  // `changed` is never overwritten (another consumer of that branch legitimately depends on it).
+  return { changed, patchIds };
+}
+
+const mergeNotAnalysed = (a, b) => (!a && !b ? null
+  : { count: (a?.count ?? 0) + (b?.count ?? 0), names: [...(a?.names ?? []), ...(b?.names ?? [])] });
+
+/**
+ * PR-backed sessions: their evidence is only trusted while it IS the PR's current head. A session whose
+ * evidence cannot be established gets a per-SESSION note + warning; the shared per-branch evidence in
+ * `changed` is never overwritten (another consumer of that branch legitimately depends on it), so this
+ * returns only the `pr:<n>` keys it adds.
+ * @returns {{changed: object, findings: object[], evidenceNotes: object, prTrusted: Set<string>, notAnalysed: {count: number, names: string[]}|null}}
+ */
+function prSessionEvidence({ cwd, registry, prFacts, names, branches, baseRev, budget, cmd }) {
+  const changed = {}; const findings = []; const evidenceNotes = {}; const prTrusted = new Set();
+  let notAnalysed = null;
+  let left = budget;
   const noFiles = (s, reason) => { evidenceNotes[s.id] = { queried: false, reason }; findings.push({ level: 'warn', sessions: [s.id], message: `changed files not queried (${reason}) - overlap by files is unknown for ${s.id}` }); };
   for (const s of registry.sessions) {
     if (!needsEvidenceKey(s)) continue;
@@ -160,28 +217,17 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
     if (!prFacts.queried) { noFiles(s, `the PR head cannot be verified: PRs not queried (${prFacts.reason})`); continue; }
     if (!pr?.headOid) { noFiles(s, `PR #${s.source.prNumber} is not in the open PR list; its head cannot be verified`); continue; }
     if (pr.headOid !== have.oid) { noFiles(s, `materialised ref is stale (${have.oid.slice(0, 12)} != ${pr.headOid.slice(0, 12)}); run ${cmd} ready to refetch`); continue; }
-    if (budget <= 0) {
-      branchesNotAnalysed = { count: (branchesNotAnalysed?.count ?? 0) + 1, names: [...(branchesNotAnalysed?.names ?? []), prKey(s)] };
+    if (left <= 0) {
+      notAnalysed = mergeNotAnalysed(notAnalysed, { count: 1, names: [prKey(s)] });
       noFiles(s, 'not analysed: the maxBranches budget is spent');
       continue;
     }
-    budget -= 1;
+    left -= 1;
     const files = changedFiles(cwd, baseRev, have.oid); // the oid just verified against the PR head, not the ref name
     if (!files.queried) { noFiles(s, files.reason); continue; }
     changed[prKey(s)] = files;
   }
-  const worktreeList = worktrees ? listWorktrees(cwd) : { queried: false, reason: 'not requested', worktrees: [] };
-  return {
-    worktreeClean: probeWorktreeCleanliness({ branches, worktreeList, base, registry, now, idleMs: idleMsFrom(config) }),
-    hotFiles: config.hotFiles ?? [],
-    findings, evidenceNotes, prTrusted, dir, now, leaseMs: leaseMsFrom(env), baseOid: baseOidSnap ?? (() => { const h = headOf(cwd, `refs/heads/${base}`); return h.ok ? h.oid : null; })(),
-    base: { name: base, upstream: up.upstream, freshness: baseFreshness(cwd, { base, upstream: up.upstream }), measure },
-    registry, hold: readHold(dir), trains: trainsRead.trains, trainsInvalid: trainsRead.invalid,
-    worktrees: worktreeList,
-    branches, prs: prFacts, changed, patchIds,
-    ...(branchesNotAnalysed ? { branchesNotAnalysed } : {}),
-    ...(checks === false ? { checks: { queried: false, reason: 'not requested' } } : {}),
-  };
+  return { changed, findings, evidenceNotes, prTrusted, notAnalysed };
 }
 
 /** Bounds of the cleanliness probe (plan §2.2): per process, candidate cap, aggregate. */
