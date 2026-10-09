@@ -79,8 +79,8 @@ export const STATIC_POOL = Object.freeze({
     // `refreshModelCatalog()` that both ids exist in Anthropic's real
     // catalog. `claude-opus-4-6`/`claude-opus-4-1`/`claude-sonnet-4-5`
     // removed — more than one generation behind 4-8/5, never selectable.
-    // Haiku's dated/undated pair is intentional (model-resolver.mjs's
-    // `resolveModel` doc: "prefers undated alias"), not staleness — kept.
+    // Haiku 5.5 added 2026-10-09 (live catalog had it; this fallback capped at
+    // 4-5). Its dated/undated 4-5 pair is intentional ("prefers undated alias").
     //
     // `claude-opus-5` added (2026-09-01, upstream report): the Opus 5 release
     // had never been added here, so `latest-opus` capped at `claude-opus-4-8`
@@ -102,14 +102,6 @@ export const STATIC_POOL = Object.freeze({
     // but this fallback capped at `claude-sonnet-5`. Like Opus 5.5 it rejects
     // forced `tool_choice` — `acceptsForcedToolChoice` already routes any 5.x
     // with minor > 0 to `auto`, so no call site changes.
-    //
-    // `claude-haiku-5-5` added 2026-10-09 (Haiku 5.5 release, $0.10/$0.50 up
-    // to a 100K-token prompt): the live catalog already resolved
-    // `latest-haiku` to it (`model-resolver.mjs catalog` lists it live-only),
-    // but this fallback capped at `claude-haiku-4-5` — the arch-index
-    // summariser, brief generator and rephrase retry all ride `latest-haiku`.
-    // Undated alias only: the live catalog carries no dated 5.5 id. 4-5 kept
-    // one generation back, like Opus/Sonnet above.
     'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8',
     'claude-sonnet-5-5', 'claude-sonnet-5', 'claude-sonnet-4-6',
     'claude-haiku-5-5', 'claude-haiku-4-5', 'claude-haiku-4-5-20251001',
