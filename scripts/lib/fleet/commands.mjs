@@ -30,6 +30,7 @@ import {
   buildStatusFrom, gatherFacts, leaseMsFrom, othersFor, readyChecks, resolveUpstream, statusChecks,
 } from './facts.mjs';
 import { parseWaitingOn, splitPaths } from './argv.mjs';
+import { newDirectiveId, readDirectives, readHosts, writeDirective, writeHost } from './directives.mjs';
 
 export const ok = (extra) => ({ ok: true, code: 'ok', ...extra });
 export const refused = (reason, extra = {}) => ({ ok: false, code: 'refused', reason, text: `REFUSED: ${reason}`, ...extra });
@@ -128,12 +129,14 @@ export function cmdStatus(ctx, flags = {}) {
   const general = hook.findings.filter((f) => !f.sessions?.length);
   // The ONE place the default view hides stale untracked items; `status` itself stays complete.
   const view = splitHidden(status, { all: Boolean(flags['--all']), idleMs: idleMsFrom(ctx.config) });
-  const lines = [renderStatus({ ...status, items: view.items }, { hidden: view.hidden })];
+  const hosts = readHosts(ctx.dir);
+  const directives = readDirectives(ctx.dir);
+  const lines = [renderStatus({ ...status, items: view.items }, { hidden: view.hidden, hosts: hosts.hosts, directives, now: ctx.now })];
   if (general.length) lines.push('', 'checks:', ...general.map((f) => `  ${f.level}: ${f.message}`));
   const todo = renderOpenTrains(facts.trains, ctx.cmd);
   if (todo) lines.push('', todo);
   if (warnings.length) lines.push('', ...warnings.map((w) => `warning: ${w}`));
-  return ok({ status: { ...status, items: view.items, hidden: view.hidden }, checks: hook.results, warnings, text: lines.join('\n') });
+  return ok({ status: { ...status, items: view.items, hidden: view.hidden, hosts: hosts.hosts, directives: { active: directives.active, unsupported: directives.unsupported, invalid: directives.invalid, complete: directives.complete } }, checks: hook.results, warnings, text: lines.join('\n') });
 }
 
 /**
@@ -199,6 +202,7 @@ export function cmdClaim(ctx, flags) {
       ? { gen: cur ? cur.gen + 1 : 1, ready: null, waitingOn: [], knownOverlaps: [], createdAt: stamp, state: 'working', startOid,
         source: { kind: 'branch', branch, repo: null, prNumber: null, headRepo: null, headRef: branch, baseRef: ctx.config.baseBranch } }
       : { gen: cur.gen, ready: cur.ready, waitingOn: cur.waitingOn, knownOverlaps: cur.knownOverlaps, createdAt: cur.createdAt, state: cur.state, startOid: cur.startOid, source: cur.source };
+    if (flags['--host-session'] !== undefined) writeHost(ctx.dir, { id, hostSession: flags['--host-session'], at: stamp });
     const record = t.writeSession({
       schemaVersion: 1, rev: cur ? cur.rev + 1 : 1, id, ...base,
       worktree: fresh ? (top.ok ? top.dir : null) : cur.worktree, intent, paths: claimPaths,
@@ -358,12 +362,28 @@ export function cmdTouch(ctx, flags) {
 export function cmdHold(ctx, flags, positionals) {
   const mode = positionals[0];
   if (mode !== 'on' && mode !== 'off') throw new ArgvError('fleet hold: expected "on" or "off"');
+  if (flags['--note'] !== undefined && mode !== 'off') throw new ArgvError('fleet hold: --note goes with "hold off" (it posts the resume note)');
+  if (flags['--notify'] && mode !== 'on') throw new ArgvError('fleet hold: --notify goes with "hold on" (it posts a pause directive)');
   const by = flags['--id'] ?? currentBranch(ctx.cwd);
-  const tx = transact(ctx.dir, (t) => t.writeHold(mode === 'on'
-    ? { held: true, by, reason: flags['--reason'] ?? null, at: nowIso(ctx) }
-    : { held: false, by: null, reason: null, at: null }));
+  // Every hold transition is an EVENT identified by `at` (off included), so a pause/resume directive can
+  // cite exactly one of them; the hold and its directive share one transaction and one timestamp.
+  const stamp = nowIso(ctx);
+  const tx = transact(ctx.dir, (t) => {
+    const hold = t.writeHold(mode === 'on'
+      ? { held: true, by, reason: flags['--reason'] ?? null, at: stamp }
+      : { held: false, by, reason: null, at: stamp });
+    const post = (kind, note) => writeDirective(ctx.dir, {
+      schemaVersion: 1, id: newDirectiveId(ctx.now), to: 'all', kind, reason: { kind: 'hold', ref: stamp, ...(note ? { note } : {}) },
+      by: by ?? 'coordinator', createdAt: stamp, expiresAt: new Date(ctx.now.getTime() + 24 * 3_600_000).toISOString(), acks: [],
+    });
+    const directive = mode === 'off' && flags['--note'] !== undefined ? post('resume', flags['--note'])
+      : mode === 'on' && flags['--notify'] ? post('pause', flags['--reason'] ?? null) : null;
+    return { hold, directive };
+  });
   if (!tx.ok) return lockFailed();
-  return ok({ hold: tx.value, text: mode === 'on' ? `HOLD on heavy runs${flags['--reason'] ? `: ${flags['--reason']}` : ''}` : 'hold released' });
+  const { hold, directive } = tx.value;
+  const head = mode === 'on' ? `HOLD on heavy runs${flags['--reason'] ? `: ${flags['--reason']}` : ''}` : 'hold released';
+  return ok({ hold, ...(directive ? { directive } : {}), text: directive ? `${head}\n  posted ${directive.kind} directive ${directive.id} to all (cites hold event ${stamp})` : head });
 }
 
 /** `fleet repair --quarantine <file>` — human-run; moves, never deletes. */

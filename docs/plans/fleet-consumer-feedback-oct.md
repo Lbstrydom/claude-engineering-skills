@@ -151,10 +151,11 @@ Consumers (#5 single source of truth — one predicate, three readers):
   filters, no new branch.
 - `hideReason` gains `'landed'` for untracked branches (same evidence, and the
   existing clean-worktree precondition), counted as `N landed (squash)`.
-- The derived state is persisted by mutating verbs through the existing
-  `writeDoneCache` pattern, generalised to "derived-done evidence" (train OR
-  merge), re-deciding under `fleet/.lock` against the fresh record exactly as
-  today. `status` stays write-free.
+- The derived state is derived on READ everywhere (status, claim, land); it is
+  persisted when the session runs `fleet release`, which `next` tells it to
+  do. (The plan first said mutating verbs would cache it; that would make
+  `touch` silently end a session — dropped in implementation.) `status` stays
+  write-free.
 
 **Fact-acquisition profiles (audit H9).** Which facts a verb gathers is named,
 not implied by `untracked:false`:
@@ -609,7 +610,6 @@ new logic goes in new modules, not into it.
 | `scripts/lib/fleet/render.mjs` | modify | landed/uncommitted/host/directive/warning lines |
 | `scripts/lib/fleet/render-train.mjs` | modify | required-check lines in pr plan, serial results |
 | `scripts/lib/fleet/commands.mjs` | modify | footer on claim/touch/ready, `--host-session`, `hold off --note`, `status --fetch` |
-| `scripts/lib/fleet/registry.mjs` | modify | export the managed-path + JSON helpers the new record kinds reuse |
 | `scripts/lib/fleet/config.mjs` | modify | `appendOnlyGlobs`, `restackIgnore`, `archiveIgnore`, `serialTimeoutMs`, `requiredChecks` |
 | `scripts/lib/fleet/train.mjs` | modify | union resolution in direct modes, checks after provisioning in the candidate |
 | `scripts/lib/fleet/train-approve.mjs` | modify | draft + required-checks gate in pr plan; `--serial` dispatch |
@@ -627,7 +627,7 @@ new logic goes in new modules, not into it.
 
 **Phase 3 — Session lifecycle + uncommitted evidence**: `release`, `archive-check`, porcelain paths in overlaps, `status --fetch`. Files: scripts/lib/fleet/worktree-status.mjs (create), scripts/lib/fleet/lifecycle.mjs (create), scripts/lib/fleet/commands.mjs (modify), scripts/lib/fleet/config.mjs (modify), scripts/lib/fleet/argv.mjs (modify), scripts/fleet.mjs (modify), tests/fleet-lifecycle.test.mjs (create)
 
-**Phase 4 — Directive records + host sidecar**: schema, read/write/ack under the registry lock, reason verification, `hosts/` sidecar. Files: scripts/lib/fleet/directives.mjs (create), scripts/lib/fleet/registry.mjs (modify), tests/fleet-directives.test.mjs (create)
+**Phase 4 — Directive records + host sidecar**: schema, read/write/ack under the registry lock, `hosts/` sidecar. Files: scripts/lib/fleet/directives.mjs (create), tests/fleet-directives.test.mjs (create) (registry.mjs already exports `assertManaged`/`storageKey`/`TRAIN_ID_RE`, so it needs no change)
 
 **Phase 5 — `next` + checkpoint footer**: `deriveObligations`, `next`/`directive` verbs, footer on claim/touch/ready, `hold off --note`, `claim --host-session`, status lines. Files: scripts/lib/fleet/obligations.mjs (create), scripts/lib/fleet/coordination.mjs (create), tests/fleet-coordination.test.mjs (create)
 
@@ -758,6 +758,7 @@ merged PR).
   - Additional files: scripts/lib/fleet/git-facts.mjs (modify — shared canonical-diff constants for both patch-id producers), scripts/lib/fleet/land.mjs (modify — passes `requiredChecks` to approval), tests/fleet-cli.test.mjs (modify — field-contract test knows `pr checks` fields), tests/fleet-capstone-feedback.test.mjs (modify — hidden-count shape gains `landed`), tests/fleet-storyline-feedback.test.mjs (modify — same)
 - **Cluster 2** — Phases 4-6 — fix-gate: yes
   - Coupling: directives are the registry record `next` reads and the participant rules teach; obligations depend on Cluster 1's merged and hold facts.
+  - Additional files: scripts/fleet.mjs (modify — dispatch next/directive, checkpoint footer), scripts/lib/fleet/argv.mjs (modify — verbs and flags), scripts/lib/fleet/commands.mjs (modify — hold events + directives, claim --host-session, status hosts/directives), scripts/lib/fleet/render.mjs (modify — host and directive lines), scripts/lib/fleet/render-train.mjs (modify — chip prompt authority clause), scripts/lib/fleet/overlap.mjs (modify — structured workRemaining on the status item), tests/fleet-claim-analysis-scope.test.mjs (modify — the footer diffs registered sessions, never untracked ones), .claude/skills/fleet/SKILL.md (modify — generated), .claude/skills/fleet/references/participant-rules.md (modify — generated), .claude/skills/fleet/references/coordination.md (create — generated), skills.manifest.json (modify — generated)
 - **Cluster 3** — Phases 7-10 — fix-gate: final
   - Coupling: union-merge is shared by train and restack; serial reuses Cluster 1's required-checks predicate and restack's hint; one landing reference documents all four.
 - **Final gate**: consolidated Gemini review over the union diff of all three clusters.

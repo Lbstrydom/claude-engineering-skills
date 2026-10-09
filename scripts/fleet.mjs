@@ -15,6 +15,8 @@
  *   repair --quarantine <file>      move one invalid record aside (human-run)
  *   release [--id] [--abandoned]    retire a claim now (done / abandoned)
  *   archive-check [<id|branch|path>] what removing a worktree would lose (read-only)
+ *   next [--id]                     what this session should do now (read-only)
+ *   directive --to|--list|--ack     coordinator requests in the shared registry
  *   land [--select a,b] [--dry-run] build + test one combined train
  *   land --approve|--confirm|--reconcile|--resume|--abandon <trainId>
  *
@@ -38,6 +40,7 @@ import {
 } from './lib/fleet/commands.mjs';
 import { leaseMsFrom, resolveNow } from './lib/fleet/facts.mjs';
 import { cmdArchiveCheck, cmdRelease } from './lib/fleet/lifecycle.mjs';
+import { checkpointFooter, cmdDirective, cmdNext } from './lib/fleet/coordination.mjs';
 import { renderCommand } from './lib/fleet/shell-quote.mjs';
 import { cmdLand } from './lib/fleet/land.mjs';
 import { fleetDir, RegistryError } from './lib/fleet/registry.mjs';
@@ -86,8 +89,16 @@ async function main() {
       case 'repair': result = cmdRepair(ctx, flags); break;
       case 'release': result = cmdRelease(ctx, flags); break;
       case 'archive-check': result = cmdArchiveCheck(ctx, flags, positionals); break;
+      case 'next': result = cmdNext(ctx, flags); break;
+      case 'directive': result = cmdDirective(ctx, flags); break;
       case 'land': result = cmdLand(ctx, flags); break;
       default: throw new ArgvError(`fleet: unhandled verb ${verb}`);
+    }
+    // Checkpoint footer: a session sees its obligations (hold, merged PR, directives) at the verbs it
+    // already runs, without polling. Never changes the verb's outcome.
+    if (['claim', 'touch', 'ready'].includes(verb) && result.ok && result.id) {
+      result.next = checkpointFooter(ctx, result.id);
+      result.text = [result.text, ...result.next].join('\n');
     }
     const code = EXIT[result.code] ?? 1;
     process.exitCode = code;
@@ -102,7 +113,7 @@ async function main() {
     if (err instanceof GitUnavailableError) { process.stderr.write(`fleet: ${err.message}\n`); return finishAndExit(1); }
     if (err instanceof ConfigError) { process.stderr.write(`fleet: ${err.message}\n`); return finishAndExit(1); }
     if (err instanceof RegistryError) {
-      const hint = err.repairFile ? `; run \`${selfCommand(process.cwd())} repair --quarantine ${err.repairFile}\`` : '';
+      const hint = err.repairFile ? `; run \`${selfCommand(process.cwd())} ${renderCommand(['repair', '--quarantine', err.repairFile])}\`` : '';
       process.stderr.write(`fleet: ${err.message}${hint}\n`);
       return finishAndExit(1);
     }

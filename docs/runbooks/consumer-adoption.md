@@ -947,6 +947,22 @@ rule (AGENTS.md): a check that can go green having checked nothing needs to
 fail, not skip. Resolve the gate against the common git dir, or exit non-zero
 naming `npm run skills:hydrate`.
 
+### Running `/fleet` sessions without permission prompts
+
+Concurrent sessions stall on a prompt for fleet's own CLI unless the repo
+allows it. Add a project allow rule to the committed `.claude/settings.json`:
+
+```json
+{ "permissions": { "allow": ["Bash(node scripts/.claude-skills/fleet.mjs:*)"] } }
+```
+
+It names no personal folder, so it is safe in a public repo (personal paths
+belong in the gitignored `.claude/settings.local.json`). It does not change how
+the host delivers messages between sessions whose permission modes differ:
+that is host behaviour, which is why `/fleet` coordinates through `fleet next`
+and directives in the shared registry instead of messages
+(`.claude/skills/fleet/references/coordination.md`).
+
 ---
 
 ## Main-branch protection (baseline-ratchet safety)

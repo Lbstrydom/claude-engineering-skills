@@ -50,8 +50,8 @@ function hiddenWhy(h) {
   return parts.length ? parts.join(', ') : 'stale / merged';
 }
 
-/** @param {object} it a status item @param {number|null} [nowMs] */
-function itemBlock(it, nowMs = null) {
+/** @param {object} it a status item @param {number|null} [nowMs] @param {Record<string, string>} [hosts] */
+function itemBlock(it, nowMs = null, hosts = {}) {
   const lines = [];
   const head = [it.id, `[${it.display}]`];
   if (it.branch && it.branch !== it.id) head.push(`branch ${it.branch}`);
@@ -60,6 +60,7 @@ function itemBlock(it, nowMs = null) {
   const meta = [];
   if (it.ahead !== null && it.ahead !== undefined) meta.push(`ahead ${it.ahead} / behind ${it.behind ?? '?'}`);
   if (it.worktree) meta.push(`worktree ${it.worktree}${it.worktreeState && it.worktreeState !== 'present' ? ` (${it.worktreeState})` : ''}`);
+  if (hosts[it.id]) meta.push(`host: ${hosts[it.id]}`);
   if (it.pr) meta.push(`PR #${it.pr.number}${it.pr.isDraft ? ' (draft)' : ''} checks:${it.pr.checks?.state ?? 'none'}${it.pr.checks?.skipped ? ` (${it.pr.checks.skipped} skipped)` : ''}`);
   if (meta.length) lines.push(`    ${meta.join(' · ')}`);
   if (it.waitingOn.length) {
@@ -111,7 +112,7 @@ export function describeMeasurement(m, name = 'base') {
  * @param {ReturnType<import('./overlap.mjs').buildStatus>} status
  * @returns {string}
  */
-export function renderStatus(status, { hidden } = {}) {
+export function renderStatus(status, { hidden, hosts = {}, directives = null, now = null } = {}) {
   const out = [];
   if (!status.registry.complete) {
     out.push(BANNER(status.registry.invalid));
@@ -135,13 +136,27 @@ export function renderStatus(status, { hidden } = {}) {
     else out.push(`(nothing found — but ${missing.length} source${missing.length === 1 ? ' was' : 's were'} not fully queried: ${missing.join(', ')})`);
   }
   const nowMs = Number.isFinite(Date.parse(status.observedAt)) ? Date.parse(status.observedAt) : null;
-  for (const it of status.items) out.push(itemBlock(it, nowMs));
+  for (const it of status.items) out.push(itemBlock(it, nowMs, hosts));
+  out.push(...directiveLines(directives, now));
   if (hidden?.count) out.push(`${hidden.count} hidden (${hiddenWhy(hidden)}) — use --all`);
   if (hidden?.unchecked) out.push(`${hidden.unchecked} merged- or idle-looking worktree${hidden.unchecked === 1 ? '' : 's'} shown: cleanliness unchecked`);
   if (status.landingOrder.length) out.push('', `proposed landing order: ${status.landingOrder.join(' → ')}`);
   for (const c of status.cycles) out.push(`waiting cycle: ${c.join(' ↔ ')} (ordered by id for display only)`);
   for (const t of status.trains) out.push(`train ${t.trainId}: ${t.phase}${t.result ? ` (${t.result})` : ''}`);
   return out.join('\n');
+}
+
+/** Active directives, one line each; an incomplete read and unsupported records are named, never hidden. */
+function directiveLines(d, now) {
+  if (!d) return [];
+  const out = [];
+  const live = (d.active ?? []).filter((x) => !now || Date.parse(x.expiresAt) > now.getTime());
+  if (live.length || !d.complete || d.unsupported?.length || d.invalid?.length) out.push('');
+  for (const x of live) out.push(`directive ${x.id}: ${x.kind} → ${x.to} (${x.reason.kind}${x.reason.ref ? ` ${x.reason.ref}` : ''}) by ${x.by || '?'} · acks: ${x.acks.length}`);
+  if (!d.complete) out.push(`directives: not fully read (${d.reason ?? 'incomplete'})`);
+  if (d.unsupported?.length) out.push(`directives: ${d.unsupported.length} not understood by this fleet version (never acted on)`);
+  for (const i of d.invalid ?? []) out.push(`directives: invalid record ${i.file} (${i.reason}) — never acted on; inspect it under fleet/directives/`);
+  return out;
 }
 
 /**

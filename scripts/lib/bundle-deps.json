@@ -184,6 +184,7 @@
         "scripts/.claude-skills/lib/fleet/checks.mjs",
         "scripts/.claude-skills/lib/fleet/config.mjs",
         "scripts/.claude-skills/lib/fleet/contracts.mjs",
+        "scripts/.claude-skills/lib/fleet/directives.mjs",
         "scripts/.claude-skills/lib/fleet/registry.mjs",
         "scripts/.claude-skills/lib/learning/author-tier-observation.mjs",
         "scripts/.claude-skills/lib/llm-wrappers.mjs",

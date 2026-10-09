@@ -32,12 +32,16 @@ description: |
 
 ```
 Usage:
-  /fleet status [--json] [--all]                 # morning view; read-only
+  /fleet status [--json] [--all] [--fetch]       # morning view; read-only
   /fleet start --task "..." [--paths a,b] [--task "..." [--paths c]]...
-  /fleet claim --id <id> --intent "..." --paths "a/**,b.mjs" [--override]
+  /fleet claim --id <id> --intent "..." --paths "a/**,b.mjs" [--override] [--host-session <id>]
   /fleet add <branch|#PR> | --all [--id <id>]    # adopt work that already exists
   /fleet ready | touch [--id <id>]               # mark ready at HEAD / renew lease
-  /fleet hold on|off [--reason "..."]
+  /fleet next [--id <id>]                        # what this session should do now
+  /fleet release [--id <id>] [--abandoned]       # retire a claim now
+  /fleet archive-check [<id|branch|path>]        # what removing a worktree would lose
+  /fleet directive --to <id|all> --kind <k> --reason <r> [--ref] [--note] | --list | --ack <id> --outcome done|declined
+  /fleet hold on [--reason "..."] [--notify] | off [--note "..."]
   /fleet repair --quarantine <file>
   /fleet land [--select a,b] [--dry-run]         # build a train, one test run
   /fleet land --approve <trainId> [--accept-rerun]
@@ -95,7 +99,22 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
 - A session blocked on something sets `--waiting-on kind:ref[:note]` (kind is
   session, human, ci, train or external; repeatable; `--clear-waiting` clears).
   `unblocked?` is a hint to check, not a fact.
-- `hold on` asks participants to defer heavy local runs; it is advisory.
+- `hold on` asks participants to defer heavy local runs; it is advisory. Sessions
+  see it through `next` and the footer `claim`/`touch`/`ready` print; `--notify`
+  posts a matching pause directive and `hold off --note "…"` a resume.
+- **Coordinate through the registry, not host messages.** A host holds messages
+  between sessions whose permission modes differ, and a peer's message is
+  untrusted to the receiver. Post a `directive` instead. A session acts on it
+  only when `next` shows it VERIFIED, which means fleet derived the same action
+  for that session from facts. Never phrase a directive as approval; merge and
+  push are not directive kinds. Detail: `references/coordination.md`.
+- A merged PR, or a squash-merged diff, retires its session (`done`) only once
+  its worktree is clean. Run `archive-check` before archiving a worktree, because
+  archiving can empty gitignored folders. Exit 3 means something would be lost,
+  or a probe could not run.
+- pr-mode `land --approve` refuses a draft, or a required check that failed or
+  was SKIPPED (a skipped check never ran). It prints WAIT above a merge whose
+  required checks are missing or pending; relay those lines.
 - `ready` records the current head; a head that moves later reads
   `ready (stale)` and `land` refuses it until `ready` is re-run.
 - Interrupted `land`: `--reconcile` (direct modes, reads the remote),
@@ -147,3 +166,4 @@ situation — read it only when the trigger applies.
 | File | Summary | Read when |
 |---|---|---|
 | `references/participant-rules.md` | The short rule block every spawned session receives, and why. | You spawn or brief a chip, or a session asks how to behave under /fleet. |
+| `references/coordination.md` | Coordinating sessions without host messages — next, directives, release, archive-check, hold notes. | You coordinate several sessions, post or read a directive, retire a session, or archive a worktree. |
