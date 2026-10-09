@@ -305,16 +305,22 @@ export function changedFiles(cwd, base, branch) {
 }
 
 /**
+ * `-c` config and flags that make a diff canonical for `git patch-id`. Every
+ * patch-id producer uses BOTH, so fingerprints from different producers compare.
+ */
+export const CANON_DIFF_CONFIG = Object.freeze([
+  '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', '-c', 'core.quotepath=off', '-c', 'color.ui=false', '-c', 'diff.renames=false',
+]);
+export const CANON_DIFF_FLAGS = Object.freeze(['--no-ext-diff', '--no-textconv', '--no-color', '--no-renames']);
+
+/**
  * Stable patch-id of the whole branch diff (`merge-base...branch`); two branches
  * with equal ids carry the same change. `patchId: null` = empty diff. The diff is
  * canonical: nothing in a user's git config (external diff, textconv, colour,
  * prefixes, path quoting, rename detection) may change the fingerprint.
  */
 export function patchId(cwd, base, branch) {
-  const d = runGit([
-    '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', '-c', 'core.quotepath=off', '-c', 'color.ui=false',
-    '-c', 'diff.renames=false', 'diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', `${base}...${branch}`,
-  ], cwd);
+  const d = runGit([...CANON_DIFF_CONFIG, 'diff', ...CANON_DIFF_FLAGS, `${base}...${branch}`], cwd);
   if (!d.ok) return block(false, { patchId: null }, d.reason);
   if (d.stdout === '') return block(true, { patchId: null });
   const p = runGit(['patch-id', '--stable'], cwd, { input: d.stdout });

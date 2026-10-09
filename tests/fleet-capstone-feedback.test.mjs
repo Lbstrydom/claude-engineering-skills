@@ -100,7 +100,7 @@ describe('splitHidden — idle items, reasons, folded overlaps', () => {
   it('default hides idle and merged, counted by reason', () => {
     const v = splitHidden(scene(), { idleMs: IDLE_MS });
     assert.deepEqual(v.items.map((i) => i.id), ['live', 'peer']);
-    assert.deepEqual(v.hidden, { count: 2, ids: ['old', 'merged'], unchecked: 0, merged: 1, idle: 1, idleDays: DEFAULT_IDLE_DAYS });
+    assert.deepEqual(v.hidden, { count: 2, ids: ['old', 'merged'], unchecked: 0, merged: 1, landed: 0, idle: 1, idleDays: DEFAULT_IDLE_DAYS });
   });
   it('an overlap INTO a hidden item folds to overlapsWithHidden; an overlap between visible items stays', () => {
     const live = splitHidden(scene(), { idleMs: IDLE_MS }).items.find((i) => i.id === 'live');

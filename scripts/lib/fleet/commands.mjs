@@ -25,16 +25,16 @@ import {
 } from './overlap.mjs';
 import { renderClaimVerdict, renderStatus } from './render.mjs';
 import { renderChipPrompt, renderOpenTrains } from './render-train.mjs';
-import { WaitingOnSchema, quarantine, transact } from './registry.mjs';
+import { WaitingOnSchema, listTrains, quarantine, transact } from './registry.mjs';
 import {
-  buildStatusFrom, gatherFacts, leaseMsFrom, othersFor, readyChecks, statusChecks,
+  buildStatusFrom, gatherFacts, leaseMsFrom, othersFor, readyChecks, resolveUpstream, statusChecks,
 } from './facts.mjs';
 import { parseWaitingOn, splitPaths } from './argv.mjs';
 
-const ok = (extra) => ({ ok: true, code: 'ok', ...extra });
-const refused = (reason, extra = {}) => ({ ok: false, code: 'refused', reason, text: `REFUSED: ${reason}`, ...extra });
-const failed = (reason, extra = {}) => ({ ok: false, code: 'error', reason, text: `ERROR: ${reason}`, ...extra });
-const lockFailed = () => failed('could not acquire fleet/.lock (contention) — nothing was changed; retry');
+export const ok = (extra) => ({ ok: true, code: 'ok', ...extra });
+export const refused = (reason, extra = {}) => ({ ok: false, code: 'refused', reason, text: `REFUSED: ${reason}`, ...extra });
+export const failed = (reason, extra = {}) => ({ ok: false, code: 'error', reason, text: `ERROR: ${reason}`, ...extra });
+export const lockFailed = () => failed('could not acquire fleet/.lock (contention) — nothing was changed; retry');
 
 /**
  * What HEAD is, with a detached HEAD and a FAILED `git` call kept apart: a branch
@@ -61,7 +61,7 @@ export class GitUnavailableError extends Error {
 }
 
 /** The participant identity: `--id`, else the current branch. */
-function selfId(ctx, flags) {
+export function selfId(ctx, flags) {
   if (flags['--id'] !== undefined) return flags['--id'];
   const h = headState(ctx.cwd);
   // A failed `git` call is an operational error, not "you are on a detached HEAD" (which `--id` cures).
@@ -70,8 +70,8 @@ function selfId(ctx, flags) {
   return h.branch;
 }
 
-const leaseIso = (ctx) => new Date(ctx.now.getTime() + leaseMsFrom(ctx.env)).toISOString();
-const nowIso = (ctx) => ctx.now.toISOString();
+export const leaseIso = (ctx) => new Date(ctx.now.getTime() + leaseMsFrom(ctx.env)).toISOString();
+export const nowIso = (ctx) => ctx.now.toISOString();
 
 /** Validate `--waiting-on` / `--clear-waiting` into `{clear, adds}`. */
 function waitingFromFlags(flags, ctx) {
@@ -116,11 +116,13 @@ export function startOidFor(ctx, branch, measure, { git = runGit } = {}) {
 
 /** `fleet status` — strictly read-only: no lock, no registry write, no lease renewal. */
 export function cmdStatus(ctx, flags = {}) {
+  const fetched = flags['--fetch'] ? fetchBase(ctx) : null;
   const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, cmd: ctx.cmd });
   let status = buildStatusFrom(facts);
   const hook = statusChecks({ cwd: ctx.cwd, config: ctx.config, status });
   if (hook.findings.length) { facts.findings = [...(facts.findings ?? []), ...hook.findings]; status = buildStatusFrom(facts); }
   const warnings = [];
+  if (fetched && !fetched.ok) warnings.push(`--fetch failed (${fetched.reason}); measured against the last fetch`);
   if (facts.hold?.invalid) warnings.push(`hold.json unreadable (${facts.hold.invalid})`);
   for (const t of facts.trainsInvalid) warnings.push(`train record unreadable: ${t.file} (${t.reason})`);
   const general = hook.findings.filter((f) => !f.sessions?.length);
@@ -132,6 +134,24 @@ export function cmdStatus(ctx, flags = {}) {
   if (todo) lines.push('', todo);
   if (warnings.length) lines.push('', ...warnings.map((w) => `warning: ${w}`));
   return ok({ status: { ...status, items: view.items, hidden: view.hidden }, checks: hook.results, warnings, text: lines.join('\n') });
+}
+
+/**
+ * `status --fetch`: bring the base's remote-tracking ref up to date first. A
+ * failure is reported and the run continues on the last fetch — never fatal,
+ * never silent.
+ */
+export function fetchBase(ctx, { git = runGit } = {}) {
+  const base = ctx.config.baseBranch;
+  // The SAME upstream the measurement will read (an open train's destination first), so the fetch
+  // refreshes exactly the ref the overlaps are then measured from.
+  const { upstream } = resolveUpstream(ctx.cwd, base, listTrains(ctx.dir).trains);
+  // `<remote>/<branch>` - the branch is the UPSTREAM's own name, which need not equal baseBranch.
+  const slash = upstream.indexOf('/');
+  const remote = slash > 0 ? upstream.slice(0, slash) : 'origin';
+  const branch = slash > 0 ? upstream.slice(slash + 1) : base;
+  const r = git(['fetch', '--no-tags', remote, branch], ctx.cwd, { timeoutMs: 60_000 });
+  return r.ok ? { ok: true, remote, branch } : { ok: false, remote, branch, reason: r.reason ?? 'git fetch failed' };
 }
 
 // ── claim ───────────────────────────────────────────────────────────────────
@@ -146,7 +166,8 @@ export function cmdClaim(ctx, flags) {
   const waiting = waitingFromFlags(flags, ctx);
   const branch = currentBranch(ctx.cwd);
   const top = repoToplevel(ctx.cwd);
-  const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: false, untracked: false });
+  // The `claim` fact profile: every live session's worktree is probed for UNCOMMITTED edits (advisory evidence).
+  const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: true, untracked: false, uncommitted: 'all' });
   const start = startOidFor(ctx, branch, facts.base.measure);
   const startOid = start.ok ? start.oid : null; // claim stays lenient but never substitutes; the reason is surfaced below
 
@@ -383,7 +404,7 @@ export function cmdStart(ctx, tasks) {
     const pv = validateClaimPatterns(t.paths);
     if (!pv.ok) throw new ArgvError(`fleet start: task ${JSON.stringify(t.task)}: ${pv.errors.join('; ')}`);
   }
-  const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: false, untracked: false });
+  const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: true, untracked: false, uncommitted: 'all' });
   // Chips start from the base the overlaps were measured against: the fresher of local and upstream.
   const base = facts.base.measure;
   if (!base.ok) return failed(`cannot resolve the base branch ${ctx.config.baseBranch}: ${base.reason}`);

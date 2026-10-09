@@ -54,7 +54,7 @@ describe('splitHidden — presentation boundary over a COMPLETE status', () => {
     const s = status(items);
     const v = splitHidden(s);
     assert.deepEqual(v.items.map((i) => i.id), ['live', 'sess']);
-    assert.deepEqual(v.hidden, { count: 2, ids: ['old1', 'old2'], unchecked: 0, merged: 2, idle: 0, idleDays: 14 });
+    assert.deepEqual(v.hidden, { count: 2, ids: ['old1', 'old2'], unchecked: 0, merged: 2, landed: 0, idle: 0, idleDays: 14 });
     assert.equal(splitHidden(s, { all: true }).items.length, 4);
     assert.equal(s.items.length, 4, 'the input status is never mutated');
   });

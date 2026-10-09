@@ -22,7 +22,7 @@ import { runGit, headOf } from './git-facts.mjs';
 export const PR_LIST_FIELDS = Object.freeze([
   'number', 'title', 'url', 'state', 'isDraft', 'isCrossRepository',
   'headRefName', 'headRefOid', 'headRepository', 'headRepositoryOwner',
-  'baseRefName', 'baseRefOid', 'updatedAt',
+  'baseRefName', 'baseRefOid', 'updatedAt', 'autoMergeRequest', 'mergeStateStatus',
 ]);
 
 /**
@@ -84,24 +84,28 @@ const strOrAbsent = (v) => v === undefined || v === null || typeof v === 'string
 
 /**
  * Collapse `statusCheckRollup` into one honest summary.
- * `none` = no checks reported (not the same as passing).
+ * `none` = no checks reported (not the same as passing). A SKIPPED check does
+ * not fail the rollup, but it is COUNTED (`skipped`) rather than silently folded
+ * into success: whether a REQUIRED check actually ran is `required-checks.mjs`'s
+ * question, and this summary must not read as its answer.
  * @param {Array<object>|null|undefined} rollup
- * @returns {{state: 'success'|'failure'|'pending'|'none', total: number}}
+ * @returns {{state: 'success'|'failure'|'pending'|'none', total: number, skipped?: number}}
  */
 export function summariseChecks(rollup) {
   const list = Array.isArray(rollup) ? rollup : [];
   if (list.length === 0) return { state: 'none', total: 0 };
   const bad = ['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'STARTUP_FAILURE', 'ACTION_REQUIRED'];
   const good = ['SUCCESS', 'NEUTRAL', 'SKIPPED'];
-  let pending = false;
+  let pending = false; let skipped = 0; let failed = false;
   for (const c of list) {
     if (!isObj(c)) { pending = true; continue; } // a malformed record is never a pass
     const verdict = (str(c.conclusion) || str(c.state)).toUpperCase();
+    if (verdict === 'SKIPPED') skipped += 1;
     const status = (str(c.status) || 'COMPLETED').toUpperCase();
-    if (bad.includes(verdict)) return { state: 'failure', total: list.length };
-    if (status !== 'COMPLETED' || !good.includes(verdict)) pending = true;
+    if (bad.includes(verdict)) failed = true;
+    else if (status !== 'COMPLETED' || !good.includes(verdict)) pending = true;
   }
-  return { state: pending ? 'pending' : 'success', total: list.length };
+  return { state: failed ? 'failure' : pending ? 'pending' : 'success', total: list.length, ...(skipped ? { skipped } : {}) };
 }
 
 /**
@@ -174,7 +178,34 @@ export function normalisePr(raw) {
     isCrossRepository: Boolean(raw.isCrossRepository),
     checks: UNKNOWN_CHECKS,
     updatedAt: raw.updatedAt ?? null,
+    autoMerge: isObj(raw.autoMergeRequest),
+    mergeState: typeof raw.mergeStateStatus === 'string' ? raw.mergeStateStatus.toUpperCase() : null,
   };
+}
+
+/** Minutes a green, CLEAN, auto-merge-armed PR may sit unmerged before status calls it a possible hang. */
+export const AUTO_MERGE_HANG_MINUTES = 15;
+
+/**
+ * Advisory warnings about how a PR is set to merge, from the PR list alone:
+ *  - a DRAFT with auto-merge armed merges the moment it is marked ready, on
+ *    whatever checks ran (or were skipped) while it was a draft;
+ *  - green + CLEAN + auto-merge armed + unmerged for a while: auto-merge may be
+ *    hung and need re-arming.
+ * @param {ReturnType<typeof normalisePr>} pr
+ * @param {number|null} nowMs
+ * @returns {string[]}
+ */
+export function prWarnings(pr, nowMs) {
+  const out = [];
+  if (!pr) return out;
+  if (pr.isDraft && pr.autoMerge) out.push(`PR #${pr.number} is a DRAFT with auto-merge armed — marking it ready merges on draft-time (possibly skipped) checks; disarm auto-merge, mark ready, let required checks run, then merge`);
+  const idleMs = nowMs !== null && pr.updatedAt ? nowMs - Date.parse(pr.updatedAt) : NaN;
+  // A rollup with skipped checks is not 'green' here: re-arming auto-merge over a skipped REQUIRED check is the #802 defect.
+  if (!pr.isDraft && pr.autoMerge && pr.checks?.state === 'success' && !pr.checks.skipped && pr.mergeState === 'CLEAN' && idleMs > AUTO_MERGE_HANG_MINUTES * 60_000) {
+    out.push(`PR #${pr.number}: checks green and CLEAN with auto-merge armed, but unmerged for ${Math.round(idleMs / 60_000)} min — auto-merge may be hung; confirm its required checks ran (gh pr checks ${pr.number} --required), then re-arm with gh pr merge ${pr.number} --auto`);
+  }
+  return out;
 }
 
 /** `gh pr list --limit`; a result of exactly this many rows cannot prove there are no more. */
@@ -237,13 +268,31 @@ export function attachChecks(prs, text) {
   return { queried: true, missing, ...(reasons.length ? { reason: reasons.join('; ') } : {}) };
 }
 
-function runGh(cwd, ghBin, env, fields) {
-  return spawnSync(ghBin, [
-    'pr', 'list', '--state', 'open', '--limit', String(PR_LIMIT), '--json', fields.join(','),
-  ], {
-    cwd, encoding: 'utf-8', timeout: GH_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'],
+/**
+ * Spawn `gh` once, never prompting and never coloured. Returns the raw
+ * `spawnSync` result; callers classify `error` / `status` themselves (a `gh pr
+ * checks` exit 1 or 8 still carries a valid JSON answer, for instance).
+ * @param {string} cwd
+ * @param {string[]} args
+ * @param {{ghBin?: string, env?: NodeJS.ProcessEnv, timeoutMs?: number}} [opts]
+ */
+export function spawnGh(cwd, args, { ghBin = 'gh', env, timeoutMs = GH_TIMEOUT_MS } = {}) {
+  return spawnSync(ghBin, args, {
+    cwd, encoding: 'utf-8', timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...(env ?? process.env), GH_PROMPT_DISABLED: '1', NO_COLOR: '1' },
   });
+}
+
+/** Reason for a `spawnSync` that never produced a `gh` answer (`res.error`). */
+export function ghSpawnFailure(res, what = '') {
+  const tag = what ? ` (${what})` : '';
+  if (res.error.code === 'ENOENT') return 'gh not installed';
+  if (res.error.code === 'ETIMEDOUT') return `gh timed out${tag}`;
+  return `gh failed to run${tag}: ${res.error.message}`;
+}
+
+function runGh(cwd, ghBin, env, fields) {
+  return spawnGh(cwd, ['pr', 'list', '--state', 'open', '--limit', String(PR_LIMIT), '--json', fields.join(',')], { ghBin, env });
 }
 
 /**
@@ -256,10 +305,7 @@ export function listPullRequests(cwd, { ghBin = 'gh', env } = {}) {
   const observedAt = nowIso();
   const res = runGh(cwd, ghBin, env, PR_LIST_FIELDS);
   const no = (reason) => ({ queried: false, complete: false, limit: PR_LIMIT, observedAt, reason, prs: [] });
-  if (res.error) {
-    return no(res.error.code === 'ENOENT' ? 'gh not installed'
-      : res.error.code === 'ETIMEDOUT' ? 'gh timed out' : `gh failed to run: ${res.error.message}`);
-  }
+  if (res.error) return no(ghSpawnFailure(res));
   if (res.status !== 0) return no(classifyGhFailure(res.stderr));
   const core = parsePrList(res.stdout, { observedAt });
   if (!core.queried) return core;
@@ -267,7 +313,7 @@ export function listPullRequests(cwd, { ghBin = 'gh', env } = {}) {
   const cres = runGh(cwd, ghBin, env, PR_CHECK_FIELDS);
   let field;
   if (cres.error) {
-    field = { queried: false, missing: core.prs.length, reason: cres.error.code === 'ETIMEDOUT' ? 'gh timed out (checks)' : `gh failed to run (checks): ${cres.error.message}` };
+    field = { queried: false, missing: core.prs.length, reason: ghSpawnFailure(cres, 'checks') };
   } else if (cres.status !== 0) {
     field = { queried: false, missing: core.prs.length, reason: classifyChecksFailure(cres.stderr) };
   } else {

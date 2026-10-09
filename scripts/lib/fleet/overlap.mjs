@@ -195,7 +195,7 @@ export function splitHotFiles(files, hotFiles) {
  * predicate `claim`, `start` and the verdict itself use.
  */
 export function isBlockingConflict(c) {
-  return !c.known && !c.hotOnly;
+  return !c.known && !c.hotOnly && !c.uncommittedOnly;
 }
 
 // ── Duplicates and liveness ─────────────────────────────────────────────────
@@ -277,9 +277,11 @@ export function decideClaim({ claim, mode, others, complete, hotFiles = [] }) {
   const myIntent = normIntent(claim.intent);
   const myPaths = claim.paths ?? [];
   const conflicts = [];
+  const uninspected = [];
   for (const o of others) {
     const s = o.session;
     if (!o.live || isTerminalState(s.state) || s.id === claim.id) continue;
+    if (o.uncommittedUnknown) uninspected.push({ with: s.id, reason: o.uncommittedUnknown });
     const via = [];
     const hit = { with: s.id, via, paths: [], files: [], known: false };
     const hot = new Set();
@@ -295,16 +297,24 @@ export function decideClaim({ claim, mode, others, complete, hotFiles = [] }) {
     const { real, hot: hotChanged } = splitHotFiles(fileOverlap(o.changedFiles ?? [], myPaths), hotFiles);
     if (real.length) { via.push('files'); hit.files = real; }
     for (const f of hotChanged) hot.add(f);
+    // Another session's UNCOMMITTED edits under my paths: disclosed, advisory (volatile; may be discarded).
+    const { real: unc, hot: hotUnc } = splitHotFiles(fileOverlap(o.uncommittedFiles ?? [], myPaths).filter((f) => !real.includes(f)), hotFiles);
+    if (unc.length) { via.push('uncommitted'); hit.uncommittedFiles = unc; }
+    for (const f of hotUnc) hot.add(f);
     if (hot.size) { via.push('hot-files'); hit.hotFiles = [...hot]; hit.hotOnly = via.length === 1; }
     if (!via.length) continue;
+    hit.uncommittedOnly = via.includes('uncommitted') && via.every((v) => v === 'uncommitted' || v === 'hot-files');
     hit.known = (claim.knownOverlaps ?? []).some((k) => k.with === s.id)
       || (s.knownOverlaps ?? []).some((k) => k.with === claim.id);
     conflicts.push(hit);
   }
   const blocking = conflicts.filter(isBlockingConflict);
-  if (mode === 'new' && blocking.length) return { ok: false, verdict: 'blocked', conflicts };
-  if (mode === 'adopt' && blocking.length) return { ok: true, verdict: 'warn', conflicts };
-  return { ok: true, verdict: 'ok', conflicts };
+  const extra = uninspected.length ? { uninspected } : {};
+  if (mode === 'new' && blocking.length) return { ok: false, verdict: 'blocked', conflicts, ...extra };
+  if (mode === 'adopt' && blocking.length) return { ok: true, verdict: 'warn', conflicts, ...extra };
+  // Advisory-only evidence (uncommitted edits) reads as a WARN, never a block and never a silent OK.
+  if (conflicts.some((c) => c.uncommittedOnly && !c.known)) return { ok: true, verdict: 'warn', conflicts, ...extra };
+  return { ok: true, verdict: 'ok', conflicts, ...extra };
 }
 
 // ── Approval eligibility ────────────────────────────────────────────────────
@@ -466,14 +476,54 @@ const samePath = (a, b) => a && b && String(a).replace(/\\/g, '/').replace(/\/+$
   === String(b).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
 /**
- * Is the session finished? Derived on read from a `landed` train: the train's
- * `sources` contain `(id, gen)`; the session's current `rev`/`ready.oid` equal
- * the manifest's; and the OBSERVED tip still equals the manifest oid (or the
- * source ref is gone). A record already cached as `done` is terminal on its own.
- * @returns {{done: boolean, trainId?: string, note?: string}}
+ * Is the session finished? A record already cached as `done` is terminal on its
+ * own. Otherwise, derived on read from EITHER
+ *  - a `landed` train: the train's `sources` contain `(id, gen)`; the session's
+ *    current `rev`/`ready.oid` equal the manifest's; and the OBSERVED tip still
+ *    equals the manifest oid (or the source ref is gone); or
+ *  - merged evidence (`mergedDone`): the committed work landed outside fleet AND
+ *    the worktree is proven to hold nothing more.
+ * @param {object} session
+ * @param {object[]} trains
+ * @param {{observedOid?: string|null, branchGone?: boolean, tipObserved?: boolean,
+ *   merged?: object|null, workRemaining?: boolean|null}} facts
+ * @returns {{done: boolean, trainId?: string, note?: string, mergedVia?: object}}
  */
-export function deriveDone(session, trains, { observedOid, branchGone, tipObserved }) {
+export function deriveDone(session, trains, facts) {
   if (isTerminalState(session.state)) return { done: true };
+  const byTrain = deriveTrainDone(session, trains, facts);
+  if (byTrain.done) return byTrain;
+  const byMerge = mergedDone(facts.merged, facts.workRemaining);
+  if (byMerge.done) return byMerge;
+  const notes = [byTrain.note, byMerge.note].filter(Boolean);
+  return notes.length ? { done: false, note: notes.join('; ') } : { done: false };
+}
+
+/**
+ * Merged evidence (`merged-facts.mjs:mergedEvidenceFor`) to a completion verdict.
+ * Committed work merged is NOT "finished": the worktree must be proven clean
+ * (`workRemaining === false`, which includes "has no worktree"). Dirty or
+ * uninspected stays non-terminal and says why.
+ * @param {object|null|undefined} merged
+ * @param {boolean|null|undefined} workRemaining
+ */
+export function mergedDone(merged, workRemaining) {
+  if (!merged || !merged.merged) return { done: false };
+  const what = mergedWhat(merged);
+  if (merged.merged === 'partially') {
+    return { done: false, note: `${what}; ${merged.extraCommits ?? 'some'} newer commit(s) on the branch since — restack them` };
+  }
+  if (workRemaining === false) return { done: true, mergedVia: merged, note: `derived done (${what})` };
+  if (workRemaining === true) return { done: false, note: `${what} — worktree has uncommitted changes` };
+  return { done: false, note: `${what} — worktree not inspected` };
+}
+
+/** "PR #12 merged" / "squash-merged as abc123def456" — how merged evidence names itself. */
+export function mergedWhat(merged) {
+  return merged.via === 'pr' ? `PR #${merged.pr} merged` : `squash-merged as ${String(merged.commit ?? '?').slice(0, 12)}`;
+}
+
+function deriveTrainDone(session, trains, { observedOid, branchGone, tipObserved }) {
   for (const t of trains ?? []) {
     if (t.phase !== 'landed') continue;
     const src = (t.sources ?? []).find((s) => s.id === session.id && s.gen === session.gen);
@@ -538,6 +588,14 @@ export function buildStatus(facts) {
   const prFor = (src, branch) => prs.find((p) => (src?.prNumber && p.number === src.prNumber && (!src.repo || p.repo === src.repo)))
     ?? prs.find((p) => !p.isCrossRepository && p.headRef === branch) ?? null;
 
+  // Does the worktree hold work history does not show? true / false (no worktree, or probed clean) / null (unknown).
+  const workRemainingFor = (branch, wt) => {
+    const u = branch ? facts.uncommitted?.[branch] : undefined;
+    if (u) return u.queried ? u.files.length > 0 : null;
+    if (facts.worktrees?.queried && (!wt || wt.missing)) return false;
+    return null;
+  };
+
   const items = [];
   const claimedBranches = new Set();
   for (const s of sessions) {
@@ -550,12 +608,13 @@ export function buildStatus(facts) {
     const branchGone = tipObserved && !b && !pr;
     const wt = wtFor(s.worktree, branch);
     const live = liveness(s, { now: nowMs, leaseMs, tipCommitAt: b?.tipTime ?? null, skewMs });
-    const done = deriveDone(s, trains, { observedOid, branchGone, tipObserved });
+    const merged = branch ? facts.merged?.evidence?.[branch] ?? null : null;
+    const done = deriveDone(s, trains, { observedOid, branchGone, tipObserved, merged, workRemaining: workRemainingFor(branch, wt) });
     const state = done.done ? 'done' : s.state;
     const notes = [];
     if (done.note) notes.push(done.note);
     if (live.futureDatedTipIgnored) notes.push('future-dated commit ignored');
-    if (done.done && s.state !== 'done') notes.push(`derived done (landed in ${done.trainId})`);
+    if (done.done && s.state !== 'done' && done.trainId) notes.push(`derived done (landed in ${done.trainId})`);
     let display = state;
     if (state === 'ready') {
       if (s.ready?.oid && observedOid && s.ready.oid !== observedOid) display = 'ready (stale — head moved)';
@@ -569,7 +628,7 @@ export function buildStatus(facts) {
       worktree: s.worktree ?? wt?.path ?? null, worktreeState: wtState(wt), intent: s.intent, paths: s.paths ?? [],
       state, display, live: live.live, liveReason: live.reason, stale: !isTerminalState(state) && !live.live,
       gen: s.gen, rev: s.rev, ready: s.ready ?? null, readyStale: display.startsWith('ready (stale'),
-      ahead: b?.ahead ?? null, behind: b?.behind ?? null, pr, notes,
+      ahead: b?.ahead ?? null, behind: b?.behind ?? null, pr, notes, merged,
       waitingOn: (s.waitingOn ?? []).map((w) => waitingView(w, { byId, trains })),
       overlaps: [], hotOverlaps: [], duplicates: [], findings: [],
     });
@@ -583,12 +642,16 @@ export function buildStatus(facts) {
     claimedBranches.add(b.name);
     const pr = prFor(null, b.name);
     const live = liveness({ state: 'working', leaseExpiresAt: null }, { now: nowMs, leaseMs, tipCommitAt: b.tipTime, skewMs });
+    const merged = facts.merged?.evidence?.[b.name] ?? null;
+    const notes = live.futureDatedTipIgnored ? ['future-dated commit ignored'] : [];
+    if (merged?.merged === true) notes.push(`landed (${mergedWhat(merged)})`);
+    else if (merged?.merged === 'partially') notes.push(mergedDone(merged, false).note);
     items.push({
       id: b.name, tracked: false, kind: 'branch', branch: b.name, oid: b.oid, worktree: wt?.path ?? null, worktreeState: wtState(wt),
       intent: null, paths: [], state: 'untracked', display: 'untracked', live: live.live, liveReason: live.reason, stale: false, tipTime: b.tipTime ?? null,
       worktreeClean: wt ? (facts.worktreeClean?.[wt.path] ?? null) : null,
-      gen: null, rev: null, ready: null, readyStale: false, ahead: b.ahead, behind: b.behind, pr,
-      notes: live.futureDatedTipIgnored ? ['future-dated commit ignored'] : [], waitingOn: [], overlaps: [], hotOverlaps: [], duplicates: [], findings: [],
+      gen: null, rev: null, ready: null, readyStale: false, ahead: b.ahead, behind: b.behind, pr, merged,
+      notes, waitingOn: [], overlaps: [], hotOverlaps: [], duplicates: [], findings: [],
     });
   }
   for (const w of worktrees) {
@@ -617,6 +680,8 @@ export function buildStatus(facts) {
   const hotFiles = facts.hotFiles ?? [];
   const active = items.filter((i) => i.branch && i.kind !== 'remote-only' && !isTerminalState(i.state));
   const changedOf = (i) => (facts.changed?.[i.branch]?.queried ? facts.changed[i.branch].files ?? [] : []);
+  // Uncommitted evidence (a registered session's worktree): advisory, volatile, never counted as committed.
+  const uncommittedOf = (i) => (i.tracked && facts.uncommitted?.[i.branch]?.queried ? facts.uncommitted[i.branch].files ?? [] : []);
   for (let x = 0; x < active.length; x += 1) {
     for (let y = x + 1; y < active.length; y += 1) {
       const a = active[x]; const b = active[y];
@@ -624,7 +689,12 @@ export function buildStatus(facts) {
       const setB = new Set(changedOf(b));
       const { real: files, hot: hotShared } = splitHotFiles(changedOf(a).filter((f) => setB.has(f)), hotFiles);
       if (files.length) via.push('files');
-      const hot = new Set(hotShared);
+      // Shared paths where at least one side holds the file only UNCOMMITTED.
+      const allA = new Set([...changedOf(a), ...uncommittedOf(a)]);
+      const sharedAny = [...new Set([...changedOf(b), ...uncommittedOf(b)])].filter((f) => allA.has(f) && !files.includes(f) && !hotShared.includes(f));
+      const { real: uncShared, hot: uncHot } = splitHotFiles(sharedAny, hotFiles);
+      if (uncShared.length) via.push('uncommitted');
+      const hot = new Set([...hotShared, ...uncHot]);
       let declared = false;
       for (const pa of a.paths) {
         for (const pb of b.paths) {
@@ -642,8 +712,9 @@ export function buildStatus(facts) {
       if (!via.length) continue;
       const sa = byId.get(a.id); const sb = byId.get(b.id);
       const known = (sa?.knownOverlaps ?? []).some((k) => k.with === b.id) || (sb?.knownOverlaps ?? []).some((k) => k.with === a.id);
-      a.overlaps.push({ with: b.id, via, files: files.slice(0, 5), known });
-      b.overlaps.push({ with: a.id, via, files: files.slice(0, 5), known });
+      const unc = uncShared.length ? { uncommittedFiles: uncShared.slice(0, 5) } : {};
+      a.overlaps.push({ with: b.id, via, files: files.slice(0, 5), known, ...unc });
+      b.overlaps.push({ with: a.id, via, files: files.slice(0, 5), known, ...unc });
     }
   }
   const dupGroups = duplicatePatches(active.map((i) => ({ id: i.id, patchId: facts.patchIds?.[i.branch]?.patchId ?? null })));
@@ -655,7 +726,7 @@ export function buildStatus(facts) {
   const landable = items.filter((i) => i.tracked && !isTerminalState(i.state));
   const { order, cycles } = proposeLandingOrder(landable.map((i) => ({
     id: i.id, ready: i.state === 'ready' && !i.readyStale && Boolean(i.ready),
-    overlapCount: i.overlaps.filter((o) => !o.known).length, readyAt: i.ready?.at ?? null, waitingOn: i.waitingOn,
+    overlapCount: i.overlaps.filter((o) => !o.known && !(o.via.length === 1 && o.via[0] === 'uncommitted')).length, readyAt: i.ready?.at ?? null, waitingOn: i.waitingOn,
   })));
   const rank = new Map(order.map((id, n) => [id, n]));
   items.sort((a, b) => {
@@ -723,12 +794,13 @@ export function isIdleTip(tipTime, now, idleMs) {
  *     missing or future-dated is not idle.
  * @param {object} item a status item
  * @param {{prsComplete: boolean, now?: number|string|Date|null, idleMs?: number}} ctx
- * @returns {'merged'|'idle'|null}
+ * @returns {'merged'|'landed'|'idle'|null}
  */
 export function hideReason(item, { prsComplete, now = null, idleMs = DEFAULT_IDLE_DAYS * DAY_MS }) {
   if (!(item.tracked === false && item.kind === 'branch' && item.pr === null && prsComplete === true)) return null;
   if (!(item.worktree === null || item.worktreeClean === true)) return null;
   if (item.ahead === 0) return 'merged';
+  if (item.merged?.merged === true) return 'landed';
   if (Number.isInteger(item.ahead) && isIdleTip(item.tipTime, now, idleMs)) return 'idle';
   return null;
 }
@@ -753,7 +825,7 @@ export function splitHidden(status, { all = false, idleMs = DEFAULT_IDLE_DAYS * 
   // Candidates that would be hidden but for an attached worktree of unknown cleanliness: visible, and counted.
   const unchecked = status.items.filter((i) => i.worktree !== null && i.worktreeClean === null
     && hideReason({ ...i, worktreeClean: true }, ctx) !== null).length;
-  if (all) return { items: status.items, hidden: { count: 0, ids: [], unchecked, merged: 0, idle: 0, idleDays } };
+  if (all) return { items: status.items, hidden: { count: 0, ids: [], unchecked, merged: 0, landed: 0, idle: 0, idleDays } };
   const reasons = new Map();
   for (const i of status.items) { const r = hideReason(i, ctx); if (r) reasons.set(i.id, r); }
   const items = status.items.filter((i) => !reasons.has(i.id)).map((i) => {
@@ -769,5 +841,5 @@ export function splitHidden(status, { all = false, idleMs = DEFAULT_IDLE_DAYS * 
   });
   const ids = [...reasons.keys()];
   const count = (r) => ids.filter((id) => reasons.get(id) === r).length;
-  return { items, hidden: { count: ids.length, ids, unchecked, merged: count('merged'), idle: count('idle'), idleDays } };
+  return { items, hidden: { count: ids.length, ids, unchecked, merged: count('merged'), landed: count('landed'), idle: count('idle'), idleDays } };
 }

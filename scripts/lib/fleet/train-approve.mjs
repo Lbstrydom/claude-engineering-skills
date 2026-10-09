@@ -26,6 +26,7 @@ import {
 } from './git-facts.mjs';
 import { PR_VIEW_FIELDS, materializePrRef, repoFromPrUrl } from './gh-facts.mjs';
 import { approvable, deriveDone } from './overlap.mjs';
+import { describeVerdict, observeRequiredChecks, requiredInventory } from './required-checks.mjs';
 import { fleetDir, listTrains, readSessions, readTrain, transact } from './registry.mjs';
 import { buildStatusFrom, gatherFacts } from './facts.mjs';
 import {
@@ -33,7 +34,7 @@ import {
 } from './train.mjs';
 
 /** Fields requested when re-checking a PR at approval (all real `gh pr view` fields — see the recorded fixture). */
-export const PR_APPROVE_FIELDS = Object.freeze(['state', 'baseRefName', 'baseRefOid', 'headRefOid', 'url']);
+export const PR_APPROVE_FIELDS = Object.freeze(['state', 'baseRefName', 'baseRefOid', 'headRefOid', 'url', 'isDraft']);
 
 const refuse = (reason, extra = {}) => ({ ok: false, code: 'refused', reason, ...extra });
 const short = (o) => String(o ?? '?').slice(0, 12);
@@ -122,22 +123,40 @@ export function verifyFacts({ cwd, train, dir, deps }) {
   return problems.length ? { ok: false, reason: `a recorded fact changed: ${problems.join('; ')} — build a new train` } : { ok: true, remoteOid: rem.oid };
 }
 
-/** Each PR is re-checked at plan emission: open, right base ref, head == recorded, `baseRefOid` == expected. An unverifiable base refuses. */
-function verifyPrsForPlan({ cwd, train, deps }) {
+/**
+ * Each PR is re-checked at plan emission: open, not a draft, right base ref, head ==
+ * recorded, `baseRefOid` == expected. An unverifiable base refuses. Then its
+ * REQUIRED checks on that head (`required-checks.mjs`): `failed`/`not-run` refuse
+ * (a skipped required check never ran); `missing`/`pending`/`unknown` let the plan
+ * be printed but put a WAIT on that merge line — the commands are for a human, and a
+ * just-pushed head registers its checks asynchronously.
+ * @returns {{problems: string[], waits: Record<string, string>}}
+ */
+function verifyPrsForPlan({ cwd, train, deps, requiredChecks, requiredChecksError = null }) {
   const baseBranch = branchOfRef(train.destination.ref);
-  const problems = [];
+  const problems = []; const waits = {};
+  const inventories = new Map();
+  const inventoryFor = (repo) => {
+    if (!inventories.has(repo)) inventories.set(repo, requiredInventory(cwd, { repo, base: baseBranch, configured: requiredChecks, configError: requiredChecksError, gh: deps.gh }));
+    return inventories.get(repo);
+  };
   for (const src of train.sources) {
     const v = ghView(deps, cwd, src, PR_APPROVE_FIELDS);
     if (!v.ok) { problems.push(`${src.id}: PR #${src.prNumber} cannot be verified (${v.reason})`); continue; }
     const d = v.doc;
     if (String(d.state).toUpperCase() !== 'OPEN') problems.push(`${src.id}: PR #${src.prNumber} is ${d.state}, not OPEN`);
+    if (d.isDraft === true) problems.push(`${src.id}: PR #${src.prNumber} is a DRAFT — mark it ready, let its required checks run on the ready head, then approve (never ready + auto-merge on a draft)`);
     if (repoFromPrUrl(d.url) !== src.repo) problems.push(`${src.id}: PR #${src.prNumber} belongs to ${repoFromPrUrl(d.url) ?? '?'}, not ${src.repo}`);
     if (d.baseRefName !== baseBranch) problems.push(`${src.id}: PR #${src.prNumber} now targets ${d.baseRefName}, not ${baseBranch}`);
     if (d.headRefOid !== src.oid) problems.push(`${src.id}: PR #${src.prNumber} head moved (${short(src.oid)} -> ${short(d.headRefOid)})`);
     if (!d.baseRefOid) problems.push(`${src.id}: PR #${src.prNumber} base cannot be verified`);
     else if (d.baseRefOid !== train.destination.expectedOid) problems.push(`${src.id}: PR #${src.prNumber} baseRefOid ${short(d.baseRefOid)} != recorded base ${short(train.destination.expectedOid)}`);
+    if (d.headRefOid !== src.oid || d.isDraft === true) continue;
+    const rc = observeRequiredChecks(cwd, { pr: src.prNumber, repo: src.repo, inventory: inventoryFor(src.repo), expectHead: src.oid, gh: deps.gh });
+    if (rc.verdict === 'failed' || rc.verdict === 'not-run') problems.push(`${src.id}: PR #${src.prNumber} required checks ${describeVerdict(rc)}`);
+    else if (rc.verdict !== 'pass' && rc.verdict !== 'none-required') waits[src.id] = `required checks ${rc.verdict} (${describeVerdict(rc)}) — do not merge until they pass`;
   }
-  return problems;
+  return { problems, waits };
 }
 
 /**
@@ -189,9 +208,10 @@ export function writeDoneCache({ cwd, baseBranch, deps }) {
   }
 }
 
-const planFor = (train) => train.sources.map((s) => ({
+const planFor = (train, waits = {}) => train.sources.map((s) => ({
   id: s.id, prNumber: s.prNumber,
   command: ['gh', 'pr', 'merge', String(s.prNumber), '-R', s.repo, '--squash', '--match-head-commit', s.oid],
+  ...(waits[s.id] ? { wait: waits[s.id] } : {}),
 }));
 
 /**
@@ -201,7 +221,7 @@ const planFor = (train) => train.sources.map((s) => ({
  *
  * @param {{cwd: string, trainId: string, acceptRerun?: boolean, doneCache?: boolean, deps?: ReturnType<typeof defaultDeps>}} args
  */
-export function approveTrain({ cwd, trainId, acceptRerun = false, doneCache = true, cmd = 'fleet', deps = defaultDeps() }) {
+export function approveTrain({ cwd, trainId, acceptRerun = false, doneCache = true, cmd = 'fleet', deps = defaultDeps(), requiredChecks, requiredChecksError = null }) {
   const dir = fleetDir(cwd);
   return withTrainLock(dir, () => {
     const r = readTrain(dir, trainId);
@@ -216,10 +236,10 @@ export function approveTrain({ cwd, trainId, acceptRerun = false, doneCache = tr
     const common = { trainId, deferredTiers: deferred, ...(elig.note ? { note: elig.note } : {}) };
 
     if (t.mergeMethod === 'pr') {
-      const problems = verifyPrsForPlan({ cwd, train: t, deps });
+      const { problems, waits } = verifyPrsForPlan({ cwd, train: t, deps, requiredChecks, requiredChecksError });
       if (problems.length) return refuse(`a PR changed or cannot be verified: ${problems.join('; ')}`);
       const train = patchTrain(dir, trainId, { phase: 'awaiting-merge' }, deps);
-      return { ok: true, code: 'ok', ...common, train, mode: 'pr', plan: planFor(t), landed: false, perMergeMainRuns: true };
+      return { ok: true, code: 'ok', ...common, train, mode: 'pr', plan: planFor(t, waits), landed: false, perMergeMainRuns: true };
     }
 
     // Direct modes: write the intent BEFORE the push, push to the RECORDED URL, lease on the recorded oid.

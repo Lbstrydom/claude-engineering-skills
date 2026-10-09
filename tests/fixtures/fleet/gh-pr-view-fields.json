@@ -1,5 +1,5 @@
 {
-  "_source": "gh 2.78.0: gh pr view --help / gh pr list --help, JSON FIELDS (identical lists); recorded 2026-10-05. baseRepository is NOT a field.",
+  "_source": "gh 2.78.0: gh pr view --help / gh pr list --help, JSON FIELDS (identical lists); recorded 2026-10-05. baseRepository is NOT a field. | checks: gh 2.78.0 gh pr checks --help, JSON FIELDS; recorded 2026-10-09.",
   "view": [
     "additions",
     "assignees",
@@ -95,5 +95,16 @@
     "title",
     "updatedAt",
     "url"
+  ],
+  "checks": [
+    "bucket",
+    "completedAt",
+    "description",
+    "event",
+    "link",
+    "name",
+    "startedAt",
+    "state",
+    "workflow"
   ]
 }

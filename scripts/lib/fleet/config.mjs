@@ -50,6 +50,11 @@ export class ConfigError extends Error {
 
 const timeout = () => z.number().int().positive().max(MAX_TIMER_MS, `must be at most ${MAX_TIMER_MS} ms (Node's timer limit)`);
 export const MAX_HOT_FILES = 200;
+/** `archive-check` ignores these gitignored trees by default: regenerable, never a deliverable. */
+export const DEFAULT_ARCHIVE_IGNORE = Object.freeze(['node_modules/**', 'scripts/.claude-skills/**']);
+/** `land --serial`: how long one PR may wait for its required checks. */
+export const DEFAULT_SERIAL_TIMEOUT_MS = 60 * 60 * 1000;
+const patternList = (what) => z.array(z.string(), { error: `must be an array of ${what}` }).max(MAX_HOT_FILES).optional();
 
 /** User-facing tier: the persisted tier minus `shell` (only a string testCommand may set it). */
 const TierSchema = PersistedTierSchema.omit({ shell: true }).extend({ timeoutMs: timeout().optional() });
@@ -78,6 +83,12 @@ const FleetFileSchema = z.strictObject({
   // matching and claim matching share one semantics.
   hotFiles: z.array(z.string(), { error: 'must be an array of path patterns' }).max(MAX_HOT_FILES).optional(),
   hideIdleAfterDays: z.number().int('must be a whole number of days').min(1).max(3650).optional(),
+  // Absent = "not declared" (inventory comes from rulesets, else unknown); [] = "this repo requires none".
+  requiredChecks: z.array(z.string().min(1), { error: 'must be an array of check names' }).max(200).optional(),
+  appendOnlyGlobs: patternList('path patterns'),
+  restackIgnore: patternList('path patterns'),
+  archiveIgnore: patternList('path patterns'),
+  serialTimeoutMs: timeout().optional(),
 });
 
 const issuePath = (i) => i.path.length ? i.path.join('.') : '(root)';
@@ -152,10 +163,12 @@ export function parseFleetConfig(raw, { hasPackageTest = false } = {}) {
     if (bad) errors.push(`checks.${i}.script: ${bad}`);
     return { ...c, script: c.script.replace(/\\/g, '/') };
   });
-  (cfg.hotFiles ?? []).forEach((p, i) => {
-    const r = validateClaimPattern(p);
-    if (!r.ok) errors.push(`hotFiles.${i}: ${r.reason}`);
-  });
+  for (const key of ['hotFiles', 'appendOnlyGlobs', 'restackIgnore', 'archiveIgnore']) {
+    (cfg[key] ?? []).forEach((p, i) => {
+      const r = validateClaimPattern(p);
+      if (!r.ok) errors.push(`${key}.${i}: ${r.reason}`);
+    });
+  }
   const cnames = checks.map((c) => c.name);
   const cdup = cnames.find((n, i) => cnames.indexOf(n) !== i);
   if (cdup) errors.push(`checks: duplicate check name "${cdup}"`);
@@ -167,6 +180,9 @@ export function parseFleetConfig(raw, { hasPackageTest = false } = {}) {
       baseBranch: cfg.baseBranch ?? null, testCommand: tiers, testCommandSource,
       mergeMethod: cfg.mergeMethod ?? 'pr', mergeMethodSource: cfg.mergeMethod ? 'config' : 'default', checks,
       hotFiles: cfg.hotFiles ?? [], hideIdleAfterDays: cfg.hideIdleAfterDays ?? DEFAULT_IDLE_DAYS,
+      ...(cfg.requiredChecks ? { requiredChecks: cfg.requiredChecks } : {}),
+      appendOnlyGlobs: cfg.appendOnlyGlobs ?? [], restackIgnore: cfg.restackIgnore ?? [],
+      archiveIgnore: cfg.archiveIgnore ?? [...DEFAULT_ARCHIVE_IGNORE], serialTimeoutMs: cfg.serialTimeoutMs ?? DEFAULT_SERIAL_TIMEOUT_MS,
     },
   };
 }
@@ -257,6 +273,8 @@ export function resolveConfig(cwd, { env = process.env } = {}) {
   return {
     baseBranch: base.baseBranch, testCommand: v.testCommand, mergeMethod: v.mergeMethod, checks: v.checks, worktreeRoot,
     hotFiles: v.hotFiles, hideIdleAfterDays: v.hideIdleAfterDays,
+    ...(v.requiredChecks ? { requiredChecks: v.requiredChecks } : {}),
+    appendOnlyGlobs: v.appendOnlyGlobs, restackIgnore: v.restackIgnore, archiveIgnore: v.archiveIgnore, serialTimeoutMs: v.serialTimeoutMs,
     sources: {
       baseBranch: base.source, testCommand: v.testCommandSource, mergeMethod: v.mergeMethodSource,
       checks: file.value?.checks ? 'config' : 'default', worktreeRoot: fromEnv ? 'env' : 'default',

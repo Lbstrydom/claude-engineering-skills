@@ -9,6 +9,8 @@
  * @module scripts/lib/fleet/render
  */
 
+import { prWarnings } from './gh-facts.mjs';
+
 const BANNER = (inv) => `registry incomplete: ${inv.length} record${inv.length === 1 ? '' : 's'} unreadable — claims may be missing`;
 
 /** The optional PR-checks column's provenance line, or null when it is complete. */
@@ -43,12 +45,13 @@ export function incompleteSources(status) {
 function hiddenWhy(h) {
   const parts = [];
   if (h.merged) parts.push(`${h.merged} merged into base`);
+  if (h.landed) parts.push(`${h.landed} landed (squash / merged PR)`);
   if (h.idle) parts.push(`${h.idle} idle > ${h.idleDays ?? '?'} day${h.idleDays === 1 ? '' : 's'}`);
   return parts.length ? parts.join(', ') : 'stale / merged';
 }
 
-/** @param {object} it a status item */
-function itemBlock(it) {
+/** @param {object} it a status item @param {number|null} [nowMs] */
+function itemBlock(it, nowMs = null) {
   const lines = [];
   const head = [it.id, `[${it.display}]`];
   if (it.branch && it.branch !== it.id) head.push(`branch ${it.branch}`);
@@ -57,14 +60,15 @@ function itemBlock(it) {
   const meta = [];
   if (it.ahead !== null && it.ahead !== undefined) meta.push(`ahead ${it.ahead} / behind ${it.behind ?? '?'}`);
   if (it.worktree) meta.push(`worktree ${it.worktree}${it.worktreeState && it.worktreeState !== 'present' ? ` (${it.worktreeState})` : ''}`);
-  if (it.pr) meta.push(`PR #${it.pr.number} checks:${it.pr.checks?.state ?? 'none'}`);
+  if (it.pr) meta.push(`PR #${it.pr.number}${it.pr.isDraft ? ' (draft)' : ''} checks:${it.pr.checks?.state ?? 'none'}${it.pr.checks?.skipped ? ` (${it.pr.checks.skipped} skipped)` : ''}`);
   if (meta.length) lines.push(`    ${meta.join(' · ')}`);
   if (it.waitingOn.length) {
     lines.push(`    WAITING: ${it.waitingOn.map((w) => `${w.kind}:${w.ref}${w.unblocked ? ` (${w.unblocked})` : ''}${w.note ? ` — ${w.note}` : ''}`).join('; ')}`);
   }
   for (const o of it.overlaps) {
     const what = o.files.length ? ` on ${o.files.join(', ')}` : '';
-    lines.push(`    overlaps ${o.with} (${o.via.join('+')})${what}${o.known ? ' [known]' : ''}`);
+    const unc = o.uncommittedFiles?.length ? ` · uncommitted: ${o.uncommittedFiles.join(', ')}` : '';
+    lines.push(`    overlaps ${o.with} (${o.via.join('+')})${what}${unc}${o.known ? ' [known]' : ''}`);
   }
   if (it.overlapsWithHidden?.length) {
     lines.push(`    + overlaps ${it.overlapsWithHidden.length} hidden item${it.overlapsWithHidden.length === 1 ? '' : 's'} — use --all`);
@@ -77,6 +81,7 @@ function itemBlock(it) {
   if (it.duplicates.length) lines.push(`    DUPLICATE patch with ${it.duplicates.join(', ')}`);
   for (const f of it.findings) lines.push(`    ${f.level}: ${f.message}`);
   for (const n of it.notes) lines.push(`    note: ${n}`);
+  for (const w of prWarnings(it.pr, nowMs)) lines.push(`    warning: ${w}`);
   return lines.join('\n');
 }
 
@@ -129,7 +134,8 @@ export function renderStatus(status, { hidden } = {}) {
     else if (noGit) out.push(`(inventory unavailable — git facts could not be read: ${missing.join(', ')})`);
     else out.push(`(nothing found — but ${missing.length} source${missing.length === 1 ? ' was' : 's were'} not fully queried: ${missing.join(', ')})`);
   }
-  for (const it of status.items) out.push(itemBlock(it));
+  const nowMs = Number.isFinite(Date.parse(status.observedAt)) ? Date.parse(status.observedAt) : null;
+  for (const it of status.items) out.push(itemBlock(it, nowMs));
   if (hidden?.count) out.push(`${hidden.count} hidden (${hiddenWhy(hidden)}) — use --all`);
   if (hidden?.unchecked) out.push(`${hidden.unchecked} merged- or idle-looking worktree${hidden.unchecked === 1 ? '' : 's'} shown: cleanliness unchecked`);
   if (status.landingOrder.length) out.push('', `proposed landing order: ${status.landingOrder.join(' → ')}`);
@@ -156,10 +162,12 @@ export function renderClaimVerdict(v, ctx = {}) {
     const detail = [];
     if (c.paths?.length) detail.push(`paths ${c.paths.slice(0, 3).map(([a, b]) => `${a} ~ ${b}`).join(', ')}`);
     if (c.files?.length) detail.push(`files ${c.files.slice(0, 5).join(', ')}`);
+    if (c.uncommittedFiles?.length) detail.push(`UNCOMMITTED in their worktree: ${c.uncommittedFiles.slice(0, 5).join(', ')} (advisory)`);
     if (c.via.includes('intent')) detail.push('identical intent');
     if (c.hotFiles?.length) detail.push(`hot files ${c.hotFiles.slice(0, 5).join(', ')} (${c.hotOnly ? 'disclosed, not blocking' : 'not counted'})`);
     lines.push(`  ${c.known ? '[known] ' : ''}${c.hotOnly ? '[hot] ' : ''}${c.with}: ${c.via.join('+')}${detail.length ? ` — ${detail.join('; ')}` : ''}`);
   }
+  for (const u of v.uninspected ?? []) lines.push(`  note: uncommitted work not inspected for ${u.with} (${u.reason})`);
   return lines.join('\n');
 }
 
