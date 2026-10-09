@@ -17,6 +17,7 @@
  *   archive-check [<id|branch|path>] what removing a worktree would lose (read-only)
  *   next [--id]                     what this session should do now (read-only)
  *   directive --to|--list|--ack     coordinator requests in the shared registry
+ *   restack [<branch>] [--replace]  replay a branch's own commits onto the base (patch-id checked)
  *   land [--select a,b] [--dry-run] build + test one combined train
  *   land --approve|--confirm|--reconcile|--resume|--abandon <trainId>
  *
@@ -41,6 +42,7 @@ import {
 import { leaseMsFrom, resolveNow } from './lib/fleet/facts.mjs';
 import { cmdArchiveCheck, cmdRelease } from './lib/fleet/lifecycle.mjs';
 import { checkpointFooter, cmdDirective, cmdNext } from './lib/fleet/coordination.mjs';
+import { cmdRestack } from './lib/fleet/restack.mjs';
 import { renderCommand } from './lib/fleet/shell-quote.mjs';
 import { cmdLand } from './lib/fleet/land.mjs';
 import { fleetDir, RegistryError } from './lib/fleet/registry.mjs';
@@ -91,6 +93,7 @@ async function main() {
       case 'archive-check': result = cmdArchiveCheck(ctx, flags, positionals); break;
       case 'next': result = cmdNext(ctx, flags); break;
       case 'directive': result = cmdDirective(ctx, flags); break;
+      case 'restack': result = cmdRestack(ctx, flags, positionals); break;
       case 'land': result = cmdLand(ctx, flags); break;
       default: throw new ArgvError(`fleet: unhandled verb ${verb}`);
     }

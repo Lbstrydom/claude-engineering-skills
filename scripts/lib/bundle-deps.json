@@ -71,6 +71,8 @@
       "importers": [
         "scripts/.claude-skills/lib/fleet/lifecycle.mjs",
         "scripts/.claude-skills/lib/fleet/overlap.mjs",
+        "scripts/.claude-skills/lib/fleet/train.mjs",
+        "scripts/.claude-skills/lib/fleet/union-merge.mjs",
         "scripts/.claude-skills/openai-audit.mjs"
       ]
     },
@@ -186,6 +188,7 @@
         "scripts/.claude-skills/lib/fleet/contracts.mjs",
         "scripts/.claude-skills/lib/fleet/directives.mjs",
         "scripts/.claude-skills/lib/fleet/registry.mjs",
+        "scripts/.claude-skills/lib/fleet/serial.mjs",
         "scripts/.claude-skills/lib/learning/author-tier-observation.mjs",
         "scripts/.claude-skills/lib/llm-wrappers.mjs",
         "scripts/.claude-skills/lib/memory-paths.mjs",

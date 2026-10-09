@@ -13,8 +13,9 @@ import { assertTrainId, readTrain } from './registry.mjs';
 import { buildStatusFrom, gatherFacts, payloadFromStatus } from './facts.mjs';
 import { abandonTrain, branchOfRef, buildTrain, defaultDeps, resumeTrain, withTrainLock } from './train.mjs';
 import { approveTrain, confirmTrain, reconcileTrain } from './train-approve.mjs';
+import { approveSerial, readSerial, resumeSerial } from './serial.mjs';
 import {
-  renderAbandon, renderApprove, renderBuilt, renderConfirm, renderDryRun, renderReconcile,
+  renderAbandon, renderApprove, renderBuilt, renderConfirm, renderDryRun, renderReconcile, renderSerial,
 } from './render-train.mjs';
 
 /**
@@ -23,6 +24,11 @@ import {
  * then reads `unknown` (a WAIT on every merge line), never "nothing declared".
  * @returns {{requiredChecks?: string[], requiredChecksError?: string}}
  */
+/** `.fleet.json` `serialTimeoutMs`, or the default when config cannot be read (approval reads the manifest). */
+function serialTimeout(ctx) {
+  try { return ctx.config.serialTimeoutMs; } catch { return undefined; }
+}
+
 function configuredRequiredChecks(ctx) {
   try { return { requiredChecks: ctx.config.requiredChecks }; } catch (e) { return { requiredChecksError: e.message }; }
 }
@@ -44,8 +50,13 @@ export function cmdLand(ctx, flags, deps = defaultDeps({ now: () => ctx.now })) 
   if (modes.length > 1) throw new ArgvError(`fleet land: ${modes.join(' and ')} are mutually exclusive`);
   if (modes.length && (flags['--select'] !== undefined || flags['--dry-run'])) throw new ArgvError('fleet land: --select/--dry-run apply only when building a train');
   if (flags['--accept-rerun'] && modes[0] !== '--approve') throw new ArgvError('fleet land: --accept-rerun applies only to --approve');
+  if (flags['--serial'] && modes[0] !== '--approve') throw new ArgvError('fleet land: --serial applies only to --approve (a stopped serial run continues with --resume)');
   const { cwd, cmd } = ctx; // NOTE: ctx.config is lazy — manifest-driven verbs below never touch it
 
+  if (modes[0] === '--approve' && flags['--serial']) {
+    const r = approveSerial({ cwd, trainId: validId(flags['--approve']), acceptRerun: Boolean(flags['--accept-rerun']), deps, ...configuredRequiredChecks(ctx), timeoutMs: serialTimeout(ctx) });
+    return withText(r, renderSerial(r, cmd));
+  }
   if (modes[0] === '--approve') {
     const r = approveTrain({ cwd, trainId: validId(flags['--approve']), acceptRerun: Boolean(flags['--accept-rerun']), cmd, deps, ...configuredRequiredChecks(ctx) });
     return withText(r, renderApprove(r, cmd));
@@ -61,6 +72,10 @@ export function cmdLand(ctx, flags, deps = defaultDeps({ now: () => ctx.now })) 
   if (modes[0] === '--abandon') {
     const r = abandonTrain({ cwd, trainId: validId(flags['--abandon']), deps });
     return withText(r, renderAbandon(r));
+  }
+  if (modes[0] === '--resume' && readSerial(ctx.dir, validId(flags['--resume'])).ok) {
+    const r = resumeSerial({ cwd, trainId: flags['--resume'], deps, ...configuredRequiredChecks(ctx) });
+    return withText(r, renderSerial(r, cmd));
   }
   if (modes[0] === '--resume') {
     const trainId = validId(flags['--resume']);

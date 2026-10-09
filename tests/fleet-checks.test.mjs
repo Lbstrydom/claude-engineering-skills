@@ -8,7 +8,8 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { cleanupFleetRoots, makeFleetRepo, addBranch, tmpRoot, writeFile } from './helpers/fleet-repo.mjs';
+import { execFileSync } from 'node:child_process';
+import { cleanupFleetRoots, commitFile, makeFleetRepo, addBranch, tmpRoot, writeFile } from './helpers/fleet-repo.mjs';
 import {
   runChecks, checksBlockApproval, checkScriptHash, checkArgv, resultsToFindings, CheckOutputSchema, buildCheckPayload,
 } from '../scripts/lib/fleet/checks.mjs';
@@ -258,7 +259,9 @@ describe('train-level consequences (real repo, real origin)', () => {
   /** Build a direct-squash train with one source on a repo whose hook is `script`. */
   function trainWith(script, checks, { fleetExtra = {} } = {}) {
     const fx = makeFleetRepo({ fleetConfig: { mergeMethod: 'direct-squash', testCommand: { tiers: [{ name: 'default', command: ['node', '-e', 'process.exit(0)'] }] }, checks, ...fleetExtra } });
-    writeFile(fx.repo, 'chk.mjs', script);
+    // Land checks run INSIDE the train worktree, so the script must be committed (as a repo-owned check is).
+    commitFile(fx.repo, 'chk.mjs', script, 'add check');
+    execFileSync('git', ['push', '-q', 'origin', 'main'], { cwd: fx.repo, stdio: 'ignore' });
     const oid = addBranch(fx.repo, 'feat-a', { 'a.txt': 'changed\n' });
     const config = resolveConfig(fx.repo, { env: { ...process.env, FLEET_WORKTREE_ROOT: fx.wtRoot } });
     const r = buildTrain({

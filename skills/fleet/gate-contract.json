@@ -13,22 +13,6 @@
       "reason": "Describes behaviour of the fleet CLI (pinned by tests/fleet-cli.test.mjs) or is an instruction to the AGENT; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
     },
     {
-      "line": "`--all` shows them. Registered sessions are never hidden, and anything not",
-      "reason": "Describes the fleet CLI's status hiding rule (merged or idle untracked branches), pinned by tests/fleet-storyline-feedback.test.mjs and tests/fleet-capstone-feedback.test.mjs (hideReason table, each with a must-not-hide control); the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound. Not an enforcement claim about this skill file itself."
-    },
-    {
-      "line": "listed apart (`hot files shared with N items`, `[hot]` on a claim) and never",
-      "reason": "Describes the fleet CLI's hotFiles classification at the status join and the claim gate, pinned by tests/fleet-capstone-feedback.test.mjs (the same claim BLOCKS without hotFiles; mixed and wildcard evidence still blocks); the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound. Not an enforcement claim about this skill file itself."
-    },
-    {
-      "line": "counts as a conflict or blocks a claim; mixed evidence still blocks. A wildcard",
-      "reason": "Describes the fleet CLI's hotFiles classification at the status join and the claim gate, pinned by tests/fleet-capstone-feedback.test.mjs (the same claim BLOCKS without hotFiles; mixed and wildcard evidence still blocks); the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound. Not an enforcement claim about this skill file itself."
-    },
-    {
-      "line": "`PR checks: not queried`, never a missing PR list.",
-      "reason": "Describes the fleet CLI's checks-column degradation, pinned by tests/fleet-gh-facts.test.mjs; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound. Not an enforcement claim about this skill file itself."
-    },
-    {
       "line": "`<git-common-dir>/fleet` that every linked worktree shares and that is never",
       "reason": "Describes behaviour of the fleet CLI (pinned by tests/fleet-cli.test.mjs) or is an instruction to the AGENT; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
     },
@@ -73,14 +57,6 @@
       "reason": "Describes behaviour of the fleet CLI (pinned by tests/fleet-cli.test.mjs) or is an instruction to the AGENT; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
     },
     {
-      "line": "collision scripts; a failing `block` check makes a train non-approvable, and one",
-      "reason": "Describes the fleet CLI's check predicate (checkBlocksApproval), pinned by tests/fleet-checks.test.mjs. Not an enforcement claim about this skill file itself; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason."
-    },
-    {
-      "line": "listed with `\"runIn\": [..., \"ready\"]` (opt-in) refuses `ready` too; on a timeout fleet terminates the hook's process group/tree, but a descendant that deliberately escapes it via `setsid`/detached/a job object is not terminated).",
-      "reason": "Describes the fleet CLI: the ready-phase refusal is pinned by tests/fleet-base-measurement.test.mjs (block refuses, warn and an unlisted check do not), the process-tree kill by tests/fleet-checks.test.mjs. Not an enforcement claim about this skill file itself; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason."
-    },
-    {
       "line": "\"runIn\": [\"status\", \"land\"], \"severity\": \"block\" } ] }",
       "reason": "Describes behaviour of the fleet CLI (pinned by tests/fleet-cli.test.mjs) or is an instruction to the AGENT; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
     },
@@ -103,6 +79,26 @@
     {
       "line": "was SKIPPED (a skipped check never ran). It prints WAIT above a merge whose",
       "reason": "Continuation of the pr-mode approval line above; same enforcement and the same pinning tests (SKIPPED → not-run → refused; missing/pending → WAIT)."
+    },
+    {
+      "line": "`land --approve <id> --serial` (pr mode, for \"branch must be up to date\"",
+      "reason": "Describes the serial landing mode; its refusals and stops are enforced in scripts/lib/fleet/serial.mjs and pinned by tests/fleet-serial.test.mjs; an oracle needs a throwaway multi-session git repo (and, for pr mode, a scripted gh), which the closed oracle registry has no recipe to build."
+    },
+    {
+      "line": "base after a squash merge and never moves a checked-out branch. Detail:",
+      "reason": "Describes restack's publication rule (only update-ref compare-and-swap, never a checked-out branch), enforced in scripts/lib/fleet/restack.mjs and pinned by tests/fleet-restack.test.mjs; an oracle needs a throwaway multi-session git repo (and, for pr mode, a scripted gh), which the closed oracle registry has no recipe to build."
+    },
+    {
+      "line": "`block` check makes a train non-approvable, and one listed with",
+      "reason": "Describes the fleet CLI's check predicate (checkBlocksApproval), pinned by tests/fleet-checks.test.mjs. Not an enforcement claim about this skill file itself; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason."
+    },
+    {
+      "line": "`\"runIn\": [..., \"ready\"]` (opt-in) refuses `ready` too; a timed-out hook's",
+      "reason": "Describes the fleet CLI: the ready-phase refusal is pinned by tests/fleet-base-measurement.test.mjs (block refuses, warn and an unlisted check do not), the process-tree kill by tests/fleet-checks.test.mjs. Not an enforcement claim about this skill file itself; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason."
+    },
+    {
+      "line": "never blocks; mixed evidence still blocks. A tier or check may carry a one-line",
+      "reason": "Describes the fleet CLI's hotFiles classification at the status join and the claim gate, pinned by tests/fleet-capstone-feedback.test.mjs (the same claim BLOCKS without hotFiles; mixed and wildcard evidence still blocks); the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound. Not an enforcement claim about this skill file itself."
     }
   ]
 }
