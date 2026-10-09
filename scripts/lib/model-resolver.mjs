@@ -79,8 +79,8 @@ export const STATIC_POOL = Object.freeze({
     // `refreshModelCatalog()` that both ids exist in Anthropic's real
     // catalog. `claude-opus-4-6`/`claude-opus-4-1`/`claude-sonnet-4-5`
     // removed — more than one generation behind 4-8/5, never selectable.
-    // Haiku's dated/undated pair is intentional (model-resolver.mjs's
-    // `resolveModel` doc: "prefers undated alias"), not staleness — kept.
+    // Haiku 5.5 added 2026-10-09 (live catalog had it; this fallback capped at
+    // 4-5). Its dated/undated 4-5 pair is intentional ("prefers undated alias").
     //
     // `claude-opus-5` added (2026-09-01, upstream report): the Opus 5 release
     // had never been added here, so `latest-opus` capped at `claude-opus-4-8`
@@ -104,7 +104,7 @@ export const STATIC_POOL = Object.freeze({
     // with minor > 0 to `auto`, so no call site changes.
     'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8',
     'claude-sonnet-5-5', 'claude-sonnet-5', 'claude-sonnet-4-6',
-    'claude-haiku-4-5', 'claude-haiku-4-5-20251001',
+    'claude-haiku-5-5', 'claude-haiku-4-5', 'claude-haiku-4-5-20251001',
   ]),
   google: Object.freeze([
     // Google's `gemini-{tier}-latest` alias is authoritative (isAlias:true

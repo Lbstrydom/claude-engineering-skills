@@ -287,8 +287,8 @@ describe('resolveModel', () => {
     assert.equal(resolveModel('latest-flash'), 'gemini-flash-latest');
   });
 
-  it('resolves latest-haiku preferring undated rolling alias', () => {
-    assert.equal(resolveModel('latest-haiku'), 'claude-haiku-4-5');
+  it('resolves latest-haiku to the static head (5.5, 2026-10-09), not the dated 4.5 pair', () => {
+    assert.equal(resolveModel('latest-haiku'), 'claude-haiku-5-5');
   });
 
   it('applies deprecatedRemap before sentinel resolution', () => {
@@ -315,6 +315,7 @@ describe('resolveModel', () => {
     assert.equal(resolveModel('latest-gpt-mini'), 'gpt-6-luna');
     assert.equal(resolveModel('latest-opus'), 'claude-opus-5-5');
     assert.equal(resolveModel('latest-sonnet'), 'claude-sonnet-5-5');
+    assert.equal(resolveModel('latest-haiku'), 'claude-haiku-5-5');
   });
 
   it('a live catalog listing astra BEFORE sol still resolves latest-gpt to sol — the incident shape (status.md 2026-09-20)', () => {

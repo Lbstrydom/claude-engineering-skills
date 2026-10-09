@@ -103,6 +103,12 @@ export const modelPricing = Object.freeze({
   'claude-sonnet-5-5': { input: 2, output: 10 }, // cache read $0.20 = the standard 0.10x multiplier
   'claude-sonnet-5':   { input: 2, output: 10 }, // launch $2/$10 made permanent (the 2026-09-01 rise to $3/$15 was cancelled)
   'claude-sonnet-4-6': { input: 3, output: 15 },
+  // Haiku 5.5 is priced by PROMPT LENGTH: this row is the <=100K-token rate
+  // (cache read $0.01 = the standard 0.10x multiplier); a prompt over 100K pays
+  // $0.50/$2.50 (5x). The table has no per-request tier, so a >100K Haiku call
+  // is under-counted 5x — every in-repo Haiku call site (brief, summaries,
+  // rephrase) stays far below that. Source: platform.claude.com pricing, 2026-10-09.
+  'claude-haiku-5-5':  { input: 0.10, output: 0.50 },
   'claude-haiku-4-5':  { input: 1, output: 5  },
   // Anthropic — family fallbacks at the predecessor generation's rate, which
   // is exact for Opus 5/4.x and Sonnet 4.6 and errs HIGH for Opus 5.5 and
