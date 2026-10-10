@@ -181,7 +181,7 @@ export const KNOWN_FLAGS = [
   // skill-census: docs/plans/skill-efficacy-census.md Phase 2
   '--window-days',
   // fleet-telemetry flush|stats: docs/plans/fleet-telemetry.md
-  '--spool', '--days',
+  '--spool', '--days', '--fail-on',
   // lock-with-test: record a unit/integration test as a finding's regression lock
   '--finding', '--test', '--description',
   '--commit', '--state',

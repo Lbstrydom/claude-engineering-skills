@@ -150,3 +150,29 @@ describe('fleet-telemetry stats', () => {
     assert.equal(r.envelope.telemetry, null);
   });
 });
+
+describe('fleet-telemetry stats --fail-on (the weekly review gate)', () => {
+  test('a weakness at or above the threshold exits 1 and KEEPS the payload', async () => {
+    const r = await run(['stats', '--fail-on', 'high']);
+    assert.equal(r.exitCode, 1);
+    assert.equal(r.envelope.ok, false);
+    assert.equal(r.envelope.reason, 'weaknesses-at-or-above-threshold');
+    assert.ok(r.envelope.weaknesses.length >= 1, 'the findings are the point: they ride along');
+    assert.match(r.envelope.summary, /\d+ high \/ \d+ medium/);
+  });
+
+  test('below the threshold: ok, exit 0, with the one-line summary', async () => {
+    const r = await run(['stats', '--fail-on', 'high'], { readFleetTelemetry: async () => ({
+      goldenSignals: [{ verb: 'status', mode: null, n: 20, ok: 20, refused: 0, pending: 0, error: 0, argv: 1, errorRate: 0.05, p50Ms: 100, p95Ms: 200, maxMs: 300 }],
+      sessionFlow: { started: 0, released: 0, abandoned: 0, refusalsPerSession: null }, topReasons: [], errorKinds: [], saturation: { registryInvalidSeen: 0 }, versions: [],
+    }) });
+    assert.equal(r.exitCode, 0);
+    assert.equal(r.envelope.ok, true);
+    assert.match(r.envelope.summary, /0 high \/ 0 medium \/ 1 low/);
+  });
+
+  test('a bad severity, or --fail-on with the worksheet format, is BAD_INPUT', async () => {
+    assert.equal((await run(['stats', '--fail-on', 'urgent'])).envelope.error.code, 'BAD_INPUT');
+    assert.equal((await run(['stats', '--fail-on', 'high', '--format', 'worksheet'])).envelope.error.code, 'BAD_INPUT');
+  });
+});

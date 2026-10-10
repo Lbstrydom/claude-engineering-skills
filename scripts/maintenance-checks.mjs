@@ -242,6 +242,19 @@ export const CHECKS = [
     ],
   },
   {
+    // Ad hoc — no workflow file. /fleet usage telemetry, reviewed weekly
+    // (docs/plans/fleet-telemetry.md): golden signals, session flow and the
+    // weakness rules over 14 days. Fails on a HIGH weakness (errors, a crash
+    // kind, a latency regression, a drain that is not reaching the store), and
+    // reports thin data as `insufficient`, never as clean. Thresholds live in
+    // scripts/lib/fleet/telemetry-insights.mjs; this review is where to see
+    // whether they fire too often or never.
+    key: 'fleet-telemetry',
+    label: 'Fleet usage telemetry review (14 days)',
+    requiredEnv: ['AUDIT_DB_URL'],
+    steps: [{ script: 'cross-skill.mjs', args: ['fleet-telemetry', 'stats', '--days', '14', '--fail-on', 'high'] }],
+  },
+  {
     key: 'cache-hitrate', // ad hoc weekly routine (no dedicated workflow file)
     label: 'Cache hit-rate check',
     requiredEnv: ['AUDIT_DB_URL'],
