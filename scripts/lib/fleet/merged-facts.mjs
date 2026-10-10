@@ -68,13 +68,19 @@ export function parseMergedList(text, { limit = MERGED_LIMIT } = {}) {
   return { queried: true, complete: reasons.length === 0, limit, prs, ...(reasons.length ? { reason: reasons.join('; ') } : {}) };
 }
 
+/** argv for the merged-PR listing — shared by the direct call and the batched prefetch. */
+export function mergedPrArgs(base, limit = MERGED_LIMIT) {
+  return ['pr', 'list', '--state', 'merged', '--base', base, '--limit', String(limit), '--json', MERGED_PR_FIELDS.join(',')];
+}
+
 /**
  * Recently merged PRs into `base`.
  * @param {string} cwd
- * @param {{base: string, ghBin?: string, env?: NodeJS.ProcessEnv, limit?: number}} opts
+ * @param {{base: string, ghBin?: string, env?: NodeJS.ProcessEnv, limit?: number, prefetched?: object}} opts - `prefetched` = the
+ *   answer already fetched concurrently (lib/fleet/gh-batch.mjs), classified exactly as a direct call would be
  */
-export function listMergedPullRequests(cwd, { base, ghBin = 'gh', env, limit = MERGED_LIMIT }) {
-  const res = spawnGh(cwd, ['pr', 'list', '--state', 'merged', '--base', base, '--limit', String(limit), '--json', MERGED_PR_FIELDS.join(',')], { ghBin, env });
+export function listMergedPullRequests(cwd, { base, ghBin = 'gh', env, limit = MERGED_LIMIT, prefetched }) {
+  const res = prefetched ?? spawnGh(cwd, mergedPrArgs(base, limit), { ghBin, env });
   if (res.error) return notQueried(ghSpawnFailure(res, 'merged PRs'), { prs: [] });
   if (res.status !== 0) return notQueried(classifyGhFailure(res.stderr), { prs: [] });
   return parseMergedList(res.stdout, { limit });

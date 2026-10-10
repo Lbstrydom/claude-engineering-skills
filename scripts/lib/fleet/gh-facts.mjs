@@ -40,7 +40,7 @@ export const PR_VIEW_FIELDS = Object.freeze([
   'state', 'baseRefName', 'headRefOid', 'mergeCommit', 'url',
 ]);
 
-const GH_TIMEOUT_MS = 30_000;
+export const GH_TIMEOUT_MS = 30_000;
 
 function nowIso() { return new Date().toISOString(); }
 
@@ -291,26 +291,35 @@ export function ghSpawnFailure(res, what = '') {
   return `gh failed to run${tag}: ${res.error.message}`;
 }
 
+/** argv for an open-PR listing with `fields` — shared by the direct call and the batched prefetch. */
+export function openPrArgs(fields) {
+  return ['pr', 'list', '--state', 'open', '--limit', String(PR_LIMIT), '--json', fields.join(',')];
+}
+export const OPEN_PR_LIST_ARGS = () => openPrArgs(PR_LIST_FIELDS);
+export const OPEN_PR_CHECK_ARGS = () => openPrArgs(PR_CHECK_FIELDS);
+
 function runGh(cwd, ghBin, env, fields) {
-  return spawnGh(cwd, ['pr', 'list', '--state', 'open', '--limit', String(PR_LIMIT), '--json', fields.join(',')], { ghBin, env });
+  return spawnGh(cwd, openPrArgs(fields), { ghBin, env });
 }
 
 /**
  * Open PRs for the repo at `cwd`.
  * @param {string} cwd
- * @param {{ghBin?: string, env?: NodeJS.ProcessEnv}} [opts] - `env` lets a test scrub PATH
+ * @param {{ghBin?: string, env?: NodeJS.ProcessEnv, prefetched?: {list: object, checks: object}}} [opts] - `env` lets a
+ *   test scrub PATH; `prefetched` = the two answers already fetched concurrently (lib/fleet/gh-batch.mjs),
+ *   classified exactly as a direct call would be
  * @returns {{queried: boolean, complete: boolean, limit: number, observedAt: string, reason?: string, prs: Array<object>}}
  */
-export function listPullRequests(cwd, { ghBin = 'gh', env } = {}) {
+export function listPullRequests(cwd, { ghBin = 'gh', env, prefetched } = {}) {
   const observedAt = nowIso();
-  const res = runGh(cwd, ghBin, env, PR_LIST_FIELDS);
+  const res = prefetched?.list ?? runGh(cwd, ghBin, env, PR_LIST_FIELDS);
   const no = (reason) => ({ queried: false, complete: false, limit: PR_LIMIT, observedAt, reason, prs: [] });
   if (res.error) return no(ghSpawnFailure(res));
   if (res.status !== 0) return no(classifyGhFailure(res.stderr));
   const core = parsePrList(res.stdout, { observedAt });
   if (!core.queried) return core;
   // Optional second column; its failure never touches the PR list above.
-  const cres = runGh(cwd, ghBin, env, PR_CHECK_FIELDS);
+  const cres = prefetched?.checks ?? runGh(cwd, ghBin, env, PR_CHECK_FIELDS);
   let field;
   if (cres.error) {
     field = { queried: false, missing: core.prs.length, reason: ghSpawnFailure(cres, 'checks') };
