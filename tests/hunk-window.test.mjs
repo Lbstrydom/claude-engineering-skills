@@ -5,8 +5,19 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   unionRanges, countLines, countUncovered, changedLineRanges, planHunkWindow, renderRanges,
-  gapMarkerFor, charsInRanges, formatRanges, prefixRange, assembleBlocks,
+  gapMarkerFor, charsInRanges, formatRanges, prefixRange, assembleBlocks, unreadChangedLines,
 } from '../scripts/lib/hunk-window.mjs';
+
+test('unreadChangedLines: covered → 0, a prefix ending before the hunk → total, unknown → null (never 0)', () => {
+  const hunks = [{ startLine: 50, lineCount: 4 }, { startLine: 90, lineCount: 0 }];
+  assert.deepEqual(unreadChangedLines({ lineCount: 100, hunks, ranges: [[1, 10], [48, 55], [90, 90]] }), { total: 5, unread: 0 });
+  assert.deepEqual(unreadChangedLines({ lineCount: 100, hunks, ranges: [[1, 49]] }), { total: 5, unread: 5 });
+  assert.deepEqual(unreadChangedLines({ lineCount: 100, hunks, ranges: [[1, 51]] }), { total: 5, unread: 3 }, 'a partial cover counts the rest');
+  // Negative controls: an unknown input is unmeasured, not a clean measurement.
+  assert.equal(unreadChangedLines({ lineCount: 100, hunks: null, ranges: [] }), null);
+  assert.equal(unreadChangedLines({ lineCount: null, hunks, ranges: [] }), null);
+  assert.deepEqual(unreadChangedLines({ lineCount: 100, hunks: [], ranges: [] }), { total: 0, unread: 0 }, 'a measured empty change is 0 of 0');
+});
 
 const fileOf = (n, width = 40) => Array.from({ length: n }, (_, i) => `line ${String(i + 1).padStart(4, '0')} `.padEnd(width, 'x'));
 

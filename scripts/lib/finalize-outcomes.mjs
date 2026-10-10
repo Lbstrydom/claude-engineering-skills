@@ -65,14 +65,25 @@ export function parseResultPath(outPath) {
  * triage at round 1. Only a real positive integer is stamped: a result is never
  * given a round nobody asserted, so an unparseable `--round` leaves it absent.
  *
+ * `diffBase` — the commit the round's `--scope diff` change set was measured against — is stamped as `_diffBase` so the
+ * final reviewer can rebuild the SAME hunks from the transcript (docs/plans/final-review-hunk-windows.md D1). Only a
+ * full hex object id is stamped: the provisional `'HEAD~1'` a plan/full-scope round carries, or anything else, is not.
+ *
  * @template T
  * @param {T} result — mutated and returned
  * @param {unknown} round
+ * @param {unknown} [diffBase]
  * @returns {T}
  */
-export function stampAuditRound(result, round) {
+export function stampAuditRound(result, round, diffBase = null) {
   if (result && typeof result === 'object' && Number.isInteger(round) && round >= 1) result.round = round;
+  if (result && typeof result === 'object' && isFullObjectId(diffBase)) result._diffBase = diffBase;
   return result;
+}
+
+/** A full git object id (SHA-1 or SHA-256) — the only shape a stamped diff base may take. */
+export function isFullObjectId(value) {
+  return typeof value === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value);
 }
 
 /**

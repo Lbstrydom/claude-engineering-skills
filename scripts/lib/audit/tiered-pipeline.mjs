@@ -65,8 +65,8 @@
  * @module scripts/lib/audit/tiered-pipeline
  */
 
-import { readFilesAsContext, readFilesAsContextDetailed } from '../file-io.mjs';
-import { createCoverageRecorder, buildCoverageReport } from './file-coverage.mjs';
+import { readFilesAsContext, readFilesAsContextDetailed, parseDiffFile } from '../file-io.mjs';
+import { createCoverageRecorder, buildCoverageReport, buildRoundHunkMap } from './file-coverage.mjs';
 import { redactSecrets } from '../sensitive-egress-gate.mjs';
 import { formatSkipLog } from '../sensitive-paths.mjs';
 import { prepareCandidates } from './diff-path-map.mjs';
@@ -94,6 +94,26 @@ import { routePreExistingIndependent } from './stage0-debt-routing.mjs';
  * @param {import('../schemas.mjs').AuditRunContext} ctx
  * @returns {Promise<import('../schemas.mjs').AuditRunResult>}
  */
+/**
+ * The discovery read: the changed files, rendered through the SAME windowed reader and hunk map the legacy passes use
+ * (docs/plans/final-review-hunk-windows.md D6). The map follows the legacy rule — the R1 change record, or an R2+
+ * `--diff` — and is handed to the reader only when it applies; with no evidence the read options are exactly the
+ * historical `{maxPerFile: 8000, maxTotal: 100000}`.
+ *
+ * @param {object} ctx - the audit run context
+ * @param {{read?: Function, parseDiff?: Function}} [deps] - injected for tests
+ * @returns {{context: string, stats: object, hunkMap: object}}
+ */
+export function readDiscoveryCode(ctx, { read = readFilesAsContextDetailed, parseDiff = parseDiffFile } = {}) {
+  const hunkMap = buildRoundHunkMap({
+    diffMap: (ctx.round ?? 1) >= 2 && ctx.diffFile ? parseDiff(ctx.diffFile) : null,
+    coverageChanged: ctx.coverageChanged ?? null, changedFiles: ctx.changedFiles || [], fileFilter: ctx.fileFilter ?? null,
+  });
+  const opts = { maxPerFile: 8000, maxTotal: 100000, ...(hunkMap.applicable ? { hunksFor: hunkMap.hunksFor } : {}) };
+  const { context, stats } = read(ctx.changedFiles || [], opts);
+  return { context, stats, hunkMap };
+}
+
 export async function runTieredAuditPipeline(ctx) {
   const stageStart = { discovery: Date.now() };
   const { providers = {} } = ctx;
@@ -167,7 +187,7 @@ export async function runTieredAuditPipeline(ctx) {
   // Measured, not merely read: the SAME render (readFilesAsContext is a wrapper over the detailed reader) with its
   // stats kept for the file-coverage ledger (`_coverage`), so a tiered run makes the same coverage claim a legacy one does.
   const coverageRecorder = createCoverageRecorder();
-  const { context: discoveryCode, stats: discoveryReadStats } = readFilesAsContextDetailed(ctx.changedFiles || [], { maxPerFile: 8000, maxTotal: 100000 });
+  const { context: discoveryCode, stats: discoveryReadStats, hunkMap: discoveryHunkMap } = readDiscoveryCode(ctx);
   coverageRecorder.recordRead('discovery', discoveryReadStats);
 
   // The discovery payload's OTHER half. `discoveryCode` above is redacted by
@@ -464,6 +484,9 @@ export async function runTieredAuditPipeline(ctx) {
     changed: ctx.coverageChanged ?? (ctx.changedFiles || []),
     excludedInfra: ctx.coverageExcluded?.infra ?? [],
     excludedUser: ctx.coverageExcluded?.user ?? [],
+    // The same map the discovery read rendered against, so the ledger measures the changed lines it did not show.
+    hunks: discoveryHunkMap.applicable ? discoveryHunkMap.hunksFor : null,
+    hunksExpected: discoveryHunkMap.applicable,
   });
   const verdict = computeAuditVerdict(findings, { incomplete: incomplete || coverage.gate === 'fail' });
 

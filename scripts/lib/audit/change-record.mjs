@@ -72,6 +72,26 @@ export function buildChangeRecord({ diffChanged, untrackedFiles, baseSha, allowI
 }
 
 /**
+ * The parsed `git diff -U0 <base>` (base vs WORKING TREE) — `parseDiffText`'s map, each entry carrying its `hunks` and its
+ * post-image blob id (`postImage`), so a caller can verify the hunks still describe the file before trusting them
+ * (`buildHunkMap`; docs/plans/final-review-hunk-windows.md). The ONE place these git flags live; `readChangeHunks` is
+ * its hunks-only projection. Null when the diff cannot be read.
+ *
+ * @returns {Map<string, {hunks: object[], postImage?: string}>|null}
+ */
+export function readChangeDiff({ baseSha, run = execFileSync }) {
+  try {
+    const out = run('git', ['diff', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', baseSha], {
+      encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 30000, maxBuffer: 256 * 1024 * 1024,
+    });
+    return parseDiffText(String(out ?? ''));
+  } catch (err) {
+    process.stderr.write(`  [coverage] diff hunks unavailable (${err?.message || err}) — changed files are treated as wholly changed\n`);
+    return null;
+  }
+}
+
+/**
  * New-side diff hunks per changed path, so an R1 `--scope diff` round can centre its read windows on the change and
  * count the changed lines it did not read (docs/plans/audit-hunk-window-coverage.md D6). R2+ gets the same from the
  * operator's `--diff`; R1 had none, so every head-cut changed file in R1 was unmeasurable.
@@ -86,16 +106,8 @@ export function buildChangeRecord({ diffChanged, untrackedFiles, baseSha, allowI
  *   entry = that file's change is unknown; a null map = the diff could not be read at all
  */
 export function readChangeHunks({ baseSha, untrackedFiles = [], run = execFileSync, readText = defaultReadText }) {
-  let diffMap;
-  try {
-    const out = run('git', ['diff', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', baseSha], {
-      encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 30000, maxBuffer: 256 * 1024 * 1024,
-    });
-    diffMap = parseDiffText(String(out ?? ''));
-  } catch (err) {
-    process.stderr.write(`  [coverage] diff hunks unavailable (${err?.message || err}) — changed files are treated as wholly changed\n`);
-    return null;
-  }
+  const diffMap = readChangeDiff({ baseSha, run });
+  if (!diffMap) return null;
   const map = new Map([...diffMap].map(([k, v]) => [k, v.hunks]));
   for (const p of untrackedFiles) {
     const text = readText(p);

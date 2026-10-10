@@ -32,6 +32,20 @@ export const CHANGED_FILE_MAX_PER_FILE = 40_000;
 export const FULL_AMBIENT_MAX_PER_FILE = 8_000;
 /** Total code budget on the `full` path — unchanged. */
 export const FULL_CODE_MAX_CHARS = 100_000;
+/** Hunk-window target bounds per changed file when hunk evidence exists (docs/plans/final-review-hunk-windows.md D2). */
+export const CHANGED_WINDOW_MAX = 8_000;
+export const CHANGED_WINDOW_MIN = 2_000;
+
+/**
+ * Per-file window target: each changed file's fair share of the code budget, clamped (plan audit R1-M1). A 27-file
+ * diff on the 100K budget gets ~3.7K windows instead of 8K ones, so far more files are admitted on their changed lines
+ * before any file is given whole-file context. Not a guarantee — a window that still does not fit is budget-omitted,
+ * and the coverage counts its changed lines as unread.
+ */
+export function windowTargetFor(changedCount, maxTotal) {
+  const n = Math.max(1, changedCount | 0);
+  return Math.min(CHANGED_WINDOW_MAX, Math.max(CHANGED_WINDOW_MIN, Math.floor(maxTotal / n)));
+}
 
 /**
  * Build the `renderCode` reader the envelope injects.
@@ -42,9 +56,12 @@ export const FULL_CODE_MAX_CHARS = 100_000;
  *   degenerates cleanly to a single render.
  * @param {boolean} [opts.reduced=false] - thin/gap budgets instead of full.
  * @param {Function} [opts.read=readFilesAsContextDetailed] - injected for tests.
+ * @param {Function|null} [opts.hunksFor=null] - new-side hunks per changed path (`final-review-hunks.mjs`). Present →
+ *   changed files render as hunk windows at a fair-share target and grow, in diff order, into leftover budget up to the
+ *   whole file (`growWholeUpTo`). Absent → the historical call, byte for byte.
  * @returns {(paths: string[]) => {text: string, stats: object|null}}
  */
-export function makeTieredCodeRenderer({ changedFiles = [], reduced = false, read = readFilesAsContextDetailed } = {}) {
+export function makeTieredCodeRenderer({ changedFiles = [], reduced = false, read = readFilesAsContextDetailed, hunksFor = null } = {}) {
   const changedKeys = new Set(
     (Array.isArray(changedFiles) ? changedFiles : [])
       .filter((p) => typeof p === 'string' && p.length > 0)
@@ -67,7 +84,12 @@ export function makeTieredCodeRenderer({ changedFiles = [], reduced = false, rea
       return { text: only.context, stats: only.stats };
     }
 
-    const first = read(changed, { maxPerFile: changedMaxPerFile, maxTotal: codeTotalBudget });
+    const first = typeof hunksFor === 'function'
+      ? read(changed, {
+        maxPerFile: Math.min(windowTargetFor(changed.length, codeTotalBudget), changedMaxPerFile),
+        maxTotal: codeTotalBudget, hunksFor, growWholeUpTo: changedMaxPerFile,
+      })
+      : read(changed, { maxPerFile: changedMaxPerFile, maxTotal: codeTotalBudget });
     const remaining = Math.max(0, codeTotalBudget - first.stats.charsRendered);
     // Ambient is rendered even when `remaining` is 0: every block then exceeds
     // the budget and lands in `budgetOmitted`, so the files appear in the record

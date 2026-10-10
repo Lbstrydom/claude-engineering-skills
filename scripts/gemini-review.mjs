@@ -51,8 +51,9 @@ import {
 } from './lib/final-review/scope.mjs';
 import { buildReviewEnvelope } from './lib/final-review/envelope.mjs';
 import { serializePrimaryForGap } from './lib/final-review/gap-projection.mjs';
-import { summariseCodeCoverage, applyCoverageGate } from './lib/final-review/code-coverage.mjs';
+import { summariseCodeCoverage, applyCoverageGate, formatCodeCoverageSegment } from './lib/final-review/code-coverage.mjs';
 import { makeTieredCodeRenderer } from './lib/final-review/code-render.mjs';
+import { resolveFinalReviewHunks } from './lib/audit/final-review-hunks.mjs';
 // NOTE: lib/llm-wrappers.mjs provides shared wrappers for learning/refinement/evolution paths.
 // This subsystem keeps the specialized `callReviewer` seam (lib/final-review/transport.mjs;
 // thinkingConfig + one abort-correct timeout across all transports) because the final
@@ -310,7 +311,10 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
   // context (code-render.mjs). Returns `{text, stats}` — the stats are what
   // make `_envelope.truncated` a measurement instead of a claim.
   const changedFilesDeclared = Array.isArray(transcript.changed_files) ? transcript.changed_files : [];
-  const renderCode = makeTieredCodeRenderer({ changedFiles: changedFilesDeclared, reduced });
+  // Hunks from the audit's own diff base (transcript `_diffBase`): changed files render as hunk windows and the coverage
+  // counts the changed lines the reviewer never saw. No base → today's render, lines reported unmeasured (plan D1/D4).
+  const hunks = resolveFinalReviewHunks({ transcript, changedFiles: changedFilesDeclared });
+  const renderCode = makeTieredCodeRenderer({ changedFiles: changedFilesDeclared, reduced, hunksFor: hunks.hunksFor });
 
   // Phase D.4: extract debt-suppression context from transcript envelope.
   // When the upstream audit already filtered debt, tell the reviewer so they
@@ -423,10 +427,11 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
   userPrompt = scanned.text;
   // How much of the DIFF actually reached the model. Distinct from
   // `truncated`, which counts drops without knowing which of them mattered.
-  const codeCoverage = summariseCodeCoverage(built.accounting.codeRender, changedFilesDeclared);
+  const codeCoverage = summariseCodeCoverage(built.accounting.codeRender, changedFilesDeclared, { hunksFor: hunks.hunksFor, requested: codePaths });
   const envelopeAccounting = {
     ...built.accounting,
     codeCoverage,
+    hunkEvidence: { base: hunks.base, evidence: hunks.evidence, reason: hunks.reason },
     redactions: scanned.redacted,
     codeExcluded,
     gapFindings: gapProjection
@@ -442,7 +447,7 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
   process.stderr.write(`\n── ${descriptor.label} Final Review${shadowTag} ──\n`);
   process.stderr.write(`  Model: ${selectedModel}\n`);
   process.stderr.write(`  Context: ~${(userPrompt.length / 4).toFixed(0)} tokens (estimated)\n`);
-  process.stderr.write(`  Code coverage: ${codeCoverage.state.toUpperCase()} — ${codeCoverage.reason}\n`);
+  process.stderr.write(`  Code coverage: ${codeCoverage.state.toUpperCase()} — ${codeCoverage.reason} [diff evidence: ${hunks.reason}]\n`);
 
   // Append classification rubric so new_findings populate the required envelope.
   const classificationBlock = buildClassificationRubric({
@@ -586,7 +591,8 @@ function formatReviewResult(result, usage, latencyMs, provider) {
   const VERDICT_ICONS = { APPROVE: '✅', CONCERNS: '⚠️', CONCERNS_REMAINING: '⚠️', REJECT: '❌' };
   const icon = VERDICT_ICONS[result.verdict] ?? '❌';
   lines.push(`## Verdict: ${icon} **${result.verdict}**`);
-  lines.push(`**Gate**: ${result.gateDisposition ?? 'n/a'}${result.gateDispositionDetail?.reasons?.length ? ` — ${result.gateDispositionDetail.reasons.join('; ')}` : ''}`, '');
+  lines.push(`**Gate**: ${result.gateDisposition ?? 'n/a'}${result.gateDispositionDetail?.reasons?.length ? ` — ${result.gateDispositionDetail.reasons.join('; ')}` : ''}`);
+  lines.push(`**Coverage**: ${result._envelope?.codeCoverage ? `${formatCodeCoverageSegment(result._envelope.codeCoverage)} — ${result._envelope.codeCoverage.reason}` : 'not measured'}`, '');
 
   // Deliberation quality
   const dq = result.deliberation_quality;
@@ -773,7 +779,8 @@ function emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile,
     if (outFile) {
       const newCount = result.new_findings?.length ?? 0;
       const dismissedCount = result.wrongly_dismissed?.length ?? 0;
-      const summaryLine = `Verdict: ${result.verdict} | ${gateSummary} | New: ${newCount} | Wrongly dismissed: ${dismissedCount} | ${(latencyMs / 1000).toFixed(0)}s`;
+      const codeSeg = formatCodeCoverageSegment(result._envelope?.codeCoverage);
+      const summaryLine = `Verdict: ${result.verdict} | ${gateSummary} | New: ${newCount} | Wrongly dismissed: ${dismissedCount} | ${(latencyMs / 1000).toFixed(0)}s${codeSeg ? ` | ${codeSeg}` : ''}`;
       writeOutput(data, outFile, summaryLine);
     } else {
       console.log(JSON.stringify(data, null, 2));

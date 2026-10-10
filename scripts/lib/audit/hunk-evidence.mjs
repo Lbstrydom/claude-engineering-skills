@@ -55,10 +55,13 @@ export function buildHunkMap({ diffMap = null, changed = [], coverageChanged = n
   }
   const diffHasHunks = !!diffMap && [...diffMap.values()].some((v) => (v?.hunks?.length ?? 0) > 0);
   const memo = new Map();
-  const wholeFile = (rec, cause) => {
+  // `warn` also receives structured metadata ({path, code}), so a caller can act on WHICH file and WHY without parsing
+  // the human line (code audit R2, docs/plans/final-review-hunk-windows.md). Codes: 'no-post-image' | 'unhashable' |
+  // 'stale' | 'absent-from-diff' | 'no-usable-diff' | 'hunks-unreadable'.
+  const wholeFile = (rec, cause, code) => {
     const text = readText(rec.path);
     if (typeof text !== 'string') return null;
-    warn(`  [coverage] ${rec.path.replace(/\\/g, '/')}: ${cause} — treated as wholly changed\n`);
+    warn(`  [coverage] ${rec.path.replace(/\\/g, '/')}: ${cause} — treated as wholly changed\n`, { path: rec.path, code });
     return [{ startLine: 1, lineCount: text.split('\n').length }];
   };
   const resolve = (key) => {
@@ -77,7 +80,7 @@ export function buildHunkMap({ diffMap = null, changed = [], coverageChanged = n
       const why = !post ? 'the supplied --diff carries no post-image id for it (no `index` line)'
         : actual === null ? 'its content could not be hashed to verify the supplied --diff'
           : 'the supplied --diff does not describe the current file (stale)';
-      return wholeFile(rec, why);
+      return wholeFile(rec, why, !post ? 'no-post-image' : actual === null ? 'unhashable' : 'stale');
     }
     if (!rec) return null;   // not a changed file: never invent a change for a dependent or shared file
     // A supplied --diff is the round's only evidence: never fall through to change-record hunks (code audit R1 H4).
@@ -85,7 +88,7 @@ export function buildHunkMap({ diffMap = null, changed = [], coverageChanged = n
     const cause = diffMap
       ? (diffHasHunks ? 'absent from the supplied --diff' : 'no usable --diff for this round')
       : 'its diff hunks could not be read';
-    return wholeFile(rec, cause);
+    return wholeFile(rec, cause, diffMap ? (diffHasHunks ? 'absent-from-diff' : 'no-usable-diff') : 'hunks-unreadable');
   };
   const lookup = (key) => {
     if (!memo.has(key)) memo.set(key, resolve(key));

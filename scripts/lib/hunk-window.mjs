@@ -100,6 +100,23 @@ export function changedLineRanges(hunks, lineCount) {
   return unionRanges(out);
 }
 
+/**
+ * Changed lines a render did not show — the ONE arithmetic both the audit ledger (`file-coverage.mjs`) and the
+ * final-review envelope coverage (`final-review/code-coverage.mjs`) use (docs/plans/final-review-hunk-windows.md D3).
+ *
+ * Takes a LINE COUNT, not the text, so a caller can measure against the count the reader recorded for the exact snapshot
+ * it rendered instead of re-reading a file that may have changed since (plan audit R1-M2). A caller holding prefix
+ * lengths converts them with `prefixRange(text, chars)` first.
+ *
+ * @param {{lineCount: number, hunks: Array<{startLine: number, lineCount: number}>|null, ranges?: Array<[number, number]>}} input
+ * @returns {{total: number, unread: number}|null} null when the hunks or the line count are unknown — never a guessed 0
+ */
+export function unreadChangedLines({ lineCount, hunks, ranges = [] } = {}) {
+  if (!Array.isArray(hunks) || !Number.isInteger(lineCount) || lineCount < 1) return null;
+  const changed = changedLineRanges(hunks, lineCount);
+  return { total: countLines(changed), unread: countUncovered(changed, ranges) };
+}
+
 /** Line count of a text, the way the readers split it (`split('\n')`). */
 export function lineCountOf(text) {
   return String(text).split('\n').length;
