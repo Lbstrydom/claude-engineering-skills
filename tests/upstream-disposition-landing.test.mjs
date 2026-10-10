@@ -108,7 +108,7 @@ describe('upstreamTransition + the dispatcher (real git, temp repo)', () => {
   beforeEach(() => {
     savedDsn = process.env.AUDIT_DB_URL;
     delete process.env.AUDIT_DB_URL;
-    fs.rmSync(path.join(repo, 'scripts'), { recursive: true, force: true });
+    fs.rmSync(path.join(repo, 'scripts'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
   afterEach(() => {
     process.chdir(origCwd);
