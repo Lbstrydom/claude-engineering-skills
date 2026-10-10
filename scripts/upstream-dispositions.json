@@ -223,6 +223,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "512cf1c9-89a3-46fc-9ff0-745a4236dc37",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/plan-verification-items-db.test.mjs"
+      },
+      "recordedAt": "2026-10-10T14:05:50.278Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "52126241-c152-4e5c-ab09-0516d01209f0",
       "storeFingerprint": "c7177057dcafa55d",
       "state": "fixed",
