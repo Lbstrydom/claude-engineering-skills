@@ -1,6 +1,7 @@
 /**
- * @fileoverview CLI tab renderer — groups npm scripts by category with
- * search + per-card command/description/output metadata.
+ * @fileoverview CLI tab renderer — groups npm scripts, and the CLI entry
+ * points skills name without an npm alias, by category with search +
+ * per-card command/description/output metadata.
  *
  * Plan: docs/plans/sustainability-cleanup-batch.md (WS2).
  *
@@ -39,7 +40,7 @@ export default function sectionCli({ src, cli }, ui) {
   if (ui.NON_OK.has(src.status)) return ui.warningPanel(SECTION, src);
   const entries = cli || [];
   if (!entries.length) {
-    return ui.emptyPanel(null, 'No npm scripts found in package.json.');
+    return ui.emptyPanel(null, 'No npm scripts found in package.json, and no skill names a CLI entry point.');
   }
   const groups = new Map();
   for (const e of entries) {
@@ -62,14 +63,17 @@ export default function sectionCli({ src, cli }, ui) {
       const outputs = e.outputs
         ? ` <span class="chip" title="output file">writes ${ui.escapeHtml(e.outputs)}</span>`
         : '';
+      const entryPoint = e.kind === 'entry-point';
       const uncatLabel = e.uncatalogued
-        ? ' <span class="chip warn" title="add metadata to scripts/.cli-catalog.json">uncatalogued</span>'
+        ? ` <span class="chip warn" title="add metadata to scripts/.cli-catalog.json${entryPoint ? ' (entryPoints)' : ''}">uncatalogued</span>`
         : '';
+      const aliasLabel = entryPoint ? ' <span class="chip" title="named by a skill; run it directly">no npm alias</span>' : '';
+      const title = entryPoint ? `node ${e.name}` : `npm run ${e.name}`;
       const desc = e.description
         ? `<p class="cli-desc">${ui.escapeHtml(e.description)}</p>`
         : `<p class="cli-desc cli-desc-muted">No description — add an entry to scripts/.cli-catalog.json.</p>`;
       return `<article class="card cli-card" data-search="${haystack}" data-category="${ui.escapeHtml(cat)}">
-        <h3 class="cli-name"><code>npm run ${ui.escapeHtml(e.name)}</code>${uncatLabel}${linked}${outputs}</h3>
+        <h3 class="cli-name"><code>${ui.escapeHtml(title)}</code>${uncatLabel}${aliasLabel}${linked}${outputs}</h3>
         ${desc}
         <pre class="cli-cmd"><code>${ui.escapeHtml(e.command)}</code></pre>
       </article>`;

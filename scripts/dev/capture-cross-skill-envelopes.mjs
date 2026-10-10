@@ -175,6 +175,14 @@ export const CASES = [
   // (commit shas, dates) a golden fixture cannot pin. --window-days 0 fails
   // before any of that runs, giving a deterministic, environment-independent envelope.
   { id: 'skill-census-bad-window', args: ['skill-census', '--window-days', '0'] },
+  // ── fleet-telemetry (docs/plans/fleet-telemetry.md) ──────────────────────
+  // Every refusal fires before the cloud check; stats with cloud off degrades
+  // to the canonical envelope with the (absent, non-git cwd) spool as null.
+  { id: 'fleet-telemetry-bad-verb', args: ['fleet-telemetry', 'nope'] },
+  { id: 'fleet-telemetry-flush-no-spool', args: ['fleet-telemetry', 'flush'] },
+  { id: 'fleet-telemetry-flush-not-a-spool', args: ['fleet-telemetry', 'flush', '--spool', 'some/dir'] },
+  { id: 'fleet-telemetry-stats-bad-days', args: ['fleet-telemetry', 'stats', '--days', '0'] },
+  { id: 'fleet-telemetry-stats-cloud-off', args: ['fleet-telemetry', 'stats'] },
   // `volatile` names fields whose value is derived from the ENVIRONMENT rather
   // than from the command's contract. Here the repo name comes from the cwd,
   // and every run gets a fresh randomised temp dir — so the field differs on

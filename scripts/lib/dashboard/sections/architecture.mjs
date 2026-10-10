@@ -6,7 +6,12 @@
  * Subtitle from: docs/plans/observed-domain-deps.md §6.
  *
  * Signature: `default({src, architecture}, ui) → string`.
- *   architecture = { domains, deps, mergedDeps, depsSource, mapPath }
+ *   architecture = { domains, deps, mergedDeps, depsSource, mapPath, snapshot }
+ *
+ * The domain list is the committed roster (`.audit-loop/domain-map.json`);
+ * symbol counts and summaries come from the gitignored architecture-map.md
+ * snapshot, whose age is printed, and a declared domain it lacks reads "?" —
+ * never 0.
  *
  * @module scripts/lib/dashboard/sections/architecture
  */
@@ -88,12 +93,45 @@ function formatCoverageBanner(coverage, ui) {
   return `<p class="${cls}">${icon} <strong>${ui.escapeHtml(text)}</strong>${why}${detail}</p>`;
 }
 
+/** ISO timestamp → its date part; anything else passes through escaped by the caller. */
+function dateOf(iso) {
+  return typeof iso === 'string' && /^\d{4}-\d{2}-\d{2}/.test(iso) ? iso.slice(0, 10) : iso;
+}
+
+/**
+ * Where the roster came from and how old the symbol snapshot is. The age is
+ * printed as a DATE (no clock read — the page stays a pure function of its
+ * inputs); declared-but-unrendered domains are named, never silently zeroed.
+ */
+function formatSnapshotLine(snapshot, ui) {
+  if (!snapshot?.rosterSource) return '';
+  const lines = [];
+  const genBits = [];
+  if (snapshot.generatedAt) genBits.push(`generated ${ui.escapeHtml(dateOf(snapshot.generatedAt))}`);
+  if (snapshot.commit) genBits.push(`commit <code>${ui.escapeHtml(snapshot.commit.slice(0, 8))}</code>`);
+  if (snapshot.domainCount === 0) {
+    lines.push('<p class="section-note section-warn">No rendered architecture snapshot — every symbol count is unknown; run <code>npm run arch:refresh</code> then <code>npm run arch:render</code></p>');
+  } else {
+    lines.push(`<p class="section-note">domains from <code>${ui.escapeHtml(snapshot.rosterSource)}</code> · symbol counts from the snapshot${genBits.length ? ` (${genBits.join(', ')})` : ''}</p>`);
+  }
+  if (snapshot.missing?.length) {
+    const shown = snapshot.missing.slice(0, 8).map((n) => `<code>${ui.escapeHtml(n)}</code>`).join(', ');
+    const more = snapshot.missing.length > 8 ? ` and ${ui.escapeHtml(snapshot.missing.length - 8)} more` : '';
+    lines.push(`<p class="section-note section-warn">${ui.escapeHtml(snapshot.missing.length)} declared domain(s) not in the snapshot (${shown}${more}) — counts unknown; run <code>npm run arch:refresh</code> then <code>npm run arch:render</code></p>`);
+  }
+  if (snapshot.retired?.length) {
+    lines.push(`<p class="section-note">${ui.escapeHtml(snapshot.retired.length)} snapshot domain(s) no longer declared, not drawn: ${snapshot.retired.map((n) => `<code>${ui.escapeHtml(n)}</code>`).join(', ')}</p>`);
+  }
+  return lines.join('\n    ');
+}
+
 function formatDepsSourceLine(ds, ui) {
   if (!ds) return '';
   const { observed = 0, manual = 0, both = 0 } = ds.edgeCounts || {};
   const total = observed + manual + both;
+  const observedAge = ds.observedGeneratedAt ? ` · observed graph generated ${ui.escapeHtml(dateOf(ds.observedGeneratedAt))}` : '';
   if (ds.observedAvailable) {
-    const refresh = ds.observedRefreshId ? ` · refresh <code>${ui.escapeHtml(ds.observedRefreshId.slice(0, 8))}</code>` : '';
+    const refresh = (ds.observedRefreshId ? ` · refresh <code>${ui.escapeHtml(ds.observedRefreshId.slice(0, 8))}</code>` : '') + observedAge;
     if (manual === 0 && both === 0) {
       return `<p class="section-note">${ui.escapeHtml(total)} edges (all observed)${refresh}</p>`;
     }
@@ -107,7 +145,7 @@ function formatDepsSourceLine(ds, ui) {
   const reason = ds.observedRejectedReason || 'absent';
   const hint = {
     'absent': 'run <code>npm run dashboard:setup</code> to enable observed deps',
-    'stale-rules': 'observed deps rejected as stale; run <code>npm run arch:render</code>',
+    'stale-rules': `observed deps rejected as stale${observedAge}; run <code>npm run arch:render</code>`,
     'schema-invalid': 'observed deps file corrupt; check stderr',
     // Two different remedies, so two different hints: `malformed` is corrupt
     // CONTENT (regenerate), `unreadable` is an I/O fault (check the filesystem).
@@ -119,7 +157,7 @@ function formatDepsSourceLine(ds, ui) {
 
 export default function sectionArchitecture({ src, architecture }, ui) {
   if (ui.NON_OK.has(src.status)) return ui.warningPanel(SECTION, src);
-  const { domains, deps = {}, depsSource = null, mapPath, domainPurposes = {} } = architecture;
+  const { domains, deps = {}, depsSource = null, mapPath, domainPurposes = {}, snapshot = null } = architecture;
   if (!domains.length) {
     return ui.emptyPanel('arch-empty',
       'No architecture-map.md — run `npm run arch:render` to generate it.');
@@ -142,6 +180,13 @@ export default function sectionArchitecture({ src, architecture }, ui) {
     const boxes = inTier.map((d) => {
       const sym = d.symbolCount || 0;
       const barPct = Math.max(2, Math.round((sym / maxSym) * 100));
+      // Unmeasured (not in the snapshot, or code-less): "?" / "—" and no bar,
+      // so an unknown count never reads as a small one.
+      const unknown = d.symbolCount == null;
+      const symLabel = unknown ? (d.codeless ? '—' : '?') : sym;
+      const barHtml = unknown
+        ? '<span class="arch-bar arch-bar-unknown" title="symbol count unknown"></span>'
+        : `<span class="arch-bar" title="${ui.escapeHtml(sym)} symbols"><span style="width:${barPct}%"></span></span>`;
       const ds = (deps[d.name] || []).filter((x) => names.has(x) && x !== d.name);
       const depLine = ds.length
         ? `<div class="arch-deps">&#8627; depends on: ${ds.map((x) => ui.escapeHtml(x)).join(', ')}</div>`
@@ -153,11 +198,12 @@ export default function sectionArchitecture({ src, architecture }, ui) {
         ? `<div class="arch-serves">serves: ${purposes.map((p) =>
             `<a class="serves-chip" data-cross-tab href="#${ui.escapeHtml(purposeTitleElementId(p.id))}">${ui.escapeHtml(p.label)}</a>`).join('')}</div>`
         : '';
-      return `<details class="arch-domain" id="${ui.escapeHtml(archDomainElementId(d.name))}">
+      const unrenderedCls = d.rendered === false && !d.codeless ? ' arch-domain-unrendered' : '';
+      return `<details class="arch-domain${unrenderedCls}" id="${ui.escapeHtml(archDomainElementId(d.name))}">
         <summary>
           <span class="arch-name">${ui.escapeHtml(d.name)}</span>
-          <span class="arch-sym">${ui.escapeHtml(sym)}</span>
-          <span class="arch-bar" title="${ui.escapeHtml(sym)} symbols"><span style="width:${barPct}%"></span></span>
+          <span class="arch-sym">${ui.escapeHtml(symLabel)}</span>
+          ${barHtml}
         </summary>
         <div class="arch-body"><p>${ui.escapeHtml(d.summary || 'No summary.')}</p>${depLine}${servesLine}</div>
       </details>`;
@@ -173,9 +219,11 @@ export default function sectionArchitecture({ src, architecture }, ui) {
   // learn whether this graph can be believed BEFORE reading numbers derived
   // from it.
   const coverageLine = formatCoverageBanner(depsSource?.coverage, ui);
+  const snapshotLine = formatSnapshotLine(snapshot, ui);
   return `<p class="section-note">${ui.escapeHtml(domains.length)} domains · `
     + `${ui.escapeHtml(tierCount)} dependency tiers (top-level → foundation) · `
     + `bar width &prop; symbol count · full map: <code>${mp}</code></p>
+    ${snapshotLine}
     ${coverageLine}
     ${depsLine}
     <div class="arch-graph">${bands}</div>`;
@@ -183,4 +231,4 @@ export default function sectionArchitecture({ src, architecture }, ui) {
 
 // Exported for testing only — keeps the contract-test able to verify
 // archTiers + formatDepsSourceLine without re-rendering the whole section.
-export const __test__ = { archTiers, formatDepsSourceLine, ARCH_TIER_LABELS };
+export const __test__ = { archTiers, formatDepsSourceLine, formatSnapshotLine, ARCH_TIER_LABELS };

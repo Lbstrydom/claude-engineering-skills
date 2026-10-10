@@ -27,12 +27,16 @@ import { getShipEventWindowCounts } from './ship-events.mjs';
 import { getPersonaSessionWindowCounts } from './persona.mjs';
 import { getNavAuditWindowCounts } from './nav-audit.mjs';
 import { getRegressionSpecWindowCounts } from './regression-specs.mjs';
+import { getFleetEventWindowCounts } from './fleet-events.mjs';
 
-/** The eight read-only/meta skills whose ONLY signal is the git trailer proxy. */
+/** The seven read-only/meta skills whose ONLY signal is the git trailer proxy. */
 const TRAILER_ONLY_SKILLS = Object.freeze([
   'explain', 'investigate', 'brainstorm', 'security-strategy',
-  'ai-context-management', 'cycle', 'skills', 'fleet',
+  'ai-context-management', 'cycle', 'skills',
 ]);
+
+/** Skills with a DB table, in the order their rows are built. */
+const DB_SKILLS = Object.freeze(['audit-code', 'audit-plan', 'plan', 'ship', 'persona-test', 'nav-audit', 'ux-lock', 'fleet']);
 
 /** No DB table at all, by deliberate design; still get a trailer-proxy fallback row. */
 const NO_TABLE_SKILLS = Object.freeze(['click-test', 'visual-audit']);
@@ -41,7 +45,7 @@ const NO_TABLE_SKILLS = Object.freeze(['click-test', 'visual-audit']);
 export const ALL_SKILLS = Object.freeze([
   'audit-code', 'audit-plan', 'plan', 'ship', 'persona-test', 'nav-audit', 'ux-lock',
   'click-test', 'visual-audit',
-  ...TRAILER_ONLY_SKILLS,
+  ...TRAILER_ONLY_SKILLS, 'fleet',
 ]);
 
 /**
@@ -242,6 +246,14 @@ const SKILL_BUILDERS = {
       caveat: 'written best-effort from a bare execFileSync; the telemetry catch was narrowed to log a write failure on 2026-08-22 — rows before that date carry irreducible ambiguity between "ran once, successfully" and "ran, and the write silently failed".',
     });
   },
+  async fleet({ repoId, bounds }) {
+    const counts = await getFleetEventWindowCounts(repoId, bounds);
+    return dbRow({
+      skill: 'fleet', signalSource: 'fleet_events', signalQuality: 'caller-checked',
+      effectiveSince: '2026-10-10', counts,
+      caveat: 'one row per fleet CLI invocation (status polls included, so this counts USE, not sessions — fleet-telemetry stats splits it by verb); none exist before 2026-10-10, and events written while the store was unreachable arrive when the spool drains.',
+    });
+  },
   async 'ux-lock'({ repoId, bounds }) {
     const counts = await getRegressionSpecWindowCounts(repoId, bounds);
     return dbRow({
@@ -278,7 +290,7 @@ export async function censusAllSkills({ root = process.cwd(), windowDays = 14, n
   const cloudUp = await isCloudEnabled();
   const rows = [];
 
-  for (const skill of ['audit-code', 'audit-plan', 'plan', 'ship', 'persona-test', 'nav-audit', 'ux-lock']) {
+  for (const skill of DB_SKILLS) {
     if (!cloudUp || !repoId) {
       rows.push({
         skill, signalSource: 'postgres (unavailable)', signalQuality: 'unchecked-call-site',

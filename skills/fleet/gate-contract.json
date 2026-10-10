@@ -99,6 +99,14 @@
     {
       "line": "never blocks; mixed evidence still blocks. A tier or check may carry a one-line",
       "reason": "Describes the fleet CLI's hotFiles classification at the status join and the claim gate, pinned by tests/fleet-capstone-feedback.test.mjs (the same claim BLOCKS without hotFiles; mixed and wildcard evidence still blocks); the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound. Not an enforcement claim about this skill file itself."
+    },
+    {
+      "line": "Every verb also records one usage event (counts and outcome classes only, never",
+      "reason": "Describes what the telemetry capture records. Enforced in scripts/lib/fleet/telemetry.mjs (summarize keeps only counts/booleans/enum strings; reasonClass scrubs ids/paths/shas; sessionHandle hashes the session id) and pinned by tests/fleet-telemetry.test.mjs (summarize/reasonClass/buildEvent cases and the wiring test asserting no raw session id in any event). Nothing in /fleet exits non-zero on it — it is a property of the event, not a gate."
+    },
+    {
+      "line": "how fleet is performing and where it fails: `node scripts/cross-skill.mjs",
+      "reason": "Names the read command for the telemetry (`cross-skill.mjs fleet-telemetry stats`). Its findings are produced by scripts/lib/fleet/telemetry-insights.mjs deriveWeaknesses and pinned by tests/fleet-telemetry.test.mjs (weakness findings suite) and tests/cross-skill-fleet-telemetry.test.mjs; it is advisory and never exits non-zero on a weakness."
     }
   ]
 }

@@ -1,6 +1,6 @@
 {
   "$schema": "./.cli-catalog.schema.json",
-  "_description": "Metadata sidecar for the dashboard's CLI section. Joined against package.json scripts by scripts/lib/dashboard/collect-cli.mjs. Missing entries surface as 'uncatalogued' — that's intentional friction so new scripts get a description added here. Categories: audit, diagnostic, sync, skills, arch, security, learning, plans, dashboard, hooks, parity, test, other.",
+  "_description": "Metadata sidecar for the dashboard's CLI section. Joined against package.json scripts by scripts/lib/dashboard/collect-cli.mjs. Missing entries surface as 'uncatalogued' — that's intentional friction so new scripts get a description added here. Categories: audit, diagnostic, sync, skills, arch, security, learning, plans, dashboard, hooks, parity, test, other. The 'entryPoints' block (keyed by repo-relative path) describes CLIs a skill names as `node scripts/<x>.mjs` that have no npm alias; collect-cli derives that set from skills/*/SKILL.md + references.",
   "entries": {
     "anthropic:ping": {
       "description": "One-shot Anthropic API ping (verifies the configured backend — sdk or cli).",
@@ -779,6 +779,68 @@
     "cadence:doctor:json": {
       "description": "cadence:doctor, machine-readable (one envelope on stdout).",
       "category": "diagnostic"
+    }
+  },
+  "entryPoints": {
+    "scripts/backlog-snapshot.mjs": {
+      "description": "One-line backlog snapshot (finding queues, debt, upstream) for the /ship session-log entry.",
+      "category": "learning"
+    },
+    "scripts/brainstorm-round.mjs": {
+      "description": "Run one /brainstorm round across the configured provider voices.",
+      "category": "skills"
+    },
+    "scripts/build-audit-transcript.mjs": {
+      "description": "Build the final-review transcript the mandatory Gemini/Opus gate reads.",
+      "category": "audit"
+    },
+    "scripts/campaign.mjs": {
+      "description": "Scoped evaluation campaigns: declare, run, and read back adjudication queues.",
+      "category": "learning"
+    },
+    "scripts/cycle-cluster-scope.mjs": {
+      "description": "/cycle per-cluster scope pre-flight: derive and validate a cluster's file scope from the plan.",
+      "category": "plans"
+    },
+    "scripts/debt-auto-capture.mjs": {
+      "description": "Capture deferred audit findings into the tech-debt ledger.",
+      "category": "audit"
+    },
+    "scripts/explain-history.mjs": {
+      "description": "/explain --history: trace a topic through commits, plans and status.md.",
+      "category": "skills"
+    },
+    "scripts/fleet.mjs": {
+      "description": "/fleet CLI: coordinate concurrent sessions — status, claim, next, directive, land, restack, archive-check.",
+      "category": "skills"
+    },
+    "scripts/persona-consistency-run.mjs": {
+      "description": "Deterministic persona-consistency check over a /persona-test session.",
+      "category": "audit"
+    },
+    "scripts/ship-commit.mjs": {
+      "description": "The only writer of AI-* provenance trailers; /ship Step 6.3 commits through it.",
+      "category": "hooks"
+    },
+    "scripts/ux-lock-run.mjs": {
+      "description": "Run locked regression specs and record regression_spec_runs (ship gate or ad hoc).",
+      "category": "test"
+    },
+    "scripts/visual-audit.mjs": {
+      "description": "/visual-audit runner: computed-style checks against the visual contract.",
+      "category": "audit"
+    },
+    "scripts/write-code-outcomes.mjs": {
+      "description": "Record a final audit round's triage outcomes to the learning store.",
+      "category": "learning"
+    },
+    "scripts/write-ledger-entries.mjs": {
+      "description": "Write adjudication-ledger entries for a triaged audit round (drives R2+ suppression).",
+      "category": "audit"
+    },
+    "scripts/write-plan-outcomes.mjs": {
+      "description": "Record dismissed plan-audit findings into the local PlanFpTracker.",
+      "category": "learning"
     }
   }
 }

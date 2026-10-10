@@ -224,7 +224,8 @@ function readObservedEnvelope(root) {
   const currentDigest = computeDomainMapDigest(rules);
   if (parsed.data.domainMapDigest !== currentDigest) {
     process.stderr.write(`  [dashboard] ${OBSERVED_FILE}: stale (rule digest mismatch — observed=${parsed.data.domainMapDigest.slice(0, 8)} current=${currentDigest.slice(0, 8)}); run npm run arch:render to refresh. Falling back to manual allowedDeps\n`);
-    return { envelope: null, rejectedReason: 'stale-rules' };
+    // Carry the rejected envelope's age: "stale since <date>" names how far behind it is.
+    return { envelope: null, rejectedReason: 'stale-rules', generatedAt: parsed.data.generatedAt ?? null };
   }
   return { envelope: parsed.data, rejectedReason: null };
 }
@@ -287,7 +288,7 @@ function readManualAllowedDeps(root) {
  * }}
  */
 export function readDomainDeps(root) {
-  const { envelope, rejectedReason } = readObservedEnvelope(root);
+  const { envelope, rejectedReason, generatedAt: rejectedGeneratedAt = null } = readObservedEnvelope(root);
   const manual = readManualAllowedDeps(root);
   const observed = envelope?.deps || {};
   const merged = mergeDomainDeps(observed, manual);
@@ -301,7 +302,7 @@ export function readDomainDeps(root) {
     observedAvailable: !!envelope,
     observedRejectedReason: rejectedReason,
     observedRefreshId: envelope?.refreshId || null,
-    observedGeneratedAt: envelope?.generatedAt || null,
+    observedGeneratedAt: envelope?.generatedAt || rejectedGeneratedAt || null,
     manualKeyCount: Object.keys(manual).length,
     edgeCounts,
     // An envelope with no `coverage` block predates the feature — `unknown`,
@@ -345,15 +346,84 @@ function readRequirementsLedger(root) {
 }
 
 /**
- * Parse ONLY the stable `## Contents` block of `docs/architecture-map.md`
- * — domain name + symbol count + the per-domain `>` summary blurb. Mermaid
- * blocks and symbol tables are deliberately NOT scraped (Gemini-G2): a
- * Contents-parse failure degrades to `missing-optional`, never `invalid`.
+ * The domain ROSTER: every domain the committed `.audit-loop/domain-map.json`
+ * declares (rule targets ∪ `codelessDomains`). This is the current answer to
+ * "which domains exist"; `docs/architecture-map.md` is a gitignored snapshot
+ * rendered from the store and can be weeks old (persona-test 2026-10-06: the tab
+ * showed 33 domains while the map declared 37, `fleet` among the missing).
  *
  * @param {string} root
- * @returns {{domains: object[], mapPath: string|null, status: object}}
+ * @returns {{names: string[], codeless: Set<string>}|null} null when no map / no rules
+ */
+export function readDomainRoster(root) {
+  const rules = loadDomainRules(root);
+  if (!rules.length) return null;
+  let codeless = [];
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(root, '.audit-loop', 'domain-map.json'), 'utf-8'));
+    if (Array.isArray(raw?.codelessDomains)) codeless = raw.codelessDomains.filter((d) => typeof d === 'string');
+  } catch { /* loadDomainRules already reported an unreadable map; rules alone still name the roster */ }
+  const names = [...new Set([...rules.map((r) => r.domain), ...codeless])].sort();
+  return { names, codeless: new Set(codeless) };
+}
+
+/**
+ * The domains the Architecture tab draws: the committed roster, joined with the
+ * snapshot's symbol counts and summaries where the snapshot has them. A roster
+ * domain the snapshot lacks is drawn with `rendered: false` and an UNKNOWN symbol
+ * count (never 0 — nothing was measured); a snapshot domain the roster no longer
+ * declares is dropped and reported as retired. No roster → the snapshot alone,
+ * as before.
+ *
+ * @param {string} root
+ * @returns {{domains: object[], mapPath: string|null, status: object, snapshot: object}}
  */
 export function collectArchitecture(root) {
+  const snap = collectArchitectureSnapshot(root);
+  const roster = readDomainRoster(root);
+  const snapshot = {
+    generatedAt: snap.generatedAt ?? null,
+    commit: snap.commit ?? null,
+    domainCount: snap.domains.length,
+    missing: [],
+    retired: [],
+    rosterSource: roster ? '.audit-loop/domain-map.json' : null,
+  };
+  if (!roster) return { domains: snap.domains.map((d) => ({ ...d, rendered: true, codeless: false })), mapPath: snap.mapPath, status: snap.status, snapshot };
+  const byName = new Map(snap.domains.map((d) => [d.name, d]));
+  const domains = roster.names.map((name) => {
+    const s = byName.get(name);
+    if (s) return { ...s, rendered: true, codeless: roster.codeless.has(name) };
+    const codeless = roster.codeless.has(name);
+    if (!codeless) snapshot.missing.push(name);
+    return {
+      name, anchor: name, symbolCount: null, rendered: false, codeless,
+      summary: codeless
+        ? 'Code-less by design (markdown / SQL / SKILL.md only) — no symbols to index.'
+        : 'Not in the rendered architecture snapshot yet — symbol count and summary unknown.',
+    };
+  });
+  const rosterSet = new Set(roster.names);
+  snapshot.retired = snap.domains.map((d) => d.name).filter((n) => !rosterSet.has(n)).sort();
+  // The roster answers the tab's question, so an absent/broken snapshot is a
+  // detail, not a failed source — but an I/O fault on it stays visible.
+  const status = snap.status.status === 'unexpected-error'
+    ? snap.status
+    : { status: 'ok', detail: snap.status.status === 'ok' ? '' : snap.status.detail };
+  return { domains, mapPath: snap.mapPath, status, snapshot };
+}
+
+/**
+ * Parse ONLY the stable `## Contents` block of `docs/architecture-map.md`
+ * — domain name + symbol count + the per-domain `>` summary blurb, plus the
+ * `Generated:` header line. Mermaid blocks and symbol tables are deliberately
+ * NOT scraped (Gemini-G2): a Contents-parse failure degrades to
+ * `missing-optional`, never `invalid`.
+ *
+ * @param {string} root
+ * @returns {{domains: object[], mapPath: string|null, status: object, generatedAt?: string|null, commit?: string|null}}
+ */
+export function collectArchitectureSnapshot(root) {
   const rel = 'docs/architecture-map.md';
   const file = path.join(root, rel);
   let raw;
@@ -371,9 +441,12 @@ export function collectArchitecture(root) {
     // `## ` heading, a `---` rule, or end-of-string. NO `/m` flag — under
     // `/m` the `$` alternative matches every line-end and the non-greedy
     // capture would stop after the first list line (only 1 domain).
+    const gen = raw.match(/^- Generated:\s*(\S+)(?:\s+commit:\s*([0-9a-f]{7,40}))?/m);
+    const generatedAt = gen ? gen[1] : null;
+    const commit = gen?.[2] ?? null;
     const contents = raw.match(/\n## Contents\n([\s\S]*?)(?:\n## |\n---|$)/);
     if (!contents) {
-      return { domains: [], mapPath: rel, status: { status: 'missing-optional', detail: 'no ## Contents block — see the raw map' } };
+      return { domains: [], mapPath: rel, generatedAt, commit, status: { status: 'missing-optional', detail: 'no ## Contents block — see the raw map' } };
     }
     const domains = [];
     const lineRe = /^- \[([^\]]+)\]\(#([^)]+)\)(?:\s*[—-]\s*(\d+)\s*symbols)?/gm;
@@ -390,7 +463,7 @@ export function collectArchitecture(root) {
         summary: sm ? sm[1].trim() : '',
       });
     }
-    return { domains, mapPath: rel, status: { status: 'ok', detail: '' } };
+    return { domains, mapPath: rel, generatedAt, commit, status: { status: 'ok', detail: '' } };
   } catch (err) {
     return { domains: [], mapPath: rel, status: { status: 'missing-optional', detail: `architecture-map parse failed: ${err.message}` } };
   }
@@ -552,7 +625,10 @@ export async function collectReference(opts = {}) {
   // requirements ledger. Deterministic; sources.purposes mirrors its status.
   const ledger = readRequirementsLedger(root);
   const purposesFull = collectPurposes(root, {
-    architectureDomains: arch.domains,
+    // Only the domains the snapshot MEASURED: the Purpose tab's "mapped but no
+    // architecture" hygiene asks the snapshot, and would go vacuous if handed the
+    // roster (every declared domain would trivially be "in the architecture").
+    architectureDomains: arch.domains.filter((d) => d.rendered !== false),
     flows: flowRes.flows,
     rules: loadDomainRules(root),
     requirements: ledger.requirements,
@@ -594,6 +670,7 @@ export async function collectReference(opts = {}) {
         mergedDeps: dd.mergedDeps,
         depsSource: dd.depsSource,
         mapPath: arch.mapPath,
+        snapshot: arch.snapshot,
         domainPurposes: domainPurposeIndex,   // v2 Part 2 — Architecture→Purpose
       };
     })(),

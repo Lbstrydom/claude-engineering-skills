@@ -468,6 +468,7 @@
       "arm-eval",
       "audit-orchestration",
       "findings",
+      "fleet",
       "friction",
       "learning-store",
       "model-eval",

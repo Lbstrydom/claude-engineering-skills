@@ -292,6 +292,7 @@ jobs:
             tests/final-review-adjudicate.test.mjs \
             tests/final-review-pending-db.test.mjs \
             tests/final-review-replay-db.test.mjs \
+            tests/fleet-events-db.test.mjs \
             tests/graph-coverage-db.test.mjs \
             tests/mark-findings-remediation.test.mjs \
             tests/memory-health-cluster-space.test.mjs \

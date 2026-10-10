@@ -535,6 +535,19 @@ export const REGISTRY = Object.freeze([
     load: () => import('./commands/census.mjs').then((m) => m.skillCensusCmd),
   },
   {
+    // docs/plans/fleet-telemetry.md. `flush` is spawned detached by fleet after
+    // each invocation (and is safe by hand); `stats` reads the derived
+    // measurements + weakness findings. `degrade-noop`: cloud off leaves the
+    // events in the local spool and stats reports the spool, never a zero.
+    name: 'fleet-telemetry',
+    flags: ['spool', 'days', 'format', 'repo'],
+    positionals: { verbs: ['flush', 'stats'] },
+    payload: 'flags',
+    scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop',
+    degradeShape: {},
+    load: () => import('./commands/fleet-telemetry.mjs').then((m) => m.fleetTelemetryCmd),
+  },
+  {
     name: 'shadow-overlap',
     flags: [], positionals: 'none', payload: 'json',
     scope: 'none', kind: 'read', cloud: 'degrade-noop',
