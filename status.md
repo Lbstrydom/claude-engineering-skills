@@ -87,6 +87,30 @@
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
 
+## 2026-10-10 — /fleet: status truth, a coordination channel, and real landing (wine + storyline feedback)
+
+Plan: `docs/plans/fleet-consumer-feedback-oct.md`. Built by `/cycle --autonomous` in three clusters, one commit each (stackable as three PRs).
+
+### What shipped
+- **Cluster 1, status accuracy.** Squash-merged work no longer reads as unlanded: a merged-PR head or a squash patch-id match is merged evidence, and a session derives `done` only when its worktree is also proven clean. Required checks must have RUN: the inventory comes from rulesets + classic protection + `.fleet.json` `requiredChecks`, the observation is bound to the head, and SKIPPED never satisfies a required check. pr-mode approval refuses drafts and not-run/failed checks and WAITs on missing/pending. New `release` and `archive-check` (fails closed over staged/unstaged/untracked/ignored files, unpushed commits incl. detached HEAD, hidden index flags). Uncommitted edits in live worktrees are advisory overlap evidence. New `status --fetch`.
+- **Cluster 2, coordination without host messages.** `fleet next` derives each session's obligations from facts it can re-check and is appended to claim/touch/ready. `fleet directive` stores coordinator requests in the shared registry: closed vocabulary (no merge/push), VERIFIED for a recipient only when fleet derives the same action for it, version dispatch. Hold transitions are events (`hold on --notify`, `hold off --note`); `claim --host-session`. The participant rules move the authority into the user's launch prompt.
+- **Cluster 3, landing.** `land --approve --serial` (update-branch with expected_head_sha → wait for required checks on that head → merge with `--match-head-commit`, intent-first and resumable, updated heads proven by parentage + re-derived merge tree). `fleet restack` (only the branch's own commits, closest merged-PR ancestor, patch-id checked, compare-and-swap publication). `appendOnlyGlobs` (byte-preserving, both sides proven append-only). Land-phase checks run inside the train worktree.
+
+### Behaviour change
+- `.fleet.json` land checks now run in the train worktree after provisioning, so a check script must be **committed** (an untracked one fails to run, loudly). Documented in `references/landing.md`.
+
+### Verification
+- **Plan**: GPT 3 rounds (H9 → H4 → H1, every finding accepted); Gemini `approve_with_debt`, 3 non-blocking notes folded in.
+- **Code**: C1 5 rounds → PASS; C2 2 rounds → PASS; C3 4 rounds → PASS. Consolidated Gemini over the union diff: APPROVE (0 blocking, 0 new, 0 wrongly dismissed). Audit coverage was reported PARTIAL each round (changed lines past the read window).
+- **Tests (measured)**: full `npm test` 18,249 tests, 18,207 pass, 0 fail, 42 skipped. Mutation checks: breaking the clean-worktree rule, the skipped-check refusal and the serial recovery proof each turned their tests red.
+- **Each cluster commit verified on its own** (throwaway worktrees): `check-gate-contracts` exit 0, rmSync retry guard 0 fail.
+- **Deferred (independent)**: splitting `overlap.mjs` / `fleet-cli.test.mjs`; serial's shared plumbing out of `train.mjs`. **Limit**: required checks are matched by name (gh exposes no check-app identity). **Out of scope**: host load / CI-idle / slots, reservations, permission modes and duplicate peers (host app).
+
+### Backlog
+Backlog 2026-10-09T23:21Z: Q1 46c/16p (+420 aged) · Q2 111c/67p (54 perm) · Q3 35 · debt 313 cloud/21 local (0 spilled) · upstream 1
+
+---
+
 ## 2026-10-06 — /fleet: claim-pattern bounds + evidence from captured commit ids
 
 Closes two of the three items the hardening entry below left open. Not run through the audit loop (gate `not-run`).

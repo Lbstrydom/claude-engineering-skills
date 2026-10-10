@@ -44,8 +44,9 @@ Usage:
   /fleet hold on [--reason "..."] [--notify] | off [--note "..."]
   /fleet repair --quarantine <file>
   /fleet land [--select a,b] [--dry-run]         # build a train, one test run
-  /fleet land --approve <trainId> [--accept-rerun]
+  /fleet land --approve <trainId> [--accept-rerun] [--serial]
   /fleet land --confirm|--reconcile|--resume|--abandon <trainId>
+  /fleet restack [<branch>] [--onto <ref>] [--from <oid>] [--replace]
 ```
 
 # /fleet — coordinate concurrent sessions
@@ -73,12 +74,12 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
    files is **three-dot** (`base...branch`, changes since the merge-base), measured
    from the FRESHER of the local base and its upstream, so neither a base that moved
    on nor a local base that trails `origin` makes a branch look like it touched
-   files it did not. A diverged base is named, with overlaps flagged maybe-phantom.
-   Untracked branches already merged into base (ahead 0) or idle (no commit for
-   `hideIdleAfterDays`, default 14) with no open PR and a clean or no worktree
-   are hidden with one `N hidden` line, and overlaps into them fold to a count;
-   `--all` shows them. Registered sessions are never hidden, and anything not
-   proven stale (unknown tip time, PRs not queried) stays visible.
+   files it did not (`--fetch` refreshes it first). Uncommitted edits in live
+   sessions' worktrees count as advisory overlap evidence. Untracked branches
+   that are merged (ahead 0), landed (squash or merged PR) or idle
+   (`hideIdleAfterDays`, default 14), with no open PR and a clean or no worktree,
+   hide behind one `N hidden` line (`--all` shows them); anything not proven
+   stale stays visible.
 4. **Land** — `land` builds an integration worktree off the base, applies every
    ready head, runs the configured test command once (rerun once if red) and
    prints the result plus the exact approve command. It never touches the base.
@@ -118,8 +119,13 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
 - `ready` records the current head; a head that moves later reads
   `ready (stale)` and `land` refuses it until `ready` is re-run.
 - Interrupted `land`: `--reconcile` (direct modes, reads the remote),
-  `--confirm` (pr mode, observes each PR merged), `--resume` (continue tiers).
-  A green train does not prove each branch green alone.
+  `--confirm` (pr mode, observes each PR merged), `--resume` (continue tiers,
+  or a stopped serial run). A green train does not prove each branch green alone.
+- `land --approve <id> --serial` (pr mode, for "branch must be up to date"
+  repos) updates, waits for required checks and merges ONE PR at a time; it is
+  the same human approval. `restack` replays a branch's own commits onto the
+  base after a squash merge and never moves a checked-out branch. Detail:
+  `references/landing.md`.
 
 ## Config — optional `.fleet.json` at the repo root
 
@@ -129,8 +135,10 @@ branch name — `origin/main` is refused; default origin/HEAD, else main),
 `mergeMethod` (`pr` default, `direct-squash`, `direct-merge`; fixed into the
 train when built), `testCommand` (a string, or ordered tiers; `post-merge` tiers
 never run in `land` and are listed as deferred), and `checks` (repo-owned
-collision scripts; a failing `block` check makes a train non-approvable, and one
-listed with `"runIn": [..., "ready"]` (opt-in) refuses `ready` too; on a timeout fleet terminates the hook's process group/tree, but a descendant that deliberately escapes it via `setsid`/detached/a job object is not terminated).
+collision scripts; `land` runs them inside the combined train tree; a failing
+`block` check makes a train non-approvable, and one listed with
+`"runIn": [..., "ready"]` (opt-in) refuses `ready` too; a timed-out hook's
+process tree is terminated, except a descendant that deliberately escapes it).
 A monorepo with a long chain:
 
 ```json
@@ -143,27 +151,22 @@ A monorepo with a long chain:
                 "runIn": ["status", "land"], "severity": "block" } ] }
 ```
 
-`hotFiles` (claim-grammar patterns, e.g. `["domainBudgets.json", "**/tech-debt.json"]`)
-declares files nearly every branch touches. An overlap made ONLY of hot files is
-listed apart (`hot files shared with N items`, `[hot]` on a claim) and never
-counts as a conflict or blocks a claim; mixed evidence still blocks. A wildcard
-claim pair stays a conflict even when it covers a hot file. Relay `[hot]` lines.
-
-A tier or a check may carry an optional `"note"` (one line, at most 300
-characters) saying why it is shaped that way, e.g. why a tier is `post-merge`.
-fleet prints it beside the deferred-tier, tier-result and check lines and records
-it in the train manifest. Check rollups (`statusCheckRollup`) are fetched apart
-from the PR list: a token that cannot read them shows `checks:unknown` and
-`PR checks: not queried`, never a missing PR list.
+`hotFiles` (claim-grammar patterns, e.g. `["**/tech-debt.json"]`) are files nearly
+every branch touches: an overlap made ONLY of them is listed apart (`[hot]`) and
+never blocks; mixed evidence still blocks. A tier or check may carry a one-line
+`"note"` (≤300 chars), printed and recorded in the manifest. Landing keys —
+`requiredChecks`, `appendOnlyGlobs`, `restackIgnore`, `serialTimeoutMs` — are in
+`references/landing.md`; `archiveIgnore` (default `node_modules/**`, `scripts/.claude-skills/**`) in `references/coordination.md`.
 
 ---
 
 ## Reference files
 
-This skill's canonical flow is above. The file below covers a specialised
-situation — read it only when the trigger applies.
+This skill's canonical flow is above. The files below cover specialised
+situations — read them only when the trigger applies.
 
 | File | Summary | Read when |
 |---|---|---|
 | `references/participant-rules.md` | The short rule block every spawned session receives, and why. | You spawn or brief a chip, or a session asks how to behave under /fleet. |
 | `references/coordination.md` | Coordinating sessions without host messages — next, directives, release, archive-check, hold notes. | You coordinate several sessions, post or read a directive, retire a session, or archive a worktree. |
+| `references/landing.md` | Landing beyond one combined run — required checks that ran, serial landing, restack, append-only files. | You approve a pr-mode train, land PRs one at a time, restack after a squash merge, or configure append-only files. |

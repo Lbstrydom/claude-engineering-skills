@@ -25,12 +25,13 @@ export const VERBS = Object.freeze({
   release: { bool: ['--json', '--abandoned'], value: ['--id'], repeat: [], positionals: [0, 0] },
   'archive-check': { bool: ['--json'], value: ['--id', '--min-kb'], repeat: [], positionals: [0, 1] },
   next: { bool: ['--json'], value: ['--id'], repeat: [], positionals: [0, 0] },
+  restack: { bool: ['--json', '--replace'], value: ['--onto', '--from'], repeat: [], positionals: [0, 1] },
   directive: {
     bool: ['--json', '--list', '--all'],
     value: ['--to', '--kind', '--reason', '--ref', '--note', '--expires-hours', '--ack', '--outcome', '--id'], repeat: [], positionals: [0, 0],
   },
   land: {
-    bool: ['--json', '--dry-run', '--accept-rerun'],
+    bool: ['--json', '--dry-run', '--accept-rerun', '--serial'],
     value: ['--select', '--approve', '--confirm', '--reconcile', '--resume', '--abandon'], repeat: [], positionals: [0, 0],
   },
 });

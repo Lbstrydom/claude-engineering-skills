@@ -115,6 +115,19 @@ export function renderApprove(r, cmd = 'fleet') {
   return L.join('\n');
 }
 
+/** `land --approve --serial` / `--resume` of a serial run. */
+export function renderSerial(r, cmd = 'fleet') {
+  const L = [];
+  if (r.landed) L.push(`LANDED ${r.trainId} (serial): every PR observed merged. Each merged at a head GitHub's CI tested, which may differ from the locally tested candidate.`);
+  else L.push(`${r.code === 'error' ? 'ERROR' : 'STOPPED'}${r.trainId ? ` ${r.trainId}` : ''}: ${r.reason}`);
+  for (const s of r.run?.steps ?? []) {
+    const head = s.head !== s.testedOid ? ` (updated: ${o12(s.testedOid)} -> ${o12(s.head)})` : '';
+    L.push(`  ${s.id} (PR #${s.prNumber}): ${s.step}${head}${s.mergedOid ? ` [${o12(s.mergedOid)}]` : ''}${s.note ? ` — ${s.note}` : ''}`);
+  }
+  if (r.resumable) L.push(`Fix the cause, then: ${cmd} land --resume ${r.trainId}`);
+  return L.join('\n');
+}
+
 /** `land --confirm` result. */
 export function renderConfirm(r) {
   if (r.confirmations) {

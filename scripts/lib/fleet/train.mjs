@@ -23,6 +23,7 @@
  * @module scripts/lib/fleet/train
  */
 import fs from 'node:fs';
+import micromatch from 'micromatch';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -34,6 +35,7 @@ import {
 } from './git-facts.mjs';
 import { materializePrRef } from './gh-facts.mjs';
 import { runChecks, buildCheckPayload } from './checks.mjs';
+import { resolveAppendOnly } from './union-merge.mjs';
 import { superviseTier } from './tier-supervisor.mjs';
 import { approvable, tiersOf, worstResult } from './overlap.mjs';
 import { assertManaged, fleetDir, newTrainId, readTrain, writeTrain } from './registry.mjs';
@@ -222,7 +224,8 @@ export function removeTrainWorktree(cwd, train, deps, { platform = process.platf
   return r.ok ? { removed: true } : { removed: false, reason: `worktree not fully removed: ${(r.steps ?? []).slice(-1)[0] ?? ''}` };
 }
 
-function noHooksDir() {
+/** A throwaway empty hooks dir (`core.hooksPath`), so no consumer hook runs in a fleet-made worktree. */
+export function noHooksDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-nohooks-'));
   return { dir, cleanup: () => { try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ } } };
 }
@@ -335,7 +338,9 @@ export function buildTrain({ cwd, config, sources, checkPayload = { sessions: []
 
     const ident = deps.git(['var', 'GIT_COMMITTER_IDENT'], wt).ok ? [] : ['-c', 'user.name=fleet', '-c', 'user.email=fleet@localhost'];
     const wgit = (args) => deps.git([...ident, '-c', `core.hooksPath=${hooks.dir}`, ...args], wt);
-    const conflict = applySources({ wgit, sources, mergeMethod: config.mergeMethod, trainId });
+    const applied = applySources({ wgit, dir: wt, sources, mergeMethod: config.mergeMethod, trainId, appendOnlyGlobs: config.appendOnlyGlobs ?? [] });
+    const conflict = applied.conflict;
+    if (applied.unioned.length) patchTrain(dir, trainId, { notes: applied.unioned.map((u) => `${u.sourceId}: ${u.files.join(', ')} merged keeping both sides (appendOnlyGlobs)`) }, deps);
     if (conflict) {
       const t = patchTrain(dir, trainId, { phase: 'conflict', result: 'none', conflict, notes: [`stopped at ${conflict.sourceId}: ${conflict.reason}`] }, deps);
       return { ok: true, train: t, approvability: approvable(t) };
@@ -349,8 +354,15 @@ export function buildTrain({ cwd, config, sources, checkPayload = { sessions: []
   } finally { hooks.cleanup(); }
 }
 
-/** Apply sources in order; returns a `conflict` record, or null when every source applied. */
-function applySources({ wgit, sources, mergeMethod, trainId }) {
+/**
+ * Apply sources in order. A conflict confined to `appendOnlyGlobs` is resolved
+ * keeping both sides in the DIRECT modes (fleet pushes this very tree); in `pr`
+ * mode it stays a conflict, because GitHub would report it too — the remedy is to
+ * restack the later branch once the earlier one lands.
+ * @returns {{conflict: object|null, unioned: Array<{sourceId: string, files: string[]}>}}
+ */
+function applySources({ wgit, dir, sources, mergeMethod, trainId, appendOnlyGlobs = [] }) {
+  const unioned = [];
   for (const s of sources) {
     const before = wgit(['rev-parse', 'HEAD']).stdout.trim();
     let r;
@@ -361,27 +373,39 @@ function applySources({ wgit, sources, mergeMethod, trainId }) {
       if (r.ok) r = wgit(['commit', '--no-verify', '--allow-empty', '-C', s.oid]);
     }
     if (!r.ok) {
-      const files = wgit(['diff', '--name-only', '--diff-filter=U']);
-      return { sourceId: s.id, oid: s.oid, reason: 'merge conflict', files: files.ok ? files.stdout.split('\n').filter(Boolean) : [] };
+      const list = wgit(['diff', '--name-only', '--diff-filter=U']);
+      const files = list.ok ? list.stdout.split('\n').filter(Boolean) : [];
+      const conflict = { sourceId: s.id, oid: s.oid, reason: 'merge conflict', files };
+      if (!appendOnlyGlobs.length || !files.length) return { conflict, unioned };
+      if (mergeMethod === 'pr') {
+        const allAppendOnly = files.every((f) => micromatch.isMatch(f, appendOnlyGlobs, { dot: true }));
+        return { conflict: allAppendOnly ? { ...conflict, reason: `append-only conflict — GitHub would refuse it too; land the earlier branch, then fleet restack ${s.id}` } : conflict, unioned };
+      }
+      const u = resolveAppendOnly({ dir, git: wgit, globs: appendOnlyGlobs });
+      if (!u.ok) return { conflict: { ...conflict, ...(u.ineligible ? { reason: `merge conflict (${u.reason})` } : {}) }, unioned };
+      const done = mergeMethod === 'direct-merge'
+        ? wgit(['commit', '--no-verify', '--no-edit'])
+        : wgit(['commit', '--no-verify', '--allow-empty', '-C', s.oid]);
+      if (!done.ok) return { conflict: { ...conflict, reason: `resolved append-only files but could not commit: ${done.reason}` }, unioned };
+      unioned.push({ sourceId: s.id, files: u.resolved });
     }
     const after = wgit(['rev-parse', 'HEAD']).stdout.trim();
-    if (after === before) return { sourceId: s.id, oid: s.oid, reason: 'produced no commit (already contained in the candidate)', files: [] };
+    if (after === before) return { conflict: { sourceId: s.id, oid: s.oid, reason: 'produced no commit (already contained in the candidate)', files: [] }, unioned };
   }
-  return null;
+  return { conflict: null, unioned };
 }
 
 /**
  * The steps after the candidate is recorded, each skipped when its result is
- * already in the manifest (so `resumeTrain` can re-enter): the consumer hook,
- * dependency provisioning from the candidate, then the tiers.
+ * already in the manifest (so `resumeTrain` can re-enter): dependency
+ * provisioning from the candidate, the consumer hook, then the tiers.
+ *
+ * The `land` checks run INSIDE the candidate worktree, after provisioning: a
+ * guard committed by one train branch therefore applies to every other branch's
+ * change in the combined tree, before CI does.
  */
 export function finishTrain({ cwd, dir, trainId, getChecks, checkPayload, deps }) {
   let t = readTrain(dir, trainId).train;
-  if (!Array.isArray(t.checkResults)) {
-    const payload = buildCheckPayload({ ...(typeof checkPayload === 'function' ? checkPayload() : checkPayload), phase: 'land', baseOid: t.baseOid, trainSources: t.sources });
-    const results = runChecks({ cwd, checks: getChecks(), phase: 'land', payload });
-    t = patchTrain(dir, trainId, { checkResults: results }, deps);
-  }
   if (t.depsChanged === null || t.depsChanged === undefined) {
     const diff = deps.git(['diff', '--name-only', t.baseOid, t.candidate.oid], t.worktree);
     const changed = diff.ok && diff.stdout.split('\n').some((f) => DEP_FILES.has(path.posix.basename(f.trim())));
@@ -392,6 +416,11 @@ export function finishTrain({ cwd, dir, trainId, getChecks, checkPayload, deps }
       t = patchTrain(dir, trainId, { phase: 'tested', result: 'none', notes: [...(t.notes ?? []), prov.reason] }, deps);
       return { ok: true, train: t, approvability: approvable(t) };
     }
+  }
+  if (!Array.isArray(t.checkResults)) {
+    const payload = buildCheckPayload({ ...(typeof checkPayload === 'function' ? checkPayload() : checkPayload), phase: 'land', baseOid: t.baseOid, trainSources: t.sources });
+    const results = runChecks({ cwd: t.worktree, checks: getChecks(), phase: 'land', payload });
+    t = patchTrain(dir, trainId, { checkResults: results }, deps);
   }
   t = runTiers({ dir, trainId, deps });
   return { ok: true, train: t, approvability: approvable(t) };
