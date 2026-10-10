@@ -38,17 +38,18 @@ const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0
  * Required packages — the audit loop won't function without these.
  * Each entry: [package-name, what-needs-it, is-required]
  */
-const REQUIRED_PACKAGES = [
+// Exported so tests derive the expected set from THIS list, never a second hand-kept copy.
+export const REQUIRED_PACKAGES = [
   ['openai', 'GPT-5.4 auditor (openai-audit.mjs)', true],
   ['zod', 'Schema validation', true],
   ['dotenv', 'Environment variable loading', true],
-  ['micromatch', 'Glob matching for --exclude-paths', true],
+  ['picomatch', 'Glob matching (lib/glob.mjs: --exclude-paths, fleet claims, budgets)', true],
 ];
 
 /**
  * Optional packages — audit runs without them but with reduced capability.
  */
-const OPTIONAL_PACKAGES = [
+export const OPTIONAL_PACKAGES = [
   ['@google/genai', 'Gemini final review + brief generation', 'GEMINI_API_KEY'],
   ['@anthropic-ai/sdk', 'Claude Opus fallback for Gemini', 'ANTHROPIC_API_KEY'],
   ['pg', 'Cloud learning store (Postgres driver)', 'AUDIT_DB_URL'],

@@ -54,6 +54,7 @@ describe('maintenance-checks — CHECKS manifest', () => {
       'debt-capture-trail',
       'debt-health',
       'debt-ledger-claims',
+      'fleet-telemetry',
       'learning-weekly-review',
       'memory-health',
       'migration-drift',
@@ -81,11 +82,14 @@ describe('maintenance-checks — CHECKS manifest', () => {
     }
   });
 
-  it('arch-maintenance bundles refresh + drift + prune as one check (not three)', () => {
+  it('arch-maintenance bundles refresh + render + drift + prune as one check (not four)', () => {
+    // render sits right after refresh: the dashboard's Architecture tab reads the rendered
+    // snapshot, which only ever aged while the weekly check refreshed the index alone.
     const c = CHECKS.find((c) => c.key === 'arch-maintenance');
-    assert.equal(c.steps.length, 3);
+    assert.equal(c.steps.length, 4);
     assert.deepEqual(c.steps.map((s) => s.script), [
       'symbol-index/refresh.mjs',
+      'symbol-index/render-mermaid.mjs',
       'symbol-index/drift.mjs',
       'symbol-index/prune.mjs',
     ]);
@@ -664,7 +668,7 @@ describe('maintenance CHECKS — workflow citations resolve', () => {
   it('every check whose key names no workflow is marked ad hoc in the header', () => {
     // The inverse direction: a check with no workflow must be DECLARED as such,
     // so "no citation" is a stated fact rather than an omission.
-    const adHoc = ['cache-hitrate', 'concern-report', 'debt-health', 'debt-ledger-claims', 'debt-capture-trail', 'context-staleness', 'slice-recurrence', 'accepted-debt', 'workflow-cadence'];
+    const adHoc = ['cache-hitrate', 'concern-report', 'fleet-telemetry', 'debt-health', 'debt-ledger-claims', 'debt-capture-trail', 'context-staleness', 'slice-recurrence', 'accepted-debt', 'workflow-cadence'];
     for (const key of adHoc) {
       assert.ok(CHECKS.some((c) => c.key === key), `${key} must still exist for this assertion to mean anything`);
     }

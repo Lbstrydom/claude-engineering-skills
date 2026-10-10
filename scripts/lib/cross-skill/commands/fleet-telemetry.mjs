@@ -20,6 +20,7 @@ import { deriveWeaknesses } from '../../fleet/telemetry-insights.mjs';
 
 const VERBS = new Set(['flush', 'stats']);
 const FORMATS = new Set(['json', 'worksheet']);
+const SEVERITY_RANK = { high: 0, medium: 1, low: 2 };
 
 /**
  * Only ever THIS checkout's `<git-common-dir>/fleet-telemetry`: flush deletes
@@ -136,6 +137,9 @@ export async function fleetTelemetryCmd(ctx) {
 
   const format = ctx.flag('format') ?? 'json';
   if (!FORMATS.has(format)) throw new CommandError('BAD_INPUT', `--format must be one of json, worksheet (got ${format})`);
+  const failOn = ctx.flag('fail-on');
+  if (failOn != null && !Object.hasOwn(SEVERITY_RANK, failOn)) throw new CommandError('BAD_INPUT', `--fail-on must be one of high, medium, low (got ${failOn})`);
+  if (failOn != null && format !== 'json') throw new CommandError('BAD_INPUT', '--fail-on reports through the JSON envelope; drop --format worksheet');
   const days = parseDays(ctx.flag('days'));
   const spool = localSpool();
   let result;
@@ -157,5 +161,22 @@ export async function fleetTelemetryCmd(ctx) {
     process.stdout.write(`${renderWorksheet(result)}\n`);
     return undefined;
   }
+  result.summary = summaryLine(result);
+  if (failOn != null) {
+    // A review gate passes only on a MEASUREMENT: an unreadable store (schema fault, unresolved repo)
+    // or no store at all must not read as "no weaknesses". Thin data (`insufficient`) was measured
+    // and passes. Cloud-off is a supported MODE, but asking a gate to judge with no store is asking
+    // it a question nothing answered (the weekly runner skips this check when AUDIT_DB_URL is unset).
+    if (result.state === 'unavailable') return { ...result, ok: false, reason: 'not-measured', failOn };
+    const over = result.weaknesses.filter((w) => SEVERITY_RANK[w.severity] <= SEVERITY_RANK[failOn]);
+    if (over.length) return { ...result, ok: false, reason: 'weaknesses-at-or-above-threshold', failOn, over: over.length };
+  }
   return result;
+}
+
+/** One line a maintenance log can show: state, counts per severity, the top finding. */
+function summaryLine(r) {
+  const n = (s) => r.weaknesses.filter((w) => w.severity === s).length;
+  const top = r.weaknesses[0];
+  return `fleet telemetry ${r.state ?? (r.measured ? 'measured' : 'unavailable')}: ${n('high')} high / ${n('medium')} medium / ${n('low')} low${top ? ` — top: [${top.severity}] ${top.signal}: ${top.message}` : ''}`;
 }

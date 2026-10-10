@@ -14,7 +14,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import micromatch from 'micromatch';
+import { isMatch } from '../glob.mjs';
 import { ArgvError } from '../cli-io.mjs';
 import { runGit, listWorktrees } from './git-facts.mjs';
 import { listPullRequests } from './gh-facts.mjs';
@@ -123,8 +123,8 @@ export function isIgnoredByConfig(p, patterns) {
   // character on POSIX and must never be read as a separator.
   const isDir = /\/$/.test(String(p));
   const bare = String(p).replace(/\/+$/, '');
-  if (!isDir) return micromatch.isMatch(bare, patterns, { dot: true });
-  return patterns.some((pat) => pat.endsWith('/**') && micromatch.isMatch(bare, pat.slice(0, -3), { dot: true }));
+  if (!isDir) return isMatch(bare, patterns, { dot: true });
+  return patterns.some((pat) => pat.endsWith('/**') && isMatch(bare, pat.slice(0, -3), { dot: true }));
 }
 
 /**

@@ -25,7 +25,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import micromatch from 'micromatch';
+import { isMatch } from '../glob.mjs';
 
 const REGULAR = new Set(['100644', '100755']);
 
@@ -52,7 +52,7 @@ export function parseUnmerged(text) {
  * @param {string[]} globs
  */
 export function ineligibility(p, stages, globs) {
-  if (!globs.length || !micromatch.isMatch(p, globs, { dot: true })) return 'not in appendOnlyGlobs';
+  if (!globs.length || !isMatch(p, globs, { dot: true })) return 'not in appendOnlyGlobs';
   for (const s of ['1', '2', '3']) if (!stages[s]) return `stage ${s} missing (${s === '1' ? 'add/add' : 'modify/delete or rename'} conflict)`;
   if (!REGULAR.has(stages['1'].mode) || !REGULAR.has(stages['2'].mode) || !REGULAR.has(stages['3'].mode)) return 'not a regular file';
   if (stages['2'].mode !== stages['3'].mode) return 'file mode differs between the two sides';
@@ -138,7 +138,9 @@ export function resolveAppendOnly({ dir, git, globs }) {
     }
     for (const { p, from } of results) {
       try { fs.copyFileSync(from, path.join(dir, p)); } catch (e) { return { ok: false, reason: `cannot write ${p}: ${e.message} — abandon this worktree` }; }
-      const a = git(['add', '--', p]);
+      // :(literal) — a file NAME, never a pattern: `--` stops option parsing but not glob or
+      // pathspec magic, so a conflicted file called `*.md` would stage every markdown file.
+      const a = git(['add', '--', `:(literal)${p}`]);
       if (!a.ok) return { ok: false, reason: `cannot stage ${p}: ${a.reason} — abandon this worktree` };
     }
     return { ok: true, resolved: results.map((r) => r.p) };

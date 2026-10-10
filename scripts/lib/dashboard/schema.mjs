@@ -573,6 +573,11 @@ export const TelemetryDataSchema = z.object({
       total: count,
       byType: z.array(z.object({ type: z.string(), count })),
     }),
+    // Outcome-ledger state for the latest session (open vs labelled). Optional so older snapshots validate.
+    outcomes: z.union([
+      z.object({ measured: z.literal(true), openP0: count, openP1: count, pendingVerification: count }),
+      z.object({ measured: z.literal(false), reason: z.string() }),
+    ]).optional(),
   }).optional(),
   // Audit effectiveness (precision/recall vs persona ground truth) — Cluster D.
   auditEffectiveness: z.object({

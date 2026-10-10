@@ -540,11 +540,15 @@ export const REGISTRY = Object.freeze([
     // measurements + weakness findings. `degrade-noop`: cloud off leaves the
     // events in the local spool and stats reports the spool, never a zero.
     name: 'fleet-telemetry',
-    flags: ['spool', 'days', 'format', 'repo'],
+    flags: ['spool', 'days', 'format', 'repo', 'fail-on'],
     positionals: { verbs: ['flush', 'stats'] },
     payload: 'flags',
     scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop',
     degradeShape: {},
+    // `stats --fail-on <severity>` is a REVIEW gate (the weekly maintenance check):
+    // a weakness at or above it is a failure whose payload IS the point, so the
+    // envelope is kept and the exit is 1. Scoped to the one verb that has it.
+    reportsFailure: { verbs: ['stats'] },
     load: () => import('./commands/fleet-telemetry.mjs').then((m) => m.fleetTelemetryCmd),
   },
   {

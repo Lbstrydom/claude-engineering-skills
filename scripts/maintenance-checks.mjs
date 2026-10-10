@@ -186,10 +186,15 @@ if (process.env.AUDIT_LOOP_STATE_DIR) {
 export const CHECKS = [
   {
     key: 'arch-maintenance', // formerly architectural-drift.yml -- Actions cron deleted 2026-09-13; this is its only runner here
-    label: 'Architectural memory refresh + drift sweep + retention prune',
+    label: 'Architectural memory refresh + render + drift sweep + retention prune',
     requiredEnv: ['AUDIT_DB_URL'],
     steps: [
       { script: 'symbol-index/refresh.mjs', args: [] },
+      // Re-render the snapshot the dashboard's Architecture tab reads (docs/architecture-map.md +
+      // the observed-deps envelope, both gitignored). Without it the index was refreshed weekly but
+      // the snapshot only ever aged — persona-test 2026-10-10 found it 13 days old two days after a
+      // maintenance run. Per-domain summaries are cached; render degrades without an Anthropic key.
+      { script: 'symbol-index/render-mermaid.mjs', args: [] },
       { script: 'symbol-index/drift.mjs', args: [] },
       { script: 'symbol-index/prune.mjs', args: [] },
     ],
@@ -240,6 +245,19 @@ export const CHECKS = [
       { script: 'cross-skill.mjs', args: ['learning-backfill-outcomes', '--rebuild-stats'] },
       { script: 'cross-skill.mjs', args: ['learning-weekly-review'] },
     ],
+  },
+  {
+    // Ad hoc — no workflow file. /fleet usage telemetry, reviewed weekly
+    // (docs/plans/fleet-telemetry.md): golden signals, session flow and the
+    // weakness rules over 14 days. Fails on a HIGH weakness (errors, a crash
+    // kind, a latency regression, a drain that is not reaching the store), and
+    // reports thin data as `insufficient`, never as clean. Thresholds live in
+    // scripts/lib/fleet/telemetry-insights.mjs; this review is where to see
+    // whether they fire too often or never.
+    key: 'fleet-telemetry',
+    label: 'Fleet usage telemetry review (14 days)',
+    requiredEnv: ['AUDIT_DB_URL'],
+    steps: [{ script: 'cross-skill.mjs', args: ['fleet-telemetry', 'stats', '--days', '14', '--fail-on', 'high'] }],
   },
   {
     key: 'cache-hitrate', // ad hoc weekly routine (no dedicated workflow file)

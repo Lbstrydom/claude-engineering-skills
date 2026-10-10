@@ -811,7 +811,7 @@
       "category": "skills"
     },
     "scripts/fleet.mjs": {
-      "description": "/fleet CLI: coordinate concurrent sessions — status, claim, next, directive, land, restack, archive-check.",
+      "description": "/fleet CLI: coordinate concurrent sessions — status, claim, next, directive, land, restack, archive-check, prune.",
       "category": "skills"
     },
     "scripts/persona-consistency-run.mjs": {

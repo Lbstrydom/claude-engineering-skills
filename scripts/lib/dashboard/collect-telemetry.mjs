@@ -17,6 +17,7 @@ import { getRepoIdByUuid } from '../store/repo.mjs';
 import { loadBanditArms } from '../store/bandit-fp.mjs';
 import { readShipEvents, readAuditEffectiveness, readCorrelationCountsByType } from '../store/plans-ship.mjs';
 import { getPersonaSessionsByRepo } from '../store/persona.mjs';
+import { getPersonaOutcomesSummary } from '../store/persona-outcomes.mjs';
 import { getSecurityStats } from '../store/security.mjs';
 import { getPurposeHealth } from '../store/purpose-health.mjs';
 import { getAuthorTierStats } from '../store/learning-decisions.mjs';
@@ -335,7 +336,16 @@ async function collectPersonaTests(root) {
       correlations = { total: corr.total, byType: corr.byType };
     }
 
-    const data = { cloud: true, latestByPersona, trend, correlations };
+    // The OUTCOME LEDGER for the latest session — the same summary /ship and the CLI read. Raw
+    // session counts alone made fixed-and-labelled P1s read as still open (persona-test
+    // 2026-10-10). A failed read is said, never rendered as zero.
+    let outcomes;
+    try {
+      outcomes = outcomesFromSummary(await getPersonaOutcomesSummary({ repoName, repoId }));
+    } catch (err) {
+      outcomes = { measured: false, reason: redactSecrets(String(err?.message ?? err)).slice(0, 200) };
+    }
+    const data = { cloud: true, latestByPersona, trend, correlations, outcomes };
     if (correlations.total === 0) {
       return { data, status: { status: 'ok', detail: 'correlation loop has not fired yet' } };
     }
@@ -790,6 +800,33 @@ async function collectTieredShadow(root) {
  * @param {{git?: {baseSha: string}}} [opts]
  * @returns {Promise<object>} a TelemetryData object (validate before render)
  */
+const OUTCOME_COUNT_FIELDS = ['openP0', 'openP1', 'pendingVerificationP0', 'pendingVerificationP1'];
+
+/**
+ * The persona-tests outcome panel from `getPersonaOutcomesSummary`'s RETURN SHAPE — the store
+ * function, not the CLI wrapper: it carries `ok`/`cloud`/`sessionId` and the counts, and NO
+ * `measured` field (keying on one rendered every real summary as unreadable). Measured only when
+ * the read succeeded, the store is on, a session exists, and every count is a non-negative safe
+ * integer — a missing or malformed count says so, never renders as zero. Diagnostics are redacted.
+ *
+ * @param {object|null|undefined} o
+ * @returns {{measured: true, openP0: number, openP1: number, pendingVerification: number}
+ *   | {measured: false, reason: string}}
+ */
+export function outcomesFromSummary(o) {
+  const unmeasured = (reason) => ({ measured: false, reason: redactSecrets(String(reason)).slice(0, 200) });
+  if (!o || o.ok !== true) return unmeasured(o?.error ?? o?.reason ?? 'outcome summary unavailable');
+  if (o.cloud === false) return unmeasured('cloud store off');
+  if (!o.sessionId) return unmeasured('no persona-test session recorded for this repo yet');
+  const n = {};
+  for (const k of OUTCOME_COUNT_FIELDS) {
+    const v = typeof o[k] === 'string' && o[k].trim() !== '' ? Number(o[k]) : o[k];
+    if (!Number.isSafeInteger(v) || v < 0) return unmeasured(`malformed outcome summary: ${k}=${JSON.stringify(o[k] ?? null)}`);
+    n[k] = v;
+  }
+  return { measured: true, openP0: n.openP0, openP1: n.openP1, pendingVerification: n.pendingVerificationP0 + n.pendingVerificationP1 };
+}
+
 export async function collectTelemetry(opts = {}) {
   const root = process.cwd();
   const git = opts.git || { baseSha: 'unknown' };

@@ -13,7 +13,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { runGit } from '../fleet/git-facts.mjs';
+import { resolveMeasurementBase, runGit } from '../fleet/git-facts.mjs';
 import { parseStatusEntries, STATUS_HEAD_BYTES } from './status-entries.mjs';
 import { makeMeasurement, clip } from './home-model.mjs';
 
@@ -70,8 +70,22 @@ function mergeRef(root) {
   const m = origin.ok ? /^origin\/(.+)$/.exec(origin.stdout.trim()) : null;
   const has = (ref) => runGit(['rev-parse', '--verify', '--quiet', ref], root, { timeoutMs: GIT_TIMEOUT_MS }).ok;
   for (const name of [m?.[1], 'main', 'master'].filter(Boolean)) {
-    if (has(`refs/heads/${name}`)) return { ref: `refs/heads/${name}`, label: name };
-    if (has(`refs/remotes/origin/${name}`)) return { ref: `refs/remotes/origin/${name}`, label: `origin/${name}` };
+    if (!has(`refs/heads/${name}`) && !has(`refs/remotes/origin/${name}`)) continue;
+    // The FRESHER of local and origin (fleet's own rule): a local default branch that trails its
+    // upstream — a checkout that has not pulled — made "what shipped" stop at an old merge while the
+    // status log beside it listed newer work (persona-test 2026-10-10, P1). Diverged or unknown keeps
+    // local and says so. Never fetches: "fresher" is as of the last fetch.
+    const pick = resolveMeasurementBase(root, { base: name, upstream: `origin/${name}` });
+    // Freshness could not be decided: list the local branch, and SAY that it may trail origin.
+    if (!pick.ok) {
+      const local = has(`refs/heads/${name}`);
+      const ref = local ? `refs/heads/${name}` : `refs/remotes/origin/${name}`;
+      return { ref, label: `${local ? name : `origin/${name}`} (freshness vs ${local ? `origin/${name}` : `local ${name}`} not determined: ${pick.reason ?? 'unknown'})` };
+    }
+    const label = pick.source === 'upstream'
+      ? `origin/${name}${pick.relation === 'local-trails' ? ` (local ${name} is ${pick.behindBy ?? 'some'} commit(s) behind)` : ''}`
+      : `${name}${pick.relation === 'diverged' || pick.relation === 'unknown' ? ` (${pick.relation} from origin/${name})` : ''}`;
+    return { ref: pick.oid, label };
   }
   // The default branch could not be resolved. Falling back to HEAD is only honest if it SAYS so: an
   // attached feature branch is not the default branch, and its log is not "what shipped".
@@ -88,7 +102,8 @@ export function collectShippedMerges(root, { now = new Date() } = {}) {
   const target = mergeRef(root);
   if (!target) return makeMeasurement({ ...base, status: 'missing-optional', detail: 'no default branch (local or origin) and no HEAD commit could be resolved' });
   const r = runGit(['log', '--first-parent', '-n', String(SHIPPED_LIMIT), '--format=%h%x00%s', target.ref], root, { timeoutMs: GIT_TIMEOUT_MS });
-  if (!r.ok) return makeMeasurement({ ...base, status: 'missing-optional', detail: r.reason ?? 'git log failed' });
+  // The ref RESOLVED, so a failing log is a collection failure, not an absent optional source.
+  if (!r.ok) return makeMeasurement({ ...base, status: 'unexpected-error', detail: `git log ${target.label} failed: ${r.reason ?? 'unknown error'}` });
   const subjects = r.stdout.split('\n').filter(Boolean).map((l) => {
     const [sha7, ...rest] = l.split('\0');
     return { sha7, subject: clip(rest.join('\0')) };

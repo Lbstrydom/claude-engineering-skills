@@ -100,6 +100,7 @@ const REPO_SLUG = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 /** Literal commands. Every npm invocation that takes a flag uses the `--` form. */
 const CMD = Object.freeze({
   whoami: 'node scripts/cross-skill.mjs whoami',
+  unlockedFixes: 'node scripts/cross-skill.mjs list-unlocked-fixes',
   syncStatus: 'node scripts/sync-status.mjs',
   maintenanceStatus: 'node scripts/maintenance-checks.mjs --status',
   contextCheck: 'npm run context:check',
@@ -233,7 +234,9 @@ function gradeSkills(m) {
  * a chip never has a state its row does not name. Add a chip = add a row + a test row.
  */
 export const HEALTH_RULES = Object.freeze([
-  { id: 'queue-q1', label: 'Q1 code fixes', from: 'queue-q1', tab: null, command: CMD.whoami,
+  // The queue's OWN listing, like Q2 — `whoami` is the remedy for an UNMEASURED queue (unmeasuredCommand),
+  // and on a measured card it named nothing about the fixes counted (persona-test 2026-10-10, P2).
+  { id: 'queue-q1', label: 'Q1 code fixes', from: 'queue-q1', tab: null, command: CMD.unlockedFixes,
     rule: 'ok: measured and not above the previous Backlog line; warn: grew; neutral: no previous line', grade: gradeQueue },
   { id: 'queue-q2', label: 'Q2 acceptances', from: 'queue-q2', tab: null, command: CMD.unremediated,
     rule: 'ok: measured and not above the previous line; warn: grew; neutral: no previous line', grade: gradeQueue },

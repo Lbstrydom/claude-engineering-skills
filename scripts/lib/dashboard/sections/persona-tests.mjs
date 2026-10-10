@@ -64,7 +64,15 @@ export default function sectionPersonaTests({ src, personaTests }, ui) {
         p.correlations.byType.map((t) => `${ui.escapeHtml(t.type)} (${ui.escapeHtml(t.count)})`).join(', ')
       }</p>`;
 
+  // Raw counts say what the latest session FOUND; the outcome ledger says what is still OPEN.
+  const o = p.outcomes;
+  const outcomeLine = !o ? ''
+    : o.measured
+      ? `<p>Outcome ledger (latest session): <strong>open P0 ${ui.escapeHtml(o.openP0)} · open P1 ${ui.escapeHtml(o.openP1)}</strong>${o.pendingVerification ? ` · ${ui.escapeHtml(o.pendingVerification)} labelled fixed, awaiting re-test` : ''} — the counts above are what the session found, before labelling.</p>`
+      : `<p class="section-note section-warn">Outcome ledger unreadable (${ui.escapeHtml(o.reason)}) — open counts are unknown, not zero.</p>`;
+
   return `<div class="cards">${cards}</div>
+    ${outcomeLine}
     <h3>Correlation loop health</h3>
     ${correlationLine}
     <h3>Recent sessions (last ${p.trend.length})</h3>

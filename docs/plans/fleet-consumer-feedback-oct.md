@@ -1,6 +1,6 @@
 # Plan: /fleet — status truth, a coordination channel, and real landing (wine + storyline feedback)
 - **Date**: 2026-10-09
-- **Status**: Approved
+- **Status**: Complete — shipped in #173 (ead39e7d), #174 (842d8dbe), #175 (f689caca), #176 (aa7699a0), #178 (5884285b)
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI + skill content; no UI) · stack `js-ts`
 - **Target domain(s)**: `fleet`, `skills-content`

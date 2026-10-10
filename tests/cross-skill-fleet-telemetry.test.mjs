@@ -3,7 +3,7 @@
  * the real dispatcher with an injected store port (no database).
  * Plan: docs/plans/fleet-telemetry.md.
  */
-import { after, describe, test } from 'node:test';
+import { after, beforeEach, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -128,6 +128,10 @@ describe('fleet-telemetry flush', () => {
 });
 
 describe('fleet-telemetry stats', () => {
+  // Each stats test runs in its OWN fresh checkout: the local spool is read from cwd, and the
+  // flush tests above chdir into theirs (R1-M17) — a stats result must not depend on test order.
+  beforeEach(() => { process.chdir(repoSpool().root); });
+
   test('returns measurements plus weakness findings', async () => {
     const r = await run(['stats', '--days', '7']);
     assert.equal(r.exitCode, 0);
@@ -148,5 +152,61 @@ describe('fleet-telemetry stats', () => {
     const r = await run(['stats'], { resolveRepoForStoreResult: async () => ({ kind: 'unresolved' }) });
     assert.equal(r.envelope.measured, false);
     assert.equal(r.envelope.telemetry, null);
+  });
+});
+
+describe('fleet-telemetry stats --fail-on (the weekly review gate)', () => {
+  beforeEach(() => { process.chdir(repoSpool().root); });
+
+  test('a weakness at or above the threshold exits 1 and KEEPS the payload', async () => {
+    const r = await run(['stats', '--fail-on', 'high']);
+    assert.equal(r.exitCode, 1);
+    assert.equal(r.envelope.ok, false);
+    assert.equal(r.envelope.reason, 'weaknesses-at-or-above-threshold');
+    assert.ok(r.envelope.weaknesses.length >= 1, 'the findings are the point: they ride along');
+    assert.match(r.envelope.summary, /\d+ high \/ \d+ medium/);
+  });
+
+  test('below the threshold: ok, exit 0, with the one-line summary', async () => {
+    const r = await run(['stats', '--fail-on', 'high'], { readFleetTelemetry: async () => ({
+      goldenSignals: [{ verb: 'status', mode: null, n: 20, ok: 20, refused: 0, pending: 0, error: 0, argv: 1, errorRate: 0.05, p50Ms: 100, p95Ms: 200, maxMs: 300 }],
+      sessionFlow: { started: 0, released: 0, abandoned: 0, refusalsPerSession: null }, topReasons: [], errorKinds: [], saturation: { registryInvalidSeen: 0 }, versions: [],
+    }) });
+    assert.equal(r.exitCode, 0);
+    assert.equal(r.envelope.ok, true);
+    assert.match(r.envelope.summary, /0 high \/ 0 medium \/ 1 low/);
+  });
+
+  test('a bad severity, or --fail-on with the worksheet format, is BAD_INPUT', async () => {
+    assert.equal((await run(['stats', '--fail-on', 'urgent'])).envelope.error.code, 'BAD_INPUT');
+    assert.equal((await run(['stats', '--fail-on', 'high', '--format', 'worksheet'])).envelope.error.code, 'BAD_INPUT');
+  });
+
+  test('an inherited property name is not a severity (R1-M1)', async () => {
+    for (const name of ['toString', 'constructor', '__proto__']) {
+      assert.equal((await run(['stats', '--fail-on', name])).envelope.error.code, 'BAD_INPUT', name);
+    }
+  });
+
+  test('an unreadable store FAILS the gate as not-measured — never passes as "no weaknesses" (R1-M4)', async () => {
+    const fault = await run(['stats', '--fail-on', 'high'], { readFleetTelemetry: async () => ({ error: 'relation missing', schemaFault: true }) });
+    assert.equal(fault.exitCode, 1);
+    assert.equal(fault.envelope.ok, false);
+    assert.equal(fault.envelope.reason, 'not-measured');
+    const unresolved = await run(['stats', '--fail-on', 'low'], { resolveRepoForStoreResult: async () => ({ kind: 'unresolved' }) });
+    assert.equal(unresolved.envelope.ok, false);
+    assert.equal(unresolved.envelope.reason, 'not-measured');
+  });
+
+  test('with the store OFF, --fail-on is not-measured too — cloud-off is a mode, not a measurement (R1-H4)', async () => {
+    const off = await run(['stats', '--fail-on', 'high'], {}, 'off');
+    assert.equal(off.envelope.ok, false);
+    assert.equal(off.envelope.reason, 'not-measured');
+    const plain = await run(['stats'], {}, 'off');
+    assert.equal(plain.exitCode, 0, 'without --fail-on, cloud-off stays a clean degrade');
+  });
+
+  test('the summary line is present with or without --fail-on (R1-M15)', async () => {
+    assert.match((await run(['stats'])).envelope.summary, /^fleet telemetry /);
   });
 });

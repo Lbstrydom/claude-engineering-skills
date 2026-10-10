@@ -89,6 +89,7 @@ describe('CLI contract', () => {
     assert.match(a.stderr, /unknown flag "--bogus"/);
     assert.equal(s.f(['claim', '--id', 'x', '--intent', 'i', '--paths', 'a', '--typo']).status, 2);
     assert.equal(s.f(['nonsense']).status, 2);
+    for (const inherited of ['toString', 'constructor', 'hasOwnProperty']) assert.equal(s.f([inherited]).status, 2, `${inherited} is not a verb (R1-M3)`);
     assert.equal(s.f([]).status, 2);
     assert.equal(s.f(['claim', '--id']).status, 2, 'a missing value is an argv error');
   });

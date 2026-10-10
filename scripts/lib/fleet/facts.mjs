@@ -15,7 +15,8 @@
 import {
   listWorktrees, listBranches, changedFiles, patchId, baseFreshness, headOf, runGit, resolveMeasurementBase, mergeBase, cacheDirFor,
 } from './git-facts.mjs';
-import { listPullRequests, prLocalRef } from './gh-facts.mjs';
+import { GH_TIMEOUT_MS, OPEN_PR_CHECK_ARGS, OPEN_PR_LIST_ARGS, listPullRequests, prLocalRef } from './gh-facts.mjs';
+import { ghBatch } from './gh-batch.mjs';
 import { ConfigError } from './config.mjs';
 import { fleetDir, readSessions, readHold, listTrains } from './registry.mjs';
 import {
@@ -24,7 +25,7 @@ import {
 import { buildCheckPayload, resultsToFindings, runChecks } from './checks.mjs';
 import { CLEAN_PROBE, probeWorktrees, uncommittedPaths, worktreeStatus } from './worktree-status.mjs';
 import { VALID, memoPure } from './oid-cache.mjs';
-import { SQUASH_DEPTH, gitAdapters, listMergedPullRequests, mergedEvidenceFor, squashPatchIds } from './merged-facts.mjs';
+import { SQUASH_DEPTH, gitAdapters, listMergedPullRequests, mergedEvidenceFor, mergedPrArgs, squashPatchIds } from './merged-facts.mjs';
 
 /**
  * The one clock read. `FLEET_NOW` (ISO string or epoch ms) overrides it so a
@@ -115,7 +116,14 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
   const measure = resolveMeasurementBase(cwd, { base, upstream: up.upstream });
   const branches = listBranches(cwd, measure.ok ? measure.oid : base);
   const anyPr = registry.sessions.some((x) => x.source?.kind === 'pr' && !['done', 'abandoned'].includes(x.state));
-  const prFacts = prs || anyPr ? listPullRequests(cwd, { env }) : { queried: false, complete: false, reason: 'not requested', prs: [] };
+  const wantPrs = prs || anyPr;
+  // Merged evidence (squash merges never make a tip an ancestor of base). The default follows `untracked`:
+  // the full view judges every candidate branch; session-only verbs name the branches they need.
+  const mergedWanted = merged === undefined ? (untracked ? 'all' : false) : merged;
+  // The gh questions are independent network round trips: ask them CONCURRENTLY (lib/fleet/gh-batch.mjs),
+  // then classify each exactly as a direct call would. A single question is asked directly.
+  const gh = prefetchGh({ cwd, env, base, wantPrs, wantMerged: mergedWanted !== false });
+  const prFacts = wantPrs ? listPullRequests(cwd, { env, prefetched: gh.open }) : { queried: false, complete: false, reason: 'not requested', prs: [] };
   const sel = selectBranchesToAnalyse({ registry, branches, base, maxBranches, untracked });
   // Evidence is computed from the commit ids `listBranches` captured, not by re-resolving the NAMES: another
   // session can commit between the two reads, and the PR-trust comparison below uses the captured tip, so
@@ -132,12 +140,9 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
   Object.assign(changed, pr.changed);
   const branchesNotAnalysed = mergeNotAnalysed(sel.branchesNotAnalysed, pr.notAnalysed);
   const worktreeList = worktrees ? listWorktrees(cwd) : { queried: false, reason: 'not requested', worktrees: [] };
-  // Merged evidence (squash merges never make a tip an ancestor of base). The default follows `untracked`:
-  // the full view judges every candidate branch; session-only verbs name the branches they need.
-  const mergedWanted = merged === undefined ? (untracked ? 'all' : false) : merged;
   const mergedFacts = mergedWanted === false
     ? { prs: { queried: false, reason: 'not requested' }, squash: { queried: false, reason: 'not requested' }, evidence: {} }
-    : gatherMerged({ cwd, base, baseRev, names: mergedWanted === 'all' ? [...sel.names] : mergedWanted, branches, patchIds, env });
+    : gatherMerged({ cwd, base, baseRev, names: mergedWanted === 'all' ? [...sel.names] : mergedWanted, branches, patchIds, env, prefetchedMerged: gh.merged });
   const tracked = new Set(registry.sessions.map((s) => s.source?.branch).filter(Boolean));
   const landed = new Set(Object.entries(mergedFacts.evidence).filter(([n, e]) => e.merged === true && !tracked.has(n)).map(([n]) => n));
   // Uncommitted evidence: every non-terminal session's worktree (`'all'`), the named branches, or none.
@@ -155,6 +160,22 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
     branches, prs: prFacts, changed, patchIds,
     ...(branchesNotAnalysed ? { branchesNotAnalysed } : {}),
     ...(checks === false ? { checks: { queried: false, reason: 'not requested' } } : {}),
+  };
+}
+
+/**
+ * The gh answers a status needs, fetched concurrently when there is more than one question.
+ * @returns {{open?: {list: object, checks: object}, merged?: object}}
+ */
+function prefetchGh({ cwd, env, base, wantPrs, wantMerged }) {
+  const jobs = [];
+  if (wantPrs) jobs.push(OPEN_PR_LIST_ARGS(), OPEN_PR_CHECK_ARGS());
+  if (wantMerged) jobs.push(mergedPrArgs(base));
+  if (jobs.length < 2) return {}; // nothing to overlap: the callers ask directly
+  const r = ghBatch(cwd, jobs, { env, timeoutMs: GH_TIMEOUT_MS });
+  return {
+    ...(wantPrs ? { open: { list: r[0], checks: r[1] } } : {}),
+    ...(wantMerged ? { merged: r[wantPrs ? 2 : 0] } : {}),
   };
 }
 
@@ -311,8 +332,8 @@ const samePathLoose = (a, b) => String(a).replace(/\\/g, '/').replace(/\/+$/, ''
  * merged`, one squash patch-id window over base, then `mergedEvidenceFor` per
  * branch at its CAPTURED tip. Each source keeps its own provenance.
  */
-export function gatherMerged({ cwd, base, baseRev, names, branches, patchIds, env }) {
-  const prs = listMergedPullRequests(cwd, { base, env });
+export function gatherMerged({ cwd, base, baseRev, names, branches, patchIds, env, prefetchedMerged }) {
+  const prs = listMergedPullRequests(cwd, { base, env, prefetched: prefetchedMerged });
   const squash = squashPatchIds(cwd, baseRev);
   const tipOid = new Map((branches?.branches ?? []).map((b) => [b.name, b.oid]));
   const adapters = gitAdapters(cwd);

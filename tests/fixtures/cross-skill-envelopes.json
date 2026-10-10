@@ -1487,7 +1487,24 @@
         "repo": null,
         "spool": null,
         "telemetry": null,
-        "weaknesses": []
+        "weaknesses": [],
+        "summary": "fleet telemetry unavailable: 0 high / 0 medium / 0 low"
+      }
+    },
+    "fleet-telemetry-stats-bad-fail-on": {
+      "args": [
+        "fleet-telemetry",
+        "stats",
+        "--fail-on",
+        "urgent"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--fail-on must be one of high, medium, low (got urgent)"
+        }
       }
     },
     "resolve-identity-json": {

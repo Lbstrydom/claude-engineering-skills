@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**7 active · 238 terminal · 32 audit summaries · 1 parked · 5 reference docs**
+**6 active · 239 terminal · 32 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -22,7 +22,6 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [Enforce the debt ledger's persisted-record contract (§2 of aged-out-acceptance-remainder.md)](./debt-ledger-persisted-record-contract.md) | `Approved` | GPT plan audit converged after 3 rounds (9→3→2 findings, 100% acceptance throughout); Gemini final gate… |
-| [/fleet — status truth, a coordination channel, and real landing (wine + storyline feedback)](./fleet-consumer-feedback-oct.md) | `Approved` |  |
 | [Decompose `gemini-review.mjs`](./gemini-review-decomposition.md) | `Approved` | GPT: 2 rounds, 100% acceptance both rounds, H:0 M:0 L:0 at R2; Gemini: 2 rounds, CONCERNS → APPROVE after… |
 | [`runs-findings.mjs` Identity & Write-Boundary Hardening](./runs-findings-write-boundary-hardening.md) | `Approved` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
@@ -58,7 +57,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 235 completed plans</summary>
+<summary>Show all 236 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -157,6 +156,7 @@ source comments that no docs linter sees — stays valid.
 | [Shadow Final-Review Reviewer (A/B test final-gate effectiveness)](./final-review-shadow-reviewer.md) | `Complete` | verified built; status corrected from Approved during archive triage 2026-06-27 |
 | [/fleet — idle-branch hiding and hot files (capstone consumer feedback)](./fleet-capstone-feedback.md) | `Complete` |  |
 | [/fleet — session-only verbs stop diffing every untracked branch](./fleet-claim-analysis-scope.md) | `Complete` |  |
+| [/fleet — status truth, a coordination channel, and real landing (wine + storyline feedback)](./fleet-consumer-feedback-oct.md) | `Complete` | shipped in #173 (ead39e7d), #174 (842d8dbe), #175 (f689caca), #176 (aa7699a0), #178 (5884285b) |
 | [/fleet — coordinating several concurrent AI coding sessions](./fleet-multi-session-coordination.md) | `Complete` |  |
 | [/fleet — four fixes from the storyline consumer's first real use](./fleet-storyline-feedback.md) | `Complete` |  |
 | [/fleet — supervisors end promptly and reap what an exited hook/tier left behind](./fleet-supervisor-lifecycle.md) | `Complete` |  |

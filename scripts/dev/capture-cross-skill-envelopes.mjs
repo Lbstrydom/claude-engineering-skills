@@ -183,6 +183,7 @@ export const CASES = [
   { id: 'fleet-telemetry-flush-not-a-spool', args: ['fleet-telemetry', 'flush', '--spool', 'some/dir'] },
   { id: 'fleet-telemetry-stats-bad-days', args: ['fleet-telemetry', 'stats', '--days', '0'] },
   { id: 'fleet-telemetry-stats-cloud-off', args: ['fleet-telemetry', 'stats'] },
+  { id: 'fleet-telemetry-stats-bad-fail-on', args: ['fleet-telemetry', 'stats', '--fail-on', 'urgent'] },
   // `volatile` names fields whose value is derived from the ENVIRONMENT rather
   // than from the command's contract. Here the repo name comes from the cwd,
   // and every run gets a fresh randomised temp dir — so the field differs on
