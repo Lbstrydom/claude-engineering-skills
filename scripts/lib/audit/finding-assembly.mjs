@@ -822,6 +822,8 @@ export async function assembleFindings(data) {
       cwd: process.cwd(),
       checkDetectorsFn: checkDetectors,
     }),
+    // A measured changed-line shortfall blocks convergence (hence AI-Gate): docs/plans/audit-hunk-window-coverage.md D9.
+    coverage,
   );
 
   // Phase 11 (tiered-recall pipeline): shared verdict function — pre-normalise

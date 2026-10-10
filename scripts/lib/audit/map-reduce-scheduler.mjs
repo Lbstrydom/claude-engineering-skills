@@ -188,12 +188,46 @@ export function throwIfConfigError(settled) {
 // Run one map-reduce unit. Extracted from runMapReducePass body so the
 // cache-seed path (sequential seed → parallel fanout) can re-use the same
 // per-unit logic without duplicating retry/context wiring.
-export async function runOneMapUnit(openai, unit, i, totalUnits, passName, buildPromptForUnit, changedFileSet, acquireSlot, releaseSlot) {
+/**
+ * The render evidence a CHUNKED unit (a file split by function boundaries) hands the coverage ledger: the line ranges
+ * of the items it carries. The import block is extracted text with no reliable line range, so it is not credited —
+ * under-crediting is the safe direction for a coverage claim.
+ */
+export function chunkUnitReadStats(unit) {
+  const filePath = unit.files[0];
+  const ranges = unit.chunk.items
+    .filter((it) => Number.isInteger(it.startLine) && typeof it.source === 'string')
+    .map((it) => [it.startLine, it.startLine + it.source.split('\n').length - 1]);
+  let charsOnDisk = 0;
+  try { charsOnDisk = fs.statSync(filePath).size; } catch { /* unreadable: the ranges still say what was sent */ }
+  const charsRendered = unit.chunk.items.reduce((n, it) => n + (it.source?.length ?? 0), 0);
+  return {
+    requested: 1, maxPerFile: null, maxTotal: null, full: [],
+    headTruncated: [{ path: filePath, charsOnDisk, charsRendered, ranges, windowed: true }],
+    budgetOmitted: [], unreadable: [], sensitiveExcluded: [], redactionShortened: [], charsRendered, charsOnDisk,
+  };
+}
+
+/**
+ * Run one map-reduce unit.
+ *
+ * `coverage` (`{renderFor, coverageRecorder}`) routes the unit's read through the audit's measured seam: the render is
+ * recorded under `passName` in `_coverage`, centred on the diff hunks like every other pass's, and its own 10000-char
+ * per-file cut becomes visible (upstream report 58f4e3a5 — map-reduce reads were the one read the ledger never saw).
+ * Absent, the unit reads as it always did (library callers, tests).
+ */
+export async function runOneMapUnit(openai, unit, i, totalUnits, passName, buildPromptForUnit, changedFileSet, acquireSlot, releaseSlot, coverage = null) {
   if (acquireSlot) await acquireSlot();
   try {
-    const context = unit.chunk
-      ? `// ${unit.files[0]} (chunk)\n${unit.chunk.imports}\n\n${unit.chunk.items.map(it => it.source).join('\n\n')}`
-      : readFilesAsContext(unit.files, { maxPerFile: 10000, maxTotal: 80000 });
+    let context;
+    if (unit.chunk) {
+      context = `// ${unit.files[0]} (chunk)\n${unit.chunk.imports}\n\n${unit.chunk.items.map(it => it.source).join('\n\n')}`;
+      coverage?.coverageRecorder?.recordRead(passName, chunkUnitReadStats(unit));
+    } else if (typeof coverage?.renderFor === 'function') {
+      context = coverage.renderFor(passName, unit.files, { maxPerFile: 10000, maxTotal: 80000 });
+    } else {
+      context = readFilesAsContext(unit.files, { maxPerFile: 10000, maxTotal: 80000 });
+    }
 
     const limits = computePassLimits(context.length, 'high');
     const unitHasChangedFiles = !changedFileSet || unit.files.some(f => changedFileSet.has(normalizePath(f)));
@@ -217,8 +251,10 @@ export async function runOneMapUnit(openai, unit, i, totalUnits, passName, build
   }
 }
 
-export async function runMapReducePass(openai, files, passName, buildPromptForUnit, maxFilesPerUnit = Infinity, { changedFileSet = null } = {}) {
+export async function runMapReducePass(openai, files, passName, buildPromptForUnit, maxFilesPerUnit = Infinity, { changedFileSet = null, renderFor = null, coverageRecorder = null } = {}) {
   const units = buildAuditUnits(files, 30000, maxFilesPerUnit);
+  // Unit reads go through the measured seam when the orchestrator supplies it (see runOneMapUnit).
+  const coverage = renderFor || coverageRecorder ? { renderFor, coverageRecorder } : null;
 
   // MAP phase: parallel calls with concurrency limit. Phase 7
   // (audit-orchestrator-hardening): now reads the bounds-validated
@@ -256,7 +292,7 @@ export async function runMapReducePass(openai, files, passName, buildPromptForUn
     _runSeedUsed = true; // run-level effective-seed flag for cache_seed_enabled telemetry
     const seedIdx = seedDecision.seedUnitIdx;
     process.stderr.write(`  [${passName}] cache-seed: warming with unit ${seedIdx} (~${seedDecision.seedUnitTokens} tok), then fanning out\n`);
-    const runOneAtIdx = (i) => runOneMapUnit(openai, units[i], i, units.length, passName, buildPromptForUnit, changedFileSet, acquireSlot, releaseSlot);
+    const runOneAtIdx = (i) => runOneMapUnit(openai, units[i], i, units.length, passName, buildPromptForUnit, changedFileSet, acquireSlot, releaseSlot, coverage);
     const [seedSettled] = await Promise.allSettled([runOneAtIdx(seedIdx)]);
     throwIfConfigError(seedSettled);
     const fanoutIdxs = units.map((_, i) => i).filter(i => i !== seedIdx);
@@ -267,7 +303,7 @@ export async function runMapReducePass(openai, files, passName, buildPromptForUn
     fanoutIdxs.forEach((origIdx, j) => { results[origIdx] = fanoutSettled[j]; });
   } else {
     results = await Promise.allSettled(
-      units.map((unit, i) => runOneMapUnit(openai, unit, i, units.length, passName, buildPromptForUnit, changedFileSet, acquireSlot, releaseSlot))
+      units.map((unit, i) => runOneMapUnit(openai, unit, i, units.length, passName, buildPromptForUnit, changedFileSet, acquireSlot, releaseSlot, coverage))
     );
     // Fail-fast on config errors (Gemini-R1/MED)
     for (const s of results) throwIfConfigError(s);

@@ -58,7 +58,7 @@ import {
 } from '../ledger.mjs';
 import {
   estimateTokens, chunkLargeFile, extractExportsOnly,
-  buildDependencyGraph, measureContextChars, setChunkingObserver
+  buildDependencyGraph, setChunkingObserver
 } from '../code-analysis.mjs';
 import { semanticId, formatFindings, appendOutcome, loadOutcomes, FalsePositiveTracker } from '../findings.mjs';
 import { estimateStablePrefixTokens } from './prompt-builder.mjs';
@@ -674,7 +674,7 @@ async function runLegacyProductionAuditImpl(ctx) {
   const isR2Plus = round >= 2;
   let ledger = null, diffMap = null, impactSet = [];
   // Every pass's reads are measured here (`_coverage`); `renderFor` is byte-identical to the readers it replaces.
-  const { recorder: coverageRecorder, renderFor } = startCoverage({ getDiffMap: () => diffMap, plain: readFilesAsContextDetailed, annotated: readFilesAsAnnotatedContextDetailed, setChunkingObserver });
+  const { recorder: coverageRecorder, renderFor } = startCoverage({ getDiffMap: () => diffMap, plain: readFilesAsContextDetailed, annotated: readFilesAsAnnotatedContextDetailed, setChunkingObserver, coverageChanged, changedFiles, fileFilter });
   let suppressionUnavailable = false;
   // Entries validateLedgerForR2 drops as malformed. Travels into _executionMeta
   // alongside suppressionUnavailable (see the merged-result assembly below):
@@ -891,10 +891,10 @@ async function runLegacyProductionAuditImpl(ctx) {
   // (which has a stderr side effect on the repo-profile-skip branch).
   const runStructure = shouldRunPass('structure');
   if (runStructure) {
-    const structureContextChars = baseContextChars + measureContextChars(found, 2000);
+    const structureFiles = renderFor('structure', found, { maxPerFile: 2000, maxTotal: 30000 }, false);
+    const structureContextChars = baseContextChars + structureFiles.length;   // sized by what is sent (hunk-window plan D11)
     const structureLimits = computePassLimits(structureContextChars, 'low');
     process.stderr.write(`\n── Wave 1: Structure + Wiring (parallel, reasoning: low) ──\n`);
-    const structureFiles = renderFor('structure', found, { maxPerFile: 2000, maxTotal: 30000 }, false);
     wave1Promises.push(
       safeCallGPT(openai, {
         ...passPrompt({
@@ -925,9 +925,9 @@ async function runLegacyProductionAuditImpl(ctx) {
   const runWiring = shouldRunPass('wiring');
   if (runWiring) {
     const wiringFiles = found.filter(f => f.includes('/api/') || f.includes('/routes/'));
-    const wiringContextChars = baseContextChars + measureContextChars(wiringFiles, 8000) + sharedContext.length;
-    const wiringLimits = computePassLimits(wiringContextChars, 'low');
     const wiringCode = `${renderFor('wiring', wiringFiles, { maxPerFile: 8000, maxTotal: 60000 }, false)}\n\n## Shared Files\n${sharedContext}`;
+    const wiringContextChars = baseContextChars + wiringCode.length;
+    const wiringLimits = computePassLimits(wiringContextChars, 'low');
     wave1Promises.push(
       safeCallGPT(openai, {
         ...passPrompt({
@@ -1124,12 +1124,12 @@ async function runLegacyProductionAuditImpl(ctx) {
               codeHeader: '## Code',
               code: unit._context,
               unitLabel,
-            }), openaiConfig.backendMaxFilesPerUnit)
+            }), openaiConfig.backendMaxFilesPerUnit, { renderFor, coverageRecorder })
           );
         } else {
-          const limits = computePassLimits(baseContextChars + measureContextChars(effectiveRoutes, 8000) + sharedContext.length, 'high');
-          process.stderr.write(`  be-routes: ${effectiveRoutes.length} files → ${limits.maxTokens} tok / ${(limits.timeoutMs/1000).toFixed(0)}s\n`);
           const beRoutesCode = `${renderFor('be-routes', effectiveRoutes, { maxPerFile: 8000, maxTotal: 60000 }, !!(isR2Plus && diffMap))}\n\n## Shared Files\n${sharedContext}`;
+          const limits = computePassLimits(baseContextChars + beRoutesCode.length, 'high');
+          process.stderr.write(`  be-routes: ${effectiveRoutes.length} files → ${limits.maxTokens} tok / ${(limits.timeoutMs/1000).toFixed(0)}s\n`);
           wave2Promises.push(
             safeCallGPT(openai, {
               ...passPrompt({
@@ -1171,12 +1171,12 @@ async function runLegacyProductionAuditImpl(ctx) {
               codeHeader: '## Code',
               code: unit._context,
               unitLabel,
-            }), openaiConfig.backendMaxFilesPerUnit)
+            }), openaiConfig.backendMaxFilesPerUnit, { renderFor, coverageRecorder })
           );
         } else {
-          const limits = computePassLimits(baseContextChars + measureContextChars(effectiveServices, 8000), 'high');
-          process.stderr.write(`  be-services: ${effectiveServices.length} files → ${limits.maxTokens} tok / ${(limits.timeoutMs/1000).toFixed(0)}s\n`);
           const beServicesCode = renderFor('be-services', effectiveServices, { maxPerFile: 8000, maxTotal: 80000 }, !!(isR2Plus && diffMap));
+          const limits = computePassLimits(baseContextChars + beServicesCode.length, 'high');
+          process.stderr.write(`  be-services: ${effectiveServices.length} files → ${limits.maxTokens} tok / ${(limits.timeoutMs/1000).toFixed(0)}s\n`);
           wave2Promises.push(
             safeCallGPT(openai, {
               ...passPrompt({
@@ -1218,12 +1218,12 @@ async function runLegacyProductionAuditImpl(ctx) {
             codeHeader: '## Code',
             code: unit._context,
             unitLabel,
-          }), openaiConfig.backendMaxFilesPerUnit)
+          }), openaiConfig.backendMaxFilesPerUnit, { renderFor, coverageRecorder })
         );
       } else {
-        const limits = computePassLimits(baseContextChars + measureContextChars(effectiveBackend, 8000) + sharedContext.length, 'high');
-        process.stderr.write(`  backend: ${effectiveBackend.length} files → ${limits.maxTokens} tok / ${(limits.timeoutMs/1000).toFixed(0)}s\n`);
         const backendCode = `${renderFor('backend', effectiveBackend, { maxPerFile: 8000, maxTotal: 80000 }, !!(isR2Plus && diffMap))}\n\n## Shared Files\n${sharedContext}`;
+        const limits = computePassLimits(baseContextChars + backendCode.length, 'high');
+        process.stderr.write(`  backend: ${effectiveBackend.length} files → ${limits.maxTokens} tok / ${(limits.timeoutMs/1000).toFixed(0)}s\n`);
         wave2Promises.push(
           safeCallGPT(openai, {
             ...passPrompt({
@@ -1274,12 +1274,12 @@ async function runLegacyProductionAuditImpl(ctx) {
           codeHeader: '## Code',
           code: unit._context,
           unitLabel,
-        }), openaiConfig.frontendMaxFilesPerUnit)
+        }), openaiConfig.frontendMaxFilesPerUnit, { renderFor, coverageRecorder })
       );
     } else {
-      const limits = computePassLimits(baseContextChars + measureContextChars(effectiveFrontend, 10000) + sharedContext.length, 'high');
-      process.stderr.write(`  frontend: ${effectiveFrontend.length} files → ${limits.maxTokens} tok / ${(limits.timeoutMs/1000).toFixed(0)}s\n`);
       const frontendCode = `${renderFor('frontend', effectiveFrontend, { maxPerFile: 10000, maxTotal: 80000 }, !!(isR2Plus && diffMap))}\n\n## Shared Files\n${sharedContext}`;
+      const limits = computePassLimits(baseContextChars + frontendCode.length, 'high');
+      process.stderr.write(`  frontend: ${effectiveFrontend.length} files → ${limits.maxTokens} tok / ${(limits.timeoutMs/1000).toFixed(0)}s\n`);
       wave2Promises.push(
         safeCallGPT(openai, {
           ...passPrompt({
@@ -1340,13 +1340,13 @@ async function runLegacyProductionAuditImpl(ctx) {
         codeHeader: '## Code',
         code: unit._context,
         unitLabel,
-      }), Infinity, { changedFileSet });
+      }), Infinity, { changedFileSet, renderFor, coverageRecorder });
     } else {
-      const sustainContextChars = baseContextChars + measureContextChars(sustainFiles, 4000);
+      const sustainCode = renderFor('sustainability', sustainFiles, { maxPerFile: 4000, maxTotal: 60000 }, !!(isR2Plus && diffMap));
+      const sustainContextChars = baseContextChars + sustainCode.length;
       const sustainLimits = computePassLimits(sustainContextChars, 'medium');
       process.stderr.write(`  ${sustainFiles.length} files → ${sustainLimits.maxTokens} tok / ${(sustainLimits.timeoutMs/1000).toFixed(0)}s\n`);
 
-      const sustainCode = renderFor('sustainability', sustainFiles, { maxPerFile: 4000, maxTotal: 60000 }, !!(isR2Plus && diffMap));
       sustainResult = await safeCallGPT(openai, {
         ...passPrompt({
           rubric: isR2Plus ? PASS_SUSTAINABILITY_RUBRIC : PASS_SUSTAINABILITY_SYSTEM,
@@ -1384,10 +1384,10 @@ async function runLegacyProductionAuditImpl(ctx) {
     process.stderr.write(`\n── Wave 4: Quickfix design-shortcuts (reasoning: low) ──\n`);
     const PASS_QUICKFIX_SYSTEM_LOCAL = getPassPrompt('quickfix');
     const qfRubric = PASS_QUICKFIX_SYSTEM_LOCAL;  // pass full prompt for low-reasoning consistency
-    const qfContextChars = baseContextChars + measureContextChars(qfFiles, 4000);
+    const qfCode = renderFor('quickfix', qfFiles, { maxPerFile: 4000, maxTotal: 60000 }, !!(isR2Plus && diffMap));
+    const qfContextChars = baseContextChars + qfCode.length;
     const qfLimits = computePassLimits(qfContextChars, 'low');
     process.stderr.write(`  ${qfFiles.length} files → ${qfLimits.maxTokens} tok / ${(qfLimits.timeoutMs/1000).toFixed(0)}s\n`);
-    const qfCode = renderFor('quickfix', qfFiles, { maxPerFile: 4000, maxTotal: 60000 }, !!(isR2Plus && diffMap));
     quickfixResult = await safeCallGPT(openai, {
       ...passPrompt({
         rubric: qfRubric,

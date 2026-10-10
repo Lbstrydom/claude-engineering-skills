@@ -112,7 +112,7 @@ const PINNED_DOCUMENT_ONLY = {
   // audit. The rule constrains what the AGENT writes into the invocation, so there
   // is no /audit-code exit code to bind — same shape as ship/category-a-never-staged.
   // The skill TEXT is guarded by tests/skill-staging-instructions.test.mjs.
-  'audit-code': ['mechanical-vs-architectural-label', 'rigor-pressure-stop', 'detector-blocks-convergence', 'convergence-census-and-label', 'round-1-passes-the-selected-scope', 'coverage-gate-fail-incomplete'],
+  'audit-code': ['mechanical-vs-architectural-label', 'rigor-pressure-stop', 'detector-blocks-convergence', 'convergence-census-and-label', 'round-1-passes-the-selected-scope', 'coverage-gate-fail-incomplete', 'changed-lines-unread-blocks-convergence'],
   'visual-audit': ['partial-matrix-refusal', 'vlm-advisory-only'],
   'ai-context-management': ['never-write-without-confirmation'],
   explain: [],
@@ -318,7 +318,8 @@ describe('gate-honesty — real skills/', () => {
     //   decision and wiring ARE covered: tests/plan-verification-outcome.test.mjs
     //   (stub writers, negative-controlled) and tests/plan-verification-items-db.test.mjs
     //   (real writers on disposable Postgres: exit 0 recorded, exit 4 unrecordable).
-    assert.equal(totalDocOnly, 56);   // +1 audit-code coverage-gate-fail-incomplete (file-coverage contract, 2026-09-30); +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5); +2 ship: converged + no-tests cap (2026-09-04)
+    // 56 -> 57: +1 audit-code (changed-lines-unread-blocks-convergence, 2026-10-10, upstream 58f4e3a5).
+    assert.equal(totalDocOnly, 57);   // +1 audit-code coverage-gate-fail-incomplete (file-coverage contract, 2026-09-30); +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5); +2 ship: converged + no-tests cap (2026-09-04)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));

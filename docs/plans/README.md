@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**7 active · 237 terminal · 32 audit summaries · 1 parked · 5 reference docs**
+**7 active · 238 terminal · 32 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -58,7 +58,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 234 completed plans</summary>
+<summary>Show all 235 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -89,6 +89,7 @@ source comments that no docs linter sees — stays valid.
 | [Plan — audit-clean.mjs traversal safety](./audit-cleanup-traversal-safety.md) | `Complete` |  |
 | [Duplication Audit Wave for /audit-code](./audit-code-duplication-wave.md) | `Complete` | shipped as commit `138dec8` (2026-07-14). Implemented via `/cycle --autonomous`… |
 | [Audit-Effectiveness Experiment — cheap credible traction on "what's the cost-effective, high-quality code-audit setup"](./audit-effectiveness-experiment.md) | `Complete` | every §12.6 CLI this plan specifies was built… |
+| [Audit read windows that cover the change (upstream 58f4e3a5)](./audit-hunk-window-coverage.md) | `Complete` |  |
 | [Audit-Loop Reliability & Intelligence Improvements](./audit-loop-improvements.md) | `Complete` | shipped — reliability + intelligence improvements landed across `scripts/openai-audit.mjs`… |
 | [Split `/audit-loop` into `/audit-plan` + `/audit-code`](./audit-loop-skill-split.md) | `Complete` | all 6 phases shipped 2026-04-27 |
 | [Claude Audit Loop v1.0](./audit-loop-v1.md) | `Complete` |  |

@@ -44,6 +44,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { z } from 'zod';
 import { normalizePath } from '../file-io.mjs';
+import { changedLineRanges, countUncovered, prefixRange } from '../hunk-window.mjs';
+import { buildHunkMap } from './hunk-evidence.mjs';
+
+export { buildHunkMap };
 import { classifyFileCoverage } from '../language-profiles.mjs';
 import { classifyPath } from '../sensitive-paths.mjs';
 import { formatCoverageSuffix, shortCoverageFiles } from '../coverage-format.mjs';
@@ -56,7 +60,11 @@ export const COVERAGE_CLASSES = Object.freeze(['profiled', 'model-only', 'declar
 export const COVERAGE_OUTCOMES = Object.freeze([
   'audited', 'not-admitted', 'excluded-infra', 'excluded-user', 'sensitive', 'deleted', 'unreadable', 'budget-omitted',
 ]);
-export const READ_STATES = Object.freeze(['full', 'head-cut', 'none', 'unknown']);
+/**
+ * `windowed` = a partial render centred on the diff hunks (hunk-window.mjs); `head-cut` = a partial render of the file's
+ * start. Both are partial: a file in either state is wholly examined only when `changedLinesUnread === 0`.
+ */
+export const READ_STATES = Object.freeze(['full', 'windowed', 'head-cut', 'none', 'unknown']);
 export const CHANGE_KINDS = Object.freeze(['added', 'modified', 'deleted', 'renamed', 'untracked']);
 export const COVERAGE_STATUSES = Object.freeze(['complete', 'partial', 'none', 'incomplete']);
 export const COVERAGE_GATES = Object.freeze(['pass', 'warn', 'fail']);
@@ -185,34 +193,55 @@ export function createCoverageRecorder() {
  * @param {{plain: Function, annotated: Function}} readers the two *Detailed readers, injected to keep this module import-light
  * @returns {(pass: string, files: string[], opts: object, annotated?: boolean) => string}
  */
-export function makeRenderFor(recorder, getDiffMap, { plain, annotated }) {
+export function makeRenderFor(recorder, getDiffMap, { plain, annotated }, getHunkMap = null) {
   return (pass, files, opts, useAnnotated = false) => {
-    const { context, stats } = useAnnotated ? annotated(files, getDiffMap(), opts) : plain(files, opts);
+    const hunkMap = getHunkMap ? getHunkMap() : null;
+    // The annotated reader is handed the SAME hunks the ledger measures against (D7) — verified, with the
+    // wholly-changed fallback — in the diffMap shape it reads. No hunk map → the caller's diffMap, as before.
+    const { context, stats } = useAnnotated
+      ? annotated(files, hunkMap ? hunkMap.asDiffMap() : getDiffMap(), opts)
+      : plain(files, hunkMap?.applicable ? { ...opts, hunksFor: hunkMap.hunksFor } : opts);
     recorder.recordRead(pass, stats);
     return context;
   };
+}
+
+/** The changed-file list the ledger is built over: the VCS record, else the explicit list. One rule for both readers of it. */
+function changedListOf({ coverageChanged, changedFiles = [], fileFilter }) {
+  return coverageChanged ?? (changedFiles.length > 0 ? changedFiles : (fileFilter ?? []));
 }
 
 /**
  * Start measuring an audit: the recorder, the measured reader, and the chunking observer wired together. One call so the
  * orchestrator (over the size limit) carries one line, not three.
  *
- * @returns {{recorder: object, renderFor: Function}}
+ * `coverageChanged` / `changedFiles` / `fileFilter` select the hunk map (`buildHunkMap`); it is built on the
+ * first read, because `diffMap` is parsed after this runs.
+ *
+ * @returns {{recorder: object, renderFor: Function, getHunkMap: () => object}}
  */
-export function startCoverage({ getDiffMap, plain, annotated, setChunkingObserver }) {
+export function startCoverage({ getDiffMap, plain, annotated, setChunkingObserver, coverageChanged = null, changedFiles = [], fileFilter = null }) {
   const recorder = createCoverageRecorder();
   setChunkingObserver((filePath, state) => recorder.recordChunking(filePath, state));
-  return { recorder, renderFor: makeRenderFor(recorder, getDiffMap, { plain, annotated }) };
+  let hunkMap = null;
+  const getHunkMap = () => (hunkMap ??= buildHunkMap({
+    diffMap: getDiffMap(), changed: changedListOf({ coverageChanged, changedFiles, fileFilter }), coverageChanged,
+  }));
+  recorder.getHunkMap = getHunkMap;
+  return { recorder, renderFor: makeRenderFor(recorder, getDiffMap, { plain, annotated }, getHunkMap), getHunkMap };
 }
 
 /** The ledger's inputs as `finding-assembly` takes them (`data.coverageInput`). `changed`: VCS record, else the explicit list. */
 export function makeCoverageInput({ recorder, coverageChanged, changedFiles, fileFilter, coverageExcluded, diffMap, toolCapability, noTools }) {
+  // The SAME map the readers rendered against when the recorder carries one (D7); built fresh otherwise.
+  const hunkMap = recorder?.getHunkMap?.() ?? buildHunkMap({ diffMap, changed: changedListOf({ coverageChanged, changedFiles, fileFilter }), coverageChanged });
   return {
     recorder,
-    changed: coverageChanged ?? (changedFiles.length > 0 ? changedFiles : (fileFilter ?? [])),
+    changed: changedListOf({ coverageChanged, changedFiles, fileFilter }),
     excludedInfra: coverageExcluded?.infra ?? [],
     excludedUser: coverageExcluded?.user ?? [],
-    hunks: diffMap ? new Map([...diffMap].map(([k, v]) => [k, v.hunks])) : null,
+    hunks: hunkMap.applicable ? hunkMap.hunksFor : null,
+    hunksExpected: hunkMap.applicable,
     tools: toolCapability.coverageTools ?? [],
     // the policy the tools ran under, recorded beside their results (`_coverage.toolPolicy`)
     toolPolicy: { disabled: !!noTools, restore: toolRunConfig.restore, deadlineMs: toolRunConfig.deadlineMs, maxProjects: 6 },
@@ -227,18 +256,12 @@ function ext(filePath) {
   return dot > 0 ? base.slice(dot + 1).toLowerCase() : '(no extension)';
 }
 
-/** Lines of `text` covered by its first `chars` characters. */
-function linesInPrefix(text, chars) {
-  let n = 0;
-  const end = Math.min(chars, text.length);
-  for (let i = 0; i < end; i++) if (text.charCodeAt(i) === 10) n++;
-  return n + 1;
-}
-
 /**
  * Best render evidence for one path across all recorded passes.
- * Only COMPLETED passes count toward `state` and `bestCharsRendered`; every pass that
- * requested the path is kept in `byPass` as evidence.
+ * Only COMPLETED passes count toward `state`, `bestCharsRendered` and the rendered line ranges; every pass that
+ * requested the path is kept in `byPass` as evidence. `renderedRanges` is the UNION over completed passes (a reader
+ * that reports `ranges`); `prefixChars` holds the head-cut lengths of renders that report none (older producers),
+ * resolved to line ranges once the file's text is read.
  */
 function readEvidence(key, passes) {
   const byPass = {};
@@ -249,6 +272,9 @@ function readEvidence(key, passes) {
   let unreadableIn = false;
   let budgetOmittedIn = false;
   let anyStats = false;
+  let windowedAny = false;
+  const renderedRanges = [];
+  const prefixChars = [];
   for (const [name, p] of passes) {
     for (const st of p.stats) {
       anyStats = true;
@@ -270,7 +296,12 @@ function readEvidence(key, passes) {
       };
       if (p.completed) {
         if (inFull) bestFull = true;
-        if (cut) bestChars = Math.max(bestChars ?? 0, cut.charsRendered);
+        if (cut) {
+          bestChars = Math.max(bestChars ?? 0, cut.charsRendered);
+          if (cut.windowed) windowedAny = true;
+          if (Array.isArray(cut.ranges)) renderedRanges.push(...cut.ranges);
+          else prefixChars.push(cut.charsRendered);
+        }
       }
     }
   }
@@ -279,12 +310,28 @@ function readEvidence(key, passes) {
   let state;
   if (!anyStats) state = 'unknown';
   else if (bestFull) state = 'full';
-  else if (bestChars !== null) state = 'head-cut';
+  else if (bestChars !== null) state = windowedAny ? 'windowed' : 'head-cut';
   else state = 'none';
   return {
     state, charsOnDisk, bestCharsRendered: bestFull ? (charsOnDisk ?? null) : bestChars,
-    byPass, requestedByAny, unreadableIn, budgetOmittedIn,
+    byPass, requestedByAny, unreadableIn, budgetOmittedIn, renderedRanges, prefixChars,
   };
+}
+
+/**
+ * Changed lines no completed pass rendered (upstream 58f4e3a5): the file's changed ranges minus the UNION of every
+ * completed pass's rendered ranges — two passes that each read a different part of a file add up. `null` when it
+ * cannot be measured (no hunk evidence, or the file cannot be read).
+ */
+function measureUnread(path, fileHunks, changeKind, ev, readText) {
+  const wholeFileNew = changeKind === 'added' || changeKind === 'untracked';
+  if (!Array.isArray(fileHunks) && !wholeFileNew) return null;
+  const text = readText(path);
+  if (typeof text !== 'string') return null;
+  const lineCount = text.split('\n').length;
+  const hunks = Array.isArray(fileHunks) ? fileHunks : [{ startLine: 1, lineCount }];
+  const covered = [...ev.renderedRanges, ...ev.prefixChars.map((c) => prefixRange(text, c))];
+  return countUncovered(changedLineRanges(hunks, lineCount), covered);
 }
 
 // ── The builder ─────────────────────────────────────────────────────────────
@@ -302,12 +349,13 @@ function readEvidence(key, passes) {
  * @param {Map<string, Array<{startLine:number, lineCount:number}>>|null} [input.hunks] new-side hunks by path
  * @param {(p: string) => boolean} [input.existsOnDisk]
  * @param {(p: string) => string|null} [input.readText] for measuring unread changed lines
+ * @param {boolean} [input.hunksExpected] the round declared a diff (buildHunkMap evidence `expected`): an unmeasurable partial read is then an invariant violation
  * @returns {object} a CoverageSchema-valid `_coverage`
  */
 export function buildCoverageReport(input) {
   const {
     changed = [], excludedInfra = [], excludedUser = [], recorder = null, tools = [], waves = [],
-    toolPolicy = null, hunks = null,
+    toolPolicy = null, hunks = null, hunksExpected = false,
     existsOnDisk = (p) => fs.existsSync(p),
     readText = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } },
   } = input || {};
@@ -341,28 +389,28 @@ export function buildCoverageReport(input) {
     else if (classifyPath(rec.path) === 'sensitive') outcome = 'sensitive';
     else if (cls.class === 'non-code' || cls.class === 'uncovered') outcome = 'not-admitted';
     else if (!existsOnDisk(rec.path)) { outcome = 'unreadable'; reason = 'not on disk'; }
-    else if (ev.state === 'full' || ev.state === 'head-cut') outcome = 'audited';
+    else if (ev.state === 'full' || ev.state === 'windowed' || ev.state === 'head-cut') outcome = 'audited';
     // No render evidence at all is NOT "audited": nothing here can vouch that a pass ever saw the file.
     else if (ev.state === 'unknown') { outcome = 'unreadable'; reason = 'no render evidence recorded'; }
     else if (ev.unreadableIn) { outcome = 'unreadable'; reason = 'the reader could not read it'; }
     else if (ev.budgetOmittedIn) { outcome = 'budget-omitted'; reason = 'context budget spent before it was rendered'; }
     else { outcome = 'unreadable'; reason = ev.requestedByAny ? 'no completed pass rendered it' : 'no pass requested it'; }
 
-    // Changed lines beyond the best completed render — null unless we can actually measure it.
+    // Changed lines no completed pass rendered — null unless we can actually measure it.
     let changedLinesUnread = null;
-    const fileHunks = hunks?.get?.(key) ?? hunks?.get?.(rec.path) ?? null;
+    // `hunks` is the audit's hunk map lookup (buildHunkMap) or, from older callers, a Map keyed by normalised path.
+    const hunksOf = () => (typeof hunks === 'function' ? hunks(rec.path) : (hunks?.get?.(key) ?? hunks?.get?.(rec.path) ?? null));
     if (outcome === 'audited' && ev.state === 'full') changedLinesUnread = 0;
-    else if (outcome === 'audited' && ev.state === 'head-cut' && Array.isArray(fileHunks) && fileHunks.length > 0) {
-      const text = readText(rec.path);
-      if (typeof text === 'string') {
-        const rendered = linesInPrefix(text, ev.bestCharsRendered ?? 0);
-        let unread = 0;
-        for (const h of fileHunks) {
-          const end = h.startLine + Math.max(1, h.lineCount) - 1;
-          if (end > rendered) unread += end - Math.max(h.startLine, rendered + 1) + 1;
-        }
-        changedLinesUnread = Math.max(0, unread);
-      }
+    else if (outcome === 'audited' && (ev.state === 'head-cut' || ev.state === 'windowed')) {
+      changedLinesUnread = measureUnread(rec.path, hunksOf(), changeKind, ev, readText);
+      // Diff evidence was expected, the file was read only in part, and its change still could not be measured (it
+      // became unreadable mid-audit): the ledger cannot vouch for it, so it says so — never an unknown that converges.
+      if (changedLinesUnread === null && hunksExpected) violations.push(`${rec.path}: changed lines could not be measured although diff evidence was expected`);
+    } else if (outcome === 'budget-omitted') {
+      // A pass asked for it and the context budget ran out first: every changed line went unread, which is at least as
+      // bad as a partial read and must block convergence the same way (final gate G1, round 2). `unreadable` stays
+      // null — it is its own short outcome (missing, refused, never requested), not a budget shortfall a re-run fixes.
+      changedLinesUnread = measureUnread(rec.path, hunksOf(), changeKind, { renderedRanges: [], prefixChars: [] }, readText);
     }
 
     const fileTools = [];
@@ -421,7 +469,7 @@ export function buildCoverageReport(input) {
       if (f.outcome !== 'deleted') presentRequired++;
       if (f.outcome === 'audited') auditedRequired++;
       const wholly = f.outcome === 'audited'
-        && (f.read.state === 'full' || (f.read.state === 'head-cut' && f.changedLinesUnread === 0));
+        && (f.read.state === 'full' || ((f.read.state === 'head-cut' || f.read.state === 'windowed') && f.changedLinesUnread === 0));
       if (wholly) examined++;
     } else if (f.class === 'uncovered' && f.outcome === 'not-admitted') {
       required++;
@@ -434,8 +482,10 @@ export function buildCoverageReport(input) {
   let status;
   if (violations.length > 0) status = 'incomplete';
   // `none` = the change was not MEASURED at all: no present required file was audited. A file that was audited
-  // but head-cut is `partial` (short, visible in the suffix), not `none` — failing a round because a large file
-  // exceeds the per-file read window would make every repo with a big file unable to converge.
+  // but read partially is `partial` (short, visible in the suffix), not `none` — failing a round because a large file
+  // exceeds the per-file read window would make every repo with a big file unable to converge. Convergence is a
+  // separate decision: a MEASURED changed-line shortfall withholds it (convergence.mjs), which became actionable once
+  // windows grow into the pass budget (hunk-window.mjs) — a re-run on the short files can now read them.
   else if (presentRequired > 0 && auditedRequired === 0) status = 'none';
   else if (short > 0) status = 'partial';
   else status = 'complete';

@@ -72,6 +72,47 @@ describe('buildChangeRecord does not hide a failed change-kind lookup', () => {
   });
 });
 
+// docs/plans/audit-hunk-window-coverage.md D6: R1 gets diff hunks from the change record (R1 had none at all).
+describe('buildChangeRecord attaches new-side hunks per changed file', () => {
+  const base = { diffChanged: ['a.js', 'img.png'], untrackedFiles: ['new.js'], baseSha: 'abc', allowInfraScope: false, excludePatterns: [], applyExclusions: (f) => f };
+  const u0 = [
+    'diff --git a/a.js b/a.js', 'index 1111111..2222222 100644', '--- a/a.js', '+++ b/a.js',
+    '@@ -10,2 +10,3 @@ fn', '+x', '+y', '+z', '@@ -40 +41,0 @@', '-gone', '',
+  ].join('\n');
+  const calls = [];
+  const run = (cmd, args) => {
+    calls.push(args);
+    if (args.includes('--name-status')) return 'M\0a.js\0M\0img.png\0';
+    return u0;
+  };
+  it('tracked files get their hunks, an unmentioned (binary) file stays unknown, an untracked file one whole-file hunk', () => {
+    const r = buildChangeRecord({ ...base, run, readText: (p) => (p === 'new.js' ? 'a\nb\nc' : null) });
+    const by = Object.fromEntries(r.changed.map((c) => [c.path, c.hunks]));
+    assert.deepEqual(by['a.js'], [{ startLine: 10, lineCount: 3 }, { startLine: 41, lineCount: 0 }]);
+    assert.equal(by['img.png'], undefined, 'absent from the diff is unknown, never a measured empty change (code audit R2 H5)');
+    assert.deepEqual(by['new.js'], [{ startLine: 1, lineCount: 3 }]);
+    const u0Call = calls.find((a) => a.includes('-U0'));
+    assert.ok(u0Call.includes('--src-prefix=a/') && u0Call.includes('--dst-prefix=b/'), 'a diff.noprefix config must not empty the map');
+    assert.ok(u0Call.includes('--no-textconv'), 'hunk coordinates must number the bytes the readers render');
+  });
+  it('a C-quoted (non-ASCII) path keeps its hunks — an unrecognised header must not read as "no change"', () => {
+    const q = (side) => `"${side}/caf\\303\\251.js"`;   // git's C-quoting of café.js under core.quotePath
+    const quoted = [`diff --git ${q('a')} ${q('b')}`, 'index 1111111..2222222 100644', `--- ${q('a')}`, `+++ ${q('b')}`, '@@ -3 +3,2 @@', '+x', '+y', ''].join('\n');
+    const nameStatus = ['M', 'café.js', ''].join('\u0000');
+    const r = buildChangeRecord({ ...base, diffChanged: ['café.js'], untrackedFiles: [], run: (cmd, args) => (args.includes('--name-status') ? nameStatus : quoted) });
+    assert.deepEqual(r.changed[0].hunks, [{ startLine: 3, lineCount: 2 }]);
+  });
+  it('an untracked file that cannot be read stays UNKNOWN (no hunks), never a measured empty change', () => {
+    const r = buildChangeRecord({ ...base, run, readText: () => null });
+    const rec = r.changed.find((c) => c.path === 'new.js');
+    assert.equal('hunks' in rec, false);
+  });
+  it('a failed hunk read leaves `hunks` absent (unknown), never [] (which would mean "nothing changed")', () => {
+    const r = buildChangeRecord({ ...base, run: (cmd, args) => { if (args.includes('-U0')) throw new Error('ENOBUFS'); return 'M\0a.js\0M\0img.png\0'; }, readText: () => 'a' });
+    assert.ok(r.changed.every((c) => !('hunks' in c)));
+  });
+});
+
 describe('runTool', () => {
   it('a self-referencing fallback fails the tool instead of recursing forever', () => {
     setExistsSync(() => true);
