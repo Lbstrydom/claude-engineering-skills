@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { git } from './helpers/git.mjs';
 import {
-  advanceTouching, baseAdvance, mergedEvidenceFor, parseAdvanceLog, parseMergedList, parsePatchIdPairs, squashPatchIds,
+  advanceTouching, baseAdvance, gitAdapters, mergedEvidenceFor, parseAdvanceLog, parseMergedList, parsePatchIdPairs, squashPatchIds,
 } from '../scripts/lib/fleet/merged-facts.mjs';
 import { deriveDone, hideReason, mergedDone } from '../scripts/lib/fleet/overlap.mjs';
 import { patchId } from '../scripts/lib/fleet/git-facts.mjs';
@@ -81,8 +81,19 @@ describe('mergedEvidenceFor — the ONE predicate', () => {
     assert.equal(mergedEvidenceFor({ branch: 'feat', tipOid: A, mergedPrs: prs([pr({ isCrossRepository: true })]) }).merged, false);
   });
   it('squash patch-id match → merged via squash; gh absent does not stop it', () => {
-    const e = mergedEvidenceFor({ branch: 'feat', tipOid: C, patchId: D, mergedPrs: { queried: false }, squash: { queried: true, byPatchId: new Map([[D, B]]) } });
+    const e = mergedEvidenceFor({ branch: 'feat', tipOid: C, patchId: D, ancestor: anc([]), mergedPrs: { queried: false }, squash: { queried: true, byPatchId: new Map([[D, B]]) } });
     assert.deepEqual([e.merged, e.via, e.commit], [true, 'squash', B]);
+  });
+  it('a matching base commit that is in the branch\'s OWN history predates the fork: not merged (audit H2)', () => {
+    // B is an ancestor of the tip C: the identical change was made on base BEFORE this branch forked.
+    const e = mergedEvidenceFor({ branch: 'feat', tipOid: C, patchId: D, ancestor: anc([[B, C]]), mergedPrs: { queried: true, complete: true, prs: [] }, squash: { queried: true, complete: true, byPatchId: new Map([[D, B]]) } });
+    assert.equal(e.merged, false);
+    assert.equal(e.known, true, 'both sources complete and no real match: known not merged');
+  });
+  it('a squash match whose ancestry cannot be checked is never a merged verdict', () => {
+    const e = mergedEvidenceFor({ branch: 'feat', tipOid: C, patchId: D, mergedPrs: { queried: true, complete: true, prs: [] }, squash: { queried: true, complete: true, byPatchId: new Map([[D, B]]) } });
+    assert.deepEqual([e.known, e.merged], [false, false]);
+    assert.match(e.reason, /predates the branch fork could not be verified/);
   });
   it('neither source queried → known:false (silence is never "not merged")', () => {
     const r = mergedEvidenceFor({ branch: 'feat', tipOid: C, mergedPrs: { queried: false }, squash: { queried: false } });
@@ -150,6 +161,28 @@ describe('squashPatchIds + baseAdvance on a real repo', () => {
     assert.equal(adv.complete, true);
     assert.deepEqual(advanceTouching(adv, ['a.txt', 'zzz']).map((c) => [c.pr, c.files]), [[5, ['a.txt']]]);
     assert.deepEqual(advanceTouching(adv, ['c.txt']), [], 'a file base never touched is no reason to rebase');
+  });
+
+  it('an identical change made on base BEFORE the fork (added, reverted, re-made on the branch) is not a squash merge (audit H2)', () => {
+    const { repo } = makeFleetRepo();
+    commitFile(repo, 'x.txt', 'same change\n', 'add x');
+    git(['rm', '-q', 'x.txt'], repo); git(['commit', '-q', '-m', 'revert x'], repo);
+    git(['checkout', '-q', '-b', 'redo'], repo);
+    commitFile(repo, 'x.txt', 'same change\n', 'add x again');
+    git(['checkout', '-q', 'main'], repo);
+    const tip = git(['rev-parse', 'redo'], repo);
+    const base = git(['rev-parse', 'main'], repo);
+    const sq = squashPatchIds(repo, base);
+    const pid = patchId(repo, base, tip).patchId;
+    assert.ok(sq.byPatchId.has(pid), 'precondition: the old base commit carries the same patch-id');
+    const e = mergedEvidenceFor({ branch: 'redo', tipOid: tip, patchId: pid, mergedPrs: { queried: true, complete: true, prs: [] }, squash: { ...sq, coversFork: true }, ...gitAdapters(repo) });
+    assert.equal(e.merged, false, 'the branch has NOT landed');
+    // Control: once it really is squash-merged, the new squash commit is not in its history and matches.
+    git(['merge', '--squash', 'redo'], repo); git(['commit', '-q', '-m', 'redo (#3)'], repo);
+    const base2 = git(['rev-parse', 'main'], repo);
+    const sq2 = squashPatchIds(repo, base2);
+    const e2 = mergedEvidenceFor({ branch: 'redo', tipOid: tip, patchId: patchId(repo, base2, tip).patchId, mergedPrs: { queried: true, complete: true, prs: [] }, squash: { ...sq2, coversFork: true }, ...gitAdapters(repo) });
+    assert.deepEqual([e2.merged, e2.via, e2.commit], [true, 'squash', base2]);
   });
 });
 

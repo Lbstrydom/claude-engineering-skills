@@ -75,15 +75,28 @@ export const GIT_LOCAL_ENV_VARS = [
  *   the static baseline (never `[]`) when it doesn't — a discovery failure
  *   must never mean "strip nothing".
  */
-export function getGitLocalEnvVarNames(cwd = process.cwd()) {
+export function getGitLocalEnvVarNames(cwd = process.cwd(), { exec = execFileSync } = {}) {
+  // Memoised per PROCESS: the list is a property of the git binary, not of cwd,
+  // and a caller that sanitises before every git call (fleet's runGit) was
+  // spawning this once per call — 329 of 666 subprocesses in one `fleet status`
+  // (7.7 s of 24 s, measured 2026-10-10). Only a SUCCESSFUL discovery is cached;
+  // a failure returns the baseline and the next call tries again.
+  if (discovered) return [...discovered];
   try {
-    const out = execFileSync('git', ['rev-parse', '--local-env-vars'], { cwd, encoding: 'utf8' });
+    const out = exec('git', ['rev-parse', '--local-env-vars'], { cwd, encoding: 'utf8', timeout: 15_000, stdio: ['ignore', 'pipe', 'pipe'] });
     const dynamic = out.split('\n').map((s) => s.trim()).filter(Boolean);
-    return Array.from(new Set([...GIT_LOCAL_ENV_VARS, ...dynamic]));
+    discovered = Array.from(new Set([...GIT_LOCAL_ENV_VARS, ...dynamic]));
+    return [...discovered];
   } catch {
     return [...GIT_LOCAL_ENV_VARS];
   }
 }
+
+/** @type {string[]|null} the memoised successful discovery */
+let discovered = null;
+
+/** Test hook: forget the memoised discovery. */
+export function _resetGitLocalEnvVarCache() { discovered = null; }
 
 /**
  * Returns a COPY of `baseEnv` with every git-local variable name deleted.
@@ -95,8 +108,17 @@ export function getGitLocalEnvVarNames(cwd = process.cwd()) {
  * @param {NodeJS.ProcessEnv} [baseEnv]
  * @returns {NodeJS.ProcessEnv}
  */
-export function sanitizeGitEnv(cwd = process.cwd(), baseEnv = process.env) {
+export function sanitizeGitEnv(cwd = process.cwd(), baseEnv = process.env, { platform = process.platform } = {}) {
   const env = { ...baseEnv };
-  for (const name of getGitLocalEnvVarNames(cwd)) delete env[name];
+  const names = new Set(getGitLocalEnvVarNames(cwd));
+  if (platform === 'win32') {
+    // Windows variable names are case-insensitive, but a COPY of the env is a
+    // plain object: `git_dir` would survive a delete of `GIT_DIR` and still
+    // reach git. Match case-insensitively there.
+    const upper = new Set([...names].map((n) => n.toUpperCase()));
+    for (const k of Object.keys(env)) if (upper.has(k.toUpperCase())) delete env[k];
+  } else {
+    for (const name of names) delete env[name];
+  }
   return env;
 }

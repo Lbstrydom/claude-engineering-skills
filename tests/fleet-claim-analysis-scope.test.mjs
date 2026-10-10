@@ -78,7 +78,8 @@ describe('fleet CLI — git calls made by claim (GIT_TRACE)', () => {
     for (let i = 0; i < STALE; i += 1) addBranch(fx.repo, `stale-${i}`, { [`s${i}.txt`]: `${i}\n` });
     addBranch(fx.repo, 'a', { 'a/x.txt': 'x\n' });
     const trace = path.join(fx.root, 'git-trace.log');
-    const env = scrubbedEnv({ FLEET_WORKTREE_ROOT: fx.wtRoot });
+    // FLEET_CACHE=off: these tests COUNT git processes, which the commit-id cache exists to avoid.
+    const env = scrubbedEnv({ FLEET_WORKTREE_ROOT: fx.wtRoot, FLEET_CACHE: 'off' });
     const f = (args, traced = false) => {
       if (traced) fs.writeFileSync(trace, '');
       return runFleet(args, { cwd: fx.repo, env: traced ? { ...env, GIT_TRACE: trace } : env });

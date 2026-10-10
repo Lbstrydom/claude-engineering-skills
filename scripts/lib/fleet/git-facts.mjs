@@ -24,7 +24,8 @@ import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { sanitizeGitEnv } from '../git-env-sanitize.mjs';
 import { resolveBaseFreshness } from '../git-freshness.mjs';
-import { OID_PATTERN, OID_RE } from './contracts.mjs';
+import { OID_PATTERN, OID_RE, isOid } from './contracts.mjs';
+import { VALID, memoPure } from './oid-cache.mjs';
 
 const LOCAL_TIMEOUT_MS = 15_000;
 const REMOTE_TIMEOUT_MS = 30_000;
@@ -157,6 +158,39 @@ export function gitCommonDir(cwd) {
   return r.ok ? { ok: true, dir: r.stdout.trim() } : { ok: false, reason: r.reason };
 }
 
+const commonDirs = new Map();
+/** The common dir for the commit-id cache (memoised per cwd); null when it cannot be resolved. */
+export function cacheDirFor(cwd) {
+  if (!commonDirs.has(cwd)) {
+    const r = gitCommonDir(cwd);
+    commonDirs.set(cwd, r.ok ? r.dir : null);
+  }
+  return commonDirs.get(cwd);
+}
+
+/**
+ * Every merge-base of two COMMITS (`merge-base --all`), memoised by their ids.
+ * @returns {{ok: boolean, value?: string[], reason?: string}}
+ */
+export function mergeBasesAll(cwd, a, b) {
+  return memoPure({ commonDir: cacheDirFor(cwd), op: 'mb-all', oids: [a, b], valid: VALID.oids, compute: () => {
+    const r = runGit(['merge-base', '--all', a, b], cwd);
+    return r.ok ? { ok: true, value: r.stdout.split('\n').map((x) => x.trim()).filter(Boolean) } : { ok: false, reason: r.reason };
+  } });
+}
+
+/**
+ * The cache key for a `base...branch` (three-dot) answer. With a SINGLE
+ * merge-base the answer is a function of (merge-base, branch) alone, so it stays
+ * cached when base moves on but the fork point does not; with several (a
+ * criss-cross history) the key falls back to (base, branch). Not ids → [] (live).
+ */
+function forkKey(cwd, base, branch) {
+  if (!isOid(base) || !isOid(branch)) return [];
+  const mbs = mergeBasesAll(cwd, base, branch);
+  return mbs.ok && mbs.value.length === 1 ? [mbs.value[0], branch] : [base, branch];
+}
+
 /** Top-level of the work tree containing `cwd`. */
 export function repoToplevel(cwd) {
   const r = runGit(['rev-parse', '--show-toplevel'], cwd);
@@ -171,6 +205,13 @@ export function headOf(cwd, ref = 'HEAD') {
 
 /** @returns {{ok: boolean, oid?: string, reason?: string}} */
 export function mergeBase(cwd, a, b) {
+  // Two commit ids: answer from the (memoised) `--all` list — its first entry is
+  // the one `git merge-base a b` prints — so a status run pays one merge-base per
+  // branch, not two. A ref name still asks git directly.
+  if (isOid(a) && isOid(b)) {
+    const all = mergeBasesAll(cwd, a, b);
+    return all.ok && all.value.length ? { ok: true, oid: all.value[0] } : { ok: false, reason: all.reason ?? `no merge-base of ${a} and ${b}` };
+  }
   const r = runGit(['merge-base', a, b], cwd);
   return r.ok ? { ok: true, oid: r.stdout.trim() } : { ok: false, reason: r.reason };
 }
@@ -300,8 +341,12 @@ export function listBranches(cwd, base, { exec = runGit, aheadBehind = true } = 
  * @returns {{queried: boolean, files: string[], observedAt: string, reason?: string}}
  */
 export function changedFiles(cwd, base, branch) {
-  const r = runGit(['diff', '--name-only', '-z', '--no-renames', `${base}...${branch}`], cwd);
-  return r.ok ? block(true, { files: parseNulList(r.stdout) }) : block(false, { files: [] }, r.reason);
+  const key = forkKey(cwd, base, branch);
+  const r = memoPure({ commonDir: key.length ? cacheDirFor(cwd) : null, op: 'changed', oids: key, valid: VALID.files, compute: () => {
+    const g = runGit(['diff', '--name-only', '-z', '--no-renames', `${base}...${branch}`], cwd);
+    return g.ok ? { ok: true, value: parseNulList(g.stdout) } : { ok: false, reason: g.reason };
+  } });
+  return r.ok ? block(true, { files: r.value }) : block(false, { files: [] }, r.reason);
 }
 
 /**
@@ -320,11 +365,15 @@ export const CANON_DIFF_FLAGS = Object.freeze(['--no-ext-diff', '--no-textconv',
  * prefixes, path quoting, rename detection) may change the fingerprint.
  */
 export function patchId(cwd, base, branch) {
-  const d = runGit([...CANON_DIFF_CONFIG, 'diff', ...CANON_DIFF_FLAGS, `${base}...${branch}`], cwd);
-  if (!d.ok) return block(false, { patchId: null }, d.reason);
-  if (d.stdout === '') return block(true, { patchId: null });
-  const p = runGit(['patch-id', '--stable'], cwd, { input: d.stdout });
-  return p.ok ? block(true, { patchId: parsePatchId(p.stdout) }) : block(false, { patchId: null }, p.reason);
+  const key = forkKey(cwd, base, branch);
+  const r = memoPure({ commonDir: key.length ? cacheDirFor(cwd) : null, op: 'patch', oids: key, valid: VALID.patchId, compute: () => {
+    const d = runGit([...CANON_DIFF_CONFIG, 'diff', ...CANON_DIFF_FLAGS, `${base}...${branch}`], cwd);
+    if (!d.ok) return { ok: false, reason: d.reason };
+    if (d.stdout === '') return { ok: true, value: null };
+    const p = runGit(['patch-id', '--stable'], cwd, { input: d.stdout });
+    return p.ok ? { ok: true, value: parsePatchId(p.stdout) } : { ok: false, reason: p.reason };
+  } });
+  return r.ok ? block(true, { patchId: r.value }) : block(false, { patchId: null }, r.reason);
 }
 
 /**

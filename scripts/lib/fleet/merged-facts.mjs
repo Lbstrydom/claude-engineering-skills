@@ -22,9 +22,10 @@
  *
  * @module scripts/lib/fleet/merged-facts
  */
-import { runGit, CANON_DIFF_CONFIG, CANON_DIFF_FLAGS, isAncestor } from './git-facts.mjs';
+import { runGit, CANON_DIFF_CONFIG, CANON_DIFF_FLAGS, isAncestor, cacheDirFor } from './git-facts.mjs';
+import { VALID, memoPure } from './oid-cache.mjs';
 import { classifyGhFailure, ghSpawnFailure, spawnGh, repoFromPrUrl } from './gh-facts.mjs';
-import { OID_PATTERN } from './contracts.mjs';
+import { OID_PATTERN, isOid } from './contracts.mjs';
 
 /** Fields of the merged-PR listing (all real `gh pr list --json` fields — see the recorded fixture). */
 export const MERGED_PR_FIELDS = Object.freeze([
@@ -104,6 +105,19 @@ export function parsePatchIdPairs(text) {
  * @returns {{queried: boolean, complete: boolean, byPatchId: Map<string, string>, reason?: string}}
  */
 export function squashPatchIds(cwd, baseRev, { depth = SQUASH_DEPTH, git = runGit } = {}) {
+  // The window of a base COMMIT never changes: memoise it by id (live git only — an injected `git` is a test double).
+  if (git === runGit && isOid(baseRev)) {
+    const r = memoPure({ commonDir: cacheDirFor(cwd), op: `squash${depth}`, oids: [baseRev], valid: VALID.squash, compute: () => {
+      const live = squashPatchIdsLive(cwd, baseRev, { depth, git });
+      return live.queried ? { ok: true, value: { complete: live.complete, pairs: [...live.byPatchId], reason: live.reason ?? null } } : { ok: false, live };
+    } });
+    if (!r.ok) return r.live;
+    return { queried: true, complete: r.value.complete, byPatchId: new Map(r.value.pairs), ...(r.value.reason ? { reason: r.value.reason } : {}) };
+  }
+  return squashPatchIdsLive(cwd, baseRev, { depth, git });
+}
+
+function squashPatchIdsLive(cwd, baseRev, { depth, git }) {
   const log = git([...CANON_DIFF_CONFIG, 'log', '--first-parent', '-p', ...CANON_DIFF_FLAGS, '--format=commit %H', '-n', String(depth), baseRev], cwd, { timeoutMs: 60_000 });
   if (!log.ok) return { ...notQueried(`squash detection: ${log.reason}`), byPatchId: new Map() };
   if (log.stdout === '') return { queried: true, complete: true, byPatchId: new Map() };
@@ -151,10 +165,18 @@ export function mergedEvidenceFor({ branch, tipOid, patchId = null, mergedPrs, s
       // Same name, unrelated history (a reused branch name): not this branch's PR.
     }
   }
+  let squashUnverified = false;
   if (squash?.queried && patchId && squash.byPatchId?.has(patchId)) {
-    return { known: true, merged: true, via: 'squash', commit: squash.byPatchId.get(patchId), extraCommits: 0 };
+    // A squash of THIS branch landed on base AFTER the branch forked, so it is not in the branch's own
+    // history. A base commit that IS an ancestor of the tip predates the fork: an identical change made
+    // earlier (say, added, reverted, and re-made on this branch) is not evidence this branch merged.
+    const commit = squash.byPatchId.get(patchId);
+    const own = ancestor(commit, tipOid);
+    if (own.ok && !own.value) return { known: true, merged: true, via: 'squash', commit, extraCommits: 0 };
+    if (!own.ok) squashUnverified = true; // could not tell: never a merged verdict
   }
   if (partial) return partial;
+  if (squashUnverified) return { known: false, merged: false, reason: 'a squash patch-id matched but whether it predates the branch fork could not be verified' };
   // "Not merged" needs BOTH sources to be complete for THIS branch: the PR list (not truncated) and the
   // squash window (reaching back past the branch's fork point — a squash pushed without a PR is only
   // visible there). Anything less is `known:false`; every consumer stays on the safe side.
@@ -164,12 +186,22 @@ export function mergedEvidenceFor({ branch, tipOid, patchId = null, mergedPrs, s
 
 /** `mergedEvidenceFor`'s git adapters for a real repo. */
 export function gitAdapters(cwd) {
+  const commonDir = cacheDirFor(cwd);
   return {
-    ancestor: (x, y) => isAncestor(cwd, x, y),
+    ancestor: (x, y) => {
+      const r = memoPure({ commonDir, op: 'anc', oids: [x, y], valid: VALID.bool, compute: () => {
+        const a = isAncestor(cwd, x, y);
+        return a.ok ? { ok: true, value: a.value } : { ok: false, reason: a.reason };
+      } });
+      return r.ok ? { ok: true, value: r.value } : { ok: false, reason: r.reason };
+    },
     countRange: (from, to) => {
-      const r = runGit(['rev-list', '--count', `${from}..${to}`], cwd);
-      const n = r.ok ? Number.parseInt(r.stdout.trim(), 10) : NaN;
-      return Number.isInteger(n) ? n : null;
+      const r = memoPure({ commonDir, op: 'count', oids: [from, to], valid: VALID.count, compute: () => {
+        const g = runGit(['rev-list', '--count', `${from}..${to}`], cwd);
+        const n = g.ok ? Number.parseInt(g.stdout.trim(), 10) : NaN;
+        return Number.isInteger(n) ? { ok: true, value: n } : { ok: false };
+      } });
+      return r.ok ? r.value : null;
     },
   };
 }

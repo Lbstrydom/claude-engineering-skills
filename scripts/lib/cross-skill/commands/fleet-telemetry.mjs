@@ -51,8 +51,14 @@ function parseDays(raw) {
   return Number(raw);
 }
 
+/** This checkout's spool: null outside a git repository; a failure to locate it is reported as {error}. */
 function localSpool() {
-  try { return spoolHealth(spoolDir(fleetDir(process.cwd()))); } catch { return null; }
+  let registry;
+  try { registry = fleetDir(process.cwd()); } catch (err) {
+    if (err?.code === 'NOT_A_REPO') return null;
+    return { pending: null, oldestPendingAt: null, dropped: null, rejected: null, error: String(err?.message ?? err) };
+  }
+  return spoolHealth(spoolDir(registry));
 }
 
 const fmt = (v, d = 0) => (v == null ? '—' : Number(v).toFixed(d));
@@ -62,7 +68,9 @@ function renderWorksheet(r) {
   L.push(`fleet telemetry — ${r.repo ?? '(unresolved repo)'} — last ${r.days}d`);
   if (r.spool?.error) L.push(`local spool: UNREADABLE (${r.spool.error})`);
   else if (r.spool) L.push(`local spool: ${r.spool.pending} pending${r.spool.oldestPendingAt ? ` (oldest ${r.spool.oldestPendingAt})` : ''} · ${r.spool.dropped} dropped · ${r.spool.rejected} rejected`);
-  if (!r.measured) {
+  // `insufficient` = the data WAS read, there is just too little of it; the
+  // weaknesses block says so. Only an unread store gets the "not measured" line.
+  if (!r.measured && r.state !== 'insufficient') {
     let why = 'cloud store off (events stay in the local spool)';
     if (r.cloud) why = r.reason === 'schema-fault' ? 'fleet_events is missing or drifted in this store — run node scripts/setup-postgres.mjs --migrate'
       : r.reason ? `store query failed (${r.reason})` : 'no repo row resolvable for this checkout';

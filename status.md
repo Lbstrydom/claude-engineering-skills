@@ -87,6 +87,33 @@
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
 
+## 2026-10-10 — /fleet status 24 s → 2.5 s; squash evidence must postdate the fork
+
+Triggered by fleet telemetry's first finding (status 16 s against a 10 s budget).
+
+### What shipped
+- **Memoised git env discovery.** `getGitLocalEnvVarNames` re-ran `git rev-parse --local-env-vars` before every fleet git call: 329 of 666 subprocesses in one `status`. It now discovers once per process; a failure is not cached; there is a 15 s timeout; and names are deleted case-insensitively on Windows.
+- **Commit-id cache** (`scripts/lib/fleet/oid-cache.mjs`, `<git-common-dir>/fleet-cache/`). Merge-bases, changed files, patch-ids, counts, ancestry and the squash window are cached as pure functions of full object ids.
+  - Three-dot answers are keyed by (merge-base, tip), so they survive base moves.
+  - Disabled in shallow, grafted or replace-ref repositories.
+  - Hits are shape-validated; LRU-capped in memory; `FLEET_CACHE=off` turns it off.
+- **Squash false positive (audit H2).** A matched base commit that is an ancestor of the branch tip (an identical change made before the fork) is no longer merged evidence. Unverifiable ancestry is `known:false`.
+- `fleet-telemetry stats`: thin data no longer prints "not measured: no repo row", and a spool that cannot be located is reported rather than hidden.
+
+### Measured (this repo, 62 analysed branches)
+- Before: 18–24 s, 666 subprocesses.
+- After: cold 12.8 s; warm 2.5 s with 26 subprocesses.
+- Status output is byte-identical with the cache on, off, cold or warm (test-pinned).
+- About 70% of the remaining warm time is three sequential `gh pr list` calls; batching them is the next lever.
+
+### Verification
+- GPT audit 2 rounds (H3 M6 → PASS H0 M2); Gemini final gate APPROVE.
+- Fleet and affected suites: 701 tests, 0 fail.
+- H2 negative control: removing the check turns both H2 tests red.
+- Telemetry verified live: a real `status` spooled its event, the detached drain flushed it, and `stats` reads it back.
+
+---
+
 ## 2026-10-10 — /fleet telemetry (golden signals, session flow, weakness findings) + dashboard persona P1s
 
 Plans: `docs/plans/fleet-telemetry.md` (Complete). Persona session `d53c9c25` (2026-10-06, 4 open P1s).
