@@ -18,7 +18,7 @@ beside it. Recount from `CHECKS` if they ever disagree again.)
 
 | Check | Source workflow | What it does | Required env |
 |---|---|---|---|
-| `arch-maintenance` | `architectural-drift.yml` | Incremental architectural-memory refresh + drift sweep + retention prune (bundled — the workflow runs these as one job, each step independent of the previous step's exit) | `AUDIT_DB_URL` |
+| `arch-maintenance` | `architectural-drift.yml` | Incremental architectural-memory refresh + snapshot render (`docs/architecture-map.md`, read by the dashboard) + drift sweep + retention prune (bundled — the workflow runs these as one job, each step independent of the previous step's exit) | `AUDIT_DB_URL` |
 | `migration-drift` | `migration-drift.yml` | Postgres migration-ledger drift check | `AUDIT_DB_URL` |
 | `model-freshness` | `model-freshness.yml` | Live provider catalog vs `STATIC_POOL` | none (public catalogs) |
 | `memory-health` | `memory-health.yml` | Findings-memory trigger metrics | `AUDIT_DB_URL` |

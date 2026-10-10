@@ -33,7 +33,7 @@ const CLI_CATEGORY_TITLES = {
   hooks:      'Git hooks',
   parity:     'Postgres parity',
   test:       'Tests',
-  other:      'Other / uncatalogued',
+  other:      'Other', // uncatalogued entries carry their own chip; a catalogued 'other' script is not uncatalogued
 };
 
 export default function sectionCli({ src, cli }, ui) {

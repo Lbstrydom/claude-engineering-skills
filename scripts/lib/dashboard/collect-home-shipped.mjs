@@ -13,7 +13,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { runGit } from '../fleet/git-facts.mjs';
+import { resolveMeasurementBase, runGit } from '../fleet/git-facts.mjs';
 import { parseStatusEntries, STATUS_HEAD_BYTES } from './status-entries.mjs';
 import { makeMeasurement, clip } from './home-model.mjs';
 
@@ -70,8 +70,17 @@ function mergeRef(root) {
   const m = origin.ok ? /^origin\/(.+)$/.exec(origin.stdout.trim()) : null;
   const has = (ref) => runGit(['rev-parse', '--verify', '--quiet', ref], root, { timeoutMs: GIT_TIMEOUT_MS }).ok;
   for (const name of [m?.[1], 'main', 'master'].filter(Boolean)) {
-    if (has(`refs/heads/${name}`)) return { ref: `refs/heads/${name}`, label: name };
-    if (has(`refs/remotes/origin/${name}`)) return { ref: `refs/remotes/origin/${name}`, label: `origin/${name}` };
+    if (!has(`refs/heads/${name}`) && !has(`refs/remotes/origin/${name}`)) continue;
+    // The FRESHER of local and origin (fleet's own rule): a local default branch that trails its
+    // upstream — a checkout that has not pulled — made "what shipped" stop at an old merge while the
+    // status log beside it listed newer work (persona-test 2026-10-10, P1). Diverged or unknown keeps
+    // local and says so. Never fetches: "fresher" is as of the last fetch.
+    const pick = resolveMeasurementBase(root, { base: name, upstream: `origin/${name}` });
+    if (!pick.ok) return { ref: `refs/heads/${name}`, label: name };
+    const label = pick.source === 'upstream'
+      ? `origin/${name}${pick.relation === 'local-trails' ? ` (local ${name} is ${pick.behindBy ?? 'some'} commit(s) behind)` : ''}`
+      : `${name}${pick.relation === 'diverged' || pick.relation === 'unknown' ? ` (${pick.relation} from origin/${name})` : ''}`;
+    return { ref: pick.oid, label };
   }
   // The default branch could not be resolved. Falling back to HEAD is only honest if it SAYS so: an
   // attached feature branch is not the default branch, and its log is not "what shipped".

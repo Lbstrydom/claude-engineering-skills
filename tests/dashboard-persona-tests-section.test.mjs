@@ -77,3 +77,31 @@ describe('sectionPersonaTests — defensive shape handling (code-audit M1 fix)',
     assert.match(html, /has not fired yet/);
   });
 });
+
+// Raw session counts vs the outcome ledger (persona-test 2026-10-10: fixed-and-labelled P1s read as open).
+describe('persona-tests section — outcome ledger', () => {
+  const base = {
+    cloud: true,
+    latestByPersona: [{ persona: 'Eng', verdict: 'Needs work', p0Count: 0, p1Count: 4, createdAt: '2026-10-06T00:00:00Z' }],
+    trend: [{ persona: 'Eng', verdict: 'Needs work', p0Count: 0, p1Count: 4, createdAt: '2026-10-06T00:00:00Z' }],
+    correlations: { total: 0, byType: [] },
+  };
+  const render = (outcomes) => sectionPersonaTests({ src: { status: 'ok', detail: '' }, personaTests: { ...base, ...(outcomes ? { outcomes } : {}) } }, buildUi());
+
+  it('shows the ledger beside the raw counts', () => {
+    const html = render({ measured: true, openP0: 0, openP1: 0, pendingVerification: 4 });
+    assert.match(html, /open P0 0 · open P1 0/);
+    assert.match(html, /4 labelled fixed, awaiting re-test/);
+    assert.match(html, /P1: 4/, 'the raw session count is still shown, labelled as what the session found');
+  });
+
+  it('an unreadable ledger says so — never a zero', () => {
+    const html = render({ measured: false, reason: 'cloud store off' });
+    assert.match(html, /Outcome ledger unreadable \(cloud store off\)/);
+    assert.doesNotMatch(html, /open P1 0/);
+  });
+
+  it('an older snapshot without outcomes renders as before', () => {
+    assert.doesNotMatch(render(null), /Outcome ledger/);
+  });
+});

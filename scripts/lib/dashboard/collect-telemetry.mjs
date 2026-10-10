@@ -17,6 +17,7 @@ import { getRepoIdByUuid } from '../store/repo.mjs';
 import { loadBanditArms } from '../store/bandit-fp.mjs';
 import { readShipEvents, readAuditEffectiveness, readCorrelationCountsByType } from '../store/plans-ship.mjs';
 import { getPersonaSessionsByRepo } from '../store/persona.mjs';
+import { getPersonaOutcomesSummary } from '../store/persona-outcomes.mjs';
 import { getSecurityStats } from '../store/security.mjs';
 import { getPurposeHealth } from '../store/purpose-health.mjs';
 import { getAuthorTierStats } from '../store/learning-decisions.mjs';
@@ -335,7 +336,21 @@ async function collectPersonaTests(root) {
       correlations = { total: corr.total, byType: corr.byType };
     }
 
-    const data = { cloud: true, latestByPersona, trend, correlations };
+    // The OUTCOME LEDGER for the latest session — the same summary /ship and the CLI read. Raw
+    // session counts alone made fixed-and-labelled P1s read as still open (persona-test
+    // 2026-10-10). A failed read is said, never rendered as zero.
+    let outcomes;
+    try {
+      const o = await getPersonaOutcomesSummary({ repoName, repoId });
+      // measured === true only: a cloud-off answer carries no counts, and must not read as zero open.
+      outcomes = o?.ok && o.cloud !== false && o.measured === true
+        ? { measured: true, openP0: Number(o.openP0) || 0, openP1: Number(o.openP1) || 0,
+          pendingVerification: (Number(o.pendingVerificationP0) || 0) + (Number(o.pendingVerificationP1) || 0) }
+        : { measured: false, reason: String(o?.reason ?? o?.error ?? 'outcome summary unavailable').slice(0, 200) };
+    } catch (err) {
+      outcomes = { measured: false, reason: redactSecrets(String(err?.message ?? err)).slice(0, 200) };
+    }
+    const data = { cloud: true, latestByPersona, trend, correlations, outcomes };
     if (correlations.total === 0) {
       return { data, status: { status: 'ok', detail: 'correlation loop has not fired yet' } };
     }

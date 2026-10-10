@@ -82,11 +82,14 @@ describe('maintenance-checks — CHECKS manifest', () => {
     }
   });
 
-  it('arch-maintenance bundles refresh + drift + prune as one check (not three)', () => {
+  it('arch-maintenance bundles refresh + render + drift + prune as one check (not four)', () => {
+    // render sits right after refresh: the dashboard's Architecture tab reads the rendered
+    // snapshot, which only ever aged while the weekly check refreshed the index alone.
     const c = CHECKS.find((c) => c.key === 'arch-maintenance');
-    assert.equal(c.steps.length, 3);
+    assert.equal(c.steps.length, 4);
     assert.deepEqual(c.steps.map((s) => s.script), [
       'symbol-index/refresh.mjs',
+      'symbol-index/render-mermaid.mjs',
       'symbol-index/drift.mjs',
       'symbol-index/prune.mjs',
     ]);
