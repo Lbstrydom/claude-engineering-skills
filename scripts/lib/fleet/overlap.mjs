@@ -335,8 +335,11 @@ export function decideClaim({ claim, mode, others, complete, hotFiles = [], trac
     for (const f of hotUnc) hot.add(f);
     if (hot.size) { via.push('hot-files'); hit.hotFiles = [...hot]; hit.hotOnly = via.length === 1; }
     if (!via.length) continue;
-    hit.uncommittedOnly = via.includes('uncommitted') && via.every((v) => v === 'uncommitted' || v === 'hot-files');
-    hit.abstractOnly = via.includes('paths-abstract') && via.every((v) => v === 'paths-abstract' || v === 'hot-files');
+    // ADVISORY evidence (uncommitted edits, abstract pattern pairs, hot files) never blocks, alone or
+    // combined — two advisory signals do not add up to a concrete one (audit R1-H1).
+    const advisoryOnly = via.every((v) => v === 'uncommitted' || v === 'paths-abstract' || v === 'hot-files');
+    hit.uncommittedOnly = via.includes('uncommitted') && advisoryOnly;
+    hit.abstractOnly = via.includes('paths-abstract') && advisoryOnly;
     hit.known = (claim.knownOverlaps ?? []).some((k) => k.with === s.id)
       || (s.knownOverlaps ?? []).some((k) => k.with === claim.id);
     conflicts.push(hit);
