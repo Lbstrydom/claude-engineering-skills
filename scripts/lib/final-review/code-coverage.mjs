@@ -18,8 +18,8 @@
  * @module scripts/lib/final-review/code-coverage
  */
 
-import fs from 'node:fs';
-import { normalizePath } from '../file-io.mjs';
+import path from 'node:path';
+import { normalizePath, safeReadFile } from '../file-io.mjs';
 import { unreadChangedLines } from '../hunk-window.mjs';
 
 /**
@@ -165,8 +165,9 @@ export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = nul
   return { ...base, state: 'full', reason: `all ${changed.length} changed file(s) rendered whole` };
 }
 
+// The reader's own boundary (repo-contained, realpath-checked, never sensitive): `changed_files` is transcript-supplied.
 function defaultReadText(p) {
-  try { return fs.readFileSync(p, 'utf8'); } catch { return null; }
+  return safeReadFile(p, path.resolve('.'))?.content ?? null;
 }
 
 function unmeasuredReason(outcome, hunks) {

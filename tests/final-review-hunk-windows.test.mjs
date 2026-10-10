@@ -157,7 +157,15 @@ describe('overflow — what does not fit is counted unread', () => {
     const r = makeTieredCodeRenderer({ changedFiles: ['huge.mjs'], reduced: true, hunksFor: map.hunksFor })(['huge.mjs']);
     const cov = summariseCodeCoverage(r.stats, ['huge.mjs'], { hunksFor: map.hunksFor, requested: ['huge.mjs'] });
     assert.equal(cov.state, 'partial');
-    assert.ok(cov.changedLinesUnread > 0 && cov.changedLinesUnread < 1201, `${cov.changedLinesUnread}`);
+    // Exact, derived independently from the fixture (1201 lines, all changed) and the ranges the renderer recorded.
+    const cut = r.stats.headTruncated.find((c) => c.path === 'huge.mjs');
+    assert.ok(cut, 'the file was rendered (cut), not dropped');
+    const shown = new Set();
+    for (const [a, b] of cut.ranges) for (let i = a; i <= b; i++) shown.add(i);
+    assert.equal(cov.changedLinesTotal, 1201);
+    assert.equal(cov.changedLinesUnread, 1201 - shown.size);
+    assert.ok(cov.changedLinesUnread > 0, 'fixture: the change does not fit');
+    assert.deepEqual(cov.changedUnread, [{ path: 'huge.mjs', outcome: 'windowed', unread: 1201 - shown.size, total: 1201 }]);
   });
 });
 
@@ -262,6 +270,41 @@ describe('summariseCodeCoverage — line-level outcomes', () => {
 
 describe('resolveFinalReviewHunks — the transcript base rebuilds the working-tree hunks', () => {
   const gitRun = (dir) => (cmd, args, opts) => execFileSync(cmd, args, { ...opts, cwd: dir, env: gitFixtureEnv() });
+  const gitHash = (dir) => (p) => execFileSync('git', ['hash-object', '--', p], { cwd: dir, encoding: 'utf8', env: gitFixtureEnv() }).trim();
+  function baseRepo(t) {
+    const dir = inTempDir(t, { 'big.js': moduleText(420) });
+    gitInit(dir);
+    commitAll(dir, 'base');
+    const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8', env: gitFixtureEnv() }).trim();
+    return { dir, base };
+  }
+
+  test('an edit AFTER the diff was read demotes the file to wholly changed (post-image check, code audit R1-M1)', (t) => {
+    const { dir, base } = baseRepo(t);
+    fs.writeFileSync(path.join(dir, 'big.js'), withNeedle(moduleText(420), 300, 'EDIT'));
+    const lines = [];
+    const r = resolveFinalReviewHunks({ transcript: { rounds: [{ _diffBase: base }] }, changedFiles: ['big.js'], run: gitRun(dir), hashFile: gitHash(dir), warn: (l) => lines.push(l) });
+    // The file changes between hunk acquisition and the render (the reader asks for hunks as it reaches the file).
+    fs.writeFileSync(path.join(dir, 'big.js'), withNeedle(withNeedle(moduleText(420), 300, 'EDIT'), 10, 'LATER'));
+    assert.deepEqual(r.hunksFor('big.js'), [{ startLine: 1, lineCount: 421 }], 'stale hunks are never trusted');
+    assert.match(lines.join(''), /does not describe the current file \(stale\)/);
+  });
+
+  test('a changed path outside the checkout is never opened (code audit R1-M2)', (t) => {
+    const { dir, base } = baseRepo(t);
+    const outside = path.join(path.dirname(dir), `outside-${process.pid}.js`);
+    fs.writeFileSync(outside, 'secret\n');
+    t.after(() => fs.rmSync(outside, { force: true }));
+    const rel = path.relative(dir, outside);
+    const r = resolveFinalReviewHunks({ transcript: { rounds: [{ _diffBase: base }] }, changedFiles: [rel], run: gitRun(dir), hashFile: gitHash(dir), warn: () => {} });
+    assert.equal(r.hunksFor(rel), null, 'no line count read from outside the repo');
+    // Negative control: an in-repo path with the same shape IS read.
+    fs.writeFileSync(path.join(dir, 'inside.js'), 'x\n');
+    const r2 = resolveFinalReviewHunks({ transcript: { rounds: [{ _diffBase: base }] }, changedFiles: ['inside.js'], run: gitRun(dir), hashFile: gitHash(dir), warn: () => {} });
+    assert.deepEqual(r2.hunksFor('inside.js'), [{ startLine: 1, lineCount: 2 }]);
+    const cov = summariseCodeCoverage(statsOf({ budgetOmitted: [rel] }), [rel], { hunksFor: () => [{ startLine: 1, lineCount: 1 }] });
+    assert.equal(cov.changedLinesUnread, null, 'the coverage fallback read is bounded too');
+  });
 
   test('R1 _diffBase + an edited and an untracked file → their real hunks', (t) => {
     const dir = inTempDir(t, { 'big.js': moduleText(420) });
@@ -271,11 +314,13 @@ describe('resolveFinalReviewHunks — the transcript base rebuilds the working-t
     fs.writeFileSync(path.join(dir, 'big.js'), withNeedle(moduleText(420), 300, 'EDIT'));
     fs.writeFileSync(path.join(dir, 'new.js'), 'a\nb\nc\n');
     const transcript = { rounds: [{ round: 1, _diffBase: base }, { round: 2 }] };
-    const r = resolveFinalReviewHunks({ transcript, changedFiles: ['big.js', 'new.js'], run: gitRun(dir), warn: () => {} });
+    const warned = [];
+    const r = resolveFinalReviewHunks({ transcript, changedFiles: ['big.js', 'new.js'], run: gitRun(dir), hashFile: gitHash(dir), warn: (l) => warned.push(l) });
     assert.equal(r.evidence, 'expected');
     assert.equal(r.base, base);
     assert.deepEqual(r.hunksFor('big.js'), [{ startLine: 300, lineCount: 1 }]);
     assert.deepEqual(r.hunksFor('new.js'), [{ startLine: 1, lineCount: 4 }]);
+    assert.deepEqual(warned, [], 'an untracked file is wholly new by definition — not reported as a degradation');
   });
 
   test('no base, or a non-hex base: not-applicable and git is never called', () => {
