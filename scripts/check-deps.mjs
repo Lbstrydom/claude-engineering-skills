@@ -156,11 +156,23 @@ export function packagesToFix(results) {
   ];
 }
 
-/** Default installer: the manager's own JS entry under this node, no shell. */
-function execInstall(pm, args, { cwd, timeoutMs }) {
-  const { bin, prefix, shell } = packageManagerInvocation(pm);
+/**
+ * Default installer: the manager's own JS entry under this node, no shell.
+ *
+ * The child's stdout goes to OUR stderr (fd 2), never our stdout: stdout is
+ * the report channel, and under `--json --fix` a package manager's progress
+ * lines ahead of the JSON would make the output unparseable.
+ *
+ * @param {string} pm
+ * @param {string[]} args
+ * @param {{cwd: string, timeoutMs: number,
+ *   invocation?: ReturnType<typeof packageManagerInvocation>}} opts
+ *   `invocation` is injectable so a test can stand in a noisy fake manager.
+ */
+export function execInstall(pm, args, { cwd, timeoutMs, invocation = packageManagerInvocation(pm) }) {
+  const { bin, prefix, shell } = invocation;
   execFileSync(bin, [...prefix, ...args], {
-    cwd, stdio: ['ignore', 'inherit', 'inherit'], timeout: timeoutMs, shell,
+    cwd, stdio: ['ignore', 2, 'inherit'], timeout: timeoutMs, shell,
   });
 }
 
@@ -249,8 +261,12 @@ export function run({
   err = (s) => process.stderr.write(`${s}\n`),
 } = {}) {
   assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'check-deps', from: 0 });
-  const jsonMode = argv.includes('--json');
-  const fixMode = argv.includes('--fix');
+  // Modes are read from the SAME span assertKnownFlags validated: it stops at
+  // the POSIX `--` terminator, so `-- --fix` must not run an install.
+  const end = argv.indexOf('--');
+  const flags = end === -1 ? argv : argv.slice(0, end);
+  const jsonMode = flags.includes('--json');
+  const fixMode = flags.includes('--fix');
 
   let results = probeDeps({ probeDir: scriptDir, env });
   let fix = null;

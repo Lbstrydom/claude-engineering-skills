@@ -228,6 +228,40 @@ describe('check-deps --fix re-probes and reports the post-fix state', () => {
     assert.equal(code, 1);
   });
 
+  it('a flag after the `--` terminator selects no mode (matches what was validated)', () => {
+    const { scriptDir } = pkgRoot();
+    const install = installer({ land: WANTED });
+    const { out } = runCli(['--', '--fix', '--json'], { scriptDir, install });
+    assert.equal(install.calls.length, 0, '`-- --fix` must not run an install');
+    assert.throws(() => JSON.parse(out), '`-- --json` must not switch to JSON output');
+  });
+
+  it("the real installer's stdout goes to stderr, never the report stream", () => {
+    // A child process, because the property is about file descriptors: an
+    // in-process capture cannot see what a grandchild writes to fd 1.
+    const dir = tmp('check-deps-stdio-');
+    const probe = path.join(dir, 'probe.mjs');
+    fs.writeFileSync(probe, `
+      import { pathToFileURL } from 'node:url';
+      const m = await import(pathToFileURL(${JSON.stringify(SCRIPT)}).href);
+      m.execInstall('npm', ['install'], {
+        cwd: ${JSON.stringify(dir)}, timeoutMs: 30000,
+        invocation: { bin: process.execPath, shell: false, prefix: ['-e',
+          'process.stdout.write("PM-OUT\\\\n"); process.stderr.write("PM-ERR\\\\n")'] },
+      });
+      process.stdout.write('REPORT');
+    `);
+    const env = hermeticEnv(tmp('check-deps-home-'));
+    env.DOTENV_CONFIG_PATH = path.join(dir, 'absent.env');
+    env.AUDIT_LOOP_DISABLE_SHARED = '1';
+    const r = spawnSync(process.execPath, [probe], { cwd: dir, env, encoding: 'utf8', timeout: 60_000 });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, 'REPORT', 'installer output leaked onto stdout');
+    // Vacuous-pass guard: the fake manager really ran and its output survived.
+    assert.match(r.stderr, /PM-OUT/);
+    assert.match(r.stderr, /PM-ERR/);
+  });
+
   it('rejects an unknown flag rather than ignoring it', () => {
     const { scriptDir } = pkgRoot();
     assert.throws(() => runCli(['--fixx'], { scriptDir, install: installer({ land: [] }) }),
