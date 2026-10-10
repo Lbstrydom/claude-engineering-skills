@@ -231,7 +231,7 @@ describe('bundle-deps — the bundle declares what it imports', () => {
     const names = doc.packages.map((p) => p.name);
     // The 16 the consumer measured by scanning the bundle for bare specifiers.
     for (const pkg of ['@anthropic-ai/sdk', '@babel/parser', '@babel/traverse', '@google/genai',
-      'codeowners-utils', 'dependency-cruiser', 'dotenv', 'micromatch', 'minimatch', 'openai',
+      'codeowners-utils', 'dependency-cruiser', 'dotenv', 'minimatch', 'openai', 'picomatch',
       'pg', 'playwright', 'proper-lockfile', 'ts-morph', 'yaml', 'zod']) {
       assert.ok(names.includes(pkg), `${pkg} must be declared`);
     }

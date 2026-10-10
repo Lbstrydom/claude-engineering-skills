@@ -337,7 +337,7 @@ export function countDebtByFile(debtEntries) {
 
 /**
  * Detect files exceeding their budget. Supports both exact paths AND globs
- * (via micromatch). Budget violations are reported per-BUDGET-KEY:
+ * (via the glob seam, lib/glob.mjs). Budget violations are reported per-BUDGET-KEY:
  *   budget "scripts/lib/**": 10 exceeded → one violation record with
  *   count = total entries across all files matching that glob.
  *
@@ -378,18 +378,8 @@ export function findBudgetViolations(debtEntries, budgets = {}, opts = {}) {
   return violations.sort((a, b) => (b.count - b.budget) - (a.count - a.budget));
 }
 
-// Lazy micromatch loader — synchronous via createRequire (ESM→CJS interop)
-import { createRequire } from 'node:module';
-let _matcher = null;
+// Budget patterns match through the shared glob seam (lib/glob.mjs).
+import { filterMatches } from './glob.mjs';
 function getDefaultMatcher() {
-  if (_matcher) return _matcher;
-  try {
-    const mm = createRequire(import.meta.url)('micromatch');
-    _matcher = (files, pattern) => mm(files, pattern);
-    return _matcher;
-  } catch (err) {
-    process.stderr.write(`  [budgets] micromatch unavailable (${err.message}); falling back to exact-match\n`);
-    _matcher = (files, pattern) => files.filter(f => f === pattern);
-    return _matcher;
-  }
+  return (files, pattern) => filterMatches(files, pattern);
 }

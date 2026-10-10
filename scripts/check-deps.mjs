@@ -42,7 +42,7 @@ const REQUIRED_PACKAGES = [
   ['openai', 'GPT-5.4 auditor (openai-audit.mjs)', true],
   ['zod', 'Schema validation', true],
   ['dotenv', 'Environment variable loading', true],
-  ['micromatch', 'Glob matching for --exclude-paths', true],
+  ['picomatch', 'Glob matching (lib/glob.mjs: --exclude-paths, fleet claims, budgets)', true],
 ];
 
 /**

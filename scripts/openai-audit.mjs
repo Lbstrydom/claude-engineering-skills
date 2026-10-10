@@ -156,7 +156,7 @@ import {
   buildClassificationRubric
 } from './lib/prompt-seeds.mjs';
 import { getActivePrompt, getActiveRevisionId, bootstrapFromConstants } from './lib/prompt-registry.mjs';
-import micromatch from 'micromatch';
+import { filterMatches } from './lib/glob.mjs';
 import { incrementRunCounter } from './lib/llm-auditor.mjs';
 import { assertStoreSchemaRealized } from './lib/audit/schema-precondition.mjs';
 
@@ -198,7 +198,7 @@ function loadExcludePatterns(cliPatterns = []) {
  */
 function applyExclusions(files, patterns) {
   if (!patterns || patterns.length === 0) return files;
-  const excluded = micromatch(files, patterns, { dot: true });
+  const excluded = filterMatches(files, patterns, { dot: true });
   const excludedSet = new Set(excluded);
   const kept = files.filter(f => !excludedSet.has(f));
   if (excluded.length > 0) {

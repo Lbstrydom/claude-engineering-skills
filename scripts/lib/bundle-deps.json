@@ -66,17 +66,6 @@
       ]
     },
     {
-      "name": "micromatch",
-      "required": true,
-      "importers": [
-        "scripts/.claude-skills/lib/fleet/lifecycle.mjs",
-        "scripts/.claude-skills/lib/fleet/overlap.mjs",
-        "scripts/.claude-skills/lib/fleet/train.mjs",
-        "scripts/.claude-skills/lib/fleet/union-merge.mjs",
-        "scripts/.claude-skills/openai-audit.mjs"
-      ]
-    },
-    {
       "name": "minimatch",
       "required": true,
       "importers": [
@@ -102,6 +91,13 @@
       "required": true,
       "importers": [
         "scripts/.claude-skills/lib/db/client.mjs"
+      ]
+    },
+    {
+      "name": "picomatch",
+      "required": true,
+      "importers": [
+        "scripts/.claude-skills/lib/glob.mjs"
       ]
     },
     {

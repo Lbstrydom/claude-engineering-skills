@@ -16,7 +16,7 @@
  *
  * @module scripts/lib/fleet/overlap
  */
-import micromatch from 'micromatch';
+import { isMatch } from '../glob.mjs';
 
 export const TERMINAL_STATES = Object.freeze(['done', 'abandoned']);
 export const DEFAULT_LEASE_MS = 4 * 60 * 60 * 1000;
@@ -36,7 +36,7 @@ export function isTerminalState(state) { return TERMINAL_STATES.includes(state);
 // ── Claim-pattern grammar ───────────────────────────────────────────────────
 
 // ALLOWLIST of per-segment characters. Every accepted character is a LITERAL in
-// micromatch too (or one of the two grammar wildcards), so validation,
+// the glob engine too (or one of the two grammar wildcards), so validation,
 // patternsIntersect and fileOverlap share one semantics. Anything else
 // (double quote, ', backslash, `, $, ^, |, ;, :, <, >, braces, brackets, parens, !, &)
 // is rejected at claim time, naming the character.
@@ -106,10 +106,10 @@ function charsIntersect(a, b) {
 
 /**
  * Two segments intersect iff the DP finds a common string. The DP runs on CODE
- * POINTS (a supplementary-plane letter is ONE `?`). micromatch, however, counts
+ * POINTS (a supplementary-plane letter is ONE `?`). The glob engine, however, counts
  * `?` in UTF-16 units, so for a segment holding an astral character the DP is
  * ALSO run on code units and either answer counts: the engine may over-report
- * overlap there but never claims `disjoint` where micromatch could match.
+ * overlap there but never claims `disjoint` where the engine could match.
  */
 function segmentsIntersect(a, b) {
   if (charsIntersect(Array.from(a), Array.from(b))) return true;
@@ -155,7 +155,7 @@ export function patternsIntersect(a, b) {
  */
 export function fileOverlap(files, patterns) {
   if (!files?.length || !patterns?.length) return [];
-  return files.filter((f) => micromatch.isMatch(f, patterns, { dot: true, nocase: false }));
+  return files.filter((f) => isMatch(f, patterns, { dot: true, nocase: false }));
 }
 
 // ── Hot files (`.fleet.json` `hotFiles`) ────────────────────────────────────
@@ -170,7 +170,7 @@ export function fileOverlap(files, patterns) {
  * covers a hot file, because it may cover non-hot files too.
  */
 export function isHotFile(file, hotFiles) {
-  return Boolean(hotFiles?.length) && micromatch.isMatch(file, hotFiles, { dot: true, nocase: false });
+  return Boolean(hotFiles?.length) && isMatch(file, hotFiles, { dot: true, nocase: false });
 }
 
 const isLiteralPattern = (p) => typeof p === 'string' && !/[*?]/.test(p);

@@ -25,7 +25,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import micromatch from 'micromatch';
+import { isMatch } from '../glob.mjs';
 
 const REGULAR = new Set(['100644', '100755']);
 
@@ -52,7 +52,7 @@ export function parseUnmerged(text) {
  * @param {string[]} globs
  */
 export function ineligibility(p, stages, globs) {
-  if (!globs.length || !micromatch.isMatch(p, globs, { dot: true })) return 'not in appendOnlyGlobs';
+  if (!globs.length || !isMatch(p, globs, { dot: true })) return 'not in appendOnlyGlobs';
   for (const s of ['1', '2', '3']) if (!stages[s]) return `stage ${s} missing (${s === '1' ? 'add/add' : 'modify/delete or rename'} conflict)`;
   if (!REGULAR.has(stages['1'].mode) || !REGULAR.has(stages['2'].mode) || !REGULAR.has(stages['3'].mode)) return 'not a regular file';
   if (stages['2'].mode !== stages['3'].mode) return 'file mode differs between the two sides';

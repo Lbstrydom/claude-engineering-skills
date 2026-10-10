@@ -23,7 +23,7 @@
  * @module scripts/lib/fleet/train
  */
 import fs from 'node:fs';
-import micromatch from 'micromatch';
+import { isMatch } from '../glob.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -378,7 +378,7 @@ function applySources({ wgit, dir, sources, mergeMethod, trainId, appendOnlyGlob
       const conflict = { sourceId: s.id, oid: s.oid, reason: 'merge conflict', files };
       if (!appendOnlyGlobs.length || !files.length) return { conflict, unioned };
       if (mergeMethod === 'pr') {
-        const allAppendOnly = files.every((f) => micromatch.isMatch(f, appendOnlyGlobs, { dot: true }));
+        const allAppendOnly = files.every((f) => isMatch(f, appendOnlyGlobs, { dot: true }));
         return { conflict: allAppendOnly ? { ...conflict, reason: `append-only conflict — GitHub would refuse it too; land the earlier branch, then fleet restack ${s.id}` } : conflict, unioned };
       }
       const u = resolveAppendOnly({ dir, git: wgit, globs: appendOnlyGlobs });

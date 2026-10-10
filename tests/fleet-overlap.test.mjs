@@ -4,7 +4,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import micromatch from 'micromatch';
+import { matcher as globMatcher, isMatch as globIsMatch } from '../scripts/lib/glob.mjs';
 import {
   validateClaimPattern, validateClaimPatterns, patternsIntersect, fileOverlap, duplicatePatches,
   liveness, isLive, decideClaim, claimMode, approvable, proposeLandingOrder, buildStatus,
@@ -65,13 +65,13 @@ describe('patternsIntersect', () => {
   // Seeded property check over a small EXHAUSTIVE corpus. Two independent oracles:
   //  * an own path-vs-pattern matcher with the documented grammar semantics — exactness
   //    (DP says intersect <=> some path matches both);
-  //  * micromatch with the options fileOverlap uses — soundness (a path micromatch matches
+  //  * the glob engine (lib/glob.mjs) with the options fileOverlap uses — soundness (a path the engine matches
   //    on both sides must never be called disjoint).
   // They differ in one place, pinned below: picomatch does not let a trailing `/**` match
   // its own prefix when the prefix segment contains `*` ("aa" vs "a*/**"). That under-matches
   // only a FILE named exactly the directory prefix, so the engine's answer (intersect) is the
   // conservative one.
-  it('property: agrees with brute-force matching (exact vs grammar oracle, sound vs micromatch)', () => {
+  it('property: agrees with brute-force matching (exact vs grammar oracle, sound vs the glob engine)', () => {
     let seed = 0x5eed1234;
     const rnd = () => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
     const pick = (xs) => xs[Math.floor(rnd() * xs.length)];
@@ -96,7 +96,7 @@ describe('patternsIntersect', () => {
     };
     const own = (pattern) => (f) => matchSegs(pattern.split('/'), f.split('/'));
     const mm = new Map();
-    const mmatch = (q) => { if (!mm.has(q)) mm.set(q, micromatch.matcher(q, { dot: true, nocase: false })); return mm.get(q); };
+    const mmatch = (q) => { if (!mm.has(q)) mm.set(q, globMatcher(q, { dot: true, nocase: false })); return mm.get(q); };
     const segPool = ['a', 'b', '*', '?', 'a*', '*b', '?a', 'a?', '*a*', '**', '**'];
     const randPattern = () => Array.from({ length: 1 + Math.floor(rnd() * 2) }, () => pick(segPool)).join('/');
     let intersects = 0; let disjoints = 0;
@@ -108,15 +108,15 @@ describe('patternsIntersect', () => {
       assert.notEqual(got, 'unknown', `${a} / ${b}`);
       assert.equal(got === 'intersect', witness, `${a} vs ${b}: DP=${got}, brute-force witness=${witness}`);
       const ma = mmatch(a); const mb = mmatch(b);
-      if (corpus.some((f) => ma(f) && mb(f))) assert.equal(got, 'intersect', `unsound vs micromatch: ${a} vs ${b}`);
+      if (corpus.some((f) => ma(f) && mb(f))) assert.equal(got, 'intersect', `unsound vs the glob engine: ${a} vs ${b}`);
       if (witness) intersects += 1; else disjoints += 1;
     }
     assert.ok(intersects > 40 && disjoints > 40, `corpus must exercise both outcomes (${intersects}/${disjoints})`);
   });
   it('documented picomatch divergence: trailing /** after a starred segment; engine stays conservative', () => {
-    assert.equal(micromatch.isMatch('aa', 'a*/**', { dot: true }), false);
+    assert.equal(globIsMatch('aa', 'a*/**', { dot: true }), false);
     assert.equal(patternsIntersect('a*/**', 'aa'), 'intersect');
-    assert.equal(micromatch.isMatch('src', 'src/**', { dot: true }), true);
+    assert.equal(globIsMatch('src', 'src/**', { dot: true }), true);
   });
 });
 
@@ -125,7 +125,7 @@ describe('fileOverlap', () => {
     assert.deepEqual(fileOverlap(['src/a.mjs', 'src/x/b.mjs', 'lib/c.mjs'], ['src/**/*.mjs']), ['src/a.mjs', 'src/x/b.mjs']);
     assert.deepEqual(fileOverlap(['.github/ci.yml', 'src/a'], ['.github/*']), ['.github/ci.yml']);
     assert.equal(patternsIntersect('.github/*', '.github/ci.yml'), 'intersect');
-    // The grammar's `*` matches a leading-dot name; micromatch's default would not.
+    // The grammar's `*` matches a leading-dot name; the engine's default would not.
     assert.deepEqual(fileOverlap(['src/.env', '.github/.keep', 'src/a'], ['src/*', '.github/*']), ['src/.env', '.github/.keep', 'src/a']);
     assert.equal(patternsIntersect('src/*', 'src/.env'), 'intersect');
     assert.deepEqual(fileOverlap(['SRC/a.js'], ['src/*.js']), [], 'case-exact');
@@ -487,7 +487,7 @@ describe('renderers', () => {
   });
 });
 
-describe('claim grammar is an allowlist shared with micromatch', () => {
+describe('claim grammar is an allowlist shared with the glob engine', () => {
   it('rejects a double quote and every other non-allowlisted character, naming it', () => {
     for (const ch of ['"', "'", '\\', '`', '$', '^', '|', ';', ':', '<', '>', '{', '}', '[', ']', '(', ')', '!', '&', '\n', '\t']) {
       const r = validateClaimPattern(`src/a${ch}b.mjs`);
@@ -501,19 +501,19 @@ describe('claim grammar is an allowlist shared with micromatch', () => {
       assert.equal(validateClaimPattern(p).ok, true, p);
     }
   });
-  it('conformance: every accepted literal is a literal to micromatch AND to patternsIntersect', () => {
+  it('conformance: every accepted literal is a literal to the glob engine AND to patternsIntersect', () => {
     const lits = ['_', '.', '-', ' ', '@', '+', '=', ',', '~', '#', '%', 'é', '7'];
     for (const c of lits) {
       const lit = `x${c}y`;
       assert.equal(validateClaimPattern(`d/${lit}`).ok, true, c);
-      assert.equal(micromatch.isMatch(`d/${lit}`, `d/${lit}`, { dot: true, nocase: false }), true, `micromatch literal ${c}`);
+      assert.equal(globIsMatch(`d/${lit}`, `d/${lit}`, { dot: true, nocase: false }), true, `glob-engine literal ${c}`);
       assert.deepEqual(fileOverlap([`d/${lit}`, 'd/xy'], [`d/${lit}`]), [`d/${lit}`]);
       assert.equal(patternsIntersect(`d/${lit}`, `d/x*y`), 'intersect', c);
       assert.equal(patternsIntersect(`d/${lit}`, `d/${lit}z`), 'disjoint', c);
       assert.equal(patternsIntersect(`d/${lit}`, `d/x?y`), 'intersect', c);
     }
   });
-  it('conformance (seeded): over accepted patterns with special literals, an intersect-implied overlap never contradicts micromatch', () => {
+  it('conformance (seeded): over accepted patterns with special literals, an intersect-implied overlap never contradicts the glob engine', () => {
     let seed = 7;
     const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
     const pick = (xs) => xs[Math.floor(rnd() * xs.length)];
@@ -524,8 +524,8 @@ describe('claim grammar is an allowlist shared with micromatch', () => {
       const mkp = () => Array.from({ length: 1 + Math.floor(rnd() * 2) }, () => pick(segPool)).join('/');
       const a = mkp(); const b = mkp();
       if (!validateClaimPattern(a).ok || !validateClaimPattern(b).ok) continue;
-      const both = files.filter((f) => micromatch.isMatch(f, a, { dot: true, nocase: false }) && micromatch.isMatch(f, b, { dot: true, nocase: false }));
-      if (both.length) assert.equal(patternsIntersect(a, b), 'intersect', `${a} vs ${b} share ${both[0]} under micromatch`);
+      const both = files.filter((f) => globIsMatch(f, a, { dot: true, nocase: false }) && globIsMatch(f, b, { dot: true, nocase: false }));
+      if (both.length) assert.equal(patternsIntersect(a, b), 'intersect', `${a} vs ${b} share ${both[0]} under the glob engine`);
     }
   });
 });
@@ -599,11 +599,11 @@ describe('astral (supplementary-plane) characters', () => {
     assert.equal(patternsIntersect(`src/?b.mjs`, `src/${A}b.mjs`), 'intersect');
     assert.equal(patternsIntersect('src/?.mjs', `src/${A}${A}.mjs`), 'disjoint');
   });
-  it('documented divergence: micromatch counts ? in UTF-16 units; the engine is conservative there', () => {
+  it('documented divergence: the glob engine (picomatch) counts ? in UTF-16 units; the engine is conservative there', () => {
     const o = { dot: true, nocase: false };
-    assert.equal(micromatch.isMatch(`src/${A}.mjs`, 'src/?.mjs', o), false, 'micromatch: one ? does NOT match an astral char');
-    assert.equal(micromatch.isMatch(`src/${A}.mjs`, 'src/??.mjs', o), true, 'micromatch: two ?? do');
-    // The engine must never say disjoint where micromatch could match.
+    assert.equal(globIsMatch(`src/${A}.mjs`, 'src/?.mjs', o), false, 'glob engine: one ? does NOT match an astral char');
+    assert.equal(globIsMatch(`src/${A}.mjs`, 'src/??.mjs', o), true, 'glob engine: two ?? do');
+    // The engine must never say disjoint where the glob engine could match.
     assert.equal(patternsIntersect('src/??.mjs', `src/${A}.mjs`), 'intersect');
     assert.equal(patternsIntersect('src/?.mjs', `src/${A}.mjs`), 'intersect');
   });
