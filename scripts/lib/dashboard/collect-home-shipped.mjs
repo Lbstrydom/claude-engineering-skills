@@ -76,7 +76,12 @@ function mergeRef(root) {
     // status log beside it listed newer work (persona-test 2026-10-10, P1). Diverged or unknown keeps
     // local and says so. Never fetches: "fresher" is as of the last fetch.
     const pick = resolveMeasurementBase(root, { base: name, upstream: `origin/${name}` });
-    if (!pick.ok) return { ref: `refs/heads/${name}`, label: name };
+    // Freshness could not be decided: list the local branch, and SAY that it may trail origin.
+    if (!pick.ok) {
+      const local = has(`refs/heads/${name}`);
+      const ref = local ? `refs/heads/${name}` : `refs/remotes/origin/${name}`;
+      return { ref, label: `${local ? name : `origin/${name}`} (freshness vs ${local ? `origin/${name}` : `local ${name}`} not determined: ${pick.reason ?? 'unknown'})` };
+    }
     const label = pick.source === 'upstream'
       ? `origin/${name}${pick.relation === 'local-trails' ? ` (local ${name} is ${pick.behindBy ?? 'some'} commit(s) behind)` : ''}`
       : `${name}${pick.relation === 'diverged' || pick.relation === 'unknown' ? ` (${pick.relation} from origin/${name})` : ''}`;
