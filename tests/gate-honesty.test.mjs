@@ -148,7 +148,7 @@ const PINNED_DOCUMENT_ONLY = {
   // first-match-wins PLAN_NOT_SHIPPED > PLAN_PARTIAL > PLAN_SATISFIED table is
   // agent-composed report prose over live plan_satisfaction data; same
   // disposition class as status-rubric beside it.
-  'ux-lock': ['verify-is-a-report-not-a-blocker', 'status-rubric', 'status-rubric-precedence'],
+  'ux-lock': ['verify-is-a-report-not-a-blocker', 'status-rubric', 'status-rubric-precedence', 'verify-exit-4-when-not-recorded'],
   // `unremediated-acceptances-never-blocks` added 2026-07-27 with /ship Step 0.5e.
   // Document-only for the same reason as step-0-5-gates-non-blocking beside it:
   // the READ half is mechanically honest (getUnremediatedAcceptances returns []
@@ -312,7 +312,13 @@ describe('gate-honesty — real skills/', () => {
     //   Document-only: /cycle emits no exit code, and the accepted-plan skip has
     //   no content-identity oracle to bind to (plan-mode audit_runs carry HEAD,
     //   not the audited plan bytes).
-    assert.equal(totalDocOnly, 55);   // +1 audit-code coverage-gate-fail-incomplete (file-coverage contract, 2026-09-30); +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5); +2 ship: converged + no-tests cap (2026-09-04)
+    // 55 -> 56: +1 ux-lock (verify-exit-4-when-not-recorded, 2026-10-10, upstream
+    //   512cf1c9). Document-only because a cli-exit recipe would have to drive
+    //   `ux-lock-run.mjs verify` through Playwright against a live URL. The
+    //   decision and wiring ARE covered: tests/plan-verification-outcome.test.mjs
+    //   (stub writers, negative-controlled) and tests/plan-verification-items-db.test.mjs
+    //   (real writers on disposable Postgres: exit 0 recorded, exit 4 unrecordable).
+    assert.equal(totalDocOnly, 56);   // +1 audit-code coverage-gate-fail-incomplete (file-coverage contract, 2026-09-30); +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5); +2 ship: converged + no-tests cap (2026-09-04)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));

@@ -79,6 +79,9 @@ export async function recordPlanVerificationRun(run, opts = {}) {
       rows: [cols.map((c) => row[c])],
       parentId: run.planId,
       repoId: opts.repoId ?? null,
+      // The child's parent key comes from the row the ownership join PROVED,
+      // never from a separately-bound value that could name a different plan.
+      fromParent: { plan_id: 'id' },
     });
     // The id comes OUT of the statement (`inserted_id`), not from a follow-up
     // SELECT. The first version read it back with
@@ -205,7 +208,10 @@ export async function recordPlanVerificationItems(runId, planId, items, opts = {
       // different plans — the join proved one thing and the row recorded
       // another (Phase-7 audit H2/H7). Sourcing it from the parent makes the
       // mismatch unrepresentable rather than merely unchecked.
-      fromParent: { plan_id: 'plan_id' },
+      // `run_id` likewise comes from the proven parent row (upstream 512cf1c9
+      // code-audit H1): binding it separately let the ownership join check one
+      // run while the row recorded another.
+      fromParent: { plan_id: 'plan_id', run_id: 'id' },
     });
     const res = await pool.query(text, values);
     return classifyOwnedWrite(res?.rows?.[0], rows.length);

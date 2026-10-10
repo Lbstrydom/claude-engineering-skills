@@ -1,7 +1,7 @@
 {
   "_description": "Reachable `process.exit()` sites preceded by a stdout write, per scripts/check-stdout-flush.mjs. Drift-only ratchet: a net-new site fails, and so does an unrecorded shrink. Shrink this list; never grow it. Re-baseline deliberately with --update. The fix for an entry is `await finishAndExit(code)` from scripts/lib/cli-io.mjs.",
-  "total": 217,
-  "envelope": 105,
+  "total": 216,
+  "envelope": 104,
   "files": {
     "scripts/audit-full.mjs": 4,
     "scripts/audit-loop.mjs": 2,
@@ -99,7 +99,7 @@
     "scripts/sync-to-repos.mjs": 2,
     "scripts/update-auditloop.mjs": 1,
     "scripts/upstream-queues.mjs": 1,
-    "scripts/ux-lock-run.mjs": 8,
+    "scripts/ux-lock-run.mjs": 7,
     "scripts/verify-anchor-contract.mjs": 1,
     "scripts/visual-audit.mjs": 3
   },
@@ -316,7 +316,6 @@
     "scripts/ux-lock-run.mjs::cmdSpec::emit->exit(dynamic)#1",
     "scripts/ux-lock-run.mjs::cmdVerify[if>then]::emit->exit(dynamic)#1",
     "scripts/ux-lock-run.mjs::cmdVerify[if>then]::emit->exit(dynamic)#2",
-    "scripts/ux-lock-run.mjs::cmdVerify::emit->exit(0)#1",
     "scripts/verify-anchor-contract.mjs::main::console.log->exit(dynamic)#1",
     "scripts/visual-audit.mjs::main[if>then]::emit() → stdout->exit(0)#1",
     "scripts/visual-audit.mjs::main[if>then]::emit() → stdout->exit(1)#1",

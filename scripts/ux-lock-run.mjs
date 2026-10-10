@@ -31,7 +31,7 @@ import {
 } from './lib/playwright-runner.mjs';
 import { parseAcceptanceCriteria } from './lib/plan-criteria-parser.mjs';
 import { playwrightInstallHint } from './lib/package-manager.mjs';
-import { emit, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { emit, assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import {
   initLearningStore, isCloudEnabled, resolveRepoForStoreResult,
   recordRegressionSpec, recordRegressionSpecRun,
@@ -467,58 +467,144 @@ async function cmdVerify() {
     process.stderr.write(`  [ux-lock-run] ${orphanTests.length} test(s) had no matching expected criterion (not recorded as items): ${orphanTests.slice(0, 5).join('; ')}\n`);
   }
 
+  await initLearningStore().catch(() => {});
+  const cloud = await isCloudEnabled();
+  const { envelope, exitCode } = await persistAndReportVerify({
+    items, orphanTests, policyTotal: policy.total, cloud,
+    // The plan id is resolved by the caller (plans table); pass via --plan-id when known.
+    planId: opt('plan-id'), commit, url,
+  });
+  emit(envelope);
+  // VERIFY is a REPORT, not a blocker — it exits 0 even when criteria fail (the
+  // established /ux-lock verify contract). Non-zero is reserved for "could not
+  // run" (PLAYWRIGHT_MISSING → 5, RUN_FAILED → 3, handled above) and for "ran,
+  // but the report was NOT recorded" (VERIFY_PERSIST_FAILED_EXIT → 4).
+  await finishAndExit(exitCode);
+}
+
+/**
+ * Exit code for a verify run whose spec RAN and whose report was printed, but
+ * whose persistence failed. Distinct from 3 (could not run), 5 (Playwright
+ * missing) and 6 (strict selectors), so a caller can tell "the app failed its
+ * criteria" (0 — a report) from "nothing durable was written" (4).
+ */
+export const VERIFY_PERSIST_FAILED_EXIT = 4;
+
+/**
+ * The ok/exit decision for verify's recording step. PURE.
+ *
+ * Upstream 512cf1c9: the items write failed on every multi-criterion run, its
+ * result was discarded, and the command emitted `ok: true` + exit 0 — four
+ * consecutive consumer runs looked successful while the per-criterion
+ * time-series received nothing. An envelope reporting failure beside a 0 exit
+ * is read as success by every caller checking `$?`, so a failed write is
+ * `ok: false` AND non-zero. The two DOCUMENTED skips (cloud off, no
+ * `--plan-id`) stay `ok: true` — they decline to record, they do not fail to.
+ *
+ * @param {{cloud: boolean, planId: string|null, runRes?: object|null, itemsRes?: object|null}} a
+ * @returns {{ok: boolean, exitCode: number, persistFailed?: 'run'|'items', reason?: string, message?: string|null}}
+ */
+export function verifyPersistOutcome({ cloud, planId, runRes = null, itemsRes = null }) {
+  if (!cloud || !planId) return { ok: true, exitCode: 0 };
+  if (!runRes?.ok) {
+    return {
+      ok: false, exitCode: VERIFY_PERSIST_FAILED_EXIT, persistFailed: 'run',
+      reason: runRes?.reason ?? 'write-failed', message: runRes?.message ?? null,
+    };
+  }
+  if (!itemsRes?.ok) {
+    return {
+      ok: false, exitCode: VERIFY_PERSIST_FAILED_EXIT, persistFailed: 'items',
+      reason: itemsRes?.reason ?? 'write-failed', message: itemsRes?.message ?? null,
+    };
+  }
+  return { ok: true, exitCode: 0 };
+}
+
+/**
+ * The post-run half of `verify`: record the run + its criterion items, and
+ * build the complete JSON envelope and exit code. Extracted from `cmdVerify` so
+ * the WIRING is testable — the defect was a discarded writer result, which a
+ * test of the decision alone cannot see. The writers are injected (defaulting
+ * to the real store writers); there is no production-only switch.
+ *
+ * @param {object} a
+ * @param {Array<object>} a.items  criterion items from `mapCriteriaToItems`
+ * @param {string[]} a.orphanTests
+ * @param {number} a.policyTotal  selector-policy violation count
+ * @param {boolean} a.cloud
+ * @param {string|null} a.planId
+ * @param {string|null} a.commit
+ * @param {string|null} a.url
+ * @param {{recordPlanVerificationRun: Function, recordPlanVerificationItems: Function}} [a.writers]
+ * @returns {Promise<{envelope: object, exitCode: number}>}
+ */
+export async function persistAndReportVerify({
+  items, orphanTests = [], policyTotal = 0, cloud, planId = null, commit = null, url = null,
+  writers = { recordPlanVerificationRun, recordPlanVerificationItems },
+}) {
   const passedCount = items.filter(i => i.passed).length;
   const failedCount = items.filter(i => !i.passed && i.errorMessage !== 'skipped').length;
   const skippedCount = items.filter(i => i.errorMessage === 'skipped').length;
   const durationMs = items.reduce((s, i) => s + (i.durationMs || 0), 0);
 
-  await initLearningStore().catch(() => {});
-  const cloud = await isCloudEnabled();
-  let runId = null;
-  let verifyPersistFailed = null;
-  if (cloud) {
-    // The plan id is resolved by the caller (plans table); pass via --plan-id when known.
-    const planId = opt('plan-id');
-    if (planId) {
-      const runRes = await recordPlanVerificationRun({
-        planId, commitSha: commit, url,
-        totalCriteria: items.length, passedCount, failedCount, skippedCount,
-        durationMs, runContext: 'ux-lock-verify',
-        // One row per run → the run total is the correct granularity here.
-        selectorPolicyViolations: policy.total,
-      });
-      // Discriminated since §2b F2. A failed run insert used to yield `null`,
-      // which silently skipped the per-criterion rows AND still emitted
-      // `{ok:true, runId:null}` — a verify run reporting success having
-      // persisted nothing.
-      runId = runRes.ok ? runRes.runId : null;
-      if (!runRes.ok) {
-        verifyPersistFailed = runRes.reason;
-        process.stderr.write(`  [ux-lock-run] plan verification run NOT recorded (${runRes.reason}): ${runRes.message}\n`);
-      } else {
-        await recordPlanVerificationItems(runId, planId, items);
-      }
+  let runRes = null;
+  let itemsRes = null;
+  if (cloud && planId) {
+    runRes = await writers.recordPlanVerificationRun({
+      planId, commitSha: commit, url,
+      totalCriteria: items.length, passedCount, failedCount, skippedCount,
+      durationMs, runContext: 'ux-lock-verify',
+      // One row per run → the run total is the correct granularity here.
+      selectorPolicyViolations: policyTotal,
+    });
+    // Discriminated since §2b F2. A failed run insert used to yield `null`,
+    // which silently skipped the per-criterion rows AND still emitted
+    // `{ok:true, runId:null}`.
+    if (!runRes?.ok) {
+      process.stderr.write(`  [ux-lock-run] plan verification run NOT recorded (${runRes?.reason}): ${runRes?.message}\n`);
     } else {
-      process.stderr.write('  [ux-lock-run] no --plan-id — recorded nothing (plan_verification_* require a plan id)\n');
+      // A writer that THROWS is the same outcome as one that reports failure:
+      // the rows were not written. Caught here so the report still prints.
+      try {
+        itemsRes = await writers.recordPlanVerificationItems(runRes.runId, planId, items);
+      } catch (err) {
+        itemsRes = { ok: false, inserted: 0, reason: 'write-threw', message: err?.message ?? String(err) };
+      }
+      if (!itemsRes?.ok) {
+        process.stderr.write(`  [ux-lock-run] plan verification ITEMS NOT recorded (${itemsRes?.reason}) — the run row exists but has no criteria\n`);
+      }
     }
+  } else if (cloud) {
+    process.stderr.write('  [ux-lock-run] no --plan-id — recorded nothing (plan_verification_* require a plan id)\n');
   }
 
-  emit({
-    ok: true, mode: 'verify', cloud, runId,
-    // `runId: null` alone cannot say WHY nothing was recorded — no --plan-id,
-    // cloud off, or a failed insert all produced it. This names the third.
-    ...(verifyPersistFailed ? { persistFailed: verifyPersistFailed } : {}),
+  const outcome = verifyPersistOutcome({ cloud, planId, runRes, itemsRes });
+  const envelope = {
+    ok: outcome.ok, mode: 'verify', cloud,
+    runId: runRes?.ok ? runRes.runId : null,
+    ...(outcome.ok ? {} : {
+      error: {
+        code: 'PERSIST_FAILED',
+        message: `verify ran but its ${outcome.persistFailed} write failed (${outcome.reason})`
+          + `${outcome.message ? `: ${outcome.message}` : ''} — this report was NOT recorded`,
+      },
+      // `runId: null` alone cannot say WHY nothing was recorded — no --plan-id,
+      // cloud off, or a failed insert all produced it. This names the third,
+      // and which write it was.
+      persistFailed: outcome.persistFailed,
+    }),
+    ...(itemsRes ? { itemsInserted: itemsRes.inserted ?? 0 } : {}),
+    // The `skipped` column was missing, so the rows landed without it — a real
+    // loss the writer reports; surfaced rather than read as a complete record.
+    ...(itemsRes?.degraded ? { itemsDegraded: itemsRes.degraded } : {}),
     totalCriteria: items.length, passedCount, failedCount, skippedCount,
-    selectorPolicyViolations: policy.total,
+    selectorPolicyViolations: policyTotal,
     orphanTests: orphanTests.length,
     items: items.map(i => ({ hash: i.criterionHash, severity: i.severity, passed: i.passed, error: i.errorMessage })),
     hint: cloud ? undefined : 'AUDIT_DB_URL unset — ran spec, skipped recording',
-  });
-  // VERIFY is a REPORT, not a blocker — it exits 0 even when criteria fail (the
-  // established /ux-lock verify contract; /ship gates via the status rubric +
-  // plan_satisfaction view, not this exit code). Non-zero is reserved for
-  // "could not run" (PLAYWRIGHT_MISSING → 5, RUN_FAILED → 3, handled above).
-  process.exit(0);
+  };
+  return { envelope, exitCode: outcome.exitCode };
 }
 
 // ── dispatch ────────────────────────────────────────────────────────────────

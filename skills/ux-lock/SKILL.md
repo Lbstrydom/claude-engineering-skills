@@ -297,7 +297,8 @@ registers the SPEC row via cross-skill; this call owns only the RUN rows.)
 - **Graceful**: cloud off → runs + prints, skips recording; Playwright missing →
   exit 5. **Verify is a report, not a blocker** — it exits 0 even when criteria
   fail; a non-zero exit means the spec could not RUN (PW missing / fatal), not
-  that a criterion failed.
+  that a criterion failed. Exit 4 (`error.code: PERSIST_FAILED`) means it RAN
+  but its run or criterion rows were NOT recorded.
 - **Nothing gates on this today.** An earlier version said gating was `/ship`'s
   job "via the status rubric + `plan_satisfaction`". It is not: `/ship` never
   queries `plan_satisfaction` — `readPlanSatisfaction`

@@ -177,7 +177,9 @@ Coverage guarantees (the runner enforces them, plan §2.3):
   is a report, not a blocker** — it exits 0 even when criteria fail (consistent
   with the existing `/ux-lock verify` contract below; `/ship` gates via the
   status rubric + `plan_satisfaction`). A non-zero exit means the spec could not
-  RUN (Playwright missing → 5, fatal → 3), not that a criterion failed.
+  RUN (Playwright missing → 5, fatal → 3), or that it ran but was not
+  recorded (exit 4, `error.code: PERSIST_FAILED`, `persistFailed: run|items` —
+  the full report is still printed), never that a criterion failed.
 
 This depends on the spec template emitting the `criterion_hash` annotation per
 test (Step V2 above) — without it the runner cannot map results to criteria.

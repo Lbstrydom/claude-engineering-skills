@@ -189,6 +189,12 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // and statsReason are all properties only Postgres has. Two edits, always —
   // this list AND postgres-parity.yml.
   'tests/persona-pair-link-db.test.mjs',
+  // Enrolled 2026-10-10 (upstream 512cf1c9): buildOwnedInsert's MULTI-row
+  // shape typed every bind parameter as text (42804), so /ux-lock verify lost
+  // all plan_verification_items rows. Only Postgres resolves parameter types:
+  // the pure SQL-text tier cannot see it, and the one-row store-ownership-db
+  // suite never reached it. Two edits, always — this list AND postgres-parity.yml.
+  'tests/plan-verification-items-db.test.mjs',
   'tests/plans-ship-persona-correlation.test.mjs',
   'tests/record-findings-write-boundary.test.mjs',
   'tests/refresh-provenance-promotion.test.mjs',

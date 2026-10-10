@@ -76,6 +76,10 @@ on:
       # Postgres transaction-abort behaviour, named explicitly since it doesn't
       # start with 'db-'.
       - 'tests/store-finding-write-db.test.mjs'
+      # Upstream 512cf1c9 — the multi-row plan_verification_items suite and the
+      # verify CLI whose recording step it drives with the real writers.
+      - 'tests/plan-verification-items-db.test.mjs'
+      - 'scripts/ux-lock-run.mjs'
       - 'tests/fixtures/expected-schema.json'
       # triage-independence-test-and-write-boundary-fixes.md round-1 code-audit
       # M4: neither matches a pattern above (not db-*/campaign-*/final-review-*/
@@ -131,6 +135,10 @@ on:
       # Postgres transaction-abort behaviour, named explicitly since it doesn't
       # start with 'db-'.
       - 'tests/store-finding-write-db.test.mjs'
+      # Upstream 512cf1c9 — the multi-row plan_verification_items suite and the
+      # verify CLI whose recording step it drives with the real writers.
+      - 'tests/plan-verification-items-db.test.mjs'
+      - 'scripts/ux-lock-run.mjs'
       - 'tests/fixtures/expected-schema.json'
       # See the matching pull_request comment above (round-1 code-audit M4).
       - 'tests/mark-findings-remediation.test.mjs'
@@ -300,6 +308,7 @@ jobs:
             tests/persist-kept-embeddings.test.mjs \
             tests/persona-outcomes-hash-backfill.test.mjs \
             tests/persona-pair-link-db.test.mjs \
+            tests/plan-verification-items-db.test.mjs \
             tests/plans-ship-persona-correlation.test.mjs \
             tests/postgres-parity-identity-columns.test.mjs \
             tests/record-findings-write-boundary.test.mjs \
