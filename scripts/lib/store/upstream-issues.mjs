@@ -194,16 +194,24 @@ export async function listUpstreamIssues(opts = {}) {
  * still cheap. If it ever needs paging, that is a deliberate later change,
  * not a default inherited from an unrelated list view.
  *
- * @returns {Promise<{ok: boolean, cloud: boolean, rows: Array<{issueId: string, state: string, disposition: string|null}>, error?: string}>}
+ * @returns {Promise<{ok: boolean, cloud: boolean, rows: Array<{issueId: string, state: string, disposition: string|null, closedAt: string|null}>, error?: string}>}
  */
 export async function listTerminalUpstreamIssues() {
   if (!await isCloudEnabled()) return { ok: true, cloud: false, rows: [] };
   try {
     const rows = await many(
-      `SELECT id, state, disposition FROM upstream_issues WHERE state IN ('fixed', 'wont_fix') ORDER BY created_at`,
+      `SELECT id, state, disposition, updated_at FROM upstream_issues WHERE state IN ('fixed', 'wont_fix') ORDER BY created_at`,
       [],
     );
-    return { ok: true, cloud: true, rows: rows.map((r) => ({ issueId: r.id, state: r.state, disposition: r.disposition })) };
+    // `closedAt` is `updated_at`, the lifecycle timestamp: set on every transition
+    // and deliberately NOT on annotate (see `recordUpstreamIssueAnnotation`). For a
+    // terminal row that is when it was closed. The reconcile gate prints it so a
+    // pending landing names WHEN the closure happened.
+    const iso = (v) => (v instanceof Date ? v.toISOString() : (v ?? null));
+    return {
+      ok: true, cloud: true,
+      rows: rows.map((r) => ({ issueId: r.id, state: r.state, disposition: r.disposition, closedAt: iso(r.updated_at) })),
+    };
   } catch (err) {
     process.stderr.write(`  [upstream] listTerminalUpstreamIssues failed: ${err.message}\n`);
     return { ok: false, cloud: true, rows: [], error: err.message };

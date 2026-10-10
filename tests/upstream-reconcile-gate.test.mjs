@@ -13,8 +13,17 @@
  * real ledger entry with a matching db row (mocking only one entry would
  * make the other real entries read as `ledgerOnly` divergences) — built
  * once in `before()`, then each test perturbs a COPY of it.
+ *
+ * ATTRIBUTION (docs/plans/upstream-disposition-landing.md). `--gate` now blocks
+ * only divergence on an issue whose ledger entry the PUSHED RANGE changed, and
+ * reports the rest. These perturbations change the store side only, so against a
+ * resolvable base they are correctly reported rather than blocking. The cases
+ * below assert the per-category wording on the FAIL-CLOSED path instead: an
+ * unresolvable explicit range base, where nothing can be attributed and every
+ * divergence blocks, exactly as before attribution existed. Attribution itself,
+ * in both directions, is tested in tests/upstream-reconcile-gate-attribution.test.mjs.
  */
-import { describe, it, before } from 'node:test';
+import { describe, it, before, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -49,6 +58,19 @@ function makeCtx({ boolFlags = new Set(), rows }) {
 }
 
 describe('upstream reconcile --gate', () => {
+  // A well-formed sha no checkout contains: `resolvePushRange` refuses it as
+  // `unresolvable-explicit`, so the gate cannot attribute and fails closed.
+  const UNRESOLVABLE_BASE = 'f'.repeat(40);
+  let savedBase;
+  beforeEach(() => {
+    savedBase = process.env.AUDIT_PUSH_RANGE_BASE;
+    process.env.AUDIT_PUSH_RANGE_BASE = UNRESOLVABLE_BASE;
+  });
+  afterEach(() => {
+    if (savedBase === undefined) delete process.env.AUDIT_PUSH_RANGE_BASE;
+    else process.env.AUDIT_PUSH_RANGE_BASE = savedBase;
+  });
+
   it('does NOT throw when every db row exactly matches its real ledger entry (clean baseline)', async () => {
     const ctx = makeCtx({ boolFlags: new Set(['gate']), rows: baselineRows });
     const res = await upstreamCmd(ctx);
