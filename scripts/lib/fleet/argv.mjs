@@ -24,6 +24,7 @@ export const VERBS = Object.freeze({
   repair: { bool: ['--json'], value: ['--quarantine'], repeat: [], positionals: [0, 0] },
   release: { bool: ['--json', '--abandoned'], value: ['--id'], repeat: [], positionals: [0, 0] },
   'archive-check': { bool: ['--json'], value: ['--id', '--min-kb'], repeat: [], positionals: [0, 1] },
+  prune: { bool: ['--json'], value: [], repeat: [], positionals: [0, 0] },
   next: { bool: ['--json'], value: ['--id'], repeat: [], positionals: [0, 0] },
   restack: { bool: ['--json', '--replace'], value: ['--onto', '--from'], repeat: [], positionals: [0, 1] },
   directive: {

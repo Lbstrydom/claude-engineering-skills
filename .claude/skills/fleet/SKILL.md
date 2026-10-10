@@ -40,6 +40,7 @@ Usage:
   /fleet next [--id <id>]                        # what this session should do now
   /fleet release [--id <id>] [--abandoned]       # retire a claim now
   /fleet archive-check [<id|branch|path>]        # what removing a worktree would lose
+  /fleet prune                                    # branches/worktrees removable with nothing lost (read-only)
   /fleet directive --to <id|all> --kind <k> --reason <r> [--ref] [--note] | --list | --ack <id> --outcome done|declined
   /fleet hold on [--reason "..."] [--notify] | off [--note "..."]
   /fleet repair --quarantine <file>
@@ -173,6 +174,6 @@ situations — read them only when the trigger applies.
 | File | Summary | Read when |
 |---|---|---|
 | `references/participant-rules.md` | The short rule block every spawned session receives, and why. | You spawn or brief a chip, or a session asks how to behave under /fleet. |
-| `references/coordination.md` | Coordinating sessions without host messages — next, directives, release, archive-check, hold notes. | You coordinate several sessions, post or read a directive, retire a session, or archive a worktree. |
+| `references/coordination.md` | Coordinating sessions without host messages — next, directives, release, archive-check, prune, hold notes. | You coordinate several sessions, post or read a directive, retire a session, or archive a worktree. |
 | `references/landing.md` | Landing beyond one combined run — required checks that ran, serial landing, restack, append-only files. | You approve a pr-mode train, land PRs one at a time, restack after a squash merge, or configure append-only files. |
 | `references/telemetry.md` | Usage telemetry — what each verb records, the weakness findings stats derives, and how to turn it off. | You want to know how fleet is performing, why stats flags a weakness, or what fleet sends to the store. |

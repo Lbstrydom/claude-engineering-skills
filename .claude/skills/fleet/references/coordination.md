@@ -1,5 +1,5 @@
 ---
-summary: Coordinating sessions without host messages — next, directives, release, archive-check, hold notes.
+summary: Coordinating sessions without host messages — next, directives, release, archive-check, prune, hold notes.
 ---
 
 # Coordinating sessions without host messages
@@ -72,6 +72,15 @@ is delivered.
   failed, or skip-worktree/assume-unchanged files hide edits from git). Run it
   before archiving a worktree: archiving can empty gitignored folders such as
   `.claude/tmp`.
+- `fleet prune` is read-only. It lists the local branches (and their worktrees)
+  that can be removed with nothing lost, with the exact commands, and runs none
+  of them. A branch qualifies only when its tip is already in base (`git branch
+  -d`) or merged evidence covers its exact tip (a merged PR head, or a squash
+  that postdates the fork: `-D`, since git cannot see squash merges). No
+  registered session, no open PR, a readable PR list, and a worktree that passes
+  the archive-check evidence (its "unpushed" commits excepted, because their
+  content is proven on base). Idle branches, locked worktrees, the main checkout
+  and the current worktree are never listed. Every kept branch says why.
 
 ## Permission prompts
 
