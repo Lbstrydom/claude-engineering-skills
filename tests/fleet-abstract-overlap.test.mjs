@@ -11,6 +11,7 @@
  */
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { decideClaim, isAbstractPair, isBlockingConflict } from '../scripts/lib/fleet/overlap.mjs';
 import { renderClaimVerdict } from '../scripts/lib/fleet/render.mjs';
 import { cleanupFleetRoots, makeFleetRepo, runFleet, scrubbedEnv } from './helpers/fleet-repo.mjs';
@@ -83,6 +84,15 @@ describe('fleet claim (CLI) — the 2026-10-10 shape', () => {
     assert.match(r.stdout, /WARN.*advisory/);
     assert.match(r.stdout, /\[abstract\] gemini/);
   });
+  it('run from a SUBDIRECTORY, the tracked-file list is still the whole repo, root-relative (R2-H1)', () => {
+    const fx = makeFleetRepo({ files: { 'tests/upstream-final-review.test.mjs': 'z\n', 'docs/readme.md': 'd\n' } });
+    const env = scrubbedEnv({ FLEET_TELEMETRY: 'off' });
+    const sub = path.join(fx.repo, 'docs');
+    assert.equal(runFleet(['claim', '--id', 'gemini', '--intent', 'reviewer default', '--paths', 'tests/*final-review*'], { cwd: sub, env }).status, 0);
+    const r = runFleet(['claim', '--id', 'upstream', '--intent', 'disposition landing', '--paths', 'tests/*upstream*'], { cwd: sub, env });
+    assert.equal(r.status, 3, 'the tracked file matching both is seen from docs/ too, so this is concrete: ' + r.stdout + r.stderr);
+  });
+
   it('control: once a tracked file matches both patterns, the same claim is BLOCKED (exit 3)', () => {
     const fx = makeFleetRepo({ files: { 'tests/upstream-final-review.test.mjs': 'z\n' } });
     const env = scrubbedEnv({ FLEET_TELEMETRY: 'off' });
