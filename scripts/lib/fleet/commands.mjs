@@ -32,6 +32,18 @@ import {
 import { parseWaitingOn, splitPaths } from './argv.mjs';
 import { newDirectiveId, readDirectives, readHosts, writeDirective, writeHost } from './directives.mjs';
 
+
+/**
+ * The repo's tracked files, for telling a concrete claim overlap from an abstract one
+ * (overlap.mjs isAbstractPair). `null` when git cannot answer: callers then treat every
+ * intersecting pair as concrete (fail closed), never as abstract.
+ * @param {string} cwd @returns {string[]|null}
+ */
+function trackedFilesOf(cwd) {
+  const r = runGit(['ls-files', '-z'], cwd, { timeoutMs: 30_000 });
+  return r.ok ? r.stdout.split('\0').filter(Boolean) : null;
+}
+
 export const ok = (extra) => ({ ok: true, code: 'ok', ...extra });
 export const refused = (reason, extra = {}) => ({ ok: false, code: 'refused', reason, text: `REFUSED: ${reason}`, ...extra });
 export const failed = (reason, extra = {}) => ({ ok: false, code: 'error', reason, text: `ERROR: ${reason}`, ...extra });
@@ -183,6 +195,7 @@ export function cmdClaim(ctx, flags) {
     const verdict = decideClaim({
       claim: { id, intent, paths: claimPaths, knownOverlaps: mode === 'adopt' ? cur.knownOverlaps : [] },
       mode, others: othersFor(facts, id, ctx.now, t.sessions), complete: t.complete, hotFiles: ctx.config.hotFiles ?? [],
+      trackedFiles: trackedFilesOf(ctx.cwd),
     });
     const blocking = verdict.conflicts.filter(isBlockingConflict);
     const overriding = Boolean(flags['--override']) && blocking.length > 0 && verdict.verdict !== 'refused';
@@ -434,12 +447,14 @@ export function cmdStart(ctx, tasks) {
     return { ...t, name, branch, dir: path.join(ctx.config.worktreeRoot, 'chips', name), branchPreexisted: headOf(ctx.cwd, `refs/heads/${branch}`).ok };
   });
 
+  const tracked = trackedFilesOf(ctx.cwd);
   const tx = transact(ctx.dir, (t) => {
     // 1. The gate: every task as a NEW session vs the registry and vs the earlier tasks of this batch.
     const batch = []; const blocked = [];
     for (const p of plan) {
       const verdict = decideClaim({
         claim: { id: p.branch, intent: p.task, paths: p.paths, knownOverlaps: [] }, mode: 'new', complete: t.complete, hotFiles: ctx.config.hotFiles ?? [],
+        trackedFiles: tracked,
         others: [...othersFor(facts, p.branch, ctx.now, t.sessions), ...batch.map((b) => ({ session: b, live: true, changedFiles: [] }))],
       });
       if (verdict.verdict === 'refused') return { verdict, refusedAll: true };
