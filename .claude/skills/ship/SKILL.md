@@ -1194,8 +1194,8 @@ back the way a consumer gets it, and check **that**.
 **A feature-branch push publishes nothing to consumers** (since 2026-10-10 the
 pre-push hook syncs only when the default branch is updated, so unmerged tooling
 never reaches them). For a branch/PR ship, the synced-bundle row is `unverified
-(blocked: not merged)` until the PR merges and a sync runs from an up-to-date
-default branch: `node scripts/sync-to-repos.mjs`, then `node scripts/sync-pr.mjs`.
+(blocked: not merged)` until the PR merges and the source repo re-syncs its
+consumers from an up-to-date default branch.
 
 Pick the row(s) this push actually produced:
 
