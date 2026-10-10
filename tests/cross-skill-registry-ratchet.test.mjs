@@ -53,13 +53,15 @@ const CLI_PATH = fileURLToPath(new URL('../scripts/cross-skill.mjs', import.meta
 //     the danglingLocks report; also registered directly: 72 + 1 = 73
 //   link-persona-pair (2026-09-27) — /persona-test --pair Step P7 had
 //     documented it since pair mode shipped; registered directly: 73 + 1 = 74
+//   fleet-telemetry (2026-10-10, docs/plans/fleet-telemetry.md) — the drain and
+//     stats reader for /fleet's usage events; registered directly: 74 + 1 = 75
 //
 // ZERO is the end state, and the ratchet flips meaning here: from "legacy may
 // only shrink" to "legacy must not come BACK". A new command belongs in the
 // registry; re-introducing a second dispatch surface is the two-oracles defect
 // this migration removed.
 const LEGACY_PIN = 0;
-const TOTAL_INVENTORY = 74;
+const TOTAL_INVENTORY = 75;
 
 describe('cross-skill registry ratchet', () => {
   it(`legacy command count is exactly ${LEGACY_PIN} (decrease-only; update WITH the cohort that moves it)`, () => {

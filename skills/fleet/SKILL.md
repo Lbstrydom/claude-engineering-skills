@@ -158,6 +158,11 @@ never blocks; mixed evidence still blocks. A tier or check may carry a one-line
 `requiredChecks`, `appendOnlyGlobs`, `restackIgnore`, `serialTimeoutMs` — are in
 `references/landing.md`; `archiveIgnore` (default `node_modules/**`, `scripts/.claude-skills/**`) in `references/coordination.md`.
 
+Every verb also records one usage event (counts and outcome classes only, never
+paths or prose) for the audit store; `FLEET_TELEMETRY=off` disables it. To see
+how fleet is performing and where it fails: `node scripts/cross-skill.mjs
+fleet-telemetry stats --format worksheet`. Detail: `references/telemetry.md`.
+
 ---
 
 ## Reference files
@@ -170,3 +175,4 @@ situations — read them only when the trigger applies.
 | `references/participant-rules.md` | The short rule block every spawned session receives, and why. | You spawn or brief a chip, or a session asks how to behave under /fleet. |
 | `references/coordination.md` | Coordinating sessions without host messages — next, directives, release, archive-check, hold notes. | You coordinate several sessions, post or read a directive, retire a session, or archive a worktree. |
 | `references/landing.md` | Landing beyond one combined run — required checks that ran, serial landing, restack, append-only files. | You approve a pr-mode train, land PRs one at a time, restack after a squash merge, or configure append-only files. |
+| `references/telemetry.md` | Usage telemetry — what each verb records, the weakness findings stats derives, and how to turn it off. | You want to know how fleet is performing, why stats flags a weakness, or what fleet sends to the store. |

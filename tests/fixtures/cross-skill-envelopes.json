@@ -1412,6 +1412,84 @@
         }
       }
     },
+    "fleet-telemetry-bad-verb": {
+      "args": [
+        "fleet-telemetry",
+        "nope"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "usage: fleet-telemetry flush --spool <dir> | stats [--days N] [--format json|worksheet]"
+        }
+      }
+    },
+    "fleet-telemetry-flush-no-spool": {
+      "args": [
+        "fleet-telemetry",
+        "flush"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "flush needs --spool <git-common-dir>/fleet-telemetry"
+        }
+      }
+    },
+    "fleet-telemetry-flush-not-a-spool": {
+      "args": [
+        "fleet-telemetry",
+        "flush",
+        "--spool",
+        "some/dir"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--spool must be a fleet telemetry spool (…/fleet-telemetry), got some/dir"
+        }
+      }
+    },
+    "fleet-telemetry-stats-bad-days": {
+      "args": [
+        "fleet-telemetry",
+        "stats",
+        "--days",
+        "0"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--days must be an integer 1-90 (got 0)"
+        }
+      }
+    },
+    "fleet-telemetry-stats-cloud-off": {
+      "args": [
+        "fleet-telemetry",
+        "stats"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "measured": false,
+        "state": "unavailable",
+        "days": 14,
+        "repo": null,
+        "spool": null,
+        "telemetry": null,
+        "weaknesses": []
+      }
+    },
     "resolve-identity-json": {
       "args": [
         "resolve-repo-identity"

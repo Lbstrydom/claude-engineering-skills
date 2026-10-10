@@ -189,6 +189,7 @@
         "scripts/.claude-skills/lib/fleet/directives.mjs",
         "scripts/.claude-skills/lib/fleet/registry.mjs",
         "scripts/.claude-skills/lib/fleet/serial.mjs",
+        "scripts/.claude-skills/lib/fleet/telemetry-drain.mjs",
         "scripts/.claude-skills/lib/learning/author-tier-observation.mjs",
         "scripts/.claude-skills/lib/llm-wrappers.mjs",
         "scripts/.claude-skills/lib/memory-paths.mjs",

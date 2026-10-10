@@ -22,6 +22,8 @@
  *   land --approve|--confirm|--reconcile|--resume|--abandon <trainId>
  *
  * Exit codes: 0 ok · 1 error (incl. lock not acquired) · 2 argv · 3 blocked/refused.
+ * Every known-verb invocation also spools one telemetry event (lib/fleet/telemetry.mjs;
+ * `FLEET_TELEMETRY=off` disables it) — counts only, never on stdout.
  * `FLEET_NOW` (ISO or epoch ms) pins the clock for tests; `FLEET_LEASE_HOURS`
  * (default 4) sets the lease; `FLEET_WORKTREE_ROOT` moves the integration
  * worktrees.
@@ -46,6 +48,7 @@ import { cmdRestack } from './lib/fleet/restack.mjs';
 import { renderCommand } from './lib/fleet/shell-quote.mjs';
 import { cmdLand } from './lib/fleet/land.mjs';
 import { fleetDir, RegistryError } from './lib/fleet/registry.mjs';
+import { recordInvocation } from './lib/fleet/telemetry.mjs';
 
 const EXIT = { ok: 0, error: 1, argv: 2, refused: 3, pending: 3 };
 const USAGE = `usage: fleet <verb> [flags]\nverbs: ${Object.keys(VERBS).join(', ')}\n`;
@@ -57,8 +60,22 @@ function selfCommand(cwd) {
   return renderCommand(['node', rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel.split(path.sep).join('/') : self]);
 }
 
+/** Spool this invocation's telemetry event. Never throws; never touches stdout. */
+function record(verb, parsed, outcome, exitCode, startedMs) {
+  let dir = null;
+  try { dir = fleetDir(process.cwd()); } catch { return; } // not a repo: nothing to attach the event to
+  recordInvocation({
+    fleetDirPath: dir, cwd: process.cwd(), env: process.env,
+    scriptsDir: path.dirname(fileURLToPath(import.meta.url)),
+    verb, flags: parsed?.flags ?? {}, positionals: parsed?.positionals ?? [],
+    result: outcome.result ?? null, error: outcome.error ?? null,
+    exitCode, startedMs, endedMs: Date.now(),
+  });
+}
+
 async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+  const startedMs = Date.now();
   const verb = process.argv[2];
   if (!verb || verb === '--help' || verb === '-h' || verb === 'help') {
     process.stdout.write(USAGE);
@@ -70,9 +87,11 @@ async function main() {
   }
 
   let result;
+  let parsed = null;
   try {
     assertKnownFlags(process.argv, knownFlagsFor(verb), { cli: `fleet ${verb}` });
-    const { flags, positionals, tasks } = parseVerbArgs(verb, process.argv.slice(3));
+    parsed = parseVerbArgs(verb, process.argv.slice(3));
+    const { flags, positionals, tasks } = parsed;
     const cwd = process.cwd();
     const env = process.env;
     leaseMsFrom(env); // an invalid FLEET_LEASE_HOURS is a config error up front, never a silent default
@@ -105,6 +124,7 @@ async function main() {
     }
     const code = EXIT[result.code] ?? 1;
     process.exitCode = code;
+    record(verb, parsed, { result }, code, startedMs);
     if (flags['--json']) {
       emit({ verb, ...result, ok: result.ok });
     } else {
@@ -112,6 +132,7 @@ async function main() {
     }
     return finishAndExit(code);
   } catch (err) {
+    record(verb, parsed, { error: err }, err instanceof ArgvError ? 2 : 1, startedMs);
     if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); return finishAndExit(2); }
     if (err instanceof GitUnavailableError) { process.stderr.write(`fleet: ${err.message}\n`); return finishAndExit(1); }
     if (err instanceof ConfigError) { process.stderr.write(`fleet: ${err.message}\n`); return finishAndExit(1); }
