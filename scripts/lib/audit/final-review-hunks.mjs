@@ -77,7 +77,12 @@ export function resolveFinalReviewHunks({
     // A failed diff is an EMPTY supplied diff: evidence stays expected and every changed file is wholly changed.
     diffMap: diffMap ?? new Map(), changed, coverageChanged: null, readText,
     ...(hashFile ? { hashFile } : {}),
-    warn: (line) => { if (![...changed].some((p) => isUntracked(p) && line.includes(p.replace(/\\/g, '/')))) warn(line); },
+    // Exact path + reason, never a substring of the human line (code audit R2): only the missing-diff-section fallback
+    // of a file KNOWN untracked is expected; a stale or unhashable tracked file is always reported.
+    warn: (line, meta) => {
+      const expected = meta && isUntracked(meta.path) && (meta.code === 'absent-from-diff' || meta.code === 'no-usable-diff');
+      if (!expected) warn(line);
+    },
   });
   return {
     evidence: map.evidence,

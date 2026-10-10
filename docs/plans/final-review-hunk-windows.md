@@ -382,3 +382,17 @@ One cluster, in this order:
   - M: `unreadChangedLines` takes `lineCount`, not text.
   - L: `changedLinesTotal` covers known totals only, plus `changedLinesTotalUnknownFiles`.
 - **Stop decision**: GPT R2 READY_TO_IMPLEMENT (H0 M0 L0, R1 acceptance 100%); Gemini capped at 2. Status → Ready.
+
+## Implementation notes (code audit)
+
+- **R1** (GPT, `--scope diff --base 5df1ade5`): H:0 M:4 L:0. Coverage `complete`. Not converged: `finding-thresholds`.
+  - M1 (snapshot): **fixed** with the existing oracle rather than a new snapshot mechanism. `readChangeDiff`
+    (`change-record.mjs`) is now the only home of the git diff flags, and `readChangeHunks` is its projection. D1's
+    map is built from the parsed diff, so `buildHunkMap` trusts a file's hunks only when the diff's post-image blob
+    id matches the file's current `git hash-object`. That check runs lazily, as the reader reaches the file. An edit
+    between the diff and the render demotes the file to wholly changed.
+  - M2 (unbounded fallback reads): **fixed**. Both local line-count readers go through `safeReadFile`
+    (repo-contained, realpath-checked, never sensitive).
+  - M3 (weak assertion): **fixed**. The test now checks exact totals derived from the recorded ranges.
+  - M4: **dismissed**. The adjacency wave reported its own enumeration bound. This is a census row, not a code
+    defect.

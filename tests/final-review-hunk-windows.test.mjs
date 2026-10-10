@@ -290,6 +290,25 @@ describe('resolveFinalReviewHunks — the transcript base rebuilds the working-t
     assert.match(lines.join(''), /does not describe the current file \(stale\)/);
   });
 
+  test('only the untracked file’s own fallback is quiet: a stale tracked file whose path CONTAINS it still warns (code audit R2)', (t) => {
+    const dir = inTempDir(t, { 'src/new.js': moduleText(50) });
+    gitInit(dir);
+    commitAll(dir, 'base');
+    const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8', env: gitFixtureEnv() }).trim();
+    fs.writeFileSync(path.join(dir, 'src/new.js'), withNeedle(moduleText(50), 20, 'E1'));
+    fs.writeFileSync(path.join(dir, 'new.js'), 'a\n');   // untracked; its path is a substring of the tracked one
+    const warned = [];
+    const r = resolveFinalReviewHunks({
+      transcript: { rounds: [{ _diffBase: base }] }, changedFiles: ['src/new.js', 'new.js'],
+      run: gitRun(dir), hashFile: gitHash(dir), warn: (l) => warned.push(l),
+    });
+    fs.writeFileSync(path.join(dir, 'src/new.js'), withNeedle(moduleText(50), 30, 'E2'));   // now stale
+    assert.deepEqual(r.hunksFor('src/new.js'), [{ startLine: 1, lineCount: 51 }]);
+    assert.deepEqual(r.hunksFor('new.js'), [{ startLine: 1, lineCount: 2 }]);
+    assert.equal(warned.length, 1, warned.join(''));
+    assert.match(warned[0], /src\/new\.js: the supplied --diff does not describe the current file \(stale\)/);
+  });
+
   test('a changed path outside the checkout is never opened (code audit R1-M2)', (t) => {
     const { dir, base } = baseRepo(t);
     const outside = path.join(path.dirname(dir), `outside-${process.pid}.js`);
