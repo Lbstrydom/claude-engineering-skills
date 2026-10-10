@@ -175,4 +175,24 @@ describe('fleet-telemetry stats --fail-on (the weekly review gate)', () => {
     assert.equal((await run(['stats', '--fail-on', 'urgent'])).envelope.error.code, 'BAD_INPUT');
     assert.equal((await run(['stats', '--fail-on', 'high', '--format', 'worksheet'])).envelope.error.code, 'BAD_INPUT');
   });
+
+  test('an inherited property name is not a severity (R1-M1)', async () => {
+    for (const name of ['toString', 'constructor', '__proto__']) {
+      assert.equal((await run(['stats', '--fail-on', name])).envelope.error.code, 'BAD_INPUT', name);
+    }
+  });
+
+  test('an unreadable store FAILS the gate as not-measured — never passes as "no weaknesses" (R1-M4)', async () => {
+    const fault = await run(['stats', '--fail-on', 'high'], { readFleetTelemetry: async () => ({ error: 'relation missing', schemaFault: true }) });
+    assert.equal(fault.exitCode, 1);
+    assert.equal(fault.envelope.ok, false);
+    assert.equal(fault.envelope.reason, 'not-measured');
+    const unresolved = await run(['stats', '--fail-on', 'low'], { resolveRepoForStoreResult: async () => ({ kind: 'unresolved' }) });
+    assert.equal(unresolved.envelope.ok, false);
+    assert.equal(unresolved.envelope.reason, 'not-measured');
+  });
+
+  test('the summary line is present with or without --fail-on (R1-M15)', async () => {
+    assert.match((await run(['stats'])).envelope.summary, /^fleet telemetry /);
+  });
 });

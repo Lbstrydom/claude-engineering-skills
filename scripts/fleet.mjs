@@ -83,7 +83,7 @@ async function main() {
     process.stdout.write(USAGE);
     return finishAndExit(verb ? 0 : 2);
   }
-  if (!VERBS[verb]) {
+  if (!Object.hasOwn(VERBS, verb)) { // own keys only: `toString` is not a verb
     process.stderr.write(`fleet: unknown verb ${JSON.stringify(verb)}\n${USAGE}`);
     return finishAndExit(2);
   }

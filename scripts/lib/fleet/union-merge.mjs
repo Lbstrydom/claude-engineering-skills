@@ -138,7 +138,9 @@ export function resolveAppendOnly({ dir, git, globs }) {
     }
     for (const { p, from } of results) {
       try { fs.copyFileSync(from, path.join(dir, p)); } catch (e) { return { ok: false, reason: `cannot write ${p}: ${e.message} — abandon this worktree` }; }
-      const a = git(['add', '--', p]);
+      // :(literal) — a file NAME, never a pattern: `--` stops option parsing but not glob or
+      // pathspec magic, so a conflicted file called `*.md` would stage every markdown file.
+      const a = git(['add', '--', `:(literal)${p}`]);
       if (!a.ok) return { ok: false, reason: `cannot stage ${p}: ${a.reason} — abandon this worktree` };
     }
     return { ok: true, resolved: results.map((r) => r.p) };

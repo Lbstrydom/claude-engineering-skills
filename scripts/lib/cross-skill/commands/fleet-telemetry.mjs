@@ -138,7 +138,7 @@ export async function fleetTelemetryCmd(ctx) {
   const format = ctx.flag('format') ?? 'json';
   if (!FORMATS.has(format)) throw new CommandError('BAD_INPUT', `--format must be one of json, worksheet (got ${format})`);
   const failOn = ctx.flag('fail-on');
-  if (failOn != null && !(failOn in SEVERITY_RANK)) throw new CommandError('BAD_INPUT', `--fail-on must be one of high, medium, low (got ${failOn})`);
+  if (failOn != null && !Object.hasOwn(SEVERITY_RANK, failOn)) throw new CommandError('BAD_INPUT', `--fail-on must be one of high, medium, low (got ${failOn})`);
   if (failOn != null && format !== 'json') throw new CommandError('BAD_INPUT', '--fail-on reports through the JSON envelope; drop --format worksheet');
   const days = parseDays(ctx.flag('days'));
   const spool = localSpool();
@@ -161,9 +161,12 @@ export async function fleetTelemetryCmd(ctx) {
     process.stdout.write(`${renderWorksheet(result)}\n`);
     return undefined;
   }
+  result.summary = summaryLine(result);
   if (failOn != null) {
+    // A review gate passes only on a MEASUREMENT: an unreadable store (schema fault, unresolved repo)
+    // must not read as "no weaknesses". Thin data (`insufficient`) was measured and passes.
+    if (result.cloud && result.state === 'unavailable') return { ...result, ok: false, reason: 'not-measured', failOn };
     const over = result.weaknesses.filter((w) => SEVERITY_RANK[w.severity] <= SEVERITY_RANK[failOn]);
-    result.summary = summaryLine(result);
     if (over.length) return { ...result, ok: false, reason: 'weaknesses-at-or-above-threshold', failOn, over: over.length };
   }
   return result;

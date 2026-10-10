@@ -100,6 +100,19 @@ describe('resolveAppendOnly on a real conflict', () => {
     assert.match(r.reason, /src\/a\.js \(not in appendOnlyGlobs\)/);
     assert.equal(fs.readFileSync(path.join(repo, 'docs/log.md'), 'utf8'), before, 'the eligible file was not resolved either');
   });
+  it('a conflicted file NAME is staged literally — `log[1].md` never stages `log1.md` (R1-H3)', () => {
+    const { repo } = makeFleetRepo({ files: { 'docs/log[1].md': '# log\n- base\n', 'docs/log1.md': 'untouched\n' } });
+    git(['checkout', '-q', '-b', 'one'], repo); commitFile(repo, 'docs/log[1].md', '# log\n- base\n- one\n');
+    git(['checkout', '-q', '-b', 'two', 'main'], repo); commitFile(repo, 'docs/log[1].md', '# log\n- base\n- two\n');
+    assert.throws(() => git(['cherry-pick', 'one'], repo));
+    // An unrelated, unstaged edit whose name the bracket expression matches as a glob.
+    fs.writeFileSync(path.join(repo, 'docs/log1.md'), 'edited, not for this commit\n');
+    const r = resolveAppendOnly({ dir: repo, git: g(repo), globs: ['docs/**'] });
+    assert.deepEqual(r, { ok: true, resolved: ['docs/log[1].md'] });
+    const staged = git(['diff', '--cached', '--name-only'], repo).split('\n').filter(Boolean);
+    assert.ok(staged.includes('docs/log[1].md'), 'the conflicted file is staged');
+    assert.ok(!staged.includes('docs/log1.md'), 'the glob-matching neighbour is not');
+  });
 });
 
 describe('trains: direct modes resolve and disclose; pr mode stops with the remedy', () => {

@@ -34,6 +34,25 @@ describe('ghBatch', () => {
     assert.deepEqual(r.map((x) => x.error?.code), ['ENOENT', 'ENOENT']);
   });
 
+  test('a SYNCHRONOUS spawn failure is the job\'s own error, not a crashed worker (R1-H4)', () => {
+    // spawn('') throws before any timer exists; the job must settle with the spawn error rather than
+    // take the whole worker down (which would turn every job into EBATCH).
+    const r = ghBatch(process.cwd(), [['pr', 'list'], ['pr', 'list']], { ghBin: '', timeoutMs: 2000 });
+    assert.equal(r.length, 2);
+    for (const x of r) {
+      assert.ok(x.error, 'each job reports an error');
+      assert.notEqual(x.error.code, 'EBATCH', `the worker survived: ${x.error.message}`);
+    }
+  });
+
+  test('a timed-out child is gone when its job settles, even one that ignores SIGTERM (R1-H5)', () => {
+    const r = ghBatch(process.cwd(), [js('process.on("SIGTERM", () => {}); process.stdout.write(String(process.pid)); setInterval(() => {}, 1000)')], { ghBin: node, timeoutMs: 800 });
+    assert.equal(r[0].error?.code, 'ETIMEDOUT');
+    const pid = Number(r[0].stdout);
+    assert.ok(pid > 0, 'the child reported its pid before timing out');
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' }, 'no gh process outlives its resolved job');
+  });
+
   test('the jobs really run concurrently', () => {
     const t0 = Date.now();
     ghBatch(process.cwd(), [0, 1, 2].map(() => js('setTimeout(() => {}, 900)')), { ghBin: node, timeoutMs: 10_000 });

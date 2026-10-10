@@ -20,6 +20,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertKnownFlags } from '../cli-io.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 
@@ -52,9 +53,20 @@ async function worker() {
   let raw = '';
   for await (const chunk of process.stdin) raw += chunk;
   const { ghBin, jobs, timeoutMs } = JSON.parse(raw);
+  // A job settles exactly once, and a timed-out child is OWNED until it exits: SIGTERM, then SIGKILL
+  // after KILL_GRACE_MS, and the job resolves on 'close' (or after a final bound if the OS never
+  // reports it) — never leaving a gh process running behind a resolved promise.
+  const KILL_GRACE_MS = 2000;
   const one = (args) => new Promise((resolve) => {
-    let stdout = ''; let stderr = ''; let settled = false;
-    const done = (r) => { if (!settled) { settled = true; clearTimeout(timer); resolve(r); } };
+    let stdout = ''; let stderr = ''; let settled = false; let timedOut = false;
+    let timer = null; let killTimer = null; let lastResort = null;
+    const done = (r) => {
+      if (settled) return;
+      settled = true;
+      for (const t of [timer, killTimer, lastResort]) if (t) clearTimeout(t);
+      resolve(r);
+    };
+    const timeoutResult = () => ({ status: null, stdout, stderr, error: { code: 'ETIMEDOUT', message: `timed out after ${timeoutMs}ms` } });
     let child;
     try {
       child = spawn(ghBin, args, { cwd: process.cwd(), env: process.env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
@@ -62,14 +74,16 @@ async function worker() {
       done({ status: null, stdout: '', stderr: '', error: { code: err.code ?? 'ESPAWN', message: err.message } });
       return;
     }
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
+      timedOut = true;
       try { child.kill(); } catch { /* already gone */ }
-      done({ status: null, stdout, stderr, error: { code: 'ETIMEDOUT', message: `timed out after ${timeoutMs}ms` } });
+      killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* gone */ } }, KILL_GRACE_MS);
+      lastResort = setTimeout(() => done(timeoutResult()), 2 * KILL_GRACE_MS);
     }, timeoutMs);
     child.stdout.setEncoding('utf8').on('data', (d) => { stdout += d; });
     child.stderr.setEncoding('utf8').on('data', (d) => { stderr += d; });
     child.on('error', (err) => done({ status: null, stdout, stderr, error: { code: err.code ?? 'ESPAWN', message: err.message } }));
-    child.on('close', (status) => done({ status, stdout, stderr }));
+    child.on('close', (status) => done(timedOut ? timeoutResult() : { status, stdout, stderr }));
   });
   const results = await Promise.all(jobs.map(one));
   process.stdout.write(JSON.stringify(results));
@@ -77,4 +91,7 @@ async function worker() {
 
 // Worker entry: only when THIS file is the script being run, with the worker flag.
 const canon = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
-if (process.argv.includes('--gh-batch-worker') && process.argv[1] && canon(process.argv[1]) === canon(SELF)) await worker();
+if (process.argv.includes('--gh-batch-worker') && process.argv[1] && canon(process.argv[1]) === canon(SELF)) {
+  assertKnownFlags(process.argv, ['--gh-batch-worker'], { cli: 'gh-batch worker' });
+  await worker();
+}

@@ -94,6 +94,39 @@ describe('fleet prune', () => {
     assert.match(r.stdout, /done — landed/);
   });
 
+  test('the remote delete is offered only when the remote tip is covered by the proven local tip (R1-H1)', () => {
+    const fx = makeFleetRepo();
+    const fake = installFakeGh(fx.root);
+    const env = scrubbedEnv({ FLEET_TELEMETRY: 'off', ...fake.env }, { prependPath: [fake.bin] });
+    const { repo } = fx;
+    const tip = (ref) => git(['rev-parse', ref], repo);
+    // same: origin/<b> IS the landed tip
+    addBranch(repo, 'same', { 'a.txt': 'A1\n' });
+    squashInto(repo, 'same', 'same (#1)');
+    git(['update-ref', 'refs/remotes/origin/same', tip('same')], repo);
+    // behind: origin/<b> is an ancestor of the landed tip (pushed, then one more local commit)
+    addBranch(repo, 'behind', { 'b.txt': 'B1\n' });
+    const pushed = tip('behind');
+    git(['switch', '-q', 'behind'], repo); commitFile(repo, 'b.txt', 'B2\n', 'more'); git(['switch', '-q', 'main'], repo);
+    squashInto(repo, 'behind', 'behind (#2)');
+    git(['update-ref', 'refs/remotes/origin/behind', pushed], repo);
+    // moved-on: origin/<b> carries a commit the landed tip does not (pushed from elsewhere after landing)
+    addBranch(repo, 'moved-on', { 'c.txt': 'C1\n' });
+    squashInto(repo, 'moved-on', 'moved-on (#3)');
+    git(['switch', '-q', '-c', 'scratch', 'moved-on'], repo); commitFile(repo, 'c.txt', 'C2 — only on the remote\n', 'remote-only');
+    git(['update-ref', 'refs/remotes/origin/moved-on', tip('scratch')], repo);
+    git(['switch', '-q', 'main'], repo); git(['branch', '-q', '-D', 'scratch'], repo);
+
+    const r = runFleet(['prune', '--json'], { cwd: repo, env });
+    assert.equal(r.status, 0, r.stderr);
+    const by = Object.fromEntries(r.json.prune.candidates.map((c) => [c.branch, c]));
+    assert.match(by.same.remote, /git push origin --delete same/);
+    assert.match(by.behind.remote, /git push origin --delete behind/);
+    assert.equal(by['moved-on'].remote, null, 'the remote holds a commit nothing proved landed');
+    assert.match(by['moved-on'].remoteNote, /not covered by the landed tip/);
+    assert.match(by['moved-on'].commands.join('\n'), /git branch -D moved-on/, 'the LOCAL branch is still removable');
+  });
+
   test('without a readable PR list, nothing is judged removable', () => {
     const fx = makeFleetRepo();
     addBranch(fx.repo, 'done', { 'a.txt': 'A1\n' });

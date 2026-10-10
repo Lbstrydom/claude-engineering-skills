@@ -32,7 +32,7 @@ import path from 'node:path';
 import { gatherFacts, buildStatusFrom } from './facts.mjs';
 import { hideReason, idleMsFrom } from './overlap.mjs';
 import { archiveReport } from './lifecycle.mjs';
-import { headOf, listWorktrees, repoToplevel } from './git-facts.mjs';
+import { headOf, isAncestor, listWorktrees, repoToplevel } from './git-facts.mjs';
 import { renderCommand } from './shell-quote.mjs';
 import { ok } from './commands.mjs';
 
@@ -100,10 +100,19 @@ export function planPrune(ctx, { facts = null, report = archiveReport } = {}) {
     }
     // -d is git's own merged check (works for ahead 0); a squash-landed tip needs -D, justified above.
     commands.push(renderCommand(['git', 'branch', reason === 'merged' ? '-d' : '-D', item.branch]));
+    // The REMOTE branch is a separate decision: the evidence covers the LOCAL tip only. Suggest deleting
+    // the remote branch only when its tip IS that tip or an ancestor of it (its commits are a subset of
+    // what landed); a remote that moved on, or diverged, is named and left alone.
     const remote = headOf(ctx.cwd, `refs/remotes/origin/${item.branch}`);
+    let remoteCmd = null; let remoteNote = null;
+    if (remote.ok) {
+      const covered = remote.oid === item.oid || (item.oid && isAncestor(ctx.cwd, remote.oid, item.oid).value === true);
+      if (covered) remoteCmd = renderCommand(['git', 'push', 'origin', '--delete', item.branch]);
+      else remoteNote = `origin/${item.branch} is at ${remote.oid.slice(0, 12)}, not covered by the landed tip — left alone`;
+    }
     candidates.push({
       branch: item.branch, reason, via, worktree: item.worktree ?? null, oid: item.oid ?? null,
-      commands, remote: remote.ok ? renderCommand(['git', 'push', 'origin', '--delete', item.branch]) : null,
+      commands, remote: remoteCmd, ...(remoteNote ? { remoteNote } : {}),
     });
   }
   return { candidates, excluded, notJudged };
@@ -117,6 +126,7 @@ export function renderPrune(p) {
     lines.push('', `${c.branch} — ${c.via}${c.worktree ? ` · worktree ${c.worktree}` : ''}`);
     for (const cmd of c.commands) lines.push(`    ${cmd}`);
     if (c.remote) lines.push(`    ${c.remote}    # optional: the remote branch too`);
+    if (c.remoteNote) lines.push(`    # ${c.remoteNote}`);
   }
   if (p.excluded.length) {
     lines.push('', `kept (${p.excluded.length}) — look before removing:`);
