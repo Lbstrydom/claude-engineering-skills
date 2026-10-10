@@ -313,7 +313,7 @@ describe('resolveFinalReviewHunks — the transcript base rebuilds the working-t
     const { dir, base } = baseRepo(t);
     const outside = path.join(path.dirname(dir), `outside-${process.pid}.js`);
     fs.writeFileSync(outside, 'secret\n');
-    t.after(() => fs.rmSync(outside, { force: true }));
+    t.after(() => fs.rmSync(outside, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
     const rel = path.relative(dir, outside);
     const r = resolveFinalReviewHunks({ transcript: { rounds: [{ _diffBase: base }] }, changedFiles: [rel], run: gitRun(dir), hashFile: gitHash(dir), warn: () => {} });
     assert.equal(r.hunksFor(rel), null, 'no line count read from outside the repo');
