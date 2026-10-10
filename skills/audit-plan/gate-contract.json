@@ -104,6 +104,10 @@
     {
       "line": "to a third round, and never for rigor pressure or implementation detail. Record the stop decision (round count +",
       "reason": "Post-cap escalation policy (fix a design defect, then escalate to the user; never a third round): a judgement routed to the human, backed mechanically only by the round-3 refusal in scripts/lib/final-review/round-gate.mjs."
+    },
+    {
+      "line": "Run the final reviewer — the newest Gemini Pro by default (`latest-pro`, resolved at runtime; override with `FINAL_REVIEW_MODEL`) as the final gate. Falls back to Claude Opus when",
+      "reason": "Describes which model the final reviewer runs and how to change it (the latest-pro default, the FINAL_REVIEW_MODEL override, the Opus fallback) - configuration, not an enforcement claim. Reworded 2026-10-10 from the stale \"Run Gemini 3.1 Pro as the final gate\"; the word override names an env var, not a bypass. The model default itself is pinned by tests/final-review-env-alias.test.mjs; the gate being MANDATORY is dispositioned separately."
     }
   ]
 }

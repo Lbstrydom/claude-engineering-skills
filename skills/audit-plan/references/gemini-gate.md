@@ -15,7 +15,7 @@ summary: Step 7 Gemini independent review protocol — transcript, verdict handl
 > to the canonical by design.
 
 After the final GPT audit round (whether converged or not), run
-Gemini 3.1 Pro as an independent third reviewer. This step is MANDATORY —
+the final reviewer — the newest Gemini Pro by default (`latest-pro`, resolved at runtime; override with `FINAL_REVIEW_MODEL`) as an independent third reviewer. This step is MANDATORY —
 Gemini provides cross-model perspective that catches blind spots in the
 Claude-GPT deliberation.
 
