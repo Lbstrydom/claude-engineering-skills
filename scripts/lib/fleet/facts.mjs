@@ -13,7 +13,7 @@
  * @module scripts/lib/fleet/facts
  */
 import {
-  listWorktrees, listBranches, changedFiles, patchId, baseFreshness, headOf, runGit, resolveMeasurementBase,
+  listWorktrees, listBranches, changedFiles, patchId, baseFreshness, headOf, runGit, resolveMeasurementBase, mergeBase, cacheDirFor,
 } from './git-facts.mjs';
 import { listPullRequests, prLocalRef } from './gh-facts.mjs';
 import { ConfigError } from './config.mjs';
@@ -23,6 +23,7 @@ import {
 } from './overlap.mjs';
 import { buildCheckPayload, resultsToFindings, runChecks } from './checks.mjs';
 import { CLEAN_PROBE, probeWorktrees, uncommittedPaths, worktreeStatus } from './worktree-status.mjs';
+import { VALID, memoPure } from './oid-cache.mjs';
 import { SQUASH_DEPTH, gitAdapters, listMergedPullRequests, mergedEvidenceFor, squashPatchIds } from './merged-facts.mjs';
 
 /**
@@ -326,9 +327,13 @@ export function gatherMerged({ cwd, base, baseRev, names, branches, patchIds, en
     // A squash window shorter than base's history still COVERS this branch when its fork point is inside it.
     let covers = squash.complete;
     if (squash.queried && !squash.complete && tip) {
-      const mb = runGit(['merge-base', baseRev, tip], cwd);
-      const n2 = mb.ok ? runGit(['rev-list', '--count', '--first-parent', `${mb.stdout.trim()}..${baseRev}`], cwd) : null;
-      covers = Boolean(n2?.ok) && Number.parseInt(n2.stdout.trim(), 10) <= SQUASH_DEPTH;
+      const mb = mergeBase(cwd, baseRev, tip);
+      const n2 = mb.ok ? memoPure({ commonDir: cacheDirFor(cwd), op: 'fp-count', oids: [mb.oid, baseRev], valid: VALID.count, compute: () => {
+        const g = runGit(['rev-list', '--count', '--first-parent', `${mb.oid}..${baseRev}`], cwd);
+        const v = g.ok ? Number.parseInt(g.stdout.trim(), 10) : NaN;
+        return Number.isInteger(v) ? { ok: true, value: v } : { ok: false };
+      } }) : null;
+      covers = Boolean(n2?.ok) && n2.value <= SQUASH_DEPTH;
     }
     evidence[n] = mergedEvidenceFor({ branch: n, tipOid: tip, patchId: pid, mergedPrs: prs, squash: { ...squash, coversFork: covers }, ...adapters });
   }

@@ -7,7 +7,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { getGitLocalEnvVarNames, sanitizeGitEnv, GIT_LOCAL_ENV_VARS } from '../scripts/lib/git-env-sanitize.mjs';
+import { getGitLocalEnvVarNames, sanitizeGitEnv, GIT_LOCAL_ENV_VARS, _resetGitLocalEnvVarCache } from '../scripts/lib/git-env-sanitize.mjs';
+
+const NOWHERE = 'C:\\this\\path\\does\\not\\exist\\at\\all';
 
 describe('getGitLocalEnvVarNames', () => {
   it('is a superset of the live git rev-parse --local-env-vars result (union with the static baseline)', () => {
@@ -45,9 +47,28 @@ describe('getGitLocalEnvVarNames', () => {
   });
 
   it('falls back to the static baseline (never []) when git discovery fails — the round-3 audit fix', () => {
+    _resetGitLocalEnvVarCache(); // a successful discovery earlier in this process would otherwise be reused
     const names = getGitLocalEnvVarNames('C:\\this\\path\\does\\not\\exist\\at\\all');
     assert.deepEqual(new Set(names), new Set(GIT_LOCAL_ENV_VARS));
     assert.ok(names.length > 0, 'a discovery failure must never silently strip nothing');
+  });
+
+  it('memoises a successful discovery (one git call per process, not per sanitise) but never a failure', () => {
+    _resetGitLocalEnvVarCache();
+    let calls = 0;
+    const failing = () => { calls += 1; throw new Error('git not runnable here'); };
+    assert.deepEqual(new Set(getGitLocalEnvVarNames(NOWHERE, { exec: failing })), new Set(GIT_LOCAL_ENV_VARS), 'a failure returns the baseline');
+    getGitLocalEnvVarNames(NOWHERE, { exec: failing });
+    assert.equal(calls, 2, 'a failure is not cached: the next call tries again');
+    const ok = () => { calls += 1; return 'GIT_DIR\nGIT_FUTURE_VAR\n'; };
+    const first = getGitLocalEnvVarNames(process.cwd(), { exec: ok });
+    assert.ok(first.includes('GIT_FUTURE_VAR'), 'the discovered list is used');
+    const second = getGitLocalEnvVarNames(NOWHERE, { exec: ok });
+    assert.equal(calls, 3, 'one discovery per process, whatever the cwd');
+    assert.deepEqual(second, first);
+    second.push('MUTATED');
+    assert.ok(!getGitLocalEnvVarNames(process.cwd(), { exec: ok }).includes('MUTATED'), 'callers get a copy');
+    _resetGitLocalEnvVarCache(); // leave no fake discovery behind for later tests
   });
 
   it('never throws — a git failure degrades to the baseline, not a crash', () => {
