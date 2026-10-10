@@ -169,23 +169,35 @@ describe('R1 fixes', () => {
   it('H4: a hook that exits near its deadline is not reported "timed out" while cleanup waits', { skip: !IS_WIN && 'win32: on Linux the stdio-ends scan always finds such a holder' }, async () => {
     // The helper is started through an intermediate that exits at once (a double fork). The win32 reaper walks
     // ParentProcessId through LIVE processes only, so it cannot reach the helper (a documented limit), the helper
-    // keeps the hook's pipes, and the supervisor waits out its 1 s finish delay — which spans the 3 s deadline.
-    // Pre-fix the deadline then fired on a hook that had already exited; measured with the fix reverted.
+    // keeps the hook's pipes, and the supervisor's cleanup (reap + 1 s finish delay, ~2.5 s measured) spans the
+    // deadline. Pre-fix the deadline then fired on a hook that had already exited; measured with the fix reverted.
+    // Load-robust timing: the hook starts the helper FIRST (node start-ups are what load stretches), then exits at
+    // a fixed point MARGIN before the EARLIEST possible deadline — the supervisor's clock starts after t0 — and it
+    // reports when it started and exited, so a run where load made it late fails as such, never as the regression.
+    const DEADLINE = 5000, MARGIN = 500;
     const dir = tmpRoot('fleet-near-deadline-');
     const pidFile = path.join(dir, 'pid');
+    const timesFile = path.join(dir, 'times');
     const hook = path.join(dir, 'hook.cjs');
     const helper = 'setTimeout(() => {}, 60000)';
     const intermediate = `const g = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(helper)}], { stdio: ['ignore', 'inherit', 'inherit'], detached: true }); g.unref(); require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(g.pid));`;
     fs.writeFileSync(hook, `
+      const t0 = Number(process.argv[2]);
+      require('node:child_process').spawnSync(process.execPath, ['-e', ${JSON.stringify(intermediate)}], { stdio: ['ignore', 'inherit', 'inherit'] });
       setTimeout(() => {
-        require('node:child_process').spawnSync(process.execPath, ['-e', ${JSON.stringify(intermediate)}], { stdio: ['ignore', 'inherit', 'inherit'] });
+        require('node:fs').writeFileSync(${JSON.stringify(timesFile)}, JSON.stringify({ startedAt: performance.timeOrigin, exitAt: Date.now() }));
         process.stdout.write(${JSON.stringify(FINDINGS)});
-      }, 2300);
+      }, Math.max(0, t0 + ${DEADLINE - MARGIN} - Date.now()));
     `);
-    const r = spawnExec([process.execPath, hook], { cwd: dir, input: '{}', timeoutMs: 3000 });
+    const t0 = Date.now();
+    const r = spawnExec([process.execPath, hook, String(t0)], { cwd: dir, input: '{}', timeoutMs: DEADLINE });
+    const returnedAt = Date.now();
     const pid = await waitFor(pidFile);
     try {
       assert.ok(pid > 0, 'the helper really started');
+      const { startedAt, exitAt } = JSON.parse(fs.readFileSync(timesFile, 'utf8'));
+      assert.ok(exitAt < t0 + DEADLINE, `precondition: the hook exits before the deadline — under load it was ${exitAt - t0 - DEADLINE}ms late; not the regression`);
+      assert.ok(returnedAt > startedAt + DEADLINE, `precondition: cleanup outlasts the LATEST possible deadline, else this run proves nothing (returned ${returnedAt - startedAt - DEADLINE}ms after it)`);
       assert.equal(r.error, undefined, `got ${r.error?.code} — the hook had already exited`);
       assert.equal(r.status, 0);
       assert.equal(r.stdout, FINDINGS);
