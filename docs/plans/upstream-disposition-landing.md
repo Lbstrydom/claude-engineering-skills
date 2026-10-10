@@ -1,7 +1,7 @@
 # Plan: An upstream closure must not silently block every push
 
 - **Date**: 2026-10-10
-- **Status**: Approved — /audit-plan 2 GPT rounds + Gemini gate APPROVE (round 2)
+- **Status**: In Progress — implemented and code-audited (converged R2, Gemini APPROVE); PR open, awaiting merge
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI + pre-push gate; no UI)
 
@@ -232,3 +232,20 @@ cloudlessly by `upstream:coverage:gate`.
   diagnostics must be the error message, not a render the throw skips. G2:
   `presentUpstream` is the existing `missingCause` read, used for wording only.
 - **Gemini gate R2**: APPROVE, 0 new.
+- **/audit-code R1** (GPT, 5 passes + waves, coverage complete): H:5 M:5. Accepted
+  7, at 70% acceptance. H2/H4/H5 were one concern: both ledger writers degraded a
+  malformed ledger to `[]` and overwrote it, and they now refuse with
+  `LEDGER_MALFORMED`. M1: a thrown transition is now folded into
+  `storeTransitioned:false`. M2: mismatch records replace parallel arrays. M3:
+  remedies no longer re-close terminal rows. M4: fixtures commit the pushed change.
+  H1 (head = working tree) and H3 (non-atomic two-store write) were deliberated,
+  and GPT overruled its own findings. M5 was the adjacency wave's own enumeration
+  bound (`maxContainers=20`), recorded as tool coverage, not a defect.
+- **/audit-code R2**: PASS, H:0 M:0 L:0, `_coverage` complete,
+  `_convergence.converged: true`.
+- **Gemini code gate R1**: APPROVE, 0 new, 0 wrongly-dismissed, 0
+  over-engineering flags.
+- **Negative controls**: the dispatcher "pre-existing closure does not block" test,
+  plus 4 more, failed on the unmodified gate. The landing and envelope tests failed
+  on the unmodified `commands.mjs`. Each R1 guard (strict write path, thrown
+  transition) was reverted alone, went red naming its defect, then was restored green.

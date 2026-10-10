@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**6 active · 239 terminal · 32 audit summaries · 1 parked · 5 reference docs**
+**7 active · 239 terminal · 32 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -27,6 +27,7 @@ This is the list to read when asking "what is in flight?".
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Reduce `skills/ship/SKILL.md`'s size via progressive disclosure](./ship-skill-size-reduction.md) | `Approved` | GPT: 3 rounds, 4→1→0 findings, 100% acceptance both rounds with findings; Gemini: 1 round, APPROVE — no… |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
+| [An upstream closure must not silently block every push](./upstream-disposition-landing.md) | `In Progress` | implemented and code-audited (converged R2, Gemini APPROVE); PR open, awaiting merge |
 
 ## Parked
 
