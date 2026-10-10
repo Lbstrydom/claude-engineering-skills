@@ -6,6 +6,10 @@
 **Verdict: switch to `gemini-3.8-flash`, on cost and gate-authority grounds, with
 quality equivalence explicitly UNMEASURED and recorded as such.**
 
+> **Superseded for the final-review role on 2026-10-10 — see [§9](#9-reversal--2026-10-10-the-final-reviewer-runs-the-best-available-gemini).**
+> The committed default is `latest-pro` again (owner decision: best available Gemini,
+> resolved at runtime). §1–§8 are kept as the record of the cost analysis.
+
 That is a weaker claim than it sounds, and the reasoning matters more than the
 decision — because the decision is worth $27/month and the reasoning is what
 stops the seventh dead instrument.

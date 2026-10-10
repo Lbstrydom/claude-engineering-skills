@@ -11,10 +11,22 @@
 
 import { readEnvWithAlias } from './env-alias.mjs';
 
-/** Parse an int, falling back rather than yielding NaN. */
-function safeInt(value, fallback) {
-  const n = Number.parseInt(value ?? '', 10);
-  return Number.isFinite(n) ? n : fallback;
+/**
+ * The largest per-attempt timeout accepted. The watchdog floor is `2 x timeout + 60000` and
+ * Node's setTimeout caps at 2^31-1 ms; anything above this would overflow into an immediate fire.
+ */
+export const MAX_FINAL_REVIEW_TIMEOUT_MS = 1_000_000_000;
+
+/**
+ * A positive whole number of milliseconds, written as plain digits, within the cap — else the
+ * fallback. `parseInt` alone accepted `-1`, `0`, read `1.5` as 1 and `1e5` as 1 (audit R1-H1/M1):
+ * a timeout of 1 ms fails every review instantly, which reads as a provider outage.
+ */
+function positiveMsOr(value, fallback) {
+  const s = String(value ?? '').trim();
+  if (!/^\d+$/.test(s)) return fallback;
+  const n = Number(s);
+  return Number.isSafeInteger(n) && n > 0 && n <= MAX_FINAL_REVIEW_TIMEOUT_MS ? n : fallback;
 }
 
 /**
@@ -36,18 +48,18 @@ function safeInt(value, fallback) {
  * arm), so naming its model after one vendor is legacy. `GEMINI_REVIEW_MODEL`
  * stays a working alias; nothing needs renaming to keep working.
  */
-export function finalReviewModelSpec(env = process.env) {
+export function finalReviewModelSpec(env = process.env, { write } = {}) {
   return readEnvWithAlias({
     canonical: 'FINAL_REVIEW_MODEL', alias: 'GEMINI_REVIEW_MODEL',
-    subsystem: 'final-review', env,
+    subsystem: 'final-review', env, write,
   }) || 'latest-pro';
 }
 
 /** The final reviewer's per-attempt timeout. Same canonical/alias pair. */
-export function finalReviewTimeoutMs(env = process.env) {
-  return safeInt(readEnvWithAlias({
+export function finalReviewTimeoutMs(env = process.env, { write } = {}) {
+  return positiveMsOr(readEnvWithAlias({
     canonical: 'FINAL_REVIEW_TIMEOUT_MS', alias: 'GEMINI_REVIEW_TIMEOUT_MS',
-    subsystem: 'final-review', env,
+    subsystem: 'final-review', env, write,
   }), 270000);
 }
 

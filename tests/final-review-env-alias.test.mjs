@@ -23,7 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { finalReviewModelSpec, finalReviewTimeoutMs } from '../scripts/lib/final-review-config.mjs';
+import { MAX_FINAL_REVIEW_TIMEOUT_MS, finalReviewModelSpec, finalReviewTimeoutMs } from '../scripts/lib/final-review-config.mjs';
 import { _resetAliasWarnings } from '../scripts/lib/env-alias.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -69,8 +69,22 @@ describe('finalReviewModelSpec — canonical/alias precedence', () => {
     const write = (m) => lines.push(m);
     // Canonical set: the alias did not contribute, so no notice. A warning that
     // fires when the alias was set but unused trains people to ignore it.
-    finalReviewModelSpec({ FINAL_REVIEW_MODEL: 'latest-opus', GEMINI_REVIEW_MODEL: 'latest-pro' });
+    finalReviewModelSpec({ FINAL_REVIEW_MODEL: 'latest-opus', GEMINI_REVIEW_MODEL: 'latest-pro' }, { write });
     assert.equal(lines.length, 0, 'must not warn when the canonical won');
+    // Alias alone contributes: exactly one notice, however many reads (audit R1-M2: the writer
+    // used to be unconnected, so this test could not fail).
+    finalReviewModelSpec({ GEMINI_REVIEW_MODEL: 'latest-pro' }, { write });
+    finalReviewModelSpec({ GEMINI_REVIEW_MODEL: 'latest-pro' }, { write });
+    assert.equal(lines.length, 1, 'one notice per process when the alias contributed');
+    assert.match(lines[0], /GEMINI_REVIEW_MODEL/);
+  });
+
+  it('a timeout is a positive whole number of ms within the cap, else the default (R1-H1/M1)', () => {
+    for (const bad of ['-1', '0', '1.5', '1e5', 'abc', ' ', String(MAX_FINAL_REVIEW_TIMEOUT_MS + 1)]) {
+      assert.equal(finalReviewTimeoutMs({ FINAL_REVIEW_TIMEOUT_MS: bad }), 270000, JSON.stringify(bad));
+    }
+    assert.equal(finalReviewTimeoutMs({ FINAL_REVIEW_TIMEOUT_MS: '300000' }), 300000);
+    assert.equal(finalReviewTimeoutMs({ FINAL_REVIEW_TIMEOUT_MS: String(MAX_FINAL_REVIEW_TIMEOUT_MS) }), MAX_FINAL_REVIEW_TIMEOUT_MS);
   });
 });
 
