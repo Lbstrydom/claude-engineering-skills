@@ -41,13 +41,13 @@ describe('finalReviewModelSpec — canonical/alias precedence', () => {
 
   it('honours the deprecated alias', () => {
     _resetAliasWarnings();
-    assert.equal(finalReviewModelSpec({ GEMINI_REVIEW_MODEL: 'latest-pro' }), 'latest-pro');
+    assert.equal(finalReviewModelSpec({ GEMINI_REVIEW_MODEL: 'latest-flash' }), 'latest-flash');
   });
 
   it('canonical WINS when both are set', () => {
     _resetAliasWarnings();
     assert.equal(
-      finalReviewModelSpec({ FINAL_REVIEW_MODEL: 'latest-opus', GEMINI_REVIEW_MODEL: 'latest-pro' }),
+      finalReviewModelSpec({ FINAL_REVIEW_MODEL: 'latest-opus', GEMINI_REVIEW_MODEL: 'latest-flash' }),
       'latest-opus',
     );
   });
@@ -58,8 +58,8 @@ describe('finalReviewModelSpec — canonical/alias precedence', () => {
     // alias a consumer actually set would be ignored.
     _resetAliasWarnings();
     assert.equal(
-      finalReviewModelSpec({ FINAL_REVIEW_MODEL: '', GEMINI_REVIEW_MODEL: 'latest-pro' }),
-      'latest-pro',
+      finalReviewModelSpec({ FINAL_REVIEW_MODEL: '', GEMINI_REVIEW_MODEL: 'latest-flash' }),
+      'latest-flash',
     );
   });
 
@@ -69,12 +69,12 @@ describe('finalReviewModelSpec — canonical/alias precedence', () => {
     const write = (m) => lines.push(m);
     // Canonical set: the alias did not contribute, so no notice. A warning that
     // fires when the alias was set but unused trains people to ignore it.
-    finalReviewModelSpec({ FINAL_REVIEW_MODEL: 'latest-opus', GEMINI_REVIEW_MODEL: 'latest-pro' }, { write });
+    finalReviewModelSpec({ FINAL_REVIEW_MODEL: 'latest-opus', GEMINI_REVIEW_MODEL: 'latest-flash' }, { write });
     assert.equal(lines.length, 0, 'must not warn when the canonical won');
     // Alias alone contributes: exactly one notice, however many reads (audit R1-M2: the writer
     // used to be unconnected, so this test could not fail).
-    finalReviewModelSpec({ GEMINI_REVIEW_MODEL: 'latest-pro' }, { write });
-    finalReviewModelSpec({ GEMINI_REVIEW_MODEL: 'latest-pro' }, { write });
+    finalReviewModelSpec({ GEMINI_REVIEW_MODEL: 'latest-flash' }, { write });
+    finalReviewModelSpec({ GEMINI_REVIEW_MODEL: 'latest-flash' }, { write });
     assert.equal(lines.length, 1, 'one notice per process when the alias contributed');
     assert.match(lines[0], /GEMINI_REVIEW_MODEL/);
   });
