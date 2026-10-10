@@ -56,10 +56,23 @@ export function finalReviewModelSpec(env = process.env, { write } = {}) {
 }
 
 /** The final reviewer's per-attempt timeout. Same canonical/alias pair. */
-export function finalReviewTimeoutMs(env = process.env, { write } = {}) {
-  return positiveMsOr(readEnvWithAlias({
+export function finalReviewTimeoutMs(env = process.env, { write = (m) => process.stderr.write(m) } = {}) {
+  const raw = readEnvWithAlias({
     canonical: 'FINAL_REVIEW_TIMEOUT_MS', alias: 'GEMINI_REVIEW_TIMEOUT_MS',
     subsystem: 'final-review', env, write,
-  }), 270000);
+  });
+  const ms = positiveMsOr(raw, DEFAULT_TIMEOUT_MS);
+  // A set-but-invalid value is a configuration error: SAY so (once per distinct value per
+  // process) rather than substitute the default silently (audit R2-H1).
+  if (raw !== undefined && ms === DEFAULT_TIMEOUT_MS && String(raw).trim() !== String(DEFAULT_TIMEOUT_MS) && !warnedTimeouts.has(raw)) {
+    warnedTimeouts.add(raw);
+    write(`  [final-review] FINAL_REVIEW_TIMEOUT_MS=${JSON.stringify(raw)} is not a positive whole number of ms <= ${MAX_FINAL_REVIEW_TIMEOUT_MS}; using the default ${DEFAULT_TIMEOUT_MS}\n`);
+  }
+  return ms;
 }
+
+const DEFAULT_TIMEOUT_MS = 270000;
+const warnedTimeouts = new Set();
+/** For tests — reset the invalid-timeout warning latch. */
+export function _resetTimeoutWarnings() { warnedTimeouts.clear(); }
 

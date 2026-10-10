@@ -23,7 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { MAX_FINAL_REVIEW_TIMEOUT_MS, finalReviewModelSpec, finalReviewTimeoutMs } from '../scripts/lib/final-review-config.mjs';
+import { MAX_FINAL_REVIEW_TIMEOUT_MS, _resetTimeoutWarnings, finalReviewModelSpec, finalReviewTimeoutMs } from '../scripts/lib/final-review-config.mjs';
 import { _resetAliasWarnings } from '../scripts/lib/env-alias.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -80,9 +80,19 @@ describe('finalReviewModelSpec — canonical/alias precedence', () => {
   });
 
   it('a timeout is a positive whole number of ms within the cap, else the default (R1-H1/M1)', () => {
-    for (const bad of ['-1', '0', '1.5', '1e5', 'abc', ' ', String(MAX_FINAL_REVIEW_TIMEOUT_MS + 1)]) {
-      assert.equal(finalReviewTimeoutMs({ FINAL_REVIEW_TIMEOUT_MS: bad }), 270000, JSON.stringify(bad));
+    _resetTimeoutWarnings();
+    const lines = [];
+    const write = (m) => lines.push(m);
+    for (const bad of ['-1', '0', '1.5', '1e5', 'abc', String(MAX_FINAL_REVIEW_TIMEOUT_MS + 1)]) {
+      assert.equal(finalReviewTimeoutMs({ FINAL_REVIEW_TIMEOUT_MS: bad }, { write }), 270000, JSON.stringify(bad));
     }
+    // Each invalid value is REPORTED, not silently replaced (audit R2-H1) — once per value.
+    assert.equal(lines.length, 6);
+    assert.match(lines[3], /FINAL_REVIEW_TIMEOUT_MS="1e5" is not a positive whole number/);
+    finalReviewTimeoutMs({ FINAL_REVIEW_TIMEOUT_MS: '1e5' }, { write });
+    assert.equal(lines.length, 6, 'the same bad value warns once per process');
+    finalReviewTimeoutMs({}, { write });
+    assert.equal(lines.length, 6, 'unset is not an error');
     assert.equal(finalReviewTimeoutMs({ FINAL_REVIEW_TIMEOUT_MS: '300000' }), 300000);
     assert.equal(finalReviewTimeoutMs({ FINAL_REVIEW_TIMEOUT_MS: String(MAX_FINAL_REVIEW_TIMEOUT_MS) }), MAX_FINAL_REVIEW_TIMEOUT_MS);
   });
