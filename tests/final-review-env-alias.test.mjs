@@ -30,7 +30,9 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 
 describe('finalReviewModelSpec — canonical/alias precedence', () => {
   it('returns the committed default when neither var is set', () => {
-    assert.equal(finalReviewModelSpec({}), 'latest-flash');
+    // latest-pro: the best available Gemini, resolved at runtime (owner decision 2026-10-10;
+    // experiment-6 §9). A sentinel, never a concrete id.
+    assert.equal(finalReviewModelSpec({}), 'latest-pro');
   });
 
   it('honours the canonical name', () => {

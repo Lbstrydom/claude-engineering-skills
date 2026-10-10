@@ -26,6 +26,11 @@ function safeInt(value, fallback) {
  * and that second copy silently reassigned MODEL back to pro at runtime,
  * undoing the switch and printing it as an `upgraded` notice.
  *
+ * The default is `latest-pro` again since 2026-10-10 (owner decision: the
+ * final reviewer runs the BEST available Gemini, resolved at runtime to
+ * Google's always-newest Pro alias — never a pinned id). Rationale and the
+ * reversal of experiment-6's cost swap: docs/research/experiment-6-*.md §9.
+ *
  * `FINAL_REVIEW_MODEL` is the canonical name -- the role is provider-agnostic
  * (FINAL_REVIEW_PROVIDER, selectProvider(), an Opus fallback, a grok shadow
  * arm), so naming its model after one vendor is legacy. `GEMINI_REVIEW_MODEL`
@@ -35,7 +40,7 @@ export function finalReviewModelSpec(env = process.env) {
   return readEnvWithAlias({
     canonical: 'FINAL_REVIEW_MODEL', alias: 'GEMINI_REVIEW_MODEL',
     subsystem: 'final-review', env,
-  }) || 'latest-flash';
+  }) || 'latest-pro';
 }
 
 /** The final reviewer's per-attempt timeout. Same canonical/alias pair. */
