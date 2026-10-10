@@ -40,7 +40,9 @@ import { newDirectiveId, readDirectives, readHosts, writeDirective, writeHost } 
  * @param {string} cwd @returns {string[]|null}
  */
 function trackedFilesOf(cwd) {
-  const r = runGit(['ls-files', '-z'], cwd, { timeoutMs: 30_000 });
+  // --full-name + the ':/' pathspec: the WHOLE repo, as repo-root-relative paths, from any subdirectory
+  // (claim patterns are repo-relative; a subtree listing made the abstract check wrong there — audit R2-H1).
+  const r = runGit(['ls-files', '-z', '--full-name', '--', ':/'], cwd, { timeoutMs: 30_000 });
   return r.ok ? r.stdout.split('\0').filter(Boolean) : null;
 }
 
