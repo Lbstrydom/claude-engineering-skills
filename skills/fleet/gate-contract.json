@@ -87,6 +87,22 @@
     {
       "line": "| `references/participant-rules.md` | The short rule block every spawned session receives, and why. | You spawn or brief a chip, or a session asks how to behave under /fleet. |",
       "reason": "Describes behaviour of the fleet CLI (pinned by tests/fleet-cli.test.mjs) or is an instruction to the AGENT; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
+    },
+    {
+      "line": "for that session from facts. Never phrase a directive as approval; merge and",
+      "reason": "An instruction to the AGENT about how to word a directive. The enforceable half — merge and push are not expressible directive kinds — is a zod enum in scripts/lib/fleet/directives.mjs, pinned by tests/fleet-directives.test.mjs (\"merge, push, override and delete are not expressible\") and by the CLI test that exits 2 on --kind merge; a cli-exit oracle for it needs a throwaway multi-session git repo (and, for pr mode, a scripted gh), which the closed oracle registry has no recipe to build."
+    },
+    {
+      "line": "archiving can empty gitignored folders. Exit 3 means something would be lost,",
+      "reason": "Describes archive-check's exit contract (0 only when every probe ran and found nothing; 3 for AT RISK or UNVERIFIED), enforced in scripts/lib/fleet/lifecycle.mjs and pinned by tests/fleet-lifecycle.test.mjs (\"fleet archive-check — fails closed\"); an oracle needs a throwaway multi-session git repo (and, for pr mode, a scripted gh), which the closed oracle registry has no recipe to build."
+    },
+    {
+      "line": "pr-mode `land --approve` refuses a draft, or a required check that failed or",
+      "reason": "Describes pr-mode approval's refusals, enforced by verifyPrsForPlan in scripts/lib/fleet/train-approve.mjs over required-checks.mjs and pinned by tests/fleet-required-checks.test.mjs (\"pr-mode approve — the gate on a real train\"); an oracle needs a throwaway multi-session git repo (and, for pr mode, a scripted gh), which the closed oracle registry has no recipe to build."
+    },
+    {
+      "line": "was SKIPPED (a skipped check never ran). It prints WAIT above a merge whose",
+      "reason": "Continuation of the pr-mode approval line above; same enforcement and the same pinning tests (SKIPPED → not-run → refused; missing/pending → WAIT)."
     }
   ]
 }

@@ -609,7 +609,8 @@ export function buildStatus(facts) {
     const wt = wtFor(s.worktree, branch);
     const live = liveness(s, { now: nowMs, leaseMs, tipCommitAt: b?.tipTime ?? null, skewMs });
     const merged = branch ? facts.merged?.evidence?.[branch] ?? null : null;
-    const done = deriveDone(s, trains, { observedOid, branchGone, tipObserved, merged, workRemaining: workRemainingFor(branch, wt) });
+    const workRemaining = workRemainingFor(branch, wt);
+    const done = deriveDone(s, trains, { observedOid, branchGone, tipObserved, merged, workRemaining });
     const state = done.done ? 'done' : s.state;
     const notes = [];
     if (done.note) notes.push(done.note);
@@ -628,7 +629,7 @@ export function buildStatus(facts) {
       worktree: s.worktree ?? wt?.path ?? null, worktreeState: wtState(wt), intent: s.intent, paths: s.paths ?? [],
       state, display, live: live.live, liveReason: live.reason, stale: !isTerminalState(state) && !live.live,
       gen: s.gen, rev: s.rev, ready: s.ready ?? null, readyStale: display.startsWith('ready (stale'),
-      ahead: b?.ahead ?? null, behind: b?.behind ?? null, pr, notes, merged,
+      ahead: b?.ahead ?? null, behind: b?.behind ?? null, pr, notes, merged, workRemaining,
       waitingOn: (s.waitingOn ?? []).map((w) => waitingView(w, { byId, trains })),
       overlaps: [], hotOverlaps: [], duplicates: [], findings: [],
     });

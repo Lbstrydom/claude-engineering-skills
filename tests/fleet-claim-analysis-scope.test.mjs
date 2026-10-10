@@ -95,7 +95,9 @@ describe('fleet CLI — git calls made by claim (GIT_TRACE)', () => {
     const s = setup();
     const r = s.f(['claim', '--id', 'b', '--intent', 'feature b', '--paths', 'b/**'], true);
     assert.equal(r.status, 0, r.stdout + r.stderr);
-    assert.equal(s.diffs(), 1, 'one changed-files diff: the registered session a');
+    // The claim gate diffs the registered session a; the checkpoint footer `claim` prints (fleet next) then
+    // diffs each REGISTERED session once (a, b). None of the untracked branches is ever diffed.
+    assert.equal(s.diffs(), 3, 'claim: session a; footer: sessions a and b — never the untracked ones');
   });
   it(`control: status still diffs every branch (the probe can see ${STALE + 1} diffs)`, () => {
     const s = setup();

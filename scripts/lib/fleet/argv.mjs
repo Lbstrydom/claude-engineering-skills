@@ -16,14 +16,19 @@ import { ArgvError } from '../cli-io.mjs';
 export const VERBS = Object.freeze({
   status: { bool: ['--json', '--all', '--fetch'], value: [], repeat: [], positionals: [0, 0] },
   add: { bool: ['--json', '--all'], value: ['--id'], repeat: [], positionals: [0, 1] },
-  claim: { bool: ['--json', '--override', '--clear-waiting'], value: ['--id', '--intent', '--paths'], repeat: ['--waiting-on'], positionals: [0, 0] },
+  claim: { bool: ['--json', '--override', '--clear-waiting'], value: ['--id', '--intent', '--paths', '--host-session'], repeat: ['--waiting-on'], positionals: [0, 0] },
   ready: { bool: ['--json', '--clear-waiting'], value: ['--id'], repeat: ['--waiting-on'], positionals: [0, 0] },
   touch: { bool: ['--json', '--clear-waiting'], value: ['--id'], repeat: ['--waiting-on'], positionals: [0, 0] },
-  hold: { bool: ['--json'], value: ['--reason'], repeat: [], positionals: [1, 1] },
+  hold: { bool: ['--json', '--notify'], value: ['--reason', '--note', '--id'], repeat: [], positionals: [1, 1] },
   start: { bool: ['--json'], value: [], repeat: ['--task', '--paths'], positionals: [0, 0] },
   repair: { bool: ['--json'], value: ['--quarantine'], repeat: [], positionals: [0, 0] },
   release: { bool: ['--json', '--abandoned'], value: ['--id'], repeat: [], positionals: [0, 0] },
   'archive-check': { bool: ['--json'], value: ['--id', '--min-kb'], repeat: [], positionals: [0, 1] },
+  next: { bool: ['--json'], value: ['--id'], repeat: [], positionals: [0, 0] },
+  directive: {
+    bool: ['--json', '--list', '--all'],
+    value: ['--to', '--kind', '--reason', '--ref', '--note', '--expires-hours', '--ack', '--outcome', '--id'], repeat: [], positionals: [0, 0],
+  },
   land: {
     bool: ['--json', '--dry-run', '--accept-rerun'],
     value: ['--select', '--approve', '--confirm', '--reconcile', '--resume', '--abandon'], repeat: [], positionals: [0, 0],
