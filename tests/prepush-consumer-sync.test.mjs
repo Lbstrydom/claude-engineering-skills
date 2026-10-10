@@ -95,6 +95,18 @@ describe('.githooks/pre-push — consumers receive the default branch only', () 
     });
   });
 
+  it('updating main to a commit that is NOT this checkout skips — the sync would publish the wrong tree (R1-M1)', (t) => {
+    if (!HAS_GIT || !HAS_BASH) return t.skip('git and bash are both required');
+    withFixture(({ repo, seed }) => {
+      // `git push origin <seed>:main` from a checkout at tip: main moves to seed, the working tree is tip.
+      const got = runHook(repo, `${seed} ${seed} refs/heads/main ${'0'.repeat(40)}
+`);
+      assert.equal(got.status, 0, got.stderr);
+      assert.equal(got.synced, false, 'published a tree that is not the commit going to main');
+      assert.match(got.stdout, /would publish the wrong tree/);
+    });
+  });
+
   it('pushing a local branch TO main counts as updating main (the remote ref decides)', (t) => {
     if (!HAS_GIT || !HAS_BASH) return t.skip('git and bash are both required');
     withFixture(({ repo, seed, tip }) => {

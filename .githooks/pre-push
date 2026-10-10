@@ -144,6 +144,7 @@ DEFAULT_BRANCH="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/d
 DEFAULT_BRANCH="${DEFAULT_BRANCH#origin/}"
 [ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH="main"
 PUSHES_DEFAULT=0
+DEFAULT_PUSH_SHA=""
 while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
   [ -z "$LOCAL_SHA" ] && continue
   if [ "$LOCAL_SHA" = "$ZERO_SHA" ]; then
@@ -151,7 +152,7 @@ while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
     continue
   fi
   PUBLISHED_REFS=$((PUBLISHED_REFS + 1))
-  [ "$REMOTE_REF" = "refs/heads/$DEFAULT_BRANCH" ] && PUSHES_DEFAULT=1
+  if [ "$REMOTE_REF" = "refs/heads/$DEFAULT_BRANCH" ]; then PUSHES_DEFAULT=1; DEFAULT_PUSH_SHA="$LOCAL_SHA"; fi
   [ -n "$PUSH_BASE" ] && continue   # range already taken from an earlier ref
   if [ -z "$REMOTE_SHA" ] || [ "$REMOTE_SHA" = "$ZERO_SHA" ]; then
     # New branch on the remote: the range is everything since it diverged from
@@ -283,10 +284,16 @@ fi
 # shipped UNMERGED tooling into every consumer (seen repeatedly on 2026-10-10, including a branch
 # whose PR was still under review). A branch push now says so and skips; after a PR merges,
 # sync from an up-to-date default branch (`npm run sync`, then `npm run sync:pr`).
+# The sync copies THIS CHECKOUT's files, so it must also BE the commit going to the default branch:
+# `git push origin feature:main` from a feature worktree would otherwise publish the feature tree.
 SYNC_SCRIPT="$REPO_ROOT/scripts/sync-to-repos.mjs"
+CHECKOUT_SHA="$(git rev-parse HEAD 2>/dev/null)"
 if [ -f "$SYNC_SCRIPT" ] && [ "$PUSHES_DEFAULT" -ne 1 ]; then
   echo "→ Consumer sync skipped: this push does not update '$DEFAULT_BRANCH' — consumers receive the default branch only."
   echo "   After the PR merges, sync from an up-to-date $DEFAULT_BRANCH: node scripts/sync-to-repos.mjs"
+elif [ -f "$SYNC_SCRIPT" ] && [ "$CHECKOUT_SHA" != "$DEFAULT_PUSH_SHA" ]; then
+  echo "→ Consumer sync skipped: '$DEFAULT_BRANCH' is being updated to ${DEFAULT_PUSH_SHA:0:12}, but this checkout is at ${CHECKOUT_SHA:0:12} — the sync would publish the wrong tree."
+  echo "   Sync from a checkout of the pushed $DEFAULT_BRANCH: node scripts/sync-to-repos.mjs"
 elif [ -f "$SYNC_SCRIPT" ]; then
   echo "→ Syncing skills to consumer repos..."
   node "$SYNC_SCRIPT" 2>&1
