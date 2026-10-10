@@ -281,37 +281,53 @@ export async function upstreamCmd(ctx) {
       if (!res.reconciliation && res.ok === false) {
         throw new CommandError('RECONCILE_FAILED', res.error || 'listTerminalUpstreamIssues failed', res);
       }
-      // Round-3 audit H5 compromise (widened round-4, audit H3): --gate must
-      // block on EVERY divergence direction the reconciler can report, not
-      // just the migration catch-all sentinel — a terminal DB row missing
-      // from the ledger (the original crash-window gap), a ledger entry
-      // whose issue is absent or no longer terminal in the DB, a state
-      // disagreement, or a disposition VALUE disagreement are all evidence
-      // the backfill/CLI write path silently missed or diverged from what
-      // was intended (round-4 H3: "a raw migration does not itself prove
-      // every intended row was updated" — this is the blocking check that
-      // proves it after the fact).
+      // WHAT --gate BLOCKS ON, and why only that (docs/plans/upstream-disposition-landing.md).
+      //
+      // It still reconciles EVERY direction (round-3 H5 / round-4 H3): a terminal
+      // row with no ledger entry, an entry with no terminal row, a state or
+      // disposition-value disagreement, a row still carrying the catch-all sentinel.
+      // What changed on 2026-10-10 is which of those BLOCK. Until then, any
+      // divergence failed every push. So one `upstream fix` in one checkout, whose
+      // entry sat uncommitted there, failed every push from every session until
+      // somebody hand-landed that file (#180, #183, twice in one day).
+      //
+      // THE LEVEL FOLLOWS THE KIND OF STATE READ. The pushed commit's ledger is
+      // repo state, so a divergence on an id whose entry THIS RANGE changed blocks.
+      // A store row someone else moved is shared live state that no unrelated
+      // commit can fix, so it is REPORTED on stderr, on every run, pass or fail,
+      // with its cause and remedy. It is never silent and never blocking.
+      // Attribution needs both ledgers readable. When it cannot be had (an
+      // unresolvable range base, an unreadable or malformed ledger), the gate fails
+      // CLOSED and blocks everything, exactly as before, saying why. The decision is
+      // `decideReconcileGate` (pure), and its tests are
+      // tests/upstream-reconcile-gate-attribution.test.mjs.
       if (ctx.hasFlag('gate')) {
         if (res.reconciliation) {
           const r = res.reconciliation;
-          const problems = [];
-          if (r.missingFromLedger.length) problems.push(`${r.missingFromLedger.length} terminal db row(s) with no ledger entry: ${r.missingFromLedger.join(', ')}`);
-          if (r.ledgerOnly.length) problems.push(`${r.ledgerOnly.length} ledger entr(y/ies) with no matching terminal db row: ${r.ledgerOnly.join(', ')}`);
-          if (r.stateMismatch.length) problems.push(`${r.stateMismatch.length} state mismatch(es): ${r.stateMismatch.join('; ')}`);
-          if (r.dispositionMismatch.length) problems.push(`${r.dispositionMismatch.length} disposition mismatch(es): ${r.dispositionMismatch.join('; ')}`);
-          if (r.needsReview.length) problems.push(`${r.needsReview.length} row(s) still carry the migration catch-all sentinel: ${r.needsReview.join(', ')}`);
-          // `r.otherStore` is DELIBERATELY absent from `problems`, and must
-          // stay absent. Those entries close reports living in a database this
-          // run is not connected to, so it has no evidence about them either
-          // way — failing on them is asserting staleness from absence, and it
-          // is what made five real closures unrecordable on 2026-08-29. It is
-          // still reported (stderr below, and in the --worksheet render), so
-          // "not checked" never masquerades as "checked and clean".
+          // `r.otherStore` is DELIBERATELY not divergence, and must stay that
+          // way. Those entries close reports living in a database this run is not
+          // connected to, so it has no evidence about them either way. Failing on
+          // them is asserting staleness from absence, which is what made five real
+          // closures unrecordable on 2026-08-29. It is still reported (stderr
+          // below, and in the --worksheet render), so "not checked" never
+          // masquerades as "checked and clean".
           if (r.otherStore?.length) {
             process.stderr.write(`  [upstream reconcile --gate] ${r.otherStore.length} ledger entr(y/ies) belong to another store and were NOT checked: ${r.otherStore.join(', ')}\n`);
           }
-          if (problems.length > 0) {
-            throw new CommandError('RECONCILE_NEEDS_REVIEW', problems.join(' | '), r);
+          const gate = await import('../../upstream/reconcile-gate.mjs');
+          const decision = gate.decideReconcileGate({
+            reconciliation: r, head: res.ledger, base: gate.readRangeBaseLedger({ repoRoot }),
+          });
+          // Pre-existing divergence FIRST, so it reaches the operator whether or
+          // not the throw below fires.
+          const rendered = gate.renderPreExistingLines(decision, {
+            rows: res.rows ?? [], presentUpstream: res.missingCause?.presentUpstream ?? [],
+          });
+          for (const line of rendered) process.stderr.write(`${line}\n`);
+          if (decision.blocking.length > 0) {
+            // The cause IS the error message, not a render the throw would skip.
+            throw new CommandError('RECONCILE_NEEDS_REVIEW',
+              gate.renderBlockingMessage(decision, { rows: res.rows ?? [] }), { ...r, gate: decision });
           }
         } else {
           // Round-6 audit H6 compromise: cloud-off must never LOOK like a
@@ -474,6 +490,9 @@ export async function upstreamCmd(ctx) {
       storeFingerprint: await currentStoreFingerprint(),
       transitionFn: (a) => ctx.deps.transitionUpstreamIssue(a),
     });
+    for (const line of renderDispositionFileNotice(res.dispositionFile, ctx.flag('id'))) {
+      process.stderr.write(`${line}\n`);
+    }
     if (!res.ok) {
       const code = res.code || (res.illegal ? 'ILLEGAL_TRANSITION'
         : res.notFound ? 'NOT_FOUND' : res.ambiguous ? 'AMBIGUOUS_ID'
@@ -485,6 +504,51 @@ export async function upstreamCmd(ctx) {
     if (err instanceof CommandError) throw err;
     throw new CommandError('EXCEPTION', err.message);
   }
+}
+
+/**
+ * The operator notice for the disposition entry `upstream fix|wont-fix` just
+ * wrote (docs/plans/upstream-disposition-landing.md §2.3). It is keyed on BOTH
+ * outcomes (plan-audit R1 H1):
+ *
+ * - store transitioned, entry not yet on the base branch: the entry is an
+ *   uncommitted change to a COMMITTED file. Say what it causes until it lands,
+ *   and exactly how to land it.
+ * - store transition FAILED: the ledger was written ahead of it, so the entry
+ *   must NOT be committed (the gate would block that push as ledger-ahead-of-store).
+ *   Never print commit instructions here.
+ * - landed already, or nothing written: silent.
+ *
+ * PURE, returns lines; the caller writes them. PowerShell-safe: real values, no
+ * angle-bracket placeholders. It never commits or pushes, because this CLI runs
+ * in shared working trees.
+ *
+ * @param {{path: string, written: boolean, landed: boolean|null, base: string, reason: string|null,
+ *   storeTransitioned: boolean}|null|undefined} file
+ * @param {string|null} idFlag the `--id` as typed, for the commit message
+ * @returns {string[]}
+ */
+export function renderDispositionFileNotice(file, idFlag) {
+  if (!file?.written) return [];
+  const tag = '  [upstream]';
+  if (file.storeTransitioned !== true) {
+    return [
+      `${tag} ${file.path} was written AHEAD of a store transition that did not succeed. Do NOT commit that change:`,
+      `${tag} the store row is not terminal, so the reconcile gate would block the push that carries it.`,
+      `${tag} Re-run the same command once the store is reachable (the entry is rewritten in place), or drop just that entry.`,
+    ];
+  }
+  if (file.landed === true) return [];
+  const short = String(idFlag ?? '').trim().slice(0, 8) || 'issue';
+  return [
+    `${tag} ${file.path} now carries this closure's disposition, UNCOMMITTED in this checkout.`,
+    `${tag} ${file.landed === null ? `Landing on ${file.base} could not be checked (${file.reason}).` : `It is not on ${file.base} yet.`}`
+      + ' Until it lands, `upstream:reconcile:gate` reports this issue on every push in the repo,',
+    `${tag} and branches still on the pre-attribution gate FAIL their push on it until rebased. Land it now, from this checkout:`,
+    `${tag}   git add -- ${file.path}`,
+    `${tag}   git commit -m "chore(upstream): record ${short} disposition"`,
+    `${tag}   then push it on its own branch and open a PR (or fold it into the PR that carries the fix).`,
+  ];
 }
 
 /** Read a multiline report body from stdin — prose must never be an argv string. */

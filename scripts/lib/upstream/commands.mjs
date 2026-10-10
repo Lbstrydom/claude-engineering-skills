@@ -31,7 +31,7 @@ import {
 import {
   DISPOSITION_LEDGER_PATH, mergeLedgerEntry,
   upsertDispositionLedgerEntry, serialiseDispositionLedger,
-  applyMissingDispositions, captureReconcilePrecondition, readUpstreamLedgerEvidence,
+  applyMissingDispositions, captureReconcilePrecondition, readUpstreamLedgerEvidence, readWorkingLedger,
 } from './disposition-ledger.mjs';
 import { resolveBaseFreshness } from '../git-freshness.mjs';
 import { foldEventsToState, NON_LIFECYCLE_EVENTS } from './events.mjs';
@@ -640,18 +640,18 @@ export async function upstreamTransition({
     };
   }
 
-  // Sequential ledger-then-DB write (§2.4) — the cheap local write happens
-  // FIRST, and only then the DB transition.
-  if (parsedDisposition) {
-    await upsertDispositionLedgerEntry(repoRoot, {
-      issueId: normId, state: to, disposition: safeDispositionValue, storeFingerprint,
-    });
-  }
-
-  return transitionFn({
+  // Sequential ledger-then-DB write (§2.4): the cheap local write FIRST. The
+  // descriptor says the entry is now an uncommitted change that must land (plan
+  // docs/plans/upstream-disposition-landing.md §2.3); `storeTransitioned` says
+  // whether it may, because a failed store write leaves an entry that must NOT.
+  const dispositionFile = parsedDisposition ? await upsertDispositionLedgerEntry(repoRoot, {
+    issueId: normId, state: to, disposition: safeDispositionValue, storeFingerprint,
+  }) : null;
+  const res = await transitionFn({
     id: normId, to, note: safeNote, commit, actor,
     disposition: parsedDisposition ? formatDisposition(safeDispositionValue) : null,
   });
+  return dispositionFile ? { ...res, dispositionFile: { ...dispositionFile, storeTransitioned: res?.ok === true } } : res;
 }
 
 /** The `--note` value that means "read it from stdin instead". */
@@ -1034,11 +1034,10 @@ export function renderWorksheet(items, { state = 'open' } = {}) {
  * terminal rows against the committed local ledger, both directions, plus
  * flags any row still carrying the generation-time catch-all sentinel.
  *
- * Advisory, cloud-only (mirrors `upstreamList`): the mandatory, cloudless
- * `upstream:coverage:gate` validates the ledger's own internal consistency;
- * THIS is the direction that structurally needs the live db, so it can never
- * be a `check` gate — it degrades to `{ok:true, cloud:false}` exactly like
- * every other db-backed upstream command.
+ * Cloud-only (mirrors `upstreamList`); the cloudless `upstream:coverage:gate`
+ * checks the ledger's internal consistency. Its `--gate` blocks only divergence
+ * the pushed range caused (`reconcile-gate.mjs`): live store state that someone
+ * else moved is reported, never blocking. Cloud off degrades to `{cloud:false}`.
  *
  * @param {{repoRoot?: string, listTerminalFn: () => Promise<{ok:boolean,cloud:boolean,rows:Array}>}} args
  */
@@ -1053,16 +1052,11 @@ export async function upstreamReconcile({ repoRoot = process.cwd(), listTerminal
   const res = await listTerminalFn();
   if (!res.ok || res.cloud === false) return { ...res, reconciliation: null };
 
-  const ledgerPath = path.join(repoRoot, DISPOSITION_LEDGER_PATH);
-  let ledgerEntries = [];
-  try {
-    const parsed = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
-    ledgerEntries = Array.isArray(parsed?.entries) ? parsed.entries : [];
-  } catch {
-    // Absent/unreadable ledger is a legitimate state to REPORT (every DB row
-    // is then "missing from ledger"), never a reason to throw — the whole
-    // point of this command is to surface exactly that gap.
-  }
+  // Absent/unreadable/malformed is a state to REPORT (every DB row is then
+  // "missing"), never a throw. `ledger.status` keeps malformed distinct from
+  // absent, so the gate can never read a corrupt file as a clean empty one.
+  const ledger = readWorkingLedger(repoRoot);
+  const ledgerEntries = ledger.entries ?? [];
 
   const reconciliation = computeLedgerReconciliation({ dbRows: res.rows, ledgerEntries, currentStore });
 
@@ -1089,5 +1083,5 @@ export async function upstreamReconcile({ repoRoot = process.cwd(), listTerminal
   // `rows` is propagated because `--apply` needs the store rows this call already
   // fetched: dropping them made `dbRows` always `[]`, so every id refused at gate
   // "db-row" while `upstream history` showed it terminal. The repair was dead.
-  return { ok: true, cloud: true, rows: res.rows, reconciliation, missingCause };
+  return { ok: true, cloud: true, rows: res.rows, reconciliation, missingCause, ledger };
 }

@@ -327,6 +327,8 @@ export function computeDispositionDivergences({ ledgerEntries, registryProbeIds,
  *   stateMismatch: string[],
  *   dispositionMismatch: string[],
  *   needsReview: string[],
+ *   stateMismatchIds: string[],
+ *   dispositionMismatchIds: string[],
  * }}
  */
 export function computeLedgerReconciliation({ dbRows, ledgerEntries, currentStore = null }) {
@@ -350,6 +352,12 @@ export function computeLedgerReconciliation({ dbRows, ledgerEntries, currentStor
   const stateMismatch = [];
   const dispositionMismatch = [];
   const needsReview = [];
+  // The issue ids behind the two prose lists, index-aligned with them. The
+  // reconcile gate attributes each divergence to the pushed range BY ID
+  // (docs/plans/upstream-disposition-landing.md §2.2). Parsing the id back out
+  // of the prose would make that decision hang on the wording of a message.
+  const stateMismatchIds = [];
+  const dispositionMismatchIds = [];
 
   for (const row of dbRows) {
     const entry = ledgerByIssueId.get(row.issueId);
@@ -358,10 +366,12 @@ export function computeLedgerReconciliation({ dbRows, ledgerEntries, currentStor
     } else {
       if (entry.state !== row.state) {
         stateMismatch.push(`${row.issueId}: ledger says "${entry.state}", db says "${row.state}"`);
+        stateMismatchIds.push(row.issueId);
       }
       const ledgerDisposition = entry.disposition ? formatDisposition(entry.disposition) : null;
       if (ledgerDisposition !== row.disposition) {
         dispositionMismatch.push(`${row.issueId}: ledger says "${ledgerDisposition}", db says "${row.disposition}"`);
+        dispositionMismatchIds.push(row.issueId);
       }
     }
     if (row.disposition === LEGACY_UNTRACKED_TRANSITION) {
@@ -398,7 +408,7 @@ export function computeLedgerReconciliation({ dbRows, ledgerEntries, currentStor
 
   return {
     missingFromLedger, ledgerOnly, stateMismatch, dispositionMismatch, needsReview,
-    otherStore, coverage,
+    stateMismatchIds, dispositionMismatchIds, otherStore, coverage,
   };
 }
 

@@ -24,10 +24,22 @@ import { withFileLock } from '../file-lock.mjs';
 import { readFileAtRef } from '../git-freshness.mjs';
 import {
   MISSING_CAUSE, isLegalTestDisposition, parseDisposition, LEGACY_UNTRACKED_TRANSITION,
+  formatDisposition,
 } from './dispositions.mjs';
 
 /** Where the committed closure-disposition ledger lives (§2.4). */
 export const DISPOSITION_LEDGER_PATH = 'scripts/upstream-dispositions.json';
+
+/**
+ * The branch a closure's ledger entry must reach before the reconcile gate stops
+ * reporting it as a pending landing. It is the same default the pre-push hook and
+ * `push-range.mjs` use for a new branch's merge-base. It is the FULLY QUALIFIED
+ * remote-tracking ref, never the short name. A local branch literally named
+ * `origin/main` would otherwise be read instead (see `readUpstreamLedgerEvidence`).
+ * It is read as of the last fetch. Nothing here fetches.
+ */
+export const LANDING_BASE_REF = 'refs/remotes/origin/main';
+const LANDING_BASE_DISPLAY = 'origin/main';
 
 /**
  * Local git adapter. Duplicated from `commands.mjs` deliberately rather than
@@ -76,6 +88,88 @@ function readDispositionLedger(repoRoot) {
   } catch {
     return [];
   }
+}
+
+/**
+ * Parse ledger bytes into a well-formed entry list, or `malformed`. This is the ONE
+ * parser for every READER that has to tell a broken ledger from an empty one.
+ * The write path above deliberately does not use it: it degrades to `[]` so a
+ * typo cannot block every future transition. A gate must never read
+ * "unparseable" as "no entries", because that turns a corrupt file into a clean
+ * reconciliation (docs/plans/upstream-disposition-landing.md §2.2).
+ *
+ * @param {string} text
+ * @returns {{status: 'read'|'malformed', entries: object[]|null, reason: string|null}}
+ */
+export function parseLedgerText(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    return { status: 'malformed', entries: null, reason: `not valid JSON (${err.message})` };
+  }
+  if (!parsed || !Array.isArray(parsed.entries)) {
+    return { status: 'malformed', entries: null, reason: 'no top-level `entries` array' };
+  }
+  return { status: 'read', entries: parsed.entries, reason: null };
+}
+
+/**
+ * The ledger as committed at `ref`. It is `absent` when the ref has no such file
+ * (determinate), `unreadable` when the question could not be asked, and
+ * `malformed` when the file is there but broken.
+ *
+ * @returns {{status: 'read'|'absent'|'unreadable'|'malformed', entries: object[]|null, reason: string|null}}
+ */
+export function readLedgerEntriesAtRef({ ref, repoRoot = process.cwd() }) {
+  const read = readFileAtRef({ ref, filePath: DISPOSITION_LEDGER_PATH, repoRoot });
+  if (read.status !== 'read') return { status: read.status, entries: null, reason: read.reason ?? null };
+  return parseLedgerText(read.content);
+}
+
+/**
+ * The ledger in the working tree. In the pre-push sandbox the working tree IS the
+ * pushed commit, so this is the head side of the gate's comparison. It uses the
+ * same statuses as `readLedgerEntriesAtRef`, so absent and malformed stay distinct.
+ */
+export function readWorkingLedger(repoRoot = process.cwd()) {
+  const p = path.join(repoRoot, DISPOSITION_LEDGER_PATH);
+  let text;
+  try {
+    text = fs.readFileSync(p, 'utf-8');
+  } catch (err) {
+    return err?.code === 'ENOENT'
+      ? { status: 'absent', entries: null, reason: null }
+      : { status: 'unreadable', entries: null, reason: err.message };
+  }
+  return parseLedgerText(text);
+}
+
+/**
+ * Has this entry LANDED, i.e. does the base branch already carry it?
+ * "Same" means same `state` and the same formatted disposition. Those are exactly
+ * the two fields the reconcile gate compares, so a `recordedAt`-only difference
+ * does not count as unlanded. PURE.
+ *
+ * `landed: null` means the base could not be read, so the answer is unknown,
+ * never "no".
+ *
+ * @param {{entry: {issueId: string, state: string, disposition: {kind: string, value: string}},
+ *   baseLedger: {status: string, entries: object[]|null, reason?: string|null}, baseDisplay?: string}} args
+ * @returns {{landed: boolean|null, reason: string|null}}
+ */
+export function assessDispositionLanding({ entry, baseLedger, baseDisplay = LANDING_BASE_DISPLAY }) {
+  if (baseLedger?.status === 'absent') return { landed: false, reason: `${baseDisplay} has no disposition ledger yet` };
+  if (baseLedger?.status !== 'read') {
+    return { landed: null, reason: `could not read the ledger on ${baseDisplay} (${baseLedger?.reason ?? baseLedger?.status ?? 'no evidence'})` };
+  }
+  const onBase = baseLedger.entries.find((e) => e?.issueId === entry.issueId);
+  if (!onBase) return { landed: false, reason: `${baseDisplay} does not carry this entry yet (as of your last fetch)` };
+  const same = onBase.state === entry.state && Boolean(onBase.disposition)
+    && formatDisposition(onBase.disposition) === formatDisposition(entry.disposition);
+  return same
+    ? { landed: true, reason: null }
+    : { landed: false, reason: `${baseDisplay} carries a DIFFERENT entry for this issue (as of your last fetch)` };
 }
 
 /**
@@ -172,9 +266,19 @@ export async function upsertDispositionLedgerEntry(repoRoot, entry) {
   // read-modify-write on a file the batch path also rewrites, so a lock only one
   // of the two takes protects nothing.
   ensureLedgerDir(p);
-  return withFileLock(`${p}.lock`, {}, async () => {
+  await withFileLock(`${p}.lock`, {}, async () => {
     atomicWriteFileSync(p, serialiseDispositionLedger(mergeLedgerEntry(readDispositionLedger(repoRoot), entry)));
   });
+  // WHAT THE WRITE LEFT BEHIND (docs/plans/upstream-disposition-landing.md §2.3).
+  // The entry now sits in a COMMITTED file, uncommitted in whatever checkout ran
+  // this. Until it lands on the base branch, the reconcile gate reports this
+  // issue on every push in the repo. Twice on 2026-10-10 nobody was told, and every
+  // session's push failed until a hand-made one-file PR landed it. The caller
+  // turns this descriptor into the operator notice and the envelope field.
+  const landing = assessDispositionLanding({
+    entry, baseLedger: readLedgerEntriesAtRef({ ref: LANDING_BASE_REF, repoRoot }),
+  });
+  return { path: DISPOSITION_LEDGER_PATH, written: true, base: LANDING_BASE_DISPLAY, ...landing };
 }
 
 /** The exact bytes the ledger file is written as — one serialiser, one format. */
@@ -367,15 +471,11 @@ export function readUpstreamLedgerEvidence({ freshness, repoRoot = process.cwd()
   // The two fields are separate for exactly this reason; dropping back to the
   // display name here discards the identity that was checked.
   const upstreamRef = freshness.upstreamRef || freshness.upstream;
-  const read = readFileAtRef({ ref: upstreamRef, filePath: DISPOSITION_LEDGER_PATH, repoRoot });
-  if (read.status !== 'read') return { status: read.status, issueIds: null };
-  try {
-    const parsed = JSON.parse(read.content);
-    const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
-    return { status: 'read', issueIds: new Set(entries.map((e) => e?.issueId).filter(Boolean)) };
-  } catch {
-    // The file is there but not parseable — we looked and could not tell, which
-    // is `unreadable`, never an empty set masquerading as a clean upstream.
-    return { status: 'unreadable', issueIds: null };
+  const read = readLedgerEntriesAtRef({ ref: upstreamRef, repoRoot });
+  if (read.status === 'read') {
+    return { status: 'read', issueIds: new Set(read.entries.map((e) => e?.issueId).filter(Boolean)) };
   }
+  // A file that is there but not parseable means we looked and could not tell.
+  // That is `unreadable`, never an empty set masquerading as a clean upstream.
+  return { status: read.status === 'malformed' ? 'unreadable' : read.status, issueIds: null };
 }
