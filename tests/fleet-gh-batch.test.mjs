@@ -5,6 +5,8 @@
  */
 import { after, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { ghBatch } from '../scripts/lib/fleet/gh-batch.mjs';
@@ -54,10 +56,28 @@ describe('ghBatch', () => {
   });
 
   test('the jobs really run concurrently', () => {
-    const t0 = Date.now();
-    ghBatch(process.cwd(), [0, 1, 2].map(() => js('setTimeout(() => {}, 900)')), { ghBin: node, timeoutMs: 10_000 });
-    const ms = Date.now() - t0;
-    assert.ok(ms < 2 * 900, `three 900 ms jobs took ${ms} ms — they ran one after another`);
+    // A rendezvous, not a stopwatch: each job registers in a shared directory, then waits (up to 20 s)
+    // until all three have registered. Run concurrently, every job sees the others ("together"); run
+    // one after another, the first can never see the rest and reports "alone". The verdict depends on
+    // ORDERING, not speed, so a loaded machine cannot fail it (the wall-clock version failed under the
+    // full pre-push suite: three 900 ms jobs took 2029 ms).
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gh-batch-rdv-'));
+    try {
+      const job = (i) => js(`
+        const fs = require('node:fs'), path = require('node:path'), dir = ${JSON.stringify(dir)};
+        fs.writeFileSync(path.join(dir, 'job-${i}'), '');
+        const deadline = Date.now() + 20000;
+        const tick = () => {
+          if (fs.readdirSync(dir).length >= 3) return process.stdout.write('together');
+          if (Date.now() > deadline) return process.stdout.write('alone');
+          setTimeout(tick, 25);
+        };
+        tick();`);
+      const r = ghBatch(process.cwd(), [0, 1, 2].map(job), { ghBin: node, timeoutMs: 30_000 });
+      assert.deepEqual(r.map((x) => x.stdout), ['together', 'together', 'together'], 'every job saw the other two while it was running');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
   });
 
   test('a worker that cannot start fails every job as a spawn error, never as an empty answer', () => {

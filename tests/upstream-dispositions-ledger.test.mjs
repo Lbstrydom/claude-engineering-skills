@@ -251,8 +251,15 @@ describe('computeLedgerReconciliation (round-1 audit H2/M13 — the bidirectiona
     // make this repo's ledger, which permanently carries 20 such entries,
     // impossible to reconcile clean: a gate unsatisfiable by doing the work
     // correctly. The `clean` predicate below is deliberately unchanged.
+    //
+    // `mismatches` (2026-10-10) is not a bucket either. It is the two prose
+    // buckets again as records carrying their issue ids, so the reconcile gate can
+    // attribute each divergence to the pushed range by id
+    // (docs/plans/upstream-disposition-landing.md). It adds no new divergence class
+    // and changes nothing the gate counts.
     assert.deepEqual(r, {
       missingFromLedger: [], ledgerOnly: [], stateMismatch: [], dispositionMismatch: [], needsReview: [],
+      mismatches: [],
       otherStore: [],
       coverage: { total: 1, checked: 1, foreign: 0, storeScoped: false },
     });

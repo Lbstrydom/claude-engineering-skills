@@ -87,6 +87,28 @@
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
 
+## 2026-10-10 — /fleet: claim overlaps that exist only on names no file has are a WARN, not a block
+
+Two agents stopped today on `tests/*upstream*` ~ `tests/*final-review*`. The intersection math was exact: the patterns do meet, on e.g. `tests/upstream-final-review.test.mjs`. But no such file existed, so the sessions could not touch each other's work.
+
+`decideClaim` now takes the repo's tracked files and marks a pair ABSTRACT only when all three hold:
+- both sides are wildcards;
+- neither pattern can contain the other, proven by a witness. Identical or nested new-area claims (`shared/**` ~ `shared/**`) still block;
+- no tracked file matches both.
+
+An abstract pair is disclosed as `[abstract]` with a WARN verdict and never blocks. Advisory signals (uncommitted edits, abstract pairs, hot files) stay advisory even when combined. Tracked files are read before the registry lock and are root-relative from any subdirectory. Unknown tracked files fail closed. A real collision on a new file still surfaces as files/uncommitted evidence at status and land.
+
+Verification: GPT audit 2 rounds with complete coverage (R1 H2 M2: 3 fixed, 1 overruled as the requested trade-off; R2 H1: fixed). Gemini final gate (gemini-pro-latest) APPROVE, 0 blocking. Fleet suites 177+ green; each fix was seen red with it reverted.
+## 2026-10-10 — final reviewer: best available Gemini (latest-pro), version-free wording
+
+Owner decision: the final reviewer runs the newest Gemini Pro, resolved at runtime via the `latest-pro` sentinel (Google's always-newest Pro alias), never a pinned id. This reverses experiment-6's 2026-09-07 cost swap to Flash for this role only. Experiment-6 now opens with a "superseded" banner and records the reversal in a new §9.
+
+The GPT auditor is deliberately unchanged (`latest-gpt` -> `gpt-6.1-sol`; the premium astra tier stays excluded on cost). `FINAL_REVIEW_MODEL` still overrides. The stale "Gemini 3.1 Pro" / "GPT-5.4" wording in the synced skills, README, package.json, setup banner and CLI catalog is now version-free.
+
+Also: `FINAL_REVIEW_TIMEOUT_MS` must be a positive whole number of ms within the watchdog cap. An invalid value is reported once and falls back to the default, rather than becoming a 1 ms timeout. The alias-warning test was vacuous and now observes the warning.
+
+Verification: GPT audit 2 rounds with complete coverage (R1 H2 M2, 3 fixed and 1 plan-context artifact; R2 H1, fixed). Gemini final gate approve-with-debt, 0 blocking; it ran on `gemini-pro-latest`. Its one debt item was fixed: the alias tests now use a value distinct from the default.
+
 ## 2026-10-10 — fleet follow-ups: one glob seam (braces CVE gone), batched gh, prune, weekly telemetry review; dashboard persona fixes
 
 From the 2026-10-10 follow-up list ("long-term sustainable, not quick fixes") and a /persona-test re-run.

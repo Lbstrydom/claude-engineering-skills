@@ -866,7 +866,7 @@ the "two surfaces must show the same number" check.
 > note naming what was NOT examined. Do not summarise it away in `--summary`; if the note is present the reviewer was told,
 > and an APPROVE over it is an APPROVE of the examined files only. A coverage gap is not itself release-blocking.
 
-Run Gemini 3.1 Pro as the final gate. Falls back to Claude Opus when
+Run the final reviewer — the newest Gemini Pro by default (`latest-pro`, resolved at runtime; override with `FINAL_REVIEW_MODEL`) as the final gate. Falls back to Claude Opus when
 `GEMINI_API_KEY` is absent.
 
 **Build the transcript first** — the reviewer reads a file no earlier step

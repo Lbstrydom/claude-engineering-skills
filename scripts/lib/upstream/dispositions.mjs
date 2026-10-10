@@ -327,6 +327,7 @@ export function computeDispositionDivergences({ ledgerEntries, registryProbeIds,
  *   stateMismatch: string[],
  *   dispositionMismatch: string[],
  *   needsReview: string[],
+ *   mismatches: Array<{kind: 'state'|'disposition', issueId: string, detail: string}>,
  * }}
  */
 export function computeLedgerReconciliation({ dbRows, ledgerEntries, currentStore = null }) {
@@ -350,6 +351,12 @@ export function computeLedgerReconciliation({ dbRows, ledgerEntries, currentStor
   const stateMismatch = [];
   const dispositionMismatch = [];
   const needsReview = [];
+  // The same two disagreements as RECORDS, one per divergence, each carrying its
+  // own issue id. The reconcile gate attributes each divergence to the pushed range
+  // BY ID (docs/plans/upstream-disposition-landing.md §2.2). Parsing the id back out
+  // of the prose would hang that decision on a message's wording, and a parallel id
+  // array would hang it on two lists staying index-aligned (code-audit R1 M2).
+  const mismatches = [];
 
   for (const row of dbRows) {
     const entry = ledgerByIssueId.get(row.issueId);
@@ -357,11 +364,15 @@ export function computeLedgerReconciliation({ dbRows, ledgerEntries, currentStor
       missingFromLedger.push(row.issueId);
     } else {
       if (entry.state !== row.state) {
-        stateMismatch.push(`${row.issueId}: ledger says "${entry.state}", db says "${row.state}"`);
+        const detail = `${row.issueId}: ledger says "${entry.state}", db says "${row.state}"`;
+        stateMismatch.push(detail);
+        mismatches.push({ kind: 'state', issueId: row.issueId, detail });
       }
       const ledgerDisposition = entry.disposition ? formatDisposition(entry.disposition) : null;
       if (ledgerDisposition !== row.disposition) {
-        dispositionMismatch.push(`${row.issueId}: ledger says "${ledgerDisposition}", db says "${row.disposition}"`);
+        const detail = `${row.issueId}: ledger says "${ledgerDisposition}", db says "${row.disposition}"`;
+        dispositionMismatch.push(detail);
+        mismatches.push({ kind: 'disposition', issueId: row.issueId, detail });
       }
     }
     if (row.disposition === LEGACY_UNTRACKED_TRANSITION) {
@@ -398,7 +409,7 @@ export function computeLedgerReconciliation({ dbRows, ledgerEntries, currentStor
 
   return {
     missingFromLedger, ledgerOnly, stateMismatch, dispositionMismatch, needsReview,
-    otherStore, coverage,
+    mismatches, otherStore, coverage,
   };
 }
 

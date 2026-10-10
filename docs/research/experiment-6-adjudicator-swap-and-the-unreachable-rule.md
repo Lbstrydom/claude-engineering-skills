@@ -6,6 +6,10 @@
 **Verdict: switch to `gemini-3.8-flash`, on cost and gate-authority grounds, with
 quality equivalence explicitly UNMEASURED and recorded as such.**
 
+> **Superseded for the final-review role on 2026-10-10 — see [§9](#9-reversal--2026-10-10-the-final-reviewer-runs-the-best-available-gemini).**
+> The committed default is `latest-pro` again (owner decision: best available Gemini,
+> resolved at runtime). §1–§8 are kept as the record of the cost analysis.
+
 That is a weaker claim than it sounds, and the reasoning matters more than the
 decision — because the decision is worth $27/month and the reasoning is what
 stops the seventh dead instrument.
@@ -260,3 +264,33 @@ breaking, ~24 files, no migration, no consumer break.
 
 Deliberately deferred: the payoff is legibility, and it should be scoped as its
 own change rather than smuggled into a model swap.
+
+---
+
+## 9. Reversal — 2026-10-10: the final reviewer runs the best available Gemini
+
+**Decision (owner):** the committed default returns to `latest-pro`, Google's
+always-newest Pro alias, resolved at runtime and never a pinned id. This
+supersedes §5 for the final-review role only. The GPT auditor (`latest-gpt`,
+the balanced `gpt-6.1-sol`; [experiment-7](./experiment-7-gpt-sol-auditor-swap.md))
+is deliberately unchanged, and so is the premium `astra` tier, which stays
+excluded on cost.
+
+**Why this is not a contradiction of §5:** §5 was a cost decision, and it was
+explicit that quality equivalence was *not established*. With quality
+unmeasurable either way (§1.1), choosing between "cheaper" and "most capable"
+was a policy preference rather than an empirical result. The owner chose
+capability for the one gate that reviews everything else's work. That gate
+runs about once per audited change, so the cost is the §1.2 delta: about
+$27/month *(derived, at July–August volume)* plus the higher per-review latency.
+
+**Enacted as:**
+- the committed default in `scripts/lib/final-review-config.mjs`, so it takes
+  effect on every machine and every consumer at their next sync, not only on a
+  local `~/.audit-loop.env` line;
+- a `FINAL_REVIEW_MODEL` override, which still wins: a tenant or consumer can
+  opt down to `latest-flash`.
+
+§5's revisit triggers still apply in reverse. If the final review ever becomes
+mechanically blocking, or a genuinely independent judge lineage appears, revisit
+both the model and its lineage.

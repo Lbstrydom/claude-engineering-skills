@@ -424,7 +424,7 @@ default, 5 absolute).
 
 ## Step 6 — Gemini Independent Review (MANDATORY)
 
-Run Gemini 3.1 Pro as the final gate. Falls back to Claude Opus when
+Run the final reviewer — the newest Gemini Pro by default (`latest-pro`, resolved at runtime; override with `FINAL_REVIEW_MODEL`) as the final gate. Falls back to Claude Opus when
 `GEMINI_API_KEY` is absent.
 
 **Build the transcript first** — the reviewer reads a file no earlier step

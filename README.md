@@ -215,7 +215,7 @@ Claude/Copilot (plans + implements)
     ↓
 GPT (5 parallel passes: structure, wiring, backend, frontend, sustainability)
     ↓ deliberation: accept / challenge / compromise
-Gemini 3.1 Pro (independent final review: bias, consensus, missed issues)
+Gemini Pro, newest (independent final review: bias, consensus, missed issues)
     ↓
 Adaptive learning (bandit arms, FP tracker, meta-assessment, prompt evolution)
 ```
@@ -224,7 +224,7 @@ Adaptive learning (bandit arms, FP tracker, meta-assessment, prompt evolution)
 2. **Claude triages** each finding — accept, challenge, or defer
 3. **GPT deliberates** on challenges — sustain, overrule, or compromise
 4. **Fixes applied**, then R2+ re-audits with suppression of resolved findings
-5. **Gemini 3.1 Pro** independent final review (catches blind spots in the GPT-Claude loop)
+5. **Gemini Pro** (the newest, via `latest-pro`) independent final review (catches blind spots in the GPT-Claude loop)
 6. **Debt review** triggers when deferred findings reach critical mass
 7. **Meta-assessment** periodically evaluates audit-loop quality, recommends prompt changes
 

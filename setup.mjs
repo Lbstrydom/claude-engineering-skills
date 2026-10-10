@@ -439,7 +439,7 @@ async function main() {
   console.log(`
 ${B}╔══════════════════════════════════════════════════════════╗
 ║  Engineering Skills — First-Time Setup                   ║
-║  Multi-model audit: Claude + GPT-5.4 + Gemini 3.1 Pro   ║
+║  Multi-model audit: Claude + GPT + Gemini (latest)      ║
 ╚══════════════════════════════════════════════════════════╝${X}
 `);
 

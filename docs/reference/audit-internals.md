@@ -28,7 +28,7 @@ about, which is part of why it was the one condensed. Both are marked
 
 - **`gemini-review.mjs`** — independent final review (**MANDATORY — not gated by
   convergence**). Receives the full audit transcript; detects bias, false
-  consensus, missed issues. Default Gemini 3.1 Pro (16K thinking budget), and
+  consensus, missed issues. Default: the newest Gemini Pro via the `latest-pro` sentinel (16K thinking budget), and
   **provider-agnostic** via one abort-correct `callReviewer` seam plus a
   `PROVIDERS` descriptor catalog — gemini / claude-opus / azure-claude (both
   shapes) / `openai-compatible` / `openrouter`. Recipe:

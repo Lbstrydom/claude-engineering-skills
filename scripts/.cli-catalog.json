@@ -81,7 +81,7 @@
       "category": "diagnostic"
     },
     "audit:gemini-review": {
-      "description": "Gemini 3.1 Pro final review of the Claude+GPT audit transcript.",
+      "description": "Final review (newest Gemini Pro by default) of the Claude+GPT audit transcript.",
       "category": "audit"
     },
     "audit:phase7": {
