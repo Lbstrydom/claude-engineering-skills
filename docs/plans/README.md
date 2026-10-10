@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**7 active · 236 terminal · 32 audit summaries · 1 parked · 5 reference docs**
+**7 active · 237 terminal · 32 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -58,7 +58,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 233 completed plans</summary>
+<summary>Show all 234 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -220,6 +220,7 @@ source comments that no docs linter sees — stays valid.
 | [Phase I — CLAUDE.md / AGENTS.md Hygiene + Sprawl Control](./phase-i-claudemd-hygiene.md) | `Complete` | shipped — `/ai-context-management` skill + `scripts/check-context-drift.mjs`… |
 | [Pinned-Revision Fixture for Spend-Bearing Runs](./pinned-revision-fixture.md) | `Complete` | Phases 1–5 implemented and shipped 2026-08-18; `npm test` 12902 pass / 0 fail and `npm run check` green.… |
 | [Plan-audit learning parity + AGENTS.md sprawl cap](./plan-audit-parity-and-agents-md-cap.md) | `Complete` |  |
+| [plan_verification_items run_id uuid/text — multi-row owned insert + verify exit honesty](./plan-verification-items-run-id.md) | `Complete` | implemented + audited 2026-10-10; awaiting review |
 | [pnpm-aware consumer installation](./pnpm-consumer-support.md) | `Complete` |  |
 | [Postgres Parity — One Postgres Code Path for the Audit-Loop Store](./postgres-parity.md) | `Complete` | 2026-07-18 — the one deferred follow-up was retired, not built; see §12 "Follow-up retired". No open work… |
 | [Predictive Audit Strategy — Data Loop Completion & Intelligence](./predictive-audit-strategy.md) | `Complete` | shipped — `predictiveConfig` block exported from `scripts/lib/config.mjs`… |

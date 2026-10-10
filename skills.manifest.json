@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "57ae22b1bce689bc",
+  "bundleVersion": "c08ab6f13c810bc1",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -546,14 +546,14 @@
     },
     "ux-lock": {
       "path": "skills/ux-lock/SKILL.md",
-      "sha": "82132ed428a4",
-      "size": 19621,
+      "sha": "0558911b51b1",
+      "size": 19723,
       "summary": "Generate Playwright e2e specs. Two modes:",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "82132ed428a4",
-          "size": 19621
+          "sha": "0558911b51b1",
+          "size": 19723
         },
         {
           "relPath": "references/input-acquisition.md",
@@ -577,8 +577,8 @@
         },
         {
           "relPath": "references/verify-mode-generation.md",
-          "sha": "bc3524b196c8",
-          "size": 12142
+          "sha": "9866cff3d137",
+          "size": 12289
         }
       ]
     },

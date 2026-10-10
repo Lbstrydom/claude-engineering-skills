@@ -19,6 +19,10 @@
  *        (SELECT count(*) FROM ins)    AS inserted;
  * ```
  *
+ * (Shown for one row. N rows emit `ins0 … insN-1`, one INSERT CTE each, and
+ * `ins AS (SELECT id FROM ins0 UNION ALL …)` — see the builder for why a union
+ * over the VALUES is forbidden.)
+ *
  * A bare join returns zero rows for *parent not found* and *parent not owned*
  * alike, losing the very distinction this design promises (audit R3-H4). The
  * two counts keep them apart: `parent_found = 0` → `PARENT_NOT_FOUND`;
@@ -108,6 +112,17 @@ export function buildOwnedInsert({
   ident(childTable, 'child table');
   columns.forEach((c) => ident(c, 'child column'));
   if (!Array.isArray(rows) || rows.length === 0) throw new Error('ownership: rows must be a non-empty array');
+  // Every row must match the column list exactly. A short row would bind
+  // `undefined` (sent as NULL) into the trailing columns — a silent wrong write,
+  // not an error, on exactly the multi-row path.
+  rows.forEach((row, r) => {
+    if (!Array.isArray(row) || row.length !== columns.length) {
+      throw new Error(
+        `ownership: row ${r} has ${Array.isArray(row) ? row.length : typeof row} value(s), `
+        + `expected ${columns.length} (one per column)`,
+      );
+    }
+  });
 
   // Child columns whose value comes from the PARENT row, not the caller.
   for (const [child, parentCol] of Object.entries(fromParent)) {
@@ -116,7 +131,13 @@ export function buildOwnedInsert({
       throw new Error(`ownership: fromParent names "${child}", which is not in the child column list`);
     }
   }
-  const parentExtra = [...new Set(Object.values(fromParent))];
+  // `id` and `repo_id` are ALWAYS projected by the parent CTE (as aliases), so a
+  // fromParent mapping onto either reuses that projection instead of projecting
+  // the column a second time — `{ run_id: 'id' }` (the child's own parent key,
+  // taken from the row the ownership join proved) would otherwise emit a
+  // duplicate `id` column and an ambiguous `parent.id` reference.
+  const PARENT_CTE_COLUMNS = new Set(['id', 'repo_id']);
+  const parentExtra = [...new Set(Object.values(fromParent))].filter((c) => !PARENT_CTE_COLUMNS.has(c));
 
   const values = [parentId, repoId];
   // $1 = parent id, $2 = repoId (nullable). Row values follow.
@@ -132,7 +153,18 @@ export function buildOwnedInsert({
       + `${parentExtra.map((c) => `, ${c}`).join('')} `
       + `FROM ${ident(parentTable, 'parent table')} WHERE ${idCol} = $1`;
 
-  const rowSelects = rows.map((row) => {
+  // ONE data-modifying CTE PER ROW — never `SELECT … UNION ALL SELECT …` over
+  // bind parameters (upstream 512cf1c9). node-postgres sends every parameter
+  // untyped. A single-row `INSERT … SELECT $n FROM parent` leaves those unknown
+  // outputs for the INSERT target to coerce to each column's type; a set
+  // operation resolves its output column types FIRST, and an all-unknown column
+  // resolves to `text` — so every multi-row write failed with 42804 ("column
+  // run_id is of type uuid but expression is of type text") before it could even
+  // report parent-not-found. Per-row CTEs keep each value under its INSERT
+  // target; the UNION below runs over the typed `RETURNING id` column only. All
+  // CTEs are one statement, so the write stays all-or-nothing.
+  const insertHead = `INSERT INTO ${childTable} (${columns.map((c) => `"${c}"`).join(', ')}) `;
+  const rowInserts = rows.map((row, r) => {
     const exprs = columns.map((col, i) => {
       // A parent-sourced column reads from the joined row; everything else is a
       // bound placeholder. Reading it from the parent is what makes a
@@ -141,13 +173,15 @@ export function buildOwnedInsert({
       values.push(row[i]);
       return `$${values.length}`;
     });
-    return `SELECT ${exprs.join(', ')} FROM parent WHERE ($2::uuid IS NULL OR parent.repo_id = $2)`;
+    return `ins${r} AS (${insertHead}SELECT ${exprs.join(', ')} FROM parent `
+      + 'WHERE ($2::uuid IS NULL OR parent.repo_id = $2) RETURNING id)';
   });
+  const insUnion = rows.map((_, r) => `SELECT id FROM ins${r}`).join(' UNION ALL ');
 
   const text =
     `WITH parent AS (${parentCte}), `
-    + `ins AS (INSERT INTO ${childTable} (${columns.map((c) => `"${c}"`).join(', ')}) `
-    + `${rowSelects.join(' UNION ALL ')} RETURNING id) `
+    + `${rowInserts.join(', ')}, `
+    + `ins AS (${insUnion}) `
     + 'SELECT (SELECT count(*) FROM parent)::int AS parent_found, '
     + '(SELECT count(*) FROM ins)::int AS inserted, '
     // The inserted id comes OUT of the CTE. The first version read it back with

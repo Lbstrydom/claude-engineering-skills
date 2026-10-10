@@ -109,6 +109,47 @@ describe('the emitted statement keeps BOTH guarantees visible', () => {
     assert.equal(values.length, 2 + 6);
   });
 
+  it('a multi-row write is one INSERT per row — never a set operation over bind parameters', () => {
+    // Upstream 512cf1c9. `SELECT $3 … UNION ALL SELECT $5 …` made Postgres
+    // resolve the untyped parameters to `text` before the INSERT target could
+    // coerce them: every multi-row write failed with 42804. Only real Postgres
+    // proves the typing (tests/plan-verification-items-db.test.mjs); this pins
+    // the SHAPE everywhere, so a rewrite back to a union over values fails here
+    // too, not only in the DB job.
+    const { text } = build({ rows: [['a', true], ['b', false], ['c', true]] });
+    assert.equal((text.match(/ins\d+ AS \(INSERT INTO regression_spec_runs/g) || []).length, 3);
+    assert.doesNotMatch(text, /UNION ALL SELECT \$/,
+      'a UNION over bind parameters is exactly the construct that typed them as text');
+    assert.match(text, /ins AS \(SELECT id FROM ins0 UNION ALL SELECT id FROM ins1 UNION ALL SELECT id FROM ins2\)/);
+  });
+
+  it('refuses a row whose length does not match the column list (a short row would bind NULLs)', () => {
+    assert.throws(() => build({ rows: [['a', true], ['b']] }), /row 1 has 1 value\(s\), expected 2/);
+    assert.throws(() => build({ rows: [['a', true, 'extra']] }), /row 0 has 3 value\(s\), expected 2/);
+    assert.throws(() => build({ rows: ['not-an-array'] }), /row 0 has string value\(s\)/);
+  });
+
+  it("fromParent onto the parent's own id reuses the CTE projection — no duplicate column", () => {
+    // The child's parent key taken from the PROVEN parent row (upstream 512cf1c9
+    // code-audit H1). Mapping onto `id` must not project `id` a second time,
+    // which Postgres rejects as an ambiguous `parent.id`.
+    const { text, values } = buildOwnedInsert({
+      parentTable: 'plan_verification_runs',
+      childTable: 'plan_verification_items',
+      columns: ['run_id', 'plan_id', 'criterion_hash'],
+      rows: [['caller-run', 'caller-plan', 'h0'], ['caller-run', 'caller-plan', 'h1']],
+      parentId: 'run-1',
+      repoId: null,
+      fromParent: { run_id: 'id', plan_id: 'plan_id' },
+    });
+    const projection = text.match(/^WITH parent AS \(SELECT (.*?) FROM plan_verification_runs p /)?.[1];
+    assert.equal(projection, 'p.id AS id, f.repo_id AS repo_id, p.plan_id',
+      'the parent CTE projects `id` once (its alias) and adds only the genuinely extra column');
+    assert.match(text, /SELECT parent\.id, parent\.plan_id, \$3 FROM parent/);
+    assert.ok(!values.includes('caller-run') && !values.includes('caller-plan'),
+      'parent-sourced values must never be bound from the caller');
+  });
+
   it('reaches the tenant through the declared hop when the parent has no repo_id', () => {
     const { text } = buildOwnedInsert({
       parentTable: 'plan_verification_runs',

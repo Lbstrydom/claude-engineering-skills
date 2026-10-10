@@ -21,6 +21,13 @@
       "reason": "'Verify is a report, not a blocker — it exits 0 even when criteria fail' is a NEGATIVE gate (an absence of failure), and asserting it needs a live plan + a running app the verify runner drives via Playwright to produce a genuine criterion failure at exit 0 — not hermetically constructible under the cli-exit fixture without a browser. The strict-selectors FAILURE direction is bound executably above."
     },
     {
+      "id": "verify-exit-4-when-not-recorded",
+      "kind": "document-only",
+      "statedIn": "skills/ux-lock/SKILL.md",
+      "stated": "Exit 4 (`error.code: PERSIST_FAILED`) means it RAN",
+      "reason": "Added 2026-10-10 with upstream 512cf1c9 (verify lost every plan_verification_items row and still exited 0). The decision and wiring ARE mechanically tested: persistAndReportVerify / verifyPersistOutcome in scripts/ux-lock-run.mjs are exported and pinned by tests/plan-verification-outcome.test.mjs (stub writers, every outcome row, a negative control) and tests/plan-verification-items-db.test.mjs (the REAL writers against disposable Postgres: recorded run -> exit 0, unrecordable run -> exit 4). It stays document-only because the closed oracle registry's cli-exit recipe would have to drive `ux-lock-run.mjs verify` end to end, which spawns Playwright against a live URL before anything is recorded — the same constraint that keeps verify-is-a-report-not-a-blocker document-only above."
+    },
+    {
       "id": "status-rubric",
       "kind": "document-only",
       "reason": "The PLAN_SATISFIED / PLAN_PARTIAL / PLAN_NOT_SHIPPED status label is model-emitted report prose, composed by the agent from Step V6's instructions over live plan_satisfaction data — no script computes it, it is neither persisted nor parsed, and it surfaces as report text, not a process exit code the cli-exit oracle can assert. (Corrected 2026-08-20, lens-coverage-honesty plan §1.1: the prior reason described the underlying satisfaction DATA as browser-driven, which is true, but the gate claim being dispositioned is the STATUS LABEL a script never computes.)"
