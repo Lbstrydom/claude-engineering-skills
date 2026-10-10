@@ -37,7 +37,7 @@ function tmp(prefix) {
   return d;
 }
 after(() => {
-  for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true });
+  for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 /** A child env with none of the ambient answers this suite asks about. */
