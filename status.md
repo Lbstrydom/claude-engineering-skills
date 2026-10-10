@@ -87,6 +87,33 @@
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
 
+## 2026-10-10 — fleet follow-ups: one glob seam (braces CVE gone), batched gh, prune, weekly telemetry review; dashboard persona fixes
+
+From the 2026-10-10 follow-up list ("long-term sustainable, not quick fixes") and a /persona-test re-run.
+
+### What shipped
+- **Dependabot (2 alerts).** `scripts/lib/glob.mjs` is the one glob seam, built on picomatch. micromatch is gone, and with it `braces` (GHSA-vfj7-8cjw-p6xm, which has no patched release). It keeps micromatch's list semantics, where `!` excludes but `!(…)` is a negative extglob. knip 6.41 brings smol-toml 1.9.1.
+- **gh batching.** `lib/fleet/gh-batch.mjs` asks gh's three status questions concurrently from synchronous code. Measured median 3632 ms → 1621 ms. A timed-out child is owned until it exits.
+- **`fleet prune`** (read-only). It lists branches and worktrees whose removal provably loses nothing. Proof is merged/landed evidence plus archive evidence; locked worktrees and the main checkout are never candidates. A remote delete is offered only when origin's tip is covered by the proven tip, and it is printed with a lease. Real-repo dry run: 67 candidates.
+- **Weekly fleet-telemetry review.** `fleet-telemetry stats --fail-on high` runs as a local maintenance check. Unreadable data, or no store at all, fails as not-measured rather than reading as clean.
+- **Dashboard (persona re-test, session 7fb663e2; all 4 earlier P1s verified fixed):**
+  - The merges list reads the fresher of local and origin main.
+  - The arch map re-renders weekly.
+  - The Persona Tests tab shows the outcome ledger. This was fixed again after audit: the store summary has no `measured` field, so the first version read as unreadable forever.
+  - The queue card's command is fixed.
+  - The CLI group is renamed "Other".
+
+### Verification
+- The first audit round under the old tooling read about 4K characters per file, so its PASS was unmeasured. That reproduced upstream 58f4e3a5, which was fixed and merged first (#182).
+- Re-audited with the fixed tooling, with full coverage: R1 H6 M18 (17 accepted, 8 of them deferred to #181, which fixes check-deps), then R2 M3 (1 valid, fixed; 2 were egress-redaction artifacts, disproved by a negative control).
+- Gemini final gate: APPROVE, 0 blocking.
+- Every fix has a regression test, each seen red with the fix reverted. The one exception is a label-only fallback branch reachable only on a git error, disclosed in the ledger.
+
+### Coordinated alongside (/fleet)
+- Upstream 512cf1c9 (#179) and 58f4e3a5 (#182) are fixed and closed with notes.
+- Their disposition entries landed as #180 and #183. `upstream fix` writes a committed file, and an unlanded one blocks every push via `upstream:reconcile:gate`.
+- check-deps (#181) and the H4 deflake are landing separately.
+
 ## 2026-10-10 — /fleet status 24 s → 2.5 s; squash evidence must postdate the fork
 
 Triggered by fleet telemetry's first finding (status 16 s against a 10 s budget).
