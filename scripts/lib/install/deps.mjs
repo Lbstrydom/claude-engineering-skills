@@ -300,11 +300,14 @@ export function npmInvocation() {
  * `node_modules/<dep>` is a symlink into `.pnpm/`, and `existsSync` follows it
  * to the real manifest.
  *
+ * Exported so `check-deps.mjs --fix` adjudicates its install with this SAME
+ * predicate, rather than a second spelling of "is it installed".
+ *
  * @param {string} nodeModules — absolute path to the target's `node_modules`
  * @param {string} dep — package name, possibly scoped
  * @returns {boolean}
  */
-function isInstalledPackage(nodeModules, dep) {
+export function isInstalledPackage(nodeModules, dep) {
   return fs.existsSync(path.join(nodeModules, dep, 'package.json'));
 }
 
