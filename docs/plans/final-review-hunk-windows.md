@@ -1,6 +1,6 @@
 # Plan: Hunk windows for the final-review envelope and the tiered discovery read
 - **Date**: 2026-10-10
-- **Status**: Ready
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend — stack `js-ts` (universal engineering principles)
 - **Target domain(s)**: `audit-orchestration`, `shared-lib`
@@ -396,3 +396,19 @@ One cluster, in this order:
   - M3 (weak assertion): **fixed**. The test now checks exact totals derived from the recorded ranges.
   - M4: **dismissed**. The adjacency wave reported its own enumeration bound. This is a census row, not a code
     defect.
+- **R2** (R2+ mode, run on the R1 fixes): H:0 M:1 L:1, converged. Both findings were the same root cause: the
+  untracked-warning filter matched substrings of the human-readable line. **Fixed**: `buildHunkMap` now passes
+  `{path, code}` to `warn`, and suppression is limited to an exact untracked path with an absent-diff reason. Added a
+  regression test with untracked `new.js` and a stale tracked `src/new.js`.
+- **R3**: H:0 M:0 L:0, converged (2/2 stable). Detector census: 0 detectors, not blocked. Coverage `complete` on every
+  round.
+- **Gemini gate R1**: APPROVE, gate `approve` (0 blocking, 0 debt). It ran on this branch's own code, so it doubled as
+  a live check of the feature:
+  - The R1 round stamped `_diffBase` (`5df1ade5…`), and the reviewer rebuilt post-image-verified hunks from it.
+  - Its coverage line read `PARTIAL — 6/15 rendered whole; 6 windowed; 3 absent; 273 of 756 changed line(s) never
+    shown; changed lines unmeasured for 3 file(s)`.
+  - The 273 unread lines are all in the 399-changed-line test file, which was windowed under the 100K budget.
+  - The 3 unmeasured files are `gemini-review.mjs`, `audit-scope.mjs` and `openai-audit.mjs`. `isAuditInfraFile`
+    excludes them from the envelope in this source repo, so they are reported as `not selected for the envelope`, not
+    as clean.
+  - The GPT rounds read all of them (`_coverage` complete).
