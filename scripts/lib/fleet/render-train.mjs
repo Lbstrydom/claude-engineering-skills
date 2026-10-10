@@ -99,7 +99,10 @@ export function renderApprove(r, cmd = 'fleet') {
   if (r.note) L.push(`NOTE: ${r.note}`);
   if (r.mode === 'pr') {
     L.push(`APPROVED ${r.trainId} (pr mode): ${r.plan.length} merge(s) to run, in landing order. NOTHING was executed or recorded as landed.`);
-    for (const p of r.plan) L.push(`  ${renderCommand(p.command)}`);
+    for (const p of r.plan) {
+      if (p.wait) L.push(`  WAIT (${p.id}): ${p.wait}`);
+      L.push(`  ${renderCommand(p.command)}`);
+    }
     L.push(`The train is awaiting-merge. After merging, run: ${cmd} land --confirm ${r.trainId}`);
   } else {
     L.push(`LANDED ${r.trainId} (${r.mode}): pushed ${o12(r.train.candidate.oid)} to ${r.train.destination.ref}.`);

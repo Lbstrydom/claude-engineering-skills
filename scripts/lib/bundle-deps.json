@@ -69,6 +69,7 @@
       "name": "micromatch",
       "required": true,
       "importers": [
+        "scripts/.claude-skills/lib/fleet/lifecycle.mjs",
         "scripts/.claude-skills/lib/fleet/overlap.mjs",
         "scripts/.claude-skills/openai-audit.mjs"
       ]

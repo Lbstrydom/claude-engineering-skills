@@ -13,6 +13,8 @@
  *   hold on|off [--reason]          "hold heavy runs"
  *   start --task … [--paths …]…     atomic all-or-nothing batch of chip worktrees
  *   repair --quarantine <file>      move one invalid record aside (human-run)
+ *   release [--id] [--abandoned]    retire a claim now (done / abandoned)
+ *   archive-check [<id|branch|path>] what removing a worktree would lose (read-only)
  *   land [--select a,b] [--dry-run] build + test one combined train
  *   land --approve|--confirm|--reconcile|--resume|--abandon <trainId>
  *
@@ -35,6 +37,7 @@ import {
   GitUnavailableError, cmdAdd, cmdClaim, cmdHold, cmdReady, cmdRepair, cmdStart, cmdStatus, cmdTouch,
 } from './lib/fleet/commands.mjs';
 import { leaseMsFrom, resolveNow } from './lib/fleet/facts.mjs';
+import { cmdArchiveCheck, cmdRelease } from './lib/fleet/lifecycle.mjs';
 import { renderCommand } from './lib/fleet/shell-quote.mjs';
 import { cmdLand } from './lib/fleet/land.mjs';
 import { fleetDir, RegistryError } from './lib/fleet/registry.mjs';
@@ -81,6 +84,8 @@ async function main() {
       case 'hold': result = cmdHold(ctx, flags, positionals); break;
       case 'start': result = cmdStart(ctx, tasks); break;
       case 'repair': result = cmdRepair(ctx, flags); break;
+      case 'release': result = cmdRelease(ctx, flags); break;
+      case 'archive-check': result = cmdArchiveCheck(ctx, flags, positionals); break;
       case 'land': result = cmdLand(ctx, flags); break;
       default: throw new ArgvError(`fleet: unhandled verb ${verb}`);
     }

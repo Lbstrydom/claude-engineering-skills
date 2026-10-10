@@ -14,7 +14,7 @@ import { ArgvError } from '../cli-io.mjs';
 
 /** Per-verb flag tables. `bool` takes no value, `value` takes one, `repeat` may recur. */
 export const VERBS = Object.freeze({
-  status: { bool: ['--json', '--all'], value: [], repeat: [], positionals: [0, 0] },
+  status: { bool: ['--json', '--all', '--fetch'], value: [], repeat: [], positionals: [0, 0] },
   add: { bool: ['--json', '--all'], value: ['--id'], repeat: [], positionals: [0, 1] },
   claim: { bool: ['--json', '--override', '--clear-waiting'], value: ['--id', '--intent', '--paths'], repeat: ['--waiting-on'], positionals: [0, 0] },
   ready: { bool: ['--json', '--clear-waiting'], value: ['--id'], repeat: ['--waiting-on'], positionals: [0, 0] },
@@ -22,6 +22,8 @@ export const VERBS = Object.freeze({
   hold: { bool: ['--json'], value: ['--reason'], repeat: [], positionals: [1, 1] },
   start: { bool: ['--json'], value: [], repeat: ['--task', '--paths'], positionals: [0, 0] },
   repair: { bool: ['--json'], value: ['--quarantine'], repeat: [], positionals: [0, 0] },
+  release: { bool: ['--json', '--abandoned'], value: ['--id'], repeat: [], positionals: [0, 0] },
+  'archive-check': { bool: ['--json'], value: ['--id', '--min-kb'], repeat: [], positionals: [0, 1] },
   land: {
     bool: ['--json', '--dry-run', '--accept-rerun'],
     value: ['--select', '--approve', '--confirm', '--reconcile', '--resume', '--abandon'], repeat: [], positionals: [0, 0],

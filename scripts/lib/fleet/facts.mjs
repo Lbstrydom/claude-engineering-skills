@@ -22,6 +22,8 @@ import {
   DEFAULT_LEASE_MS, buildStatus, checkBlocksApproval, idleMsFrom, isIdleTip, liveness,
 } from './overlap.mjs';
 import { buildCheckPayload, resultsToFindings, runChecks } from './checks.mjs';
+import { CLEAN_PROBE, probeWorktrees, uncommittedPaths, worktreeStatus } from './worktree-status.mjs';
+import { SQUASH_DEPTH, gitAdapters, listMergedPullRequests, mergedEvidenceFor, squashPatchIds } from './merged-facts.mjs';
 
 /**
  * The one clock read. `FLEET_NOW` (ISO string or epoch ms) overrides it so a
@@ -100,7 +102,7 @@ export function resolveUpstream(cwd, base, trains = []) {
  *   empty change set, and costs no git call.
  * @returns {object} facts for `buildStatus`, plus `dir`
  */
-export function gatherFacts({ cwd, config, now, env = process.env, prs = true, patches = true, worktrees = true, cmd = 'fleet', checks = true, maxBranches, untracked = true }) {
+export function gatherFacts({ cwd, config, now, env = process.env, prs = true, patches = true, worktrees = true, cmd = 'fleet', checks = true, maxBranches, untracked = true, merged, uncommitted }) {
   const dir = fleetDir(cwd);
   const base = config.baseBranch;
   const registry = readSessions(dir);
@@ -129,8 +131,21 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
   Object.assign(changed, pr.changed);
   const branchesNotAnalysed = mergeNotAnalysed(sel.branchesNotAnalysed, pr.notAnalysed);
   const worktreeList = worktrees ? listWorktrees(cwd) : { queried: false, reason: 'not requested', worktrees: [] };
+  // Merged evidence (squash merges never make a tip an ancestor of base). The default follows `untracked`:
+  // the full view judges every candidate branch; session-only verbs name the branches they need.
+  const mergedWanted = merged === undefined ? (untracked ? 'all' : false) : merged;
+  const mergedFacts = mergedWanted === false
+    ? { prs: { queried: false, reason: 'not requested' }, squash: { queried: false, reason: 'not requested' }, evidence: {} }
+    : gatherMerged({ cwd, base, baseRev, names: mergedWanted === 'all' ? [...sel.names] : mergedWanted, branches, patchIds, env });
+  const tracked = new Set(registry.sessions.map((s) => s.source?.branch).filter(Boolean));
+  const landed = new Set(Object.entries(mergedFacts.evidence).filter(([n, e]) => e.merged === true && !tracked.has(n)).map(([n]) => n));
+  // Uncommitted evidence: every non-terminal session's worktree (`'all'`), the named branches, or none.
+  const uncommittedWanted = uncommitted === undefined ? (untracked ? 'all' : false) : uncommitted;
+  const uncommittedFacts = uncommittedWanted === false ? {}
+    : probeSessionWorktrees({ registry, worktreeList, branches: uncommittedWanted === 'all' ? null : uncommittedWanted });
   return {
-    worktreeClean: probeWorktreeCleanliness({ branches, worktreeList, base, registry, now, idleMs: idleMsFrom(config) }),
+    worktreeClean: probeWorktreeCleanliness({ branches, worktreeList, base, registry, now, idleMs: idleMsFrom(config), landed }),
+    merged: mergedFacts, uncommitted: uncommittedFacts,
     hotFiles: config.hotFiles ?? [],
     findings: pr.findings, evidenceNotes: pr.evidenceNotes, prTrusted: pr.prTrusted, dir, now, leaseMs: leaseMsFrom(env), baseOid: baseOidSnap ?? (() => { const h = headOf(cwd, `refs/heads/${base}`); return h.ok ? h.oid : null; })(),
     base: { name: base, upstream: up.upstream, freshness: baseFreshness(cwd, { base, upstream: up.upstream }), measure },
@@ -230,37 +245,94 @@ function prSessionEvidence({ cwd, registry, prFacts, names, branches, baseRev, b
   return { changed, findings, evidenceNotes, prTrusted, notAnalysed };
 }
 
-/** Bounds of the cleanliness probe (plan §2.2): per process, candidate cap, aggregate. */
-export const CLEAN_PROBE = Object.freeze({ timeoutMs: 5_000, maxCandidates: 20, deadlineMs: 15_000 });
+export { CLEAN_PROBE };
 
 /**
- * For each UNTRACKED branch the default view could hide (ahead 0, or a known ahead
- * count with a tip older than `idleMs`) that has a worktree, is that worktree clean?
+ * For each UNTRACKED branch the default view could hide (ahead 0, a known ahead
+ * count with a tip older than `idleMs`, or committed work already landed — `landed`)
+ * that has a worktree, is that worktree clean?
  * `{[path]: true|false|null}`; `null` = could not be established (probe failed,
  * timed out, over the cap, or past the aggregate deadline) and keeps the item
- * visible. Sequential probes through `runGit`, the deadline checked before each,
+ * visible. Sequential probes (`probeWorktrees`), the deadline checked before each,
  * so the worst case is deadline + one timeout — never N x timeout.
  * @param {{branches: object, worktreeList: object, registry: object, base: string, now?: Date|number|null,
- *   idleMs?: number, clock?: () => number}} a - without `now`/`idleMs` only ahead-0 branches are candidates
+ *   idleMs?: number, landed?: Set<string>, clock?: () => number}} a - without `now`/`idleMs` only ahead-0 branches are candidates
  */
-export function probeWorktreeCleanliness({ branches, worktreeList, registry, base, now = null, idleMs = 0, clock = Date.now, probe = (p) => runGit(['status', '--porcelain', '--untracked-files=normal'], p, { timeoutMs: CLEAN_PROBE.timeoutMs }) }) {
-  const out = {};
-  if (!branches?.queried || !worktreeList?.queried) return out;
+export function probeWorktreeCleanliness({ branches, worktreeList, registry, base, now = null, idleMs = 0, landed = new Set(), clock = Date.now, probe = (p) => runGit(['status', '--porcelain', '--untracked-files=normal'], p, { timeoutMs: CLEAN_PROBE.timeoutMs }) }) {
+  if (!branches?.queried || !worktreeList?.queried) return {};
   const tracked = new Set((registry?.sessions ?? []).map((s) => s.source?.branch).filter(Boolean));
   const candidates = [];
   for (const b of branches.branches ?? []) {
-    const hideable = b.ahead === 0 || (Number.isInteger(b.ahead) && isIdleTip(b.tipTime, now, idleMs));
+    const hideable = b.ahead === 0 || (Number.isInteger(b.ahead) && isIdleTip(b.tipTime, now, idleMs)) || landed.has(b.name);
     if (b.name === base || tracked.has(b.name) || !hideable) continue;
     const wt = (worktreeList.worktrees ?? []).find((w) => w.branch === b.name && !w.bare);
     if (wt) candidates.push(wt.path);
   }
-  const start = clock();
-  candidates.forEach((p, i) => {
-    if (i >= CLEAN_PROBE.maxCandidates || clock() - start > CLEAN_PROBE.deadlineMs) { out[p] = null; return; }
-    const r = probe(p);
-    out[p] = r.ok ? r.stdout.trim() === '' : null;
-  });
+  const probed = probeWorktrees(candidates, { clock, probe: (p) => ({ queried: true, ...probe(p) }) });
+  return Object.fromEntries(Object.entries(probed).map(([p, r]) => [p, r.queried && r.ok ? r.stdout.trim() === '' : null]));
+}
+
+/**
+ * Uncommitted evidence for registered sessions' worktrees: the paths each holds
+ * that are not committed (staged, unstaged, untracked — ignored excluded). Keyed
+ * by BRANCH, like `changed`. Bounded by `CLEAN_PROBE`; a worktree over budget or
+ * whose probe failed is `{queried:false, reason}`, never `[]`.
+ * @param {{registry: object, worktreeList: object, branches?: string[]|null, now?: Date, clock?: () => number,
+ *   probe?: (dir: string) => object}} a - `branches` limits the set (null = every non-terminal session)
+ * @returns {Record<string, {queried: boolean, files: string[], worktree: string, reason?: string}>}
+ */
+export function probeSessionWorktrees({ registry, worktreeList, branches = null, clock = Date.now, probe = (d) => worktreeStatus(d) }) {
+  if (!worktreeList?.queried) return {};
+  const want = branches ? new Set(branches) : null;
+  const byBranch = new Map();
+  for (const s of registry?.sessions ?? []) {
+    const b = s.source?.branch;
+    if (!b || (want && !want.has(b))) continue;
+    // Non-terminal only: a session with merged evidence is still non-terminal until its worktree is read.
+    if (TERMINAL.has(s.state)) continue;
+    const wt = (worktreeList.worktrees ?? []).find((w) => !w.bare && (w.branch === b || (s.worktree && samePathLoose(w.path, s.worktree))));
+    if (wt) byBranch.set(b, wt.path);
+  }
+  const probed = probeWorktrees([...byBranch.values()], { clock, probe });
+  const out = {};
+  for (const [b, p] of byBranch) {
+    const r = probed[p];
+    out[b] = r?.queried ? { queried: true, files: uncommittedPaths(r.entries), worktree: p } : { queried: false, files: [], worktree: p, reason: r?.reason ?? 'not probed' };
+  }
   return out;
+}
+
+const TERMINAL = new Set(['done', 'abandoned']);
+const samePathLoose = (a, b) => String(a).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() === String(b).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+
+/**
+ * Merged evidence for `names` (the branches to judge): one `gh pr list --state
+ * merged`, one squash patch-id window over base, then `mergedEvidenceFor` per
+ * branch at its CAPTURED tip. Each source keeps its own provenance.
+ */
+export function gatherMerged({ cwd, base, baseRev, names, branches, patchIds, env }) {
+  const prs = listMergedPullRequests(cwd, { base, env });
+  const squash = squashPatchIds(cwd, baseRev);
+  const tipOid = new Map((branches?.branches ?? []).map((b) => [b.name, b.oid]));
+  const adapters = gitAdapters(cwd);
+  const evidence = {};
+  for (const n of names) {
+    const tip = tipOid.get(n) ?? null;
+    let pid = patchIds?.[n]?.queried ? patchIds[n].patchId : null;
+    if (!pid && tip && squash.queried && squash.byPatchId.size) {
+      const p = patchId(cwd, baseRev, tip);
+      pid = p.queried ? p.patchId : null;
+    }
+    // A squash window shorter than base's history still COVERS this branch when its fork point is inside it.
+    let covers = squash.complete;
+    if (squash.queried && !squash.complete && tip) {
+      const mb = runGit(['merge-base', baseRev, tip], cwd);
+      const n2 = mb.ok ? runGit(['rev-list', '--count', '--first-parent', `${mb.stdout.trim()}..${baseRev}`], cwd) : null;
+      covers = Boolean(n2?.ok) && Number.parseInt(n2.stdout.trim(), 10) <= SQUASH_DEPTH;
+    }
+    evidence[n] = mergedEvidenceFor({ branch: n, tipOid: tip, patchId: pid, mergedPrs: prs, squash: { ...squash, coversFork: covers }, ...adapters });
+  }
+  return { prs: { queried: prs.queried, complete: prs.complete, reason: prs.reason, count: prs.prs?.length ?? 0 }, squash: { queried: squash.queried, complete: squash.complete, reason: squash.reason }, evidence };
 }
 
 /** The hook's session/overlap payload, derived from a joined status. */
@@ -368,6 +440,10 @@ export function othersFor(facts, selfId, now, sessions = facts.registry.sessions
     const b = s.source?.branch;
     const k = evidenceKey(s, facts);
     const live = liveness(s, { now, leaseMs: facts.leaseMs, tipCommitAt: b ? tipOf.get(b) ?? null : null }).live;
-    return { session: s, live, changedFiles: k && facts.changed?.[k]?.queried ? facts.changed[k].files : [] };
+    const u = b ? facts.uncommitted?.[b] : undefined;
+    return {
+      session: s, live, changedFiles: k && facts.changed?.[k]?.queried ? facts.changed[k].files : [],
+      uncommittedFiles: u?.queried ? u.files : [], ...(u && !u.queried ? { uncommittedUnknown: u.reason } : {}),
+    };
   });
 }

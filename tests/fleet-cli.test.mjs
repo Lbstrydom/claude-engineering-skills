@@ -1034,7 +1034,8 @@ describe('pr mode: emits a plan, observes via gh', () => {
   });
 
   it('every gh --json field fleet requests is a member of the recorded real field list', () => {
-    const fields = JSON.parse(fs.readFileSync(path.resolve('tests/fixtures/fleet/gh-pr-view-fields.json'), 'utf8')).view;
+    const recorded = JSON.parse(fs.readFileSync(path.resolve('tests/fixtures/fleet/gh-pr-view-fields.json'), 'utf8'));
+    const fields = recorded.view;
     for (const f of [...PR_APPROVE_FIELDS, ...PR_VIEW_FIELDS]) assert.ok(fields.includes(f), `${f} is a real gh pr view field`);
     const { s } = prFx();
     const t = land(s).json.train;
@@ -1042,7 +1043,8 @@ describe('pr mode: emits a plan, observes via gh', () => {
     s.f(['land', '--confirm', t.trainId]);
     for (const c of s.fake.calls()) {
       const i = c.indexOf('--json');
-      if (i >= 0) for (const f of c[i + 1].split(',')) assert.ok(fields.includes(f), `${f} requested via gh ${c.slice(0, 2).join(' ')}`);
+      const known = c[0] === 'pr' && c[1] === 'checks' ? recorded.checks : fields;
+      if (i >= 0) for (const f of c[i + 1].split(',')) assert.ok(known.includes(f), `${f} requested via gh ${c.slice(0, 2).join(' ')}`);
     }
   });
 

@@ -17,6 +17,16 @@ import {
   renderAbandon, renderApprove, renderBuilt, renderConfirm, renderDryRun, renderReconcile,
 } from './render-train.mjs';
 
+/**
+ * `.fleet.json` `requiredChecks` for approval. Recovery verbs (--confirm/--reconcile/--abandon) never
+ * read config; approval does, and a config that fails to load is carried as an ERROR — the inventory
+ * then reads `unknown` (a WAIT on every merge line), never "nothing declared".
+ * @returns {{requiredChecks?: string[], requiredChecksError?: string}}
+ */
+function configuredRequiredChecks(ctx) {
+  try { return { requiredChecks: ctx.config.requiredChecks }; } catch (e) { return { requiredChecksError: e.message }; }
+}
+
 const MODES = ['--approve', '--confirm', '--reconcile', '--resume', '--abandon'];
 const withText = (r, text) => ({ ...r, text });
 
@@ -37,7 +47,7 @@ export function cmdLand(ctx, flags, deps = defaultDeps({ now: () => ctx.now })) 
   const { cwd, cmd } = ctx; // NOTE: ctx.config is lazy — manifest-driven verbs below never touch it
 
   if (modes[0] === '--approve') {
-    const r = approveTrain({ cwd, trainId: validId(flags['--approve']), acceptRerun: Boolean(flags['--accept-rerun']), cmd, deps });
+    const r = approveTrain({ cwd, trainId: validId(flags['--approve']), acceptRerun: Boolean(flags['--accept-rerun']), cmd, deps, ...configuredRequiredChecks(ctx) });
     return withText(r, renderApprove(r, cmd));
   }
   if (modes[0] === '--confirm') {

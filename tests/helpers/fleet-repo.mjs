@@ -157,22 +157,58 @@ if (/^gh(\\.exe)?$/i.test(path.basename(process.execPath))) {
   const out = (s) => { fs.writeSync(1, s); process.exit(0); };
   const fail = (m) => { fs.writeSync(2, m + '\\n'); process.exit(1); };
   const state = JSON.parse(fs.readFileSync(process.env.FAKE_GH_STATE, 'utf8'));
-  const fields = JSON.parse(fs.readFileSync(process.env.FAKE_GH_FIELDS, 'utf8')).view;
+  const recorded = JSON.parse(fs.readFileSync(process.env.FAKE_GH_FIELDS, 'utf8'));
+  const fields = args[0] === 'pr' && args[1] === 'checks' ? recorded.checks : recorded.view;
   if (process.env.FAKE_GH_LOG) fs.appendFileSync(process.env.FAKE_GH_LOG, JSON.stringify(args) + '\\n');
   const ji = args.indexOf('--json');
   const req = ji < 0 ? [] : String(args[ji + 1]).split(',');
   for (const f of req) if (!fields.includes(f)) fail('Unknown JSON field: "' + f + '"');
   if (state.authFail) fail('To get started with GitHub CLI, please run:  gh auth login');
+  // Sequenced answers: state.seq[key] is a list consumed one per call (the last one repeats).
+  const next = (key, fallback) => {
+    const seq = (state.seq ?? {})[key];
+    if (!Array.isArray(seq) || !seq.length) return fallback;
+    const cf = process.env.FAKE_GH_STATE + '.counters.json';
+    let counters = {}; try { counters = JSON.parse(fs.readFileSync(cf, 'utf8')); } catch {}
+    const i = counters[key] ?? 0; counters[key] = i + 1; fs.writeFileSync(cf, JSON.stringify(counters));
+    return seq[Math.min(i, seq.length - 1)];
+  };
+  const pick = (row) => { const o = {}; for (const f of req) if (f in row) o[f] = row[f]; return o; };
+  if (args[0] === 'pr' && args[1] === 'checks') {
+    // Like real gh: exit 1 (a check failed) or 8 (pending) still print the JSON answer.
+    const c = next('checks:' + args[2], (state.checks ?? {})[args[2]]);
+    if (!c) { fs.writeSync(2, 'no checks reported on the branch\\n'); process.exit(1); }
+    if (c.fail) fail(c.fail);
+    fs.writeSync(1, JSON.stringify((c.rows ?? []).map(pick)));
+    process.exit(c.exit ?? 0);
+  }
+  if (args[0] === 'api') {
+    const method = args.includes('-X') ? args[args.indexOf('-X') + 1] : 'GET';
+    const key = method + ' ' + args.find((a, i) => i > 0 && !a.startsWith('-') && args[i - 1] !== '-X' && args[i - 1] !== '-f');
+    const a = next('api:' + key, (state.api ?? {})[key]);
+    if (!a) fail('gh: Not Found (HTTP 404)');
+    if (a.fail) fail(a.fail);
+    out(JSON.stringify(a.body ?? {}));
+  }
+  if (args[0] === 'pr' && args[1] === 'merge') {
+    const m = next('merge:' + args[2], (state.merge ?? {})[args[2]] ?? { ok: true });
+    if (!m.ok) fail(m.fail ?? 'merge refused');
+    out('');
+  }
   if (args[0] === 'pr' && args[1] === 'list') {
     // Like real gh: only the requested fields come back, and a token that cannot read
     // check rollups fails ONLY the call that asks for statusCheckRollup.
     if (req.includes('statusCheckRollup') && state.checksFail) fail(state.checksFail);
     const omit = new Set(state.checksOmit ?? []);
-    const rows = (state.list ?? []).filter((r) => !(req.includes('statusCheckRollup') && omit.has(r.number)));
+    const si = args.indexOf('--state');
+    const wantState = si < 0 ? 'open' : String(args[si + 1]);
+    if (wantState === 'merged' && state.mergedFail) fail(state.mergedFail);
+    const source = wantState === 'merged' ? (state.merged ?? []) : (state.list ?? []);
+    const rows = source.filter((r) => !(req.includes('statusCheckRollup') && omit.has(r.number)));
     out(JSON.stringify(req.length ? rows.map((r) => { const o = {}; for (const f of req) if (f in r) o[f] = r[f]; return o; }) : rows));
   }
   else if (args[0] === 'pr' && args[1] === 'view') {
-    const row = (state.view ?? {})[args[2]];
+    const row = next('view:' + args[2], (state.view ?? {})[args[2]]);
     if (!row) fail('no pull requests found for ' + args[2]);
     const o = {}; for (const f of req) if (f in row) o[f] = row[f];
     out(JSON.stringify(o));
@@ -187,7 +223,7 @@ if (/^gh(\\.exe)?$/i.test(path.basename(process.execPath))) {
     bin,
     env: { // Node's NODE_OPTIONS parser splits on spaces unless the value is double-quoted.
     NODE_OPTIONS: `--require="${preload.replace(/\\/g, '/')}"`, FAKE_GH_STATE: state, FAKE_GH_FIELDS: FIELDS_FIXTURE, FAKE_GH_LOG: log },
-    setState(s) { fs.writeFileSync(state, JSON.stringify(s)); },
+    setState(s) { fs.writeFileSync(state, JSON.stringify(s)); fs.rmSync(`${state}.counters.json`, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); },
     calls() { return fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); },
   };
 }
