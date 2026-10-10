@@ -69,3 +69,31 @@ describe('shouldMapReduceHighReasoning — lower file-count threshold for reason
     assert.equal(shouldMapReduce(files), false);
   });
 });
+
+// ── Map-reduce reads are metered (upstream report 58f4e3a5; docs/plans/audit-hunk-window-coverage.md D8) ──
+const { runOneMapUnit, chunkUnitReadStats } = await import('../scripts/lib/audit/map-reduce-scheduler.mjs');
+
+describe('runOneMapUnit reads through the measured seam', () => {
+  const prompt = (unit) => ({ system: 's', messages: [{ role: 'user', content: unit._context }] });
+  // A client with no API surface: the model call fails AFTER the read, which is all these tests need.
+  const deadClient = {};
+  const noChanged = new Set();   // no changed file in the unit → no retries → the failure is immediate
+
+  it('a file unit renders via the injected renderFor, under the pass name, with its own 10000/80000 cut', async () => {
+    const calls = [];
+    const renderFor = (pass, files, opts) => { calls.push({ pass, files, opts }); return '### a.js\nx\n'; };
+    await assert.rejects(runOneMapUnit(deadClient, { files: ['a.js'] }, 0, 1, 'be-services', prompt, noChanged, null, null, { renderFor }));
+    assert.deepEqual(calls, [{ pass: 'be-services', files: ['a.js'], opts: { maxPerFile: 10000, maxTotal: 80000 } }]);
+  });
+
+  it('a chunked unit records the line ranges of the items it carries', async () => {
+    const recorded = [];
+    const coverageRecorder = { recordRead: (pass, stats) => recorded.push({ pass, stats }) };
+    const unit = { files: ['nonexistent-big.js'], chunk: { imports: 'import x from "y";', items: [{ source: 'a\nb\nc', startLine: 40 }, { source: 'd', startLine: 90 }] } };
+    await assert.rejects(runOneMapUnit(deadClient, unit, 0, 1, 'backend', prompt, noChanged, null, null, { coverageRecorder }));
+    assert.equal(recorded.length, 1);
+    assert.equal(recorded[0].pass, 'backend');
+    assert.deepEqual(recorded[0].stats.headTruncated[0].ranges, [[40, 42], [90, 90]]);
+    assert.deepEqual(chunkUnitReadStats(unit).full, []);
+  });
+});

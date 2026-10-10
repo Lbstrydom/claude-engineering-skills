@@ -14,6 +14,9 @@ import { normalizePath } from './file-io.mjs';
 import { fenceLanguageFor, commentPrefixFor, SOURCE_CODE_EXTENSIONS } from './file-taxonomy.mjs';
 import { safeReadFile, isSensitiveFile } from './audit-scope.mjs';
 import { redactSecrets } from './sensitive-egress-gate.mjs';
+import {
+  assembleBlocks, changedLineRanges, charsInRanges, formatRanges, gapMarkerFor, planHunkWindow, prefixRange, renderRanges,
+} from './hunk-window.mjs';
 
 // ── Diff Parsing ────────────────────────────────────────────────────────────
 
@@ -84,6 +87,11 @@ function looksLikeUnifiedDiff(text) {
 export function parseDiffText(content) {
   const diffMap = new Map();
   let currentFile = null;
+  // Each file's POST-IMAGE blob id (its `index <pre>..<post>` line, abbreviated) is kept as `postImage`, so a supplied
+  // diff can be checked against the working tree before its line numbers are trusted: the patch describes the current
+  // file exactly when `git hash-object <file>` starts with it (docs/plans/audit-hunk-window-coverage.md D7 — a stale
+  // diff otherwise misplaces every window, and the coverage count agrees with it).
+  let pendingPostImage = null;
   // Strip a BOM and fold CRLF: `(.+)$` cannot match `+++ b/x\r` (`.` excludes
   // \r), so a CRLF patch dropped every file header — and every hunk with it,
   // since a hunk only attaches to a current file.
@@ -91,11 +99,14 @@ export function parseDiffText(content) {
   for (const line of text.split('\n')) {
     // A new file section, or a deleted file's `+++ /dev/null`, ends the previous file: without this reset a
     // deleted file's `@@ -1,5 +0,0 @@` hunk was attributed to whichever file preceded it.
-    if (line.startsWith('diff --git ') || line.startsWith('+++ /dev/null')) { currentFile = null; continue; }
-    const fileMatch = line.match(/^\+\+\+ b\/(.+)$/);
+    if (line.startsWith('diff --git ') || line.startsWith('+++ /dev/null')) { currentFile = null; pendingPostImage = null; continue; }
+    const indexMatch = currentFile === null ? line.match(/^index [0-9a-f]+\.\.([0-9a-f]+)/) : null;
+    if (indexMatch) { pendingPostImage = indexMatch[1]; continue; }
+    const fileMatch = line.match(/^\+\+\+ (?:b\/(.+)|("b\/.+"))$/);
     if (fileMatch) {
-      currentFile = normalizePath(fileMatch[1]);
-      if (!diffMap.has(currentFile)) diffMap.set(currentFile, { hunks: [] });
+      currentFile = normalizePath(fileMatch[1] ?? unquoteGitPath(fileMatch[2]).slice(2));
+      if (!diffMap.has(currentFile)) diffMap.set(currentFile, { hunks: [], postImage: pendingPostImage });
+      pendingPostImage = null;
       continue;
     }
     const hunkMatch = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
@@ -107,6 +118,31 @@ export function parseDiffText(content) {
     }
   }
   return diffMap;
+}
+
+/**
+ * Decode a C-quoted git path (`"b/caf\303\251.js"`). Git quotes a path holding non-ASCII bytes (under its default
+ * `core.quotePath`) or special characters, escaping bytes as octal; an unquoted-only header parser silently dropped
+ * every such file, which read downstream as "no changed line" (code audit R2, upstream 58f4e3a5).
+ *
+ * @param {string} quoted including the surrounding double quotes
+ * @returns {string}
+ */
+export function unquoteGitPath(quoted) {
+  const body = String(quoted).replace(/^"|"$/g, '');
+  const simple = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92 };
+  const bytes = [];
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c !== '\\') { bytes.push(...Buffer.from(c, 'utf8')); continue; }
+    const oct = body.slice(i + 1, i + 4);
+    if (/^[0-7]{3}$/.test(oct)) { bytes.push(Number.parseInt(oct, 8)); i += 3; continue; }
+    const next = body[i + 1];
+    if (next === undefined) { bytes.push(92); continue; }
+    bytes.push(next in simple ? simple[next] : next.charCodeAt(0));
+    i += 1;
+  }
+  return Buffer.from(bytes).toString('utf8');
 }
 
 // ── Annotation Styles ─────────────────────────────────────────────────────
@@ -268,24 +304,44 @@ export function readFilesAsAnnotatedContextDetailed(filePaths, diffMap, { maxPer
     charsRendered: 0, charsOnDisk: 0,
   };
 
+  const entries = [];
   for (const relPath of filePaths) {
     if (isSensitiveFile(relPath)) { stats.sensitiveExcluded.push(relPath); continue; }
     const built = _buildFileBlock(relPath, diffMap, cwdBoundary, maxPerFile, redact);
     if (built === null) { stats.unreadable.push(relPath); continue; }
-    const { block, meta } = built;
-    if (total.length + block.length > maxTotal) { omitted++; stats.budgetOmitted.push(relPath); continue; }
-    total += block;
-    stats.charsOnDisk += meta.charsOnDisk;
-    if (meta.headCut) stats.headTruncated.push({ path: relPath, charsOnDisk: meta.charsOnDisk, charsRendered: meta.charsRenderedOriginal });
-    else stats.full.push(relPath);
+    entries.push({ relPath, ...built });
   }
+
+  // Breadth first (hunk-window.mjs): every base block under the old omit rule, then leftover budget grows windows.
+  const { text, placement } = assembleBlocks(entries, maxTotal);
+  total = text;
+  entries.forEach((e, i) => {
+    if (placement[i] === 'omitted') { omitted++; stats.budgetOmitted.push(e.relPath); return; }
+    const meta = placement[i] === 'grown' ? e.grownMeta : e.baseMeta;
+    stats.charsOnDisk += e.charsOnDisk;
+    if (!meta.cut) { stats.full.push(e.relPath); return; }
+    const rec = { path: e.relPath, charsOnDisk: e.charsOnDisk, charsRendered: meta.charsRendered };
+    if (meta.ranges) Object.assign(rec, { ranges: meta.ranges, windowed: meta.windowed });
+    stats.headTruncated.push(rec);
+  });
 
   if (omitted > 0) total += `\n... [${omitted} file(s) omitted — context budget reached]\n`;
   stats.charsRendered = total.length;
   return { context: total, stats };
 }
 
-/** @returns {{block: string, meta: {headCut: boolean, charsOnDisk: number, charsRenderedOriginal: number}}|null} */
+/**
+ * One file's block(s) for the annotated reader.
+ *
+ * Within `maxPerFile` (measured on the ANNOTATED text, as always) the file renders whole. Over it, a file with hunks
+ * renders a hunk-centred window of its ORIGINAL lines — each kept segment annotated on its own, so CHANGED markers
+ * and line numbers stay true — plus a `grown` variant with every changed line (docs/plans/audit-hunk-window-coverage.md
+ * D2-D3). An oversized file with no usable hunks is head-cut as before; its `charsRendered` is then scaled back to
+ * original characters (the annotated text is longer than the file), and when no annotation was applied its exact
+ * line range is reported too.
+ *
+ * @returns {{base: string, baseMeta: object, grown?: string|null, grownMeta?: object|null, charsOnDisk: number}|null}
+ */
 function _buildFileBlock(relPath, diffMap, cwdBoundary, maxPerFile, redact = true) {
   const result = safeReadFile(relPath, cwdBoundary);
   if (!result) return null;
@@ -295,34 +351,64 @@ function _buildFileBlock(relPath, diffMap, cwdBoundary, maxPerFile, redact = tru
   // redacting first also means no annotation marker text can ever land
   // between a secret's context and its value (the failure mode when this was
   // tried the other way around during plan review).
-  let raw = redact ? redactSecrets(result.content) : result.content;
+  const original = redact ? redactSecrets(result.content) : result.content;
+  let raw = original;
   const lang = fenceLanguageFor(relPath);
+  const charsOnDisk = result.content.length;
+  const wrap = (header, body) => `### ${relPath}${header}\n\`\`\`${lang}\n${body}\n\`\`\`\n`;
 
   const diffInfo = diffMap?.get(normalizePath(relPath));
   let headerAnnotation = '';
+  let sortedHunks = null;
+  const blockStyle = getCommentStyle(relPath) === 'block';
 
   if (diffInfo && diffInfo.hunks.length > 0) {
-    const sortedHunks = [...diffInfo.hunks].sort((a, b) => a.startLine - b.startLine);
-    const { content, headerAnnotation: ha } = getCommentStyle(relPath) === 'block'
+    sortedHunks = [...diffInfo.hunks].sort((a, b) => a.startLine - b.startLine);
+    const { content, headerAnnotation: ha } = blockStyle
       ? _annotateBlockStyle(raw, sortedHunks, commentPrefixFor(relPath))
       : _annotateHeaderOnlyStyle(raw, sortedHunks);
     raw = content;
     headerAnnotation = ha;
   }
 
-  const headCut = raw.length > maxPerFile;
-  const content = headCut
-    ? raw.slice(0, maxPerFile) + `\n... [TRUNCATED — ${raw.length} chars total]`
-    : raw;
+  if (raw.length <= maxPerFile) return { base: wrap(headerAnnotation, raw), baseMeta: { cut: false }, charsOnDisk };
 
-  const charsOnDisk = result.content.length;
-  return {
-    block: `### ${relPath}${headerAnnotation}\n\`\`\`${lang}\n${content}\n\`\`\`\n`,
-    meta: {
-      headCut,
+  const lines = original.split('\n');
+  const changed = sortedHunks ? changedLineRanges(sortedHunks, lines.length) : [];
+  if (changed.length === 0) {
+    return {
+      base: wrap(headerAnnotation, raw.slice(0, maxPerFile) + `\n... [TRUNCATED — ${raw.length} chars total]`),
+      baseMeta: {
+        cut: true,
+        // annotated text -> original-file characters (see readFilesAsAnnotatedContextDetailed)
+        charsRendered: Math.floor(maxPerFile * (charsOnDisk / raw.length)),
+        ranges: sortedHunks ? null : [prefixRange(original, maxPerFile)],
+        windowed: false,
+      },
       charsOnDisk,
-      // annotated text -> original-file characters (see readFilesAsAnnotatedContextDetailed)
-      charsRenderedOriginal: headCut ? Math.floor(maxPerFile * (charsOnDisk / raw.length)) : charsOnDisk,
-    },
-  };
+    };
+  }
+
+  const prefix = commentPrefixFor(relPath);
+  const gap = gapMarkerFor(blockStyle ? prefix : null);
+  const segment = blockStyle
+    ? (seg, first) => {
+      const last = first + seg.length - 1;
+      const sub = changed
+        .filter(([s, e]) => e >= first && s <= last)
+        .map(([s, e]) => ({ startLine: Math.max(s, first) - first + 1, lineCount: Math.min(e, last) - Math.max(s, first) + 1 }));
+      return sub.length > 0 ? _annotateBlockStyle(seg.join('\n'), sub, prefix).content : seg.join('\n');
+    }
+    : (seg, first) => seg.map((line, i) => `${String(first + i).padStart(4, ' ')} | ${line}`).join('\n');
+  // Charge the annotation's own text against the budget (code audit R2 M1): block style wraps each changed range in up
+  // to four marker lines; header-only style prefixes every shown line with a `NNNN | ` gutter.
+  const markerCost = [UNCHANGED_OPEN, UNCHANGED_CLOSE, CHANGED_OPEN, CHANGED_CLOSE].reduce((n, m) => n + m.length + 1, 0);
+  const plan = planHunkWindow(lines, changed, blockStyle ? { maxPerFile, rangeOverhead: markerCost } : { maxPerFile, lineOverhead: 7 });
+  const variant = (ranges) => ({
+    block: wrap(`${headerAnnotation} [WINDOWED — shows lines ${formatRanges(ranges)} of ${lines.length}, centred on the diff]`, renderRanges(lines, ranges, gap, segment)),
+    meta: { cut: true, charsRendered: charsInRanges(lines, ranges), ranges, windowed: true },
+  });
+  const base = variant(plan.base);
+  const grown = plan.grown ? variant(plan.grown) : null;
+  return { base: base.block, baseMeta: base.meta, grown: grown?.block ?? null, grownMeta: grown?.meta ?? null, charsOnDisk };
 }

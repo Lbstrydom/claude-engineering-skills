@@ -129,6 +129,10 @@ export async function finalizeRun(data, writeOutcomes) {
   // audit-loop, and (verbatim, via the transcript) the final reviewer — sees which changed files were and were
   // not audited. Absent means "not measured", never "clean".
   if (assembled.coverage) mergedResult._coverage = assembled.coverage;
+  // The code's own convergence verdict — the value that licenses `AI-Gate` — on the round JSON, so the skill's
+  // "2 stable rounds" judgement can read it instead of re-deriving it from H/M/L (a PASS can carry
+  // `changed-lines-unread`: docs/plans/audit-hunk-window-coverage.md D9).
+  if (assembled.convergence) mergedResult._convergence = assembled.convergence;
 
   // 4d then 4c, in that fixed order — preserves the ORIGINAL source order.
   // A 4d failure is best-effort/swallowed internally and never propagates

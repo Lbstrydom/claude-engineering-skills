@@ -254,6 +254,26 @@ test('affected path: Windows backslashes normalise before the lookup', () => {
   assert.equal(r.normalised, 'scripts/.claude-skills/ship-commit.mjs');
 });
 
+test('affected path: the UPSTREAM spelling of a synced file is recognised and stored under the manifest key', () => {
+  // Upstream report 58f4e3a5 (2026-10-10): a consumer named
+  // `scripts/lib/audit/legacy-production-audit.mjs` — the file's path in THIS
+  // repo, and the one a maintainer greps for — while its manifest keys the same
+  // file as `scripts/.claude-skills/lib/audit/...`. A correct report was stamped
+  // `path_recognised: false` and rendered "NOT an upstream-owned synced file".
+  // Measured 2026-10-10: 3 of 40 fixed reports and both open ones hit this.
+  const manifest = { files: { 'scripts/.claude-skills/lib/audit/legacy-production-audit.mjs': 'sha256:x' } };
+  const r = validateAffectedPath('scripts/lib/audit/legacy-production-audit.mjs', manifest);
+  assert.equal(r.recognised, true);
+  // One stored spelling, so prior-fix lookup (exact `affected_path` match) sees both.
+  assert.equal(r.normalised, 'scripts/.claude-skills/lib/audit/legacy-production-audit.mjs');
+  // Windows separators on the upstream spelling too.
+  assert.equal(validateAffectedPath('scripts\\lib\\audit\\legacy-production-audit.mjs', manifest).recognised, true);
+  // A mapped path that is NOT in the manifest stays unrecognised, spelled as given.
+  const miss = validateAffectedPath('scripts/lib/audit/not-synced.mjs', manifest);
+  assert.equal(miss.recognised, false);
+  assert.equal(miss.normalised, 'scripts/lib/audit/not-synced.mjs');
+});
+
 test('affected path: no manifest → null (not checked), never a false negative', () => {
   assert.equal(validateAffectedPath('anything', null).recognised, null);
   assert.equal(validateAffectedPath('anything', { files: {} }).recognised, null);

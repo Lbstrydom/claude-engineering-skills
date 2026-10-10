@@ -23,6 +23,7 @@ import {
   parseEnvelopeFrame, writeEnvelope as writeEnvelopeToDir, drainEnvelopes,
 } from '../outbox-envelope.mjs';
 import { redactSecrets } from '../secret-patterns.mjs';
+import { sourceRelToDestRel } from '../sync-path-map.mjs';
 import {
   parseDisposition, formatDisposition, computeLedgerReconciliation,
   classifyMissingCause, MISSING_CAUSE,
@@ -116,16 +117,16 @@ export function readBundleStamp(repoRoot) {
  * have a correct report stamped `path_recognised: false`, defeating the very
  * check that catches a wrong path.
  *
+ * The UPSTREAM spelling (`scripts/lib/x.mjs`) is as correct as the manifest key and is mapped via `sync-path-map.mjs`;
+ * a hit is stored under the manifest key so prior-fix lookup (exact match) sees one spelling (upstream 58f4e3a5).
+ *
  * @returns {{recognised: boolean|null, normalised: string}} `null` = no manifest to check against
  */
 export function validateAffectedPath(affectedPath, manifest) {
-  const normalised = String(affectedPath || '')
-    .replace(/\\/g, '/')
-    .replace(/^\.\//, '');
-  if (!manifest || !manifest.files || Object.keys(manifest.files).length === 0) {
-    return { recognised: null, normalised };
-  }
-  return { recognised: Object.hasOwn(manifest.files, normalised), normalised };
+  const given = String(affectedPath || '').replace(/\\/g, '/').replace(/^\.\//, '');
+  if (!manifest || !manifest.files || Object.keys(manifest.files).length === 0) return { recognised: null, normalised: given };
+  const hit = [given, sourceRelToDestRel(given)].find((p) => Object.hasOwn(manifest.files, p));
+  return { recognised: hit !== undefined, normalised: hit ?? given };
 }
 
 // ── Pure decision functions ─────────────────────────────────────────────────

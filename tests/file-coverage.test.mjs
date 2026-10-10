@@ -298,3 +298,167 @@ describe('tool state aggregation (audit-plan R2-M3)', () => {
     assert.equal(cov.tools[0].status, 'timeout');
   });
 });
+
+// ── Upstream report 58f4e3a5: read windows, the hunk map, convergence (docs/plans/audit-hunk-window-coverage.md) ──
+import { buildHunkMap, makeCoverageInput } from '../scripts/lib/audit/file-coverage.mjs';
+import { evaluateConvergenceWithDetectors } from '../scripts/lib/audit/convergence.mjs';
+import { changedLinesUnreadTotal } from '../scripts/lib/coverage-format.mjs';
+import { formatAuditSummaryLine } from '../scripts/lib/audit/findings-pipeline.mjs';
+
+const text400 = Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join('\n');
+const cut = (ranges, o = {}) => ({ path: 'big.js', charsOnDisk: text400.length, charsRendered: 1000, ranges, windowed: true, ...o });
+
+describe('changedLinesUnread is the union over completed passes (D5)', () => {
+  const hunks = new Map([['big.js', [{ startLine: 100, lineCount: 50 }, { startLine: 300, lineCount: 20 }]]]);
+  it('two passes that each rendered a different hunk add up to zero unread', () => {
+    const cov = build({
+      changed: ['big.js'], hunks, readText: () => text400,
+      recorder: rec({
+        quickfix: { completed: true, stats: stats({ headTruncated: [cut([[1, 20], [95, 155]])] }) },
+        sustainability: { completed: true, stats: stats({ headTruncated: [cut([[290, 325]])] }) },
+      }),
+    });
+    const f = byPath(cov, 'big.js');
+    assert.equal(f.read.state, 'windowed');
+    assert.equal(f.changedLinesUnread, 0);
+    assert.equal(cov.status, 'complete', 'every changed line was rendered somewhere → wholly examined');
+  });
+  it('a FAILED pass vouches for nothing it rendered', () => {
+    const cov = build({
+      changed: ['big.js'], hunks, readText: () => text400,
+      recorder: rec({
+        quickfix: { completed: true, stats: stats({ headTruncated: [cut([[95, 155]])] }) },
+        sustainability: { completed: false, stats: stats({ headTruncated: [cut([[290, 325]])] }) },
+      }),
+    });
+    assert.equal(byPath(cov, 'big.js').changedLinesUnread, 20);
+    assert.equal(changedLinesUnreadTotal(cov), 20);
+  });
+  it('a prefix-only render (no ranges) keeps the old head-cut semantics', () => {
+    const cov = build({
+      changed: ['big.js'], hunks, readText: () => text400,
+      recorder: rec({ quickfix: { completed: true, stats: stats({ headTruncated: [{ path: 'big.js', charsOnDisk: text400.length, charsRendered: 10 }] }) } }),
+    });
+    const f = byPath(cov, 'big.js');
+    assert.equal(f.read.state, 'head-cut');
+    assert.equal(f.changedLinesUnread, 70);
+  });
+  it('diff evidence expected but the change unmeasurable → the ledger refuses to vouch (incomplete), never a converging null', () => {
+    const cov = build({
+      changed: ['big.js'], hunks: () => [{ startLine: 100, lineCount: 5 }], hunksExpected: true, readText: () => null,
+      recorder: rec({ quickfix: { completed: true, stats: stats({ headTruncated: [cut([[1, 20]])] }) } }),
+    });
+    assert.equal(byPath(cov, 'big.js').changedLinesUnread, null);
+    assert.equal(cov.status, 'incomplete');
+    assert.equal(cov.gate, 'fail');
+    // Control: the same unmeasurable file where no diff was declared is an honest unknown, not a violation.
+    const na = build({
+      changed: ['big.js'], hunks: null, readText: () => null,
+      recorder: rec({ quickfix: { completed: true, stats: stats({ headTruncated: [cut([[1, 20]])] }) } }),
+    });
+    assert.equal(na.status, 'partial');
+  });
+  it('an untracked file with no hunk record counts every line as changed', () => {
+    const cov = build({
+      changed: [{ path: 'big.js', changeKind: 'untracked' }], hunks: null, readText: () => text400,
+      recorder: rec({ quickfix: { completed: true, stats: stats({ headTruncated: [cut([[1, 100]])] }) } }),
+    });
+    assert.equal(byPath(cov, 'big.js').changedLinesUnread, 300);
+  });
+});
+
+describe('buildHunkMap — one map, and absent evidence is never a pass (D7)', () => {
+  const quiet = () => {};
+  const readText = (p) => (p === 'big.js' ? text400 : null);
+  it('not-applicable (no diff, no VCS record) → null, and the plain reader is not given hunks', () => {
+    const m = buildHunkMap({ changed: ['big.js'], readText, warn: quiet });
+    assert.equal(m.evidence, 'not-applicable');
+    assert.equal(m.hunksFor('big.js'), null);
+    // An R2+ re-run with no --diff (e.g. --scope full) declared no diff either: the same not-applicable, never a block.
+    assert.equal(buildHunkMap({ changed: ['big.js'], diffMap: null, coverageChanged: null, readText, warn: quiet }).evidence, 'not-applicable');
+  });
+  it('a supplied --diff that parsed to nothing (failed / empty patch) is expected evidence that is missing → wholly changed', () => {
+    const m = buildHunkMap({ diffMap: new Map(), changed: ['big.js'], readText, warn: quiet });
+    assert.equal(m.evidence, 'expected');
+    assert.deepEqual(m.hunksFor('big.js'), [{ startLine: 1, lineCount: 400 }]);
+  });
+  it('R1 change record hunks are used as measured; an empty array is a measured "no changed text"', () => {
+    const m = buildHunkMap({ coverageChanged: [{ path: 'big.js', hunks: [{ startLine: 5, lineCount: 2 }] }, { path: 'bin.png', hunks: [] }], changed: [{ path: 'big.js', hunks: [{ startLine: 5, lineCount: 2 }] }, { path: 'bin.png', hunks: [] }], readText, warn: quiet });
+    assert.deepEqual(m.hunksFor('big.js'), [{ startLine: 5, lineCount: 2 }]);
+    assert.deepEqual(m.hunksFor('bin.png'), []);
+  });
+  it('R1 record whose diff could not be read → wholly changed, said on stderr', () => {
+    const lines = [];
+    const m = buildHunkMap({ coverageChanged: [{ path: 'big.js' }], changed: [{ path: 'big.js' }], readText, warn: (l) => lines.push(l) });
+    assert.deepEqual(m.hunksFor('big.js'), [{ startLine: 1, lineCount: 400 }]);
+    assert.match(lines.join(''), /big\.js: its diff hunks could not be read — treated as wholly changed/);
+  });
+  it('R2: a --diff entry is trusted only when its post-image id is the working-tree hash', () => {
+    const diffMap = new Map([['big.js', { hunks: [{ startLine: 10, lineCount: 1 }], postImage: 'abc1234' }]]);
+    const fresh = buildHunkMap({ diffMap, changed: ['big.js'], isR2Plus: true, readText, hashFile: () => 'abc1234ffff', warn: quiet });
+    assert.deepEqual(fresh.hunksFor('big.js'), [{ startLine: 10, lineCount: 1 }]);
+    // The stale case: the patch's hunks still "look" valid (line 10 exists, nothing else to check), but the file was
+    // edited after the patch was made. Without verification this file would read 0 unread with the edit unseen.
+    const stale = buildHunkMap({ diffMap, changed: ['big.js'], isR2Plus: true, readText, hashFile: () => 'def5678', warn: quiet });
+    assert.deepEqual(stale.hunksFor('big.js'), [{ startLine: 1, lineCount: 400 }]);
+    const noIndex = new Map([['big.js', { hunks: [{ startLine: 10, lineCount: 0 }], postImage: null }]]);
+    assert.deepEqual(buildHunkMap({ diffMap: noIndex, changed: ['big.js'], isR2Plus: true, readText, hashFile: () => 'x', warn: quiet }).hunksFor('big.js'), [{ startLine: 1, lineCount: 400 }], 'a deletion-only entry with no post-image id is not trusted either');
+  });
+  it('R2: a changed file absent from the --diff → wholly changed; a dependent outside the changed set → null', () => {
+    const diffMap = new Map([['other.js', { hunks: [{ startLine: 1, lineCount: 1 }], postImage: 'aaa' }]]);
+    const m = buildHunkMap({ diffMap, changed: ['big.js'], isR2Plus: true, readText, hashFile: () => 'aaa', warn: quiet });
+    assert.deepEqual(m.hunksFor('big.js'), [{ startLine: 1, lineCount: 400 }]);
+    assert.equal(m.hunksFor('dependent.js'), null, 'never invent a change for a file that did not change');
+  });
+  it('makeCoverageInput measures against the SAME map the readers rendered with', () => {
+    let builds = 0;
+    const recorder = createCoverageRecorder();
+    const map = { applicable: true, hunksFor: () => [{ startLine: 1, lineCount: 1 }] };
+    recorder.getHunkMap = () => { builds++; return map; };
+    const ci = makeCoverageInput({ recorder, coverageChanged: null, changedFiles: ['a.js'], fileFilter: null, coverageExcluded: null, diffMap: null, toolCapability: {}, noTools: true });
+    assert.equal(ci.hunks, map.hunksFor);
+    assert.equal(builds, 1);
+  });
+});
+
+describe('a measured changed-line shortfall blocks convergence (D9) and is said beside the verdict (D10)', () => {
+  const counts = { high: 0, medium: 0, quickFix: 0 };
+  const clean = { blocked: false, checked: 0 };
+  const covWith = (unread) => ({
+    status: 'partial', counts: { required: 1, short: unread === 0 ? 0 : 1, excludedRequired: 0 }, uncoveredByExtension: {},
+    files: [{ path: 'big.js', class: 'profiled', outcome: 'audited', changedLinesUnread: unread, read: { state: 'windowed' } }],
+  });
+  it('unread > 0 → changed-lines-unread; 0 / null / no ledger → converged', () => {
+    assert.deepEqual(evaluateConvergenceWithDetectors(counts, clean, covWith(248)), { converged: false, reason: 'changed-lines-unread' });
+    assert.equal(evaluateConvergenceWithDetectors(counts, clean, covWith(0)).converged, true);
+    assert.equal(evaluateConvergenceWithDetectors(counts, clean, covWith(null)).converged, true);
+    assert.equal(evaluateConvergenceWithDetectors(counts, clean).converged, true);
+  });
+  it('a budget-omitted changed file counts every changed line unread and blocks; a policy-excluded one never does', () => {
+    const hunks = new Map([['big.js', [{ startLine: 10, lineCount: 5 }]], ['package-lock.json', [{ startLine: 1, lineCount: 99 }]]]);
+    const cov = build({
+      changed: ['big.js', 'package-lock.json'], hunks, readText: () => text400,
+      excludedInfra: ['package-lock.json'],
+      recorder: rec({ quickfix: { completed: true, stats: stats({ budgetOmitted: ['big.js'] }) } }),
+    });
+    assert.equal(byPath(cov, 'big.js').outcome, 'budget-omitted');
+    assert.equal(byPath(cov, 'big.js').changedLinesUnread, 5);
+    assert.equal(byPath(cov, 'package-lock.json').changedLinesUnread, null, 'excluded on purpose: not a shortfall');
+    assert.equal(changedLinesUnreadTotal(cov), 5);
+    assert.equal(evaluateConvergenceWithDetectors(counts, clean, cov).reason, 'changed-lines-unread');
+  });
+  it('the counts and the detector census are still read first', () => {
+    assert.equal(evaluateConvergenceWithDetectors({ ...counts, high: 1 }, clean, covWith(5)).reason, 'finding-thresholds');
+    assert.equal(evaluateConvergenceWithDetectors(counts, undefined, covWith(5)).reason, 'detector-not-run');
+  });
+  it('the summary line states the line count and that PASS is not convergence evidence', () => {
+    const line = formatAuditSummaryLine({ verdict: 'PASS', high: 0, medium: 0, low: 0, latencyMs: 1000, coverage: covWith(248) });
+    assert.match(line, /248 changed line\(s\) in 1 file\(s\) never rendered to any pass — not convergence evidence/);
+    assert.doesNotMatch(formatAuditSummaryLine({ verdict: 'PASS', high: 0, medium: 0, low: 0, coverage: covWith(0) }), /not convergence evidence/);
+  });
+  it('an older reader meeting an unrecognised read state counts the file as short (the conservative direction)', () => {
+    const cov = covWith(0);
+    cov.files[0].read.state = 'some-future-state';
+    assert.match(formatCoverageSuffix({ ...cov, counts: { required: 1, short: 1, excludedRequired: 0 } }), /PARTIAL/);
+  });
+});

@@ -33,7 +33,7 @@ function recordsOf(cov) {
 export function shortCoverageFiles(cov) {
   const isShort = (f) => f.outcome !== 'audited'
     ? !['excluded-infra', 'excluded-user'].includes(f.outcome) && f.class !== 'non-code'
-    : !(f.read.state === 'full' || (f.read.state === 'head-cut' && f.changedLinesUnread === 0));
+    : !(f.read.state === 'full' || ((f.read.state === 'head-cut' || f.read.state === 'windowed') && f.changedLinesUnread === 0));
   return recordsOf(cov).filter(isShort);
 }
 
@@ -78,11 +78,32 @@ export function formatCoverageSuffix(cov) {
   const floor = !Array.isArray(cov.files) && (cov.filesProjection?.shortTotal ?? 0) > recs.length ? 'at least ' : '';
   const deleted = recs.filter((f) => f.outcome === 'deleted' && ['profiled', 'model-only', 'declarative'].includes(f.class)).length;
   if (deleted > 0) parts.push(`${floor}${deleted} deleted source file(s) not reviewed`);
-  const unread = recs.filter((f) => f.outcome === 'audited' && (f.changedLinesUnread ?? 0) > 0).length;
-  if (unread > 0) parts.push(`${floor}${unread} file(s) with changed lines past the read window`);
+  const unread = recs.filter((f) => UNREAD_OUTCOMES.has(f.outcome) && (f.changedLinesUnread ?? 0) > 0).length;
+  if (unread > 0) parts.push(`${floor}${changedLinesUnreadTotal(cov)} changed line(s) in ${unread} file(s) never rendered to any pass`);
   if ((c.excludedRequired || 0) > 0) parts.push(`${c.excludedRequired} source file(s) excluded by policy`);
   return parts.join('; ');
 }
+
+/**
+ * Changed lines no completed pass rendered, summed over the files that MEASURED it — audited files read partially and
+ * budget-omitted ones (every changed line unread) (`null` = not measurable,
+ * contributes nothing). The one count both the convergence gate and the summary line read (upstream report 58f4e3a5:
+ * a round converged PASS with 844 changed lines unread, and the line beside the verdict said only "5 file(s)").
+ * On a reviewer projection this is a floor (only the shown records are summed).
+ *
+ * @param {object|null|undefined} cov a `_coverage`
+ * @returns {number}
+ */
+export function changedLinesUnreadTotal(cov) {
+  if (!cov || typeof cov !== 'object') return 0;
+  return recordsOf(cov).reduce((n, f) => {
+    const u = UNREAD_OUTCOMES.has(f?.outcome) ? f.changedLinesUnread : null;
+    return n + (Number.isInteger(u) && u > 0 ? u : 0);
+  }, 0);
+}
+
+/** Outcomes whose `changedLinesUnread` is a shortfall a re-run can fix. A policy exclusion never is (final gate G1). */
+const UNREAD_OUTCOMES = new Set(['audited', 'budget-omitted']);
 
 /** What to print when a round carries NO `_coverage` (a result from tooling that predates the contract). */
 export const coverageMissingNote = 'no _coverage ledger on this round — which changed files were audited is unknown';

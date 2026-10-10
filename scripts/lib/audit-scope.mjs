@@ -10,7 +10,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { classifyPath } from './sensitive-paths.mjs';
 import { scanEgressPayload, redactSecrets } from './sensitive-egress-gate.mjs';
-import { fenceLanguageFor } from './file-taxonomy.mjs';
+import { fenceLanguageFor, commentPrefixFor } from './file-taxonomy.mjs';
+import {
+  assembleBlocks, changedLineRanges, charsInRanges, formatRanges, gapMarkerFor, planHunkWindow, prefixRange, renderRanges,
+} from './hunk-window.mjs';
 // normalizePath not used directly here but re-exported via file-io.mjs barrel
 
 // ── Sensitive File Filtering ────────────────────────────────────────────────
@@ -155,7 +158,43 @@ export function safeReadFile(relPath, cwdBoundary) {
  */
 const SPAN_COLLAPSE_CHARS = 200;
 
-export function readFilesAsContextDetailed(filePaths, { maxPerFile = 10000, maxTotal = 120000, redact = true } = {}) {
+/**
+ * One file's block(s) for the plain reader. A file within `maxPerFile` renders whole; an oversized file with known
+ * hunks renders a hunk-centred window (plus a `grown` variant holding every changed line, for leftover budget); any
+ * other oversized file is head-cut exactly as it always was. `meta` is the render evidence for each variant.
+ */
+function plainFileBlocks(relPath, raw, fileHunks, maxPerFile, redactionNote) {
+  const lang = fenceLanguageFor(relPath);
+  const wrap = (header, body) => `### ${relPath}${header}\n\`\`\`${lang}\n${body}\n\`\`\`\n${redactionNote}`;
+  if (raw.length <= maxPerFile) return { base: wrap('', raw), baseMeta: { cut: false } };
+  const lines = raw.split('\n');
+  const changed = changedLineRanges(fileHunks, lines.length);
+  if (changed.length === 0) {
+    return {
+      base: wrap('', raw.slice(0, maxPerFile) + `\n... [TRUNCATED — ${raw.length} chars total]`),
+      baseMeta: { cut: true, charsRendered: maxPerFile, ranges: [prefixRange(raw, maxPerFile)], windowed: false },
+    };
+  }
+  const gap = gapMarkerFor(commentPrefixFor(relPath));
+  const plan = planHunkWindow(lines, changed, { maxPerFile });
+  const variant = (ranges) => ({
+    block: wrap(` [WINDOWED — shows lines ${formatRanges(ranges)} of ${lines.length}, centred on the diff]`, renderRanges(lines, ranges, gap)),
+    meta: { cut: true, charsRendered: charsInRanges(lines, ranges), ranges, windowed: true },
+  });
+  const base = variant(plan.base);
+  const grown = plan.grown ? variant(plan.grown) : null;
+  return { base: base.block, baseMeta: base.meta, grown: grown?.block ?? null, grownMeta: grown?.meta ?? null };
+}
+
+/**
+ * @param {string[]} filePaths
+ * @param {object} [opts]
+ * @param {(relPath: string) => Array<{startLine: number, lineCount: number}>|null} [opts.hunksFor] new-side diff hunks
+ *   for a path, or null. With hunks, an oversized file renders a hunk-centred window instead of a head cut and may
+ *   grow into budget the other files left unused (docs/plans/audit-hunk-window-coverage.md D2-D3). Absent → the
+ *   render is byte-identical to the reader before windows existed.
+ */
+export function readFilesAsContextDetailed(filePaths, { maxPerFile = 10000, maxTotal = 120000, redact = true, hunksFor = null } = {}) {
   let total = '';
   let omitted = 0;
   let sensitive = 0;
@@ -189,6 +228,7 @@ export function readFilesAsContextDetailed(filePaths, { maxPerFile = 10000, maxT
   };
 
   const cwdBoundary = path.resolve('.');
+  const entries = [];
 
   for (const relPath of filePaths) {
     if (isSensitiveFile(relPath)) { sensitive++; stats.sensitiveExcluded.push(relPath); continue; }
@@ -220,25 +260,26 @@ export function readFilesAsContextDetailed(filePaths, { maxPerFile = 10000, maxT
     const charsLost = redact ? result.content.length - raw.length : 0;
     if (charsLost > SPAN_COLLAPSE_CHARS) shortened.push({ path: relPath, charsLost });
 
-    const lang = fenceLanguageFor(relPath);
-    const headCut = raw.length > maxPerFile;
-    const content = headCut
-      ? raw.slice(0, maxPerFile) + `\n... [TRUNCATED — ${raw.length} chars total]`
-      : raw;
     const redactionNote = charsLost > SPAN_COLLAPSE_CHARS
       ? `> ⚠ REDACTION REMOVED CONTENT FROM THIS FILE: ${charsLost} characters were removed by secret-redaction `
         + 'before review. The text above is NOT byte-identical to the file on disk — a multi-line '
         + 'secret match collapses everything it spans into one placeholder. Do NOT report syntax '
         + 'errors, unbalanced delimiters, or missing code in this file; verify against disk first.\n'
       : '';
-    const block = `### ${relPath}\n\`\`\`${lang}\n${content}\n\`\`\`\n${redactionNote}`;
-
-    if (total.length + block.length > maxTotal) { omitted++; stats.budgetOmitted.push(relPath); continue; }
-    total += block;
-    stats.charsOnDisk += result.content.length;
-    if (headCut) stats.headTruncated.push({ path: relPath, charsOnDisk: result.content.length, charsRendered: maxPerFile });
-    else stats.full.push(relPath);
+    const fileHunks = typeof hunksFor === 'function' ? hunksFor(relPath) : null;
+    entries.push({ relPath, charsOnDisk: result.content.length, ...plainFileBlocks(relPath, raw, fileHunks, maxPerFile, redactionNote) });
   }
+
+  // Breadth first: every file's base block under today's omit rule, then leftover budget grows windowed files.
+  const { text, placement } = assembleBlocks(entries, maxTotal);
+  total = text;
+  entries.forEach((e, i) => {
+    if (placement[i] === 'omitted') { omitted++; stats.budgetOmitted.push(e.relPath); return; }
+    const meta = placement[i] === 'grown' ? e.grownMeta : e.baseMeta;
+    stats.charsOnDisk += e.charsOnDisk;
+    if (meta.cut) stats.headTruncated.push({ path: e.relPath, charsOnDisk: e.charsOnDisk, charsRendered: meta.charsRendered, ranges: meta.ranges, windowed: meta.windowed });
+    else stats.full.push(e.relPath);
+  });
 
   if (omitted > 0) total += `\n... [${omitted} file(s) omitted — context budget reached]\n`;
   if (sensitive > 0) total += `\n... [${sensitive} sensitive file(s) excluded (.env, secrets, keys)]\n`;

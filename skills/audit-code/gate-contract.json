@@ -243,6 +243,13 @@
       "statedIn": "skills/audit-code/SKILL.md",
       "stated": "the round is already `INCOMPLETE` (exit 3) and must not be reported as converged at all.",
       "reason": "Mechanically enforced AND wired: finding-assembly.mjs builds the `_coverage` ledger and, on `gate: fail`, forces the round `incomplete`; openai-audit.mjs maps INCOMPLETE to exit 3; findings-pipeline.mjs formatAuditSummaryLine refuses the counts-first shape for it and audit-loop.mjs prints no CONVERGED banner without a ledger. Pinned by tests/file-coverage.test.mjs (status/gate matrix), tests/coverage-orchestrator.test.mjs (the orchestrator builds and threads the ledger) and tests/coverage-surface.test.mjs (summary line and banner). Still document-only because the CLOSED oracle registry has no fit: convergence-threshold binds only finding-count params and cli-exit drives a CLI against a filesystem fixture, while this gate's subject is a per-file ledger built from a diff and completed passes, which a recipe cannot construct. Revisit if a ledger-fixture oracle is ever added."
+    },
+    {
+      "id": "changed-lines-unread-blocks-convergence",
+      "kind": "document-only",
+      "statedIn": "skills/audit-code/SKILL.md",
+      "stated": "| Summary line says `N changed line(s) … never rendered to any pass — not convergence evidence` | **Not stable, whatever H/M/L say** — the round did not read the change (the code withholds convergence: `changed-lines-unread`). Re-run on the short files with `--files` (a window grows into the pass's whole budget); if one file's changed text is too big even alone, report it as not converged |",
+      "reason": "Mechanically enforced AND wired (docs/plans/audit-hunk-window-coverage.md D9): evaluateConvergenceWithDetectors (scripts/lib/audit/convergence.mjs) returns `changed-lines-unread` when the round's `_coverage` measures changed lines no completed pass rendered (changedLinesUnreadTotal in scripts/lib/coverage-format.mjs); finding-assembly.mjs passes the ledger, run-persistence.mjs withholds round_converged_after (so AI-Gate passed/converged refuse) and run-finalization.mjs puts `_convergence` on the round JSON; formatAuditSummaryLine prints \"not convergence evidence\" beside the verdict. Pinned by tests/file-coverage.test.mjs (the oracle, incl. budget-omitted and policy-excluded files) and tests/coverage-orchestrator.test.mjs (end to end through the orchestrator). Document-only for the same reason as coverage-gate-fail-incomplete: the closed oracle registry has no ledger-fixture oracle."
     }
   ],
   "ignoredCandidates": [
@@ -447,7 +454,7 @@
       "reason": "Describes openai-audit.mjs's own pre-existing --files-overrides---scope precedence (5e88d1e1142b fix, 2026-09) -- a separately-implemented CLI behavior this prose explains, not a new claim this skill's own execution enforces."
     },
     {
-      "line": "Generate diff (dirty-aware base, matching R1 — untracked counts): `BASE=$([ -n \"$(git status --porcelain)\" ] && echo HEAD || echo HEAD~1); git diff \"$BASE\" -- . > .audit/$SID-diff.patch` — then append UNTRACKED new files (`git diff` omits them): `git ls-files --others --exclude-standard -z | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null \"{}\" >> .audit/$SID-diff.patch 2>.audit/$SID-untracked-diff-stderr.log || true` (the trailing `|| true` is only for `git diff --no-index`'s expected exit-1-on-differ; stderr goes to a file, not `/dev/null`, so a genuine `git`/`xargs` failure is still visible — see Step 2's fuller note on this exact pipeline)",
+      "line": "Generate diff (dirty-aware base, matching R1 — untracked counts): `BASE=$([ -n \"$(git status --porcelain)\" ] && echo HEAD || echo HEAD~1); git diff --no-textconv \"$BASE\" -- . > .audit/$SID-diff.patch` — then append UNTRACKED new files (`git diff` omits them): `git ls-files --others --exclude-standard -z | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null \"{}\" >> .audit/$SID-diff.patch 2>.audit/$SID-untracked-diff-stderr.log || true` (the trailing `|| true` is only for `git diff --no-index`'s expected exit-1-on-differ; stderr goes to a file, not `/dev/null`, so a genuine `git`/`xargs` failure is still visible — see Step 2's fuller note on this exact pipeline)",
       "reason": "Step 5's inline numbered-list copy of the Step 2 untracked-file diff pipeline recipe and its || true rationale (b08342000fed/ccda5b96c281 fix, 2026-09) -- same descriptive shell-mechanics class as the Step 2 block, not a new enforcement claim."
     },
     {
@@ -487,7 +494,7 @@
       "reason": "Describes debt-auto-capture.mjs --final-review, whose refusal to capture release-blocking findings is pinned by tests/final-review-round-cap-cli.test.mjs; the skill line routes to it."
     },
     {
-      "line": "| `uncovered` | **file-level, from the result's `_coverage`, never from a pass:** changed files the audit did not (fully) examine — an unrecognised file type, an unreadable file, a deleted source file, a head-cut read. NOT `ineligible`: `ineligible` is an EXPECTED scope exclusion, and labelling a C# diff that way is exactly how twelve `.cs` files went unaudited under an APPROVE |",
+      "line": "| `uncovered` | **file-level, from the result's `_coverage`, never from a pass:** changed files the audit did not (fully) examine — an unrecognised file type, an unreadable file, a deleted source file, a partial (head-cut or windowed) read. NOT `ineligible`: `ineligible` is an EXPECTED scope exclusion, and labelling a C# diff that way is exactly how twelve `.cs` files went unaudited under an APPROVE |",
       "reason": "Describes how the round's `_coverage` ledger is worded and rendered (formatCoverageSuffix / coverageMissingNote in scripts/lib/coverage-format.mjs, wave INELIGIBLE wording in scripts/lib/audit/wave-eligibility.mjs); the wording and the ledger invariants are pinned by tests/coverage-surface.test.mjs, tests/wave-eligibility.test.mjs and tests/coverage-cluster-c-fixes.test.mjs. This skill line is a rendering instruction, not a separate gate."
     },
     {

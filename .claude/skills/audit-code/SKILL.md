@@ -182,7 +182,7 @@ Non-empty output above → `BASE=HEAD` (dirty tree). Empty output → `BASE=HEAD
 
 ```bash
 BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1)
-git diff --output=.audit/$SID-diff.patch "$BASE" -- .
+git diff --no-textconv --output=.audit/$SID-diff.patch "$BASE" -- .
 ```
 
 `--output` makes git write the patch bytes itself. A PowerShell `>` re-encodes
@@ -420,6 +420,7 @@ Stability uses `_hash` for exact cross-round matching:
 | Threshold NOT met | Fix → re-audit |
 | Threshold met, new architectural | Fix → re-audit (stability resets) |
 | Threshold met, mechanical only | Fix → re-audit (stability NOT reset) |
+| Summary line says `N changed line(s) … never rendered to any pass — not convergence evidence` | **Not stable, whatever H/M/L say** — the round did not read the change (the code withholds convergence: `changed-lines-unread`). Re-run on the short files with `--files` (a window grows into the pass's whole budget); if one file's changed text is too big even alone, report it as not converged |
 | Threshold met, 0 new, 2/2 stable | **CONVERGED** → Step 6, then REQUIRED Step 7 |
 | Round 6, not stable | Present to user, then REQUIRED Step 7 |
 
@@ -627,7 +628,7 @@ After fixes, re-audit using R2+ mode (back to Step 2):
 
 1. Collect files modified during Step 4 → `--changed`
 2. Compute scope: changed + importers → `--files`
-3. Generate diff (dirty-aware base, matching R1 — untracked counts): `BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1); git diff "$BASE" -- . > .audit/$SID-diff.patch` — then append UNTRACKED new files (`git diff` omits them): `git ls-files --others --exclude-standard -z | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null "{}" >> .audit/$SID-diff.patch 2>.audit/$SID-untracked-diff-stderr.log || true` (the trailing `|| true` is only for `git diff --no-index`'s expected exit-1-on-differ; stderr goes to a file, not `/dev/null`, so a genuine `git`/`xargs` failure is still visible — see Step 2's fuller note on this exact pipeline)
+3. Generate diff (dirty-aware base, matching R1 — untracked counts): `BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1); git diff --no-textconv "$BASE" -- . > .audit/$SID-diff.patch` — then append UNTRACKED new files (`git diff` omits them): `git ls-files --others --exclude-standard -z | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null "{}" >> .audit/$SID-diff.patch 2>.audit/$SID-untracked-diff-stderr.log || true` (the trailing `|| true` is only for `git diff --no-index`'s expected exit-1-on-differ; stderr goes to a file, not `/dev/null`, so a genuine `git`/`xargs` failure is still visible — see Step 2's fuller note on this exact pipeline)
 4. Build `--passes` from file types
 5. Run R2+ audit with `--round <N> --ledger --diff --changed --files`
 
@@ -695,7 +696,7 @@ failed is a different thing from never-attempted (`references/verification-disci
 | `ineligible` | does not apply to this repo's resolved language/scope (e.g. a frontend-specific pass on a backend-only diff) |
 | `unavailable` | a concrete missing prerequisite — e.g. `AUDIT_DB_URL` unset for the architectural-memory catalogue |
 | `not-reached` | the round's control flow did not get to this pass/wave before stopping (rare — see below) |
-| `uncovered` | **file-level, from the result's `_coverage`, never from a pass:** changed files the audit did not (fully) examine — an unrecognised file type, an unreadable file, a deleted source file, a head-cut read. NOT `ineligible`: `ineligible` is an EXPECTED scope exclusion, and labelling a C# diff that way is exactly how twelve `.cs` files went unaudited under an APPROVE |
+| `uncovered` | **file-level, from the result's `_coverage`, never from a pass:** changed files the audit did not (fully) examine — an unrecognised file type, an unreadable file, a deleted source file, a partial (head-cut or windowed) read. NOT `ineligible`: `ineligible` is an EXPECTED scope exclusion, and labelling a C# diff that way is exactly how twelve `.cs` files went unaudited under an APPROVE |
 
 **A per-round execution record.** `arch-memory` is resolved **once**, by
 Step 0.5, before any round's Step 2 begins, and is never re-seeded — Step 0.5

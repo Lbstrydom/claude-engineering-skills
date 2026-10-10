@@ -11,6 +11,8 @@
  * @module scripts/lib/audit/convergence
  */
 
+import { changedLinesUnreadTotal } from '../coverage-format.mjs';
+
 /** The quality threshold /audit-code gates on — SKILL.md's stated rule. */
 export const CONVERGENCE_THRESHOLDS = Object.freeze({ high: 0, medium: 2, quickFix: 0 });
 
@@ -48,11 +50,20 @@ export function evaluateConvergence({ high, medium, quickFix }) {
  * `detector-not-run`: not converged, and named so the operator can tell "no detectors were
  * declared" (pass `checkDetectors`' own `{blocked:false, checked:0}`) from "nobody asked".
  *
+ * **Coverage (upstream report 58f4e3a5).** The round's `_coverage` ledger is the third input: a round that reports
+ * changed lines no completed pass rendered (`changedLinesUnread > 0` on any file) did not read the change, so it is
+ * `changed-lines-unread` — not converged, which is what refuses `AI-Gate: passed|converged` (run-persistence reads this
+ * value). Only a MEASURED shortfall blocks: `null` means "not applicable" (no diff, e.g. `--scope full`; the hunk map
+ * never yields null where evidence was expected), and a missing ledger is a library caller that built none — the
+ * convergence banner already names that case (`coverageMissingNote`). Read after the counts and the detector census,
+ * so the reason names the FIRST unmet requirement.
+ *
  * @param {{high: number, medium: number, quickFix: number}} counts
  * @param {{blocked: boolean, undispositioned?: object[], checked?: number}} detectorResult
+ * @param {object|null} [coverage] the round's `_coverage`
  * @returns {{converged: boolean, reason: string}}
  */
-export function evaluateConvergenceWithDetectors(counts, detectorResult) {
+export function evaluateConvergenceWithDetectors(counts, detectorResult, coverage = null) {
   if (!evaluateConvergence(counts)) {
     return { converged: false, reason: 'finding-thresholds' };
   }
@@ -72,6 +83,9 @@ export function evaluateConvergenceWithDetectors(counts, detectorResult) {
   }
   if (detectorResult.blocked) {
     return { converged: false, reason: 'detector-undispositioned' };
+  }
+  if (changedLinesUnreadTotal(coverage) > 0) {
+    return { converged: false, reason: 'changed-lines-unread' };
   }
   return { converged: true, reason: 'converged' };
 }
