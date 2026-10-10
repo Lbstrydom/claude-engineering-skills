@@ -87,6 +87,30 @@
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
 
+## 2026-10-10 — /fleet telemetry (golden signals, session flow, weakness findings) + dashboard persona P1s
+
+Plans: `docs/plans/fleet-telemetry.md` (Complete). Persona session `d53c9c25` (2026-10-06, 4 open P1s).
+
+### What shipped
+- **Dashboard P1s.** #1 (no Home summary) and #4 (hard-coded "16 bundled skills") were already fixed by #163, so they are labelled fixed, not re-done. #2: the CLI tab now also lists the 15 `node scripts/<x>.mjs` entry points skills name with no npm alias (`scripts/fleet.mjs` among them), described in a new `entryPoints` block of `scripts/.cli-catalog.json`. #3: the Architecture tab draws the committed domain-map roster (37) and takes symbol counts from the gitignored snapshot (33, dated 2026-09-20). A declared domain the snapshot lacks reads "?" (never 0), and the snapshot and observed-graph dates are printed.
+- **fleet telemetry.** fleet had written nothing to the store; the census proxied it from trailers it never writes. Each verb now spools one counts-only event (verb/mode, outcome, exit code, latency, a hash of the session id, normalised reason class) to `<git-common-dir>/fleet-telemetry/` (beside the registry), with no network and nothing on stdout. A detached `cross-skill.mjs fleet-telemetry flush` drains the spool idempotently into the new `fleet_events` table. `fleet-telemetry stats` derives the metrics at read time and names weaknesses against stated thresholds:
+  - golden signals per verb;
+  - claim→release lead time;
+  - refusal and error classes;
+  - saturation;
+  - per-tool-version regressions.
+
+  Rules need a minimum sample, so "not enough data" is not clean. The census reads fleet from `fleet_events`. Off switch: `FLEET_TELEMETRY=off` or `LEARNING_DISABLE=1`.
+
+### First measurement
+- `status` on this repo took 16 s (23 board items, 47 hidden branches), over the 10 s budget the new rules use. It is the first latency finding, and the baseline the next fleet perf change is judged against.
+
+### Verification
+- **Audit**: GPT 2 rounds (H12 M3 → H3 M6; acceptance 73% → 89%), Gemini final gate APPROVE (0 blocking, 0 new, 0 wrongly dismissed). Fixes from it: a spool is drained only from its own repo and never with an unresolved repo; token lock with atomic-rename takeover; dropped counts reported exactly once; one [since, until) window; claim→release lifecycles paired with one end boundary; one failure predicate; true newest-vs-previous version comparison; unreadable spool is a failure, not empty.
+- New suites (52 tests): fleet telemetry, cross-skill handler, dashboard roster; `tests/fleet-events-db.test.mjs` on real Postgres (`npm run db:local`: 445 pass, 0 fail, 0 skipped). All 33 non-test `check` gates pass on each commit (throwaway worktrees).
+- Negative controls turned their tests red: removing the test-runner drain guard, deleting events on a failed write, removing the min-sample guard, an unknown domain count read as 0, and repeating npm-aliased scripts.
+- The `fleet_events` migration is applied to the shared store (138/138, no drift), and one real event went spool → drain → store → `stats`. Other stores (storyline's) need `setup-postgres.mjs --migrate` by their owner; until then their events wait in the local spool.
+- `expected-schema.json` was regenerated from a fresh replay (additive only).
 ## 2026-10-10 — /fleet: status truth, a coordination channel, and real landing (wine + storyline feedback)
 
 Plan: `docs/plans/fleet-consumer-feedback-oct.md`. Built by `/cycle --autonomous` in three clusters, one commit each (stackable as three PRs).
