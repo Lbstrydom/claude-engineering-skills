@@ -315,7 +315,11 @@ describe('discoveryCode assembly — secret-redaction default (discovery-portfol
   test('static pin: the discoveryCode readFilesAsContext call does not pass redact:false', () => {
     const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf8');
     // `readFilesAsContextDetailed` is the SAME render with its stats kept for the coverage ledger (readFilesAsContext wraps it).
-    const callMatch = src.match(/const \{ context: discoveryCode, stats: discoveryReadStats \} = readFilesAsContext(?:Detailed)?\([^;]*\);/s);
+    // Since docs/plans/final-review-hunk-windows.md D6 the read lives in `readDiscoveryCode` (default reader
+    // readFilesAsContextDetailed); the pin covers that whole function body, and the call site must still delegate to it.
+    assert.match(src, /const \{ context: discoveryCode, stats: discoveryReadStats(?:, hunkMap: \w+)? \} = readDiscoveryCode\(ctx\);/,
+      'the discoveryCode read must go through readDiscoveryCode');
+    const callMatch = src.match(/export function readDiscoveryCode\([^)]*read = readFilesAsContextDetailed[\s\S]*?\n\}\n/);
     assert.ok(callMatch, 'expected to find the discoveryCode readFilesAsContext call');
     assert.equal(
       /redact\s*:\s*false/.test(callMatch[0]),

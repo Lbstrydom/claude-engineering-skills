@@ -44,7 +44,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { z } from 'zod';
 import { normalizePath } from '../file-io.mjs';
-import { changedLineRanges, countUncovered, prefixRange } from '../hunk-window.mjs';
+import { prefixRange, unreadChangedLines } from '../hunk-window.mjs';
 import { buildHunkMap } from './hunk-evidence.mjs';
 
 export { buildHunkMap };
@@ -212,6 +212,14 @@ function changedListOf({ coverageChanged, changedFiles = [], fileFilter }) {
 }
 
 /**
+ * The round's hunk map: `buildHunkMap` over the ledger's changed list. The ONE selection rule the legacy readers, the
+ * ledger and the tiered discovery read share (docs/plans/final-review-hunk-windows.md D3).
+ */
+export function buildRoundHunkMap({ diffMap = null, coverageChanged = null, changedFiles = [], fileFilter = null } = {}) {
+  return buildHunkMap({ diffMap, changed: changedListOf({ coverageChanged, changedFiles, fileFilter }), coverageChanged });
+}
+
+/**
  * Start measuring an audit: the recorder, the measured reader, and the chunking observer wired together. One call so the
  * orchestrator (over the size limit) carries one line, not three.
  *
@@ -224,9 +232,7 @@ export function startCoverage({ getDiffMap, plain, annotated, setChunkingObserve
   const recorder = createCoverageRecorder();
   setChunkingObserver((filePath, state) => recorder.recordChunking(filePath, state));
   let hunkMap = null;
-  const getHunkMap = () => (hunkMap ??= buildHunkMap({
-    diffMap: getDiffMap(), changed: changedListOf({ coverageChanged, changedFiles, fileFilter }), coverageChanged,
-  }));
+  const getHunkMap = () => (hunkMap ??= buildRoundHunkMap({ diffMap: getDiffMap(), coverageChanged, changedFiles, fileFilter }));
   recorder.getHunkMap = getHunkMap;
   return { recorder, renderFor: makeRenderFor(recorder, getDiffMap, { plain, annotated }, getHunkMap), getHunkMap };
 }
@@ -234,7 +240,7 @@ export function startCoverage({ getDiffMap, plain, annotated, setChunkingObserve
 /** The ledger's inputs as `finding-assembly` takes them (`data.coverageInput`). `changed`: VCS record, else the explicit list. */
 export function makeCoverageInput({ recorder, coverageChanged, changedFiles, fileFilter, coverageExcluded, diffMap, toolCapability, noTools }) {
   // The SAME map the readers rendered against when the recorder carries one (D7); built fresh otherwise.
-  const hunkMap = recorder?.getHunkMap?.() ?? buildHunkMap({ diffMap, changed: changedListOf({ coverageChanged, changedFiles, fileFilter }), coverageChanged });
+  const hunkMap = recorder?.getHunkMap?.() ?? buildRoundHunkMap({ diffMap, coverageChanged, changedFiles, fileFilter });
   return {
     recorder,
     changed: changedListOf({ coverageChanged, changedFiles, fileFilter }),
@@ -331,7 +337,7 @@ function measureUnread(path, fileHunks, changeKind, ev, readText) {
   const lineCount = text.split('\n').length;
   const hunks = Array.isArray(fileHunks) ? fileHunks : [{ startLine: 1, lineCount }];
   const covered = [...ev.renderedRanges, ...ev.prefixChars.map((c) => prefixRange(text, c))];
-  return countUncovered(changedLineRanges(hunks, lineCount), covered);
+  return unreadChangedLines({ lineCount, hunks, ranges: covered }).unread;
 }
 
 // ── The builder ─────────────────────────────────────────────────────────────
