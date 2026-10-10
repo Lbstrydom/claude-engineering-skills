@@ -267,6 +267,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "58f4e3a5-b5e1-44f0-afdf-5bf295dde3bc",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/file-coverage.test.mjs"
+      },
+      "recordedAt": "2026-10-10T15:38:36.140Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "5b1a121e-7de6-4399-b43b-9b3de1e9d5ea",
       "storeFingerprint": "c7177057dcafa55d",
       "state": "fixed",
