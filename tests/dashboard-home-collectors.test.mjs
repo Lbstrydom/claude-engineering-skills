@@ -307,7 +307,7 @@ describe('collectShippedMerges + shippedLog', () => {
   test('a ref that RESOLVED but whose log fails is unexpected-error, not missing-optional (R1-M6)', () => {
     const { repo, shas } = mkRepo({ commits: 3 });
     const obj = path.join(repo, '.git', 'objects', shas[0].slice(0, 2), shas[0].slice(2));
-    fs.rmSync(obj, { force: true }); // the history walk now hits a missing commit
+    fs.rmSync(obj, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); // the history walk now hits a missing commit
     const m = collectShippedMerges(repo, { now: NOW });
     assert.equal(m.status, 'unexpected-error', m.detail);
     assert.match(m.detail, /git log .* failed/);
