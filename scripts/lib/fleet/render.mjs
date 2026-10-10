@@ -176,11 +176,12 @@ export function renderClaimVerdict(v, ctx = {}) {
   for (const c of v.conflicts) {
     const detail = [];
     if (c.paths?.length) detail.push(`paths ${c.paths.slice(0, 3).map(([a, b]) => `${a} ~ ${b}`).join(', ')}`);
+    if (c.abstractPaths?.length) detail.push(`patterns meet only on names no tracked file has: ${c.abstractPaths.slice(0, 3).map(([a, b]) => `${a} ~ ${b}`).join(', ')} (disclosed, not blocking)`);
     if (c.files?.length) detail.push(`files ${c.files.slice(0, 5).join(', ')}`);
     if (c.uncommittedFiles?.length) detail.push(`UNCOMMITTED in their worktree: ${c.uncommittedFiles.slice(0, 5).join(', ')} (advisory)`);
     if (c.via.includes('intent')) detail.push('identical intent');
     if (c.hotFiles?.length) detail.push(`hot files ${c.hotFiles.slice(0, 5).join(', ')} (${c.hotOnly ? 'disclosed, not blocking' : 'not counted'})`);
-    lines.push(`  ${c.known ? '[known] ' : ''}${c.hotOnly ? '[hot] ' : ''}${c.with}: ${c.via.join('+')}${detail.length ? ` — ${detail.join('; ')}` : ''}`);
+    lines.push(`  ${c.known ? '[known] ' : ''}${c.hotOnly ? '[hot] ' : ''}${c.abstractOnly ? '[abstract] ' : ''}${c.with}: ${c.via.join('+')}${detail.length ? ` — ${detail.join('; ')}` : ''}`);
   }
   for (const u of v.uninspected ?? []) lines.push(`  note: uncommitted work not inspected for ${u.with} (${u.reason})`);
   return lines.join('\n');

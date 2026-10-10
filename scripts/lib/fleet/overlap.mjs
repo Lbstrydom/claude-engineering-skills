@@ -182,6 +182,32 @@ function hotLiteralOf(pa, pb, hotFiles) {
   return null;
 }
 
+/**
+ * An ABSTRACT pattern pair: both sides are wildcards and no TRACKED file matches both. The
+ * intersection math is exact (`tests/*upstream*` and `tests/*final-review*` do meet, on a name
+ * like `tests/upstream-final-review.test.mjs`), but a meeting only on names that do not exist is
+ * not evidence two sessions will edit the same file — blocking on it made two unrelated agents
+ * stop on 2026-10-10. Abstract requires ALL of:
+ *  - both sides are wildcards (a LITERAL names exact intent, including a file about to be created);
+ *  - NEITHER pattern can contain the other — proven by a witness: fill one pattern's wildcards with
+ *    a sample name; if the other pattern rejects it, it cannot contain the first. Identical or nested
+ *    claims (`shared/**` ~ `shared/**`, `lib/**` ~ `lib/new/*.mjs`) are the real "two sessions in
+ *    the same NEW area" collision and stay concrete even with no tracked file under them;
+ *  - the tracked-file list is known and no tracked file matches both (`null` fails closed).
+ * Real collisions on new files still surface later as `files`/`uncommitted` evidence.
+ *
+ * @param {string} pa @param {string} pb
+ * @param {string[]|null} trackedFiles
+ */
+export function isAbstractPair(pa, pb, trackedFiles) {
+  if (!Array.isArray(trackedFiles) || isLiteralPattern(pa) || isLiteralPattern(pb)) return false;
+  const opts = { dot: true, nocase: false };
+  // A witness of p: one concrete path p matches, with every wildcard filled by a sample token.
+  const witness = (p) => p.split('/').map((seg) => (seg === '**' ? 'zqx' : seg.replace(/\*/g, 'zqx').replace(/\?/g, 'q'))).join('/');
+  if (isMatch(witness(pb), pa, opts) || isMatch(witness(pa), pb, opts)) return false; // may contain: concrete
+  return !trackedFiles.some((f) => isMatch(f, pa, opts) && isMatch(f, pb, opts));
+}
+
 /** Partition files into real and hot. @returns {{real: string[], hot: string[]}} */
 export function splitHotFiles(files, hotFiles) {
   const real = []; const hot = [];
@@ -195,7 +221,7 @@ export function splitHotFiles(files, hotFiles) {
  * predicate `claim`, `start` and the verdict itself use.
  */
 export function isBlockingConflict(c) {
-  return !c.known && !c.hotOnly && !c.uncommittedOnly;
+  return !c.known && !c.hotOnly && !c.uncommittedOnly && !c.abstractOnly;
 }
 
 // ── Duplicates and liveness ─────────────────────────────────────────────────
@@ -269,9 +295,12 @@ export function claimMode(existing) {
  * @param {boolean} args.complete - registry completeness; false refuses for BOTH modes
  * @param {string[]} [args.hotFiles] - `.fleet.json` `hotFiles`: evidence made only of these is disclosed
  *   on the conflict (`hotFiles`, `hotOnly:true`) and never blocks; mixed evidence blocks as before
+ * @param {string[]|null} [args.trackedFiles] - the repo's tracked files; a wildcard×wildcard pattern
+ *   pair no tracked file satisfies is ABSTRACT (`abstractPaths`, `abstractOnly:true`): disclosed as a
+ *   WARN, never a block. `null` (unknown) treats every intersecting pair as concrete.
  * @returns {{ok: boolean, verdict: 'ok'|'warn'|'blocked'|'refused', conflicts: object[], reason?: string}}
  */
-export function decideClaim({ claim, mode, others, complete, hotFiles = [] }) {
+export function decideClaim({ claim, mode, others, complete, hotFiles = [], trackedFiles = null }) {
   if (mode !== 'new' && mode !== 'adopt') throw new Error(`decideClaim: unknown mode ${JSON.stringify(mode)}`);
   if (!complete) return { ok: false, verdict: 'refused', conflicts: [], reason: 'registry incomplete' };
   const myIntent = normIntent(claim.intent);
@@ -289,10 +318,13 @@ export function decideClaim({ claim, mode, others, complete, hotFiles = [] }) {
       for (const pb of s.paths ?? []) {
         if (patternsIntersect(pa, pb) === 'disjoint') continue;
         const lit = hotLiteralOf(pa, pb, hotFiles);
-        if (lit) hot.add(lit); else hit.paths.push([pa, pb]);
+        if (lit) hot.add(lit);
+        else if (isAbstractPair(pa, pb, trackedFiles)) (hit.abstractPaths ??= []).push([pa, pb]);
+        else hit.paths.push([pa, pb]);
       }
     }
     if (hit.paths.length) via.push('paths');
+    else if (hit.abstractPaths?.length) via.push('paths-abstract');
     if (myIntent && myIntent === normIntent(s.intent)) via.push('intent');
     const { real, hot: hotChanged } = splitHotFiles(fileOverlap(o.changedFiles ?? [], myPaths), hotFiles);
     if (real.length) { via.push('files'); hit.files = real; }
@@ -304,6 +336,7 @@ export function decideClaim({ claim, mode, others, complete, hotFiles = [] }) {
     if (hot.size) { via.push('hot-files'); hit.hotFiles = [...hot]; hit.hotOnly = via.length === 1; }
     if (!via.length) continue;
     hit.uncommittedOnly = via.includes('uncommitted') && via.every((v) => v === 'uncommitted' || v === 'hot-files');
+    hit.abstractOnly = via.includes('paths-abstract') && via.every((v) => v === 'paths-abstract' || v === 'hot-files');
     hit.known = (claim.knownOverlaps ?? []).some((k) => k.with === s.id)
       || (s.knownOverlaps ?? []).some((k) => k.with === claim.id);
     conflicts.push(hit);
@@ -313,7 +346,7 @@ export function decideClaim({ claim, mode, others, complete, hotFiles = [] }) {
   if (mode === 'new' && blocking.length) return { ok: false, verdict: 'blocked', conflicts, ...extra };
   if (mode === 'adopt' && blocking.length) return { ok: true, verdict: 'warn', conflicts, ...extra };
   // Advisory-only evidence (uncommitted edits) reads as a WARN, never a block and never a silent OK.
-  if (conflicts.some((c) => c.uncommittedOnly && !c.known)) return { ok: true, verdict: 'warn', conflicts, ...extra };
+  if (conflicts.some((c) => (c.uncommittedOnly || c.abstractOnly) && !c.known)) return { ok: true, verdict: 'warn', conflicts, ...extra };
   return { ok: true, verdict: 'ok', conflicts, ...extra };
 }
 
