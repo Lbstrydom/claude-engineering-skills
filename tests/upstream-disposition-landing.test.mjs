@@ -149,6 +149,36 @@ describe('upstreamTransition + the dispatcher (real git, temp repo)', () => {
     assert.equal(res.dispositionFile.storeTransitioned, false);
   });
 
+  it('a THROWN store transition takes the same path: storeTransitioned false, message preserved (code-audit R1 M1)', async () => {
+    const res = await close(async () => { throw new Error('connection reset'); });
+    assert.equal(res.ok, false);
+    assert.equal(res.error, 'connection reset');
+    assert.equal(res.dispositionFile.storeTransitioned, false);
+  });
+
+  it('a malformed existing ledger is REFUSED: nothing written, the store never reached (code-audit R1 H2/H4/H5)', async () => {
+    fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true });
+    const ledger = path.join(repo, LEDGER_REL);
+    const corrupt = '{ "entries": [ {"issueId": "x"} ], oops';
+    fs.writeFileSync(ledger, corrupt);
+    let reached = false;
+    await assert.rejects(
+      () => close(async () => { reached = true; return { ok: true }; }),
+      (err) => err.code === 'LEDGER_MALFORMED',
+    );
+    assert.equal(reached, false, 'the store must not be transitioned');
+    assert.equal(fs.readFileSync(ledger, 'utf8'), corrupt, 'the corrupt bytes must survive for repair');
+  });
+
+  it('dispatcher: a malformed ledger surfaces as LEDGER_MALFORMED, not a bare EXCEPTION', async () => {
+    fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(repo, LEDGER_REL), 'not json');
+    process.chdir(repo);
+    _resetRepoRootCache();
+    const { thrown } = await captureStderr(() => upstreamCmd(ctxFor({ ok: true })));
+    assert.equal(thrown?.code, 'LEDGER_MALFORMED');
+  });
+
   it('`ack` writes no ledger entry and carries no dispositionFile', async () => {
     const res = await upstreamTransition({
       repoRoot: repo, id: ID, to: 'acknowledged', storeFingerprint: null, transitionFn: async () => ({ ok: true }),

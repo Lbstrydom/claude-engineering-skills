@@ -121,8 +121,8 @@ makes the `check` wiring honest.
   - attributable missing entry: "this push removes the entry".
   - ledgerOnly, mismatch and sentinel each get their own sentence.
 
-To support per-id attribution, `computeLedgerReconciliation` gains structured
-`stateMismatchIds` / `dispositionMismatchIds`. The prose strings stay as they are.
+To support per-id attribution, `computeLedgerReconciliation` gains per-divergence
+`mismatches` records `{kind, issueId, detail}` (code-audit R1 M2: not parallel arrays). The prose strings stay as they are.
 That avoids parsing ids back out of prose. `listTerminalUpstreamIssues`
 additionally projects `updated_at` as `closedAt`, the lifecycle timestamp: set on
 transition, deliberately NOT on annotate (`store/upstream-issues.mjs:303,346`).

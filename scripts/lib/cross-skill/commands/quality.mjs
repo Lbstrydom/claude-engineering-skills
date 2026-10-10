@@ -502,7 +502,9 @@ export async function upstreamCmd(ctx) {
     return { ...res, drain };
   } catch (err) {
     if (err instanceof CommandError) throw err;
-    throw new CommandError('EXCEPTION', err.message);
+    // A ledger the writer refused to overwrite is a named, operator-fixable state,
+    // not a crash, so its code survives (disposition-ledger.mjs readDispositionLedger).
+    throw new CommandError(err?.code === 'LEDGER_MALFORMED' ? 'LEDGER_MALFORMED' : 'EXCEPTION', err.message);
   }
 }
 
@@ -514,9 +516,11 @@ export async function upstreamCmd(ctx) {
  * - store transitioned, entry not yet on the base branch: the entry is an
  *   uncommitted change to a COMMITTED file. Say what it causes until it lands,
  *   and exactly how to land it.
- * - store transition FAILED: the ledger was written ahead of it, so the entry
- *   must NOT be committed (the gate would block that push as ledger-ahead-of-store).
- *   Never print commit instructions here.
+ * - store transition FAILED (returned or thrown): the ledger was written ahead of
+ *   it, so the entry must NOT be committed (the gate would block that push as
+ *   ledger-ahead-of-store). Never print commit instructions here, and never assume
+ *   the failure was transient: terminal states are final, so a re-run of an
+ *   illegal transition fails again.
  * - landed already, or nothing written: silent.
  *
  * PURE, returns lines; the caller writes them. PowerShell-safe: real values, no
@@ -533,9 +537,10 @@ export function renderDispositionFileNotice(file, idFlag) {
   const tag = '  [upstream]';
   if (file.storeTransitioned !== true) {
     return [
-      `${tag} ${file.path} was written AHEAD of a store transition that did not succeed. Do NOT commit that change:`,
-      `${tag} the store row is not terminal, so the reconcile gate would block the push that carries it.`,
-      `${tag} Re-run the same command once the store is reachable (the entry is rewritten in place), or drop just that entry.`,
+      `${tag} ${file.path} was written AHEAD of a store transition that did not succeed (error above). Do NOT commit that change:`,
+      `${tag} the store row did not reach this state, so the reconcile gate would block the push that carries it.`,
+      `${tag} If the failure was transient (store unreachable), re-run the same command; the entry is rewritten in place.`,
+      `${tag} Otherwise (e.g. an illegal transition: fixed and wont_fix are final), remove just that entry from the file.`,
     ];
   }
   if (file.landed === true) return [];

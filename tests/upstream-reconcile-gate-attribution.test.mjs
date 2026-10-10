@@ -56,6 +56,21 @@ function writeLedger(entries) {
   fs.writeFileSync(path.join(repo, LEDGER_REL), ledgerText(entries));
 }
 
+/**
+ * Mirror the pre-push sandbox (code-audit R1 M4): the change is COMMITTED, the
+ * working tree is that commit, and the hook hands the gate an explicit
+ * base..head range. A working-tree-only edit would not be what a push carries.
+ */
+function commitLedger(textOrEntries) {
+  fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(repo, LEDGER_REL),
+    typeof textOrEntries === 'string' ? textOrEntries : ledgerText(textOrEntries));
+  git('add', '--', LEDGER_REL);
+  git('commit', '-q', '-m', 'the pushed change');
+  process.env.AUDIT_PUSH_RANGE_HEAD = git('rev-parse', 'HEAD');
+  process.env.AUDIT_PUSH_RANGE_REQUIRED = '1';
+}
+
 function makeCtx(rows) {
   return {
     verb: 'reconcile',
@@ -106,7 +121,7 @@ beforeEach(() => {
   process.env.AUDIT_PUSH_RANGE_BASE = baseSha;
   delete process.env.AUDIT_PUSH_RANGE_HEAD;
   delete process.env.AUDIT_PUSH_RANGE_REQUIRED;
-  writeLedger([entry(ID_A)]);
+  git('reset', '-q', '--hard', baseSha);
   process.chdir(repo);
   _resetRepoRootCache();
 });
@@ -135,7 +150,7 @@ describe('upstream reconcile --gate — attribution to the pushed range (dispatc
   });
 
   it('a push that REMOVES a disposition entry whose store row is terminal still blocks, naming the cause', async () => {
-    writeLedger([]);
+    commitLedger([]);
     const { error } = await runCapturingStderr(() => upstreamCmd(makeCtx([row(ID_A)])));
     assert.ok(error, 'must block');
     assert.equal(error.code, 'RECONCILE_NEEDS_REVIEW');
@@ -144,7 +159,7 @@ describe('upstream reconcile --gate — attribution to the pushed range (dispatc
   });
 
   it('a push that ADDS an entry with no terminal store row blocks (the ledger-ahead-of-store shape)', async () => {
-    writeLedger([entry(ID_A), entry(ID_B)]);
+    commitLedger([entry(ID_A), entry(ID_B)]);
     const { error } = await runCapturingStderr(() => upstreamCmd(makeCtx([row(ID_A)])));
     assert.ok(error, 'must block');
     assert.equal(error.code, 'RECONCILE_NEEDS_REVIEW');
@@ -152,7 +167,7 @@ describe('upstream reconcile --gate — attribution to the pushed range (dispatc
   });
 
   it('mixed: blocks on the attributable item only, and still reports the pre-existing one', async () => {
-    writeLedger([entry(ID_A, 'tests/changed.test.mjs')]);
+    commitLedger([entry(ID_A, 'tests/changed.test.mjs')]);
     const { error, stderr } = await runCapturingStderr(
       () => upstreamCmd(makeCtx([row(ID_A), row(ID_B)])));
     assert.ok(error, 'must block on A');
@@ -171,7 +186,7 @@ describe('upstream reconcile --gate — attribution to the pushed range (dispatc
   });
 
   it('fails CLOSED when the head ledger is malformed, even with no per-id divergence', async () => {
-    fs.writeFileSync(path.join(repo, LEDGER_REL), '{ not json');
+    commitLedger('{ not json');
     const { error } = await runCapturingStderr(() => upstreamCmd(makeCtx([])));
     assert.ok(error, 'a malformed ledger must never read as a clean empty one');
     assert.equal(error.code, 'RECONCILE_NEEDS_REVIEW');
@@ -190,7 +205,7 @@ describe('upstream reconcile --gate — attribution to the pushed range (dispatc
 
 const recon = (over = {}) => ({
   missingFromLedger: [], ledgerOnly: [], stateMismatch: [], dispositionMismatch: [], needsReview: [],
-  stateMismatchIds: [], dispositionMismatchIds: [], otherStore: [], ...over,
+  mismatches: [], otherStore: [], ...over,
 });
 const read = (entries) => ({ status: 'read', entries, reason: null, range: 'BASE..HEAD [explicit]' });
 const ID_C = 'cccccccc-0000-4000-8000-00000000000c';
@@ -220,8 +235,8 @@ describe('decideReconcileGate', () => {
   it('every category on an UNCHANGED id is pre-existing, never blocking', () => {
     const d = decideReconcileGate({
       reconciliation: recon({
-        missingFromLedger: [ID_B], ledgerOnly: [ID_A], stateMismatch: [`${ID_A}: x`], stateMismatchIds: [ID_A],
-        dispositionMismatch: [`${ID_A}: y`], dispositionMismatchIds: [ID_A], needsReview: [ID_A],
+        missingFromLedger: [ID_B], ledgerOnly: [ID_A], needsReview: [ID_A],
+        mismatches: [{ kind: 'state', issueId: ID_A, detail: `${ID_A}: x` }, { kind: 'disposition', issueId: ID_A, detail: `${ID_A}: y` }],
       }),
       head: read([entry(ID_A)]), base: read([entry(ID_A)]),
     });
@@ -234,7 +249,7 @@ describe('decideReconcileGate', () => {
   it('every category on a CHANGED id blocks', () => {
     const d = decideReconcileGate({
       reconciliation: recon({
-        ledgerOnly: [ID_B], dispositionMismatch: [`${ID_A}: y`], dispositionMismatchIds: [ID_A], needsReview: [ID_A],
+        ledgerOnly: [ID_B], needsReview: [ID_A], mismatches: [{ kind: 'disposition', issueId: ID_A, detail: `${ID_A}: y` }],
       }),
       head: read([entry(ID_A, 'tests/edited.test.mjs'), entry(ID_B)]), base: read([entry(ID_A)]),
     });
@@ -272,12 +287,17 @@ describe('decideReconcileGate', () => {
     assert.equal(d.blocking[0].category, 'ledger-unreadable');
   });
 
-  it('a mismatch item without an id cannot be attributed, so it blocks', () => {
-    const d = decideReconcileGate({
-      reconciliation: recon({ stateMismatch: ['?: x'], stateMismatchIds: [] }),
+  it('a mismatch without an id cannot be attributed, so it blocks (record without id, and prose-only shape)', () => {
+    const noId = decideReconcileGate({
+      reconciliation: recon({ mismatches: [{ kind: 'state', issueId: null, detail: '?: x' }] }),
       head: read([]), base: read([]),
     });
-    assert.equal(d.blocking.length, 1);
+    assert.equal(noId.blocking.length, 1);
+    const proseOnly = decideReconcileGate({
+      reconciliation: { ...recon({ stateMismatch: ['?: x'] }), mismatches: undefined },
+      head: read([]), base: read([]),
+    });
+    assert.equal(proseOnly.blocking.length, 1);
   });
 });
 

@@ -647,10 +647,12 @@ export async function upstreamTransition({
   const dispositionFile = parsedDisposition ? await upsertDispositionLedgerEntry(repoRoot, {
     issueId: normId, state: to, disposition: safeDispositionValue, storeFingerprint,
   }) : null;
-  const res = await transitionFn({
+  // A THROWN store write is the same partial state as a returned failure, so it takes
+  // the same path (code-audit R1 M1). The dispatcher already maps both to `EXCEPTION`.
+  const res = await Promise.resolve().then(() => transitionFn({
     id: normId, to, note: safeNote, commit, actor,
     disposition: parsedDisposition ? formatDisposition(safeDispositionValue) : null,
-  });
+  })).catch((err) => { if (!dispositionFile) throw err; return { ok: false, error: err?.message ?? String(err) }; });
   return dispositionFile ? { ...res, dispositionFile: { ...dispositionFile, storeTransitioned: res?.ok === true } } : res;
 }
 

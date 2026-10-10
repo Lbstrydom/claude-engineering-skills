@@ -102,8 +102,17 @@ function divergenceItems(r) {
   const items = [];
   for (const id of r.missingFromLedger ?? []) items.push({ category: 'missing', issueId: id, detail: null });
   for (const id of r.ledgerOnly ?? []) items.push({ category: 'ledgerOnly', issueId: id, detail: null });
-  (r.stateMismatch ?? []).forEach((detail, i) => items.push({ category: 'stateMismatch', issueId: r.stateMismatchIds?.[i] ?? null, detail }));
-  (r.dispositionMismatch ?? []).forEach((detail, i) => items.push({ category: 'dispositionMismatch', issueId: r.dispositionMismatchIds?.[i] ?? null, detail }));
+  // Records, never the prose lists: each carries its own id (code-audit R1 M2). A
+  // reconciliation without `mismatches` but with prose mismatches cannot be
+  // attributed, so each prose line becomes an id-less item, which blocks.
+  if (Array.isArray(r.mismatches)) {
+    for (const m of r.mismatches) {
+      items.push({ category: m.kind === 'state' ? 'stateMismatch' : 'dispositionMismatch', issueId: m.issueId ?? null, detail: m.detail });
+    }
+  } else {
+    for (const detail of r.stateMismatch ?? []) items.push({ category: 'stateMismatch', issueId: null, detail });
+    for (const detail of r.dispositionMismatch ?? []) items.push({ category: 'dispositionMismatch', issueId: null, detail });
+  }
   for (const id of r.needsReview ?? []) items.push({ category: 'needsReview', issueId: id, detail: null });
   return items;
 }
@@ -155,6 +164,11 @@ const LABEL = Object.freeze({
   'ledger-unreadable': 'ledger malformed',
 });
 
+// Terminal states are final (`LEGAL_TRANSITIONS`: fixed/wont_fix -> nothing), so no
+// `upstream fix` can replace a terminal row's disposition (code-audit R1 M3).
+const SENTINEL_REMEDY = 'A terminal row cannot be re-closed, so its disposition is corrected by a reviewed '
+  + 'store migration (see scripts/backfill-upstream-dispositions.mjs), then the ledger entry to match';
+
 const closedPhrase = (id, rowsById) => {
   const row = rowsById.get(id);
   return row ? `closed (${row.state}) at ${row.closedAt ?? 'an unknown time'}` : 'terminal';
@@ -169,9 +183,9 @@ function blockingSentence(item, rowsById, attributable) {
     case 'missing':
       return `${head}. This push removes its disposition entry, but the store row is ${closedPhrase(item.issueId, rowsById)}. Restore the entry`;
     case 'ledgerOnly':
-      return `${head}. This push adds or edits an entry with no terminal store row. Was the store transition lost after the ledger write, or the id mistyped? Re-run the upstream fix/wont-fix, or drop the entry`;
+      return `${head}. This push adds or edits an entry with no terminal store row. Was the store transition lost after the ledger write, or the id mistyped? If the row is still open, re-run the upstream fix/wont-fix; otherwise drop the entry`;
     case 'needsReview':
-      return `${head}. This push changed its entry, but the store row still carries the catch-all sentinel. Give it a real disposition via upstream fix --disposition`;
+      return `${head}. This push changed its entry, but the store row still carries the catch-all sentinel. ${SENTINEL_REMEDY}`;
     default:
       return `${LABEL[item.category]}: ${item.detail}. This push changed this entry; make it agree with the store`;
   }
@@ -193,11 +207,11 @@ function preExistingSentence(item, rowsById, presentUpstream) {
       return `${id}: a ledger entry (unchanged by this push) has no terminal store row. The row was reopened, a store write `
         + `was lost, or it belongs to an unstamped other store. Inspect: node scripts/cross-skill.mjs upstream history --id ${id} --worksheet`;
     case 'needsReview':
-      return `${id}: the store row still carries the migration catch-all sentinel. It needs a real disposition via `
-        + `node scripts/cross-skill.mjs upstream fix --id ${id} --commit SHA --disposition test:PATH --note -`;
+      return `${id}: the store row still carries the migration catch-all sentinel. ${SENTINEL_REMEDY}`;
     default:
-      return `${LABEL[item.category]}: ${item.detail}. The store row moved after this entry landed. Re-run upstream `
-        + 'fix/wont-fix for it, or inspect with `npm run upstream:reconcile`';
+      return `${LABEL[item.category]}: ${item.detail}. The ledger entry and the store row disagree, and fixed/wont_fix are `
+        + `final, so re-closing cannot fix it. Make the entry agree with the store row (inspect: node scripts/cross-skill.mjs `
+        + `upstream history --id ${id} --worksheet) and land that one-file change`;
   }
 }
 

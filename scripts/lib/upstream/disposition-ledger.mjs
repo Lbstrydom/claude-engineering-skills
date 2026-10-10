@@ -70,33 +70,38 @@ function ensureLedgerDir(ledgerPath) {
 }
 
 /**
- * Read + parse the committed disposition ledger. Never throws — an absent
- * file (first-ever transition in a fresh checkout) is `[]`, not an error;
- * a present-but-corrupt file is also `[]` so the write path below can still
- * proceed with a fresh array rather than blocking every future transition on
- * a hand-fixable JSON typo (the GATE, not this write path, is what enforces
- * the ledger's integrity for `npm run check`).
+ * Read the committed disposition ledger for a WRITE. An absent file (the
+ * first-ever transition in a fresh checkout) is `[]`.
+ *
+ * A present-but-malformed or unreadable file THROWS (`code: 'LEDGER_MALFORMED'`),
+ * before anything is written and before the store is transitioned. It used to
+ * degrade to `[]` so a JSON typo could not block transitions. But both writers
+ * merge into what this returns and then atomically REPLACE the file, so that
+ * fallback turned a typo into "the whole ledger is now one entry", in valid JSON.
+ * Nothing downstream could then tell corruption from a deliberate removal
+ * (code-audit R1 H2/H4/H5, docs/plans/upstream-disposition-landing.md). Refusing
+ * costs a hand-fix of the JSON. Not refusing costs the history.
  *
  * @param {string} repoRoot
  * @returns {Array<object>}
  */
 function readDispositionLedger(repoRoot) {
-  const p = path.join(repoRoot, DISPOSITION_LEDGER_PATH);
-  try {
-    const parsed = JSON.parse(fs.readFileSync(p, 'utf-8'));
-    return Array.isArray(parsed?.entries) ? parsed.entries : [];
-  } catch {
-    return [];
-  }
+  const read = readWorkingLedger(repoRoot);
+  if (read.status === 'absent') return [];
+  if (read.status === 'read') return read.entries;
+  const err = new Error(`${DISPOSITION_LEDGER_PATH} is ${read.status}${read.reason ? ` (${read.reason})` : ''}. `
+    + 'Refusing to write over it, because that would replace every entry. Repair the JSON, or restore it with '
+    + `git checkout -- ${DISPOSITION_LEDGER_PATH}, then re-run. Nothing was written and the store was not touched.`);
+  err.code = 'LEDGER_MALFORMED';
+  throw err;
 }
 
 /**
  * Parse ledger bytes into a well-formed entry list, or `malformed`. This is the ONE
- * parser for every READER that has to tell a broken ledger from an empty one.
- * The write path above deliberately does not use it: it degrades to `[]` so a
- * typo cannot block every future transition. A gate must never read
- * "unparseable" as "no entries", because that turns a corrupt file into a clean
- * reconciliation (docs/plans/upstream-disposition-landing.md §2.2).
+ * parser for every reader, and for the write path (`readDispositionLedger`), that
+ * has to tell a broken ledger from an empty one. Nothing may read "unparseable" as
+ * "no entries". A gate doing so turns a corrupt file into a clean reconciliation,
+ * and a writer doing so overwrites the history (docs/plans/upstream-disposition-landing.md).
  *
  * @param {string} text
  * @returns {{status: 'read'|'malformed', entries: object[]|null, reason: string|null}}
