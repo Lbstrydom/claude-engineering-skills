@@ -35,6 +35,13 @@ describe('glob seam', () => {
     assert.equal(isMatch('docs/a.js', 'docs/*.{md,txt}'), false);
   });
 
+  test('a negative EXTGLOB `!(…)` is a positive pattern, not a list exclusion (R1-M5)', () => {
+    const list = ['a.mjs', 'a.test.mjs', 'b.md'];
+    assert.deepEqual(filterMatches(list, ['!(*.test).mjs']), ['a.mjs'], 'the extglob selects; it is not stripped to "(*.test).mjs" and inverted');
+    assert.deepEqual(filterMatches(list, ['*.mjs', '!*.test.mjs']), ['a.mjs'], 'a plain leading ! is still an exclusion');
+    assert.deepEqual(filterMatches(list, ['**', '!!(*.md)']), ['b.md'], 'an exclusion OF a negative extglob: drop everything that is not *.md');
+  });
+
   test('deeply nested braces never exhaust the stack (the braces CVE shape)', () => {
     const nested = `${'{a,'.repeat(3000)}b${'}'.repeat(3000)}`;
     let threw = null;

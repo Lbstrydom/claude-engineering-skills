@@ -164,8 +164,10 @@ export async function fleetTelemetryCmd(ctx) {
   result.summary = summaryLine(result);
   if (failOn != null) {
     // A review gate passes only on a MEASUREMENT: an unreadable store (schema fault, unresolved repo)
-    // must not read as "no weaknesses". Thin data (`insufficient`) was measured and passes.
-    if (result.cloud && result.state === 'unavailable') return { ...result, ok: false, reason: 'not-measured', failOn };
+    // or no store at all must not read as "no weaknesses". Thin data (`insufficient`) was measured
+    // and passes. Cloud-off is a supported MODE, but asking a gate to judge with no store is asking
+    // it a question nothing answered (the weekly runner skips this check when AUDIT_DB_URL is unset).
+    if (result.state === 'unavailable') return { ...result, ok: false, reason: 'not-measured', failOn };
     const over = result.weaknesses.filter((w) => SEVERITY_RANK[w.severity] <= SEVERITY_RANK[failOn]);
     if (over.length) return { ...result, ok: false, reason: 'weaknesses-at-or-above-threshold', failOn, over: over.length };
   }

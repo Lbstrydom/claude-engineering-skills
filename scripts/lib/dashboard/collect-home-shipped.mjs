@@ -97,7 +97,8 @@ export function collectShippedMerges(root, { now = new Date() } = {}) {
   const target = mergeRef(root);
   if (!target) return makeMeasurement({ ...base, status: 'missing-optional', detail: 'no default branch (local or origin) and no HEAD commit could be resolved' });
   const r = runGit(['log', '--first-parent', '-n', String(SHIPPED_LIMIT), '--format=%h%x00%s', target.ref], root, { timeoutMs: GIT_TIMEOUT_MS });
-  if (!r.ok) return makeMeasurement({ ...base, status: 'missing-optional', detail: r.reason ?? 'git log failed' });
+  // The ref RESOLVED, so a failing log is a collection failure, not an absent optional source.
+  if (!r.ok) return makeMeasurement({ ...base, status: 'unexpected-error', detail: `git log ${target.label} failed: ${r.reason ?? 'unknown error'}` });
   const subjects = r.stdout.split('\n').filter(Boolean).map((l) => {
     const [sha7, ...rest] = l.split('\0');
     return { sha7, subject: clip(rest.join('\0')) };

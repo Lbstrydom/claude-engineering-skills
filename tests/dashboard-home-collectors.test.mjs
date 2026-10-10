@@ -293,6 +293,26 @@ describe('collectShippedMerges + shippedLog', () => {
     assert.ok(!m.value.subjects.some((s) => /wip on the feature/.test(s.subject)));
   });
 
+  test('a local main that TRAILS origin/main lists origin/main and says local is behind (persona P1, 2026-10-10)', () => {
+    const { repo } = mkRepo({ commits: 2, remote: true });
+    write(repo, 'f.txt', 'newer\n'); git(['add', '.'], repo); git(['commit', '-q', '-m', 'merged upstream'], repo);
+    git(['push', '-q', 'origin', 'main'], repo);
+    git(['reset', '-q', '--hard', 'HEAD~1'], repo); // local main now trails its upstream by 1
+    const m = collectShippedMerges(repo, { now: NOW });
+    assert.equal(m.status, 'ok');
+    assert.equal(m.value.subjects[0].subject, 'merged upstream', 'the fresher ref, not the stale local one');
+    assert.match(m.value.branch, /^origin\/main \(local main is 1 commit\(s\) behind\)$/);
+  });
+
+  test('a ref that RESOLVED but whose log fails is unexpected-error, not missing-optional (R1-M6)', () => {
+    const { repo, shas } = mkRepo({ commits: 3 });
+    const obj = path.join(repo, '.git', 'objects', shas[0].slice(0, 2), shas[0].slice(2));
+    fs.rmSync(obj, { force: true }); // the history walk now hits a missing commit
+    const m = collectShippedMerges(repo, { now: NOW });
+    assert.equal(m.status, 'unexpected-error', m.detail);
+    assert.match(m.detail, /git log .* failed/);
+  });
+
   test('H5/M9: no default branch anywhere and no HEAD: the measurement SAYS so (not "no merges")', () => {
     const empty = tmp();
     git(['init', '-q', '-b', 'trunk'], empty);

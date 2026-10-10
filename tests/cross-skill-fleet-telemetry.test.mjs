@@ -3,7 +3,7 @@
  * the real dispatcher with an injected store port (no database).
  * Plan: docs/plans/fleet-telemetry.md.
  */
-import { after, describe, test } from 'node:test';
+import { after, beforeEach, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -128,6 +128,10 @@ describe('fleet-telemetry flush', () => {
 });
 
 describe('fleet-telemetry stats', () => {
+  // Each stats test runs in its OWN fresh checkout: the local spool is read from cwd, and the
+  // flush tests above chdir into theirs (R1-M17) — a stats result must not depend on test order.
+  beforeEach(() => { process.chdir(repoSpool().root); });
+
   test('returns measurements plus weakness findings', async () => {
     const r = await run(['stats', '--days', '7']);
     assert.equal(r.exitCode, 0);
@@ -152,6 +156,8 @@ describe('fleet-telemetry stats', () => {
 });
 
 describe('fleet-telemetry stats --fail-on (the weekly review gate)', () => {
+  beforeEach(() => { process.chdir(repoSpool().root); });
+
   test('a weakness at or above the threshold exits 1 and KEEPS the payload', async () => {
     const r = await run(['stats', '--fail-on', 'high']);
     assert.equal(r.exitCode, 1);
@@ -190,6 +196,14 @@ describe('fleet-telemetry stats --fail-on (the weekly review gate)', () => {
     const unresolved = await run(['stats', '--fail-on', 'low'], { resolveRepoForStoreResult: async () => ({ kind: 'unresolved' }) });
     assert.equal(unresolved.envelope.ok, false);
     assert.equal(unresolved.envelope.reason, 'not-measured');
+  });
+
+  test('with the store OFF, --fail-on is not-measured too — cloud-off is a mode, not a measurement (R1-H4)', async () => {
+    const off = await run(['stats', '--fail-on', 'high'], {}, 'off');
+    assert.equal(off.envelope.ok, false);
+    assert.equal(off.envelope.reason, 'not-measured');
+    const plain = await run(['stats'], {}, 'off');
+    assert.equal(plain.exitCode, 0, 'without --fail-on, cloud-off stays a clean degrade');
   });
 
   test('the summary line is present with or without --fail-on (R1-M15)', async () => {

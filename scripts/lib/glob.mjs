@@ -15,7 +15,8 @@
  *    starting with `!` are EXCLUSIONS, not independent matchers. An item is kept
  *    when it matches some positive pattern (or there are none) and no negated one.
  *    Plain picomatch would treat `!*.md` as "anything but *.md" and keep almost
- *    everything; tests/glob.test.mjs pins the difference.
+ *    everything; tests/glob.test.mjs pins the difference. `!(…)` is NOT an exclusion: it is a
+ *    negative EXTGLOB (`!(*.test).mjs`), a positive pattern in its own right — micromatch's rule too.
  *
  * @module scripts/lib/glob
  */
@@ -23,6 +24,9 @@
 // import graph, and only a static specifier tells a consumer's sync to install
 // the package. A required dependency that is missing fails loudly at import.
 import picomatch from 'picomatch';
+
+/** A list-level exclusion: a leading `!` that does not open a negative extglob `!(…)`. */
+const isExclusion = (p) => p.startsWith('!') && !p.startsWith('!(');
 
 const asList = (patterns) => (Array.isArray(patterns) ? patterns : [patterns]).filter((p) => typeof p === 'string' && p !== '');
 
@@ -57,8 +61,8 @@ export function isMatch(str, patterns, opts = {}) {
  */
 export function filterMatches(list, patterns, opts = {}) {
   const all = asList(patterns);
-  const pos = all.filter((p) => !p.startsWith('!'));
-  const neg = all.filter((p) => p.startsWith('!')).map((p) => p.slice(1)).filter(Boolean);
+  const pos = all.filter((p) => !isExclusion(p));
+  const neg = all.filter(isExclusion).map((p) => p.slice(1)).filter(Boolean);
   const keep = pos.length ? matcher(pos, opts) : () => true;
   const drop = neg.length ? matcher(neg, opts) : () => false;
   return list.filter((s) => keep(s) && !drop(s));

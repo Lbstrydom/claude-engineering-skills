@@ -102,12 +102,14 @@ export function planPrune(ctx, { facts = null, report = archiveReport } = {}) {
     commands.push(renderCommand(['git', 'branch', reason === 'merged' ? '-d' : '-D', item.branch]));
     // The REMOTE branch is a separate decision: the evidence covers the LOCAL tip only. Suggest deleting
     // the remote branch only when its tip IS that tip or an ancestor of it (its commits are a subset of
-    // what landed); a remote that moved on, or diverged, is named and left alone.
+    // what landed); a remote that moved on, or diverged, is named and left alone. The judgement reads
+    // the LAST-FETCHED origin/<b>, so the printed delete carries it as a lease: git refuses the delete
+    // if the remote branch is no longer at the tip that was judged (someone pushed since the fetch).
     const remote = headOf(ctx.cwd, `refs/remotes/origin/${item.branch}`);
     let remoteCmd = null; let remoteNote = null;
     if (remote.ok) {
       const covered = remote.oid === item.oid || (item.oid && isAncestor(ctx.cwd, remote.oid, item.oid).value === true);
-      if (covered) remoteCmd = renderCommand(['git', 'push', 'origin', '--delete', item.branch]);
+      if (covered) remoteCmd = renderCommand(['git', 'push', `--force-with-lease=refs/heads/${item.branch}:${remote.oid}`, 'origin', '--delete', item.branch]);
       else remoteNote = `origin/${item.branch} is at ${remote.oid.slice(0, 12)}, not covered by the landed tip — left alone`;
     }
     candidates.push({

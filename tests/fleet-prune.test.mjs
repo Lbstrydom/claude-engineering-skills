@@ -120,11 +120,41 @@ describe('fleet prune', () => {
     const r = runFleet(['prune', '--json'], { cwd: repo, env });
     assert.equal(r.status, 0, r.stderr);
     const by = Object.fromEntries(r.json.prune.candidates.map((c) => [c.branch, c]));
-    assert.match(by.same.remote, /git push origin --delete same/);
-    assert.match(by.behind.remote, /git push origin --delete behind/);
+    assert.match(by.same.remote, new RegExp(`git push '?--force-with-lease=refs/heads/same:${tip('same')}'? origin --delete same`));
+    assert.match(by.behind.remote, new RegExp(`git push '?--force-with-lease=refs/heads/behind:${pushed}'? origin --delete behind`));
     assert.equal(by['moved-on'].remote, null, 'the remote holds a commit nothing proved landed');
     assert.match(by['moved-on'].remoteNote, /not covered by the landed tip/);
     assert.match(by['moved-on'].commands.join('\n'), /git branch -D moved-on/, 'the LOCAL branch is still removable');
+  });
+
+  test('the printed remote delete is leased: it works as printed, and refuses once the remote moved (R1-H1/H5)', () => {
+    const fx = makeFleetRepo();
+    const fake = installFakeGh(fx.root);
+    const env = scrubbedEnv({ FLEET_TELEMETRY: 'off', ...fake.env }, { prependPath: [fake.bin] });
+    const { repo } = fx;
+    const bare = path.join(fx.root, 'origin.git');
+    git(['init', '-q', '--bare', bare], fx.root);
+    git(['remote', 'set-url', 'origin', bare], repo);
+    for (const b of ['ok-gone', 'moved-after']) {
+      addBranch(repo, b, { [`${b}.txt`]: '1\n' });
+      git(['push', '-q', 'origin', b], repo);
+      squashInto(repo, b, `${b} (#1)`);
+    }
+    const r = runFleet(['prune', '--json'], { cwd: repo, env });
+    assert.equal(r.status, 0, r.stderr);
+    const by = Object.fromEntries(r.json.prune.candidates.map((c) => [c.branch, c]));
+    // Someone pushes to moved-after AFTER the plan was printed (our origin/moved-after is now stale).
+    const other = path.join(fx.root, 'other');
+    git(['clone', '-q', bare, other], fx.root);
+    git(['switch', '-q', 'moved-after'], other);
+    commitFile(other, 'late.txt', 'pushed after the plan\n', 'late');
+    git(['push', '-q', 'origin', 'moved-after'], other);
+    // The printed command is shell-quoted (renderCommand); none of these args contain spaces.
+    const exec = (cmd) => git(cmd.split(' ').slice(1).map((a) => a.replace(/^'(.*)'$/, '$1')), repo);
+    exec(by['ok-gone'].remote);
+    assert.equal(git(['ls-remote', bare, 'refs/heads/ok-gone'], repo), '', 'the judged remote branch was deleted');
+    assert.throws(() => exec(by['moved-after'].remote), /stale info|rejected/, 'the lease refuses a remote that moved since it was judged');
+    assert.notEqual(git(['ls-remote', bare, 'refs/heads/moved-after'], repo), '', 'and the moved branch survives');
   });
 
   test('without a readable PR list, nothing is judged removable', () => {
