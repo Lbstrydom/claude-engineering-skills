@@ -81,6 +81,11 @@ const DomainSchema = z.object({
   anchor: z.string(),
   symbolCount: count.nullable(),
   summary: z.string(),
+  // Roster join (persona-test 2026-10-06): a domain declared in the committed
+  // domain-map but absent from the rendered snapshot is drawn with
+  // `rendered: false` and a null symbol count. Optional so older snapshots validate.
+  rendered: z.boolean().optional(),
+  codeless: z.boolean().optional(),
 });
 
 /**
@@ -100,6 +105,9 @@ const CliEntrySchema = z.object({
   relatedSkill: z.string().nullable(),
   outputs: z.string().nullable(),
   uncatalogued: z.boolean(),
+  // 'entry-point' = a CLI a skill names (`node scripts/<x>.mjs`) with no npm
+  // alias. Optional so older snapshots (npm-only) validate.
+  kind: z.enum(['npm', 'entry-point']).optional(),
 });
 
 // ── Purpose view (outcome map) ───────────────────────────────────────────
@@ -413,6 +421,16 @@ export const ReferenceDataSchema = z.object({
       }).passthrough().nullable().optional(),
     }),
     mapPath: z.string().nullable(),
+    // Where the roster came from and how old the symbol snapshot is. Optional so
+    // pre-roster reference snapshots validate.
+    snapshot: z.object({
+      generatedAt: z.string().nullable(),
+      commit: z.string().nullable(),
+      domainCount: count,
+      missing: z.array(z.string()),
+      retired: z.array(z.string()),
+      rosterSource: z.string().nullable(),
+    }).optional(),
     // v2 Part 2 — inverse edge {domainId: [{id,label}]} for Architecture→Purpose
     // "serves:" chips. Optional so v1 snapshots validate.
     domainPurposes: z.record(z.string(), z.array(z.object({

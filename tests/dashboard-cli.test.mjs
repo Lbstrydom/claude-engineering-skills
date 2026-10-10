@@ -269,3 +269,123 @@ test('renderDocument: uncatalogued entries get the warn chip + muted desc', () =
   assert.match(html, /uncatalogued/);
   assert.match(html, /No description/);
 });
+
+// ─── skill-named entry points with no npm alias (persona-test 2026-10-06) ─────
+
+function writeSkill(root, name, body, refs = {}) {
+  const dir = path.join(root, 'skills', name);
+  fs.mkdirSync(path.join(dir, 'references'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'SKILL.md'), body);
+  for (const [f, text] of Object.entries(refs)) fs.writeFileSync(path.join(dir, 'references', f), text);
+}
+
+function touchScript(root, rel) {
+  fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+  fs.writeFileSync(path.join(root, rel), '// cli\n');
+}
+
+test('collectCli lists a CLI a skill names when no npm script runs it', () => {
+  withTmp((tmp) => {
+    mkScriptsDir(tmp);
+    writePkg(tmp, { 'audit:code': 'node scripts/openai-audit.mjs code' });
+    touchScript(tmp, 'scripts/openai-audit.mjs');
+    touchScript(tmp, 'scripts/fleet.mjs');
+    writeSkill(tmp, 'fleet', 'Run `node scripts/fleet.mjs status`.\nThen node scripts/fleet.mjs next.');
+    writeSkill(tmp, 'audit-code', 'Run node scripts/openai-audit.mjs code and node scripts/fleet.mjs status.');
+    const { entries } = collectCli(tmp);
+    const eps = entries.filter((e) => e.kind === 'entry-point');
+    assert.deepEqual(eps.map((e) => e.name), ['scripts/fleet.mjs'], 'the npm-aliased script is not repeated');
+    const fleet = eps[0];
+    assert.equal(fleet.command, 'node scripts/fleet.mjs');
+    assert.equal(fleet.relatedSkill, 'fleet', 'grouped under the skill that names it most');
+    assert.equal(fleet.uncatalogued, true, 'no entryPoints metadata yet');
+    assert.equal(fleet.category, 'skills');
+    assert.equal(entries.find((e) => e.name === 'audit:code').kind, 'npm');
+  });
+});
+
+test('collectCli entry points: a reference file counts, a missing file and opt-out do not', () => {
+  withTmp((tmp) => {
+    mkScriptsDir(tmp);
+    writePkg(tmp, { x: 'node scripts/x.mjs' });
+    touchScript(tmp, 'scripts/ship-commit.mjs');
+    writeSkill(tmp, 'ship', 'no commands here', {
+      'step6.md': 'node scripts/ship-commit.mjs --skill ship\nnode scripts/ghost.mjs',
+    });
+    const names = collectCli(tmp).entries.filter((e) => e.kind === 'entry-point').map((e) => e.name);
+    assert.deepEqual(names, ['scripts/ship-commit.mjs'], 'a named script that does not exist is not listed');
+    assert.equal(collectCli(tmp, { entryPoints: false }).entries.some((e) => e.kind === 'entry-point'), false);
+  });
+});
+
+test('collectCli entry points take description + category from the catalog entryPoints block', () => {
+  withTmp((tmp) => {
+    mkScriptsDir(tmp);
+    writePkg(tmp, { x: 'node scripts/x.mjs' });
+    touchScript(tmp, 'scripts/fleet.mjs');
+    writeSkill(tmp, 'fleet', 'node scripts/fleet.mjs status');
+    fs.writeFileSync(path.join(tmp, 'scripts', '.cli-catalog.json'), JSON.stringify({
+      entries: { x: { description: 'x', category: 'other' } },
+      entryPoints: { 'scripts/fleet.mjs': { description: 'coordinate sessions', category: 'diagnostic' } },
+    }));
+    const fleet = collectCli(tmp).entries.find((e) => e.name === 'scripts/fleet.mjs');
+    assert.equal(fleet.description, 'coordinate sessions');
+    assert.equal(fleet.category, 'diagnostic');
+    assert.equal(fleet.uncatalogued, false);
+  });
+});
+
+test('this repo: every skill-named CLI without an npm alias is catalogued, fleet.mjs included', () => {
+  const root = path.resolve(import.meta.dirname, '..');
+  const eps = collectCli(root).entries.filter((e) => e.kind === 'entry-point');
+  assert.ok(eps.some((e) => e.name === 'scripts/fleet.mjs' && e.relatedSkill === 'fleet'), 'fleet.mjs is on the CLI tab');
+  assert.deepEqual(eps.filter((e) => e.uncatalogued).map((e) => e.name), [],
+    'add the new entry point to scripts/.cli-catalog.json entryPoints');
+});
+
+test('renderDocument titles an entry point by its node command, not `npm run`', () => {
+  withTmp((tmp) => {
+    mkScriptsDir(tmp);
+    writePkg(tmp, { x: 'node scripts/x.mjs' });
+    touchScript(tmp, 'scripts/fleet.mjs');
+    writeSkill(tmp, 'fleet', 'node scripts/fleet.mjs status');
+    const { entries } = collectCli(tmp);
+    const html = renderDocument({
+      kind: 'reference',
+      provenance: { baseSha: 'a', dirty: false, sourceHash: 'b' },
+      sources: {
+        skills: { status: 'ok', detail: '' }, plans: { status: 'ok', detail: '' },
+        architecture: { status: 'ok', detail: '' }, flows: { status: 'ok', detail: '' },
+        cli: { status: 'ok', detail: '' },
+      },
+      skills: [],
+      plans: { active: [], completed: [] },
+      architecture: {
+        domains: [], deps: {}, mergedDeps: {},
+        depsSource: {
+          observedAvailable: false, observedRejectedReason: 'absent',
+          observedRefreshId: null, observedGeneratedAt: null,
+          manualKeyCount: 0, edgeCounts: { observed: 0, manual: 0, both: 0 },
+        },
+        mapPath: null,
+      },
+      flows: { nodes: [{ id: 'plan', skill: 'plan', label: 'Plan' }], edges: [] },
+      cli: entries,
+    }, 'reference', { css: '', js: '' });
+    assert.match(html, /<code>node scripts\/fleet\.mjs<\/code>/);
+    assert.match(html, /no npm alias/);
+    assert.doesNotMatch(html, /npm run scripts\/fleet\.mjs/);
+  });
+});
+
+test('collectCli lists skill-named entry points even when package.json has no scripts', () => {
+  withTmp((tmp) => {
+    mkScriptsDir(tmp);
+    writePkg(tmp, {});
+    touchScript(tmp, 'scripts/fleet.mjs');
+    writeSkill(tmp, 'fleet', 'node scripts/fleet.mjs status');
+    const { entries, status } = collectCli(tmp);
+    assert.deepEqual(entries.map((e) => e.name), ['scripts/fleet.mjs']);
+    assert.equal(status.status, 'ok');
+  });
+});
