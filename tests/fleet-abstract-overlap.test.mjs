@@ -55,6 +55,13 @@ describe('decideClaim with trackedFiles', () => {
     const v = decideClaim({ claim: claim(['tests/*upstream*']), mode: 'new', others: [other(['tests/*final-review*'])], complete: true });
     assert.equal(v.verdict, 'blocked');
   });
+  it('two ADVISORY signals together stay advisory: abstract pair + their uncommitted edit => warn (R1-H1)', () => {
+    const o = { ...other(['tests/*final-review*']), uncommittedFiles: ['tests/upstream-notes.md'] };
+    const v = decideClaim({ claim: claim(['tests/*upstream*']), mode: 'new', others: [o], complete: true, trackedFiles: TRACKED });
+    assert.deepEqual(v.conflicts[0].via, ['paths-abstract', 'uncommitted']);
+    assert.equal(isBlockingConflict(v.conflicts[0]), false);
+    assert.equal(v.verdict, 'warn');
+  });
   it('mixed: one concrete pair alongside an abstract one still blocks', () => {
     const v = decideClaim({
       claim: claim(['tests/*upstream*', 'scripts/lib/fleet/*.mjs']), mode: 'new',

@@ -186,6 +186,8 @@ export function cmdClaim(ctx, flags) {
   const start = startOidFor(ctx, branch, facts.base.measure);
   const startOid = start.ok ? start.oid : null; // claim stays lenient but never substitutes; the reason is surfaced below
 
+  // Gathered BEFORE the lock (a git subprocess), like every other fact this gate reads (audit R1-M1/M2).
+  const tracked = trackedFilesOf(ctx.cwd);
   const tx = transact(ctx.dir, (t) => {
     const cur = t.sessions.find((s) => s.id === id) ?? null;
     const mode = claimMode(cur);
@@ -195,7 +197,7 @@ export function cmdClaim(ctx, flags) {
     const verdict = decideClaim({
       claim: { id, intent, paths: claimPaths, knownOverlaps: mode === 'adopt' ? cur.knownOverlaps : [] },
       mode, others: othersFor(facts, id, ctx.now, t.sessions), complete: t.complete, hotFiles: ctx.config.hotFiles ?? [],
-      trackedFiles: trackedFilesOf(ctx.cwd),
+      trackedFiles: tracked,
     });
     const blocking = verdict.conflicts.filter(isBlockingConflict);
     const overriding = Boolean(flags['--override']) && blocking.length > 0 && verdict.verdict !== 'refused';
