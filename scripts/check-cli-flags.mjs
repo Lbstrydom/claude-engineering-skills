@@ -190,7 +190,10 @@ export const BASELINE = new Set([
   // unguarded and merely invisible, so they are baselined in the same commit
   // that made them visible. Nothing regressed; the census got honest again.
   'scripts/audit-metrics.mjs',
-  'scripts/check-deps.mjs',
+  // 'scripts/check-deps.mjs' — FIXED 2026-10-10, baseline paid down. `--fix`
+  // runs a package install, so a typo'd `--fixx` silently reported instead of
+  // fixing. Removed on a negative control, not the detector's say-so:
+  // `check-deps.mjs --fixx` now exits 2 with "unknown flag".
   'scripts/debt-backfill.mjs',
   'scripts/debt-budget-check.mjs',
   'scripts/debt-pr-comment.mjs',

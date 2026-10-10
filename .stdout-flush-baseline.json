@@ -1,7 +1,7 @@
 {
   "_description": "Reachable `process.exit()` sites preceded by a stdout write, per scripts/check-stdout-flush.mjs. Drift-only ratchet: a net-new site fails, and so does an unrecorded shrink. Shrink this list; never grow it. Re-baseline deliberately with --update. The fix for an entry is `await finishAndExit(code)` from scripts/lib/cli-io.mjs.",
-  "total": 216,
-  "envelope": 104,
+  "total": 214,
+  "envelope": 103,
   "files": {
     "scripts/audit-full.mjs": 4,
     "scripts/audit-loop.mjs": 2,
@@ -17,7 +17,6 @@
     "scripts/check-cli-flags.mjs": 2,
     "scripts/check-context-drift.mjs": 4,
     "scripts/check-db-suite-enrolment.mjs": 1,
-    "scripts/check-deps.mjs": 2,
     "scripts/check-doc-citations.mjs": 2,
     "scripts/check-docs-placement.mjs": 4,
     "scripts/check-docs-refs.mjs": 3,
@@ -133,8 +132,6 @@
     "scripts/check-context-drift.mjs::main[if>then]::emitOutput() → stdout->exit(dynamic)#1",
     "scripts/check-context-drift.mjs::main::emitOutput() → stdout->exit(0)#1",
     "scripts/check-db-suite-enrolment.mjs::main[if>then]::process.stdout.write->exit(dynamic)#1",
-    "scripts/check-deps.mjs::main[if>then]::console.log->exit(dynamic)#1",
-    "scripts/check-deps.mjs::main::console.log->exit(dynamic)#1",
     "scripts/check-doc-citations.mjs::main[if>then]::process.stdout.write->exit(1)#1",
     "scripts/check-doc-citations.mjs::main::process.stdout.write->exit(0)#1",
     "scripts/check-docs-placement.mjs::main[if>then]::console.log->exit(2)#1",
