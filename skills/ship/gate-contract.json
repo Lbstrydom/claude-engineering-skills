@@ -680,6 +680,10 @@
     {
       "line": "| `references/commit-provenance-deep-dive.md` | Step 6.2/6.3's AI-Gate and worktree-identity deep-dive — why each value/flag exists and the incidents behind them. | Debugging `--gate`/`--expect-head`/`--expect-branch` behaviour, or before changing one. |",
       "reason": "The reference-index ROW for the new commit-provenance-deep-dive.md file, added by the Phase-4 size-reduction. Index rows describe what a document covers; they are not gate claims about /ship's behaviour. Matched on 'gate' inside '--gate' and 'AI-Gate', same class as the existing command-example-text entries in this file."
+    },
+    {
+      "line": "never reaches them). For a branch/PR ship, the synced-bundle row is `unverified",
+      "reason": "States what the repo pre-push hook does (2026-10-10): consumer sync runs only when the push updates the default branch AND the checkout is that commit, so a branch ship publishes nothing to consumers. The behaviour lives in .githooks/pre-push, outside /ship's exit code, and is pinned behaviourally by tests/prepush-consumer-sync.test.mjs (5 cases, both directions). The /ship-side instruction it carries, reporting the synced-bundle row as unverified until the post-merge sync, is agent output in Step 6.8, which is advisory."
     }
   ]
 }

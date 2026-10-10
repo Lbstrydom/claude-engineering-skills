@@ -857,7 +857,8 @@ visible conflicts.
 ### 6.0 Sync manifest — no action (source repo)
 
 The source repo's `scripts/.sync-manifest.json` is **gitignored** (it's
-regenerated on every `npm run sync`, which the pre-push hook runs, and carries
+regenerated on every `npm run sync` — which the pre-push hook runs only when
+the push updates the default branch — and carries
 volatile provenance — a timestamp + HEAD sha — so committing it is pure churn;
 Category A per the generated-artifact policy). **Do not `git add` it.** The
 pre-push sync regenerates it on disk for readers; it is never committed here.
@@ -1189,6 +1190,12 @@ queue.
 the receiver's view** — and a generated artifact can pass every check against
 its *source* while the built output carries real defects. So fetch the thing
 back the way a consumer gets it, and check **that**.
+
+**A feature-branch push publishes nothing to consumers** (since 2026-10-10 the
+pre-push hook syncs only when the default branch is updated, so unmerged tooling
+never reaches them). For a branch/PR ship, the synced-bundle row is `unverified
+(blocked: not merged)` until the PR merges and the source repo re-syncs its
+consumers from an up-to-date default branch.
 
 Pick the row(s) this push actually produced:
 

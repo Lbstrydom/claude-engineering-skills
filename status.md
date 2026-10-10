@@ -87,6 +87,18 @@
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
 
+## 2026-10-10 — pre-push publishes to consumers only from the default branch
+
+The pre-push hook's consumer sync dates from the main-only workflow. Since branches + PRs (2026-09-25) it ran on every feature-branch push and copied UNMERGED tooling into every consumer. Today that included a branch whose PR was still under review, synced into all three.
+
+A push now syncs only when two conditions hold:
+- a ref update targets `refs/heads/<default>` (resolved from origin/HEAD, falling back to main);
+- this checkout IS the commit going there, since the sync copies the working tree.
+
+Otherwise the hook says why and how to sync after the merge. `/ship` 6.0/6.8 are updated: on a branch ship, the synced-bundle verification is `unverified (blocked: not merged)` until the post-merge sync.
+
+Verification: GPT audit converged in round 1 (one MEDIUM, fixed: the checkout must match the pushed sha). Gemini final gate (gemini-pro-latest) APPROVE. The behavioural hook test (5 cases, both directions) is red without each guard.
+
 ## 2026-10-10 — /fleet: claim overlaps that exist only on names no file has are a WARN, not a block
 
 Two agents stopped today on `tests/*upstream*` ~ `tests/*final-review*`. The intersection math was exact: the patterns do meet, on e.g. `tests/upstream-final-review.test.mjs`. But no such file existed, so the sessions could not touch each other's work.
