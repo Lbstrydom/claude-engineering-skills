@@ -112,12 +112,18 @@ describe('check-deps --fix re-probes and reports the post-fix state', () => {
     process.env.DOTENV_CONFIG_PATH = path.join(tmp('check-deps-noenv-'), 'absent.env');
     process.env.AUDIT_LOOP_DISABLE_SHARED = '1';
     mod = await import('../scripts/check-deps.mjs');
+    WANTED = [
+      ...mod.REQUIRED_PACKAGES.map(([pkg]) => pkg),
+      ...mod.OPTIONAL_PACKAGES.filter(([, , gate]) => gate === null).map(([pkg]) => pkg),
+    ];
+    assert.ok(WANTED.includes('proper-lockfile') && !WANTED.includes('pg'), 'the ungated/gated split this suite relies on');
   });
 
   const ENV = { OPENAI_API_KEY: 'sk-test' };
-  // proper-lockfile has no env gate, so it is wanted; the gated optionals are
-  // not, because ENV leaves their keys unset.
-  const WANTED = ['openai', 'zod', 'dotenv', 'micromatch', 'proper-lockfile'];
+  // Every required package, plus each optional one with NO env gate (proper-lockfile); the gated
+  // optionals are not wanted because ENV leaves their keys unset. Derived from check-deps' own
+  // lists (set in before()) so a dependency swap there cannot strand a hardcoded copy here.
+  let WANTED;
 
   /** A package root whose scripts/ dir is the probe origin. */
   function pkgRoot({ lockfiles = ['package-lock.json'] } = {}) {

@@ -1487,7 +1487,8 @@
         "repo": null,
         "spool": null,
         "telemetry": null,
-        "weaknesses": []
+        "weaknesses": [],
+        "summary": "fleet telemetry unavailable: 0 high / 0 medium / 0 low"
       }
     },
     "fleet-telemetry-stats-bad-fail-on": {
