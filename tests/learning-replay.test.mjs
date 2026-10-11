@@ -417,6 +417,20 @@ describe('replay CLI / runReplayCli validates before any import or read', () => 
     }
   });
 
+  it('--repo and --repo-id are one filter: disagreeing values are refused, the same value twice is accepted', async () => {
+    const OTHER_UUID = A_UUID.replace(/.$/, (c) => (c === '0' ? '1' : '0'));
+    const refused = spy();
+    const { result } = await runCaptured(['pass_selection', '--repo', A_UUID, '--repo-id', OTHER_UUID], { replayFn: refused });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /same filter but disagree/);
+    assert.equal(refused.calls.length, 0, 'the store must not be queried for an ambiguous scope');
+
+    // Control: the same value in both spellings (even in a different case) reaches replay().
+    const accepted = spy();
+    await runCaptured(['pass_selection', '--repo', A_UUID.toUpperCase(), '--repo-id', A_UUID], { replayFn: accepted });
+    assert.equal(accepted.calls.length, 1, 'control: an agreeing pair is not refused');
+  });
+
   it('--since=7d and --since 7d are the same window; last wins; the default is 30d', async () => {
     const day = 24 * 60 * 60 * 1000;
     const cases = [

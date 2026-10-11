@@ -264,6 +264,11 @@ function validateReplayOptions({ positionals, opts }) {
   // Audit-fix Phase 3 R1 H4: accept BOTH --repo-id (canonical, UUID) and
   // --repo (alias).  The flag was advertised in the docstring but only
   // --repo-id was wired — fix the inconsistency at the CLI surface.
+  // The two spellings are ONE filter: if both are given and disagree, silently preferring one
+  // would measure a repo the operator may not have meant. Repeating the same value is fine.
+  if (opts['repo-id'] && opts.repo && String(opts['repo-id']).toLowerCase() !== String(opts.repo).toLowerCase()) {
+    return fail(`--repo and --repo-id are the same filter but disagree ("${opts.repo}" vs "${opts['repo-id']}"); pass one.`);
+  }
   const repoId = opts['repo-id'] || opts.repo || null;
   if (repoId !== null && !UUID_RE.test(repoId)) {
     return fail(`--repo/--repo-id must be an audit_repos UUID, got "${repoId}". This is NOT a name or owner/repo lookup.`);
