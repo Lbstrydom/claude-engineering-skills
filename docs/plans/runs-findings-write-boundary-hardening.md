@@ -1,6 +1,6 @@
 # Plan: `runs-findings.mjs` Identity & Write-Boundary Hardening
 - **Date**: 2026-09-25
-- **Status**: Approved
+- **Status**: Complete — shipped in #118 (abea5dac, merged 2026-09-25), all ten phases; audit trail in [the audit summary](./runs-findings-write-boundary-hardening-audit-summary.md). 11 of the 12 debt entries cited in §1 were closed against the fix sites on 2026-10-11; umbrella `6706b21a3335` stays open because `getRunMeta`/`getRunFindings` still read by run id alone.
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
 - **Depends on**: none (a sibling "triage-independence-test-and-write-boundary-fixes" plan from a concurrent session already landed its two call sites — that plan's document is not present in this branch, so it is described here by name only, not cited as a resolvable path; this plan does not touch `projectRemediationState`'s repo-isolation fix or the severity-truthiness guard it shipped)

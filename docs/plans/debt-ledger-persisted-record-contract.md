@@ -1,12 +1,17 @@
 # Plan: Enforce the debt ledger's persisted-record contract (§2 of aged-out-acceptance-remainder.md)
 
 - **Date**: 2026-09-15
-- **Status**: Approved — GPT plan audit converged after 3 rounds (9→3→2
+- **Status**: Complete — shipped in #108 (bea0b270, merged 2026-09-15), Fixes
+  A–D (normalisation at both write boundaries, `debt-alias.mjs`, and
+  `reviewDeadline`/`supersededBy`, which every store row now carries; verified
+  2026-10-11). Plan audit: GPT converged after 3 rounds (9→3→2
   findings, 100% acceptance throughout); Gemini final gate APPROVE after
   3 rounds (round 1: 4 findings incl. a real receipt-contract bug in this
   plan's own text; round 2: 4 findings, mostly §6 table drift from already-
   corrected prose plus a genuine embedding data-flow gap; round 3: 0
-  findings). Implementation in progress.
+  findings). The two Q2 acceptances it remedies (`75981b9b`, `dd651e36`) still
+  read `remediation_state: planned` in the store: they cite the gitignored
+  `.audit/tech-debt.json`, so `remediation-reconcile` cannot diff them.
   **Implementation-time correction 1 (found by running the pre-existing
   `tests/debt-ledger.test.mjs` suite, not by review):** §2 Fix A's
   `normalizeClassificationEnvelope` call was specified as living in the

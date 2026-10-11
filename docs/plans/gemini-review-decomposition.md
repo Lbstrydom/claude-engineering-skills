@@ -1,7 +1,7 @@
 # Plan: Decompose `gemini-review.mjs`
 
 - **Date**: 2026-09-16
-- **Status**: Approved (GPT: 2 rounds, 100% acceptance both rounds, H:0 M:0 L:0 at R2; Gemini: 2 rounds, CONCERNS → APPROVE after fixing G1 HIGH test-pinning gap, G2 MEDIUM top-level-export gap, G3 LOW consistency nits)
+- **Status**: Complete — shipped 2026-09-16 directly on main: Cluster A f5441cad, Cluster B 72c7b0ba, Cluster C 446a755b, size ratchet locked at 16d7b075 (3219 → 1138 lines; 1135 at 56eb0459). Plan audit: (GPT: 2 rounds, 100% acceptance both rounds, H:0 M:0 L:0 at R2; Gemini: 2 rounds, CONCERNS → APPROVE after fixing G1 HIGH test-pinning gap, G2 MEDIUM top-level-export gap, G3 LOW consistency nits)
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `audit-orchestration`

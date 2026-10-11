@@ -87,6 +87,40 @@
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
 
+## 2026-10-11 — drift + backlog re-measured; five shipped plans closed; three honesty fixes
+
+Measured on `origin/main` 56eb0459. Each figure carries its command.
+
+- **Architecture**: `npm run arch:coverage-gate` VERIFIED: 1699/1719 files cruised, 2887/2887 edges attributed, 0 layering violations. `npm run arch:drift` is RED at 21/20, all of it duplicated test helpers.
+  - **The index is stale**: anchored at a6b035b3 (2026-09-27), 62 commits behind origin/main.
+  - Cause (derived): #134 publishes the index only from the default branch, and every push is now a feature-branch push, so the pre-push refresh skips.
+  - The refresh from a main-identical HEAD was not run: it needs the operator's approval for a shared-store write.
+- **Debt** (store read directly): 315 entries, of which the local cache held 67.
+  - 11 entries cited by the #118 plan were closed against their fix sites in `runs-findings.mjs`, taking the store to 304.
+  - Umbrella entry `6706b21a3335` stays open: `getRunMeta`/`getRunFindings` still read by run id alone.
+- **Queues** (`node scripts/backlog-snapshot.mjs`):
+  - Q1 95c/17p (+420 aged)
+  - Q2 116c/76p (54 perm). Q2's reconciler examined 2 of 640 rows.
+  - Q3 35
+  - upstream 0 across 2 stores
+- **Ratchets**:
+  - stdout-flush 221 → 214 since 09-04 (103 envelope)
+  - size 29,918 → 29,455 lines over 20 files
+  - knip 21 → 20
+  - gitignore 29, emit-exit 0
+- **Plans**: marked Complete (statuses were stale): debt-ledger-persisted-record-contract (#108), gemini-review-decomposition (09-16 commits), runs-findings-write-boundary-hardening (#118), ship-skill-size-reduction (09-16, now 67,933 chars, +2.9% since close-out), upstream-disposition-landing (#189). Active plans went 7 → 2.
+- **Lane A PRs**, each audited (`--allow-infra-scope`) with a Gemini APPROVE:
+  - #193: `debt:health` / `debt:review` read the private store, not the local cache.
+  - #194: `dashboard:build` no longer exits 1 in every linked worktree.
+  - #195: the drift report says how far the index trails main.
+- **Found along the way**:
+  - `gemini-review.mjs:304` drops audit-infra files from the final-gate envelope unconditionally.
+  - The main checkout's `node_modules` still holds micromatch/braces, which the lockfile dropped (`prepush-installed-tree-identity` fails locally).
+
+### Next Steps
+- Operator: approve or run `npm run arch:refresh` on main. Run `npm ci` in the main checkout.
+- Lane B candidates, awaiting a pick: runs-findings decomposition, legacy-production-audit decomposition, Q2 measurability, stdout-flush envelope burndown, post-merge maintenance runner.
+
 ## 2026-10-11 — `fleet handover`: move coordination to another Claude Code account, memory carry-over measured
 
 A standard check for switching Claude Code accounts on one machine. It runs from any repo with the bundle.
