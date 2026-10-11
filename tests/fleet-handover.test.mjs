@@ -10,13 +10,15 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { git } from './helpers/git.mjs';
 import {
   HANDOVER_SCHEMA_VERSION, OP_ID_RE, checkHandoverFlags, collectMemory, decideFile, handoverId, loadManifest,
-  mainCheckout, receiveHandover, safeRelSegments,
+  claimCommand, mainCheckout, receiveHandover, safeRelSegments,
 } from '../scripts/lib/fleet/handover.mjs';
 import { withFileLockSync } from '../scripts/lib/file-lock.mjs';
-import { cleanupFleetRoots, makeFleetRepo, runFleet, scrubbedEnv, tmpRoot } from './helpers/fleet-repo.mjs';
+import { quoteArg } from '../scripts/lib/fleet/shell-quote.mjs';
+import { FLEET_CLI, cleanupFleetRoots, makeFleetRepo, runFleet, scrubbedEnv, tmpRoot } from './helpers/fleet-repo.mjs';
 
 after(cleanupFleetRoots);
 
@@ -290,6 +292,172 @@ describe('fleet handover — end to end through the CLI', () => {
     const entry = manifest.scope.repos.find((x) => path.resolve(x.path) === path.resolve(other));
     assert.equal(entry.fleet, 'absent');
     rm(other);
+  });
+});
+
+describe('unregistered work — worktrees holding work no claim covers', () => {
+  const envFor = (cfg) => scrubbedEnv({ FLEET_TELEMETRY: 'off', CLAUDE_CONFIG_DIR: cfg, CLAUDE_AUDIT_LOOP_DIR: '' });
+  const addWorktree = (fx, name) => {
+    const wt = path.join(tmpRoot('handover-unreg-'), name);
+    git(['worktree', 'add', '-q', '-b', name, wt], fx.repo);
+    return wt;
+  };
+  const manifestOf = (prep) => JSON.parse(fs.readFileSync(prep.json.handover.json, 'utf8'));
+
+  it('an unclaimed worktree with an uncommitted file is listed and prepare exits 3; a clean one is not (control)', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-u1-'), { task: null });
+    const dirty = addWorktree(fx, 'coordinator-wip');
+    fs.writeFileSync(path.join(dirty, 'notes.md'), 'in flight\n');
+    addWorktree(fx, 'clean-side');
+    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(prep.status, 3, prep.stdout);
+    assert.equal(prep.json.handover.unregistered, 1);
+    const [entry] = manifestOf(prep).scope.repos;
+    assert.deepEqual(entry.unregistered.map((u) => [u.branch, u.risks.untracked]), [['coordinator-wip', 1]], 'the clean worktree is not listed');
+    const md = fs.readFileSync(prep.json.handover.md, 'utf8');
+    assert.match(md, /## Unregistered work/);
+    assert.match(md, /claim --id coordinator-wip/);
+    assert.doesNotMatch(md, /clean-side/);
+  });
+
+  it('local commits nothing remote holds count as unregistered work', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-u2-'), { task: null });
+    const wt = addWorktree(fx, 'local-only');
+    fs.writeFileSync(path.join(wt, 'x.txt'), 'x\n');
+    git(['add', 'x.txt'], wt);
+    git(['commit', '-q', '-m', 'local only'], wt);
+    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(prep.status, 3, prep.stdout);
+    assert.equal(manifestOf(prep).scope.repos[0].unregistered[0].risks.unpushed, 1);
+  });
+
+  it('a claim bound to the worktree covers it: prepare is clean (the direction it must NOT fire)', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-u3-'), { task: null });
+    const wt = addWorktree(fx, 'claimed-wip');
+    fs.writeFileSync(path.join(wt, 'notes.md'), 'in flight\n');
+    assert.equal(runFleet(['claim', '--id', 'claimed-wip', '--intent', 'wip', '--paths', 'notes.md'], { cwd: wt, env: envFor(A) }).status, 0);
+    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(prep.status, 0, prep.stdout);
+    assert.deepEqual(manifestOf(prep).scope.repos[0].unregistered, []);
+  });
+
+  it('a branch adopted with `fleet add` (no worktree recorded) covers the worktree it is checked out in', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-u4-'), { task: null });
+    const wt = addWorktree(fx, 'adopted');
+    fs.writeFileSync(path.join(wt, 'y.txt'), 'y\n');
+    git(['add', 'y.txt'], wt);
+    git(['commit', '-q', '-m', 'adopted work'], wt);
+    assert.equal(runFleet(['add', 'adopted'], { cwd: fx.repo, env: envFor(A) }).status, 0);
+    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(prep.status, 0, prep.stdout);
+    const [entry] = manifestOf(prep).scope.repos;
+    assert.deepEqual(entry.unregistered, []);
+    assert.equal(path.resolve(entry.sessions[0].worktree).toLowerCase(), path.resolve(wt).toLowerCase(), 'the session resolves the worktree its branch is checked out in');
+  });
+
+  it('receive re-checks: refuses (exit 3) while the work is unclaimed, clean once it is claimed', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-u5-'), { task: null });
+    const wt = addWorktree(fx, 'late-claim');
+    fs.writeFileSync(path.join(wt, 'notes.md'), 'in flight\n');
+    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(prep.status, 3);
+    const recv = () => runFleet(['handover', 'receive', '--from', prep.json.handover.json, '--json'], { cwd: fx.repo, env: envFor(A) });
+    const r1 = recv();
+    assert.equal(r1.status, 3, r1.stdout);
+    assert.equal(r1.json.handover.unregistered.length, 1);
+    assert.match(r1.json.text, /UNREGISTERED WORK: .*late-claim/);
+    assert.equal(runFleet(['claim', '--id', 'late-claim', '--intent', 'wip', '--paths', 'notes.md'], { cwd: wt, env: envFor(A) }).status, 0);
+    const r2 = recv();
+    assert.deepEqual(r2.json.handover.unregistered, [], r2.stdout);
+  });
+
+  it('receive measures NOW: work that appeared after a clean prepare blocks (M1/H3)', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-u7-'), { task: null });
+    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(prep.status, 0, prep.stdout);
+    const wt = addWorktree(fx, 'after-prepare');
+    fs.writeFileSync(path.join(wt, 'late.md'), 'new\n');
+    const r = runFleet(['handover', 'receive', '--from', prep.json.handover.json, '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(r.status, 3, r.stdout);
+    assert.deepEqual(r.json.handover.unregistered.map((u) => u.branch), ['after-prepare']);
+  });
+
+  it('a claim made after a clean prepare is a live session at receive, not invisible (R3-H1)', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-u9-'), { task: null });
+    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(prep.status, 0, prep.stdout);
+    const wt = addWorktree(fx, 'claimed-later');
+    fs.writeFileSync(path.join(wt, 'n.md'), 'n\n');
+    assert.equal(runFleet(['claim', '--id', 'claimed-later', '--intent', 'later', '--paths', 'n.md'], { cwd: wt, env: envFor(A) }).status, 0);
+    const r = runFleet(['handover', 'receive', '--from', prep.json.handover.json, '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.deepEqual(r.json.handover.liveSessions.map((x) => [x.id, x.sincePrepare]), [['claimed-later', true]], r.stdout);
+    assert.deepEqual(r.json.handover.unregistered, [], 'the claim covers its worktree');
+    assert.match(r.json.text, /claimed since prepare/);
+  });
+
+  it('a scoped repo that cannot be measured is never "ready" and still gets a coordinator (H1)', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-u8-'), { task: null });
+    const notRepo = tmpRoot('handover-notrepo-');
+    const prep = runFleet(['handover', 'prepare', '--repo', notRepo, '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(prep.status, 3, prep.stdout);
+    assert.match(prep.json.text, /NOT MEASURED in/);
+    const md = fs.readFileSync(prep.json.handover.md, 'utf8');
+    assert.ok(md.slice(md.indexOf('## Coordination prompt')).includes(`cwd "${notRepo}"`), 'the unmeasured repo still gets a coordinator');
+  });
+
+  it('the coordination prompt fans out one coordinator chip per repo, each with an explicit cwd (M2)', () => {
+    const fx = makeFleetRepo();
+    const other = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-u6-'), { task: null });
+    assert.equal(runFleet(['claim', '--id', 'home-work', '--intent', 'here', '--paths', 'a.txt'], { cwd: fx.repo, env: envFor(A) }).status, 0);
+    assert.equal(runFleet(['claim', '--id', 'other-work', '--intent', 'there', '--paths', 'b.txt'], { cwd: other.repo, env: envFor(A) }).status, 0);
+    const prep = runFleet(['handover', 'prepare', '--repo', other.repo, '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(prep.status, 0, prep.stdout);
+    const md = fs.readFileSync(prep.json.handover.md, 'utf8');
+    const prompt = md.slice(md.indexOf('## Coordination prompt'));
+    assert.ok(prompt.includes(`cwd "${other.repo}"`), prompt);
+    assert.ok(prompt.includes(`cwd "${fx.repo}"`), 'the invoking repo gets an explicit cwd too, so the prompt does not depend on where it is pasted');
+    assert.doesNotMatch(prompt, /this repo/);
+    assert.ok(md.includes(`### ${other.repo}`), 'sessions are grouped per repo so a chip can be handed its own section');
+  });
+});
+
+describe('claimCommand (H2/M3, R2-H1)', () => {
+  const cli = (platform) => quoteArg(path.resolve('/r', 'scripts/fleet.mjs'), platform);
+  it('quotes every data argument on POSIX, and only claims after a successful cd', () => {
+    const c = claimCommand({ worktree: "/w/it's $(rm -rf x)", branch: 'feat;$(id)' }, 'node scripts/fleet.mjs', '/r', 'linux');
+    assert.equal(c, `cd '/w/it'\\''s $(rm -rf x)' && node ${cli('linux')} claim --id 'feat;$(id)' --intent 'what it is' --paths 'changed/paths/**'`);
+  });
+  it('quotes every data argument for PowerShell, and a failed Set-Location terminates', () => {
+    const c = claimCommand({ worktree: "C:\\w\\it's", branch: 'feat;$x' }, 'node scripts/fleet.mjs', '/r', 'win32');
+    assert.equal(c, `Set-Location -LiteralPath 'C:\\w\\it''s' -ErrorAction Stop; node ${cli('win32')} claim --id 'feat;$x' --intent 'what it is' --paths 'changed/paths/**'`);
+  });
+  it('executed from inside another fleet repo: a missing worktree claims nothing; an existing one claims IT', () => {
+    const fx = makeFleetRepo();
+    const env = scrubbedEnv({ FLEET_TELEMETRY: 'off' });
+    const sourceRoot = path.resolve(path.dirname(FLEET_CLI), '..');
+    const run = (cmd) => (process.platform === 'win32'
+      ? spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', cmd], { cwd: fx.repo, env, encoding: 'utf8' })
+      : spawnSync('sh', ['-c', cmd], { cwd: fx.repo, env, encoding: 'utf8' }));
+    const sessionsDir = path.join(git(['rev-parse', '--path-format=absolute', '--git-common-dir'], fx.repo), 'fleet', 'sessions');
+    const records = () => (fs.existsSync(sessionsDir) ? fs.readdirSync(sessionsDir).filter((f) => f.endsWith('.json')) : []);
+    const missing = run(claimCommand({ worktree: path.join(fx.root, 'gone'), branch: 'ghost' }, 'node scripts/fleet.mjs', sourceRoot));
+    assert.notEqual(missing.status, 0, 'a failed directory change must fail the command');
+    assert.deepEqual(records(), [], 'no claim was written against the shell\'s original directory');
+    const wt = path.join(fx.root, 'real-wt');
+    git(['worktree', 'add', '-q', '-b', 'real', wt], fx.repo);
+    const okRun = run(claimCommand({ worktree: wt, branch: 'real' }, 'node scripts/fleet.mjs', sourceRoot));
+    assert.equal(okRun.status, 0, okRun.stderr + okRun.stdout);
+    const rec = JSON.parse(fs.readFileSync(path.join(sessionsDir, records()[0]), 'utf8'));
+    assert.equal(path.resolve(rec.worktree).toLowerCase(), path.resolve(wt).toLowerCase(), 'the claim is bound to the target worktree');
   });
 });
 

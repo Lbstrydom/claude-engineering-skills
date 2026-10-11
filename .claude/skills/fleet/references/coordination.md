@@ -98,6 +98,11 @@ Session transcripts, cross-session messages and task chips cannot move at all.
   - a hash manifest of all memory;
   - every live claim (worktree, branch, uncommitted files, ready, waiting-on)
     with a resume prompt;
+  - **unregistered work**: every worktree no live claim covers (by worktree, or
+    by the branch checked out there) that holds staged, unstaged or untracked
+    files or unpushed commits. Claim each from INSIDE its worktree, since a
+    claim binds the worktree it is run from. Or push it, or settle it with the
+    user. Prepare exits 3 while any remain;
   - open directives and trains;
   - scheduled tasks and settings presence;
   - folder anomalies (case-duplicate or worktree-slug memory dirs, a missing
@@ -107,7 +112,10 @@ Session transcripts, cross-session messages and task chips cannot move at all.
   repo resolves, plus each `--repo`; an unresolved source is a WARNING, never
   a silent narrower scope. Output goes to `<git-common-dir>/fleet/handover/`
   (a `.json` manifest and a `.md` with the coordination prompt).
-- **New account:** paste the coordination prompt, then run
+- **New account:** paste the coordination prompt into ONE session, in any repo.
+  It resumes that repo's sessions directly, and starts one coordinator chip per
+  OTHER repo with work, inside that repo (spawn_task `cwd`). Each chip gets its
+  own repo's section of the handover. Then run
   `fleet handover receive --from <json>`.
   - *Same config root:* it verifies every hash.
   - *Different config root:* it copies missing memory files additively (staged,
@@ -116,8 +124,10 @@ Session transcripts, cross-session messages and task chips cannot move at all.
 
   Scheduled-task registration is always UNVERIFIED (the CLI cannot see the
   scheduler): recreate the tasks with the scheduling tool. Settings are compared
-  by hash only, never copied. Exit codes: 0 clean, 3 human steps (conflicts,
-  tasks to recreate, lock held), 1 a file could not be decided.
+  by hash only, never copied. Unregistered work is RE-PROBED, so claiming or
+  pushing it since prepare clears it. Exit codes: 0 clean, 3 human steps
+  (conflicts, tasks to recreate, unregistered work, lock held), 1 a file could
+  not be decided.
 - Commit WIP in sessions you own before preparing; prepare flags uncommitted
   work, it never commits it.
 
