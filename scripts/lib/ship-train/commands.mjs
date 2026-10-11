@@ -344,7 +344,14 @@ export async function runVerify(ctx, { op }) {
   // record, and that is refused for a human to read, not silently rewritten.
   const freshPhase = v.interleaved.length ? 'verified-interleaved' : 'verified';
   if (receipt.phase !== 'landed' && receipt.phase !== freshPhase) {
-    throw new TrainRefusal(`op ${op} was recorded ${receipt.phase} but now verifies as ${freshPhase} — the landed train changed under its record; read both before acting`, { verify: v });
+    // Refusing must not leave the OLD clearance standing (round-4 code H1/H2):
+    // the fresh evidence is persisted first, marked blocked, under the phase
+    // already held — so publicationClearance refuses until a human acts.
+    const reason = `the landed train changed under its record: recorded ${receipt.phase}, now verifies as ${freshPhase}`;
+    updateReceipt(dir, op, (d) => {
+      d.verify = { ...v, publicationBlocked: true, blockedReason: [v.blockedReason, reason].filter(Boolean).join('; ') };
+    }, { now: ctx.now(), note: 're-verify refused' });
+    throw new TrainRefusal(`op ${op}: ${reason}; publication is now blocked — read both before acting`, { verify: v });
   }
   const current = updateReceipt(dir, op, (d) => {
     d.verify = v;

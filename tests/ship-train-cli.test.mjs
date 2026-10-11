@@ -339,6 +339,20 @@ describe('verify / abandon', () => {
     assert.equal(readReceipt(dir, opId).verify.publicationBlocked, true);
   });
 
+  test('a refused re-verify (the train changed under its record) blocks publication durably (round-4 H1/H2)', async () => {
+    const { opId, ctx } = await landedOp();
+    assert.equal((await runVerify(ctx, { op: opId })).clearance.clear, true);
+    // A foreign commit now appears before the final merge: clean → interleaved.
+    const orig = ctx.git;
+    ctx.git = (args) => (args[0] === 'log' && args.includes('--first-parent')
+      ? [`${oid('5')}\ta`, `${oid('7')}\tforeign`, `${oid('6')}\tb`, `${oid('0')}\tlog`].join('\n')
+      : orig(args));
+    await assert.rejects(runVerify(ctx, { op: opId }), (e) => e instanceof TrainRefusal && /changed under its record/.test(e.message));
+    const after = readReceipt(dir, opId);
+    assert.equal(after.phase, 'verified');
+    assert.equal(publicationClearance(after).clear, false);
+  });
+
   test('verify refuses before the train has landed', async () => {
     const ctx = fakeCtx({ prs: { 202: PR202 }, runs: [converged(oid('a'), oid('1'))], fleet: readyFleet });
     const { opId } = await runPrepare(ctx, opts({ prs: [202] }));
