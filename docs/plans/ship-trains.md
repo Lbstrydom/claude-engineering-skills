@@ -1,6 +1,6 @@
 # Plan: Ship trains — batched, impact-based `/ship --train`
 - **Date**: 2026-10-11
-- **Status**: Draft
+- **Status**: Approved
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend (CLI + skill prose + docs; no UI)
 - **Target domain(s)**: `ship`, `fleet`, `shared-lib`, `skills-content`
@@ -103,17 +103,18 @@ sequenceDiagram
   participant CS as consumers (sync + sync:pr)
   U->>C: /ship --train
   C->>ST: plan (read-only)
-  ST->>DB: runs whose audited_tree = a PR commit's tree
+  ST->>DB: runs whose audited_tree = a PR commit tree, or audited_sha = a PR commit
   ST-->>C: per-PR tier, binding, planned gate, refusals, due?
-  C->>C: write ONE status.md entry on the train log branch, open log PR
+  C->>ST: prepare (writes the opId receipt)
+  C->>C: write ONE status.md entry (keyed by opId) on the log branch, open log PR
   C->>FL: land --select sources+log  (one combined test run)
-  C->>ST: land --train id  (drives serial landing)
+  C->>ST: land --op opId --train trainId  (receipt vs manifest, then serial landing)
   ST->>FL: runSerial(..., messageFor)
   FL->>ST: messageFor(pr, headOid, baseOid)
-  ST-->>FL: subject + body + AI-* block
+  ST-->>FL: subject + body + AI-* block (persisted to the receipt first)
   FL->>GH: gh pr merge --squash --match-head-commit --subject --body-file
-  C->>ST: verify --train id (merge trees vs claims, trailer parse)
-  C->>ST: sync --train id (clean worktree at the landed tip)
+  C->>ST: verify --op opId (trailer parse, claims vs %T, final merge OID)
+  C->>ST: sync --op opId (clean worktree at the recorded final merge OID)
   ST->>CS: sync-to-repos then sync-pr
 ```
 
@@ -124,17 +125,18 @@ Sessions stop at **ship-ready**: audited, PR open, `fleet ready`. They do **not*
 | Step | Action | Mechanism |
 |---|---|---|
 | T0 | Pre-ship nudges, once per train | `/ship` Step 0.5 queries, unchanged. Not per PR: the store questions are repo-wide. |
-| T1 | **Plan** | `node scripts/ship-train.mjs plan --json` (read-only). For each ready session with an open PR it reports: the tier (§2.5), the provenance binding (§2.3), the **planned gate**, any refusal, and whether a train is **due** (§2.6). Not due → stop, naming the missing trigger. |
-| T2 | Refusals | A PR with a refusal (no bound converged run on a non-ride-along, an unverifiable store, a ride-along-only set) stops the train. The only overrides are invocation flags: `--waive <n,…>`, `--allow-unaudited <n,…>` and `--end-of-day`. They are read **only** from the `/ship --train` invocation, the same rule `/ship` applies to its existing override flags (`skills/ship/SKILL.md:536-543`). |
-| T3 | **Train log** | On a branch `ship/train-<date>-<shortid>` in the coordinator's worktree, the model writes **one** status.md entry by hand, using the train template (§7, Phase 7). It runs the AGENTS drift check (`/ship` Step 4) and commits through `ship-commit.mjs --gate not-run`. It pushes, opens a PR, and runs `fleet claim` + `fleet ready` on that branch. The log is a ride-along and lands **last**. |
+| T1 | **Plan** | `node scripts/ship-train.mjs plan --json` (read-only, writes nothing). For each ready session with an open PR it reports: the tier (§2.5), the provenance binding (§2.3), the **planned gate**, any refusal, and whether a train is **due** (§2.6). Not due → stop, naming the missing trigger. |
+| T2 | Refusals | A PR with a refusal (no bound converged run on a non-ride-along, an unverifiable store, a ride-along-only set) stops the train. The only overrides are invocation flags: `--waive <n,…>`, `--allow-unaudited <n,…>` and `--end-of-day`. They are read **only** from the `/ship --train` invocation, the same rule `/ship` applies to its existing override flags (`skills/ship/SKILL.md:536-543` (5157ff65)). |
+| T2b | **Prepare** (the receipt) | `node scripts/ship-train.mjs prepare --select <n,…> [--waive …] [--allow-unaudited …] [--end-of-day]` re-runs T1's computation and writes the **operation receipt** (§2.8). The receipt holds a stable `opId`, the selected PRs and their exact head oids, the bindings, the planned decisions, the overrides, the base-pinning verdict, and a fingerprint. It is the single handoff from planning to execution; `plan` itself stays read-only. |
+| T3 | **Train log** | On a branch `ship/train-<opId>` in the coordinator's worktree, the model writes **one** status.md entry by hand, using the train template (§7, Phase 7). The entry is keyed by the **`opId`**, not the fleet train id, which does not exist yet. It runs the AGENTS drift check (`/ship` Step 4) and commits through `ship-commit.mjs --gate not-run`. It pushes, opens a PR, and runs `fleet claim` + `fleet ready` on that branch. The log is a ride-along; fleet decides its landing position (§2.8 "Landing order"). `prepare --log-pr <n>` records the log PR's number and head in the receipt. |
 | T4 | **Build** | `node scripts/fleet.mjs land --select <sources…,log>`: the existing train build with one combined test run. Not `approvable` → stop. |
-| T5 | **Land** | `node scripts/ship-train.mjs land --train <id>` re-checks T1's bindings against the manifest's exact source oids, then drives fleet's **serial** landing. Fleet calls `messageFor` per PR **at merge time**, after any update-branch (§2.3). |
-| T6 | **Verify** | `node scripts/ship-train.mjs verify --train <id>` reads each merge commit and requires its trailers to parse and match the planned claims (§2.3). A deviation becomes a `pending-note`, so the **next** status entry carries it. |
+| T5 | **Land** | `node scripts/ship-train.mjs land --op <opId> --train <trainId>` records the `opId → trainId` mapping and **compares the receipt with the fleet manifest**: same PR set, same head oids, same base. It re-derives every binding and refuses if anything moved since `prepare`. It then drives fleet's **serial** landing. Fleet calls `messageFor` per PR **at merge time**, after any update-branch (§2.3). Each message is persisted to the receipt **before** its merge is submitted (§2.9). |
+| T6 | **Verify** | `node scripts/ship-train.mjs verify --op <opId>` reads each merge commit and requires its trailers to parse and match the **actual** decision persisted before that merge (§2.8). It diffs actual vs planned, records interleaved foreign commits, and records the **final merge OID**: the last train merge in observed order. A deviation becomes a `pending-note`, so the **next** status entry carries it. A `passed` claim whose `AI-Audited-Tree` ≠ `%T` sets `publicationBlocked` (§2.3). |
 | T7 | Post-land advisories, once per train | `/ship` Steps 6.5–6.7, unchanged. |
-| T8 | **Consumer sync** | `node scripts/ship-train.mjs sync --train <id>` creates a clean detached worktree at the remote tip the train landed on and runs `sync-to-repos` there, then `sync-pr`. It records the Step 6.8 consumer-verification note. |
-| T9 | Ship event | One `record-ship-event` per train (it is one human ship action). Its outcome reflects the worst per-PR result. |
+| T8 | **Consumer sync** | `node scripts/ship-train.mjs sync --op <opId>` refuses while `publicationBlocked` is set. Otherwise it fetches and creates a clean detached worktree at the receipt's recorded **final merge OID** (never a re-read branch tip), checks the worktree's tree against that commit, and runs `sync-to-repos` there, then `sync-pr`. If `main` has moved past that OID, the output says the newer commits are **not** part of this publication (§2.8). It records the Step 6.8 consumer-verification note. |
+| T9 | Ship event | One `record-ship-event` per train (it is one human ship action). Its outcome reflects the worst per-PR result. A partially completed train reports `warned` with the phase it stopped in (§2.9). |
 
-**Why the log rides inside the train, not after it.** A follow-up log PR would need its own required-checks wait: a second CI run and a second landing, exactly the per-change overhead trains exist to remove. Putting it last means one combined test run covers it.
+**Why the log rides inside the train, not after it.** A follow-up log PR would need its own required-checks wait: a second CI run and a second landing, exactly the per-change overhead trains exist to remove. Riding inside the train means one combined test run covers it.
 
 The cost is that the entry is written before the merge shas exist, and before T5 knows whether an update-branch has turned a planned `passed` into `converged`. So the entry records **planned** gates. T6 is what reconciles them, and any difference reaches the next entry through the existing pending-note drain. That is the same channel Step 6.8 already uses for "verify after the fact" facts.
 
@@ -142,10 +144,12 @@ The cost is that the entry is written before the merge shas exist, and before T5
 
 | Unit | Kind | Responsibility |
 |---|---|---|
-| `scripts/lib/ship-train/impact.mjs` | pure | `classifyPrImpact({files, closure, isCode})` returns `{tier, reasons[]}`. `isTrainDue({prs, endOfDay})` returns `{due, triggers[], missing[]}`. |
-| `scripts/lib/ship-train/provenance.mjs` | pure | `bindAuditRun({commits, runs})` returns a binding or an unbound reason. `decideTrainGate({binding, predictedTree, tier, waived, allowUnaudited})` returns `{gate, runId, auditedTree, models, refusal}`. It **calls `evaluateGateVerification`**; it does not reimplement it. `composeSquashMessage({pr, commits, decision})` calls `composeFinalMessage`. |
-| `scripts/lib/store/train-provenance.mjs` | store read | `findCodeRunsByAuditedTrees({trees})`: one parameterised `SELECT` over `audit_runs`, scoped to the current repo and to code-mode runs. Read-only, so it is not a durable-write registration. |
-| `scripts/ship-train.mjs` | CLI | `plan`, `land`, `verify`, `sync`, plus a read-only `message --pr <n>` for inspection. It follows the `--selfcheck-relocation` contract, uses `assertKnownFlags`, and exits through `emit` / `finishAndExit`. |
+| `scripts/lib/ship-train/impact.mjs` | pure | `classifyPrImpact({changes, closure, isCode})` returns `{tier, reasons[]}`, where `changes` is a list of `{status, path, oldPath?}` (§2.5). `isTrainDue({prs, endOfDay})` returns `{due, triggers[], missing[]}`. |
+| `scripts/lib/ship-train/provenance.mjs` | pure | `bindAuditRun({commits, candidates})` returns a `tree` binding, an `ancestry` candidate, or an unbound reason. `decideTrainGate({binding, headTree, basePinning, tier, waived, allowUnaudited})` returns `{gate, runId, auditedTree, models, identityProvable, refusal}`. It **calls `evaluateGateVerification`**; it does not reimplement it. `composeSquashMessage({pr, commits, decision})` calls `composeFinalMessage`. `modelsFromRun(row, composerFamily)` returns only substantiated families. |
+| `scripts/lib/ship-train/receipt.mjs` | pure + atomic I/O | The receipt schema (Zod, `.strict()`), `fingerprintOf`, the phase transition table (§2.9), and `readReceipt` / `writeReceipt`. Writes are `atomicWriteFileSync` under `withFileLock`, and immutable fields are refused on rewrite. |
+| `scripts/lib/commit-trailers.mjs` | shared-lib (+~10 lines) | `evaluateGateVerification` gains `identityProvable = true` (§2.3). The default keeps every existing caller byte-identical. |
+| `scripts/lib/store/train-provenance.mjs` | store read | `findCodeRunCandidates({trees, oids})`: one parameterised `SELECT` over `audit_runs`, scoped to the current repo and to code-mode runs, returning each row's match kind. Read-only, so it is not a durable-write registration. |
+| `scripts/ship-train.mjs` | CLI | `plan` (read-only), `prepare`, `land`, `verify`, `sync`, `resume`, `abandon`, plus a read-only `message --pr <n>` for inspection. It follows the `--selfcheck-relocation` contract, uses `assertKnownFlags`, and exits through `emit` / `finishAndExit`. |
 | `scripts/lib/fleet/serial.mjs` | seam (+~15 lines) | An optional `messageFor({source, headOid, baseOid}) → {subject, body} \| null` on the serial run options. When it returns a value, the merge call adds `--subject` and `--body-file`. When it is absent, behaviour is byte-identical to today. |
 | `skills/ship/references/train-mode.md` | prose | The T0–T9 runbook, its refusals and override flags, and the laundering rationale (§2.7). |
 | `skills/ship/SKILL.md` | prose (+~12 lines) | A `--train` usage row and a pointer section to the reference above. |
@@ -156,7 +160,7 @@ Why a sibling CLI and not a `ship-commit --train` mode: covered in §1.3. In sho
 
 The pre-authorisation for this work says sessions make **plain commits with no `AI-*` trailers**: the user's `/ship` writes provenance. So the train has to establish *which audit run covered which PR* without any declaration from the session.
 
-**Binding by content, not by declaration (#13, #4).** For a PR with merge-base `B` and commits `C1..Cn`, read every commit tree `T(Ci)`. Then query the store for code-mode runs where `audited_tree ∈ {T(C1)..T(Cn)}`.
+**Binding by content, not by declaration (#13, #4).** For a PR with merge-base `B` and commits `C1..Cn`, read every commit oid and tree `T(Ci)`. Then run **one** repo-scoped, code-mode query, `findCodeRunCandidates({trees, oids})`, which returns rows where `audited_tree = ANY(trees) OR audited_sha = ANY(oids)`. Each row is tagged with its **match kind**, `tree` or `sha-only`, and the rows are ordered deterministically: bound commit position, then `created_at`, then `id`. The two kinds are kept apart from the moment they are read. A `tree` match can bind; a `sha-only` match is an **ancestry candidate** and can only ever back an explicitly authorised waiver, never `passed` or `converged`. The oid list is `C1..Cn` and **excludes `B`**: the merge-base is shared with every other branch off `main`, so a run on `B` says nothing about this PR.
 
 `audited_tree` is the audited **worktree** content: `read-tree HEAD` + `add -A`. When a session commits exactly what was audited, that tree *is* a commit tree in the PR. This is E1's content identity, the strongest binding the store can give. It needs no run id from the session, so it cannot be forged by an agent writing a PR body. The best a forger could do is a store row with that exact tree, which is the same bar `passed` has today.
 
@@ -167,33 +171,50 @@ Choose the binding as follows:
 
 **Ancestry is deliberately not a fallback for `passed`/`converged`.** An `audited_sha` inside `(B, H]` shows that an audit happened on this branch. It does not show what that audit read: the tree it read included uncommitted content that may never have been committed. So an ancestry-only match can support at most `waived` with that run id, and only under `--waive <n>`.
 
-**The gate for the squash commit `S` on `main`.** `S` does not exist yet when the message is written, so the comparand is the **predicted** `T(S)`:
+**The gate for the squash commit `S` on `main`.** `S` does not exist when its message is written. Its tree is only **provable** in advance when the server pins the base: a PR that is up to date with `main` squashes to exactly `T(H)`, but `--match-head-commit` protects the head, not the target. If anything else reaches `main` between the message and the merge, GitHub squashes onto the newer base and `T(S) ≠ T(H)`. Detecting that afterwards cannot repair a published `passed` (round-1 finding H1, accepted). So the train claims tree identity **only when it is server-enforced**:
 
-- If the land-time base tip is an ancestor of the PR head `H`, GitHub's squash of an up-to-date head reproduces `H`'s tree exactly, so `T(S) = T(H)`.
-- `serial.mjs` already update-branches a BEHIND PR before merging (`serial.mjs:143-245`). `messageFor` runs **after** that, on the new head, so the prediction holds at merge time.
-- If the base is not an ancestor (no update ran, or a race), the prediction is "unknown". Then `passed` is never claimed.
+- **Base pinned** (`basePinning: 'strict'`): the destination's ruleset or classic protection requires branches to be up to date before merging (`strict_required_status_checks_policy` / `required_status_checks.strict`). In that case GitHub itself refuses a merge whose head does not contain the current base. With `messageFor` running **after** serial's update-branch on the exact head being merged (`serial.mjs:143-245` (5157ff65)), `T(S) = T(H)` is guaranteed by the server, not predicted. `committedTree = T(H)`.
+- **Base not pinned** (`basePinning: 'none'`, or the protection read failed, which is fail-closed): tree identity is **not provable at commit time**. `committedTree` is still `T(H)`, but the evaluator is told `identityProvable: false` (below).
 
-With `evidence = {state:'fresh', runId, auditedTree: T(Ck)}` and `committedTree = predicted T(S)`, the train calls **the existing** `evaluateGateVerification`. It tries `passed`, then `converged`, and takes the first accepted. So:
+*Measured* 2026-10-11 for **this** repo: `gh api repos/Lbstrydom/claude-engineering-skills/rulesets` → `[]` and `…/branches/main/protection` → 404. `main` is unpinned, so trains here land audited PRs as `converged`, never `passed`. That is the honest result, and it is the reason `prepare` reports the pinning verdict up front.
+
+**One additive input to the shared evaluator.** `evaluateGateVerification` (`scripts/lib/commit-trailers.mjs:338` (5157ff65)) gains an optional `identityProvable` (default `true`, so every existing caller is byte-identical). When it is `false`:
+- `passed` is **refused**, with an AGENT FIX naming the missing server pin and pointing at `converged`.
+- The under-claim refusal for `converged` ("trees match, use `passed`") is **suspended**, because `passed` is not available to under-claim against.
+
+It can never grant `passed`, and it changes nothing else in the function. This is the one semantic widening the train makes. `converged` now reads "a store-verified converged run, and the committed tree is **not asserted** equal to the audited tree: either it differs, or equality could not be proven at commit time". That still carries no `AI-Audited-Tree`, exactly as today. Phase 7 states the widening in `commit-provenance.md` and in AGENTS.md's four-value paragraph.
+
+With `evidence = {state:'fresh', runId, auditedTree: T(Ck)}` the train calls `evaluateGateVerification`, trying `passed` then `converged`, and takes the first accepted:
 
 | Situation | Gate on `S` | Extra trailers |
 |---|---|---|
-| Bound converged run, `T(Ck) == T(S)` (audited at head, PR already current with base) | `passed` | `AI-Run-ID`, `AI-Audited-Tree: T(Ck)`. Self-verifying with `%T` on `S`, **reachable from `main` forever** |
-| Bound converged run, trees differ (post-audit commits, or base merged in by update-branch) | `converged` | `AI-Run-ID` |
-| Bound run, not converged | refuse. Under `--waive <n>`: `waived` | `AI-Run-ID` |
-| Ancestry-only match | refuse. Under `--waive <n>`: `waived` | `AI-Run-ID` |
+| Tree-bound converged run, `T(Ck) == T(H)`, base **pinned** | `passed` | `AI-Run-ID`, `AI-Audited-Tree: T(Ck)`. Self-verifying with `%T` on `S`, **reachable from `main` forever** |
+| Tree-bound converged run, `T(Ck) == T(H)`, base **not pinned** | `converged` (`identityProvable:false`) | `AI-Run-ID` |
+| Tree-bound converged run, `T(Ck) ≠ T(H)` (post-audit commits, or base merged in by update-branch) | `converged` | `AI-Run-ID` |
+| Tree-bound run, not converged | refuse. Under `--waive <n>`: `waived` | `AI-Run-ID` |
+| Ancestry candidate only (`sha-only`) | refuse. Under `--waive <n>`: `waived` | `AI-Run-ID` of the newest candidate |
 | No run, ride-along tier | `not-run` (the normal case for docs/tests/config) | none |
 | No run, `standard`/`urgent` tier | refuse. Under `--allow-unaudited <n>`: `not-run` | none |
 | Store unreachable / cloud off | `standard`/`urgent` refuse (cannot verify, so cannot claim; same fail-closed bar as `ship-commit`). Ride-alongs: `not-run` | none |
 
+**Post-merge mismatch blocks publication (defence in depth).** On a base-pinned destination T6 should never find `AI-Audited-Tree ≠ %T`. If it does, the server pin was not what `prepare` read. The receipt then gets `publicationBlocked: true` with both trees, a pending-note is filed, and T8 refuses to sync until the operator has read it and re-runs `sync --op <opId> --accept-provenance-mismatch`. That flag is invocation-only and recorded in the receipt.
+
 `AI-Skill: ship`.
 
-`AI-Models` is **derived from the bound run row**, not typed: `claude` (the author) is always included, plus `gpt` for a code-audit run, plus `gemini` when `gemini_verdict` is non-null. An unbound PR gets `claude`. This is *more* evidence-bound than today's declared lineup, which is a v2 item in `commit-provenance.md:293-299` (5157ff65). Its grammar is still validated by `canonicaliseModels`.
+`AI-Models` lists **only substantiated participants** (round-1 M1, accepted). It is assembled from what the run row actually records:
+- `author_model` (arm-eval column, `supabase/migrations/20260701160000_arm_eval.sql:98` (5157ff65));
+- `final_review_model` (`20260610120000_final_review_shadow.sql:16`);
+- the auditor model, if the row records one.
+
+Each is mapped through `modelFamily` (`scripts/lib/model-resolver.mjs:383` (5157ff65)), the one family function AGENTS.md mandates, and then through `canonicaliseModels`. Which column holds the **auditor** model is a build-time census, Phase 2's first step. An unrecorded stage is **omitted**, never assumed, and the receipt lists `attributionMissing: [stage…]`.
+
+The model that composes the squash message is always a substantiated participant: it is the coordinator's own family. If nothing else is recorded, `AI-Models` is that family alone, and the train entry says "audit-stage attribution unrecorded". That keeps `AI-Models` non-empty (its grammar requires it) without inventing anyone.
 
 **Recording: per-PR trailers + the status.md entry. No new manifest file, no new trailer key.**
 
 - **Per-PR trailers at squash-merge** are authoritative. They are git-native, they answer the existing query cookbook unchanged, and `passed` stays self-verifying from git alone.
-- **The status.md train entry** is the human-readable cross-PR record. It names every PR (including ride-alongs), its tier, its planned gate and run id, and the train id.
-- **fleet's existing local manifest** (`trains/<id>.json`, already immutable) holds the machine record of what was tested and landed. `ship-train` adds nothing to its schema. Its own small results file sits beside it, `<git-common-dir>/fleet/ship-trains/<trainId>.json`: Category A, local, gitignored by location. It holds the bindings, decisions and T6 verify outcome.
+- **The status.md train entry** is the human-readable cross-PR record. It names every PR (including ride-alongs), its tier, its planned gate and run id, and the `opId`.
+- **fleet's existing local manifest** (`trains/<id>.json`, already immutable) holds the machine record of what was tested and landed. `ship-train` adds nothing to its schema. Its own **operation receipt** (§2.8) sits beside it at `<git-common-dir>/fleet/ship-trains/<opId>.json`: local and outside the work tree, so Category A by location. It holds the bindings, planned and actual decisions, persisted messages, merge checkpoints, verify outcome and publication checkpoints.
 
 **Right-sizing for this choice.**
 - *Band-aid*: loop `/ship` per PR. It changes nothing structurally and leaves the squash-body loss in place.
@@ -219,9 +240,9 @@ Domain edges: `ship` → `fleet` (new: `ship-train.mjs` imports `serial.mjs` and
 
 ### 2.5 Impact tiers (`classifyPrImpact`)
 
-The PR's file list comes from `git diff --name-only B...H` on the fetched PR ref, never `gh pr view --json files`, which pages at 100.
+The PR's change list comes from `git diff --name-status -z -M B...H` on the fetched PR ref, never `gh pr view --json files`, which pages at 100. The output is NUL-delimited, so it is safe for paths containing whitespace or newlines, and it is parsed into `{status, path, oldPath?}`. A rename or copy keeps **both endpoints**, so a file renamed *out of* the closure is evaluated at its old path, which is in the closure. A delete is evaluated at the deleted path (round-1 M2, accepted). "Changed path" below means the union of every `path` and every `oldPath`.
 
-1. **`urgent`**: any changed file is in `getSyncClosure()`. Reason `reaches-consumers:<n> files`. The closure contains synced `scripts/lib/store/**`, `scripts/lib/db/**`, migrations and security libs, so "changes behaviour, security or the store **for consumers**" is covered by the same single oracle. No second hand-kept list.
+1. **`urgent`**: any changed path is in `getSyncClosure()`. Reason `reaches-consumers:<n> files`. The closure contains synced `scripts/lib/store/**`, `scripts/lib/db/**`, migrations and security libs, so "changes behaviour, security or the store **for consumers**" is covered by the same single oracle. No second hand-kept list.
 2. **`standard`**: otherwise, any changed file is source code per `file-taxonomy.mjs` `matchFileKind` and is not under `tests/`. This is repo-internal behaviour, e.g. `scripts/sync-to-repos.mjs`, which the closure does not include.
 3. **`ride-along`**: otherwise. Only tests, docs or config.
 
@@ -244,14 +265,92 @@ When the user types `/ship --train` and the set is not due, `plan` refuses with 
 
 The alternative is to drop `disable-model-invocation` so that a coordinator agent can run `/ship` on a schedule. That turns a **standing, agent-held authority** into the thing that publishes to `main` and to every consumer. Today the only path from "an agent decided" to "consumers received it" passes through a human keystroke. With the gate relaxed, an agent could reach the push through any chain of agent-authored inputs — another session's message, a file, a PR body, a directive. That is the laundering path AGENTS.md and fleet's participant rules already refuse (`skills/fleet/SKILL.md:92-95`). A train keeps the keystroke and spends it better: the per-PR human cost goes from N keystrokes to 1, and the human still sees what is being shipped (the T1 table) at the moment they authorise it.
 
-What remains is cooperative, stated plainly. `ship-train.mjs land` is an ordinary CLI, and an agent with a shell could run it. So could `gh pr merge`, or `fleet land --approve --serial`. The skill gate is a policy layer, as it is for `/fleet`, and an agent cannot enforce a gate against its own shell. The train changes neither the reachability nor the policy. It removes the *pressure* to bypass `/ship`, which is what actually produced #200/#201.
+The remaining limit is cooperative, stated plainly. `ship-train.mjs land` is an ordinary CLI, and an agent with a shell could run it. So could `gh pr merge`, or `fleet land --approve --serial`. The skill gate is a policy layer, as it is for `/fleet`, and an agent cannot enforce a gate against its own shell. The train changes neither the reachability nor the policy. It removes the *pressure* to bypass `/ship`, which is what actually produced #200/#201.
+
+### 2.8 The operation receipt (planning → execution handoff)
+
+`plan` is read-only and writes nothing. `prepare` is the one step that turns a plan into something executable. It writes `<git-common-dir>/fleet/ship-trains/<opId>.json` (round-1 H2, accepted).
+
+The receipt is versioned (`schemaVersion: 1`) and validated by a Zod schema with `.strict()`. It holds:
+- `opId`: generated by `prepare`, in fleet's `newTrainId` shape but with an `s-` prefix.
+- `createdAt`.
+- `repo`.
+- `destination{ref, expectedOid}`, read with `ls-remote`.
+- `basePinning`, with the evidence that decided it.
+- `selected[{pr, headOid, mergeBaseOid, tier, reasons, binding{kind, runId, boundCommit, postAuditCommits}, decision{gate, runId, auditedTree, models, identityProvable}}]`.
+- `overrides{waive[], allowUnaudited[], endOfDay}`.
+- `fingerprint`: a sha256 over the canonical JSON of everything above.
+
+The fields above are **immutable once written**, the same discipline as fleet's `TrainSchema`. Mutable fields are appended by later steps:
+- `logPr{number, headOid}`;
+- `trainId`;
+- `phase`;
+- `landingOrder[]` (from the fleet manifest);
+- `actual{pr → {headOid, baseOid, basePinning, inputs, claims, subject, bodySha256, bodyPath}}`, persisted before the merge is submitted;
+- `merges{pr → {mergeOid, observedHeadOid}}`;
+- `verify{perPr, plannedVsActual[], interleaved[], finalMergeOid, publicationBlocked}`;
+- `publicationAmendment{acceptedOids[], at}`;
+- `publication{sync: {consumer → status}, syncPr: {consumer → status}}`.
+
+**Train id ordering.** The status entry is keyed by `opId` because the fleet train id does not exist until T4. `land --op <opId> --train <trainId>` writes the mapping and refuses unless:
+1. the fleet manifest's source set equals `selected` plus `logPr` (same PR numbers, same head oids);
+2. the manifest's `baseOid` equals `destination.expectedOid`;
+3. every binding re-derived from the store now still equals the receipt's.
+
+Anything that moved means a **new `prepare`**, never a patched receipt.
+
+**Planned vs actual decisions** (round-2 H2, accepted). `selected[].decision` is the **planned** decision and stays immutable as planning history. At merge time `messageFor` computes the **actual** decision on the head being merged. Before returning, it persists `actual[pr]`:
+- `headOid`, the observed base oid, and the `basePinning` re-read;
+- the gate inputs (binding, `T(Ck)`, `T(H)`, `identityProvable`);
+- the resulting claims (gate, run id, audited tree, models);
+- the canonical message's sha256 and path.
+
+`verify` checks each landed commit against **`actual[pr]`**, not the plan. Separately, it diffs actual against planned and turns every difference into a pending-note.
+
+**Which differences need renewed authorization**:
+- **Note only**: any change that keeps the PR landable with an evidence-backed claim, e.g. `passed` → `converged` after an update-branch, or a narrower `AI-Models`.
+- **Stop (`diverged`), with no message persisted and no merge submitted**: any change that would turn a planned accept into a **refusal**, e.g. the head moved to commits outside the binding, the run row vanished, or the store became unreachable. Re-authorization is a new `prepare` for the remaining PRs.
+
+**Publication pin** (round-1 H3, accepted). `verify` records `finalMergeOid`: the merge commit of the **last PR to land in observed merge order**, from `gh pr view --json mergeCommit` per PR, ordered by first-parent position on `main`. Each train merge commit is verified **individually** against its `actual[pr]`. On an unpinned `main`, an unrelated merge can land *between* two train merges (round-2 H1, accepted). So the first-parent chain from `finalMergeOid` back to `expectedOid` is not required to contain only train commits. Instead:
+- every commit on it that is not a train merge is recorded in `interleaved[]` (oid, subject, PR if any);
+- a non-empty `interleaved[]` puts the op in **`verified-interleaved`**, which is a recoverable **blocked** state, not a success.
+
+`sync` refuses in that state unless re-invoked as `sync --op <opId> --accept-interleaved`. That flag is invocation-only, and the human is shown the interleaved list first. It is recorded in the receipt as a `publicationAmendment{acceptedOids[], at}`: an immutable record of exactly what the publication contains beyond the train. The train does not acquire audit evidence for interleaved commits. Those commits reached `main` by their own route and carry whatever provenance that route gave them; the amendment only declares that this publication includes them.
+
+Commits that landed **after** `finalMergeOid` are never part of this publication. `sync` checks out `finalMergeOid` exactly, never a branch tip read later, and says that newer commits are excluded. A train never silently widens what it publishes.
+
+**Landing order** (round-2 M1, accepted). Fleet decides landing order (`proposeLandingOrder`, `scripts/lib/fleet/overlap.mjs:476` (5157ff65)), not `--select` order. The plan therefore **does not require the log PR to land last**. `finalMergeOid` is defined by observed merge order, so it is correct whatever position the log takes. `land` records the manifest's source order in the receipt (`landingOrder[]`), and `verify` checks that the observed merge order equals it. If the train stops partway, the log PR may already describe PRs that did not land. The pending-note for the next entry then names exactly which planned PRs did not land, read from `merges` vs `selected`.
+
+### 2.9 Partial failure and recovery
+
+Each external mutation is bracketed by a write-ahead record and a confirmation record (round-1 H5, accepted). All receipt writes go through `atomicWriteFileSync` under a per-op lock (`withFileLock` on `<opId>.lock`). A second process on the same op is **refused**, not queued, matching fleet's `withTrainLock` (`scripts/lib/fleet/train.mjs:156` (5157ff65)).
+
+| Phase | Before the mutation | After | On interruption: `ship-train resume --op <opId>` |
+|---|---|---|---|
+| `prepared` | — | receipt written | nothing external happened; safe to `abandon` |
+| `log-opened` | `logPr` intent | `logPr{number, headOid}` | `gh pr view` reconciles; an orphan log PR is closed by `abandon` |
+| `built` | — | `trainId` mapped | fleet's own `--abandon`/rebuild applies; the receipt is untouched |
+| `landing` | **`actual[pr]` (decision + message) persisted before the merge is submitted** | `merges[pr]` after fleet observes MERGED | for each PR, `gh pr view --json state,headRefOid,mergeCommit`: **MERGED** at the persisted `headOid` → record the merge (the remote did it; never resubmit) · **OPEN** at the persisted head → **revalidate, then replay**: re-read `basePinning` and recompute the decision on the current head and base; resubmit the persisted bytes only if the recomputed claims equal `actual[pr].claims` exactly, else stop as `diverged` (the old attempt and message are kept as history; the remaining PRs need a new `prepare`) · head moved → stop, `diverged`, a human reads it. Fleet's `resumeSerial` drives the merge loop; `messageFor` serves the persisted message for an already-decided `(pr, headOid)` only after that revalidation passes (round-3 H1) |
+| `landed` | — | all merges recorded | — |
+| `verified` / `verified-interleaved` | — | `verify{…}` | re-runnable; pure reads. `verified-interleaved` is blocked until `sync --accept-interleaved` writes the `publicationAmendment` |
+| `publishing` | per consumer `syncing` | per consumer `synced` / `failed{retryable}` | re-runs only the consumers not yet `synced`. `sync-to-repos` already journals in-progress work (`scripts/.sync-in-progress.json`) and refuses rollbacks per consumer receipt, so a re-run is safe. `sync-pr` is per-consumer and skips a consumer with nothing to do. |
+| `done` / `partial` | — | — | `partial` names the stuck phase and drives T9's `warned` |
+
+**Retryable vs terminal.**
+- **Retryable**: gh 5xx, network errors, a lock held by a live pid.
+- **Terminal**: a head moved, a manifest mismatch, a store schema fault (`describeSchemaFault`, loud), `publicationBlocked`.
+
+A terminal state never auto-retries. `abandon --op <opId>` is allowed only before `landing`. After the first merge it is refused, because some of the train is on `main`; the only ways forward are `resume` or a human.
 
 ---
 
 ## 6. Sustainability Notes
 
-- **Assumptions that could change.** GitHub's squash merge of an up-to-date head reproducing the head tree is what makes `passed` claimable. T6 checks that assumption on every train, and a violation is reported, not hidden. If it ever stops holding, `passed` silently becomes unreachable on squash (the code falls through to `converged`), never falsely claimed.
-- **Direct-squash repos.** For a consumer whose `mergeMethod` is `direct-squash`, `messageFor` needs a sibling hook where `applySources` commits (`train.mjs:364`). That is deliberately not built (§8, D2).
+- **Assumptions that could change.** `passed` on a squash commit rests on two things holding together: the server refusing a merge whose head is not up to date, and GitHub squashing an up-to-date head to exactly that head's tree.
+  - The first is **read** from the destination's protection at `prepare` time, never assumed. Without it, `passed` is simply not offered (§2.3).
+  - The second is **checked** on every train by T6. A violation blocks publication rather than being merely reported.
+  - Turning on strict up-to-date protection is a repo setting. It is the user's decision and **not** made by this plan. It is the switch that makes `passed` reachable here.
+- **Direct-squash repos.** For a consumer whose `mergeMethod` is `direct-squash`, `messageFor` needs a sibling hook where `applySources` commits (`scripts/lib/fleet/train.mjs:364` (5157ff65)). That is deliberately not built (§8, D2). There, the push lease against `expectedOid` *is* a server-enforced base pin, so it is the cleaner route to `passed` if a consumer ever needs it.
 - **Extension point.** `messageFor` is the single seam a future evidence receipt (V2) would attach to.
 
 ## 7. File-Level Plan
@@ -259,12 +358,37 @@ What remains is cooperative, stated plainly. `ship-train.mjs land` is an ordinar
 ### 7b. Implementation Phases
 
 - **Phase 1 — Impact classifier**: `classifyPrImpact` + `isTrainDue`, pure, test-first. Files: `scripts/lib/ship-train/impact.mjs` (create), `tests/ship-train-impact.test.mjs` (create).
-- **Phase 2 — Provenance binder + store read**: `bindAuditRun`, `decideTrainGate` (via `evaluateGateVerification`), `composeSquashMessage` (via `composeFinalMessage`), and `findCodeRunsByAuditedTrees`. The read degrades loudly on a schema fault (`describeSchemaFault`) and never returns an empty list on a broken query. It is enrolled as a DB suite in `scripts/db-test-container.mjs`'s `*_SUITE_FILES` **and** `.github/workflows/postgres-parity.yml`, two edits, because the binding query must be asserted once on real Postgres. Files: `scripts/lib/ship-train/provenance.mjs` (create), `scripts/lib/store/train-provenance.mjs` (create), `tests/ship-train-provenance.test.mjs` (create), `tests/ship-train-provenance.db.test.mjs` (create), `scripts/db-test-container.mjs` (modify), `.github/workflows/postgres-parity.yml` (modify).
-- **Phase 3 — `ship-train.mjs` read-only verbs**: `plan`, `message`, `verify`. `plan` reads `node scripts/fleet.mjs status --json` (the CLI, so no fleet edit) plus git, and `verify` reads merge commits by PR. All three are read-only. CLI smoke + registration. Files: `scripts/ship-train.mjs` (create), `tests/ship-train-cli.test.mjs` (create), `package.json` (modify — `ship:train` script), `scripts/lib/sync-isolation-verify.mjs` (modify — `CLI_SMOKE_SET`).
-- **Phase 4 — Serial `messageFor` seam**: optional callback, a temp `--body-file` (under the train's log dir, removed after merge), and byte-identical behaviour when absent. Files: `scripts/lib/fleet/serial.mjs` (modify), `tests/fleet-serial.test.mjs` (modify).
-- **Phase 5 — `land` and `sync` verbs**: `land --train <id>` re-binds against the manifest's exact source oids and refuses if any binding moved since `plan`. It calls `approveSerial` with `messageFor` and writes `ship-trains/<id>.json`. `sync --train <id>` does a detached `git worktree add` at the train's landed remote tip (read back with `ls-remote`, never a local ref), provisions dependencies with `provisionNodeModules` (`scripts/lib/pinned-worktree/manage.mjs`, the pinned-revision precedent fleet already uses), runs `sync-to-repos.mjs` then `sync-pr.mjs`, and removes the worktree. Domain-map `allowedDeps` for `ship → fleet`, if the layering test requires it. Files: `scripts/ship-train.mjs` (modify), `tests/ship-train-cli.test.mjs` (modify), `.audit-loop/domain-map.json` (modify).
+- **Phase 2 — Provenance binder, evaluator input, store read**. Steps:
+  - **First step is a census**: which `audit_runs` column, if any, records the auditor model. Run the query, record its result in the Implementation Log, then write `modelsFromRun` against it.
+  - Write `bindAuditRun` (tree binding vs ancestry candidate kept apart), `decideTrainGate` (via `evaluateGateVerification`), `composeSquashMessage` (via `composeFinalMessage`) and `modelsFromRun`.
+  - Add `evaluateGateVerification`'s `identityProvable` input, default `true`.
+  - Write `findCodeRunCandidates({trees, oids})`. The read degrades loudly on a schema fault (`describeSchemaFault`) and never returns an empty list on a broken query.
+  - Enrol the new DB suite in `scripts/db-test-container.mjs`'s `*_SUITE_FILES` **and** in `.github/workflows/postgres-parity.yml`: two edits, because the binding query must be asserted once on real Postgres.
+
+  Files: `scripts/lib/ship-train/provenance.mjs` (create), `scripts/lib/store/train-provenance.mjs` (create), `scripts/lib/commit-trailers.mjs` (modify), `tests/commit-trailers.test.mjs` (modify), `tests/ship-train-provenance.test.mjs` (create), `tests/ship-train-provenance.db.test.mjs` (create), `scripts/db-test-container.mjs` (modify), `.github/workflows/postgres-parity.yml` (modify).
+- **Phase 3 — Receipt + `ship-train.mjs` non-landing verbs**:
+  - The receipt module: schema, fingerprint, the phase table and locked atomic writes.
+  - `plan` (read-only), `prepare` (writes the receipt, including the base-pinning read via `gh api` rulesets + classic protection, which fails closed to `none`), `message` (read-only), `verify` (records `finalMergeOid` and `publicationBlocked`), and `abandon` (pre-`landing` only).
+  - `plan` reads `node scripts/fleet.mjs status --json` (the CLI, so no fleet edit) plus git.
+  - CLI smoke and registration.
+
+  Files: `scripts/lib/ship-train/receipt.mjs` (create), `tests/ship-train-receipt.test.mjs` (create), `scripts/ship-train.mjs` (create), `tests/ship-train-cli.test.mjs` (create), `package.json` (modify — `ship:train` script), `scripts/lib/sync-isolation-verify.mjs` (modify — `CLI_SMOKE_SET`).
+- **Phase 4 — Serial `messageFor` seam**:
+  - An optional callback; when it is absent, behaviour is byte-identical to today.
+  - The message goes to a temp `--body-file` under the train's log dir and is removed after the merge.
+  - On resume, the callback re-reads protection and recomputes the decision for an already-decided `(pr, headOid)`. It re-sends the persisted message byte-for-byte only when the recomputed claims equal the persisted ones, and otherwise returns a `diverged` stop. Permission to replay is never implied by persistence alone.
+
+  Files: `scripts/lib/fleet/serial.mjs` (modify), `tests/fleet-serial.test.mjs` (modify).
+- **Phase 5 — `land`, `resume` and `sync` verbs**:
+  - `land --op --train` runs the receipt ↔ manifest comparison and re-binding (§2.8). It calls `approveSerial` with a `messageFor` that persists each message **before** returning it.
+  - `resume --op` follows the §2.9 table and reconciles every ambiguous merge with `gh pr view`.
+  - `sync --op` refuses on `publicationBlocked`. Otherwise it does a detached `git worktree add` at the receipt's `finalMergeOid` and checks that commit's tree. It provisions dependencies with `provisionNodeModules` (`scripts/lib/pinned-worktree/manage.mjs`, the pinned-revision precedent), runs `sync-to-repos.mjs` then `sync-pr.mjs` with per-consumer checkpoints, and removes the worktree.
+  - Fault-injection tests interrupt immediately before and after every external mutation.
+  - Domain-map `allowedDeps` for `ship → fleet`, if the layering test requires it.
+
+  Files: `scripts/ship-train.mjs` (modify), `tests/ship-train-cli.test.mjs` (modify), `tests/ship-train-recovery.test.mjs` (create), `.audit-loop/domain-map.json` (modify).
 - **Phase 6 — `/ship --train` skill surface**: a usage row, a pointer section and the reference doc, plus a one-line cross-reference from fleet's landing doc. Files: `skills/ship/SKILL.md` (modify), `skills/ship/references/train-mode.md` (create), `skills/fleet/references/landing.md` (modify).
-- **Phase 7 — Records and invariants docs**: the status.md train-entry template; the second emission point and the content-binding rule in the provenance reference; AGENTS.md's provenance paragraph ("written only by" → the two emission points, one renderer). Files: `skills/ship/references/status-md-format.md` (modify), `docs/reference/commit-provenance.md` (modify), `AGENTS.md` (modify).
+- **Phase 7 — Records and invariants docs**: the status.md train-entry template (keyed by `opId`, with a planned-gate and `identityProvable` column); in the provenance reference, the second emission point, the content-binding rule, the server-pin precondition for `passed` on squash, and `converged`'s widened reading; AGENTS.md's provenance paragraph ("written only by" → two emission points, one renderer, one evaluator; `converged` = "not asserted equal"). Files: `skills/ship/references/status-md-format.md` (modify), `docs/reference/commit-provenance.md` (modify), `AGENTS.md` (modify).
 
 **Close-out (not a phase)**: `npm run skills:regenerate`, `npm run skills:check`, `npm run bundle:deps`, `npm run plans:index`, then `npm test`. The shared generated files in `.fleet.json` `hotFiles` are regenerated at rebase, never claimed.
 
@@ -273,19 +397,21 @@ What remains is cooperative, stated plainly. `ship-train.mjs land` is an ordinar
 | File | Exports | Imports | Imported by |
 |---|---|---|---|
 | `scripts/lib/ship-train/impact.mjs` | `classifyPrImpact`, `isTrainDue`, `TIERS` | `file-taxonomy.mjs` | `ship-train.mjs` |
-| `scripts/lib/ship-train/provenance.mjs` | `bindAuditRun`, `decideTrainGate`, `composeSquashMessage`, `modelsFromRun` | `commit-trailers.mjs` | `ship-train.mjs` |
-| `scripts/lib/store/train-provenance.mjs` | `findCodeRunsByAuditedTrees` | `db/client.mjs`, `db/errors.mjs`, `store/repo.mjs` | `ship-train.mjs` |
-| `scripts/ship-train.mjs` | CLI only | the three above, `sync-inventory.mjs`, `fleet/serial.mjs`, `fleet/registry.mjs`, `pinned-worktree/manage.mjs` (`provisionNodeModules`), `cli-io.mjs` | `skills/ship/references/train-mode.md` (prose) |
+| `scripts/lib/ship-train/provenance.mjs` | `bindAuditRun`, `decideTrainGate`, `composeSquashMessage`, `modelsFromRun` | `commit-trailers.mjs`, `model-resolver.mjs` (`modelFamily`) | `ship-train.mjs` |
+| `scripts/lib/ship-train/receipt.mjs` | `ReceiptSchema`, `fingerprintOf`, `PHASES`, `readReceipt`, `writeReceipt` | `zod`, `file-io.mjs` (`atomicWriteFileSync`), the existing file-lock helper | `ship-train.mjs` |
+| `scripts/lib/store/train-provenance.mjs` | `findCodeRunCandidates` | `db/client.mjs`, `db/errors.mjs`, `store/repo.mjs` | `ship-train.mjs` |
+| `scripts/ship-train.mjs` | CLI only | the four above, `sync-inventory.mjs`, `fleet/serial.mjs`, `fleet/registry.mjs`, `pinned-worktree/manage.mjs` (`provisionNodeModules`), `cli-io.mjs` | `skills/ship/references/train-mode.md` (prose) |
 
 ## 8. Risk & Trade-off Register
 
-- **R1 — Base moves between update-branch and merge.** `--match-head-commit` protects the head, not the target. If someone else merges to `main` in that window, GitHub squashes onto the newer base and `T(S) ≠ T(H)`, so a `passed` claim is false on `main`. *Mitigation*: `AI-Audited-Tree` vs `%T` exposes the mismatch with pure git, forever, and T6 checks it on every train and files a pending-note. It cannot be amended on a protected `main`. *Accepted*: the window is seconds, in a cooperative fleet, and the claim is self-refuting rather than silent.
+- **R1 — Base moves between update-branch and merge.** `--match-head-commit` protects the head, not the target. *Resolved by construction* (round-1 H1): `passed` is offered only where the server refuses a non-up-to-date merge (§2.3). On an unpinned destination, which is this repo as measured, audited PRs land as `converged` with `identityProvable:false`. Residual: the protection read could be wrong or change mid-train. T6's `%T` check catches that and **blocks publication** until a human has read it.
 - **R2 — Planned gates in the log can differ from actual.** Covered in §2.1. T6 plus pending-note reconcile it, and the entry labels its column "planned".
-- **R3 — Unbound PRs because of a stray untracked file in the audited worktree.** The binder refuses, and the honest repairs are `--waive` or a re-audit. *Accepted*: refusing beats inferring. `plan` names the nearest ancestry-matched run so the operator can see the cause.
+- **R3 — Unbound PRs because of a stray untracked file in the audited worktree.** The binder refuses, and the honest repairs are `--waive` or a re-audit. *Accepted*: refusing beats inferring. `plan` names the newest `sha-only` ancestry candidate, returned by the same query (§2.3), so the operator can see the cause.
+- **R7 — `converged`'s meaning widens.** It now also covers "equality not provable at commit time". The widening only *removes* an implied claim ("the tree differs"). It never adds one, and it carries no new trailer. A reader who needs the distinction has `AI-Audited-Tree`'s presence (on `passed`) and the train entry's `identityProvable` column. *Accepted*, documented in Phase 7.
 - **R4 — Closure on the base under-classifies a PR that only *adds* synced files.** Benign direction, as §2.5 explains.
 - **R5 — The coordinator's log branch must itself be a fleet session.** It claims only `status.md`. Parallel `/ship` runs no longer touch status.md, which **removes** today's main status.md conflict source.
 - **R6 — Sessions that still run single `/ship`.** Single `/ship` stays valid for coordinator-less work. It is unchanged, and its squash-body loss is the same defect. *Deferred (D1)*: `/ship`'s own branch path could pass the body at merge time too, but `/ship` does not merge (it pushes a branch). That needs its own design and is out of scope here.
-- **D2 — Deferred**: a `messageFor` for `direct-squash`/`direct-merge` modes (`applySources`). No current consumer of this feature uses them; this repo is `pr` mode under a required-checks ruleset.
+- **D2 — Deferred**: a `messageFor` for `direct-squash`/`direct-merge` modes (`applySources`). No current consumer of this feature uses them. This repo is `pr` mode (the fleet default) and, measured 2026-10-11, has no ruleset or branch protection on `main`.
 - **D3 — Deferred**: backfilling provenance for the 56 already-merged commits. Not possible honestly: the squash trees exist, but claims made after the fact would not be produced at ship time.
 
 ## 9. Testing Strategy
@@ -295,7 +421,12 @@ What remains is cooperative, stated plainly. `ship-train.mjs land` is an ordinar
   - a closure hit beats everything (including a `tests/fixtures/**` file that is in the closure);
   - code outside the closure → `standard`;
   - only `docs/**`, `*.md` or `tests/**` → `ride-along`;
-  - an empty file list → `ride-along`, flagged with reason `no-files`.
+  - an empty file list → `ride-along`, flagged with reason `no-files`;
+  - a rename **out of** the closure → `urgent` (old endpoint);
+  - a rename **into** the closure → `urgent`;
+  - a delete of a closure file → `urgent`;
+  - a rename from `tests/` into `scripts/` → not `ride-along`;
+  - a path containing a space and one containing a newline both parse correctly from `-z` output.
 - **`isTrainDue`**:
   - all four triggers fire;
   - three ride-alongs → **not** due (the contradiction case);
@@ -304,16 +435,33 @@ What remains is cooperative, stated plainly. `ship-train.mjs land` is an ordinar
   - a tree match on the head;
   - a tree match on an earlier commit (delta recorded);
   - the newest converged run wins;
-  - **an ancestry-only match never binds** for `passed`/`converged` (the must-not-fire direction).
+  - **a `sha-only` candidate never binds** for `passed`/`converged` (the must-not-fire direction);
+  - a run on the merge-base `B` is never a candidate.
 - **`decideTrainGate`**:
   - every row of the §2.3 table;
-  - `passed` is refused when the predicted tree is unknown;
+  - **`passed` is refused whenever `basePinning !== 'strict'`, even with equal trees** (the must-not-fire direction for H1);
   - `AI-Audited-Tree` is present only on `passed` (assert its **absence** on `converged`);
   - refusals name the override flag.
+- **`evaluateGateVerification` with `identityProvable`**:
+  - the default `true` leaves all existing `tests/commit-trailers.test.mjs` cases unchanged;
+  - `false` refuses `passed`;
+  - `false` permits `converged` on equal trees;
+  - `false` never turns a non-converged or absent store row into an accept.
+- **`modelsFromRun`**:
+  - a row with only `final_review_model` yields that family plus the composer, nothing else;
+  - no hard-coded `gpt`/`gemini` without a recording column.
+- **Receipt**:
+  - `.strict()` rejects unknown keys;
+  - an immutable field rewrite is refused;
+  - the fingerprint changes when any selected head changes;
+  - a second writer on the same op is refused.
 - **`composeSquashMessage`**: the output round-trips through `parseMessageTrailers` as a **parseable trailer block**. This is the regression test for the 56/76 defect.
 
-**DB-gated (enrolled twice):** `findCodeRunsByAuditedTrees` against real Postgres:
-- matches by tree;
+**DB-gated (enrolled twice):** `findCodeRunCandidates` against real Postgres:
+- matches by tree (kind `tree`);
+- matches by sha (kind `sha-only`);
+- a row matching both is reported once, as `tree`;
+- deterministic ordering;
 - excludes plan-mode runs and other repos;
 - a missing column reads as a loud schema fault, not `[]`.
 
@@ -328,15 +476,54 @@ What remains is cooperative, stated plainly. `ship-train.mjs land` is an ordinar
 - when present, `--subject`/`--body-file` are added and the body file holds the message;
 - `messageFor` is called with the **post-update** head (fake gh that reports BEHIND, then an updated oid).
 
+**Recovery (fault injection, `tests/ship-train-recovery.test.mjs`):** interrupt immediately before and immediately after each external mutation:
+- the log PR is opened;
+- each merge is submitted;
+- each consumer sync.
+
+In every case, `resume` must:
+- **never resubmit a merge GitHub already performed**;
+- resend the **persisted** message byte-for-byte when the PR is still open at the same head **and** the revalidated claims are unchanged;
+- stop as `diverged` with no resend when they have changed. Case: persist `passed` under strict protection, interrupt before the merge, remove strict protection, resume → `diverged`;
+- stop as `diverged` when a head moved;
+- re-run only the consumers not yet `synced`;
+- refuse `abandon` after the first merge.
+
+**Publication pin:** `sync` checks out `finalMergeOid` even when the fake remote's tip has moved past it, and says so. It refuses while `publicationBlocked` is set.
+
+**Interleaving:** a foreign merge lands between two train merges (fake remote). Expected:
+- `verify` ends in `verified-interleaved` with that oid in `interleaved[]`, not `verified`;
+- `sync` refuses without `--accept-interleaved`;
+- with the flag, `sync` writes the `publicationAmendment` and checks out `finalMergeOid`;
+- a commit landing *after* `finalMergeOid` is never in the amendment.
+
+**Planned vs actual:** update-branch legitimately turns a planned `passed` into an actual `converged`. Expected:
+- `verify` accepts the commit only against `actual[pr]`;
+- `verify` files exactly one planned-vs-actual pending-note;
+- a hand-edited squash body that matches the plan but not `actual[pr]` is rejected.
+
+A change that turns an accept into a refusal stops as `diverged`, with no message persisted and no merge submitted.
+
+**Landing order:** a manifest with the same sources and heads but the log PR first. `finalMergeOid` is the last observed train merge (not the log's), and `verify` checks the observed order against `landingOrder[]`.
+
 **Empirical (pre-ship, verification-discipline):** run `plan` against today's real open PRs (#202–#206) **read-only** and check each binding by hand against the store. A check is not trusted until it has been seen to fail, so the negative control is a PR whose head was amended after its audit.
 
 ## 11. Execution Clustering
 
 - **Cluster A** — Phases 1–3 — fix-gate: yes
-  - Coupling: the read-only core. The classifier and binder are only meaningful together inside `plan`/`verify`, and the wiring pass needs to see `decideTrainGate` → `evaluateGateVerification` and the CLI's use of the store read in one diff. It touches **no** held path, so it can start now.
+  - Coupling: the decision core and its handoff. The classifier, binder, evaluator input and receipt are only meaningful together inside `plan`/`prepare`/`verify`, and the wiring pass needs to see `decideTrainGate` → `evaluateGateVerification(identityProvable)` and the receipt's use of both in one diff. It touches **no** held path (`scripts/lib/commit-trailers.mjs` is shared-lib, unclaimed), so it can start now.
   - author-tier: standard
 - **Cluster B** — Phases 4–5 — fix-gate: yes
   - Coupling: the seam and its only caller. `messageFor` (fleet) and `ship-train land` (ship) must be audited across the boundary, since the post-update-head timing is the correctness claim. **Blocked** until the `claude/fleet-unclaimed-work-impl` claim on `scripts/lib/fleet/**` is released. If `fleet claim` reports BLOCKED, stop and report; never `--override`.
 - **Cluster C** — Phases 6–7 — fix-gate: final
   - Coupling: the human-facing surface and the invariant docs. They describe A+B and must agree with the CLI as built. **Blocked** on the keyset PR's hold on `skills/ship/SKILL.md` and on the fleet claim for `skills/fleet/**`.
 - **Final gate**: the mandatory consolidated Gemini review over the union diff of A+B+C.
+
+## Audit Trail
+
+- **/audit-plan** (SID `audit-plan-1791751223`, run `bd49abc4-243e-42cc-85ec-e5d14328841d`), 3 GPT rounds, stopped at the default cap:
+  - R1 H5 M2, 7/7 accepted;
+  - R2 H2 M1, 3/3 accepted (propagation debt from R1's fixes: interleaving, planned vs actual, landing order);
+  - R3 H1, 1/1 accepted (replay permission on resume).
+  - Acceptance was 100% in every round. Every finding was a concrete design defect, with no rigor pressure. The cap was reached with the count falling (7 → 3 → 1).
+- **Final gate** (Gemini `latest-pro`, `--mode plan`): **APPROVE** on round 1. Disposition `approve`, 0 blocking, 0 debt, 0 new findings, 0 wrongly dismissed.
