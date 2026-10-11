@@ -20,6 +20,7 @@ import {
   STORE_UNREACHABLE_CODES, STORE_UNREACHABLE_NO_ENVELOPE_SIGNATURES,
 } from '../scripts/lib/store/backlog-gather.mjs';
 import { renderBacklogSnapshot, parseBacklogLine } from '../scripts/lib/store/backlog-snapshot.mjs';
+import { waitForPidFile, isAlive } from './helpers/child-ready.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = JSON.parse(fs.readFileSync(path.join(HERE, 'fixtures', 'dashboard-home', 'store-unreachable-envelopes.json'), 'utf8'));
@@ -263,14 +264,21 @@ describe('execReader (real child processes)', () => {
     try {
       const pidFile = path.join(dir, 'pid.txt');
       const script = path.join(dir, 'stubborn.mjs');
-      fs.writeFileSync(script, `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);\n`);
-      const t0 = Date.now();
-      const r = await execReader({ script, args: [], cwd: dir, timeoutMs: 800, graceMs: 300, closeWaitMs: 5000 });
+      // The pid is published LAST: its existence means the SIGTERM trap is installed, so the abort below
+      // can only ever hit a child that is actually stubborn (and never one still booting).
+      fs.writeFileSync(script, `import fs from 'node:fs'; process.on('SIGTERM', () => {}); setInterval(() => {}, 1000); fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));\n`);
+      // Abort by signal, delivered only once the child has published its pid. A `timeoutMs` here would start
+      // its clock at spawn, racing node's startup under CPU load (the child killed before it wrote: ENOENT).
+      // The timeout path itself is covered deterministically by the fakeSpawn tests below.
+      const ac = new AbortController();
+      const reader = execReader({ script, args: [], cwd: dir, signal: ac.signal, graceMs: 300, closeWaitMs: 5000 });
+      const pid = await waitForPidFile(pidFile);
+      assert.ok(isAlive(pid), `child ${pid} must be running when the abort is delivered (else this proves nothing)`);
+      ac.abort();
+      const r = await reader;
       assert.equal(r.aborted, true);
       assert.equal(r.childExited, true, 'resolved only after the child closed');
-      assert.ok(Date.now() - t0 < 8000);
-      const pid = Number(fs.readFileSync(pidFile, 'utf8'));
-      assert.throws(() => process.kill(pid, 0), 'the child must be gone, not merely abandoned');
+      assert.equal(isAlive(pid), false, `child ${pid} must be gone, not merely abandoned`);
     } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
