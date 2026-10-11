@@ -566,3 +566,10 @@ A terminal stop never auto-retries.
   - `/audit-plan` R4 (H2 M1): H1, source identity before claim truth, fixed. H2 was rebutted with `scripts/sync-to-repos.mjs:1701` (the sync journal lives in each consumer checkout) and GPT overruled itself, so it is dismissed. M1, the ship-event unit, fixed.
   - R5 (H1): one repo-scoped, code-mode run lookup for every claim; fixed.
   - Gemini plan gate round 2 (`--prior` round 1): **APPROVE**. Disposition `approve`, 0 blocking, 0 debt, 0 new, 0 wrongly dismissed. The Gemini cap of 2 rounds is now used.
+- **Cluster A, stateless re-implementation** (`/audit-code` SID `audit-code-1791760063`, base `9d6bd80c`; this replaces the receipt-shaped implementation the R1–R6 session above audited). Net −537 lines.
+  - R1 (7 source files): H4 M6 L1, 9 accepted (82%). M1 dismissed as stale (receipt.mjs is removed by the amendment); M6 dismissed as a control marker. Fixes: one repo identity from `origin`; canonical trailer keys; terminator-aware boolean flags; a framed `-z` parse; an `unbindable` input category.
+  - R2 (verify + commands): H1 accepted. A PR's commits are now measured from the squash's first parent, so an update-branch can't lend one PR another's run.
+  - R3 (5 files), R4 (2 files), R5 (all 7): **PASS, H:0 M:0 L:0**, coverage COMPLETE every round. Converged.
+  - Every fix was proven red, then green. That includes the held real-Postgres suite (6/6), where removing the repo-scope clause turns its new `findCodeRunForRepo` test red.
+  - Deferred-declared (not gating A): `tests/ship-train-recovery.test.mjs` (Cluster B), `skills/ship/references/train-mode.md` (Cluster C), and the DB suite's two-list enrolment (held for the keyset PR).
+- **Cluster A final gate** (Gemini `latest-pro`, stateless code): **APPROVE**, round 1. Disposition `approve`, 0 blocking, 0 debt, 0 new, 0 wrongly dismissed. Its envelope reported `Code: PARTIAL, changed lines unmeasured for 6 file(s)`, so the APPROVE covers what it examined.
