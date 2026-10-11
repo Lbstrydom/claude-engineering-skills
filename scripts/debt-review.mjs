@@ -32,6 +32,7 @@ import { zodTextFormat } from 'openai/helpers/zod';
 
 import { DebtReviewResultSchema } from './lib/schemas.mjs';
 import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
+import { resolveDebtReadContext, loadAuthoritativeDebt, DEBT_SOURCE_LABELS } from './lib/debt-memory.mjs';
 import { DEFAULT_DEBT_EVENTS_PATH } from './lib/debt-events.mjs';
 import {
   rankRefactorsByLeverage, findStaleEntries, findOverdueForReview, oldestEntryDays,
@@ -59,6 +60,7 @@ function parseArgs(argv) {
     ledgerPath: get('--ledger') || DEFAULT_DEBT_LEDGER_PATH,
     eventsPath: get('--events') || DEFAULT_DEBT_EVENTS_PATH,
     outFile: get('--out'),
+    noCloud: hasFlag('no-cloud'),
     help: hasFlag('help', { short: 'h' }),
   };
 }
@@ -70,9 +72,14 @@ Cluster accumulated tech-debt into refactor candidates ranked by leverage.
 
 Modes (default = LLM clustering via the resolved GPT audit model):
   --local-only           Deterministic heuristic clustering, no external LLM
+                         (debt is still read from the private store)
   --include-sensitive    Include sensitive entries in LLM payload (opt-in)
 
+Source: the private store when configured (the source of truth), else the
+local cache, labelled as such in the report.
+
 Options:
+  --no-cloud             Read only the local cache (labelled not authoritative)
   --ttl-days <n>         Flag entries older than N days as stale (default: 180)
   --ledger <path>        Debt ledger path (default: .audit/tech-debt.json)
   --events <path>        Event log path (default: .audit/local/debt-events.jsonl)
@@ -91,7 +98,15 @@ function renderMarkdown({ ledger, review, violations, mode, upstreamOwned = [], 
   lines.push(`# Debt Review — ${now}`);
   lines.push('');
   lines.push(`- **Mode**: ${mode}`);
+  lines.push(`- **Source**: ${DEBT_SOURCE_LABELS[ledger.source] ?? ledger.source ?? 'unknown'}`);
   lines.push(`- **Entries**: ${ledger.entries.length}`);
+  if (ledger.localCacheEntries != null && ledger.localCacheEntries !== ledger.entries.length) {
+    lines.push(`- **Local cache**: ${ledger.localCacheEntries} entries (diverges — \`node scripts/debt-reconcile.mjs\`)`);
+  }
+  if (ledger.recurrenceMeasured === false) {
+    // Recurrence feeds the ranking; without it every entry reads as surfaced 0 times.
+    lines.push(`- **Recurrence**: unknown — the store's events could not be read (${ledger.recurrenceReason}); the ranking below ignores it`);
+  }
   lines.push(`- **Clusters**: ${review.clusters.length}`);
   lines.push(`- **Oldest entry**: ${review.summary.oldestEntryDays} days`);
   lines.push(`- **Stale (>TTL)**: ${review.summary.staleEntries.length}`);
@@ -402,14 +417,29 @@ async function main() {
   const opts = parseArgs(process.argv);
   if (opts.help) { printUsage(); process.exit(0); }
 
-  // Load ledger
-  let ledger;
+  // Load ledger. The ENTRIES come from loadAuthoritativeDebt, which asks the
+  // private store when it is configured: this ranked the local cache alone,
+  // which on 2026-10-11 held 67 of the store's 315 entries and put a different
+  // file first. The local FILE is still read for its budgets.
+  let local;
   try {
-    ledger = readDebtLedger({ ledgerPath: opts.ledgerPath, eventsPath: opts.eventsPath });
+    local = readDebtLedger({ ledgerPath: opts.ledgerPath, eventsPath: opts.eventsPath });
   } catch (err) {
     console.error(`Error reading debt ledger: ${err.message}`);
     process.exit(1);
   }
+  const ctx = await resolveDebtReadContext({ noCloud: opts.noCloud });
+  const auth = await loadAuthoritativeDebt(ctx, { ledgerPath: opts.ledgerPath, eventsPath: opts.eventsPath });
+  const ledger = {
+    entries: auth.entries,
+    budgets: local.budgets,
+    available: auth.source !== 'unavailable',
+    reason: auth.reason,
+    source: auth.source,
+    localCacheEntries: auth.source === 'cloud' && local.available !== false ? local.entries.length : null,
+    recurrenceMeasured: auth.recurrenceMeasured,
+    recurrenceReason: auth.recurrenceReason,
+  };
 
   // "There is no ledger" and "the ledger is empty" are different claims, and
   // this reported the second when the first was true — `.audit/` is gitignored,
@@ -417,7 +447,8 @@ async function main() {
   // worktree. Asserting "no debt to review" from an unread file is the same
   // false-green as debt-health-check's "0 open entries".
   if (ledger.available === false) {
-    const output = `# Debt Review\n\n_UNVERIFIABLE — no debt ledger at ${opts.ledgerPath} (${ledger.reason})._\n\n`
+    const what = ctx.source === 'cloud' ? 'the private store could not be read' : `no debt ledger at ${opts.ledgerPath}`;
+    const output = `# Debt Review\n\n_UNVERIFIABLE — ${what} (${ledger.reason})._\n\n`
       + '_Nothing was read, so this is not a statement that there is no debt._\n';
     if (opts.outFile) fs.writeFileSync(opts.outFile, output, 'utf-8');
     else process.stdout.write(output);

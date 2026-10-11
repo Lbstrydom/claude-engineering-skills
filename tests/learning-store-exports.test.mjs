@@ -95,6 +95,9 @@ const EXPECTED_EXPORTS = [
   // consecutive SELECTs can observe different committed states.
   'readReconciliationSnapshot',
   'readDebtEventsCloud',
+  // docs/plans/debt-readers-ask-store.md — the same read, saying whether it
+  // happened: a REPORTING caller must not hydrate a failed query as "no events".
+  'readDebtEventsCloudResult',
   'removeDebtEntryCloud',
   'upsertDebtEntries',
   // docs/plans/debt-ledger-persisted-record-contract.md §2 Fix D — links a
@@ -616,6 +619,9 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // 210 → 211: +recordPersonaPairLink (2026-09-27) — the writer behind
     // `link-persona-pair`, which SKILL.md Step P7 had named for months while
     // no command, handler or table existed.
-    assert.equal(EXPECTED_EXPORTS.length, 211);
+    // 211 → 212: +readDebtEventsCloudResult (2026-10-11, debt-readers-ask-
+    // store.md) — the events read that says whether it happened, so a
+    // reporting caller cannot count a failed query as "no recurrence".
+    assert.equal(EXPECTED_EXPORTS.length, 212);
   });
 });

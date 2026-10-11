@@ -519,7 +519,21 @@ export function renderNeighbourhoodCallout({ records, targetPaths, totalCandidat
  * @param {number|null} [args.symbolCount] symbols in the measured snapshot
  * @param {{label: string}|null} [args.store] from `db/client.mjs::storeDescriptor`
  */
-export function renderDriftIssue({ drift, threshold, status, clusters = [], violations = [], generatedAt, commitSha, refreshId, repoName, symbolCount = null, store = null }) {
+/**
+ * The `Index freshness` line, or null when the caller measured none. A stale
+ * index is the loud case: the whole report then describes an older commit.
+ */
+function renderFreshnessLine(freshness, commitSha) {
+  if (!freshness) return null;
+  if (freshness.state === 'current') return `- **Index freshness:** ${escapeMarkdown(freshness.detail)}`;
+  if (freshness.state === 'behind' || freshness.state === 'off-branch') {
+    return `- **Index freshness:** ⚠ ${escapeMarkdown(freshness.detail)} — this report measures ${commitSha || 'another commit'}, `
+      + 'not the current code; re-run the refresh on the default branch to measure it';
+  }
+  return `- **Index freshness:** unknown — ${escapeMarkdown(freshness.detail || 'not measured')}`;
+}
+
+export function renderDriftIssue({ drift, threshold, status, clusters = [], violations = [], generatedAt, commitSha, refreshId, repoName, symbolCount = null, store = null, freshness = null }) {
   const TOP_CLUSTERS = 5;
   const top = clusters.slice(0, TOP_CLUSTERS);
   const tail = clusters.slice(TOP_CLUSTERS);
@@ -531,6 +545,7 @@ export function renderDriftIssue({ drift, threshold, status, clusters = [], viol
     `- **Status:** \`${status}\``,
     `- **Generated:** ${generatedAt}`,
     `- **Commit:** ${commitSha || 'unknown'}   refresh_id: ${refreshId || 'unknown'}`,
+    ...[renderFreshnessLine(freshness, commitSha)].filter(Boolean),
     `- **Store:** ${store?.label ? `\`${escapeMarkdown(store.label)}\`` : 'unknown'}`,
     `- **Corpus measured:** ${Number.isFinite(symbolCount) ? `${symbolCount} symbols` : 'unknown — the score below describes an unknown number of symbols'}`,
     `- **Drift score:** ${drift?.score ?? 0} / threshold ${threshold}`,

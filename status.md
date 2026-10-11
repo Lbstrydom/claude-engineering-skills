@@ -121,6 +121,30 @@ Measured on `origin/main` 56eb0459. Each figure carries its command.
 - Operator: approve or run `npm run arch:refresh` on main. Run `npm ci` in the main checkout.
 - Lane B candidates, awaiting a pick: runs-findings decomposition, legacy-production-audit decomposition, Q2 measurability, stdout-flush envelope burndown, post-merge maintenance runner.
 
+## 2026-10-11 — `fleet handover`: move coordination to another Claude Code account, memory carry-over measured
+
+A standard check for switching Claude Code accounts on one machine. It runs from any repo with the bundle.
+
+- **`prepare`** runs in the old account and is read-only towards repos. It records:
+  - a hash manifest of EVERY `projects/*/memory` under the account's config root (`CLAUDE_CONFIG_DIR`, else `~/.claude`);
+  - live claims across the invoking repo, every registered consumer (found via `resolveSourceRepo`) and any `--repo`, each with a resume prompt and worktree risks;
+  - open directives and trains, scheduled tasks, settings presence, and folder anomalies.
+
+  The output is `.git/fleet/handover/handover-<id>.{json,md}`, and the `.md` includes the coordination prompt for the new account.
+- **`receive`** runs in the new account. On the same config root it verifies every hash. On a different root it copies memory additively, following a fixed decision table: each file is staged, hash-checked, published with a no-clobber hard link under a lock, and a differing file is never overwritten (CONFLICT).
+  - Scheduled-task registration is always UNVERIFIED.
+  - Settings are compared by hash only, never copied.
+  - Unmeasured or incomplete state always exits 3 rather than clean.
+- **`harness-paths.mjs`** is the one account-aware path resolver. The friction-memory resolver now honours `CLAUDE_CONFIG_DIR`; it previously hard-coded `~/.claude`.
+
+Real run on this machine: 4 memory dirs / 712 files, 22 live sessions over 3 repos, 13 scheduled tasks, 0 folder anomalies. A same-account receive verified 712/712.
+
+Verification:
+- Plan: audit-plan 3 rounds, then Gemini plan gate APPROVE after 2 fixes.
+- Code: audit-code 2 rounds with complete coverage. R1 found H10 M10 (15 fixed, 3 deferred as pre-existing friction-parser code, 2 tool notices); R2 found H1 M1, both fixed.
+- Gemini final gate (gemini-pro-latest): APPROVE, 0 blocking.
+- 26 handover tests plus 12 resolver tests, each key guard seen red with its fix removed.
+
 ## 2026-10-10 — pre-push publishes to consumers only from the default branch
 
 The pre-push hook's consumer sync dates from the main-only workflow. Since branches + PRs (2026-09-25) it ran on every feature-branch push and copied UNMERGED tooling into every consumer. Today that included a branch whose PR was still under review, synced into all three.

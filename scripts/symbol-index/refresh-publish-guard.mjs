@@ -162,6 +162,70 @@ export function assessPublishEligibility({ run, override = false }) {
  *
  * @param {{repoRoot: string, allowBranchPublish?: boolean, env?: NodeJS.ProcessEnv, run?: Function}} opts
  */
+/**
+ * How far the ACTIVE index's commit trails the default branch.
+ *
+ * The publish guard above keeps a feature branch from becoming the active
+ * index; its cost is that the index only moves when a refresh runs ON the
+ * default branch. Measured 2026-10-11: with every push a feature-branch push,
+ * the index sat at a6b035b3 for two weeks, 40 first-parent commits behind
+ * origin/main, and the drift report printed that commit with no hint it was
+ * not the current code. This is the hint.
+ *
+ * Decided by IDENTITY and ANCESTRY, never by a count alone: `rev-list --count
+ * <index>..<tip>` is also 0 when the index is AHEAD of the tip (published from
+ * a feature branch that contains it), which is exactly the snapshot the guard
+ * exists to keep out. So:
+ *   index === tip                       → `current`
+ *   index is an ancestor of tip         → `behind` (N = rev-list --count)
+ *   anything else (ahead, diverged)     → `off-branch`
+ *   shallow clone / commit absent / git
+ *   could not run / no default branch   → `unknown` (never `current`)
+ * The tip is `origin/<default>` first — a local branch of the same name can be stale.
+ *
+ * @param {object} opts
+ * @param {Function} opts.run - git runner (`makeGitRunner(repoRoot)`); injectable
+ * @param {string|null|undefined} opts.indexCommit - the active snapshot's commit
+ * @returns {{state: 'current'|'behind'|'off-branch'|'unknown', behind: number|null,
+ *            defaultBranch: string|null, tip: string|null, detail: string}}
+ */
+export function assessIndexFreshness({ run, indexCommit }) {
+  const unknown = (detail, def = null, tip = null) => ({ state: 'unknown', behind: null, defaultBranch: def, tip, detail });
+  if (!indexCommit) return unknown('the active snapshot carries no commit');
+  const def = resolveDefaultBranch({ run });
+  if (!def.ok) return unknown(def.detail);
+  const tip = def.tips[0];
+  const short = tip.replace(/^refs\/(?:remotes|heads)\//, '');
+  const result = (state, behind, detail) => ({ state, behind, defaultBranch: def.name, tip, detail });
+
+  const shallow = run(['rev-parse', '--is-shallow-repository']);
+  if (execFailed(shallow) || shallow.status !== 0) return result('unknown', null, 'git could not report whether this clone is shallow');
+  if (String(shallow.stdout ?? '').trim() === 'true') {
+    return result('unknown', null, 'this clone is shallow, so its history cannot prove where the index sits');
+  }
+
+  const sha = (rev) => {
+    const r = run(['rev-parse', '--verify', '--quiet', `${rev}^{commit}`]);
+    if (execFailed(r)) return { ok: false, detail: `git could not run (rev-parse ${rev})` };
+    return r.status === 0 ? { ok: true, sha: String(r.stdout ?? '').trim() } : { ok: false, detail: null };
+  };
+  const index = sha(indexCommit);
+  if (!index.ok) return result('unknown', null, index.detail ?? `${String(indexCommit).slice(0, 8)} is not in this clone's history`);
+  const head = sha(tip);
+  if (!head.ok) return result('unknown', null, head.detail ?? `${short} does not resolve`);
+  if (index.sha === head.sha) return result('current', 0, `at the tip of ${short}`);
+
+  const anc = run(['merge-base', '--is-ancestor', index.sha, head.sha]);
+  if (execFailed(anc) || (anc.status !== 0 && anc.status !== 1)) return result('unknown', null, 'git could not decide ancestry');
+  if (anc.status === 1) {
+    return result('off-branch', null, `${index.sha.slice(0, 8)} is not on ${short} (published from another branch)`);
+  }
+  const count = run(['rev-list', '--count', `${index.sha}..${head.sha}`]);
+  const behind = !execFailed(count) && count.status === 0 ? Number.parseInt(String(count.stdout ?? '').trim(), 10) : Number.NaN;
+  if (!Number.isInteger(behind) || behind < 1) return result('unknown', null, 'git rev-list returned no usable count');
+  return result('behind', behind, `${behind} commit${behind === 1 ? '' : 's'} behind ${short}`);
+}
+
 export function checkRefreshPublishEligibility({ repoRoot, allowBranchPublish = false, env = process.env, run = makeGitRunner(repoRoot) }) {
   const override = allowBranchPublish === true || env[ALLOW_BRANCH_PUBLISH_ENV] === '1';
   return assessPublishEligibility({ run, override });

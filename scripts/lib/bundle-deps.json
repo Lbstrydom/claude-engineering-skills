@@ -183,6 +183,7 @@
         "scripts/.claude-skills/lib/fleet/config.mjs",
         "scripts/.claude-skills/lib/fleet/contracts.mjs",
         "scripts/.claude-skills/lib/fleet/directives.mjs",
+        "scripts/.claude-skills/lib/fleet/handover.mjs",
         "scripts/.claude-skills/lib/fleet/registry.mjs",
         "scripts/.claude-skills/lib/fleet/serial.mjs",
         "scripts/.claude-skills/lib/fleet/telemetry-drain.mjs",

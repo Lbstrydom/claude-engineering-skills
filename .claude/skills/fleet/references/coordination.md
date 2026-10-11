@@ -1,5 +1,5 @@
 ---
-summary: Coordinating sessions without host messages — next, directives, release, archive-check, prune, hold notes.
+summary: Coordinating sessions without host messages — next, directives, release, archive-check, prune, handover, hold notes.
 ---
 
 # Coordinating sessions without host messages
@@ -81,6 +81,45 @@ is delivered.
   the archive-check evidence (its "unpushed" commits excepted, because their
   content is proven on base). Idle branches, locked worktrees, the main checkout
   and the current worktree are never listed. Every kept branch says why.
+
+## Moving to another Claude Code account (`fleet handover`)
+
+Repos, worktrees, uncommitted files and this registry are on disk, so they carry
+over on their own. What stays with the old ACCOUNT is everything under its
+config root (`CLAUDE_CONFIG_DIR`, else `~/.claude`):
+- the harness memory of EVERY repo (`projects/*/memory`);
+- scheduled tasks;
+- user settings.
+
+Session transcripts, cross-session messages and task chips cannot move at all.
+
+- **Old account:** `fleet handover prepare` is read-only towards every repo, and
+  runs from ANY repo with the bundle. It records:
+  - a hash manifest of all memory;
+  - every live claim (worktree, branch, uncommitted files, ready, waiting-on)
+    with a resume prompt;
+  - open directives and trains;
+  - scheduled tasks and settings presence;
+  - folder anomalies (case-duplicate or worktree-slug memory dirs, a missing
+    `MEMORY.md`).
+
+  It covers the invoking repo, plus every registered consumer when the source
+  repo resolves, plus each `--repo`; an unresolved source is a WARNING, never
+  a silent narrower scope. Output goes to `<git-common-dir>/fleet/handover/`
+  (a `.json` manifest and a `.md` with the coordination prompt).
+- **New account:** paste the coordination prompt, then run
+  `fleet handover receive --from <json>`.
+  - *Same config root:* it verifies every hash.
+  - *Different config root:* it copies missing memory files additively (staged,
+    hash-checked, published with a no-clobber hard link, under a lock) and never
+    overwrites a differing file; that is a CONFLICT for you to decide.
+
+  Scheduled-task registration is always UNVERIFIED (the CLI cannot see the
+  scheduler): recreate the tasks with the scheduling tool. Settings are compared
+  by hash only, never copied. Exit codes: 0 clean, 3 human steps (conflicts,
+  tasks to recreate, lock held), 1 a file could not be decided.
+- Commit WIP in sessions you own before preparing; prepare flags uncommitted
+  work, it never commits it.
 
 ## Permission prompts
 
