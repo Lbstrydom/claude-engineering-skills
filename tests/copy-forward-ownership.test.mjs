@@ -159,6 +159,29 @@ test('an edge is dropped when EITHER endpoint file is disowned as an importer', 
  * that switches itself off based on its own argument's type is inert in
  * precisely the configuration that needs it.
  */
+test('an edge INTO a disowned target is not carried — extraction drops an edge when EITHER endpoint is disowned', () => {
+  // The importer is owned and the target exists on disk, so neither the importer
+  // check nor fileStillExists can drop it: only the target-side ownership check can.
+  const edges = [
+    { importer_path: 'src/app.mjs', imported_path: 'scripts/.claude-skills/vendored.mjs' },
+    { importer_path: 'src/app.mjs', imported_path: 'src/util.mjs' },
+  ];
+  const keep = retainCarriedRows(edges, {
+    pathOf: (r) => r.importer_path,
+    targetPathOf: (r) => r.imported_path,
+    touchedFileSet: new Set(),
+    fileStillExists: () => true,
+    isDisowned: (p) => p.startsWith('scripts/.claude-skills/'),
+  });
+  assert.deepEqual(keep.map((r) => r.imported_path), ['src/util.mjs']);
+});
+
+test('NEGATIVE CONTROL — with no ownership predicate (a degraded oracle) an edge into a disowned target is carried', () => {
+  const edges = [{ importer_path: 'src/app.mjs', imported_path: 'scripts/.claude-skills/vendored.mjs' }];
+  const keep = retainCarriedRows(edges, { pathOf: (r) => r.importer_path, targetPathOf: (r) => r.imported_path, touchedFileSet: new Set(), fileStillExists: () => true });
+  assert.equal(keep.length, 1, 'isDisowned absent means CARRY, never drop on an unanswered question');
+});
+
 test('the dimension check is not disabled by a string dimension', () => {
   // The exact reported case: dimension '2' (string) with a three-element vector.
   assert.throws(() => vectorLiteral([1, 2, 3], '2'), /3 dims, expected 2/,
