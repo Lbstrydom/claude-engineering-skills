@@ -562,3 +562,7 @@ A terminal stop never auto-retries.
   - Census: structure, wiring, be-services and sustainability `completed`; frontend `ineligible` (backend-only diff); quickfix `completed`; adjacency **incomplete** (`ADJACENCY_INCOMPLETE`, maxContainers=20); arch-memory `ineligible` (`--scope diff`).
   - Not converged by the 2-stable-rounds rule: R6 raised 2 HIGH, fixed after it, and there is no R7.
 - **Cluster A final gate** (Gemini `latest-pro`): **APPROVE**, round 1. Disposition `approve`, 0 blocking, 0 debt, 0 new, 0 wrongly dismissed. Its envelope reported `Code: PARTIAL, changed lines unmeasured for 7 file(s)`, so the APPROVE covers the examined files only.
+- **Stateless amendment (2026-10-12)** — §2.1, §2.2, §2.8, §2.9, §7b, §8, §9 and §11 rewritten to remove the ship-train receipt. §2.8 maps every item the receipt provided to the owned state that covers it.
+  - `/audit-plan` R4 (H2 M1): H1, source identity before claim truth, fixed. H2 was rebutted with `scripts/sync-to-repos.mjs:1701` (the sync journal lives in each consumer checkout) and GPT overruled itself, so it is dismissed. M1, the ship-event unit, fixed.
+  - R5 (H1): one repo-scoped, code-mode run lookup for every claim; fixed.
+  - Gemini plan gate round 2 (`--prior` round 1): **APPROVE**. Disposition `approve`, 0 blocking, 0 debt, 0 new, 0 wrongly dismissed. The Gemini cap of 2 rounds is now used.
