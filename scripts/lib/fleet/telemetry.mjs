@@ -83,6 +83,7 @@ export function modeOf(verb, flags = {}, positionals = []) {
     case 'release': return has('--abandoned') ? 'abandoned' : 'done';
     case 'restack': return has('--replace') ? 'replace' : 'candidate';
     case 'status': return has('--fetch') ? 'fetch' : null;
+    case 'handover': return positionals[0] === 'prepare' || positionals[0] === 'receive' ? positionals[0] : null;
     default: return null;
   }
 }
