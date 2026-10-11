@@ -653,7 +653,18 @@ export const REGISTRY = Object.freeze([
   {
     name: 'learning-replay',
     forward: { to: 'scripts/learning/replay.mjs' }, portExempt: true,
-    positionals: 'none', payload: 'none',
+    // The dispatcher validates ONLY the names declared here (dispatch.mjs builds
+    // `allowed` from `flags`), so a forwarder that takes flags or a positional
+    // MUST declare them — `positionals:'none'` with no flags made the documented
+    // `npm run learning:replay -- pass_selection --since 7d` exit 2 before it ever
+    // reached replay.mjs (measured 2026-10-03; the CLI-contract-hardening plan §2.5).
+    // The verbs and flags mirror replay.mjs's own grammar; the registry cannot
+    // import it (static data), so tests/learning-replay.test.mjs pins the two
+    // against REPLAY_GRAMMAR. Unknown verbs still flow to the handler, so a typo'd
+    // decision type gets replay's own ok:false envelope, not a BAD_INPUT.
+    flags: ['policy', 'baseline', 'since', 'repo', 'repo-id', 'format'],
+    positionals: { verbs: ['pass_selection', 'convergence_predict', 'arch_memory_band'] },
+    payload: 'none',
     scope: 'none', kind: 'read', cloud: 'none',
     load: () => import('./commands/learning.mjs').then((m) => m.learningReplayCmd),
   },

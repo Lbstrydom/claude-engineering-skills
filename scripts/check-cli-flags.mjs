@@ -123,7 +123,9 @@ export const BASELINE = new Set([
   'scripts/defect-harvest.mjs',
   'scripts/efficacy-lints-check.mjs',
   'scripts/friction-log.mjs',
-  'scripts/learning/replay.mjs',
+  // 'scripts/learning/replay.mjs' — FIXED: its isMain calls assertKnownFlags (the gate
+  // reported it shrinkable before 2026-10-03). Negative control, not the detector's
+  // say-so: `replay.mjs pass_selection --nope` exits 2 (tests/learning-replay.test.mjs).
   'scripts/ledger-decompose.mjs',
   // 'scripts/lib/arch-memory/calibrate.mjs' — FIXED 2026-07-20, baseline paid
   // down. It should never have been baselined: `--out` feeds writeFileSync
