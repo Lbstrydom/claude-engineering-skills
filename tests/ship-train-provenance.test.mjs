@@ -205,7 +205,7 @@ describe('findCodeRunCandidates — failure is never an empty result (pure)', ()
   test('a schema fault (SQLSTATE 42xxx) → ok:false schema-fault, not []', async () => {
     const err = Object.assign(new Error('column "audited_tree" does not exist'), { code: '42703' });
     const r = await findCodeRunCandidates({ repoRowId: 'r', trees: [hex('a')], oids: [] }, { isCloudEnabled: on, many: async () => { throw err; } });
-    assert.deepEqual(r, { ok: false, reason: 'schema-fault: 42703' });
+    assert.deepEqual(r, { ok: false, fatal: true, reason: 'schema-fault: 42703' });
   });
 
   test('any other query failure → ok:false query-failed', async () => {

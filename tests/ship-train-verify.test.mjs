@@ -7,6 +7,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyLanded, checkCommitClaims, readAiTrailers, publicationClearance } from '../scripts/lib/ship-train/verify.mjs';
 import { composeSquashMessage } from '../scripts/lib/ship-train/provenance.mjs';
+import { verifyBasisOf } from '../scripts/lib/ship-train/receipt.mjs';
 
 const oid = (c) => c.repeat(40);
 const RUN = 'bd49abc4-243e-42cc-85ec-e5d14328841d';
@@ -146,7 +147,13 @@ describe('verifyLanded', () => {
 });
 
 describe('publicationClearance — the one predicate sync must pass (round-2 H1)', () => {
-  const verified = (over = {}) => ({ phase: 'verified', verify: { interleaved: [], finalMergeOid: oid('c'), publicationBlocked: false, blockedReason: null }, ...over });
+  // A verify record carries the basis of the receipt it judged; the fixture
+  // computes it the same way verifyLanded does.
+  const verified = (over = {}) => {
+    const r = { phase: 'verified', selected: [], verify: { interleaved: [], finalMergeOid: oid('c'), publicationBlocked: false, blockedReason: null }, ...over };
+    r.verify = { ...r.verify, basis: verifyBasisOf(r) };
+    return r;
+  };
 
   test('a clean verified train is clear', () => {
     assert.deepEqual(publicationClearance(verified()), { clear: true, blocks: [] });
@@ -163,6 +170,15 @@ describe('publicationClearance — the one predicate sync must pass (round-2 H1)
     assert.equal(publicationClearance(base).blocks[0].flag, '--accept-interleaved');
     assert.equal(publicationClearance({ ...base, publicationAmendment: { acceptedOids: [oid('d')], at: 't' } }).clear, false);
     assert.equal(publicationClearance({ ...base, publicationAmendment: { acceptedOids: [oid('d'), oid('e')], at: 't' } }).clear, true);
+  });
+
+  test('a verification is obsolete once the facts it judged change (round-6 H1)', () => {
+    const r = verified();
+    assert.equal(publicationClearance(r).clear, true);
+    const moved = { ...r, merges: { 202: { mergeOid: oid('a'), observedHeadOid: oid('1'), at: 't' } } };
+    const c = publicationClearance(moved);
+    assert.equal(c.clear, false);
+    assert.match(c.blocks[0].reason, /changed after this verification/);
   });
 
   test('a provenance block clears only with the invocation acknowledgement', () => {

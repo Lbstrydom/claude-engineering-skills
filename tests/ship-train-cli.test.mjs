@@ -206,6 +206,15 @@ describe('plan', () => {
     await assert.rejects(runPlan(ctx, opts({ prs: [202] })), /no usable base branch/);
   });
 
+  test('a schema fault in the store stops the plan instead of degrading to store-unavailable (round-6 H2)', async () => {
+    const ctx = fakeCtx({ prs: { 203: PR203 }, fleet: readyFleet });
+    ctx.store.resolveRepoRowIdForRead = async () => ({ ok: false, fatal: true, reason: 'schema-fault: 42703' });
+    await assert.rejects(runPlan(ctx, opts({ prs: [203] })), (e) => e instanceof TrainRefusal && /rejected the provenance query/.test(e.message));
+    const ctx2 = fakeCtx({ prs: { 203: PR203 }, fleet: readyFleet });
+    ctx2.store.findCodeRunCandidates = async () => ({ ok: false, fatal: true, reason: 'schema-fault: 42P01' });
+    await assert.rejects(runPlan(ctx2, opts({ prs: [203] })), /schema-fault: 42P01/);
+  });
+
   test('no PRs named and none fleet-ready → refusal', async () => {
     await assert.rejects(runPlan(fakeCtx({ prs: {}, fleet: {} }), opts()), TrainRefusal);
   });

@@ -137,6 +137,7 @@ const VerifyRecord = z.object({
   blockedReason: z.string().nullable(),
   orderOk: z.boolean(),
   observedOrder: z.array(PR),
+  basis: z.string().regex(/^[0-9a-f]{64}$/),
 }).strict();
 
 export const ReceiptSchema = z.object({
@@ -199,6 +200,17 @@ export function fingerprintOf(receipt) {
   const planning = {};
   for (const k of IMMUTABLE_KEYS) if (k !== 'fingerprint') planning[k] = receipt[k];
   return crypto.createHash('sha256').update(canonicalJson(planning)).digest('hex');
+}
+
+/**
+ * The receipt state a verification judged: everything verify reads, nothing it
+ * writes. A verification is valid only while this is unchanged (round-6 code
+ * H1) — a later concurrent change to the facts it judged makes it obsolete,
+ * and publicationClearance refuses an obsolete one.
+ */
+export function verifyBasisOf(receipt) {
+  const { selected, logPr, landingOrder, actual, merges, destination } = receipt;
+  return crypto.createHash('sha256').update(canonicalJson({ selected, logPr, landingOrder, actual, merges, destination })).digest('hex');
 }
 
 /** @param {string} gitCommonDir */

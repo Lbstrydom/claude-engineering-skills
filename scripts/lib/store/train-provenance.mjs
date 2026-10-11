@@ -6,10 +6,12 @@
  * docs/plans/ship-trains.md §2.3 (binding) and round-1 H4 (one query returns
  * both kinds, kept apart by `matchKind`).
  *
- * Failure is never an empty result. A cloud-off store, an unresolvable repo, a
- * schema fault and a failed query each come back as `{ok:false, reason}` — the
- * caller turns that into a `store-unavailable` binding, which refuses a
- * non-ride-along PR. `[]` means only "the query ran and nothing matched".
+ * Failure is never an empty result. A cloud-off store, an unresolvable repo and
+ * a failed query come back as `{ok:false, reason}` — the caller turns that into
+ * a `store-unavailable` binding, which refuses a non-ride-along PR. A SCHEMA
+ * fault additionally carries `fatal:true`: a broken query is not an absent
+ * store, so the caller stops instead of degrading. `[]` means only "the query
+ * ran and nothing matched".
  *
  * @module scripts/lib/store/train-provenance
  */
@@ -43,7 +45,10 @@ export async function resolveRepoRowIdForRead(cwd) {
     return row?.id ? { ok: true, repoRowId: row.id } : { ok: false, reason: 'repo-not-in-store' };
   } catch (err) {
     const fault = describeSchemaFault(err, 'resolveRepoRowIdForRead');
-    if (fault) process.stderr.write(fault);
+    if (fault) {
+      process.stderr.write(fault);
+      return { ok: false, fatal: true, reason: `schema-fault: ${err.code ?? err.cause?.code ?? 'unknown'}` };
+    }
     return { ok: false, reason: `repo lookup failed: ${err.message}` };
   }
 }
@@ -111,7 +116,7 @@ export async function findCodeRunCandidates({ repoRowId, trees, oids }, deps = {
     const fault = describeSchemaFault(err, 'findCodeRunCandidates');
     if (fault) {
       process.stderr.write(fault);
-      return { ok: false, reason: `schema-fault: ${err.code}` };
+      return { ok: false, fatal: true, reason: `schema-fault: ${err.code}` };
     }
     return { ok: false, reason: `query-failed: ${err.message}` };
   }

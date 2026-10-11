@@ -223,6 +223,13 @@ export async function computePlan(ctx, { prs, overrides, composer }) {
   const basePinning = readBasePinning(ctx, repo, branch);
   const closure = ctx.closure();
   const repoRow = await ctx.store.resolveRepoRowIdForRead(ctx.cwd);
+  // A schema fault is a broken query, not an absent store: it never degrades
+  // into "store unavailable", which would still let ride-alongs land as
+  // not-run (round-6 code H2). Stop loudly instead.
+  const failFatal = (r) => {
+    if (r?.fatal) throw new TrainRefusal(`the audit store rejected the provenance query (${r.reason}) — fix the store schema before planning a train (node scripts/setup-postgres.mjs --check-drift)`);
+  };
+  failFatal(repoRow);
 
   const rows = [];
   for (const pr of selected.sort((a, b) => a - b)) {
@@ -230,6 +237,7 @@ export async function computePlan(ctx, { prs, overrides, composer }) {
     const candidates = repoRow.ok
       ? await ctx.store.findCodeRunCandidates({ repoRowId: repoRow.repoRowId, trees: facts.commits.map((c) => c.tree), oids: facts.commits.map((c) => c.oid) })
       : { ok: false, reason: repoRow.reason };
+    failFatal(candidates);
     const row = decidePr({ facts, closure, basePinning, candidates, overrides, composer });
     const session = fleet.get(facts.view.headRefName);
     const blockers = [];

@@ -24,6 +24,7 @@
  */
 
 import { parseMessageTrailers } from '../commit-trailers.mjs';
+import { verifyBasisOf } from './receipt.mjs';
 
 /**
  * Read the AI-* trailers of a commit message. Multiplicity is preserved: a key
@@ -121,6 +122,9 @@ export function publicationClearance(receipt, { acceptProvenanceMismatch = false
     return { clear: false, blocks };
   }
   if (!v.finalMergeOid) blocks.push({ reason: 'no final merge was recorded', flag: null });
+  if (v.basis !== verifyBasisOf(receipt)) {
+    blocks.push({ reason: 'the receipt changed after this verification was recorded — run verify again', flag: null });
+  }
   if (receipt.revocation) blocks.push({ reason: `verification revoked: ${receipt.revocation.reason}`, flag: null });
   if (v.interleaved.length) {
     const accepted = new Set(receipt.publicationAmendment?.acceptedOids ?? []);
@@ -235,5 +239,6 @@ export function verifyLanded({ receipt, merged, chain, at }) {
     blockedReason: publicationBlocked ? blocked.join('; ') : null,
     orderOk,
     observedOrder,
+    basis: verifyBasisOf(receipt),
   };
 }
