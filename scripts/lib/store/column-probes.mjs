@@ -67,14 +67,17 @@ export function _resetClassificationColumnCache() {
   _hasClassificationColumns = null;
 }
 
-/** @returns {Promise<boolean>} whether `audit_findings.sonar_type` & co. exist */
-export async function detectClassificationColumns() {
+/**
+ * @param {typeof many} [manyFn]
+ * @param {() => Promise<boolean>} [cloudFn]
+ * @returns {Promise<boolean>} whether `audit_findings.sonar_type` & co. exist
+ */
+export async function detectClassificationColumns(manyFn = many, cloudFn = isCloudEnabled) {
   if (_hasClassificationColumns !== null) return _hasClassificationColumns;
-  if (!await isCloudEnabled()) {
-    _hasClassificationColumns = false;
-    return false;
-  }
-  const { present, definitive } = await probeColumn(`SELECT sonar_type FROM audit_findings LIMIT 0`);
+  // Cloud off means NO probe ran: that is "not asked", not "column absent", so it
+  // is answered but never cached — a cached false would outlive the store coming up.
+  if (!await cloudFn()) return false;
+  const { present, definitive } = await probeColumn(`SELECT sonar_type FROM audit_findings LIMIT 0`, manyFn);
   if (definitive) {
     _hasClassificationColumns = present; // cache only an authoritative result
     if (!present) process.stderr.write('  [learning] classification columns not present — run migration to enable\n');
@@ -140,10 +143,9 @@ export function _resetRunReadColumnCache() {
 export async function probeColumnExistence(table, col, manyFn, cloudFn) {
   const key = `${table}.${col}`;
   if (_runReadColumnCache.has(key)) return { present: _runReadColumnCache.get(key), definitive: true };
-  if (!await cloudFn()) {
-    _runReadColumnCache.set(key, false);
-    return { present: false, definitive: true };
-  }
+  // No probe ran with the cloud off, so there is nothing to cache (see the
+  // module header: only a schema observation is cached).
+  if (!await cloudFn()) return { present: false, definitive: true };
   // Retry once before degrading (round-1 audit H8/H17): a single blip must not
   // omit the probed column from THIS call — load-bearing for `recordFindings`,
   // whose intra-batch dedup key depends on `hasBucket` being accurate.
