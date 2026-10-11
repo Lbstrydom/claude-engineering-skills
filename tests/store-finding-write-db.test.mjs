@@ -18,6 +18,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { findingKeyString } from '../scripts/lib/store/finding-identity.mjs';
+import { waitUntilBlockedBy } from './helpers/pg-lock-wait.mjs';
 
 const TEST_URL = process.env.AUDIT_DB_TEST_URL;
 const skip = TEST_URL ? false : 'AUDIT_DB_TEST_URL not set (integration block)';
@@ -529,23 +530,65 @@ describe('write-boundary transaction abort (DB integration)', { skip }, () => {
     // other needs, which Postgres breaks by aborting one of them (40P01).
     const { fp, id } = await seedFindingWithEvent('lockorder');
     const { getPool } = await import('../scripts/lib/db/client.mjs');
-    const t1 = await (await getPool()).connect();
+    const pool = await getPool();
+    const t1 = await pool.connect();
     let adjudication;
+    let committed = false;
     try {
       await t1.query('BEGIN');
+      const { rows: [{ pid }] } = await t1.query('SELECT pg_backend_pid() AS pid');
       await t1.query(`UPDATE audit_findings SET remediation_state = 'fixed' WHERE id = $1`, [id]); // projection, statement 1
       adjudication = recordAdjudicationEvent(runId, fp, {
         adjudicationOutcome: 'accepted', remediationState: 'fixed', ruling: 'sustain', round: 1,
       });
-      await new Promise((r) => setTimeout(r, 400)); // let the adjudication reach its first blocking lock
+      // Barrier, not a sleep: proceed only once the adjudication is OBSERVED waiting
+      // on the lock T1 holds, so the interleaving under test is the one that ran.
+      await waitUntilBlockedBy(pool, pid);
       await t1.query(`UPDATE finding_adjudication_events SET remediation_state = 'fixed' WHERE finding_id = $1`, [id]); // statement 2
       await t1.query('COMMIT');
+      committed = true;
     } finally {
+      // An open transaction must never go back to the pool, and the competing
+      // call must be settled on every exit path (it unblocks on the rollback).
+      if (!committed) await t1.query('ROLLBACK').catch(() => {});
       t1.release();
+      await adjudication?.catch(() => {});
     }
     assert.deepEqual(await adjudication, { ok: true }, 'the adjudication must not be the deadlock victim');
     const ev = await q.many(`SELECT remediation_state FROM finding_adjudication_events WHERE finding_id = $1`, [id]);
     assert.deepEqual(ev, [{ remediation_state: 'fixed' }]);
+  });
+
+  test('the lock barrier fails when nothing blocks (so the lock-order/dismissal tests cannot pass by never interleaving)', async () => {
+    const { getPool } = await import('../scripts/lib/db/client.mjs');
+    const pool = await getPool();
+    const holder = await pool.connect();
+    try {
+      const { rows: [{ pid }] } = await holder.query('SELECT pg_backend_pid() AS pid');
+      await assert.rejects(waitUntilBlockedBy(pool, pid, { timeoutMs: 150, pollMs: 10 }), /never reached the lock/);
+    } finally {
+      holder.release();
+    }
+  });
+
+  test('recordPassStats: an UNRESOLVED round probe writes no row, rather than a round-N row filed as round 1', async () => {
+    const { recordPassStats, _resetPassStatsRoundColumnCache } = await import('../scripts/lib/store/runs-findings.mjs');
+    const { detectPassStatsRoundColumn } = await import('../scripts/lib/store/column-probes.mjs');
+    const flaky = async () => { throw Object.assign(new Error('connection reset'), { code: '57P01' }); };
+    const passName = `unresolved-${crypto.randomUUID().slice(0, 8)}`;
+    _resetPassStatsRoundColumnCache();
+    const res = await recordPassStats(runId, passName, { raised: 1 }, 3, { detectRound: () => detectPassStatsRoundColumn(flaky, async () => true) });
+    assert.deepEqual({ applied: res.applied, rows: res.rows, reason: res.reason }, { applied: false, rows: 0, reason: 'round-probe-unresolved' });
+    const none = await q.many('SELECT 1 FROM audit_pass_stats WHERE run_id = $1 AND pass_name = $2', [runId, passName]);
+    assert.equal(none.length, 0, 'no row may be written when the round column could not be probed');
+
+    // Positive control: the real probe resolves, so the same call writes the row WITH its round.
+    _resetPassStatsRoundColumnCache();
+    const ok = await recordPassStats(runId, passName, { raised: 1 }, 3);
+    assert.equal(ok.applied, true, JSON.stringify(ok));
+    const row = await q.one('SELECT round FROM audit_pass_stats WHERE run_id = $1 AND pass_name = $2', [runId, passName]);
+    assert.equal(row.round, 3, 'with a resolved probe the supplied round is stored, not defaulted to 1');
+    await q.query('DELETE FROM audit_pass_stats WHERE run_id = $1 AND pass_name = $2', [runId, passName]);
   });
 
   test('H2/H3 (positive control): the SAME row-id path succeeds when repo AND fingerprint both match', async () => {

@@ -19,6 +19,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import { waitUntilBlockedBy } from './helpers/pg-lock-wait.mjs';
 
 const TEST_URL = process.env.AUDIT_DB_TEST_URL;
 const skip = TEST_URL ? false : 'AUDIT_DB_TEST_URL not set (integration block)';
@@ -240,16 +241,23 @@ describe('adjudicateFinalReviewFinding — bucket resolution (integration)', { s
   it('Phase 4: a dismissal that lands while record-fix is in flight is honoured (one conditional UPDATE, not SELECT-then-UPDATE)', async () => {
     const { id } = await insRow('fprace00', 'final-review', 'primary-only');
     const { getPool } = await import('../scripts/lib/db/client.mjs');
-    const t1 = await (await getPool()).connect();
+    const pool = await getPool();
+    const t1 = await pool.connect();
     let fix;
+    let committed = false;
     try {
       await t1.query('BEGIN');
+      const { rows: [{ pid }] } = await t1.query('SELECT pg_backend_pid() AS pid');
       await t1.query(`UPDATE audit_findings SET user_action = 'dismissed', adjudication_outcome = 'dismissed' WHERE id = $1`, [id]);
       fix = mod.recordFinalReviewFix(runId, 'fprace00', { commitSha: 'abc' }); // its UPDATE waits on T1's row lock
-      await new Promise((r) => setTimeout(r, 400));
+      // Barrier, not a sleep: commit only once the fix is OBSERVED blocked on T1's lock.
+      await waitUntilBlockedBy(pool, pid);
       await t1.query('COMMIT');
+      committed = true;
     } finally {
+      if (!committed) await t1.query('ROLLBACK').catch(() => {});
       t1.release();
+      await fix?.catch(() => {});
     }
     const res = await fix;
     assert.equal(res.ok, false);
