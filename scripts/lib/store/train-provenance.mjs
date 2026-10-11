@@ -16,7 +16,7 @@
  * @module scripts/lib/store/train-provenance
  */
 
-import { many } from '../db/query.mjs';
+import { many, one } from '../db/query.mjs';
 import { describeSchemaFault } from '../db/errors.mjs';
 import { isCloudEnabled, getRepoIdByUuid } from './repo.mjs';
 import { resolveRepoIdentity } from '../repo-identity.mjs';
@@ -114,6 +114,50 @@ export async function findCodeRunCandidates({ repoRowId, trees, oids }, deps = {
     };
   } catch (err) {
     const fault = describeSchemaFault(err, 'findCodeRunCandidates');
+    if (fault) {
+      process.stderr.write(fault);
+      return { ok: false, fatal: true, reason: `schema-fault: ${err.code}` };
+    }
+    return { ok: false, reason: `query-failed: ${err.message}` };
+  }
+}
+
+/**
+ * Resolve ONE run named by a commit's `AI-Run-ID`, scoped to the current
+ * repository AND to code mode — the single lookup every audit-backed claim is
+ * judged through (plan §2.8, R5 H1). Another repository's run, a plan-mode run
+ * or no row all come back as `{ok:true, run:null}`: the claim is then false.
+ * A schema fault is fatal, never a silent "no run".
+ *
+ * @param {{repoRowId: string, runId: string}} input
+ * @param {{one?: Function, isCloudEnabled?: Function}} [deps]
+ * @returns {Promise<{ok: true, run: null | {id: string, auditedSha: string|null, auditedTree: string|null,
+ *   roundConvergedAfter: number|null}} | {ok: false, fatal?: true, reason: string}>}
+ */
+export async function findCodeRunForRepo({ repoRowId, runId }, deps = {}) {
+  const { one: oneFn = one, isCloudEnabled: cloudFn = isCloudEnabled } = deps;
+  if (!repoRowId) return { ok: false, reason: 'no-repo-row-id' };
+  // audit_runs.id is a uuid; a run id of any other shape cannot name a row.
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(runId ?? ''))) return { ok: true, run: null };
+  if (!await cloudFn()) return { ok: false, reason: 'cloud-off' };
+  try {
+    const row = await oneFn(
+      `SELECT id, audited_sha, audited_tree, round_converged_after
+         FROM audit_runs
+        WHERE id = $1::uuid AND repo_id = $2 AND mode = 'code'`,
+      [String(runId), repoRowId],
+    );
+    return {
+      ok: true,
+      run: row ? {
+        id: String(row.id),
+        auditedSha: row.audited_sha ?? null,
+        auditedTree: row.audited_tree ?? null,
+        roundConvergedAfter: row.round_converged_after ?? null,
+      } : null,
+    };
+  } catch (err) {
+    const fault = describeSchemaFault(err, 'findCodeRunForRepo');
     if (fault) {
       process.stderr.write(fault);
       return { ok: false, fatal: true, reason: `schema-fault: ${err.code}` };

@@ -1,38 +1,38 @@
 /**
- * @fileoverview Post-landing verification for a ship train (plan T6, §2.8).
+ * @fileoverview Ship-train verification — stateless (plan §2.8).
  *
- * Pure: the CLI gathers the facts (each PR's merge commit, its message and
- * tree, the first-parent chain on main) and this module judges them.
+ * Pure: the caller gathers facts from owned state (fleet's train manifest,
+ * GitHub, git, the audit store) and this module judges them. Nothing here
+ * reads or writes a ship-train record; every call is a fresh judgement, so
+ * there is no stored result to go stale, race, or be revoked.
  *
- * What it checks, per landed PR, against the ACTUAL decision persisted before
- * that merge was submitted — never against the plan (round-2 H2):
- *   - the merge commit's message ends in a PARSEABLE AI-* trailer block;
- *   - every trailer equals the persisted claim (skill, models, gate, run id);
- *   - a `passed` claim's `AI-Audited-Tree` equals the commit's own tree. If it
- *     does not, publication is BLOCKED: the server pin that justified `passed`
- *     was not what `prepare` read.
+ * Two questions, in order, per train source:
+ *   1. SOURCE IDENTITY — is the merged PR the source the train tested? Its
+ *      merged head must be the manifest's pinned oid, or a chain of fleet
+ *      serial's own base-only updates leading back to it (each link judged by
+ *      fleet's `classifyUpdatedHead`). Anything else blocks publication and no
+ *      flag acknowledges it: identity is the train's definition.
+ *   2. CLAIM TRUTH — is every AI-* claim on the squash commit TRUE, given git
+ *      and the store? Not "equal to what was decided": an under-claim is true.
  *
- * Across the train it records:
- *   - planned-vs-actual differences (pending-notes, never failures);
- *   - `finalMergeOid`, the last train merge in observed first-parent order;
- *   - foreign commits interleaved between train merges on an unpinned main
- *     (round-2 H1). A non-empty list is a recoverable BLOCKED state, not a
- *     success: `sync` needs an explicit `--accept-interleaved`;
- *   - whether the observed landing order equals the manifest's.
+ * Then, across the train: the final merge OID and any foreign commits
+ * interleaved before it, and `publicationClearance` — the one predicate `sync`
+ * applies to the verification it computed in the same invocation.
  *
  * @module scripts/lib/ship-train/verify
  */
 
 import { parseMessageTrailers } from '../commit-trailers.mjs';
-import { verifyBasisOf } from './receipt.mjs';
+
+/** A merged head is a bounded number of serial updates from its pinned oid. */
+export const MAX_UPDATE_LINKS = 5;
 
 /**
  * Read the AI-* trailers of a commit message. Multiplicity is preserved: a key
- * appearing more than once is reported in `duplicates`, never silently reduced
- * to its last value — two contradictory claims on one commit is itself the
- * defect (round-1 code H2/M10).
+ * appearing more than once is reported in `duplicates`, never reduced to its
+ * last value — two contradictory claims on one commit is itself a false claim.
  *
- * @param {string} message — the merge commit's full message
+ * @param {string} message
  * @returns {{parseable: boolean, trailers: Record<string, string>, duplicates: string[]}}
  */
 export function readAiTrailers(message) {
@@ -50,195 +50,165 @@ export function readAiTrailers(message) {
 }
 
 /**
- * Compare one merge commit against its persisted claims.
- *
- * `identityUnproven` is true whenever a `passed` claim's tree identity cannot be
- * confirmed from the commit — a mismatched tree OR a missing/duplicated
- * `AI-Audited-Tree` (round-1 code M9). Either way publication must not proceed
- * on that claim.
- *
- * @param {{message: string, tree: string}} commit
- * @param {{gate: string, runId: string|null, auditedTree: string|null, models: string[]}} claims
- * @returns {{problems: string[], identityUnproven: boolean}}
- */
-export function checkCommitClaims(commit, claims) {
-  const problems = [];
-  const { parseable, trailers, duplicates } = readAiTrailers(commit.message);
-  if (!parseable) {
-    return { problems: ['no parseable AI-* trailer block on the merge commit'], identityUnproven: claims.gate === 'passed' };
-  }
-  for (const key of duplicates) problems.push(`${key} appears more than once — the commit carries contradictory or repeated claims`);
-  const expect = {
-    'AI-Skill': 'ship',
-    'AI-Models': claims.models.join(','),
-    'AI-Gate': claims.gate,
-    'AI-Run-ID': claims.runId ?? undefined,
-    'AI-Audited-Tree': claims.gate === 'passed' ? claims.auditedTree : undefined,
-  };
-  for (const [key, want] of Object.entries(expect)) {
-    const got = trailers[key];
-    if (want === undefined && got !== undefined) problems.push(`${key} present ("${got}") but the persisted claim has none`);
-    else if (want !== undefined && got !== want) problems.push(`${key} is ${got === undefined ? 'missing' : `"${got}"`}, persisted claim "${want}"`);
-  }
-  let identityUnproven = false;
-  const tree = trailers['AI-Audited-Tree'];
-  if (tree !== undefined && tree !== commit.tree) {
-    identityUnproven = true;
-    problems.push(`AI-Audited-Tree ${tree.slice(0, 12)} is not the commit's tree ${String(commit.tree).slice(0, 12)} — a passed claim that does not hold`);
-  }
-  // A passed claim's identity holds only when the trailer is present once, is
-  // the commit's own tree, AND is the tree the persisted decision named
-  // (round-3 code H1 — a trailer self-consistent with its commit but not with
-  // the decision is a claim nobody made).
-  if (claims.gate === 'passed'
-    && (tree === undefined || duplicates.includes('AI-Audited-Tree') || tree !== claims.auditedTree)) {
-    identityUnproven = true;
-  }
-  return { problems, identityUnproven };
-}
-
-/**
- * May this train be published to consumers now? The ONE predicate `sync`
- * consults (round-2 code H1) — recording a block in `verify` is not enforcing
- * it, so the enforcement lives in code here rather than in a caller's prose.
- *
- * Each block names the invocation flag that acknowledges it, and an
- * acknowledgement counts only when the receipt records it:
- *   - not verified yet, no final merge, or a revoked verification → no flag
- *     clears it (a human reads both records and starts a new op);
- *   - interleaved foreign commits before the final merge → `--accept-interleaved`,
- *     cleared only by a `publicationAmendment` naming exactly those oids;
- *   - a `passed` claim the merge commit does not confirm → `--accept-provenance-mismatch`.
- *
- * @param {object} receipt — a validated receipt
- * @param {{acceptProvenanceMismatch?: boolean}} [acks] — flags given on THIS invocation
- * @returns {{clear: boolean, blocks: Array<{reason: string, flag: string|null}>}}
- */
-export function publicationClearance(receipt, { acceptProvenanceMismatch = false } = {}) {
-  const v = receipt.verify;
-  const blocks = [];
-  if (!v || !['verified', 'verified-interleaved', 'publishing', 'partial'].includes(receipt.phase)) {
-    blocks.push({ reason: `op is ${receipt.phase}; publication needs a verified train`, flag: null });
-    return { clear: false, blocks };
-  }
-  if (!v.finalMergeOid) blocks.push({ reason: 'no final merge was recorded', flag: null });
-  if (v.basis !== verifyBasisOf(receipt)) {
-    blocks.push({ reason: 'the receipt changed after this verification was recorded — run verify again', flag: null });
-  }
-  if (receipt.revocation) blocks.push({ reason: `verification revoked: ${receipt.revocation.reason}`, flag: null });
-  if (v.interleaved.length) {
-    const accepted = new Set(receipt.publicationAmendment?.acceptedOids ?? []);
-    const unaccepted = v.interleaved.filter((c) => !accepted.has(c.oid));
-    if (unaccepted.length) {
-      blocks.push({ reason: `${unaccepted.length} foreign commit(s) interleaved before the final merge are not accepted into this publication`, flag: '--accept-interleaved' });
-    }
-  }
-  if (v.publicationBlocked && !acceptProvenanceMismatch) {
-    blocks.push({ reason: v.blockedReason ?? 'verification blocked publication', flag: '--accept-provenance-mismatch' });
-  }
-  return { clear: blocks.length === 0, blocks };
-}
-
-/** The train's PRs: the selected sources plus the status-log PR. */
-export function trainPrs(receipt) {
-  return [...receipt.selected.map((s) => s.pr), ...(receipt.logPr ? [receipt.logPr.number] : [])];
-}
-
-/**
- * Judge a landed train.
+ * Judge source identity from a first-parent walk the caller gathered.
  *
  * @param {object} input
- * @param {object} input.receipt — a validated receipt in phase `landed`
- * @param {Record<string, {mergeOid: string, message: string, tree: string}>} input.merged — by PR number
- * @param {Array<{oid: string, subject: string}>} input.chain — first-parent commits expectedOid..tip, OLDEST first
- * @param {string} input.at — ISO timestamp for the record
- * @returns {object} the receipt's `verify` record
+ * @param {string} input.pinnedOid — the manifest's `sources[].oid`
+ * @param {Array<{oid: string, verdict: 'own'|'foreign'|'unverifiable', reason?: string}>} input.links
+ *   — from the merged head backwards, each head with fleet's verdict on it being
+ *   a clean base-only update of its first parent
+ * @param {string|null} input.reachedOid — the oid the walk stopped at
+ * @returns {{ok: boolean, reason: string|null}}
  */
-export function verifyLanded({ receipt, merged, chain, at }) {
-  const perPr = {};
-  const plannedVsActual = [];
-  let publicationBlocked = false;
-  const blocked = [];
+export function judgeSourceIdentity({ pinnedOid, links, reachedOid }) {
+  const bad = links.find((l) => l.verdict !== 'own');
+  if (bad) {
+    return { ok: false, reason: `${bad.oid.slice(0, 12)} is not fleet serial's own base-only update (${bad.verdict}${bad.reason ? `: ${bad.reason}` : ''})` };
+  }
+  if (reachedOid !== pinnedOid) {
+    return { ok: false, reason: `merged head does not lead back to the tested head ${String(pinnedOid).slice(0, 12)} within ${MAX_UPDATE_LINKS} update link(s)` };
+  }
+  return { ok: true, reason: null };
+}
 
-  // ONE train membership set, used for claim checks, order and the final merge
-  // alike (round-1 code H1). A merged entry outside it is not train evidence.
-  const prs = trainPrs(receipt);
-  const members = new Set(prs.map(String));
-  const strays = Object.keys(merged).filter((k) => !members.has(k));
-  for (const pr of prs) {
-    const key = String(pr);
-    const m = merged[key];
-    const actual = receipt.actual?.[key];
-    const problems = [];
-    if (!m) problems.push('not merged');
-    if (!actual) problems.push('no actual decision was persisted before the merge');
-    if (m && actual) {
-      const r = checkCommitClaims(m, actual.claims);
-      problems.push(...r.problems);
-      if (r.identityUnproven) {
-        publicationBlocked = true;
-        blocked.push(`#${pr}: the passed claim's tree identity is not confirmed by the merge commit`);
+/**
+ * Is every claim on one squash commit TRUE? (plan §2.8 truth list)
+ *
+ * @param {object} input
+ * @param {string} input.message — the squash commit's full message
+ * @param {string} input.tree — the squash commit's own tree (%T)
+ * @param {Array<{oid: string, tree: string}>} input.prCommits — the PR's commits (merge-base..merged head)
+ * @param {{id: string, auditedTree: string|null, auditedSha: string|null, roundConvergedAfter: number|null}|null} input.run
+ *   — `AI-Run-ID` resolved through the repo-scoped, code-mode lookup; null when absent or unresolvable
+ * @returns {{true: boolean, gate: string|null, problems: string[], notes: string[]}}
+ */
+export function checkClaimTruth({ message, tree, prCommits, run }) {
+  const { parseable, trailers, duplicates } = readAiTrailers(message);
+  if (!parseable) return { true: false, gate: null, problems: ['no parseable AI-* trailer block on the squash commit'], notes: [] };
+  const problems = duplicates.map((k) => `${k} appears more than once`);
+  const notes = [];
+  const gate = trailers['AI-Gate'] ?? null;
+  const runId = trailers['AI-Run-ID'];
+  const claimedTree = trailers['AI-Audited-Tree'];
+  const trees = new Set(prCommits.map((c) => c.tree));
+  const oids = new Set(prCommits.map((c) => c.oid));
+
+  const runResolves = () => {
+    if (!runId) { problems.push(`AI-Gate ${gate} names no AI-Run-ID`); return false; }
+    if (!run || run.id !== runId) { problems.push(`run ${runId} is not a code-mode run of this repository`); return false; }
+    return true;
+  };
+  const requireTreeBound = () => {
+    if (!(run.auditedTree && trees.has(run.auditedTree))) problems.push(`run ${runId}'s audited tree is not the tree of any commit in this PR`);
+  };
+  const requireConverged = () => {
+    if (run.roundConvergedAfter == null) problems.push(`run ${runId} did not converge`);
+  };
+
+  if (claimedTree !== undefined && gate !== 'passed') problems.push(`AI-Audited-Tree on a ${gate} gate`);
+  switch (gate) {
+    case 'passed':
+      if (claimedTree !== tree) problems.push(`AI-Audited-Tree ${String(claimedTree).slice(0, 12)} is not the commit's tree ${String(tree).slice(0, 12)}`);
+      if (runResolves()) {
+        if (run.auditedTree !== claimedTree) problems.push(`run ${runId} audited tree ${String(run.auditedTree).slice(0, 12)}, not the claimed ${String(claimedTree).slice(0, 12)}`);
+        requireTreeBound();
+        requireConverged();
       }
-      const planned = receipt.selected.find((s) => s.pr === pr)?.decision?.gate;
-      if (planned && planned !== actual.claims.gate) plannedVsActual.push({ pr, planned, actual: actual.claims.gate });
-    }
-    perPr[key] = { ok: problems.length === 0, problems };
+      break;
+    case 'converged':
+      if (runResolves()) { requireTreeBound(); requireConverged(); }
+      break;
+    case 'waived':
+      if (runResolves() && !(trees.has(run.auditedTree) || oids.has(run.auditedSha))) {
+        problems.push(`run ${runId} is unrelated to this PR's commits`);
+      }
+      break;
+    case 'not-run':
+      if (runId) problems.push('not-run carries an AI-Run-ID');
+      break;
+    default:
+      problems.push(`AI-Gate is ${gate === null ? 'missing' : `"${gate}"`}`);
   }
+  if (problems.length === 0 && gate === 'converged' && run?.auditedTree === tree) {
+    notes.push('converged where the commit tree equals the audited tree — an under-claim, true');
+  }
+  return { true: problems.length === 0, gate, problems, notes };
+}
 
-  if (strays.length) {
-    publicationBlocked = true;
-    blocked.push(`merge evidence for PR(s) outside this train: ${strays.map((k) => `#${k}`).join(', ')}`);
-  }
-  const trainOids = new Map(Object.entries(merged)
-    .filter(([pr]) => members.has(pr))
-    .map(([pr, m]) => [m.mergeOid, Number(pr)]));
+/**
+ * Judge a train from gathered facts.
+ *
+ * @param {object} input
+ * @param {Array<{pr: number, merged: null | {mergeOid: string, message: string, tree: string},
+ *   identity: {ok: boolean, reason: string|null}|null, prCommits: Array<{oid: string, tree: string}>,
+ *   run: object|null}>} input.sources — every manifest source, in manifest (landing) order
+ * @param {Array<{oid: string, subject: string}>} input.chain — destination first-parent commits after the
+ *   train's base, OLDEST first
+ */
+export function verifyTrain({ sources, chain }) {
   const position = new Map(chain.map((c, i) => [c.oid, i]));
-  const landedInOrder = [...trainOids.entries()]
-    .filter(([oid]) => position.has(oid))
-    .sort((a, b) => position.get(a[0]) - position.get(b[0]));
-  const finalMergeOid = landedInOrder.length ? landedInOrder[landedInOrder.length - 1][0] : null;
+  const perPr = {};
+  const unmerged = [];
+  const identityFailures = [];
+  const falseClaims = [];
+  const offChain = [];
+  const actualGates = {};
+  const trainMerges = new Map();
 
-  // Every merged PR must be on main's first-parent chain at all.
-  for (const [oid, pr] of trainOids) {
-    if (!position.has(oid)) perPr[String(pr)].problems.push('merge commit is not on the first-parent chain of the destination');
+  for (const s of sources) {
+    const key = String(s.pr);
+    if (!s.merged) {
+      unmerged.push(s.pr);
+      perPr[key] = { merged: false, identity: null, claim: null };
+      continue;
+    }
+    if (!position.has(s.merged.mergeOid)) offChain.push(s.pr);
+    if (!s.identity?.ok) {
+      // A foreign head is not a train source: its merge is not train evidence.
+      identityFailures.push(s.pr);
+      perPr[key] = { merged: true, identity: s.identity?.reason ?? 'identity not established', claim: null };
+      continue;
+    }
+    trainMerges.set(s.merged.mergeOid, s.pr);
+    const claim = checkClaimTruth({ message: s.merged.message, tree: s.merged.tree, prCommits: s.prCommits, run: s.run });
+    if (!claim.true) falseClaims.push(s.pr);
+    actualGates[key] = claim.gate;
+    perPr[key] = { merged: true, identity: null, claim };
   }
-  for (const k of Object.keys(perPr)) perPr[k].ok = perPr[k].problems.length === 0;
 
+  const onChain = [...trainMerges.keys()].filter((o) => position.has(o)).sort((a, b) => position.get(a) - position.get(b));
+  const finalMergeOid = onChain.length ? onChain[onChain.length - 1] : null;
   const interleaved = [];
   if (finalMergeOid) {
-    const end = position.get(finalMergeOid);
-    for (let i = 0; i <= end; i++) {
-      if (!trainOids.has(chain[i].oid)) interleaved.push({ oid: chain[i].oid, subject: chain[i].subject });
+    for (let i = 0; i <= position.get(finalMergeOid); i++) {
+      if (!trainMerges.has(chain[i].oid)) interleaved.push({ oid: chain[i].oid, subject: chain[i].subject });
     }
   }
+  return { perPr, finalMergeOid, interleaved, unmerged, identityFailures, falseClaims, offChain, actualGates };
+}
 
-  const observedOrder = landedInOrder.map(([, pr]) => pr);
-  const orderOk = !receipt.landingOrder
-    || JSON.stringify(observedOrder) === JSON.stringify(receipt.landingOrder.filter((pr) => observedOrder.includes(pr)));
-
-  // Every failed check blocks publication — recorded failures are not enforced
-  // failures (round-3 code H3). One flag acknowledges them all, because each is
-  // the same question: publish a train whose record does not verify?
-  const failed = Object.entries(perPr).filter(([, p]) => !p.ok).map(([pr]) => `#${pr}`);
-  if (failed.length) {
-    publicationBlocked = true;
-    blocked.push(`per-PR verification failed for ${failed.join(', ')}`);
+/**
+ * May this train be published now? `sync` calls this on the verification it
+ * computed in the SAME invocation, with the flags given on that invocation.
+ * Unmerged sources, foreign heads and merges off the destination's chain have
+ * no acknowledging flag: they are not this train.
+ *
+ * @param {ReturnType<typeof verifyTrain>} v
+ * @param {{acceptInterleaved?: boolean, acceptProvenanceMismatch?: boolean}} [acks]
+ * @returns {{clear: boolean, blocks: Array<{reason: string, flag: string|null}>}}
+ */
+export function publicationClearance(v, { acceptInterleaved = false, acceptProvenanceMismatch = false } = {}) {
+  const blocks = [];
+  const list = (prs) => prs.map((p) => `#${p}`).join(', ');
+  if (!v.finalMergeOid) blocks.push({ reason: 'no train merge is on the destination', flag: null });
+  if (v.unmerged.length) blocks.push({ reason: `not merged: ${list(v.unmerged)}`, flag: null });
+  if (v.identityFailures.length) blocks.push({ reason: `merged at a head the train did not test: ${list(v.identityFailures)}`, flag: null });
+  if (v.offChain.length) blocks.push({ reason: `merge commit not on the destination's first-parent chain: ${list(v.offChain)}`, flag: null });
+  if (v.falseClaims.length && !acceptProvenanceMismatch) {
+    blocks.push({ reason: `provenance claims that do not hold: ${list(v.falseClaims)}`, flag: '--accept-provenance-mismatch' });
   }
-  if (!orderOk) {
-    publicationBlocked = true;
-    blocked.push(`observed landing order ${observedOrder.join(',')} differs from the manifest's`);
+  if (v.interleaved.length && !acceptInterleaved) {
+    blocks.push({ reason: `${v.interleaved.length} foreign commit(s) interleaved before the final merge`, flag: '--accept-interleaved' });
   }
-
-  return {
-    at,
-    perPr,
-    plannedVsActual,
-    interleaved,
-    finalMergeOid,
-    publicationBlocked,
-    blockedReason: publicationBlocked ? blocked.join('; ') : null,
-    orderOk,
-    observedOrder,
-    basis: verifyBasisOf(receipt),
-  };
+  return { clear: blocks.length === 0, blocks };
 }

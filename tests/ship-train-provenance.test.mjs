@@ -9,7 +9,7 @@ import {
   bindAuditRun, decideTrainGate, composeSquashMessage, modelsFromRun, modelToken,
 } from '../scripts/lib/ship-train/provenance.mjs';
 import { parseMessageTrailers } from '../scripts/lib/commit-trailers.mjs';
-import { findCodeRunCandidates, MAX_PR_COMMITS } from '../scripts/lib/store/train-provenance.mjs';
+import { findCodeRunCandidates, findCodeRunForRepo, MAX_PR_COMMITS } from '../scripts/lib/store/train-provenance.mjs';
 
 const hex = (c) => c.repeat(40);
 
@@ -236,5 +236,39 @@ describe('findCodeRunCandidates — failure is never an empty result (pure)', ()
       await findCodeRunCandidates({ repoRowId: 'r', trees: [hex('a')], oids: [] }, { isCloudEnabled: on, many: async () => [] }),
       { ok: true, rows: [] },
     );
+  });
+});
+
+describe('findCodeRunForRepo — the one run lookup every claim is judged through (plan R5 H1)', () => {
+  const RUN_ID = 'bd49abc4-243e-42cc-85ec-e5d14328841d';
+  const on = async () => true;
+
+  test('a run id that is not a uuid cannot name a row: run null, no query', async () => {
+    let called = false;
+    const r = await findCodeRunForRepo({ repoRowId: 'r', runId: 'not-a-uuid' }, { isCloudEnabled: on, one: async () => { called = true; return null; } });
+    assert.deepEqual(r, { ok: true, run: null });
+    assert.equal(called, false);
+  });
+
+  test('the query is scoped to the repository AND code mode', async () => {
+    let seen = null;
+    await findCodeRunForRepo({ repoRowId: 'repo-1', runId: RUN_ID }, { isCloudEnabled: on, one: async (sql, params) => { seen = { sql, params }; return null; } });
+    assert.match(seen.sql, /repo_id = \$2/);
+    assert.match(seen.sql, /mode = 'code'/);
+    assert.deepEqual(seen.params, [RUN_ID, 'repo-1']);
+  });
+
+  test('a matching row maps to the run shape; no row is run null (claim then false)', async () => {
+    const row = { id: RUN_ID, audited_sha: hex('1'), audited_tree: hex('a'), round_converged_after: 2 };
+    assert.deepEqual(await findCodeRunForRepo({ repoRowId: 'r', runId: RUN_ID }, { isCloudEnabled: on, one: async () => row }),
+      { ok: true, run: { id: RUN_ID, auditedSha: hex('1'), auditedTree: hex('a'), roundConvergedAfter: 2 } });
+    assert.deepEqual(await findCodeRunForRepo({ repoRowId: 'r', runId: RUN_ID }, { isCloudEnabled: on, one: async () => null }), { ok: true, run: null });
+  });
+
+  test('cloud off is ok:false; a schema fault is fatal', async () => {
+    assert.deepEqual(await findCodeRunForRepo({ repoRowId: 'r', runId: RUN_ID }, { isCloudEnabled: async () => false }), { ok: false, reason: 'cloud-off' });
+    const err = Object.assign(new Error('column "audited_tree" does not exist'), { code: '42703' });
+    assert.deepEqual(await findCodeRunForRepo({ repoRowId: 'r', runId: RUN_ID }, { isCloudEnabled: on, one: async () => { throw err; } }),
+      { ok: false, fatal: true, reason: 'schema-fault: 42703' });
   });
 });

@@ -1,6 +1,9 @@
 /**
- * @fileoverview Ship-train verbs — plan, prepare, message, verify, abandon —
- * over an injected context (git, gh, fleet status, closure, store, clock).
+ * @fileoverview Ship-train verbs — plan, message, verify — over an injected
+ * context (git, gh, fleet status and manifest, closure, store, clock).
+ *
+ * Stateless (plan §2.8): no verb reads or writes a ship-train record. Each
+ * recomputes from owned state — fleet's manifest, GitHub, git, the store.
  *
  * The CLI (scripts/ship-train.mjs) wires the real context; tests wire fakes.
  * Lives under lib/ so tests import it without an edge into the CLI's domain.
@@ -12,8 +15,7 @@
 import { ArgvError } from '../cli-io.mjs';
 import { classifyPrImpact, isTrainDue, parseNameStatusZ } from './impact.mjs';
 import { bindAuditRun, decideTrainGate, modelsFromRun, composeSquashMessage } from './provenance.mjs';
-import { createReceipt, readReceipt, updateReceipt, newOpId, canonicalJson } from './receipt.mjs';
-import { verifyLanded, publicationClearance } from './verify.mjs';
+import { verifyTrain, publicationClearance, judgeSourceIdentity, readAiTrailers, MAX_UPDATE_LINKS } from './verify.mjs';
 
 export class TrainRefusal extends Error {
   constructor(message, details = {}) {
@@ -65,14 +67,6 @@ export function flagValue(argv, flag) {
   });
   if (values.length > 1) throw new ArgvError(`${flag} was given ${values.length} times; it takes one value`);
   return values[0] ?? null;
-}
-
-/** A flag that names exactly ONE PR — a list is refused, never truncated to its first entry. */
-export function singlePr(argv, flag) {
-  const raw = flagValue(argv, flag);
-  if (raw === null) return null;
-  if (!/^[1-9]\d*$/.test(raw.trim())) throw new ArgvError(`${flag} takes exactly one PR number, got "${raw}"`);
-  return Number(raw.trim());
 }
 
 // ── facts ───────────────────────────────────────────────────────────────────
@@ -172,6 +166,15 @@ export function readFleet(ctx) {
   return { byBranch, baseBranch };
 }
 
+/**
+ * A schema fault is a broken query, not an absent store: it never degrades into
+ * "store unavailable", which would still let ride-alongs land as not-run
+ * (round-6 code H2). Stop loudly instead.
+ */
+function failFatal(r) {
+  if (r?.fatal) throw new TrainRefusal(`the audit store rejected the provenance query (${r.reason}) — fix the store schema before running a train (node scripts/setup-postgres.mjs --check-drift)`);
+}
+
 // ── decision ────────────────────────────────────────────────────────────────
 
 /** Tier, binding and gate for one PR (pure over gathered facts). */
@@ -223,12 +226,6 @@ export async function computePlan(ctx, { prs, overrides, composer }) {
   const basePinning = readBasePinning(ctx, repo, branch);
   const closure = ctx.closure();
   const repoRow = await ctx.store.resolveRepoRowIdForRead(ctx.cwd);
-  // A schema fault is a broken query, not an absent store: it never degrades
-  // into "store unavailable", which would still let ride-alongs land as
-  // not-run (round-6 code H2). Stop loudly instead.
-  const failFatal = (r) => {
-    if (r?.fatal) throw new TrainRefusal(`the audit store rejected the provenance query (${r.reason}) — fix the store schema before planning a train (node scripts/setup-postgres.mjs --check-drift)`);
-  };
   failFatal(repoRow);
 
   const rows = [];
@@ -272,40 +269,6 @@ export async function runPlan(ctx, opts) {
   return { ok: true, verb: 'plan', ...(await computePlan(ctx, opts)) };
 }
 
-export async function runPrepare(ctx, opts) {
-  if (opts.op) return recordLogPr(ctx, opts);
-  const plan = await computePlan(ctx, opts);
-  if (!plan.trainReady) {
-    throw new TrainRefusal('the train is not ready to prepare', { due: plan.due, refusals: plan.refusals, blocked: plan.blocked });
-  }
-  const now = ctx.now();
-  const receipt = createReceipt(ctx.gitCommonDir(), {
-    schemaVersion: 1,
-    opId: newOpId(now),
-    createdAt: now.toISOString(),
-    repo: plan.repo,
-    destination: plan.destination,
-    basePinning: plan.basePinning,
-    selected: plan.prs.map(({ pr, title, headOid, mergeBaseOid, tier, reasons, binding, decision }) => ({ pr, title, headOid, mergeBaseOid, tier, reasons, binding, decision })),
-    overrides: { waive: opts.overrides.waive, allowUnaudited: opts.overrides.allowUnaudited, endOfDay: opts.overrides.endOfDay },
-  }, { now });
-  return { ok: true, verb: 'prepare', opId: receipt.opId, phase: receipt.phase, fingerprint: receipt.fingerprint, due: plan.due, prs: plan.prs };
-}
-
-function recordLogPr(ctx, { op, logPr }) {
-  if (!logPr) throw new ArgvError('prepare --op <id> needs --log-pr <n>');
-  const receipt = readReceipt(ctx.gitCommonDir(), op);
-  const view = JSON.parse(ctx.gh(['pr', 'view', String(logPr), '-R', receipt.repo, '--json', 'state,headRefOid,baseRefName']));
-  if (view.state !== 'OPEN') throw new TrainRefusal(`log PR #${logPr} is ${view.state}, not OPEN`);
-  if (`refs/heads/${view.baseRefName}` !== receipt.destination.ref) throw new TrainRefusal(`log PR #${logPr} targets ${view.baseRefName}`);
-  if (receipt.selected.some((s) => s.pr === logPr)) throw new TrainRefusal(`#${logPr} is already a train source, not a log PR`);
-  const updated = updateReceipt(ctx.gitCommonDir(), op, (d) => {
-    d.logPr = { number: logPr, headOid: view.headRefOid };
-    d.phase = 'log-opened';
-  }, { now: ctx.now(), note: `log PR #${logPr}` });
-  return { ok: true, verb: 'prepare', opId: op, phase: updated.phase, logPr: updated.logPr };
-}
-
 export async function runMessage(ctx, opts) {
   if (opts.prs.length !== 1) throw new ArgvError('message needs exactly one --pr <n>');
   const plan = await computePlan(ctx, opts);
@@ -315,94 +278,113 @@ export async function runMessage(ctx, opts) {
   return { ok: true, verb: 'message', pr: row.pr, basePinning: plan.basePinning.verdict, decision: row.decision, subject, body };
 }
 
-/** Facts for a landed train: each merge commit, and main's first-parent chain. */
-export function gatherLandedFacts(ctx, receipt) {
-  const branch = receipt.destination.ref.replace(/^refs\/heads\//, '');
+/**
+ * Everything `verify` judges, read fresh from OWNED state: fleet's train
+ * manifest (pinned heads, base, destination, landing order), GitHub (what
+ * merged, at which head), git (commits, trees, main's first-parent chain) and
+ * the audit store (each claimed run, repo-scoped and code-mode). Nothing is
+ * read from, or written to, a ship-train record — there is none (plan §2.8).
+ */
+export async function gatherTrainFacts(ctx, trainId) {
+  const t = ctx.readTrain(trainId);
+  if (!t.ok) throw new TrainRefusal(`fleet train ${trainId}: ${t.reason}`);
+  const train = t.train;
+  if (train.mergeMethod !== 'pr') throw new TrainRefusal(`train ${trainId} lands by ${train.mergeMethod}; ship trains verify pr-mode trains only (plan D2)`);
+  const branch = train.destination.ref.replace(/^refs\/heads\//, '');
+  const repo = train.sources.find((s) => s.repo)?.repo ?? ctx.repo();
   const tip = fetchDestination(ctx, branch);
-  const prs = [...receipt.selected.map((s) => s.pr), ...(receipt.logPr ? [receipt.logPr.number] : [])];
-  const merged = {};
-  for (const pr of prs) {
-    const v = JSON.parse(ctx.gh(['pr', 'view', String(pr), '-R', receipt.repo, '--json', 'state,mergeCommit']));
-    if (v.state !== 'MERGED' || !v.mergeCommit?.oid) continue;
-    const oid = v.mergeCommit.oid;
-    merged[String(pr)] = {
-      mergeOid: oid,
-      message: ctx.git(['log', '-1', '--format=%B', oid]),
-      tree: ctx.git(['rev-parse', `${oid}^{tree}`]).trim(),
-    };
+  const repoRow = await ctx.store.resolveRepoRowIdForRead(ctx.cwd);
+  failFatal(repoRow);
+  const closure = ctx.closure();
+
+  const sources = [];
+  for (const s of train.sources) {
+    if (!s.prNumber) throw new TrainRefusal(`train ${trainId} source ${s.id} has no PR`);
+    const pr = s.prNumber;
+    const v = JSON.parse(ctx.gh(['pr', 'view', String(pr), '-R', repo, '--json', 'state,mergeCommit,headRefOid']));
+    if (v.state !== 'MERGED' || !v.mergeCommit?.oid) {
+      sources.push({ pr, tier: null, merged: null, identity: null, prCommits: [], run: null });
+      continue;
+    }
+    ctx.git(['fetch', '--no-tags', '--quiet', 'origin', `+refs/pull/${pr}/head:refs/ship-train/pr/${pr}`]);
+    const head = v.headRefOid;
+
+    // Source identity: walk first parents from the merged head back to the
+    // pinned oid, each step judged by fleet's own classifyUpdatedHead.
+    const links = [];
+    let h = head;
+    for (let i = 0; i < MAX_UPDATE_LINKS && h !== s.oid; i++) {
+      let priorHead = null;
+      try { priorHead = ctx.git(['rev-parse', `${h}^1`]).trim(); } catch { /* root or unreadable: judged below */ }
+      if (!priorHead) { links.push({ oid: h, verdict: 'unverifiable', reason: 'no first parent' }); break; }
+      const c = ctx.classifyUpdate({ trainId, remote: train.destination.remote, base: branch, pr, h, priorHead });
+      links.push({ oid: h, verdict: c.verdict, reason: c.reason });
+      if (c.verdict !== 'own') break;
+      h = priorHead;
+    }
+    const identity = judgeSourceIdentity({ pinnedOid: s.oid, links, reachedOid: h });
+
+    const mergeBase = ctx.git(['merge-base', train.baseOid, head]).trim();
+    const prCommits = lines(ctx.git(['log', '--reverse', '--format=%H %T', `${mergeBase}..${head}`]))
+      .map((l) => { const [oid, tree] = l.split(' '); return { oid, tree }; });
+    const changes = parseNameStatusZ(ctx.git(['diff', '--name-status', '-z', '-M', mergeBase, head]));
+    const message = ctx.git(['log', '-1', '--format=%B', v.mergeCommit.oid]);
+    const tree = ctx.git(['rev-parse', `${v.mergeCommit.oid}^{tree}`]).trim();
+
+    const runId = readAiTrailers(message).trailers['AI-Run-ID'];
+    let run = null;
+    if (runId && repoRow.ok) {
+      const r = await ctx.store.findCodeRunForRepo({ repoRowId: repoRow.repoRowId, runId });
+      failFatal(r);
+      run = r.ok ? r.run : null;
+    }
+    sources.push({
+      pr,
+      tier: classifyPrImpact({ changes, closure }).tier,
+      merged: { mergeOid: v.mergeCommit.oid, message, tree },
+      identity,
+      prCommits,
+      run,
+    });
   }
-  const chain = lines(ctx.git(['log', '--first-parent', '--reverse', '--format=%H%x09%s', `${receipt.destination.expectedOid}..${tip}`]))
+  const chain = lines(ctx.git(['log', '--first-parent', '--reverse', '--format=%H%x09%s', `${train.baseOid}..${tip}`]))
     .map((l) => { const i = l.indexOf('\t'); return { oid: l.slice(0, i), subject: l.slice(i + 1) }; });
-  return { merged, chain };
+  return { trainId, repo, branch, tip, storeState: repoRow.ok ? 'ok' : repoRow.reason, sources, chain };
 }
 
-export async function runVerify(ctx, { op }) {
-  if (!op) throw new ArgvError('verify needs --op <id>');
-  const dir = ctx.gitCommonDir();
-  const receipt = readReceipt(dir, op);
-  if (!['landed', 'verified', 'verified-interleaved'].includes(receipt.phase)) {
-    throw new TrainRefusal(`op ${op} is ${receipt.phase}; verify runs after the train has landed`);
-  }
-  const { merged, chain } = gatherLandedFacts(ctx, receipt);
-  const v = verifyLanded({ receipt, merged, chain, at: ctx.now().toISOString() });
-  // A re-verify REFRESHES the record, and clearance is always computed from the
-  // record just written — never from a stale one (round-3 code H2). The phase a
-  // fresh verification implies must equal the one already held: a train that
-  // was clean and now shows interleaving (or the reverse) has changed under the
-  // record, and that is refused for a human to read, not silently rewritten.
-  const freshPhase = v.interleaved.length ? 'verified-interleaved' : 'verified';
-  // Compare-and-swap (round-5 code H2): v was computed from `receipt` OUTSIDE
-  // the lock, so it may be written only if the receipt is still exactly that.
-  // A concurrent writer in between means the facts were judged against a
-  // record that no longer exists — refuse, never clobber.
-  const unchanged = (d) => {
-    if (canonicalJson(d) !== canonicalJson(receipt)) {
-      throw new TrainRefusal(`op ${op} changed while it was being verified — run verify again`);
-    }
-  };
-  if (receipt.phase !== 'landed' && receipt.phase !== freshPhase) {
-    // Refusing must not leave the OLD clearance standing (round-4 code H1/H2),
-    // and must not overwrite the old record into a shape its phase forbids
-    // (round-5 code H1/H3). The fresh evidence goes into `revocation`, beside
-    // the original; publicationClearance refuses while a revocation exists.
-    const reason = `the landed train changed under its record: recorded ${receipt.phase}, now verifies as ${freshPhase}`;
-    updateReceipt(dir, op, (d) => {
-      unchanged(d);
-      d.revocation = { at: ctx.now().toISOString(), reason, freshPhase, verify: v };
-    }, { now: ctx.now(), note: 're-verify refused' });
-    throw new TrainRefusal(`op ${op}: ${reason}; publication is now blocked — read both before acting`, { verify: v });
-  }
-  const current = updateReceipt(dir, op, (d) => {
-    unchanged(d);
-    d.verify = v;
-    d.phase = freshPhase;
-  }, { now: ctx.now(), note: receipt.phase === 'landed' ? 'verify' : 're-verify' });
-  const written = receipt.phase === 'landed';
+/**
+ * Judge a landed train afresh. Read-only apart from the optional pending-note
+ * (`--write-note`), which carries the ACTUAL gates and every deviation into the
+ * next status entry. Re-runnable any number of times; nothing goes stale.
+ */
+export async function runVerify(ctx, { train, writeNote = false, acks = {} }) {
+  if (!train) throw new ArgvError('verify needs --train <trainId>');
+  const facts = await gatherTrainFacts(ctx, train);
+  const v = verifyTrain({ sources: facts.sources, chain: facts.chain });
+  const clearance = publicationClearance(v, acks);
+  const tierOf = Object.fromEntries(facts.sources.map((s) => [String(s.pr), s.tier]));
   const deviations = [
-    ...Object.entries(v.perPr).filter(([, p]) => !p.ok).map(([pr, p]) => `#${pr}: ${p.problems.join('; ')}`),
-    ...v.plannedVsActual.map((d) => `#${d.pr}: planned ${d.planned}, landed ${d.actual}`),
-    ...(v.interleaved.length ? [`${v.interleaved.length} foreign commit(s) interleaved before ${String(v.finalMergeOid).slice(0, 12)}: ${v.interleaved.map((c) => c.oid.slice(0, 12)).join(', ')}`] : []),
-    ...(v.orderOk ? [] : [`observed landing order ${v.observedOrder.join(',')} differs from the manifest's`]),
-    ...(v.publicationBlocked ? [`PUBLICATION BLOCKED: ${v.blockedReason}`] : []),
+    ...v.unmerged.map((pr) => `#${pr}: not merged`),
+    ...v.identityFailures.map((pr) => `#${pr}: ${v.perPr[String(pr)].identity}`),
+    ...v.offChain.map((pr) => `#${pr}: merge commit is not on ${facts.branch}'s first-parent chain`),
+    ...v.falseClaims.map((pr) => `#${pr}: ${v.perPr[String(pr)].claim.problems.join('; ')}`),
+    ...Object.entries(v.actualGates)
+      .filter(([pr, gate]) => gate === 'not-run' && tierOf[pr] && tierOf[pr] !== 'ride-along')
+      .map(([pr]) => `#${pr}: not-run on a ${tierOf[pr]} PR — landed only under --allow-unaudited`),
+    ...(v.interleaved.length ? [`${v.interleaved.length} foreign commit(s) before ${v.finalMergeOid.slice(0, 12)}: ${v.interleaved.map((c) => c.oid.slice(0, 12)).join(', ')}`] : []),
   ];
-  let note = null;
-  if (written && deviations.length && v.finalMergeOid) {
-    note = ctx.writePendingNote(v.finalMergeOid, [
-      `Ship train ${op} — verify deviations (final merge ${v.finalMergeOid})`,
+  const notes = Object.entries(v.perPr).flatMap(([pr, p]) => (p.claim?.notes ?? []).map((n) => `#${pr}: ${n}`));
+  let pendingNote = null;
+  if (writeNote) {
+    pendingNote = ctx.writePendingNote(v.finalMergeOid ?? facts.tip, [
+      `Ship train ${train} — verified ${new Date(ctx.now()).toISOString()} (final merge ${v.finalMergeOid ?? 'none'})`,
+      `Actual gates: ${Object.entries(v.actualGates).map(([pr, g]) => `#${pr} ${g}`).join(', ') || 'none'}`,
       ...deviations.map((d) => `- ${d}`),
+      ...notes.map((n) => `- note: ${n}`),
     ].join('\n'));
   }
-  return { ok: true, verb: 'verify', opId: op, phase: current.phase, firstVerify: written, verify: v, deviations, pendingNote: note, clearance: publicationClearance(current) };
-}
-
-export async function runAbandon(ctx, { op }) {
-  if (!op) throw new ArgvError('abandon needs --op <id>');
-  const updated = updateReceipt(ctx.gitCommonDir(), op, (d) => { d.phase = 'abandoned'; }, { now: ctx.now(), note: 'abandon' });
   return {
-    ok: true,
-    verb: 'abandon',
-    opId: op,
-    phase: updated.phase,
-    followUp: updated.logPr ? `the log PR is still open — close it with: gh pr close ${updated.logPr.number} -R ${updated.repo}` : null,
+    ok: true, verb: 'verify', trainId: train, storeState: facts.storeState,
+    finalMergeOid: v.finalMergeOid, actualGates: v.actualGates, deviations, notes, clearance, pendingNote,
   };
 }

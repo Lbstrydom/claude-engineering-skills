@@ -1,7 +1,7 @@
 /**
  * @fileoverview ship-train CLI verbs driven through an injected context:
- * fake gh/git/fleet/store, real receipt files in a temp dir. No network, no
- * store, no merges (docs/plans/ship-trains.md §2.1, §7 Phase 3).
+ * fake gh/git/fleet/store. No network, no store, no merges, and no ship-train
+ * state anywhere (docs/plans/ship-trains.md §2.1, §7 Phase 3).
  */
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,10 +10,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  runPlan, runPrepare, runMessage, runVerify, runAbandon, parsePrList, flagValue, singlePr, readBasePinning, TrainRefusal,
+  runPlan, runMessage, runVerify, parsePrList, flagValue, readBasePinning, TrainRefusal,
 } from '../scripts/lib/ship-train/commands.mjs';
-import { readReceipt, updateReceipt } from '../scripts/lib/ship-train/receipt.mjs';
-import { publicationClearance } from '../scripts/lib/ship-train/verify.mjs';
 import { composeSquashMessage } from '../scripts/lib/ship-train/provenance.mjs';
 import { ArgvError } from '../scripts/lib/cli-io.mjs';
 
@@ -118,9 +116,7 @@ describe('argv helpers', () => {
     assert.deepEqual(parsePrList(['--pr', '202', '--', '--pr', '204'], '--pr'), [202]);
     assert.equal(flagValue(['--', '--op', 's-x'], '--op'), null);
   });
-  test('a single-value flag refuses a list or a repeat instead of keeping the first (round-1 M3)', () => {
-    assert.equal(singlePr(['--log-pr', '210'], '--log-pr'), 210);
-    assert.throws(() => singlePr(['--log-pr', '210,211'], '--log-pr'), ArgvError);
+  test('a single-value flag refuses a repeat instead of keeping the first (round-1 M3)', () => {
     assert.throws(() => flagValue(['--op', 'a', '--op=b'], '--op'), ArgvError);
   });
 });
@@ -220,35 +216,6 @@ describe('plan', () => {
   });
 });
 
-describe('prepare', () => {
-  test('writes a receipt with the planning snapshot; refuses when the train is not ready', async () => {
-    const ctx = fakeCtx({ prs: { 202: PR202, 203: PR203 }, runs: [converged(oid('a'), oid('1'))], fleet: readyFleet });
-    const env = await runPrepare(ctx, opts({ prs: [202, 203] }));
-    const r = readReceipt(dir, env.opId);
-    assert.equal(r.phase, 'prepared');
-    assert.deepEqual(r.selected.map((s) => [s.pr, s.decision.gate]), [[202, 'converged'], [203, 'not-run']]);
-    assert.equal(r.basePinning.verdict, 'none');
-
-    const notReady = fakeCtx({ prs: { 204: PR204 }, fleet: readyFleet });
-    await assert.rejects(runPrepare(notReady, opts({ prs: [204] })), (e) => e instanceof TrainRefusal && e.details.refusals.length === 1);
-  });
-
-  test('a ride-along-only set is not due and cannot be prepared', async () => {
-    const ctx = fakeCtx({ prs: { 203: PR203 }, fleet: readyFleet });
-    await assert.rejects(runPrepare(ctx, opts({ prs: [203], overrides: { waive: [], allowUnaudited: [], endOfDay: true } })),
-      (e) => e instanceof TrainRefusal && e.details.due.due === false);
-  });
-
-  test('--op --log-pr records the log PR and moves prepared → log-opened', async () => {
-    const ctx = fakeCtx({ prs: { 202: PR202, 210: { title: 'ship train log', branch: 'ship/train', commits: [{ oid: oid('9'), tree: oid('9'), subject: 'log' }], changes: [] } }, runs: [converged(oid('a'), oid('1'))], fleet: readyFleet });
-    const { opId } = await runPrepare(ctx, opts({ prs: [202] }));
-    const env = await runPrepare(ctx, opts({ op: opId, logPr: 210 }));
-    assert.equal(env.phase, 'log-opened');
-    assert.deepEqual(readReceipt(dir, opId).logPr, { number: 210, headOid: oid('9') });
-    await assert.rejects(runPrepare(ctx, opts({ op: opId, logPr: 202 })), /already a train source|log-opened/);
-  });
-});
-
 describe('message', () => {
   test('renders the squash subject and a body ending in the AI-* block', async () => {
     const ctx = fakeCtx({ prs: { 202: PR202 }, runs: [converged(oid('a'), oid('1'))], fleet: readyFleet });
@@ -261,153 +228,126 @@ describe('message', () => {
   });
 });
 
-describe('verify / abandon', () => {
+describe('verify (stateless, over the fleet manifest)', () => {
   const LOG = { title: 'ship train log', branch: 'ship/train', commits: [{ oid: oid('4'), tree: oid('4'), subject: 'log' }], changes: [['M', 'status.md']] };
+  const TRAIN = 't-20261011233000-0001';
+  const decision = (gate, runId = RUN) => ({ gate, runId, auditedTree: null });
+  const msgFor = (pr, d, models = ['claude', 'gpt']) => composeSquashMessage({ number: pr, title: `pr ${pr}`, commitSubjects: ['x'], decision: d, models }).message;
 
-  async function landedOp({ interleave = false } = {}) {
-    const ctx0 = fakeCtx({ prs: { 202: PR202, 204: PR204, 210: LOG }, runs: [converged(oid('a'), oid('1')), { ...converged(oid('c'), oid('3')), id: 'run-204' }], fleet: readyFleet });
-    const { opId } = await runPrepare(ctx0, opts({ prs: [202, 204] }));
-    await runPrepare(ctx0, opts({ op: opId, logPr: 210 }));
-    const r = readReceipt(dir, opId);
-    // Stand in for Cluster B's land: persist actual decisions, then mark landed.
-    updateReceipt(dir, opId, (d) => { d.phase = 'built'; d.trainId = 't-20261011233000-0001'; d.landingOrder = [202, 204, 210]; });
-    const logClaims = { gate: 'not-run', runId: null, auditedTree: null, models: ['claude'] };
-    updateReceipt(dir, opId, (d) => {
-      d.phase = 'landing';
-      d.actual = Object.fromEntries([
-        ...r.selected.map((s) => [String(s.pr), {
-          headOid: s.headOid, baseOid: BASE, basePinning: 'none',
-          claims: { gate: s.decision.gate, runId: s.decision.runId, auditedTree: s.decision.auditedTree, models: s.decision.models },
-          subject: 's', bodySha256: 'f'.repeat(64), bodyPath: 'p', at: 't',
-        }]),
-        ['210', { headOid: oid('4'), baseOid: BASE, basePinning: 'none', claims: logClaims, subject: 's', bodySha256: 'f'.repeat(64), bodyPath: 'p', at: 't' }],
-      ]);
-    });
-    updateReceipt(dir, opId, (d) => { d.phase = 'landed'; });
-    const msg = (s) => composeSquashMessage({ number: s.pr, title: s.title, commitSubjects: ['x'], decision: s.decision, models: s.decision.models }).message;
-    const [m202, m204, m210] = [oid('5'), oid('6'), oid('0')];
-    const chain = interleave
-      ? [{ oid: m202, subject: 'a' }, { oid: oid('7'), subject: 'foreign' }, { oid: m204, subject: 'b' }, { oid: m210, subject: 'log' }]
-      : [{ oid: m202, subject: 'a' }, { oid: m204, subject: 'b' }, { oid: m210, subject: 'log' }];
+  /**
+   * A landed train: fleet manifest pinning 202 + 204 + the log PR 210, GitHub
+   * reporting each MERGED, and main's first-parent chain. `over` swaps facts.
+   */
+  function landedWorld(over = {}) {
+    const m = { 202: oid('5'), 204: oid('6'), 210: oid('0') };
+    const chain = over.chain ?? [{ oid: m[202], subject: 'a' }, { oid: m[204], subject: 'b' }, { oid: m[210], subject: 'log' }];
     const notes = [];
     const ctx = fakeCtx({
-      prs: {}, notes,
+      // A head substituted for 202 gets its own commit list (the pinned commit +
+      // the new head) so git facts resolve; identity is what is under test.
+      prs: { 202: PR202, 204: PR204, 210: LOG, ...(over.head202 ? { 9202: { ...PR202, commits: [...PR202.commits, { oid: over.head202, tree: oid('a'), subject: 'update' }] } } : {}) },
+      notes,
       landed: {
         tip: chain.at(-1).oid,
-        202: { view: { state: 'MERGED', mergeCommit: { oid: m202 } } },
-        204: { view: { state: 'MERGED', mergeCommit: { oid: m204 } } },
-        210: { view: { state: 'MERGED', mergeCommit: { oid: m210 } } },
+        202: { view: { state: 'MERGED', mergeCommit: { oid: m[202] }, headRefOid: over.head202 ?? oid('1') } },
+        204: { view: { state: 'MERGED', mergeCommit: { oid: m[204] }, headRefOid: oid('3') } },
+        210: { view: { state: 'MERGED', mergeCommit: { oid: m[210] }, headRefOid: oid('4') } },
         chain,
         messages: {
-          [m202]: msg(r.selected[0]),
-          [m204]: msg(r.selected[1]),
-          [m210]: composeSquashMessage({ number: 210, title: 'log', commitSubjects: ['log'], decision: logClaims, models: logClaims.models }).message,
+          [m[202]]: over.msg202 ?? msgFor(202, decision('converged')),
+          [m[204]]: msgFor(204, decision('converged', 'c3d1f6a2-0000-4000-8000-000000000204')),
+          [m[210]]: msgFor(210, decision('not-run', null), ['claude']),
         },
-        trees: { [m202]: oid('8'), [m204]: oid('9'), [m210]: oid('b') },
+        trees: { [m[202]]: oid('8'), [m[204]]: oid('9'), [m[210]]: oid('b') },
       },
     });
-    return { opId, ctx, notes };
+    const runs = {
+      [RUN]: { id: RUN, auditedTree: oid('a'), auditedSha: oid('1'), roundConvergedAfter: 2 },
+      'c3d1f6a2-0000-4000-8000-000000000204': { id: 'c3d1f6a2-0000-4000-8000-000000000204', auditedTree: oid('c'), auditedSha: oid('3'), roundConvergedAfter: 1 },
+      ...(over.runs ?? {}),
+    };
+    ctx.store.findCodeRunForRepo = async ({ runId }) => ({ ok: true, run: runs[runId] ?? null });
+    ctx.readTrain = (id) => (id === TRAIN ? {
+      ok: true,
+      train: {
+        trainId: TRAIN, mergeMethod: 'pr', baseOid: BASE,
+        destination: { remote: 'origin', ref: 'refs/heads/main', expectedOid: BASE },
+        sources: [202, 204, 210].map((pr) => ({ id: `s${pr}`, oid: { 202: oid('1'), 204: oid('3'), 210: oid('4') }[pr], prNumber: pr, repo: REPO })),
+      },
+    } : { ok: false, reason: 'no such train' });
+    ctx.classifyUpdate = over.classifyUpdate ?? (() => ({ verdict: 'foreign', reason: 'not expected in this fixture' }));
+    return { ctx, notes };
   }
 
-  test('verify on a clean landing: verified, final merge recorded, no pending note', async () => {
-    const { opId, ctx, notes } = await landedOp();
-    const env = await runVerify(ctx, { op: opId });
-    assert.equal(env.phase, 'verified');
-    assert.equal(readReceipt(dir, opId).verify.finalMergeOid, oid('0'));
+  test('a clean landed train: every claim true, final merge is the last train merge, clear to publish, no state written', async () => {
+    const { ctx, notes } = landedWorld();
+    const before = fs.readdirSync(dir);
+    const env = await runVerify(ctx, { train: TRAIN });
+    assert.equal(env.finalMergeOid, oid('0'));
+    assert.deepEqual(env.actualGates, { 202: 'converged', 204: 'converged', 210: 'not-run' });
     assert.deepEqual(env.deviations, []);
     assert.deepEqual(env.clearance, { clear: true, blocks: [] });
-    assert.equal(notes.length, 0);
+    assert.equal(notes.length, 0, 'no note unless --write-note');
+    assert.deepEqual(fs.readdirSync(dir), before, 'stateless: verify writes nothing');
   });
 
-  test('verify with an interleaved foreign commit: verified-interleaved and a pending note', async () => {
-    const { opId, ctx, notes } = await landedOp({ interleave: true });
-    const env = await runVerify(ctx, { op: opId });
-    assert.equal(env.phase, 'verified-interleaved');
-    // Recorded is not enough: the publication predicate refuses until the
-    // interleaved oid is accepted into an amendment (round-2 H1).
-    assert.equal(env.clearance.clear, false);
-    assert.equal(env.clearance.blocks[0].flag, '--accept-interleaved');
-    const amended = updateReceipt(dir, opId, (d) => { d.publicationAmendment = { acceptedOids: [oid('7')], at: 't' }; });
-    assert.deepEqual(publicationClearance(amended), { clear: true, blocks: [] });
+  test('re-running verify gives the same answer (nothing to go stale)', async () => {
+    const { ctx } = landedWorld();
+    const a = await runVerify(ctx, { train: TRAIN });
+    const b = await runVerify(ctx, { train: TRAIN });
+    assert.deepEqual(a, b);
+  });
+
+  test('--write-note files the actual gates for the next status entry', async () => {
+    const { ctx, notes } = landedWorld();
+    await runVerify(ctx, { train: TRAIN, writeNote: true });
     assert.equal(notes.length, 1);
-    assert.match(notes[0].text, /interleaved/);
+    assert.match(notes[0].text, /Actual gates: #202 converged, #204 converged, #210 not-run/);
   });
 
-  test('re-verify refreshes the record and computes clearance from the FRESH state (round-3 H2)', async () => {
-    const { opId, ctx } = await landedOp();
-    assert.equal((await runVerify(ctx, { op: opId })).clearance.clear, true);
-    // The log PR's merge commit is later found carrying a different gate claim.
-    const m210 = oid('0');
-    const orig = ctx.git;
-    ctx.git = (args) => (args[0] === 'log' && args[1] === '-1' && args[3] === m210
-      ? composeSquashMessage({ number: 210, title: 'log', commitSubjects: ['log'], decision: { gate: 'waived', runId: RUN, auditedTree: null }, models: ['claude'] }).message
-      : orig(args));
-    const env = await runVerify(ctx, { op: opId });
-    assert.equal(env.firstVerify, false);
+  test('interleaved foreign commit: blocked until --accept-interleaved', async () => {
+    const chain = [{ oid: oid('5'), subject: 'a' }, { oid: oid('7'), subject: 'foreign' }, { oid: oid('6'), subject: 'b' }, { oid: oid('0'), subject: 'log' }];
+    const { ctx } = landedWorld({ chain });
+    const env = await runVerify(ctx, { train: TRAIN });
+    assert.equal(env.clearance.blocks[0].flag, '--accept-interleaved');
+    assert.match(env.deviations.join('|'), /1 foreign commit/);
+    assert.equal((await runVerify(ctx, { train: TRAIN, acks: { acceptInterleaved: true } })).clearance.clear, true);
+  });
+
+  test('a PR merged at a head the train did not test blocks with NO override (plan R4 H1)', async () => {
+    const { ctx } = landedWorld({ head202: oid('d') }); // classifyUpdate says foreign
+    const env = await runVerify(ctx, { train: TRAIN, acks: { acceptInterleaved: true, acceptProvenanceMismatch: true } });
     assert.equal(env.clearance.clear, false);
-    assert.equal(readReceipt(dir, opId).verify.publicationBlocked, true);
+    assert.ok(env.clearance.blocks.some((b) => /did not test: #202/.test(b.reason) && b.flag === null));
   });
 
-  test('a refused re-verify (the train changed under its record) blocks publication durably (round-4 H1/H2)', async () => {
-    const { opId, ctx } = await landedOp();
-    assert.equal((await runVerify(ctx, { op: opId })).clearance.clear, true);
-    // A foreign commit now appears before the final merge: clean → interleaved.
+  test("a head that is fleet serial's own base-only update of the pinned oid is the same source", async () => {
+    const { ctx } = landedWorld({ head202: oid('d'), classifyUpdate: ({ h, priorHead }) => ({ verdict: h === oid('d') && priorHead === oid('1') ? 'own' : 'foreign' }) });
     const orig = ctx.git;
-    ctx.git = (args) => (args[0] === 'log' && args.includes('--first-parent')
-      ? [`${oid('5')}\ta`, `${oid('7')}\tforeign`, `${oid('6')}\tb`, `${oid('0')}\tlog`].join('\n')
-      : orig(args));
-    await assert.rejects(runVerify(ctx, { op: opId }), (e) => e instanceof TrainRefusal && /changed under its record/.test(e.message));
-    const after = readReceipt(dir, opId);
-    assert.equal(after.phase, 'verified');
-    assert.equal(after.verify.interleaved.length, 0, 'the original record is kept, not overwritten');
-    assert.equal(after.revocation.freshPhase, 'verified-interleaved');
-    const c = publicationClearance(after);
-    assert.equal(c.clear, false);
-    assert.equal(c.blocks.find((b) => /revoked/.test(b.reason)).flag, null);
+    ctx.git = (args) => (args[0] === 'rev-parse' && args[1] === `${oid('d')}^1` ? `${oid('1')}\n` : orig(args));
+    const env = await runVerify(ctx, { train: TRAIN });
+    assert.deepEqual(env.clearance, { clear: true, blocks: [] });
   });
 
-  test('interleaved → clean on re-verify is recorded as a revocation the receipt can hold (round-5 H1/H3)', async () => {
-    const { opId, ctx } = await landedOp({ interleave: true });
-    await runVerify(ctx, { op: opId });
-    const orig = ctx.git;
-    ctx.git = (args) => (args[0] === 'log' && args.includes('--first-parent')
-      ? [`${oid('5')}\ta`, `${oid('6')}\tb`, `${oid('0')}\tlog`].join('\n')
-      : orig(args));
-    await assert.rejects(runVerify(ctx, { op: opId }), /now verifies as verified/);
-    const after = readReceipt(dir, opId); // validates: the old interleaved record stays intact
-    assert.equal(after.phase, 'verified-interleaved');
-    assert.equal(after.revocation.freshPhase, 'verified');
-    assert.equal(publicationClearance(after).clear, false);
+  test('a claim naming another repository\'s run is false (repo-scoped, code-mode lookup)', async () => {
+    const { ctx } = landedWorld({ runs: { [RUN]: undefined } });
+    const env = await runVerify(ctx, { train: TRAIN });
+    assert.match(env.deviations.join('|'), /#202: run .* is not a code-mode run of this repository/);
+    assert.equal(env.clearance.blocks[0].flag, '--accept-provenance-mismatch');
   });
 
-  test('a receipt that changes while verify is computing is never clobbered (round-5 H2)', async () => {
-    const { opId, ctx } = await landedOp();
-    const orig = ctx.git;
-    ctx.git = (args) => {
-      if (args[0] === 'log' && args.includes('--first-parent')) {
-        // A concurrent writer lands between verify's read and its write.
-        updateReceipt(dir, opId, (d) => { d.trainId = 't-20261011233000-0002'; });
-      }
-      return orig(args);
-    };
-    await assert.rejects(runVerify(ctx, { op: opId }), /changed while it was being verified/);
-    const after = readReceipt(dir, opId);
-    assert.equal(after.phase, 'landed');
-    assert.equal(after.trainId, 't-20261011233000-0002');
+  test('a schema fault in the run lookup stops verify (fatal, never a silent "no run")', async () => {
+    const { ctx } = landedWorld();
+    ctx.store.findCodeRunForRepo = async () => ({ ok: false, fatal: true, reason: 'schema-fault: 42703' });
+    await assert.rejects(runVerify(ctx, { train: TRAIN }), /rejected the provenance query/);
   });
 
-  test('verify refuses before the train has landed', async () => {
-    const ctx = fakeCtx({ prs: { 202: PR202 }, runs: [converged(oid('a'), oid('1'))], fleet: readyFleet });
-    const { opId } = await runPrepare(ctx, opts({ prs: [202] }));
-    await assert.rejects(runVerify(ctx, { op: opId }), TrainRefusal);
-  });
-
-  test('abandon works before landing and is refused after it', async () => {
-    const ctx = fakeCtx({ prs: { 202: PR202 }, runs: [converged(oid('a'), oid('1'))], fleet: readyFleet });
-    const { opId } = await runPrepare(ctx, opts({ prs: [202] }));
-    assert.equal((await runAbandon(ctx, { op: opId })).phase, 'abandoned');
-    const { opId: landedId, ctx: c2 } = await landedOp();
-    await assert.rejects(runAbandon(c2, { op: landedId }), (e) => e.code === 'ILLEGAL_TRANSITION');
+  test('an unknown train is refused; a non-pr train is refused', async () => {
+    const { ctx } = landedWorld();
+    await assert.rejects(runVerify(ctx, { train: 't-20261011233000-9999' }), /no such train/);
+    const orig = ctx.readTrain;
+    ctx.readTrain = (id) => { const t = orig(id); t.train.mergeMethod = 'direct-squash'; return t; };
+    await assert.rejects(runVerify(ctx, { train: TRAIN }), /pr-mode trains only/);
   });
 });
 
