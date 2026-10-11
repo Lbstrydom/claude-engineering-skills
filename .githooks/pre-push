@@ -7,6 +7,8 @@
 # 1. CHECKS — runs `npm run check` against a CLEAN CHECKOUT of the pushed
 #    commit (a throwaway git worktree), NOT the working tree. BLOCKS on
 #    failure. Bypass when you must: git push --no-verify
+#    A push of ONLY refs/heads/archive/* or refs/tags/archive/* takes the archive
+#    lane instead (section 0.97): a scan of what it publishes, not the full check.
 # 2. SYNC   — propagates SKILL.md + scripts to consumer repos. Non-blocking:
 #    a missing consumer repo warns but never stops the push.
 #
@@ -223,8 +225,66 @@ if [ -f "$REPO_ROOT/package.json" ]; then
     echo "⚠ transcript harvest failed (non-blocking) — see docs/plans/audit-transcript-durability.md" >&2
 fi
 
+# ── 0.97 Archive lane (blocking) ─────────────────────────────────────────
+# A push whose EVERY ref lands under refs/heads/archive/ or refs/tags/archive/ is a
+# backup of work in flight. `npm run check` fails on such a commit for reasons that
+# say nothing about publishing it (docs-ref drift, a stale generated index, a
+# live-store gate), and the pusher then reaches for `git push --no-verify`, which
+# disarms every gate. The lane replaces that habit with the one check that matters
+# when commits become public: a scan of EXACTLY what this push publishes, for
+# secret-shaped content and sensitive paths. `check` has no such scan, so this is
+# added, not kept. Plan + evidence: docs/plans/prepush-archive-lane.md.
+#
+# The lane predicate lives in ONE place, scripts/prepush-archive-lane.mjs; this block
+# never re-derives it. The CLI prints a single `archive-lane/v1 <outcome>` line and
+# the hook acts on that token alone, never on exit status (node exits 1 on a syntax
+# error before any catch can run):
+#   not-applicable  → fall through to the full gate, silently
+#   clean           → skip the full check
+#   findings|error  → block (an eligible push that could not be scanned is refused)
+#   no valid token  → warn loudly and run the full gate (a broken lane reverts to today)
+#
+# The lane's code comes from the checkout THIS HOOK lives in ($0), NOT from the
+# pusher's cwd. core.hooksPath points at one checkout's .githooks while pushes come
+# from any worktree (measured: it pointed into a linked worktree, in backslash form),
+# so REPO_ROOT/scripts may predate the lane while the hook is new. `\` is normalised
+# first: dirname on a backslash path returns "." and would resolve the PARENT of cwd.
+# AUDIT_PREPUSH_ARCHIVE_LANE=0 reverts to the full gate — a loosening, since the full
+# gate does not scan; it exists so a lane bug is never an outage.
+LANE_HANDLED=0
+if [ "$AUDIT_PREPUSH_ARCHIVE_LANE" != "0" ] && [ "$PUBLISHED_REFS" -gt 0 ]; then
+  # Plain path arithmetic, deliberately NOT `git -C "$HOOK_DIR" rev-parse`: git exports
+  # GIT_DIR into a hook's environment, which overrides discovery and would answer with
+  # the PUSHER's checkout — the exact thing this block must not use. `pwd -W` gives a
+  # Windows-form path under Git Bash (falling back to plain `pwd` elsewhere).
+  HOOK_DIR="$(dirname "${0//\\//}")"
+  HOOK_ROOT="$(cd "$HOOK_DIR/.." 2>/dev/null && { pwd -W 2>/dev/null || pwd; })"
+  LANE_SCRIPT="$HOOK_ROOT/scripts/prepush-archive-lane.mjs"
+  if [ -n "$HOOK_ROOT" ] && [ -f "$LANE_SCRIPT" ]; then
+    LANE_OUT="$(printf '%s\n' "$PUSH_STDIN" | ( cd "$REPO_ROOT" && node "$LANE_SCRIPT" --remote="$1" --destination="$2" ))"
+    LANE_TOKEN="$(printf '%s\n' "$LANE_OUT" | grep -E '^archive-lane/v1 (not-applicable|clean|findings|error)$' | tail -n 1)"
+  else
+    LANE_TOKEN=""
+    LANE_WHY="its script was not found next to this hook"
+  fi
+  case "$LANE_TOKEN" in
+    "archive-lane/v1 clean")
+      LANE_HANDLED=1
+      echo "✓  archive lane clean — the full check was skipped (docs-ref drift, generated-artifact freshness, the suite do not apply to a backup ref)."
+      ;;
+    "archive-lane/v1 findings"|"archive-lane/v1 error")
+      echo "✗  pre-push archive lane blocked this push — the details are above."
+      exit 1
+      ;;
+    "archive-lane/v1 not-applicable") ;;
+    *)
+      echo "⚠ archive lane unavailable (${LANE_WHY:-it produced no valid result}): running the full gate, which does NOT scan published content." >&2
+      ;;
+  esac
+fi
+
 # ── 1. Checks (blocking) ────────────────────────────────────────────────
-if [ -f "$REPO_ROOT/package.json" ]; then
+if [ "$LANE_HANDLED" -ne 1 ] && [ -f "$REPO_ROOT/package.json" ]; then
   if [ "$AUDIT_PREPUSH_SANDBOX" = "0" ]; then
     echo "→ Pre-push checks: npm run check (in-tree; sandbox disabled) ..."
     ( cd "$REPO_ROOT" && AUDIT_PUSH_RANGE_BASE="$PUSH_BASE" AUDIT_PUSH_RANGE_HEAD="$PUSH_HEAD" npm run check )

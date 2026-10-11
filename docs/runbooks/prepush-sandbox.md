@@ -279,6 +279,8 @@ hooks.
 |---|---|
 | Run checks in-tree (old behaviour) | `AUDIT_PREPUSH_SANDBOX=0 git push` |
 | Skip the hook entirely | `git push --no-verify` |
+| Force the full gate for an archive push (a loosening: the full gate does not scan) | `AUDIT_PREPUSH_ARCHIVE_LANE=0 git push` |
+| Publish an archive push whose findings you have read | the `AUDIT_ARCHIVE_LANE_ACK` value the block message prints |
 | Run the sandbox by hand | `npm run prepush:check -- --base <sha> --head <sha>` |
 | Run the poison pills serially (debugging) | `GATES_POISON_CONCURRENCY=1 npm run gates:poison` |
 | Force a refresh of the DB test image | `AUDIT_LOOP_DB_IMAGE_PULL=always npm run db:suites:gate` |
@@ -351,3 +353,43 @@ machine state, not repo state.
 **A check passes in-tree but fails in the sandbox** — that is the feature
 working. The commit is missing something your working tree has; most often a
 file that was never staged. `git status` will show it.
+
+## 7. The archive lane (`archive/*` refs)
+
+A push whose **every** ref lands under `refs/heads/archive/` or `refs/tags/archive/` is a
+backup of work in flight. `npm run check` fails on such a commit for reasons that say nothing
+about publishing it, which is how `--no-verify` became a habit. Those pushes take the **archive
+lane** instead (`.githooks/pre-push` §0.97): a scan of exactly what the push publishes, and
+nothing else. Plan, evidence and the full audit trail:
+[`docs/plans/prepush-archive-lane.md`](../plans/prepush-archive-lane.md).
+
+**What it checks.** The objects the destination lacks (secret-shaped content in blobs, commit
+messages and tag messages) and every path a published commit adds or changes (sensitive
+paths, including a blob the destination already holds). `npm run check` has **no** such scan
+(measured; plan §1.2), so the lane adds it rather than keeping it. What the destination
+holds comes from the destination itself (`git ls-remote` on the push URL), never from
+remote-tracking refs.
+
+**What it skips**, and why, step by step: plan §3 and
+`ARCHIVE_LANE_CHECK_CLASSIFICATION` in `scripts/lib/prepush-archive-lane.mjs`. A test makes
+that table executable: a new `check` step with no entry fails, and so does a class-P
+(publication-safety) step that names no lane scanner.
+
+**When it blocks.** A finding, or an eligible push that could not be scanned completely
+(unreachable destination, a limit hit, git output that does not add up). An incomplete scan is
+never clean. The message lists each finding (sensitive paths as `[redacted:<hash>].<ext>`,
+matched text never) and a fingerprint of the set. To publish exactly that set, re-run the same
+push with `AUDIT_ARCHIVE_LANE_ACK` set to the fingerprint; it covers only the findings it was
+computed from. Expect to need it: this repo tests its own scanner, so fixtures shaped like
+secrets are normal (13 findings, all synthetic, on `archive/queue-burndown-2026-10-02`), and
+so are `.env.example` templates, which the shared path classifier calls sensitive.
+
+**When it steps aside.** `not-applicable` (any other ref, a mixed push, a deletion of a
+non-archive ref) runs the full gate exactly as before. If the lane yields no valid result at
+all (script missing from the hook's checkout, a crash) the hook says so and runs the full gate,
+which does **not** scan published content.
+
+**Where the lane's code comes from.** The checkout the hook itself lives in, found from
+`$0`, not the pusher's cwd: `core.hooksPath` points at one checkout while pushes come from
+any worktree. Until that checkout contains this change, pushes from any worktree run the old
+hook.

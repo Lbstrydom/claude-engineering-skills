@@ -1,6 +1,6 @@
 # Plan: pre-push — a sanctioned lane for `archive/*` refs
 - **Date**: 2026-10-11
-- **Status**: Draft
+- **Status**: In Progress
 - **Author**: Claude + Louis
 - **Scope**: backend (git hook + one CLI + one lib; no UI) · stack `js-ts` (`detect-stack`: `js-ts`)
 - **Target domain(s)**: `root-scripts`, `shared-lib`
@@ -176,7 +176,7 @@ Classes: **P** publication-safety (none exist; the lane's own scan fills the slo
 | `size:ratchet:gate` | S | drift-only ratchet | pass |
 | `gitignore:policy:gate` | S | `.gitignore` category declarations | pass |
 | `status:integrity:gate` | S | session-log conservation vs a base | pass |
-| `npm-args:gate` | S | documented `npm run x --flag` form | pass |
+| `npm-args:gate` | S | the `--` separator in documented npm commands | pass |
 | `mcp:parity:gate` | S | two MCP configs equivalent | pass |
 | `visual-contract-doc:gate` | S | doc example vs schema | pass |
 | `worktree:preflight:gate` | S | skill preflight marker | pass |
@@ -250,3 +250,14 @@ Live replay (Pre-ship empirical verify): push `3c0afc4e` as `archive/queue-burnd
 Acceptance rate 100% in every round (no dismissals, deferrals or rebuttals); every finding was a concrete design defect, none was rigor pressure. The GPT cap (3) was reached while findings were still being accepted, which is why Gemini's two rounds followed. Finding count fell 8 → 2 → 2 → 3 → 1.
 
 **Not reviewed**: the plan text after Gemini's round-2 fix; any implementation (none exists yet); and the one judgment the user should confirm, that the lane skips all of `check` rather than a subset (§3).
+
+## 8. Implementation notes (2026-10-11)
+
+Built as planned (§4). Deviations and findings, each from running the code rather than from the plan:
+
+- **The hook finds its checkout by path arithmetic, not `git -C`.** `git` exports `GIT_DIR` into a hook's environment, which overrides discovery: `git -C "$HOOK_DIR" rev-parse --show-toplevel` would have answered with the *pusher's* checkout, silently defeating D7. `HOOK_ROOT` is `dirname "$0"` (backslashes normalised) plus `..`, resolved with `pwd -W` where Git Bash has it.
+- **`git log --raw -z` puts a newline between a commit's header and its first entry** (`od -c`: NUL, newline, then the colon token). The first parser, written from the documented shape, skipped the first entry of every commit; four tests failed on it before it was fixed, and the `parseRawLog` unit fixture now carries the real shape. `--no-show-signature` was added to the same invocation for the same reason as `--root`: a config can otherwise change the output.
+- **Mutation-checked, each seen to fail**: removing `--root` fails the `log.showRoot=false` test; removing `-m` fails the merge-only-path test; resolving the lane from the pusher's cwd fails both worktree-topology tests.
+- **`.env.example` is a `sensitive` path** under the shared classifier (`(^|/)\.env(\..+)?$`), so a repo history that carries one produces a `path` finding. Not special-cased: the classifier is the single oracle, and the acknowledgement exists for exactly this. A full-history scan of an empty destination gave 780 findings in 25,272 objects, which is also why an empty destination is the honest "everything is published" case and not an error.
+- **Live replay on the real case.** `archive/queue-burndown-2026-10-02` (`3c0afc4e`) against a local bare destination seeded with `origin/main`: 460 objects, 128 paths classified, 0 path findings, 14 secret findings (the 13 of §1.3, one blob counted per pattern), 0.5 s end to end. The printed fingerprint is the acknowledgement.
+- **Pre-existing and unrelated**: `tests/prepush-installed-tree-identity.test.mjs` "records a subset of the root lockfile" fails in the main checkout at the same base commit, because that checkout's `node_modules` holds six packages (`braces`, `fill-range`, `is-number`, `micromatch`, `picomatch`, `to-regex-range`) that its lockfile does not declare. Machine state, not this change; the pre-push sandbox installs afresh when it detects a stale tree.
