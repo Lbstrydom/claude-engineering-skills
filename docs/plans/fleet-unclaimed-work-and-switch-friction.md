@@ -14,10 +14,10 @@
 | Item | Decision | Phase |
 |---|---|---|
 | **h** live-session defect | Fix first. Handover reads the same merged evidence as `status`; merged-but-unreleased claims are listed as "release these" | 1 |
-| **i, n, g** classification | One verdict per unregistered worktree: `unlanded` · `superseded` · `unverified` · `sync-owned`. Only the first and third block a handover | 2 |
-| Part 1.1 status section | Added. Not subject to the 14-day idle hide, which today hides exactly the unlanded, clean, idle work | 3 |
-| Part 1.2 footer | One FYI line, fed from a derived cache file refreshed by `claim`/`touch`/`ready` under a 3 s bound; `status` stays read-only | 3 |
-| Part 1.3 `fleet archive` | Dry run by default; `--apply` snapshots to a temporary index, tags, verifies, then removes. Branch is never deleted | 4 |
+| **i, n, g** classification | One verdict per unregistered worktree from an ordered contract: `unlanded` · `superseded` · `unverified` · `sync-owned`. Candidates include clean, pushed, unlanded worktrees. Only work with no copy outside this worktree, and unmeasured work, blocks a handover | 2 |
+| Part 1.1 status section | Added. Not subject to the 14-day idle hide, which today hides exactly the unlanded, clean, idle work. `status` writes a derived cache | 3 |
+| Part 1.2 footer | Reads the cache only (no scan, so no bound to miss). Two lines: an FYI when abandoned work is known, and a request to run `fleet status` when the scan is more than 24 h old or partial | 3 |
+| Part 1.3 `fleet archive` | Dry run by default; `--apply` snapshots deterministically to a temporary index, tags, verifies, revalidates under the registry lock, then removes. Refuses anything it cannot preserve. Branch is never deleted | 4 |
 | **a, b, j** binding | `claim --worktree`; `add` records the worktree; `release` resolves it by branch (the one reader that does not); warn when id ≠ bound branch | 5 |
 | **c** stale tooling | Warn when a hydrated worktree's bundle stamp trails the main checkout's, and name `npm run skills:hydrate` on an unknown verb | 6 |
 | **e** gh reachability | Free: reuse the merged-PR query's `queried`/`reason` already in `facts.merged.prs`. No extra `gh` call | 6 |
@@ -98,20 +98,31 @@ graph LR
 
 ### 2.1 One verdict per unregistered worktree (`scripts/lib/fleet/unregistered.mjs`, new)
 
-`unregisteredWork` moves here from `handover.mjs` (one predicate; #1, #10) and returns items enriched with a pure verdict (#7, #11):
+`unregisteredWork` moves here from `handover.mjs` (one predicate; #1, #10) and returns items enriched with a pure verdict (#7, #11).
 
-| Verdict | Means | Blocks handover? |
-|---|---|---|
-| `unlanded` | Dirty files, or commits no evidence puts on base. A merged tip with dirty files is still `unlanded` | yes |
-| `superseded` | The exact tip is on base (`landedReason`: `ahead 0` → contained; merged-PR or squash evidence → landed) **and** no staged/unstaged/untracked files; **or** the patch duplicates a branch a live claim covers. Gives `via` | no, listed as removable (the commands are `fleet prune`'s) |
-| `unverified` | Evidence incomplete: `gh` unreachable, a probe failed, or a detached HEAD with unpushed commits | yes, as today's "check before claiming", now a state rather than free text |
-| `sync-owned` | The only dirty path is `RECEIPT_PATH` (`.sync-receipt.json`) | no, listed with its reason |
+**Candidates.** Every worktree (not bare, missing or prunable) that no live claim covers. Today's predicate only selects a worktree that is dirty or holds *unpushed* commits, so a clean worktree whose commits were pushed but never landed is invisible, and that is exactly the work the idle hide buries. Selection is therefore independent of push status: each candidate is described by three separate facts, and a candidate with nothing local and nothing off base is simply not listed.
 
-- **Evidence.** Callers pass the `facts` they already gathered, so the module makes no extra git or gh call for evidence. Status has `merged:'all'`. Handover and the footer build facts with `merged: <worktree branch names>`. Missing evidence yields `unverified`, never `superseded` (an unasked question is not an empty answer).
+- **L, local changes**: staged, unstaged and untracked paths, with `SYNC_OWNED_PATHS` (the receipt) split out.
+- **C, committed work off base**: `none` (the tip is contained in the measured base), `pushed` (commits not on base, but a remote ref holds them), `unpushed` (no remote ref holds them), or `unknown`. `ahead` comes free from `facts.branches`; push placement is the existing `rev-list HEAD --not --remotes`.
+- **E, evidence**: `landed` (`landedReason` on the exact tip), `duplicate` (the whole-diff patch-id equals that of a branch a **live claim** covers), `none`, or `incomplete` (`gh` not queried, squash window short).
+
+**Ordered contract; the first matching row wins.**
+
+| # | Condition | Verdict | Blocks handover? |
+|---|---|---|---|
+| 1 | A probe failed or was skipped, or C is `unknown`, or C has commits and E is `incomplete` | `unverified` | yes if L > 0 or C is `unpushed` (something could be lost), else no (a remote holds it) |
+| 2 | L (receipt excluded) is non-empty | `unlanded`, reason "N uncommitted files", noting if the committed part is landed | yes (the files exist nowhere else) |
+| 3 | C has commits and E is `landed` or `duplicate` | `superseded`, with `via` (L is already empty here, so a duplicate never rests on a dirty tree) | no, listed as removable (the commands are `fleet prune`'s) |
+| 4 | C has commits and E is `none` | `unlanded`, `preserved: remote` when C is `pushed` | yes only when C is `unpushed` |
+| 5 | Only the receipt is dirty and C is `none` | `sync-owned` | no, listed with its reason |
+
+The receipt discount applies to **L alone**: receipt-plus-unlanded-commits is row 4, not row 5. A receipt left dirty beside any other verdict is carried as `syncOwnedDirty: true`, so `fleet prune` and `archive` still see it. Rows 2 to 4 are *possibly abandoned* once idle longer than `staleWorktreeDays`; row 1 is too when it blocks.
+
+- **Evidence.** Callers pass the `facts` they already gathered, so the module makes no extra git or gh call for evidence. Status has `merged:'all'`. Handover builds facts with `merged: <worktree branch names>`. Missing evidence yields row 1, never `superseded` (an unasked question is not an empty answer).
 - **Shared landed predicate.** `hideReason`'s two lines become an exported `landedReason(item)` in `overlap.mjs`, used by `hideReason`, `planPrune` and the verdict, so "is this tip on base" has one spelling (#10).
 - **Light probe.** `archiveReport` gains `scanIgnored = true` and `probeTimeoutMs = 30000`. The scan passes `scanIgnored:false`, which skips the `--ignored` status call and the size walk. The predicate never used their result, and they are the measured cost (M2). `ls-files -v` stays, so skip-worktree still makes an item `unverified`. Defaults leave `release`, `archive-check` and `prune` byte-identical.
 - **Idle age.** `lastActivity = max(HEAD commit time, newest mtime among the first 200 dirty paths)`, run through `isIdleTip(…, staleWorktreeDays)`. An unknown or future-dated time is **not** stale, matching `isIdleTip`. Config key `staleWorktreeDays` (default 3, 1 to 3650) sits beside `hideIdleAfterDays`.
-- **Bound.** `{ timeoutMs, maxWorktrees: 40, deadlineMs }`, sequential, deadline checked before each probe (the `CLEAN_PROBE` shape). Status uses 20 s, the footer 3 s, handover 120 s. Unprobed worktrees are returned as `notProbed: n`, never dropped. Handover treats them as NOT MEASURED, which fails closed.
+- **Bound: one absolute deadline.** The scan takes `deadlineAt` (status 60 s, handover 120 s from its start). Every subprocess gets `timeoutMs = min(its own cap, deadlineAt − now)`, and the mtime stats and the archive-tag scan stop when it passes, so a slow probe cannot overrun the budget it was started inside. There is **no worktree-count cap**. Candidates are probed **oldest tip first** (the abandoned ones), so truncation drops the freshest and a repeated scan cannot starve the same suffix. What was not reached is returned as `notProbed: n` with `partial: true`; handover treats it as NOT MEASURED (fail closed). At the measured ≈ 0.15 to 1 s per worktree the budget covers 60 or more; an estate beyond that reports partial rather than pretending.
 - **Archived, unlanded.** `git for-each-ref --no-merged=<base> refs/tags/archive` lists archive tags not contained in base. Each is checked by whole-diff patch-id against the squash window (`patchId`, `squashPatchIds`); a match is `superseded`, otherwise `unlanded` (≤ 50 tags; overflow is reported). Without this, `fleet archive` would move work from a noisy place to a silent one.
 
 ### 2.2 Surfaces
@@ -128,7 +139,11 @@ graph LR
   ```
 
   `possibly abandoned` and `unverified` items are listed in full; the other groups are counts (`--all` lists them). `--json` carries `status.unregistered`. The section ignores `hideReason`'s `idle`, and the "N hidden" line gains "(k of them unlanded — see Unregistered work)" so the two views agree. Fresh unclaimed desktop worktrees are counted, never alarmed.
-- **Footer (Part 1.2).** One line from `checkpointFooter` when `abandoned > 0`: `FYI for the user/coordinator, not an action for this session: 3 worktree(s) idle >3d hold unlanded work — fleet status (scan 2h old)`. It is fed from `fleet/unregistered.json`, a **derived Category-A file** beside `hold.json` (`{schemaVersion, at, staleDays, probed, total, partial, counts}`, zod `.strict()`, written with `atomicWriteFileSync`, never committed). `claim`, `touch` and `ready` refresh it when it is missing or older than 6 h, under the 3 s bound, and a partial scan is cached as partial. `status` never writes it and stays live. A corrupt or unreadable cache prints `next: not derived (…)` and cannot change the verb's exit code. Archive tags stay out of the footer (they would nag for weeks).
+- **Footer (Part 1.2): reads a cache, never scans.** `status` writes `fleet/unregistered.json`, a **derived Category-A file** beside `hold.json` (`{schemaVersion, at, staleDays, partial, notProbed, counts}`, zod `.strict()`, written with `atomicWriteFileSync`, never committed). `cmdStatus` still takes no lock and writes no registry state; the cache is a derived artefact like the telemetry spool `status` already writes, and a failed write is a `warning:` line, not a failure. `checkpointFooter` then prints up to two lines:
+  - **FYI**, when `counts.abandoned > 0`: `FYI for the user/coordinator, not an action for this session: 3 worktree(s) idle >3d hold unlanded work — fleet status (scan 2h old)`.
+  - **Refresh request**, when the cache is missing, unreadable, older than 24 h, or `partial` (even with zero abandoned, so an unmeasured suffix is never silent): `unregistered-work scan is 2d old (or: missing / incomplete, 4 not probed) — run \`fleet status\` (read-only) to refresh`.
+
+  Why no scan in `claim`/`touch`/`ready`: a scan there needs a deadline, rotation and a thundering-herd answer (several sessions crossing a TTL together), and the audit (M1, M2) showed each is real. Reading a file has none of them, and the refresh request turns the first checkpoint after 24 h into the trigger for one `status` run. A corrupt cache prints the refresh request and cannot change a verb's exit code. Archive tags stay out of the footer (they would nag for weeks).
 - **Why the wording matters.** The user pre-authorises acting without asking only on `next`'s `DO` lines. A footer line that reads like an instruction would send chip sessions off to inspect other sessions' worktrees. The line says whose it is, and `participant-rules.md` states it is not a `DO`.
 
 ### 2.3 `fleet archive <worktree|branch|path|id> [--apply] [--discard-ignored]` (`archive.mjs`, new)
@@ -136,17 +151,24 @@ graph LR
 ```mermaid
 graph TD
   A["resolve target via resolveArchiveTarget"] --> B["refuse: main checkout, this worktree, locked, live claim, not in git worktree list, .gitmodules, any unverified"]
-  B --> C["full archiveReport: refuse ignored-only without discard-ignored, sensitive untracked, over 50 MiB or size unmeasured"]
+  B --> C["full archiveReport over the preservation set: refuse partially staged, unmerged, ignored without discard-ignored, sensitive, over 50 MiB or unmeasured"]
   C --> D["dry run stops here and prints the plan"]
-  C --> E["snapshot: temp index, add -A, write-tree, commit-tree parent HEAD"]
+  C --> E["snapshot: temp index, fixed identity and date, add -A, write-tree, commit-tree parent HEAD"]
   E --> F["tag archive/branch, verify tag tree equals written tree"]
-  F --> G["git worktree remove --force"]
-  G --> H["check directory gone, else report leftover"]
+  F --> G["under the registry lock: revalidate HEAD, branch, porcelain status and no live claim"]
+  G --> H["git worktree remove --force"]
+  H --> I["check directory gone, else report leftover"]
 ```
 
-- **Snapshot without side effects (#13, #14).** `GIT_INDEX_FILE=<tmp>`, `read-tree HEAD`, `add -A`, `write-tree`, `commit-tree <tree> -p HEAD`. No hook runs, the branch and the worktree are untouched until the final step, and every failure before removal changes nothing. This needs `runGit` to accept an `env` limited to `GIT_INDEX_FILE` (`git-facts.mjs:48`).
-- **Tag.** `archive/<branch>` (detached: `archive/<worktree basename>`); if that name exists at another oid, append `-<short oid>`. A tag already at the same oid is reused. Lightweight, matching the 8 existing tags. Tags are local; nothing pushes them.
-- **Removal result.** If removal fails, or the directory is still there afterwards (the storyline file-lock case), the verb exits 1 with the tag kept and `leftover: <path>`, never "success". The branch is never deleted.
+- **Preservation set and refusals (#12).** The set is every staged, unstaged and untracked path from the full `archiveReport`. The verb refuses, naming the paths and the remedy ("stage everything with `git add -A` in that worktree, or reset the index, then re-run"), when:
+  - a path is **partially staged** (staged *and* changed again in the working tree): a working-tree snapshot would silently drop the staged version, so it cannot be preserved losslessly;
+  - the index has **unmerged entries** (`git ls-files -u`);
+  - **any** gitignored path outside `archiveIgnore` exists, in a mixed tree as much as an ignored-only one, unless `--discard-ignored` is given; the result lists every discarded path either way;
+  - `.gitmodules` exists, any probe is `unverified`, or the preservation set is over 50 MiB or its size could not be measured (the size walk covers all dirty paths, not only untracked ones).
+- **Snapshot without side effects, and deterministic (#13, #14).** `GIT_INDEX_FILE=<tmp>`, `read-tree HEAD`, `add -A`, `write-tree`, `commit-tree <tree> -p HEAD` with a **fixed identity** (`fleet archive <fleet-archive@localhost>`), a fixed message, and author and committer dates set to HEAD's commit date. The same tree, parent, identity and date give the same oid on every retry, and the run no longer needs `user.name` configured. No hook runs, and the branch and worktree are untouched until the removal step. `runGit` accepts an `env` limited to an allowlist (`GIT_INDEX_FILE`, `GIT_AUTHOR_*`, `GIT_COMMITTER_*`) (`git-facts.mjs:48`).
+- **Tag.** `archive/<branch>` (detached: `archive/<worktree basename>`); if that name exists at another oid, append `-<short oid>`. A tag already at the same oid is reused, which the deterministic snapshot now makes a real case. Lightweight, matching the 8 existing tags. Tags are local; nothing pushes them.
+- **Revalidate, then remove (#14).** Immediately before removal, inside `transact` (the registry lock, so no `claim` can register this worktree meanwhile), the verb re-reads and compares: HEAD oid and branch against the capture, the full `status --porcelain=v1 -z --untracked-files=all` output byte-for-byte against the capture the snapshot was built from, that no live claim covers the worktree or branch, and that the tag still resolves to the verified tree. Any mismatch aborts with the tag and the worktree kept (exit 3, "changed since the snapshot"). Only then `git worktree remove --force`. The remaining window is edits in the milliseconds between that compare and the delete; coordination here is cooperative, not enforced, and the verb says so rather than claiming quiescence.
+- **Outcomes and retries.** Artefacts left by stage: before the tag, none; after it, the tag only; after a failed removal, the tag plus the worktree (or a `leftover: <path>` directory when a file lock stopped the delete, the storyline case; exit 1, never "success"). A re-run with the worktree still there and unchanged recreates the same oid and reuses the tag. After a successful removal the target resolves to a branch with no worktree: if `archive/<branch>` exists the verb prints `already archived at <oid>` (exit 0), otherwise it refuses with "no worktree to archive". The branch is never deleted.
 - **No restore verb, no expiry** (`git checkout archive/x` already restores).
 
 ### 2.4 Registration and handover (Phases 1, 5, 6)
@@ -164,7 +186,7 @@ graph TD
 |---|---|---|---|
 | `unregistered.mjs` + `unregistered.json` | Print the "N hidden" line louder or cut `hideIdleAfterDays` | A scheduler/daemon, or a per-worktree registry record | One pure verdict, the moved predicate, and a derived cache. Requirement: the 2026-10-11 sweep took a coordinator round trip per item, and a footer at M1 cost per call is unusable |
 | `fleet archive` | A runbook of four git commands (today's manual state) | Restore verb, expiry, remote archive repo | One verb: snapshot, tag, verify, remove. Requirement: 8 abandoned worktrees were rescued by hand |
-| Footer cache | Recompute on every footer (3.6 to 17 s) | A background watcher | TTL file refreshed by the verbs that already run, 3 s bound |
+| Footer cache | Recompute on every footer (3.6 to 17 s) | A background watcher, or a bounded scan with rotation inside `claim`/`touch`/`ready` | `status` writes the derived file; footers only read it and ask for a refresh when it is old or partial |
 | `landedReason`, `scanIgnored` | Copy `hideReason`'s two lines; a second probe function | A general probe-plan abstraction | Extract one predicate; add one default-preserving option |
 
 Principles: #1/#10 (one predicate, one `landedReason`), #2/#7 (verdict pure, probe injected), #8 (`staleWorktreeDays`, bounds as named constants), #11 (every probe and clock injectable), #12 (realpath and `git worktree list` membership at the boundary), #13/#14 (archive is create-then-verify-then-remove), #15 (closed verdict enum; failures are results), #16 (cache or probe failure degrades to a stated "not derived"), #18 (new manifest fields optional; defaults preserve `release`/`archive-check`/`prune`), #19 (every skipped worktree is counted).
@@ -173,18 +195,19 @@ Principles: #1/#10 (one predicate, one `landedReason`), #2/#7 (verdict pure, pro
 
 Dependencies: **1 → 2 → 3 and 4**; **5** is independent of 2 to 4 (touches `cmdClaim`, `cmdAdd`, `cmdRelease`); **6** edits `handover.mjs` after 1 and 2; **7** documents every flag added by 3 to 6, so it is last.
 
-- **Archive chain** (atomic by construction): resolve → refuse-checks → snapshot (temp index; nothing mutated) → tag → verify → remove. A failure before removal leaves the repo as it was (the temp index is deleted in `finally`). A failure at removal leaves a verified tag and an honest `leftover`. Re-running with the tag at the same oid is idempotent (#13).
-- **Cache.** Writes are atomic renames of derived content, so two concurrent refreshes (several sessions crossing the TTL together) are last-writer-wins and both correct. No registry lock is taken, and the refresh runs outside `transact` so a 3 s scan can never hold `fleet/.lock`.
-- **Registry mutation.** Only Phase 5 changes how the registry is written, inside the existing `transact`. The validation for `--worktree` runs before the lock, like every other git fact (`commands.mjs` header).
+- **Archive chain**: resolve → refuse-checks → snapshot (temp index; worktree and refs untouched) → tag → verify → *lock, revalidate* → remove → leftover check. Each stage's failure leaves a defined artefact (§2.3 "Outcomes and retries"): nothing before the tag, the tag after it, the tag plus the worktree or a named `leftover` after a failed removal. The temp index is deleted in `finally`. A re-run reproduces the same oid (fixed identity and date), so tag reuse and "already archived" are real, not asserted (#13).
+- **Cache.** Only `status` writes it, by atomic rename of derived content; two concurrent `status` runs are last-writer-wins and both correct. The scan runs outside any lock. Footers only read.
+- **Registry lock.** Phase 5 changes how claims are written, inside the existing `transact` (validation for `--worktree` runs before the lock, like every other git fact). `archive` takes the same lock for its final revalidate-and-remove only: the one in-lock step is a filesystem delete that is fast after the snapshot, and it is what stops a `claim` registering the worktree being removed.
 
 ## 4. Security Considerations
 
 The security-incident neighbourhood returned INC-001 (a symlink resolving into a sensitive path evades a lexical classifier). It applies to `archive` because the verb deletes a directory and copies untracked files into a git object:
 
 - The removal target must be a `git worktree list` entry whose **realpath** equals the requested path's realpath. A symlinked or junctioned worktree root is refused (junctions *inside* a worktree, such as `node_modules`, are unlinked by `git worktree remove`; that is existing behaviour the fleet test helper already relies on).
-- Untracked paths are classified with `resolveAndClassify` from `scripts/lib/sensitive-paths.mjs`, the single oracle (no fifth classifier). Any `sensitive` hit refuses: a snapshot would copy a credential into the object database, and this repo is public (a stray `git push --tags` would publish it).
+- The **whole preservation set** (staged additions, modified tracked files and untracked paths alike) is classified with `resolveAndClassify` from `scripts/lib/sensitive-paths.mjs`, the single oracle (no fifth classifier). Any `sensitive` hit refuses before an object or a ref is created: a snapshot would copy a credential into the object database, and this repo is public (a stray `git push --tags` would publish it). A newly staged `.env` is no longer "untracked" but is in the set.
 - `.gitmodules` present → refuse: a submodule's inner changes cannot be snapshotted.
-- The size cap (50 MiB, or size unmeasured) keeps a build-artefact tree out of the object database.
+- The size cap (50 MiB over the same set, or size unmeasured) keeps a build-artefact tree out of the object database.
+- The fixed snapshot identity is a literal local string; no user identity or credential is read or written.
 - Nothing here sends data to a model or a network service.
 
 ## 6. Sustainability Notes
@@ -197,8 +220,8 @@ The security-incident neighbourhood returned INC-001 (a symlink resolving into a
 
 | File | Purpose | Key exports / change | Why |
 |---|---|---|---|
-| `scripts/lib/fleet/unregistered.mjs` (create) | Scan, verdict, idle age, bounds, cache I/O, `liveSessionsOf` helper inputs | `unregisteredWork`, `classifyUnregistered`, `scanArchiveTags`, `readUnregisteredCache`, `refreshUnregisteredCache`, `UNREGISTERED_PROBE` | One predicate (#1, #10); testable seams (#11) |
-| `scripts/lib/fleet/archive.mjs` (create) | `fleet archive` | `planArchive`, `applyArchive`, `cmdArchive` | Snapshot-tag-verify-remove (#13, #14) |
+| `scripts/lib/fleet/unregistered.mjs` (create) | Candidates, ordered verdict contract, idle age, one-deadline scan, archive-tag scan, cache read/write | `unregisteredWork`, `classifyUnregistered`, `scanArchiveTags`, `readUnregisteredCache`, `writeUnregisteredCache`, `UNREGISTERED_BUDGET` | One predicate (#1, #10); testable seams (#11) |
+| `scripts/lib/fleet/archive.mjs` (create) | `fleet archive` (imports `transact` from `registry.mjs`) | `planArchive`, `applyArchive`, `cmdArchive` | Snapshot-tag-verify-revalidate-remove (#13, #14) |
 | `scripts/lib/fleet/bundle-stamp.mjs` (create) | Stale hydrated tooling | `staleBundleWarning` | Friction c |
 | `scripts/lib/fleet/handover.mjs` (modify) | Drop the moved predicate; merged evidence; `liveSessionsOf`; manifest fields; `--allow-older`; prose | schema additions are optional | Friction h, i, e, l, d, k |
 | `scripts/lib/fleet/lifecycle.mjs` (modify) | `archiveReport` options; `release` resolves the worktree | `scanIgnored`, `probeTimeoutMs` | Light probe; friction a |
@@ -208,7 +231,7 @@ The security-incident neighbourhood returned INC-001 (a symlink resolving into a
 | `scripts/lib/fleet/coordination.mjs` (modify) | Footer line | `checkpointFooter` | Part 1.2 |
 | `scripts/lib/fleet/config.mjs` (modify) | `staleWorktreeDays` | zod int 1 to 3650, with `sources` | #8 |
 | `scripts/lib/fleet/argv.mjs` (modify) | `archive` verb; `claim --worktree`; `handover --allow-older` | flag tables | Unknown flags are refused otherwise |
-| `scripts/lib/fleet/git-facts.mjs` (modify) | `runGit` accepts `env: {GIT_INDEX_FILE}` only | | Temp index |
+| `scripts/lib/fleet/git-facts.mjs` (modify) | `runGit` accepts an `env` limited to `GIT_INDEX_FILE`, `GIT_AUTHOR_*`, `GIT_COMMITTER_*` | | Temp index and deterministic snapshot |
 | `scripts/fleet.mjs` (modify) | Dispatch `archive`; run the stamp check | | Entry point |
 | `skills/fleet/SKILL.md`, `skills/fleet/references/coordination.md`, `skills/fleet/references/participant-rules.md`, `skills/fleet/gate-contract.json` (modify) | Usage lines and rules; FYI is not a `DO`; `archive --apply` needs the user's go-ahead | | The skill is the only carrier that reaches consumers |
 | `tests/fleet-unregistered.test.mjs`, `tests/fleet-archive.test.mjs`, `tests/fleet-bundle-stamp.test.mjs` (create); `tests/fleet-handover.test.mjs`, `tests/fleet-lifecycle.test.mjs`, `tests/fleet-cli.test.mjs`, `tests/fleet-config.test.mjs`, `tests/fleet-coordination.test.mjs`, `tests/fleet-git-facts.test.mjs` (modify) | See §9 | | |
@@ -217,11 +240,11 @@ The security-incident neighbourhood returned INC-001 (a symlink resolving into a
 
 **Phase 1 — Handover live-session defect (h)**: `repoState` passes merged evidence, so a merged, clean claim reads `done`; merged-unreleased claims are listed with their `release` command; `receive` derives its live list through the same `liveSessionsOf`. Red test first, on a fixture whose PR merged (M9). Files: scripts/lib/fleet/handover.mjs (modify), tests/fleet-handover.test.mjs (modify).
 
-**Phase 2 — Shared unregistered-work module (i, n, g)**: create the module with the moved predicate, verdict, idle age, bounds and cache I/O; add `scanIgnored`/`probeTimeoutMs` to `archiveReport`; extract `landedReason`; handover consumes the verdicts (only `unlanded` and `unverified` block). Files: scripts/lib/fleet/unregistered.mjs (create), scripts/lib/fleet/lifecycle.mjs (modify), scripts/lib/fleet/overlap.mjs (modify), scripts/lib/fleet/handover.mjs (modify), tests/fleet-unregistered.test.mjs (create), tests/fleet-lifecycle.test.mjs (modify), tests/fleet-handover.test.mjs (modify).
+**Phase 2 — Shared unregistered-work module (i, n, g)**: create the module with the moved predicate (candidates no longer limited to dirty or unpushed worktrees), the ordered verdict contract, idle age, the one-deadline scan and cache I/O; add `scanIgnored`/`probeTimeoutMs` to `archiveReport`; extract `landedReason`; handover consumes the verdicts and blocks only per the contract's last column. Files: scripts/lib/fleet/unregistered.mjs (create), scripts/lib/fleet/lifecycle.mjs (modify), scripts/lib/fleet/overlap.mjs (modify), scripts/lib/fleet/handover.mjs (modify), tests/fleet-unregistered.test.mjs (create), tests/fleet-lifecycle.test.mjs (modify), tests/fleet-handover.test.mjs (modify).
 
-**Phase 3 — Status section, footer and config (Part 1.1, 1.2)**: render the section, refresh and read the cache in `claim`/`touch`/`ready`, add `staleWorktreeDays`. Files: scripts/lib/fleet/commands.mjs (modify), scripts/lib/fleet/render.mjs (modify), scripts/lib/fleet/coordination.mjs (modify), scripts/lib/fleet/config.mjs (modify), scripts/lib/fleet/unregistered.mjs (modify), tests/fleet-unregistered.test.mjs (modify), tests/fleet-coordination.test.mjs (modify), tests/fleet-config.test.mjs (modify), tests/fleet-cli.test.mjs (modify).
+**Phase 3 — Status section, footer and config (Part 1.1, 1.2)**: render the section and have `status` write the derived cache; `checkpointFooter` reads it (FYI line, refresh request) and never scans; add `staleWorktreeDays`. Files: scripts/lib/fleet/commands.mjs (modify), scripts/lib/fleet/render.mjs (modify), scripts/lib/fleet/coordination.mjs (modify), scripts/lib/fleet/config.mjs (modify), scripts/lib/fleet/unregistered.mjs (modify), tests/fleet-unregistered.test.mjs (modify), tests/fleet-coordination.test.mjs (modify), tests/fleet-config.test.mjs (modify), tests/fleet-cli.test.mjs (modify).
 
-**Phase 4 — `fleet archive` (Part 1.3)**: dry run by default, `--apply` runs the snapshot chain; `runGit` gains the restricted `env`. Files: scripts/lib/fleet/archive.mjs (create), scripts/lib/fleet/git-facts.mjs (modify), scripts/lib/fleet/argv.mjs (modify), scripts/fleet.mjs (modify), tests/fleet-archive.test.mjs (create), tests/fleet-git-facts.test.mjs (modify).
+**Phase 4 — `fleet archive` (Part 1.3)**: dry run by default, `--apply` runs the snapshot chain with its refusals and the revalidate-under-lock step; `runGit` gains the allowlisted `env`. Files: scripts/lib/fleet/archive.mjs (create), scripts/lib/fleet/git-facts.mjs (modify), scripts/lib/fleet/argv.mjs (modify), scripts/fleet.mjs (modify), tests/fleet-archive.test.mjs (create), tests/fleet-git-facts.test.mjs (modify).
 
 **Phase 5 — Registration binding (a, b, j)**: `claim --worktree`, the id ≠ branch warning, `add` records the worktree, `release` resolves it (the false-CLEAN fix). Files: scripts/lib/fleet/commands.mjs (modify), scripts/lib/fleet/lifecycle.mjs (modify), scripts/lib/fleet/argv.mjs (modify), tests/fleet-cli.test.mjs (modify), tests/fleet-lifecycle.test.mjs (modify).
 
@@ -236,14 +259,17 @@ The security-incident neighbourhood returned INC-001 (a symlink resolving into a
 | Risk | Mitigation |
 |---|---|
 | The footer line sends chip sessions to inspect other worktrees | Worded "not an action for this session"; `participant-rules.md` says it is not a `DO`; a test pins the exact line |
-| A false `superseded` gets real work removed | Needs exact-tip evidence **and** no dirty files, the bar `prune` already uses; incomplete evidence is `unverified`; removal commands are `prune`'s, run by a person |
+| A false `superseded` gets real work removed | The contract reaches row 3 only after row 2 found no local changes, and needs exact-tip evidence or a whole-diff duplicate; incomplete evidence is row 1; removal commands are `prune`'s, run by a person |
 | The light probe misses something the full probe caught | The predicate never counted ignored files; `ls-files -v` stays; paired controls (§9) |
-| Duplicate-of-claim hides work if the twin is later abandoned | Counts only while the twin is a **live claimed** branch; the next scan reclassifies |
-| A stale cache gives false comfort | The footer prints the scan age; `status` is always live |
-| Archive copies a secret, or a huge tree, into the object DB | Sensitive-path refusal and the 50 MiB cap (§4) |
+| Duplicate-of-claim hides work if the twin is later abandoned | Counts only while the twin is a **live claimed** branch and the tree is clean; the next scan reclassifies |
+| A stale cache gives false comfort, or nobody runs `status` | Footers print the scan age and, past 24 h or when partial, ask for a `status` run; `status` is always live |
+| Footer refresh request becomes noise | It shows only when the cache is missing, over 24 h old, or partial, and one `status` run clears it for 24 h |
+| Archive copies a secret, or a huge tree, into the object DB | Sensitive-path refusal over the whole preservation set and the 50 MiB cap (§4) |
+| Archive races an active editor or a new claim | Revalidation under the registry lock (§2.3); the millisecond residual window is stated, not hidden |
+| Archive silently drops a staged version or ignored data | Refuses partially staged paths, unmerged entries and any ignored data without `--discard-ignored` |
 | Windows file lock leaves a directory behind | Reported as `leftover`, exit 1, tag kept |
 | `receive` refusing an older manifest blocks a legitimate restore | `--allow-older` |
-| Extra scan makes `status` slower | Measured M3 ≈ 3.5 s on wine; the 20 s deadline reports a partial scan, never silence |
+| Extra scan makes `status` slower | Measured M3 ≈ 3.5 s on wine; the 60 s deadline reports a partial scan, oldest candidates first, never silence |
 
 **Deferred, and why that is acceptable**: mode listing (d, no data source), directive posting (f, a registry write from a read-mostly verb), date parsing (k, unreliable by M6), `sync-pr` rolling PR (g, contradicts a recorded decision), keep-latest-N (l, 1.6 MB), a branch-only `archive` (it would be `git tag`), restore and expiry. **Spun out**: triaging the 8 `archive/*` tags (land or drop, one judgement per tag).
 
@@ -252,11 +278,11 @@ The security-incident neighbourhood returned INC-001 (a symlink resolving into a
 Tier 1 throughout: deterministic modules, no model calls. Tier 3(b) applies because the new modules join the consumer sync closure; add an import test for each new lib module wherever `tests/relocation-guard.test.mjs` covers library modules (it has no `lib/fleet` enumeration today, so verify, don't assume). Fixtures use `tests/helpers/fleet-repo.mjs` (throwaway repos, fake `gh`). Every "does not" case gets a paired control that fires the other way.
 
 - **Red first.** (h) a claim whose PR merged reads live in `repoState` today → fixture. (a) an adopted session with pushed commits and one dirty untracked file: `release` prints CLEAN today, must print AT RISK. (j) a claim run from the wrong worktree binds the wrong branch.
-- **Verdict table**, one case per row with its inverse: `unlanded` (dirty) vs the same tree clean and merged → `superseded`; exact-tip PR evidence vs a tip one commit past it → not `superseded`; `gh` unreachable → `unverified`, never `superseded`; detached with unpushed → `unverified`; receipt-only dirty → `sync-owned` vs receipt + one other file → `unlanded`; duplicate of a live claimed branch → `superseded` vs the twin released → `unlanded`. A contract test pins the literal receipt path in `SYNC_OWNED_PATHS` against `RECEIPT_PATH`.
-- **Light probe.** An injected `git` records its calls: with `scanIgnored:false` no `--ignored` call and no size walk, and unpushed/untracked/skip-worktree are still found; the default mode makes both calls (control). A bounded run with a slow injected probe returns `notProbed`, never a clean list.
+- **Verdict contract**, one case per row with its inverse, including the order between rows: a **clean worktree whose commits are pushed but not landed** → `unlanded`, `preserved: remote`, listed, non-blocking (the case today's predicate misses), against the same worktree with its tip contained in base → not listed (control); dirty vs the same tree clean and merged → `superseded`; exact-tip PR evidence vs a tip one commit past it → not `superseded`; `gh` unreachable → row 1, never `superseded`; detached with unpushed → `unverified`, blocking; **receipt dirty plus unpushed unlanded commits → `unlanded`, not `sync-owned`**; receipt-only → `sync-owned`; receipt + one other file → `unlanded`; duplicate of a live claimed branch → `superseded` vs the same branch **with a dirty file → `unlanded`** vs the twin released → `unlanded`. A contract test pins `SYNC_OWNED_PATHS` against `RECEIPT_PATH`.
+- **Light probe and deadline.** An injected `git` records its calls: with `scanIgnored:false` no `--ignored` call and no size walk, and unpushed/untracked/skip-worktree are still found; the default mode makes both calls (control). An injected clock and a **single slow subprocess** show its timeout clipped to the remaining budget (not its own 30 s cap); slow fact gathering and a slow tag scan likewise stop at the deadline. With 45 candidates (more than the old cap) and a deadline that fits 30, the 30 oldest tips are probed, `notProbed: 15`, `partial: true`, and a second run with a later clock is not stuck on the same prefix; handover treats `notProbed` as NOT MEASURED.
 - **Idle age.** Frozen clock (`FLEET_NOW`): exactly at, one second inside and one second past `staleWorktreeDays`; a future-dated commit and a missing mtime are not stale.
-- **Footer.** TTL boundary; partial scan cached as partial; corrupt cache → "not derived", exit code unchanged; `status` writes nothing (file absent before and after).
-- **Archive.** Dirty + untracked: the tag's tree contains both, the branch tip did not move, the worktree is gone. Refusals each with a clean control: ignored-only without the flag, live claim, locked, main checkout, symlinked root, sensitive untracked file, `.gitmodules`, oversize. Injected failures: tag creation fails → worktree intact; `worktree remove` fails → tag kept, `leftover`, exit 1; second run is idempotent.
+- **Footer.** No scan in `claim`/`touch`/`ready` (an injected `git` records zero worktree probes); FYI line when `abandoned > 0`; refresh request when the cache is missing, over 24 h, partial (even with `abandoned: 0`), or corrupt; the exact line text is pinned; exit codes unchanged. `status` writes the cache (present after, absent before) and a write failure is a `warning:` not an error.
+- **Archive.** Dirty + untracked: the tag's tree contains both, the branch tip did not move, the worktree is gone. Refusals, each with a clean control: **partially staged path** (control: staged and unchanged since, which is accepted), **unmerged index entry**, **ignored data in a mixed tree** (control: the same tree with `--discard-ignored`, whose result lists the paths), live claim, locked, main checkout, symlinked root, **sensitive file that is untracked, newly staged or a modified tracked file**, `.gitmodules`, oversize. **Determinism**: two runs with an advancing clock and no `user.name` configured produce the same oid and reuse the tag. **Races**: an edit, a HEAD move, or a new claim injected between the snapshot and the removal aborts with the tag and worktree kept. Other injected failures: tag creation fails → worktree intact; `worktree remove` fails → tag kept, `leftover`, exit 1. A run after a successful removal prints `already archived at <oid>`; with no tag it refuses.
 - **Binding and handover.** `--worktree` accepts a listed worktree and refuses a path outside this repo; the id ≠ branch warning; manifest round-trip with the new optional fields **and** an old manifest without them; newer-manifest refusal vs `--allow-older`; the stamp warning only in a linked worktree with an older stamp.
 - **Empirical run before calling it done** (the repo's pre-ship rule): run `status`, a `touch`, and `handover prepare` against CEE, wine, storyline and ai-organiser. Check no fresh worktree alarms, the 8 archive tags are counted, wall time ≤ 5 s on wine (M3), and the harness worktree of M10 reads `superseded (duplicate)`. Record the figures here with their commands.
 
@@ -265,7 +291,7 @@ Tier 1 throughout: deterministic modules, no model calls. Tier 3(b) applies beca
 - **Cluster A** — Phases 1-2 — fix-gate: yes
   - Coupling: both rework `repoState`/`receiveHandover` in `handover.mjs` and define the live-session and unregistered-work facts every later surface consumes; Phase 2's verdict is only as good as Phase 1's merged evidence, which comes from the same `gatherFacts` call.
 - **Cluster B** — Phases 3-4 — fix-gate: yes
-  - Coupling: the status section, the footer and `archive` all read `unregistered.mjs`'s verdict and cache, and `archive` refuses on the same verdict plus the full `archiveReport`; both edit `argv.mjs` and `fleet.mjs`.
+  - Coupling: the status section writes the cache the footer reads, and `archive` refuses on the same `archiveReport` evidence and the same verdict module, so a verdict change moves all three; both phases edit `argv.mjs` and `fleet.mjs`.
 - **Cluster C** — Phases 5-7 — fix-gate: final
   - Coupling: `claim`/`add`/`release` binding, the receive guards and the stamp check share `commands.mjs`, `handover.mjs`, `argv.mjs` and `fleet.mjs`; Phase 7 documents every flag Phases 3 to 6 add, so it must follow them.
 - **Final gate**: consolidated Gemini review over the union diff.
