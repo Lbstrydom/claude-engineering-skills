@@ -1815,12 +1815,21 @@ export async function getFinalReviewStats(repoName, { queueLimit = 50, after = n
  * @param {number} [round] 1-based audit round. Written only when the `round`
  *   column exists (migration 20260605120000); on an un-migrated store it is
  *   omitted and the row defaults to round 1 server-side — preserving today's
- *   behaviour (WS1 §1.3a).
+ *   behaviour (WS1 §1.3a). An UNRESOLVED probe is not that store: omitting the
+ *   round there would file a round-N row as round 1 on a migrated store, so a
+ *   caller that supplied a round gets `applied:false` (`round-probe-unresolved`,
+ *   retryable — durableWrite spills and replays it) instead of a mislabelled row.
+ * @param {{detectRound?: () => Promise<{present: boolean, definitive: boolean}>}} [deps] test seam
  */
-export async function recordPassStats(runId, passName, stats, round) {
+export async function recordPassStats(runId, passName, stats, round, deps = {}) {
   if (!runId) return { applied: false, rows: 0, reason: 'no-run-id' };
   if (!await isCloudEnabled()) return { applied: false, rows: 0, reason: 'cloud-off' };
-  const { present: hasRound } = await detectPassStatsRoundColumn();
+  const { detectRound = detectPassStatsRoundColumn } = deps;
+  const { present: hasRound, definitive: roundProbeDefinitive } = await detectRound();
+  if (Number.isInteger(round) && !hasRound && !roundProbeDefinitive) {
+    process.stderr.write(`  [learning] recordPassStats(${passName}, round ${round}): audit_pass_stats.round probe unresolved — not writing a row that would default to round 1\n`);
+    return { applied: false, rows: 0, reason: 'round-probe-unresolved' };
+  }
   // Model-A/B/C per-arm-execution columns (migration 20260701120000): written
   // only when present AND the caller supplied them, so the normal audit path is
   // byte-identical on an un-migrated store or when not shadowing.
