@@ -61,6 +61,7 @@ happen continuously instead.
 | d | Cross-session messages between sessions in different permission modes were held, then expired undelivered | The coordination prompt and handover doc say to put coordinators in the same permission mode first. Prepare could also list sessions whose mode differs, if the host exposes it |
 | e | `gh` could not see storyline's repo (it belongs to a different account), so PR state was unknown | Prepare records per-repo `gh` reachability and lists the account to sign in to as a step for the new account |
 | f | Checkpointing coordinators was a hand-pasted message | Mostly solved: prepare now detects unregistered work itself. Optionally, prepare posts a fleet directive to each repo's live sessions |
+| g | `sync-pr` skips a receipt-only consumer change, so that consumer's `.sync-receipt.json` stays dirty on main, and handover prepare flags it as unregistered work (ai-organiser, 2026-10-11) | Either commit receipt-only changes in one rolling PR, or have the unregistered-work predicate recognise a dirty sync receipt as sync-owned |
 
 ## 4. Out of scope (for now)
 
