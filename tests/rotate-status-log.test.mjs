@@ -63,41 +63,81 @@ test('an existing archive with different content is refused before anything is w
 });
 
 describe('a write that dies partway leaves no torn file', () => {
-  for (const victim of ['status.md', 'docs/status/2026-08.md', 'docs/status/rotation-manifest.json']) {
-    test(`a crash while writing ${victim}`, (t) => {
-      const repo = makeRepo();
-      const target = path.resolve(repo, victim);
-      const realWrite = fs.writeFileSync;
-      // Simulate the crash at the byte level: half the data lands in the file
-      // the write was aimed at, then the process "dies".
-      t.mock.method(fs, 'writeFileSync', (file, data, opts) => {
-        if (typeof file === 'string' && path.resolve(file) === target) {
-          realWrite(file, String(data).slice(0, Math.floor(String(data).length / 2)), opts);
-          throw Object.assign(new Error('simulated crash mid-write'), { code: 'ENOSPC' });
-        }
-        return realWrite(file, data, opts);
-      });
-      try {
-        try { applyRotation(args(repo)); } catch { /* the crash */ }
-        t.mock.restoreAll();
+  // applyRotation writes through atomicWriteFileSync: a `.tmp-<pid>-<ts>` sibling
+  // first, then a rename onto the final name. A fault injected at the FINAL path
+  // never fires (nothing writes there directly), which is how an earlier version
+  // of this test passed while testing nothing — so each case injects at a stage
+  // the atomic writer really has, and asserts the fault was actually reached.
+  // The three writes happen in this order, so the Nth temp write IS that file.
+  const VICTIMS = [
+    { rel: 'docs/status/2026-08.md', nth: 1, old: null },
+    { rel: 'docs/status/rotation-manifest.json', nth: 2, old: null },
+    { rel: 'status.md', nth: 3, old: ROOT_OLD },
+  ];
+  const isTemp = (file) => typeof file === 'string' && path.basename(file).startsWith('.tmp-');
+  const crash = () => Object.assign(new Error('simulated crash mid-write'), { code: 'ENOSPC' });
 
-        const read = (rel) => {
-          const p = path.join(repo, rel);
-          return fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : null;
-        };
-        const root = read('status.md');
-        assert.ok(root === ROOT_OLD || root === ROOT_NEW, `status.md is torn: ${JSON.stringify(root)}`);
-        const archive = read('docs/status/2026-08.md');
-        assert.ok(archive === null || archive === ARCHIVE_BODY, `archive is torn: ${JSON.stringify(archive)}`);
-        const manifest = read('docs/status/rotation-manifest.json');
-        assert.ok(manifest === null || (() => { try { JSON.parse(manifest); return true; } catch { return false; } })(),
-          `manifest is torn: ${JSON.stringify(manifest)}`);
-        // And no history was lost: the archived entry is still SOMEWHERE whole.
-        assert.ok(root === ROOT_OLD || archive === ARCHIVE_BODY, 'the archived entry exists whole in at least one file');
-      } finally {
-        t.mock.restoreAll();
-        fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-      }
-    });
+  const readIfAny = (repo, rel) => {
+    const p = path.join(repo, rel);
+    return fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : null;
+  };
+  const leftoverTemps = (repo) => [repo, path.join(repo, 'docs', 'status')]
+    .filter((d) => fs.existsSync(d))
+    .flatMap((d) => fs.readdirSync(d).filter((n) => n.startsWith('.tmp-')));
+
+  for (const stage of ['temp write', 'rename']) {
+    for (const victim of VICTIMS) {
+      test(`a crash at the ${stage} of ${victim.rel}`, (t) => {
+        const repo = makeRepo();
+        const target = path.resolve(repo, victim.rel);
+        const realWrite = fs.writeFileSync;
+        let fired = false;
+        let tempWrites = 0;
+        if (stage === 'temp write') {
+          // Half the bytes land in the temp file, then the process "dies".
+          t.mock.method(fs, 'writeFileSync', (file, data, opts) => {
+            if (isTemp(file) && ++tempWrites === victim.nth) {
+              fired = true;
+              realWrite(file, String(data).slice(0, Math.floor(String(data).length / 2)), opts);
+              throw crash();
+            }
+            return realWrite(file, data, opts);
+          });
+        } else {
+          const realRename = fs.renameSync;
+          t.mock.method(fs, 'renameSync', (from, to) => {
+            if (path.resolve(to) === target) { fired = true; throw crash(); }
+            return realRename(from, to);
+          });
+        }
+        try {
+          let thrown = null;
+          try { applyRotation(args(repo)); } catch (err) { thrown = err; }
+          t.mock.restoreAll();
+
+          // Vacuous-pass guard: the fault must have been reached, and must have
+          // stopped the rotation. Without these, a never-firing mock reads as
+          // "no file was torn".
+          assert.ok(fired, `the injected fault at the ${stage} of ${victim.rel} was never reached`);
+          assert.equal(thrown?.code, 'ENOSPC', 'applyRotation must surface the failed write, not swallow it');
+
+          assert.equal(readIfAny(repo, victim.rel), victim.old, `${victim.rel} must be exactly its OLD content, never a torn prefix`);
+          assert.deepEqual(leftoverTemps(repo), [], 'the half-written temp file is cleaned up');
+
+          const root = readIfAny(repo, 'status.md');
+          const archive = readIfAny(repo, 'docs/status/2026-08.md');
+          const manifest = readIfAny(repo, 'docs/status/rotation-manifest.json');
+          assert.ok(root === ROOT_OLD || root === ROOT_NEW, `status.md is torn: ${JSON.stringify(root)}`);
+          assert.ok(archive === null || archive === ARCHIVE_BODY, `archive is torn: ${JSON.stringify(archive)}`);
+          assert.ok(manifest === null || (() => { try { JSON.parse(manifest); return true; } catch { return false; } })(),
+            `manifest is torn: ${JSON.stringify(manifest)}`);
+          // And no history was lost: the archived entry is still SOMEWHERE whole.
+          assert.ok(root === ROOT_OLD || archive === ARCHIVE_BODY, 'the archived entry exists whole in at least one file');
+        } finally {
+          t.mock.restoreAll();
+          fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+        }
+      });
+    }
   }
 });
