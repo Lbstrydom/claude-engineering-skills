@@ -754,8 +754,10 @@ export function filterPersistableRows(mappedRows) {
  *   caller make a delete+insert atomic (final-review replace-persistence). The
  *   default `{}` preserves every existing call site byte-for-byte.
  *   **Invariant (write-boundary-hardening plan Phase 7)**: `opts.client`,
- *   when supplied, MUST be a client from an OPEN transaction — passing a bare
- *   pool connection here is a caller bug, not a supported mode. This function's
+ *   when supplied, MUST be a client from an OPEN `withTx` frame (the only
+ *   transaction `persistKeptEmbeddings` can discover, via `getActiveTxClient()`,
+ *   to open its SAVEPOINTs on) — passing a bare pool connection, or one with a
+ *   hand-issued `BEGIN`, is a caller bug, not a supported mode. This function's
  *   own `if (opts.client) throw err` below already relied on that equivalence
  *   silently; `persistKeptEmbeddings`' `isCallerTx` parameter now inherits the
  *   same, now-documented, invariant instead of re-deriving it.
