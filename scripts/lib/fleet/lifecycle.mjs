@@ -20,7 +20,7 @@ import { runGit, listWorktrees } from './git-facts.mjs';
 import { listPullRequests } from './gh-facts.mjs';
 import { readSessions, transact } from './registry.mjs';
 import { isTerminalState } from './overlap.mjs';
-import { classifyEntries, parsePorcelainZ } from './worktree-status.mjs';
+import { IGNORED_STATUS_ARGS, STATUS_ARGS, classifyEntries, parsePorcelainZ } from './worktree-status.mjs';
 import { currentBranch, lockFailed, nowIso, ok, refused, selfId } from './commands.mjs';
 
 /** Size walk bounds: display only, so over budget is "not measured", never a verdict change. */
@@ -130,11 +130,25 @@ export function isIgnoredByConfig(p, patterns) {
 /**
  * Everything removing `worktree` (and deleting `branch`) would lose, plus the
  * reminders. Pure over its probes; `git` injectable for tests.
+ *
+ * Light mode (the unregistered-work scan): `scanIgnored:false` skips the `--ignored` status call and the
+ * size walk — the measured cost (plan M2), and a result that scan never used. `probeTimeoutMs` caps the
+ * status and `ls-files` calls (30 s, as before); with `deadlineAt` EVERY call gets `min(cap, deadlineAt -
+ * clock())` and one that would start past the deadline is not made but recorded as unverified. Without a
+ * deadline the remaining calls keep `runGit`'s own default, so existing callers are unchanged.
  * @returns {{verdict: 'CLEAN'|'AT RISK'|'UNVERIFIED', target: object, risks: object, unverified: string[], pr: object|null,
  *   waitingOn: object[], sizes: object, stashes: number|null, owed: readonly string[]}}
  */
-export function archiveReport(ctx, { session = null, branch = session?.source?.branch ?? null, worktree = session?.worktree ?? null, inventoryError = null, git = runGit } = {}) {
+export function archiveReport(ctx, { session = null, branch = session?.source?.branch ?? null, worktree = session?.worktree ?? null, inventoryError = null, git: rawGit = runGit,
+  scanIgnored = true, probeTimeoutMs = 30_000, deadlineAt = null, clock = Date.now } = {}) {
   const unverified = inventoryError ? [inventoryError] : [];
+  // Every call goes through one budget: clipped to the deadline, or not made (and said so) once it passed.
+  const git = (args, cwd, opts) => {
+    if (deadlineAt === null) return rawGit(args, cwd, opts);
+    const left = deadlineAt - clock();
+    if (left <= 0) return { ok: false, stdout: '', reason: `scan deadline passed before git ${args[0]}` };
+    return rawGit(args, cwd, { ...opts, timeoutMs: Math.min(opts?.timeoutMs ?? probeTimeoutMs, left) });
+  };
   const risks = { staged: [], unstaged: [], untracked: [], ignored: [], unpushed: [] };
   const sizes = {};
   const ignore = ctx.config?.archiveIgnore ?? [];
@@ -143,7 +157,7 @@ export function archiveReport(ctx, { session = null, branch = session?.source?.b
   // out now (it may have switched since registration): both are probed.
   const headRefs = branch ? [`refs/heads/${branch}`] : [];
   if (worktree && fs.existsSync(worktree)) {
-    const main = git(['status', '--porcelain=v1', '-z', '--no-renames', '--ignore-submodules=none', '--untracked-files=all'], worktree, { timeoutMs: 30_000 });
+    const main = git(STATUS_ARGS, worktree, { timeoutMs: probeTimeoutMs });
     if (!main.ok) unverified.push(`git status failed: ${main.reason}`);
     else {
       const c = classifyEntries(parsePorcelainZ(main.stdout));
@@ -151,17 +165,19 @@ export function archiveReport(ctx, { session = null, branch = session?.source?.b
     }
     // Ignored entries come from a SECOND call that collapses ignored directories (node_modules/ is one
     // line, not 100k), so the probe stays bounded.
-    const ign = git(['status', '--porcelain=v1', '-z', '--no-renames', '--ignored=traditional', '--untracked-files=normal'], worktree, { timeoutMs: 30_000 });
-    if (!ign.ok) unverified.push(`git status --ignored failed: ${ign.reason}`);
-    else risks.ignored = classifyEntries(parsePorcelainZ(ign.stdout)).ignored.filter((p) => !isIgnoredByConfig(p, ignore));
+    if (scanIgnored) {
+      const ign = git(IGNORED_STATUS_ARGS, worktree, { timeoutMs: probeTimeoutMs });
+      if (!ign.ok) unverified.push(`git status --ignored failed: ${ign.reason}`);
+      else risks.ignored = classifyEntries(parsePorcelainZ(ign.stdout)).ignored.filter((p) => !isIgnoredByConfig(p, ignore));
+    }
     // Index flags hide edits from `git status`: skip-worktree (S) and assume-unchanged (lowercase tag).
-    const lsv = git(['ls-files', '-v', '-z'], worktree, { timeoutMs: 30_000 });
+    const lsv = git(['ls-files', '-v', '-z'], worktree, { timeoutMs: probeTimeoutMs });
     if (!lsv.ok) unverified.push(`git ls-files -v failed: ${lsv.reason}`);
     else {
       const hidden = lsv.stdout.split('\0').filter((r) => r.length > 2 && (r[0] === 'S' || /^[a-z]$/.test(r[0]))).map((r) => r.slice(2));
       if (hidden.length) unverified.push(`${hidden.length} file(s) are skip-worktree or assume-unchanged, so git status cannot see edits to them (${hidden.slice(0, 3).join(', ')}${hidden.length > 3 ? ', …' : ''})`);
     }
-    for (const p of [...risks.untracked, ...risks.ignored]) sizes[p] = measureSize(path.join(worktree, p), { budget });
+    if (scanIgnored) for (const p of [...risks.untracked, ...risks.ignored]) sizes[p] = measureSize(path.join(worktree, p), { budget });
     // The worktree's ACTUAL HEAD (detached, or a branch other than the one recorded).
     const h = git(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], worktree);
     if (h.ok) headRefs.push(h.stdout.trim()); else unverified.push(`cannot resolve HEAD of ${worktree}: ${h.reason ?? 'unborn'}`);
@@ -173,7 +189,8 @@ export function archiveReport(ctx, { session = null, branch = session?.source?.b
     if (!rl.ok) unverified.push(`cannot list unpushed commits of ${branch ?? headRefs[0]}: ${rl.reason}`);
     else risks.unpushed = rl.stdout.split('\n').map((x) => x.trim()).filter(Boolean);
   }
-  const st = git(['stash', 'list'], ctx.cwd);
+  // The stash list is repo-wide and only a reminder: the light scan (one report per worktree) does not ask it.
+  const st = scanIgnored ? git(['stash', 'list'], ctx.cwd) : { ok: false };
   const stashes = st.ok ? st.stdout.split('\n').filter(Boolean).length : null;
   let pr = null;
   if (branch) {
