@@ -297,6 +297,23 @@ describe('renderNeighbourhoodCallout', () => {
 });
 
 describe('renderDriftIssue', () => {
+  const base = { drift: { score: 5 }, threshold: 20, status: 'GREEN', generatedAt: 't', commitSha: 'a6b035b3', refreshId: 'r', repoName: 'x' };
+  it('a stale index says how far behind, and that the report is not the current code', () => {
+    const { markdown } = renderDriftIssue({
+      ...base, freshness: { state: 'behind', behind: 40, detail: '40 commits behind origin/main' },
+    });
+    assert.match(markdown, /\*\*Index freshness:\*\* ⚠ 40 commits behind origin\/main/);
+    assert.match(markdown, /measures a6b035b3, not the current code/);
+  });
+  it('a current index says so; an unmeasurable one says unknown, never current', () => {
+    assert.match(renderDriftIssue({ ...base, freshness: { state: 'current', behind: 0, detail: 'at the tip of origin/main' } }).markdown,
+      /\*\*Index freshness:\*\* at the tip of origin\/main/);
+    const unk = renderDriftIssue({ ...base, freshness: { state: 'unknown', behind: null, detail: 'a6b035b3 is not in this clone\'s history' } }).markdown;
+    assert.match(unk, /\*\*Index freshness:\*\* unknown — a6b035b3 is not in this clone's history/);
+  });
+  it('no freshness supplied renders no freshness line (other renderers unchanged)', () => {
+    assert.doesNotMatch(renderDriftIssue(base).markdown, /Index freshness/);
+  });
   it('starts with sticky marker', () => {
     const { markdown } = renderDriftIssue({
       drift: { score: 25 }, threshold: 20, status: 'RED',

@@ -20,7 +20,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  assessPublishEligibility, checkRefreshPublishEligibility, resolveDefaultBranch, ALLOW_BRANCH_PUBLISH_ENV,
+  assessPublishEligibility, assessIndexFreshness, checkRefreshPublishEligibility, resolveDefaultBranch, ALLOW_BRANCH_PUBLISH_ENV,
 } from '../scripts/symbol-index/refresh-publish-guard.mjs';
 import { parseArgs, KNOWN_FLAGS } from '../scripts/symbol-index/refresh-args.mjs';
 import { gitInit, commit, gitFixtureEnv, makeGitRunner as makeCheckedGit, makeRepoTemplate } from './helpers/fixtures.mjs';
@@ -188,6 +188,65 @@ describe('publish guard — cloned repo (origin/HEAD)', () => {
     assert.equal(r.publish, false);
     assert.equal(r.reason, 'default-branch-unresolvable');
   });
+});
+
+// Measured 2026-10-11: the active index was anchored at a6b035b3 (2026-09-27)
+// while origin/main was 40 first-parent commits ahead — every refresh since
+// #134 had run on a feature branch and skipped — and `arch:drift` printed
+// `Commit: a6b035b3` with nothing saying that is not the current code.
+describe('index freshness — how far the active index trails the default branch', () => {
+  let root; let remote; let clone; let git;
+  beforeEach(() => {
+    root = clonedRepo('index-freshness-');
+    remote = path.join(root, 'remote');
+    clone = path.join(root, 'clone');
+    git = makeCheckedGit(() => clone);
+    git(['remote', 'set-url', 'origin', remote]);
+  });
+  afterEach(() => rm(root));
+
+  it('an index at the default-branch tip is current', () => {
+    const tip = git(['rev-parse', 'origin/main']).trim();
+    const f = assessIndexFreshness({ run: runnerFor(clone), indexCommit: tip });
+    assert.equal(f.state, 'current');
+    assert.equal(f.behind, 0);
+    assert.equal(f.defaultBranch, 'main');
+  });
+
+  it('counts the default-branch commits the index does not contain', () => {
+    const indexed = git(['rev-parse', 'origin/main']).trim();
+    commit(remote, 'a.txt', 'three\n', 'third');
+    commit(remote, 'a.txt', 'four\n', 'fourth');
+    git(['fetch', '-q', 'origin']);
+    const f = assessIndexFreshness({ run: runnerFor(clone), indexCommit: indexed });
+    assert.equal(f.state, 'behind');
+    assert.equal(f.behind, 2);
+    assert.match(f.detail, /2 commits behind/);
+  });
+
+  it('measures against origin/<default>, not a stale local branch of the same name', () => {
+    const indexed = git(['rev-parse', 'HEAD']).trim();
+    commit(remote, 'a.txt', 'three\n', 'third');
+    git(['fetch', '-q', 'origin']); // local main stays at `indexed`; origin/main moved
+    const f = assessIndexFreshness({ run: runnerFor(clone), indexCommit: indexed });
+    assert.equal(f.behind, 1);
+    assert.equal(f.tip, 'refs/remotes/origin/main');
+  });
+
+  it('an index commit this clone does not have is UNKNOWN, never current', () => {
+    const f = assessIndexFreshness({ run: runnerFor(clone), indexCommit: 'deadbeef'.repeat(5) });
+    assert.equal(f.state, 'unknown');
+    assert.equal(f.behind, null);
+  });
+
+  it('a snapshot with no commit is UNKNOWN', () => {
+    for (const indexCommit of [null, undefined, '']) {
+      const f = assessIndexFreshness({ run: runnerFor(clone), indexCommit });
+      assert.equal(f.state, 'unknown');
+      assert.equal(f.behind, null);
+    }
+  });
+
 });
 
 describe('publish guard — git failure fails closed', () => {

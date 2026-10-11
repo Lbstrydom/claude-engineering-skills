@@ -162,6 +162,45 @@ export function assessPublishEligibility({ run, override = false }) {
  *
  * @param {{repoRoot: string, allowBranchPublish?: boolean, env?: NodeJS.ProcessEnv, run?: Function}} opts
  */
+/**
+ * How far the ACTIVE index's commit trails the default branch.
+ *
+ * The publish guard above keeps a feature branch from becoming the active
+ * index; its cost is that the index only moves when a refresh runs ON the
+ * default branch. Measured 2026-10-11: with every push a feature-branch push,
+ * the index sat at a6b035b3 for two weeks, 40 first-parent commits behind
+ * origin/main, and the drift report printed that commit with no hint it was
+ * not the current code. This is the hint.
+ *
+ * Counted as `rev-list --count <index>..<tip>` — the default-branch commits
+ * the index does not contain — against `origin/<default>` first (a local
+ * branch of the same name can be stale). Anything git cannot answer is
+ * `unknown`, never `current`.
+ *
+ * @param {object} opts
+ * @param {Function} opts.run - git runner (`makeGitRunner(repoRoot)`); injectable
+ * @param {string|null|undefined} opts.indexCommit - the active snapshot's commit
+ * @returns {{state: 'current'|'behind'|'unknown', behind: number|null,
+ *            defaultBranch: string|null, tip: string|null, detail: string}}
+ */
+export function assessIndexFreshness({ run, indexCommit }) {
+  const unknown = (detail, def = null, tip = null) => ({ state: 'unknown', behind: null, defaultBranch: def, tip, detail });
+  if (!indexCommit) return unknown('the active snapshot carries no commit');
+  const def = resolveDefaultBranch({ run });
+  if (!def.ok) return unknown(def.detail);
+  const tip = def.tips[0];
+  const res = run(['rev-list', '--count', `${indexCommit}..${tip}`]);
+  if (execFailed(res) || res.status !== 0) {
+    return unknown(`${String(indexCommit).slice(0, 8)} is not in this clone's history`, def.name, tip);
+  }
+  const behind = Number.parseInt(String(res.stdout ?? '').trim(), 10);
+  if (!Number.isInteger(behind) || behind < 0) return unknown('git rev-list returned no count', def.name, tip);
+  const short = tip.replace(/^refs\/(?:remotes|heads)\//, '');
+  return behind === 0
+    ? { state: 'current', behind: 0, defaultBranch: def.name, tip, detail: `at the tip of ${short}` }
+    : { state: 'behind', behind, defaultBranch: def.name, tip, detail: `${behind} commit${behind === 1 ? '' : 's'} behind ${short}` };
+}
+
 export function checkRefreshPublishEligibility({ repoRoot, allowBranchPublish = false, env = process.env, run = makeGitRunner(repoRoot) }) {
   const override = allowBranchPublish === true || env[ALLOW_BRANCH_PUBLISH_ENV] === '1';
   return assessPublishEligibility({ run, override });
