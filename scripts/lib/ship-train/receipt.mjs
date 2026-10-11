@@ -127,6 +127,18 @@ const Actual = z.object({
   at: z.string(),
 }).strict();
 
+const VerifyRecord = z.object({
+  at: z.string(),
+  perPr: z.record(z.string(), z.object({ ok: z.boolean(), problems: z.array(z.string()) }).strict()),
+  plannedVsActual: z.array(z.object({ pr: PR, planned: z.string(), actual: z.string() }).strict()),
+  interleaved: z.array(z.object({ oid: OID, subject: z.string() }).strict()),
+  finalMergeOid: OID.nullable(),
+  publicationBlocked: z.boolean(),
+  blockedReason: z.string().nullable(),
+  orderOk: z.boolean(),
+  observedOrder: z.array(PR),
+}).strict();
+
 export const ReceiptSchema = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),
   opId: z.string().regex(OP_ID_RE),
@@ -144,17 +156,11 @@ export const ReceiptSchema = z.object({
   landingOrder: z.array(PR).optional(),
   actual: z.record(z.string(), Actual).optional(),
   merges: z.record(z.string(), z.object({ mergeOid: OID, observedHeadOid: OID, at: z.string() }).strict()).optional(),
-  verify: z.object({
-    at: z.string(),
-    perPr: z.record(z.string(), z.object({ ok: z.boolean(), problems: z.array(z.string()) }).strict()),
-    plannedVsActual: z.array(z.object({ pr: PR, planned: z.string(), actual: z.string() }).strict()),
-    interleaved: z.array(z.object({ oid: OID, subject: z.string() }).strict()),
-    finalMergeOid: OID.nullable(),
-    publicationBlocked: z.boolean(),
-    blockedReason: z.string().nullable(),
-    orderOk: z.boolean(),
-    observedOrder: z.array(PR),
-  }).strict().optional(),
+  verify: VerifyRecord.optional(),
+  // A re-verify whose result contradicts the recorded phase is kept HERE, beside
+  // the original record, never written over it (round-5 code H1/H3): the old
+  // record stays valid for its phase, and any revocation blocks publication.
+  revocation: z.object({ at: z.string(), reason: z.string(), freshPhase: z.enum(['verified', 'verified-interleaved']), verify: VerifyRecord }).strict().optional(),
   publicationAmendment: z.object({ acceptedOids: z.array(OID), at: z.string() }).strict().optional(),
   publication: z.object({
     sync: z.record(z.string(), z.enum(['syncing', 'synced', 'failed-retryable', 'failed-terminal'])),

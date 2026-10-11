@@ -350,7 +350,41 @@ describe('verify / abandon', () => {
     await assert.rejects(runVerify(ctx, { op: opId }), (e) => e instanceof TrainRefusal && /changed under its record/.test(e.message));
     const after = readReceipt(dir, opId);
     assert.equal(after.phase, 'verified');
+    assert.equal(after.verify.interleaved.length, 0, 'the original record is kept, not overwritten');
+    assert.equal(after.revocation.freshPhase, 'verified-interleaved');
+    const c = publicationClearance(after);
+    assert.equal(c.clear, false);
+    assert.equal(c.blocks.find((b) => /revoked/.test(b.reason)).flag, null);
+  });
+
+  test('interleaved → clean on re-verify is recorded as a revocation the receipt can hold (round-5 H1/H3)', async () => {
+    const { opId, ctx } = await landedOp({ interleave: true });
+    await runVerify(ctx, { op: opId });
+    const orig = ctx.git;
+    ctx.git = (args) => (args[0] === 'log' && args.includes('--first-parent')
+      ? [`${oid('5')}\ta`, `${oid('6')}\tb`, `${oid('0')}\tlog`].join('\n')
+      : orig(args));
+    await assert.rejects(runVerify(ctx, { op: opId }), /now verifies as verified/);
+    const after = readReceipt(dir, opId); // validates: the old interleaved record stays intact
+    assert.equal(after.phase, 'verified-interleaved');
+    assert.equal(after.revocation.freshPhase, 'verified');
     assert.equal(publicationClearance(after).clear, false);
+  });
+
+  test('a receipt that changes while verify is computing is never clobbered (round-5 H2)', async () => {
+    const { opId, ctx } = await landedOp();
+    const orig = ctx.git;
+    ctx.git = (args) => {
+      if (args[0] === 'log' && args.includes('--first-parent')) {
+        // A concurrent writer lands between verify's read and its write.
+        updateReceipt(dir, opId, (d) => { d.trainId = 't-20261011233000-0002'; });
+      }
+      return orig(args);
+    };
+    await assert.rejects(runVerify(ctx, { op: opId }), /changed while it was being verified/);
+    const after = readReceipt(dir, opId);
+    assert.equal(after.phase, 'landed');
+    assert.equal(after.trainId, 't-20261011233000-0002');
   });
 
   test('verify refuses before the train has landed', async () => {

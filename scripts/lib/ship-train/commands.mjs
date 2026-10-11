@@ -12,7 +12,7 @@
 import { ArgvError } from '../cli-io.mjs';
 import { classifyPrImpact, isTrainDue, parseNameStatusZ } from './impact.mjs';
 import { bindAuditRun, decideTrainGate, modelsFromRun, composeSquashMessage } from './provenance.mjs';
-import { createReceipt, readReceipt, updateReceipt, newOpId } from './receipt.mjs';
+import { createReceipt, readReceipt, updateReceipt, newOpId, canonicalJson } from './receipt.mjs';
 import { verifyLanded, publicationClearance } from './verify.mjs';
 
 export class TrainRefusal extends Error {
@@ -343,17 +343,29 @@ export async function runVerify(ctx, { op }) {
   // was clean and now shows interleaving (or the reverse) has changed under the
   // record, and that is refused for a human to read, not silently rewritten.
   const freshPhase = v.interleaved.length ? 'verified-interleaved' : 'verified';
+  // Compare-and-swap (round-5 code H2): v was computed from `receipt` OUTSIDE
+  // the lock, so it may be written only if the receipt is still exactly that.
+  // A concurrent writer in between means the facts were judged against a
+  // record that no longer exists — refuse, never clobber.
+  const unchanged = (d) => {
+    if (canonicalJson(d) !== canonicalJson(receipt)) {
+      throw new TrainRefusal(`op ${op} changed while it was being verified — run verify again`);
+    }
+  };
   if (receipt.phase !== 'landed' && receipt.phase !== freshPhase) {
-    // Refusing must not leave the OLD clearance standing (round-4 code H1/H2):
-    // the fresh evidence is persisted first, marked blocked, under the phase
-    // already held — so publicationClearance refuses until a human acts.
+    // Refusing must not leave the OLD clearance standing (round-4 code H1/H2),
+    // and must not overwrite the old record into a shape its phase forbids
+    // (round-5 code H1/H3). The fresh evidence goes into `revocation`, beside
+    // the original; publicationClearance refuses while a revocation exists.
     const reason = `the landed train changed under its record: recorded ${receipt.phase}, now verifies as ${freshPhase}`;
     updateReceipt(dir, op, (d) => {
-      d.verify = { ...v, publicationBlocked: true, blockedReason: [v.blockedReason, reason].filter(Boolean).join('; ') };
+      unchanged(d);
+      d.revocation = { at: ctx.now().toISOString(), reason, freshPhase, verify: v };
     }, { now: ctx.now(), note: 're-verify refused' });
     throw new TrainRefusal(`op ${op}: ${reason}; publication is now blocked — read both before acting`, { verify: v });
   }
   const current = updateReceipt(dir, op, (d) => {
+    unchanged(d);
     d.verify = v;
     d.phase = freshPhase;
   }, { now: ctx.now(), note: receipt.phase === 'landed' ? 'verify' : 're-verify' });

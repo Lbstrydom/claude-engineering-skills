@@ -103,7 +103,8 @@ export function checkCommitClaims(commit, claims) {
  *
  * Each block names the invocation flag that acknowledges it, and an
  * acknowledgement counts only when the receipt records it:
- *   - not verified yet (or no final merge)           → no flag clears it;
+ *   - not verified yet, no final merge, or a revoked verification → no flag
+ *     clears it (a human reads both records and starts a new op);
  *   - interleaved foreign commits before the final merge → `--accept-interleaved`,
  *     cleared only by a `publicationAmendment` naming exactly those oids;
  *   - a `passed` claim the merge commit does not confirm → `--accept-provenance-mismatch`.
@@ -120,6 +121,7 @@ export function publicationClearance(receipt, { acceptProvenanceMismatch = false
     return { clear: false, blocks };
   }
   if (!v.finalMergeOid) blocks.push({ reason: 'no final merge was recorded', flag: null });
+  if (receipt.revocation) blocks.push({ reason: `verification revoked: ${receipt.revocation.reason}`, flag: null });
   if (v.interleaved.length) {
     const accepted = new Set(receipt.publicationAmendment?.acceptedOids ?? []);
     const unaccepted = v.interleaved.filter((c) => !accepted.has(c.oid));
