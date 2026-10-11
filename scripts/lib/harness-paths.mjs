@@ -63,6 +63,11 @@ export function scheduledTasksDir(configDir) {
 
 /** Case-insensitive on win32 (NTFS), exact elsewhere — the one comparison for harness paths. */
 export function samePath(a, b, platform = process.platform) {
-  const n = (p) => path.resolve(p).replace(/\\/g, '/').replace(/\/+$/, '');
-  return platform === 'win32' ? n(a).toLowerCase() === n(b).toLowerCase() : n(a) === n(b);
+  // Separators fold ONLY on win32: on POSIX a backslash is a legal filename character (audit R1-M1/M7).
+  if (platform === 'win32') {
+    const w = (p) => path.win32.resolve(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    return w(a) === w(b);
+  }
+  const x = (p) => path.posix.resolve(p).replace(/\/+$/, '');
+  return x(a) === x(b);
 }

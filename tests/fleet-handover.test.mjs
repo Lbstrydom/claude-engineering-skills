@@ -234,6 +234,38 @@ describe('fleet handover — end to end through the CLI', () => {
     assert.equal(fs.existsSync(path.join(B, 'projects')), false);
   });
 
+  it('a session registry that cannot be read completely is UNKNOWN live state, not "none" (R1-H4/M4)', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-i-'));
+    const env = scrubbedEnv({ FLEET_TELEMETRY: 'off', CLAUDE_CONFIG_DIR: A, CLAUDE_AUDIT_LOOP_DIR: '' });
+    assert.equal(runFleet(['claim', '--id', 'live-one', '--intent', 'live work', '--paths', 'src/**'], { cwd: fx.repo, env }).status, 0);
+    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env });
+    assert.equal(prep.json.handover.sessions, 1, 'the claim is in the manifest');
+    const sessions = path.join(git(['rev-parse', '--path-format=absolute', '--git-common-dir'], fx.repo), 'fleet', 'sessions');
+    fs.writeFileSync(path.join(sessions, 'corrupt.json'), '{ not json');
+    const r = runFleet(['handover', 'receive', '--from', prep.json.handover.json, '--json'], { cwd: fx.repo, env });
+    assert.equal(r.json.handover.liveUnknown.length, 1, r.stdout);
+    assert.equal(r.status, 3, 'unknown live state is a human step, never a clean exit');
+    // control: the same receive with the registry intact is not unknown
+    fs.rmSync(path.join(sessions, 'corrupt.json'));
+    const ok = runFleet(['handover', 'receive', '--from', prep.json.handover.json, '--json'], { cwd: fx.repo, env });
+    assert.deepEqual([ok.json.handover.liveUnknown.length, ok.json.handover.liveSessions.map((x) => x.id)], [0, ['live-one']]);
+  });
+
+  it('a source memory dir swapped for a junction after prepare cannot anchor itself (R1-H3/H7)', () => {
+    const { A, f, json } = setup();
+    const mem = path.join(A, 'projects', 'c--GIT-demo', 'memory');
+    const elsewhere = tmpRoot('handover-swap-');
+    fs.writeFileSync(path.join(elsewhere, 'a.md'), 'alpha\n');
+    rm(mem);
+    fs.symlinkSync(elsewhere, mem, 'junction');
+    const C = tmpRoot('handover-acct-j-');
+    const r = f(['handover', 'receive', '--from', json], C);
+    assert.equal(r.status, 1, r.stdout);
+    assert.ok(r.json.handover.files.every((x) => x.outcome === 'source-unreadable'), JSON.stringify(r.json.handover.files.map((x) => x.outcome)));
+    assert.equal(fs.existsSync(path.join(C, 'projects', 'c--GIT-demo', 'memory', 'a.md')), false, 'nothing copied from the swapped dir');
+  });
+
   it('a --repo without fleet state is reported as absent, never an error', () => {
     const fx = makeFleetRepo();
     const other = tmpRoot('handover-nofleet-');

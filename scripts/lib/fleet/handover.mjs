@@ -141,14 +141,18 @@ export function collectMemory(configDir) {
   let names = [];
   try { names = fs.readdirSync(projects, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name); }
   catch (e) { if (e.code !== 'ENOENT') throw e; }
-  const memory = []; const anomalies = [];
+  const memory = []; const anomalies = []; const errors = [];
   for (const dirName of names.sort()) {
     const mem = path.join(projects, dirName, 'memory');
-    let st; try { st = fs.lstatSync(mem); } catch { continue; }
+    // ENOENT = this project simply has no memory (most are transcript-only). ANY other failure means the
+    // inventory was NOT measured, and must be said — never read as "no memory here" (audit R1-H5/H10).
+    let st; try { st = fs.lstatSync(mem); } catch (e) { if (e.code !== 'ENOENT') errors.push({ dirName, reason: e.code ?? 'lstat-failed' }); continue; }
     if (st.isSymbolicLink()) { anomalies.push({ kind: 'memory-is-link', detail: dirName }); continue; }
     if (!st.isDirectory()) continue;
     if (!SLUG_RE.test(dirName)) { anomalies.push({ kind: 'unsafe-slug', detail: dirName }); continue; }
-    const { files, skipped } = walkMemory(mem);
+    let walked;
+    try { walked = walkMemory(mem); } catch (e) { errors.push({ dirName, reason: e.code ?? 'read-failed' }); continue; }
+    const { files, skipped } = walked;
     memory.push({ dirName, files, skipped });
     if (!files.some((f) => f.rel === 'MEMORY.md')) anomalies.push({ kind: 'no-memory-index', detail: dirName });
     if (/--claude-worktrees-/.test(dirName)) anomalies.push({ kind: 'memory-under-worktree-slug', detail: dirName });
@@ -156,7 +160,7 @@ export function collectMemory(configDir) {
   const byLower = new Map();
   for (const m of memory) byLower.set(m.dirName.toLowerCase(), [...(byLower.get(m.dirName.toLowerCase()) ?? []), m.dirName]);
   for (const group of byLower.values()) if (group.length > 1) anomalies.push({ kind: 'case-duplicate-slugs', detail: group.join(' ~ ') });
-  return { memory, anomalies };
+  return { memory, anomalies, errors };
 }
 
 /** Scheduled tasks under the config root: id + its frontmatter description. */
@@ -265,6 +269,7 @@ export const HandoverManifestSchema = z.object({
     repos: z.array(z.object({ path: z.string(), fleet: z.enum(['present', 'absent', 'error']), error: z.string().optional(), directives: z.number().optional(), trains: z.number().optional(), sessions: z.array(z.object({ id: z.string() }).passthrough()) }).strict()),
   }).strict(),
   memory: z.array(MemoryEntry),
+  memoryErrors: z.array(z.object({ dirName: z.string(), reason: z.string() }).strict()),
   anomalies: z.array(z.object({ kind: z.string(), detail: z.string() }).strict()),
   scheduledTasks: z.array(z.object({ id: z.string(), description: z.string() }).strict()),
   settings: z.array(z.object({ name: z.string(), path: z.string(), exists: z.boolean(), sha256: z.string().nullable() }).strict()),
@@ -289,7 +294,7 @@ function reserveArtifacts(dir, now) {
 /** prepare: everything account-bound and coordination-live, written as JSON + markdown. Writes nothing to repos. */
 export async function prepareHandover(ctx, flags = {}, { homedir = os.homedir() } = {}) {
   const configDir = claudeConfigDir(ctx.env, { homedir });
-  const { memory, anomalies } = collectMemory(configDir);
+  const { memory, anomalies, errors: memoryErrors } = collectMemory(configDir);
   const scope = await resolveRepoScope(ctx.cwd, flags['--repo'] ?? []);
   const repos = scope.repos.map((r) => repoState(r, { env: ctx.env, now: ctx.now }));
   const handoverDir = path.join(ctx.dir, 'handover');
@@ -298,7 +303,7 @@ export async function prepareHandover(ctx, flags = {}, { homedir = os.homedir() 
     schemaVersion: HANDOVER_SCHEMA_VERSION, id: art.id, createdAt: new Date().toISOString(),
     sourceConfigDir: configDir, sourceConfigDirReal: realWithTail(configDir), invokingRepo: scope.repos[0],
     fleetCommand: ctx.cmd ?? 'node scripts/fleet.mjs',
-    scope: { sourceRepo: scope.sourceRepo, repos }, memory, anomalies,
+    scope: { sourceRepo: scope.sourceRepo, repos }, memory, memoryErrors, anomalies,
     scheduledTasks: collectScheduledTasks(configDir), settings: settingsFiles(configDir, ctx.env, homedir),
   };
   HandoverManifestSchema.parse(manifest); // a manifest prepare cannot itself validate is a bug, never a file
@@ -334,12 +339,19 @@ function destDirName(destConfigDir, dirName, platform = process.platform) {
 
 /** Plan every memory file against the destination (no writes). */
 function planMemory(manifest, destConfigDir, destReal) {
+  let srcCfgReal = null;
+  try { srcCfgReal = fs.realpathSync.native(manifest.sourceConfigDir); } catch { srcCfgReal = null; }
   const plan = [];
   for (const m of manifest.memory) {
     const name = destDirName(destConfigDir, m.dirName);
     const srcRoot = path.join(manifest.sourceConfigDir, 'projects', m.dirName, 'memory');
     let srcRootReal = null; let srcRootErr = null;
     try { srcRootReal = fs.realpathSync.native(srcRoot); } catch (e) { srcRootErr = e.code ?? 'unreadable'; }
+    // The memory dir must still BE <canonical source config root>/projects/<dirName>/memory: a dir swapped
+    // for a link since prepare cannot anchor its own containment check (audit R1-H3/H7).
+    if (srcRootReal && !samePath(srcRootReal, path.join(srcCfgReal ?? '', 'projects', m.dirName, 'memory'))) {
+      srcRootErr = 'source-root-moved'; srcRootReal = null;
+    }
     const dstRoot = path.join(destReal, 'projects', name, 'memory');
     for (const f of m.files) {
       const segs = safeRelSegments(f.rel);
@@ -363,19 +375,38 @@ function planMemory(manifest, destConfigDir, destReal) {
 }
 
 /** Copy one planned file via staging + exclusive hard-link publish (R1-H2); EEXIST is re-classified, never overwritten. */
-function publishOne(item, stagingDir, seq) {
+/**
+ * Copy one planned file via staging + exclusive hard-link publish (R1-H2); EEXIST is re-classified, never
+ * overwritten. Every failure is a per-file outcome, never a throw that strands later files (audit R1-M5).
+ * The destination is re-checked for links right before publishing (audit R1-H2/H8): Node has no dirfd
+ * APIs, so a NON-cooperating writer racing in that instant remains a documented residual; cooperating
+ * receivers are excluded by the lock.
+ */
+function publishOne(item, stagingDir, seq, rootReal) {
   const staged = path.join(stagingDir, `${seq}.tmp`);
-  fs.copyFileSync(item.source, staged, fs.constants.COPYFILE_EXCL);
-  const got = sha256(fs.readFileSync(staged));
-  if (got !== item.sourceHash) { fs.unlinkSync(staged); return { ...item, outcome: 'source-changed-during-copy', write: false, human: true }; }
-  fs.mkdirSync(path.dirname(item.target), { recursive: true });
-  try { fs.linkSync(staged, item.target); } catch (e) {
+  const fail = (outcome, reason) => {
+    try { fs.unlinkSync(staged); } catch { /* not created yet / already gone */ }
+    return { ...item, outcome, write: false, human: true, ...(reason ? { reason } : {}) };
+  };
+  try {
+    fs.copyFileSync(item.source, staged, fs.constants.COPYFILE_EXCL);
+    if (sha256(fs.readFileSync(staged)) !== item.sourceHash) return fail('source-changed-during-copy');
+    fs.mkdirSync(path.dirname(item.target), { recursive: true });
+    const unsafe = linkBelow(rootReal, item.target);
+    if (unsafe) return fail('unsafe-destination', unsafe);
+    try { fs.linkSync(staged, item.target); } catch (e) {
+      if (e.code !== 'EEXIST') return fail('publish-failed', e.code ?? e.message);
+      fs.unlinkSync(staged);
+      const D = probeFile(item.target);
+      // The target existed at link time but not now: something else is writing here. Never report a copy.
+      if (D.kind === 'absent') return { ...item, outcome: 'publish-raced', write: false, human: true };
+      return { ...item, ...decideFile(item.prepared, D, () => ({ kind: 'file', hash: item.sourceHash })), raced: true };
+    }
     fs.unlinkSync(staged);
-    if (e.code !== 'EEXIST') throw e;
-    return { ...item, ...decideFile(item.prepared, probeFile(item.target), () => ({ kind: 'file', hash: item.sourceHash })), raced: true };
+    return item;
+  } catch (e) {
+    return fail('publish-failed', e.code ?? e.message);
   }
-  fs.unlinkSync(staged);
-  return item;
 }
 
 /** Sweep staging dirs of DEAD runs. Only called while holding the lock (no other receive can be live) (R2-H1/R3-H1). */
@@ -432,7 +463,7 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
         const stagingDir = path.join(stagingRoot, opId);
         fs.mkdirSync(stagingDir); // exclusive: fails if it exists
         let seq = 0;
-        const out = replanned.map((item) => (item.write ? publishOne(item, stagingDir, seq++) : item));
+        const out = replanned.map((item) => (item.write ? publishOne(item, stagingDir, seq++, rootReal) : item));
         fs.rmdirSync(stagingDir);
         return { out };
       });
@@ -449,13 +480,17 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
   const ownSettings = settingsFiles(destConfigDir, ctx.env, homedir);
   const settings = m.settings.map((s) => {
     const mine = ownSettings.find((o) => o.name === s.name);
-    const status = !mine?.exists ? 'absent' : mine.sha256 === s.sha256 ? 'same' : 'differs';
+    const status = !mine?.exists ? (s.exists ? 'absent' : 'same') : mine.sha256 === s.sha256 ? 'same' : 'differs';
     return { name: s.name, status, review: status !== 'same' };
   });
+  // A registry that cannot be read completely is UNKNOWN live state, never "no live sessions" (audit R1-H4/M4).
+  const liveUnknown = [];
   const liveSessions = m.scope.repos.flatMap((r) => {
-    let dir; try { dir = fleetDir(r.path); } catch { return []; }
-    let live = [];
-    try { live = readSessions(dir).sessions.filter((s) => !['done', 'abandoned'].includes(s.state)).map((s) => s.id); } catch { live = []; }
+    if (!r.sessions.length) return [];
+    let reg;
+    try { reg = readSessions(fleetDir(r.path)); } catch (e) { liveUnknown.push({ repo: r.path, reason: e.message }); return []; }
+    if (!reg.complete) liveUnknown.push({ repo: r.path, reason: 'registry incomplete (unreadable session records)' });
+    const live = reg.sessions.filter((s) => !['done', 'abandoned'].includes(s.state)).map((s) => s.id);
     return r.sessions.filter((s) => live.includes(s.id)).map((s) => ({ repo: r.path, id: s.id }));
   });
 
@@ -465,17 +500,20 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
   const missingTasks = tasks.filter((t) => t.file === 'missing');
   const handover = {
     id: m.id, mode: sameRoot ? 'same-config-root' : 'copy', dryRun, destConfigDir, sourceConfigDir: m.sourceConfigDir,
-    files, sweep, lockContention, tasks, settings, liveSessions, anomalies: m.anomalies,
+    files, sweep, lockContention, tasks, settings, liveSessions, liveUnknown, anomalies: m.anomalies, memoryErrors: m.memoryErrors,
     summary: {
       verified: count('verified'), copied: count('copied') + count('copied-source-changed'), present: count('present') + count('present-source-changed'),
       changedSincePrepare: count('changed-since-prepare'), missingSincePrepare: count('missing-since-prepare'),
-      conflicts: conflicts.length, errors: errors.length, missingTasks: missingTasks.length,
+      conflicts: conflicts.length, errors: errors.length, missingTasks: missingTasks.length, settingsReview: settings.filter((x) => x.review).length,
     },
   };
   const text = renderReceiveText(handover);
   if (errors.length) return failed(`${errors.length} memory file(s) could not be decided or written`, { handover, text });
   if (lockContention) return refused('another handover receive holds the lock on this config root', { handover, text });
-  if (conflicts.length || missingTasks.length) return refused(`human steps remain: ${conflicts.length} conflict(s), ${missingTasks.length} scheduled task(s) to recreate`, { handover, text });
+  const settingsReview = settings.filter((x) => x.review);
+  if (conflicts.length || missingTasks.length || settingsReview.length || liveUnknown.length) {
+    return refused(`human steps remain: ${conflicts.length} conflict(s), ${missingTasks.length} scheduled task(s) to recreate, ${settingsReview.length} settings file(s) to review${liveUnknown.length ? `, live state unknown in ${liveUnknown.length} repo(s)` : ''}`, { handover, text });
+  }
   return ok({ handover, text });
 }
 
@@ -542,6 +580,8 @@ function renderReceiveText(h) {
   for (const t of h.tasks.filter((x) => x.file === 'missing')) L.push(`    recreate: ${t.id} — ${t.description}`);
   for (const st of h.settings.filter((x) => x.review)) L.push(`  settings ${st.name}: ${st.status} — review by hand (MCP servers, permissions)`);
   L.push(`  sessions still live (adopt or resume from the handover prompts): ${h.liveSessions.length ? h.liveSessions.map((x) => x.id).join(', ') : 'none'}`);
+  for (const u of h.liveUnknown) L.push(`  LIVE STATE UNKNOWN in ${u.repo}: ${u.reason}`);
+  for (const e of h.memoryErrors ?? []) L.push(`  memory dir NOT measured at prepare: ${e.dirName} (${e.reason})`);
   for (const a of h.anomalies) L.push(`  folder anomaly: ${a.kind} ${a.detail}`);
   return L.join('\n');
 }
@@ -555,9 +595,12 @@ export async function cmdHandover(ctx, flags, positionals) {
     const sessions = manifest.scope.repos.reduce((n, r) => n + r.sessions.length, 0);
     const files = manifest.memory.reduce((n, mm) => n + mm.files.length, 0);
     const scopeNote = manifest.scope.sourceRepo.type === 'resolved' ? '' : `\n  WARNING: source repo not resolved (${manifest.scope.sourceRepo.type}) — per-repo scope limited to the invoking repo and --repo`;
-    return ok({
-      handover: { id: manifest.id, json: artifacts.json, md: artifacts.md, memoryDirs: manifest.memory.length, memoryFiles: files, sessions, scheduledTasks: manifest.scheduledTasks.length, anomalies: manifest.anomalies.length, sourceRepo: manifest.scope.sourceRepo },
-      text: `fleet handover prepare ${manifest.id}\n  memory: ${manifest.memory.length} dir(s), ${files} file(s) · sessions: ${sessions} · scheduled tasks: ${manifest.scheduledTasks.length} · anomalies: ${manifest.anomalies.length}${scopeNote}\n  read: ${artifacts.md}\n  new account: ${manifest.fleetCommand} handover receive --from "${artifacts.json}"`,
+    // A memory dir prepare could not read was NOT measured: the run says so and is not a clean exit.
+    const memNote = manifest.memoryErrors.length ? `\n  NOT MEASURED: ${manifest.memoryErrors.map((e) => `${e.dirName} (${e.reason})`).join(', ')} — fix access and re-run prepare` : '';
+    const out = manifest.memoryErrors.length ? (x) => refused('memory dir(s) could not be read at prepare', x) : ok;
+    return out({
+      handover: { id: manifest.id, json: artifacts.json, md: artifacts.md, memoryDirs: manifest.memory.length, memoryFiles: files, memoryErrors: manifest.memoryErrors, sessions, scheduledTasks: manifest.scheduledTasks.length, anomalies: manifest.anomalies.length, sourceRepo: manifest.scope.sourceRepo },
+      text: `fleet handover prepare ${manifest.id}${memNote}\n  memory: ${manifest.memory.length} dir(s), ${files} file(s) · sessions: ${sessions} · scheduled tasks: ${manifest.scheduledTasks.length} · anomalies: ${manifest.anomalies.length}${scopeNote}\n  read: ${artifacts.md}\n  new account: ${manifest.fleetCommand} handover receive --from "${artifacts.json}"`,
     });
   }
   return receiveHandover(ctx, flags);

@@ -40,9 +40,10 @@ describe('harnessProjectSlug', () => {
 
 describe('harnessMemoryDir / memoryDirForSlug / scheduledTasksDir', () => {
   it('memory lives under the ACCOUNT config root', () => {
-    const r = harnessMemoryDir({ repoRoot: 'C:\\GIT\\demo', env: { CLAUDE_CONFIG_DIR: path.resolve('/acct-b') } });
+    const repo = path.resolve('/GIT/demo'); // portable: the slug derives from whatever path.resolve yields here
+    const r = harnessMemoryDir({ repoRoot: repo, env: { CLAUDE_CONFIG_DIR: path.resolve('/acct-b') } });
     assert.equal(r.configDir, path.resolve('/acct-b'));
-    assert.equal(r.dir, path.join(path.resolve('/acct-b'), 'projects', 'c--GIT-demo', 'memory'));
+    assert.equal(r.dir, path.join(path.resolve('/acct-b'), 'projects', harnessProjectSlug(repo), 'memory'));
     assert.equal(r.exists, false);
   });
   it('memoryDirForSlug refuses a slug that could become a path', () => {
@@ -57,9 +58,10 @@ describe('harnessMemoryDir / memoryDirForSlug / scheduledTasksDir', () => {
 
 describe('resolveHarnessMemoryDir (friction mirror) now honours CLAUDE_CONFIG_DIR', () => {
   it('derived dir follows CLAUDE_CONFIG_DIR (was hard-coded ~/.claude)', () => {
-    const r = resolveHarnessMemoryDir({ repoRoot: 'C:\\GIT\\demo', env: { CLAUDE_CONFIG_DIR: path.resolve('/acct-b') } });
+    const repo = path.resolve('/GIT/demo');
+    const r = resolveHarnessMemoryDir({ repoRoot: repo, env: { CLAUDE_CONFIG_DIR: path.resolve('/acct-b') } });
     assert.equal(r.source, 'derived');
-    assert.equal(r.dir, path.join(path.resolve('/acct-b'), 'projects', 'c--GIT-demo', 'memory'));
+    assert.equal(r.dir, path.join(path.resolve('/acct-b'), 'projects', harnessProjectSlug(repo), 'memory'));
   });
   it('FRICTION_MEMORY_DIR keeps precedence', () => {
     const r = resolveHarnessMemoryDir({ repoRoot: 'C:\\GIT\\demo', env: { FRICTION_MEMORY_DIR: path.resolve('/explicit'), CLAUDE_CONFIG_DIR: path.resolve('/acct-b') } });
@@ -72,5 +74,7 @@ describe('samePath', () => {
     assert.equal(samePath('/x/C--GIT-storyline', '/x/c--GIT-storyline', 'win32'), true);
     assert.equal(samePath('/x/C--GIT-storyline', '/x/c--GIT-storyline', 'linux'), false);
     assert.equal(samePath('/x/a/', '/x/a', 'linux'), true);
+    assert.equal(samePath('/x/a\\b', '/x/a/b', 'linux'), false, 'a POSIX backslash is a filename character, not a separator');
+    assert.equal(samePath('C:\\x\\a', 'c:/x/a', 'win32'), true);
   });
 });
