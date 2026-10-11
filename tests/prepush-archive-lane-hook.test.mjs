@@ -312,7 +312,7 @@ describe('.githooks/pre-push — the hook acts on the protocol token, never on e
         assert.equal(got.status, 0, got.stdout + got.stderr);
         assert.deepEqual(got.argv, ['--base', seed, '--head', tip]);
         assert.match(got.stdout + got.stderr, LANE_UNAVAILABLE);
-        fs.rmSync(path.join(repo, MARKER), { force: true });
+        fs.rmSync(path.join(repo, MARKER), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       }
     });
   });
@@ -333,7 +333,7 @@ describe('.githooks/pre-push — the hook acts on the protocol token, never on e
       for (const ref of refs) {
         const got = runHook(repo, `refs/heads/local ${tip} ${ref} ${ZERO}\n`, { dest, hook });
         assert.equal(got.status === 1, isArchiveRef(ref), `${ref}: bash blocked=${got.status === 1}, oracle says archive=${isArchiveRef(ref)}\n${got.stdout}${got.stderr}`);
-        fs.rmSync(path.join(repo, MARKER), { force: true });
+        fs.rmSync(path.join(repo, MARKER), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       }
     });
   });

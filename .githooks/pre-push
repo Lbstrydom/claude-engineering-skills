@@ -287,18 +287,11 @@ if [ "$AUDIT_PREPUSH_ARCHIVE_LANE" != "0" ] && [ "$PUBLISHED_REFS" -gt 0 ]; then
       # (scripts/lib/prepush-archive-lane.mjs isArchiveRef is the oracle); it can only
       # ever BLOCK, never choose the lane, and a drift test compares it with the
       # oracle over a table of refs (tests/prepush-archive-lane-hook.test.mjs).
-      LANE_SEEN=0
-      LANE_LOOKS_ARCHIVE=1
-      while read -r _LA _LB LANE_RREF _LC; do
-        [ -z "$LANE_RREF" ] && continue
-        case "$LANE_RREF" in
-          refs/heads/archive/?*|refs/tags/archive/?*) LANE_SEEN=$((LANE_SEEN + 1)) ;;
-          *) LANE_LOOKS_ARCHIVE=0 ;;
-        esac
-      done <<EOF
-$PUSH_STDIN
-EOF
-      if [ "$LANE_LOOKS_ARCHIVE" -eq 1 ] && [ "$LANE_SEEN" -gt 0 ]; then
+      # awk over the captured copy, not a second `while read`: the stdin-once invariant
+      # (tests/prepush-sandbox-honesty.test.mjs) allows ONE loop, the range loop above.
+      LANE_SEEN="$(printf '%s\n' "$PUSH_STDIN" | awk 'NF >= 4 && $3 ~ /^refs\/(heads|tags)\/archive\/./ { n++ } END { print n + 0 }')"
+      LANE_OTHER="$(printf '%s\n' "$PUSH_STDIN" | awk 'NF >= 4 && $3 !~ /^refs\/(heads|tags)\/archive\/./ { n++ } END { print n + 0 }')"
+      if [ "${LANE_OTHER:-1}" -eq 0 ] && [ "${LANE_SEEN:-0}" -gt 0 ]; then
         echo "✗  archive lane unavailable (${LANE_WHY:-it produced no valid result}) for a push that looks archive-only: refusing, because the full gate does NOT scan published content." >&2
         echo "   Fix the lane, or revert to the full gate on purpose: AUDIT_PREPUSH_ARCHIVE_LANE=0 git push" >&2
         exit 1
