@@ -118,14 +118,20 @@ test('safeReadFile reads the file it checked: a swap after the stat is never rea
   process.chdir(dir);
   const target = fs.realpathSync(path.join(dir, 'notes.txt'));
 
-  let swapped = 0;
+  // hookRuns: how often the hook fired. swapOutcome: what the injected rename DID
+  // — 'swapped', or the error code of a refusal. Recording the outcome (not just
+  // that the hook ran) is what stops a swap that silently failed for the wrong
+  // reason from reading as a pass.
+  let hookRuns = 0;
+  let swapOutcome = null;
   const swapAfter = (orig) => (...a) => {
     const result = orig(...a);
-    if (swapped === 0) {
-      swapped = 1;
+    hookRuns += 1;
+    if (swapOutcome === null) {
       // POSIX: replaces the name while an open descriptor keeps the original.
-      // Windows: refuses (EPERM) while the file is held open — equally safe.
-      try { fs.renameSync(path.join(dir, 'swap.txt'), target); swapped = 2; } catch { /* refused */ }
+      // Windows: refuses (EPERM/EBUSY/EACCES) while the file is held open —
+      // equally safe, and the only refusal this test accepts.
+      try { fs.renameSync(path.join(dir, 'swap.txt'), target); swapOutcome = 'swapped'; } catch (err) { swapOutcome = err?.code || String(err); }
     }
     return result;
   };
@@ -133,7 +139,9 @@ test('safeReadFile reads the file it checked: a swap after the stat is never rea
   t.mock.method(fs, 'fstatSync', swapAfter(fs.fstatSync.bind(fs)));
 
   const result = safeReadFile('notes.txt', dir);
-  assert.equal(swapped > 0, true, 'the swap hook must have fired (vacuous-pass guard)');
+  assert.ok(hookRuns > 0, 'the swap hook must have fired (vacuous-pass guard)');
+  assert.ok(['swapped', 'EPERM', 'EBUSY', 'EACCES'].includes(swapOutcome),
+    `the injected swap must either succeed or be refused because the file is held open — got ${swapOutcome}`);
   assert.ok(result, 'the checked file is still read');
   assert.equal(result.content, BENIGN_MARKER, 'content must come from the file that was checked, not the swapped-in one');
 });
