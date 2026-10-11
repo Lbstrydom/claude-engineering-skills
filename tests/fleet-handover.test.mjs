@@ -260,7 +260,7 @@ describe('fleet handover — end to end through the CLI', () => {
     assert.equal(r.json.handover.liveUnknown.length, 1, r.stdout);
     assert.equal(r.status, 3, 'unknown live state is a human step, never a clean exit');
     // control: the same receive with the registry intact is not unknown
-    fs.rmSync(path.join(sessions, 'corrupt.json'));
+    fs.rmSync(path.join(sessions, 'corrupt.json'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const ok = runFleet(['handover', 'receive', '--from', prep.json.handover.json, '--json'], { cwd: fx.repo, env });
     assert.deepEqual([ok.json.handover.liveUnknown.length, ok.json.handover.liveSessions.map((x) => x.id)], [0, ['live-one']]);
   });
