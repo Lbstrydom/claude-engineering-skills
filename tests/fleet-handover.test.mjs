@@ -293,6 +293,104 @@ describe('fleet handover — end to end through the CLI', () => {
   });
 });
 
+describe('unregistered work — worktrees holding work no claim covers', () => {
+  const envFor = (cfg) => scrubbedEnv({ FLEET_TELEMETRY: 'off', CLAUDE_CONFIG_DIR: cfg, CLAUDE_AUDIT_LOOP_DIR: '' });
+  const addWorktree = (fx, name) => {
+    const wt = path.join(tmpRoot('handover-unreg-'), name);
+    git(['worktree', 'add', '-q', '-b', name, wt], fx.repo);
+    return wt;
+  };
+  const manifestOf = (prep) => JSON.parse(fs.readFileSync(prep.json.handover.json, 'utf8'));
+
+  it('an unclaimed worktree with an uncommitted file is listed and prepare exits 3; a clean one is not (control)', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-u1-'), { task: null });
+    const dirty = addWorktree(fx, 'coordinator-wip');
+    fs.writeFileSync(path.join(dirty, 'notes.md'), 'in flight\n');
+    addWorktree(fx, 'clean-side');
+    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(prep.status, 3, prep.stdout);
+    assert.equal(prep.json.handover.unregistered, 1);
+    const [entry] = manifestOf(prep).scope.repos;
+    assert.deepEqual(entry.unregistered.map((u) => [u.branch, u.risks.untracked]), [['coordinator-wip', 1]], 'the clean worktree is not listed');
+    const md = fs.readFileSync(prep.json.handover.md, 'utf8');
+    assert.match(md, /## Unregistered work/);
+    assert.match(md, /claim --id coordinator-wip/);
+    assert.doesNotMatch(md, /clean-side/);
+  });
+
+  it('local commits nothing remote holds count as unregistered work', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-u2-'), { task: null });
+    const wt = addWorktree(fx, 'local-only');
+    fs.writeFileSync(path.join(wt, 'x.txt'), 'x\n');
+    git(['add', 'x.txt'], wt);
+    git(['commit', '-q', '-m', 'local only'], wt);
+    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(prep.status, 3, prep.stdout);
+    assert.equal(manifestOf(prep).scope.repos[0].unregistered[0].risks.unpushed, 1);
+  });
+
+  it('a claim bound to the worktree covers it: prepare is clean (the direction it must NOT fire)', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-u3-'), { task: null });
+    const wt = addWorktree(fx, 'claimed-wip');
+    fs.writeFileSync(path.join(wt, 'notes.md'), 'in flight\n');
+    assert.equal(runFleet(['claim', '--id', 'claimed-wip', '--intent', 'wip', '--paths', 'notes.md'], { cwd: wt, env: envFor(A) }).status, 0);
+    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(prep.status, 0, prep.stdout);
+    assert.deepEqual(manifestOf(prep).scope.repos[0].unregistered, []);
+  });
+
+  it('a branch adopted with `fleet add` (no worktree recorded) covers the worktree it is checked out in', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-u4-'), { task: null });
+    const wt = addWorktree(fx, 'adopted');
+    fs.writeFileSync(path.join(wt, 'y.txt'), 'y\n');
+    git(['add', 'y.txt'], wt);
+    git(['commit', '-q', '-m', 'adopted work'], wt);
+    assert.equal(runFleet(['add', 'adopted'], { cwd: fx.repo, env: envFor(A) }).status, 0);
+    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(prep.status, 0, prep.stdout);
+    const [entry] = manifestOf(prep).scope.repos;
+    assert.deepEqual(entry.unregistered, []);
+    assert.equal(path.resolve(entry.sessions[0].worktree).toLowerCase(), path.resolve(wt).toLowerCase(), 'the session resolves the worktree its branch is checked out in');
+  });
+
+  it('receive re-checks: refuses (exit 3) while the work is unclaimed, clean once it is claimed', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-u5-'), { task: null });
+    const wt = addWorktree(fx, 'late-claim');
+    fs.writeFileSync(path.join(wt, 'notes.md'), 'in flight\n');
+    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(prep.status, 3);
+    const recv = () => runFleet(['handover', 'receive', '--from', prep.json.handover.json, '--json'], { cwd: fx.repo, env: envFor(A) });
+    const r1 = recv();
+    assert.equal(r1.status, 3, r1.stdout);
+    assert.equal(r1.json.handover.unregistered.length, 1);
+    assert.match(r1.json.text, /UNREGISTERED WORK: .*late-claim/);
+    assert.equal(runFleet(['claim', '--id', 'late-claim', '--intent', 'wip', '--paths', 'notes.md'], { cwd: wt, env: envFor(A) }).status, 0);
+    const r2 = recv();
+    assert.deepEqual(r2.json.handover.unregistered, [], r2.stdout);
+  });
+
+  it('the coordination prompt fans out one coordinator chip per OTHER repo, started in that repo (spawn_task cwd)', () => {
+    const fx = makeFleetRepo();
+    const other = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-u6-'), { task: null });
+    assert.equal(runFleet(['claim', '--id', 'home-work', '--intent', 'here', '--paths', 'a.txt'], { cwd: fx.repo, env: envFor(A) }).status, 0);
+    assert.equal(runFleet(['claim', '--id', 'other-work', '--intent', 'there', '--paths', 'b.txt'], { cwd: other.repo, env: envFor(A) }).status, 0);
+    const prep = runFleet(['handover', 'prepare', '--repo', other.repo, '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(prep.status, 0, prep.stdout);
+    const md = fs.readFileSync(prep.json.handover.md, 'utf8');
+    const prompt = md.slice(md.indexOf('## Coordination prompt'));
+    assert.match(prompt, /\(this repo\): run fleet status/);
+    assert.ok(prompt.includes(`spawn_task, cwd "${other.repo}"`), prompt);
+    assert.ok(!prompt.includes(`spawn_task, cwd "${fx.repo}"`), 'the invoking repo is resumed in place, not chipped');
+    assert.ok(md.includes(`### ${other.repo}`), 'sessions are grouped per repo so a chip can be handed its own section');
+  });
+});
+
 describe('mainCheckout', () => {
   it('a linked worktree resolves to the MAIN checkout (one repo, one identity)', () => {
     const fx = makeFleetRepo();
