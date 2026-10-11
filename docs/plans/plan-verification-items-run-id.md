@@ -1,7 +1,7 @@
 # Plan: plan_verification_items run_id uuid/text — multi-row owned insert + verify exit honesty
 
 - **Date**: 2026-10-10
-- **Status**: Complete (implemented + audited 2026-10-10; awaiting review)
+- **Status**: Complete — shipped in #179 (32c83bc4, merged 2026-10-10)
 - **Author**: Claude + Louis
 - **Scope**: backend (store write builder + one CLI exit path; no migration, no UI)
 

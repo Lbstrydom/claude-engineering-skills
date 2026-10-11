@@ -1,7 +1,7 @@
 # Plan: Reduce `skills/ship/SKILL.md`'s size via progressive disclosure
 
 - **Date**: 2026-09-16
-- **Status**: Approved (GPT: 3 rounds, 4→1→0 findings, 100% acceptance both rounds with findings; Gemini: 1 round, APPROVE — no concerns)
+- **Status**: Complete — shipped 2026-09-16 directly on main (ee0e7da0, 85166fe0, e4edb530), closed out at 360a5abb. Re-measured 2026-10-11: 67,933 chars (`wc -c skills/ship/SKILL.md` at 56eb0459), up 2.9% from the 66,002 close-out. Plan audit: (GPT: 3 rounds, 4→1→0 findings, 100% acceptance both rounds with findings; Gemini: 1 round, APPROVE — no concerns)
 - **Author**: Claude
 - **Scope**: backend/tooling (skill-content reorganization; no code behavior changes)
 - **Target domain(s)**: `skills-content`

@@ -1,7 +1,7 @@
 # Plan: An upstream closure must not silently block every push
 
 - **Date**: 2026-10-10
-- **Status**: In Progress — implemented and code-audited (converged R2, Gemini APPROVE); PR open, awaiting merge
+- **Status**: Complete — shipped in #189 (e529f93c, merged 2026-10-10); implemented and code-audited (converged R2, Gemini APPROVE)
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI + pre-push gate; no UI)
 

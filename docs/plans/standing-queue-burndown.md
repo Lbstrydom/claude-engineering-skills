@@ -8,6 +8,12 @@
   closed (91→90) — both queues had already re-grown between passes from new
   audits landing. Both queues are large, actively-growing, shared state — these
   passes made a dent, not a close-out.
+- **Re-measured 2026-10-11** (`node scripts/backlog-snapshot.mjs`, measured,
+  `scope.mode: repo`): Q1 **95 code** / 17 plan (+420 aged), Q2 **116 code** /
+  76 plan (54 accepted-permanent), Q3 35. Both code queues are back above their
+  pre-burndown 2026-08-28 levels (Q1 95, Q2 91). Q2's out-of-band reconciler
+  (`node scripts/remediation-reconcile.mjs`, dry run) examined **2** of 640
+  eligible rows: it fetches 200, and 192 of those cite no diffable file.
 - **A fourth queue is now measurable and is NOT tracked here** (see §5): the
   local-vs-store debt divergence, closed 2026-09-04 by
   `docs/plans/backlog-and-drift-reduction.md`. It had **37 debt entries existing
