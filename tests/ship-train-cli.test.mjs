@@ -74,7 +74,10 @@ function fakeCtx({ prs, runs = [], fleet = {}, pinning = { rules: [], protection
       return args.includes('--format=%s') ? p.commits.map((c) => c.subject).join('\n') : p.commits.map((c) => `${c.oid} ${c.tree}`).join('\n');
     }
     if (cmd === 'diff') {
-      const p = prOfHead(args.at(-1));
+      // plan: diff <merge-base> <head>; verify: diff <squash>^1 <squash>.
+      const last = args.at(-1);
+      const landedPr = landed && Object.entries(landed).find(([, v]) => v?.view?.mergeCommit?.oid === last);
+      const p = prOfHead(last) ?? (landedPr ? prs[landedPr[0]] : undefined);
       return p.changes.map(([s, f]) => `${s}\0${f}\0`).join('');
     }
     throw new Error(`fake git: unexpected ${args.join(' ')}`);
@@ -299,6 +302,17 @@ describe('verify (stateless, over the fleet manifest)', () => {
     assert.deepEqual(env.clearance, { clear: true, blocks: [] });
     assert.equal(notes.length, 0, 'no note unless --write-note');
     assert.deepEqual(fs.readdirSync(dir), before, 'stateless: verify writes nothing');
+  });
+
+  test("a PR's own commits are measured from the squash's first parent, never from the train base (code R2 H1)", async () => {
+    const { ctx } = landedWorld();
+    const ranges = [];
+    const orig = ctx.git;
+    ctx.git = (args) => { if (args[0] === 'log' && !args.includes('--first-parent') && args[1] !== '-1') ranges.push(args.at(-1)); return orig(args); };
+    await runVerify(ctx, { train: TRAIN });
+    // Every per-PR range starts at <squash>^1 — an update-branch's imported
+    // commits (an earlier train merge among them) are on that side and excluded.
+    assert.deepEqual(ranges, [`${oid('5')}^1..${oid('1')}`, `${oid('6')}^1..${oid('3')}`, `${oid('0')}^1..${oid('4')}`]);
   });
 
   test('re-running verify gives the same answer (nothing to go stale)', async () => {

@@ -350,10 +350,16 @@ export async function gatherTrainFacts(ctx, trainId) {
     }
     const identity = judgeSourceIdentity({ pinnedOid: s.oid, links, reachedOid: h });
 
-    const mergeBase = ctx.git(['merge-base', train.baseOid, head]).trim();
-    const prCommits = lines(ctx.git(['log', '--reverse', '--format=%H %T', `${mergeBase}..${head}`]))
+    // The PR's OWN commits are those reachable from its merged head but not from
+    // the destination as it stood just before this squash (the squash's first
+    // parent). Measuring from the train's base instead would count commits an
+    // update-branch imported — including an earlier train PR's merge — so one
+    // PR could borrow another's audited run (code R2 H1).
+    const before = `${v.mergeCommit.oid}^1`;
+    const prCommits = lines(ctx.git(['log', '--reverse', '--format=%H %T', `${before}..${head}`]))
       .map((l) => { const [oid, tree] = l.split(' '); return { oid, tree }; });
-    const changes = parseNameStatusZ(ctx.git(['diff', '--name-status', '-z', '-M', mergeBase, head]));
+    // Its tier is judged on exactly what the squash put on the destination.
+    const changes = parseNameStatusZ(ctx.git(['diff', '--name-status', '-z', '-M', before, v.mergeCommit.oid]));
     const message = ctx.git(['log', '-1', '--format=%B', v.mergeCommit.oid]);
     const tree = ctx.git(['rev-parse', `${v.mergeCommit.oid}^{tree}`]).trim();
 
