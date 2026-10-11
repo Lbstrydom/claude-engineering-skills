@@ -18,7 +18,7 @@ import {
 } from '../scripts/lib/fleet/handover.mjs';
 import { withFileLockSync } from '../scripts/lib/file-lock.mjs';
 import { quoteArg } from '../scripts/lib/fleet/shell-quote.mjs';
-import { FLEET_CLI, cleanupFleetRoots, makeFleetRepo, runFleet, scrubbedEnv, tmpRoot } from './helpers/fleet-repo.mjs';
+import { FLEET_CLI, cleanupFleetRoots, commitFile, makeFleetRepo, runFleet, scrubbedEnv, tmpRoot } from './helpers/fleet-repo.mjs';
 
 after(cleanupFleetRoots);
 
@@ -113,6 +113,15 @@ describe('collectMemory — account-wide, with folder anomalies', () => {
     assert.deepEqual(memory.map((m) => m.dirName), ['c--GIT-one', 'c--GIT-two--claude-worktrees-x']);
     assert.deepEqual(anomalies.map((a) => a.kind).sort(), ['memory-under-worktree-slug', 'no-memory-index']);
   });
+  it('a project dir that is a LINK is reported as an anomaly, never dropped as if it held no memory', () => {
+    const root = seedConfig(tmpRoot('handover-mem-link-'), { task: null });
+    const real = seedConfig(tmpRoot('handover-mem-real-'), { slug: 'c--GIT-real', task: null });
+    fs.symlinkSync(path.join(real, 'projects', 'c--GIT-real'), path.join(root, 'projects', 'c--GIT-linked'), 'junction');
+    const r = collectMemory(root);
+    assert.deepEqual(r.anomalies.filter((a) => a.kind === 'project-is-link').map((a) => a.detail), ['c--GIT-linked']);
+    assert.deepEqual(r.memory.map((m) => m.dirName), ['c--GIT-demo'], 'the link is not walked');
+  });
+
   it('control: a clean layout reports no anomalies', () => {
     const root = seedConfig(tmpRoot('handover-clean-'), { task: null });
     assert.deepEqual(collectMemory(root).anomalies, []);
@@ -427,6 +436,55 @@ describe('unregistered work — worktrees holding work no claim covers', () => {
     assert.ok(prompt.includes(`cwd "${fx.repo}"`), 'the invoking repo gets an explicit cwd too, so the prompt does not depend on where it is pasted');
     assert.doesNotMatch(prompt, /this repo/);
     assert.ok(md.includes(`### ${other.repo}`), 'sessions are grouped per repo so a chip can be handed its own section');
+  });
+});
+
+describe('defect h — a claim whose work landed is not a live session in a handover', () => {
+  const envFor = (cfg) => scrubbedEnv({ FLEET_TELEMETRY: 'off', CLAUDE_CONFIG_DIR: cfg, CLAUDE_AUDIT_LOOP_DIR: '' });
+  const landedClaim = (fx, env, name) => {
+    const wt = path.join(tmpRoot('handover-h-'), name);
+    git(['worktree', 'add', '-q', '-b', name, wt, 'main'], fx.repo);
+    assert.equal(runFleet(['claim', '--intent', `${name} work`, '--paths', `${name}.txt`], { cwd: wt, env }).status, 0);
+    commitFile(wt, `${name}.txt`, `${name}\n`);
+    return wt;
+  };
+
+  it('a squash-merged, clean claim reads done in prepare AND receive, listed with its release command', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-h1-'), { task: null });
+    const env = envFor(A);
+    landedClaim(fx, env, 'landed');
+    git(['merge', '--squash', 'landed'], fx.repo); git(['commit', '-q', '-m', 'landed (#5)'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
+    // control: the status view already derives it done — the handover must agree with it
+    const st = runFleet(['status', '--json'], { cwd: fx.repo, env }).json.status.items.find((i) => i.id === 'landed');
+    assert.equal(st.state, 'done');
+    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env });
+    assert.equal(prep.status, 0, prep.stdout);
+    const [entry] = JSON.parse(fs.readFileSync(prep.json.handover.json, 'utf8')).scope.repos;
+    assert.deepEqual(entry.sessions.map((s) => s.id), [], 'a landed claim is never a session to resume');
+    assert.deepEqual(entry.mergedUnreleased.map((m) => [m.id, m.release]), [['landed', 'node scripts/.claude-skills/fleet.mjs release --id landed']], 'a consumer-shaped repo runs its synced CLI');
+    assert.deepEqual(entry.unregistered, [], 'its record is still non-terminal, so it still covers its worktree');
+    assert.match(fs.readFileSync(prep.json.handover.md, 'utf8'), /Merged but not released[\s\S]*release --id landed/);
+    const r = runFleet(['handover', 'receive', '--from', prep.json.handover.json, '--json'], { cwd: fx.repo, env });
+    assert.deepEqual(r.json.handover.liveSessions, [], 'receive derives live sessions the same way');
+    assert.deepEqual(r.json.handover.mergedUnreleased.map((m) => m.id), ['landed']);
+    assert.match(r.json.text, /merged but not released .*release --id landed/);
+  });
+
+  it('control: an unmerged claim stays live in both, and a merged one with a dirty worktree stays live too', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-h2-'), { task: null });
+    const env = envFor(A);
+    landedClaim(fx, env, 'unmerged');
+    const dirty = landedClaim(fx, env, 'merged-dirty');
+    git(['merge', '--squash', 'merged-dirty'], fx.repo); git(['commit', '-q', '-m', 'merged-dirty (#6)'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
+    fs.writeFileSync(path.join(dirty, 'scratch.md'), 'not committed\n');
+    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env });
+    const [entry] = JSON.parse(fs.readFileSync(prep.json.handover.json, 'utf8')).scope.repos;
+    assert.deepEqual(entry.sessions.map((s) => s.id).sort(), ['merged-dirty', 'unmerged']);
+    assert.deepEqual(entry.mergedUnreleased, []);
+    const r = runFleet(['handover', 'receive', '--from', prep.json.handover.json, '--json'], { cwd: fx.repo, env });
+    assert.deepEqual(r.json.handover.liveSessions.map((x) => x.id).sort(), ['merged-dirty', 'unmerged']);
   });
 });
 

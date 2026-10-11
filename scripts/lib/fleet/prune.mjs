@@ -28,15 +28,16 @@
  *
  * @module scripts/lib/fleet/prune
  */
-import path from 'node:path';
 import { gatherFacts, buildStatusFrom } from './facts.mjs';
-import { hideReason, idleMsFrom } from './overlap.mjs';
+import { hideReason, idleMsFrom, landedReason } from './overlap.mjs';
 import { archiveReport } from './lifecycle.mjs';
 import { headOf, isAncestor, listWorktrees, repoToplevel } from './git-facts.mjs';
 import { renderCommand } from './shell-quote.mjs';
+import { samePath as samePathOnPlatform } from '../harness-paths.mjs';
 import { ok } from './commands.mjs';
 
-const samePath = (a, b) => Boolean(a && b) && path.resolve(a).replace(/\\/g, '/').toLowerCase() === path.resolve(b).replace(/\\/g, '/').toLowerCase();
+// Platform-aware path identity (case and separators fold only on win32) — the helper handover and unregistered use.
+const samePath = (a, b) => Boolean(a && b) && samePathOnPlatform(a, b);
 
 /**
  * @param {{cwd: string, config: object, now: Date, env: NodeJS.ProcessEnv, cmd: string}} ctx
@@ -60,15 +61,16 @@ export function planPrune(ctx, { facts = null, report = archiveReport } = {}) {
   const inputs = [];
   for (const item of status.items) {
     if (item.kind !== 'branch' || !item.branch) continue;
-    const reason = hideReason(item.worktree ? { ...item, worktreeClean: true } : item, hctx);
-    if (reason === 'merged' || reason === 'landed') inputs.push({ ...item, reason });
+    // hideReason gates (untracked, no open PR, complete PR list); landedReason names WHY it is removable.
+    const reason = hideReason(item.worktree ? { ...item, worktreeClean: true } : item, hctx) && landedReason(item);
+    if (reason) inputs.push({ ...item, reason });
   }
   const listed = new Set(status.items.map((i) => i.branch).filter(Boolean));
   const tracked = new Set((f.registry?.sessions ?? []).map((s) => s.source?.branch).filter(Boolean));
   const openHeads = new Set((f.prs?.prs ?? []).filter((p) => !p.isCrossRepository).map((p) => p.headRef));
   if (hctx.prsComplete) {
     for (const b of f.branches?.branches ?? []) {
-      if (b.ahead !== 0 || b.name === base || listed.has(b.name) || tracked.has(b.name) || openHeads.has(b.name)) continue;
+      if (landedReason({ ahead: b.ahead }) !== 'merged' || b.name === base || listed.has(b.name) || tracked.has(b.name) || openHeads.has(b.name)) continue;
       const w = wt.queried ? wt.worktrees.find((x) => x.branch === b.name && !x.bare) : null;
       inputs.push({ branch: b.name, oid: b.oid, worktree: w?.path ?? null, reason: 'merged', merged: null });
     }
