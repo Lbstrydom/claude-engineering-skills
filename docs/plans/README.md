@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**9 active · 241 terminal · 32 audit summaries · 1 parked · 5 reference docs**
+**10 active · 241 terminal · 33 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -24,6 +24,7 @@ This is the list to read when asking "what is in flight?".
 | [The drift report says how far the active index trails the default branch](./arch-index-freshness.md) | `In Progress` | implemented on `fix/arch-index-freshness`; under /audit-code |
 | [The dashboard's debt queue treats "no local cache" as an expected absence](./dashboard-debt-sandbox-absence.md) | `In Progress` | implemented on `fix/dashboard-debt-sandbox-absence`; under /audit-code |
 | [Enforce the debt ledger's persisted-record contract (§2 of aged-out-acceptance-remainder.md)](./debt-ledger-persisted-record-contract.md) | `Approved` | GPT plan audit converged after 3 rounds (9→3→2 findings, 100% acceptance throughout); Gemini final gate… |
+| [The debt reporting CLIs read the private store, not the local cache](./debt-readers-ask-store.md) | `In Progress` | implemented on `fix/debt-readers-ask-store`; under /audit-code |
 | [Decompose `gemini-review.mjs`](./gemini-review-decomposition.md) | `Approved` | GPT: 2 rounds, 100% acceptance both rounds, H:0 M:0 L:0 at R2; Gemini: 2 rounds, CONCERNS → APPROVE after… |
 | [`runs-findings.mjs` Identity & Write-Boundary Hardening](./runs-findings-write-boundary-hardening.md) | `Approved` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
@@ -311,7 +312,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 (they carry a free-text convergence sentence by convention).
 
 <details>
-<summary>Show all 32 audit summaries</summary>
+<summary>Show all 33 audit summaries</summary>
 
 | Plan | Notes |
 |---|---|
@@ -320,6 +321,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 | [Audit Summary: audit-target-identity-commit-sha-correction](./audit-target-identity-commit-sha-correction-audit-summary.md) |  |
 | [Audit Summary — brainstorm-arch-context](./brainstorm-arch-context-audit-summary.md) |  |
 | [`/audit-code` summary — `machine/git-autocrlf` probe (8620cfe8)](./consumer-friction-doctor-audit-summary.md) |  |
+| [Audit convergence summary — debt readers ask the store](./debt-readers-ask-store-audit-summary.md) |  |
 | [Audit Summary — discovery-portfolio-secret-redaction](./discovery-portfolio-secret-redaction-audit-summary.md) |  |
 | [Audit Summary — gemini-gate-scope-fix](./gemini-gate-scope-fix-audit-summary.md) |  |
 | [Audit Summary — git-env-leak-sustainability](./git-env-leak-sustainability-audit-summary.md) |  |
