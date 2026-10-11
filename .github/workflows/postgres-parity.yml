@@ -72,6 +72,7 @@ on:
       - 'scripts/lib/debt-alias.mjs'
       - 'tests/store-debt-cloud-validation.test.mjs'
       - 'tests/debt-alias-integration.test.mjs'
+      - 'tests/debt-authoritative-read-db.test.mjs'
       # docs/plans/runs-findings-write-boundary-hardening.md Phases 7-8 — real
       # Postgres transaction-abort behaviour, named explicitly since it doesn't
       # start with 'db-'.
@@ -131,6 +132,7 @@ on:
       - 'scripts/lib/debt-alias.mjs'
       - 'tests/store-debt-cloud-validation.test.mjs'
       - 'tests/debt-alias-integration.test.mjs'
+      - 'tests/debt-authoritative-read-db.test.mjs'
       # docs/plans/runs-findings-write-boundary-hardening.md Phases 7-8 — real
       # Postgres transaction-abort behaviour, named explicitly since it doesn't
       # start with 'db-'.
@@ -297,6 +299,7 @@ jobs:
             tests/control-marker-acceptance-db.test.mjs \
             tests/db-schema-realization-live.test.mjs \
             tests/debt-alias-integration.test.mjs \
+            tests/debt-authoritative-read-db.test.mjs \
             tests/final-review-adjudicate.test.mjs \
             tests/final-review-pending-db.test.mjs \
             tests/final-review-replay-db.test.mjs \
