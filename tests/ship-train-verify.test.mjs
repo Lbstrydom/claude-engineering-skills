@@ -66,6 +66,13 @@ describe('readAiTrailers / checkCommitClaims', () => {
     assert.ok(r.problems.some((p) => /AI-Audited-Tree is missing/.test(p)), r.problems.join('|'));
   });
 
+  test('a passed trailer that matches its commit but NOT the persisted decision leaves identity unproven (round-3 H1)', () => {
+    const decided = claims({ gate: 'passed', auditedTree: oid('7') });
+    const other = claims({ gate: 'passed', auditedTree: oid('6') });
+    const r = checkCommitClaims({ message: msgFor(202, other), tree: oid('6') }, decided);
+    assert.equal(r.identityUnproven, true);
+  });
+
   test('a duplicated AI-* key is reported, never reduced to its last value (round-1 H2/M10)', () => {
     const doubled = msgFor(202, claims()).replace('AI-Gate: converged\n', 'AI-Gate: passed\nAI-Gate: converged\n');
     assert.deepEqual(readAiTrailers(doubled).duplicates, ['AI-Gate']);
@@ -131,6 +138,9 @@ describe('verifyLanded', () => {
     delete m['203'];
     const v = verifyLanded({ receipt: receipt(), merged: m, chain: chainOf(oid('c')), at: 't' });
     assert.deepEqual(v.perPr['203'].problems, ['not merged']);
+    // Recorded AND enforced (round-3 H3): a failed per-PR check blocks publication.
+    assert.equal(v.publicationBlocked, true);
+    assert.match(v.blockedReason, /per-PR verification failed for #202, #203/);
     assert.match(v.perPr['202'].problems.join('|'), /not on the first-parent chain/);
   });
 });

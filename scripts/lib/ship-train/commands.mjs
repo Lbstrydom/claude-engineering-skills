@@ -337,15 +337,20 @@ export async function runVerify(ctx, { op }) {
   }
   const { merged, chain } = gatherLandedFacts(ctx, receipt);
   const v = verifyLanded({ receipt, merged, chain, at: ctx.now().toISOString() });
-  let written = false;
-  let current = receipt;
-  if (receipt.phase === 'landed') {
-    current = updateReceipt(dir, op, (d) => {
-      d.verify = v;
-      d.phase = v.interleaved.length ? 'verified-interleaved' : 'verified';
-    }, { now: ctx.now(), note: 'verify' });
-    written = true;
+  // A re-verify REFRESHES the record, and clearance is always computed from the
+  // record just written — never from a stale one (round-3 code H2). The phase a
+  // fresh verification implies must equal the one already held: a train that
+  // was clean and now shows interleaving (or the reverse) has changed under the
+  // record, and that is refused for a human to read, not silently rewritten.
+  const freshPhase = v.interleaved.length ? 'verified-interleaved' : 'verified';
+  if (receipt.phase !== 'landed' && receipt.phase !== freshPhase) {
+    throw new TrainRefusal(`op ${op} was recorded ${receipt.phase} but now verifies as ${freshPhase} — the landed train changed under its record; read both before acting`, { verify: v });
   }
+  const current = updateReceipt(dir, op, (d) => {
+    d.verify = v;
+    d.phase = freshPhase;
+  }, { now: ctx.now(), note: receipt.phase === 'landed' ? 'verify' : 're-verify' });
+  const written = receipt.phase === 'landed';
   const deviations = [
     ...Object.entries(v.perPr).filter(([, p]) => !p.ok).map(([pr, p]) => `#${pr}: ${p.problems.join('; ')}`),
     ...v.plannedVsActual.map((d) => `#${d.pr}: planned ${d.planned}, landed ${d.actual}`),
@@ -360,7 +365,7 @@ export async function runVerify(ctx, { op }) {
       ...deviations.map((d) => `- ${d}`),
     ].join('\n'));
   }
-  return { ok: true, verb: 'verify', opId: op, phase: current.phase, written, verify: v, deviations, pendingNote: note, clearance: publicationClearance(current) };
+  return { ok: true, verb: 'verify', opId: op, phase: current.phase, firstVerify: written, verify: v, deviations, pendingNote: note, clearance: publicationClearance(current) };
 }
 
 export async function runAbandon(ctx, { op }) {

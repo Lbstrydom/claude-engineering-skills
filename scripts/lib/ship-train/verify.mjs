@@ -85,7 +85,12 @@ export function checkCommitClaims(commit, claims) {
     identityUnproven = true;
     problems.push(`AI-Audited-Tree ${tree.slice(0, 12)} is not the commit's tree ${String(commit.tree).slice(0, 12)} — a passed claim that does not hold`);
   }
-  if (claims.gate === 'passed' && (tree === undefined || duplicates.includes('AI-Audited-Tree'))) {
+  // A passed claim's identity holds only when the trailer is present once, is
+  // the commit's own tree, AND is the tree the persisted decision named
+  // (round-3 code H1 — a trailer self-consistent with its commit but not with
+  // the decision is a claim nobody made).
+  if (claims.gate === 'passed'
+    && (tree === undefined || duplicates.includes('AI-Audited-Tree') || tree !== claims.auditedTree)) {
     identityUnproven = true;
   }
   return { problems, identityUnproven };
@@ -204,6 +209,19 @@ export function verifyLanded({ receipt, merged, chain, at }) {
   const observedOrder = landedInOrder.map(([, pr]) => pr);
   const orderOk = !receipt.landingOrder
     || JSON.stringify(observedOrder) === JSON.stringify(receipt.landingOrder.filter((pr) => observedOrder.includes(pr)));
+
+  // Every failed check blocks publication — recorded failures are not enforced
+  // failures (round-3 code H3). One flag acknowledges them all, because each is
+  // the same question: publish a train whose record does not verify?
+  const failed = Object.entries(perPr).filter(([, p]) => !p.ok).map(([pr]) => `#${pr}`);
+  if (failed.length) {
+    publicationBlocked = true;
+    blocked.push(`per-PR verification failed for ${failed.join(', ')}`);
+  }
+  if (!orderOk) {
+    publicationBlocked = true;
+    blocked.push(`observed landing order ${observedOrder.join(',')} differs from the manifest's`);
+  }
 
   return {
     at,

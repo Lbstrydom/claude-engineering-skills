@@ -324,6 +324,21 @@ describe('verify / abandon', () => {
     assert.match(notes[0].text, /interleaved/);
   });
 
+  test('re-verify refreshes the record and computes clearance from the FRESH state (round-3 H2)', async () => {
+    const { opId, ctx } = await landedOp();
+    assert.equal((await runVerify(ctx, { op: opId })).clearance.clear, true);
+    // The log PR's merge commit is later found carrying a different gate claim.
+    const m210 = oid('0');
+    const orig = ctx.git;
+    ctx.git = (args) => (args[0] === 'log' && args[1] === '-1' && args[3] === m210
+      ? composeSquashMessage({ number: 210, title: 'log', commitSubjects: ['log'], decision: { gate: 'waived', runId: RUN, auditedTree: null }, models: ['claude'] }).message
+      : orig(args));
+    const env = await runVerify(ctx, { op: opId });
+    assert.equal(env.firstVerify, false);
+    assert.equal(env.clearance.clear, false);
+    assert.equal(readReceipt(dir, opId).verify.publicationBlocked, true);
+  });
+
   test('verify refuses before the train has landed', async () => {
     const ctx = fakeCtx({ prs: { 202: PR202 }, runs: [converged(oid('a'), oid('1'))], fleet: readyFleet });
     const { opId } = await runPrepare(ctx, opts({ prs: [202] }));
