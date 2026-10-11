@@ -543,3 +543,13 @@ A change that turns an accept into a refusal stops as `diverged`, with no messag
   - R3 H1, 1/1 accepted (replay permission on resume).
   - Acceptance was 100% in every round. Every finding was a concrete design defect, with no rigor pressure. The cap was reached with the count falling (7 → 3 → 1).
 - **Final gate** (Gemini `latest-pro`, `--mode plan`): **APPROVE** on round 1. Disposition `approve`, 0 blocking, 0 debt, 0 new findings, 0 wrongly dismissed.
+- **Cluster A `/audit-code`** (SID `audit-code-1791755121`, base `9d6bd80c`, 14 files via `scripts/cycle-cluster-scope.mjs`). Six GPT rounds, the hard cap:
+  - R1 H3 M12, 14/15 accepted (1 adjacency control marker dismissed).
+  - R2 H1, R3 H3, R4 H2, R5 H3, R6 H2: all accepted and fixed.
+  - R2–R6 were each propagation from the previous round's fix in the verify/publication path: interleaving enforcement → re-verify freshness → refusal persistence → revocation record + compare-and-swap → verification bound to the receipt state it judged.
+  - Every fix landed with a test that was reverted to confirm it fails, then restored (`scripts/lib/ship-train/**`, 127 tests in the five ship-train suites).
+  - Deferred-declared, not gating Cluster A: `skills/ship/references/train-mode.md` (Cluster C); `tests/ship-train-recovery.test.mjs` (Cluster B); `tests/ship-train-provenance.db.test.mjs` plus its two enrolment lists (held for the keyset PR; already 12/12 on a disposable Postgres).
+  - Coverage: R1 PARTIAL (7 of 14 files head-cut by the pass budget); R2–R6 COMPLETE on the 8 source files (windowed reads).
+  - Census: structure, wiring, be-services and sustainability `completed`; frontend `ineligible` (backend-only diff); quickfix `completed`; adjacency **incomplete** (`ADJACENCY_INCOMPLETE`, maxContainers=20); arch-memory `ineligible` (`--scope diff`).
+  - Not converged by the 2-stable-rounds rule: R6 raised 2 HIGH, fixed after it, and there is no R7.
+- **Cluster A final gate** (Gemini `latest-pro`): **APPROVE**, round 1. Disposition `approve`, 0 blocking, 0 debt, 0 new, 0 wrongly dismissed. Its envelope reported `Code: PARTIAL, changed lines unmeasured for 7 file(s)`, so the APPROVE covers the examined files only.
