@@ -378,6 +378,8 @@ A terminal state never auto-retries. `abandon --op <opId>` is allowed only befor
   - Write `findCodeRunCandidates({trees, oids})`. The read degrades loudly on a schema fault (`describeSchemaFault`) and never returns an empty list on a broken query.
   - Enrol the new DB suite in `scripts/db-test-container.mjs`'s `*_SUITE_FILES` **and** in `.github/workflows/postgres-parity.yml`: two edits, because the binding query must be asserted once on real Postgres.
 
+  - *Sequencing (coordinator, 2026-10-11):* `scripts/db-test-container.mjs` and `.github/workflows/postgres-parity.yml` are held by the keyset PR (`fix/ship-nudge-keyset-paging`). The real-Postgres suite and its two-list enrolment therefore land **last**, after that PR merges and Cluster A rebases. Until then the store read's failure branches are covered purely in `tests/ship-train-provenance.test.mjs`. The DB suite already ran green (12/12) against a local disposable container, and that run caught two real SQL defects (a locale-dependent `ORDER BY`, and `COLLATE` on a `DISTINCT` `ORDER BY`).
+
   Files: `scripts/lib/ship-train/provenance.mjs` (create), `scripts/lib/store/train-provenance.mjs` (create), `scripts/lib/commit-trailers.mjs` (modify), `tests/commit-trailers.test.mjs` (modify), `tests/ship-train-provenance.test.mjs` (create), `tests/ship-train-provenance.db.test.mjs` (create), `scripts/db-test-container.mjs` (modify), `.github/workflows/postgres-parity.yml` (modify).
 - **Phase 3 — Receipt + `ship-train.mjs` non-landing verbs**:
   - The receipt module: schema, fingerprint, the phase table and locked atomic writes.
@@ -385,7 +387,8 @@ A terminal state never auto-retries. `abandon --op <opId>` is allowed only befor
   - `plan` reads `node scripts/fleet.mjs status --json` (the CLI, so no fleet edit) plus git.
   - CLI smoke and registration.
 
-  Files: `scripts/lib/ship-train/receipt.mjs` (create), `tests/ship-train-receipt.test.mjs` (create), `scripts/ship-train.mjs` (create), `tests/ship-train-cli.test.mjs` (create), `package.json` (modify — `ship:train` script), `scripts/lib/sync-isolation-verify.mjs` (modify — `CLI_SMOKE_SET`).
+  Files: `scripts/lib/ship-train/receipt.mjs` (create), `tests/ship-train-receipt.test.mjs` (create), `scripts/lib/ship-train/verify.mjs` (create — the pure judgement `verify` runs over gathered facts), `tests/ship-train-verify.test.mjs` (create), `scripts/lib/ship-train/commands.mjs` (create — the verbs over an injected context; under lib/ so tests import them without a `tests → ship` edge, which the layering test forbids), `scripts/ship-train.mjs` (create — thin CLI: argv, real context, rendering), `tests/ship-train-cli.test.mjs` (create).
+  - *Amended during implementation:* no `npm run` alias. A synced SKILL.md must name tooling by path (AGENTS.md shape #5), so an alias would serve nobody. `CLI_SMOKE_SET` membership moved to Phase 6, because membership asserts consumer **presence** and so needs the `sync-to-repos.mjs` declaration in the same edit.
 - **Phase 4 — Serial `messageFor` seam**:
   - An optional callback; when it is absent, behaviour is byte-identical to today.
   - The message goes to a temp `--body-file` under the train's log dir and is removed after the merge.
