@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**7 active · 240 terminal · 32 audit summaries · 1 parked · 5 reference docs**
+**7 active · 241 terminal · 32 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -58,7 +58,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 237 completed plans</summary>
+<summary>Show all 238 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -159,6 +159,7 @@ source comments that no docs linter sees — stays valid.
 | [/fleet — idle-branch hiding and hot files (capstone consumer feedback)](./fleet-capstone-feedback.md) | `Complete` |  |
 | [/fleet — session-only verbs stop diffing every untracked branch](./fleet-claim-analysis-scope.md) | `Complete` |  |
 | [/fleet — status truth, a coordination channel, and real landing (wine + storyline feedback)](./fleet-consumer-feedback-oct.md) | `Complete` | shipped in #173 (ead39e7d), #174 (842d8dbe), #175 (f689caca), #176 (aa7699a0), #178 (5884285b) |
+| [fleet handover — move coordination to another Claude Code account on this machine](./fleet-handover.md) | `Complete` |  |
 | [/fleet — coordinating several concurrent AI coding sessions](./fleet-multi-session-coordination.md) | `Complete` |  |
 | [/fleet — four fixes from the storyline consumer's first real use](./fleet-storyline-feedback.md) | `Complete` |  |
 | [/fleet — supervisors end promptly and reap what an exited hook/tier left behind](./fleet-supervisor-lifecycle.md) | `Complete` |  |
