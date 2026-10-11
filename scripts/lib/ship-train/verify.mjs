@@ -40,14 +40,23 @@ export function readAiTrailers(message) {
   const out = {};
   const seen = new Set();
   const duplicates = new Set();
+  const nonCanonical = [];
   for (const t of trailers) {
     if (!/^AI-/i.test(t.key)) continue;
-    if (seen.has(t.key)) duplicates.add(t.key);
-    seen.add(t.key);
-    out[t.key] = t.value;
+    // ONE canonical key per claim (code R1 H2/M5): matching is case-insensitive,
+    // so `ai-gate` and `AI-Gate` are the same claim — a second one is a
+    // duplicate, never a separate key the lookup would miss.
+    const canonical = CANONICAL_KEYS.get(t.key.toLowerCase()) ?? t.key;
+    if (canonical !== t.key) nonCanonical.push(t.key);
+    if (seen.has(canonical)) duplicates.add(canonical);
+    seen.add(canonical);
+    out[canonical] = t.value;
   }
-  return { parseable: isTrailerBlock && seen.size > 0, trailers: out, duplicates: [...duplicates] };
+  return { parseable: isTrailerBlock && seen.size > 0, trailers: out, duplicates: [...duplicates], nonCanonical };
 }
+
+/** The reserved keys as their one writer emits them (commit-trailers.mjs formatTrailerBlock). */
+const CANONICAL_KEYS = new Map(['AI-Skill', 'AI-Models', 'AI-Gate', 'AI-Run-ID', 'AI-Audited-Tree'].map((k) => [k.toLowerCase(), k]));
 
 /**
  * Judge source identity from a first-parent walk the caller gathered.
@@ -83,9 +92,14 @@ export function judgeSourceIdentity({ pinnedOid, links, reachedOid }) {
  * @returns {{true: boolean, gate: string|null, problems: string[], notes: string[]}}
  */
 export function checkClaimTruth({ message, tree, prCommits, run }) {
-  const { parseable, trailers, duplicates } = readAiTrailers(message);
+  const { parseable, trailers, duplicates, nonCanonical } = readAiTrailers(message);
   if (!parseable) return { true: false, gate: null, problems: ['no parseable AI-* trailer block on the squash commit'], notes: [] };
-  const problems = duplicates.map((k) => `${k} appears more than once`);
+  const problems = [
+    ...duplicates.map((k) => `${k} appears more than once`),
+    // The reserved namespace has exactly one writer, which emits canonical keys;
+    // any other spelling did not come from it.
+    ...nonCanonical.map((k) => `${k} is not the canonical spelling — not written by the trailer helper`),
+  ];
   const notes = [];
   const gate = trailers['AI-Gate'] ?? null;
   const runId = trailers['AI-Run-ID'];

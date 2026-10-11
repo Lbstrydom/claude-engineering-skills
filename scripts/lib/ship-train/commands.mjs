@@ -33,6 +33,26 @@ const optionsOnly = (argv) => {
   return end < 0 ? argv : argv.slice(0, end);
 };
 
+/** A boolean flag, honouring the same `--` boundary as every value flag (code R1 H3/M4). */
+export function hasOption(argv, flag) {
+  return optionsOnly(argv).includes(flag);
+}
+
+/**
+ * `owner/name` of a GitHub remote URL (https, scp-style or ssh). The ONE repo
+ * identity: gh calls name it with -R and git fetches the same `origin`, so the
+ * two can never disagree about which repository they are reading (code R1 H1).
+ * Anything that is not a GitHub URL is refused rather than guessed.
+ *
+ * @param {string} url
+ * @returns {string}
+ */
+export function githubSlugFromUrl(url) {
+  const m = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(String(url ?? '').trim());
+  if (!m) throw new TrainRefusal(`origin is not a GitHub remote (${JSON.stringify(String(url ?? '').trim())}) — ship trains land through GitHub PRs`);
+  return `${m[1]}/${m[2]}`;
+}
+
 /** `--pr 202,203 --pr 204` → [202, 203, 204]. */
 export function parsePrList(argv, flag) {
   const out = [];
@@ -180,9 +200,11 @@ function failFatal(r) {
 /** Tier, binding and gate for one PR (pure over gathered facts). */
 export function decidePr({ facts, closure, basePinning, candidates, overrides, composer }) {
   const impact = classifyPrImpact({ changes: facts.changes, closure });
+  // Three distinct outcomes, never collapsed (code R1 M3): the store answered,
+  // the store could not be asked, or this PR's input could not be bound at all.
   const binding = candidates.ok
     ? bindAuditRun({ commits: facts.commits, candidates: candidates.rows })
-    : { kind: 'store-unavailable', reason: candidates.reason };
+    : { kind: candidates.input ? 'unbindable' : 'store-unavailable', reason: candidates.reason };
   const d = decideTrainGate({
     binding,
     headTree: facts.headTree,
@@ -291,7 +313,11 @@ export async function gatherTrainFacts(ctx, trainId) {
   const train = t.train;
   if (train.mergeMethod !== 'pr') throw new TrainRefusal(`train ${trainId} lands by ${train.mergeMethod}; ship trains verify pr-mode trains only (plan D2)`);
   const branch = train.destination.ref.replace(/^refs\/heads\//, '');
-  const repo = train.sources.find((s) => s.repo)?.repo ?? ctx.repo();
+  const repo = ctx.repo();
+  const recorded = train.sources.find((s) => s.repo)?.repo;
+  if (recorded && recorded.toLowerCase() !== repo.toLowerCase()) {
+    throw new TrainRefusal(`train ${trainId} was built for ${recorded}, but origin here is ${repo} — verify from a checkout of the same repository`);
+  }
   const tip = fetchDestination(ctx, branch);
   const repoRow = await ctx.store.resolveRepoRowIdForRead(ctx.cwd);
   failFatal(repoRow);

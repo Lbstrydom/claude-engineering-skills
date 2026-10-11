@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  runPlan, runMessage, runVerify, parsePrList, flagValue, readBasePinning, TrainRefusal,
+  runPlan, runMessage, runVerify, parsePrList, flagValue, hasOption, githubSlugFromUrl, readBasePinning, TrainRefusal,
 } from '../scripts/lib/ship-train/commands.mjs';
 import { composeSquashMessage } from '../scripts/lib/ship-train/provenance.mjs';
 import { ArgvError } from '../scripts/lib/cli-io.mjs';
@@ -111,6 +111,16 @@ describe('argv helpers', () => {
     assert.throws(() => parsePrList(['--pr', 'abc'], '--pr'), ArgvError);
     assert.throws(() => parsePrList(['--pr'], '--pr'), ArgvError);
     assert.throws(() => parsePrList(['--pr', '--json'], '--pr'), ArgvError);
+  });
+  test('boolean flags honour the -- terminator too (code R1 H3/M4)', () => {
+    assert.equal(hasOption(['--end-of-day'], '--end-of-day'), true);
+    assert.equal(hasOption(['--', '--end-of-day'], '--end-of-day'), false);
+  });
+  test('the repo identity comes from the GitHub remote URL, every form; anything else is refused (code R1 H1)', () => {
+    for (const u of ['https://github.com/Lbstrydom/claude-engineering-skills.git', 'git@github.com:Lbstrydom/claude-engineering-skills.git', 'ssh://git@github.com/Lbstrydom/claude-engineering-skills', 'https://github.com/Lbstrydom/claude-engineering-skills/\n']) {
+      assert.equal(githubSlugFromUrl(u), 'Lbstrydom/claude-engineering-skills', u);
+    }
+    assert.throws(() => githubSlugFromUrl('https://gitlab.com/a/b.git'), TrainRefusal);
   });
   test('options after a POSIX -- terminator are positional, not flags (round-1 M11)', () => {
     assert.deepEqual(parsePrList(['--pr', '202', '--', '--pr', '204'], '--pr'), [202]);
@@ -340,6 +350,12 @@ describe('verify (stateless, over the fleet manifest)', () => {
     const { ctx } = landedWorld();
     ctx.store.findCodeRunForRepo = async () => ({ ok: false, fatal: true, reason: 'schema-fault: 42703' });
     await assert.rejects(runVerify(ctx, { train: TRAIN }), /rejected the provenance query/);
+  });
+
+  test('a train built for another repository is refused, not verified against this one (code R1 H1)', async () => {
+    const { ctx } = landedWorld();
+    ctx.repo = () => 'someone/else';
+    await assert.rejects(runVerify(ctx, { train: TRAIN }), /was built for .* but origin here is someone\/else/);
   });
 
   test('an unknown train is refused; a non-pr train is refused', async () => {

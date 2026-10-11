@@ -38,6 +38,10 @@ describe('parseNameStatusZ', () => {
     assert.deepEqual(parseNameStatusZ(''), []);
   });
 
+  test('an unterminated final path throws: -z output ends every field with NUL (code R1 H4)', () => {
+    assert.throws(() => parseNameStatusZ('M\0scripts/lib/db/query.m'), /NUL terminator/);
+  });
+
   test('a truncated rename record throws rather than returning a short list', () => {
     assert.throws(() => parseNameStatusZ('R100\0only-old\0'), /truncated/);
   });

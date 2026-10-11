@@ -10,8 +10,10 @@
  * a failed query come back as `{ok:false, reason}` — the caller turns that into
  * a `store-unavailable` binding, which refuses a non-ride-along PR. A SCHEMA
  * fault additionally carries `fatal:true`: a broken query is not an absent
- * store, so the caller stops instead of degrading. `[]` means only "the query
- * ran and nothing matched".
+ * store, so the caller stops instead of degrading. A refusal of the INPUT (too
+ * many commits, a malformed object id) carries `input:true`: the store was never
+ * asked, so it is neither "unavailable" nor "no match" (code R1 M3). `[]` means
+ * only "the query ran and nothing matched".
  *
  * @module scripts/lib/store/train-provenance
  */
@@ -72,9 +74,9 @@ export async function findCodeRunCandidates({ repoRowId, trees, oids }, deps = {
   const t = [...new Set(trees ?? [])];
   const o = [...new Set(oids ?? [])];
   if (t.length > MAX_PR_COMMITS || o.length > MAX_PR_COMMITS) {
-    return { ok: false, reason: `pr-too-large: more than ${MAX_PR_COMMITS} commits` };
+    return { ok: false, input: true, reason: `pr-too-large: more than ${MAX_PR_COMMITS} commits` };
   }
-  if (![...t, ...o].every((v) => OID_RE.test(v))) return { ok: false, reason: 'malformed-object-id' };
+  if (![...t, ...o].every((v) => OID_RE.test(v))) return { ok: false, input: true, reason: 'malformed-object-id' };
   if (t.length === 0 && o.length === 0) return { ok: true, rows: [] };
   if (!await cloudFn()) return { ok: false, reason: 'cloud-off' };
   try {

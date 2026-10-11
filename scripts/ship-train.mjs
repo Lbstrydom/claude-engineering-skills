@@ -38,7 +38,7 @@ import { fileURLToPath } from 'node:url';
 import { ArgvError, assertKnownFlags, emit, finishAndExit } from './lib/cli-io.mjs';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
 import {
-  TrainRefusal, parsePrList, flagValue, runPlan, runMessage, runVerify,
+  TrainRefusal, parsePrList, flagValue, hasOption, githubSlugFromUrl, runPlan, runMessage, runVerify,
 } from './lib/ship-train/commands.mjs';
 
 const VERBS = ['plan', 'message', 'verify'];
@@ -84,7 +84,9 @@ async function realContext(cwd) {
     cwd,
     git,
     gh: (args) => run('gh', args, cwd),
-    repo: () => (repoSlug ??= run('gh', ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], cwd).trim()),
+    // The repo is the one `origin` fetches from — never gh's own default-repo
+    // setting, which can point elsewhere.
+    repo: () => (repoSlug ??= githubSlugFromUrl(git(['remote', 'get-url', 'origin']))),
     fleetStatus: () => run(process.execPath, [path.join(SCRIPT_DIR, 'fleet.mjs'), 'status', '--json'], cwd),
     readTrain: (id) => readTrain(fleetDir(cwd), id),
     // Fleet's own oracle for "is head h serial's clean base-only update of priorHead".
@@ -145,14 +147,14 @@ export async function main(argv = process.argv) {
     const opts = {
       prs: parsePrList(argv, '--pr'),
       train,
-      writeNote: argv.includes('--write-note'),
+      writeNote: hasOption(argv, '--write-note'),
       composer,
-      overrides: { waive: parsePrList(argv, '--waive'), allowUnaudited: parsePrList(argv, '--allow-unaudited'), endOfDay: argv.includes('--end-of-day') },
+      overrides: { waive: parsePrList(argv, '--waive'), allowUnaudited: parsePrList(argv, '--allow-unaudited'), endOfDay: hasOption(argv, '--end-of-day') },
     };
     const ctx = await realContext(process.cwd());
     const fn = { plan: runPlan, message: runMessage, verify: runVerify }[verb];
     const env = await fn(ctx, opts);
-    if (argv.includes('--json')) emit(env); else process.stdout.write(`${renderText(env)}\n`);
+    if (hasOption(argv, '--json')) emit(env); else process.stdout.write(`${renderText(env)}\n`);
     return finishAndExit(0);
   } catch (err) {
     if (err instanceof ArgvError) {

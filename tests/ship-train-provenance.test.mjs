@@ -124,6 +124,12 @@ describe('decideTrainGate — the §2.3 table', () => {
     assert.equal(decideTrainGate({ binding: s, headTree: C3.tree, basePinning: 'none', tier: 'urgent' }).refusal.code, 'store-unavailable');
   });
 
+  test('an unbindable PR is refused even as a ride-along, with no override (code R1 M3)', () => {
+    const r = decideTrainGate({ binding: { kind: 'unbindable', reason: 'pr-too-large' }, headTree: C3.tree, basePinning: 'none', tier: 'ride-along', allowUnaudited: true, waive: true });
+    assert.equal(r.gate, null);
+    assert.deepEqual([r.refusal.code, r.refusal.override], ['unbindable', null]);
+  });
+
   test('an unresolvable head tree refuses outright', () => {
     assert.equal(decide({ headTree: null }).refusal.code, 'no-head-tree');
   });
@@ -217,7 +223,7 @@ describe('findCodeRunCandidates — failure is never an empty result (pure)', ()
   test('a malformed object id is refused before any query', async () => {
     let called = false;
     const r = await findCodeRunCandidates({ repoRowId: 'r', trees: ['not-an-oid'], oids: [] }, { isCloudEnabled: on, many: async () => { called = true; return []; } });
-    assert.deepEqual(r, { ok: false, reason: 'malformed-object-id' });
+    assert.deepEqual(r, { ok: false, input: true, reason: 'malformed-object-id' });
     assert.equal(called, false);
   });
 
@@ -225,6 +231,7 @@ describe('findCodeRunCandidates — failure is never an empty result (pure)', ()
     const trees = Array.from({ length: MAX_PR_COMMITS + 1 }, (_, i) => i.toString(16).padStart(40, '0'));
     const r = await findCodeRunCandidates({ repoRowId: 'r', trees, oids: [] }, { isCloudEnabled: on, many: async () => [] });
     assert.match(r.reason, /^pr-too-large/);
+    assert.equal(r.input, true, 'an input refusal, not store unavailability');
   });
 
   test('no repo row id → ok:false', async () => {

@@ -25,6 +25,14 @@ describe('readAiTrailers', () => {
   test("GitHub's default body (block buried mid-list) is unparseable", () => {
     assert.equal(readAiTrailers('t (#9)\n\n* a\n\nAI-Skill: ship\nAI-Gate: waived\n\n* b\n').parseable, false);
   });
+  test('keys match case-insensitively: a mixed-case second claim is a duplicate, and non-canonical spelling is flagged (code R1 H2/M5)', () => {
+    const r = readAiTrailers('t\n\nAI-Gate: not-run\nai-gate: passed\n');
+    assert.deepEqual(r.duplicates, ['AI-Gate']);
+    assert.deepEqual(r.nonCanonical, ['ai-gate']);
+    const t = checkClaimTruth({ message: 't\n\nAI-Skill: ship\nAI-Models: claude\nai-gate: not-run\n', tree: oid('b'), prCommits: PR_COMMITS, run: null });
+    assert.equal(t.true, false);
+    assert.match(t.problems.join('|'), /not the canonical spelling/);
+  });
   test('a duplicated key is reported, not reduced to its last value', () => {
     assert.deepEqual(readAiTrailers('t\n\nAI-Gate: passed\nAI-Gate: converged\n').duplicates, ['AI-Gate']);
   });

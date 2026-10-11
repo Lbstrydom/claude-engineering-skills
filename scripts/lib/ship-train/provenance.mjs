@@ -134,7 +134,7 @@ const refusal = (code, message, override = null) => ({ code, message, override }
  * Decide the squash commit's gate (plan §2.3 table).
  *
  * @param {object} input
- * @param {ReturnType<typeof bindAuditRun>|{kind: 'store-unavailable', reason: string}} input.binding
+ * @param {ReturnType<typeof bindAuditRun>|{kind: 'store-unavailable'|'unbindable', reason: string}} input.binding
  * @param {string} input.headTree — T(H), the PR head's tree
  * @param {'strict'|'none'} input.basePinning — does the server refuse a non-up-to-date merge?
  * @param {'urgent'|'standard'|'ride-along'} input.tier
@@ -149,6 +149,12 @@ export function decideTrainGate({ binding, headTree, basePinning, tier, waive = 
 
   if (!TREE_ID_RE.test(headTree ?? '')) {
     return refuse(refusal('no-head-tree', 'the PR head tree could not be resolved, so no tree relation can be decided'));
+  }
+
+  if (binding.kind === 'unbindable') {
+    // The PR itself could not be bound (too many commits, a malformed id). No
+    // tier lets it through and no flag overrides it: nothing was checked.
+    return refuse(refusal('unbindable', `this PR cannot be bound to an audit run (${binding.reason})`));
   }
 
   if (binding.kind === 'store-unavailable') {

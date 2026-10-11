@@ -44,8 +44,12 @@ export const DUE_PR_COUNT = 3;
  * @throws {Error} on a truncated record — a short list must never pass for a complete one
  */
 export function parseNameStatusZ(raw) {
-  const fields = String(raw ?? '').split('\0');
-  if (fields.length && fields[fields.length - 1] === '') fields.pop();
+  const text = String(raw ?? '');
+  if (text === '') return [];
+  // `-z` output terminates EVERY field with NUL, the last one included. A
+  // missing final terminator is a truncated record, not a short path (code R1 H4).
+  if (!text.endsWith('\0')) throw new Error('parseNameStatusZ: output does not end with a NUL terminator — truncated');
+  const fields = text.slice(0, -1).split('\0');
   const out = [];
   for (let i = 0; i < fields.length;) {
     const status = fields[i++];
