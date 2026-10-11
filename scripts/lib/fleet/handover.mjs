@@ -29,6 +29,7 @@ import { gitCommonDir, listWorktrees, repoToplevel } from './git-facts.mjs';
 import { archiveReport } from './lifecycle.mjs';
 import { fleetDir, listTrains, readSessions, realWithTail } from './registry.mjs';
 import { renderChipPrompt } from './render-train.mjs';
+import { renderCommand } from './shell-quote.mjs';
 
 export const HANDOVER_SCHEMA_VERSION = 1;
 export const OP_ID_RE = /^\d{8}T\d{9}Z-[0-9a-f]{6}$/;
@@ -254,10 +255,14 @@ export function unregisteredWork(repo, ctx, { worktrees: claimedWorktrees = [], 
 function repoState(repo, { env, now }) {
   const fleetCli = fleetCliFor(repo);
   let dir;
-  try { dir = fleetDir(repo); } catch (e) { return { path: repo, fleetCli, fleet: 'error', error: e.message, sessions: [], unregistered: [] }; }
-  let config;
-  try { config = resolveConfig(repo, { env }); } catch (e) { return { path: repo, fleetCli, fleet: 'error', error: `config: ${e.message}`, sessions: [], unregistered: [] }; }
+  try { dir = fleetDir(repo); } catch (e) { return { path: repo, fleetCli, fleet: 'error', error: e.message, sessions: [], unregistered: [], unregisteredUnknown: `not a git repo: ${e.message}` }; }
   const wtList = listWorktrees(repo);
+  let config;
+  try { config = resolveConfig(repo, { env }); } catch (e) {
+    // Sessions cannot be read without config, but worktrees still can: probe them (nothing counts as claimed).
+    const u = unregisteredWork(repo, { cwd: repo, env, now }, {}, { list: () => wtList });
+    return { path: repo, fleetCli, fleet: 'error', error: `config: ${e.message}`, sessions: [], ...(u.queried ? { unregistered: u.items } : { unregistered: [], unregisteredUnknown: u.reason }) };
+  }
   const unregisteredFor = (claimed) => {
     const u = unregisteredWork(repo, { cwd: repo, config, env, now }, claimed, { list: () => wtList });
     return u.queried ? { unregistered: u.items } : { unregistered: [], unregisteredUnknown: u.reason };
@@ -551,11 +556,11 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
     return r.sessions.filter((s) => live.includes(s.id)).map((s) => ({ repo: r.path, id: s.id }));
   });
 
-  // Unregistered work recorded at prepare is RE-PROBED: claiming it (or committing + pushing) since then clears it.
+  // Unregistered work is MEASURED NOW for every scoped repo — the prepare snapshot never decides what counts
+  // (new work since prepare blocks; work claimed or pushed since clears; a prepare-time probe failure can recover).
   const unregistered = [];
   for (const r of m.scope.repos) {
-    if (r.unregisteredUnknown) { unregistered.push({ repo: r.path, unknown: `not measured at prepare: ${r.unregisteredUnknown}` }); continue; }
-    if (!r.unregistered?.length) continue;
+    if (!fs.existsSync(r.path)) { unregistered.push({ repo: r.path, unknown: 'repo path no longer exists' }); continue; }
     let claimed = { worktrees: [], branches: [] };
     try {
       const reg = readSessions(fleetDir(r.path));
@@ -564,7 +569,7 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
     } catch { /* no registry: nothing is claimed */ }
     const u = unregisteredWork(r.path, { cwd: r.path, env: ctx.env, now: ctx.now }, claimed);
     if (!u.queried) { unregistered.push({ repo: r.path, unknown: u.reason }); continue; }
-    for (const item of u.items) if (r.unregistered.some((x) => samePath(x.worktree, item.worktree))) unregistered.push({ repo: r.path, ...item });
+    for (const item of u.items) unregistered.push({ repo: r.path, ...item });
   }
 
   const count = (o) => files.filter((f) => f.outcome === o).length;
@@ -595,20 +600,20 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
 // ── rendering ───────────────────────────────────────────────────────────────
 
 /** Repos that need a coordinator: live sessions or unregistered work. */
-const reposNeedingCoordination = (m) => m.scope.repos.filter((r) => r.sessions.length || r.unregistered?.length || r.unregisteredUnknown);
+const reposNeedingCoordination = (m) => m.scope.repos.filter((r) => r.fleet === 'error' || r.sessions.length || r.unregistered?.length || r.unregisteredUnknown);
 
 /**
- * Step 6: THIS session resumes the invoking repo's sessions; every other repo gets ONE coordinator chip
- * started IN that repo (spawn_task `cwd`), handed only its own section — one prompt fans out to all repos.
+ * Step 6: ONE coordinator chip per repo with work, each started IN its repo (spawn_task `cwd`) and handed only
+ * its own section. Every repo — the one prepare ran in included — gets an explicit cwd, so the prompt means the
+ * same thing whichever repo the receiving session was opened in.
  */
 function coordinationStep6(m, art) {
   const repos = reposNeedingCoordination(m);
   if (!repos.length) return ['6. No live sessions or unregistered work in any repo — nothing to resume.'];
-  const home = repos.find((r) => samePath(r.path, m.invokingRepo));
-  const L = ['6. Resume the work:'];
-  if (home) L.push(`   - ${home.path} (this repo): run fleet status, then spin out one chip per session in its "Sessions to resume" section with that session's resume prompt; settle its "Unregistered work" with the user.`);
-  for (const r of repos.filter((x) => x !== home)) {
-    L.push(`   - ${r.path}: spin out ONE coordinator chip with spawn_task, cwd "${r.path}", prompt: "You coordinate ${path.basename(r.path)} after an account handover. Read the ${r.path} sections of ${art.md} (Sessions to resume, Unregistered work). Run ${r.fleetCli ?? 'node scripts/.claude-skills/fleet.mjs'} status, spin out one chip per session with its resume prompt, and ask the user about each unregistered worktree before touching it."`);
+  const L = ['6. Resume the work — spin out ONE coordinator chip per repo below with spawn_task, using the cwd given (whatever repo you are in):'];
+  for (const r of repos) {
+    const unmeasured = r.fleet === 'error' || r.unregisteredUnknown ? ' Its state was NOT fully measured at prepare (see the handover): run fleet status first and report what it shows.' : '';
+    L.push(`   - cwd "${r.path}", prompt: "You coordinate ${path.basename(r.path)} after an account handover. Read the ${r.path} sections of ${art.md} (Sessions to resume, Unregistered work). Run ${r.fleetCli ?? 'node scripts/.claude-skills/fleet.mjs'} status, spin out one chip per session with its resume prompt, and ask the user about each unregistered worktree before touching it.${unmeasured}"`);
   }
   return L;
 }
@@ -662,6 +667,11 @@ export function renderHandoverMarkdown(m, art) {
   return L.join('\n');
 }
 
+/** A pasteable claim for an unregistered worktree: every data argument goes through the one shell quoter. */
+export function claimCommand(u, fleetCli, platform = process.platform) {
+  return `${renderCommand(['cd', u.worktree], platform)}; ${renderCommand([...fleetCli.split(' '), 'claim', '--id', u.branch, '--intent', 'what it is', '--paths', 'changed/paths/**'], platform)}`;
+}
+
 /** "Unregistered work" section: worktrees holding work that no live claim covers. */
 function renderUnregistered(m) {
   const L = ['## Unregistered work (worktrees holding work no live fleet claim covers)', '',
@@ -675,7 +685,7 @@ function renderUnregistered(m) {
       const risk = RISK_KINDS.filter((k) => u.risks[k]).map((k) => `${u.risks[k]} ${k}`).join(', ') || 'unverifiable';
       L.push(`- \`${u.worktree}\` — ${u.branch ? `branch \`${u.branch}\`` : 'detached HEAD'}${u.locked ? ' (locked)' : ''}: ${risk}${u.unverified?.length ? `; UNVERIFIED: ${u.unverified.join('; ')}` : ''}`);
       if (u.risks.unpushed && RISK_KINDS.every((k) => k === 'unpushed' || !u.risks[k])) L.push('  - only unpushed commits: if the branch was squash-merged and its remote deleted, they are already on the base — check before claiming');
-      if (u.branch) L.push(`  - claim: \`cd "${u.worktree}"; ${r.fleetCli ?? m.fleetCommand} claim --id ${u.branch} --intent "<what it is>" --paths "<paths>"\``);
+      if (u.branch) L.push(`  - claim (from inside the worktree; replace the intent and paths): \`${claimCommand(u, r.fleetCli ?? m.fleetCommand)}\``);
     }
     L.push('');
   }
@@ -716,11 +726,11 @@ export async function cmdHandover(ctx, flags, positionals) {
     // A memory dir prepare could not read was NOT measured: the run says so and is not a clean exit.
     const memNote = manifest.memoryErrors.length ? `\n  NOT MEASURED: ${manifest.memoryErrors.map((e) => `${e.dirName} (${e.reason})`).join(', ')} — fix access and re-run prepare` : '';
     const unreg = manifest.scope.repos.reduce((n, r) => n + (r.unregistered?.length ?? 0), 0);
-    const unregUnknown = manifest.scope.repos.filter((r) => r.unregisteredUnknown);
+    const unregUnknown = manifest.scope.repos.filter((r) => r.unregisteredUnknown || r.fleet === 'error');
     // Unregistered work is a human step: the manifest is written, but the switch is not ready (exit 3).
     const unregNote = unreg || unregUnknown.length ? `\n  UNREGISTERED WORK: ${unreg} worktree(s) hold work no claim covers${unregUnknown.length ? `; NOT MEASURED in ${unregUnknown.map((r) => r.path).join(', ')}` : ''} — see "Unregistered work", claim or settle, re-run prepare` : '';
     const out = manifest.memoryErrors.length ? (x) => refused('memory dir(s) could not be read at prepare', x)
-      : unreg || unregUnknown.length ? (x) => refused('worktrees hold unregistered work', x) : ok;
+      : unreg || unregUnknown.length ? (x) => refused(unreg ? 'worktrees hold unregistered work' : 'repo state could not be measured', x) : ok;
     return out({
       handover: { id: manifest.id, json: artifacts.json, md: artifacts.md, memoryDirs: manifest.memory.length, memoryFiles: files, memoryErrors: manifest.memoryErrors, sessions, unregistered: unreg, scheduledTasks: manifest.scheduledTasks.length, anomalies: manifest.anomalies.length, sourceRepo: manifest.scope.sourceRepo },
       text: `fleet handover prepare ${manifest.id}${memNote}${unregNote}\n  memory: ${manifest.memory.length} dir(s), ${files} file(s) · sessions: ${sessions} · scheduled tasks: ${manifest.scheduledTasks.length} · anomalies: ${manifest.anomalies.length}${scopeNote}\n  read: ${artifacts.md}\n  new account: ${manifest.fleetCommand} handover receive --from "${artifacts.json}"`,

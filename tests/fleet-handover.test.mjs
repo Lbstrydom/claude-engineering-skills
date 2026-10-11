@@ -13,7 +13,7 @@ import path from 'node:path';
 import { git } from './helpers/git.mjs';
 import {
   HANDOVER_SCHEMA_VERSION, OP_ID_RE, checkHandoverFlags, collectMemory, decideFile, handoverId, loadManifest,
-  mainCheckout, receiveHandover, safeRelSegments,
+  claimCommand, mainCheckout, receiveHandover, safeRelSegments,
 } from '../scripts/lib/fleet/handover.mjs';
 import { withFileLockSync } from '../scripts/lib/file-lock.mjs';
 import { cleanupFleetRoots, makeFleetRepo, runFleet, scrubbedEnv, tmpRoot } from './helpers/fleet-repo.mjs';
@@ -374,7 +374,30 @@ describe('unregistered work — worktrees holding work no claim covers', () => {
     assert.deepEqual(r2.json.handover.unregistered, [], r2.stdout);
   });
 
-  it('the coordination prompt fans out one coordinator chip per OTHER repo, started in that repo (spawn_task cwd)', () => {
+  it('receive measures NOW: work that appeared after a clean prepare blocks (M1/H3)', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-u7-'), { task: null });
+    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(prep.status, 0, prep.stdout);
+    const wt = addWorktree(fx, 'after-prepare');
+    fs.writeFileSync(path.join(wt, 'late.md'), 'new\n');
+    const r = runFleet(['handover', 'receive', '--from', prep.json.handover.json, '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(r.status, 3, r.stdout);
+    assert.deepEqual(r.json.handover.unregistered.map((u) => u.branch), ['after-prepare']);
+  });
+
+  it('a scoped repo that cannot be measured is never "ready" and still gets a coordinator (H1)', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-u8-'), { task: null });
+    const notRepo = tmpRoot('handover-notrepo-');
+    const prep = runFleet(['handover', 'prepare', '--repo', notRepo, '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(prep.status, 3, prep.stdout);
+    assert.match(prep.json.text, /NOT MEASURED in/);
+    const md = fs.readFileSync(prep.json.handover.md, 'utf8');
+    assert.ok(md.slice(md.indexOf('## Coordination prompt')).includes(`cwd "${notRepo}"`), 'the unmeasured repo still gets a coordinator');
+  });
+
+  it('the coordination prompt fans out one coordinator chip per repo, each with an explicit cwd (M2)', () => {
     const fx = makeFleetRepo();
     const other = makeFleetRepo();
     const A = seedConfig(tmpRoot('handover-acct-u6-'), { task: null });
@@ -384,10 +407,22 @@ describe('unregistered work — worktrees holding work no claim covers', () => {
     assert.equal(prep.status, 0, prep.stdout);
     const md = fs.readFileSync(prep.json.handover.md, 'utf8');
     const prompt = md.slice(md.indexOf('## Coordination prompt'));
-    assert.match(prompt, /\(this repo\): run fleet status/);
-    assert.ok(prompt.includes(`spawn_task, cwd "${other.repo}"`), prompt);
-    assert.ok(!prompt.includes(`spawn_task, cwd "${fx.repo}"`), 'the invoking repo is resumed in place, not chipped');
+    assert.ok(prompt.includes(`cwd "${other.repo}"`), prompt);
+    assert.ok(prompt.includes(`cwd "${fx.repo}"`), 'the invoking repo gets an explicit cwd too, so the prompt does not depend on where it is pasted');
+    assert.doesNotMatch(prompt, /this repo/);
     assert.ok(md.includes(`### ${other.repo}`), 'sessions are grouped per repo so a chip can be handed its own section');
+  });
+});
+
+describe('claimCommand (H2/M3)', () => {
+  const u = { worktree: "/w/it's $(rm -rf x)", branch: 'feat;$(id)' };
+  it('quotes every data argument on POSIX', () => {
+    const c = claimCommand(u, 'node scripts/fleet.mjs', 'linux');
+    assert.equal(c, "cd '/w/it'\\''s $(rm -rf x)'; node scripts/fleet.mjs claim --id 'feat;$(id)' --intent 'what it is' --paths 'changed/paths/**'");
+  });
+  it('quotes every data argument for PowerShell', () => {
+    const c = claimCommand({ worktree: "C:\\w\\it's", branch: 'feat;$x' }, 'node scripts/fleet.mjs', 'win32');
+    assert.equal(c, "cd 'C:\\w\\it''s'; node scripts/fleet.mjs claim --id 'feat;$x' --intent 'what it is' --paths 'changed/paths/**'");
   });
 });
 
