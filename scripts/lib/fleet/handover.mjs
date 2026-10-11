@@ -545,28 +545,28 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
     const status = !mine?.exists ? (s.exists ? 'absent' : 'same') : mine.sha256 === s.sha256 ? 'same' : 'differs';
     return { name: s.name, status, review: status !== 'same' };
   });
-  // A registry that cannot be read completely is UNKNOWN live state, never "no live sessions" (audit R1-H4/M4).
+  // ONE live read per scoped repo drives both the live-session list and claimed-worktree coverage: a claim made
+  // after prepare is a live session here AND covers its worktree. A registry that cannot be read completely is
+  // UNKNOWN live state, never "no live sessions" (audit R1-H4/M4).
   const liveUnknown = [];
-  const liveSessions = m.scope.repos.flatMap((r) => {
-    if (!r.sessions.length) return [];
-    let reg;
-    try { reg = readSessions(fleetDir(r.path)); } catch (e) { liveUnknown.push({ repo: r.path, reason: e.message }); return []; }
-    if (!reg.complete) liveUnknown.push({ repo: r.path, reason: 'registry incomplete (unreadable session records)' });
-    const live = reg.sessions.filter((s) => !['done', 'abandoned'].includes(s.state)).map((s) => s.id);
-    return r.sessions.filter((s) => live.includes(s.id)).map((s) => ({ repo: r.path, id: s.id }));
-  });
-
-  // Unregistered work is MEASURED NOW for every scoped repo — the prepare snapshot never decides what counts
-  // (new work since prepare blocks; work claimed or pushed since clears; a prepare-time probe failure can recover).
+  const liveSessions = [];
   const unregistered = [];
   for (const r of m.scope.repos) {
     if (!fs.existsSync(r.path)) { unregistered.push({ repo: r.path, unknown: 'repo path no longer exists' }); continue; }
     let claimed = { worktrees: [], branches: [] };
-    try {
-      const reg = readSessions(fleetDir(r.path));
-      const live = reg.sessions.filter((x) => !['done', 'abandoned'].includes(x.state));
-      claimed = { worktrees: live.map((x) => x.worktree).filter(Boolean), branches: live.map((x) => x.source?.branch).filter(Boolean) };
-    } catch { /* no registry: nothing is claimed */ }
+    let dir = null;
+    try { dir = fleetDir(r.path); } catch (e) { liveUnknown.push({ repo: r.path, reason: e.message }); }
+    if (dir && fs.existsSync(dir)) {
+      try {
+        const reg = readSessions(dir);
+        if (!reg.complete) liveUnknown.push({ repo: r.path, reason: 'registry incomplete (unreadable session records)' });
+        const live = reg.sessions.filter((x) => !['done', 'abandoned'].includes(x.state));
+        claimed = { worktrees: live.map((x) => x.worktree).filter(Boolean), branches: live.map((x) => x.source?.branch).filter(Boolean) };
+        const atPrepare = new Set(r.sessions.map((x) => x.id));
+        for (const x of live) liveSessions.push({ repo: r.path, id: x.id, ...(atPrepare.has(x.id) ? {} : { sincePrepare: true }) });
+      } catch (e) { liveUnknown.push({ repo: r.path, reason: e.message }); }
+    } else if (r.sessions.length) liveUnknown.push({ repo: r.path, reason: 'fleet registry missing, but prepare recorded live sessions' });
+    // Unregistered work is MEASURED NOW — the prepare snapshot never decides what counts.
     const u = unregisteredWork(r.path, { cwd: r.path, env: ctx.env, now: ctx.now }, claimed);
     if (!u.queried) { unregistered.push({ repo: r.path, unknown: u.reason }); continue; }
     for (const item of u.items) unregistered.push({ repo: r.path, ...item });
@@ -716,6 +716,8 @@ function renderReceiveText(h) {
   for (const t of h.tasks.filter((x) => x.file === 'missing')) L.push(`    recreate: ${t.id} — ${t.description}`);
   for (const st of h.settings.filter((x) => x.review)) L.push(`  settings ${st.name}: ${st.status} — review by hand (MCP servers, permissions)`);
   L.push(`  sessions still live (adopt or resume from the handover prompts): ${h.liveSessions.length ? h.liveSessions.map((x) => x.id).join(', ') : 'none'}`);
+  const since = h.liveSessions.filter((x) => x.sincePrepare);
+  if (since.length) L.push(`  claimed since prepare (no resume prompt in the handover — run fleet status in their repo): ${since.map((x) => `${x.id} (${x.repo})`).join(', ')}`);
   for (const u of h.liveUnknown) L.push(`  LIVE STATE UNKNOWN in ${u.repo}: ${u.reason}`);
   for (const u of h.unregistered ?? []) L.push(u.unknown ? `  UNREGISTERED WORK UNKNOWN in ${u.repo}: ${u.unknown}` : `  UNREGISTERED WORK: ${u.worktree}${u.branch ? ` (${u.branch})` : ''} — ${RISK_KINDS.filter((k) => u.risks[k]).map((k) => `${u.risks[k]} ${k}`).join(', ') || 'unverifiable'}; claim it or settle it with the user`);
   for (const e of h.memoryErrors ?? []) L.push(`  memory dir NOT measured at prepare: ${e.dirName} (${e.reason})`);

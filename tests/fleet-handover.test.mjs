@@ -388,6 +388,20 @@ describe('unregistered work — worktrees holding work no claim covers', () => {
     assert.deepEqual(r.json.handover.unregistered.map((u) => u.branch), ['after-prepare']);
   });
 
+  it('a claim made after a clean prepare is a live session at receive, not invisible (R3-H1)', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-u9-'), { task: null });
+    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(prep.status, 0, prep.stdout);
+    const wt = addWorktree(fx, 'claimed-later');
+    fs.writeFileSync(path.join(wt, 'n.md'), 'n\n');
+    assert.equal(runFleet(['claim', '--id', 'claimed-later', '--intent', 'later', '--paths', 'n.md'], { cwd: wt, env: envFor(A) }).status, 0);
+    const r = runFleet(['handover', 'receive', '--from', prep.json.handover.json, '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.deepEqual(r.json.handover.liveSessions.map((x) => [x.id, x.sincePrepare]), [['claimed-later', true]], r.stdout);
+    assert.deepEqual(r.json.handover.unregistered, [], 'the claim covers its worktree');
+    assert.match(r.json.text, /claimed since prepare/);
+  });
+
   it('a scoped repo that cannot be measured is never "ready" and still gets a coordinator (H1)', () => {
     const fx = makeFleetRepo();
     const A = seedConfig(tmpRoot('handover-acct-u8-'), { task: null });
