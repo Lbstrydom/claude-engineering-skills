@@ -22,7 +22,7 @@ const REPO = 'Lbstrydom/claude-engineering-skills';
 
 let dir;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ship-train-cli-')); });
-afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 /**
  * A fake world: PRs keyed by number with commits [{oid, tree, subject}] and a
