@@ -51,19 +51,3 @@ export async function waitForPidFile(file, { timeoutMs = READY_TIMEOUT_MS, pollM
     await sleep(pollMs);
   }
 }
-
-/**
- * Poll until a process no longer exists.
- *
- * @param {number} pid
- * @param {{timeoutMs?: number, pollMs?: number}} [opts]
- * @returns {Promise<boolean>} true once gone; false if still alive at `timeoutMs`
- */
-export async function waitForExit(pid, { timeoutMs = 10_000, pollMs = 50 } = {}) {
-  const t0 = Date.now();
-  while (isAlive(pid)) {
-    if (Date.now() - t0 >= timeoutMs) return false;
-    await sleep(pollMs);
-  }
-  return true;
-}

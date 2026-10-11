@@ -271,14 +271,24 @@ describe('execReader (real child processes)', () => {
       // its clock at spawn, racing node's startup under CPU load (the child killed before it wrote: ENOENT).
       // The timeout path itself is covered deterministically by the fakeSpawn tests below.
       const ac = new AbortController();
-      const reader = execReader({ script, args: [], cwd: dir, signal: ac.signal, graceMs: 300, closeWaitMs: 5000 });
-      const pid = await waitForPidFile(pidFile);
-      assert.ok(isAlive(pid), `child ${pid} must be running when the abort is delivered (else this proves nothing)`);
-      ac.abort();
-      const r = await reader;
-      assert.equal(r.aborted, true);
-      assert.equal(r.childExited, true, 'resolved only after the child closed');
-      assert.equal(isAlive(pid), false, `child ${pid} must be gone, not merely abandoned`);
+      let reader = null;
+      try {
+        reader = execReader({ script, args: [], cwd: dir, signal: ac.signal, graceMs: 300, closeWaitMs: 5000 });
+        const pid = await waitForPidFile(pidFile);
+        assert.ok(isAlive(pid), `child ${pid} must be running when the abort is delivered (else this proves nothing)`);
+        ac.abort();
+        const r = await reader;
+        assert.equal(r.aborted, true);
+        assert.equal(r.childExited, true, 'resolved only after the child closed');
+        assert.equal(isAlive(pid), false, `child ${pid} must be gone, not merely abandoned`);
+      } finally {
+        // Without a spawn-time timeoutMs nothing else bounds the reader: if readiness or the liveness assertion
+        // fails, abort it and wait for the kill-and-close here, or the stubborn child (SIGTERM trapped, interval
+        // running) outlives the test and keeps the runner alive. execReader never rejects and the wait is
+        // bounded by graceMs + closeWaitMs; a no-op on the success path.
+        ac.abort();
+        if (reader) await reader;
+      }
     } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
