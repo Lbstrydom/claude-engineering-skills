@@ -8,12 +8,12 @@
  * @module scripts/lib/memory-paths
  */
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import yaml from 'yaml';
 import { z } from 'zod';
 import { frictionConfig } from './config.mjs';
+import { harnessMemoryDir } from './harness-paths.mjs';
 
 const MitigationRefSchema = z.object({
   kind: z.enum(['commit', 'agents_rule', 'doc', 'test', 'durable_memory', 'ignore']),
@@ -38,26 +38,22 @@ export const FrictionFrontmatterSchema = z.object({
   }).passthrough(),
 }).passthrough();
 
-/** Harness project slug — VERIFIED: `C:\GIT\claude-engineering-skills` → `c--GIT-claude-engineering-skills`
- *  (lowercase the drive letter, then each non-alphanumeric char → a single `-`, per-char not per-run). */
-export function harnessProjectSlug(absRoot) {
-  return String(absRoot)
-    .replace(/^([A-Za-z]):/, (_, d) => `${d.toLowerCase()}:`)
-    .replace(/[^A-Za-z0-9]/g, '-');
-}
+// The slug rule and the config root live in ONE place (harness-paths.mjs, which honours
+// CLAUDE_CONFIG_DIR — this module used to hard-code `~/.claude`). Re-exported for existing callers.
+export { harnessProjectSlug } from './harness-paths.mjs';
 
 const dirExists = (d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } };
 
-/** Resolve the harness memory dir (C4 precedence): FRICTION_MEMORY_DIR → slug-derived → absent.
+/** Resolve the harness memory dir (C4 precedence): FRICTION_MEMORY_DIR → the account's config root
+ *  (`CLAUDE_CONFIG_DIR`, else `~/.claude`) + slug → absent.
  *  Never throws; absent/unreadable → `{dir, exists:false}` (every caller treats as a graceful no-op). */
 export function resolveHarnessMemoryDir({ repoRoot = process.cwd(), env = process.env } = {}) {
   if (env.FRICTION_MEMORY_DIR) {
     const dir = env.FRICTION_MEMORY_DIR;
     return { dir, exists: dirExists(dir), source: 'env' };
   }
-  const slug = harnessProjectSlug(path.resolve(repoRoot));
-  const dir = path.join(os.homedir(), '.claude', 'projects', slug, 'memory');
-  return { dir, exists: dirExists(dir), source: 'derived' };
+  const { dir, exists } = harnessMemoryDir({ repoRoot, env });
+  return { dir, exists, source: 'derived' };
 }
 
 const FM_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;

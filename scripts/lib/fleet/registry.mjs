@@ -154,7 +154,7 @@ export function fleetDir(cwd) {
 }
 
 /** realpath of the nearest EXISTING ancestor of `p`, with the not-yet-existing tail re-appended. */
-function realWithTail(p) {
+export function realWithTail(p) {
   let cur = path.resolve(p);
   const tail = [];
   for (;;) {

@@ -31,6 +31,8 @@ import {
 import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
 import { renderDriftIssue } from '../lib/arch-render.mjs';
+import { assessIndexFreshness } from './refresh-publish-guard.mjs';
+import { makeGitRunner } from '../lib/worktree-identity.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 import { atomicWriteFileSync } from '../lib/file-io.mjs';
 import { assertKnownFlags, ArgvError } from '../lib/cli-io.mjs';
@@ -140,7 +142,7 @@ function classify(driftScore, threshold) {
 // renderDriftIssue() so all three human surfaces (architecture-map.md,
 // drift sticky issue, neighbourhood callout) share one renderer. Local
 // renderMarkdown() removed.
-function renderMarkdownViaShared(drift, threshold, status, identity, clusters, commitSha, symbolCount, store) {
+function renderMarkdownViaShared(drift, threshold, status, identity, clusters, commitSha, symbolCount, store, freshness) {
   const { markdown } = renderDriftIssue({
     drift,
     threshold,
@@ -159,6 +161,9 @@ function renderMarkdownViaShared(drift, threshold, status, identity, clusters, c
     // carries no commit" rather than "nobody looked" (consumer report,
     // 2026-09-04).
     commitSha,
+    // How far that commit trails the default branch: the index only moves on a
+    // default-branch refresh, so a report can describe code two weeks old.
+    freshness,
     refreshId: drift.refresh_id,
     repoName: identity.name,
     clusters,
@@ -372,13 +377,19 @@ async function main() {
     process.stderr.write(`arch:drift: pragma reconciliation skipped: ${err.message}\n`);
   }
 
-  const md = renderMarkdownViaShared(drift, threshold, status, identity, clusters, snap.commitSha ?? null, symbolCount, store) + excludedNote + renderStalePragmaSection(stalePragmas) + ambiguousUnresolvedSection;
+  // Best-effort and local: git answers it, and an unanswerable question is
+  // `unknown`, never `current`.
+  const freshness = assessIndexFreshness({ run: makeGitRunner(process.cwd()), indexCommit: snap.commitSha ?? null });
+  if (freshness.state === 'behind' || freshness.state === 'off-branch') {
+    process.stderr.write(`arch:drift: WARNING — the active index is ${freshness.detail}; this report does not describe the current code\n`);
+  }
+  const md = renderMarkdownViaShared(drift, threshold, status, identity, clusters, snap.commitSha ?? null, symbolCount, store, freshness) + excludedNote + renderStalePragmaSection(stalePragmas) + ambiguousUnresolvedSection;
 
   // `symbolCount`/`store` ride in the JSON envelope for the same reason they
   // ride in the markdown: a policy gate reading this cannot otherwise tell a
   // clean repo from a near-empty snapshot in the wrong database. `store` is the
   // publishable descriptor (fingerprint + db name), never a hostname.
-  if (args.json) process.stdout.write(JSON.stringify({ drift, threshold, status, stalePragmas, symbolCount, store }, null, 2) + '\n');
+  if (args.json) process.stdout.write(JSON.stringify({ drift, threshold, status, stalePragmas, symbolCount, store, freshness }, null, 2) + '\n');
   else process.stdout.write(md);
 
   // round-1 M1: an unwritable --out path (bad dir, full disk, permissions)
