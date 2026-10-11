@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**10 active · 241 terminal · 33 audit summaries · 1 parked · 5 reference docs**
+**5 active · 246 terminal · 33 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -23,14 +23,9 @@ This is the list to read when asking "what is in flight?".
 |---|---|---|
 | [The drift report says how far the active index trails the default branch](./arch-index-freshness.md) | `In Progress` | implemented on `fix/arch-index-freshness`; under /audit-code |
 | [The dashboard's debt queue treats "no local cache" as an expected absence](./dashboard-debt-sandbox-absence.md) | `In Progress` | implemented on `fix/dashboard-debt-sandbox-absence`; under /audit-code |
-| [Enforce the debt ledger's persisted-record contract (§2 of aged-out-acceptance-remainder.md)](./debt-ledger-persisted-record-contract.md) | `Approved` | GPT plan audit converged after 3 rounds (9→3→2 findings, 100% acceptance throughout); Gemini final gate… |
 | [The debt reporting CLIs read the private store, not the local cache](./debt-readers-ask-store.md) | `In Progress` | implemented on `fix/debt-readers-ask-store`; under /audit-code |
-| [Decompose `gemini-review.mjs`](./gemini-review-decomposition.md) | `Approved` | GPT: 2 rounds, 100% acceptance both rounds, H:0 M:0 L:0 at R2; Gemini: 2 rounds, CONCERNS → APPROVE after… |
-| [`runs-findings.mjs` Identity & Write-Boundary Hardening](./runs-findings-write-boundary-hardening.md) | `Approved` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
-| [Reduce `skills/ship/SKILL.md`'s size via progressive disclosure](./ship-skill-size-reduction.md) | `Approved` | GPT: 3 rounds, 4→1→0 findings, 100% acceptance both rounds with findings; Gemini: 1 round, APPROVE — no… |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
-| [An upstream closure must not silently block every push](./upstream-disposition-landing.md) | `In Progress` | implemented and code-audited (converged R2, Gemini APPROVE); PR open, awaiting merge |
 
 ## Parked
 
@@ -61,7 +56,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 238 completed plans</summary>
+<summary>Show all 243 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -137,6 +132,7 @@ source comments that no docs linter sees — stays valid.
 | [Dead-Code Detection — Phase 1 (Orphan-Introduced Check)](./dead-code-phase-1-orphan-introduced.md) | `Complete` |  |
 | [Debt Burndown — Workstreams A–E (master)](./debt-burndown-workstreams.md) | `Complete` | (2026-07-19) — all workstreams closed and traced against the code, not against their labels. WS-D and… |
 | [Debt-Ledger Merge-Safety — CI Gate + Serialization Hardening](./debt-ledger-merge-safety.md) | `Complete` | Plan audit: GPT converged after 4 rounds, Gemini APPROVE round 1. Implementation: Cluster A (CI-gate)… |
+| [Enforce the debt ledger's persisted-record contract (§2 of aged-out-acceptance-remainder.md)](./debt-ledger-persisted-record-contract.md) | `Complete` | shipped in #108 (bea0b270, merged 2026-09-15), Fixes A–D… |
 | [Determinism Follow-ups — Model-Independent Outcome Capture + Deterministic ux-lock Runners](./determinism-follow-ups.md) | `Complete` | both workstreams implemented, audited, and shipped via autonomous `/cycle` (2026-06-22). WS1… |
 | [Deterministic `/audit-code` outcome capture for rounds 1..N-1 (orchestrator-only)](./deterministic-outcome-capture.md) | `Complete` | shipped 2026-06-29. Audit trail: v1 hook+queue design REJECTED by Gemini… |
 | [Device-profile emulation for persona-driven + structural browser tests](./device-profile-emulation.md) | `Complete` | implemented in this repo; shareable brief for porting elsewhere |
@@ -176,6 +172,7 @@ source comments that no docs linter sees — stays valid.
 | [An honest `AI-Gate` value for an audited-then-remediated ship](./gate-taxonomy-remediated-ships.md) | `Complete` |  |
 | [Gemini 3.1 Pro Final Reviewer](./gemini-final-reviewer.md) | `Complete` |  |
 | [Gemini-gate scope-error fix](./gemini-gate-scope-fix.md) | `Complete` | applied 2026-05-11 |
+| [Decompose `gemini-review.mjs`](./gemini-review-decomposition.md) | `Complete` | shipped 2026-09-16 directly on main: Cluster A f5441cad, Cluster B 72c7b0ba, Cluster C 446a755b, size… |
 | [Close the GIT_DIR/GIT_WORK_TREE Env-Leak Class (full blast radius)](./git-env-leak-sustainability.md) | `Complete` |  |
 | [God-module and layering debt — two problems, two answers](./god-module-and-layering-debt.md) | `Complete` | all three clusters shipped 2026-08-13. Cluster 1 (Phases 0–3): 14 layering violations → 0, now gated at… |
 | [Closing the Green-but-Unrealized Gap](./green-but-unrealized.md) | `Complete` | implemented 2026-08-01; both clusters shipped, consolidated Gemini gate APPROVE — see Implementation Log.… |
@@ -227,7 +224,7 @@ source comments that no docs linter sees — stays valid.
 | [Phase I — CLAUDE.md / AGENTS.md Hygiene + Sprawl Control](./phase-i-claudemd-hygiene.md) | `Complete` | shipped — `/ai-context-management` skill + `scripts/check-context-drift.mjs`… |
 | [Pinned-Revision Fixture for Spend-Bearing Runs](./pinned-revision-fixture.md) | `Complete` | Phases 1–5 implemented and shipped 2026-08-18; `npm test` 12902 pass / 0 fail and `npm run check` green.… |
 | [Plan-audit learning parity + AGENTS.md sprawl cap](./plan-audit-parity-and-agents-md-cap.md) | `Complete` |  |
-| [plan_verification_items run_id uuid/text — multi-row owned insert + verify exit honesty](./plan-verification-items-run-id.md) | `Complete` | implemented + audited 2026-10-10; awaiting review |
+| [plan_verification_items run_id uuid/text — multi-row owned insert + verify exit honesty](./plan-verification-items-run-id.md) | `Complete` | shipped in #179 (32c83bc4, merged 2026-10-10) |
 | [pnpm-aware consumer installation](./pnpm-consumer-support.md) | `Complete` |  |
 | [Postgres Parity — One Postgres Code Path for the Audit-Loop Store](./postgres-parity.md) | `Complete` | 2026-07-18 — the one deferred follow-up was retired, not built; see §12 "Follow-up retired". No open work… |
 | [Predictive Audit Strategy — Data Loop Completion & Intelligence](./predictive-audit-strategy.md) | `Complete` | shipped — `predictiveConfig` block exported from `scripts/lib/config.mjs`… |
@@ -261,6 +258,7 @@ source comments that no docs linter sees — stays valid.
 | [Reviewer Cost-vs-Value Experiment (Experiment 5)](./reviewer-cost-value-experiment.md) | `Complete` | verdict: keep Arm A (incumbent). See… |
 | [Robustness Hardening & R2+ Ledger Auto-Write](./robustness-and-ledger-wiring.md) | `Complete` | shipped — `scripts/lib/ledger.mjs` exports `writeLedgerEntry` + tracks the two-axis state model… |
 | [Role-Agnostic Model-Comparison Core](./role-agnostic-comparison-core.md) | `Complete` | all three clusters shipped (`916147a0..a0c72290`) and the mandatory consolidated Gemini gate returned… |
+| [`runs-findings.mjs` Identity & Write-Boundary Hardening](./runs-findings-write-boundary-hardening.md) | `Complete` | shipped in #118 (abea5dac, merged 2026-09-25), all ten phases; audit trail in [the audit… |
 | [Sast-Routing, Sandbox Integrity & Migration-Adoption Hardening (7-item punch list)](./sast-sandbox-backlog-hardening.md) | `Complete` | all 7 items implemented + tested (19 new/updated tests across 5 test files), audit-code stopped at round 5… |
 | [SAST Triage — Route, Never Suppress](./sast-triage-routing.md) | `Complete` |  |
 | [Isolate engineering-skills tooling in consumer repos under `scripts/.claude-skills/`](./scripts-claude-skills-isolation.md) | `Complete` | (2026-06-02) — archived to docs/completed/. All phases done; both consumers migrated. Phases 0/1/5… |
@@ -270,6 +268,7 @@ source comments that no docs linter sees — stays valid.
 | [Shadow write-gate + orchestrator smoke execution](./shadow-write-gate-and-orchestrator-smoke.md) | `Complete` |  |
 | [Shared cloud-config file for consumer repos](./shared-cloud-config.md) | `Complete` |  |
 | [Shared-Env Loading Root-Fix + Contract Guard (+ cache-seed experiment record)](./shared-env-loading-root-fix.md) | `Complete` |  |
+| [Reduce `skills/ship/SKILL.md`'s size via progressive disclosure](./ship-skill-size-reduction.md) | `Complete` | shipped 2026-09-16 directly on main (ee0e7da0, 85166fe0, e4edb530), closed out at 360a5abb. Re-measured… |
 | [Close Two Sibling-Path Defects (bandit_arms NULL key + local FP tracker in the ledger branch)](./sibling-path-suppression-defects.md) | `Complete` | implemented + audited via `/cycle --autonomous` (2026-07-18). Plan audit: 4 GPT + 1 Gemini → APPROVE. Code:… |
 | [Four places that report success without establishing it](./silent-success-cluster.md) | `Complete` |  |
 | [Mega-Plan: Skill-Bundle Consolidation + Public Distribution](./skill-bundle-mega-plan.md) | `Complete` | parent — split into sub-phases E (skill consolidation) / F (install + update infra) / G.1… |
@@ -293,6 +292,7 @@ source comments that no docs linter sees — stays valid.
 | [Distinguish "nothing to clean up" from "cleanup failed" in the install WAL](./transaction-wal-cleanup-failure-distinction.md) | `Complete` |  |
 | [Close the Same-File Independence Loophole in Triage, Fix Two Bugs It Let Through](./triage-independence-test-and-write-boundary-fixes.md) | `Complete` |  |
 | [Unremediated acceptances — honour the disposition that already exists](./unremediated-acceptance-backlog.md) | `Complete` | (shipped 2026-08-11, `ed41ec78`) — the §6 follow-on campaign is deliberately unstarted and is NOT a phase of… |
+| [An upstream closure must not silently block every push](./upstream-disposition-landing.md) | `Complete` | shipped in #189 (e529f93c, merged 2026-10-10); implemented and code-audited (converged R2, Gemini APPROVE) |
 | [Upstream Issue Reports (consumer → source bug channel)](./upstream-issue-reports.md) | `Complete` | all 4 phases shipped 2026-07-31 — see Audit Trail + Implementation Log |
 | [/ux-lock selector policy — locate semantically, lint the drift](./ux-lock-selector-policy.md) | `Complete` | implemented + code-audited 2026-07-04; consolidated Gemini gate over the union diff: APPROVE, 0 findings —… |
 | [Harden vcs.mjs's git-output parsing and find-rmsync-sites.mjs's scope resolution](./vcs-parsing-and-rmsync-scope-hardening.md) | `Complete` |  |
