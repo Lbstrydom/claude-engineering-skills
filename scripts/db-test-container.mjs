@@ -231,6 +231,11 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // Two edits, always — this list AND postgres-parity.yml.
   'tests/store-debt-cloud-validation.test.mjs',
   'tests/debt-alias-integration.test.mjs',
+  // Enrolled 2026-10-11: the debt reporting CLIs (debt-health-check,
+  // debt-review) read the private store, not the local cache — only real
+  // debt_entries/debt_events rows can show a CLI asked the store at all.
+  // Two edits, always — this list AND postgres-parity.yml.
+  'tests/debt-authoritative-read-db.test.mjs',
   // Enrolled 2026-09-25 (docs/plans/runs-findings-write-boundary-hardening.md
   // Phases 7-8): proves a thrown error inside a caller-supplied transaction
   // actually aborts a real Postgres transaction and rolls back a sibling

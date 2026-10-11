@@ -237,6 +237,37 @@ export const LEDGER_UNAVAILABLE_REASONS = Object.freeze([
 ]);
 
 /**
+ * Hydrate persisted debt entries with the event-derived fields (recurrence,
+ * escalation). One definition for both sources: the local cache hydrates from
+ * the local event log, store rows from the store's `debt_events`.
+ *
+ * @param {object[]} entries - persisted entries
+ * @param {object[]} events - DebtEvent-shaped
+ * @returns {object[]}
+ */
+export function hydrateDebtEntries(entries, events) {
+  const metrics = deriveMetricsFromEvents(events);
+  return entries.map((entry) => {
+    const m = metrics.get(entry.topicId) || {
+      distinctRunCount: 0,
+      occurrences: 0,
+      matchCount: 0,
+      escalated: false,
+    };
+    return {
+      ...entry,
+      distinctRunCount: m.distinctRunCount,
+      occurrences: m.occurrences,
+      matchCount: m.matchCount,
+      lastSurfacedRun: m.lastSurfacedRun,
+      lastSurfacedAt: m.lastSurfacedAt,
+      escalated: m.escalated,
+      escalatedAt: m.escalatedAt,
+    };
+  });
+}
+
+/**
  * Read the debt ledger, hydrating entries with event-derived fields.
  *
  * **Returns an availability discriminator, and that is the point.** This
@@ -303,29 +334,7 @@ export function readDebtLedger({
     throw new Error(`Debt ledger corrupted: missing entries array at ${absPath}`);
   }
 
-  // Hydrate each entry with event-derived metrics
-  const eventStream = events ?? readDebtEventsLocal(eventsPath);
-  const metrics = deriveMetricsFromEvents(eventStream);
-
-  const hydrated = [];
-  for (const entry of raw.entries) {
-    const m = metrics.get(entry.topicId) || {
-      distinctRunCount: 0,
-      occurrences: 0,
-      matchCount: 0,
-      escalated: false,
-    };
-    hydrated.push({
-      ...entry,
-      distinctRunCount: m.distinctRunCount,
-      occurrences: m.occurrences,
-      matchCount: m.matchCount,
-      lastSurfacedRun: m.lastSurfacedRun,
-      lastSurfacedAt: m.lastSurfacedAt,
-      escalated: m.escalated,
-      escalatedAt: m.escalatedAt,
-    });
-  }
+  const hydrated = hydrateDebtEntries(raw.entries, events ?? readDebtEventsLocal(eventsPath));
 
   // `budgets` is opt-in policy stored on the raw ledger file's top level, not
   // part of any individual entry — three call sites (debt-health-check.mjs,

@@ -41,8 +41,9 @@ import './lib/load-env.mjs';
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { assertKnownFlags, ArgvError, argOption, hasFlag } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, argOption, hasFlag, finishAndExit } from './lib/cli-io.mjs';
 import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH, warnIfLedgerTracked } from './lib/debt-ledger.mjs';
+import { resolveDebtReadContext, loadAuthoritativeDebt, DEBT_SOURCE_LABELS } from './lib/debt-memory.mjs';
 import {
   findStaleEntries, oldestEntryDays, findRecurringEntries, findBudgetViolations,
   findDuplicateTopicIds,
@@ -66,7 +67,7 @@ const TTL_DAYS = numEnv('DEBT_HEALTH_TTL_DAYS', 180);
 const RECURRENCE_THRESHOLD = numEnv('DEBT_HEALTH_RECURRENCE_THRESHOLD', 3);
 
 const KNOWN_FLAGS = [
-  '--ledger', '--json', '--out', '--fail-on-duplicates', '--help', '-h', '--selfcheck-relocation',
+  '--ledger', '--json', '--out', '--fail-on-duplicates', '--no-cloud', '--help', '-h', '--selfcheck-relocation',
 ];
 
 function parseArgs(argv) {
@@ -86,6 +87,7 @@ function parseArgs(argv) {
     jsonMode: hasFlag('json'),
     outFile: argOption('out', null),
     failOnDuplicates: hasFlag('fail-on-duplicates'),
+    noCloud: hasFlag('no-cloud'),
     help: hasFlag('help', { short: 'h' }),
   };
 }
@@ -114,12 +116,16 @@ function printUsage() {
 
 Report tech-debt ledger health: open count, staleness, recurrence, budget
 violations, duplicate topicIds. No LLM call, no required env — safe to run
-in any repo state.
+in any repo state. Counts come from the private store when it is configured
+(the source of truth) and from the local cache otherwise; every count names
+its source. Duplicate topicIds are a property of the local FILE (a merge
+artefact), so that check always reads the local cache.
 
 Options:
   --ledger <path>          Debt ledger path (default: .audit/tech-debt.json)
   --json                   Machine-readable JSON output to stdout
   --out <file>             Write markdown report to file (default: stdout/human)
+  --no-cloud               Read only the local cache (labelled not authoritative)
   --fail-on-duplicates     CI gate mode: exit 1 ONLY on duplicate topicIds,
                            ignoring stale/recurring/budget for the exit code
                            (still printed). Op-error (2) and unavailable (0)
@@ -165,7 +171,10 @@ function renderHuman(summary) {
     lines.push('  or `node scripts/debt-reconcile.mjs` to compare against the private store.');
     return lines.join('\n');
   }
-  lines.push(`Tech-debt ledger: ${summary.totalEntries} open entries (oldest: ${summary.oldestEntryDays}d)`);
+  lines.push(`Tech-debt ledger (${DEBT_SOURCE_LABELS[summary.source]}): ${summary.totalEntries} open entries (oldest: ${summary.oldestEntryDays}d)`);
+  if (summary.localCacheEntries != null && summary.localCacheEntries !== summary.totalEntries) {
+    lines.push(`  Local cache holds ${summary.localCacheEntries} — run \`node scripts/debt-reconcile.mjs\` to see the divergence.`);
+  }
   if (summary.totalEntries === 0) return lines.join('\n');
   const bySeverity = Object.entries(summary.bySeverity).map(([k, v]) => `${k}:${v}`).join(' ');
   lines.push(`  Severity — ${bySeverity}`);
@@ -191,7 +200,7 @@ function renderHuman(summary) {
   return lines.join('\n');
 }
 
-function main() {
+async function main() {
   // CLI smoke contract (AGENTS.md): proves the module's imports survive
   // relocation to a consumer's scripts/.claude-skills/. Required now that
   // this script is in the sync bundle.
@@ -219,23 +228,34 @@ function main() {
   // matching the advisory tone of this whole check.
   if (!opts.failOnDuplicates) warnIfLedgerTracked(path.resolve(opts.ledgerPath));
 
+  // The COUNTS come from loadAuthoritativeDebt, which asks the store when it is
+  // configured. This read the local cache alone, which on 2026-10-11 held 67 of
+  // the store's 315 entries. The local FILE is still read above: budgets and
+  // duplicate topicIds are properties of it. --fail-on-duplicates is a CI merge
+  // gate over that file and never needs the store.
+  const ctx = await resolveDebtReadContext({ noCloud: opts.noCloud || opts.failOnDuplicates });
+  const auth = await loadAuthoritativeDebt(ctx, { ledgerPath: opts.ledgerPath });
+  const entries = auth.entries;
+
   const now = new Date();
   const bySeverity = {};
-  for (const e of ledger.entries) bySeverity[e.severity] = (bySeverity[e.severity] || 0) + 1;
+  for (const e of entries) bySeverity[e.severity] = (bySeverity[e.severity] || 0) + 1;
 
   // Budgets are opt-in policy stored on the raw ledger file (not part of the
   // hydrated HydratedDebtEntry shape). readDebtLedger now surfaces it.
   const budgets = ledger.budgets || {};
 
   const summary = {
-    available: ledger.available !== false,
-    reason: ledger.reason ?? null,
-    totalEntries: ledger.entries.length,
-    oldestEntryDays: oldestEntryDays(ledger.entries, now),
+    available: auth.source !== 'unavailable',
+    source: auth.source,
+    reason: auth.reason ?? null,
+    totalEntries: entries.length,
+    localCacheEntries: auth.source === 'cloud' && ledger.available !== false ? ledger.entries.length : null,
+    oldestEntryDays: oldestEntryDays(entries, now),
     bySeverity,
-    stale: findStaleEntries(ledger.entries, TTL_DAYS, now),
-    recurring: findRecurringEntries(ledger.entries, RECURRENCE_THRESHOLD).map((e) => e.topicId),
-    violations: findBudgetViolations(ledger.entries, budgets),
+    stale: findStaleEntries(entries, TTL_DAYS, now),
+    recurring: findRecurringEntries(entries, RECURRENCE_THRESHOLD).map((e) => e.topicId),
+    violations: findBudgetViolations(entries, budgets),
     duplicates: findDuplicateTopicIds(ledger.entries),
   };
   summary.triggered = summary.stale.length > 0 || summary.recurring.length > 0
@@ -269,7 +289,10 @@ function main() {
   // exists to catch) or teams disable it the first time it flags unrelated
   // staleness noise on an unrelated PR.
   const escalationTrigger = opts.failOnDuplicates ? summary.duplicates.length > 0 : summary.triggered;
-  process.exit(summary.available !== false && escalationTrigger ? 1 : 0);
+  await finishAndExit(summary.available !== false && escalationTrigger ? 1 : 0);
 }
 
-main();
+main().catch((err) => {
+  process.stderr.write(`debt-health: ${err.message}\n`);
+  process.exit(2);
+});
