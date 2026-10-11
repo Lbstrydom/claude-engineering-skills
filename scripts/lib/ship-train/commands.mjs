@@ -1,0 +1,319 @@
+/**
+ * @fileoverview Ship-train verbs — plan, prepare, message, verify, abandon —
+ * over an injected context (git, gh, fleet status, closure, store, clock).
+ *
+ * The CLI (scripts/ship-train.mjs) wires the real context; tests wire fakes.
+ * Lives under lib/ so tests import it without an edge into the CLI's domain.
+ * Plan: docs/plans/ship-trains.md §2.1, §7 Phase 3.
+ *
+ * @module scripts/lib/ship-train/commands
+ */
+
+import { ArgvError } from '../cli-io.mjs';
+import { classifyPrImpact, isTrainDue, parseNameStatusZ } from './impact.mjs';
+import { bindAuditRun, decideTrainGate, modelsFromRun, composeSquashMessage } from './provenance.mjs';
+import { createReceipt, readReceipt, updateReceipt, newOpId } from './receipt.mjs';
+import { verifyLanded } from './verify.mjs';
+
+export class TrainRefusal extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = 'TrainRefusal';
+    this.details = details;
+  }
+}
+
+// ── argv ────────────────────────────────────────────────────────────────────
+
+/** `--pr 202,203 --pr 204` → [202, 203, 204]. */
+export function parsePrList(argv, flag) {
+  const out = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    let raw = null;
+    if (a === flag) raw = argv[i + 1];
+    else if (a.startsWith(`${flag}=`)) raw = a.slice(flag.length + 1);
+    if (raw === null) continue;
+    if (raw === undefined || raw.startsWith('--')) throw new ArgvError(`${flag} needs a value: a PR number or a comma-separated list`);
+    for (const part of raw.split(',')) {
+      if (!/^[1-9]\d*$/.test(part.trim())) throw new ArgvError(`${flag}: "${part}" is not a PR number`);
+      out.push(Number(part.trim()));
+    }
+  }
+  return [...new Set(out)];
+}
+
+/** `--flag value` or `--flag=value`; null when absent. */
+export function flagValue(argv, flag) {
+  const i = argv.indexOf(flag);
+  if (i >= 0) {
+    const v = argv[i + 1];
+    if (v === undefined || v.startsWith('--')) throw new ArgvError(`${flag} needs a value`);
+    return v;
+  }
+  const eq = argv.find((a) => a.startsWith(`${flag}=`));
+  return eq ? eq.slice(flag.length + 1) : null;
+}
+
+// ── facts ───────────────────────────────────────────────────────────────────
+
+const lines = (s) => String(s).split('\n').map((l) => l.trim()).filter(Boolean);
+
+/**
+ * Read whether the destination REFUSES a merge whose head is not up to date —
+ * the server-side pin that alone makes `passed` provable on a squash (§2.3).
+ * Unreadable protection fails closed to `none`.
+ */
+export function readBasePinning(ctx, repo, branch) {
+  const evidence = [];
+  let strict = false;
+  const ask = (label, args, pick) => {
+    try {
+      const v = pick(JSON.parse(ctx.gh(args)));
+      evidence.push(`${label}: ${v ? 'strict' : 'not strict'}`);
+      if (v) strict = true;
+    } catch (err) {
+      const msg = String(err?.stderr || err?.message || err);
+      evidence.push(/HTTP 404/.test(msg) ? `${label}: none (404)` : `${label}: unreadable (${msg.split('\n')[0].slice(0, 120)}) — fail-closed`);
+    }
+  };
+  ask('rulesets', ['api', `repos/${repo}/rules/branches/${branch}`], (rules) => Array.isArray(rules)
+    && rules.some((r) => r?.type === 'required_status_checks' && r?.parameters?.strict_required_status_checks_policy === true));
+  ask('protection', ['api', `repos/${repo}/branches/${branch}/protection`], (p) => p?.required_status_checks?.strict === true);
+  return { verdict: strict ? 'strict' : 'none', evidence: evidence.join(' ; ') };
+}
+
+/** The destination's remote tip, fetched into a private ref (never a stale origin/*). */
+export function fetchDestination(ctx, branch) {
+  const ref = `refs/ship-train/base/${branch}`;
+  ctx.git(['fetch', '--no-tags', '--quiet', 'origin', `+refs/heads/${branch}:${ref}`]);
+  return ctx.git(['rev-parse', ref]).trim();
+}
+
+/** Everything the decision needs about one PR, read from gh + git. */
+export function gatherPrFacts(ctx, repo, pr, baseOid) {
+  const view = JSON.parse(ctx.gh(['pr', 'view', String(pr), '-R', repo, '--json',
+    'number,title,state,isDraft,headRefOid,headRefName,baseRefName']));
+  const ref = `refs/ship-train/pr/${pr}`;
+  ctx.git(['fetch', '--no-tags', '--quiet', 'origin', `+refs/pull/${pr}/head:${ref}`]);
+  const headOid = ctx.git(['rev-parse', ref]).trim();
+  const mergeBaseOid = ctx.git(['merge-base', baseOid, headOid]).trim();
+  const commits = lines(ctx.git(['log', '--reverse', '--format=%H %T', `${mergeBaseOid}..${headOid}`]))
+    .map((l) => { const [oid, tree] = l.split(' '); return { oid, tree }; });
+  const subjects = String(ctx.git(['log', '--reverse', '--format=%s', `${mergeBaseOid}..${headOid}`])).split('\n').filter((s) => s !== '');
+  const changes = parseNameStatusZ(ctx.git(['diff', '--name-status', '-z', '-M', mergeBaseOid, headOid]));
+  const headTree = ctx.git(['rev-parse', `${headOid}^{tree}`]).trim();
+  return { pr, view, headOid, mergeBaseOid, commits, subjects, changes, headTree };
+}
+
+/** Fleet's own view of which sessions are ready, by branch. */
+export function fleetReadyByBranch(ctx) {
+  const env = JSON.parse(ctx.fleetStatus());
+  const out = new Map();
+  for (const item of env?.status?.items ?? []) {
+    if (item?.branch) out.set(item.branch, { state: item.state, readyOid: item.ready?.oid ?? null, pr: item.pr?.number ?? null });
+  }
+  return out;
+}
+
+// ── decision ────────────────────────────────────────────────────────────────
+
+/** Tier, binding and gate for one PR (pure over gathered facts). */
+export function decidePr({ facts, closure, basePinning, candidates, overrides, composer }) {
+  const impact = classifyPrImpact({ changes: facts.changes, closure });
+  const binding = candidates.ok
+    ? bindAuditRun({ commits: facts.commits, candidates: candidates.rows })
+    : { kind: 'store-unavailable', reason: candidates.reason };
+  const d = decideTrainGate({
+    binding,
+    headTree: facts.headTree,
+    basePinning: basePinning.verdict,
+    tier: impact.tier,
+    waive: overrides.waive.includes(facts.pr),
+    allowUnaudited: overrides.allowUnaudited.includes(facts.pr),
+  });
+  const run = binding.kind === 'tree' || binding.kind === 'ancestry' ? binding.run : null;
+  const { models, attributionMissing } = modelsFromRun(run, composer);
+  return {
+    pr: facts.pr,
+    title: facts.view.title,
+    headOid: facts.headOid,
+    mergeBaseOid: facts.mergeBaseOid,
+    tier: impact.tier,
+    reasons: impact.reasons,
+    binding: {
+      kind: binding.kind,
+      runId: run?.id ?? null,
+      boundCommit: binding.kind === 'tree' ? binding.boundCommit : null,
+      postAuditCommits: binding.kind === 'tree' ? binding.postAuditCommits : [],
+      reason: binding.reason ?? null,
+    },
+    decision: d.refusal ? null : {
+      gate: d.gate, runId: d.runId, auditedTree: d.auditedTree, models, attributionMissing, identityProvable: d.identityProvable,
+    },
+    refusal: d.refusal,
+  };
+}
+
+/** The plan for a set of PRs: gathered, decided, and checked for executability. */
+export async function computePlan(ctx, { prs, overrides, composer }) {
+  const repo = ctx.repo();
+  const branch = 'main';
+  const fleet = fleetReadyByBranch(ctx);
+  const selected = prs.length ? prs : [...fleet.values()].filter((s) => s.state === 'ready' && s.pr).map((s) => s.pr);
+  if (selected.length === 0) {
+    throw new TrainRefusal('no ship-ready PRs: none named with --pr and fleet reports no ready session with an open PR');
+  }
+  const expectedOid = fetchDestination(ctx, branch);
+  const basePinning = readBasePinning(ctx, repo, branch);
+  const closure = ctx.closure();
+  const repoRow = await ctx.store.resolveRepoRowIdForRead(ctx.cwd);
+
+  const rows = [];
+  for (const pr of selected.sort((a, b) => a - b)) {
+    const facts = gatherPrFacts(ctx, repo, pr, expectedOid);
+    const candidates = repoRow.ok
+      ? await ctx.store.findCodeRunCandidates({ repoRowId: repoRow.repoRowId, trees: facts.commits.map((c) => c.tree), oids: facts.commits.map((c) => c.oid) })
+      : { ok: false, reason: repoRow.reason };
+    const row = decidePr({ facts, closure, basePinning, candidates, overrides, composer });
+    const session = fleet.get(facts.view.headRefName);
+    const blockers = [];
+    if (facts.view.state !== 'OPEN') blockers.push(`PR is ${facts.view.state}`);
+    if (facts.view.isDraft) blockers.push('PR is a draft');
+    if (facts.view.baseRefName !== branch) blockers.push(`PR targets ${facts.view.baseRefName}, not ${branch}`);
+    if (facts.view.headRefOid !== facts.headOid) blockers.push('PR head moved while it was being read');
+    if (!session || session.state !== 'ready') blockers.push('not fleet-ready (fleet land needs a ready session)');
+    else if (session.readyOid !== facts.headOid) blockers.push(`fleet ready oid ${String(session.readyOid).slice(0, 12)} is not the PR head ${facts.headOid.slice(0, 12)}`);
+    rows.push({ ...row, fleetReady: blockers.length === 0, blockers, commitSubjects: facts.subjects });
+  }
+  const due = isTrainDue({ prs: rows, endOfDay: overrides.endOfDay });
+  const refusals = rows.filter((r) => r.refusal).map((r) => ({ pr: r.pr, ...r.refusal }));
+  const blocked = rows.filter((r) => r.blockers.length).map((r) => ({ pr: r.pr, blockers: r.blockers }));
+  return {
+    repo,
+    destination: { ref: `refs/heads/${branch}`, expectedOid },
+    basePinning,
+    storeState: repoRow.ok ? 'ok' : repoRow.reason,
+    prs: rows,
+    due,
+    refusals,
+    blocked,
+    trainReady: due.due && refusals.length === 0 && blocked.length === 0,
+  };
+}
+
+// ── verbs ───────────────────────────────────────────────────────────────────
+
+export async function runPlan(ctx, opts) {
+  return { ok: true, verb: 'plan', ...(await computePlan(ctx, opts)) };
+}
+
+export async function runPrepare(ctx, opts) {
+  if (opts.op) return recordLogPr(ctx, opts);
+  const plan = await computePlan(ctx, opts);
+  if (!plan.trainReady) {
+    throw new TrainRefusal('the train is not ready to prepare', { due: plan.due, refusals: plan.refusals, blocked: plan.blocked });
+  }
+  const now = ctx.now();
+  const receipt = createReceipt(ctx.gitCommonDir(), {
+    schemaVersion: 1,
+    opId: newOpId(now),
+    createdAt: now.toISOString(),
+    repo: plan.repo,
+    destination: plan.destination,
+    basePinning: plan.basePinning,
+    selected: plan.prs.map(({ pr, title, headOid, mergeBaseOid, tier, reasons, binding, decision }) => ({ pr, title, headOid, mergeBaseOid, tier, reasons, binding, decision })),
+    overrides: { waive: opts.overrides.waive, allowUnaudited: opts.overrides.allowUnaudited, endOfDay: opts.overrides.endOfDay },
+  }, { now });
+  return { ok: true, verb: 'prepare', opId: receipt.opId, phase: receipt.phase, fingerprint: receipt.fingerprint, due: plan.due, prs: plan.prs };
+}
+
+function recordLogPr(ctx, { op, logPr }) {
+  if (!logPr) throw new ArgvError('prepare --op <id> needs --log-pr <n>');
+  const receipt = readReceipt(ctx.gitCommonDir(), op);
+  const view = JSON.parse(ctx.gh(['pr', 'view', String(logPr), '-R', receipt.repo, '--json', 'state,headRefOid,baseRefName']));
+  if (view.state !== 'OPEN') throw new TrainRefusal(`log PR #${logPr} is ${view.state}, not OPEN`);
+  if (`refs/heads/${view.baseRefName}` !== receipt.destination.ref) throw new TrainRefusal(`log PR #${logPr} targets ${view.baseRefName}`);
+  if (receipt.selected.some((s) => s.pr === logPr)) throw new TrainRefusal(`#${logPr} is already a train source, not a log PR`);
+  const updated = updateReceipt(ctx.gitCommonDir(), op, (d) => {
+    d.logPr = { number: logPr, headOid: view.headRefOid };
+    d.phase = 'log-opened';
+  }, { now: ctx.now(), note: `log PR #${logPr}` });
+  return { ok: true, verb: 'prepare', opId: op, phase: updated.phase, logPr: updated.logPr };
+}
+
+export async function runMessage(ctx, opts) {
+  if (opts.prs.length !== 1) throw new ArgvError('message needs exactly one --pr <n>');
+  const plan = await computePlan(ctx, opts);
+  const row = plan.prs[0];
+  if (!row.decision) return { ok: true, verb: 'message', pr: row.pr, refusal: row.refusal };
+  const { subject, body } = composeSquashMessage({ number: row.pr, title: row.title, commitSubjects: row.commitSubjects, decision: row.decision, models: row.decision.models });
+  return { ok: true, verb: 'message', pr: row.pr, basePinning: plan.basePinning.verdict, decision: row.decision, subject, body };
+}
+
+/** Facts for a landed train: each merge commit, and main's first-parent chain. */
+export function gatherLandedFacts(ctx, receipt) {
+  const branch = receipt.destination.ref.replace(/^refs\/heads\//, '');
+  const tip = fetchDestination(ctx, branch);
+  const prs = [...receipt.selected.map((s) => s.pr), ...(receipt.logPr ? [receipt.logPr.number] : [])];
+  const merged = {};
+  for (const pr of prs) {
+    const v = JSON.parse(ctx.gh(['pr', 'view', String(pr), '-R', receipt.repo, '--json', 'state,mergeCommit']));
+    if (v.state !== 'MERGED' || !v.mergeCommit?.oid) continue;
+    const oid = v.mergeCommit.oid;
+    merged[String(pr)] = {
+      mergeOid: oid,
+      message: ctx.git(['log', '-1', '--format=%B', oid]),
+      tree: ctx.git(['rev-parse', `${oid}^{tree}`]).trim(),
+    };
+  }
+  const chain = lines(ctx.git(['log', '--first-parent', '--reverse', '--format=%H%x09%s', `${receipt.destination.expectedOid}..${tip}`]))
+    .map((l) => { const i = l.indexOf('\t'); return { oid: l.slice(0, i), subject: l.slice(i + 1) }; });
+  return { merged, chain };
+}
+
+export async function runVerify(ctx, { op }) {
+  if (!op) throw new ArgvError('verify needs --op <id>');
+  const dir = ctx.gitCommonDir();
+  const receipt = readReceipt(dir, op);
+  if (!['landed', 'verified', 'verified-interleaved'].includes(receipt.phase)) {
+    throw new TrainRefusal(`op ${op} is ${receipt.phase}; verify runs after the train has landed`);
+  }
+  const { merged, chain } = gatherLandedFacts(ctx, receipt);
+  const v = verifyLanded({ receipt, merged, chain, at: ctx.now().toISOString() });
+  let written = false;
+  if (receipt.phase === 'landed') {
+    updateReceipt(dir, op, (d) => {
+      d.verify = v;
+      d.phase = v.interleaved.length ? 'verified-interleaved' : 'verified';
+    }, { now: ctx.now(), note: 'verify' });
+    written = true;
+  }
+  const deviations = [
+    ...Object.entries(v.perPr).filter(([, p]) => !p.ok).map(([pr, p]) => `#${pr}: ${p.problems.join('; ')}`),
+    ...v.plannedVsActual.map((d) => `#${d.pr}: planned ${d.planned}, landed ${d.actual}`),
+    ...(v.interleaved.length ? [`${v.interleaved.length} foreign commit(s) interleaved before ${String(v.finalMergeOid).slice(0, 12)}: ${v.interleaved.map((c) => c.oid.slice(0, 12)).join(', ')}`] : []),
+    ...(v.orderOk ? [] : [`observed landing order ${v.observedOrder.join(',')} differs from the manifest's`]),
+    ...(v.publicationBlocked ? [`PUBLICATION BLOCKED: ${v.blockedReason}`] : []),
+  ];
+  let note = null;
+  if (written && deviations.length && v.finalMergeOid) {
+    note = ctx.writePendingNote(v.finalMergeOid, [
+      `Ship train ${op} — verify deviations (final merge ${v.finalMergeOid})`,
+      ...deviations.map((d) => `- ${d}`),
+    ].join('\n'));
+  }
+  return { ok: true, verb: 'verify', opId: op, phase: written ? (v.interleaved.length ? 'verified-interleaved' : 'verified') : receipt.phase, written, verify: v, deviations, pendingNote: note };
+}
+
+export async function runAbandon(ctx, { op }) {
+  if (!op) throw new ArgvError('abandon needs --op <id>');
+  const updated = updateReceipt(ctx.gitCommonDir(), op, (d) => { d.phase = 'abandoned'; }, { now: ctx.now(), note: 'abandon' });
+  return {
+    ok: true,
+    verb: 'abandon',
+    opId: op,
+    phase: updated.phase,
+    followUp: updated.logPr ? `the log PR is still open — close it with: gh pr close ${updated.logPr.number} -R ${updated.repo}` : null,
+  };
+}
