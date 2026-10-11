@@ -29,7 +29,7 @@ import { gitCommonDir, listWorktrees, repoToplevel } from './git-facts.mjs';
 import { archiveReport } from './lifecycle.mjs';
 import { fleetDir, listTrains, readSessions, realWithTail } from './registry.mjs';
 import { renderChipPrompt } from './render-train.mjs';
-import { renderCommand } from './shell-quote.mjs';
+import { quoteArg, renderCommand } from './shell-quote.mjs';
 
 export const HANDOVER_SCHEMA_VERSION = 1;
 export const OP_ID_RE = /^\d{8}T\d{9}Z-[0-9a-f]{6}$/;
@@ -667,9 +667,18 @@ export function renderHandoverMarkdown(m, art) {
   return L.join('\n');
 }
 
-/** A pasteable claim for an unregistered worktree: every data argument goes through the one shell quoter. */
-export function claimCommand(u, fleetCli, platform = process.platform) {
-  return `${renderCommand(['cd', u.worktree], platform)}; ${renderCommand([...fleetCli.split(' '), 'claim', '--id', u.branch, '--intent', 'what it is', '--paths', 'changed/paths/**'], platform)}`;
+/**
+ * A pasteable claim for an unregistered worktree. A claim binds the worktree it runs FROM, so the directory
+ * change is fail-closed: if it fails, the claim never runs against whatever directory the shell was in. The
+ * CLI is the main checkout's, by absolute path — a linked worktree of a consumer has no synced tooling unless
+ * hydrated. Every data argument goes through the one shell quoter.
+ */
+export function claimCommand(u, fleetCli, repo, platform = process.platform) {
+  const [bin, script, ...rest] = fleetCli.split(' ');
+  const claim = renderCommand([bin, path.resolve(repo, script), ...rest, 'claim', '--id', u.branch, '--intent', 'what it is', '--paths', 'changed/paths/**'], platform);
+  return platform === 'win32'
+    ? `Set-Location -LiteralPath ${quoteArg(u.worktree, platform)} -ErrorAction Stop; ${claim}`
+    : `cd ${quoteArg(u.worktree, platform)} && ${claim}`;
 }
 
 /** "Unregistered work" section: worktrees holding work that no live claim covers. */
@@ -685,7 +694,7 @@ function renderUnregistered(m) {
       const risk = RISK_KINDS.filter((k) => u.risks[k]).map((k) => `${u.risks[k]} ${k}`).join(', ') || 'unverifiable';
       L.push(`- \`${u.worktree}\` — ${u.branch ? `branch \`${u.branch}\`` : 'detached HEAD'}${u.locked ? ' (locked)' : ''}: ${risk}${u.unverified?.length ? `; UNVERIFIED: ${u.unverified.join('; ')}` : ''}`);
       if (u.risks.unpushed && RISK_KINDS.every((k) => k === 'unpushed' || !u.risks[k])) L.push('  - only unpushed commits: if the branch was squash-merged and its remote deleted, they are already on the base — check before claiming');
-      if (u.branch) L.push(`  - claim (from inside the worktree; replace the intent and paths): \`${claimCommand(u, r.fleetCli ?? m.fleetCommand)}\``);
+      if (u.branch) L.push(`  - claim (from inside the worktree; replace the intent and paths): \`${claimCommand(u, r.fleetCli ?? m.fleetCommand, r.path)}\``);
     }
     L.push('');
   }

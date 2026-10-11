@@ -10,13 +10,15 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { git } from './helpers/git.mjs';
 import {
   HANDOVER_SCHEMA_VERSION, OP_ID_RE, checkHandoverFlags, collectMemory, decideFile, handoverId, loadManifest,
   claimCommand, mainCheckout, receiveHandover, safeRelSegments,
 } from '../scripts/lib/fleet/handover.mjs';
 import { withFileLockSync } from '../scripts/lib/file-lock.mjs';
-import { cleanupFleetRoots, makeFleetRepo, runFleet, scrubbedEnv, tmpRoot } from './helpers/fleet-repo.mjs';
+import { quoteArg } from '../scripts/lib/fleet/shell-quote.mjs';
+import { FLEET_CLI, cleanupFleetRoots, makeFleetRepo, runFleet, scrubbedEnv, tmpRoot } from './helpers/fleet-repo.mjs';
 
 after(cleanupFleetRoots);
 
@@ -414,15 +416,34 @@ describe('unregistered work — worktrees holding work no claim covers', () => {
   });
 });
 
-describe('claimCommand (H2/M3)', () => {
-  const u = { worktree: "/w/it's $(rm -rf x)", branch: 'feat;$(id)' };
-  it('quotes every data argument on POSIX', () => {
-    const c = claimCommand(u, 'node scripts/fleet.mjs', 'linux');
-    assert.equal(c, "cd '/w/it'\\''s $(rm -rf x)'; node scripts/fleet.mjs claim --id 'feat;$(id)' --intent 'what it is' --paths 'changed/paths/**'");
+describe('claimCommand (H2/M3, R2-H1)', () => {
+  const cli = (platform) => quoteArg(path.resolve('/r', 'scripts/fleet.mjs'), platform);
+  it('quotes every data argument on POSIX, and only claims after a successful cd', () => {
+    const c = claimCommand({ worktree: "/w/it's $(rm -rf x)", branch: 'feat;$(id)' }, 'node scripts/fleet.mjs', '/r', 'linux');
+    assert.equal(c, `cd '/w/it'\\''s $(rm -rf x)' && node ${cli('linux')} claim --id 'feat;$(id)' --intent 'what it is' --paths 'changed/paths/**'`);
   });
-  it('quotes every data argument for PowerShell', () => {
-    const c = claimCommand({ worktree: "C:\\w\\it's", branch: 'feat;$x' }, 'node scripts/fleet.mjs', 'win32');
-    assert.equal(c, "cd 'C:\\w\\it''s'; node scripts/fleet.mjs claim --id 'feat;$x' --intent 'what it is' --paths 'changed/paths/**'");
+  it('quotes every data argument for PowerShell, and a failed Set-Location terminates', () => {
+    const c = claimCommand({ worktree: "C:\\w\\it's", branch: 'feat;$x' }, 'node scripts/fleet.mjs', '/r', 'win32');
+    assert.equal(c, `Set-Location -LiteralPath 'C:\\w\\it''s' -ErrorAction Stop; node ${cli('win32')} claim --id 'feat;$x' --intent 'what it is' --paths 'changed/paths/**'`);
+  });
+  it('executed from inside another fleet repo: a missing worktree claims nothing; an existing one claims IT', () => {
+    const fx = makeFleetRepo();
+    const env = scrubbedEnv({ FLEET_TELEMETRY: 'off' });
+    const sourceRoot = path.resolve(path.dirname(FLEET_CLI), '..');
+    const run = (cmd) => (process.platform === 'win32'
+      ? spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', cmd], { cwd: fx.repo, env, encoding: 'utf8' })
+      : spawnSync('sh', ['-c', cmd], { cwd: fx.repo, env, encoding: 'utf8' }));
+    const sessionsDir = path.join(git(['rev-parse', '--path-format=absolute', '--git-common-dir'], fx.repo), 'fleet', 'sessions');
+    const records = () => (fs.existsSync(sessionsDir) ? fs.readdirSync(sessionsDir).filter((f) => f.endsWith('.json')) : []);
+    const missing = run(claimCommand({ worktree: path.join(fx.root, 'gone'), branch: 'ghost' }, 'node scripts/fleet.mjs', sourceRoot));
+    assert.notEqual(missing.status, 0, 'a failed directory change must fail the command');
+    assert.deepEqual(records(), [], 'no claim was written against the shell\'s original directory');
+    const wt = path.join(fx.root, 'real-wt');
+    git(['worktree', 'add', '-q', '-b', 'real', wt], fx.repo);
+    const okRun = run(claimCommand({ worktree: wt, branch: 'real' }, 'node scripts/fleet.mjs', sourceRoot));
+    assert.equal(okRun.status, 0, okRun.stderr + okRun.stdout);
+    const rec = JSON.parse(fs.readFileSync(path.join(sessionsDir, records()[0]), 'utf8'));
+    assert.equal(path.resolve(rec.worktree).toLowerCase(), path.resolve(wt).toLowerCase(), 'the claim is bound to the target worktree');
   });
 });
 
