@@ -83,6 +83,7 @@
 | `removeDebtEntryCloud` | `debt_entries` | — | `void` | n/a |
 | `appendDebtEventsCloud` | `debt_events` | — | `void` | n/a |
 | `readDebtEventsCloud` | — | `debt_events` | `[{eventType, ...}]` | `contract:created_at ASC` |
+| `readDebtEventsCloudResult` | — | `debt_events` | `{ok:true, events} \| {ok:false, events:[], reason}` | `contract:created_at ASC` |
 
 ## bandit-fp (Thompson Sampling + false-positive learning)
 

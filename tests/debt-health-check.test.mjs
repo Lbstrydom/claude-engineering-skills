@@ -29,8 +29,11 @@ function makeEntry(topicId, { file = 'src/x.js', severity = 'MEDIUM', deferredAt
   };
 }
 
+// AUDIT_DB_URL='' is the air-gap signal: these tests pin the LOCAL-cache
+// contract, and the CLI now asks the private store whenever one is configured —
+// without it they would read whichever store this machine points at.
 function runCli(args, env = {}) {
-  return spawnSync('node', [scriptPath, ...args], { encoding: 'utf-8', cwd: path.resolve('.'), env: { ...process.env, ...env } });
+  return spawnSync('node', [scriptPath, ...args], { encoding: 'utf-8', cwd: path.resolve('.'), env: { ...process.env, AUDIT_DB_URL: '', ...env } });
 }
 
 beforeEach(() => {
