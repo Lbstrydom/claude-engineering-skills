@@ -145,7 +145,7 @@ Sessions stop at **ship-ready**: audited, PR open, `fleet ready`. They do **not*
 | T6 | **Verify** | `node scripts/ship-train.mjs verify --train <trainId>` checks that every landed claim is **true** (§2.8): each merge commit's trailers parse, and each claim is supported by git and the store. It also derives the final merge OID and any interleaved foreign commits. It writes a pending-note with the **actual** gates and any deviation, so the next status entry carries them. It is read-only apart from that note, and re-runnable. |
 | T7 | Post-land advisories, once per train | `/ship` Steps 6.5–6.7, unchanged. |
 | T8 | **Consumer sync** | `node scripts/ship-train.mjs sync --train <trainId> [--accept-interleaved] [--accept-provenance-mismatch]` **re-runs T6's verification in the same invocation** and refuses unless it is clean, or unless every remaining block is acknowledged by a flag given on this invocation (§2.8). It then creates a clean detached worktree at the derived **final merge OID** (never a re-read branch tip), checks its tree, and runs `sync-to-repos` there, then `sync-pr`. Newer commits on `main` are reported as **not** part of this publication. It records the Step 6.8 consumer-verification note, naming any acknowledged oids. |
-| T9 | Ship event | One `record-ship-event` per train (it is one human ship action). Its outcome reflects the worst per-PR result; a train that stopped partway reports `warned` with the PR it stopped at. |
+| T9 | Ship event | One `record-ship-event` per **`/ship --train` invocation**, because the event's unit is a human ship action, not a train (plan R4 M1). A train finished across two invocations (stop, then `land --resume` under a second `/ship --train`) therefore records two events, each true of its own invocation, and no idempotency key is needed. The outcome reflects the worst per-PR result of that invocation; one that stopped partway reports `warned` with the PR it stopped at. |
 
 **Why the log rides inside the train, not after it.** A follow-up log PR would need its own required-checks wait: a second CI run and a second landing, exactly the per-change overhead trains exist to remove. Riding inside the train means one combined test run covers it.
 
@@ -303,10 +303,18 @@ Each fix created the next finding. That is the AGENTS.md over-engineering signal
 | Merge checkpoints (`merges[pr]`) and landing recovery — plan R1 H5 | resume after a crash without double-merging | **fleet's serial progress record** (`fleet/serial/<trainId>.json`, `scripts/lib/fleet/serial.mjs:70-90`) and its resume (`resumeSerial`), plus **GitHub** (`gh pr view --json state,headRefOid,mergeCommit`) | Serial already resumes per PR and never resubmits a PR GitHub reports MERGED. A ship-train copy would have been a second checkpoint to reconcile. |
 | Landing order — plan R2 M1 | find the final merge; detect reordering | the manifest's `sources` order (fleet's `landingOrder`) and `main`'s first-parent chain | Both are read fresh in the same invocation that uses them. |
 | `verify` record, `verified`/`verified-interleaved` phases, `publicationAmendment`, revocation, basis hash, compare-and-swap — code R2–R6 | `sync` (a later invocation) consumed verify's result | **`sync` re-runs verification itself, in the same invocation**, and gates on that fresh result plus flags given on that invocation | With no stored verify result there is nothing to go stale, be revoked, race, or drift from its basis. The class of finding R2–R6 produced becomes unrepresentable rather than handled. |
-| Publication checkpoints per consumer | resume a partly-failed sync | **sync-to-repos' own journal** (`scripts/.sync-in-progress.json`) and per-consumer receipts (rollback refusal), and **sync-pr**'s per-consumer skip of a consumer with nothing to do | Re-running `sync --train` is safe by those tools' own contracts. |
+| Publication checkpoints per consumer | resume a partly-failed sync | **sync-to-repos' in-progress journal, written in each CONSUMER checkout** (`path.join(repo.path, LAYOUT_CONSTANTS.IN_PROGRESS_JOURNAL)`, `scripts/sync-to-repos.mjs:1701` (5157ff65)), the consumer-side rollback receipts, and **sync-pr**'s per-consumer skip of a consumer with nothing to do | The recovery state lives in the consumer, so removing the source-side publication worktree cannot touch it. A retry re-creates the source worktree at the same final merge OID, and the tools reopen their own journals. (Plan R4 H2 was dismissed on exactly this evidence.) |
 | `opId` key for the status.md entry | the fleet train id does not exist when the entry is written | the entry's **date + PR list** | The entry never needed a machine key; the train id appears in T6's pending-note. |
 
-**Claim truth, the key move.** For each source in the fleet manifest that GitHub reports MERGED, `verify` reads the squash commit's trailers and checks what each one **asserts**:
+**Source identity first** (plan R4 H1). Before any trailer is read, `verify` proves that each merged PR **is the source the train tested**. A PR can change after the manifest pinned it, gain a valid audit, and be merged by someone else. Its trailers could then pass every truth check while carrying content the combined run never saw.
+
+So, for each manifest source, GitHub's merged `headRefOid` must be one of:
+- the manifest's pinned `sources[].oid`; or
+- a chain of fleet serial's **own** base-only updates leading back to it, each link proven by fleet's existing oracle `classifyUpdatedHead` (`scripts/lib/fleet/serial.mjs:109` (5157ff65)). That oracle requires two parents, the first being the prior head, the second on the base, and a tree equal to a clean re-merge. The chain is bounded at a small number of links.
+
+Anything else (a foreign head, an unverifiable link) **blocks publication with no override flag**. Identity is not acknowledgeable, because it is the train's definition. A PR that merged at a foreign head is reported as a foreign commit, not a train source.
+
+**Claim truth, the key move.** For each source that passed the identity check and that GitHub reports MERGED, `verify` reads the squash commit's trailers and checks what each one **asserts**:
 - The block **parses** as a last-paragraph trailer block, with no duplicated `AI-*` key. Classes B1/B2 (§1.1) fail here.
 - **`passed`** asserts tree identity plus a verified verdict. It is true iff:
   - `AI-Audited-Tree` equals the commit's own `%T`;
@@ -344,7 +352,7 @@ Commits after the final merge are never published by this train.
 | T4 build | fleet manifest + phase | fleet's own `--abandon` / rebuild |
 | T5 landing | fleet serial record + GitHub | `ship-train land --train <id> --resume [same overrides]`. Serial resumes; a source GitHub reports MERGED is recorded, never resubmitted. `messageFor` recomputes the decision on the current head, so a stale decision is never replayed. A source whose fresh decision is now a refusal stops the run, and the output names it. |
 | T6 verify | nothing (read-only apart from its note) | re-run |
-| T8 sync | sync-to-repos journal + consumer receipts | re-run `sync --train <id>`; already-synced consumers are no-ops, and rollbacks are refused by the consumer receipt |
+| T8 sync | sync-to-repos' journal and rollback receipts, **in each consumer checkout** | re-run `sync --train <id>`. It re-creates the source worktree at the same final merge OID; already-synced consumers are no-ops; rollbacks are refused by the consumer receipt |
 
 There is no ship-train lock, because ship-train writes nothing that two processes could race on. Concurrent landing of the same train is excluded by fleet's own train lock (`withTrainLock`, `scripts/lib/fleet/train.mjs:156` (5157ff65)).
 
@@ -495,6 +503,12 @@ A terminal stop never auto-retries.
 - decide the message for a still-open PR **fresh** on its current head. Case: strict protection removed between attempts → the retry claims `converged`, not the `passed` the first attempt would have claimed;
 - stop **before merging** when the fresh decision is a refusal;
 - re-run only the consumers that are not already synced (the sync tools' own no-op contract).
+
+**Source identity (`verify`):**
+- a merged head equal to the pinned oid passes;
+- a head that is one or two serial base-only updates of it passes, via `classifyUpdatedHead`;
+- a head the PR gained after pinning (truthful trailers, valid audit) **blocks with no override flag**;
+- an unverifiable link (fetch failure) blocks as unverifiable.
 
 **Claim truth (`verify`):**
 - every row of the §2.8 truth list, true and false;
