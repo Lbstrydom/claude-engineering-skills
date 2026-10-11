@@ -179,7 +179,9 @@ function renderHuman(summary) {
   const bySeverity = Object.entries(summary.bySeverity).map(([k, v]) => `${k}:${v}`).join(' ');
   lines.push(`  Severity — ${bySeverity}`);
   lines.push(`  Stale (>${TTL_DAYS}d): ${summary.stale.length}`);
-  lines.push(`  Recurring (>=${RECURRENCE_THRESHOLD} runs): ${summary.recurring.length}`);
+  lines.push(summary.recurring === null
+    ? `  Recurring (>=${RECURRENCE_THRESHOLD} runs): unknown — the store's events could not be read (${summary.recurrenceReason})`
+    : `  Recurring (>=${RECURRENCE_THRESHOLD} runs): ${summary.recurring.length}`);
   if (summary.violations.length > 0) {
     lines.push(`  Budget violations: ${summary.violations.length}`);
     for (const v of summary.violations) {
@@ -254,11 +256,15 @@ async function main() {
     oldestEntryDays: oldestEntryDays(entries, now),
     bySeverity,
     stale: findStaleEntries(entries, TTL_DAYS, now),
-    recurring: findRecurringEntries(entries, RECURRENCE_THRESHOLD).map((e) => e.topicId),
+    // null, not [], when the store's events could not be read: the entries
+    // stand, but "0 recurring" would be a count of an unasked question.
+    recurring: auth.recurrenceMeasured
+      ? findRecurringEntries(entries, RECURRENCE_THRESHOLD).map((e) => e.topicId) : null,
+    recurrenceReason: auth.recurrenceReason ?? null,
     violations: findBudgetViolations(entries, budgets),
     duplicates: findDuplicateTopicIds(ledger.entries),
   };
-  summary.triggered = summary.stale.length > 0 || summary.recurring.length > 0
+  summary.triggered = summary.stale.length > 0 || (summary.recurring?.length ?? 0) > 0
     || summary.violations.length > 0 || summary.duplicates.length > 0;
 
   if (opts.jsonMode) {
@@ -267,13 +273,24 @@ async function main() {
     // defect restated in JSON. Exit stays 0: this is an advisory maintenance
     // nudge (maintenance-checks.mjs `attention` semantics), and an
     // unverifiable input must not start gating what a clean one never gated.
+    // Every number DERIVED from the entries is null when they were not read —
+    // an empty `stale: []` beside `available: false` still reads as "0 stale".
+    // `duplicates` is a property of the local FILE and stands on its own read.
+    // A partial read (entries read, store events not) is not a clean one:
+    // `incomplete`, never `ok`, whenever nothing else already needs attention.
     const measured = summary.available !== false;
+    const complete = measured && summary.recurring !== null;
     const out = JSON.stringify({
-      ok: measured ? !summary.triggered : false,
-      verdict: !measured ? 'unverifiable' : (summary.triggered ? 'attention' : 'ok'),
+      ok: complete ? !summary.triggered : false,
+      verdict: !measured ? 'unverifiable' : (summary.triggered ? 'attention' : (complete ? 'ok' : 'incomplete')),
       ...summary,
       totalEntries: measured ? summary.totalEntries : null,
       oldestEntryDays: measured ? summary.oldestEntryDays : null,
+      bySeverity: measured ? summary.bySeverity : null,
+      stale: measured ? summary.stale : null,
+      recurring: measured ? summary.recurring : null,
+      violations: measured ? summary.violations : null,
+      duplicates: ledger.available !== false ? summary.duplicates : null,
     }) + '\n';
     if (opts.outFile) writeOut(opts.outFile, out);
     else process.stdout.write(out);

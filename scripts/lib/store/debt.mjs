@@ -383,31 +383,52 @@ export async function appendDebtEventsCloud(repoId, events) {
 }
 
 /**
- * Read all debt events for a repo, ordered chronologically.
+ * Read all debt events for a repo, ordered chronologically — and say whether
+ * the read happened. A failed query and an empty history are different facts:
+ * `{ok:false}` is the first, `{ok:true, events:[]}` the second. A REPORTING
+ * caller that derives a count from events (recurrence) must use this, never
+ * `readDebtEventsCloud`, which folds the failure into `[]`.
  *
  * @param {string|null} repoId
+ * @returns {Promise<{ok: true, events: object[]} | {ok: false, events: [], reason: string}>}
  */
-export async function readDebtEventsCloud(repoId) {
-  if (!repoId || !await isCloudEnabled()) return [];
+export async function readDebtEventsCloudResult(repoId) {
+  if (!repoId) return { ok: false, events: [], reason: 'repo-identity-unresolved' };
+  if (!await isCloudEnabled()) return { ok: false, events: [], reason: 'cloud-off' };
   try {
     const rows = await many(
       `SELECT * FROM debt_events WHERE repo_id = $1 ORDER BY ts ASC`,
       [repoId]
     );
-    return rows.map((row) => ({
-      ts: row.ts,
-      runId: row.run_id,
-      topicId: row.topic_id ?? undefined,
-      event: row.event,
-      matchCount: row.match_count ?? undefined,
-      rationale: row.rationale ?? undefined,
-      resolutionRationale: row.resolution_rationale ?? undefined,
-      resolvedBy: row.resolved_by ?? undefined,
-    }));
+    return {
+      ok: true,
+      events: rows.map((row) => ({
+        ts: row.ts,
+        runId: row.run_id,
+        topicId: row.topic_id ?? undefined,
+        event: row.event,
+        matchCount: row.match_count ?? undefined,
+        rationale: row.rationale ?? undefined,
+        resolutionRationale: row.resolution_rationale ?? undefined,
+        resolvedBy: row.resolved_by ?? undefined,
+      })),
+    };
   } catch (err) {
     process.stderr.write(`  [learning] readDebtEventsCloud failed: ${err.message}\n`);
-    return [];
+    return { ok: false, events: [], reason: `events-read-failed:${err?.code || 'unknown'}` };
   }
+}
+
+/**
+ * Read all debt events for a repo, ordered chronologically. Best-effort:
+ * a failure reads as `[]` (hydration for an audit run, where a missing
+ * recurrence signal only weakens suppression). Reporting callers use
+ * `readDebtEventsCloudResult`.
+ *
+ * @param {string|null} repoId
+ */
+export async function readDebtEventsCloud(repoId) {
+  return (await readDebtEventsCloudResult(repoId)).events;
 }
 
 /**

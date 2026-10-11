@@ -103,6 +103,10 @@ function renderMarkdown({ ledger, review, violations, mode, upstreamOwned = [], 
   if (ledger.localCacheEntries != null && ledger.localCacheEntries !== ledger.entries.length) {
     lines.push(`- **Local cache**: ${ledger.localCacheEntries} entries (diverges — \`node scripts/debt-reconcile.mjs\`)`);
   }
+  if (ledger.recurrenceMeasured === false) {
+    // Recurrence feeds the ranking; without it every entry reads as surfaced 0 times.
+    lines.push(`- **Recurrence**: unknown — the store's events could not be read (${ledger.recurrenceReason}); the ranking below ignores it`);
+  }
   lines.push(`- **Clusters**: ${review.clusters.length}`);
   lines.push(`- **Oldest entry**: ${review.summary.oldestEntryDays} days`);
   lines.push(`- **Stale (>TTL)**: ${review.summary.staleEntries.length}`);
@@ -433,6 +437,8 @@ async function main() {
     reason: auth.reason,
     source: auth.source,
     localCacheEntries: auth.source === 'cloud' && local.available !== false ? local.entries.length : null,
+    recurrenceMeasured: auth.recurrenceMeasured,
+    recurrenceReason: auth.recurrenceReason,
   };
 
   // "There is no ledger" and "the ledger is empty" are different claims, and

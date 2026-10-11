@@ -43,7 +43,7 @@ import {
 } from './debt-events.mjs';
 import {
   removeDebtEntryCloud, readDebtEntriesCloud,
-  appendDebtEventsCloud, readDebtEventsCloud, markSupersededCloud,
+  appendDebtEventsCloud, readDebtEventsCloud, readDebtEventsCloudResult, markSupersededCloud,
   enrichDebtEntriesWithAliases,
   initLearningStore, isCloudEnabled, resolveRepoForStore,
 } from '../learning-store.mjs';
@@ -108,13 +108,18 @@ export const DEBT_SOURCE_LABELS = Object.freeze({ cloud: 'private store', local:
  *
  * @param {object} [opts]
  * @param {boolean} [opts.noCloud=false] - read the local cache only
+ * @param {object} [deps] - the store seams (tests inject them)
  * @returns {Promise<{ source: string, canWrite: false, repoId: string|null }>}
  */
-export async function resolveDebtReadContext({ noCloud = false } = {}) {
+export async function resolveDebtReadContext({ noCloud = false } = {}, {
+  init = initLearningStore,
+  cloudEnabled = isCloudEnabled,
+  resolveRepo = () => resolveRepoForStore({ profile: generateRepoProfile() }),
+} = {}) {
   if (noCloud) return { source: EventSource.LOCAL, canWrite: false, repoId: null };
-  await initLearningStore().catch(() => {});
-  if (!await isCloudEnabled()) return { source: EventSource.LOCAL, canWrite: false, repoId: null };
-  const ref = await resolveRepoForStore({ profile: generateRepoProfile() }).catch(() => null);
+  await Promise.resolve().then(init).catch(() => {});
+  if (!await cloudEnabled()) return { source: EventSource.LOCAL, canWrite: false, repoId: null };
+  const ref = await Promise.resolve().then(resolveRepo).catch(() => null);
   return { source: EventSource.CLOUD, canWrite: false, repoId: ref?.repoRowId ?? null };
 }
 
@@ -171,36 +176,46 @@ export async function loadDebtLedger(context, {
  *
  * Entries from either source are hydrated with the event-derived fields
  * (`distinctRunCount`, …) from THAT source's events, so a recurrence count
- * computed over store rows is not silently zero.
+ * computed over store rows is not silently zero. `recurrenceMeasured` is false
+ * when the events read failed (the entries still stand): a caller must not
+ * print a recurrence count then.
  *
  * @param {object} context - from selectEventSource()
  * @param {object} [opts]
  * @param {string} [opts.ledgerPath=DEFAULT_DEBT_LEDGER_PATH]
  * @param {string} [opts.eventsPath=DEFAULT_DEBT_EVENTS_PATH]
  * @returns {Promise<{entries: object[], source: 'cloud'|'local'|'unavailable',
- *   reason: string|null, degraded: boolean}>}
+ *   reason: string|null, degraded: boolean, recurrenceMeasured: boolean,
+ *   recurrenceReason: string|null}>}
  */
 export async function loadAuthoritativeDebt(context, {
   ledgerPath = DEFAULT_DEBT_LEDGER_PATH,
   eventsPath = DEFAULT_DEBT_EVENTS_PATH,
 } = {}) {
   if (context.source === EventSource.DISABLED) {
-    return { entries: [], source: 'unavailable', reason: 'debt-ledger-disabled', degraded: false };
+    return { entries: [], source: 'unavailable', reason: 'debt-ledger-disabled', degraded: false, recurrenceMeasured: false, recurrenceReason: null };
   }
 
   if (context.source === EventSource.CLOUD && context.repoId) {
     try {
       const rows = await readDebtEntriesCloud(context.repoId);
       if (Array.isArray(rows)) {
-        const events = await readDebtEventsCloud(context.repoId);
-        return { entries: hydrateDebtEntries(rows, events), source: 'cloud', reason: null, degraded: false };
+        // The entry count stands on its own; recurrence needs the events read
+        // to have HAPPENED. A failed events query must not hydrate as "no
+        // recurrence" — that is a count of 0 for an unasked question.
+        const events = await readDebtEventsCloudResult(context.repoId);
+        return {
+          entries: hydrateDebtEntries(rows, events.events), source: 'cloud', reason: null, degraded: !events.ok,
+          recurrenceMeasured: events.ok, recurrenceReason: events.ok ? null : events.reason,
+        };
       }
       // A non-array is a malformed response. Never parse it as "no debt".
-      return { entries: [], source: 'unavailable', reason: 'cloud-response-malformed', degraded: true };
+      return { entries: [], source: 'unavailable', reason: 'cloud-response-malformed', degraded: true, recurrenceMeasured: false, recurrenceReason: null };
     } catch (err) {
       return {
         entries: [], source: 'unavailable',
         reason: `cloud-read-failed:${err?.code || 'unknown'}`, degraded: true,
+        recurrenceMeasured: false, recurrenceReason: null,
       };
     }
   }
@@ -208,7 +223,7 @@ export async function loadAuthoritativeDebt(context, {
   // Cloud off (or repo identity unresolved) — fall back to the local cache,
   // and say so. A cache is a legitimate answer; an unlabelled one is not.
   if (context.source === EventSource.CLOUD && !context.repoId) {
-    return { entries: [], source: 'unavailable', reason: 'repo-identity-unresolved', degraded: true };
+    return { entries: [], source: 'unavailable', reason: 'repo-identity-unresolved', degraded: true, recurrenceMeasured: false, recurrenceReason: null };
   }
 
   let ledger;
@@ -217,12 +232,12 @@ export async function loadAuthoritativeDebt(context, {
   } catch (err) {
     // Corruption is louder than unavailability and must not be softened into
     // it — but a reporting caller still must not print a count.
-    return { entries: [], source: 'unavailable', reason: 'ledger-corrupt', degraded: true, error: err.message };
+    return { entries: [], source: 'unavailable', reason: 'ledger-corrupt', degraded: true, error: err.message, recurrenceMeasured: false, recurrenceReason: null };
   }
   if (!ledger.available) {
-    return { entries: [], source: 'unavailable', reason: ledger.reason, degraded: false };
+    return { entries: [], source: 'unavailable', reason: ledger.reason, degraded: false, recurrenceMeasured: false, recurrenceReason: null };
   }
-  return { entries: ledger.entries, source: 'local', reason: null, degraded: false };
+  return { entries: ledger.entries, source: 'local', reason: null, degraded: false, recurrenceMeasured: true, recurrenceReason: null };
 }
 
 // ── Write: events ───────────────────────────────────────────────────────────
