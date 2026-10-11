@@ -316,13 +316,14 @@ Anything else (a foreign head, an unverifiable link) **blocks publication with n
 
 **Claim truth, the key move.** For each source that passed the identity check and that GitHub reports MERGED, `verify` reads the squash commit's trailers and checks what each one **asserts**:
 - The block **parses** as a last-paragraph trailer block, with no duplicated `AI-*` key. Classes B1/B2 (§1.1) fail here.
+- **Every run reference is resolved one way** (plan R5 H1). `AI-Run-ID` is looked up by `findCodeRunForRepo({repoRowId, runId})` in `scripts/lib/store/train-provenance.mjs`. That is one parameterised read, scoped to the current canonical repository (`resolveRepoRowIdForRead`, the same resolution `plan` uses) **and** to `mode = 'code'`, so the scope is not left to each claim rule. A run from another repo, a plan-mode run, or no row at all makes every audit-backed claim **false**. A schema fault is fatal, as in `plan`. This matters because §2.8 also judges PRs whose trailers ship-train did not write.
 - **`passed`** asserts tree identity plus a verified verdict. It is true iff:
   - `AI-Audited-Tree` equals the commit's own `%T`;
-  - the run named in `AI-Run-ID` exists in the store, is code-mode and converged;
+  - the run resolves (above) and is converged;
   - its `audited_tree` equals `AI-Audited-Tree`;
   - that tree is the tree of a commit in the PR (merge-base..merged head).
-- **`converged`** asserts the same binding and verdict without tree identity. It is true iff the run exists, is converged, and its `audited_tree` is the tree of a PR commit.
-- **`waived`** asserts only that a related run exists. It is true iff the run exists and its `audited_tree` or `audited_sha` belongs to the PR.
+- **`converged`** asserts the same binding and verdict without tree identity. It is true iff the run resolves (above), is converged, and its `audited_tree` is the tree of a PR commit.
+- **`waived`** asserts only that a related run exists. It is true iff the run resolves (above) and its `audited_tree` or `audited_sha` belongs to the PR.
 - **`not-run`** asserts nothing. It is true iff there is no `AI-Run-ID` and no `AI-Audited-Tree`.
 - An **under-claim** (`converged` where `passed` was provable, `not-run` on an audited PR) is **true** and not a failure. Verify notes it.
 
@@ -395,7 +396,7 @@ A terminal stop never auto-retries.
   - `publicationClearance` (pure).
   - `plan` reads `node scripts/fleet.mjs status --json` (the CLI, so no fleet edit) plus git. `verify` reads the fleet manifest through fleet's own `readTrain` (an import, not an edit).
 
-  Files: `scripts/lib/ship-train/verify.mjs` (create — claim truth + clearance, pure over gathered facts), `tests/ship-train-verify.test.mjs` (create), `scripts/lib/ship-train/commands.mjs` (create — the verbs over an injected context; under lib/ so tests import them without a `tests → ship` edge, which the layering test forbids), `scripts/ship-train.mjs` (create — thin CLI: argv, real context, rendering), `tests/ship-train-cli.test.mjs` (create).
+  Files: `scripts/lib/store/train-provenance.mjs` (modify — add `findCodeRunForRepo`), `scripts/lib/ship-train/verify.mjs` (create — claim truth + clearance, pure over gathered facts), `tests/ship-train-verify.test.mjs` (create), `scripts/lib/ship-train/commands.mjs` (create — the verbs over an injected context; under lib/ so tests import them without a `tests → ship` edge, which the layering test forbids), `scripts/ship-train.mjs` (create — thin CLI: argv, real context, rendering), `tests/ship-train-cli.test.mjs` (create).
   - *Amended during implementation:* no `npm run` alias. A synced SKILL.md must name tooling by path (AGENTS.md shape #5), so an alias would serve nobody. `CLI_SMOKE_SET` membership moved to Phase 6, because membership asserts consumer **presence** and so needs the `sync-to-repos.mjs` declaration in the same edit.
   - *Amended 2026-10-12 (§2.8):* the receipt module and its tests (`scripts/lib/ship-train/receipt.mjs`, `tests/ship-train-receipt.test.mjs`), and the `prepare`/`abandon` verbs, are removed. ship-train persists no state.
 - **Phase 4 — Serial `messageFor` seam**:
@@ -516,6 +517,7 @@ A terminal stop never auto-retries.
 - `passed` with `AI-Audited-Tree ≠ %T` is false;
 - `passed` naming a run whose `audited_tree` is not that trailer is false;
 - duplicated keys are false;
+- an `AI-Run-ID` from another repository, or naming a plan-mode run, makes `passed`/`converged`/`waived` false;
 - an under-claim is true and noted;
 - `not-run` on a non-ride-along PR is reported, not failed.
 
