@@ -24,6 +24,7 @@ import {
 } from '../scripts/lib/final-review/round-gate.mjs';
 import { applyPriorRoundSuppression, applyDebtSuppression } from '../scripts/lib/final-review/post-review.mjs';
 import { getReviewPrompt, RELEASE_BLOCKING_BLOCK } from '../scripts/lib/final-review/prompts.mjs';
+import { captureStderr } from './helpers/capture-stderr.mjs';
 
 function finding(overrides = {}) {
   return {
@@ -257,6 +258,25 @@ describe('applyPriorRoundSuppression — round 2 does not re-raise settled items
     assert.equal(computeGateDisposition(r).disposition, 'approve_with_debt');
   });
 
+  it('H1 (audit-code R1): a CURRENT release-blocking re-raise of a prior NON-blocking finding is kept — and the gate blocks', () => {
+    // The mirror of the H6 case above. Round 1 called it non-blocking; round 2 now says it
+    // blocks. Settling it by the prior judgement would turn `blocked` into `approve_with_debt`.
+    const reraise = blocking({ id: 'N1', detail: reworded.detail });
+    const r = result('CONCERNS_REMAINING', [reraise]);
+    applyPriorRoundSuppression(r, prior);
+    assert.equal(r.new_findings.length, 1, 'a blocker must not be settled by a prior judgement that it was not one');
+    assert.equal(r._priorSuppressedCount, 0);
+    assert.equal(r._priorRoundKept[0].reason, 'current_release_blocking');
+    assert.equal(r._priorRoundKept[0].matchedPriorId, 'G1', 'the near-miss is recorded, so the decision is auditable');
+    assert.equal(computeGateDisposition(r).disposition, 'blocked');
+  });
+
+  it('H1: a CURRENT finding with a missing or invalid blocking pair is kept too (fail closed)', () => {
+    const r = { new_findings: [{ ...reworded, release_blocking: undefined }] };
+    applyPriorRoundSuppression(r, prior);
+    assert.equal(r.new_findings.length, 1);
+  });
+
   it('no prior findings → no-op', () => {
     const r = { new_findings: [reworded] };
     assert.deepEqual(applyPriorRoundSuppression(r, []), { suppressed: 0 });
@@ -265,11 +285,17 @@ describe('applyPriorRoundSuppression — round 2 does not re-raise settled items
 });
 
 describe('applyDebtSuppression — file overlap required when the debt entry carries files (H5/H17)', () => {
+  // `detailSnapshot` is what makes the comparison SYMMETRIC (category+section+detail on both
+  // sides). An entry without one is not a candidate at all — see the fail-open block below.
   const debt = (o = {}) => ({
     topicId: 'debt0001aaaa', category: 'Missing Error Handling',
-    section: 'readConfig swallows the parse error and returns an empty object', ...o,
+    section: 'readConfig swallows the parse error and returns an empty object',
+    detailSnapshot: 'readConfig swallows the parse error and returns an empty object, hiding a corrupt config file',
+    ...o,
   });
-  const transcript = (entries) => JSON.stringify({ _debtMemory: { suppressionContext: entries } });
+  // The REAL envelope shape: build-audit-transcript nests each round's audit result under
+  // rounds[], so the debt envelope is at rounds[i]._debtMemory and NEVER at top level.
+  const transcript = (entries) => JSON.stringify({ rounds: [{ round: 1, _debtMemory: { suppressionContext: entries } }] });
 
   it('suppresses a finding matching a debt entry in the SAME file, recording id/topic/score/file', async () => {
     const r = { new_findings: [finding({ id: 'N1' })] };
@@ -303,6 +329,118 @@ describe('applyDebtSuppression — file overlap required when the debt entry car
     const r = { new_findings: [other] };
     await applyDebtSuppression(r, transcript([debt({ affectedFiles: ['scripts/lib/foo.mjs'] })]));
     assert.equal(r.new_findings.length, 1);
+  });
+});
+
+describe('applyDebtSuppression — symmetric signature, carve-outs, fail-open, loud errors', () => {
+  // Verbatim from the REAL debt ledger entry 713af1a3f1bc (the entry this change closes).
+  const POST_REVIEW = 'scripts/lib/final-review/post-review.mjs';
+  const REAL_DEBT = {
+    topicId: '713af1a3f1bc',
+    category: '[be-services] Incorrect Finding Suppression',
+    section: `${POST_REVIEW} — applyDebtSuppression`,
+    affectedFiles: [POST_REVIEW],
+    deferredReason: 'out-of-scope',
+    detailSnapshot: "Debt matching compares a new finding's category, section, and detail against only the deferred topic's category and section. Findings can therefore be removed based on topic overlap without establishing that they describe the same underlying defect.",
+  };
+  const transcript = (entries, extra = {}) => JSON.stringify({ rounds: [{ round: 1, _debtMemory: { suppressionContext: entries, ...extra } }] });
+  // A reviewer-authored finding at the debt's own locus. Defaults to a restatement.
+  const at = (o = {}) => finding({
+    id: 'N1', category: REAL_DEBT.category, section: REAL_DEBT.section,
+    detail: "applyDebtSuppression scores a new finding's category, section and detail against only the debt topic's category and section, so a finding can be deleted on wording overlap alone without establishing that it describes the same defect.",
+    ...o,
+  });
+
+  it('suppresses a normal-length paraphrase of the settled concern (the old matcher scored it 0.18 and MISSED it)', async () => {
+    const r = result('CONCERNS', [at()]);
+    await applyDebtSuppression(r, transcript([REAL_DEBT]));
+    assert.equal(r.new_findings.length, 0);
+    assert.equal(r._debtSuppressedFindings[0].matchedTopicId, '713af1a3f1bc');
+    assert.ok(r._debtSuppressedFindings[0].score > 0.5, `expected a clear margin over 0.30, got ${r._debtSuppressedFindings[0].score}`);
+  });
+
+  it('KEEPS a terse DISTINCT finding in the same category+section (the old matcher scored it 0.50 and DELETED it)', async () => {
+    const distinct = at({ id: 'N2', detail: 'A finding with is_reopened true is dropped.' });
+    const r = result('CONCERNS', [distinct]);
+    await applyDebtSuppression(r, transcript([REAL_DEBT]));
+    assert.equal(r.new_findings.length, 1, 'a different defect that shares a topic label must survive');
+    assert.equal(r._debtSuppressedCount, undefined);
+  });
+
+  it('works through the DEBT envelope at any depth the accessor reads — nested rounds AND the legacy top-level key', async () => {
+    for (const shape of [
+      JSON.stringify({ rounds: [{ _debtMemory: { suppressionContext: [REAL_DEBT] } }] }),
+      JSON.stringify({ _debtMemory: { suppressionContext: [REAL_DEBT] } }),
+    ]) {
+      const r = result('CONCERNS', [at()]);
+      await applyDebtSuppression(r, shape);
+      assert.equal(r.new_findings.length, 0, shape.slice(0, 40));
+    }
+  });
+
+  it('NEGATIVE CONTROL: an envelope in neither place suppresses nothing (the reader is not trivially permissive)', async () => {
+    const r = result('CONCERNS', [at()]);
+    await applyDebtSuppression(r, JSON.stringify({ rounds: [{ round: 1 }], summary: { _debtMemory: { suppressionContext: [REAL_DEBT] } } }));
+    assert.equal(r.new_findings.length, 1);
+  });
+
+  it('ALWAYS keeps is_reopened:true — an exact restatement that cites the reopening is live work', async () => {
+    const r = result('CONCERNS', [at({ is_reopened: true })]);
+    await applyDebtSuppression(r, transcript([REAL_DEBT]));
+    assert.equal(r.new_findings.length, 1);
+  });
+
+  it('ALWAYS keeps a release-blocking restatement — and the gate still BLOCKS (the stage runs upstream of it)', async () => {
+    const r = result('CONCERNS', [at({ id: 'N3', release_blocking: true, blocking_basis: 'data_loss' })]);
+    await applyDebtSuppression(r, transcript([REAL_DEBT]));
+    assert.equal(r.new_findings.length, 1, 'deleting a release blocker would turn blocked into approve_with_debt');
+    assert.equal(computeGateDisposition(r).disposition, 'blocked');
+  });
+
+  it('NEGATIVE CONTROL: the same restatement with the blocking pair cleared IS suppressed (the exemption is the pair, not the text)', async () => {
+    const r = result('CONCERNS', [at({ release_blocking: false, blocking_basis: 'none' })]);
+    await applyDebtSuppression(r, transcript([REAL_DEBT]));
+    assert.equal(r.new_findings.length, 0);
+  });
+
+  it('keeps a finding with a missing or invalid blocking pair (isReleaseBlocking fails closed)', async () => {
+    const r = result('CONCERNS', [at({ release_blocking: undefined })]);
+    await applyDebtSuppression(r, transcript([REAL_DEBT]));
+    assert.equal(r.new_findings.length, 1);
+  });
+
+  it('FAILS OPEN on a debt topic with no detailSnapshot — and says so once on stderr, never silently', async () => {
+    const { detailSnapshot: _omit, ...legacy } = REAL_DEBT;
+    const r = result('CONCERNS', [at()]);
+    const { text: stderr } = await captureStderr(() => applyDebtSuppression(r, transcript([legacy])));
+    assert.equal(r.new_findings.length, 1, 'a legacy envelope must not fall back to the asymmetric comparison');
+    assert.match(stderr, /1 of 1 debt topics? carr(?:y|ies) no detailSnapshot/);
+  });
+
+  it('a malformed entry beside a valid one: the valid one still matches, nothing is swallowed silently', async () => {
+    const r = result('CONCERNS', [at()]);
+    const { text: stderr } = await captureStderr(() => applyDebtSuppression(r, transcript([null, REAL_DEBT])));
+    assert.equal(r.new_findings.length, 0, 'one bad entry must not disable the stage');
+    assert.doesNotMatch(stderr, /NOT applied/, 'a filtered entry is not an operational failure');
+    assert.match(stderr, /1 malformed debt topic entr/);
+  });
+
+  it('an operational failure leaves new_findings untouched and is REPORTED — it no longer vanishes into an empty catch', async () => {
+    const boom = at({ id: 'N9' });
+    Object.defineProperty(boom, 'detail', { enumerable: true, get() { throw new Error('boom: detail getter'); } });
+    const r = result('CONCERNS', [boom, at({ id: 'N10' })]);
+    const before = [...r.new_findings];
+    const { text: stderr } = await captureStderr(() => applyDebtSuppression(r, transcript([REAL_DEBT])));
+    assert.deepEqual(r.new_findings, before, 'a throw mid-run must not half-write the result');
+    assert.equal(r._debtSuppressedCount, undefined);
+    assert.match(stderr, /Debt re-suppression NOT applied: boom: detail getter/);
+  });
+
+  it('a non-JSON (markdown) transcript is the one quiet case: no throw, no stderr, result untouched', async () => {
+    const r = result('CONCERNS', [at()]);
+    const { text: stderr } = await captureStderr(() => applyDebtSuppression(r, '# audit transcript\n\nnot json'));
+    assert.equal(r.new_findings.length, 1);
+    assert.equal(stderr, '');
   });
 });
 

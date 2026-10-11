@@ -20,7 +20,11 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { z } from 'zod';
 import { _internals } from '../scripts/gemini-review.mjs';
+import {
+  truncateToSchema, IDENTITY_PATHS, GeminiFinalReviewSchema, FinalReviewFindingSchema,
+} from '../scripts/lib/final-review/output-schemas.mjs';
 
 const { REVIEW_TRANSPORTS, PROVIDERS } = _internals;
 
@@ -94,5 +98,87 @@ describe('openai final-review transport — structured output', () => {
       assert.ok(!PROVIDERS[id]?.structuredOutput,
         `${id} must not opt in — azure-claude shares the openai adapter`);
     }
+  });
+});
+
+// ── truncateToSchema: prose is repaired, IDENTITY is not ────────────────────
+// `_maxLengthMap` used to cover every bounded string, so the repair that keeps a verbose
+// narrative from failing Zod also clipped identifiers: two distinct ids collapsed into one
+// (`G-existence-claim-one` / `-two` -> `G-existenc`) and a 12-hex ledger topicId stopped
+// joining to its entry (`713af1a3f1bc` -> `713af1a3f1`). Real logs showed
+// `new_findings[].id (21 -> 10)`. (docs/plans/final-review-debt-suppression-revival.md §2.4)
+describe('truncateToSchema — identity fields are never truncated', () => {
+  const finding = (id) => ({ id, severity: 'LOW', category: 'c', section: 's', detail: 'd' });
+
+  it('prose is STILL truncated (the repair this function exists for)', () => {
+    const truncated = [];
+    const out = truncateToSchema({ overall_reasoning: 'x'.repeat(3500), new_findings: [{ ...finding('G1'), detail: 'y'.repeat(900) }] }, '', truncated);
+    assert.equal(out.overall_reasoning.length, 3000);
+    assert.equal(out.new_findings[0].detail.length, 600);
+    assert.deepEqual(truncated.map((t) => t.split(' ')[0]), ['overall_reasoning', 'new_findings[].detail']);
+  });
+
+  it('every IDENTITY_PATHS member comes back WHOLE, however long', () => {
+    const out = truncateToSchema({
+      new_findings: [finding(`G-${'i'.repeat(200)}`)],
+      wrongly_dismissed: [{ original_finding_id: `topic-${'t'.repeat(200)}` }],
+    }, '', []);
+    assert.equal(out.new_findings[0].id.length, 202);
+    assert.equal(out.wrongly_dismissed[0].original_finding_id.length, 206);
+  });
+
+  it('the collision case: two distinct descriptive ids stay distinct', () => {
+    const out = truncateToSchema({ new_findings: [finding('G-existence-claim-one'), finding('G-existence-claim-two')] }, '', []);
+    assert.deepEqual(out.new_findings.map((f) => f.id), ['G-existence-claim-one', 'G-existence-claim-two']);
+  });
+
+  it('a 12-hex ledger topicId in original_finding_id survives (it used to become 10 chars and join to nothing)', () => {
+    const out = truncateToSchema({ wrongly_dismissed: [{ original_finding_id: '713af1a3f1bc' }] }, '', []);
+    assert.equal(out.wrongly_dismissed[0].original_finding_id, '713af1a3f1bc');
+  });
+
+  it('cited_lines: a long but realistic citation survives WHOLE (audit-code R1 M1/M5 — 100 cut valid deep paths)', () => {
+    // A 150-character repository path plus a line number: past the old 100 bound.
+    const deep = `${'packages/'.repeat(14)}core/src/widgets/very-long-component-name.mjs:4821`;
+    assert.ok(deep.length > 100 && deep.length < 300, `fixture length ${deep.length}`);
+    const out = truncateToSchema({ wrongly_dismissed: [{ cited_lines: [deep] }] }, '', []);
+    assert.equal(out.wrongly_dismissed[0].cited_lines[0], deep, 'the :line must not be cut off');
+  });
+
+  it('cited_lines is EVIDENCE, not prose (audit-code R2 M1): an oversized citation is never silently shortened — it is kept whole and REJECTED by validation', () => {
+    const oversized = `${'deeply/'.repeat(60)}nested.mjs:12`;
+    assert.ok(oversized.length > 300, `fixture length ${oversized.length}`);
+    const out = truncateToSchema({ wrongly_dismissed: [{ cited_lines: [oversized] }] }, '', []);
+    assert.equal(out.wrongly_dismissed[0].cited_lines[0], oversized, 'the reference must be preserved exactly');
+    // ...and the Zod bound that remains is what makes the oversize LOUD (callReviewer warns and keeps).
+    const citedSchema = GeminiFinalReviewSchema.shape.wrongly_dismissed.element.shape.cited_lines.unwrap().element;
+    assert.equal(citedSchema.safeParse(oversized).success, false);
+    assert.equal(citedSchema.safeParse(oversized.slice(0, 300)).success, true, 'negative control: the bound is exactly the loud limit');
+  });
+
+  it('every IDENTITY_PATHS entry names a REAL string field in the emitted schema (a rename must fail loudly, not re-enable truncation)', () => {
+    const schema = z.toJSONSchema(GeminiFinalReviewSchema);
+    const deref = (node) => (node?.$ref ? schema.$defs[node.$ref.replace('#/$defs/', '')] : node);
+    const resolve = (parts) => {
+      let cur = schema;
+      for (const part of parts) {
+        const isArray = part.endsWith('[]');
+        cur = deref(deref(cur)?.properties?.[isArray ? part.slice(0, -2) : part]);
+        if (isArray) cur = deref(cur?.items);
+      }
+      return cur;
+    };
+    assert.ok(IDENTITY_PATHS.size >= 2);
+    for (const p of IDENTITY_PATHS) {
+      const node = resolve(p.split('.'));
+      assert.equal(node?.type, 'string', `${p} must resolve to a string property`);
+      assert.ok(Number.isInteger(node.maxLength), `${p} keeps a Zod bound (validated loudly, never truncated)`);
+    }
+  });
+
+  it('the widened ids validate: a 12-hex topicId and a long descriptive id pass; > 40 fails loudly', () => {
+    assert.equal(FinalReviewFindingSchema.shape.id.safeParse('G-existence-claim-one').success, true);
+    assert.equal(FinalReviewFindingSchema.shape.id.safeParse('x'.repeat(41)).success, false);
+    assert.equal(GeminiFinalReviewSchema.shape.wrongly_dismissed.element.shape.original_finding_id.safeParse('713af1a3f1bc').success, true);
   });
 });
