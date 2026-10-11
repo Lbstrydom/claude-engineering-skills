@@ -278,6 +278,31 @@ if [ "$AUDIT_PREPUSH_ARCHIVE_LANE" != "0" ] && [ "$PUBLISHED_REFS" -gt 0 ]; then
       ;;
     "archive-lane/v1 not-applicable") ;;
     *)
+      # No valid result (script missing, crash, wrong protocol). Without the lane the
+      # hook cannot know a push was archive-only, so for an ordinary push this falls
+      # to the full gate as before. But for a push that LOOKS archive-only the full
+      # gate is the wrong answer: it fails on a backup for unrelated reasons AND does
+      # not scan, so it would either wave the push through unscanned or push the user
+      # to --no-verify. This is the one place bash spells the archive predicate
+      # (scripts/lib/prepush-archive-lane.mjs isArchiveRef is the oracle); it can only
+      # ever BLOCK, never choose the lane, and a drift test compares it with the
+      # oracle over a table of refs (tests/prepush-archive-lane-hook.test.mjs).
+      LANE_SEEN=0
+      LANE_LOOKS_ARCHIVE=1
+      while read -r _LA _LB LANE_RREF _LC; do
+        [ -z "$LANE_RREF" ] && continue
+        case "$LANE_RREF" in
+          refs/heads/archive/?*|refs/tags/archive/?*) LANE_SEEN=$((LANE_SEEN + 1)) ;;
+          *) LANE_LOOKS_ARCHIVE=0 ;;
+        esac
+      done <<EOF
+$PUSH_STDIN
+EOF
+      if [ "$LANE_LOOKS_ARCHIVE" -eq 1 ] && [ "$LANE_SEEN" -gt 0 ]; then
+        echo "✗  archive lane unavailable (${LANE_WHY:-it produced no valid result}) for a push that looks archive-only: refusing, because the full gate does NOT scan published content." >&2
+        echo "   Fix the lane, or revert to the full gate on purpose: AUDIT_PREPUSH_ARCHIVE_LANE=0 git push" >&2
+        exit 1
+      fi
       echo "⚠ archive lane unavailable (${LANE_WHY:-it produced no valid result}): running the full gate, which does NOT scan published content." >&2
       ;;
   esac

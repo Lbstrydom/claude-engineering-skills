@@ -214,7 +214,9 @@ export function displayPath(p) {
     const ext = /\.[A-Za-z0-9]{1,8}$/.exec(p)?.[0] ?? '';
     return `[redacted:${hash8(p)}]${ext}`;
   }
-  return visible(p);
+  // A non-sensitive path can still carry a token in its NAME (`ghp_….txt`), so the
+  // same secret redactor that guards the diagnostics' other fields applies here.
+  return visible(redactSecrets(p).text);
 }
 
 /**
@@ -293,7 +295,17 @@ export function makeGit(cwd, env = process.env) {
   return (args, { input, timeout } = {}) => {
     const r = spawnSync('git', args, {
       cwd,
-      env: { ...env, GIT_TERMINAL_PROMPT: '0' },
+      env: {
+        ...env,
+        GIT_TERMINAL_PROMPT: '0',
+        // The scan must read the objects the push will SEND. `git replace` refs make
+        // rev-list and cat-file answer with substitutes, while pack-objects ignores
+        // replacements and publishes the originals: a replacement could hide a
+        // secret from the scan and still ship it. A partial clone must not fetch a
+        // missing object mid-scan either; absent means unscanned, which is an error.
+        GIT_NO_REPLACE_OBJECTS: '1',
+        GIT_NO_LAZY_FETCH: '1',
+      },
       input,
       timeout,
       maxBuffer: LIMITS.maxBuffer,
@@ -376,7 +388,13 @@ export function parseRawLog(buffer) {
     // git puts a newline between a commit header and its first raw entry (measured
     // with od -c): NUL, newline, then the colon token. Entries after the first have
     // no newline, so strip leading newlines before matching.
-    const m = META.exec(tokens[i].replace(/^\n+/, ""));
+    const token = tokens[i].replace(/^\n+/, '');
+    const m = META.exec(token);
+    // A colon-led token that is not the shape this parser reads (a combined-diff
+    // `::` record, a future format) must not be skipped like a commit header: a
+    // skipped record is a path that was never classified, and a scan that cannot
+    // read its input is not a clean one.
+    if (!m && token.startsWith(':')) throw new LaneError('parse');
     if (!m) continue; // a commit header, or the empty token between records
     const p = tokens[i + 1];
     if (p === undefined || p === '') throw new LaneError('parse');
@@ -435,9 +453,18 @@ function readBodies(git, batch) {
  * @param {() => number} [p.now]
  * @param {typeof LIMITS} [p.limits] injectable so the limits are testable without 8 MiB fixtures
  */
-export function scanPublished({ git, decision, destination, now = Date.now, limits = LIMITS }) {
+export function scanPublished({ git: rawGit, decision, destination, now = Date.now, limits = LIMITS }) {
   const t0 = now();
   const checkBudget = () => { if (now() - t0 > limits.budgetMs) throw new LaneError('time-budget'); };
+  // ONE deadline for the whole scan: every git call is checked against it first and
+  // is handed what REMAINS as its own timeout, so a stalled subprocess is killed
+  // (code `timeout`) instead of outliving the budget that was only ever read
+  // between calls.
+  const git = (args, o = {}) => {
+    checkBudget();
+    const left = Math.max(1, limits.budgetMs - (now() - t0));
+    return rawGit(args, { ...o, timeout: Math.min(o.timeout ?? left, left) });
+  };
 
   const tipShas = [...new Set(decision.tips.map((t) => t.sha))];
   const peeled = peelToCommits(git, tipShas);
@@ -517,6 +544,8 @@ export function scanPublished({ git, decision, destination, now = Date.now, limi
     }
     if (scanned + excluded + unscanned !== objectCount) throw new LaneError('accounting');
   }
+  // The last batch can overrun the budget with nothing after it to notice.
+  checkBudget();
 
   return {
     findings: dedupeFindings(findings),
@@ -526,13 +555,21 @@ export function scanPublished({ git, decision, destination, now = Date.now, limi
 
 // ── Reporting ───────────────────────────────────────────────────────────────
 
+/**
+ * An acknowledgement is offered only for a set small enough to be shown IN FULL.
+ * It covers exactly the findings printed above it (plan D6): a fingerprint over 780
+ * findings next to a list of 40 would approve 740 nobody saw. Above this, no
+ * acknowledgement is offered (and none is accepted): split the push instead.
+ */
+export const ACK_MAX_FINDINGS = 200;
+
 /** Findings → human lines. Matched text is never printed. */
-export function formatFindings(findings, { limit = 40 } = {}) {
+export function formatFindings(findings, { limit = ACK_MAX_FINDINGS } = {}) {
   const lines = findings.slice(0, limit).map((f) => {
     const where = f.path ? displayPath(f.path) : `(${f.objType} object)`;
     return `   ${f.kind.padEnd(9)} ${f.objType.padEnd(7)} ${f.oid.slice(0, 8)}  ${where}  [${f.detail}]`;
   });
-  if (findings.length > limit) lines.push(`   … and ${findings.length - limit} more (the fingerprint covers all ${findings.length})`);
+  if (findings.length > limit) lines.push(`   … and ${findings.length - limit} more not shown`);
   return lines;
 }
 
@@ -585,7 +622,9 @@ export function runArchiveLane({ stdinText, destination, git, ack, now = Date.no
   }
 
   const fingerprint = fingerprintFindings(findings);
-  if (ack && ack === fingerprint) {
+  // An acknowledgement covers only what was SHOWN, so above the cap none is accepted.
+  const acknowledgeable = findings.length <= ACK_MAX_FINDINGS;
+  if (acknowledgeable && ack && ack === fingerprint) {
     return { outcome: 'clean', lines: [summary, `⚠ archive lane: ${findings.length} finding(s) acknowledged by AUDIT_ARCHIVE_LANE_ACK (${fingerprint}).`], fingerprint, findings, stats };
   }
   const lines = [
@@ -596,7 +635,12 @@ export function runArchiveLane({ stdinText, destination, git, ack, now = Date.no
   ];
   const redacted = findings.find((f) => f.path && classifyPath(f.path) === 'sensitive');
   if (redacted) lines.push(`   To locate a redacted path: git log --find-object=${redacted.oid} --name-only -n 1`);
-  if (ack) lines.push(`   AUDIT_ARCHIVE_LANE_ACK does not match this finding set (it is ${fingerprint}).`);
-  lines.push(...ackLines(fingerprint));
+  if (!acknowledgeable) {
+    lines.push(`   Too many findings to acknowledge (${findings.length} > ${ACK_MAX_FINDINGS}): an acknowledgement covers only what was shown, and the list above is cut off.`,
+      '   Split the push into smaller ones, or push only what the destination does not yet hold in pieces.');
+  } else {
+    if (ack) lines.push(`   AUDIT_ARCHIVE_LANE_ACK does not match this finding set (it is ${fingerprint}).`);
+    lines.push(...ackLines(fingerprint));
+  }
   return { outcome: 'findings', lines, fingerprint, findings, stats };
 }

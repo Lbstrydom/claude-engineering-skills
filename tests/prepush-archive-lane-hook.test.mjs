@@ -29,6 +29,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { hasBash, git } from './lib/hook-test-helpers.mjs';
+import { isArchiveRef } from '../scripts/lib/prepush-archive-lane.mjs';
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 const HOOK = path.join(REPO_ROOT, '.githooks', 'pre-push');
@@ -266,11 +267,14 @@ describe('.githooks/pre-push — the hook acts on the protocol token, never on e
     ['an error token with exit 0', say('archive-lane/v1 error', 0), true, false, false],
     ['not-applicable runs the gate and is silent', say('archive-lane/v1 not-applicable', 3), false, true, false],
     ['a token amid other stdout is still found', `console.log('noise'); ${say('archive-lane/v1 clean')}`, false, false, false],
-    ['exit 0 with NO token is "unavailable"', 'process.exit(0);\n', false, true, true],
-    ['a syntax error (node exits 1 before any catch)', 'this is not javascript (\n', false, true, true],
-    ['an unknown outcome word', say('archive-lane/v1 maybe', 0), false, true, true],
-    ['a token for another protocol version', say('archive-lane/v2 clean', 0), false, true, true],
-    ['a MISSING lane script', null, false, true, true],
+    // No valid result for an archive-looking push is REFUSED: the full gate does not
+    // scan, so falling through to it would either publish unscanned or send the
+    // pusher to --no-verify.
+    ['exit 0 with NO token is "unavailable" and refused', 'process.exit(0);\n', true, false, true],
+    ['a syntax error (node exits 1 before any catch) is refused', 'this is not javascript (\n', true, false, true],
+    ['an unknown outcome word is refused', say('archive-lane/v1 maybe', 0), true, false, true],
+    ['a token for another protocol version is refused', say('archive-lane/v2 clean', 0), true, false, true],
+    ['a MISSING lane script is refused', null, true, false, true],
   ];
   for (const [name, body, blocked, gateRuns, warns] of cases) {
     it(name, (t) => {
@@ -294,7 +298,43 @@ describe('.githooks/pre-push — the hook acts on the protocol token, never on e
       const { line } = archiveCommit(repo, { 'a.txt': 'a\n' });
       const got = runHook(repo, `${line}\n`, { dest, hook: hookCheckout(base, null) });
       assert.match(got.stdout + got.stderr, LANE_UNAVAILABLE, 'the hook read the pusher\'s scripts/');
-      assert.notEqual(got.argv, null);
+      assert.equal(got.status, 1, 'an archive push with no usable lane is refused');
+      assert.equal(got.argv, null);
+    });
+  });
+
+  it('CONTROL: a broken lane does not stop an ORDINARY push — it warns and runs the full gate', (t) => {
+    if (!guard(t)) return;
+    withFixture(({ base, repo, dest, seed }) => {
+      const tip = commit(repo, { 'x.txt': 'x\n' });
+      for (const body of ['process.exit(0);\n', 'this is not javascript (\n', null]) {
+        const got = runHook(repo, `refs/heads/feature ${tip} refs/heads/feature ${ZERO}\n`, { dest, hook: hookCheckout(base, body) });
+        assert.equal(got.status, 0, got.stdout + got.stderr);
+        assert.deepEqual(got.argv, ['--base', seed, '--head', tip]);
+        assert.match(got.stdout + got.stderr, LANE_UNAVAILABLE);
+        fs.rmSync(path.join(repo, MARKER), { force: true });
+      }
+    });
+  });
+
+  it('DRIFT: the hook\'s bash spelling of "archive ref" agrees with the oracle, ref by ref', (t) => {
+    if (!guard(t)) return;
+    // The bash predicate can only ever BLOCK (it runs when the lane yields nothing),
+    // so it is compared with isArchiveRef by feeding each ref through a broken lane:
+    // blocked ⇔ the oracle says archive.
+    const refs = [
+      'refs/heads/archive/x', 'refs/heads/archive/a/b', 'refs/tags/archive/t',
+      'refs/heads/archive', 'refs/heads/archive/', 'refs/heads/archived/x', 'refs/heads/x/archive/y',
+      'refs/remotes/origin/archive/x', 'refs/notes/archive/x', 'refs/heads/main', 'refs/tags/v1',
+    ];
+    withFixture(({ base, repo, dest }) => {
+      const tip = commit(repo, { 'x.txt': 'x\n' });
+      const hook = hookCheckout(base, 'process.exit(0);\n');
+      for (const ref of refs) {
+        const got = runHook(repo, `refs/heads/local ${tip} ${ref} ${ZERO}\n`, { dest, hook });
+        assert.equal(got.status === 1, isArchiveRef(ref), `${ref}: bash blocked=${got.status === 1}, oracle says archive=${isArchiveRef(ref)}\n${got.stdout}${got.stderr}`);
+        fs.rmSync(path.join(repo, MARKER), { force: true });
+      }
     });
   });
 

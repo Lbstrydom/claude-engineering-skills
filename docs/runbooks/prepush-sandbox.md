@@ -386,8 +386,15 @@ so are `.env.example` templates, which the shared path classifier calls sensitiv
 
 **When it steps aside.** `not-applicable` (any other ref, a mixed push, a deletion of a
 non-archive ref) runs the full gate exactly as before. If the lane yields no valid result at
-all (script missing from the hook's checkout, a crash) the hook says so and runs the full gate,
-which does **not** scan published content.
+all (script missing from the hook's checkout, a crash): an ordinary push still runs the full
+gate, with a warning; a push that **looks archive-only** is refused, because the full gate
+does not scan published content. `AUDIT_PREPUSH_ARCHIVE_LANE=0` is the explicit way past that.
+
+**Acknowledgements are for sets you can read in full.** The block message lists every finding
+up to 200 and offers the acknowledgement only then; above that it says to split the push, and
+a matching fingerprint is not accepted. The scan also ignores `git replace` refs (they change
+what `rev-list` shows while the push sends the originals) and runs every git call under one
+120 s deadline.
 
 **Where the lane's code comes from.** The checkout the hook itself lives in, found from
 `$0`, not the pusher's cwd: `core.hooksPath` points at one checkout while pushes come from

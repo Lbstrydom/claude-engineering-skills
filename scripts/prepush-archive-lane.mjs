@@ -18,15 +18,21 @@
  *
  * @module scripts/prepush-archive-lane
  */
-import fs from 'node:fs';
 import { argOption, assertKnownFlags, finishAndExit } from './lib/cli-io.mjs';
 import { LANE_PROTOCOL, makeGit, runArchiveLane } from './lib/prepush-archive-lane.mjs';
 
 const EXIT_FOR = Object.freeze({ clean: 0, findings: 1, error: 1, 'not-applicable': 3 });
 
-function readStdin() {
+/**
+ * Stdin as text. A TTY (a manual run) is empty by definition. A read that FAILS is
+ * not empty input: it propagates to the crash handler (no token), because treating
+ * it as 'no ref updates' would answer not-applicable for a push it never saw.
+ */
+async function readStdin() {
   if (process.stdin.isTTY) return '';
-  try { return fs.readFileSync(0, 'utf8'); } catch { return ''; }
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 async function main() {
@@ -43,7 +49,7 @@ async function main() {
   const destination = argOption('destination', '') ?? '';
   const ack = (process.env.AUDIT_ARCHIVE_LANE_ACK ?? '').trim() || undefined;
   const result = runArchiveLane({
-    stdinText: readStdin(),
+    stdinText: await readStdin(),
     destination,
     git: makeGit(process.cwd()),
     ack,

@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 
 import { git as runGit } from './lib/hook-test-helpers.mjs';
 import {
+  ACK_MAX_FINDINGS,
   ARCHIVE_LANE_CHECK_CLASSIFICATION,
   LANE_SCANNERS,
   LIMITS,
@@ -497,8 +498,8 @@ describe('errors — an incomplete scan is never clean, and never leaks a creden
       assert.equal(cap.outcome, 'error');
       assert.match(text(cap), /object-cap/);
 
-      let tick = 0;
-      const budget = r.lane(line, { now: () => (tick += LIMITS.budgetMs), limits: LIMITS });
+      let calls = 0;
+      const budget = r.lane(line, { now: () => (calls++ === 0 ? 0 : LIMITS.budgetMs + 1), limits: LIMITS });
       assert.equal(budget.outcome, 'error');
       assert.match(text(budget), /time-budget/);
 
@@ -578,6 +579,112 @@ describe('acknowledgement — exact, never blanket', () => {
       r.commit({ '.env': 'K=v\n' }, 'more');
       const second = r.lane(r.line('refs/heads/archive/x', r.g(['rev-parse', 'HEAD'])), { ack: first.fingerprint });
       assert.equal(second.outcome, 'findings');
+    });
+  });
+});
+
+// ── code-audit round 1 (audit-code-1791746397) ──────────────────────────────
+
+describe('what the scan reads is what the push sends', () => {
+  it('a git replace ref cannot hide content from the scan (pack-objects ignores replacements)', (t) => {
+    if (skip(t)) return;
+    withRepos((r) => {
+      r.g(['checkout', '-q', '-b', 'archive/rep']);
+      const clean = r.commit({ 'ok.txt': 'ok\n' }, 'clean');
+      const dirty = r.commit({ '.env': 'K=v\n', 'lib/t.mjs': `const t = '${GHP}';\n` }, 'dirty');
+      r.g(['replace', '--force', dirty, clean]); // rev-list/cat-file would now answer with `clean`
+      const res = r.lane(r.line('refs/heads/archive/rep', dirty));
+      assert.equal(res.outcome, 'findings', 'the scan followed the replacement and read the substitute');
+      assert.ok(res.findings.some((f) => f.path === '.env'));
+      assert.ok(res.findings.some((f) => f.detail === 'github-pat'));
+    });
+  });
+});
+
+describe('diagnostics never carry a secret, even in a path that is not sensitive', () => {
+  it('a token in a FILENAME is redacted from the output', (t) => {
+    if (skip(t)) return;
+    withRepos((r) => {
+      const named = `ghp_${'Zz9Y'.repeat(9)}`;
+      const body = `ghp_${'Qq8W'.repeat(9)}`;
+      const res = r.lane(archiveBranch(r, { [`notes/${named}.txt`]: `const t = '${body}';\n` }));
+      assert.equal(res.outcome, 'findings');
+      assert.ok(!text(res).includes(named), 'the token in the filename reached the output');
+      assert.ok(!text(res).includes(body));
+    });
+  });
+});
+
+describe('the raw-log parser fails closed on a record it cannot read', () => {
+  it('a combined-diff `::` record is a parse error, not a skipped path', () => {
+    const sha = 'a'.repeat(40);
+    const z = '\u0000';
+    const combined = Buffer.from(`${sha}${z}\n::100644 100644 100644 ${sha} ${sha} ${sha} MM${z}.env${z}`);
+    assert.throws(() => parseRawLog(combined), /parse/);
+  });
+});
+
+describe('one deadline governs every git call', () => {
+  it('each git call is handed the time that remains, as its own timeout', (t) => {
+    if (skip(t)) return;
+    withRepos((r) => {
+      const real = makeGit(r.work);
+      const timeouts = [];
+      const res = r.lane(archiveBranch(r, { 'a.txt': 'a\n' }), {
+        git: (args, o = {}) => { timeouts.push([args[0], o.timeout]); return real(args, o); },
+      });
+      assert.equal(res.outcome, 'clean', text(res));
+      assert.ok(timeouts.length >= 5, 'the probe saw the calls');
+      for (const [cmd, ms] of timeouts) {
+        assert.ok(Number.isFinite(ms) && ms > 0 && ms <= LIMITS.budgetMs, `${cmd} ran with timeout ${ms}`);
+      }
+    });
+  });
+
+  it('a final batch that overruns the budget is an error, not a clean (nothing after it would notice)', (t) => {
+    if (skip(t)) return;
+    withRepos((r) => {
+      const real = makeGit(r.work);
+      let clock = 0;
+      const res = r.lane(archiveBranch(r, { 'a.txt': 'a\n' }), {
+        now: () => clock,
+        git: (args, o) => {
+          const out = real(args, o);
+          if (args[0] === 'cat-file' && args[1] === '--batch') clock += LIMITS.budgetMs + 1; // the LAST batch is slow
+          return out;
+        },
+      });
+      assert.equal(res.outcome, 'error', text(res));
+      assert.match(text(res), /time-budget/);
+    });
+  });
+});
+
+describe('an acknowledgement covers only what was shown', () => {
+  it('above the cap no acknowledgement is offered, and a matching fingerprint is not accepted', (t) => {
+    if (skip(t)) return;
+    withRepos((r) => {
+      const files = Object.fromEntries(Array.from({ length: ACK_MAX_FINDINGS + 10 }, (_, i) => [`secrets/f${i}.txt`, `${i}\n`]));
+      const line = archiveBranch(r, files);
+      const blocked = r.lane(line);
+      assert.equal(blocked.outcome, 'findings');
+      assert.equal(blocked.findings.length, ACK_MAX_FINDINGS + 10);
+      assert.match(text(blocked), /Too many findings to acknowledge/);
+      assert.match(text(blocked), /10 more not shown/);
+      assert.doesNotMatch(text(blocked), /AUDIT_ARCHIVE_LANE_ACK =|AUDIT_ARCHIVE_LANE_ACK=/, 'a command to approve unseen findings was offered');
+      const forced = r.lane(line, { ack: blocked.fingerprint });
+      assert.equal(forced.outcome, 'findings', 'a fingerprint over unseen findings was accepted');
+    });
+  });
+
+  it('at or below the cap EVERY finding is listed', (t) => {
+    if (skip(t)) return;
+    withRepos((r) => {
+      const files = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`secrets/g${i}.txt`, `${i}\n`]));
+      const res = r.lane(archiveBranch(r, files));
+      assert.equal(res.findings.length, 12);
+      assert.equal(res.lines.filter((l) => /^ {3}path /.test(l)).length, 12);
+      assert.doesNotMatch(text(res), /more not shown/);
     });
   });
 });

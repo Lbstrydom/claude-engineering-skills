@@ -14,8 +14,8 @@
 | D2 | A push takes the lane iff **every** ref update's *destination* is `refs/heads/archive/*` or `refs/tags/archive/*` and at least one is not a deletion. Any other ref, deletions included, gets the full gate | Mixed pushes keep today's behaviour exactly |
 | D3 | Two coverages, kept apart. **Content**: bodies of objects the destination lacks (`rev-list --objects <shas> --not <roots>`). **Paths**: every path a published commit adds or changes (`log --raw`), including a blob the destination already holds | An object list names each object once; it cannot say where a reused blob now lives (§1.6) |
 | D4 | `<roots>` = what the **destination itself** advertises (`git ls-remote --refs <push URL>`, the hook's second argument) plus the remote shas on stdin, kept only if present locally. Remote-tracking refs are not used | They describe a fetch, not the push destination, and survive a force-push that removed their history (§1.4) |
-| D5 | Four outcomes. `not-applicable` → full gate. `clean` → skip the full check. `findings` or `error` → **block**. No valid result at all (missing script, crash, old checkout) → full gate with a loud warning | An archive push is scanned or refused. The one residual is a broken lane, which reverts to today (§2.1) |
-| D6 | Findings can be **acknowledged exactly** with `AUDIT_ARCHIVE_LANE_ACK=<fingerprint>`; the fingerprint hashes each finding's full identity (kind, object, path, pattern), so it cannot cover what it was not shown | Raw hits block the motivating archive (§1.3); a blanket bypass is the `--no-verify` habit again |
+| D5 | Four outcomes. `not-applicable` → full gate. `clean` → skip the full check. `findings` or `error` → **block**. No valid result at all (missing script, crash, old checkout): an ordinary push → full gate with a loud warning; a push that **looks** archive-only → **refused** (a bash check that can only block) | An archive push is scanned or refused; a broken lane never turns into an unscanned publish (§2.1) |
+| D6 | Findings can be **acknowledged exactly** with `AUDIT_ARCHIVE_LANE_ACK=<fingerprint>`; the fingerprint hashes each finding's full identity (kind, object, path, pattern), and an acknowledgement is **offered and accepted only for a set listed in full** (at most 200), so it cannot cover what it was not shown | Raw hits block the motivating archive (§1.3); a blanket bypass is the `--no-verify` habit again |
 | D7 | The lane's code comes from **the checkout the hook itself lives in** (`$0`), not the pusher's cwd | The running hook is not the pusher's checkout (§1.5) |
 | D8 | `AUDIT_PREPUSH_ARCHIVE_LANE=0` reverts to the full gate. **That is a loosening**: the full gate has no scan. It exists so a lane bug is never an outage | Stated plainly, not as "tighten only" |
 | D9 | `check` is **not** changed. Whether the full gate should also scan pushed content is raised for the user, not decided here | Out of scope, and it would block every push on fixture strings (§1.3) |
@@ -107,9 +107,9 @@ The hook already parses stdin in bash. The lane predicate is decided **only in t
 | `not-applicable` | run the full gate, silently (not an archive push) |
 | `clean` | skip the full check; print what was skipped |
 | `findings`, `error` | `exit 1`; the stderr diagnostics say what and how to proceed |
-| none valid (crash, import error, missing script, empty stdout, unknown outcome) | print `archive lane unavailable (...): running the full gate, which does NOT scan published content`, then run it |
+| none valid (crash, import error, missing script, empty stdout, unknown outcome) | a push that looks archive-only (every destination under `archive/`): **refuse**, say the lane is unavailable and name `AUDIT_PREPUSH_ARCHIVE_LANE=0` as the explicit override. Any other push: print `archive lane unavailable (...): running the full gate`, then run it |
 
-The last row is the one place an archive push can meet weaker scrutiny: the hook cannot know a push was archive-only without the lane code, and re-deriving that in bash is the second oracle D2 forbids. It reverts to today's behaviour and says so; the cause is a broken checkout, which the loud warning surfaces. A valid token always wins over exit status.
+The last row needs the predicate in bash, because without the lane code the hook cannot otherwise know a push was archive-only. That is a second spelling of the oracle (`isArchiveRef`), accepted because it is used **only** on this branch and **can only block**: drift between the two can never choose the wrong lane, at worst it refuses or fails to refuse a push whose lane already failed. `tests/prepush-archive-lane-hook.test.mjs` compares the two ref by ref (a drift test). An earlier draft let the full gate run here and accepted it as a residual; the code audit (H5) showed that waves an archive push through unscanned or sends the pusher to `--no-verify`. A valid token always wins over exit status.
 
 ### 2.2 What is scanned, with what limits, and what "clean" may claim
 
@@ -124,6 +124,8 @@ Limits are constants in the lib. An incomplete scan blocks; it is never clean. T
 - an object over 8 MiB, **of any type**, is an `unscanned` **finding**, which a person can acknowledge like any other (the scan finished and says what it could not read);
 - bodies are read in batches of at most 64 MiB, so one object can never exceed the batch;
 - these are `error`, with no acknowledgement: more than 200,000 listed objects, or a 120 s wall-clock budget, or output beyond a 256 MiB buffer on `rev-list` / `log` → `error` naming which limit was hit.
+
+Every git call runs with `GIT_NO_REPLACE_OBJECTS=1` and `GIT_NO_LAZY_FETCH=1`: `git replace` refs make `rev-list` and `cat-file` answer with substitutes while `pack-objects` publishes the originals, and a partial clone must not fetch a missing object mid-scan. One deadline governs all of them: each call is handed the time that remains as its own timeout, and the budget is checked again after the last batch.
 
 Enumeration is buffered, not streamed: the measured ranges are 460 and 4,522 objects, and the object cap bounds the worst case. Streaming would be machinery no current requirement needs.
 
@@ -227,7 +229,7 @@ Live replay (Pre-ship empirical verify): push `3c0afc4e` as `archive/queue-burnd
 ## 6. Declined, accepted limits, and things found on the way
 
 - **Not changed: `check`.** Whether ordinary pushes should also scan pushed content is a separate decision; per §1.3 it needs the same acknowledgement design or it blocks on fixtures. Raised for the user.
-- **Accepted limit: a broken lane reverts to today** (§2.1, last row). Revisit trigger: the warning is seen in practice; then the hook gains a deliberately conservative bash check used only on that branch.
+- **Resolved in the code audit: a broken lane no longer reverts to today** for an archive-looking push (§2.1, last row). It still does for an ordinary push, which is the point of the full gate.
 - **Accepted v1 limit: acknowledgement fatigue.** Every archive push with fixtures needs one. Revisit trigger: acks become routine; then add a content-addressed allowlist of reviewed blob ids, not path or value heuristics.
 - **Consumer hook** (`scripts/install-prepush-hook.mjs`, which has its own delete-only precedent) is not changed; consumers push archive refs too. Follow-up.
 - **`core.hooksPath` points into a linked worktree** (§1.5). If that worktree goes away, git runs no hook and nothing says so. Worth its own task (a `doctor` probe that resolves the configured hooks directory).
@@ -261,3 +263,15 @@ Built as planned (§4). Deviations and findings, each from running the code rath
 - **`.env.example` is a `sensitive` path** under the shared classifier (`(^|/)\.env(\..+)?$`), so a repo history that carries one produces a `path` finding. Not special-cased: the classifier is the single oracle, and the acknowledgement exists for exactly this. A full-history scan of an empty destination gave 780 findings in 25,272 objects, which is also why an empty destination is the honest "everything is published" case and not an error.
 - **Live replay on the real case.** `archive/queue-burndown-2026-10-02` (`3c0afc4e`) against a local bare destination seeded with `origin/main`: 460 objects, 128 paths classified, 0 path findings, 14 secret findings (the 13 of §1.3, one blob counted per pattern), 0.5 s end to end. The printed fingerprint is the acknowledgement.
 - **Pre-existing and unrelated**: `tests/prepush-installed-tree-identity.test.mjs` "records a subset of the root lockfile" fails in the main checkout at the same base commit, because that checkout's `node_modules` holds six packages (`braces`, `fill-range`, `is-number`, `micromatch`, `picomatch`, `to-regex-range`) that its lockfile does not declare. Machine state, not this change; the pre-push sandbox installs afresh when it detects a stale tree.
+
+## 9. Code audit trail
+
+`/audit-code`, session `audit-code-1791746397`, `--scope diff` (the implementation commit).
+
+| Round | Result | Disposition |
+|---|---|---|
+| 1 | SIGNIFICANT_ISSUES, H:6 M:5 | 10 accepted and fixed, 1 dismissed. Fixed: `git replace` refs could hide content (`GIT_NO_REPLACE_OBJECTS`, seen red without it); a token in an ordinary filename was printed; an unreadable `::` record was skipped (now a parse error; the config-driven trigger the finding described did not reproduce); no subprocess deadline except `ls-remote`, and no check after the last batch (seen red without it); a 40-line list beside a whole-set fingerprint (cap raised to 200, none offered above it); a failed stdin read answered not-applicable; and **H5**, a broken lane reverting an archive-looking push to a gate that does not scan (now refused; see §2.1). Dismissed: M5, the adjacency wave reporting its own enumeration bound |
+| 2 | PASS, H:0 M:0 | stable 1/2 |
+| 3 | PASS, H:0 M:0 | stable 2/2, converged. Full-scope detector census: 0 detectors, nothing blocked |
+
+**Not covered by the GPT passes**: `.githooks/pre-push` has no extension, so the file taxonomy classifies it as an unrecognised type and the code passes never read it (the audit said so: "1 of 8 changed source file(s) not fully audited"). The hook is therefore covered by its 29 behavioural tests (including a real `git push` from a linked worktree, two mutations seen red, and the bash-versus-oracle drift test) and by the Gemini final gate, not by the multi-pass audit.
