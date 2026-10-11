@@ -342,10 +342,11 @@ with it:
 - **Prune metadata *after* removing the directory, never before.** The reverse
   turns a visible husk into an invisible one — `git worktree list`, the one
   command that would have surfaced it, then reads clean.
-- **Age, not liveness, gates the sweep.** Two sessions share this working tree,
-  so a concurrent push can have a live sandbox on disk right now; a live
-  sandbox is always young, and 6h clears a minutes-long `npm run check` by
-  orders of magnitude.
+- **A sandbox that may still be live is never swept.** Two sessions share this
+  working tree, so a concurrent push can have a live sandbox on disk right now.
+  Wherever the sweep cannot establish that the owner is gone, age is the guard:
+  a live sandbox is always young, and 6h clears a minutes-long `npm run check`
+  by orders of magnitude.
 
 A failed sweep or removal **warns and never blocks** — temp-directory state is
 machine state, not repo state.
