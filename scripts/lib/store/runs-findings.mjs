@@ -754,10 +754,9 @@ export function filterPersistableRows(mappedRows) {
  *   caller make a delete+insert atomic (final-review replace-persistence). The
  *   default `{}` preserves every existing call site byte-for-byte.
  *   **Invariant (write-boundary-hardening plan Phase 7)**: `opts.client`,
- *   when supplied, MUST be a client from an OPEN `withTx` frame (the only
- *   transaction `persistKeptEmbeddings` can discover, via `getActiveTxClient()`,
- *   to open its SAVEPOINTs on) — passing a bare pool connection, or one with a
- *   hand-issued `BEGIN`, is a caller bug, not a supported mode. This function's
+ *   when supplied, MUST be a client from an OPEN `withTx` frame (the one
+ *   `persistKeptEmbeddings` finds via `getActiveTxClient()`) — a bare pool
+ *   connection or a hand-issued `BEGIN` is a caller bug, not a mode. This function's
  *   own `if (opts.client) throw err` below already relied on that equivalence
  *   silently; `persistKeptEmbeddings`' `isCallerTx` parameter now inherits the
  *   same, now-documented, invariant instead of re-deriving it.
@@ -1818,20 +1817,16 @@ export async function getFinalReviewStats(repoName, { queueLimit = 50, after = n
  *   column exists (migration 20260605120000); on an un-migrated store it is
  *   omitted and the row defaults to round 1 server-side — preserving today's
  *   behaviour (WS1 §1.3a). An UNRESOLVED probe is not that store: omitting the
- *   round there would file a round-N row as round 1 on a migrated store, so a
- *   caller that supplied a round gets `applied:false` (`round-probe-unresolved`,
- *   retryable — durableWrite spills and replays it) instead of a mislabelled row.
- * @param {{detectRound?: () => Promise<{present: boolean, definitive: boolean}>}} [deps] test seam
+ *   round would file a round-N row as round 1, so the call returns
+ *   `applied:false` (`round-probe-unresolved`; durableWrite spills and replays).
+ * @param {{detectRound?: Function}} [deps] test seam
  */
 export async function recordPassStats(runId, passName, stats, round, deps = {}) {
   if (!runId) return { applied: false, rows: 0, reason: 'no-run-id' };
   if (!await isCloudEnabled()) return { applied: false, rows: 0, reason: 'cloud-off' };
   const { detectRound = detectPassStatsRoundColumn } = deps;
   const { present: hasRound, definitive: roundProbeDefinitive } = await detectRound();
-  if (Number.isInteger(round) && !hasRound && !roundProbeDefinitive) {
-    process.stderr.write(`  [learning] recordPassStats(${passName}, round ${round}): audit_pass_stats.round probe unresolved — not writing a row that would default to round 1\n`);
-    return { applied: false, rows: 0, reason: 'round-probe-unresolved' };
-  }
+  if (Number.isInteger(round) && !hasRound && !roundProbeDefinitive) return { applied: false, rows: 0, reason: 'round-probe-unresolved' };
   // Model-A/B/C per-arm-execution columns (migration 20260701120000): written
   // only when present AND the caller supplied them, so the normal audit path is
   // byte-identical on an un-migrated store or when not shadowing.
