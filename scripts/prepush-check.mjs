@@ -57,6 +57,7 @@ import { GIT_LOCK_RETRY_DELAYS_MS, withGitLockRetry } from './lib/git-lock-retry
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
 import { resolveMainRoot } from './lib/pinned-worktree/paths.mjs';
 import {
+  PRESERVED_EVIDENCE_FILE,
   STALE_SANDBOX_AGE_MS,
   removeSandboxDir,
   sweepStaleSandboxes,
@@ -359,7 +360,9 @@ function reportFailedInstall(sandbox, detail) {
   if (npmLog) log(`  npm debug log (may already be rotated): ${npmLog[1].trim()}`);
 
   try {
-    const dest = path.join(sandbox, '.prepush-npm-ci.log');
+    // The name is the sweeper's "kept on purpose" marker: a husk holding it is
+    // never swept for a dead owner, only for age (prepush-sandbox-cleanup.mjs).
+    const dest = path.join(sandbox, PRESERVED_EVIDENCE_FILE);
     fs.writeFileSync(dest, detail.output);
     log(`  full npm output: ${dest}`);
   } catch (err) {
@@ -505,8 +508,13 @@ function main() {
   // not. Deliberately advisory: an uncleanable temp directory is MACHINE
   // state, and machine state may warn but must never block a push.
   try {
-    const { swept, failed, young } = sweepStaleSandboxes(os.tmpdir());
-    if (swept.length) log(`  swept ${swept.length} stale sandbox husk(s) from ${os.tmpdir()}`);
+    const { swept, sweptDeadOwner, failed, young } = sweepStaleSandboxes(os.tmpdir());
+    if (swept.length) {
+      // A husk swept at minutes old is surprising without its reason: say it was
+      // the dead owner, not the clock, that condemned it.
+      const why = sweptDeadOwner.length ? ` (${sweptDeadOwner.length} abandoned by a dead push process, the rest by age)` : '';
+      log(`  swept ${swept.length} stale sandbox husk(s) from ${os.tmpdir()}${why}`);
+    }
     if (failed.length) log(`  ⚠ ${failed.length} stale sandbox husk(s) still un-removable, e.g. ${failed[0]}`);
     // Say what was seen and left. Without this, "no sweep line" means both "temp
     // is clean" and "three husks are sitting there, all too young to sweep" —
@@ -514,8 +522,12 @@ function main() {
     // Only printed when there IS something, so a clean machine stays silent.
     if (!swept.length && young.length) {
       const oldestH = (Math.max(...young.map((h) => h.ageMs)) / 3_600_000).toFixed(1);
+      const live = young.filter((h) => h.retained === 'owner-alive').length;
+      const kept = young.length - live;
       log(`  ${young.length} sandbox husk(s) present, none swept — oldest is ${oldestH}h old, `
-        + `under the ${STALE_SANDBOX_AGE_MS / 3_600_000}h threshold (a concurrent push's sandbox is always young)`);
+        + `under the ${STALE_SANDBOX_AGE_MS / 3_600_000}h threshold`
+        + `${live ? `; ${live} owned by a running push` : ''}`
+        + `${kept ? `; ${kept} kept because their owner could not be shown dead (evidence-preserved, no pid, or liveness unknown)` : ''}`);
     }
     // Metadata written only when there was something to reconcile: a husk from
     // an interrupted run can still be REGISTERED, so its directory disappearing

@@ -39,7 +39,18 @@ import path from 'node:path';
 export const SANDBOX_PREFIX = 'ces-prepush-';
 
 /**
- * How old a husk must be before a later run will sweep it.
+ * The file `scripts/prepush-check.mjs` writes into a sandbox it PRESERVES as
+ * evidence (a failed `npm ci`). Its presence means "this husk is deliberately
+ * kept": the owner process exited NORMALLY, so a dead owner pid says nothing
+ * about abandonment and only the age rule may sweep it. The runner and the
+ * sweeper share this one name — a second spelling is how one of them would stop
+ * seeing the other's evidence.
+ */
+export const PRESERVED_EVIDENCE_FILE = '.prepush-npm-ci.log';
+
+/**
+ * How old a husk must be before a later run will sweep it REGARDLESS of who
+ * owns it.
  *
  * The only thing this threshold has to clear is a CONCURRENT push's live
  * sandbox — two sessions share this repo's working tree, so a second push can
@@ -48,8 +59,59 @@ export const SANDBOX_PREFIX = 'ces-prepush-';
  * headroom, while still self-healing within a day rather than at the point the
  * temp volume fills. Age is a sufficient discriminator here precisely because
  * a live sandbox is always young.
+ *
+ * Age is the FLOOR, not the only rule: a husk whose owner process is provably
+ * dead is swept at once (see {@link surveySandboxes}). Age remains the sole
+ * rule whenever ownership cannot be established — a live, unknown or
+ * evidence-preserving owner — because there a wrong "abandoned" is the
+ * expensive error and a late sweep is only disk space.
  */
 export const STALE_SANDBOX_AGE_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * The pid of the process that created a sandbox: the digits after the LAST `-`
+ * in `ces-prepush-<sha8>-<pid>` (the runner names it with `process.pid`).
+ *
+ * @param {string} name - a directory name, not a path
+ * @returns {number|null} null when the name carries no usable pid. `0` and
+ *   negative values are refused: `process.kill(0, …)` addresses a whole process
+ *   GROUP, which is not an owner.
+ */
+export function sandboxOwnerPid(name) {
+  const m = /-(\d+)$/.exec(name);
+  if (!m) return null;
+  const pid = Number(m[1]);
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+}
+
+/**
+ * Is a process with this pid running right now?
+ *
+ *   'dead'    - ESRCH: no such process. The only answer that licenses a sweep.
+ *   'alive'   - it exists (EPERM counts: it exists, we just may not signal it).
+ *   'unknown' - anything else; liveness could not be established.
+ *
+ * Signal 0 performs the existence check without delivering anything, on POSIX
+ * and on Windows alike (libuv opens the process and reads its exit code).
+ *
+ * PID REUSE can only turn a dead owner into an 'alive' reading, never the
+ * reverse, so it fails SAFE: that husk simply falls back to the age rule. It is
+ * deliberately not chased with a process-start-time probe (a platform-specific
+ * spawn per husk) — that would buy a faster sweep of a rare case, not safety.
+ *
+ * @param {number} pid
+ * @returns {'alive'|'dead'|'unknown'}
+ */
+export function probePidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return 'alive';
+  } catch (error) {
+    if (error?.code === 'ESRCH') return 'dead';
+    if (error?.code === 'EPERM') return 'alive';
+    return 'unknown';
+  }
+}
 
 /**
  * Remove a directory and report whether it is ACTUALLY gone afterwards.
@@ -93,13 +155,11 @@ export function removeSandboxDir(dir) {
 }
 
 /**
- * List sandbox husks in `tmpDir` old enough to be certainly abandoned.
+ * List sandbox husks in `tmpDir` certainly abandoned: older than the age
+ * threshold, or owned by a process that is provably dead.
  *
  * @param {string} tmpDir
- * @param {object} [opts]
- * @param {number} [opts.now] - injectable clock, so the age rule is testable
- * @param {number} [opts.maxAgeMs]
- * @param {string} [opts.prefix]
+ * @param {object} [opts] - forwarded to {@link surveySandboxes}
  * @returns {string[]} absolute paths
  */
 export function findStaleSandboxes(tmpDir, opts = {}) {
@@ -107,8 +167,32 @@ export function findStaleSandboxes(tmpDir, opts = {}) {
 }
 
 /**
- * Split the sandbox husks in `tmpDir` into those old enough to sweep and those
- * deliberately left alone.
+ * Why a husk was left alone. `owner-alive` is the safety property (a concurrent
+ * push's sandbox); the rest are the cases where abandonment cannot be proved, so
+ * only the age rule applies.
+ */
+export const RETAINED_REASONS = Object.freeze([
+  'owner-alive', 'owner-unknown', 'evidence-preserved', 'no-owner-pid',
+]);
+
+/**
+ * Split the sandbox husks in `tmpDir` into those to sweep and those deliberately
+ * left alone.
+ *
+ * A husk is swept when EITHER
+ *   - it is at least `maxAgeMs` old (the original rule, unchanged), OR
+ *   - its owner process is provably dead (`ownerDead`): a push killed with
+ *     SIGKILL / `taskkill /F` / TaskStop / a closed terminal runs no handler, so
+ *     its sandbox outlives it with the worktree still REGISTERED. Measured
+ *     2026-10-11: two pushes stopped mid-gate left `ces-prepush-a4d6ea00-77848`
+ *     and `…-fc2be6f7-82364`, which `git worktree list` kept showing — and the
+ *     fleet scan counted — until a human removed them, because both were far
+ *     younger than the six-hour age rule.
+ *
+ * A husk is NEVER swept early when the owner is alive (a concurrent push), when
+ * liveness cannot be established, when the name carries no pid, or when it holds
+ * {@link PRESERVED_EVIDENCE_FILE} (kept on purpose by a process that exited
+ * normally, so its dead pid is not abandonment). Those fall back to age alone.
  *
  * `young` exists because SILENCE IS AMBIGUOUS (2026-08-30). The runner logged a
  * line only when it swept something, so "swept nothing because %TEMP% is clean"
@@ -116,30 +200,36 @@ export function findStaleSandboxes(tmpDir, opts = {}) {
  * printed identically. A failing push with three husks on disk and no sweep line
  * read as a broken sweeper; measured afterwards, the oldest was 3h old and the
  * sweep had been exactly right. An unasked question must never render as an
- * empty result — so the caller can now say which of the two it is.
+ * empty result — so each retained husk carries WHY it was kept.
  *
  * @param {string} tmpDir
  * @param {object} [opts]
  * @param {number} [opts.now] - injectable clock, so the age rule is testable
  * @param {number} [opts.maxAgeMs]
  * @param {string} [opts.prefix]
- * @returns {{stale: string[], young: Array<{dir: string, ageMs: number}>}}
+ * @param {(pid: number) => 'alive'|'dead'|'unknown'} [opts.probeOwner] - injectable liveness probe
+ * @returns {{stale: string[], ownerDead: string[],
+ *   young: Array<{dir: string, ageMs: number, retained: string}>}}
+ *   `ownerDead` is the subset of `stale` that is swept for its dead owner rather
+ *   than its age.
  */
 export function surveySandboxes(tmpDir, opts = {}) {
   const {
     now = Date.now(),
     maxAgeMs = STALE_SANDBOX_AGE_MS,
     prefix = SANDBOX_PREFIX,
+    probeOwner = probePidAlive,
   } = opts;
 
   let entries;
   try {
     entries = fs.readdirSync(tmpDir, { withFileTypes: true });
   } catch {
-    return { stale: [], young: [] }; // unreadable temp dir is not this gate's problem
+    return { stale: [], ownerDead: [], young: [] }; // unreadable temp dir is not this gate's problem
   }
 
   const stale = [];
+  const ownerDead = [];
   const young = [];
   for (const entry of entries) {
     // Prefix-scoped on purpose: %TEMP% is shared with every other tool on the
@@ -149,13 +239,30 @@ export function surveySandboxes(tmpDir, opts = {}) {
     const abs = path.join(tmpDir, entry.name);
     try {
       const ageMs = now - fs.statSync(abs).mtimeMs;
-      if (ageMs >= maxAgeMs) stale.push(abs);
-      else young.push({ dir: abs, ageMs });
+      if (ageMs >= maxAgeMs) { stale.push(abs); continue; }
+
+      const retained = retentionReason(abs, entry.name, probeOwner);
+      if (retained === null) { stale.push(abs); ownerDead.push(abs); } else young.push({ dir: abs, ageMs, retained });
     } catch {
       // Vanished or unstattable between readdir and stat — nothing to do.
     }
   }
-  return { stale, young };
+  return { stale, ownerDead, young };
+}
+
+/**
+ * Why a not-yet-aged husk must be kept, or `null` when its owner is provably
+ * dead and nothing marks it as deliberately preserved.
+ * @returns {string|null} one of {@link RETAINED_REASONS}, or null (sweep it)
+ */
+function retentionReason(abs, name, probeOwner) {
+  if (fs.existsSync(path.join(abs, PRESERVED_EVIDENCE_FILE))) return 'evidence-preserved';
+  const pid = sandboxOwnerPid(name);
+  if (pid === null) return 'no-owner-pid';
+  let state;
+  try { state = probeOwner(pid); } catch { state = 'unknown'; } // a probe that throws proved nothing
+  if (state === 'dead') return null;
+  return state === 'alive' ? 'owner-alive' : 'owner-unknown';
 }
 
 /**
@@ -163,17 +270,23 @@ export function surveySandboxes(tmpDir, opts = {}) {
  *
  * @param {string} tmpDir
  * @param {object} [opts] - forwarded to surveySandboxes
- * @returns {{swept: string[], failed: string[], young: Array<{dir: string, ageMs: number}>}}
+ * @returns {{swept: string[], sweptDeadOwner: string[], failed: string[],
+ *   young: Array<{dir: string, ageMs: number, retained: string}>}}
  *   `young` is what was seen and deliberately NOT swept — see
- *   {@link surveySandboxes} for why reporting it matters.
+ *   {@link surveySandboxes} for why reporting it matters. `sweptDeadOwner` is the
+ *   subset of `swept` removed because its owner process was dead, not its age.
  */
 export function sweepStaleSandboxes(tmpDir, opts = {}) {
-  const { stale, young } = surveySandboxes(tmpDir, opts);
+  const { stale, ownerDead, young } = surveySandboxes(tmpDir, opts);
   const swept = [];
+  const sweptDeadOwner = [];
   const failed = [];
   for (const dir of stale) {
-    if (removeSandboxDir(dir).removed) swept.push(dir);
-    else failed.push(dir);
+    if (!removeSandboxDir(dir).removed) failed.push(dir);
+    else {
+      swept.push(dir);
+      if (ownerDead.includes(dir)) sweptDeadOwner.push(dir);
+    }
   }
-  return { swept, failed, young };
+  return { swept, sweptDeadOwner, failed, young };
 }

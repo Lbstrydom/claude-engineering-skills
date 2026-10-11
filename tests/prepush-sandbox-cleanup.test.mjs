@@ -11,17 +11,20 @@
  * belief about what a subprocess's exit code proves, and only touching the
  * filesystem can falsify that class of belief.
  */
-import { describe, it, before, after } from 'node:test';
+import { describe, it, before, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
+  PRESERVED_EVIDENCE_FILE,
   SANDBOX_PREFIX,
   STALE_SANDBOX_AGE_MS,
   findStaleSandboxes,
+  probePidAlive,
   removeSandboxDir,
+  sandboxOwnerPid,
   surveySandboxes,
   sweepStaleSandboxes,
 } from '../scripts/lib/prepush-sandbox-cleanup.mjs';
@@ -118,7 +121,7 @@ describe('findStaleSandboxes — age rule and prefix scoping', () => {
   it('never sweeps a young husk — a CONCURRENT push\'s live sandbox is always young', () => {
     // This is the safety property of the whole sweep: two sessions share this
     // repo's tree, so a second push can have a live sandbox on disk right now.
-    const live = makeDir(`${SANDBOX_PREFIX}abc12345-1111`, 60_000);
+    const live = makeDir(`${SANDBOX_PREFIX}abc12345-${process.pid}`, 60_000);
     const stale = findStaleSandboxes(tmp, { now: NOW });
     assert.equal(stale.includes(live), false, 'a 1-minute-old sandbox must never be swept');
   });
@@ -156,7 +159,7 @@ describe('findStaleSandboxes — age rule and prefix scoping', () => {
     // identically — and a failing push with three husks on disk was read as a
     // broken sweeper for hours. Measured afterwards: the oldest was 3h old
     // against a 6h threshold, and the sweep had been exactly right.
-    const young = makeDir(`${SANDBOX_PREFIX}beef0001-4444`, 3 * 60 * 60 * 1000);
+    const young = makeDir(`${SANDBOX_PREFIX}beef0001-${process.pid}`, 3 * 60 * 60 * 1000);
     const { stale, young: retained } = surveySandboxes(tmp, { now: NOW });
     assert.equal(stale.includes(young), false, 'a 3h husk is not stale under a 6h threshold');
     const row = retained.find((h) => h.dir === young);
@@ -174,7 +177,7 @@ describe('findStaleSandboxes — age rule and prefix scoping', () => {
   });
 
   it('sweepStaleSandboxes carries `young` through so the caller need not re-scan', () => {
-    const fresh = makeDir(`${SANDBOX_PREFIX}beef0002-5555`, 30_000);
+    const fresh = makeDir(`${SANDBOX_PREFIX}beef0002-${process.pid}`, 30_000);
     const { young } = sweepStaleSandboxes(tmp, { now: NOW });
     assert.ok(young.some((h) => h.dir === fresh));
     assert.equal(fs.existsSync(fresh), true, 'a young husk must survive the sweep');
@@ -186,6 +189,189 @@ describe('findStaleSandboxes — age rule and prefix scoping', () => {
     assert.equal(failed.length, 0);
     assert.ok(swept.includes(doomed), 'the doomed husk must be reported swept');
     assert.equal(fs.existsSync(doomed), false, 'reported-swept must mean gone from disk');
+  });
+});
+
+/** A real pid that is provably gone: spawn a child that exits, then ASK the probe.
+ *  The precondition is the instrument check — a reused pid would make every
+ *  "dead owner" assertion below pass or fail for the wrong reason. */
+function exitedChildPid() {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { pid } = spawnSync(process.execPath, ['-e', '0'], { stdio: 'ignore' });
+    if (Number.isInteger(pid) && probePidAlive(pid) === 'dead') return pid;
+  }
+  throw new Error('could not obtain a pid the probe reports dead — the dead-owner fixtures cannot be trusted');
+}
+
+describe('sandboxOwnerPid / probePidAlive — the two facts the dead-owner rule rests on', () => {
+  it('pins the marker name operators and the runbook already know', () => {
+    assert.equal(PRESERVED_EVIDENCE_FILE, '.prepush-npm-ci.log');
+  });
+
+  it('reads the pid after the LAST dash and nothing else', () => {
+    assert.equal(sandboxOwnerPid(`${SANDBOX_PREFIX}a4d6ea00-77848`), 77848);
+    assert.equal(sandboxOwnerPid(`${SANDBOX_PREFIX}fc2be6f7-82364`), 82364);
+    assert.equal(sandboxOwnerPid(`${SANDBOX_PREFIX}fixture-12`), 12);
+  });
+
+  it('refuses a name with no usable pid — 0 would address a whole process GROUP', () => {
+    assert.equal(sandboxOwnerPid(`${SANDBOX_PREFIX}abc12345-0`), null);
+    assert.equal(sandboxOwnerPid(`${SANDBOX_PREFIX}not-a-pid`), null);
+    assert.equal(sandboxOwnerPid(`${SANDBOX_PREFIX}abc12345-`), null);
+    assert.equal(sandboxOwnerPid(`${SANDBOX_PREFIX}abc12345-99999999999999999999`), null, 'beyond a safe integer');
+  });
+
+  it('reports this very process alive and an exited child dead (real probe, no mock)', () => {
+    assert.equal(probePidAlive(process.pid), 'alive');
+    assert.equal(probePidAlive(exitedChildPid()), 'dead');
+  });
+
+  it('maps errno honestly: only ESRCH is dead, EPERM is alive, anything else is unknown', () => {
+    const failWith = (code) => mock.method(process, 'kill', () => { throw Object.assign(new Error(code), { code }); });
+    try {
+      let m = failWith('ESRCH'); assert.equal(probePidAlive(4242), 'dead'); m.mock.restore();
+      m = failWith('EPERM'); assert.equal(probePidAlive(4242), 'alive', 'it exists; we just may not signal it'); m.mock.restore();
+      m = failWith('EINVAL'); assert.equal(probePidAlive(4242), 'unknown'); m.mock.restore();
+    } finally {
+      mock.restoreAll();
+    }
+  });
+});
+
+describe('owner liveness — a killed push\'s husk goes at once; a live push\'s sandbox never does', () => {
+  let tmp;
+  let liveChild;
+  const NOW = 1_800_000_000_000;
+
+  /** Files go in BEFORE the mtime is pinned: creating a file bumps the directory's mtime. */
+  const makeDir = (name, ageMs, files = []) => {
+    const abs = path.join(tmp, name);
+    fs.mkdirSync(abs, { recursive: true });
+    for (const f of files) fs.writeFileSync(path.join(abs, f), 'x');
+    const when = new Date(NOW - ageMs);
+    fs.utimesSync(abs, when, when);
+    return abs;
+  };
+  const YOUNG = 30_000;
+
+  before(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ces-owner-test-'));
+    // A genuinely different, genuinely running process: the concurrent push.
+    liveChild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 120000)'], { stdio: 'ignore' });
+  });
+  after(() => {
+    try { liveChild.kill(); } catch { /* already gone */ }
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+
+  it('sweeps a MINUTES-old husk whose owner is dead, and the disk agrees', () => {
+    const dir = makeDir(`${SANDBOX_PREFIX}dead0001-${exitedChildPid()}`, YOUNG);
+    assert.equal(fs.existsSync(dir), true, 'fixture must exist before the sweep, or the assertion below is vacuous');
+
+    const { swept, sweptDeadOwner, failed } = sweepStaleSandboxes(tmp, { now: NOW });
+
+    assert.equal(failed.length, 0);
+    assert.ok(swept.includes(dir) && sweptDeadOwner.includes(dir), 'swept, and reported as swept FOR ITS DEAD OWNER');
+    assert.equal(fs.existsSync(dir), false, 'reported-swept must mean gone from disk');
+  });
+
+  it('NEGATIVE CONTROL: the same husk survives when the probe says its owner is alive', () => {
+    // Proves the dead verdict is what condemned the previous husk, not the age
+    // rule, the prefix scope or an accident of the fixture.
+    const dir = makeDir(`${SANDBOX_PREFIX}dead0002-${exitedChildPid()}`, YOUNG);
+
+    const { swept } = sweepStaleSandboxes(tmp, { now: NOW, probeOwner: () => 'alive' });
+
+    assert.equal(swept.includes(dir), false);
+    assert.equal(fs.existsSync(dir), true);
+  });
+
+  it('NEVER sweeps a husk whose owner is a LIVE other process — a concurrent push\'s sandbox', () => {
+    assert.equal(probePidAlive(liveChild.pid), 'alive', 'precondition: the other process really is running');
+    const dir = makeDir(`${SANDBOX_PREFIX}live0001-${liveChild.pid}`, YOUNG);
+
+    const { swept, young } = sweepStaleSandboxes(tmp, { now: NOW });
+
+    assert.equal(swept.includes(dir), false, 'a running push\'s sandbox must survive another push\'s sweep');
+    assert.equal(fs.existsSync(dir), true);
+    assert.equal(young.find((h) => h.dir === dir)?.retained, 'owner-alive', 'and the reason must be reported, not silent');
+  });
+
+  it('NEVER sweeps this process\'s own pid either (the live owner is the sweeper itself)', () => {
+    const dir = makeDir(`${SANDBOX_PREFIX}self0001-${process.pid}`, YOUNG);
+    assert.equal(sweepStaleSandboxes(tmp, { now: NOW }).swept.includes(dir), false);
+    assert.equal(fs.existsSync(dir), true);
+  });
+
+  it('keeps an evidence-preserving husk on the age rule even though its owner exited', () => {
+    // A failed npm ci preserves the sandbox on purpose: the owner exits
+    // NORMALLY, so its dead pid means "finished", not "killed".
+    const dir = makeDir(`${SANDBOX_PREFIX}keep0001-${exitedChildPid()}`, YOUNG, [PRESERVED_EVIDENCE_FILE]);
+
+    const { swept, young } = sweepStaleSandboxes(tmp, { now: NOW });
+
+    assert.equal(swept.includes(dir), false);
+    assert.equal(fs.existsSync(dir), true);
+    assert.equal(young.find((h) => h.dir === dir)?.retained, 'evidence-preserved');
+  });
+
+  it('...but still sweeps that preserved husk once it is old (the age rule is unchanged)', () => {
+    const dir = makeDir(`${SANDBOX_PREFIX}keep0002-${exitedChildPid()}`, STALE_SANDBOX_AGE_MS + 60_000, [PRESERVED_EVIDENCE_FILE]);
+    const { swept, sweptDeadOwner } = sweepStaleSandboxes(tmp, { now: NOW });
+    assert.ok(swept.includes(dir));
+    assert.equal(sweptDeadOwner.includes(dir), false, 'removed for its age, so it must not be reported as a dead-owner sweep');
+    assert.equal(fs.existsSync(dir), false);
+  });
+
+  for (const [label, probeOwner] of [
+    ['reports unknown', () => 'unknown'],
+    ['throws', () => { throw new Error('probe broke'); }],
+  ]) {
+    it(`falls back to the age rule when the liveness probe ${label}`, () => {
+      const dir = makeDir(`${SANDBOX_PREFIX}unk-${label.replace(/W/g, '')}-${exitedChildPid()}`, YOUNG);
+
+      const { swept, young } = sweepStaleSandboxes(tmp, { now: NOW, probeOwner });
+
+      assert.equal(swept.includes(dir), false, 'no proof of death, no early sweep');
+      assert.equal(fs.existsSync(dir), true);
+      assert.equal(young.find((h) => h.dir === dir)?.retained, 'owner-unknown');
+    });
+  }
+
+  it('falls back to the age rule for a name carrying no pid', () => {
+    const dir = makeDir(`${SANDBOX_PREFIX}nopid-here`, YOUNG);
+    const { swept, young } = sweepStaleSandboxes(tmp, { now: NOW, probeOwner: () => { throw new Error('must not be consulted'); } });
+    assert.equal(swept.includes(dir), false);
+    assert.equal(young.find((h) => h.dir === dir)?.retained, 'no-owner-pid');
+  });
+
+  it('does not touch another tool\'s directory just because its name ends in a dead pid', () => {
+    const foreign = makeDir(`ces-db-test-${exitedChildPid()}`, YOUNG);
+    const alien = makeDir(`some-other-tool-${exitedChildPid()}`, YOUNG);
+    const { swept, young } = sweepStaleSandboxes(tmp, { now: NOW });
+    assert.equal(swept.includes(foreign) || swept.includes(alien), false);
+    assert.equal(young.some((h) => h.dir === foreign || h.dir === alien), false);
+    assert.equal(fs.existsSync(foreign) && fs.existsSync(alien), true);
+  });
+
+  it('removes a dead owner\'s husk WITHOUT following its node_modules junction into the real tree', () => {
+    // The shape provisionNodeModules() leaves behind. A sweep that began running
+    // minutes after a kill rather than hours must not become the thing that
+    // empties the main checkout's real node_modules.
+    const real = path.join(tmp, 'real-modules');
+    fs.mkdirSync(path.join(real, 'pkg'), { recursive: true });
+    fs.writeFileSync(path.join(real, 'pkg', 'index.js'), '1;');
+    const dir = path.join(tmp, `${SANDBOX_PREFIX}junc0001-${exitedChildPid()}`);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.symlinkSync(real, path.join(dir, 'node_modules'), 'junction');
+    const when = new Date(NOW - YOUNG);
+    fs.utimesSync(dir, when, when);
+
+    const { swept } = sweepStaleSandboxes(tmp, { now: NOW });
+
+    assert.ok(swept.includes(dir));
+    assert.equal(fs.existsSync(dir), false);
+    assert.equal(fs.existsSync(path.join(real, 'pkg', 'index.js')), true, 'the real node_modules must survive');
   });
 });
 

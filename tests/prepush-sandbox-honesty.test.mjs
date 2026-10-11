@@ -127,9 +127,18 @@ describe('the sandbox forbids the silent-skip paths', () => {
     // afterwards, the oldest was 3h old against a 6h threshold and the sweep had
     // been exactly right. An unasked question must never render as an empty
     // result. Behaviour of `young` itself: tests/prepush-sandbox-cleanup.test.mjs.
-    assert.match(runnerSrc, /const \{ swept, failed, young \} = sweepStaleSandboxes/);
+    assert.match(runnerSrc, /const \{ swept, sweptDeadOwner, failed, young \} = sweepStaleSandboxes/);
     assert.match(runnerSrc, /if \(!swept\.length && young\.length\)/,
       'the "saw husks, swept none" case must be reported, and only that case');
+  });
+
+  it('writes the preserved-evidence marker under the name the sweeper reads (one spelling)', () => {
+    // The sweeper keeps a husk holding this file on the age rule even when its
+    // owner is dead; a second spelling in the runner would make a preserved
+    // sandbox look like a killed one and get it swept at minutes old.
+    assert.match(runnerSrc, /path\.join\(sandbox, PRESERVED_EVIDENCE_FILE\)/);
+    assert.doesNotMatch(runnerSrc, /['"`]\.prepush-npm-ci\.log['"`]/,
+      'the marker name lives in prepush-sandbox-cleanup.mjs only');
   });
 
   it('pins a worktree-scoped core.bare=false on the sandbox, right after creating it (2026-07-23)', () => {
@@ -198,7 +207,8 @@ describe('the sandbox forbids the silent-skip paths', () => {
     );
     assert.match(runnerSrc, /function reportFailedInstall\(/);
     assert.match(runnerSrc, /NPM_FAILURE_TAIL_LINES/, 'the tail of npm output must be printed beside the failure');
-    assert.match(runnerSrc, /\.prepush-npm-ci\.log/, 'the full transcript must be persisted');
+    assert.match(runnerSrc, /writeFileSync\(dest, detail\.output\)/, 'the full transcript must be persisted');
+    assert.match(runnerSrc, /path\.join\(sandbox, PRESERVED_EVIDENCE_FILE\)/, '...under the marker name the sweeper reads');
     // shell:IS_WIN is REQUIRED, not incidental — Node 22 refuses to spawn a
     // `.cmd` without it (EINVAL). Measured on win32, it round-trips a child's
     // exit status faithfully (0→0, 3→3), so it was ruled OUT as a cause of the
