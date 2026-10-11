@@ -99,6 +99,53 @@ test('safeReadFile fail-closed: rejects a symlink whose realpath escapes the bou
   assert.equal(result, null, 'a symlink resolving outside the boundary must be rejected (null)');
 });
 
+// The size/type check and the read must be about the SAME file. `statSync(path)`
+// followed by `readFileSync(path)` re-resolved the path for each call, so a file
+// swapped in between was read without ever being checked (audit finding
+// 8a383246). Holding one descriptor binds them: the check is `fstat` of that
+// descriptor and the read is from it. The swap is injected exactly between the
+// two, at whichever stat call the implementation makes.
+test('safeReadFile reads the file it checked: a swap after the stat is never read', (t) => {
+  const dir = mkdtemp('audit-scope-toctou-');
+  const prevCwd = process.cwd();
+  t.after(() => {
+    t.mock.restoreAll();
+    process.chdir(prevCwd);
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+  fs.writeFileSync(path.join(dir, 'notes.txt'), BENIGN_MARKER);
+  fs.writeFileSync(path.join(dir, 'swap.txt'), SECRET_MARKER);
+  process.chdir(dir);
+  const target = fs.realpathSync(path.join(dir, 'notes.txt'));
+
+  // hookRuns: how often the hook fired. swapOutcome: what the injected rename DID
+  // — 'swapped', or the error code of a refusal. Recording the outcome (not just
+  // that the hook ran) is what stops a swap that silently failed for the wrong
+  // reason from reading as a pass.
+  let hookRuns = 0;
+  let swapOutcome = null;
+  const swapAfter = (orig) => (...a) => {
+    const result = orig(...a);
+    hookRuns += 1;
+    if (swapOutcome === null) {
+      // POSIX: replaces the name while an open descriptor keeps the original.
+      // Windows: refuses (EPERM/EBUSY/EACCES) while the file is held open —
+      // equally safe, and the only refusal this test accepts.
+      try { fs.renameSync(path.join(dir, 'swap.txt'), target); swapOutcome = 'swapped'; } catch (err) { swapOutcome = err?.code || String(err); }
+    }
+    return result;
+  };
+  t.mock.method(fs, 'statSync', swapAfter(fs.statSync.bind(fs)));
+  t.mock.method(fs, 'fstatSync', swapAfter(fs.fstatSync.bind(fs)));
+
+  const result = safeReadFile('notes.txt', dir);
+  assert.ok(hookRuns > 0, 'the swap hook must have fired (vacuous-pass guard)');
+  assert.ok(['swapped', 'EPERM', 'EBUSY', 'EACCES'].includes(swapOutcome),
+    `the injected swap must either succeed or be refused because the file is held open — got ${swapOutcome}`);
+  assert.ok(result, 'the checked file is still read');
+  assert.equal(result.content, BENIGN_MARKER, 'content must come from the file that was checked, not the swapped-in one');
+});
+
 test('readFilesAsContext (end-to-end chain) excludes a symlink escaping cwd', (t) => {
   // Covers the full assembly chain — readFilesAsContext → safeReadFile →
   // realpath containment — not just safeReadFile in isolation. A regression

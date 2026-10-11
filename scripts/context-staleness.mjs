@@ -35,7 +35,7 @@ import {
   citationsInLine,
   shouldTrack,
   unverifiableReason,
-  DEFAULT_THRESHOLD_DAYS,
+  parseThresholdDays,
 } from './lib/context-staleness.mjs';
 import { parsePlanStatus } from './lib/plan-status.mjs';
 
@@ -101,8 +101,12 @@ function main() {
   const json = argv.includes('--json');
   const showAll = argv.includes('--all');
   const agentsOnly = argv.includes('--agents-only');
-  const ti = argv.indexOf('--threshold');
-  const threshold = ti !== -1 && argv[ti + 1] ? Number(argv[ti + 1]) : DEFAULT_THRESHOLD_DAYS;
+  const parsed = parseThresholdDays(argv);
+  if (!parsed.ok) {
+    process.stderr.write(`context-staleness: ${parsed.error}. Nothing compared.\n`);
+    process.exit(2);
+  }
+  const threshold = parsed.value;
 
   const candidates = agentsOnly ? ['AGENTS.md'] : ['AGENTS.md', ...walk('docs')];
   const acked = loadAcks();

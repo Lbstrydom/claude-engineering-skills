@@ -15,6 +15,7 @@ import path from 'node:path';
 
 import {
   classifyLogEntry, resolvePromotionAttempts, isArmRetried, repoId, detectPlanHashMismatches,
+  indexPlanHashesByArm,
 } from '../scripts/lib/campaign/promote.mjs';
 
 // ── repoId: cloud-off / unresolved must stay a quiet null; a real store ─────
@@ -440,6 +441,30 @@ describe('detectPlanHashMismatches — the extracted comparison rule (round 6, M
 
   it('an arm with no existing history is never a mismatch', () => {
     assert.deepEqual(detectPlanHashMismatches([['opus', { planContentHash: 'h1' }]], {}), []);
+  });
+
+  // `constructor` matches ARM_ID_PATTERN (/^[a-z0-9][a-z0-9-]{0,63}$/), and on a
+  // plain `{}` it is INHERITED: `{}.constructor` is `Object`, truthy, so the
+  // "no history" branch was skipped and iterating a Function threw. An inherited
+  // property is not stored history.
+  it('an arm id that names an inherited Object property is "no history", never a crash', () => {
+    assert.deepEqual(detectPlanHashMismatches([['constructor', { planContentHash: null }]], {}), []);
+    assert.deepEqual(detectPlanHashMismatches([['constructor', { planContentHash: 'h1' }]], {}), []);
+  });
+
+  it('indexPlanHashesByArm stores history for an arm id like `constructor` as OWN data', () => {
+    const idx = indexPlanHashesByArm(
+      [{ armId: 'constructor', planContentHash: 'h-old' }, { armId: 'opus', planContentHash: null }],
+      () => false,
+    );
+    assert.deepEqual([...idx.constructor], ['h-old']);
+    assert.deepEqual(
+      detectPlanHashMismatches([['constructor', { planContentHash: 'h-new' }]], idx),
+      [{ armId: 'constructor', oldHash: 'h-old', newHash: 'h-new' }],
+    );
+    // Negative control: an excluded (quarantined) attempt contributes nothing.
+    const none = indexPlanHashesByArm([{ armId: 'opus', planContentHash: 'x' }], () => true);
+    assert.deepEqual(detectPlanHashMismatches([['opus', { planContentHash: 'y' }]], none), []);
   });
 
   it('multiple disagreeing old hashes for one arm are all reported', () => {
