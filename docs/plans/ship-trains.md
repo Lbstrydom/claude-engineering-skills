@@ -20,15 +20,28 @@
 - **One manual `/ship` per PR per chat.** PRs #202–#206 each waited for a separate human `/ship` in a separate session.
 - **Merge without `/ship`.** #200 and #201 were merged with no `/ship` at all. They skipped the status.md entry, the `AI-*` trailers, the AGENTS drift check, Steps 6.5–6.8 and the consumer sync.
 
-The provenance loss is wider than the two unshipped PRs. *Measured* 2026-10-11 at 5157ff65, with `git log origin/main --since=2026-09-25 --grep='^AI-Gate:' --oneline | wc -l` against the unfiltered count:
+The provenance loss is wider than the two unshipped PRs. The **figure** and its **attribution** are measured separately here, because the first draft of this plan attributed the whole figure to the squash. The coordinator's re-check showed that was wrong for the cases it sampled (#193, #195, #198 carry `AI-Gate` on 0 of 7, 0 of 4 and 0 of 6 of their own commits).
 
+**The figure.** *Measured* 2026-10-11 at 5157ff65, with `git log origin/main --since=2026-09-25 --grep='^AI-Gate:' --oneline | wc -l` against the unfiltered count:
 - **20 of 76** commits on `main` since the switch to branch + PR + squash-merge carry an `AI-Gate` line.
 - **12 of the last 13** carry none.
-- A finer reading of the same 76 commits (each body run through `parseMessageTrailers`) found 56 with no `AI-Gate` line at all. 5 have one only in the body, where git's last-paragraph rule cannot parse it. 15 have a parseable trailer.
+- The coordinator reproduced the figure independently.
 
-The cause: nothing passes `--subject` or `--body` to `gh pr merge`. Its callers are `scripts/lib/fleet/train-approve.mjs:213` (prints the command), `scripts/lib/fleet/serial.mjs:245` (runs it) and `scripts/lib/sync-pr.mjs:296` (consumer PRs) (all 5157ff65). GitHub therefore writes its default squash body: the PR title plus one bullet per commit. The ship commit's trailer block survives as a parseable trailer only when the ship commit happens to be listed last.
+**The attribution.** *Measured* 2026-10-11 over **all 80 PRs merged into `main` since 2026-09-25**. Method:
+- for each PR, `gh pr view <n> --json commits` gives its **own** branch commits; a commit "carries" the trailer when its message has an `AI-Gate:` line;
+- `git log -1 --format=%B <mergeCommit>` gives the squash commit on `main`, which is then run through `parseMessageTrailers`.
 
-**The provenance convention is not failing on its own terms. The landing path routes around it.**
+| Class | PRs | What happened |
+|---|---|---|
+| **A — `/ship` never ran** | **54** | No branch commit carries `AI-Gate`. ship-commit never wrote a trailer, so there was nothing to lose. **The dominant cause.** |
+| **B — carried on the branch, lost on the squash** | **9** | **B1 (4):** #162, #163, #164, #165, all merged 2026-10-06. The last branch commit carries the block, but the squash commit's body was replaced with a hand-written summary and has **no** `AI-Gate` at all (e.g. squash `e9307d26` vs its branch commit's `AI-Gate: not-run` / `AI-Run-ID: 94d699be…`). **B2 (5):** #186, #187, #192, #196, #197. GitHub's default squash body (the PR title plus one bullet per commit) keeps the block, but **mid-list**, where git's last-paragraph rule cannot parse it (e.g. squash `5df1ade5`: `AI-Gate: waived` followed by further `*` bullets). |
+| C — carried and parseable | 17 | Survived the squash, mostly because the ship commit was the last (or only) commit on the branch. |
+
+So there are **two causes, and this design has to answer both**:
+- **A (54/80)** is the pressure to merge without `/ship`. One human `/ship` per PR per session is what produced it. A train removes the pressure: one keystroke covers the batch (§2.7).
+- **B (9/80)** is real, cited, and independent of A. Nothing passes `--subject` or `--body` to `gh pr merge`; its callers are `scripts/lib/fleet/train-approve.mjs:213` (prints the command), `scripts/lib/fleet/serial.mjs:245` (runs it) and `scripts/lib/sync-pr.mjs:296` (consumer PRs) (all 5157ff65). So the squash message is whatever GitHub defaults to, or whatever the merger types. The train answers B by writing the message itself (§2.3 `messageFor`), so the block is always the last paragraph.
+
+**The provenance convention is not failing on its own terms. The workflow mostly routes around it (A), and the landing path drops it when it does run (B).**
 
 Consumer sync has the same shape. It fires only from `.githooks/pre-push` §2 (`.githooks/pre-push:281-318` (5157ff65)), and only when a push updates the default branch from a checkout whose HEAD is that tip. A PR merged on GitHub never pushes `main` locally, so it never syncs consumers. Someone has to remember to run it.
 
@@ -219,7 +232,7 @@ The model that composes the squash message is always a substantiated participant
 **Right-sizing for this choice.**
 - *Band-aid*: loop `/ship` per PR. It changes nothing structurally and leaves the squash-body loss in place.
 - *Over-engineered*: a committed `trains/<id>.json` manifest, plus a new `AI-Train:` trailer key, plus the V2 ship-evidence receipt.
-- *Chosen*: the trailers that already exist, rendered by the function that already renders them, delivered through the one place they are being lost (the squash body). The **current requirement** it serves is the measured 56/76 loss.
+- *Chosen*: the trailers that already exist, rendered by the function that already renders them, delivered through the place they are lost when /ship does run (the squash body). The **current requirements** it serves are the 9 measured class-B losses (§1.1) and, through the single keystroke per train, the 54 class-A bypasses.
 
 An `AI-Train` key would answer "which commits shipped together". The status.md entry answers that already, and a new reserved key would be a schema change across every consumer for a query nobody has asked.
 
@@ -455,7 +468,7 @@ A terminal state never auto-retries. `abandon --op <opId>` is allowed only befor
   - an immutable field rewrite is refused;
   - the fingerprint changes when any selected head changes;
   - a second writer on the same op is refused.
-- **`composeSquashMessage`**: the output round-trips through `parseMessageTrailers` as a **parseable trailer block**. This is the regression test for the 56/76 defect.
+- **`composeSquashMessage`**: the output round-trips through `parseMessageTrailers` as a **parseable trailer block**. This is the regression test for class B (§1.1): B1 (body replaced) and B2 (block buried mid-list) both fail this round-trip.
 
 **DB-gated (enrolled twice):** `findCodeRunCandidates` against real Postgres:
 - matches by tree (kind `tree`);
