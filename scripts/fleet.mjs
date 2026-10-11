@@ -47,6 +47,7 @@ import { cmdArchiveCheck, cmdRelease } from './lib/fleet/lifecycle.mjs';
 import { checkpointFooter, cmdDirective, cmdNext } from './lib/fleet/coordination.mjs';
 import { cmdRestack } from './lib/fleet/restack.mjs';
 import { cmdPrune } from './lib/fleet/prune.mjs';
+import { cmdHandover } from './lib/fleet/handover.mjs';
 import { renderCommand } from './lib/fleet/shell-quote.mjs';
 import { cmdLand } from './lib/fleet/land.mjs';
 import { fleetDir, RegistryError } from './lib/fleet/registry.mjs';
@@ -113,6 +114,7 @@ async function main() {
       case 'release': result = cmdRelease(ctx, flags); break;
       case 'archive-check': result = cmdArchiveCheck(ctx, flags, positionals); break;
       case 'prune': result = cmdPrune(ctx); break;
+      case 'handover': result = await cmdHandover(ctx, flags, positionals); break;
       case 'next': result = cmdNext(ctx, flags); break;
       case 'directive': result = cmdDirective(ctx, flags); break;
       case 'restack': result = cmdRestack(ctx, flags, positionals); break;

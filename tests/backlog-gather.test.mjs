@@ -132,6 +132,19 @@ describe('classifyReaderResult — decision tree (synthetic)', () => {
     assert.equal(classifyReaderResult({ exitCode: 0, stdout: j({ verdict: 'measured' }), reader: 'debt' }).kind, 'process-failed');
     assert.equal(classifyReaderResult({ exitCode: 0, stdout: j({ ok: true }), reader: 'upstream' }).kind, 'process-failed');
   });
+  test('debt reader with no local cache (a linked worktree) is an expected absence, not a broken reader', () => {
+    // The exact envelope `node scripts/debt-reconcile.mjs --json` prints in a linked
+    // worktree (captured 2026-10-11). It classified as `process-failed`, so
+    // `dashboard:build` exited 1 in every worktree — the documented bootstrap
+    // (`npm run dashboard:setup`) failed exactly where sessions run.
+    const sandbox = j({ ok: false, verdict: 'unverifiable', reason: 'clean-checkout-sandbox', action: 'none' });
+    const r = classifyReaderResult({ exitCode: 0, stdout: sandbox, reader: 'debt' });
+    assert.equal(r.kind, 'no-local-cache');
+    assert.equal(KIND_TO_STATUS[r.kind], 'missing-optional');
+    // Scoped to the reader that documents it, and to its documented exit 0.
+    assert.equal(classifyReaderResult({ exitCode: 0, stdout: sandbox, reader: 'q1' }).kind, 'process-failed');
+    assert.equal(classifyReaderResult({ exitCode: 1, stdout: sandbox, reader: 'debt' }).kind, 'process-failed');
+  });
   test('M11: a typed SQLSTATE OVERRIDES a connectivity code or the debt reason signature', () => {
     const debt = classifyReaderResult({ exitCode: 2, stdout: j({ ok: false, verdict: 'unverifiable', reason: 'repo-identity-unresolved', sqlstate: '42P01' }), reader: 'debt' });
     assert.equal(debt.kind, 'schema-fault');

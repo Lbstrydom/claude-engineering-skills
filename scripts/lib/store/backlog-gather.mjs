@@ -66,11 +66,24 @@ export const STORE_UNREACHABLE_REASONS = Object.freeze({
  */
 export const STORE_UNREACHABLE_NO_ENVELOPE_SIGNATURES = Object.freeze([]);
 
+/**
+ * `ok:false` reasons a reader DOCUMENTS as an expected absence of its input,
+ * answered with exit 0. `debt-reconcile --json` compares the local debt cache
+ * against the store, and `.audit/` is gitignored — so in a linked worktree or a
+ * fresh clone there is no cache to compare, the documented answer is
+ * `verdict:'unverifiable', reason:'clean-checkout-sandbox'`, and treating it as
+ * a broken reader made `dashboard:build` exit 1 in every worktree.
+ */
+export const EXPECTED_ABSENCE_REASONS = Object.freeze({
+  debt: Object.freeze(['clean-checkout-sandbox']),
+});
+
 /** Outcome kind → the dashboard's SourceStatus (schema.mjs `SourceStatusSchema`). */
 export const KIND_TO_STATUS = Object.freeze({
   ok: 'ok',
   'store-off': 'missing-optional',
   'store-unreachable': 'missing-optional',
+  'no-local-cache': 'missing-optional',
   timeout: 'missing-optional',
   'schema-fault': 'unexpected-error',
   'process-failed': 'unexpected-error',
@@ -134,6 +147,9 @@ export function classifyReaderResult({ exitCode, stdout, aborted = false, reader
       const reason = safeCode(env.reason);
       if (!code && reason && STORE_UNREACHABLE_REASONS[reader]?.includes(reason)) {
         return out('store-unreachable', `store unreachable (${reason})`);
+      }
+      if (!code && exitCode === 0 && reason && EXPECTED_ABSENCE_REASONS[reader]?.includes(reason)) {
+        return out('no-local-cache', `no local debt cache in this checkout (${reason}) — nothing to compare against the store`);
       }
       return out('process-failed', `reader reported failure (exit ${exitCode}, ${code ?? reason ?? 'no code'})`);
     }
