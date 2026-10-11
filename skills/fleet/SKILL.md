@@ -40,7 +40,7 @@ Usage:
   /fleet next [--id <id>]                        # what this session should do now
   /fleet release [--id <id>] [--abandoned]       # retire a claim now
   /fleet archive-check [<id|branch|path>]        # what removing a worktree would lose
-  /fleet prune                                    # branches/worktrees removable with nothing lost (read-only)
+  /fleet prune [--apply [--remote]]               # branches/worktrees removable with nothing lost; --apply runs exactly that list
   /fleet handover prepare [--repo <path>]...     # moving to another Claude Code account on this machine
   /fleet handover receive --from <json> [--dry-run]  # in the NEW account: verify/copy memory, list human steps
   /fleet directive --to <id|all> --kind <k> --reason <r> [--ref] [--note] | --list | --ack <id> --outcome done|declined

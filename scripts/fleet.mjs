@@ -15,7 +15,8 @@
  *   repair --quarantine <file>      move one invalid record aside (human-run)
  *   release [--id] [--abandoned]    retire a claim now (done / abandoned)
  *   archive-check [<id|branch|path>] what removing a worktree would lose (read-only)
- *   prune                           branches/worktrees removable with nothing lost, and the commands (read-only)
+ *   prune [--apply [--remote] [--include-fresh]]  branches/worktrees removable with nothing lost: the commands (read-only), or run them
+ *   archive <worktree|branch|id> [--apply] [--discard-ignored] [--include-fresh]  snapshot to a local archive/* tag, verify, remove
  *   next [--id]                     what this session should do now (read-only)
  *   directive --to|--list|--ack     coordinator requests in the shared registry
  *   restack [<branch>] [--replace]  replay a branch's own commits onto the base (patch-id checked)
@@ -47,6 +48,7 @@ import { cmdArchiveCheck, cmdRelease } from './lib/fleet/lifecycle.mjs';
 import { checkpointFooter, cmdDirective, cmdNext } from './lib/fleet/coordination.mjs';
 import { cmdRestack } from './lib/fleet/restack.mjs';
 import { cmdPrune } from './lib/fleet/prune.mjs';
+import { cmdArchive } from './lib/fleet/archive.mjs';
 import { cmdHandover } from './lib/fleet/handover.mjs';
 import { renderCommand } from './lib/fleet/shell-quote.mjs';
 import { cmdLand } from './lib/fleet/land.mjs';
@@ -113,7 +115,8 @@ async function main() {
       case 'repair': result = cmdRepair(ctx, flags); break;
       case 'release': result = cmdRelease(ctx, flags); break;
       case 'archive-check': result = cmdArchiveCheck(ctx, flags, positionals); break;
-      case 'prune': result = cmdPrune(ctx); break;
+      case 'prune': result = cmdPrune(ctx, flags); break;
+      case 'archive': result = cmdArchive(ctx, flags, positionals); break;
       case 'handover': result = await cmdHandover(ctx, flags, positionals); break;
       case 'next': result = cmdNext(ctx, flags); break;
       case 'directive': result = cmdDirective(ctx, flags); break;

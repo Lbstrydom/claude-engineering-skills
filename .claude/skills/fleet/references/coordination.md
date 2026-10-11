@@ -72,15 +72,29 @@ is delivered.
   failed, or skip-worktree/assume-unchanged files hide edits from git). Run it
   before archiving a worktree: archiving can empty gitignored folders such as
   `.claude/tmp`.
-- `fleet prune` is read-only. It lists the local branches (and their worktrees)
-  that can be removed with nothing lost, with the exact commands, and runs none
-  of them. A branch qualifies only when its tip is already in base (`git branch
-  -d`) or merged evidence covers its exact tip (a merged PR head, or a squash
-  that postdates the fork: `-D`, since git cannot see squash merges). No
-  registered session, no open PR, a readable PR list, and a worktree that passes
-  the archive-check evidence (its "unpushed" commits excepted, because their
-  content is proven on base). Idle branches, locked worktrees, the main checkout
-  and the current worktree are never listed. Every kept branch says why.
+- `fleet prune` is read-only by default. It lists the local branches (and their
+  worktrees) that can be removed with nothing lost, with the exact commands, and
+  runs none of them. `fleet prune --apply` runs exactly that list, nothing else:
+  per branch, under the registry lock, it first re-checks that the branch tip is
+  still the judged tip and that no session has registered the branch since, then
+  removes the worktree and the branch with git's own refusals intact (never
+  `--force`), stopping a branch at its first failure. It exits 1 if any removal
+  failed, and a second run finds nothing left. `--apply --remote` also deletes
+  the remote branch, leased on the judged tip (a remote that moved is refused,
+  one already gone counts as done).
+  A branch qualifies only when its tip is already in base (`git branch -d`) or
+  merged evidence covers its exact tip (a merged PR head, or a squash that
+  postdates the fork: `-D`, since git cannot see squash merges). No registered
+  session, no open PR, a readable PR list, and a worktree that passes the
+  archive-check evidence (its "unpushed" commits excepted, because their content
+  is proven on base). Idle branches, locked worktrees, the main checkout and the
+  current worktree are never listed. Every kept branch says why.
+- **Stop the clutter at the source.** Squash merges rewrite commit ids, so every
+  ancestry check (`git branch --merged`) misreports, and nothing runs `prune` on
+  its own. Two settings by the repo owner remove most of it: GitHub, Settings,
+  General, "Automatically delete head branches" (remote branches go on merge), and
+  `git config fetch.prune true` (each fetch drops the stale `origin/*` refs). Then
+  `fleet prune --apply` clears the LOCAL branches and worktrees those two do not.
 
 ## Moving to another Claude Code account (`fleet handover`)
 

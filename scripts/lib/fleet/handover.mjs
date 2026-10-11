@@ -27,7 +27,9 @@ import { readDirectives } from './directives.mjs';
 import { buildStatusFrom, gatherFacts } from './facts.mjs';
 import { gitCommonDir, listBranches, listWorktrees, repoToplevel } from './git-facts.mjs';
 import { archiveReport } from './lifecycle.mjs';
-import { RISK_KINDS, UNREGISTERED_BUDGET, VERDICTS, unregisteredWork } from './unregistered.mjs';
+import { RISK_KINDS, UNREGISTERED_BUDGET, VERDICTS, coveredBy, liveSessionsOf, unregisteredWork } from './unregistered.mjs';
+
+export { liveSessionsOf };
 import { isTerminalState } from './overlap.mjs';
 import { fleetDir, listTrains, readSessions, realWithTail } from './registry.mjs';
 import { renderChipPrompt } from './render-train.mjs';
@@ -242,22 +244,6 @@ export function mergedEvidenceNames({ registry, worktreeList, base, extra = [] }
 }
 
 /**
- * Split a status's registered items the way `status` itself reads them: `live` (still being worked on) and
- * `mergedUnreleased` (derived done from merged evidence, but the registry record is still non-terminal —
- * someone should run `release`). A record already terminal is neither.
- */
-export function liveSessionsOf(facts, status) {
-  const raw = new Map((facts.registry?.sessions ?? []).map((s) => [s.id, s]));
-  const live = []; const mergedUnreleased = [];
-  for (const i of status.items) {
-    if (!i.tracked) continue;
-    if (!isTerminalState(i.state)) live.push(i);
-    else if (raw.has(i.id) && !isTerminalState(raw.get(i.id).state)) mergedUnreleased.push(i);
-  }
-  return { live, mergedUnreleased };
-}
-
-/**
  * ONE derivation of a repo's coordination state, shared by prepare and receive (defect h): the same
  * `gatherFacts` + `buildStatusFrom` that `status` renders, with merged evidence for the branches that can
  * retire a claim. The registry is read once here to name those branches; a claim registered between that
@@ -285,9 +271,6 @@ function unregisteredFields(repo, ctx, claimed, deps) {
   const gaps = [u.notProbed ? `scan deadline reached: ${u.notProbed} worktree(s)/branch(es) not probed` : null, u.branchesUnknown ?? null].filter(Boolean);
   return { unregistered: u.items, ...(gaps.length ? { unregisteredUnknown: gaps.join('; ') } : {}) };
 }
-
-/** What live (and merged-unreleased) claims cover: their worktrees and branches. */
-const coveredBy = (items) => ({ worktrees: items.map((i) => i.worktree).filter(Boolean), branches: items.map((i) => i.branch).filter(Boolean) });
 
 /** Does an unregistered item block a handover? A manifest item written before verdicts existed always does. */
 export const blocksHandover = (u) => Boolean(u.unknown) || u.blocks !== false;

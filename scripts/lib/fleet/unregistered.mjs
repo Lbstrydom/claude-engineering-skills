@@ -17,21 +17,22 @@
  * @module scripts/lib/fleet/unregistered
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import { samePath } from '../harness-paths.mjs';
 import { RECEIPT_PATH } from '../sync-receipt.mjs';
-import { listWorktrees, patchId as gitPatchId, runGit } from './git-facts.mjs';
+import { cacheDirFor, listWorktrees, patchId as gitPatchId, runGit } from './git-facts.mjs';
 import { archiveReport } from './lifecycle.mjs';
-import { isIdleTip, landedReason, toMs } from './overlap.mjs';
+import { squashPatchIds } from './merged-facts.mjs';
+import { DEFAULT_STALE_WORKTREE_DAYS, isIdleTip, isTerminalState, landedReason, toMs } from './overlap.mjs';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Files a sync leaves dirty on purpose (`sync-pr.mjs` never opens a PR for a receipt-only change). */
 export const SYNC_OWNED_PATHS = Object.freeze([RECEIPT_PATH]);
-/** `.fleet.json` `staleWorktreeDays` default: unlanded work idle longer than this is "possibly abandoned". */
-export const DEFAULT_STALE_WORKTREE_DAYS = 3;
+export { DEFAULT_STALE_WORKTREE_DAYS };
 /** The scan's bounds: one absolute deadline per surface, and a per-call cap under it. */
 export const UNREGISTERED_BUDGET = Object.freeze({ statusMs: 60_000, handoverMs: 120_000, probeTimeoutMs: 30_000 });
 /** Captured tips per placement `rev-list` (200 × 41 chars ≈ 8 KB of argv, far under the Windows 32 KB limit). */
@@ -41,6 +42,28 @@ export const VERDICTS = Object.freeze(['unlanded', 'superseded', 'unverified', '
 
 /** The per-item risk counts every surface prints. */
 export const RISK_KINDS = Object.freeze(['staged', 'unstaged', 'untracked', 'unpushed']);
+
+/**
+ * A pre-push sandbox is TOOLING, not work: `scripts/prepush-check.mjs` checks out the commit being pushed into
+ * `<os.tmpdir()>/ces-prepush-<8-hex sha>-<pid>`, detached, and removes it afterwards (the prefix is
+ * `SANDBOX_PREFIX` in `scripts/lib/prepush-sandbox-cleanup.mjs`, spelled here rather than imported so fleet's
+ * synced closure stays small; `tests/fleet-unregistered-surfaces.test.mjs` pins the two spellings together).
+ * All three facts must hold — detached, directly under the temp dir, that exact name — so a look-alike
+ * directory with a branch checked out, or anywhere else, stays unregistered work.
+ */
+export const PREPUSH_SANDBOX_RE = /^ces-prepush-[0-9a-f]{8}-\d+$/;
+
+export function isPrepushSandbox(w, { tmpDirs = defaultTmpDirs() } = {}) {
+  if (!w?.detached || !PREPUSH_SANDBOX_RE.test(path.basename(String(w.path)))) return false;
+  const parent = path.dirname(path.resolve(w.path));
+  return tmpDirs.some((t) => samePath(parent, t));
+}
+
+/** The OS temp dir, and its realpath where that differs (macOS `/var` → `/private/var`). */
+function defaultTmpDirs() {
+  const t = os.tmpdir();
+  try { const r = fs.realpathSync.native(t); return r === t ? [t] : [t, r]; } catch { return [t]; }
+}
 
 /**
  * The ordered verdict contract; the first matching row wins. Pure.
@@ -62,7 +85,8 @@ export function classifyUnregistered({ probed, local = [], syncOwned = [], commi
     return { verdict: 'unverified', row: '1c', blocks: false, preserved: 'remote', reason: 'a remote-tracking ref (as of the last fetch) holds the commits; whether they landed is unknown (merged evidence incomplete)', ...extra };
   }
   if (local.length) {
-    const landedPart = commits && (evidence === 'landed' || evidence === 'duplicate') ? '; the committed part is already landed' : '';
+    const landedPart = !commits ? '' : evidence === 'landed' ? '; the committed part is already landed'
+      : evidence === 'duplicate' ? `; the committed part is the same patch as ${duplicateOf ?? 'a live claim'}, not landed` : '';
     return { verdict: 'unlanded', row: '2', blocks: true, preserved: 'none', reason: `${local.length} uncommitted file(s)${landedPart}`, ...extra };
   }
   if (commits && evidence === 'landed') return { verdict: 'superseded', row: '3', blocks: false, via: 'landed', preserved: 'base', reason: 'its commits are on base', ...extra };
@@ -108,12 +132,21 @@ function adminHeadPath(worktree) {
  * activity, never proof of death. Dirty paths are stat'ed until the deadline; the rest are counted.
  * @returns {{at: number|null, notStatted: number}}
  */
-export function lastActivity({ worktree, tipTime = null, dirty = [], deadlineAt = null, clock = Date.now, stat = fs.statSync }) {
+export function lastActivity({ worktree, tipTime = null, dirty = [], deadlineAt = null, clock = Date.now, stat = fs.statSync, refFiles = [] }) {
+  // A term that could not be READ (any error but "absent") or a dirty path the deadline never reached could be the
+  // most recent activity: the age is then `unknown`, which every caller treats as fresh — a failed probe must never
+  // make a live worktree look idle (and so removable).
+  let unknown = false;
+  const statOr = (p, pick) => { try { return pick(stat(p)); } catch (e) { if (e?.code !== 'ENOENT') unknown = true; return null; } };
   const terms = [toMs(tipTime)];
+  // A branch's reflog (and loose ref) is rewritten whenever the branch is created or moved: a branch made moments
+  // ago on a year-old commit is fresh, which its tip time alone would call idle. A stat, never a subprocess.
+  if (refFiles === null) unknown = true;
+  for (const f of refFiles ?? []) terms.push(statOr(f, (s) => s.mtimeMs));
   if (worktree) {
     const admin = adminHeadPath(worktree);
-    if (admin) { try { terms.push(stat(admin).mtimeMs); } catch { /* absent: no term */ } }
-    try { const b = stat(worktree).birthtimeMs; if (b > 0) terms.push(b); } catch { /* no term */ }
+    if (admin) terms.push(statOr(admin, (s) => s.mtimeMs));
+    terms.push(statOr(worktree, (s) => (s.birthtimeMs > 0 ? s.birthtimeMs : null)));
   }
   // The maximum is kept incrementally: a spread over every dirty path would hit the engine's argument limit.
   let at = null;
@@ -122,10 +155,23 @@ export function lastActivity({ worktree, tipTime = null, dirty = [], deadlineAt 
   let notStatted = 0;
   for (const p of dirty) {
     if (deadlineAt !== null && clock() >= deadlineAt) { notStatted += 1; continue; }
-    try { take(stat(path.join(worktree, p)).mtimeMs); } catch { /* deleted path: no term */ }
+    take(statOr(path.join(worktree, p), (s) => s.mtimeMs));
   }
-  return { at, notStatted };
+  return { at, notStatted, unknown: unknown || notStatted > 0 };
 }
+
+/** The files git rewrites when `branch` is created or moved: its reflog and its loose ref (either may be absent). */
+export function branchRefFiles(cwd, branch) {
+  if (!branch) return [];
+  const common = cacheDirFor(cwd);
+  // An unresolvable common dir is not "no ref evidence": null makes the activity unknown (fresh), never idle.
+  if (!common) return null;
+  const segs = String(branch).split('/');
+  return [path.join(common, 'logs', 'refs', 'heads', ...segs), path.join(common, 'refs', 'heads', ...segs)];
+}
+
+/** Is this activity provably older than the window? Unknown, missing or future-dated is NOT idle. */
+export const provablyIdle = (act, nowMs, windowMs) => !act.unknown && isIdleTip(act.at, nowMs, windowMs);
 
 /** Clip a git call to the scan deadline; past it, the call is not made and says so. */
 function clippedGit(git, { deadlineAt, clock, cap }) {
@@ -156,7 +202,8 @@ const countOf = (r) => { const n = r.ok ? Number.parseInt(String(r.stdout).trim(
  *   branchesUnknown?: string}} `partial` is true when candidates were not probed OR the branch inventory was not read.
  */
 export function unregisteredWork(repo, ctx, { worktrees: claimedWorktrees = [], branches: claimedBranches = [] } = {}, deps = {}) {
-  const { facts = null, list = listWorktrees, report = archiveReport, git = runGit, deadlineAt = null, clock = Date.now, stat = fs.statSync } = deps;
+  const { facts = null, list = listWorktrees, report = archiveReport, git = runGit, deadlineAt = null, clock = Date.now, stat = fs.statSync, isTooling = isPrepushSandbox,
+    refFilesOf = (b) => branchRefFiles(repo, b) } = deps;
   const staleDays = ctx.config?.staleWorktreeDays ?? DEFAULT_STALE_WORKTREE_DAYS;
   const base = ctx.config?.baseBranch ?? facts?.base?.name ?? null;
   const baseRev = facts?.baseOid ?? base;
@@ -208,8 +255,10 @@ export function unregisteredWork(repo, ctx, { worktrees: claimedWorktrees = [], 
   };
 
   const candidates = [];
+  const tooling = [];
   for (const w of wt.worktrees) {
     if (w.bare || w.missing || w.prunable || claimedWorktrees.some((c) => samePath(c, w.path)) || (w.branch && claimedB.has(w.branch))) continue;
+    if (isTooling(w)) { tooling.push({ worktree: path.resolve(w.path), head: w.head ?? null, kind: 'prepush-sandbox' }); continue; }
     candidates.push({ kind: 'worktree', w, tipTime: w.branch ? byName.get(w.branch)?.tipTime ?? null : null });
   }
   for (const b of branchList) {
@@ -228,14 +277,14 @@ export function unregisteredWork(repo, ctx, { worktrees: claimedWorktrees = [], 
     const item = c.kind === 'worktree' ? probeWorktree(c.w) : probeBranch(c.b);
     if (item) items.push(item);
   }
-  return { queried: true, items, partial: notProbed > 0 || Boolean(branchesUnknown), notProbed, staleDays, ...(branchesUnknown ? { branchesUnknown } : {}) };
+  return { queried: true, items, tooling, candidates: candidates.length, partial: notProbed > 0 || Boolean(branchesUnknown), notProbed, staleDays, ...(branchesUnknown ? { branchesUnknown } : {}) };
 
   function finish(base_, facts_) {
     const verdict = classifyUnregistered(facts_);
     if (!verdict) return null;
-    const act = lastActivity({ worktree: base_.worktree, tipTime: base_.tipTime, dirty: base_.dirty, deadlineAt, clock, stat });
+    const act = lastActivity({ worktree: base_.worktree, tipTime: base_.tipTime, dirty: base_.dirty, deadlineAt, clock, stat, refFiles: base_.branch ? refFilesOf(base_.branch) : [] });
     const idleDays = act.at === null || act.at > nowMs ? null : Math.floor((nowMs - act.at) / DAY_MS);
-    const stale = isIdleTip(act.at, nowMs, staleDays * DAY_MS);
+    const stale = provablyIdle(act, nowMs, staleDays * DAY_MS);
     const { dirty, tipTime, ...rest } = base_;
     return { ...rest, ...verdict, idleDays, stale, lastActivity: act.at === null ? null : new Date(act.at).toISOString(), ...(act.notStatted ? { mtimeNotStatted: act.notStatted } : {}) };
   }
@@ -311,6 +360,93 @@ export function unregisteredWork(repo, ctx, { worktrees: claimedWorktrees = [], 
   }
 }
 
+// ── live sessions (shared by status and handover) ───────────────────────────
+
+/**
+ * Split a status's registered items the way `status` itself reads them: `live` (still being worked on) and
+ * `mergedUnreleased` (derived done from merged evidence, but the registry record is still non-terminal —
+ * someone should run `release`). A record already terminal is neither.
+ */
+export function liveSessionsOf(facts, status) {
+  const raw = new Map((facts.registry?.sessions ?? []).map((s) => [s.id, s]));
+  const live = []; const mergedUnreleased = [];
+  for (const i of status.items) {
+    if (!i.tracked) continue;
+    if (!isTerminalState(i.state)) live.push(i);
+    else if (raw.has(i.id) && !isTerminalState(raw.get(i.id).state)) mergedUnreleased.push(i);
+  }
+  return { live, mergedUnreleased };
+}
+
+/** What claims cover: their worktrees and branches. A merged-unreleased record still covers until released. */
+export const coveredBy = (items) => ({ worktrees: items.map((i) => i.worktree).filter(Boolean), branches: items.map((i) => i.branch).filter(Boolean) });
+
+// ── archive tags (v) ────────────────────────────────────────────────────────
+
+/** At most this many `archive/*` tags are judged per scan; the rest are counted, never dropped silently. */
+export const ARCHIVE_TAG_LIMIT = 50;
+const LS_REMOTE_TIMEOUT_MS = 15_000;
+
+/**
+ * `archive/*` tags whose commits are not contained in base, each judged `superseded` (its whole diff against its
+ * merge-base with base is empty, or its patch-id is in the squash window) or `unlanded`, and each with where it
+ * is preserved — the strength of the evidence kept apart:
+ *   `remote`     one bounded `ls-remote` shows the SAME tag name at the SAME oid (verified now);
+ *   `last-fetch` a remote-tracking branch contained the commit at the last fetch (weaker: such refs survive a
+ *                remote deletion or rewrite);
+ *   `unknown`    `ls-remote` failed and no tracking branch has it;
+ *   `local-only` otherwise: one disk away from lost.
+ * @returns {{queried: boolean, reason?: string, tags: object[], overflow: number, counts: object}}
+ */
+export function scanArchiveTags(repo, { baseRev, deadlineAt = null, clock = Date.now, git = runGit, patchIdOf = null, squash = null } = {}) {
+  const g = clippedGit(git, { deadlineAt, clock, cap: UNREGISTERED_BUDGET.probeTimeoutMs });
+  const none = { tags: [], overflow: 0, counts: { unlanded: 0, superseded: 0, 'local-only': 0, 'last-fetch': 0, remote: 0, unknown: 0 } };
+  if (!baseRev) return { queried: false, reason: 'no base to compare against', ...none };
+  const list = g(['for-each-ref', `--no-merged=${baseRev}`, '--format=%(refname:short)%00%(objectname)%00%(*objectname)', 'refs/tags/archive'], repo);
+  if (!list.ok) return { queried: false, reason: list.reason ?? 'for-each-ref failed', ...none };
+  const all = String(list.stdout).split('\n').filter(Boolean).map((l) => { const [name, oid, peeled] = l.split('\0'); return { name, oid: peeled || oid }; });
+  const judged = all.slice(0, ARCHIVE_TAG_LIMIT);
+  const pidOf = patchIdOf ?? ((oid) => { const p = gitPatchId(repo, baseRev, oid); return p.queried ? { id: p.patchId } : null; });
+  // Past the deadline the squash window is not read (no tag is then judged: `overflow` says how many were left).
+  const pastDeadline = () => deadlineAt !== null && clock() >= deadlineAt;
+  // A real run reads it through the memoised `runGit` path; an injected git (a test) is passed through.
+  const window = squash ?? (pastDeadline() ? null : squashPatchIds(repo, baseRev, git === runGit ? {} : { git }));
+  // One bounded network read for the whole set; its failure is `unknown`, never "local-only".
+  let remoteTags = null;
+  if (judged.length && !(deadlineAt !== null && clock() >= deadlineAt)) {
+    const ls = g(['ls-remote', '--tags', 'origin', 'refs/tags/archive/*'], repo, { timeoutMs: LS_REMOTE_TIMEOUT_MS });
+    if (ls.ok) {
+      remoteTags = new Map();
+      for (const line of String(ls.stdout).split('\n')) {
+        const [oid, ref] = line.split('\t');
+        if (!ref || !oid) continue;
+        // A peeled `^{}` line names the commit an annotated tag points at: it is the oid that counts.
+        const name = ref.replace(/^refs\/tags\//, '').replace(/\^\{\}$/, '');
+        if (ref.endsWith('^{}') || !remoteTags.has(name)) remoteTags.set(name, oid.trim());
+      }
+    }
+  }
+  const tags = [];
+  for (const t of judged) {
+    // Checked before each per-tag patch-id: a call already started keeps its own timeout, so the overrun is one call.
+    if (pastDeadline()) break;
+    const pid = pidOf(t.oid);
+    const verdict = pid && pid.id === null ? 'superseded' : pid && window?.byPatchId?.has?.(pid.id) ? 'superseded' : 'unlanded';
+    let preserved;
+    if (remoteTags?.get(t.name) === t.oid) preserved = 'remote';
+    else {
+      const tracking = g(['branch', '-r', '--contains', t.oid], repo);
+      // A failed lookup is not "no tracking branch has it": `local-only` needs BOTH checks to have answered.
+      if (tracking.ok && String(tracking.stdout).trim()) preserved = 'last-fetch';
+      else preserved = remoteTags === null || !tracking.ok ? 'unknown' : 'local-only';
+    }
+    tags.push({ name: t.name, oid: t.oid, verdict, preserved });
+  }
+  const counts = { ...none.counts };
+  for (const t of tags) { counts[t.verdict] += 1; if (t.verdict === 'unlanded') counts[t.preserved] += 1; }
+  return { queried: true, tags, overflow: all.length - tags.length, counts };
+}
+
 /** Groups the surfaces render, in their display order. */
 export function groupUnregistered(items) {
   const abandoned = items.filter(isAbandoned).sort(rankAbandoned);
@@ -328,6 +464,16 @@ export function groupUnregistered(items) {
 // ── derived cache (Category A: never committed) ─────────────────────────────
 
 export const UNREGISTERED_CACHE_FILE = 'unregistered.json';
+
+/**
+ * Where the cache lives: `<git-common-dir>/fleet-cache/`, beside the commit-id cache and OUTSIDE the registry, so
+ * `status` stays strictly read-only towards `fleet/` (byte-identical registry, never creates it) and every
+ * worktree of a repo reads the same file. Null when the common dir cannot be resolved.
+ */
+export function unregisteredCacheDir(cwd) {
+  const common = cacheDirFor(cwd);
+  return common ? path.join(common, 'fleet-cache') : null;
+}
 export const UNREGISTERED_CACHE_SCHEMA_VERSION = 1;
 const CacheSchema = z.object({
   schemaVersion: z.literal(UNREGISTERED_CACHE_SCHEMA_VERSION),
@@ -335,8 +481,9 @@ const CacheSchema = z.object({
   staleDays: z.number().int().positive(),
   partial: z.boolean(),
   notProbed: z.number().int().nonnegative(),
+  branchesUnknown: z.string().optional(),
   counts: z.object({
-    total: z.number().int().nonnegative(), abandoned: z.number().int().nonnegative(), localOnly: z.number().int().nonnegative(),
+    candidates: z.number().int().nonnegative(), total: z.number().int().nonnegative(), abandoned: z.number().int().nonnegative(), localOnly: z.number().int().nonnegative(),
     unverified: z.number().int().nonnegative(),
   }).strict(),
 }).strict();
@@ -346,9 +493,9 @@ export function cacheRecord(scan, now) {
   const abandoned = scan.items.filter(isAbandoned);
   return {
     schemaVersion: UNREGISTERED_CACHE_SCHEMA_VERSION, at: new Date(toMs(now) ?? Date.now()).toISOString(), staleDays: scan.staleDays,
-    partial: scan.partial, notProbed: scan.notProbed,
+    partial: scan.partial, notProbed: scan.notProbed, ...(scan.branchesUnknown ? { branchesUnknown: scan.branchesUnknown } : {}),
     counts: {
-      total: scan.items.length, abandoned: abandoned.length, localOnly: abandoned.filter((i) => i.preserved === 'none').length,
+      candidates: scan.candidates ?? scan.items.length, total: scan.items.length, abandoned: abandoned.length, localOnly: abandoned.filter((i) => i.preserved === 'none').length,
       unverified: scan.items.filter((i) => i.verdict === 'unverified').length,
     },
   };
@@ -357,7 +504,9 @@ export function cacheRecord(scan, now) {
 /** Write the derived cache beside `hold.json`. Never throws: a failure is returned for a `warning:` line. */
 export function writeUnregisteredCache(dir, record) {
   try {
+    if (!dir) return { ok: false, reason: 'the git common dir could not be resolved' };
     CacheSchema.parse(record);
+    fs.mkdirSync(dir, { recursive: true });
     atomicWriteFileSync(path.join(dir, UNREGISTERED_CACHE_FILE), `${JSON.stringify(record, null, 2)}\n`);
     return { ok: true };
   } catch (e) { return { ok: false, reason: e.message }; }
@@ -366,6 +515,7 @@ export function writeUnregisteredCache(dir, record) {
 /** Read the cache: `{state:'missing'|'unreadable'|'ok', record?, reason?}`. Never throws. */
 export function readUnregisteredCache(dir) {
   let text;
+  if (!dir) return { state: 'unreadable', reason: 'the git common dir could not be resolved' };
   try { text = fs.readFileSync(path.join(dir, UNREGISTERED_CACHE_FILE), 'utf8'); } catch (e) {
     return e.code === 'ENOENT' ? { state: 'missing' } : { state: 'unreadable', reason: e.code ?? e.message };
   }

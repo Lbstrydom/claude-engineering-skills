@@ -799,6 +799,8 @@ export function buildStatus(facts) {
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** `.fleet.json` `hideIdleAfterDays` default: an untracked branch with no commit for this long reads as abandoned. */
 export const DEFAULT_IDLE_DAYS = 14;
+/** `.fleet.json` `staleWorktreeDays` default: unlanded work idle longer than this is "possibly abandoned". */
+export const DEFAULT_STALE_WORKTREE_DAYS = 3;
 
 /** The idle window in ms from a resolved config (`hideIdleAfterDays`, else the default). */
 export const idleMsFrom = (config) => (config?.hideIdleAfterDays ?? DEFAULT_IDLE_DAYS) * DAY_MS;

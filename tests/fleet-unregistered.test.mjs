@@ -51,6 +51,24 @@ describe('classifyUnregistered — the ordered contract, one case per row with i
     assert.match(d.reason, /committed part is already landed/);
     assert.doesNotMatch(v({ local: ['x.md'] }).reason, /landed/);
   });
+  it('2 with DUPLICATE evidence never says "landed": it names the twin (control: landed evidence says landed)', () => {
+    const dup = v({ local: ['x.md'], committed: 'pushed', evidence: 'duplicate', duplicateOf: 'live-claim' });
+    assert.match(dup.reason, /same patch as live-claim, not landed/);
+    assert.doesNotMatch(dup.reason, /already landed/);
+    assert.match(v({ local: ['x.md'], committed: 'pushed', evidence: 'landed' }).reason, /already landed/);
+  });
+  it('an unreadable activity term (not ENOENT) is UNKNOWN, so never stale; a plain absence is not (control)', () => {
+    const eacces = () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); };
+    const enoent = () => { throw Object.assign(new Error('gone'), { code: 'ENOENT' }); };
+    assert.equal(lastActivity({ worktree: '/w', tipTime: NOW - 30 * DAY, stat: eacces }).unknown, true);
+    assert.equal(lastActivity({ worktree: '/w', tipTime: NOW - 30 * DAY, stat: enoent }).unknown, false);
+    const run = (stat) => unregisteredWork('R', ctx, {}, {
+      facts: factsFor({ branches: [{ name: 'f', oid: 'a'.repeat(40), ahead: 1, tipTime: NOW - 30 * DAY }], evidence: { f: KNOWN_NOT_MERGED } }),
+      list: wtList({ path: '/wt/f', branch: 'f', head: 'a'.repeat(40) }), report: cleanReport({ risks: { untracked: ['n.md'] } }), stat, patchIdOf: () => null, refFilesOf: () => [],
+    }).items[0];
+    assert.equal(run(eacces).stale, false, 'unknown activity is not "possibly abandoned"');
+    assert.equal(run(enoent).stale, true);
+  });
   it('3: landed or duplicate commits on a clean tree are superseded, with via; a dirty tree never reaches row 3', () => {
     assert.deepEqual(['verdict', 'via', 'blocks'].map((k) => v({ committed: 'unpushed', evidence: 'landed' })[k]), ['superseded', 'landed', false]);
     const dup = v({ committed: 'pushed', evidence: 'duplicate', duplicateOf: 'live-claim' });
@@ -124,7 +142,7 @@ describe('unregisteredWork — candidates and verdicts over injected facts', () 
   it('a clean worktree whose commits are pushed but not landed is listed (unlanded, remote, non-blocking); tip on base is not (control)', () => {
     const run = (ahead) => unregisteredWork('R', ctx, {}, {
       facts: factsFor({ branches: [{ name: 'f', oid: tip, ahead, tipTime: NOW - DAY }], evidence: { f: KNOWN_NOT_MERGED } }),
-      list: wtList({ path: '/wt/f', branch: 'f', head: tip }), report: cleanReport(), stat: statNone, patchIdOf: () => null,
+      list: wtList({ path: '/wt/f', branch: 'f', head: tip }), report: cleanReport(), stat: statNone, patchIdOf: () => null, refFilesOf: () => [],
     });
     const [item] = run(2).items;
     assert.deepEqual([item.verdict, item.preserved, item.blocks, item.committed], ['unlanded', 'remote', false, 'pushed']);
@@ -133,7 +151,7 @@ describe('unregisteredWork — candidates and verdicts over injected facts', () 
   it('exact-tip evidence makes it superseded; evidence for an OLDER tip does not', () => {
     const run = (evTip) => unregisteredWork('R', ctx, {}, {
       facts: factsFor({ branches: [{ name: 'f', oid: evTip, ahead: 1, tipTime: NOW }], evidence: { f: { known: true, merged: true, via: 'squash' } } }),
-      list: wtList({ path: '/wt/f', branch: 'f', head: tip }), report: cleanReport({ risks: { unpushed: [tip] } }), stat: statNone, patchIdOf: () => null,
+      list: wtList({ path: '/wt/f', branch: 'f', head: tip }), report: cleanReport({ risks: { unpushed: [tip] } }), stat: statNone, patchIdOf: () => null, refFilesOf: () => [],
     }).items[0];
     assert.deepEqual([run(tip).verdict, run(tip).via], ['superseded', 'landed']);
     assert.equal(run('c'.repeat(40)).verdict, 'unverified', 'a tip one commit past the evidence is not covered by it');
@@ -165,7 +183,7 @@ describe('unregisteredWork — candidates and verdicts over injected facts', () 
     assert.deepEqual([run({ claimed: {} }).verdict, run({ claimed: {} }).evidence], ['unlanded', 'none'], 'no live twin: no duplicate');
   });
   it('a branch inventory that was NOT read is unknown, never empty: the scan is partial and says why (control: a read inventory)', () => {
-    const opts = (facts) => ({ facts, list: wtList(), stat: statNone, patchIdOf: () => null, git: placementGit() });
+    const opts = (facts) => ({ facts, list: wtList(), stat: statNone, patchIdOf: () => null, refFilesOf: () => [], git: placementGit() });
     const notRead = unregisteredWork('R', ctx, {}, opts({ ...factsFor(), branches: { queried: false, reason: 'for-each-ref failed', branches: [] } }));
     assert.deepEqual([notRead.partial, notRead.branchesUnknown], [true, 'branch inventory not read: for-each-ref failed']);
     assert.match(unregisteredWork('R', ctx, {}, opts(null)).branchesUnknown, /not gathered/);
@@ -176,7 +194,7 @@ describe('unregisteredWork — candidates and verdicts over injected facts', () 
     const counted = [];
     const run = (measuredOid) => unregisteredWork('R', ctx, {}, {
       facts: factsFor({ branches: [{ name: 'f', oid: measuredOid, ahead: 0, tipTime: NOW }] }), list: wtList({ path: '/wt/f', branch: 'f', head: tip }),
-      report: cleanReport({ risks: { unpushed: [tip] } }), stat: statNone, patchIdOf: () => null,
+      report: cleanReport({ risks: { unpushed: [tip] } }), stat: statNone, patchIdOf: () => null, refFilesOf: () => [],
       git: (args) => { counted.push(args.join(' ')); return { ok: true, stdout: '3\n' }; },
     }).items;
     assert.deepEqual(run(tip), [], 'control: the measurement is for this HEAD (ahead 0) — not listed');
@@ -214,7 +232,7 @@ describe('branch-only candidates (u, round 6)', () => {
   const tip = 'a'.repeat(40);
   const run = (branch, { local = true, evidence = {} } = {}) => unregisteredWork('R', ctx, {}, {
     facts: factsFor({ branches: [branch], evidence }), list: wtList(), report: () => { throw new Error('a branch-only candidate has no worktree to probe'); },
-    git: placementGit({ localOnly: local ? [branch.oid] : [], counts: { [branch.oid]: branch.ahead } }), stat: statNone, patchIdOf: () => null,
+    git: placementGit({ localOnly: local ? [branch.oid] : [], counts: { [branch.oid]: branch.ahead } }), stat: statNone, patchIdOf: () => null, refFilesOf: () => [],
   }).items;
   it('49 commits no remote holds, no worktree: unlanded, preserved none, blocking — and outranks an idle pushed branch', () => {
     const [local] = run({ name: 'queue-burndown', oid: tip, ahead: 49, tipTime: NOW - 9 * DAY }, { evidence: { 'queue-burndown': KNOWN_NOT_MERGED } });
@@ -230,7 +248,7 @@ describe('branch-only candidates (u, round 6)', () => {
   });
   it('placement is ONE listing plus a count only for local-only tips; a failed listing falls back to a count per branch', () => {
     const branches = ['a', 'b', 'c'].map((n, i) => ({ name: n, oid: n.repeat(40), ahead: i + 1, tipTime: NOW }));
-    const scan = (g) => unregisteredWork('R', ctx, {}, { facts: factsFor({ branches }), list: wtList(), stat: statNone, patchIdOf: () => null, git: g }).items;
+    const scan = (g) => unregisteredWork('R', ctx, {}, { facts: factsFor({ branches }), list: wtList(), stat: statNone, patchIdOf: () => null, refFilesOf: () => [], git: g }).items;
     const g1 = placementGit({ localOnly: ['b'.repeat(40)], counts: { ['b'.repeat(40)]: 2 } });
     assert.deepEqual(scan(g1).map((i) => [i.branch, i.committed, i.risks.unpushed]), [['a', 'pushed', 0], ['b', 'unpushed', 2], ['c', 'pushed', 0]]);
     assert.equal(g1.calls.length, 2, 'one listing + one count');
@@ -242,7 +260,7 @@ describe('branch-only candidates (u, round 6)', () => {
   it('a branch checked out in a listed worktree is that worktree\'s candidate, never a second branch-only one', () => {
     const items = unregisteredWork('R', ctx, {}, {
       facts: factsFor({ branches: [{ name: 'f', oid: tip, ahead: 1 }], evidence: { f: KNOWN_NOT_MERGED } }), list: wtList({ path: '/wt/f', branch: 'f', head: tip }),
-      report: cleanReport({ risks: { unpushed: [tip] } }), stat: statNone, patchIdOf: () => null,
+      report: cleanReport({ risks: { unpushed: [tip] } }), stat: statNone, patchIdOf: () => null, refFilesOf: () => [],
     }).items;
     assert.deepEqual(items.map((i) => i.kind), ['worktree']);
   });
@@ -278,7 +296,7 @@ describe('the light probe and the one deadline', () => {
     const branches = Array.from({ length: 45 }, (_, i) => ({ name: `b${String(i).padStart(2, '0')}`, oid: String(i).padStart(40, '0').replace(/^0/, 'a'), ahead: 1, tipTime: NOW - (100 - i) * DAY }));
     const shuffled = [...branches].reverse();
     const scan = unregisteredWork('R', ctx, {}, {
-      facts: factsFor({ branches: shuffled }), list: wtList(), stat: statNone, patchIdOf: () => null, deadlineAt: 30, clock: () => t,
+      facts: factsFor({ branches: shuffled }), list: wtList(), stat: statNone, patchIdOf: () => null, refFilesOf: () => [], deadlineAt: 30, clock: () => t,
       git: (args) => {
         t += 1;
         if (!args.includes('--count')) return { ok: true, stdout: branches.map((b) => b.oid).join('\n') };
@@ -307,7 +325,7 @@ describe('idle age (last activity)', () => {
   it('exactly at, one second inside and one second past the window (frozen clock)', () => {
     const ctxNow = { ...ctx, now: new Date(NOW) };
     const run = (age) => unregisteredWork('R', ctxNow, {}, {
-      facts: factsFor({ branches: [{ name: 'f', oid: 'a'.repeat(40), ahead: 1, tipTime: NOW - age }] }), list: wtList(), stat: statNone, patchIdOf: () => null,
+      facts: factsFor({ branches: [{ name: 'f', oid: 'a'.repeat(40), ahead: 1, tipTime: NOW - age }] }), list: wtList(), stat: statNone, patchIdOf: () => null, refFilesOf: () => [],
       git: () => ({ ok: true, stdout: '1\n' }),
     }).items[0];
     assert.equal(run(STALE).stale, false, 'exactly at the window is not past it');
@@ -333,6 +351,10 @@ describe('idle age (last activity)', () => {
     const dirty = Array.from({ length: 200_000 }, (_, i) => `f${i}`);
     const r = lastActivity({ worktree: '/wt', tipTime: null, dirty, stat: (p) => ({ mtimeMs: p.endsWith('f199999') ? NOW : NOW - DAY, birthtimeMs: 0 }) });
     assert.equal(r.at, NOW);
+  });
+  it('an unresolvable ref-evidence source (null) makes the age unknown, never idle; [] is simply no term (control)', () => {
+    assert.equal(lastActivity({ worktree: null, tipTime: NOW - 30 * DAY, refFiles: null }).unknown, true);
+    assert.equal(lastActivity({ worktree: null, tipTime: NOW - 30 * DAY, refFiles: [] }).unknown, false);
   });
   it('one recent edit among 300 older dirty files makes it fresh; paths past the deadline are counted, not dropped', () => {
     const dirty = Array.from({ length: 300 }, (_, i) => `f${i}.txt`);

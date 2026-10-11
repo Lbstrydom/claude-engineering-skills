@@ -23,7 +23,11 @@ import { listPullRequests, materializePrRef, prSourceIdentity } from './gh-facts
 import {
   claimMode, decideClaim, idleMsFrom, isBlockingConflict, isTerminalState, splitHidden, validateClaimPatterns,
 } from './overlap.mjs';
-import { renderClaimVerdict, renderStatus } from './render.mjs';
+import { renderClaimVerdict, renderStatus, renderUnregistered } from './render.mjs';
+import {
+  UNREGISTERED_BUDGET, cacheRecord, coveredBy, groupUnregistered, liveSessionsOf, scanArchiveTags, unregisteredCacheDir, unregisteredWork,
+  writeUnregisteredCache,
+} from './unregistered.mjs';
 import { renderChipPrompt, renderOpenTrains } from './render-train.mjs';
 import { WaitingOnSchema, listTrains, quarantine, transact } from './registry.mjs';
 import {
@@ -145,12 +149,23 @@ export function cmdStatus(ctx, flags = {}) {
   const view = splitHidden(status, { all: Boolean(flags['--all']), idleMs: idleMsFrom(ctx.config) });
   const hosts = readHosts(ctx.dir);
   const directives = readDirectives(ctx.dir);
-  const lines = [renderStatus({ ...status, items: view.items }, { hidden: view.hidden, hosts: hosts.hosts, directives, now: ctx.now })];
+  // Unregistered work (plan §2.2): its own section, independent of the idle hide, and the derived cache the
+  // checkpoint footer reads. Only status scans; the footer never does.
+  const { live, mergedUnreleased } = liveSessionsOf(facts, status);
+  const deadlineAt = Date.now() + UNREGISTERED_BUDGET.statusMs;
+  const unregistered = unregisteredWork(ctx.cwd, ctx, coveredBy([...live, ...mergedUnreleased]), { facts, deadlineAt });
+  const archiveTags = scanArchiveTags(ctx.cwd, { baseRev: facts.baseOid, deadlineAt });
+  if (unregistered.queried) {
+    const w = writeUnregisteredCache(unregisteredCacheDir(ctx.cwd), cacheRecord(unregistered, ctx.now));
+    if (!w.ok) warnings.push(`unregistered-work cache not written (${w.reason})`);
+  }
+  const lines = [renderStatus({ ...status, items: view.items }, { hidden: view.hidden, hosts: hosts.hosts, directives, now: ctx.now, all: Boolean(flags['--all']), unregistered })];
+  lines.push('', ...renderUnregistered(unregistered, { groups: groupUnregistered(unregistered.items), all: Boolean(flags['--all']), tags: archiveTags }));
   if (general.length) lines.push('', 'checks:', ...general.map((f) => `  ${f.level}: ${f.message}`));
   const todo = renderOpenTrains(facts.trains, ctx.cmd);
   if (todo) lines.push('', todo);
   if (warnings.length) lines.push('', ...warnings.map((w) => `warning: ${w}`));
-  return ok({ status: { ...status, items: view.items, hidden: view.hidden, hosts: hosts.hosts, directives: { active: directives.active, unsupported: directives.unsupported, invalid: directives.invalid, complete: directives.complete } }, checks: hook.results, warnings, text: lines.join('\n') });
+  return ok({ status: { ...status, items: view.items, hidden: view.hidden, hosts: hosts.hosts, directives: { active: directives.active, unsupported: directives.unsupported, invalid: directives.invalid, complete: directives.complete }, unregistered: { ...unregistered, archiveTags } }, checks: hook.results, warnings, text: lines.join('\n') });
 }
 
 /**
