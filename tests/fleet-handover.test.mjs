@@ -232,6 +232,19 @@ describe('fleet handover — end to end through the CLI', () => {
     assert.equal(held.value.code, 'refused');
     assert.equal(held.value.handover.lockContention, true);
     assert.equal(fs.existsSync(path.join(B, 'projects')), false);
+    assert.equal(held.value.handover.summary.copied, 0, 'nothing reads as copied when this receiver never held the lock (R2-M1)');
+    assert.ok(held.value.handover.files.every((x) => x.outcome === 'not-written-lock-held'));
+  });
+
+  it('a manifest from an incomplete prepare (unmeasured memory dirs) never receives clean (R2-H1)', () => {
+    const { A, f, json } = setup();
+    const manifest = JSON.parse(fs.readFileSync(json, 'utf8'));
+    manifest.memoryErrors = [{ dirName: 'c--GIT-unreadable', reason: 'EACCES' }];
+    const tampered = json.replace(/\.json$/, '-incomplete.json');
+    fs.writeFileSync(tampered, JSON.stringify(manifest));
+    const r = f(['handover', 'receive', '--from', tampered], A);
+    assert.equal(r.status, 3, r.stdout);
+    assert.match(r.json.text, /NOT measured at prepare/);
   });
 
   it('a session registry that cannot be read completely is UNKNOWN live state, not "none" (R1-H4/M4)', () => {

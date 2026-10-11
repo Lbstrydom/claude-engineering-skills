@@ -467,7 +467,11 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
         fs.rmdirSync(stagingDir);
         return { out };
       });
-      if (!res.ok) lockContention = true;
+      if (!res.ok) {
+        // Nothing was published by THIS receiver: planned copies must not read as done (audit R2-M1).
+        lockContention = true;
+        files = files.map((f) => (f.write ? { ...f, outcome: 'not-written-lock-held', write: false } : f));
+      }
       else if (res.value.unsafe) files = files.map((f) => (f.write ? { ...f, outcome: 'unsafe-destination', write: false, human: true, reason: res.value.unsafe } : f));
       else files = res.value.out;
     }
@@ -511,8 +515,10 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
   if (errors.length) return failed(`${errors.length} memory file(s) could not be decided or written`, { handover, text });
   if (lockContention) return refused('another handover receive holds the lock on this config root', { handover, text });
   const settingsReview = settings.filter((x) => x.review);
-  if (conflicts.length || missingTasks.length || settingsReview.length || liveUnknown.length) {
-    return refused(`human steps remain: ${conflicts.length} conflict(s), ${missingTasks.length} scheduled task(s) to recreate, ${settingsReview.length} settings file(s) to review${liveUnknown.length ? `, live state unknown in ${liveUnknown.length} repo(s)` : ''}`, { handover, text });
+  const unmeasured = m.memoryErrors ?? [];
+  if (conflicts.length || missingTasks.length || settingsReview.length || liveUnknown.length || unmeasured.length) {
+    // An incomplete prepare (unreadable memory dirs) can never receive clean (audit R2-H1).
+    return refused(`human steps remain: ${conflicts.length} conflict(s), ${missingTasks.length} scheduled task(s) to recreate, ${settingsReview.length} settings file(s) to review${liveUnknown.length ? `, live state unknown in ${liveUnknown.length} repo(s)` : ''}${unmeasured.length ? `, ${unmeasured.length} memory dir(s) NOT measured at prepare — fix and re-prepare` : ''}`, { handover, text });
   }
   return ok({ handover, text });
 }
