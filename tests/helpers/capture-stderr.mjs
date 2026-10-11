@@ -16,7 +16,14 @@
 export async function captureStderr(fn) {
   const original = process.stderr.write;
   const lines = [];
-  process.stderr.write = (chunk) => { lines.push(String(chunk)); return true; };
+  // Honour both `write(chunk, callback)` and `write(chunk, encoding, callback)`: code under test
+  // may pass a completion callback and wait on it, and a stand-in that drops it would hang that code.
+  process.stderr.write = (chunk, encoding, callback) => {
+    lines.push(String(chunk));
+    const done = typeof encoding === 'function' ? encoding : callback;
+    if (typeof done === 'function') process.nextTick(done);
+    return true;
+  };
   try {
     const result = await fn();
     return { result, lines, text: lines.join('') };

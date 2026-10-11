@@ -352,14 +352,16 @@ export async function applyDebtSuppression(result, transcriptContent) {
       } else kept.push(f);
     }
     if (debtSuppressed.length === 0) return;
-    // `result` is written in ONE block, after everything that can throw has run, so no failure
-    // can leave it half-updated.
-    result.new_findings = kept;
-    result._debtSuppressedCount = debtSuppressed.length;
-    result._debtSuppressedFindings = debtSuppressed.map((s) => ({
+    // `result` is written in ONE block, after everything that can throw has run — including
+    // building the replacement metadata, which reads fields of the findings — so no failure can
+    // leave it half-updated.
+    const suppressedMeta = debtSuppressed.map((s) => ({
       id: s.finding.id ?? null, category: s.finding.category, matchedTopicId: s.matchedTopic,
       score: Number(s.score.toFixed(2)), file: s.file,
     }));
+    result.new_findings = kept;
+    result._debtSuppressedCount = debtSuppressed.length;
+    result._debtSuppressedFindings = suppressedMeta;
     process.stderr.write(`  [final-review] Debt re-suppression: ${debtSuppressed.length}/${before} new_findings matched pre-filtered debt\n`);
     for (const s of debtSuppressed.slice(0, 3)) {
       process.stderr.write(`    [debt-suppressed] ${s.matchedTopic.slice(0, 8)} score=${s.score.toFixed(2)}\n`);

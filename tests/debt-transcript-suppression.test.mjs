@@ -419,6 +419,28 @@ describe('producer -> transcript -> reader -> stage: the REAL seams (plan §6, a
     await captureStderr(() => applyDebtSuppression(result, JSON.stringify(transcript)));
     assert.equal(result.new_findings.length, 1, 'the reopened concern must reach the operator');
   });
+
+  test('a failure while preparing the suppression metadata leaves the result untouched (fail-open is atomic)', async () => {
+    const debtMemory = await auditRound({ round: 1, changed: [] });
+    const transcript = JSON.stringify(buildTranscript([{ _debtMemory: debtMemory }]));
+
+    // Vacuous-pass guard: this very finding IS suppressed when nothing throws, so the failing
+    // case below is failing at the metadata step and not for lack of a match.
+    const control = { new_findings: [restatement()] };
+    await captureStderr(() => applyDebtSuppression(control, transcript));
+    assert.equal(control.new_findings.length, 0, 'control: the restatement is suppressed');
+
+    // Only the metadata step reads `id` after the match is made, so a throwing getter fails there.
+    const finding = restatement();
+    Object.defineProperty(finding, 'id', { get() { throw new Error('metadata boom'); }, enumerable: true });
+    const result = { new_findings: [finding] };
+    const { text } = await captureStderr(() => applyDebtSuppression(result, transcript));
+    assert.equal(result.new_findings.length, 1, 'the finding is kept');
+    assert.equal(result.new_findings[0], finding);
+    assert.equal(result._debtSuppressedCount, undefined, 'no half-written count');
+    assert.equal(result._debtSuppressedFindings, undefined, 'no half-written metadata');
+    assert.match(text, /Debt re-suppression NOT applied: metadata boom/);
+  });
 });
 
 describe('system prompt RULE 6 — the unconditional twin of the block (plan §10, amendment)', () => {
