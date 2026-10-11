@@ -146,8 +146,31 @@ export function diffAgainstBaseline(current, baseline, tolerance = TOLERANCE_LIN
   return { grew, newOver, shrank, dropped };
 }
 
-function readBaseline(p) {
-  try { return JSON.parse(fs.readFileSync(p, 'utf-8')).files || {}; } catch { return null; }
+/**
+ * What is on disk at the baseline path, as one of THREE outcomes. `absent`
+ * (ENOENT) is the only one `--update-baseline` may bootstrap from; `invalid`
+ * (unreadable, unparseable, or no `files` map of numeric counts) must refuse
+ * with the file untouched. Collapsing the two into `null` let a corrupt baseline
+ * read as "no baseline", so the update wrote every current size over it — the
+ * growth the ratchet exists to refuse, absorbed.
+ *
+ * @param {string} p
+ * @returns {{kind: 'absent'} | {kind: 'invalid', reason: string} | {kind: 'ok', files: Record<string, number>}}
+ */
+export function readBaselineState(p) {
+  let raw;
+  try {
+    raw = fs.readFileSync(p, 'utf-8');
+  } catch (err) {
+    return err?.code === 'ENOENT' ? { kind: 'absent' } : { kind: 'invalid', reason: `unreadable: ${err?.code || err?.message}` };
+  }
+  let files;
+  try { files = JSON.parse(raw)?.files; } catch (err) { return { kind: 'invalid', reason: `not valid JSON: ${err.message}` }; }
+  if (!files || typeof files !== 'object' || Array.isArray(files)
+      || !Object.values(files).every((n) => Number.isFinite(n))) {
+    return { kind: 'invalid', reason: 'no `files` map of numeric line counts' };
+  }
+  return { kind: 'ok', files };
 }
 
 function main() {
@@ -197,12 +220,21 @@ Exit codes: 0=clean, 1=drift, 2=no baseline / bad flag
   const current = collectSizes();
 
   if (update) {
-    const prior = readBaseline(baselinePath);
+    const state = readBaselineState(baselinePath);
+    if (state.kind === 'invalid') {
+      // Bootstrap is for an ABSENT baseline only. Treating an unreadable or
+      // malformed one as absent would write every current size over it —
+      // absorbing exactly the growth and new oversized files this update
+      // promises to refuse — so refuse and leave the file for a human.
+      process.stderr.write(`file-size-ratchet: refusing --update-baseline — the baseline at ${path.relative(REPO, baselinePath)} exists but is invalid (${state.reason}). Fix or delete it deliberately; nothing was written.\n`);
+      process.exit(2);
+    }
+    const prior = state.kind === 'ok' ? state.files : null;
     const files = updatedBaseline(current, prior);
     // Atomic: a truncate-then-write interrupted midway would leave an
-    // unparseable baseline, and readBaseline() maps a parse failure to null —
-    // which this gate treats as 'cannot say' and exits 2 on. Recoverable, but
-    // the rename is free.
+    // unparseable baseline, which the gate reads as 'invalid' and exits 2 on, and
+    // which this update now refuses to overwrite. Recoverable by hand, but the
+    // rename is free.
     atomicWriteFileSync(baselinePath, `${JSON.stringify({
       _description: 'Line counts for files already over the size limit. Drift-only ratchet: '
         + 'see scripts/file-size-ratchet.mjs. Regenerate deliberately with --update-baseline.',
@@ -218,11 +250,15 @@ Exit codes: 0=clean, 1=drift, 2=no baseline / bad flag
     process.exit(0);
   }
 
-  const baseline = readBaseline(baselinePath);
+  const baselineState = readBaselineState(baselinePath);
+  const baseline = baselineState.kind === 'ok' ? baselineState.files : null;
   if (baseline === null) {
     // Fail closed: a missing baseline means the gate cannot say anything, and
-    // "cannot say" must never render as "clean".
-    process.stderr.write(`file-size-ratchet: no baseline at ${path.relative(REPO, baselinePath)} — run --update-baseline to create it.\n`);
+    // "cannot say" must never render as "clean". An INVALID one is named as
+    // such — "run --update-baseline" would be the wrong advice for it.
+    process.stderr.write(baselineState.kind === 'invalid'
+      ? `file-size-ratchet: the baseline at ${path.relative(REPO, baselinePath)} is invalid (${baselineState.reason}) — fix it by hand; --update-baseline refuses to overwrite it.\n`
+      : `file-size-ratchet: no baseline at ${path.relative(REPO, baselinePath)} — run --update-baseline to create it.\n`);
     process.exit(reportOnly ? 0 : 2);
   }
 
