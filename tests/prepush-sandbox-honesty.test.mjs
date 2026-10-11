@@ -126,10 +126,12 @@ describe('the sandbox forbids the silent-skip paths', () => {
     // three husks on disk was therefore read as a broken sweeper. Measured
     // afterwards, the oldest was 3h old against a 6h threshold and the sweep had
     // been exactly right. An unasked question must never render as an empty
-    // result. Behaviour of `young` itself: tests/prepush-sandbox-cleanup.test.mjs.
-    assert.match(runnerSrc, /const \{ swept, sweptDeadOwner, failed, young \} = sweepStaleSandboxes/);
-    assert.match(runnerSrc, /if \(!swept\.length && young\.length\)/,
-      'the "saw husks, swept none" case must be reported, and only that case');
+    // result. The WORDING and COUNTS are asserted on describeSweep's emitted lines
+    // in tests/prepush-sandbox-cleanup.test.mjs; this pin only proves the runner
+    // actually emits that output rather than computing a survey and dropping it.
+    assert.match(runnerSrc, /const sweep = sweepStaleSandboxes\(os\.tmpdir\(\)\)/);
+    assert.match(runnerSrc, /for \(const line of describeSweep\(sweep, os\.tmpdir\(\)\)\) log\(line\)/,
+      'the sweep result must reach the log, not be computed and discarded');
   });
 
   it('writes the preserved-evidence marker under the name the sweeper reads (one spelling)', () => {

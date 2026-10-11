@@ -59,6 +59,7 @@ import { resolveMainRoot } from './lib/pinned-worktree/paths.mjs';
 import {
   PRESERVED_EVIDENCE_FILE,
   STALE_SANDBOX_AGE_MS,
+  describeSweep,
   removeSandboxDir,
   sweepStaleSandboxes,
 } from './lib/prepush-sandbox-cleanup.mjs';
@@ -508,32 +509,18 @@ function main() {
   // not. Deliberately advisory: an uncleanable temp directory is MACHINE
   // state, and machine state may warn but must never block a push.
   try {
-    const { swept, sweptDeadOwner, failed, young } = sweepStaleSandboxes(os.tmpdir());
-    if (swept.length) {
-      // A husk swept at minutes old is surprising without its reason: say it was
-      // the dead owner, not the clock, that condemned it.
-      const why = sweptDeadOwner.length ? ` (${sweptDeadOwner.length} abandoned by a dead push process, the rest by age)` : '';
-      log(`  swept ${swept.length} stale sandbox husk(s) from ${os.tmpdir()}${why}`);
-    }
-    if (failed.length) log(`  ⚠ ${failed.length} stale sandbox husk(s) still un-removable, e.g. ${failed[0]}`);
-    // Say what was seen and left. Without this, "no sweep line" means both "temp
-    // is clean" and "three husks are sitting there, all too young to sweep" —
-    // and on 2026-08-30 that ambiguity was read as a broken sweeper for hours.
-    // Only printed when there IS something, so a clean machine stays silent.
-    if (!swept.length && young.length) {
-      const oldestH = (Math.max(...young.map((h) => h.ageMs)) / 3_600_000).toFixed(1);
-      const live = young.filter((h) => h.retained === 'owner-alive').length;
-      const kept = young.length - live;
-      log(`  ${young.length} sandbox husk(s) present, none swept — oldest is ${oldestH}h old, `
-        + `under the ${STALE_SANDBOX_AGE_MS / 3_600_000}h threshold`
-        + `${live ? `; ${live} owned by a running push` : ''}`
-        + `${kept ? `; ${kept} kept because their owner could not be shown dead (evidence-preserved, no pid, or liveness unknown)` : ''}`);
-    }
+    const sweep = sweepStaleSandboxes(os.tmpdir());
+    // The wording lives in describeSweep (a pure function, asserted on its output in
+    // tests/prepush-sandbox-cleanup.test.mjs). It says WHY a husk went — dead owner
+    // vs age — and what was seen and left, because on 2026-08-30 "no sweep line"
+    // read as both "temp is clean" and "three husks, all too young" for hours.
+    // Silent only when there is genuinely nothing to say.
+    for (const line of describeSweep(sweep, os.tmpdir())) log(line);
     // Metadata written only when there was something to reconcile: a husk from
     // an interrupted run can still be REGISTERED, so its directory disappearing
     // is exactly when `git worktree list` needs pruning to stop showing a
     // corpse pointing into temp.
-    if (swept.length) {
+    if (sweep.swept.length) {
       try { gitWithLockRetry(repoRoot, ['worktree', 'prune']); } catch { /* noop */ }
     }
   } catch (err) {

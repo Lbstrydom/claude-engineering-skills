@@ -72,16 +72,19 @@ export const STALE_SANDBOX_AGE_MS = 6 * 60 * 60 * 1000;
  * The pid of the process that created a sandbox: the digits after the LAST `-`
  * in `ces-prepush-<sha8>-<pid>` (the runner names it with `process.pid`).
  *
+ * The owner token is a plain positive decimal, so the match refuses every other
+ * reading of the tail: a SECOND hyphen before the digits (`…--82364` is a
+ * malformed or signed token, not pid 82364), a leading zero, and `0` itself
+ * (`process.kill(0, …)` addresses a whole process GROUP, which is not an owner).
+ *
  * @param {string} name - a directory name, not a path
- * @returns {number|null} null when the name carries no usable pid. `0` and
- *   negative values are refused: `process.kill(0, …)` addresses a whole process
- *   GROUP, which is not an owner.
+ * @returns {number|null} null when the name carries no usable pid
  */
 export function sandboxOwnerPid(name) {
-  const m = /-(\d+)$/.exec(name);
+  const m = /(?<!-)-([1-9]\d*)$/.exec(name);
   if (!m) return null;
   const pid = Number(m[1]);
-  return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+  return Number.isSafeInteger(pid) ? pid : null;
 }
 
 /**
@@ -209,9 +212,12 @@ export const RETAINED_REASONS = Object.freeze([
  * @param {string} [opts.prefix]
  * @param {(pid: number) => 'alive'|'dead'|'unknown'} [opts.probeOwner] - injectable liveness probe
  * @returns {{stale: string[], ownerDead: string[],
- *   young: Array<{dir: string, ageMs: number, retained: string}>}}
+ *   young: Array<{dir: string, ageMs: number, retained: string}>,
+ *   unsurveyed: Array<{path: string, code: string}>}}
  *   `ownerDead` is the subset of `stale` that is swept for its dead owner rather
- *   than its age.
+ *   than its age. `unsurveyed` is what could NOT be inspected — the temp dir
+ *   itself, or an entry whose stat failed for any reason but vanishing — so
+ *   "nothing found" can never also mean "nothing could be looked at".
  */
 export function surveySandboxes(tmpDir, opts = {}) {
   const {
@@ -224,13 +230,16 @@ export function surveySandboxes(tmpDir, opts = {}) {
   let entries;
   try {
     entries = fs.readdirSync(tmpDir, { withFileTypes: true });
-  } catch {
-    return { stale: [], ownerDead: [], young: [] }; // unreadable temp dir is not this gate's problem
+  } catch (error) {
+    // Never throws (the sweep must not block a push), but never silent either: the
+    // caller is told the survey saw nothing BECAUSE it could not look.
+    return { stale: [], ownerDead: [], young: [], unsurveyed: [{ path: tmpDir, code: error?.code ?? 'unknown' }] };
   }
 
   const stale = [];
   const ownerDead = [];
   const young = [];
+  const unsurveyed = [];
   for (const entry of entries) {
     // Prefix-scoped on purpose: %TEMP% is shared with every other tool on the
     // machine, and with this repo's own test fixtures (ces-db-test-*,
@@ -243,11 +252,14 @@ export function surveySandboxes(tmpDir, opts = {}) {
 
       const retained = retentionReason(abs, entry.name, probeOwner);
       if (retained === null) { stale.push(abs); ownerDead.push(abs); } else young.push({ dir: abs, ageMs, retained });
-    } catch {
-      // Vanished or unstattable between readdir and stat — nothing to do.
+    } catch (error) {
+      // A husk that vanished between readdir and stat is a benign race (another
+      // push's sweep got there first). Anything else — permissions, I/O — means
+      // this entry was not inspected, and saying so is the point.
+      if (error?.code !== 'ENOENT') unsurveyed.push({ path: abs, code: error?.code ?? 'unknown' });
     }
   }
-  return { stale, ownerDead, young };
+  return { stale, ownerDead, young, unsurveyed };
 }
 
 /**
@@ -271,13 +283,14 @@ function retentionReason(abs, name, probeOwner) {
  * @param {string} tmpDir
  * @param {object} [opts] - forwarded to surveySandboxes
  * @returns {{swept: string[], sweptDeadOwner: string[], failed: string[],
- *   young: Array<{dir: string, ageMs: number, retained: string}>}}
+ *   young: Array<{dir: string, ageMs: number, retained: string}>,
+ *   unsurveyed: Array<{path: string, code: string}>}}
  *   `young` is what was seen and deliberately NOT swept — see
  *   {@link surveySandboxes} for why reporting it matters. `sweptDeadOwner` is the
  *   subset of `swept` removed because its owner process was dead, not its age.
  */
 export function sweepStaleSandboxes(tmpDir, opts = {}) {
-  const { stale, ownerDead, young } = surveySandboxes(tmpDir, opts);
+  const { stale, ownerDead, young, unsurveyed } = surveySandboxes(tmpDir, opts);
   const swept = [];
   const sweptDeadOwner = [];
   const failed = [];
@@ -288,5 +301,52 @@ export function sweepStaleSandboxes(tmpDir, opts = {}) {
       if (ownerDead.includes(dir)) sweptDeadOwner.push(dir);
     }
   }
-  return { swept, sweptDeadOwner, failed, young };
+  return { swept, sweptDeadOwner, failed, young, unsurveyed };
+}
+
+/**
+ * The log lines for one sweep, as a PURE function of its result — so the wording
+ * and the counts are asserted on the emitted text rather than on the runner's
+ * source (tests/prepush-sandbox-cleanup.test.mjs). Empty when there is nothing
+ * to say: a clean machine stays silent.
+ *
+ * Every state that would otherwise look like another gets its own words: swept
+ * for a dead owner vs for age, "swept nothing" because husks are young vs
+ * because their owner is running vs because ownership could not be shown, and
+ * "found nothing" vs "could not look".
+ *
+ * @param {{swept: string[], sweptDeadOwner?: string[], failed: string[],
+ *   young: Array<{dir: string, ageMs: number, retained?: string}>,
+ *   unsurveyed?: Array<{path: string, code: string}>}} result
+ * @param {string} tmpDir
+ * @returns {string[]}
+ */
+export function describeSweep(result, tmpDir) {
+  const { swept, sweptDeadOwner = [], failed, young, unsurveyed = [] } = result;
+  const lines = [];
+  if (swept.length) {
+    const byAge = swept.length - sweptDeadOwner.length;
+    const why = sweptDeadOwner.length
+      ? ` (${sweptDeadOwner.length} owner process dead${byAge ? `, ${byAge} by age` : ''})`
+      : '';
+    lines.push(`  swept ${swept.length} stale sandbox husk(s) from ${tmpDir}${why}`);
+  }
+  if (failed.length) lines.push(`  ⚠ ${failed.length} stale sandbox husk(s) still un-removable, e.g. ${failed[0]}`);
+  if (unsurveyed.length) {
+    lines.push(`  ⚠ could not inspect ${unsurveyed.length} path(s) under ${tmpDir}, e.g. ${unsurveyed[0].path} (${unsurveyed[0].code}) `
+      + '— husks there were neither swept nor counted');
+  }
+  // Say what was seen and left. Without this, "no sweep line" means both "temp is
+  // clean" and "three husks are sitting there, all too young to sweep" — and on
+  // 2026-08-30 that ambiguity was read as a broken sweeper for hours.
+  if (!swept.length && young.length) {
+    const oldestH = (Math.max(...young.map((h) => h.ageMs)) / 3_600_000).toFixed(1);
+    const live = young.filter((h) => h.retained === 'owner-alive').length;
+    const kept = young.length - live;
+    lines.push(`  ${young.length} sandbox husk(s) present, none swept — oldest is ${oldestH}h old, `
+      + `under the ${STALE_SANDBOX_AGE_MS / 3_600_000}h threshold`
+      + (live ? `; ${live} owned by a running push` : '')
+      + (kept ? `; ${kept} kept because their owner could not be shown dead (evidence-preserved, no pid, or liveness unknown)` : ''));
+  }
+  return lines;
 }

@@ -21,6 +21,7 @@ import {
   PRESERVED_EVIDENCE_FILE,
   SANDBOX_PREFIX,
   STALE_SANDBOX_AGE_MS,
+  describeSweep,
   findStaleSandboxes,
   probePidAlive,
   removeSandboxDir,
@@ -372,6 +373,142 @@ describe('owner liveness — a killed push\'s husk goes at once; a live push\'s 
     assert.ok(swept.includes(dir));
     assert.equal(fs.existsSync(dir), false);
     assert.equal(fs.existsSync(path.join(real, 'pkg', 'index.js')), true, 'the real node_modules must survive');
+  });
+});
+
+describe('malformed owner tokens never read as a pid', () => {
+  const NOW = 1_800_000_000_000;
+
+  it('rejects a second hyphen, a leading zero and zero (the owner token is a plain positive decimal)', () => {
+    assert.equal(sandboxOwnerPid(`${SANDBOX_PREFIX}abc12345--82364`), null, 'a signed/malformed token is not pid 82364');
+    assert.equal(sandboxOwnerPid(`${SANDBOX_PREFIX}abc12345---1`), null);
+    assert.equal(sandboxOwnerPid(`${SANDBOX_PREFIX}abc12345-007`), null);
+    assert.equal(sandboxOwnerPid(`${SANDBOX_PREFIX}abc12345-82364`), 82364, 'vacuous-pass guard: the well-formed shape still parses');
+  });
+
+  it('keeps a young husk with a malformed token on the age rule, even when the digits name a dead process', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ces-token-test-'));
+    try {
+      const dir = path.join(tmp, `${SANDBOX_PREFIX}abc12345--${exitedChildPid()}`);
+      fs.mkdirSync(dir);
+      const when = new Date(NOW - 30_000);
+      fs.utimesSync(dir, when, when);
+
+      const { swept, young } = sweepStaleSandboxes(tmp, { now: NOW });
+
+      assert.equal(swept.includes(dir), false);
+      assert.equal(fs.existsSync(dir), true);
+      assert.equal(young.find((h) => h.dir === dir)?.retained, 'no-owner-pid');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});
+
+describe('unsurveyed — "found nothing" is never also "could not look"', () => {
+  const NOW = 1_800_000_000_000;
+  let tmp;
+  before(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ces-unsurveyed-test-')); });
+  after(() => { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
+
+  const makeDir = (name, ageMs) => {
+    const abs = path.join(tmp, name);
+    fs.mkdirSync(abs, { recursive: true });
+    const when = new Date(NOW - ageMs);
+    fs.utimesSync(abs, when, when);
+    return abs;
+  };
+
+  it('names an unreadable temp dir instead of returning a bare empty survey', () => {
+    const missing = path.join(tmp, 'does-not-exist');
+    const survey = surveySandboxes(missing, { now: NOW });
+    assert.deepEqual([survey.stale, survey.young], [[], []]);
+    assert.deepEqual(survey.unsurveyed, [{ path: missing, code: 'ENOENT' }]);
+    assert.deepEqual(sweepStaleSandboxes(missing, { now: NOW }).unsurveyed, [{ path: missing, code: 'ENOENT' }]);
+  });
+
+  it('reports an entry it could not stat (EACCES), but not one that merely vanished (ENOENT)', () => {
+    const denied = makeDir(`${SANDBOX_PREFIX}deny0001-${process.pid}`, 30_000);
+    const vanished = makeDir(`${SANDBOX_PREFIX}gone0001-${process.pid}`, 30_000);
+    const kept = makeDir(`${SANDBOX_PREFIX}seen0001-${process.pid}`, 30_000);
+    const realStat = fs.statSync;
+    mock.method(fs, 'statSync', (p, ...rest) => {
+      if (p === denied) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+      if (p === vanished) throw Object.assign(new Error('gone'), { code: 'ENOENT' });
+      return realStat(p, ...rest);
+    });
+    let survey;
+    try { survey = surveySandboxes(tmp, { now: NOW }); } finally { mock.restoreAll(); }
+
+    assert.deepEqual(survey.unsurveyed, [{ path: denied, code: 'EACCES' }], 'only the genuine inspection failure is reported');
+    assert.equal(survey.young.some((h) => h.dir === kept), true, 'vacuous-pass guard: the survey still saw the husk it could stat');
+    assert.equal([...survey.stale, ...survey.young.map((h) => h.dir)].includes(denied), false);
+  });
+
+  it('reports nothing unsurveyed on a healthy survey', () => {
+    assert.deepEqual(surveySandboxes(tmp, { now: NOW }).unsurveyed, []);
+  });
+});
+
+describe('describeSweep — the emitted wording and counts, not the runner source', () => {
+  const T = '/tmp/x';
+  const H = 3_600_000;
+  const empty = { swept: [], sweptDeadOwner: [], failed: [], young: [], unsurveyed: [] };
+
+  it('is silent when there is genuinely nothing to say', () => {
+    assert.deepEqual(describeSweep(empty, T), []);
+  });
+
+  it('says a husk went for its DEAD OWNER, and counts the rest as age', () => {
+    assert.deepEqual(
+      describeSweep({ ...empty, swept: ['a', 'b'], sweptDeadOwner: ['a'] }, T),
+      ['  swept 2 stale sandbox husk(s) from /tmp/x (1 owner process dead, 1 by age)'],
+    );
+    assert.deepEqual(
+      describeSweep({ ...empty, swept: ['a'], sweptDeadOwner: ['a'] }, T),
+      ['  swept 1 stale sandbox husk(s) from /tmp/x (1 owner process dead)'],
+    );
+    assert.deepEqual(
+      describeSweep({ ...empty, swept: ['a'] }, T),
+      ['  swept 1 stale sandbox husk(s) from /tmp/x'],
+      'a sweep for age alone carries no dead-owner claim',
+    );
+  });
+
+  it('separates "owned by a running push" from "owner could not be shown dead" when it swept nothing', () => {
+    const young = [
+      { dir: 'a', ageMs: 3 * H, retained: 'owner-alive' },
+      { dir: 'b', ageMs: 1 * H, retained: 'evidence-preserved' },
+      { dir: 'c', ageMs: 2 * H, retained: 'owner-unknown' },
+    ];
+    assert.deepEqual(describeSweep({ ...empty, young }, T), [
+      '  3 sandbox husk(s) present, none swept — oldest is 3.0h old, under the 6h threshold'
+      + '; 1 owned by a running push'
+      + '; 2 kept because their owner could not be shown dead (evidence-preserved, no pid, or liveness unknown)',
+    ]);
+    const onlyLive = [{ dir: 'a', ageMs: 0.5 * H, retained: 'owner-alive' }];
+    assert.deepEqual(describeSweep({ ...empty, young: onlyLive }, T), [
+      '  1 sandbox husk(s) present, none swept — oldest is 0.5h old, under the 6h threshold; 1 owned by a running push',
+    ]);
+  });
+
+  it('does not repeat the "none swept" line once something WAS swept', () => {
+    const lines = describeSweep({ ...empty, swept: ['a'], young: [{ dir: 'b', ageMs: H, retained: 'owner-alive' }] }, T);
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /^ {2}swept 1 /);
+  });
+
+  it('warns for an un-removable husk and for paths it could not inspect', () => {
+    assert.deepEqual(describeSweep({ ...empty, failed: ['/tmp/x/ces-prepush-a-1'] }, T), [
+      '  ⚠ 1 stale sandbox husk(s) still un-removable, e.g. /tmp/x/ces-prepush-a-1',
+    ]);
+    assert.deepEqual(describeSweep({ ...empty, unsurveyed: [{ path: '/tmp/x/ces-prepush-b-2', code: 'EACCES' }] }, T), [
+      '  ⚠ could not inspect 1 path(s) under /tmp/x, e.g. /tmp/x/ces-prepush-b-2 (EACCES) — husks there were neither swept nor counted',
+    ]);
+  });
+
+  it('tolerates a result that predates the optional fields', () => {
+    assert.deepEqual(describeSweep({ swept: ['a'], failed: [], young: [] }, T), ['  swept 1 stale sandbox husk(s) from /tmp/x']);
   });
 });
 
