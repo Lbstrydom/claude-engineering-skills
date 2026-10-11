@@ -1,6 +1,6 @@
 # Plan: fleet handover — move coordination to another Claude Code account on this machine
 - **Date**: 2026-10-11
-- **Status**: Approved
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI + skill prose; no UI) · stack `js-ts`
 - **Target domain(s)**: `fleet`, `shared-lib`
