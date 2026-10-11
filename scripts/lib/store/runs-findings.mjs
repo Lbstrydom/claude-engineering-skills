@@ -1817,8 +1817,8 @@ export async function getFinalReviewStats(repoName, { queueLimit = 50, after = n
  *   column exists (migration 20260605120000); on an un-migrated store it is
  *   omitted and the row defaults to round 1 server-side — preserving today's
  *   behaviour (WS1 §1.3a). An UNRESOLVED probe is not that store: omitting the
- *   round would file a round-N row as round 1, so the call returns
- *   `applied:false` (`round-probe-unresolved`; durableWrite spills and replays).
+ *   round would file a round-N row as round 1, so the call returns `applied:false`
+ *   (`round-probe-unresolved`): a visible lost write (audit.passStats is lost-only), not a bad row.
  * @param {{detectRound?: Function}} [deps] test seam
  */
 export async function recordPassStats(runId, passName, stats, round, deps = {}) {
