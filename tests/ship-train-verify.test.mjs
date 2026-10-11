@@ -5,7 +5,7 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyLanded, checkCommitClaims, readAiTrailers } from '../scripts/lib/ship-train/verify.mjs';
+import { verifyLanded, checkCommitClaims, readAiTrailers, publicationClearance } from '../scripts/lib/ship-train/verify.mjs';
 import { composeSquashMessage } from '../scripts/lib/ship-train/provenance.mjs';
 
 const oid = (c) => c.repeat(40);
@@ -132,5 +132,32 @@ describe('verifyLanded', () => {
     const v = verifyLanded({ receipt: receipt(), merged: m, chain: chainOf(oid('c')), at: 't' });
     assert.deepEqual(v.perPr['203'].problems, ['not merged']);
     assert.match(v.perPr['202'].problems.join('|'), /not on the first-parent chain/);
+  });
+});
+
+describe('publicationClearance — the one predicate sync must pass (round-2 H1)', () => {
+  const verified = (over = {}) => ({ phase: 'verified', verify: { interleaved: [], finalMergeOid: oid('c'), publicationBlocked: false, blockedReason: null }, ...over });
+
+  test('a clean verified train is clear', () => {
+    assert.deepEqual(publicationClearance(verified()), { clear: true, blocks: [] });
+  });
+
+  test('an unverified op is never clear, and no flag can clear it', () => {
+    const r = publicationClearance({ phase: 'landed' });
+    assert.equal(r.clear, false);
+    assert.equal(r.blocks[0].flag, null);
+  });
+
+  test('interleaved commits block until an amendment accepts EXACTLY them', () => {
+    const base = verified({ phase: 'verified-interleaved', verify: { interleaved: [{ oid: oid('d'), subject: 'x' }, { oid: oid('e'), subject: 'y' }], finalMergeOid: oid('c'), publicationBlocked: false, blockedReason: null } });
+    assert.equal(publicationClearance(base).blocks[0].flag, '--accept-interleaved');
+    assert.equal(publicationClearance({ ...base, publicationAmendment: { acceptedOids: [oid('d')], at: 't' } }).clear, false);
+    assert.equal(publicationClearance({ ...base, publicationAmendment: { acceptedOids: [oid('d'), oid('e')], at: 't' } }).clear, true);
+  });
+
+  test('a provenance block clears only with the invocation acknowledgement', () => {
+    const b = verified({ verify: { interleaved: [], finalMergeOid: oid('c'), publicationBlocked: true, blockedReason: '#202: tree' } });
+    assert.equal(publicationClearance(b).blocks[0].flag, '--accept-provenance-mismatch');
+    assert.equal(publicationClearance(b, { acceptProvenanceMismatch: true }).clear, true);
   });
 });

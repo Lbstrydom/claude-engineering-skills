@@ -13,7 +13,7 @@ import { ArgvError } from '../cli-io.mjs';
 import { classifyPrImpact, isTrainDue, parseNameStatusZ } from './impact.mjs';
 import { bindAuditRun, decideTrainGate, modelsFromRun, composeSquashMessage } from './provenance.mjs';
 import { createReceipt, readReceipt, updateReceipt, newOpId } from './receipt.mjs';
-import { verifyLanded } from './verify.mjs';
+import { verifyLanded, publicationClearance } from './verify.mjs';
 
 export class TrainRefusal extends Error {
   constructor(message, details = {}) {
@@ -338,8 +338,9 @@ export async function runVerify(ctx, { op }) {
   const { merged, chain } = gatherLandedFacts(ctx, receipt);
   const v = verifyLanded({ receipt, merged, chain, at: ctx.now().toISOString() });
   let written = false;
+  let current = receipt;
   if (receipt.phase === 'landed') {
-    updateReceipt(dir, op, (d) => {
+    current = updateReceipt(dir, op, (d) => {
       d.verify = v;
       d.phase = v.interleaved.length ? 'verified-interleaved' : 'verified';
     }, { now: ctx.now(), note: 'verify' });
@@ -359,7 +360,7 @@ export async function runVerify(ctx, { op }) {
       ...deviations.map((d) => `- ${d}`),
     ].join('\n'));
   }
-  return { ok: true, verb: 'verify', opId: op, phase: written ? (v.interleaved.length ? 'verified-interleaved' : 'verified') : receipt.phase, written, verify: v, deviations, pendingNote: note };
+  return { ok: true, verb: 'verify', opId: op, phase: current.phase, written, verify: v, deviations, pendingNote: note, clearance: publicationClearance(current) };
 }
 
 export async function runAbandon(ctx, { op }) {

@@ -91,6 +91,43 @@ export function checkCommitClaims(commit, claims) {
   return { problems, identityUnproven };
 }
 
+/**
+ * May this train be published to consumers now? The ONE predicate `sync`
+ * consults (round-2 code H1) — recording a block in `verify` is not enforcing
+ * it, so the enforcement lives in code here rather than in a caller's prose.
+ *
+ * Each block names the invocation flag that acknowledges it, and an
+ * acknowledgement counts only when the receipt records it:
+ *   - not verified yet (or no final merge)           → no flag clears it;
+ *   - interleaved foreign commits before the final merge → `--accept-interleaved`,
+ *     cleared only by a `publicationAmendment` naming exactly those oids;
+ *   - a `passed` claim the merge commit does not confirm → `--accept-provenance-mismatch`.
+ *
+ * @param {object} receipt — a validated receipt
+ * @param {{acceptProvenanceMismatch?: boolean}} [acks] — flags given on THIS invocation
+ * @returns {{clear: boolean, blocks: Array<{reason: string, flag: string|null}>}}
+ */
+export function publicationClearance(receipt, { acceptProvenanceMismatch = false } = {}) {
+  const v = receipt.verify;
+  const blocks = [];
+  if (!v || !['verified', 'verified-interleaved', 'publishing', 'partial'].includes(receipt.phase)) {
+    blocks.push({ reason: `op is ${receipt.phase}; publication needs a verified train`, flag: null });
+    return { clear: false, blocks };
+  }
+  if (!v.finalMergeOid) blocks.push({ reason: 'no final merge was recorded', flag: null });
+  if (v.interleaved.length) {
+    const accepted = new Set(receipt.publicationAmendment?.acceptedOids ?? []);
+    const unaccepted = v.interleaved.filter((c) => !accepted.has(c.oid));
+    if (unaccepted.length) {
+      blocks.push({ reason: `${unaccepted.length} foreign commit(s) interleaved before the final merge are not accepted into this publication`, flag: '--accept-interleaved' });
+    }
+  }
+  if (v.publicationBlocked && !acceptProvenanceMismatch) {
+    blocks.push({ reason: v.blockedReason ?? 'verification blocked publication', flag: '--accept-provenance-mismatch' });
+  }
+  return { clear: blocks.length === 0, blocks };
+}
+
 /** The train's PRs: the selected sources plus the status-log PR. */
 export function trainPrs(receipt) {
   return [...receipt.selected.map((s) => s.pr), ...(receipt.logPr ? [receipt.logPr.number] : [])];

@@ -13,6 +13,7 @@ import {
   runPlan, runPrepare, runMessage, runVerify, runAbandon, parsePrList, flagValue, singlePr, readBasePinning, TrainRefusal,
 } from '../scripts/lib/ship-train/commands.mjs';
 import { readReceipt, updateReceipt } from '../scripts/lib/ship-train/receipt.mjs';
+import { publicationClearance } from '../scripts/lib/ship-train/verify.mjs';
 import { composeSquashMessage } from '../scripts/lib/ship-train/provenance.mjs';
 import { ArgvError } from '../scripts/lib/cli-io.mjs';
 
@@ -305,6 +306,7 @@ describe('verify / abandon', () => {
     assert.equal(env.phase, 'verified');
     assert.equal(readReceipt(dir, opId).verify.finalMergeOid, oid('0'));
     assert.deepEqual(env.deviations, []);
+    assert.deepEqual(env.clearance, { clear: true, blocks: [] });
     assert.equal(notes.length, 0);
   });
 
@@ -312,6 +314,12 @@ describe('verify / abandon', () => {
     const { opId, ctx, notes } = await landedOp({ interleave: true });
     const env = await runVerify(ctx, { op: opId });
     assert.equal(env.phase, 'verified-interleaved');
+    // Recorded is not enough: the publication predicate refuses until the
+    // interleaved oid is accepted into an amendment (round-2 H1).
+    assert.equal(env.clearance.clear, false);
+    assert.equal(env.clearance.blocks[0].flag, '--accept-interleaved');
+    const amended = updateReceipt(dir, opId, (d) => { d.publicationAmendment = { acceptedOids: [oid('7')], at: 't' }; });
+    assert.deepEqual(publicationClearance(amended), { clear: true, blocks: [] });
     assert.equal(notes.length, 1);
     assert.match(notes[0].text, /interleaved/);
   });
