@@ -62,6 +62,7 @@ happen continuously instead.
 | e | `gh` could not see storyline's repo (it belongs to a different account), so PR state was unknown | Prepare records per-repo `gh` reachability and lists the account to sign in to as a step for the new account |
 | f | Checkpointing coordinators was a hand-pasted message | Mostly solved: prepare now detects unregistered work itself. Optionally, prepare posts a fleet directive to each repo's live sessions |
 | g | `sync-pr` skips a receipt-only consumer change, so that consumer's `.sync-receipt.json` stays dirty on main, and handover prepare flags it as unregistered work (ai-organiser, 2026-10-11) | Either commit receipt-only changes in one rolling PR, or have the unregistered-work predicate recognise a dirty sync receipt as sync-owned |
+| h | **DEFECT, fix first.** `handover prepare` calls `gatherFacts` with `merged:false, patches:false`, so a claim whose PR merged but was never released reads as a LIVE session. `fleet status` derives it as done. On 2026-10-11 wine showed 19 live sessions where status showed 1, and 21 claims had to be released by hand before the handover was accurate | `repoState` uses the same merged evidence as `status` (`merged:'all'`, `patches:true` for session branches), or lists merged-unreleased claims separately as "release these". Receive's raw-registry live list needs the same treatment |
 
 ## 4. Out of scope (for now)
 
