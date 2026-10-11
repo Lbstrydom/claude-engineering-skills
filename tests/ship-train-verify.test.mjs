@@ -52,10 +52,25 @@ describe('readAiTrailers / checkCommitClaims', () => {
     assert.ok(r.problems.some((p) => /AI-Gate is "passed", persisted claim "converged"/.test(p)), r.problems.join('|'));
   });
 
-  test('a passed claim whose AI-Audited-Tree is not the commit tree is a tree mismatch', () => {
+  test('a passed claim whose AI-Audited-Tree is not the commit tree leaves identity unproven', () => {
     const c = claims({ gate: 'passed', auditedTree: oid('7') });
     const r = checkCommitClaims({ message: msgFor(202, c), tree: oid('6') }, c);
-    assert.equal(r.treeMismatch, true);
+    assert.equal(r.identityUnproven, true);
+  });
+
+  test('a passed claim whose commit carries NO AI-Audited-Tree also leaves identity unproven (round-1 M9)', () => {
+    const c = claims({ gate: 'passed', auditedTree: oid('7') });
+    const withoutTree = msgFor(202, c).replace(/^AI-Audited-Tree: .*\n/m, '');
+    const r = checkCommitClaims({ message: withoutTree, tree: oid('7') }, c);
+    assert.equal(r.identityUnproven, true);
+    assert.ok(r.problems.some((p) => /AI-Audited-Tree is missing/.test(p)), r.problems.join('|'));
+  });
+
+  test('a duplicated AI-* key is reported, never reduced to its last value (round-1 H2/M10)', () => {
+    const doubled = msgFor(202, claims()).replace('AI-Gate: converged\n', 'AI-Gate: passed\nAI-Gate: converged\n');
+    assert.deepEqual(readAiTrailers(doubled).duplicates, ['AI-Gate']);
+    const r = checkCommitClaims({ message: doubled, tree: oid('7') }, claims());
+    assert.ok(r.problems.some((p) => /AI-Gate appears more than once/.test(p)), r.problems.join('|'));
   });
 });
 
@@ -101,6 +116,14 @@ describe('verifyLanded', () => {
     assert.equal(v.orderOk, true);
     const wrong = verifyLanded({ receipt: receipt({ landingOrder: [202, 203, 210] }), merged: merged(), chain: chainOf(oid('c'), oid('a'), oid('b')), at: 't' });
     assert.equal(wrong.orderOk, false);
+  });
+
+  test('merge evidence for a PR outside the train blocks publication and never moves the final merge (round-1 H1)', () => {
+    const m = merged({ 999: { mergeOid: oid('d'), message: msgFor(999, claims()), tree: oid('6') } });
+    const v = verifyLanded({ receipt: receipt(), merged: m, chain: chainOf(oid('a'), oid('b'), oid('c'), oid('d')), at: 't' });
+    assert.equal(v.finalMergeOid, oid('c'));
+    assert.equal(v.publicationBlocked, true);
+    assert.match(v.blockedReason, /#999/);
   });
 
   test('an unmerged PR and a merge commit off the destination chain are problems', () => {

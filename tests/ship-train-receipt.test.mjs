@@ -123,6 +123,28 @@ describe('update', () => {
     assert.throws(() => updateReceipt(dir, r.opId, (d) => { d.phase = 'landed'; }), (e) => e.code === 'ILLEGAL_TRANSITION');
   });
 
+  test('a landing cannot reach publishing without landed + verify (round-1 M4)', () => {
+    assert.deepEqual(TRANSITIONS.landing, ['landed', 'diverged']);
+    assert.deepEqual(TRANSITIONS.partial, ['publishing']);
+    // The only road into publishing is through a verified phase.
+    const into = Object.entries(TRANSITIONS).filter(([, t]) => t.includes('publishing')).map(([p]) => p).sort();
+    assert.deepEqual(into, ['partial', 'verified', 'verified-interleaved']);
+  });
+
+  test('phase invariants: a train cannot be built without its log PR, train id and landing order', () => {
+    const r = createReceipt(dir, planning());
+    assert.throws(() => updateReceipt(dir, r.opId, (d) => { d.phase = 'built'; }), (e) => e.code === 'ILLEGAL_TRANSITION');
+    updateReceipt(dir, r.opId, (d) => { d.logPr = { number: 210, headOid: oid('3') }; d.phase = 'log-opened'; });
+    assert.throws(() => updateReceipt(dir, r.opId, (d) => { d.phase = 'built'; }), (e) => e.code === 'INVALID_RECEIPT' && /trainId/.test(e.message));
+    const ok = updateReceipt(dir, r.opId, (d) => { d.phase = 'built'; d.trainId = 't-20261011230000-0001'; d.landingOrder = [202, 210]; });
+    assert.equal(ok.phase, 'built');
+  });
+
+  test('log-opened requires the log PR record', () => {
+    const r = createReceipt(dir, planning());
+    assert.throws(() => updateReceipt(dir, r.opId, (d) => { d.phase = 'log-opened'; }), (e) => e.code === 'INVALID_RECEIPT' && /logPr/.test(e.message));
+  });
+
   test('abandon is legal before landing and illegal once landing has begun', () => {
     assert.ok(TRANSITIONS.built.includes('abandoned'));
     for (const p of ['landing', 'landed', 'verified', 'verified-interleaved', 'publishing', 'partial']) {

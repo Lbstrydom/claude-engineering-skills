@@ -45,20 +45,34 @@ export const PHASES = Object.freeze([
  * The only legal phase moves (§2.9). `abandoned` is reachable only before any
  * merge — after the first merge part of the train is on main, and the only
  * ways forward are resume or a human.
+ *
+ * An interrupted LANDING stays `landing` (resume reconciles each PR with
+ * GitHub); `partial` is publication-only and returns only to `publishing`.
+ * One shared `partial` for both used to let landing → partial → publishing
+ * skip `landed` and verification entirely (round-1 code M4).
  */
 export const TRANSITIONS = Object.freeze({
-  prepared: ['log-opened', 'built', 'abandoned'],
+  prepared: ['log-opened', 'abandoned'],
   'log-opened': ['built', 'abandoned'],
   built: ['landing', 'abandoned'],
-  landing: ['landed', 'partial', 'diverged'],
+  landing: ['landed', 'diverged'],
   landed: ['verified', 'verified-interleaved'],
   verified: ['publishing'],
   'verified-interleaved': ['publishing'],
   publishing: ['done', 'partial'],
-  partial: ['landing', 'publishing', 'diverged'],
+  partial: ['publishing'],
   diverged: [],
   done: [],
   abandoned: [],
+});
+
+/** Phases from which each mutable record must exist (phase-specific invariants). */
+const REQUIRES = Object.freeze({
+  logPr: ['log-opened', 'built', 'landing', 'landed', 'verified', 'verified-interleaved', 'publishing', 'partial', 'done'],
+  trainId: ['built', 'landing', 'landed', 'verified', 'verified-interleaved', 'publishing', 'partial', 'done'],
+  landingOrder: ['built', 'landing', 'landed', 'verified', 'verified-interleaved', 'publishing', 'partial', 'done'],
+  verify: ['verified', 'verified-interleaved', 'publishing', 'partial', 'done'],
+  publication: ['partial', 'done'],
 });
 
 export const IMMUTABLE_KEYS = Object.freeze([
@@ -200,6 +214,14 @@ function validate(receipt) {
   if (!parsed.success) {
     const first = parsed.error.issues[0];
     throw new ReceiptError('INVALID_RECEIPT', `receipt failed validation at ${first.path.join('.') || '(root)'}: ${first.message}`);
+  }
+  for (const [field, phases] of Object.entries(REQUIRES)) {
+    if (phases.includes(parsed.data.phase) && parsed.data[field] === undefined) {
+      throw new ReceiptError('INVALID_RECEIPT', `a receipt in phase ${parsed.data.phase} must carry ${field}`);
+    }
+  }
+  if (parsed.data.phase === 'verified-interleaved' && parsed.data.verify.interleaved.length === 0) {
+    throw new ReceiptError('INVALID_RECEIPT', 'phase verified-interleaved needs at least one interleaved commit in verify');
   }
   if (fingerprintOf(parsed.data) !== parsed.data.fingerprint) {
     throw new ReceiptError('FINGERPRINT_MISMATCH', 'receipt planning fields no longer match their fingerprint — it was edited after prepare; run prepare again');

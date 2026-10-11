@@ -45,9 +45,12 @@ export function modelToken(modelId) {
 }
 
 /**
- * Only substantiated participants: the composer (the model rendering the squash
- * commit — present by construction) plus every model a recorded column names.
- * An unrecorded stage is omitted and reported, never assumed.
+ * The composer — the model rendering the squash commit, DECLARED by the
+ * invoking skill (`--composer`, required, no default) — plus every model a
+ * recorded run column names. The run-derived part is evidence; the composer
+ * is a declaration, the same honesty tier AI-Models already has
+ * (docs/reference/commit-provenance.md). An unrecorded stage is omitted and
+ * reported, never assumed.
  *
  * @param {{authorModel?: string|null, finalReviewModel?: string|null, auditorModels?: string[]}|null} run
  * @param {string} composerToken

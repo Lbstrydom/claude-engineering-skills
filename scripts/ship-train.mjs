@@ -36,7 +36,7 @@ import { ArgvError, assertKnownFlags, emit, finishAndExit } from './lib/cli-io.m
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
 import { ReceiptError } from './lib/ship-train/receipt.mjs';
 import {
-  TrainRefusal, parsePrList, flagValue, runPlan, runPrepare, runMessage, runVerify, runAbandon,
+  TrainRefusal, parsePrList, flagValue, singlePr, runPlan, runPrepare, runMessage, runVerify, runAbandon,
 } from './lib/ship-train/commands.mjs';
 
 const VERBS = ['plan', 'prepare', 'message', 'verify', 'abandon'];
@@ -49,10 +49,21 @@ const EXIT_REFUSED = 3;
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * gh's environment minus the variables that silently re-point it at another
+ * repository or host (round-1 code M5): every gh call here names its repo with
+ * -R, and the repo itself is resolved from THIS checkout, never from GH_REPO.
+ */
+function ghEnv() {
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) if (/^GH_(REPO|HOST)$/i.test(k)) delete env[k];
+  return env;
+}
+
 function run(cmd, args, cwd) {
   return execFileSync(cmd, args, {
     cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, windowsHide: true,
-    env: cmd === 'git' ? sanitizeGitEnv(cwd) : process.env,
+    env: cmd === 'git' ? sanitizeGitEnv(cwd) : ghEnv(),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 }
@@ -101,13 +112,17 @@ export async function main(argv = process.argv) {
   try {
     if (!VERBS.includes(verb)) throw new ArgvError(`ship-train: unknown verb ${JSON.stringify(verb ?? '')}. Verbs: ${VERBS.join(', ')}`);
     assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'ship-train', from: 3 });
-    const composer = flagValue(argv, '--composer') ?? 'claude';
-    if (!/^[a-z][a-z0-9.-]*$/.test(composer)) throw new ArgvError(`--composer "${composer}" is not a model-line token`);
-    const logPrRaw = flagValue(argv, '--log-pr');
+    // Declared, not evidenced: the model running /ship --train names itself. No
+    // silent default — an omitted flag would publish a guess as a participant.
+    const composer = flagValue(argv, '--composer');
+    if (['plan', 'prepare', 'message'].includes(verb) && !composer && !(verb === 'prepare' && flagValue(argv, '--op'))) {
+      throw new ArgvError('--composer <model-line> is required: the model composing the squash messages (e.g. --composer claude)');
+    }
+    if (composer && !/^[a-z][a-z0-9.-]*$/.test(composer)) throw new ArgvError(`--composer "${composer}" is not a model-line token`);
     const opts = {
       prs: parsePrList(argv, '--pr'),
       op: flagValue(argv, '--op'),
-      logPr: logPrRaw ? parsePrList(['--log-pr', logPrRaw], '--log-pr')[0] : null,
+      logPr: singlePr(argv, '--log-pr'),
       composer,
       overrides: { waive: parsePrList(argv, '--waive'), allowUnaudited: parsePrList(argv, '--allow-unaudited'), endOfDay: argv.includes('--end-of-day') },
     };

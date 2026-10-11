@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  runPlan, runPrepare, runMessage, runVerify, runAbandon, parsePrList, readBasePinning, TrainRefusal,
+  runPlan, runPrepare, runMessage, runVerify, runAbandon, parsePrList, flagValue, singlePr, readBasePinning, TrainRefusal,
 } from '../scripts/lib/ship-train/commands.mjs';
 import { readReceipt, updateReceipt } from '../scripts/lib/ship-train/receipt.mjs';
 import { composeSquashMessage } from '../scripts/lib/ship-train/provenance.mjs';
@@ -33,6 +33,7 @@ function fakeCtx({ prs, runs = [], fleet = {}, pinning = { rules: [], protection
   const gh = (args) => {
     const [a0, a1, a2] = args;
     if (a0 === 'api' && /\/rules\/branches\//.test(a1)) return JSON.stringify(pinning.rules);
+    if (a0 === 'api' && /\/rulesets\/\d+$/.test(a1)) return JSON.stringify(pinning.rulesets[a1.split('/').at(-1)]);
     if (a0 === 'api' && /\/protection$/.test(a1)) {
       if (pinning.protection === '404') throw Object.assign(new Error('gh: Branch not protected (HTTP 404)'), { stderr: 'Branch not protected (HTTP 404)' });
       return JSON.stringify(pinning.protection);
@@ -84,7 +85,7 @@ function fakeCtx({ prs, runs = [], fleet = {}, pinning = { rules: [], protection
     git,
     gh,
     repo: () => REPO,
-    fleetStatus: () => JSON.stringify({ status: { items: Object.entries(fleet).map(([branch, s]) => ({ branch, state: s.state, ready: { oid: s.oid }, pr: { number: s.pr } })) } }),
+    fleetStatus: () => JSON.stringify({ status: { base: { name: 'main' }, items: Object.entries(fleet).map(([branch, s]) => ({ branch, state: s.state, ready: { oid: s.oid }, pr: { number: s.pr } })) } }),
     closure: () => new Set(['scripts/ship-commit.mjs']),
     gitCommonDir: () => dir,
     store: {
@@ -112,6 +113,15 @@ describe('argv helpers', () => {
     assert.throws(() => parsePrList(['--pr'], '--pr'), ArgvError);
     assert.throws(() => parsePrList(['--pr', '--json'], '--pr'), ArgvError);
   });
+  test('options after a POSIX -- terminator are positional, not flags (round-1 M11)', () => {
+    assert.deepEqual(parsePrList(['--pr', '202', '--', '--pr', '204'], '--pr'), [202]);
+    assert.equal(flagValue(['--', '--op', 's-x'], '--op'), null);
+  });
+  test('a single-value flag refuses a list or a repeat instead of keeping the first (round-1 M3)', () => {
+    assert.equal(singlePr(['--log-pr', '210'], '--log-pr'), 210);
+    assert.throws(() => singlePr(['--log-pr', '210,211'], '--log-pr'), ArgvError);
+    assert.throws(() => flagValue(['--op', 'a', '--op=b'], '--op'), ArgvError);
+  });
 });
 
 describe('readBasePinning', () => {
@@ -119,12 +129,21 @@ describe('readBasePinning', () => {
   test('no ruleset and a 404 protection read → none', () => {
     assert.equal(readBasePinning(ctxWith({ rules: [], protection: '404' }), REPO, 'main').verdict, 'none');
   });
-  test('a strict required-status-checks ruleset → strict', () => {
-    const rules = [{ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: true } }];
-    assert.equal(readBasePinning(ctxWith({ rules, protection: '404' }), REPO, 'main').verdict, 'strict');
+  const strictRule = [{ type: 'required_status_checks', ruleset_id: 7, parameters: { strict_required_status_checks_policy: true } }];
+  test('a strict ruleset that is active with NO bypass actors → strict', () => {
+    const r = readBasePinning(ctxWith({ rules: strictRule, rulesets: { 7: { enforcement: 'active', bypass_actors: [] } }, protection: '404' }), REPO, 'main');
+    assert.equal(r.verdict, 'strict');
   });
-  test('classic protection with strict checks → strict', () => {
-    assert.equal(readBasePinning(ctxWith({ rules: [], protection: { required_status_checks: { strict: true } } }), REPO, 'main').verdict, 'strict');
+  test('a strict ruleset with a bypass actor, or not active, does NOT pin the base (round-1 M6)', () => {
+    const bypass = { 7: { enforcement: 'active', bypass_actors: [{ actor_type: 'RepositoryRole', actor_id: 5 }] } };
+    assert.equal(readBasePinning(ctxWith({ rules: strictRule, rulesets: bypass, protection: '404' }), REPO, 'main').verdict, 'none');
+    const evaluate = { 7: { enforcement: 'evaluate', bypass_actors: [] } };
+    assert.equal(readBasePinning(ctxWith({ rules: strictRule, rulesets: evaluate, protection: '404' }), REPO, 'main').verdict, 'none');
+  });
+  test('classic strict checks pin the base only with enforce_admins on', () => {
+    const p = (admins) => ({ required_status_checks: { strict: true }, enforce_admins: { enabled: admins } });
+    assert.equal(readBasePinning(ctxWith({ rules: [], protection: p(true) }), REPO, 'main').verdict, 'strict');
+    assert.equal(readBasePinning(ctxWith({ rules: [], protection: p(false) }), REPO, 'main').verdict, 'none');
   });
   test('an unreadable protection API fails closed to none and says so', () => {
     const ctx = ctxWith({ rules: [] });
@@ -150,7 +169,7 @@ describe('plan', () => {
 
   test('a strict destination turns an at-head converged audit into passed', async () => {
     const ctx = fakeCtx({ prs: { 202: PR202 }, runs: [converged(oid('a'), oid('1'))], fleet: readyFleet,
-      pinning: { rules: [{ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: true } }], protection: '404' } });
+      pinning: { rules: [{ type: 'required_status_checks', ruleset_id: 7, parameters: { strict_required_status_checks_policy: true } }], rulesets: { 7: { enforcement: 'active', bypass_actors: [] } }, protection: '404' } });
     const env = await runPlan(ctx, opts({ prs: [202] }));
     assert.equal(env.prs[0].decision.gate, 'passed');
     assert.equal(env.prs[0].decision.auditedTree, oid('a'));
@@ -171,6 +190,19 @@ describe('plan', () => {
     assert.equal(env.storeState, 'cloud-off');
     assert.equal(env.prs[0].refusal.code, 'store-unavailable');
     assert.equal(env.prs[1].decision.gate, 'not-run');
+  });
+
+  test('a ready session registered for a DIFFERENT PR on the same branch is a blocker (round-1 H3)', async () => {
+    const ctx = fakeCtx({ prs: { 202: PR202 }, runs: [converged(oid('a'), oid('1'))], fleet: { 'fix/a': { state: 'ready', oid: oid('1'), pr: 999 } } });
+    const env = await runPlan(ctx, opts({ prs: [202] }));
+    assert.match(env.prs[0].blockers.join('|'), /registered for PR #999, not #202/);
+    assert.equal(env.trainReady, false);
+  });
+
+  test('the destination is fleet\'s resolved base; a fleet status without one is refused', async () => {
+    const ctx = fakeCtx({ prs: { 202: PR202 }, fleet: readyFleet });
+    ctx.fleetStatus = () => JSON.stringify({ status: { items: [] } });
+    await assert.rejects(runPlan(ctx, opts({ prs: [202] })), /no usable base branch/);
   });
 
   test('no PRs named and none fleet-ready → refusal', async () => {
@@ -220,26 +252,33 @@ describe('message', () => {
 });
 
 describe('verify / abandon', () => {
+  const LOG = { title: 'ship train log', branch: 'ship/train', commits: [{ oid: oid('4'), tree: oid('4'), subject: 'log' }], changes: [['M', 'status.md']] };
+
   async function landedOp({ interleave = false } = {}) {
-    const ctx0 = fakeCtx({ prs: { 202: PR202, 204: PR204 }, runs: [converged(oid('a'), oid('1')), { ...converged(oid('c'), oid('3')), id: 'run-204' }], fleet: readyFleet });
+    const ctx0 = fakeCtx({ prs: { 202: PR202, 204: PR204, 210: LOG }, runs: [converged(oid('a'), oid('1')), { ...converged(oid('c'), oid('3')), id: 'run-204' }], fleet: readyFleet });
     const { opId } = await runPrepare(ctx0, opts({ prs: [202, 204] }));
+    await runPrepare(ctx0, opts({ op: opId, logPr: 210 }));
     const r = readReceipt(dir, opId);
     // Stand in for Cluster B's land: persist actual decisions, then mark landed.
-    updateReceipt(dir, opId, (d) => { d.phase = 'built'; d.trainId = 't-20261011233000-0001'; d.landingOrder = [202, 204]; });
+    updateReceipt(dir, opId, (d) => { d.phase = 'built'; d.trainId = 't-20261011233000-0001'; d.landingOrder = [202, 204, 210]; });
+    const logClaims = { gate: 'not-run', runId: null, auditedTree: null, models: ['claude'] };
     updateReceipt(dir, opId, (d) => {
       d.phase = 'landing';
-      d.actual = Object.fromEntries(r.selected.map((s) => [String(s.pr), {
-        headOid: s.headOid, baseOid: BASE, basePinning: 'none',
-        claims: { gate: s.decision.gate, runId: s.decision.runId, auditedTree: s.decision.auditedTree, models: s.decision.models },
-        subject: 's', bodySha256: 'f'.repeat(64), bodyPath: 'p', at: 't',
-      }]));
+      d.actual = Object.fromEntries([
+        ...r.selected.map((s) => [String(s.pr), {
+          headOid: s.headOid, baseOid: BASE, basePinning: 'none',
+          claims: { gate: s.decision.gate, runId: s.decision.runId, auditedTree: s.decision.auditedTree, models: s.decision.models },
+          subject: 's', bodySha256: 'f'.repeat(64), bodyPath: 'p', at: 't',
+        }]),
+        ['210', { headOid: oid('4'), baseOid: BASE, basePinning: 'none', claims: logClaims, subject: 's', bodySha256: 'f'.repeat(64), bodyPath: 'p', at: 't' }],
+      ]);
     });
     updateReceipt(dir, opId, (d) => { d.phase = 'landed'; });
     const msg = (s) => composeSquashMessage({ number: s.pr, title: s.title, commitSubjects: ['x'], decision: s.decision, models: s.decision.models }).message;
-    const [m202, m204] = [oid('5'), oid('6')];
+    const [m202, m204, m210] = [oid('5'), oid('6'), oid('0')];
     const chain = interleave
-      ? [{ oid: m202, subject: 'a' }, { oid: oid('7'), subject: 'foreign' }, { oid: m204, subject: 'b' }]
-      : [{ oid: m202, subject: 'a' }, { oid: m204, subject: 'b' }];
+      ? [{ oid: m202, subject: 'a' }, { oid: oid('7'), subject: 'foreign' }, { oid: m204, subject: 'b' }, { oid: m210, subject: 'log' }]
+      : [{ oid: m202, subject: 'a' }, { oid: m204, subject: 'b' }, { oid: m210, subject: 'log' }];
     const notes = [];
     const ctx = fakeCtx({
       prs: {}, notes,
@@ -247,9 +286,14 @@ describe('verify / abandon', () => {
         tip: chain.at(-1).oid,
         202: { view: { state: 'MERGED', mergeCommit: { oid: m202 } } },
         204: { view: { state: 'MERGED', mergeCommit: { oid: m204 } } },
+        210: { view: { state: 'MERGED', mergeCommit: { oid: m210 } } },
         chain,
-        messages: { [m202]: msg(r.selected[0]), [m204]: msg(r.selected[1]) },
-        trees: { [m202]: oid('8'), [m204]: oid('9') },
+        messages: {
+          [m202]: msg(r.selected[0]),
+          [m204]: msg(r.selected[1]),
+          [m210]: composeSquashMessage({ number: 210, title: 'log', commitSubjects: ['log'], decision: logClaims, models: logClaims.models }).message,
+        },
+        trees: { [m202]: oid('8'), [m204]: oid('9'), [m210]: oid('b') },
       },
     });
     return { opId, ctx, notes };
@@ -259,7 +303,7 @@ describe('verify / abandon', () => {
     const { opId, ctx, notes } = await landedOp();
     const env = await runVerify(ctx, { op: opId });
     assert.equal(env.phase, 'verified');
-    assert.equal(readReceipt(dir, opId).verify.finalMergeOid, oid('6'));
+    assert.equal(readReceipt(dir, opId).verify.finalMergeOid, oid('0'));
     assert.deepEqual(env.deviations, []);
     assert.equal(notes.length, 0);
   });

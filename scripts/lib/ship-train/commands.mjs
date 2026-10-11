@@ -25,13 +25,20 @@ export class TrainRefusal extends Error {
 
 // ── argv ────────────────────────────────────────────────────────────────────
 
+/** argv up to (not including) a POSIX `--` terminator — options after it are positional. */
+const optionsOnly = (argv) => {
+  const end = argv.indexOf('--');
+  return end < 0 ? argv : argv.slice(0, end);
+};
+
 /** `--pr 202,203 --pr 204` → [202, 203, 204]. */
 export function parsePrList(argv, flag) {
   const out = [];
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
+  const opts = optionsOnly(argv);
+  for (let i = 0; i < opts.length; i++) {
+    const a = opts[i];
     let raw = null;
-    if (a === flag) raw = argv[i + 1];
+    if (a === flag) raw = opts[i + 1];
     else if (a.startsWith(`${flag}=`)) raw = a.slice(flag.length + 1);
     if (raw === null) continue;
     if (raw === undefined || raw.startsWith('--')) throw new ArgvError(`${flag} needs a value: a PR number or a comma-separated list`);
@@ -43,16 +50,29 @@ export function parsePrList(argv, flag) {
   return [...new Set(out)];
 }
 
-/** `--flag value` or `--flag=value`; null when absent. */
+/** `--flag value` or `--flag=value`, given at most once; null when absent. */
 export function flagValue(argv, flag) {
-  const i = argv.indexOf(flag);
-  if (i >= 0) {
-    const v = argv[i + 1];
-    if (v === undefined || v.startsWith('--')) throw new ArgvError(`${flag} needs a value`);
-    return v;
-  }
-  const eq = argv.find((a) => a.startsWith(`${flag}=`));
-  return eq ? eq.slice(flag.length + 1) : null;
+  const opts = optionsOnly(argv);
+  const values = [];
+  opts.forEach((a, i) => {
+    if (a === flag) {
+      const v = opts[i + 1];
+      if (v === undefined || v.startsWith('--')) throw new ArgvError(`${flag} needs a value`);
+      values.push(v);
+    } else if (a.startsWith(`${flag}=`)) {
+      values.push(a.slice(flag.length + 1));
+    }
+  });
+  if (values.length > 1) throw new ArgvError(`${flag} was given ${values.length} times; it takes one value`);
+  return values[0] ?? null;
+}
+
+/** A flag that names exactly ONE PR — a list is refused, never truncated to its first entry. */
+export function singlePr(argv, flag) {
+  const raw = flagValue(argv, flag);
+  if (raw === null) return null;
+  if (!/^[1-9]\d*$/.test(raw.trim())) throw new ArgvError(`${flag} takes exactly one PR number, got "${raw}"`);
+  return Number(raw.trim());
 }
 
 // ── facts ───────────────────────────────────────────────────────────────────
@@ -62,24 +82,52 @@ const lines = (s) => String(s).split('\n').map((l) => l.trim()).filter(Boolean);
 /**
  * Read whether the destination REFUSES a merge whose head is not up to date —
  * the server-side pin that alone makes `passed` provable on a squash (§2.3).
- * Unreadable protection fails closed to `none`.
+ *
+ * A strict setting counts only when NO actor can bypass it (round-1 code M6):
+ *   - a ruleset rule counts when its ruleset is `active` and lists no bypass
+ *     actors (read from the ruleset itself — the branch-rules endpoint does not
+ *     carry them);
+ *   - classic protection counts only with `enforce_admins` on.
+ * Anything unreadable, or a bypass the read cannot rule out, fails closed to
+ * `none`: `passed` is then simply not offered, never wrongly claimed.
  */
 export function readBasePinning(ctx, repo, branch) {
   const evidence = [];
   let strict = false;
-  const ask = (label, args, pick) => {
-    try {
-      const v = pick(JSON.parse(ctx.gh(args)));
-      evidence.push(`${label}: ${v ? 'strict' : 'not strict'}`);
-      if (v) strict = true;
-    } catch (err) {
-      const msg = String(err?.stderr || err?.message || err);
-      evidence.push(/HTTP 404/.test(msg) ? `${label}: none (404)` : `${label}: unreadable (${msg.split('\n')[0].slice(0, 120)}) — fail-closed`);
-    }
+  const json = (args) => JSON.parse(ctx.gh(args));
+  const failed = (label, err) => {
+    const msg = String(err?.stderr || err?.message || err);
+    evidence.push(/HTTP 404/.test(msg) ? `${label}: none (404)` : `${label}: unreadable (${msg.split('\n')[0].slice(0, 120)}) — fail-closed`);
   };
-  ask('rulesets', ['api', `repos/${repo}/rules/branches/${branch}`], (rules) => Array.isArray(rules)
-    && rules.some((r) => r?.type === 'required_status_checks' && r?.parameters?.strict_required_status_checks_policy === true));
-  ask('protection', ['api', `repos/${repo}/branches/${branch}/protection`], (p) => p?.required_status_checks?.strict === true);
+
+  try {
+    const rules = json(['api', `repos/${repo}/rules/branches/${branch}`]);
+    const strictRules = (Array.isArray(rules) ? rules : [])
+      .filter((r) => r?.type === 'required_status_checks' && r?.parameters?.strict_required_status_checks_policy === true);
+    if (strictRules.length === 0) evidence.push('rulesets: not strict');
+    for (const r of strictRules) {
+      try {
+        const rs = json(['api', `repos/${repo}/rulesets/${r.ruleset_id}`]);
+        const enforced = rs?.enforcement === 'active' && Array.isArray(rs?.bypass_actors) && rs.bypass_actors.length === 0;
+        evidence.push(`ruleset ${r.ruleset_id}: strict, enforcement ${rs?.enforcement}, ${Array.isArray(rs?.bypass_actors) ? `${rs.bypass_actors.length} bypass actor(s)` : 'bypass actors unreadable'}`);
+        if (enforced) strict = true;
+      } catch (err) {
+        failed(`ruleset ${r.ruleset_id}`, err);
+      }
+    }
+  } catch (err) {
+    failed('rulesets', err);
+  }
+
+  try {
+    const p = json(['api', `repos/${repo}/branches/${branch}/protection`]);
+    const isStrict = p?.required_status_checks?.strict === true;
+    const admins = p?.enforce_admins?.enabled === true;
+    evidence.push(`protection: ${isStrict ? 'strict' : 'not strict'}${isStrict ? `, enforce_admins ${admins ? 'on' : 'off'}` : ''}`);
+    if (isStrict && admins) strict = true;
+  } catch (err) {
+    failed('protection', err);
+  }
   return { verdict: strict ? 'strict' : 'none', evidence: evidence.join(' ; ') };
 }
 
@@ -106,14 +154,22 @@ export function gatherPrFacts(ctx, repo, pr, baseOid) {
   return { pr, view, headOid, mergeBaseOid, commits, subjects, changes, headTree };
 }
 
-/** Fleet's own view of which sessions are ready, by branch. */
-export function fleetReadyByBranch(ctx) {
+/**
+ * Fleet's own view: which sessions are ready (by branch) and which base branch
+ * fleet lands onto. The destination is fleet's resolved base, never a constant
+ * here — `fleet land` and the train must agree on where they are landing.
+ */
+export function readFleet(ctx) {
   const env = JSON.parse(ctx.fleetStatus());
-  const out = new Map();
+  const byBranch = new Map();
   for (const item of env?.status?.items ?? []) {
-    if (item?.branch) out.set(item.branch, { state: item.state, readyOid: item.ready?.oid ?? null, pr: item.pr?.number ?? null });
+    if (item?.branch) byBranch.set(item.branch, { state: item.state, readyOid: item.ready?.oid ?? null, pr: item.pr?.number ?? null });
   }
-  return out;
+  const baseBranch = env?.status?.base?.name ?? null;
+  if (typeof baseBranch !== 'string' || !/^[\w./-]+$/.test(baseBranch)) {
+    throw new TrainRefusal(`fleet status reports no usable base branch (${JSON.stringify(baseBranch)}) — cannot tell where the train would land`);
+  }
+  return { byBranch, baseBranch };
 }
 
 // ── decision ────────────────────────────────────────────────────────────────
@@ -158,8 +214,7 @@ export function decidePr({ facts, closure, basePinning, candidates, overrides, c
 /** The plan for a set of PRs: gathered, decided, and checked for executability. */
 export async function computePlan(ctx, { prs, overrides, composer }) {
   const repo = ctx.repo();
-  const branch = 'main';
-  const fleet = fleetReadyByBranch(ctx);
+  const { byBranch: fleet, baseBranch: branch } = readFleet(ctx);
   const selected = prs.length ? prs : [...fleet.values()].filter((s) => s.state === 'ready' && s.pr).map((s) => s.pr);
   if (selected.length === 0) {
     throw new TrainRefusal('no ship-ready PRs: none named with --pr and fleet reports no ready session with an open PR');
@@ -183,6 +238,7 @@ export async function computePlan(ctx, { prs, overrides, composer }) {
     if (facts.view.baseRefName !== branch) blockers.push(`PR targets ${facts.view.baseRefName}, not ${branch}`);
     if (facts.view.headRefOid !== facts.headOid) blockers.push('PR head moved while it was being read');
     if (!session || session.state !== 'ready') blockers.push('not fleet-ready (fleet land needs a ready session)');
+    else if (session.pr !== facts.pr) blockers.push(`fleet's ready session for ${facts.view.headRefName} is registered for PR #${session.pr}, not #${facts.pr}`);
     else if (session.readyOid !== facts.headOid) blockers.push(`fleet ready oid ${String(session.readyOid).slice(0, 12)} is not the PR head ${facts.headOid.slice(0, 12)}`);
     rows.push({ ...row, fleetReady: blockers.length === 0, blockers, commitSubjects: facts.subjects });
   }
