@@ -504,7 +504,7 @@ describe('CONSUMER_HYDRATE_NPM_SCRIPT — the one-liner /ship documents, run for
     assert.match(first, /copied 1\/2 items/);
     assert.match(first, /NOT scripts\/\.sync-manifest\.json/, 'an absent manifest must be named, not skipped silently');
 
-    fs.rmSync(path.join(tooling, 'lib'), { recursive: true, force: true });
+    fs.rmSync(path.join(tooling, 'lib'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     fs.writeFileSync(path.join(main, 'scripts', '.sync-manifest.json'), '{}');
     const second = run();
     assert.equal(fs.existsSync(path.join(mirror, 'lib')), false,
