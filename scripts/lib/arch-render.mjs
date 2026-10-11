@@ -526,8 +526,8 @@ export function renderNeighbourhoodCallout({ records, targetPaths, totalCandidat
 function renderFreshnessLine(freshness, commitSha) {
   if (!freshness) return null;
   if (freshness.state === 'current') return `- **Index freshness:** ${escapeMarkdown(freshness.detail)}`;
-  if (freshness.state === 'behind') {
-    return `- **Index freshness:** ⚠ ${escapeMarkdown(freshness.detail)} — this report measures ${commitSha || 'an older commit'}, `
+  if (freshness.state === 'behind' || freshness.state === 'off-branch') {
+    return `- **Index freshness:** ⚠ ${escapeMarkdown(freshness.detail)} — this report measures ${commitSha || 'another commit'}, `
       + 'not the current code; re-run the refresh on the default branch to measure it';
   }
   return `- **Index freshness:** unknown — ${escapeMarkdown(freshness.detail || 'not measured')}`;

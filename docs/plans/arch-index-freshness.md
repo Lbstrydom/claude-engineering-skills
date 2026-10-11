@@ -26,9 +26,11 @@ right; the report's silence about its consequence is the defect.
 
 - `assessIndexFreshness({run, indexCommit})` beside `resolveDefaultBranch` in
   `refresh-publish-guard.mjs` (one module owns "what is the default branch"):
-  `git rev-list --count <index>..<tip>` against `origin/<default>` first.
-  `current` / `behind` (with the count) / `unknown` — no commit, a commit this
-  clone lacks, or any git failure. Never `current` by default.
+  decided by identity and ancestry against `origin/<default>` first —
+  `current` (same commit) / `behind` N (index an ancestor of the tip; N from
+  `rev-list --count`) / `off-branch` (ahead or diverged — a count alone reads
+  an index AHEAD of the tip as 0 behind) / `unknown` (shallow clone, commit
+  absent, git could not run, no default branch). Never `current` by default.
 - `renderDriftIssue` (`scripts/lib/arch-render.mjs`) takes an optional
   `freshness` and renders `Index freshness:` beside `Commit:`; a stale index
   says the report "measures <commit>, not the current code". No `freshness`

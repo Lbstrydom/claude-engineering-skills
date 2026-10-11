@@ -233,6 +233,42 @@ describe('index freshness — how far the active index trails the default branch
     assert.equal(f.tip, 'refs/remotes/origin/main');
   });
 
+  it('an index AHEAD of the tip (published from a feature branch containing it) is off-branch, never current', () => {
+    // rev-list --count <index>..<tip> is 0 here — the count alone read this as current.
+    git(['checkout', '-q', '-b', 'feature']);
+    const featureTip = commit(clone, 'b.txt', 'feature\n', 'feature work');
+    const f = assessIndexFreshness({ run: runnerFor(clone), indexCommit: featureTip });
+    assert.equal(f.state, 'off-branch');
+    assert.equal(f.behind, null);
+    assert.match(f.detail, /not on origin\/main/);
+  });
+
+  it('a DIVERGED index (on a branch that forked before the tip) is off-branch, never behind', () => {
+    const base = git(['rev-parse', 'origin/main']).trim();
+    git(['checkout', '-q', '-b', 'feature', base]);
+    const featureTip = commit(clone, 'b.txt', 'feature\n', 'feature work');
+    commit(remote, 'a.txt', 'three\n', 'third');
+    git(['fetch', '-q', 'origin']);
+    const f = assessIndexFreshness({ run: runnerFor(clone), indexCommit: featureTip });
+    assert.equal(f.state, 'off-branch');
+  });
+
+  it('a shallow clone is UNKNOWN — its history cannot prove ancestry', () => {
+    const shallow = path.join(root, 'shallow');
+    makeCheckedGit(() => root)(['clone', '-q', '--depth', '1', `file://${remote.replace(/\\/g, '/')}`, shallow]);
+    const tip = makeCheckedGit(() => shallow)(['rev-parse', 'origin/main']).trim();
+    const f = assessIndexFreshness({ run: runnerFor(shallow), indexCommit: tip });
+    assert.equal(f.state, 'unknown');
+    assert.match(f.detail, /shallow/);
+  });
+
+  it('git that cannot run is UNKNOWN and says so — not "not in this clone\'s history"', () => {
+    const dead = () => ({ status: null, error: new Error('spawn ENOENT'), stdout: '' });
+    const f = assessIndexFreshness({ run: dead, indexCommit: 'a'.repeat(40) });
+    assert.equal(f.state, 'unknown');
+    assert.doesNotMatch(f.detail, /history/);
+  });
+
   it('an index commit this clone does not have is UNKNOWN, never current', () => {
     const f = assessIndexFreshness({ run: runnerFor(clone), indexCommit: 'deadbeef'.repeat(5) });
     assert.equal(f.state, 'unknown');

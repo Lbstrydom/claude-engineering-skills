@@ -305,6 +305,13 @@ describe('renderDriftIssue', () => {
     assert.match(markdown, /\*\*Index freshness:\*\* ⚠ 40 commits behind origin\/main/);
     assert.match(markdown, /measures a6b035b3, not the current code/);
   });
+  it('an off-branch index is as loud as a stale one', () => {
+    const { markdown } = renderDriftIssue({
+      ...base, freshness: { state: 'off-branch', behind: null, detail: 'a6b035b3 is not on origin/main (published from another branch)' },
+    });
+    assert.match(markdown, /\*\*Index freshness:\*\* ⚠ a6b035b3 is not on origin\/main/);
+    assert.match(markdown, /not the current code/);
+  });
   it('a current index says so; an unmeasurable one says unknown, never current', () => {
     assert.match(renderDriftIssue({ ...base, freshness: { state: 'current', behind: 0, detail: 'at the tip of origin/main' } }).markdown,
       /\*\*Index freshness:\*\* at the tip of origin\/main/);

@@ -380,7 +380,7 @@ async function main() {
   // Best-effort and local: git answers it, and an unanswerable question is
   // `unknown`, never `current`.
   const freshness = assessIndexFreshness({ run: makeGitRunner(process.cwd()), indexCommit: snap.commitSha ?? null });
-  if (freshness.state === 'behind') {
+  if (freshness.state === 'behind' || freshness.state === 'off-branch') {
     process.stderr.write(`arch:drift: WARNING — the active index is ${freshness.detail}; this report does not describe the current code\n`);
   }
   const md = renderMarkdownViaShared(drift, threshold, status, identity, clusters, snap.commitSha ?? null, symbolCount, store, freshness) + excludedNote + renderStalePragmaSection(stalePragmas) + ambiguousUnresolvedSection;
