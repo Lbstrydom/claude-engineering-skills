@@ -23,7 +23,7 @@ import assert from 'node:assert/strict';
 import { z } from 'zod';
 import { _internals } from '../scripts/gemini-review.mjs';
 import {
-  truncateToSchema, IDENTITY_PATHS, GeminiFinalReviewSchema, FinalReviewFindingSchema,
+  truncateToSchema, IDENTITY_PATHS, NARRATIVE_PATHS, GeminiFinalReviewSchema, FinalReviewFindingSchema,
 } from '../scripts/lib/final-review/output-schemas.mjs';
 
 const { REVIEW_TRANSPORTS, PROVIDERS } = _internals;
@@ -180,5 +180,30 @@ describe('truncateToSchema — identity fields are never truncated', () => {
     assert.equal(FinalReviewFindingSchema.shape.id.safeParse('G-existence-claim-one').success, true);
     assert.equal(FinalReviewFindingSchema.shape.id.safeParse('x'.repeat(41)).success, false);
     assert.equal(GeminiFinalReviewSchema.shape.wrongly_dismissed.element.shape.original_finding_id.safeParse('713af1a3f1bc').success, true);
+  });
+
+  it('every bounded string field is CLASSIFIED: a new one cannot become truncatable by default', () => {
+    // The prose fields `truncateToSchema` may clip. A field added to the review schema with a
+    // `.max()` shows up in NARRATIVE_PATHS and fails this test until someone decides: prose goes
+    // in this list, an identifier or citation goes in IDENTITY_PATHS.
+    const PROSE = [
+      'deliberation_quality.quality_summary',
+      'new_findings[].category',
+      'new_findings[].classification.sourceName',
+      'new_findings[].detail',
+      'new_findings[].principle',
+      'new_findings[].recommendation',
+      'new_findings[].risk',
+      'new_findings[].section',
+      'over_engineering_flags[]',
+      'overall_reasoning',
+      'wrongly_dismissed[].evidence_basis',
+      'wrongly_dismissed[].reason_claude_was_wrong',
+    ];
+    assert.deepEqual([...NARRATIVE_PATHS], PROSE,
+      'the set of truncatable fields changed: classify each new bounded string as prose (list it here) or identity (IDENTITY_PATHS)');
+    // The two sets are disjoint, and the probe can see something (vacuous-pass guard).
+    assert.ok(NARRATIVE_PATHS.length > 0);
+    for (const p of IDENTITY_PATHS) assert.ok(!NARRATIVE_PATHS.includes(p), `${p} is both identity and prose`);
   });
 });

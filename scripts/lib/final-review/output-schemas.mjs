@@ -221,6 +221,13 @@ const _maxLengthMap = new Map();
 _collectMaxLengths(_rawGeminiReviewSchema, '', _maxLengthMap, _rawGeminiReviewSchema.$defs);
 
 /**
+ * Every bounded string path `truncateToSchema` is allowed to clip — i.e. the prose fields. Exported
+ * for a test that pins this list: a new bounded string field must be CLASSIFIED (prose → here,
+ * identifier or citation → `IDENTITY_PATHS`) instead of becoming truncatable by default.
+ */
+export const NARRATIVE_PATHS = Object.freeze([..._maxLengthMap.keys()].sort());
+
+/**
  * Recursively walk a parsed JSON result and truncate strings that exceed their
  * schema-defined maxLength. Returns a new object (no mutation). Logs truncations.
  * @param {*} obj
