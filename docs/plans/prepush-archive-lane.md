@@ -275,3 +275,5 @@ Built as planned (§4). Deviations and findings, each from running the code rath
 | 3 | PASS, H:0 M:0 | stable 2/2, converged. Full-scope detector census: 0 detectors, nothing blocked |
 
 **Not covered by the GPT passes**: `.githooks/pre-push` has no extension, so the file taxonomy classifies it as an unrecognised type and the code passes never read it (the audit said so: "1 of 8 changed source file(s) not fully audited"). The hook is therefore covered by its 29 behavioural tests (including a real `git push` from a linked worktree, two mutations seen red, and the bash-versus-oracle drift test) and by the Gemini final gate, not by the multi-pass audit.
+
+**Gemini final review (code), round 1: APPROVE, gate `approve`** (0 blocking, 0 debt, 0 wrongly dismissed, 0 over-engineering flags). Its own qualifier: "Code: PARTIAL, changed lines unmeasured for 1 file", which is the extension-less hook above, so the approval is for the four `.mjs` files and the tests; the hook's coverage is the behavioural suite named above plus the self-review recorded in the PR.
