@@ -9,7 +9,14 @@
  * command module a dependency of the ship domain for two regexes.
  */
 
-const PG_TIMESTAMPTZ_TEXT = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}(:?\d{2})?)?$/;
+/**
+ * The UTC offset is REQUIRED. Postgres' `timestamptz::text` always emits one, so every
+ * cursor this code issues has it. A value without one is hand-made, and would be read in
+ * two different zones — `Date.parse` below in the PROCESS timezone, the query's
+ * `::timestamptz` cast in the SESSION timezone — so the keyset could start at a shifted
+ * instant while the cursor still looked valid.
+ */
+const PG_TIMESTAMPTZ_TEXT = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}(:?\d{2})?)$/;
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
