@@ -256,6 +256,13 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // state, only simulate a thrown JS exception. Two edits, always — this
   // list AND postgres-parity.yml.
   'tests/store-finding-write-db.test.mjs',
+  // Enrolled 2026-10-12 (docs/plans/ship-trains.md Phase 2): the ship-train
+  // binding query must reach real column names (audited_tree, audited_sha,
+  // audit_pass_stats.source_model). Its first live run found two defects no
+  // mock could: locale-dependent ORDER BY, and COLLATE on a DISTINCT ORDER BY.
+  // Two edits, always: this list AND postgres-parity.yml (run list, and the
+  // path filter of BOTH triggers, since the name matches no glob there).
+  'tests/ship-train-provenance.db.test.mjs',
 ]);
 
 /**
