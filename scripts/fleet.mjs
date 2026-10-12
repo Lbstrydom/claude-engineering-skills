@@ -8,7 +8,7 @@
  *
  *   status                          read-only join of git, gh, registry, trains
  *   add <branch|#PR|--all>          adopt work that already exists (advisory)
- *   claim --id --intent --paths     register a NEW session (blocking gate) or update one
+ *   claim --id --intent --paths [--worktree <path>]  register a NEW session (blocking gate) or update one
  *   ready | touch                   record the head as ready / renew the lease
  *   hold on|off [--reason]          "hold heavy runs"
  *   start --task … [--paths …]…     atomic all-or-nothing batch of chip worktrees
@@ -17,6 +17,8 @@
  *   archive-check [<id|branch|path>] what removing a worktree would lose (read-only)
  *   prune [--apply [--remote] [--include-fresh]]  branches/worktrees removable with nothing lost: the commands (read-only), or run them
  *   archive <worktree|branch|id> [--apply] [--discard-ignored] [--include-fresh]  snapshot to a local archive/* tag, verify, remove
+ *   handover prepare [--repo …] [--scheduler-checked]   record account-bound + live state before an account switch
+ *   handover receive --from <json> [--dry-run] [--allow-older]  verify/copy it in the new account (exit 0 + followUps = done)
  *   next [--id]                     what this session should do now (read-only)
  *   directive --to|--list|--ack     coordinator requests in the shared registry
  *   restack [<branch>] [--replace]  replay a branch's own commits onto the base (patch-id checked)

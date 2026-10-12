@@ -134,7 +134,8 @@ describe('fleet handover — end to end through the CLI', () => {
     const A = seedConfig(tmpRoot('handover-acct-a-'));
     const envFor = (cfg) => scrubbedEnv({ FLEET_TELEMETRY: 'off', CLAUDE_CONFIG_DIR: cfg, CLAUDE_AUDIT_LOOP_DIR: '' });
     const f = (args, cfg) => runFleet([...args, '--json'], { cwd: fx.repo, env: envFor(cfg) });
-    const prep = f(['handover', 'prepare'], A);
+    // The fixture lists a scheduled task, so the pre-switch gate applies: these cases are not about it.
+    const prep = f(['handover', 'prepare', '--scheduler-checked'], A);
     assert.equal(prep.status, 0, prep.stderr);
     return { fx, A, f, json: prep.json.handover.json, prep };
   };
@@ -166,7 +167,8 @@ describe('fleet handover — end to end through the CLI', () => {
     assert.equal(dry.json.handover.summary.copied, 3);
     assert.equal(fs.existsSync(path.join(B, 'projects')), false, 'dry run wrote nothing');
     const r = f(['handover', 'receive', '--from', json], B);
-    assert.equal(r.status, 3, 'the scheduled task must be recreated by a human');
+    assert.equal(r.status, 0, 'a task to confirm or recreate is a follow-up, never a refusal (plan p)');
+    assert.ok(r.json.handover.followUps.some((x) => x.kind === 'scheduled-tasks'));
     assert.equal(r.json.handover.summary.copied, 3);
     assert.equal(fs.readFileSync(memFile(B, 'sub/b.md'), 'utf8'), 'beta\n');
     assert.equal(r.json.handover.tasks[0].registration, 'unverified');
