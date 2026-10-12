@@ -318,9 +318,9 @@ hard-killed run. `git worktree prune` clears it. The runner removes its own
 worktree in a `finally` and on `SIGINT`/`SIGTERM`/`SIGHUP`.
 
 **`pre-push sandbox could not be removed: <path>`** — the husk named on that
-line is still on disk. A later push sweeps husks older than 6h automatically
-(`swept N stale sandbox husk(s)`), so this is informational; delete it by hand
-only if you want the space back now.
+line is still on disk. A later push sweeps husks older than 6h, and husks whose
+owner process is dead, automatically (`swept N stale sandbox husk(s)`), so this
+is informational; delete it by hand only if you want the space back now.
 
 ### Why husks leaked silently before 2026-08-01
 
@@ -347,6 +347,20 @@ with it:
   Wherever the sweep cannot establish that the owner is gone, age is the guard:
   a live sandbox is always young, and 6h clears a minutes-long `npm run check`
   by orders of magnitude.
+- **A sandbox whose owner is provably dead is swept at once.** A push killed
+  with TaskStop, `taskkill /F`, SIGKILL or a closed terminal runs no cleanup
+  handler, so its worktree stays on disk *and registered* — measured 2026-10-11,
+  two such husks sat in `git worktree list` for hours, far under the 6h age rule.
+  The owner is the pid in `ces-prepush-<sha8>-<pid>` (the digits after the last
+  `-`, a plain positive decimal); ESRCH from `process.kill(pid, 0)` is the only
+  answer that licenses an early sweep. Everything else keeps the age rule: a
+  live owner (a concurrent push; EPERM counts as alive), a probe that returns
+  unknown or throws, a name with no usable pid, and a husk holding
+  `.prepush-npm-ci.log` (preserved as evidence by a process that exited
+  normally). Pid reuse can only make a dead owner read alive, so it fails safe
+  to the age rule. The sweep line says which husks went for a dead owner and
+  which for age, and what it left and why; a path it could not inspect is
+  named, never read as "nothing there".
 
 A failed sweep or removal **warns and never blocks** — temp-directory state is
 machine state, not repo state.
