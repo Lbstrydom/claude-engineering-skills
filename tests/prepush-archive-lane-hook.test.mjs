@@ -265,7 +265,9 @@ describe('.githooks/pre-push — the hook acts on the protocol token, never on e
     ['a clean token with exit 1 (token wins over status)', say('archive-lane/v1 clean', 1), false, false, false],
     ['a findings token with exit 0 (status cannot launder it)', say('archive-lane/v1 findings', 0), true, false, false],
     ['an error token with exit 0', say('archive-lane/v1 error', 0), true, false, false],
-    ['not-applicable runs the gate and is silent', say('archive-lane/v1 not-applicable', 3), false, true, false],
+    // The lane says "not an archive push" about bytes this hook reads as archive-only: the
+    // two disagree, and the full gate (no scan) would publish it unscanned. Refused.
+    ['not-applicable for a push the hook reads as archive-only is a disagreement and is refused', say('archive-lane/v1 not-applicable', 3), true, false, false],
     ['a token amid other stdout is still found', `console.log('noise'); ${say('archive-lane/v1 clean')}`, false, false, false],
     // No valid result for an archive-looking push is REFUSED: the full gate does not
     // scan, so falling through to it would either publish unscanned or send the
@@ -322,19 +324,73 @@ describe('.githooks/pre-push — the hook acts on the protocol token, never on e
     // The bash predicate can only ever BLOCK (it runs when the lane yields nothing),
     // so it is compared with isArchiveRef by feeding each ref through a broken lane:
     // blocked ⇔ the oracle says archive.
+    // Whitespace is the trap the adversarial review found: a ref NAME may hold U+00A0 and
+    // its kin (legal in refnames, and JS \s splits on them while awk does not), and the
+    // LOCAL field is a revision expression that may hold ordinary spaces. Both spellings
+    // must classify every one of these identically, in both local-field shapes.
     const refs = [
       'refs/heads/archive/x', 'refs/heads/archive/a/b', 'refs/tags/archive/t',
+      'refs/heads/archive/a b', 'refs/heads/archive/a　b', 'refs/heads/archive/a b',
       'refs/heads/archive', 'refs/heads/archive/', 'refs/heads/archived/x', 'refs/heads/x/archive/y',
       'refs/remotes/origin/archive/x', 'refs/notes/archive/x', 'refs/heads/main', 'refs/tags/v1',
+      'refs/heads/main archive/x',
     ];
+    const locals = ['refs/heads/local', 'HEAD@{2 minutes ago}', 'HEAD^{/add backup}'];
     withFixture(({ base, repo, dest }) => {
       const tip = commit(repo, { 'x.txt': 'x\n' });
       const hook = hookCheckout(base, 'process.exit(0);\n');
       for (const ref of refs) {
-        const got = runHook(repo, `refs/heads/local ${tip} ${ref} ${ZERO}\n`, { dest, hook });
-        assert.equal(got.status === 1, isArchiveRef(ref), `${ref}: bash blocked=${got.status === 1}, oracle says archive=${isArchiveRef(ref)}\n${got.stdout}${got.stderr}`);
-        fs.rmSync(path.join(repo, MARKER), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+        for (const local of locals) {
+          const got = runHook(repo, `${local} ${tip} ${ref} ${ZERO}\n`, { dest, hook });
+          assert.equal(got.status === 1, isArchiveRef(ref), `${JSON.stringify(local)} -> ${JSON.stringify(ref)}: bash blocked=${got.status === 1}, oracle says archive=${isArchiveRef(ref)}\n${got.stdout}${got.stderr}`);
+          fs.rmSync(path.join(repo, MARKER), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+        }
       }
+    });
+  });
+
+  it('CONTROL: an ORDINARY push with a not-applicable token runs the full gate, silently', (t) => {
+    if (!guard(t)) return;
+    withFixture(({ base, repo, dest, seed }) => {
+      const tip = commit(repo, { 'x.txt': 'x\n' });
+      const got = runHook(repo, `refs/heads/feature ${tip} refs/heads/feature ${ZERO}\n`, { dest, hook: hookCheckout(base, say('archive-lane/v1 not-applicable', 3)) });
+      assert.equal(got.status, 0, got.stdout + got.stderr);
+      assert.deepEqual(got.argv, ['--base', seed, '--head', tip]);
+      assert.doesNotMatch(got.stdout + got.stderr, /archive lane|disagree/);
+    });
+  });
+
+  it('a failing awk cannot turn a missing lane into a pass (it refuses unless it can say "not archive")', (t) => {
+    if (!guard(t)) return;
+    withFixture(({ base, repo, dest }) => {
+      const stub = path.join(base, 'no-awk.sh');
+      fs.writeFileSync(stub, 'awk() { return 1; }\nexport -f awk\n');
+      const { line } = archiveCommit(repo, { '.env': 'K=v\n' });
+      const got = runHook(repo, `${line}\n`, { dest, hook: hookCheckout(base, 'process.exit(0);\n'), env: { BASH_ENV: stub.replace(/\\/g, '/') } });
+      assert.equal(got.status, 1, got.stdout + got.stderr);
+      assert.equal(got.argv, null, 'the full gate ran although neither the lane nor awk worked');
+    });
+  });
+
+  it('CDPATH cannot corrupt the hook root: a healthy lane is still found via a relative $0', (t) => {
+    if (!guard(t)) return;
+    withFixture(({ repo, dest }) => {
+      // The hook checkout lives INSIDE the pusher's tree so a relative path reaches it, and
+      // CDPATH points at the pusher's root so `cd hookco/.githooks/..` would print a path.
+      const root = path.join(repo, 'hookco');
+      fs.mkdirSync(path.join(root, '.githooks'), { recursive: true });
+      fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+      fs.copyFileSync(HOOK, path.join(root, '.githooks', 'pre-push'));
+      fs.writeFileSync(path.join(root, 'scripts', 'prepush-archive-lane.mjs'), say('archive-lane/v1 clean'));
+      const { line } = archiveCommit(repo, { 'a.txt': 'a\n' });
+      const r = spawnSync('bash', ['hookco/.githooks/pre-push', 'origin', dest], {
+        cwd: repo,
+        encoding: 'utf-8',
+        input: `${line}\n`,
+        env: { ...process.env, AUDIT_PREPUSH_SANDBOX: '', AUDIT_PREPUSH_ARCHIVE_LANE: '', CDPATH: repo.replace(/\\/g, '/') },
+      });
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.match(r.stdout + r.stderr, LANE_CLEAN);
     });
   });
 
@@ -399,6 +455,31 @@ describe('.githooks/pre-push — real git push from a LINKED WORKTREE (constrain
       assert.notEqual(r.status, 0);
       assert.match(r.stdout + r.stderr, /archive lane blocked/);
       assert.equal(remoteHas('refs/heads/archive/dirty'), false, 'a blocked push arrived anyway');
+    });
+  });
+
+  it('a LOCAL source with spaces in it (HEAD^{/add backup}) cannot slip a dirty push past the lane', (t) => {
+    if (!guard(t)) return;
+    // The adversarial review's HIGH, reproduced with a real push: git writes the stdin line
+    // `HEAD^{/add backup} <sha> refs/heads/archive/ws <sha>`, five whitespace-separated
+    // fields. A left-to-right parser called it malformed, the lane answered not-applicable,
+    // and the full gate (which does not scan) published a .env.
+    inWorktree(({ wt, dest, push, remoteHas, marker }) => {
+      git(['checkout', '-q', '-b', 'archive/ws'], wt);
+      commit(wt, { '.env': 'K=v\n' }, 'add backup');
+      const dirty = push([dest, 'HEAD^{/add backup}:refs/heads/archive/ws']);
+      assert.notEqual(dirty.status, 0, dirty.stdout + dirty.stderr);
+      assert.match(dirty.stdout + dirty.stderr, /archive lane blocked/);
+      assert.equal(remoteHas('refs/heads/archive/ws'), false, 'a dirty push with a spaced source arrived unscanned');
+      assert.equal(fs.existsSync(marker), false, 'the full gate ran for an archive-only push');
+
+      // The clean control with the same source shape: it takes the lane and arrives.
+      git(['checkout', '-q', '-b', 'archive/ws2', 'main'], wt);
+      commit(wt, { 'ok.txt': 'ok\n' }, 'add backup');
+      const clean = push([dest, 'HEAD^{/add backup}:refs/heads/archive/ws2']);
+      assert.equal(clean.status, 0, clean.stdout + clean.stderr);
+      assert.match(clean.stdout + clean.stderr, LANE_CLEAN);
+      assert.equal(remoteHas('refs/heads/archive/ws2'), true);
     });
   });
 

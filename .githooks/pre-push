@@ -242,7 +242,10 @@ fi
 #   not-applicable  → fall through to the full gate, silently
 #   clean           → skip the full check
 #   findings|error  → block (an eligible push that could not be scanned is refused)
-#   no valid token  → warn loudly and run the full gate (a broken lane reverts to today)
+#   no valid token  → a push that LOOKS archive-only is refused (the full gate does not scan);
+#                     any other push warns loudly and runs the full gate
+# A `not-applicable` token for a push that nonetheless looks archive-only means the lane and
+# this hook disagree about the push; that is refused too, for the same reason.
 #
 # The lane's code comes from the checkout THIS HOOK lives in ($0), NOT from the
 # pusher's cwd. core.hooksPath points at one checkout's .githooks while pushes come
@@ -251,6 +254,24 @@ fi
 # first: dirname on a backslash path returns "." and would resolve the PARENT of cwd.
 # AUDIT_PREPUSH_ARCHIVE_LANE=0 reverts to the full gate — a loosening, since the full
 # gate does not scan; it exists so a lane bug is never an outage.
+# Does this push LOOK archive-only? The one place bash spells the archive predicate
+# (scripts/lib/prepush-archive-lane.mjs isArchiveRef is the oracle). It can only ever
+# BLOCK, never choose the lane, and a drift test compares it with the oracle ref by ref
+# (tests/prepush-archive-lane-hook.test.mjs). Returns 0 = every destination is an archive
+# ref, 1 = not, 2 = could not tell. Fields are counted FROM THE RIGHT (`$(NF-1)` is the
+# remote ref): the local field is a revision expression and may hold spaces. awk over the
+# captured copy, not a second `while read`: the stdin-once invariant
+# (tests/prepush-sandbox-honesty.test.mjs) allows ONE loop, the range loop above.
+lane_looks_archive() {
+  local seen other
+  seen="$(printf '%s\n' "$PUSH_STDIN" | awk 'NF >= 4 && $(NF-1) ~ /^refs\/(heads|tags)\/archive\/./ { n++ } END { print n + 0 }')" || return 2
+  other="$(printf '%s\n' "$PUSH_STDIN" | awk 'NF >= 4 && $(NF-1) !~ /^refs\/(heads|tags)\/archive\/./ { n++ } END { print n + 0 }')" || return 2
+  case "$seen" in ''|*[!0-9]*) return 2 ;; esac
+  case "$other" in ''|*[!0-9]*) return 2 ;; esac
+  [ "$other" -eq 0 ] && [ "$seen" -gt 0 ] && return 0
+  return 1
+}
+
 LANE_HANDLED=0
 if [ "$AUDIT_PREPUSH_ARCHIVE_LANE" != "0" ] && [ "$PUBLISHED_REFS" -gt 0 ]; then
   # Plain path arithmetic, deliberately NOT `git -C "$HOOK_DIR" rev-parse`: git exports
@@ -258,7 +279,9 @@ if [ "$AUDIT_PREPUSH_ARCHIVE_LANE" != "0" ] && [ "$PUBLISHED_REFS" -gt 0 ]; then
   # the PUSHER's checkout — the exact thing this block must not use. `pwd -W` gives a
   # Windows-form path under Git Bash (falling back to plain `pwd` elsewhere).
   HOOK_DIR="$(dirname "${0//\\//}")"
-  HOOK_ROOT="$(cd "$HOOK_DIR/.." 2>/dev/null && { pwd -W 2>/dev/null || pwd; })"
+  # CDPATH= and `--`: with CDPATH set, `cd` PRINTS the directory it resolved, which would
+  # corrupt HOOK_ROOT and make a healthy lane look "not found".
+  HOOK_ROOT="$(CDPATH= cd -- "$HOOK_DIR/.." >/dev/null 2>&1 && { pwd -W 2>/dev/null || pwd; })"
   LANE_SCRIPT="$HOOK_ROOT/scripts/prepush-archive-lane.mjs"
   if [ -n "$HOOK_ROOT" ] && [ -f "$LANE_SCRIPT" ]; then
     LANE_OUT="$(printf '%s\n' "$PUSH_STDIN" | ( cd "$REPO_ROOT" && node "$LANE_SCRIPT" --remote="$1" --destination="$2" ))"
@@ -276,23 +299,27 @@ if [ "$AUDIT_PREPUSH_ARCHIVE_LANE" != "0" ] && [ "$PUBLISHED_REFS" -gt 0 ]; then
       echo "✗  pre-push archive lane blocked this push — the details are above."
       exit 1
       ;;
-    "archive-lane/v1 not-applicable") ;;
+    "archive-lane/v1 not-applicable")
+      # The lane says this is not an archive push. If this hook positively reads it as one,
+      # they disagree about the same bytes, and the full gate (which does not scan) would
+      # publish it unscanned. Refuse. (Could-not-tell, rc 2, trusts the lane: it was positive.)
+      lane_looks_archive
+      if [ $? -eq 0 ]; then
+        echo "✗  archive lane and pre-push hook disagree about this push (the lane says not-applicable, the hook reads it as archive-only): refusing, because the full gate does NOT scan published content." >&2
+        echo "   Force the full gate on purpose: AUDIT_PREPUSH_ARCHIVE_LANE=0 git push" >&2
+        exit 1
+      fi
+      ;;
     *)
       # No valid result (script missing, crash, wrong protocol). Without the lane the
       # hook cannot know a push was archive-only, so for an ordinary push this falls
-      # to the full gate as before. But for a push that LOOKS archive-only the full
-      # gate is the wrong answer: it fails on a backup for unrelated reasons AND does
-      # not scan, so it would either wave the push through unscanned or push the user
-      # to --no-verify. This is the one place bash spells the archive predicate
-      # (scripts/lib/prepush-archive-lane.mjs isArchiveRef is the oracle); it can only
-      # ever BLOCK, never choose the lane, and a drift test compares it with the
-      # oracle over a table of refs (tests/prepush-archive-lane-hook.test.mjs).
-      # awk over the captured copy, not a second `while read`: the stdin-once invariant
-      # (tests/prepush-sandbox-honesty.test.mjs) allows ONE loop, the range loop above.
-      LANE_SEEN="$(printf '%s\n' "$PUSH_STDIN" | awk 'NF >= 4 && $3 ~ /^refs\/(heads|tags)\/archive\/./ { n++ } END { print n + 0 }')"
-      LANE_OTHER="$(printf '%s\n' "$PUSH_STDIN" | awk 'NF >= 4 && $3 !~ /^refs\/(heads|tags)\/archive\/./ { n++ } END { print n + 0 }')"
-      if [ "${LANE_OTHER:-1}" -eq 0 ] && [ "${LANE_SEEN:-0}" -gt 0 ]; then
-        echo "✗  archive lane unavailable (${LANE_WHY:-it produced no valid result}) for a push that looks archive-only: refusing, because the full gate does NOT scan published content." >&2
+      # to the full gate as before. But for a push that LOOKS archive-only, or that cannot
+      # be classified, the full gate is the wrong answer: it fails on a backup for
+      # unrelated reasons AND does not scan, so it would either wave the push through
+      # unscanned or push the user to --no-verify. Only a positive "not archive" proceeds.
+      lane_looks_archive
+      if [ $? -ne 1 ]; then
+        echo "✗  archive lane unavailable (${LANE_WHY:-it produced no valid result}) for a push that looks archive-only or cannot be classified: refusing, because the full gate does NOT scan published content." >&2
         echo "   Fix the lane, or revert to the full gate on purpose: AUDIT_PREPUSH_ARCHIVE_LANE=0 git push" >&2
         exit 1
       fi

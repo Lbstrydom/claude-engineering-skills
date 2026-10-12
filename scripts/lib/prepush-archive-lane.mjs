@@ -148,7 +148,11 @@ export function validateClassification(table, steps) {
 // ── Reading the push ────────────────────────────────────────────────────────
 
 const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
-const ARCHIVE_REF_RE = /^refs\/(?:heads|tags)\/archive\/\S+$/;
+// ASCII space and tab are the ONLY separators git writes between fields. A ref NAME may
+// hold other whitespace (U+00A0 and friends are legal in refnames), and the LOCAL field is
+// a revision expression that may hold ordinary spaces (`HEAD@{2 minutes ago}`), so
+// neither JS `\s` nor bash/awk word-splitting may be used to find the fields.
+const ARCHIVE_REF_RE = /^refs\/(?:heads|tags)\/archive\/[^ \t]+$/;
 
 export function isArchiveRef(ref) {
   return typeof ref === 'string' && ARCHIVE_REF_RE.test(ref);
@@ -156,20 +160,35 @@ export function isArchiveRef(ref) {
 
 /**
  * Parse the pre-push stdin: `<local ref> <local sha> <remote ref> <remote sha>`.
+ *
+ * Fields are found FROM THE RIGHT: the last three are `sha ref sha` and everything
+ * before them is the local ref. A push of `HEAD@{2 minutes ago}:refs/heads/archive/x`
+ * writes a local ref with spaces in it; a left-to-right split on whitespace counted
+ * five fields, called the line malformed, and (the adversarial review's HIGH) sent an
+ * archive push with a secret down the full gate, which does not scan.
+ *
  * @param {string} text
- * @returns {{entries: Array<{localRef: string, localSha: string, remoteRef: string, remoteSha: string}>, malformed: number}}
+ * @returns {{entries: Array<{localRef: string, localSha: string, remoteRef: string, remoteSha: string}>, malformed: number, malformedArchive: number}}
  */
+const SHA = '[0-9a-f]{40}(?:[0-9a-f]{24})?';
+const PUSH_LINE_RE = new RegExp(`^(.+)[ \\t]+(${SHA})[ \\t]+([^ \\t]+)[ \\t]+(${SHA})$`);
+
 export function parsePushLines(text) {
   const entries = [];
   let malformed = 0;
+  let malformedArchive = 0;
   for (const raw of String(text ?? '').split(/\r?\n/)) {
-    const line = raw.trim();
+    const line = raw.replace(/^[ \t]+|[ \t]+$/g, '');
     if (!line) continue;
-    const p = line.split(/\s+/); // ref names cannot contain whitespace
-    if (p.length !== 4 || !SHA_RE.test(p[1]) || !SHA_RE.test(p[3])) { malformed++; continue; }
-    entries.push({ localRef: p[0], localSha: p[1], remoteRef: p[2], remoteSha: p[3] });
+    const m = PUSH_LINE_RE.exec(line);
+    if (!m) {
+      malformed++;
+      if (line.includes('archive/')) malformedArchive++;
+      continue;
+    }
+    entries.push({ localRef: m[1], localSha: m[2], remoteRef: m[3], remoteSha: m[4] });
   }
-  return { entries, malformed };
+  return { entries, malformed, malformedArchive };
 }
 
 /**
@@ -178,10 +197,13 @@ export function parsePushLines(text) {
  * A deletion of a non-archive ref makes the push mixed, so it gets the full gate;
  * a delete-only push never reaches here (hook section 0.5 exits first).
  *
- * @param {{entries: ReturnType<typeof parsePushLines>['entries'], malformed: number}} parsed
+ * @param {Pick<ReturnType<typeof parsePushLines>, 'entries' | 'malformed'> & {malformedArchive?: number}} parsed
  */
 export function decidePushLane(parsed) {
-  const { entries, malformed } = parsed;
+  const { entries, malformed, malformedArchive = 0 } = parsed;
+  // A line this parser cannot read but that MENTIONS archive/ is not "not applicable": the
+  // full gate does not scan, so answering that would publish it unscanned. Refuse it.
+  if (malformedArchive > 0) return { lane: 'refuse', reason: 'a push line mentioning archive/ could not be parsed' };
   if (malformed > 0) return { lane: 'full', reason: 'a push line could not be parsed' };
   if (entries.length === 0) return { lane: 'full', reason: 'no ref updates on stdin' };
   const outside = entries.find((e) => !isArchiveRef(e.remoteRef));
@@ -440,6 +462,45 @@ function readBodies(git, batch) {
   return bodies;
 }
 
+// ── Scanning a body: the bytes as written, and the ways a secret hides in them ─────
+
+/**
+ * Bodies above this are scanned as written only. The extra variants below each re-run
+ * every pattern (the PEM pattern alone costs ~2 s per MB), and a scan that cannot be
+ * interrupted must not be multiplied by four on the biggest files. A secret in a
+ * config file or a credential store is small.
+ */
+export const VARIANT_MAX_BYTES = 1024 * 1024;
+
+/**
+ * The text variants worth scanning besides the raw one, each only when its precondition
+ * is cheaply visible. Found missing by the adversarial review (2026-10-12), each in a real
+ * push the lane called clean:
+ *   · UTF-16 (PowerShell `>` writes it): NULs between the characters break every pattern;
+ *   · a PEM key inside JSON (a GCP service-account file): the newlines are the two
+ *     characters \\ and n, and the PEM pattern's body charset excludes a backslash;
+ *   · a PEM key in a comment block (`# `, `// `, ` * ` on each line): the markers are not in
+ *     the PEM body charset either.
+ * @param {string} text latin1-decoded body
+ * @returns {string[]} variants other than `text` itself
+ */
+export function scanVariants(text) {
+  const out = [];
+  if (text.includes('\u0000')) out.push(text.replace(/\u0000/g, ''));
+  if (text.includes('\\n') || text.includes('\\r')) out.push(text.replace(/\\r/g, '').replace(/\\n/g, '\n'));
+  if (/^[ \t]*(?:#|\/\/|\*|;|--)/m.test(text)) out.push(text.replace(/^[ \t]*(?:#|\/\/|\*|;|--)+[ \t]?/gm, ''));
+  return out;
+}
+
+/** Pattern names found in a body, across the raw text and, for small bodies, its variants. */
+export function scanBodyPatterns(text, size) {
+  const found = new Set(scanForSecrets(text).patterns);
+  if (size <= VARIANT_MAX_BYTES) {
+    for (const v of scanVariants(text)) for (const p of scanForSecrets(v).patterns) found.add(p);
+  }
+  return [...found].sort();
+}
+
 // ── The scan ────────────────────────────────────────────────────────────────
 
 /**
@@ -538,8 +599,9 @@ export function scanPublished({ git: rawGit, decision, destination, now = Date.n
       const bodies = readBodies(git, batch);
       batch.forEach((o, i) => {
         scanned++;
-        const r = scanForSecrets(bodies[i].toString('latin1'));
-        if (r.matched) for (const pattern of r.patterns) findings.push({ kind: 'secret', objType: o.objType, oid: o.oid, path: o.path, detail: pattern });
+        for (const pattern of scanBodyPatterns(bodies[i].toString('latin1'), o.size)) {
+          findings.push({ kind: 'secret', objType: o.objType, oid: o.oid, path: o.path, detail: pattern });
+        }
       });
     }
     if (scanned + excluded + unscanned !== objectCount) throw new LaneError('accounting');
@@ -592,6 +654,17 @@ export function runArchiveLane({ stdinText, destination, git, ack, now = Date.no
     decision = decidePushLane(parsePushLines(stdinText));
   } catch {
     return { outcome: 'not-applicable', lines: [], reason: 'push lines unreadable' };
+  }
+  if (decision.lane === 'refuse') {
+    return {
+      outcome: 'error',
+      lines: [
+        '✗ archive lane: a push line that mentions archive/ could not be read — push blocked.',
+        '   Not treated as "not applicable": the full gate does not scan published content.',
+        '   To force the full gate on purpose: AUDIT_PREPUSH_ARCHIVE_LANE=0',
+      ],
+      reason: decision.reason,
+    };
   }
   if (decision.lane !== 'archive') {
     // Silent on purpose: this is the answer for EVERY ordinary push, and prose here

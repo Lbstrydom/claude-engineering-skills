@@ -21,11 +21,13 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { git as runGit } from './lib/hook-test-helpers.mjs';
+import { classifyPath } from '../scripts/lib/sensitive-paths.mjs';
 import {
   ACK_MAX_FINDINGS,
   ARCHIVE_LANE_CHECK_CLASSIFICATION,
   LANE_SCANNERS,
   LIMITS,
+  VARIANT_MAX_BYTES,
   ZERO_SHA,
   batchBySize,
   checkStepNames,
@@ -40,6 +42,7 @@ import {
   parsePushLines,
   parseRawLog,
   runArchiveLane,
+  scanBodyPatterns,
   validateClassification,
 } from '../scripts/lib/prepush-archive-lane.mjs';
 
@@ -685,6 +688,112 @@ describe('an acknowledgement covers only what was shown', () => {
       assert.equal(res.findings.length, 12);
       assert.equal(res.lines.filter((l) => /^ {3}path /.test(l)).length, 12);
       assert.doesNotMatch(text(res), /more not shown/);
+    });
+  });
+});
+
+// ── the adversarial review of the hook (2026-10-12) ─────────────────────────
+
+describe('stdin parsing finds its fields from the right (whitespace inside a ref)', () => {
+  const A = 'a'.repeat(40);
+  const Z = ZERO_SHA;
+  const decide = (text) => decidePushLane(parsePushLines(text));
+
+  it('a LOCAL ref with spaces is one field, and the push is still an archive push', () => {
+    for (const local of ['HEAD@{2 minutes ago}', 'HEAD^{/add backup}', 'refs/heads/two words']) {
+      const p = parsePushLines(`${local} ${A} refs/heads/archive/x ${Z}\n`);
+      assert.equal(p.malformed, 0, local);
+      assert.equal(p.entries[0].localRef, local);
+      assert.equal(decidePushLane(p).lane, 'archive', local);
+    }
+  });
+
+  it('a REMOTE ref holding U+00A0 or another non-ASCII space is one ref name', () => {
+    for (const ch of ['\u00a0', '\u2003', '\u3000', '\ufeff']) {
+      const ref = `refs/heads/archive/a${ch}b`;
+      const p = parsePushLines(`refs/heads/local ${A} ${ref} ${Z}\n`);
+      assert.equal(p.entries[0]?.remoteRef, ref, JSON.stringify(ch));
+      assert.equal(isArchiveRef(ref), true);
+      assert.equal(decidePushLane(p).lane, 'archive');
+    }
+  });
+
+  it('CONTROL: spaces do not turn an ordinary push into an archive push', () => {
+    assert.equal(decide(`HEAD@{2 minutes ago} ${A} refs/heads/main ${Z}\n`).lane, 'full');
+    assert.equal(decide(`refs/heads/local ${A} refs/heads/main\u00a0archive/x ${Z}\n`).lane, 'full');
+  });
+
+  it('a line it cannot read that MENTIONS archive/ is refused, not "not applicable"', () => {
+    assert.equal(decide('garbage mentioning archive/x\n').lane, 'refuse');
+    assert.equal(decide(`refs/heads/archive/x ${A} refs/heads/archive/x\n`).lane, 'refuse', 'a missing field');
+    assert.equal(decide('garbage\n').lane, 'full', 'unreadable but unrelated stays the full gate');
+  });
+
+  it('runArchiveLane turns a refuse into an error outcome that names the override', () => {
+    const res = runArchiveLane({ stdinText: 'garbage mentioning archive/x\n', destination: 'unused', git: () => { throw new Error('must not run git'); } });
+    assert.equal(res.outcome, 'error');
+    assert.match(res.lines.join('\n'), /AUDIT_PREPUSH_ARCHIVE_LANE=0/);
+  });
+
+  it('end to end against real git: a spaced local source with a dirty tree is scanned and blocked', (t) => {
+    if (skip(t)) return;
+    withRepos((r) => {
+      const [, sha] = archiveBranch(r, { '.env': 'K=v\n' }).split(' ');
+      const res = r.lane(`HEAD@{2 minutes ago} ${sha} refs/heads/archive/x ${ZERO_SHA}`);
+      assert.equal(res.outcome, 'findings', text(res));
+    });
+  });
+});
+
+describe('scan coverage: the places a secret hid from the first version', () => {
+  const ghp = `ghp_${'Zz9Y'.repeat(9)}`;
+  const pem = ['-----BEGIN RSA', 'PRIVATE KEY-----\nMIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n-----END RSA', 'PRIVATE KEY-----\n'].join(' ');
+  const patterns = (body, size = body.length) => scanBodyPatterns(body, size);
+
+  it('UTF-16 text (what PowerShell > writes), a JSON-escaped PEM, a comment-prefixed PEM, an npm token', () => {
+    const utf16 = Buffer.from(`const t = '${ghp}';`, 'utf16le').toString('latin1');
+    const json = `{"private_key": "${pem.replace(/\n/g, '\\n')}"}`;
+    const commented = pem.split('\n').map((l) => `# ${l}`).join('\n');
+    assert.deepEqual(patterns(utf16), ['github-pat']);
+    assert.deepEqual(patterns(json), ['pem-private-key']);
+    assert.deepEqual(patterns(commented), ['pem-private-key']);
+    assert.deepEqual(patterns(`//registry.npmjs.org/:_authToken=npm_${'Qq8W'.repeat(9)}`), ['npm-token']);
+  });
+
+  it('CONTROL: the variants find nothing in ordinary text, escaped text and comments', () => {
+    assert.deepEqual(patterns('hello world\n'), []);
+    assert.deepEqual(patterns('# a comment\n// another\nline one\\nline two\n'), []);
+    assert.deepEqual(patterns(Buffer.from('plain utf16 text', 'utf16le').toString('latin1')), []);
+  });
+
+  it('variants are skipped above the size bound, so a big file cannot multiply the scan time', () => {
+    const json = `{"k":"${pem.replace(/\n/g, '\\n')}"}`;
+    assert.deepEqual(patterns(json, VARIANT_MAX_BYTES + 1), [], 'a variant ran on an oversize body');
+    assert.deepEqual(patterns(json, VARIANT_MAX_BYTES), ['pem-private-key']);
+  });
+
+  it('credential stores with no secret-shaped name are sensitive paths', () => {
+    for (const p of ['.git-credentials', 'home/.netrc', '_netrc', 'a/.pgpass', '.pypirc', '.htpasswd', 'x.keystore', 'a/B.JKS', 'terraform.tfvars', 'infra/prod.auto.tfvars']) {
+      assert.equal(classifyPath(p), 'sensitive', p);
+    }
+    for (const p of ['README.md', 'src/tfvars.mjs', 'terraform.tfvars.example', 'docs/netrc-notes.md']) {
+      assert.equal(classifyPath(p), null, `${p} must stay unclassified`);
+    }
+  });
+
+  it('end to end against real git: each of them blocks a real archive push', (t) => {
+    if (skip(t)) return;
+    withRepos((r) => {
+      const res = r.lane(archiveBranch(r, {
+        '.git-credentials': 'https://user:pass@github.com\n',
+        'cfg/service-account.json': `{"private_key": "${pem.replace(/\n/g, '\\n')}"}\n`,
+        '.npmrc': `//registry.npmjs.org/:_authToken=npm_${'Qq8W'.repeat(9)}\n`,
+      }));
+      assert.equal(res.outcome, 'findings', text(res));
+      const kinds = res.findings.map((f) => `${f.kind}:${f.detail}`).sort();
+      assert.ok(kinds.includes('path:sensitive-path'), kinds.join());
+      assert.ok(kinds.includes('secret:pem-private-key'), kinds.join());
+      assert.ok(kinds.includes('secret:npm-token'), kinds.join());
     });
   });
 });
