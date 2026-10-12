@@ -24,8 +24,11 @@
  * reason, so an excluded branch says what to look at.
  *
  * Never a candidate: the base branch, the main checkout's worktree, the worktree
- * this command runs in, and a LOCKED worktree (git's own "in use" marker — an
- * agent or tool holding it, even on a branch that has not moved off base yet).
+ * this command runs in, a LOCKED worktree (git's own "in use" marker — an
+ * agent or tool holding it, even on a branch that has not moved off base yet),
+ * and a worktree another worktree's `core.hooksPath` lies inside (removing it
+ * would silently disable that worktree's hooks; `hooks-path-guard.mjs`, re-checked
+ * by `--apply` under the lock).
  *
  * Cleanliness is judged HERE, by `archiveReport`, not by the status probe
  * (which only probes up to a cap and may leave a worktree unchecked): the hide
@@ -39,6 +42,7 @@ import { gatherFacts, buildStatusFrom } from './facts.mjs';
 import { DEFAULT_STALE_WORKTREE_DAYS, hideReason, idleMsFrom, landedReason } from './overlap.mjs';
 import { archiveReport } from './lifecycle.mjs';
 import { headOf, isAncestor, listWorktrees, remoteRefOid, repoToplevel, runGit } from './git-facts.mjs';
+import { hooksPathDependents, hooksPathRefusals } from './hooks-path-guard.mjs';
 import { transact } from './registry.mjs';
 import { renderCommand } from './shell-quote.mjs';
 import { samePath as samePathOnPlatform } from '../harness-paths.mjs';
@@ -144,6 +148,9 @@ export function planPrune(ctx, { facts = null, report = archiveReport } = {}) {
         });
         continue;
       }
+      // Another worktree whose core.hooksPath lies inside this one would lose its hooks without a word (2026-10-12).
+      const hooks = hooksPathRefusals(hooksPathDependents(item.worktree, wt.worktrees), item.worktree);
+      if (hooks.length) { excluded.push({ branch: item.branch, worktree: item.worktree, reason: hooks.join('; ') }); continue; }
       steps.push({ kind: 'worktree', argv: ['git', 'worktree', 'remove', item.worktree] });
     }
     // Bound to the judged commit: `update-ref -d <ref> <oid>` refuses when the branch no longer points at it, so a
@@ -233,6 +240,10 @@ export function applyPrune(ctx, plan, { remote = false, includeFresh = false, gi
         const r = report(ctx, { branch: null, worktree: c.worktree });
         const risky = Object.entries(r.risks).filter(([k, v]) => k !== 'unpushed' && v.length);
         if (risky.length || r.unverified.length) return { skip: `its worktree changed since it was judged (${risky.length ? risky.map(([k, v]) => `${v.length} ${k}`).join(', ') : r.unverified[0]})` };
+        // So is every OTHER worktree's core.hooksPath: one pointed into this worktree since the plan is refused, and
+        // one that cannot be read refuses too.
+        const hooks = hooksPathRefusals(hooksPathDependents(c.worktree, wts.worktrees, { git }), c.worktree);
+        if (hooks.length) return { skip: hooks.join('; ') };
       }
       for (const st of c.steps) {
         const r = git(st.argv.slice(1), ctx.cwd);

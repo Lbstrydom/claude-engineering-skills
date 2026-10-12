@@ -1,5 +1,16 @@
 # Project Status Log
 
+<!-- ship-verification-af173bea-20261012T134954Z.md -->
+### Consumer Verification (previous ship)
+- **Commit**: af173bea3fd28135369e91ad7adf9ecbbe5df99e on `claude/ship-trains-b` (PR #219, open, NOT merged; code head 871a111e plus the status.md ship commit).
+- **Retrieval**: the pre-push hook ran the full `check` in a clean sandbox of exactly this sha: 19,331 tests, 19,285 pass, 0 fail, 46 skipped. The first attempt failed one load-flaky timing test (`fleet-checks` H1/H3, "returned well within the 30s timeout (12432ms)") on a status.md-only commit; the single re-run was clean. No separate post-push re-run (it would repeat the same command on the same sha).
+- **Result**: pushed commit verified by the gate; synced consumer bundle unverified (blocked: #219 is not merged, and consumers sync only from the default branch). After the merge, sync from an up-to-date main and run `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in each consumer's MAIN checkout. Watch for: a consumer on stale synced tooling refuses a serial record carrying `messageRequired` until it re-syncs.
+
+<!-- ship-verification-d4b28b97-20261012T141005Z.md -->
+- **Commit**: d4b28b97f0124a5946a171d80cb09c0cec191cd2 on `fix/ship-nudge-keyset-paging` (PR #218, open; NOT merged). It is the merge of `origin/main` f858beb9 (#219) into the branch, carrying the 2026-10-12 keyset-paging status entry (ship commit `4069f1a3`).
+- **Retrieval**: the pre-push hook ran `check` in a clean sandbox checkout of exactly this sha (not a second run by me): 19,522 tests, 19,476 passed, 0 failed, 46 skipped, 373 s; `db-suites-gate: DB suites passed in 35.8s`, which includes the keyset DB suite and its 4 real-failure tests. A first push attempt was stopped by me mid-hook (to honour the coordinator's status.md hold) and transferred nothing.
+- **Result**: verified for the pushed commit (the hook's clean-checkout run). The synced consumer bundle is unverified (blocked: not merged) — a feature-branch push publishes nothing to consumers; sync from an up-to-date `main` after the PR merges. The new `scripts/lib/cross-skill/validators.mjs` is a lib module in the synced bundle, so confirm it reaches a consumer then.
+
 ### Consumer Verification (previous ship)
 - **Commit**: 00db37e0520f3ff44c24568ba36030b8e00c8937 on `fix/final-review-debt-suppression-revival` (PR #203, NOT yet merged to `main`); it contains the ship commit `e8230e7a`.
 - **Retrieval**: the push itself ran NO pre-push gate (this worktree's `core.hooksPath` pointed at a removed worktree, so git ran no hook; found and repaired afterwards). The gate was then run by hand on the pushed head, in a clean sandbox of that commit via `node scripts/prepush-check.mjs --base d2dc4775 --head 00db37e0`: run 1 failed 2 `fleet-gh-batch` timing tests, run 2 failed 1 (`R1-H5`), and the post-reboot run 3 passed: 18,902 tests, 18,856 pass, 0 fail, 46 skipped. `fleet-gh-batch` passed 9/9 in six solo runs on this tree and on clean main. The destructive DB suites were skipped each time (another invocation owned the test container). No `npm ci` re-install was done, and no consumer-side retrieval was run.
@@ -117,6 +128,51 @@
 - **Commit**: 638980bbf48e09c708ca5c0dc9170e555df5c5d0 on `fleet/make-the-pre-push-gate-s-per-f-2dab` (PR #212, open; NOT merged). Plain fast-forward from fcfd42be; it merges origin/main 0aff90cc (#204), carries the #214 reconcile and the plan Complete/log, and the status.md pointer entry.
 - **Retrieval**: the pre-push hook ran `check` in a clean checkout of exactly this sha (not a second run by me): 19,396 tests, 19,350 passed, 0 failed, 46 skipped, 476 s. The first attempt (09e4a14c) was blocked by one test: tests/dashboard-home-status-entries.test.mjs, because the Backlog line in my status.md pointer entry carried a trailing command reference that parseBacklogLine cannot round-trip; fixed by making it the bare snapshot output (cdb4b919).
 - **Result**: verified for the pushed commit (the hook's clean-checkout run). The synced consumer bundle is unverified (blocked: not merged) - a feature-branch push publishes nothing to consumers; sync from an up-to-date main after #212 merges. GitHub: MERGEABLE, checks unit and db-suite still running when this was written.
+
+## 2026-10-12 — fleet archive / prune --apply refuse removing a worktree another worktree's hooks live in (PR #220)
+
+**Why.** On 2026-10-12 three linked worktrees had `core.hooksPath` in `config.worktree` pointing at
+`.claude/worktrees/fleet-unclaimed-work-plan/.githooks`. That worktree was removed, git ran NO pre-push hook for
+them (a missing hooks directory is not an error), and #203 was pushed ungated — caught only from an empty hook log
+(see the #203 Consumer Verification note above). The fleet plan's recorded follow-up (#216).
+
+**What.** New `scripts/lib/fleet/hooks-path-guard.mjs` (`hooksPathDependents`, `hooksLocation`, `traversedEntries`,
+`canonicalEntry`, `remedyFor`, `hooksPathRefusals`). For every OTHER live, non-bare worktree it asks git for the hooks
+directory (`git rev-parse --git-path hooks` — `config.worktree`, inherited repo/global/system value, or the default),
+walks it one component at a time following each symlink/junction (POSIX resolves `..` physically, win32 lexically),
+plus every linked hook inside it, and refuses when any entry walked lies inside the worktree being removed. Fails
+closed on an unreadable config or an unwalkable path. The refusal names the dependent worktree and a remedy that
+re-points at the main checkout's own hooks directory (repo-local override for a global/system value; no command at
+all when no existing directory outside the worktree is known).
+- `scripts/lib/fleet/archive.mjs`: `planArchive` refuses (so the dry run carries the same verdict); `applyArchive`
+  re-checks under the registry lock immediately before `git worktree remove` (new `list` seam).
+- `scripts/lib/fleet/prune.mjs`: `planPrune` keeps such a worktree with the reason + remedy; `applyPrune` re-checks
+  under the lock. Prune stays read-only by default.
+- `skills/fleet/SKILL.md`, `skills/fleet/references/coordination.md` (+ regenerated `.claude/skills/fleet/**`,
+  `skills.manifest.json`); the two new SKILL.md lines dispositioned in `skills/fleet/gate-contract.json`.
+- `tests/fleet-hooks-path-guard.test.mjs` (new, 20 tests): red-then-green two-worktree controls for archive plan /
+  `--apply` / a post-plan race, prune dry run / `--apply` / the under-lock re-check; fail-closed on an unreadable
+  `config.worktree`, an unreadable hooks directory and an erroring git; POSIX vs win32 `..`, `A/..hooks`, `\\?\` and
+  `\\?\UNC\` link targets, 8.3 aliases, linked hooks.
+
+**Verification.** Guard neutralised → every guard test red; each of the 12 audit fixes reverted on its own → its test
+red, restored → green (one honest limit: on win32 the resolved-endpoint wiring cannot go red, because the Win32 API
+collapses `..` before the walk; the field is pinned on every platform by the `traversedEntries` unit, the wiring on
+POSIX by the real-filesystem test). Pre-push clean-checkout `check` on e5147629: 19,435 tests, 0 fail, 46 skipped.
+`/audit-code --scope diff`: GPT R1-R6 (round cap; R3 and R6 PASS 0/0/0; 17 findings, all accepted or deliberated,
+0 deferred; H2/H3 of R4 deliberated to a LOW compromise) → Gemini APPROVE (`gateDisposition: approve`). **Not 2/2
+stable across the whole branch**: R5 (whole-branch) raised three win32 path-spelling findings, fixed; R6 covered only
+that fix, then the cap. Summary: `docs/plans/fleet-hooks-path-removal-guard-audit-summary.md`. A read-only probe of this
+repo's 15 worktrees found no linked worktree that is currently a hooks target.
+
+**Ship-gate nudges (advisory).** Persona: 0 open P0 / 1 open P1. Unlocked fixes: 188 code / 47 plan (420 aged out,
+3 dangling locks). Unremediated acceptances: 110 code / 76 plan (54 permanently accepted, 274 aged out). Migrations
+realized on the ambient store; storyline's store is behind (6 constraints). Upstream: 2 open (wine-cellar-app),
+including 56773c7c "fleet prune evidence never reaches a person" — adjacent to this change, not addressed by it.
+
+Backlog 2026-10-12T14:18Z: Q1 188c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt 336 cloud/10 local (0 spilled) · upstream 2
+
+---
 
 ## 2026-10-12 — keyset paging for the two /ship-nudge readers (#218): rebased from an archive tag, audited, five rounds of fixes
 

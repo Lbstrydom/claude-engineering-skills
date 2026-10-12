@@ -115,6 +115,14 @@
     {
       "line": "Coordinating, not participating: the chip authority block, the session-list",
       "reason": "An instruction to the AGENT (how to treat the footer line / where the coordinator rules live), added by plan fleet-unclaimed-work-and-switch-friction.md Phase 8. No CLI exit code expresses it, and the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
+    },
+    {
+      "line": "cwd is that worktree; if one exists, do not remove it. Both verbs also refuse",
+      "reason": "Describes the hooks-path guard on `fleet archive` and `fleet prune --apply` (refuse while another worktree's core.hooksPath resolves inside the worktree being removed; an unreadable config refuses), enforced in scripts/lib/fleet/hooks-path-guard.mjs (called from archive.mjs and prune.mjs, at plan time and again under the registry lock) and pinned by tests/fleet-hooks-path-guard.test.mjs; an oracle needs a throwaway multi-worktree git repo with per-worktree config, which the closed oracle registry has no recipe to build."
+    },
+    {
+      "line": "command first; a config git cannot read refuses too.",
+      "reason": "Describes the hooks-path guard on `fleet archive` and `fleet prune --apply` (refuse while another worktree's core.hooksPath resolves inside the worktree being removed; an unreadable config refuses), enforced in scripts/lib/fleet/hooks-path-guard.mjs (called from archive.mjs and prune.mjs, at plan time and again under the registry lock) and pinned by tests/fleet-hooks-path-guard.test.mjs; an oracle needs a throwaway multi-worktree git repo with per-worktree config, which the closed oracle registry has no recipe to build."
     }
   ]
 }

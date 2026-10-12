@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**8 active · 249 terminal · 33 audit summaries · 1 parked · 5 reference docs**
+**8 active · 249 terminal · 34 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -318,7 +318,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 (they carry a free-text convergence sentence by convention).
 
 <details>
-<summary>Show all 33 audit summaries</summary>
+<summary>Show all 34 audit summaries</summary>
 
 | Plan | Notes |
 |---|---|
@@ -329,6 +329,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 | [`/audit-code` summary — `machine/git-autocrlf` probe (8620cfe8)](./consumer-friction-doctor-audit-summary.md) |  |
 | [Audit convergence summary — debt readers ask the store](./debt-readers-ask-store-audit-summary.md) |  |
 | [Audit Summary — discovery-portfolio-secret-redaction](./discovery-portfolio-secret-redaction-audit-summary.md) |  |
+| [Audit Summary — fleet hooks-path removal guard](./fleet-hooks-path-removal-guard-audit-summary.md) |  |
 | [Audit Summary — gemini-gate-scope-fix](./gemini-gate-scope-fix-audit-summary.md) |  |
 | [Audit Summary — git-env-leak-sustainability](./git-env-leak-sustainability-audit-summary.md) |  |
 | [Learning System v2 — Audit Summary](./learning-system-v2-audit-summary.md) |  |
