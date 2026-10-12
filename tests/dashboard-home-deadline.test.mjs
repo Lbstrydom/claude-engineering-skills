@@ -24,6 +24,7 @@ import {
   collectHome, withDeadline, aggregateSources, homeContentProjection,
 } from '../scripts/lib/dashboard/collect-home.mjs';
 import { execReader } from '../scripts/lib/store/backlog-gather.mjs';
+import { waitForPidFile, isAlive } from './helpers/child-ready.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -194,20 +195,55 @@ parentPort.postMessage({ ok: true, result });
 describe('an aborted async card releases its child', () => {
   test('the queue reader child is killed and reaped when the deadline fires', async () => {
     const dir = tmp();
-    const pidFile = path.join(dir, 'pid.txt');
+    // Each reader child gets its own pid file (argv[2]); the file is its readiness signal.
     const sleeper = path.join(dir, 'sleeper.mjs');
-    fs.writeFileSync(sleeper, `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => {}, 120000);\n`);
-    const run = (a) => execReader({ ...a, script: sleeper, args: [] });
+    fs.writeFileSync(sleeper, "import fs from 'node:fs'; fs.writeFileSync(process.argv[2], String(process.pid)); setTimeout(() => {}, 120000);\n");
+
+    // The 800ms deadline is real and fires on schedule, but node's startup under CPU load can outlast it, killing
+    // the child before it ever wrote (and the pid read then threw ENOENT). So the abort the DEADLINE raises is
+    // handed to the reader only once that reader's child has published its pid. Raising the deadline would only
+    // move the race; this removes the dependence on startup time.
+    const calls = [];
+    const run = (a) => {
+      const call = { pidFile: path.join(dir, `pid-${calls.length}.txt`), pid: null, aliveWhenAborted: null, readyError: null, result: null, inner: null };
+      calls.push(call);
+      const ready = waitForPidFile(call.pidFile)
+        .then((pid) => { call.pid = pid; }, (err) => { call.readyError = err; });
+      const inner = new AbortController();
+      call.inner = inner; // reachable from the failure-path teardown below
+      const deliver = () => ready.then(() => { call.aliveWhenAborted = call.pid === null ? null : isAlive(call.pid); inner.abort(); });
+      if (a.signal.aborted) deliver(); else a.signal.addEventListener('abort', deliver, { once: true });
+      return execReader({ ...a, script: sleeper, args: [call.pidFile], signal: inner.signal }).then((r) => { call.result = r; return r; });
+    };
     const repo = mkHomeRepo();
-    const { home } = await collectHome(repo, HOME_OPTS({ run, deadlineMs: 800 }));
-    assert.ok(home.cards.queues.measurements.every((x) => x.status === 'missing-optional'), 'timed-out readers are an expected absence');
-    const pid = Number(fs.readFileSync(pidFile, 'utf8'));
-    assert.ok(pid > 0);
-    let alive = true;
-    for (let i = 0; i < 40 && alive; i += 1) {
-      try { process.kill(pid, 0); await sleep(100); } catch { alive = false; }
+    try {
+      // settleMs is generous so collectHome waits for each reader's kill-and-close before returning.
+      const { home } = await collectHome(repo, HOME_OPTS({ run, deadlineMs: 800, settleMs: 30000 }));
+      assert.ok(home.cards.queues.measurements.every((x) => x.status === 'missing-optional'), 'timed-out readers are an expected absence');
+
+      // Vacuous-pass guards: readers really ran, every child really started, and each was alive when the abort reached it.
+      assert.ok(calls.length > 0, 'the queue readers were spawned');
+      for (const c of calls) {
+        assert.equal(c.readyError, null, c.readyError?.message);
+        assert.ok(c.pid > 0, `reader child published a pid (${c.pidFile})`);
+        assert.equal(c.aliveWhenAborted, true, `child ${c.pid} was running when the abort reached it`);
+      }
+      // Killed AND reaped by the time collectHome returns -- asserted here, not eventually: a regression that returns
+      // before the kill-and-close completes must fail, not pass because the child happens to die a moment later.
+      for (const c of calls) {
+        assert.ok(c.result, `child ${c.pid}: its reader had resolved when collectHome returned`);
+        assert.equal(c.result.aborted, true, `child ${c.pid}: reader was aborted`);
+        assert.equal(c.result.childExited, true, `child ${c.pid}: reader resolved only after the child closed`);
+        assert.equal(isAlive(c.pid), false, `child ${c.pid} must not outlive the abort`);
+      }
+    } finally {
+      // Failure path only (a no-op once the readers have been aborted and reaped): whatever the test died on, stop
+      // every reader and kill any child still alive, so none outlives the test or keeps the runner up.
+      for (const c of calls) {
+        c.inner?.abort();
+        if (c.pid && isAlive(c.pid)) { try { process.kill(c.pid, 'SIGKILL'); } catch { /* already gone */ } }
+      }
     }
-    assert.equal(alive, false, `child ${pid} must not outlive the abort`);
   });
 });
 

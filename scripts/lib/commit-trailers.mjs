@@ -333,9 +333,15 @@ export function validateTrailerInput(input, { skillNames }) {
  * @param {{state: string, runId: string|null}} opts.evidence
  * @param {boolean} opts.cloudEnabled
  * @param {{roundConvergedAfter: number|null}|null} opts.convergence — store row for evidence.runId
+ * @param {boolean} [opts.identityProvable] — false when the committed tree is a
+ *   prediction the server does not enforce (a ship-train squash onto an
+ *   unpinned base, docs/plans/ship-trains.md §2.3). Then `passed` is refused and
+ *   the `converged` under-claim refusal is suspended: there is no provable
+ *   `passed` to under-claim against. It never turns a refusal below into an
+ *   accept. Default true — every direct-commit caller is unchanged.
  * @returns {null | {field: string, custom: string}}
  */
-export function evaluateGateVerification({ gate, evidence, cloudEnabled, convergence, committedTree = null }) {
+export function evaluateGateVerification({ gate, evidence, cloudEnabled, convergence, committedTree = null, identityProvable = true }) {
   if (!evidence || !isContentVerifiable(evidence) || !VERIFIED_GATES.includes(gate)) return null;
   const runId = evidence.runId;
 
@@ -369,6 +375,12 @@ export function evaluateGateVerification({ gate, evidence, cloudEnabled, converg
   // the wrong half of a condition that has a right half — sending them to
   // `waived` would be telling them to under-claim a verifiable state.
   const treesMatch = committedTree === evidence.auditedTree;
+  if (gate === 'passed' && !identityProvable) {
+    return {
+      field: 'gate-evidence',
+      custom: `AGENT FIX: gate-evidence: the tree being committed is a prediction the destination does not enforce (no required up-to-date check), so "passed" cannot be verified against run ${runId}'s audited tree; use --gate converged if that run converged. Example: --gate converged`,
+    };
+  }
   if (gate === 'passed' && !treesMatch) {
     // The honest reading: what you are committing is not what was audited.
     // Note this also fires for a PARTIAL commit of an audited worktree, and
@@ -378,7 +390,7 @@ export function evaluateGateVerification({ gate, evidence, cloudEnabled, converg
       custom: `AGENT FIX: gate-evidence: what you are committing is not what run ${runId} audited (audited tree ${evidence.auditedTree.slice(0, 12)}, committing ${committedTree.slice(0, 12)}) — use --gate converged if that run converged (fixes applied after the audit are exactly this case), or --gate waived. Note a partial commit of an audited worktree also differs. Example: --gate converged`,
     };
   }
-  if (gate === 'converged' && treesMatch) {
+  if (gate === 'converged' && treesMatch && identityProvable) {
     // Refusing the UNDER-claim. Without this the weaker label is grantable
     // whenever the stronger one is earned, which erodes the distinction the
     // value exists to create — and `passed` would decay into "whatever the

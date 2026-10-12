@@ -111,6 +111,32 @@ describe('classifyPath — dot-prefixed credential/secret basenames (fail-open r
   }
 });
 
+describe('classifyPath — credential stores with no secret-shaped name (archive-lane review, 2026-10-12)', () => {
+  // Each of these holds plaintext credentials by design but matched no earlier pattern, so a
+  // push containing one was scanned as clean. The negatives are as load-bearing as the
+  // positives: a pattern that swallowed prose or code modules would block ordinary pushes.
+  it('classifies .netrc, _netrc, .git-credentials, .pgpass, .pypirc, .htpasswd as sensitive, at any depth', () => {
+    for (const p of ['.netrc', 'home/.netrc', '_netrc', '.git-credentials', 'a/b/.git-credentials', '.pgpass', '.pypirc', '.htpasswd', 'web/.htpasswd']) {
+      assert.equal(classifyPath(p), 'sensitive', p);
+    }
+  });
+
+  it('classifies Java keystores and terraform variable files as sensitive', () => {
+    for (const p of ['release.keystore', 'a/B.JKS', 'trust.jks', 'terraform.tfvars', 'infra/prod.auto.tfvars']) {
+      assert.equal(classifyPath(p), 'sensitive', p);
+    }
+  });
+
+  it('does NOT classify prose, code or example files that merely mention them', () => {
+    for (const p of [
+      'README.md', 'docs/netrc-notes.md', 'src/tfvars.mjs', 'terraform.tfvars.example', 'docs/git-credentials-howto.md',
+      'scripts/keystore-info.mjs', 'netrc.js', 'pgpass-parser.ts',
+    ]) {
+      assert.equal(classifyPath(p), null, `${p} must stay unclassified`);
+    }
+  });
+});
+
 describe('classifyPath — sensitive negatives', () => {
   const cases = [
     'src/env-config.ts',    // contains "env" but isn't .env

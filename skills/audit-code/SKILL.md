@@ -65,7 +65,7 @@ substitute when the GPT legs have no route, and which of `AUDIT_DEGRADED` /
 `AUDIT_NOT_RUN` to report so a run that did not happen stays distinguishable
 from one that passed.
 
-Initialise session ID: `SID=audit-code-$(date +%s)`.
+Initialise session ID: `SID=audit-code-$(node -e "process.stdout.write(Date.now()+'-'+process.pid)")` — epoch ms plus a PID, so two sessions started in the same second get separate result, stderr and ledger files (a bare `$(date +%s)` gave both the same ones).
 
 Show kickoff card:
 ```
@@ -158,7 +158,8 @@ advertise was accepted and then dropped.
 
 ```bash
 SCOPE=diff   # or plan / full, per the table above and the user's request
-PLAN_FILE=docs/plans/*.md   # the plan path /audit-code was invoked with
+# PLAN_FILE = the ONE plan path /audit-code was invoked with, assigned verbatim.
+# Not a glob: an assignment does not expand it, so the CLI would get the pattern itself.
 node scripts/openai-audit.mjs code "$PLAN_FILE" --scope "$SCOPE" --out .audit/$SID-r1-result.json 2>.audit/$SID-r1-stderr.log
 ```
 
@@ -211,7 +212,9 @@ cat .audit/$SID-untracked-diff-stderr.log   # non-empty = a real failure occurre
 ```
 
 ```bash
-CHANGED="scripts/*.mjs,tests/*.test.mjs"   # files with real diff content this round
+# CHANGED = the exact files you edited this round, comma-separated, no globs:
+# the CLI splits on commas, so a pattern reaches it literally.
+CHANGED="scripts/openai-audit.mjs,tests/audit-skill-shell-recipes.test.mjs"
 FILES="$CHANGED"                            # + any dependent you also want in scope
 PASSES="sustainability"                     # e.g. sustainability,backend — per r2-plus-mode.md
 node scripts/openai-audit.mjs code "$PLAN_FILE" --round 2 --ledger .audit/$SID-ledger.json --diff .audit/$SID-diff.patch --changed "$CHANGED" --files "$FILES" --passes "$PASSES" --out .audit/$SID-r2-result.json 2>.audit/$SID-r2-stderr.log
