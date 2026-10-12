@@ -19,6 +19,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import { waitUntilBlockedBy } from './helpers/pg-lock-wait.mjs';
 
 const TEST_URL = process.env.AUDIT_DB_TEST_URL;
 const skip = TEST_URL ? false : 'AUDIT_DB_TEST_URL not set (integration block)';
@@ -210,6 +211,59 @@ describe('adjudicateFinalReviewFinding — bucket resolution (integration)', { s
     assert.equal(res.ok, false);
     assert.equal(res.reason, 'no-match-in-bucket');
     assert.deepEqual(res.buckets, ['shadow-only']);
+  });
+
+  // ── queue burn-down 2026-10-02 (store cluster) ────────────────────────────
+
+  const insRow = (fp, passName, bucket) => q.one(
+    `INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category, bucket)
+     VALUES ($1, $2, $3, 'HIGH', 'test', $4) RETURNING id`, [runId, fp, passName, bucket]);
+
+  it('round-1 M1: a fingerprint that exists ONLY in a non-final-review pass is not a final-review finding', async () => {
+    const { id } = await insRow('fpmerged', 'merged', null);
+    const adj = await mod.adjudicateFinalReviewFinding(runId, 'fpmerged', 'accepted');
+    assert.equal(adj.reason, 'no-match', 'a merged-pass row must never resolve as the final-review finding');
+    const fix = await mod.recordFinalReviewFix(runId, 'fpmerged', { commitSha: 'abc' });
+    assert.equal(fix.reason, 'no-match');
+    const row = await q.one(`SELECT user_action, remediation_state FROM audit_findings WHERE id = $1`, [id]);
+    assert.deepEqual(row, { user_action: null, remediation_state: null }, 'the merged-pass row must be untouched');
+  });
+
+  it('Phase 4: a primary and a shadow row sharing fingerprint AND bucket are ambiguous, never both written', async () => {
+    await insRow('fpdupbkt', 'final-review', null);
+    await insRow('fpdupbkt', 'final-review-shadow', null);
+    const res = await mod.adjudicateFinalReviewFinding(runId, 'fpdupbkt', 'accepted');
+    assert.equal(res.reason, 'ambiguous-bucket', 'SELECT DISTINCT bucket collapsed these two rows into one "unambiguous" bucket');
+    const written = await q.many(`SELECT id FROM audit_findings WHERE run_id = $1 AND finding_fingerprint = 'fpdupbkt' AND user_action IS NOT NULL`, [runId]);
+    assert.equal(written.length, 0);
+  });
+
+  it('Phase 4: a dismissal that lands while record-fix is in flight is honoured (one conditional UPDATE, not SELECT-then-UPDATE)', async () => {
+    const { id } = await insRow('fprace00', 'final-review', 'primary-only');
+    const { getPool } = await import('../scripts/lib/db/client.mjs');
+    const pool = await getPool();
+    const t1 = await pool.connect();
+    let fix;
+    let committed = false;
+    try {
+      await t1.query('BEGIN');
+      const { rows: [{ pid }] } = await t1.query('SELECT pg_backend_pid() AS pid');
+      await t1.query(`UPDATE audit_findings SET user_action = 'dismissed', adjudication_outcome = 'dismissed' WHERE id = $1`, [id]);
+      fix = mod.recordFinalReviewFix(runId, 'fprace00', { commitSha: 'abc' }); // its UPDATE waits on T1's row lock
+      // Barrier, not a sleep: commit only once the fix is OBSERVED blocked on T1's lock.
+      await waitUntilBlockedBy(pool, pid);
+      await t1.query('COMMIT');
+      committed = true;
+    } finally {
+      if (!committed) await t1.query('ROLLBACK').catch(() => {});
+      t1.release();
+      await fix?.catch(() => {});
+    }
+    const res = await fix;
+    assert.equal(res.ok, false);
+    assert.equal(res.reason, 'dismissed-cannot-be-fixed');
+    const row = await q.one(`SELECT remediation_state FROM audit_findings WHERE id = $1`, [id]);
+    assert.equal(row.remediation_state, null, 'a fix must never be recorded on a finding dismissed before the write committed');
   });
 
   // Deliberately NOT adding an "adjudicate then replay" case here (plan

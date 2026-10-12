@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-30T10:38:20.998Z",
+  "generatedAt": "2026-10-02T05:10:31.271Z",
   "commitSha": "e73a40ee3054e16f0493e47751f7efe7069608ff",
   "extractionSourceSha": "e73a40ee3054e16f0493e47751f7efe7069608ff",
   "coveredFiles": [
@@ -74188,7 +74188,7 @@
     },
     {
       "id": "REQ-persistence-7bc1224d",
-      "assertion": "Only audit.findings and audit.runComplete durable writers may declare rowKey values and thereby be eligible for replay, while all other registered audit-store writers remain keyless.",
+      "assertion": "A durable-write writer may declare rowKey (spill-replay-eligible) only when a real DB uniqueness constraint arbitrates its idempotency; a keyless writer is lost-only.",
       "kind": "persistence",
       "checkable": true,
       "provenance": [

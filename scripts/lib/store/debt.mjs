@@ -218,6 +218,13 @@ export async function upsertDebtEntries(repoId, entries, { embeddingsByTopicId =
  * Read all debt entries for a repo. Returns PersistedDebtEntry-shaped
  * objects (no derived fields — derive via events).
  *
+ * **Throws on a query failure.** `[]` means exactly "not asked" (no repo id,
+ * cloud off) or "asked, and there are none". A failed read used to return `[]`
+ * as well, so a store outage read as "there is no debt" — and both callers
+ * (`loadAuthoritativeDebt`, `debt-ledger-claims-check`) were already written to
+ * catch a throw and report `unavailable`, a branch the swallow made dead.
+ * (Events differ on purpose: `readDebtEventsCloudResult` carries the failure.)
+ *
  * @param {string|null} repoId
  */
 export async function readDebtEntriesCloud(repoId) {
@@ -259,7 +266,7 @@ export async function readDebtEntriesCloud(repoId) {
     }));
   } catch (err) {
     process.stderr.write(`  [learning] readDebtEntriesCloud failed: ${err.message}\n`);
-    return [];
+    throw err;
   }
 }
 

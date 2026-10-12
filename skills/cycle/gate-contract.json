@@ -141,7 +141,7 @@
       "reason": "Scanner false positive on both `require()` (the Node function) and the `allowInfraScopeRequired` field NAME. Reading a boolean the pre-flight computed; the rule it reflects lives in scripts/cycle-cluster-scope.mjs and is dispositioned by cluster-scope-preflight-exits-nonzero."
     },
     {
-      "line": "#   --diff    : annotation context only — does NOT scope; must be a real file",
+      "line": "#               (R2+ also annotates); does NOT scope; must be a real file",
       "reason": "Describes what openai-audit.mjs's --diff flag IS (a materialised patch path, per openai-audit.mjs:618-620), not a gate /cycle enforces. The 'must' is documenting the flag's input contract so a caller does not pass a range expression."
     },
     {

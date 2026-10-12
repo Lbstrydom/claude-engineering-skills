@@ -1,91 +1,17 @@
 /**
- * @fileoverview Concurrency-bound regression test for the worker-pool
- * pattern introduced in stage0-relevance-context.mjs's impactCache build
- * (5308a5d6). `buildStage0RelevanceContext` itself calls
- * `getFreshImportersOrNull` (a real DB-touching import with no dependency-
- * injection seam, and this repo's `node --test` runner does not pass
- * `--experimental-test-module-mocks`), so this test proves the underlying
- * "N workers pull from a shared cursor" ALGORITHM in isolation — the exact
- * shape copied into `buildStage0RelevanceContext` — rather than exercising
- * the real function end-to-end. A prior draft of that fix wrapped a
- * semaphore around a still-sequential for...of loop, which provided no
- * concurrency at all (audit-plan round-3 M1); this test would have caught
- * that regression.
+ * @fileoverview Regression tests for `buildStage0RelevanceContext`'s impact-cache
+ * build (5308a5d6): a bounded-concurrency worker pool over the store read
+ * (`getFreshImportersOrNull`), replacing a sequential for...of loop.
+ *
+ * The builder exposes `opts.getImporters` as its test seam (default: the real,
+ * DB-touching read), so every test here drives the REAL function and counts what
+ * the injected lookup sees. An earlier version of this file carried a copy of the
+ * pool ("proving the algorithm in isolation") because no seam existed; a copy can
+ * stay green while the production loop regresses to sequential - the exact
+ * mistake the audit-plan round-3 M1 caught in a draft of the fix - so the copy is
+ * gone.
  */
-import { test } from 'node:test';
 import assert from 'node:assert/strict';
-
-// Mirrors buildStage0RelevanceContext's worker-pool block exactly, generic
-// over the per-item async work function so it's testable without a DB.
-async function runWorkerPool(items, concurrency, work) {
-  let nextIndex = 0;
-  let maxInFlight = 0;
-  let inFlight = 0;
-  const results = new Map();
-  const worker = async () => {
-    let i;
-    while ((i = nextIndex++) < items.length) {
-      inFlight++;
-      maxInFlight = Math.max(maxInFlight, inFlight);
-      try {
-        results.set(items[i], await work(items[i]));
-      } finally {
-        inFlight--;
-      }
-    }
-  };
-  const workerCount = Math.min(concurrency, items.length);
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
-  return { results, maxInFlight };
-}
-
-test('worker pool runs multiple items concurrently, not sequentially', async () => {
-  const items = Array.from({ length: 12 }, (_, i) => `file${i}.mjs`);
-  const { maxInFlight } = await runWorkerPool(items, 4, async () => {
-    await new Promise((r) => setTimeout(r, 10));
-    return true;
-  });
-  // A sequential loop (the round-2 regression) would peak at 1 in-flight.
-  assert.ok(maxInFlight > 1, `expected concurrent execution, got maxInFlight=${maxInFlight}`);
-  assert.ok(maxInFlight <= 4, `expected the concurrency cap to be honored, got maxInFlight=${maxInFlight}`);
-});
-
-test('worker pool never exceeds the concurrency cap even with more items than workers', async () => {
-  const items = Array.from({ length: 20 }, (_, i) => i);
-  const { maxInFlight, results } = await runWorkerPool(items, 8, async (i) => {
-    await new Promise((r) => setTimeout(r, 5));
-    return i * 2;
-  });
-  assert.ok(maxInFlight <= 8);
-  assert.equal(results.size, 20);
-  for (const i of items) assert.equal(results.get(i), i * 2);
-});
-
-test('a failing item degrades to null without stranding the pool — matches buildStage0RelevanceContext\'s own try/catch shape', async () => {
-  // buildStage0RelevanceContext wraps its own per-item try/catch { result =
-  // null } AROUND the getFreshImportersOrNull call, inside the loop body —
-  // the pool itself never sees the error. This test uses the identical
-  // shape rather than relying on the pool to catch for it.
-  const items = [1, 2, 3, 4, 5];
-  const work = async (i) => {
-    try {
-      if (i === 3) throw new Error('simulated lookup failure');
-      return i;
-    } catch { return null; }
-  };
-  const { results } = await runWorkerPool(items, 2, work);
-  assert.equal(results.size, 5, 'all 5 items completed — one failure does not strand or drop the others');
-  assert.equal(results.get(3), null, 'the failing item degrades to null, matching the real code\'s catch behavior');
-  assert.equal(results.get(1), 1);
-  assert.equal(results.get(5), 5);
-});
-
-test('fewer items than the concurrency cap spawns only as many workers as items', async () => {
-  const items = ['a', 'b'];
-  let started = 0;
-  await runWorkerPool(items, 8, async (i) => { started++; return i; });
-  assert.equal(started, 2, 'no wasted/idle workers beyond the item count');
-});
 
 // ── findings 1cc508ab / aa68982d ────────────────────────────────────────────
 // `buildStage0RelevanceContext` calls `getFreshImportersOrNull`, a real
@@ -141,6 +67,113 @@ test('fewer items than the concurrency cap spawns only as many workers as items'
     // resolve against a directory with a REAL git repo and behave
     // differently, which the isolated repoRoot must not do).
     assert.doesNotThrow(() => adapter('target.mjs', 1, 1, 'x'));
+  });
+
+  // final-review shadow fd93a4c7: the pool swallowed every impact-lookup throw
+  // with a bare catch and no log, so a systemic outage produced an all-null
+  // impactCache indistinguishable from a repo with no import graph. The
+  // degrade-to-null CONTRACT stays (null = unknown); the silence does not.
+  itFor('an impact-lookup THROW degrades to null but is reported once, with a count', async () => {
+    const envelopes = ['a.mjs', 'b.mjs', 'c.mjs'].map((f) => ({ canonicalFinding: { anchor: { side: 'head', newFile: f } } }));
+    const ctx = { auditBaseCommit: null, commitSha: 'abc', workingTreeDirty: false, changedFiles: [] };
+    const writes = [];
+    const realWrite = process.stderr.write;
+    process.stderr.write = (s) => { writes.push(String(s)); return true; };
+    let result;
+    try {
+      result = await buildStage0RelevanceContext(ctx, envelopes, {
+        repoRoot,
+        getImporters: async () => { throw new Error('connection terminated unexpectedly'); },
+      });
+    } finally {
+      process.stderr.write = realWrite;
+    }
+    assert.deepEqual([...result.impactCache.values()], [null, null, null], 'unknown, never a guess');
+    const notes = writes.filter((w) => /impact-lookup failure/i.test(w));
+    assert.equal(notes.length, 1, `one aggregated line, not one per file: ${JSON.stringify(writes)}`);
+    assert.match(notes[0], /3 of 3/);
+    assert.match(notes[0], /connection terminated unexpectedly/);
+  });
+
+  itFor('a lookup that RETURNS null (unknown) is not reported as a failure (negative control)', async () => {
+    const envelopes = [{ canonicalFinding: { anchor: { side: 'head', newFile: 'a.mjs' } } }];
+    const ctx = { auditBaseCommit: null, commitSha: 'abc', workingTreeDirty: false, changedFiles: [] };
+    const writes = [];
+    const realWrite = process.stderr.write;
+    process.stderr.write = (s) => { writes.push(String(s)); return true; };
+    try {
+      await buildStage0RelevanceContext(ctx, envelopes, { repoRoot, getImporters: async () => null });
+    } finally {
+      process.stderr.write = realWrite;
+    }
+    assert.equal(writes.filter((w) => /impact-lookup failure/i.test(w)).length, 0);
+  });
+
+  // ── the worker pool, driven through the REAL builder via opts.getImporters ──
+  const filesOf = (n) => Array.from({ length: n }, (_, i) => `file${i}.mjs`);
+  const envelopesFor = (files) => files.map((f) => ({ canonicalFinding: { anchor: { side: 'head', newFile: f } } }));
+  const poolCtx = { auditBaseCommit: null, commitSha: 'abc', workingTreeDirty: false, changedFiles: [] };
+  // Run the builder with STAGE0_IMPACT_CONCURRENCY pinned, recording what the
+  // injected lookup observes: peak in-flight calls, and every file asked about.
+  async function runPool(files, concurrency, lookup) {
+    const saved = process.env.STAGE0_IMPACT_CONCURRENCY;
+    if (concurrency === undefined) delete process.env.STAGE0_IMPACT_CONCURRENCY;
+    else process.env.STAGE0_IMPACT_CONCURRENCY = String(concurrency);
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const asked = [];
+    try {
+      const result = await buildStage0RelevanceContext(poolCtx, envelopesFor(files), {
+        repoRoot,
+        getImporters: async ({ filePath }) => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          asked.push(filePath);
+          try { return await lookup(filePath); } finally { inFlight -= 1; }
+        },
+      });
+      return { result, maxInFlight, asked };
+    } finally {
+      if (saved === undefined) delete process.env.STAGE0_IMPACT_CONCURRENCY;
+      else process.env.STAGE0_IMPACT_CONCURRENCY = saved;
+    }
+  }
+  const tick = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  itFor('the pool runs lookups concurrently, not sequentially, and honours the cap', async () => {
+    const { maxInFlight } = await runPool(filesOf(12), 4, async () => { await tick(10); return true; });
+    // A sequential loop (the round-2 regression) would peak at 1 in flight.
+    assert.ok(maxInFlight > 1, `expected concurrent execution, got maxInFlight=${maxInFlight}`);
+    assert.ok(maxInFlight <= 4, `expected the concurrency cap to be honoured, got maxInFlight=${maxInFlight}`);
+  });
+
+  itFor('more files than workers: never over the cap, every file looked up exactly once with its own result', async () => {
+    const files = filesOf(20);
+    const { result, maxInFlight, asked } = await runPool(files, 8, async (f) => { await tick(5); return { importers: [f] }; });
+    assert.ok(maxInFlight <= 8, `maxInFlight=${maxInFlight}`);
+    assert.deepEqual([...asked].sort(), [...files].sort(), 'each file asked about exactly once');
+    assert.equal(result.impactCache.size, 20);
+    for (const f of files) assert.deepEqual(result.impactCache.get(f), { importers: [f] });
+  });
+
+  itFor('one failing lookup degrades that file to null without stranding or dropping the others', async () => {
+    const files = filesOf(5);
+    const { result } = await runPool(files, 2, async (f) => { if (f === 'file2.mjs') throw new Error('simulated lookup failure'); return f; });
+    assert.equal(result.impactCache.size, 5, 'all 5 completed - one failure does not strand the pool');
+    assert.equal(result.impactCache.get('file2.mjs'), null, 'the failing file degrades to null (unknown)');
+    assert.equal(result.impactCache.get('file0.mjs'), 'file0.mjs');
+    assert.equal(result.impactCache.get('file4.mjs'), 'file4.mjs');
+  });
+
+  itFor('fewer files than the cap start only as many lookups as there are files', async () => {
+    const { maxInFlight, asked } = await runPool(filesOf(2), 8, async () => { await tick(10); return true; });
+    assert.equal(asked.length, 2);
+    assert.ok(maxInFlight <= 2, `no more in flight than files, got ${maxInFlight}`);
+  });
+
+  itFor('NEGATIVE CONTROL - cap 1 really serialises (the concurrency assertions above can tell the difference)', async () => {
+    const { maxInFlight } = await runPool(filesOf(6), 1, async () => { await tick(5); return true; });
+    assert.equal(maxInFlight, 1);
   });
 
   itFor('STAGE0_IMPACT_CONCURRENCY (fp=1cc508ab) is env-tunable, not a hardcoded literal', async () => {

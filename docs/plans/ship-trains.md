@@ -388,7 +388,7 @@ A terminal stop never auto-retries.
   - `fleet land` keeps `npm test` as the train's combined run. It is the **one authoritative full suite on the bytes that land**; `.fleet.json` is not edited, and the train docs say so.
   - **The thinness metric**: `ship-train verify` reports whether the train's combined run failed on a test that the branch tier did **not** select. It is the measurement that says whether a cheaper branch tier is too thin, so its fix is to widen the tier, never to drop the train's run.
   - It reads fleet's own run record (`tierResults`/log) and the branch tier's selection for the PR's head. It is built once the gate-cost plan publishes how that selection can be asked for; until then it reports `unmeasured` (no branch tier to compare against), never a clean zero.
-- **Branch side — owned by the gate-cost plan** (`docs/plans/gate-cost-slice-1.md` (planned), chip `fleet/make-the-pre-push-gate-s-per-f-2dab`). Everything below is that plan's to design, measure and decide, and is NOT built here:
+- **Branch side — owned by the gate-cost plan** (`docs/plans/gate-cost-slice-1.md`, chip `fleet/make-the-pre-push-gate-s-per-f-2dab`). Everything below is that plan's to design, measure and decide, and is NOT built here:
   - a cheaper branch-push tier (e.g. static gates plus direct-impact tests);
   - its vacuous-pass guard;
   - a full-suite escape hatch;

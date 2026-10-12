@@ -222,3 +222,77 @@ describe('inferAmbiguousFromStatus — reconstructing a dropped signal', () => {
       'a hardcoded ambiguous:false here would have demoted this entry — the exact bug this test pins');
   });
 });
+
+describe('reconcile — overrides reach RETAINED requirements too', () => {
+  // Overrides were applied only to freshly extracted candidates. A requirement
+  // carried over from the prior ledger (outside this run's coveredFiles) kept
+  // its stale text forever, so the committed REQ-persistence-7bc1224d
+  // correction never reached ledger.json and /audit-code kept raising findings
+  // against the stale assertion (queue burn-down, 2026-10-02).
+  const retainedPrior = () => ({
+    requirements: [{ ...cand({ id: 'REQ-safety-bbbbbbbb', assertion: 'Stale extracted text.', seenInRuns: 1 }),
+      provenance: [{ file: 'scripts/other.mjs', anchor: 'x' }], status: 'inferred-only', gap: null }],
+    coveredFiles: ['scripts/other.mjs'], identityAliases: {},
+  });
+
+  it('an override assertion replaces a retained requirement\'s text, keeping its id', () => {
+    const l = reconcile({ candidates: [], coveredFiles: [], priorLedger: retainedPrior(),
+      overrides: { 'REQ-safety-bbbbbbbb': { assertion: 'The corrected invariant.' } } });
+    const req = l.requirements.find((r) => r.id === 'REQ-safety-bbbbbbbb');
+    assert.equal(req.assertion, 'The corrected invariant.');
+  });
+
+  it('an override accept/reject applies to a retained requirement', () => {
+    const accepted = reconcile({ candidates: [], coveredFiles: [], priorLedger: retainedPrior(),
+      overrides: { 'REQ-safety-bbbbbbbb': { decision: 'accept' } } });
+    assert.equal(accepted.requirements[0].status, 'active');
+    const rejected = reconcile({ candidates: [], coveredFiles: [], priorLedger: retainedPrior(),
+      overrides: { 'REQ-safety-bbbbbbbb': { decision: 'reject' } } });
+    assert.equal(rejected.requirements.length, 0);
+  });
+
+  it('the COMMITTED ledger.json already reflects every committed override', () => {
+    const dir = path.join(REPO_ROOT, '.requirements');
+    if (!fs.existsSync(path.join(dir, 'overrides.json'))) return; // absent is a valid state (README)
+    const overrides = OverridesSchema.parse(JSON.parse(fs.readFileSync(path.join(dir, 'overrides.json'), 'utf-8')));
+    const ledger = loadLedger({ baseDir: REPO_ROOT });
+    for (const [id, o] of Object.entries(overrides)) {
+      const req = ledger.requirements.find((r) => r.id === id);
+      if (o.decision === 'reject') { assert.equal(req, undefined, `${id} is rejected but still in ledger.json`); continue; }
+      if (!req) continue; // an override for a requirement not (yet) extracted
+      if (o.assertion) assert.equal(req.assertion, o.assertion.slice(0, 200), `${id}: ledger.json carries the stale assertion`);
+      if (o.decision === 'accept') assert.equal(req.status, 'active', `${id}: accepted but not active`);
+    }
+  });
+});
+
+describe('loadLedger({strict}) — only an ABSENT ledger is an empty prior', () => {
+  const withDir = (fn) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'req-strict-'));
+    try { fs.mkdirSync(path.join(dir, '.requirements')); return fn(dir); }
+    finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  };
+  const ledgerFile = (dir) => path.join(dir, '.requirements', 'ledger.json');
+
+  it('the READ contract is unchanged: a truncated ledger still degrades to empty, never throws', () => withDir((dir) => {
+    fs.writeFileSync(ledgerFile(dir), '{"requirements":[');
+    assert.deepEqual(loadLedger({ baseDir: dir }).requirements, []);
+  }));
+
+  it('strict: an unparseable, schema-invalid or unreadable ledger throws', () => withDir((dir) => {
+    fs.writeFileSync(ledgerFile(dir), '{"requirements":[');
+    assert.throws(() => loadLedger({ baseDir: dir, strict: true }), /exists but cannot be loaded/);
+    fs.writeFileSync(ledgerFile(dir), '{"requirements":"not-an-array"}');
+    assert.throws(() => loadLedger({ baseDir: dir, strict: true }), /schema validation failed/);
+    fs.rmSync(ledgerFile(dir), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    fs.mkdirSync(ledgerFile(dir)); // a directory where the file should be: EISDIR, not ENOENT
+    assert.throws(() => loadLedger({ baseDir: dir, strict: true }), /exists but cannot be loaded/);
+  }));
+
+  it('NEGATIVE CONTROL — strict on an ABSENT ledger is an empty prior, and on a valid one returns it', () => withDir((dir) => {
+    assert.deepEqual(loadLedger({ baseDir: dir, strict: true }).requirements, []);
+    const written = reconcile({ candidates: [cand()], coveredFiles: COVERED, gapAssessments: [gap('REQ-correctness-aaaaaaaa')] });
+    writeLedger(written, { baseDir: dir });
+    assert.equal(loadLedger({ baseDir: dir, strict: true }).requirements.length, 1);
+  }));
+});

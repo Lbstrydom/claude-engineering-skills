@@ -9,6 +9,10 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { defaultResponses, EMPTY_STRUCTURE } from './helpers/multi-pass-audit-fixtures.mjs';
 
 process.env.AUDIT_EXPORTS_FOR_TESTS = '1';
@@ -164,6 +168,48 @@ describe('changed lines past maxPerFile: the reporter\'s shape, end to end', () 
     const unread = res._coverage.files.map((f) => f.changedLinesUnread);
     assert.ok(unread.some((u) => u > 0), JSON.stringify(unread));
     assert.deepEqual(res._convergence, { converged: false, reason: 'changed-lines-unread' });
+  });
+});
+
+// /cycle's cluster recipe: R1 with an explicit `--files` allowlist (so no VCS change record) plus `--diff`. The diff was
+// parsed only for R2+, so R1 head-cut every oversized changed file and never showed the change (measured 2026-10-11:
+// `coverage: PARTIAL — 7 of 10`, handover.mjs read to 10K of 54K). A declared diff is evidence in every round (D7).
+describe('R1 --files + --diff: the supplied diff windows the read (no change record needed)', () => {
+  const BIG = 'tests/fixtures/hunk-window/big-module.js';
+  const plan = `# Fixture plan\n\nModify \`${BIG}\`.\n`;
+  const runR1 = async (diffFile) => {
+    let sent = '';
+    const client = { responses: { parse: async (params) => {
+      if (params?.text?.format?.name === 'quickfix_pass') sent += JSON.stringify(params);
+      return stub(defaultResponses()).responses.parse(params);
+    } } };
+    const res = await runMultiPassCodeAudit(client, plan, '', false, null, '',
+      { ...OPTS, passFilter: ['quickfix'], round: 1, fileFilter: [BIG], changedFiles: [BIG], ...(diffFile ? { diffFile } : {}) });
+    return { res, sent };
+  };
+
+  it('with --diff: read.state is windowed, the changed lines reach the model, and nothing changed goes unread', async (t) => {
+    // The patch's post-image id must be the working-tree blob (a stale patch is refused), so derive it, never pin it.
+    const post = execFileSync('git', ['hash-object', '--', BIG], { encoding: 'utf-8' }).trim();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'r1-diff-window-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
+    // A well-formed hunk: line 300 rewritten, 301-303 as context, so -300,4/+300,4 matches its body.
+    const lines = fs.readFileSync(BIG, 'utf-8').replace(/\r\n/g, '\n').split('\n');
+    const patch = path.join(dir, 'cluster.patch');
+    fs.writeFileSync(patch, [`diff --git a/${BIG} b/${BIG}`, `index 0000000..${post.slice(0, 12)} 100644`, `--- a/${BIG}`, `+++ b/${BIG}`,
+      '@@ -300,4 +300,4 @@', '-export const v300 = 0; // before', `+${lines[299]}`, ...lines.slice(300, 303).map((l) => ` ${l}`), ''].join('\n'));
+    const { res, sent } = await runR1(patch);
+    const f = file(res._coverage, BIG);
+    assert.equal(f.read.state, 'windowed', JSON.stringify(f.read));
+    for (const n of [300, 303]) assert.ok(sent.includes(`MARK_${n} `), `R1 showed changed line ${n}`);
+    assert.equal(f.changedLinesUnread, 0);
+  });
+
+  it('control — the same R1 run without --diff stays head-cut and never shows the change', async () => {
+    const { res, sent } = await runR1(null);
+    const f = file(res._coverage, BIG);
+    assert.equal(f.read.state, 'head-cut');
+    assert.ok(!sent.includes('MARK_300 '), 'the 4000-char head cannot reach line 300');
   });
 });
 
