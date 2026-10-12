@@ -1,5 +1,11 @@
 # Project Status Log
 
+<!-- ship-verification-a74c9267-20261012T170519Z.md -->
+### Consumer Verification (previous ship)
+- **Commit**: a74c9267394bcfb2b4c673d17b1b7f8e82271820 on `fix/burndown-close-finding` (PR #222, NOT yet merged to `main`); code commit 47f97552, ship commit a74c9267.
+- **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of the pushed commit: 19,547 tests, 19,501 pass, 0 fail, 46 skipped, checks passed, DB suites 503/52/3 green, status-log-integrity conserved against ccefb0fc. No consumer-side retrieval was run.
+- **Result**: unverified, blocked: not merged. A branch push publishes nothing to consumers (the consumer sync runs only when the default branch is updated); verify with `sync-isolation-verify.mjs` in a consumer's MAIN checkout after PR #222 merges and the source repo re-syncs.
+
 <!-- ship-verification-af173bea-20261012T134954Z.md -->
 ### Consumer Verification (previous ship)
 - **Commit**: af173bea3fd28135369e91ad7adf9ecbbe5df99e on `claude/ship-trains-b` (PR #219, open, NOT merged; code head 871a111e plus the status.md ship commit).
@@ -133,6 +139,20 @@
 - **Commit**: d9b305538657235ff7340f052b32ace8891fe14a on `fix/fleet-hookspath-removal-guard` (PR #220, open; NOT merged). It is the merge of `origin/main` 44c4bbda into the branch plus the status.md ship commit (AI-Gate: converged, run 21ff263a).
 - **Retrieval**: the push's own pre-push hook run did NOT complete. Its process tree was hard-terminated mid-`npm test` (TAP stopped at top-level test 1954, no summary, neither "checks passed" nor "FAILED" printed, sandbox `ces-prepush-d9b30553-90492` left with a dead owner), yet git transferred the push. Killer unidentified: no Application/System event 14:18:30–14:24:20Z. The gate was then run by hand on exactly this sha, `node scripts/prepush-check.mjs --base e5147629 --head d9b30553` (clean sandbox): run 1 (14:29–14:40Z) exit 1, 19,544 tests with 1 fail, `tests/fleet-cli-approve.test.mjs` "the push is issued to the recorded pushUrl" (null envelope at 66s; passes 11/11 alone); run 2 (14:42–14:55Z) exit 0, 19,544 tests, 0 fail, 46 skipped.
 - **Result**: pushed commit verified by the second hand run, not by the hook. The synced consumer bundle is unverified (blocked: not merged); sync from an up-to-date main after #220 merges. Open: a killed pre-push hook can let a push through (coordinator to spawn a separate chip).
+
+## 2026-10-12 — `learning/replay.mjs`: an empty sample is `measured:false` on stdout, not a clean zero
+
+**Why.** `replay` with `sampleSize: 0` (store off or unreadable, a window/repo filter matching nothing, or nothing of that type ever recorded) printed `ok:true` and an all-zero delta on stdout, exit 0. #204 added a stderr WARNING and a markdown notice, but a caller reading only stdout or the exit code still saw a clean zero. Decision (user, 2026-10-12): the JSON envelope carries `measured: false`, keeping `ok: true` and exit 0 — AGENTS.md consumer shape (7), "end in measured:false, never a refusal and never a zero".
+
+- **Change**: `scripts/learning/replay.mjs` `runReplayCli` writes (and returns) `{...result, measured}`, where `measured` is `true` only for a finite `sampleSize > 0`; a missing or non-numeric `sampleSize` reads `measured:false` (fails closed). The stderr WARNING, the markdown "empty sample" block and the `{ok:false, error}` failure envelopes are unchanged. Header comment updated.
+- **Test pinned the old shape, updated on purpose**: `tests/learning-replay.test.mjs`'s "stdout JSON UNCHANGED and still ok:true" case now asserts `measured:false` (comment cites the decision), plus new cases for `measured:true` on a non-empty sample and `measured:false` on a missing `sampleSize`. Red first (3/3 new assertions failed), then green: 79/79 across `learning-replay` + `replay-positionals`.
+- **Consumers**: the library (`scripts/lib/learning/replay.mjs`) has no `measured` key. The only reader of replay's JSON is `learningReplayCmd` (`scripts/lib/cross-skill/commands/learning.mjs`, the `npm run learning:replay` dispatcher), which branches solely on `ok === false`, so it is unaffected; `cross-skill-registry-conformance` + `cross-skill-flag-registry-parity` 20/20. No skill reads it. `stdout:flush:gate` and `emit:exit:gate` at baseline.
+- **Audit** (SID `audit-code-1791825745992-75448`, against a spec written from the decision): R1 PASS H:0 M:0 L:0, file coverage complete (2/2); Gemini final gate APPROVE, 0 blocking, 0 debt.
+- **Other signals** (non-blocking): persona-test open P0 0, open P1 1; regression-lock gap 190 code fixes unlocked (+47 plan) and 3 dangling locks; 186 unremediated acceptances open (54 permanently accepted); auto-reconcile examined 0 (193 unresolvable paths skipped); migrations realized on the ambient store, the `storyline` store is behind (6 constraints, owner DSN needed); 2 upstream reports open (both wine-cellar-app).
+- Backlog 2026-10-12T17:28Z: Q1 190c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt 338 cloud/17 local (0 spilled) · upstream 2
+
+### Next Steps
+- Push held for the coordinator's gate slot (fourth in queue); then rebase onto `origin/main` keeping every status.md line, push, open the PR.
 
 ## 2026-10-12 — a killed pre-push hook no longer reads as a pass (Git for Windows)
 
