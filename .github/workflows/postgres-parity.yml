@@ -77,6 +77,9 @@ on:
       # Postgres transaction-abort behaviour, named explicitly since it doesn't
       # start with 'db-'.
       - 'tests/store-finding-write-db.test.mjs'
+      # ship-trains Phase 2: the binding query's real-Postgres suite; its name matches
+      # no glob above, and scripts/lib/store/** does not cover the test file itself.
+      - 'tests/ship-train-provenance.db.test.mjs'
       # Upstream 512cf1c9 — the multi-row plan_verification_items suite and the
       # verify CLI whose recording step it drives with the real writers.
       - 'tests/plan-verification-items-db.test.mjs'
@@ -137,6 +140,9 @@ on:
       # Postgres transaction-abort behaviour, named explicitly since it doesn't
       # start with 'db-'.
       - 'tests/store-finding-write-db.test.mjs'
+      # ship-trains Phase 2: the binding query's real-Postgres suite; its name matches
+      # no glob above, and scripts/lib/store/** does not cover the test file itself.
+      - 'tests/ship-train-provenance.db.test.mjs'
       # Upstream 512cf1c9 — the multi-row plan_verification_items suite and the
       # verify CLI whose recording step it drives with the real writers.
       - 'tests/plan-verification-items-db.test.mjs'
@@ -326,6 +332,7 @@ jobs:
             tests/setup-postgres-surface-precondition.test.mjs \
             tests/finding-disposition-db.test.mjs \
             tests/ship-nudge-keyset-db.test.mjs \
+            tests/ship-train-provenance.db.test.mjs \
             tests/store-debt-cloud-validation.test.mjs \
             tests/store-finding-write-db.test.mjs \
             tests/store-ownership-db.test.mjs \
