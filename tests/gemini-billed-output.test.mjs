@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { normalizeGeminiUsage } from '../scripts/lib/gemini-usage.mjs';
 import { _internals as efficacy } from '../scripts/lib/efficacy-lints.mjs';
+import { parseSource } from '../scripts/lib/ast.mjs';
 
 /**
  * Source with comments and string literals blanked, so the census reads CODE.
@@ -115,42 +116,93 @@ describe('discovery census — no second place may decide what billed output mea
   });
 
   /**
-   * Every READ of `.usageMetadata`, line by line — not "does the file mention
-   * the oracle somewhere". A file-level co-occurrence check let a second
-   * function in an already-compliant file return Google's raw object unseen.
-   * A read is routed iff its line hands it to `normalizeGeminiUsage(`, or
-   * assigns it to a local the file then passes to `normalizeGeminiUsage(local)`
-   * (the streaming accumulator shape).
+   * Every READ of `.usageMetadata`, judged on the SYNTAX TREE - not "does the file
+   * mention the oracle somewhere", and not "does this line, or this file, contain
+   * the text". Both text rules were beaten by ordinary code: a file-wide search
+   * for `normalizeGeminiUsage(usage)` accepted a raw `usage` returned from a
+   * DIFFERENT function that merely reused the name, and a line-level exemption
+   * accepted any line that called the oracle on something else while returning
+   * the raw object next to it.
+   *
+   * A read is routed iff
+   *   - it is itself the argument of `normalizeGeminiUsage(...)`, or
+   *   - it is assigned to a local `N` and `normalizeGeminiUsage(N)` is called in
+   *     the SAME function (the streaming-accumulator shape), or
+   *   - it is only an existence test (`if (x.usageMetadata)`, `!x.usageMetadata`,
+   *     `x.usageMetadata ? a : b`), which hands nothing over.
+   * An unparseable file is reported, never skipped: a census that cannot read a
+   * file has not cleared it.
    */
-  function unroutedUsageReads(code) {
+  function unroutedUsageReads(source) {
+    const { ast, error } = parseSource(source);
+    if (!ast) return [`(unparseable: ${error})`];
+    const FUNCTIONS = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression', 'ObjectMethod', 'ClassMethod', 'Program']);
+    const isOracleCall = (n) => n?.type === 'CallExpression' && n.callee?.type === 'Identifier' && n.callee.name === 'normalizeGeminiUsage';
+    const isUsageRead = (n) => (n.type === 'MemberExpression' || n.type === 'OptionalMemberExpression')
+      && !n.computed && n.property?.name === 'usageMetadata';
+
+    // Pass 1: for every function scope, the identifiers handed to the oracle in it.
+    const oracleArgs = new Map();
+    // Pass 2 input: every usage read with its parent and its enclosing function.
+    const reads = [];
+    const visit = (node, parent, scopes) => {
+      if (!node || typeof node.type !== 'string') return;
+      const here = FUNCTIONS.has(node.type) ? [...scopes, node] : scopes;
+      if (isOracleCall(node)) {
+        for (const a of node.arguments) {
+          if (a.type !== 'Identifier') continue;
+          for (const s of here) {
+            if (!oracleArgs.has(s)) oracleArgs.set(s, new Set());
+            oracleArgs.get(s).add(a.name);
+          }
+        }
+      }
+      if (isUsageRead(node)) reads.push({ node, parent, scope: here.at(-1) });
+      for (const key of Object.keys(node)) {
+        if (key === 'loc' || key === 'extra' || key.endsWith('Comments')) continue;
+        const child = node[key];
+        if (Array.isArray(child)) child.forEach((c) => visit(c, node, here));
+        else if (child && typeof child.type === 'string') visit(child, node, here);
+      }
+    };
+    visit(ast.type === 'File' ? ast.program : ast, null, []);
+
+    const lines = source.split('\n');
     const out = [];
-    code.split('\n').forEach((line, i) => {
-      if (!/\.usageMetadata\b/.test(line)) return;
-      if (line.includes('normalizeGeminiUsage(')) return;
-      const assigned = line.match(/\b([A-Za-z_$][\w$]*)\s*=\s*[\w$.?[\]]*\.usageMetadata\b\s*;?\s*$/);
-      if (assigned && new RegExp(`normalizeGeminiUsage\\(\\s*${assigned[1]}\\s*\\)`).test(code)) return;
-      out.push(`${i + 1}: ${line.trim()}`);
-    });
+    for (const { node, parent, scope } of reads) {
+      if (isOracleCall(parent)) continue;
+      const local = parent?.type === 'VariableDeclarator' && parent.init === node && parent.id.type === 'Identifier' ? parent.id.name
+        : parent?.type === 'AssignmentExpression' && parent.right === node && parent.left.type === 'Identifier' ? parent.left.name
+          : null;
+      if (local && oracleArgs.get(scope)?.has(local)) continue;
+      const existenceTest = (parent?.type === 'IfStatement' && parent.test === node)
+        || (parent?.type === 'ConditionalExpression' && parent.test === node)
+        || (parent?.type === 'UnaryExpression' && parent.operator === '!');
+      if (existenceTest) continue;
+      const line = node.loc?.start?.line ?? 0;
+      out.push(`${line}: ${lines[line - 1]?.trim()}`);
+    }
     return out;
   }
 
-  it('every read of usageMetadata is routed through the oracle — per read, not per file', () => {
+  it('every read of usageMetadata is routed through the oracle - per read, per function', () => {
     // Closes the pass-through hole: handing callers Google's raw object (what
     // llm-wrappers.mjs did) mentions no field name at all, so the field rule
     // alone would miss it.
     const offenders = [];
     for (const f of walk('scripts')) {
       if (ALLOWLIST.has(f)) continue;
-      const bad = unroutedUsageReads(codeOf(f, fs.readFileSync(f, 'utf8')));
+      const bad = unroutedUsageReads(fs.readFileSync(f, 'utf8'));
       if (bad.length > 0) offenders.push(`${f} -> ${bad.join(' | ')}`);
     }
     assert.deepEqual(offenders, [], 'these hand out usageMetadata without the oracle');
   });
 
-  it('NEGATIVE CONTROL: a raw pass-through in a file that ALSO uses the oracle is caught', () => {
-    // The exact shape the file-level rule could not see.
+  const ORACLE = "import { normalizeGeminiUsage } from './gemini-usage.mjs';";
+
+  it('NEGATIVE CONTROL: a raw pass-through in a file that ALSO uses the oracle is caught; the accumulator and an existence test are not', () => {
     const code = [
-      "import { normalizeGeminiUsage } from './gemini-usage.mjs';",
+      ORACLE,
       'export function good(resp) { return normalizeGeminiUsage(resp.usageMetadata); }',
       'export function bad(resp) { return { usage: resp.usageMetadata }; }',
       'let acc = null;',
@@ -158,6 +210,29 @@ describe('discovery census — no second place may decide what billed output mea
       'const g = normalizeGeminiUsage(acc);',
     ].join('\n');
     assert.deepEqual(unroutedUsageReads(code), ['3: export function bad(resp) { return { usage: resp.usageMetadata }; }']);
+  });
+
+  it('NEGATIVE CONTROL: a local that shares its NAME with a normalised one in ANOTHER function is still caught', () => {
+    // A file-wide search for normalizeGeminiUsage(usage) accepted both.
+    const code = [
+      ORACLE,
+      'export function good(resp) { const usage = resp.usageMetadata; return normalizeGeminiUsage(usage); }',
+      'export function bad(other) { const usage = other.usageMetadata; return usage; }',
+    ].join('\n');
+    assert.deepEqual(unroutedUsageReads(code), ['3: export function bad(other) { const usage = other.usageMetadata; return usage; }']);
+  });
+
+  it('NEGATIVE CONTROL: calling the oracle on something ELSE on the same line does not excuse the raw read beside it', () => {
+    // A line-level "contains normalizeGeminiUsage(" exemption accepted this.
+    const code = [
+      ORACLE,
+      'export function bad(resp, x) { return { n: normalizeGeminiUsage(x), raw: resp.usageMetadata }; }',
+    ].join('\n');
+    assert.equal(unroutedUsageReads(code).length, 1);
+  });
+
+  it('NEGATIVE CONTROL: a file the parser cannot read is reported, not skipped', () => {
+    assert.match(unroutedUsageReads('export function (((')[0], /unparseable/);
   });
 
   it('the census actually SCANS something — a vacuous pass is a failing census', () => {
