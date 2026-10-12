@@ -1,6 +1,6 @@
 # Plan: pre-push gate cost, slice 1 — make per-file cost visible, add `test:preflight`
 - **Date**: 2026-10-12
-- **Status**: Draft
+- **Status**: Complete (PR #212 open; merge pending)
 - **Author**: Claude + Louis
 - **Scope**: backend (test runner + docs; no UI) · stack `js-ts` (`detect-stack`: `js-ts`)
 - **Target domain(s)**: `scripts`, `shared-lib`, `docs`
@@ -96,8 +96,11 @@ flowchart LR
 | `scripts/lib/test-runner-listener-ceiling.mjs` | create | D9: raise the runner process's default listener ceiling; inert in a test-file process |
 | `tests/run-tests-timing.test.mjs` | create | reporter, summary, degradation and verdict-independence; balanced reporter flags; the listener ceiling (hazard, quiet runner, a test file's own warning still printed) |
 | `tests/fixtures/test-guard/listener-leak.fixture.mjs` | create | a passing test that adds 11 listeners to one emitter, to prove the runner does not hide that warning |
+| `tests/fixtures/test-guard/pattern-value.fixture.mjs` | create | a failing test named like a reporter flag, to prove the runner leaves an argument node refuses to node (code audit round 4, H1) |
 | `tests/run-tests-preflight.test.mjs` | create | selection, skip-list integrity, usage errors, banner |
 | `docs/runbooks/gate-cost.md` | create | the §1.1 table with commands, when to use preflight, follow-ups |
+
+All rows above are implemented in PR #212 (plus `docs/plans/ship-trains.md` line 391, where a `(planned)` marker for this plan went stale).
 
 Close-out (not a phase): `npm run docs:check`, `npm run plans:index`, `npm run knip:gate`, `npm run cli:flags:gate`, `npm run size:ratchet:gate`, `npm run stdout:flush:gate`.
 
@@ -173,3 +176,10 @@ Acceptance rate 100% in both GPT rounds; the finding count fell 3 → 2 → 2 �
 | Gemini 1 | **APPROVE** (`gemini-pro-latest`), gate `approve`: blocking 0, debt 0, new 0, wrongly dismissed 0; its coverage note: changed lines unmeasured for one file (the windowed `run-tests.mjs`, which round 5 then read in full) | none needed |
 
 Five rounds, 14 findings ruled, acceptance 79% (10 accepted and fixed, 1 documented limit, 3 dismissed on repo policy or as a coverage note). The rounds that mattered each corrected a premise by running it: node refuses unbalanced reporter flags (H1 real); `--disable-warning` hides a test file's own warning (M7 real, and `--import` does not run in the runner at all); and round 4's reproducer was wrong about what node does (it refuses) while the defect was worse than described (the runner turned the refusal into a pass).
+
+## Implementation Log
+
+### 2026-10-12
+- **Completed**: per-file timing summary on `npm test` (`TEST_TIMING_KEEP` keeps the full report); `npm run test:preflight`, which fails when it cannot verify which files ran; balanced reporter flags and `--`-aware option parsing in the runner; the listener ceiling raised in the runner process only; the runbook `docs/runbooks/gate-cost.md` with the within-run measurement. Five code-audit rounds and a Gemini APPROVE (see the audit trail above). Acceptance criterion MET: the within-run share was measured (`fleet-cli` = 13.2% of summed test time, 96% of wall).
+- **Remaining** (none blocks this PR): re-measure the post-#214 tree with `TEST_TIMING_KEEP` and decide whether `PREFLIGHT_SKIPPED_FILES` still names the slowest file; cut the fleet tests' remaining work (memoised `rev-parse`, skip `gh pr list` in `claim`); train `testCommand` tiers; the branch pre-push DIRECT-impact tier (a policy call); a shadow train-interaction audit; impact-tiered audit depth (sized at <= 10% of PRs).
+- **Deviations from the plan as audited**: (1) a preflight whose selection cannot be verified now FAILS instead of printing "selection unverified" (code audit round 1, H3; ordinary runs are unchanged); (2) the MaxListeners warning is handled by raising the ceiling in the runner process, not by a node flag (round 1, M7/M8); (3) the timing code is two modules, a pure report/reader and the node reporter (round 2, M1); (4) debt G1 was resolved by `extractReporterFlags` (D8); (5) after #214 split `fleet-cli` into 10 files, the skip-list reason and the runbook were reconciled to say the post-split tree is not re-measured. The "13% of CPU" wording in early drafts was wrong (summed test-body time, not CPU) and is corrected throughout.
