@@ -106,7 +106,7 @@ describe('finishRun — the post-run selection check', () => {
   const guard = JSON.stringify({ version: GUARD_REPORT_VERSION, failures: [] });
   const skipped = [entry('tests/slow.test.mjs', 'the slow one')];
   const expected = new Set(['tests/a.test.mjs', 'tests/b.test.mjs']);
-  const timing = (files) => JSON.stringify({ version: TIMING_REPORT_VERSION, files: files.map((file) => ({ file, ms: 1, tests: 1 })), totalMs: files.length, ignored: 0 });
+  const timing = (files, complete = true) => JSON.stringify({ version: TIMING_REPORT_VERSION, complete, files: files.map((file) => ({ file, ms: 1, tests: 1 })), totalMs: files.length, ignored: 0 });
   const run = (timingText, status = 0) => finishRun({ status, reportText: guard, timingText, preflight: { skipped, expected } });
 
   it('ran-set equals expected: exit 0, and the output says plainly it was NOT the gate and what it skipped', () => {
@@ -130,17 +130,31 @@ describe('finishRun — the post-run selection check', () => {
     assert.match(r.lines.join('\n'), /expected but did not run: tests\/b\.test\.mjs/);
   });
 
-  it('an unusable timing report says "selection unverified" and leaves the verdict alone', () => {
-    for (const t of [null, 'garbage']) {
+  it('a selection that cannot be verified FAILS the preflight, and says why (audit round 1, H3)', () => {
+    // The timing report is the only evidence of which files ran. A guard report that is clean
+    // establishes that the observed tests passed, not that the right ones were observed, so a
+    // preflight whose evidence is missing, unreadable or partial must not print a pass.
+    const cases = {
+      'no report': [null, /no report was written/],
+      garbage: ['garbage', /report unparseable/],
+      'wrong version': [JSON.stringify({ version: 'x', complete: true, files: [], totalMs: 0 }), /is not test-timing\/v1/],
+      // a partial report that happens to LIST every expected file is still not evidence
+      partial: [timing(['tests/a.test.mjs', 'tests/b.test.mjs'], false), /partial/],
+    };
+    for (const [name, [t, why]] of Object.entries(cases)) {
       const r = run(t);
-      assert.equal(r.exitCode, 0);
-      assert.match(r.lines.join('\n'), /selection unverified/);
+      assert.equal(r.exitCode, 1, `${name}: a preflight with unverifiable selection passed`);
+      const text = r.lines.join('\n');
+      assert.match(text, /selection UNVERIFIED/, name);
+      assert.match(text, why, name);
+      assert.match(text, /Failing rather than reporting a pass/, name);
     }
   });
 
-  it('a failing run stays failing with its own exit code, selection right or wrong', () => {
+  it('a failing run stays failing with its own exit code, selection right, wrong or unverifiable', () => {
     assert.equal(run(timing(['tests/a.test.mjs', 'tests/b.test.mjs']), 3).exitCode, 3);
     assert.equal(run(timing(['tests/a.test.mjs']), 3).exitCode, 3);
+    assert.equal(run(null, 3).exitCode, 3, 'the unverified-selection failure must not overwrite the run\'s own exit code');
   });
 
   it('without a preflight there is no banner and no selection check', () => {
@@ -175,6 +189,18 @@ describe('the flag this file owns is validated, not silently ignored', () => {
     const r2 = run('--preflightx');
     assert.equal(r2.status, 2);
     assert.match(r2.stderr, /unknown flag "--preflightx"/);
+  });
+
+  it('after a `--` terminator a flag spelled like ours is node\'s argument, not ours (audit round 1, M2)', () => {
+    // Read past the terminator, `--preflightx` is validated as the runner's own flag and rejected with a
+    // usage error (exit 2, "unknown flag"). Read correctly it is handed to node as a file name, which
+    // node cannot find. (`--preflight` itself is covered too, though `hasFlag` also stops at the
+    // terminator, so only the misspelling distinguishes the two readings.)
+    for (const flag of ['--preflightx', '--preflight']) {
+      const r = run('tests/fixtures/test-guard/healthy.fixture.mjs', '--', flag);
+      assert.doesNotMatch(r.stderr, /unknown flag|takes no other arguments|PREFLIGHT — this is NOT the gate/, flag);
+      assert.notEqual(r.status, 2, `${flag} after the terminator was parsed as the runner's own flag`);
+    }
   });
 
   it('--preflight=false means OFF: it is not forwarded to node and does not select the preflight', () => {

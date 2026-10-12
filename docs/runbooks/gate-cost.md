@@ -54,7 +54,7 @@ are *measured* from that run's kept report unless marked *derived*.
 | Fact | Figure | Label |
 |---|---|---|
 | Wall time of the whole run | **1,009 s** | measured |
-| Σ test-body time across all files (summed over parallel workers, **not** wall) | **7,344 s** | measured |
+| Σ test-body time across all files (summed over parallel workers, **not** wall; elapsed time inside test bodies, waiting on subprocesses included, so worker-seconds, **not** CPU) | **7,344 s** | measured |
 | `tests/fleet-cli.test.mjs` test-body | **972 s** (26 top-level suites, 132 cases) | measured |
 | …as a share of Σ test-body | **13.2%** | derived |
 | …as a share of the run's wall time | **96%** | derived (972 / 1,009) |
@@ -67,7 +67,8 @@ are *measured* from that run's kept report unless marked *derived*.
 | The same suite without that file, an earlier and lighter run | 159.6 s, 6,860 tests, 927 files (`tests/*.test.mjs` only) | measured 2026-10-11, **not** comparable under load |
 
 **The reading that matters.** Two numbers look contradictory and are not.
-`fleet-cli` is only **13%** of the CPU time the suite spends, yet **96%** of its
+`fleet-cli` is only **13%** of the summed test-body time the suite spends (worker-seconds,
+not CPU: a test that waits on a spawned subprocess is still running), yet **96%** of its
 wall time. `node --test` runs files in parallel but the tests *inside* one file
 serially, so a file's test body is a floor on wall time however many cores are
 idle. 948 other files share ~6,370 s of work across 31 workers and finish in the
@@ -79,7 +80,7 @@ Consequences, in order of how confident they are:
    critical path bounds the run at about 218 s (*derived*, an idealised
    bound; the run's other ~37 s is start-up and queueing around `fleet-cli`).
    While `fleet-cli` is the floor, making the other 948 files 20% faster would save almost nothing on wall time.
-2. **Fixture sharing and spawn memoisation reduce the file's CPU; splitting or
+2. **Fixture sharing and spawn memoisation reduce the file's total work; splitting or
    parallelising it reduces wall.** They are different levers. The earlier
    framing treated the first as the fix. Splitting `fleet-cli` into several files
    (or running its independent `describe` blocks with `concurrency`), without
@@ -115,9 +116,12 @@ $r = Get-Content $env:TEMP	iming-full.json | ConvertFrom-Json; $c = $r.files | W
 - A green preflight means *the other 948 files passed on this tree*. It says
   nothing about `fleet-cli`. If you touched `scripts/fleet.mjs`,
   `scripts/lib/fleet/**` or `tests/fleet-*.test.mjs`, run those files directly too.
-- Its selection is verified after the run from the timing report: if a declared
-  file ran, or an expected file did not, it says so. If the report is unavailable
-  it prints `selection unverified` and leaves the verdict alone.
+- Its selection is verified after the run from the timing report. If a declared
+  file ran, an expected file did not, or the report is missing, unreadable or
+  partial (so the selection cannot be verified), the preflight **fails** and says
+  which. A clean guard report proves the tests that ran passed, not that the right
+  ones ran. This is the one place the timing report can move an exit code; an
+  ordinary `npm test` never lets it.
 
 ## 4. Follow-ups, in the order the evidence now supports
 
@@ -128,7 +132,7 @@ $r = Get-Content $env:TEMP	iming-full.json | ConvertFrom-Json; $c = $r.files | W
    Held by `claude/fleet-unclaimed-work-impl` (it owns `tests/fleet-*.test.mjs`,
    `tests/helpers/fleet-repo.mjs`, `scripts/lib/fleet/**`); coordinate through the
    fleet, do not edit it from this chip.
-2. **Cut `fleet-cli`'s own CPU** (the original proposal): build the fixture once per
+2. **Cut `fleet-cli`'s own work** (the original proposal): build the fixture once per
    file from a template copy; memoise duplicate `rev-parse` calls inside one command
    (9× `rev-parse --verify` and 6× `--path-format=absolute` in one `claim`); skip
    `gh pr list` in `claim` when nothing needs it. Worth doing after (1) because it
@@ -150,8 +154,12 @@ $r = Get-Content $env:TEMP	iming-full.json | ConvertFrom-Json; $c = $r.files | W
 - **Test-body time is not process wall time.** It excludes node start-up and
   module import, which is why a file's wall cost is a little above its row.
 - **Σ across workers is not elapsed time.** 7,344 s of work finished in 1,009 s.
-  Quote shares of Σ for "where does the CPU go" and shares of wall for "what do I
+  Quote shares of Σ for "where does the work go" and shares of wall for "what do I
   wait for"; they answer different questions and differ by a factor of seven here.
+- **File attribution is by declaration.** Node's `file` field says where a test was
+  declared, so a suite declared in a helper would be credited to the helper. On the
+  real tree all 949 default files were reported, none missing, no strays, so nothing
+  does this today; the preflight's selection check would turn it into a failure.
 - **Compare timings only from the same run.** Two full gates of the same branch took
   1,647 s and 2,416 s; machine load alone moves a figure by 1.5x. The table above
   takes every share from one run for that reason.

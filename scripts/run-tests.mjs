@@ -12,9 +12,12 @@
  *   suite's beforeEach scrub works only because that client resolves env at
  *   CALL time — mirroring the pattern here would have been a fake fix that
  *   scrubs after the routing decision is already taken.
- * - `node --test --import <scrub>` does NOT propagate the preload to the test
- *   runner's per-file child processes (probed empirically on Node 22.19) —
- *   only the coordinator process would be scrubbed.
+ * - `node --test --import <scrub>` was recorded here as NOT propagating the preload
+ *   to the per-file child processes (probed on Node 22.19). Re-probed 2026-10-12 on
+ *   v22.23.2 it is the other way round: the preload runs in every per-file child and
+ *   NOT in the runner process (`--disable-warning` is inherited by both). That does not
+ *   reopen the choice — a preload still cannot scrub the routing env of the process that
+ *   spawns the children, and the other reason stands.
  * - Per-test-file "import the scrub first" is per-file discipline, and
  *   scrub-list-vs-resolution-list drift is this week's demonstrated failure
  *   mode (the anthropic hygiene block saved 3 of the 4 vars the factory
@@ -57,7 +60,7 @@ import { pathToFileURL } from 'node:url';
 
 import { assertKnownFlags, hasFlag } from './lib/cli-io.mjs';
 import { GUARD_REPORT_VERSION } from './lib/test-guard-reporter.mjs';
-import { TIMING_REPORT_ENV, ranFiles, summariseTiming } from './lib/test-timing-reporter.mjs';
+import { TIMING_REPORT_ENV, ranFiles, ranFilesUnavailableReason, summariseTiming } from './lib/test-timing-reporter.mjs';
 
 /**
  * Ambient provider-ROUTING vars scrubbed from the child env. Enumerated from
@@ -131,7 +134,7 @@ const DEFAULT_ARGS = DEFAULT_DIRS.map((d) => `${d}/*.test.mjs`);
  * path directly inside one of DEFAULT_DIRS, with the reason beside it.
  *
  * `tests/fleet-cli.test.mjs`: 132 cases, 189 `fleet.mjs` spawns, a fixture built per test;
- * 96% of one measured run's wall time but 13% of its CPU: node runs a file's tests serially,
+ * 96% of one measured run's wall time but 13% of its summed test time: node runs a file's tests serially,
  * so the file is a floor on wall time (docs/runbooks/gate-cost.md has the measurement and
  * the command that re-measures it). Preflight is for catching a late
  * guard-test failure cheaply BEFORE the first push; the gate still runs everything.
@@ -143,16 +146,11 @@ export const PREFLIGHT_SKIPPED_FILES = Object.freeze([
   }),
 ]);
 
-/**
- * Flags put BEFORE `--test` on the child. Node's test runner attaches a fixed number of
- * 'end' listeners per reporter to its internal TestsStream, and the default limit is 10:
- * two reporters (tap + guard) stay under it, three (tap + timing + guard) do not, so every run
- * printed "MaxListenersExceededWarning: Possible EventEmitter memory leak" — measured 0 warnings
- * with two reporters and 1 with three, independent of how many files ran. It is a count of
- * reporters, not a leak, so exactly that warning code is silenced; nothing else is.
- * tests/run-tests-timing.test.mjs pins both halves (the hazard is still real; the runner is quiet).
- */
-export const CHILD_NODE_FLAGS = Object.freeze(['--disable-warning=MaxListenersExceededWarning']);
+// A third reporter (tap + timing + guard) crosses node's default listener ceiling of 10 and printed
+// "MaxListenersExceededWarning" on every run. The ceiling is raised in the runner process only, by the
+// timing reporter importing scripts/lib/test-runner-listener-ceiling.mjs; no node flag is used, because
+// every flag is inherited by the test files' processes (where it hid a real leak) or, for `--import`,
+// does not reach the runner at all. tests/run-tests-timing.test.mjs pins all three facts.
 
 const SKIP_NAME_RE = /^[\w.-]+\.test\.mjs$/;
 
@@ -203,6 +201,53 @@ export function expectedPreflightFiles({ readdir = fs.readdirSync, skipped = PRE
   // A skip list that removes everything would "pass" having run nothing.
   if (out.size === 0) throw new Error('the preflight selection is empty: PREFLIGHT_SKIPPED_FILES removes every default test file');
   return out;
+}
+
+/**
+ * Split argv at the POSIX `--` terminator: options are looked for only before it, and the
+ * terminator and everything after it are forwarded to node untouched.
+ *
+ * @param {string[]} argv
+ * @returns {{head: string[], tail: string[]}}
+ */
+export function partitionArgs(argv) {
+  const i = argv.indexOf('--');
+  return i < 0 ? { head: [...argv], tail: [] } : { head: argv.slice(0, i), tail: argv.slice(i) };
+}
+
+const REPORTER_FLAG = '--test-reporter';
+const DESTINATION_FLAG = '--test-reporter-destination';
+
+/**
+ * Take the caller's reporter and destination flags out of `argv` and return them as BALANCED
+ * pairs, plus everything else in order.
+ *
+ * Node pairs the i-th `--test-reporter` with the i-th `--test-reporter-destination` across the
+ * whole argv and REFUSES a run where the counts differ (ERR_INVALID_ARG_VALUE, measured on
+ * v22.23.2); only a single reporter with no destination is accepted. The runner adds a
+ * reporter of its own on top of the caller's, so a caller who names a reporter without a
+ * destination (`npm test -- --test-reporter=dot`, the common spelling) used to hit that error.
+ * A reporter with no destination gets `stdout`, node's own default for the one-reporter case.
+ * A destination with no reporter is left unmatched so node reports the caller's mistake.
+ *
+ * @param {string[]} argv
+ * @returns {{pairs: string[], others: string[]}}
+ */
+export function extractReporterFlags(argv) {
+  const reporters = [];
+  const destinations = [];
+  const others = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === REPORTER_FLAG && i + 1 < argv.length) reporters.push(argv[++i]);
+    else if (a.startsWith(`${REPORTER_FLAG}=`)) reporters.push(a.slice(REPORTER_FLAG.length + 1));
+    else if (a === DESTINATION_FLAG && i + 1 < argv.length) destinations.push(argv[++i]);
+    else if (a.startsWith(`${DESTINATION_FLAG}=`)) destinations.push(a.slice(DESTINATION_FLAG.length + 1));
+    else others.push(a);
+  }
+  const pairs = reporters.flatMap((r, i) => [REPORTER_FLAG, r, DESTINATION_FLAG, destinations[i] ?? 'stdout']);
+  for (const extra of destinations.slice(reporters.length)) pairs.push(DESTINATION_FLAG, extra);
+  return { pairs, others };
 }
 
 /** The guard reporter, as a file URL resolved from THIS file's location — node
@@ -314,10 +359,13 @@ export function adjudicateRun({ status, reportText }) {
  *
  * The exit code is `adjudicateRun`'s, computed from the SAME inputs it always was: the
  * timing report is read only for lines to print, so no timing input — absent, garbage,
- * wrong version, valid — can move the verdict. The one exception is a PREFLIGHT whose
- * selection is positively wrong (it ran a declared-skipped file, or missed an expected
- * one): that fails, because a preflight that quietly ran the wrong files is the vacuous
- * pass this repo's honesty rule exists to refuse.
+ * wrong version, partial, valid — can move the verdict of an ordinary run. The exception is
+ * a PREFLIGHT, where the timing report is also the only evidence of WHICH files ran: if its
+ * selection is positively wrong (it ran a declared-skipped file, or missed an expected one),
+ * OR cannot be verified at all (no usable report, or a partial one), it fails. A preflight
+ * that may have run the wrong files and still says "pass" is the vacuous pass this repo's
+ * honesty rule exists to refuse (audit round 1, H3); the cost of failing closed is one
+ * re-run, and the message says which.
  *
  * @param {{status: number|null, reportText: string|null, timingText?: string|null,
  *          preflight?: {skipped: Array<{file: string, why: string}>, expected: Set<string>}|null}} input
@@ -333,7 +381,8 @@ export function finishRun({ status, reportText, timingText = null, preflight = n
   if (preflight) {
     const ran = ranFiles(timingText);
     if (ran === null) {
-      lines.push('Preflight: selection unverified (no usable timing report), so it cannot be confirmed that the right files ran.');
+      if (exitCode === 0) exitCode = 1;
+      lines.push(`Preflight: selection UNVERIFIED (${ranFilesUnavailableReason(timingText)}), so it cannot be confirmed that the right files ran. Failing rather than reporting a pass; re-run, or use npm test.`);
     } else {
       const skippedSet = new Set(preflight.skipped.map((x) => x.file));
       const ranSkipped = [...ran].filter((x) => skippedSet.has(x)).sort();
@@ -359,15 +408,17 @@ function main() {
   // so only the flag THIS file owns is validated here: `--preflight` and anything spelled like
   // it (a typo such as `--preflite` would otherwise be handed to node and rejected there, but
   // `--preflight=false` must mean OFF, not "accepted and inert", which `hasFlag` honours).
-  const ours = forwarded.filter((a) => a.startsWith('--preflight'));
+  // Only the part before a `--` terminator is ours to read; after it, everything is node's.
+  const { head, tail } = partitionArgs(forwarded);
+  const ours = head.filter((a) => a.startsWith('--preflight'));
   try {
     assertKnownFlags(ours, ['--preflight'], { cli: 'run-tests', from: 0 });
   } catch (err) {
     process.stderr.write(`${err.message}\n`);
     process.exit(2);
   }
-  const preflight = hasFlag('preflight');
-  const rest = forwarded.filter((a) => !a.startsWith('--preflight'));
+  const preflight = ours.length > 0 && hasFlag('preflight');
+  const rest = [...head.filter((a) => !a.startsWith('--preflight')), ...tail];
   if (preflight && rest.length > 0) {
     process.stderr.write(`test:preflight takes no other arguments (got: ${rest.join(' ')}). It runs the default set minus PREFLIGHT_SKIPPED_FILES.\n`);
     process.exit(2);
@@ -381,7 +432,13 @@ function main() {
     process.exit(2);
   }
   // `rest` is what node sees: our own flag (in any spelling, including an explicit =false) is never forwarded.
-  const args = preflight ? selection.args : (rest.length > 0 ? rest : selection.args);
+  // The caller's reporter flags are re-emitted as balanced pairs (extractReporterFlags), so the runner's own
+  // reporters never leave node with more reporters than destinations. A forward that was ONLY reporter flags
+  // names no files, so it gets the default set.
+  const split = partitionArgs(rest);
+  const caller = extractReporterFlags(split.head);
+  const userArgs = [...caller.others, ...split.tail];
+  const args = preflight ? selection.args : (userArgs.length > 0 ? userArgs : selection.args);
   if (preflight) {
     process.stderr.write(`PREFLIGHT — this is NOT the gate. Skipping: ${selection.skipped.map((x) => x.file).join(', ')}. The pre-push gate runs them.\n`);
   }
@@ -392,12 +449,12 @@ function main() {
 
   // NOTE: no try/finally around the exit — `process.exit()` does not run
   // `finally` blocks, so cleanup happens explicitly before exiting.
-  const reporterArgs = buildReporterArgs(rest, {
+  const reporterArgs = buildReporterArgs(caller.pairs, {
     isTTY: Boolean(process.stdout.isTTY),
     reportPath,
     timingEnabled: true,
   });
-  const res = spawnSync(process.execPath, [...CHILD_NODE_FLAGS, '--test', ...reporterArgs, ...args], {
+  const res = spawnSync(process.execPath, ['--test', ...reporterArgs, ...caller.pairs, ...args], {
     stdio: 'inherit',
     env: { ...scrubChildEnv(process.env), [TIMING_REPORT_ENV]: timingPath },
   });

@@ -29,12 +29,30 @@
  *   · a file-level failure (an import error is a nesting-0 `test:fail` for the file) is a
  *     normal event and carries whatever duration node attributes to it.
  * That is TEST-BODY time as node reports it: process start and module import before the
- * first test are not in it, and the printed header says so.
+ * first test are not in it, and the printed header says so. It is elapsed time inside the
+ * test body, so time spent WAITING (on a spawned subprocess, say) is in it: a sum of these
+ * is worker-seconds, not CPU.
+ *
+ * KNOWN LIMIT, file identity. `data.file` is where node says the test was DECLARED. A suite
+ * declared in a helper that a test file imports is attributed to the helper. Measured on the
+ * real tree (2026-10-12): all 949 default files reported, none missing, no strays, so nothing
+ * does this today. The one consumer that ACTS on file identity is the preflight selection
+ * check (run-tests.mjs), which compares the reported set with the expected one and fails the
+ * run on any difference, so a helper-declared suite would be a loud failure there, not a
+ * silently wrong number.
+ *
+ * COMPLETENESS. If the event stream fails part-way the reporter still writes what it gathered,
+ * but marks it `complete: false`. A partial report must not read as a whole one: the summary
+ * says so, and the preflight selection check treats it as no evidence.
  *
  * @module scripts/lib/test-timing-reporter
  */
 import fs from 'node:fs';
 import path from 'node:path';
+
+// Side effect, on purpose: node loads reporter modules in the runner process (and only there),
+// and a third reporter is what crosses the default listener ceiling. See the module's header.
+import './test-runner-listener-ceiling.mjs';
 
 /** Bumped if the report shape changes; the reader refuses an unknown version. */
 export const TIMING_REPORT_VERSION = 'test-timing/v1';
@@ -78,12 +96,15 @@ export function createTimingAccumulator({ root = process.cwd() } = {}) {
         ignored++; // a malformed event is data about the input, never a failure of the run
       }
     },
-    /** @returns {{version: string, files: Array<{file: string, ms: number, tests: number}>, totalMs: number, ignored: number}} */
-    report() {
+    /**
+     * @param {boolean} [complete] false when the event stream failed before its end
+     * @returns {{version: string, complete: boolean, files: Array<{file: string, ms: number, tests: number}>, totalMs: number, ignored: number}}
+     */
+    report(complete = true) {
       const files = [...byFile].map(([file, v]) => ({ file, ms: Math.round(v.ms * 100) / 100, tests: v.tests }));
       files.sort((a, b) => b.ms - a.ms || a.file.localeCompare(b.file));
       const totalMs = Math.round(files.reduce((n, f) => n + f.ms, 0) * 100) / 100;
-      return { version: TIMING_REPORT_VERSION, files, totalMs, ignored };
+      return { version: TIMING_REPORT_VERSION, complete: complete === true, files, totalMs, ignored };
     },
   };
 }
@@ -101,14 +122,17 @@ export function accumulateFileTimes(events, opts) {
  */
 export default async function* testTimingReporter(source) {
   const acc = createTimingAccumulator();
+  let complete = true;
   try {
     for await (const event of source) acc.add(event);
   } catch {
-    // the stream failing is the runner's business; whatever was gathered is still reported
+    // the stream failing is the runner's business; whatever was gathered is still reported,
+    // but marked partial so it cannot be read as the whole run
+    complete = false;
   }
   try {
     const target = process.env[TIMING_REPORT_ENV];
-    if (target) fs.writeFileSync(target, `${JSON.stringify(acc.report())}\n`);
+    if (target) fs.writeFileSync(target, `${JSON.stringify(acc.report(complete))}\n`);
   } catch {
     // an unwritable path means "timing unavailable", never a failed run
   }
@@ -133,6 +157,7 @@ export function parseTimingReport(reportText) {
     return { ok: false, reason: `report version ${JSON.stringify(r?.version)} is not ${TIMING_REPORT_VERSION}` };
   }
   const finite = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+  if (typeof r.complete !== 'boolean') return { ok: false, reason: 'report has no complete flag' };
   if (!Array.isArray(r.files)) return { ok: false, reason: 'report has no files array' };
   if (!finite(r.totalMs)) return { ok: false, reason: 'report totalMs is not a finite non-negative number' };
   for (const f of r.files) {
@@ -143,10 +168,20 @@ export function parseTimingReport(reportText) {
   return { ok: true, report: r };
 }
 
-/** The set of files a run reports having executed, or null when the report is unusable. */
+/**
+ * The set of files a run reports having executed, or null when the report is unusable OR
+ * partial: a list that may be missing files is not evidence of which files ran.
+ */
 export function ranFiles(reportText) {
   const p = parseTimingReport(reportText);
-  return p.ok ? new Set(p.report.files.map((f) => f.file)) : null;
+  return p.ok && p.report.complete ? new Set(p.report.files.map((f) => f.file)) : null;
+}
+
+/** Why `ranFiles` returned null, in a sentence (for the line the runner prints). */
+export function ranFilesUnavailableReason(reportText) {
+  const p = parseTimingReport(reportText);
+  if (!p.ok) return p.reason;
+  return p.report.complete ? null : 'the timing report is partial (its event stream failed before the end)';
 }
 
 const secs = (ms) => `${(ms / 1000).toFixed(1)} s`;
@@ -162,10 +197,12 @@ const secs = (ms) => `${(ms / 1000).toFixed(1)} s`;
 export function summariseTiming(reportText, { top = 8 } = {}) {
   const p = parseTimingReport(reportText);
   if (!p.ok) return unavailable(p.reason);
-  const { files, totalMs } = p.report;
-  if (files.length === 0 || totalMs === 0) return { ok: true, lines: ['No test timing recorded.'] };
+  const { files, totalMs, complete } = p.report;
+  const partial = complete ? [] : ['Test timing is PARTIAL: the event stream failed before the end, so the figures understate the run.'];
+  if (files.length === 0 || totalMs === 0) return { ok: true, lines: [...partial, 'No test timing recorded.'] };
   const shown = files.slice(0, top);
   const lines = [
+    ...partial,
     `Slowest test files (${shown.length} of ${files.length}; test-body time as node reports it, not process wall time; total ${secs(totalMs)}):`,
     ...shown.map((f) => `  ${secs(f.ms).padStart(9)}  ${String(Math.round((100 * f.ms) / totalMs)).padStart(3)}%  ${f.file}`),
   ];
