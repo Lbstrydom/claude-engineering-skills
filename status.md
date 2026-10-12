@@ -200,6 +200,31 @@ Verification:
 
 Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt 328 cloud/10 local (0 spilled) · upstream 2
 
+## 2026-10-12 — pre-push archive lane (PR #208) and the gate-cost chip (PR #212): both pushed, ready, not merged
+
+Backlog: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2 (`node scripts/backlog-snapshot.mjs`, 2026-10-12T04:31Z).
+
+### Changes
+- **PR #208, archive lane** (`claude/silly-morse-164a75`, tip 45a03d5f, full pre-push gate green on push): a pre-push lane for pushes whose refs are ALL under `refs/heads/archive/` or `refs/tags/archive/`. It still runs the secret scan and the sensitive-path check over exactly what the push publishes (objects the destination lacks, plus every path the published commits add or change), and skips only what cannot hold for an old commit. Any non-archive ref in the push, or any ref line it cannot parse, gets the full gate. Whitespace in a ref name is parsed from the right (a fail-open found by the adversarial review). Two shared oracles grew: `sensitive-paths.mjs` (`.netrc`, `_netrc`, `.git-credentials`, `.pgpass`, `.pypirc`, `.htpasswd`, `*.keystore`, `*.jks`, `*.tfvars`) and `secret-patterns.mjs` (`npm-token`), each with its own tests, negatives, and the INC-001 symlink route. Plan `docs/plans/prepush-archive-lane.md`; runbook `docs/runbooks/prepush-sandbox.md` §7.
+- **PR #212, gate cost** (`fleet/make-the-pre-push-gate-s-per-f-2dab`, tip fcfd42be, full gate green on push): `npm test` prints the slowest test files; `npm run test:preflight` runs the suite minus `tests/fleet-cli.test.mjs`; a preflight that cannot verify which files ran fails. `npm test -- --test-reporter=dot` no longer dies on node's reporter/destination count check. Plan `docs/plans/gate-cost-slice-1.md`; runbook `docs/runbooks/gate-cost.md`.
+- Measured (one full `npm test`, 949 files): 1,009 s wall, 7,344 s summed test-body time (worker-seconds, waiting included, not CPU). `fleet-cli` = 972 s: 13.2% of the sum but 96% of wall, because node runs a file's tests serially (wall >= longest file). `test:preflight` on the committed tree: 274 s, 18,626 tests, 0 failed.
+
+### Files Affected
+- #208: `.githooks/pre-push`, `scripts/lib/prepush-archive-lane.mjs`, `scripts/prepush-archive-lane.mjs`, `scripts/lib/sensitive-paths.mjs`, `scripts/lib/secret-patterns.mjs`, `tests/prepush-archive-lane*.test.mjs`, `tests/sensitive-paths*.test.mjs`, `tests/secret-patterns.test.mjs`.
+- #212: `scripts/run-tests.mjs`, `scripts/lib/test-timing-report.mjs`, `scripts/lib/test-timing-reporter.mjs`, `scripts/lib/test-runner-listener-ceiling.mjs`, `tests/run-tests-timing.test.mjs`, `tests/run-tests-preflight.test.mjs`, two guard fixtures.
+
+### Decisions Made
+- Gate cost is a critical-path cost, so the follow-up order is: measure `fleet-cli` alone on a quiet machine, split or parallelise it, then cut its work (template-copied fixture, memoised `rev-parse`). Held by the fleet-unclaimed-work session; the coordinator has the numbers.
+- #212's audit corrected three premises by running them: node REFUSES unbalanced reporter flags; `--disable-warning` is inherited by test files and hid a real leak, so the listener ceiling is raised in the runner process only (`--import` does not run there); and node refuses `--test-name-pattern --test-reporter=dot`, which the runner had turned into a passing run that selected nothing.
+- A consolidated `audit-code` over a train was not built: at most about 10% of merged PRs could skip an audit, and the wall time of the test step was the larger measured lever.
+
+### Next Steps / open decisions (the user's)
+- Merge #208 and #212 (nothing is merged). #212 still needs its own `/ship docs/plans/gate-cost-slice-1.md` from its worktree.
+- #208: should the lane skip all 34 `check` steps or only a subset; should the full gate also scan pushed content; the paid audits of the hook and the two oracle diffs were NOT run (the hook got an adversarial subagent review instead) and need an explicit go.
+- Branch pre-push DIRECT-impact tier (ship-trains §2.10) is a policy call; `docs/runbooks/gate-cost.md` §2 has the table to bring.
+- Pre-ship advisories this run (all non-blocking): 1 open persona P1 (2026-10-10), 173 code fixes without a locked regression spec (159 aged out), 111 accepted code findings never marked fixed, 3 dangling locks, the storyline store is behind this revision's migrations (6 constraints), 2 upstream reports open (both wine-cellar-app, MEDIUM).
+
+---
 
 ## 2026-10-11 — drift + backlog re-measured; five shipped plans closed; three honesty fixes
 
