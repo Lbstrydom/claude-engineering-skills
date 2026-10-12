@@ -104,7 +104,7 @@
 ## 2026-10-12 — gate-cost chip (#212): rebased onto main after #214, ready for review
 
 What #212 does and what was measured is in the combined entry "pre-push archive lane (PR #208) and the gate-cost chip (PR #212)" below; since then #212 was brought up to date with main (d65f1e8d) after #214 split `fleet-cli`, its skip list and runbook now say the post-split tree is NOT re-measured, and the plan is marked Complete pending merge.
-Backlog 2026-10-12T09:42Z: Q1 182c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2 (`node scripts/backlog-snapshot.mjs`).
+Backlog 2026-10-12T09:42Z: Q1 182c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
 
 ---
 
