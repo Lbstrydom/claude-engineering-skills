@@ -143,8 +143,42 @@ possible or attempted — guessing the value would recreate the unbound evidence
 the field exists to reject.
 
 The `AI-*` namespace is **reserved**: a commit-message file containing any
-`AI-*` trailer is rejected (`reserved-trailer`) — the helper is the only
-writer, so a malformed or hand-typed block can never enter history.
+`AI-*` trailer is rejected (`reserved-trailer`) — the helpers are the only
+writers, so a malformed or hand-typed block can never enter history.
+
+### Two emission points, one renderer, one evaluator (ship trains)
+
+A `/ship --train` lands several audited PRs in one human action, and GitHub's
+squash writes the commit message, so the block would otherwise be lost (measured
+2026-10-11: of 80 merged PRs, 54 never ran `/ship` and 9 lost the trailer on the
+squash). `scripts/ship-train.mjs` therefore writes each squash commit's message,
+and there are now **two** emission points: `ship-commit.mjs` (direct commits)
+and `ship-train.mjs` (squash messages). Both render through the same
+`formatTrailerBlock` and decide the gate through the same
+`evaluateGateVerification`, so there is still one renderer and one gate
+decision. A squash body is never typed by an agent: it is computed from the
+store and git, on the exact head being merged, and `ship-train verify` later
+checks that every claim on the landed commit is TRUE.
+
+Three rules are specific to a train. Plan:
+[`ship-trains.md`](../plans/ship-trains.md).
+
+- **A run is bound by CONTENT, never by branch or time.** The run's
+  `audited_tree` must equal the tree of one of the PR's own commits. A match on
+  `audited_sha` alone (`ancestry`) can back only a declared `--waive`, and the
+  merge-base is excluded.
+- **`passed` on a squash needs a server pin.** It is granted only when the
+  destination requires branches to be up to date (a ruleset or classic
+  protection with strict status checks and no bypass), because only then does
+  GitHub itself guarantee that the squash tree equals the audited tree. On an
+  unpinned destination (this repository's `main`, measured 2026-10-11) a train
+  lands audited PRs as `converged`, never `passed`.
+- **`converged` widens by one reading.** It now also covers "equality could not
+  be proven at commit time", not only "the tree differs". The widening only
+  removes an implied claim; it never adds one, and it still carries no
+  `AI-Audited-Tree`. Implemented as an optional `identityProvable` input to
+  `evaluateGateVerification` (default `true`, so every existing caller is
+  byte-identical).
 
 ### Who writes the evidence (and why `passed` was unreachable until 2026-07-18)
 
