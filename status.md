@@ -138,6 +138,20 @@ Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q
 - PR #210: review, then merge (not merged).
 - Fleet chip: classify `ces-prepush-*` worktrees as tooling on top of #206's verdicts.
 
+## 2026-10-12 — round 1 of a code audit honours a supplied `--diff` (no head-cut under /cycle)
+
+- **Defect** (measured 2026-10-11, /cycle --autonomous Cluster A, fleet handover work): R1 reported `coverage: PARTIAL — 7 of 10 changed source file(s) not fully audited`. `scripts/lib/fleet/handover.mjs` (54K chars) was read only to its first 10K, so the changed code (lines ~250+) was never seen. R2, given the same `--diff`, logged `[diff] Parsed 8 files, 29 hunks` and reached `coverage complete`.
+- **Cause**: `legacy-production-audit.mjs` parsed `--diff` only inside the `isR2Plus` block. /cycle's cluster recipe passes `--files`, which skips the VCS change record, so R1 had no hunk evidence and head-cut every changed file over `maxPerFile`. The tiered discovery read (`readDiscoveryCode`) had the same R2-only gate.
+- **Fix**: a supplied `--diff` is hunk evidence in every round, matching the plan's own D7 rule ("keyed on the declared diff, never the round"). R1 keeps its rubric and the plain reader, so there is no annotation and no suppression. A new row in the D7 table of `docs/plans/audit-hunk-window-coverage.md`. The /cycle recipe comment no longer calls `--diff` "annotation context only". `legacy-production-audit.mjs` is 2 lines shorter (size ratchet).
+- **Tests**: `tests/coverage-orchestrator.test.mjs` runs R1 with `--files` + `--diff` through the real orchestrator. With the diff the read is `read.state === 'windowed'` and lines 300–303 reach the model; without it the read stays `head-cut`. The new test fails on the old code and passes with the fix. `final-review-hunk-windows.test.mjs`'s "R1 ignores it" test now asserts the opposite, with a no-diff control.
+- **Audit**: `/audit-code --scope diff` R1 PASS M:1 (the test patch's hunk had no body; fixed). R2 H:0 M:0 L:0, converged. Gemini APPROVE (0 blocking, 0 debt).
+- **npm test** (local, linked worktree): 18,616 pass, 4 fail.
+  - rmsync-guard: fixed (it was my test).
+  - sync-target-path: a load flake; it passes alone.
+  - skills-artifact-freshness: compares the committed blob, so it clears on commit.
+  - prepush-installed-tree-identity: the worktree's stale `node_modules` (micromatch/braces), already noted in the 10-11 entry.
+- Backlog 2026-10-12T04:31Z: Q1 173c/47p (+420 aged) · Q2 113c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
 ## 2026-10-12 — Ship trains: plan (#209) + Cluster A, the stateless read side of `/ship --train` (#211)
 
 ### Changes

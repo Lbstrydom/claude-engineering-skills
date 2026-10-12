@@ -364,7 +364,8 @@ INFRA=$(node -p "require('./$SCOPE_JSON').allowInfraScopeRequired ? '--allow-inf
 node scripts/openai-audit.mjs code "$PLAN" --scope diff --files "$FILES" --changed "$FILES" --diff "$PATCH" $INFRA
 #   --files   : THE scoping flag — an allowlist; makes --scope a no-op
 #   --changed : R2+ reopen/impact detection only — does NOT scope
-#   --diff    : annotation context only — does NOT scope; must be a real file
+#   --diff    : hunk evidence — centres every round's read windows on the change
+#               (R2+ also annotates); does NOT scope; must be a real file
 ```
 <!-- /cycle:cluster-audit-command -->
 

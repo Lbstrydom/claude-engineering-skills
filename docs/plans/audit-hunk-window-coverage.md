@@ -169,6 +169,7 @@ other session's file is not edited.
 |---|---|---|
 | R1 `--scope diff` | change record `hunks` | `expected` |
 | R2+ with `--diff` (what the SKILL always passes) | `--diff` → `diffMap`, verified (below) | `expected` |
+| R1 with `--diff` (e.g. `/cycle`'s `--files` + `--diff` cluster recipe) — *added 2026-10-11: `--diff` was parsed only for R2+, so this row head-cut* | `--diff` → `diffMap`, verified; R1 rubric, no annotation/suppression | `expected` |
 | R1 `--scope plan`/`full`; R2+ without `--diff` (e.g. a `--scope full` re-run); explicit `--files` without a diff | none | `not-applicable` |
 
 Evidence is keyed on whether the round DECLARED a diff (a VCS record, or a supplied `--diff` — even
