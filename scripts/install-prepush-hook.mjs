@@ -123,7 +123,14 @@ const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush
 // the hook, their pre-push.local test suite inherited it, and its throwaway
 // fixture repos wrote core.bare=true and a fake user identity into the SHARED
 // .git/config. Re-install to pick it up.
-const HOOK_VERSION    = 9;
+// v10 (2026-10-12): fail closed when killed. Git for Windows reads a hook's
+// status as `code & 0xff`, and an MSYS sh killed by signal S exits `S << 8`, so
+// a killed hook read as exit 0 and the push went through (measured on this
+// repo's own gate during PR #220). The hook now traps every catchable
+// terminating signal and exits 1 — the same marked block as this repo's
+// .githooks/pre-push, kept byte-identical by
+// tests/prepush-hook-fail-closed-on-signal.test.mjs. Re-install to pick it up.
+const HOOK_VERSION    = 10;
 const HOOK_VERSION_MARKER = `# hook-version: ${HOOK_VERSION}`;
 // Accept the legacy marker too so existing installs (pre-rename) can be
 // upgraded in place by `npm run hooks:install` without manual cleanup.
@@ -145,6 +152,24 @@ ${HOOK_VERSION_MARKER}
 #
 # Bypass per-push: \`git push --no-verify\`.
 # Disable session: \`AUDIT_PREPUSH_DISABLE=1 git push\`.
+
+# >>> fail-closed-on-signal >>>
+prepush_killed() {
+  trap '' $PREPUSH_TRAPPED
+  echo "✗  pre-push hook interrupted by SIG$1 — push BLOCKED (a killed gate is not a pass)." >&2
+  exit 1
+}
+# Every POSIX terminating signal, unconditionally; then the XSI ones this shell knows
+# (\`kill -l NAME\` fails on an unknown name, so an exotic sh never errors on \`trap\`).
+PREPUSH_TRAPPED=""
+for prepush_sig in HUP INT QUIT ABRT ALRM TERM PIPE USR1 USR2 TRAP BUS FPE ILL SEGV SYS XCPU XFSZ VTALRM PROF; do
+  case "$prepush_sig" in
+    TRAP|BUS|FPE|ILL|SEGV|SYS|XCPU|XFSZ|VTALRM|PROF) kill -l "$prepush_sig" >/dev/null 2>&1 || continue ;;
+  esac
+  trap "prepush_killed $prepush_sig" "$prepush_sig"
+  PREPUSH_TRAPPED="$PREPUSH_TRAPPED $prepush_sig"
+done
+# <<< fail-closed-on-signal <<<
 
 # AUDIT_PREPUSH_DISABLE is the WHOLE-hook kill switch and stays one, deliberately:
 # it is the documented "turn this thing off" escape, and \`finish\`-ing through it

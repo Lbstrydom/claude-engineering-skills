@@ -58,7 +58,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { assertKnownFlags, hasFlag } from './lib/cli-io.mjs';
+import { assertKnownFlags, hasFlag, toShellExitCode } from './lib/cli-io.mjs';
 import { GUARD_REPORT_VERSION } from './lib/test-guard-reporter.mjs';
 import { TIMING_REPORT_ENV, ranFiles, ranFilesUnavailableReason, summariseTiming } from './lib/test-timing-report.mjs';
 
@@ -324,8 +324,10 @@ export function adjudicateRun({ status, reportText }) {
   // Signal-kill, or the child already failed: the runner's own verdict stands.
   // The guard exists only to close the green-when-actually-failed direction, so
   // there is nothing to add here.
+  // Forwarded through toShellExitCode: a status whose low byte is 0 (256, 512…)
+  // would read as a PASS to the bash/git one hop up (cli-io.mjs, runbook §8).
   if (status === null) return { exitCode: 1, message: null };
-  if (status !== 0) return { exitCode: status, message: null };
+  if (status !== 0) return { exitCode: toShellExitCode(status), message: null };
 
   if (reportText === null) {
     return {

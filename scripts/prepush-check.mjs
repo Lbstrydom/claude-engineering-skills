@@ -49,7 +49,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { log } from './lib/cli-io.mjs';
+import { log, toShellExitCode } from './lib/cli-io.mjs';
 import { dependencySetChanged } from './lib/dependency-identity.mjs';
 import { installedTreeStale } from './lib/installed-tree-identity.mjs';
 import { countTopLevelEntries, findNodeModules } from './lib/node-modules-resolver.mjs';
@@ -683,7 +683,10 @@ function main() {
       }
     }
 
-    return r.status ?? 1;
+    // NOT `r.status ?? 1`: the hook reads this through MSYS bash's `$?`, which keeps
+    // only the low byte, so a raw 256 from npm would print "✓ checks passed"
+    // (measured; docs/runbooks/prepush-sandbox.md §8).
+    return toShellExitCode(r.status);
   } catch (err) {
     if (err?.preserveSandbox) preserveSandbox = true;
     log(`✗  pre-push sandbox failed: ${err.message}`);

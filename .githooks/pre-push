@@ -29,6 +29,71 @@
 # `npm run check` is this repo's only gate — no workflow runs it on push or PR
 # (npm test runs solely in release.yml, on a version tag) — so an uninstallable
 # hook meant an unenforced repo. Edit here, never in .git/hooks/.
+#
+# FAIL CLOSED WHEN KILLED (2026-10-12): Git for Windows reads a hook's exit code
+# as `code & 0xff`, and an MSYS bash killed by signal S exits `S << 8` — so a
+# killed hook reads as exit 0 and the push went through. The two marked blocks
+# below trap every catchable terminating signal (L1) and leave a record that the
+# NEXT push reports if this hook died untrappably (L3).
+# docs/runbooks/prepush-sandbox.md §8.
+
+# >>> fail-closed-on-signal >>>
+prepush_killed() {
+  trap '' $PREPUSH_TRAPPED
+  echo "✗  pre-push hook interrupted by SIG$1 — push BLOCKED (a killed gate is not a pass)." >&2
+  exit 1
+}
+# Every POSIX terminating signal, unconditionally; then the XSI ones this shell knows
+# (`kill -l NAME` fails on an unknown name, so an exotic sh never errors on `trap`).
+PREPUSH_TRAPPED=""
+for prepush_sig in HUP INT QUIT ABRT ALRM TERM PIPE USR1 USR2 TRAP BUS FPE ILL SEGV SYS XCPU XFSZ VTALRM PROF; do
+  case "$prepush_sig" in
+    TRAP|BUS|FPE|ILL|SEGV|SYS|XCPU|XFSZ|VTALRM|PROF) kill -l "$prepush_sig" >/dev/null 2>&1 || continue ;;
+  esac
+  trap "prepush_killed $prepush_sig" "$prepush_sig"
+  PREPUSH_TRAPPED="$PREPUSH_TRAPPED $prepush_sig"
+done
+# <<< fail-closed-on-signal <<<
+
+# >>> prepush-inflight-record (see docs/runbooks/prepush-sandbox.md §8) >>>
+PREPUSH_INFLIGHT_REC=""
+prepush_inflight_write() {   # $1 = the gated sha, or "pending" before the range is known
+  [ -n "$PREPUSH_INFLIGHT_REC" ] || return 0
+  printf '%s %s %s %s\n' "$$" "$1" "$PREPUSH_STARTED" "${PREPUSH_REMOTE:--}" \
+    2>/dev/null > "$PREPUSH_INFLIGHT_REC.tmp" && mv -f "$PREPUSH_INFLIGHT_REC.tmp" "$PREPUSH_INFLIGHT_REC" 2>/dev/null
+}
+PREPUSH_REMOTE="$1"
+PREPUSH_STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+PREPUSH_COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+case "$?:$PREPUSH_COMMON_DIR" in
+  0:/*|0:[A-Za-z]:/*) PREPUSH_INFLIGHT_DIR="$PREPUSH_COMMON_DIR/prepush-inflight" ;;
+  *) PREPUSH_INFLIGHT_DIR="" ;;   # unresolved: no record, no reconciliation — never a fallback path
+esac
+if [ -n "$PREPUSH_INFLIGHT_DIR" ] && mkdir -p "$PREPUSH_INFLIGHT_DIR" 2>/dev/null; then
+  for rec in "$PREPUSH_INFLIGHT_DIR"/*.rec; do
+    [ -f "$rec" ] || continue
+    read -r rec_pid rec_sha rec_started rec_remote 2>/dev/null < "$rec"   # stderr first: a concurrent rm is silent
+    case "$rec_pid" in ''|*[!0-9]*) rm -f "$rec"; continue ;; esac
+    # Alive = a concurrent push: leave it. Never OUR pid, though: this hook has written
+    # nothing yet, so a record named for $$ is a dead predecessor whose pid was reused —
+    # treating it as alive would let the write below overwrite the evidence.
+    [ "$rec_pid" != "$$" ] && kill -0 "$rec_pid" 2>/dev/null && continue
+    echo "⚠ an earlier pre-push (pid $rec_pid, remote $rec_remote, started $rec_started) was KILLED before it" >&2
+    echo "  finished. Git for Windows reads a killed hook as a PASS, so if that push reached the remote it went UNGATED." >&2
+    case "$rec_sha" in ''|*[!0-9a-f]*) rec_sha="" ;; esac   # "pending", "unresolved", garbage
+    [ "${#rec_sha}" -ge 7 ] || rec_sha=""
+    if [ -n "$rec_sha" ]; then
+      echo "  It was gating $rec_sha. Check: git branch -r --contains $rec_sha   (runbook §8)" >&2
+    else
+      echo "  It died before the gated commit was known. Find what it pushed: runbook §8 'unknown commit'." >&2
+    fi
+    rm -f "$rec"
+  done
+  PREPUSH_INFLIGHT_REC="$PREPUSH_INFLIGHT_DIR/$$.rec"
+  trap 'rm -f "$PREPUSH_INFLIGHT_REC" "$PREPUSH_INFLIGHT_REC.tmp"' EXIT   # BEFORE the first write
+  prepush_inflight_write pending
+fi
+# <<< prepush-inflight-record <<<
 
 # ── -1. Self-heal a corrupted core.bare (2026-07-23 incident) ────────────
 # Traced live: `core.bare` was repeatedly found flipped to `true` on this
@@ -173,6 +238,7 @@ while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
 done <<EOF
 $PUSH_STDIN
 EOF
+prepush_inflight_write "${PUSH_HEAD:-unresolved}"   # L3: the gated sha is known from here on
 
 # ── 0.5 Delete-only push: nothing published, nothing to check ────────────
 # A push whose EVERY ref update is a deletion sends no commits, so there is no

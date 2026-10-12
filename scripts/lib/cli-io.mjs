@@ -466,5 +466,32 @@ export function armExitWatchdog(ms, { label = 'cli', code = 124 } = {}) {
   return { disarm: () => clearTimeout(timer) };
 }
 
+/**
+ * The exit code to use when FORWARDING a child process's status as this
+ * process's own: 0 stays 0, and every failure keeps a NON-ZERO LOW BYTE.
+ *
+ * WHY. A Windows exit code is 32 bits, but the shells and git read only its low
+ * byte. Measured 2026-10-12 (Git 2.56.0.windows.2, MSYS bash 5.3.15):
+ * `node -e "process.exit(256)"; echo $?` prints 0, and Git for Windows reads a
+ * hook's status as `code & 0xff` (`WEXITSTATUS` in compat/mingw-posix.h). So a
+ * child that failed with 256 — e.g. an MSYS process killed by SIGHUP, which
+ * exits `1 << 8` — forwarded verbatim reads as SUCCESS one hop up. That is how a
+ * gate prints "checks passed" for a run that failed
+ * (docs/runbooks/prepush-sandbox.md §8).
+ *
+ * A failure keeps its low byte when that byte is non-zero (1, 3 and 130 still
+ * mean what they meant); one whose low byte is zero becomes 1. A missing or
+ * non-integer status (`spawnSync` reports `null` for a signal death) is a
+ * failure, never a pass.
+ *
+ * @param {number|null|undefined} status
+ * @returns {number} 0..255
+ */
+export function toShellExitCode(status) {
+  if (status === 0) return 0;
+  if (!Number.isInteger(status)) return 1;
+  return (status & 0xff) || 1;
+}
+
 /** Tests only — the module-level terminal state is process-global. */
 export function _resetTerminalState() { _terminalState = 'running'; }
