@@ -406,6 +406,40 @@ describe('extractReporterFlags — node needs equal reporter and destination cou
     assert.match(r.stderr, /test-guard:/);
   });
 
+  it('a reporter-looking token that directly follows a bare dash option is left to node (code audit round 4, H1)', () => {
+    // node resolves option-versus-value by arity; this function has no arity table, so it declines to guess.
+    const ambiguous = ['--test-name-pattern', '--test-reporter=dot', 'tests/x.test.mjs'];
+    assert.deepEqual(extractReporterFlags(ambiguous), { pairs: [], others: ambiguous });
+    // a LATER reporter, not preceded by a bare dash option, is extracted as usual
+    assert.deepEqual(extractReporterFlags(['--test-name-pattern', '--test-reporter=dot', '--test-reporter=spec']), {
+      pairs: ['--test-reporter', 'spec', '--test-reporter-destination', 'stdout'],
+      others: ['--test-name-pattern', '--test-reporter=dot'],
+    });
+    // the documented cost: a boolean flag first is also left alone, and node then says so loudly
+    assert.deepEqual(extractReporterFlags(['--test-only', '--test-reporter=dot']).pairs, []);
+    // and the ordinary spellings are untouched: a value that is not flag-like, a file, or the start of argv
+    assert.deepEqual(extractReporterFlags(['--test-name-pattern', 'foo', '--test-reporter=dot']), {
+      pairs: ['--test-reporter', 'dot', '--test-reporter-destination', 'stdout'],
+      others: ['--test-name-pattern', 'foo'],
+    });
+    assert.equal(extractReporterFlags(['tests/a.test.mjs', '--test-reporter=dot']).pairs.length, 4);
+    assert.equal(extractReporterFlags(['--test-reporter=dot', '--test-reporter=spec']).pairs.length, 8);
+  });
+
+  it('REAL RUN: an argument node refuses stays refused through the runner, not a run that selects nothing and passes (code audit round 4, H1)', () => {
+    // The audit's reproducer premise was that node reads the second token as the pattern's value and
+    // selects the failing test. Measured on v22.23.2 it does not: it refuses. The defect is real
+    // anyway, because extracting the token made the refusal disappear.
+    const args = ['--test-name-pattern', '--test-reporter=dot', FIX('pattern-value')];
+    const direct = spawnSync(process.execPath, ['--test', ...args], { cwd: ROOT, encoding: 'utf8', env: scrubChildEnv(process.env) });
+    assert.notEqual(direct.status, 0, 'MIRROR: node refuses this invocation');
+    assert.match(direct.stderr, /--test-name-pattern requires an argument/);
+    const r = spawnSync(process.execPath, [RUNNER, ...args], { cwd: ROOT, encoding: 'utf8', env: scrubChildEnv(process.env) });
+    assert.notEqual(r.status, 0, `the runner turned node's refusal into a pass: ${r.stderr}`);
+    assert.equal(r.status, direct.status, 'the runner exits with the code node gave');
+    assert.match(r.stderr, /--test-name-pattern requires an argument/);
+  });
+
   it('a forward that is ONLY reporter flags leaves no file argument behind, which main() reads as "use the default set"', () => {
     // Before, `npm test -- --test-reporter=dot` counted as "the caller named something" and handed node
     // no files, so node ran its own discovery instead of the three default globs. Pinned at the seam

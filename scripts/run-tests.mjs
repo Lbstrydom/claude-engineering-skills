@@ -230,6 +230,18 @@ const DESTINATION_FLAG = '--test-reporter-destination';
  * A reporter with no destination gets `stdout`, node's own default for the one-reporter case.
  * A destination with no reporter is left unmatched so node reports the caller's mistake.
  *
+ * AMBIGUITY IS LEFT TO NODE. Whether a bare dash option takes a value is node's arity table, and
+ * this function does not copy it (a second copy of node's CLI, per version, is the thing not to
+ * build). A reporter-looking token right after a bare dash option is either a new option (after a
+ * boolean flag) or a mistake node refuses (`--test-name-pattern --test-reporter=dot`: node says
+ * "--test-name-pattern requires an argument"). We cannot tell which, and guessing wrong in the
+ * second case turned node's refusal into a run that selected nothing and PASSED (code audit round 4,
+ * H1: the extracted token left `--test-name-pattern` to swallow the file name). So such a token is
+ * left where it is, the argv reaches node as written, and node decides. The cost is that
+ * `--test-only --test-reporter=dot` is also left alone and node then refuses the unbalanced
+ * reporters, loudly, as it did before this function existed; put the reporter first, or give it a
+ * destination. A later token that is not preceded by a bare dash option is extracted as usual.
+ *
  * @param {string[]} argv
  * @returns {{pairs: string[], others: string[]}}
  */
@@ -237,13 +249,20 @@ export function extractReporterFlags(argv) {
   const reporters = [];
   const destinations = [];
   const others = [];
+  // The last token left in `others`, or undefined when the previous token was consumed here. A dash
+  // option with no `=` may own the next token as its value, so the next token is not ours to read.
+  let prev;
+  const mayOwnNext = (t) => t !== undefined && t.startsWith('-') && !t.includes('=');
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === REPORTER_FLAG && i + 1 < argv.length) reporters.push(argv[++i]);
-    else if (a.startsWith(`${REPORTER_FLAG}=`)) reporters.push(a.slice(REPORTER_FLAG.length + 1));
-    else if (a === DESTINATION_FLAG && i + 1 < argv.length) destinations.push(argv[++i]);
-    else if (a.startsWith(`${DESTINATION_FLAG}=`)) destinations.push(a.slice(DESTINATION_FLAG.length + 1));
-    else others.push(a);
+    if (!mayOwnNext(prev)) {
+      if (a === REPORTER_FLAG && i + 1 < argv.length) { reporters.push(argv[++i]); prev = undefined; continue; }
+      if (a.startsWith(`${REPORTER_FLAG}=`)) { reporters.push(a.slice(REPORTER_FLAG.length + 1)); prev = undefined; continue; }
+      if (a === DESTINATION_FLAG && i + 1 < argv.length) { destinations.push(argv[++i]); prev = undefined; continue; }
+      if (a.startsWith(`${DESTINATION_FLAG}=`)) { destinations.push(a.slice(DESTINATION_FLAG.length + 1)); prev = undefined; continue; }
+    }
+    others.push(a);
+    prev = a;
   }
   const pairs = reporters.flatMap((r, i) => [REPORTER_FLAG, r, DESTINATION_FLAG, destinations[i] ?? 'stdout']);
   for (const extra of destinations.slice(reporters.length)) pairs.push(DESTINATION_FLAG, extra);
