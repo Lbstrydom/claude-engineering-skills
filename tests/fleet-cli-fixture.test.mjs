@@ -88,7 +88,7 @@ describe('makeFleetRepo: template copies are isolated', () => {
   it('negative control: an in-place overwrite IS seen through a hard-linked working file, so the tracked-file probe can fail', () => {
     const victim = makeFleetRepo();
     const actor = makeFleetRepo();
-    fs.rmSync(path.join(actor.repo, 'a.txt'));
+    fs.rmSync(path.join(actor.repo, 'a.txt'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     fs.linkSync(path.join(victim.repo, 'a.txt'), path.join(actor.repo, 'a.txt')); // the defect a link-based copy would be
     const before = probe(victim);
     fs.writeFileSync(path.join(actor.repo, 'a.txt'), 'overwritten in place\n');
