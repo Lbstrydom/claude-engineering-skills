@@ -23,12 +23,17 @@
  *
  * Plan: docs/plans/fleet-consumer-feedback-oct.md §2.5.
  *
+ * An optional `messageFor` seam (docs/plans/ship-trains.md §2.4) lets a caller
+ * choose each squash commit's subject and body at merge time, on the exact head
+ * being merged. See {@link MessageFor}. Absent, the merge call is byte-identical.
+ *
  * @module scripts/lib/fleet/serial
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { atomicWriteFileSync } from '../file-io.mjs';
+import { retrySync } from '../retry-transient-fs.mjs';
 import { withFileLockSync } from '../file-lock.mjs';
 import { OID_RE } from './contracts.mjs';
 import { TRAIN_ID_RE, assertManaged, fleetDir, readTrain } from './registry.mjs';
@@ -63,12 +68,64 @@ export const SerialStepSchema = z.strictObject({
 export const SerialRunSchema = z.strictObject({
   schemaVersion: z.literal(1), trainId: z.string().regex(TRAIN_ID_RE), startedAt: Iso, updatedAt: Iso,
   timeoutMs: z.number().int().positive(), base: z.string().min(1), remote: z.string().min(1),
+  // Set once, at approval, by a caller that supplied `messageFor`: the run may then only merge WITH a
+  // message, so a later resume that lacks the provider cannot silently merge unmessaged. Absent on every
+  // other run (and in every pre-existing record), which behave exactly as before.
+  messageRequired: z.literal(true).optional(),
   steps: z.array(SerialStepSchema).min(1),
   outcome: z.strictObject({ status: z.enum(['landed', 'stopped']), reason: z.string().max(2000), at: Iso }).nullable(),
 });
 
+/**
+ * @callback MessageFor
+ * Called once per PR, immediately before its merge, with the head that is about to
+ * be merged (AFTER any update-branch this run made) and the base tip observed just
+ * now (`null` when it could not be read). A resumed run calls it again on the
+ * current head, so no message is ever replayed.
+ * @param {{source: object, headOid: string, baseOid: string|null}} a
+ * @returns {{subject: string, body: string} | {stop: string} | null | undefined}
+ *   `null`/`undefined`: merge as today. `{stop}`: end the run BEFORE this merge with that
+ *   reason recorded. A throw, or any other shape, also stops the run: a caller that
+ *   asked for a message must never get an unmessaged merge by accident.
+ */
+
 const serialDir = (dir) => path.join(dir, 'serial');
 const serialPath = (dir, id) => assertManaged(dir, path.join(serialDir(dir), `${id}.json`));
+const messagePath = (dir, id, prNumber) => assertManaged(dir, path.join(serialDir(dir), `${id}.pr-${prNumber}.msg`));
+
+/**
+ * Remove message files a previous run left behind. The merge call removes its own file in a `finally`,
+ * but a process that dies mid-call never reaches it, and a resume that finds the PR already merged never
+ * writes (or removes) one. Called under the run lease, so no live run owns any of them.
+ * An absent directory is the only benign case; any other fault is returned as a reason, because a
+ * file that cannot be removed is a file the next merge may not be able to write.
+ * @returns {string|null} why the sweep could not finish, or null
+ */
+function sweepMessageFiles(dir, trainId) {
+  let names;
+  try { names = fs.readdirSync(serialDir(dir)); } catch (e) {
+    return e.code === 'ENOENT' ? null : `cannot list ${serialDir(dir)} to clear stale message files (${e.code ?? e.message})`;
+  }
+  const prefix = `${trainId}.pr-`;
+  for (const n of names) {
+    if (!n.startsWith(prefix) || !n.endsWith('.msg')) continue;
+    const file = assertManaged(dir, path.join(serialDir(dir), n));
+    try { retrySync(() => fs.rmSync(file, { force: true })); } catch (e) { return `cannot remove the stale message file ${n} (${e.code ?? e.message})`; }
+  }
+  return null;
+}
+
+/** Validate a `messageFor` answer. @returns {{kind: 'none'} | {kind: 'stop', reason: string} | {kind: 'message', subject: string, body: string}} */
+function readMessageAnswer(a) {
+  if (a === null || a === undefined) return { kind: 'none' };
+  if (typeof a === 'object' && typeof a.stop === 'string' && a.stop.length > 0 && a.subject === undefined && a.body === undefined) return { kind: 'stop', reason: a.stop.slice(0, 900) };
+  if (typeof a === 'object' && typeof a.subject === 'string' && typeof a.body === 'string' && a.stop === undefined) {
+    // A subject is one line; an empty one would make gh fall back to its default title.
+    if (a.subject.trim() === '' || /[\r\n\0]/.test(a.subject) || a.body.includes('\0')) return { kind: 'stop', reason: 'messageFor returned an unusable subject or body' };
+    return { kind: 'message', subject: a.subject, body: a.body };
+  }
+  return { kind: 'stop', reason: 'messageFor returned an unrecognised answer' };
+}
 
 /** @returns {{ok: true, run: object} | {ok: false, reason: string, absent?: boolean}} */
 export function readSerial(dir, trainId) {
@@ -97,6 +154,13 @@ function ghJson(deps, cwd, args) {
 
 const viewPr = (deps, cwd, s) => ghJson(deps, cwd, ['pr', 'view', String(s.prNumber), '-R', s.repo, '--json', SERIAL_VIEW_FIELDS.join(',')]);
 const short = (o) => String(o ?? '?').slice(0, 12);
+
+/** The base branch's tip on the remote right now, for `messageFor`; `null` when it cannot be read. */
+function baseTip({ deps, cwd, run }) {
+  const r = deps.git(['ls-remote', run.remote, `refs/heads/${run.base}`], cwd, { timeoutMs: 60_000 });
+  const oid = r.ok ? r.stdout.trim().split(/\s+/)[0] : '';
+  return /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(oid) ? oid : null;
+}
 
 /**
  * Bring PR `s`'s head and the base into local objects, then decide whether head
@@ -138,17 +202,17 @@ export function classifyUpdatedHead({ deps, cwd, s, run, h, priorHead }) {
  * Run (or resume) the serial loop for `trainId`. Never throws for remote
  * failures: each stop is recorded with its reason and is resumable.
  * @param {{cwd: string, trainId: string, deps?: object, requiredChecks?: string[], requiredChecksError?: string|null,
- *   sleep?: (ms: number) => void, timings?: object}} a
+ *   sleep?: (ms: number) => void, timings?: object, messageFor?: MessageFor}} a
  */
-export function runSerial({ cwd, trainId, deps = defaultDeps(), requiredChecks, requiredChecksError = null, sleep = sleepMs, timings = {} }) {
+export function runSerial({ cwd, trainId, deps = defaultDeps(), requiredChecks, requiredChecksError = null, sleep = sleepMs, timings = {}, messageFor }) {
   const dir = fleetDir(cwd);
   const T = { poll: SERIAL_POLL_MS, updatePoll: UPDATE_POLL_MS, updateWait: UPDATE_WAIT_MS, mergeWait: MERGE_WAIT_MS, ...timings };
-  const lease = withFileLockSync(path.join(serialDir(dir), `${trainId}.lock`), { attempts: 1 }, () => loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sleep, T }));
+  const lease = withFileLockSync(path.join(serialDir(dir), `${trainId}.lock`), { attempts: 1 }, () => loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sleep, T, messageFor }));
   if (!lease.ok) return { ok: false, code: 'error', reason: `another process is landing ${trainId} serially (serial/${trainId}.lock is held)` };
   return lease.value;
 }
 
-function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sleep, T }) {
+function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sleep, T, messageFor }) {
   let run = readSerial(dir, trainId);
   if (!run.ok) return { ok: false, code: 'refused', reason: `train ${trainId}: ${run.reason}` };
   run = run.run;
@@ -163,6 +227,11 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
     return { ok: false, code: 'refused', reason, trainId, run, resumable: true };
   };
   if (run.outcome?.status === 'landed') return { ok: true, code: 'ok', trainId, run, landed: true };
+  const sweepFault = sweepMessageFiles(dir, trainId);
+  if (sweepFault) return stop(null, sweepFault);
+  if (run.messageRequired && typeof messageFor !== 'function') {
+    return stop(null, 'this run was started with a squash-message provider (ship-train land) and may only merge with one; resume it with the same tool: node scripts/ship-train.mjs land --train ' + trainId + ' --resume');
+  }
   if (run.outcome) save({ outcome: null }); // a resumed stop re-enters
   const inventory = new Map();
   const invFor = (repo) => {
@@ -241,8 +310,27 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
       const again = viewPr(deps, cwd, s);
       if (!again.ok || again.doc.headRefOid !== h) continue;
       if (String(again.doc.mergeStateStatus ?? '').toUpperCase() === 'BEHIND') continue; // the base moved while we waited
+      // The message is decided here, on the head that is about to be merged, so a refusal stops the run
+      // BEFORE this merge and nothing stale is ever replayed.
+      let message = { kind: 'none' };
+      if (typeof messageFor === 'function') {
+        let answer;
+        try { answer = messageFor({ source: s, headOid: h, baseOid: baseTip({ deps, cwd, run }) }); } catch (e) { answer = { stop: `messageFor failed: ${e?.message ?? e}` }; }
+        message = readMessageAnswer(answer);
+        if (message.kind === 'stop') return stop(i, `PR #${s.prNumber}: ${message.reason}`);
+        if (message.kind === 'none' && run.messageRequired) return stop(i, `PR #${s.prNumber}: this run requires a squash message and messageFor returned none`);
+      }
       setStep(i, { step: 'merge', head: h });
-      const m = deps.gh(['pr', 'merge', String(s.prNumber), '-R', s.repo, '--squash', '--match-head-commit', h], cwd);
+      const mergeArgs = ['pr', 'merge', String(s.prNumber), '-R', s.repo, '--squash', '--match-head-commit', h];
+      let bodyFile = null;
+      if (message.kind === 'message') {
+        // gh reads --body-file during the call, so the file lives exactly that long.
+        bodyFile = messagePath(dir, trainId, s.prNumber);
+        atomicWriteFileSync(bodyFile, message.body);
+        mergeArgs.splice(mergeArgs.indexOf('--match-head-commit'), 0, '--subject', message.subject, '--body-file', bodyFile);
+      }
+      let m;
+      try { m = deps.gh(mergeArgs, cwd); } finally { if (bodyFile) retrySync(() => fs.rmSync(bodyFile, { force: true })); }
       const until = Date.now() + T.mergeWait;
       for (;;) {
         const o = viewPr(deps, cwd, s);
@@ -266,7 +354,7 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
  * the serial record is created, and the loop runs. Re-entering a stopped run is
  * `land --resume <trainId>`.
  */
-export function approveSerial({ cwd, trainId, acceptRerun = false, requiredChecks, requiredChecksError = null, deps = defaultDeps(), sleep, timings, timeoutMs }) {
+export function approveSerial({ cwd, trainId, acceptRerun = false, requiredChecks, requiredChecksError = null, deps = defaultDeps(), sleep, timings, timeoutMs, messageFor }) {
   const dir = fleetDir(cwd);
   const start = withTrainLock(dir, () => {
     const r = readTrain(dir, trainId);
@@ -284,6 +372,7 @@ export function approveSerial({ cwd, trainId, acceptRerun = false, requiredCheck
     writeSerial(dir, {
       schemaVersion: 1, trainId, startedAt: stamp, updatedAt: stamp, timeoutMs: timeoutMs ?? 60 * 60 * 1000,
       base: branchOfRef(t.destination.ref), remote: t.destination.remote, outcome: null,
+      ...(typeof messageFor === 'function' ? { messageRequired: true } : {}),
       steps: t.sources.map((src) => ({
         id: src.id, prNumber: src.prNumber, repo: src.repo, testedOid: src.oid, step: 'pending', head: src.oid, accounted: [src.oid],
         updates: 0, priorHead: null, mergedOid: null, note: null, at: stamp,
@@ -293,13 +382,13 @@ export function approveSerial({ cwd, trainId, acceptRerun = false, requiredCheck
     return { ok: true };
   });
   if (!start.ok) return start;
-  return finishSerial({ cwd, dir, trainId, deps, r: runSerial({ cwd, trainId, deps, requiredChecks, requiredChecksError, ...(sleep ? { sleep } : {}), ...(timings ? { timings } : {}) }) });
+  return finishSerial({ cwd, dir, trainId, deps, r: runSerial({ cwd, trainId, deps, requiredChecks, requiredChecksError, ...(sleep ? { sleep } : {}), ...(timings ? { timings } : {}), ...(messageFor ? { messageFor } : {}) }) });
 }
 
 /** `land --resume <trainId>` for a train that has a serial run. */
-export function resumeSerial({ cwd, trainId, requiredChecks, requiredChecksError = null, deps = defaultDeps(), sleep, timings }) {
+export function resumeSerial({ cwd, trainId, requiredChecks, requiredChecksError = null, deps = defaultDeps(), sleep, timings, messageFor }) {
   const dir = fleetDir(cwd);
-  return finishSerial({ cwd, dir, trainId, deps, r: runSerial({ cwd, trainId, deps, requiredChecks, requiredChecksError, ...(sleep ? { sleep } : {}), ...(timings ? { timings } : {}) }) });
+  return finishSerial({ cwd, dir, trainId, deps, r: runSerial({ cwd, trainId, deps, requiredChecks, requiredChecksError, ...(sleep ? { sleep } : {}), ...(timings ? { timings } : {}), ...(messageFor ? { messageFor } : {}) }) });
 }
 
 function finishSerial({ dir, trainId, deps, r }) {
