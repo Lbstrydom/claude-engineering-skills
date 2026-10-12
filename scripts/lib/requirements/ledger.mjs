@@ -21,8 +21,18 @@ const CONFIDENCE_RANK = { low: 0, medium: 1, high: 2 };
 
 const norm = (a) => String(a).toLowerCase().replace(/\s+/g, ' ').trim().replace(/[.;,]+$/, '').trim();
 
-/** Load the ledger, or an empty one when absent/unreadable. Never throws. */
-export function loadLedger({ baseDir = process.cwd() } = {}) {
+/**
+ * Load the ledger, or an empty one when absent/unreadable. Never throws — that is
+ * the READ contract (`getRequirementsContext`, index, render: an unusable ledger
+ * degrades the audit, never aborts it).
+ *
+ * `strict` is for callers that go on to WRITE the ledger: only an ABSENT file is
+ * an empty prior. A file that exists but cannot be read, parsed or validated
+ * throws, because reconciling against an empty prior would overwrite the
+ * committed ledger with fresh candidates alone — the same reason `overrides.json`
+ * fails closed in this CLI.
+ */
+export function loadLedger({ baseDir = process.cwd(), strict = false } = {}) {
   const empty = {
     generatedAt: new Date(0).toISOString(), commitSha: null, extractionSourceSha: null,
     coveredFiles: [], requirements: [], identityAliases: {},
@@ -30,8 +40,12 @@ export function loadLedger({ baseDir = process.cwd() } = {}) {
   try {
     const raw = JSON.parse(fs.readFileSync(path.join(baseDir, LEDGER_PATH), 'utf-8'));
     const parsed = RequirementsLedgerSchema.safeParse(raw);
+    if (!parsed.success && strict) throw new Error(`schema validation failed: ${parsed.error.issues[0]?.path.join('.') || '(root)'}: ${parsed.error.issues[0]?.message}`);
     return parsed.success ? parsed.data : empty;
-  } catch {
+  } catch (err) {
+    if (strict && err?.code !== 'ENOENT') {
+      throw new Error(`${LEDGER_PATH} exists but cannot be loaded (${err.message}) — fix or restore it; reconciling against an empty ledger would overwrite it`, { cause: err });
+    }
     return empty;
   }
 }

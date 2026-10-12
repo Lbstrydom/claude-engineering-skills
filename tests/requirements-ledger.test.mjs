@@ -265,3 +265,34 @@ describe('reconcile — overrides reach RETAINED requirements too', () => {
     }
   });
 });
+
+describe('loadLedger({strict}) — only an ABSENT ledger is an empty prior', () => {
+  const withDir = (fn) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'req-strict-'));
+    try { fs.mkdirSync(path.join(dir, '.requirements')); return fn(dir); }
+    finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  };
+  const ledgerFile = (dir) => path.join(dir, '.requirements', 'ledger.json');
+
+  it('the READ contract is unchanged: a truncated ledger still degrades to empty, never throws', () => withDir((dir) => {
+    fs.writeFileSync(ledgerFile(dir), '{"requirements":[');
+    assert.deepEqual(loadLedger({ baseDir: dir }).requirements, []);
+  }));
+
+  it('strict: an unparseable, schema-invalid or unreadable ledger throws', () => withDir((dir) => {
+    fs.writeFileSync(ledgerFile(dir), '{"requirements":[');
+    assert.throws(() => loadLedger({ baseDir: dir, strict: true }), /exists but cannot be loaded/);
+    fs.writeFileSync(ledgerFile(dir), '{"requirements":"not-an-array"}');
+    assert.throws(() => loadLedger({ baseDir: dir, strict: true }), /schema validation failed/);
+    fs.rmSync(ledgerFile(dir));
+    fs.mkdirSync(ledgerFile(dir)); // a directory where the file should be: EISDIR, not ENOENT
+    assert.throws(() => loadLedger({ baseDir: dir, strict: true }), /exists but cannot be loaded/);
+  }));
+
+  it('NEGATIVE CONTROL — strict on an ABSENT ledger is an empty prior, and on a valid one returns it', () => withDir((dir) => {
+    assert.deepEqual(loadLedger({ baseDir: dir, strict: true }).requirements, []);
+    const written = reconcile({ candidates: [cand()], coveredFiles: COVERED, gapAssessments: [gap('REQ-correctness-aaaaaaaa')] });
+    writeLedger(written, { baseDir: dir });
+    assert.equal(loadLedger({ baseDir: dir, strict: true }).requirements.length, 1);
+  }));
+});
