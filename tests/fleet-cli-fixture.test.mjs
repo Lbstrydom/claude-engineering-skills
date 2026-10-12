@@ -20,6 +20,7 @@ const sameFile = (a, b) => path.relative(fs.realpathSync.native(a), fs.realpathS
 /** Everything a test can observe about a fixture that another test's mutation could change. */
 function probe(fx) {
   return {
+    tracked: fs.readFileSync(path.join(fx.repo, 'a.txt'), 'utf8'),
     head: git(['rev-parse', 'HEAD'], fx.repo),
     originMain: originMain(fx),
     branches: git(['for-each-ref', '--format=%(refname)', 'refs/heads'], fx.repo),
@@ -28,8 +29,12 @@ function probe(fx) {
   };
 }
 
-/** Mutate every surface `probe` reads: a pushed commit, a branch, an untracked file, origin refs. */
+/**
+ * Mutate every surface `probe` reads: an in-place overwrite of an EXISTING tracked file (what a
+ * hard-linked or symlinked copy would leak through), a pushed commit, a branch, an untracked file.
+ */
 function mutate(fx) {
+  fs.writeFileSync(path.join(fx.repo, 'a.txt'), 'overwritten in place\n');
   commitFile(fx.repo, 'leak.txt', 'leak\n');
   git(['push', '-q', 'origin', 'main'], fx.repo);
   git(['branch', 'leaky'], fx.repo);
@@ -78,5 +83,15 @@ describe('makeFleetRepo: template copies are isolated', () => {
     const before = probe(victim);
     mutate(actor);
     assert.notDeepEqual(probe(victim), before, 'a shared origin must be detected, or the isolation case above proves nothing');
+  });
+
+  it('negative control: an in-place overwrite IS seen through a hard-linked working file, so the tracked-file probe can fail', () => {
+    const victim = makeFleetRepo();
+    const actor = makeFleetRepo();
+    fs.rmSync(path.join(actor.repo, 'a.txt'));
+    fs.linkSync(path.join(victim.repo, 'a.txt'), path.join(actor.repo, 'a.txt')); // the defect a link-based copy would be
+    const before = probe(victim);
+    fs.writeFileSync(path.join(actor.repo, 'a.txt'), 'overwritten in place\n');
+    assert.notEqual(probe(victim).tracked, before.tracked, 'the overwrite must reach the victim, or `tracked` proves nothing');
   });
 });

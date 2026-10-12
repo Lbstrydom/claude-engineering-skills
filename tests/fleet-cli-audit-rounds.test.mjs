@@ -13,7 +13,7 @@ import { git } from './helpers/git.mjs';
 import {
   FLEET_CLI, addBranch, cleanupFleetRoots, commitFile, prRow, runFleetAsync, scrubbedEnv, tmpRoot, writeFile,
 } from './helpers/fleet-repo.mjs';
-import { fleetDirOf, land, readyBranch, sessionFiles, sessionRec, setup } from './helpers/fleet-cli-harness.mjs';
+import { fleetDirOf, readyBranch, sessionFiles, sessionRec, setup } from './helpers/fleet-cli-harness.mjs';
 import { startOidFor } from '../scripts/lib/fleet/commands.mjs';
 import { SessionSchema, writeSession } from '../scripts/lib/fleet/registry.mjs';
 import { quoteArg, renderCommand } from '../scripts/lib/fleet/shell-quote.mjs';
