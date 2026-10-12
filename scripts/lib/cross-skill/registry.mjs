@@ -812,6 +812,17 @@ export const REGISTRY = Object.freeze([
     load: () => import('./commands/ship.mjs').then((m) => m.lockWithTestCmd),
   },
   {
+    name: 'close-finding',
+    flags: ['finding', 'as', 'reason', 'commit', 'repo', 'repo-id'],
+    positionals: 'none', payload: 'none',
+    // ambient-ok like repoint-regression-spec: a per-repo write with no
+    // worksheet; the handler refuses outright when identity is unresolvable.
+    scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop',
+    degradeShape: { closed: false },
+    reportsFailure: { all: true, reason: 'every refusal returns {ok:false, error} naming what the operator must supply or which repo owns the finding; a throw would discard that.' },
+    load: () => import('./commands/ship.mjs').then((m) => m.closeFindingCmd),
+  },
+  {
     name: 'repoint-regression-spec',
     flags: ['finding', 'test', 'description', 'repo', 'repo-id', { name: 'delete', kind: 'boolean' }],
     positionals: 'none', payload: 'none',
