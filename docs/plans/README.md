@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**7 active · 246 terminal · 33 audit summaries · 1 parked · 5 reference docs**
+**8 active · 249 terminal · 33 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -25,6 +25,7 @@ This is the list to read when asking "what is in flight?".
 | [The dashboard's debt queue treats "no local cache" as an expected absence](./dashboard-debt-sandbox-absence.md) | `In Progress` | implemented on `fix/dashboard-debt-sandbox-absence`; under /audit-code |
 | [The debt reporting CLIs read the private store, not the local cache](./debt-readers-ask-store.md) | `In Progress` | implemented on `fix/debt-readers-ask-store`; under /audit-code |
 | [fleet — catch abandoned worktree work regularly, and remove account-switch friction](./fleet-unclaimed-work-and-switch-friction.md) | `Draft` |  |
+| [pre-push — a sanctioned lane for `archive/*` refs](./prepush-archive-lane.md) | `In Progress` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Ship trains — batched, impact-based `/ship --train`](./ship-trains.md) | `Approved` |  |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
@@ -58,7 +59,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 243 completed plans</summary>
+<summary>Show all 246 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -107,6 +108,7 @@ source comments that no docs linter sees — stays valid.
 | [`/brainstorm --with-arch` — codebase architecture context for external LLMs](./brainstorm-arch-context.md) | `Complete` |  |
 | [Brainstorm-skill upgrades + Quick-fix detection (v1)](./brainstorm-quickfix-v1.md) | `Complete` | shipped — both halves: `/brainstorm` enhancements (see brainstorm-and-arch-discoverability) + quick-fix… |
 | [Campaign Arm-State and Snapshot-Identity Integrity](./campaign-arm-state-and-identity-integrity.md) | `Complete` | implemented via `/cycle --autonomous` (3 clusters, each audited to convergence), consolidated Gemini gate… |
+| [CLI contract hardening — strict boolean flags, emit ordering, replay CLI honesty](./cli-contract-hardening-flags-emit-replay.md) | `Complete` | plan audited: GPT 2 rounds NEEDS_REVISION to READY_TO_IMPLEMENT; Gemini plan gate APPROVE, round 1 |
 | [Wire the Cloud FP-Pattern Read Loop into Audit Suppression](./cloud-fp-suppression-read-loop.md) | `Complete` | implemented + audited. Plan audit: 5 GPT + 2 Gemini rounds. Code audit: 5 GPT rounds + 1 deliberation + 3… |
 | [Comparison-Tooling Consolidation](./comparison-tooling-consolidation.md) | `Complete` | all clusters (A/A′, B, C, D) implemented, individually audited to convergence, and the mandatory… |
 | [Concern identity for re-raise suppression, and a one-week observation window](./concern-identity-suppression.md) | `Complete` | readout done 2026-09-29 (§3.1): hard-suppress fires, no tuning |
@@ -153,6 +155,7 @@ source comments that no docs linter sees — stays valid.
 | [Background-safe & provider-agnostic final-review gate](./final-review-background-safe-provider-agnostic.md) | `Complete` |  |
 | [Close the final-review credit loop + admit a cheap shadow](./final-review-credit-and-cheap-shadow.md) | `Complete` |  |
 | [Final-review credit — a ruling is a ruling on either axis, and a re-run must not erase it](./final-review-credit-projection.md) | `Complete` |  |
+| [Final-review debt suppression — make the dead stage live, and make it correct](./final-review-debt-suppression-revival.md) | `Complete` |  |
 | [Hunk windows for the final-review envelope and the tiered discovery read](./final-review-hunk-windows.md) | `Complete` |  |
 | [Reduced-Scope Second Final Reviewer + 4-Arm Cost/Yield Campaign](./final-review-scoped-second-reviewer.md) | `Complete` | Clusters A–C implemented via `/cycle --autonomous`, consolidated Gemini gate APPROVE in 2 rounds (§10b),… |
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `Complete` | VERDICT: KEEP opus (SELECT opus, the incumbent; no challenger cleared the relative floor). N reached 12/12… |
@@ -170,6 +173,7 @@ source comments that no docs linter sees — stays valid.
 | [Gate-contract authoring — bind the surveyed gates, ratchet the rest](./gate-contract-authoring.md) | `Complete` |  |
 | [Gate inventory — the 13 uncontracted skills](./gate-contract-expansion-inventory.md) | `Complete` | status corrected 2026-07-22 (was stale at `In Progress`). Every candidate across all 13 skills has a… |
 | [Gate-contract expansion — bind stated gates to enforcers](./gate-contract-expansion.md) | `Complete` | status corrected 2026-07-22 (was stale at `Draft`). All phases shipped across `0f0e2b2`→`5d04a35`: Phase 1… |
+| [pre-push gate cost, slice 1 — make per-file cost visible, add `test:preflight`](./gate-cost-slice-1.md) | `Complete` | PR #212 open; merge pending |
 | [Gate-honesty defects confirmed by blind adjudication](./gate-honesty-adjudicated-defects.md) | `Complete` |  |
 | [An honest `AI-Gate` value for an audited-then-remediated ship](./gate-taxonomy-remediated-ships.md) | `Complete` |  |
 | [Gemini 3.1 Pro Final Reviewer](./gemini-final-reviewer.md) | `Complete` |  |

@@ -237,6 +237,43 @@ describe('recordFinalReviewFindings — replay preserves rulings (integration)',
     assert.deepEqual(rows, [], 'no findings rows either — both facts agree');
   });
 
+  // ── queue burn-down 2026-10-02 (store cluster) ────────────────────────────
+
+  it('Phase 10: a primary write that FAILS persists no verdict — the run metadata is written only after tx1 commits', async () => {
+    const runId = await freshRun();
+    const res = await mod.recordFinalReviewFindings(runId, {
+      // chk_source_kind — a genuine constraint violation inside tx1.
+      primary: [{ ...finding('fp-p10-bad'), classification: { sourceKind: 'NOT-A-REAL-KIND' } }],
+      shadow: [], shadowRan: false, verdict: 'APPROVE', models: { primaryModel: 'gpt-test' },
+    });
+    assert.deepEqual(res, { findingsRecorded: false, verdictPersisted: false });
+    const run = await q.one(`SELECT gemini_verdict FROM audit_runs WHERE id = $1`, [runId]);
+    assert.equal(run.gemini_verdict, null, 'a verdict with no findings behind it is the orphan this ordering prevents');
+  });
+
+  it('round-3 H4: a MIXED batch (some findings dropped) skips the prune and names the drop count', async () => {
+    const runId = await freshRun();
+    await mod.recordFinalReviewFindings(runId, { primary: [finding('fp-mix-1'), finding('fp-mix-2')], shadow: [], shadowRan: false });
+    const res = await mod.recordFinalReviewFindings(runId, {
+      primary: [finding('fp-mix-1'), finding('fp-mix-bad', { severity: null })], shadow: [], shadowRan: false, verdict: 'APPROVE',
+    });
+    assert.deepEqual(res, { findingsRecorded: true, verdictPersisted: true, primaryDroppedCount: 1, shadowDroppedCount: 0, shadowWriteFailed: false });
+    const rows = await rowsFor(runId, 'final-review');
+    assert.deepEqual(rows.map((r) => r.fp).sort(), ['fp-mix-1', 'fp-mix-2'],
+      'fp-mix-2 was not re-examined by a complete snapshot — a degraded batch must not prune it');
+  });
+
+  it('Phase 3: one batch carrying the same fingerprint in two buckets persists BOTH rows (dedup keys on the full identity)', async () => {
+    const runId = await freshRun();
+    await mod.recordFinalReviewFindings(runId, {
+      primary: [], shadowRan: true,
+      shadow: [finding('fp-twobkt', { _bucket: 'both' }), finding('fp-twobkt', { _bucket: 'shadow-only' })],
+    });
+    const rows = await rowsFor(runId, 'final-review-shadow');
+    assert.deepEqual(rows.map((r) => `${r.fp}/${r.bucket}`), ['fp-twobkt/both', 'fp-twobkt/shadow-only'],
+      'a fingerprint-only intra-batch dedup silently dropped the second bucket before the bucket-scoped upsert ran');
+  });
+
   it('a genuinely EMPTY primary (nothing raised this round) still persists its verdict — not the same case as H16', async () => {
     const runId = await freshRun();
     const res = await mod.recordFinalReviewFindings(runId, {

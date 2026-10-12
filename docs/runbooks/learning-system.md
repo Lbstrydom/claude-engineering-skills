@@ -60,10 +60,11 @@ with `npm run learning:weekly-review -- --repo <name>`.
   read "did nothing" as "rebuilt".
 - `npm run learning:backfill-outcomes` — Phase 2; drain hits JSONL into
   `learning_decisions`, then resolve unresolved outcomes from file state
-- `npm run learning:replay -- <decision_type> [--policy <path>] [--since 30d] [--format markdown]`
+- `npm run learning:replay -- pass_selection --since 30d --format markdown`
   — Phase 3; counterfactual evaluation of a candidate policy against historical
   decisions. Built-in reward fns: `pass_selection`, `convergence_predict`,
-  `arch_memory_band` (per master plan §5).
+  `arch_memory_band` (per master plan §5). The `--` after the script name is
+  load-bearing: without it npm swallows the flags.
 
 ## Live quickfix learner (Phase 2)
 
@@ -117,16 +118,21 @@ reward functions encode the master plan §5 promotion gates for all three decisi
 
 **Replay CLI** (`scripts/learning/replay.mjs`):
 ```
-npm run learning:replay <decision_type> \
-  [--policy <module-path>] \
-  [--baseline <module-path>] \
-  [--since 30d] \
-  [--repo-id <uuid>] \
-  [--format json|markdown]
+npm run learning:replay -- pass_selection --policy my-policy.mjs --since 30d --repo-id 6461a693-6690-4bf3-98ee-14c0385cc357 --format markdown
 ```
-Custom policy modules export either `default` or `policy` as a function mapping
-`(context) → choice`. Stdout is JSON by default; markdown switch produces a comparison
-table.
+Every flag takes a value and is optional (`--policy`, `--baseline`, `--since`,
+`--repo-id` / `--repo`, `--format json|markdown`); `--name value` and `--name=value` are
+both read. `--repo-id` is an `audit_repos` UUID — **not** a repo name or `owner/repo`
+slug, which is refused. Custom policy modules export either `default` or `policy` as a
+function mapping `(row) → choice`. Stdout is JSON by default; markdown switch produces a
+comparison table.
+
+**Reading the result honestly.** A refusal or a failure is an `{"ok":false,"error":...}`
+envelope on stdout and exit 1 (an unknown decision type, a bad `--repo-id`/`--since`/
+`--format`, a policy module that will not load or that throws). `"sampleSize": 0` is **not**
+"candidate equals baseline": it means nothing was compared — the store may be off or
+unreadable, the window or repo filter may match nothing, or none were recorded. It prints a
+`WARNING` on stderr (and a banner in the markdown report), and the JSON stays `ok:true`.
 
 **Promotion recipe** (per master plan §5): collect ≥30 days of telemetry, write a
 candidate policy fn, run replay, validate metrics (e.g. `pass_selection` ≤5% recall

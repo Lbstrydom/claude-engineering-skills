@@ -97,6 +97,28 @@ describe('click-test perceivability — drift', () => {
     assert.equal(countDecls(`${scannerSrc}\n${decl}el) { return true; }`), 2);
   });
 
+  it('the fence defines the predicate by NO other binding form either — `var` and bare assignment shadow a hoisted function silently', () => {
+    // The sibling test above counts `function __isPerceivable(` only. A later
+    // `var __isPerceivable = ...` or bare `__isPerceivable = ...` in the same fence
+    // does NOT collide with the hoisted function (var + function of one name are
+    // legal; an assignment is just a write), it simply overwrites it at run time,
+    // so the scanner would run the wrong predicate while the drift test stayed
+    // green. (`const`/`let` of the same name are a loud SyntaxError, counted
+    // anyway.) Count the bindings in any declaration form (final-review shadow 1cbe9071).
+    const countBindings = (src) => (src.match(
+      new RegExp(`(?:function\\s+${PERCEIVABLE_FN_NAME}\\s*\\(|(?:const|let|var)\\s+${PERCEIVABLE_FN_NAME}\\s*=|\\b${PERCEIVABLE_FN_NAME}\\s*=(?!=))`, 'g'),
+    ) || []).length;
+    assert.equal(countBindings(scannerSrc), 1,
+      `expected exactly one ${PERCEIVABLE_FN_NAME} binding in the scanner fence, found ${countBindings(scannerSrc)}`);
+    // Instrument check: the same count flags each shadowing form the function-only count cannot see.
+    for (const shadow of [`var ${PERCEIVABLE_FN_NAME} = () => true;`, `${PERCEIVABLE_FN_NAME} = () => true;`]) {
+      const mutated = `${scannerSrc}\n${shadow}`;
+      assert.equal(countBindings(mutated), 2, `must catch: ${shadow}`);
+      assert.equal(mutated.split(`function ${PERCEIVABLE_FN_NAME}(`).length - 1, 1,
+        `control: the existing function-only count is blind to: ${shadow}`);
+    }
+  });
+
   it('push() applies the predicate and preserves the pre-cap severity', () => {
     assert.match(scannerSrc, /const perceivable = __isPerceivable\(el\)/,
       'push() must call __isPerceivable — it is the single call site that tags every kind');

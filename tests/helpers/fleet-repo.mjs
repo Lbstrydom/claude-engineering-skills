@@ -34,6 +34,7 @@ export function tmpRoot(prefix = 'fleet-') {
   return d;
 }
 export function cleanupFleetRoots() {
+  templates.clear(); // the template dirs are in `roots` too; a later makeFleetRepo rebuilds them
   for (const d of roots.splice(0)) {
     try {
       // junctions to node_modules etc. are unlinked by git worktree remove; best effort here
@@ -55,12 +56,8 @@ export function commitFile(repo, rel, body, msg = `edit ${rel}`) {
   return git(['rev-parse', 'HEAD'], repo);
 }
 
-/**
- * A repo on `main` with a bare `origin` (already pushed). The integration
- * worktree root is `<root>/wt` (outside both the repo and `.git`).
- */
-export function makeFleetRepo({ files = { 'a.txt': 'a\n', 'b.txt': 'b\n', 'c.txt': 'c\n' }, fleetConfig = null } = {}) {
-  const root = tmpRoot();
+/** Build the repo + bare origin under `root` from scratch (nine git spawns). */
+function buildFleetRepo(root, files) {
   const origin = path.join(root, 'origin.git');
   const repo = path.join(root, 'repo');
   fs.mkdirSync(repo);
@@ -72,6 +69,36 @@ export function makeFleetRepo({ files = { 'a.txt': 'a\n', 'b.txt': 'b\n', 'c.txt
   git(['commit', '-q', '-m', 'init'], repo);
   git(['remote', 'add', 'origin', origin], repo);
   git(['push', '-q', '-u', 'origin', 'main'], repo);
+  return { origin, repo };
+}
+
+/**
+ * One pristine fixture per distinct `files` map per test PROCESS, built once and
+ * never handed out — every `makeFleetRepo` gets a full byte copy of it. The one
+ * absolute path baked into the copy (the repo's `remote.origin.url`, pointing at
+ * the TEMPLATE's bare origin) is re-pointed at the copy's own origin, so a push
+ * from one test can never reach another test's (or the template's) origin.
+ * Isolation is pinned by tests/fleet-cli-fixture.test.mjs.
+ */
+const templates = new Map();
+function templateFor(files) {
+  const key = JSON.stringify(Object.entries(files));
+  if (!templates.has(key)) templates.set(key, buildFleetRepo(tmpRoot('fleet-tpl-'), files));
+  return templates.get(key);
+}
+
+/**
+ * A repo on `main` with a bare `origin` (already pushed). The integration
+ * worktree root is `<root>/wt` (outside both the repo and `.git`).
+ */
+export function makeFleetRepo({ files = { 'a.txt': 'a\n', 'b.txt': 'b\n', 'c.txt': 'c\n' }, fleetConfig = null } = {}) {
+  const tpl = templateFor(files);
+  const root = tmpRoot();
+  const origin = path.join(root, 'origin.git');
+  const repo = path.join(root, 'repo');
+  fs.cpSync(tpl.origin, origin, { recursive: true });
+  fs.cpSync(tpl.repo, repo, { recursive: true });
+  git(['remote', 'set-url', 'origin', origin], repo);
   if (fleetConfig) writeFile(repo, '.fleet.json', JSON.stringify(fleetConfig));
   return { root, repo, origin, wtRoot: path.join(root, 'wt') };
 }

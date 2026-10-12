@@ -1,7 +1,7 @@
 {
   "_description": "Reachable `process.exit()` sites preceded by a stdout write, per scripts/check-stdout-flush.mjs. Drift-only ratchet: a net-new site fails, and so does an unrecorded shrink. Shrink this list; never grow it. Re-baseline deliberately with --update. The fix for an entry is `await finishAndExit(code)` from scripts/lib/cli-io.mjs.",
-  "total": 213,
-  "envelope": 102,
+  "total": 212,
+  "envelope": 101,
   "files": {
     "scripts/audit-full.mjs": 4,
     "scripts/audit-loop.mjs": 2,
@@ -60,7 +60,6 @@
     "scripts/install-prepush-hook.mjs": 2,
     "scripts/install-skills.mjs": 2,
     "scripts/learning/backfill-outcomes.mjs": 1,
-    "scripts/learning/replay.mjs": 1,
     "scripts/learning/weekly-review.mjs": 1,
     "scripts/lib/arch-memory/calibrate.mjs": 2,
     "scripts/lib/audit/detector.mjs": 1,
@@ -242,7 +241,6 @@
     "scripts/install-skills.mjs::reconcileJournals[loop/if>then]::console.log->exit(1)#1",
     "scripts/install-skills.mjs::runUninstallLegacy::console.log->reconcileJournals()->exit(1)#1",
     "scripts/learning/backfill-outcomes.mjs::<module>[if>then]::process.stdout.write->exit(dynamic)#1",
-    "scripts/learning/replay.mjs::<module>[if>then]::runReplayCli() → stdout->exit(dynamic)#1",
     "scripts/learning/weekly-review.mjs::<module>[if>then]::process.stdout.write->exit(dynamic)#1",
     "scripts/lib/arch-memory/calibrate.mjs::main[if>then]::process.stdout.write->exit(3)#1",
     "scripts/lib/arch-memory/calibrate.mjs::main::process.stdout.write->exit(dynamic)#1",
