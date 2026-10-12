@@ -21,7 +21,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { normalizeGeminiUsage } from '../scripts/lib/gemini-usage.mjs';
 import { _internals as efficacy } from '../scripts/lib/efficacy-lints.mjs';
+import _traverse from '@babel/traverse';
 import { parseSource } from '../scripts/lib/ast.mjs';
+
+// @babel/traverse ships CJS; under ESM the callable lands on .default (same
+// normalisation as accepted-debt-check.mjs).
+const traverse = _traverse?.default?.default ?? _traverse?.default ?? _traverse;
 
 /**
  * Source with comments and string literals blanked, so the census reads CODE.
@@ -126,8 +131,10 @@ describe('discovery census — no second place may decide what billed output mea
    *
    * A read is routed iff
    *   - it is itself the argument of `normalizeGeminiUsage(...)`, or
-   *   - it is assigned to a local `N` and `normalizeGeminiUsage(N)` is called in
-   *     the SAME function (the streaming-accumulator shape), or
+   *   - it is assigned to a local whose BINDING (resolved by Babel's scope
+   *     analysis, so a same-named parameter in a nested or sibling function is a
+   *     different binding) is passed to `normalizeGeminiUsage(...)` somewhere in
+   *     its scope - the streaming-accumulator shape, closures included, or
    *   - it is only an existence test (`if (x.usageMetadata)`, `!x.usageMetadata`,
    *     `x.usageMetadata ? a : b`), which hands nothing over.
    * An unparseable file is reported, never skipped: a census that cannot read a
@@ -136,48 +143,37 @@ describe('discovery census — no second place may decide what billed output mea
   function unroutedUsageReads(source) {
     const { ast, error } = parseSource(source);
     if (!ast) return [`(unparseable: ${error})`];
-    const FUNCTIONS = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression', 'ObjectMethod', 'ClassMethod', 'Program']);
     const isOracleCall = (n) => n?.type === 'CallExpression' && n.callee?.type === 'Identifier' && n.callee.name === 'normalizeGeminiUsage';
-    const isUsageRead = (n) => (n.type === 'MemberExpression' || n.type === 'OptionalMemberExpression')
-      && !n.computed && n.property?.name === 'usageMetadata';
 
-    // Pass 1: for every function scope, the identifiers handed to the oracle in it.
-    const oracleArgs = new Map();
-    // Pass 2 input: every usage read with its parent and its enclosing function.
+    const routedBindings = new Set();
     const reads = [];
-    const visit = (node, parent, scopes) => {
-      if (!node || typeof node.type !== 'string') return;
-      const here = FUNCTIONS.has(node.type) ? [...scopes, node] : scopes;
-      if (isOracleCall(node)) {
-        for (const a of node.arguments) {
+    traverse(ast, {
+      CallExpression(p) {
+        if (!isOracleCall(p.node)) return;
+        for (const a of p.node.arguments) {
           if (a.type !== 'Identifier') continue;
-          for (const s of here) {
-            if (!oracleArgs.has(s)) oracleArgs.set(s, new Set());
-            oracleArgs.get(s).add(a.name);
-          }
+          const binding = p.scope.getBinding(a.name);
+          if (binding) routedBindings.add(binding);
         }
-      }
-      if (isUsageRead(node)) reads.push({ node, parent, scope: here.at(-1) });
-      for (const key of Object.keys(node)) {
-        if (key === 'loc' || key === 'extra' || key.endsWith('Comments')) continue;
-        const child = node[key];
-        if (Array.isArray(child)) child.forEach((c) => visit(c, node, here));
-        else if (child && typeof child.type === 'string') visit(child, node, here);
-      }
-    };
-    visit(ast.type === 'File' ? ast.program : ast, null, []);
+      },
+      'MemberExpression|OptionalMemberExpression'(p) {
+        if (!p.node.computed && p.node.property?.name === 'usageMetadata') reads.push(p);
+      },
+    });
 
     const lines = source.split('\n');
     const out = [];
-    for (const { node, parent, scope } of reads) {
+    for (const p of reads) {
+      const { node, parent } = p;
       if (isOracleCall(parent)) continue;
-      const local = parent?.type === 'VariableDeclarator' && parent.init === node && parent.id.type === 'Identifier' ? parent.id.name
-        : parent?.type === 'AssignmentExpression' && parent.right === node && parent.left.type === 'Identifier' ? parent.left.name
+      const local = parent.type === 'VariableDeclarator' && parent.init === node && parent.id.type === 'Identifier' ? parent.id.name
+        : parent.type === 'AssignmentExpression' && parent.right === node && parent.left.type === 'Identifier' ? parent.left.name
           : null;
-      if (local && oracleArgs.get(scope)?.has(local)) continue;
-      const existenceTest = (parent?.type === 'IfStatement' && parent.test === node)
-        || (parent?.type === 'ConditionalExpression' && parent.test === node)
-        || (parent?.type === 'UnaryExpression' && parent.operator === '!');
+      const binding = local ? p.scope.getBinding(local) : null;
+      if (binding && routedBindings.has(binding)) continue;
+      const existenceTest = (parent.type === 'IfStatement' && parent.test === node)
+        || (parent.type === 'ConditionalExpression' && parent.test === node)
+        || (parent.type === 'UnaryExpression' && parent.operator === '!');
       if (existenceTest) continue;
       const line = node.loc?.start?.line ?? 0;
       out.push(`${line}: ${lines[line - 1]?.trim()}`);
@@ -220,6 +216,19 @@ describe('discovery census — no second place may decide what billed output mea
       'export function bad(other) { const usage = other.usageMetadata; return usage; }',
     ].join('\n');
     assert.deepEqual(unroutedUsageReads(code), ['3: export function bad(other) { const usage = other.usageMetadata; return usage; }']);
+  });
+
+  it('NEGATIVE CONTROL: a nested function whose PARAMETER shadows the name does not route the outer raw local; a real closure reference does', () => {
+    const shadowed = [
+      ORACLE,
+      'export function bad(resp) { const usage = resp.usageMetadata; function inner(usage) { return normalizeGeminiUsage(usage); } return usage; }',
+    ].join('\n');
+    assert.equal(unroutedUsageReads(shadowed).length, 1, 'the inner parameter is a different binding');
+    const closure = [
+      ORACLE,
+      'export function ok(chunks) { let acc = null; for (const c of chunks) acc = c.usageMetadata; return () => normalizeGeminiUsage(acc); }',
+    ].join('\n');
+    assert.deepEqual(unroutedUsageReads(closure), [], 'normalising the SAME binding from a closure is routed');
   });
 
   it('NEGATIVE CONTROL: calling the oracle on something ELSE on the same line does not excuse the raw read beside it', () => {
