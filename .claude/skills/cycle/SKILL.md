@@ -336,7 +336,7 @@ For each remaining cluster in declared order:
 3. **Audit envelope**: capture `clusterStartRef` (`vcs.gitCommitSha`) when implementation begins, write the cluster's derived scope one-path-per-line to a scope file, then run the two commands below. On a resume with no recorded `clusterStartRef`, require `--baseline-ref <sha>` or fall back to union-diff — **never** default the base to HEAD (empty diff = silent skip). Round policy is `/audit-code`'s own cap — no new policy here.
 
    > **`--files` is the ONLY flag that scopes the audit.** `--changed` is the R2+
-   > impact set for reopen detection and `--diff` is annotation context; neither
+   > impact set for reopen detection and `--diff` is hunk evidence; neither
    > bounds what the model reads. Passing the derived scope as `--changed` and
    > expecting it to scope is the defect this recipe was rewritten to fix —
    > measured 2026-08-13, a per-cluster audit declaring 11 files audited **52**,
@@ -364,7 +364,8 @@ INFRA=$(node -p "require('./$SCOPE_JSON').allowInfraScopeRequired ? '--allow-inf
 node scripts/openai-audit.mjs code "$PLAN" --scope diff --files "$FILES" --changed "$FILES" --diff "$PATCH" $INFRA
 #   --files   : THE scoping flag — an allowlist; makes --scope a no-op
 #   --changed : R2+ reopen/impact detection only — does NOT scope
-#   --diff    : annotation context only — does NOT scope; must be a real file
+#   --diff    : hunk evidence — centres every round's read windows on the change
+#               (R2+ also annotates); does NOT scope; must be a real file
 ```
 <!-- /cycle:cluster-audit-command -->
 

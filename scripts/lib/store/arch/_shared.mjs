@@ -51,9 +51,11 @@ export function chunk(arr, n) {
  * or renamed. A full refresh drops it (`extract.mjs` counts an unresolved import
  * as `unresolved`, never persisting it), so an incremental that carried it on the
  * importer key alone diverged from the full one. `targetPathOf` names the second
- * endpoint; it is gated by `fileStillExists` ONLY — a TOUCHED target that still
- * exists leaves the edge valid (the importer's text still imports it), so
- * `touchedFileSet` deliberately does not apply to it.
+ * endpoint; it is gated by `fileStillExists` and by `isDisowned` — extraction
+ * drops an edge when EITHER endpoint is disowned (`extract.mjs`), so a carry that
+ * asked only about the importer re-admitted the edges it refused. A TOUCHED target
+ * that still exists leaves the edge valid (the importer's text still imports it),
+ * so `touchedFileSet` deliberately does not apply to it.
  *
  * @param {object[]} rows
  * @param {{pathOf?: (r: object) => string, targetPathOf?: ((r: object) => string)|null,
@@ -69,6 +71,7 @@ export function retainCarriedRows(rows, { pathOf = (r) => r.file_path, targetPat
     if (fileStillExists && !fileStillExists(p)) return false;
     if (isDisowned && isDisowned(p)) return false;
     if (targetPathOf && fileStillExists && !fileStillExists(targetPathOf(r))) return false;
+    if (targetPathOf && isDisowned && isDisowned(targetPathOf(r))) return false;
     return true;
   });
 }

@@ -453,16 +453,30 @@ export async function upsertComparison(rawArgs) {
   const args = UpsertComparisonArgsSchema.parse(rawArgs);
   if (!await isCloudEnabled()) return { ok: true, cloud: false, id: null };
   try {
+    // The subject (corpus revision / audited sha) is outside both the digest and
+    // the unique key, so the conflict arm must not overwrite it: it used to
+    // `SET subject_ref = EXCLUDED.subject_ref`, which resumed the cohort for a
+    // DIFFERENT subject and relabelled it — two subjects' runs aggregated as
+    // one. The no-op SET + WHERE resumes only a SAME-subject cohort (jsonb
+    // equality, NULL matching NULL); a different subject returns no row.
     const hit = await one(
       `INSERT INTO model_eval_comparisons (repo_id, comparison_key, config_digest, lock_schema_version, role, subject_ref)
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (repo_id, comparison_key, config_digest, lock_schema_version)
-         DO UPDATE SET subject_ref = EXCLUDED.subject_ref
+         DO UPDATE SET subject_ref = model_eval_comparisons.subject_ref
+         WHERE model_eval_comparisons.subject_ref IS NOT DISTINCT FROM EXCLUDED.subject_ref
        RETURNING id`,
       [args.repoId, args.comparisonKey, args.configDigest, args.lockSchemaVersion, args.role,
         args.subjectRef == null ? null : JSON.stringify(args.subjectRef)],
     );
-    return { ok: true, cloud: true, id: hit?.id ?? null };
+    if (!hit?.id) {
+      return {
+        ok: false, cloud: true, id: null,
+        error: `comparison "${args.comparisonKey}" already exists at this config digest for a DIFFERENT subject — `
+          + 'a cohort is one subject; give the manifest a new id to compare against this subject',
+      };
+    }
+    return { ok: true, cloud: true, id: hit.id };
   } catch (err) {
     process.stderr.write(`  [model-eval] upsertComparison failed: ${err.message}\n`);
     return { ok: false, cloud: true, error: err.message, id: null };

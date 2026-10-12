@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**8 active · 248 terminal · 33 audit summaries · 1 parked · 5 reference docs**
+**8 active · 249 terminal · 33 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -59,7 +59,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 245 completed plans</summary>
+<summary>Show all 246 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -173,6 +173,7 @@ source comments that no docs linter sees — stays valid.
 | [Gate-contract authoring — bind the surveyed gates, ratchet the rest](./gate-contract-authoring.md) | `Complete` |  |
 | [Gate inventory — the 13 uncontracted skills](./gate-contract-expansion-inventory.md) | `Complete` | status corrected 2026-07-22 (was stale at `In Progress`). Every candidate across all 13 skills has a… |
 | [Gate-contract expansion — bind stated gates to enforcers](./gate-contract-expansion.md) | `Complete` | status corrected 2026-07-22 (was stale at `Draft`). All phases shipped across `0f0e2b2`→`5d04a35`: Phase 1… |
+| [pre-push gate cost, slice 1 — make per-file cost visible, add `test:preflight`](./gate-cost-slice-1.md) | `Complete` | PR #212 open; merge pending |
 | [Gate-honesty defects confirmed by blind adjudication](./gate-honesty-adjudicated-defects.md) | `Complete` |  |
 | [An honest `AI-Gate` value for an audited-then-remediated ship](./gate-taxonomy-remediated-ships.md) | `Complete` |  |
 | [Gemini 3.1 Pro Final Reviewer](./gemini-final-reviewer.md) | `Complete` |  |

@@ -51,9 +51,8 @@ import './lib/audit-store-writers.mjs'; // side-effecting: the registry's only b
 // is not a declared edge, and the sibling `debt-memory.mjs` reaches the store
 // the same way. Refactor before declaring an edge.
 import {
-  initLearningStore, isCloudEnabled, resolveRepoForStore, readReconciliationSnapshot,
+  initLearningStore, isCloudEnabled, resolveRepoForStoreResult, readReconciliationSnapshot,
 } from './learning-store.mjs';
-import { generateRepoProfile } from './lib/context.mjs';
 
 const KNOWN_FLAGS = [
   '--push', '--prune-resolved', '--json', '--ledger', '--help', '-h',
@@ -118,6 +117,33 @@ function countUndrainedSpills() {
   }
 }
 
+/**
+ * The `audit_repos` row this reconcile reads and writes, or WHY there is none.
+ *
+ * `repoRowId`, NOT `repoUuid` — the resolver returns BOTH, and they are
+ * different columns: `debt_entries.repo_id` references `audit_repos(id)`, which
+ * is `repoRowId`. Passing the uuid yields an authoritative-looking empty result
+ * for a repo that was never queried. Same convention as debt-resolve.mjs and
+ * debt-auto-capture.mjs.
+ *
+ * The discriminated resolver, because the reason is the output: this used
+ * `resolveRepoForStore(...).catch(() => null)`, so a store outage refused as
+ * `repo-identity-unresolved` — an identity problem that did not exist.
+ *
+ * No `profile`: this is an identity lookup, not an audit, and a profile stamps
+ * `audit_repos.last_audited_at` (store/repo.mjs `auditStampCols`) — every
+ * reconcile would have recorded itself as an audit.
+ *
+ * @returns {Promise<{repoId: string|null, reason: string|null, error?: string}>}
+ */
+async function resolveStoreRepo() {
+  if (!await isCloudEnabled()) return { repoId: null, reason: 'cloud-off' };
+  const ref = await resolveRepoForStoreResult({});
+  if (ref.kind === 'resolved') return { repoId: ref.repoRowId, reason: null };
+  if (ref.kind === 'error') return { repoId: null, reason: 'repo-identity-error', error: ref.error };
+  return { repoId: null, reason: ref.kind === 'cloud-off' ? 'cloud-off' : 'repo-identity-unresolved' };
+}
+
 async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
@@ -155,21 +181,15 @@ async function main() {
 
   // ── Store side ────────────────────────────────────────────────────────────
   await initLearningStore();
-  let repoId = null;
-  if (await isCloudEnabled()) {
-    const profile = await generateRepoProfile();
-    // `repoRowId`, NOT `repoUuid` — the resolver returns BOTH, and they are
-    // different columns: `debt_entries.repo_id` references `audit_repos(id)`,
-    // which is `repoRowId`. Passing the uuid yields an authoritative-looking
-    // empty result for a repo that was never queried. Same convention as
-    // debt-resolve.mjs:96-97 and debt-auto-capture.mjs:231-232.
-    const ref = await resolveRepoForStore({ profile }).catch(() => null);
-    repoId = ref?.repoRowId ?? null;
-  }
-  const snapshot = await readReconciliationSnapshot(repoId);
+  const identity = await resolveStoreRepo();
+  const repoId = identity.repoId;
+  const snapshot = identity.repoId
+    ? await readReconciliationSnapshot(repoId)
+    : { available: false, reason: identity.reason, rows: [] };
   if (!snapshot.available) {
     const out = {
       ok: false, verdict: 'unverifiable', reason: snapshot.reason, action: 'refused',
+      ...(identity.error ? { error: identity.error } : {}),
       localEntries: ledger.entries.length,
     };
     process.stdout.write(opts.jsonMode ? `${JSON.stringify(out)}\n`

@@ -57,7 +57,8 @@ export function collectCandidateAnchorFiles(envelopes) {
  *
  * @param {import('../schemas.mjs').AuditRunContext} ctx
  * @param {Array<import('./candidate-envelope.mjs').AuditCandidateEnvelope>} envelopes
- * @param {{repoRoot?: string}} [opts] - explicit repo root (finding aa68982d:
+ * @param {{repoRoot?: string, getImporters?: Function}} [opts] - `getImporters`
+ *   replaces the store read (test seam). `repoRoot` is the explicit repo root (finding aa68982d:
  *   omitted, the default, is byte-identical to the prior `process.cwd()`
  *   coupling — every existing call site is unaffected. A caller running from
  *   a different working directory than the repo it means to analyze (a batch
@@ -117,26 +118,43 @@ export async function buildStage0RelevanceContext(ctx, envelopes, opts = {}) {
   const STAGE0_IMPACT_CONCURRENCY = clampAdjacencyBound(
     process.env.STAGE0_IMPACT_CONCURRENCY, { min: 1, max: 64, dflt: 8, name: 'STAGE0_IMPACT_CONCURRENCY' },
   );
+  // `opts.getImporters` is a test seam (default: the real store read).
+  const getImporters = opts.getImporters ?? getFreshImportersOrNull;
   let nextIndex = 0;
+  let failed = 0;
+  let firstFailure = null;
   const worker = async () => {
     let i;
     while ((i = nextIndex++) < candidateFiles.length) {
       const filePath = candidateFiles[i];
       let result = null;
       try {
-        result = await getFreshImportersOrNull({
+        result = await getImporters({
           repoUuid,
           headSha: ctx.commitSha,
           workingTreeDirty: !!ctx.workingTreeDirty,
           filePath,
           changedFiles: ctx.changedFiles || [],
         });
-      } catch { result = null; }
+      } catch (err) {
+        // null (unknown) stays the contract, but a THROW is counted: a bare
+        // catch made a systemic outage — up to N concurrent failures per wave
+        // — an all-null cache indistinguishable from "no import graph".
+        result = null;
+        failed += 1;
+        firstFailure ??= err?.message || String(err);
+      }
       impactCache.set(filePath, result);
     }
   };
   const workerCount = Math.min(STAGE0_IMPACT_CONCURRENCY, candidateFiles.length);
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  if (failed > 0) {
+    process.stderr.write(
+      `  [stage0] impact-lookup failures: ${failed} of ${candidateFiles.length} file(s) threw — `
+      + `their impact reads as unknown (first error: ${firstFailure})\n`,
+    );
+  }
 
   return { headContentCache, baseContentCache, impactCache, repoRoot };
 }

@@ -1,6 +1,15 @@
 # Project Status Log
 
 ### Consumer Verification (previous ship)
+- **Commit**: 00db37e0520f3ff44c24568ba36030b8e00c8937 on `fix/final-review-debt-suppression-revival` (PR #203, NOT yet merged to `main`); it contains the ship commit `e8230e7a`.
+- **Retrieval**: the push itself ran NO pre-push gate (this worktree's `core.hooksPath` pointed at a removed worktree, so git ran no hook; found and repaired afterwards). The gate was then run by hand on the pushed head, in a clean sandbox of that commit via `node scripts/prepush-check.mjs --base d2dc4775 --head 00db37e0`: run 1 failed 2 `fleet-gh-batch` timing tests, run 2 failed 1 (`R1-H5`), and the post-reboot run 3 passed: 18,902 tests, 18,856 pass, 0 fail, 46 skipped. `fleet-gh-batch` passed 9/9 in six solo runs on this tree and on clean main. The destructive DB suites were skipped each time (another invocation owned the test container). No `npm ci` re-install was done, and no consumer-side retrieval was run.
+- **Result**: unverified, blocked: not merged. A branch push publishes nothing to consumers (the consumer sync runs only when the default branch is updated), so no consumer has this; verify with `sync-isolation-verify.mjs` in a consumer's MAIN checkout after the PR merges and the source repo re-syncs.
+
+- **Commit**: 16e4d335ff0405312090e20b597000b317531563 on `claude/silly-morse-164a75` (PR #208, open; NOT merged). It is the merge of `origin/main` f20031ed into the branch, carrying the 2026-10-12 status.md entry (1d0b3298) for the archive lane (#208) and the gate-cost chip (#212).
+- **Retrieval**: the pre-push hook ran `check` in a clean checkout of exactly this sha (not a second run by me): 19,185 tests, 19,139 passed, 0 failed, 46 skipped, 333 s on a quiet machine. The previous attempt (1d0b3298 alone, pushed after 05:00Z on 2026-10-12) failed five timing tests under a 75-minute gate with seven concurrent gates; one of those, the dashboard-home pid race, is fixed on main by #207 and came in with this merge.
+- **Result**: verified for the pushed commit (the hook's clean-checkout run). The synced consumer bundle is unverified (blocked: not merged) — a feature-branch push publishes nothing to consumers; sync from an up-to-date main after #208 merges.
+
+### Consumer Verification (previous ship)
 - **Commit**: f26da22b8ae32de3a071bfeeeb7e9631eced45e4 on `main` (PR #145, squash-merged; branch `claude/clever-kilby-250c6f`, deleted). Merge tree 21473ffe == pushed branch tip 56c8228e's tree — the pre-push clean-checkout `check` ran on exactly this tree.
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green. `scripts/lib/model-eval/**` is source-only, so the consumer-visible surface was `lib/pinned-worktree/paths.mjs`'s optional `env` on `resolveMainRoot`. The branch push's sync reached 3/3 targets (9 files updated, 1 error: ai-organiser's `.audit-loop/expected-schema.json` refused as diverged because that checkout predates its own open sync PR `chore/sync-e73a40ee`).
 - **Result**: verified for wine-cellar-app; ai-organiser unverified — blocked on its unmerged sync PR `chore/sync-e73a40ee` (merge it, `git pull --ff-only`, re-sync).
@@ -97,6 +106,27 @@
 - **Commit**: 8cadc841385a0f8f6b3786331d5029cf0b5d48e3 on `fix/burndown-runs-findings-boundary` (PR #202, NOT yet merged to `main`); code head 14444545d3e206716e3eb9dc35f20a5de60a3758 + the status.md ship commit.
 - **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of the pushed commit: 18,641 tests, 0 fail, 46 skipped, checks passed (the first attempt failed only on four load-timing tests while ~6 gates ran at once; re-run once, green). No consumer-side retrieval was run.
 - **Result**: unverified, blocked: not merged. The pre-push hook publishes to consumers only when the default branch is updated (since 2026-10-10), so this branch has reached no consumer; verify with `sync-isolation-verify.mjs` in a consumer's MAIN checkout after the PR merges and the source repo re-syncs.
+
+## 2026-10-12 — round 1 of a code audit honours a supplied `--diff` (no head-cut under /cycle)
+
+- **Defect** (measured 2026-10-11, /cycle --autonomous Cluster A, fleet handover work): R1 reported `coverage: PARTIAL — 7 of 10 changed source file(s) not fully audited`. `scripts/lib/fleet/handover.mjs` (54K chars) was read only to its first 10K, so the changed code (lines ~250+) was never seen. R2, given the same `--diff`, logged `[diff] Parsed 8 files, 29 hunks` and reached `coverage complete`.
+- **Cause**: `legacy-production-audit.mjs` parsed `--diff` only inside the `isR2Plus` block. /cycle's cluster recipe passes `--files`, which skips the VCS change record, so R1 had no hunk evidence and head-cut every changed file over `maxPerFile`. The tiered discovery read (`readDiscoveryCode`) had the same R2-only gate.
+- **Fix**: a supplied `--diff` is hunk evidence in every round, matching the plan's own D7 rule ("keyed on the declared diff, never the round"). R1 keeps its rubric and the plain reader, so there is no annotation and no suppression. A new row in the D7 table of `docs/plans/audit-hunk-window-coverage.md`. The /cycle recipe comment no longer calls `--diff` "annotation context only". `legacy-production-audit.mjs` is 2 lines shorter (size ratchet).
+- **Tests**: `tests/coverage-orchestrator.test.mjs` runs R1 with `--files` + `--diff` through the real orchestrator. With the diff the read is `read.state === 'windowed'` and lines 300–303 reach the model; without it the read stays `head-cut`. The new test fails on the old code and passes with the fix. `final-review-hunk-windows.test.mjs`'s "R1 ignores it" test now asserts the opposite, with a no-diff control.
+- **Audit**: `/audit-code --scope diff` R1 PASS M:1 (the test patch's hunk had no body; fixed). R2 H:0 M:0 L:0, converged. Gemini APPROVE (0 blocking, 0 debt).
+- **npm test** (local, linked worktree): 18,616 pass, 4 fail.
+  - rmsync-guard: fixed (it was my test).
+  - sync-target-path: a load flake; it passes alone.
+  - skills-artifact-freshness: compares the committed blob, so it clears on commit.
+  - prepush-installed-tree-identity: the worktree's stale `node_modules` (micromatch/braces), already noted in the 10-11 entry.
+- Backlog 2026-10-12T04:31Z: Q1 173c/47p (+420 aged) · Q2 113c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
+## 2026-10-12 — gate-cost chip (#212): rebased onto main after #214, ready for review
+
+What #212 does and what was measured is in the combined entry "pre-push archive lane (PR #208) and the gate-cost chip (PR #212)" below; since then #212 was brought up to date with main (d65f1e8d) after #214 split `fleet-cli`, its skip list and runbook now say the post-split tree is NOT re-measured, and the plan is marked Complete pending merge.
+Backlog 2026-10-12T09:42Z: Q1 182c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
+---
 
 ## 2026-10-12 — pre-push: a dead push's sandbox is swept at the next push, not 6 hours later (PR #210)
 
@@ -292,6 +322,53 @@ Backlog 2026-10-12T06:21Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q
 
 
 ---
+
+## 2026-10-12 — queue-burndown cluster 2: the runs-findings write boundary (PR #202)
+
+Second of the PRs landing the abandoned 2026-10-02 campaign (`archive/queue-burndown-2026-10-02`, 49 unreviewed commits). Cluster 1 merged as #200. Each cluster is cherry-picked, then audited as if new: the campaign's commits had never been reviewed.
+
+- **Landed here** (PR #202, head `14444545`, audited sha == head):
+  - `e5baca75`: an adjudication and a remediation projection of one finding no longer deadlock (`40P01`), because `recordAdjudicationEvent` takes the locks in the same order and asserts exactly one row. `updatePassStatsPostDeliberation` refuses the all-rounds fallback on an unresolved probe. The terminal `verified` write re-asserts eligibility, so a row that became `regressed` is not flipped back. `recordFindings` checks `RETURNING`. Capability probes inside a caller transaction run in a SAVEPOINT; they move to `scripts/lib/store/column-probes.mjs` (`runs-findings.mjs` 3071 to 2920 lines).
+  - `e2e8f94a`: regression tests for #118 fixes that had none.
+- **Found by auditing the cherry-picks** (five follow-ups):
+  - `recordPassStats` read an UNRESOLVED `audit_pass_stats.round` probe as "absent", omitted the round, and the row defaulted to round 1 on a migrated store: the INSERT-side twin of what e5baca75 fixes for the UPDATE. It now returns `applied:false` / `round-probe-unresolved`; `audit.passStats` is lost-only, so this surfaces as a kept `lost` artifact and an incomplete run, not a bad row. My first push was blocked by `tests/audit-store-durability-call-site.test.mjs` (every store reason must be classified) and I corrected an earlier claim that it would spill and replay.
+  - `column-probes.mjs` promised only definitive answers are cached but cached `false` when the cloud store was off.
+  - The lock-order and dismissal-race DB tests slept 400 ms and hoped; they now wait on an observed `pg_stat_activity` lock wait (`tests/helpers/pg-lock-wait.mjs`, with a negative control) and roll back on a failed path.
+- **DB suites RAN, not skipped** (repo step order and env builder, `127.0.0.1:5433` local container only): isolated 479/479, destructive 52/52, contract 3/3. Mutation checks: `runs-findings.mjs` reverted to main turns 9 tests red; the old lock order turns the lock-order test red; the `recordPassStats` guard disabled turns its test red.
+- **Audit** (5 rounds, SID `audit-code-1791738175`): R1 21 findings: 9 fixed, 5 deferred as independent debt, 7 dismissed with evidence. For example `finding_adjudication_events.remediation_state` is `NOT NULL` with no default on the live schema, so the "inconsistent omission" cannot occur. R2 to R5 PASS; R3 re-ran `runs-findings.mjs` alone because R2 only windowed it. Gemini final gate APPROVE, coverage PARTIAL (7/12 files whole, 174 of 864 changed lines not shown to the reviewer).
+- **Gate history**: pre-push passed on the third attempt (18,641 tests, 0 fail, 42 skipped). The second attempt failed on `tests/dashboard-home-deadline.test.mjs:195` (ENOENT on `pid.txt` under load; passes 3/3 alone), the same family as `backlog-gather.test.mjs:261`; fixed separately in #207.
+- **Pre-ship signals**: auto-reconcile applied 3/3 (1 verified, 2 still open); `stores:drift` shows storyline behind on 6 constraints (owner DSN needed); upstream has 2 open reports from wine-cellar-app; no open P0.
+- **Backlog** (`node scripts/backlog-snapshot.mjs`): Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt 328 cloud/13 local (0 spilled) · upstream 2
+- **Deferred as debt** (6 entries, store): verdict/model metadata written after the advisory lock; `recordSuppressionEvents` counts attempted rows; `updateRunMeta` partial result not propagated by `recordFinalReviewFindings`; `getAuditRunWindowCounts` `roundCount` naming.
+
+### Next Steps
+- Cluster 3 (store/ledger honesty, 8 commits) is built and DB-green; its audit round 1 has 14 findings to triage. Cluster 6 (test-only pins) is assembled. Cluster 5 (`close-finding`) is user-approved as its own PR with no discharge against the store. Cluster 4 waits on `964c1d77`.
+- Owed after `a72426c6` lands: port `tests/replay-cli-false-zero.test.mjs` (burndown-only, covers the dropped `b3f80832`).
+
+## 2026-10-12 — queue-burndown cluster 3: an outage is not an empty result (PR #215)
+
+Third of the PRs landing the abandoned 2026-10-02 campaign (`archive/queue-burndown-2026-10-02`): cluster 1 merged as #200, cluster 2 is #202. The campaign's commits had never been reviewed and main moved after they were written, so three were adapted rather than cherry-picked.
+
+- **Cherry-picked clean** (5): stage0 counts impact-lookup throws instead of swallowing them; an event-wiring lifecycle record is no longer pinned to a ref nothing can descend from; a model-eval cohort is one subject (refuse, never relabel); requirements overrides reach retained ledger entries; `debt-reconcile` names the real reason the store side is unavailable.
+- **Adapted** (3), each to what main now has:
+  - arch carried edges: #160 already gates the deleted-TARGET half on `fileStillExists`, so only the disowned-target half is applied (extraction drops an edge when EITHER endpoint is disowned, `extract.mjs`; the carry asked `isDisowned` of the importer only).
+  - debt cloud read: #193 made the events reader best-effort and gave reporters `readDebtEventsCloudResult`, so only `readDebtEntriesCloud` rethrows (both callers already catch) and `loadDebtLedger` reads the Result to mark `eventsUnavailable`.
+  - the `debt-reconcile` test's `rmSync` retry-hardening, as its own commit.
+- **Found by auditing the campaign's own commits** (5 follow-ups):
+  - `requirements reconcile` / `reassess-gaps` loaded the prior ledger with a never-throw loader, so a truncated `ledger.json` became an empty prior and the write overwrote the committed ledger. Strict mode for the two writers; readers keep the degrade contract.
+  - `computeAncestryDecisions` read "did not exit 0" as "not an ancestor", so exit 128 or git failing to run authorised the write. Exit 1 is now the proven negative; anything else fails closed.
+  - Gemini BLOCKED on a real data-loss bug: `upsertLifecycle` / `reconcileLifecycle` swallowed a JSON parse error and atomic-wrote a blank ledger over the corrupt one, dropping every adjudication entry and lifecycle record the run did not touch. They now refuse, file untouched, and also refuse valid JSON of the wrong shape (a `lifecycle` array silently stores nothing; my first fix missed that and R3 caught it).
+  - `tests/stage0-relevance-context.test.mjs` tested a hand-copied worker pool; it now drives the real builder via `opts.getImporters`.
+  - one bare `fs.rmSync` in a test I had just added (the rmSync retry guard blocked my first push).
+- **DB suites RAN** via the repo's own `npm run db:local` (its own container, torn down after): isolated 459/459, destructive 52/52, contract 3/3, 0 skipped, including the model-eval cohort suite. Mutation checks went red-then-green for each fix.
+- **Audit** (5 rounds, SID `audit-code-1791745114`): R1 9 findings: 6 fixed, 3 deferred as independent debt (all committed-requirements-ledger DATA quality: the 200-char assertion cap, equivalent obligations under distinct ids, one gap classification). R2 PASS; R3 two follow-ups fixed; R4 PASS; R5 PASS on the last delta. Gemini final gate: round 1 BLOCKED (fixed), round 2 APPROVE, coverage PARTIAL (7/21 files whole, 108 of 839 changed lines not shown to the reviewer).
+- **Gate history**: pre-push passed on the second attempt (18,844 tests, 0 fail, 46 skipped). Two pushes ran during the user-approved quiet-machine window for wine-cellar and disturbed its timing measurement; the coordinator's hold messages were queued behind my long tool waits. Lesson recorded: run `fleet next` before every push.
+- **Pre-ship signals**: auto-reconcile applied (1 verified, 1 still open); `stores:drift` shows storyline behind 6 constraints (owner DSN needed); upstream has 2 open reports from wine-cellar-app; no open P0.
+- **Backlog** (`node scripts/backlog-snapshot.mjs`): Backlog 2026-10-12T07:52Z: Q1 182c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt 334 cloud/17 local (0 spilled) · upstream 2
+
+### Next Steps
+- Cluster 6 (test-only pins) is audited and waits for its push turn; cluster 5 (`close-finding`) is user-approved as code only, with no discharge against the store, and follows #202's merge. Cluster 4 waits on `964c1d77`.
+- Owed after `a72426c6` lands: port `tests/replay-cli-false-zero.test.mjs`.
 
 ## 2026-10-11 — drift + backlog re-measured; five shipped plans closed; three honesty fixes
 

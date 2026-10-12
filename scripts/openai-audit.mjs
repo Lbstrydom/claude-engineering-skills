@@ -648,7 +648,7 @@ async function main() {
   // audits keep the isAuditInfraFile exclusion unchanged. See plan-paths.mjs.
   const allowInfraScope = args.includes('--allow-infra-scope');
 
-  // --diff <file>: unified diff file for R2+ annotated context (highlights changed lines)
+  // --diff <file>: unified diff file — hunk windows in every round; R2+ also annotates changed lines
   const diffIdx = args.indexOf('--diff');
   const diffFile = diffIdx !== -1 && args[diffIdx + 1] ? args[diffIdx + 1] : null;
 
