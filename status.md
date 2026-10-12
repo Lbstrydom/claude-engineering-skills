@@ -87,6 +87,28 @@
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
 
+## 2026-10-12 — queue-burndown cluster 2: the runs-findings write boundary (PR #202)
+
+Second of the PRs landing the abandoned 2026-10-02 campaign (`archive/queue-burndown-2026-10-02`, 49 unreviewed commits). Cluster 1 merged as #200. Each cluster is cherry-picked, then audited as if new: the campaign's commits had never been reviewed.
+
+- **Landed here** (PR #202, head `14444545`, audited sha == head):
+  - `e5baca75`: an adjudication and a remediation projection of one finding no longer deadlock (`40P01`), because `recordAdjudicationEvent` takes the locks in the same order and asserts exactly one row. `updatePassStatsPostDeliberation` refuses the all-rounds fallback on an unresolved probe. The terminal `verified` write re-asserts eligibility, so a row that became `regressed` is not flipped back. `recordFindings` checks `RETURNING`. Capability probes inside a caller transaction run in a SAVEPOINT; they move to `scripts/lib/store/column-probes.mjs` (`runs-findings.mjs` 3071 to 2920 lines).
+  - `e2e8f94a`: regression tests for #118 fixes that had none.
+- **Found by auditing the cherry-picks** (five follow-ups):
+  - `recordPassStats` read an UNRESOLVED `audit_pass_stats.round` probe as "absent", omitted the round, and the row defaulted to round 1 on a migrated store: the INSERT-side twin of what e5baca75 fixes for the UPDATE. It now returns `applied:false` / `round-probe-unresolved`; `audit.passStats` is lost-only, so this surfaces as a kept `lost` artifact and an incomplete run, not a bad row. My first push was blocked by `tests/audit-store-durability-call-site.test.mjs` (every store reason must be classified) and I corrected an earlier claim that it would spill and replay.
+  - `column-probes.mjs` promised only definitive answers are cached but cached `false` when the cloud store was off.
+  - The lock-order and dismissal-race DB tests slept 400 ms and hoped; they now wait on an observed `pg_stat_activity` lock wait (`tests/helpers/pg-lock-wait.mjs`, with a negative control) and roll back on a failed path.
+- **DB suites RAN, not skipped** (repo step order and env builder, `127.0.0.1:5433` local container only): isolated 479/479, destructive 52/52, contract 3/3. Mutation checks: `runs-findings.mjs` reverted to main turns 9 tests red; the old lock order turns the lock-order test red; the `recordPassStats` guard disabled turns its test red.
+- **Audit** (5 rounds, SID `audit-code-1791738175`): R1 21 findings: 9 fixed, 5 deferred as independent debt, 7 dismissed with evidence. For example `finding_adjudication_events.remediation_state` is `NOT NULL` with no default on the live schema, so the "inconsistent omission" cannot occur. R2 to R5 PASS; R3 re-ran `runs-findings.mjs` alone because R2 only windowed it. Gemini final gate APPROVE, coverage PARTIAL (7/12 files whole, 174 of 864 changed lines not shown to the reviewer).
+- **Gate history**: pre-push passed on the third attempt (18,641 tests, 0 fail, 42 skipped). The second attempt failed on `tests/dashboard-home-deadline.test.mjs:195` (ENOENT on `pid.txt` under load; passes 3/3 alone), the same family as `backlog-gather.test.mjs:261`; fixed separately in #207.
+- **Pre-ship signals**: auto-reconcile applied 3/3 (1 verified, 2 still open); `stores:drift` shows storyline behind on 6 constraints (owner DSN needed); upstream has 2 open reports from wine-cellar-app; no open P0.
+- **Backlog** (`node scripts/backlog-snapshot.mjs`): Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt 328 cloud/13 local (0 spilled) · upstream 2
+- **Deferred as debt** (6 entries, store): verdict/model metadata written after the advisory lock; `recordSuppressionEvents` counts attempted rows; `updateRunMeta` partial result not propagated by `recordFinalReviewFindings`; `getAuditRunWindowCounts` `roundCount` naming.
+
+### Next Steps
+- Cluster 3 (store/ledger honesty, 8 commits) is built and DB-green; its audit round 1 has 14 findings to triage. Cluster 6 (test-only pins) is assembled. Cluster 5 (`close-finding`) is user-approved as its own PR with no discharge against the store. Cluster 4 waits on `964c1d77`.
+- Owed after `a72426c6` lands: port `tests/replay-cli-false-zero.test.mjs` (burndown-only, covers the dropped `b3f80832`).
+
 ## 2026-10-11 — drift + backlog re-measured; five shipped plans closed; three honesty fixes
 
 Measured on `origin/main` 56eb0459. Each figure carries its command.
