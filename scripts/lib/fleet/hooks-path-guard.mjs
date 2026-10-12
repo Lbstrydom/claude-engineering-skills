@@ -49,7 +49,9 @@ export function realpathLenient(p, { realpath = fs.realpathSync.native } = {}) {
  * entries and their targets included; past the first missing entry the rest is joined lexically (there is no disk
  * left to consult). POSIX resolves `..` physically, after the symlink before it; the Win32 API collapses `..`
  * lexically before it touches the disk, so on win32 so does this.
- * @returns {string[]} throws on any lstat/readlink failure other than absence, and on a symlink loop
+ * @returns {{entries: string[], resolved: string}} the entries walked, and — SEPARATELY, because a trailing `..`
+ *   means the last entry walked is not where the path ends — the location it resolves to. Throws on any
+ *   lstat/readlink failure other than absence, and on a symlink loop.
  */
 export function traversedEntries(p, { lstat = fs.lstatSync, readlink = fs.readlinkSync, platform = process.platform } = {}) {
   const P = platform === 'win32' ? path.win32 : path.posix;
@@ -71,7 +73,7 @@ export function traversedEntries(p, { lstat = fs.lstatSync, readlink = fs.readli
         if (e?.code !== 'ENOENT' && e?.code !== 'ENOTDIR') throw e;
         let t = entry;
         for (const r of parts.slice(i + 1)) { if (r === '.') continue; t = r === '..' ? P.dirname(t) : P.join(t, r); entries.push(t); }
-        return entries;
+        return { entries, resolved: t };
       }
       if (!st.isSymbolicLink()) { cur = entry; continue; }
       if (++hops > MAX_SYMLINK_HOPS) throw Object.assign(new Error(`more than ${MAX_SYMLINK_HOPS} symlinks resolving ${p}`), { code: 'ELOOP' });
@@ -81,7 +83,7 @@ export function traversedEntries(p, { lstat = fs.lstatSync, readlink = fs.readli
       next = rest ? `${base}${P.sep}${rest}` : base;
       break;
     }
-    if (next === null) return entries;
+    if (next === null) return { entries, resolved: cur };
     pending = platform === 'win32' ? P.resolve(next) : next;
   }
 }
@@ -95,7 +97,7 @@ export function isWithin(p, dir) {
 
 /**
  * Where a worktree's hooks are, as git itself answers, with the scope that set it and every entry the path walks.
- * @returns {{ok: true, scope: string, value: string, entries: string[]} | {ok: false, reason: string}}
+ * @returns {{ok: true, scope: string, value: string, entries: string[], resolved: string} | {ok: false, reason: string}}
  */
 export function hooksLocation(worktree, { git = runGit, lstat, readlink } = {}) {
   // `-z --show-scope`: "<scope>\0<value>\0". Exit 1 is git's "unset at every scope": hooks are then the default.
@@ -109,13 +111,18 @@ export function hooksLocation(worktree, { git = runGit, lstat, readlink } = {}) 
   const raw = loc.stdout.replace(/\r?\n$/, '');
   if (!raw) return { ok: false, reason: 'git named no hooks directory' };
   const abs = path.isAbsolute(raw) ? raw : `${worktree}${path.sep}${raw}`;
-  try { return { ok: true, scope: scope || 'unknown', value: value ?? raw, entries: traversedEntries(abs, { lstat, readlink }) }; } catch (e) {
+  try { return { ok: true, scope: scope || 'unknown', value: value ?? raw, ...traversedEntries(abs, { lstat, readlink }) }; } catch (e) {
     return { ok: false, reason: `the hooks path ${JSON.stringify(raw)} cannot be walked (${e?.code ?? e?.message})` };
   }
 }
 
-/** The remedy for a dependency, by the scope that set the value: re-point it at `target`, never rewrite shared config. */
+/**
+ * The remedy for a dependency, by the scope that set the value: re-point it at `target`, never rewrite shared config.
+ * With no `target` (no existing hooks directory outside the removed worktree is known) no command is printed: a
+ * guessed directory would make the dependency disappear while losing the hooks it was there to run.
+ */
 export function remedyFor({ worktree, scope }, mainCheckout, target) {
+  if (!target) return `move or re-install the hooks into a directory outside the worktree being removed, then point core.hooksPath (${scope} scope) at it — the main checkout has no existing hooks directory outside it, so there is no known-good one to point at`;
   const main = mainCheckout ?? worktree;
   if (scope === 'worktree') return renderCommand(['git', '-C', worktree, 'config', '--worktree', 'core.hooksPath', target]);
   if (scope === 'local') return renderCommand(['git', '-C', main, 'config', '--local', 'core.hooksPath', target]);
@@ -161,12 +168,14 @@ export function hooksPathDependents(target, worktrees, { git = runGit, realpath 
     located.push({ w, loc });
     if (via) dependents.push({ worktree: w.path, scope: loc.scope, value: loc.value, via });
   }
-  // The re-point target: the main checkout's own hooks directory when that is not itself inside `target`.
+  // The re-point target: where the main checkout's own hooks resolve, when that EXISTS and does not depend on `target`.
+  // Otherwise none — never a guessed directory.
   const mainCheckout = worktrees.find((x) => !x.bare)?.path ?? null;
   const mainLoc = located.find((x) => samePath(x.w.path, mainCheckout));
-  const mainSafe = mainLoc && !dependents.some((d) => samePath(d.worktree, mainCheckout));
-  const fallback = path.join(mainCheckout ?? '<main checkout>', '.githooks');
-  const remedyTarget = mainSafe ? (realpathLenient(mainLoc.loc.entries.at(-1), { realpath }).path ?? fallback) : fallback;
+  let remedyTarget = null;
+  if (mainLoc && !dependents.some((d) => samePath(d.worktree, mainCheckout))) {
+    try { remedyTarget = realpath(mainLoc.loc.resolved); } catch { remedyTarget = null; } // absent: nothing to point at
+  }
   for (const d of dependents) d.remedy = remedyFor(d, mainCheckout, remedyTarget);
   return done();
 }

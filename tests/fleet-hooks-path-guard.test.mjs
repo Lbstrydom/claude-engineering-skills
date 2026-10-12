@@ -63,21 +63,36 @@ describe('hooksPathDependents', () => {
     assert.equal(t.verdict(t.B).ok, true, 'and B\'s own hooksPath never blocks removing B');
   });
 
+  it('the remedy target is where the main checkout\'s hooks RESOLVE (a trailing .. included), and only when that exists', () => {
+    const t = twoWorktrees();
+    t.pointB('../A/.githooks');
+    fs.mkdirSync(path.join(t.fx.repo, '.githooks', 'sub'), { recursive: true });
+    git(['config', '--worktree', 'core.hooksPath', path.join(t.fx.repo, '.githooks', 'sub', '..')], t.fx.repo);
+    const expected = fs.realpathSync.native(path.join(t.fx.repo, '.githooks'));
+    const remedy = t.verdict().dependents[0].remedy.replace(/'/g, '');
+    assert.ok(remedy.endsWith(`core.hooksPath ${expected}`), remedy);
+    // a main hooks directory that does not exist is no target: nothing would run there either
+    git(['config', '--worktree', 'core.hooksPath', path.join(t.fx.repo, 'no-such-hooks')], t.fx.repo);
+    assert.match(t.verdict().dependents[0].remedy, /move or re-install/);
+  });
+
   it('a dangling hooksPath into A (the directory not created yet) is still a dependency', () => {
     const t = twoWorktrees();
     t.pointB(path.join(t.A, 'not-yet', 'hooks'));
     assert.equal(t.verdict().dependents.length, 1);
   });
 
-  it('an inherited repo-level value into A makes EVERY other worktree a dependent, and the remedy is --local on the main checkout', () => {
+  it('an inherited repo-level value into A makes EVERY other worktree a dependent, and no directory is guessed as the remedy', () => {
     const t = twoWorktrees();
     git(['config', '--local', 'core.hooksPath', path.join(t.A, '.githooks')], t.fx.repo);
     const v = t.verdict();
     assert.deepEqual(v.dependents.map((d) => d.scope), ['local', 'local'], 'the main checkout and B both inherit it');
     const refusals = hooksPathRefusals(v, t.A);
     assert.equal(refusals.filter((l) => l.startsWith('re-point first:')).length, 1);
-    assert.match(refusals.find((l) => l.startsWith('re-point first:')), /config --local core\.hooksPath .*\.githooks/, 'the main checkout depends too, so the target falls back to <main>/.githooks');
-    assert.ok(!/ {2}· {2}/.test(refusals.find((l) => l.startsWith('re-point first:'))), 'one shared remedy, not one per worktree');
+    const line = refusals.find((l) => l.startsWith('re-point first:'));
+    assert.match(line, /move or re-install/, 'the main checkout depends too, so there is no known-good directory to point at');
+    assert.ok(!line.includes('config --local core.hooksPath'), 'and no guessed command is printed');
+    assert.ok(!/ {2}· {2}/.test(line), 'one shared remedy, not one per worktree');
     // control: B's own worktree value overrides the inherited one, but the main checkout still depends
     t.repointB();
     assert.deepEqual(t.verdict().dependents.map((d) => path.basename(d.worktree)), [path.basename(t.fx.repo)]);
@@ -134,13 +149,17 @@ describe('hooksPathDependents', () => {
     const key = (p) => p.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '');
     const fakeFs = (links) => ({ lstat: (p) => ({ isSymbolicLink: () => Object.hasOwn(links, key(p)) }), readlink: (p) => links[key(p)] });
     const posix = traversedEntries('/w/B/link/../hooks', { ...fakeFs({ '/w/B/link': '/w/A/sub' }), platform: 'linux' });
-    assert.deepEqual(posix, ['/w', '/w/B', '/w/B/link', '/w', '/w/A', '/w/A/sub', '/w/A/hooks']);
+    assert.deepEqual(posix, { entries: ['/w', '/w/B', '/w/B/link', '/w', '/w/A', '/w/A/sub', '/w/A/hooks'], resolved: '/w/A/hooks' });
     const win = traversedEntries('C:\\w\\B\\link\\..\\hooks', { ...fakeFs({ '/w/B/link': 'C:\\w\\A\\sub' }), platform: 'win32' });
-    assert.deepEqual(win, ['C:\\w', 'C:\\w\\B', 'C:\\w\\B\\hooks']);
+    assert.deepEqual(win, { entries: ['C:\\w', 'C:\\w\\B', 'C:\\w\\B\\hooks'], resolved: 'C:\\w\\B\\hooks' });
     // a relative link target resolves against the link's directory; past a missing entry the rest is joined lexically
     const enoent = Object.assign(new Error('absent'), { code: 'ENOENT' });
     const rel = traversedEntries('/w/B/l2/x', { lstat: (p) => { if (p === '/w/A/gone') throw enoent; return { isSymbolicLink: () => p === '/w/B/l2' }; }, readlink: () => '../A/gone', platform: 'linux' });
-    assert.deepEqual(rel, ['/w', '/w/B', '/w/B/l2', '/w', '/w/B', '/w/A', '/w/A/gone', '/w/A/gone/x'], 'the target /w/B/../A/gone is walked from the root again');
+    assert.deepEqual(rel.entries, ['/w', '/w/B', '/w/B/l2', '/w', '/w/B', '/w/A', '/w/A/gone', '/w/A/gone/x'], 'the target /w/B/../A/gone is walked from the root again');
+    assert.equal(rel.resolved, '/w/A/gone/x');
+    // a trailing .. ends one level ABOVE the last entry walked, so the endpoint is returned separately from the walk
+    const trailing = traversedEntries('/w/h/sub/..', { lstat: () => ({ isSymbolicLink: () => false }), platform: 'linux' });
+    assert.deepEqual([trailing.entries.at(-1), trailing.resolved], ['/w/h/sub', '/w/h']);
     assert.throws(() => traversedEntries('/loop', { lstat: () => ({ isSymbolicLink: () => true }), readlink: () => '/loop', platform: 'linux' }), /symlinks/);
     const eacces = Object.assign(new Error('denied'), { code: 'EACCES' });
     assert.throws(() => traversedEntries('/w/x', { lstat: () => { throw eacces; }, platform: 'linux' }), /denied/, 'only absence is tolerated');
@@ -151,8 +170,8 @@ describe('hooksPathDependents', () => {
     const loc = hooksLocation(t.B);
     assert.equal(loc.ok, true, loc.reason);
     assert.equal(loc.scope, 'default');
-    assert.equal(path.basename(loc.entries.at(-1)), 'hooks');
-    assert.equal(path.basename(path.dirname(loc.entries.at(-1))), '.git', 'the common dir, shared by every worktree');
+    assert.equal(path.basename(loc.resolved), 'hooks');
+    assert.equal(path.basename(path.dirname(loc.resolved)), '.git', 'the common dir, shared by every worktree');
   });
 
   it('remedyFor never rewrites configuration shared with other repositories', () => {
