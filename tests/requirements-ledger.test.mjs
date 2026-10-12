@@ -284,7 +284,7 @@ describe('loadLedger({strict}) — only an ABSENT ledger is an empty prior', () 
     assert.throws(() => loadLedger({ baseDir: dir, strict: true }), /exists but cannot be loaded/);
     fs.writeFileSync(ledgerFile(dir), '{"requirements":"not-an-array"}');
     assert.throws(() => loadLedger({ baseDir: dir, strict: true }), /schema validation failed/);
-    fs.rmSync(ledgerFile(dir));
+    fs.rmSync(ledgerFile(dir), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     fs.mkdirSync(ledgerFile(dir)); // a directory where the file should be: EISDIR, not ENOENT
     assert.throws(() => loadLedger({ baseDir: dir, strict: true }), /exists but cannot be loaded/);
   }));
