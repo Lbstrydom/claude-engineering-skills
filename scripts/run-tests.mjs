@@ -107,8 +107,13 @@ export function scrubRoutingEnv(env) {
  * executed, reported as a pass. It bites whenever the runner is invoked from
  * inside a test (which `tests/test-env-hermeticity.test.mjs` does deliberately).
  * Measured on Node 22.19, 2026-08-11.
+ *
+ * `TEST_TIMING_KEEP` is an instruction to THIS runner (copy the timing report here). A
+ * test that spawns the runner would otherwise inherit it and a nested run would write
+ * to the operator's path: observed 2026-10-12, a nested runner clobbered a measurement
+ * file mid-run. The runner reads it from its own env before scrubbing.
  */
-export const SCRUBBED_RUNNER_ENV = Object.freeze(['NODE_TEST_CONTEXT']);
+export const SCRUBBED_RUNNER_ENV = Object.freeze(['NODE_TEST_CONTEXT', 'TEST_TIMING_KEEP']);
 
 /** Pure: the full child env — routing selectors AND runner state removed. */
 export function scrubChildEnv(env) {

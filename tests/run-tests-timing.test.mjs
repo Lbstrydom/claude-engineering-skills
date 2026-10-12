@@ -281,6 +281,13 @@ describe('the real runner end to end (reusing the guard fixtures)', () => {
     });
   });
 
+  it('a nested runner does not inherit TEST_TIMING_KEEP (the scrub list carries it)', () => {
+    const env = scrubChildEnv({ TEST_TIMING_KEEP: '/operator/path.json', NODE_TEST_CONTEXT: 'child-v8', KEEP_ME: '1' });
+    assert.equal('TEST_TIMING_KEEP' in env, false);
+    assert.equal('NODE_TEST_CONTEXT' in env, false);
+    assert.equal(env.KEEP_ME, '1');
+  });
+
   it('a construction failure still exits 1 and the summary is still printed', () => {
     const r = run(FIX('construction-failure'));
     assert.equal(r.status, 1);
