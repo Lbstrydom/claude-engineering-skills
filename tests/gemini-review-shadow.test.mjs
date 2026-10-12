@@ -5,10 +5,13 @@ import {
   canAttemptRunIdRecovery,
 } from '../scripts/gemini-review.mjs';
 import { semanticId } from '../scripts/lib/findings.mjs';
+import { classifyLlmError } from '../scripts/lib/robustness.mjs';
+import { createAnthropicClient } from '../scripts/lib/anthropic-client.mjs';
+import { fetchedUrlsUnderCli, isAnthropicMessagesUrl, MESSAGES_REQUEST } from './helpers/anthropic-wire.mjs';
 
 const {
   resolveShadow, shadowErrorBlock, diffFindingBuckets, dedupByHash, shadowModelMatchesFamily,
-  resolveModelEvalShadowOverride, mapRouteToShadowProvider, runShadowAndPersist,
+  resolveModelEvalShadowOverride, mapRouteToShadowProvider, runShadowAndPersist, buildShadowClient,
 } = _internals;
 
 // A resolver stub so tests don't depend on the live model catalog.
@@ -87,25 +90,33 @@ describe('shadowErrorBlock — a failed shadow carries its classification, not j
     // `timeout` through — do not survive. Every timeout was therefore
     // classified `permanent`, and the automatic retry could never fire.
     //
-    // A source-level pin, deliberately and with its limitation stated: driving
-    // the real function to a timeout means waiting out TIMEOUT_MS against a
-    // live transport. It proves the assignment is PRESENT, not that it runs —
-    // `shadowErrorBlock`'s own tests above cover the behaviour once an error
-    // with these fields exists. (Same shape as the buildShadowClient pin below.)
-    //
-    // Target path updated for the Phase 2 relocation
-    // (docs/plans/gemini-review-decomposition.md) — callReviewer moved to
-    // lib/final-review/transport.mjs; same pin, new location.
-    const fs = await import('node:fs');
-    const src = fs.readFileSync('scripts/lib/final-review/transport.mjs', 'utf8');
-    const fn = src.slice(src.indexOf('async function callReviewer'));
-    const body = fn.slice(0, fn.indexOf('\n}\n'));
-    assert.match(
-      body,
-      /isAbort\s*\)\s*\{\s*wrapped\.llmCategory\s*=\s*'timeout';\s*wrapped\.llmRetryable\s*=\s*true;/,
-      'the abort branch must stamp the structured classification onto the wrapped error — '
-      + 'without it every timeout reads as `permanent` and no arm is ever retried',
-    );
+    // BEHAVIOURAL, not a source slice. This used to regex the function body for the
+    // assignment, which proved the text was PRESENT and nothing about whether it ran (and
+    // broke on any reformat). The real function is driven with a fake Anthropic client whose
+    // call rejects with an AbortError — the exact error an SDK raises when its signal fires —
+    // so no timeout has to be waited out: the abort path is reached in milliseconds.
+    // (Ledger topics 251efde41d8d / 630ffd6e3f03.)
+    const { callReviewer } = _internals;
+    const abortErr = Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+    const fakeClient = (err) => ({ messages: { create: async () => { throw err; } } });
+    const args = { transportKind: 'anthropic', model: 'claude-test', systemPrompt: 's', userPrompt: 'u', passName: 'shadow-abort-test' };
+    const started = Date.now();
+    const err = await callReviewer(fakeClient(abortErr), args).then(() => null, (e) => e);
+    assert.ok(err, 'an aborted call must reject');
+    assert.ok(Date.now() - started < 5000, 'reached through the abort, not by waiting out the 270s timeout');
+    assert.equal(err.llmCategory, 'timeout',
+      'the wrap must stamp the structured classification — without it every timeout reads as `permanent` and no arm is retried');
+    assert.equal(err.llmRetryable, true);
+    // The classification survives into the artifact the bake-off collector reads.
+    assert.equal(classifyLlmError(err).category, 'timeout', 'the single classifyLlmError oracle reads it');
+    assert.equal(shadowErrorBlock(SHADOW, err).errorRetryable, true);
+
+    // NEGATIVE CONTROL — the direction that must not fire: a 404 (bad model id) is not a timeout.
+    const notFound = Object.assign(new Error('model not found'), { status: 404 });
+    const err404 = await callReviewer(fakeClient(notFound), args).then(() => null, (e) => e);
+    assert.equal(err404.llmCategory, undefined, 'a non-abort failure must carry no timeout classification');
+    assert.equal(err404.status, 404);
+    assert.equal(classifyLlmError(err404).retryable, false);
   });
 
   it('keeps the fields the completeness check reads absent — a failed shadow never counts as having run', () => {
@@ -342,33 +353,34 @@ describe('resolveModelEvalShadowOverride — discovery is unconditional, never r
 // `claude -p`. This transport's JSON contract is a prompt instruction with no
 // provider-side enforcement, so a conversational backend silently voids it.
 //
-// A source-level pin (not a behavioural mock) because the failure is a MISSING
-// ARGUMENT: there is no return value to assert on, and constructing the real
-// client would either spawn the CLI or need an API key. This mirrors the
-// existing `tests/tiered-pipeline-wiring.test.mjs` static pin guarding the same
-// invariant for the discovery generator.
+// OBSERVED ON THE WIRE, not read from source. This pin used to regex the function body for
+// `backend: 'sdk'`, which proves the text is present and breaks on a reformat. The failure is a
+// MISSING ARGUMENT, but its consequence is observable: under `CLAUDE_BACKEND=cli` a client that
+// did NOT pin the sdk backend would be the cli adapter, which never calls the network at all,
+// while the pinned one issues exactly one POST to api.anthropic.com/v1/messages. The Anthropic
+// SDK binds its transport at CONSTRUCTION, so `globalThis.fetch` is stubbed BEFORE the client is
+// built. Only the `azureRoute: null` half stays source-pinned (shadow-gateway-provider.test.mjs):
+// the Azure config is frozen at import, so observing it needs a subprocess.
+// (Ledger topics 251efde41d8d / 630ffd6e3f03.)
 describe('buildShadowClient pins backend:sdk — a conversational backend silently voids the JSON contract', () => {
-  it('passes backend:"sdk" explicitly rather than inheriting the ambient CLAUDE_BACKEND', async () => {
-    // Target path updated for the Phase 3 relocation
-    // (docs/plans/gemini-review-decomposition.md) — buildShadowClient moved
-    // to lib/final-review/shadow.mjs; same pin, new location.
-    const fs = await import('node:fs');
-    const src = fs.readFileSync('scripts/lib/final-review/shadow.mjs', 'utf8');
-    const fn = src.slice(src.indexOf('async function buildShadowClient'));
-    const body = fn.slice(0, fn.indexOf('\n}'));
-    assert.match(
-      body,
-      // `backend:'sdk'` as an OPTION, not the sole option — the call also pins
-      // `azureRoute: null` since 2026-08-30 (asserted in shadow-gateway-provider).
-      /return createAnthropicClient\(\{[^)]*backend:\s*'sdk'/,
-      'the claude-opus shadow branch must pin backend:sdk — a bare createAnthropicClient() '
-      + 'inherits CLAUDE_BACKEND=cli and returns markdown prose, which drops every observation',
-    );
-    assert.doesNotMatch(
-      body,
-      /return createAnthropicClient\(\)\s*;/,
-      'a bare, argument-less createAnthropicClient() in this function is the exact 2026-07-26 defect',
-    );
+  const MESSAGES = MESSAGES_REQUEST;
+
+  it('under CLAUDE_BACKEND=cli the shadow STILL reaches api.anthropic.com/v1/messages exactly once', async () => {
+    const urls = await fetchedUrlsUnderCli(async () => {
+      const client = await buildShadowClient('claude-opus');
+      await client.messages.create(MESSAGES);
+    });
+    assert.equal(urls.filter(isAnthropicMessagesUrl).length, 1,
+      `the pinned sdk backend must reach the API once; saw ${JSON.stringify(urls)}`);
+  });
+
+  it('NEGATIVE CONTROL: an UNPINNED client under the same env makes ZERO fetches — so this test can fail', async () => {
+    const urls = await fetchedUrlsUnderCli(async () => {
+      // The 2026-07-26 defect, reproduced: no `backend` option, so the ambient `cli` is inherited.
+      const client = await createAnthropicClient({ azureRoute: null });
+      await assert.rejects(() => client.messages.create(MESSAGES), 'the cli adapter fails on the bogus binary');
+    });
+    assert.deepEqual(urls, [], 'an unpinned client under cli never touches the network — that is what the pin is observed against');
   });
 });
 
