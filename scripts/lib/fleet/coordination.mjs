@@ -23,6 +23,7 @@ import {
   DEFAULT_EXPIRY_HOURS, DIRECTIVE_KINDS, REASON_KINDS, ackDirective, newDirectiveId, readDirectives, sweepDirectives, writeDirective,
 } from './directives.mjs';
 import { deriveObligations, renderObligations } from './obligations.mjs';
+import { readUnregisteredCache, unregisteredCacheDir } from './unregistered.mjs';
 import { currentBranch, lockFailed, nowIso, ok, refused, selfId } from './commands.mjs';
 
 /**
@@ -63,12 +64,53 @@ export function obligationsFor(ctx, id) {
  * verb — a footer that cannot be derived says so.
  */
 export function checkpointFooter(ctx, id, { limit = 3 } = {}) {
+  let lines;
   try {
     const r = obligationsFor(ctx, id);
-    if (!r.ok) return [`next: not derived (${r.reason})`];
-    return renderObligations(r.result, { limit, cmd: ctx.cmd }).map((l) => (l.startsWith('next:') ? l : `next: ${l}`));
+    lines = !r.ok ? [`next: not derived (${r.reason})`]
+      : renderObligations(r.result, { limit, cmd: ctx.cmd }).map((l) => (l.startsWith('next:') ? l : `next: ${l}`));
   } catch (e) {
-    return [`next: not derived (${e.message})`];
+    lines = [`next: not derived (${e.message})`];
+  }
+  let footer;
+  try { footer = unregisteredFooter(unregisteredCacheDir(ctx.cwd), ctx.now, ctx.cmd); } catch (e) { footer = [`unregistered-work footer not derived (${e.message})`]; }
+  return [...lines, ...footer];
+}
+
+/** A cache older than this asks for one `fleet status` run (the only thing that refreshes it). */
+export const UNREGISTERED_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+const ageText = (ms) => (ms < 3_600_000 ? `${Math.max(0, Math.round(ms / 60_000))}m` : ms < 86_400_000 ? `${Math.round(ms / 3_600_000)}h` : `${Math.round(ms / 86_400_000)}d`);
+
+/**
+ * The checkpoint footer's unregistered-work lines (plan §2.2). Reads the derived cache `status` writes — never
+ * scans, so it has no bound to miss and no herd to start. Up to three lines:
+ *  - FYI, when abandoned work is known. Worded as the user's/coordinator's, NOT an action for this session:
+ *    only `next`'s DO lines are pre-authorised (participant rule);
+ *  - a refresh request, only when the cache is missing, unreadable or over 24 h old — the states a `status`
+ *    run clears;
+ *  - a coverage notice when the scan was partial — information, never a request (nothing could clear it).
+ * Never throws: a footer cannot change a verb's exit code.
+ */
+export function unregisteredFooter(dir, now, cmd = 'fleet', { read = readUnregisteredCache } = {}) {
+  try {
+    const status = `${cmd} status`;
+    const c = read(dir);
+    if (c.state !== 'ok') return [`unregistered-work scan is ${c.state === 'missing' ? 'missing' : 'unreadable'} — run \`${status}\` (read-only) to refresh`];
+    const rec = c.record;
+    const age = (now instanceof Date ? now.getTime() : Date.now()) - Date.parse(rec.at);
+    const out = [];
+    if (rec.counts.abandoned > 0) {
+      const local = rec.counts.localOnly ? `, ${rec.counts.localOnly} of them local-only (no remote ref holds it)` : '';
+      out.push(`FYI for the user/coordinator, not an action for this session: ${rec.counts.abandoned} worktree(s)/branch(es) idle >${rec.staleDays}d hold unlanded work${local} — ${status} (scan ${ageText(age)} old)`);
+    }
+    if (!Number.isFinite(age) || age > UNREGISTERED_CACHE_MAX_AGE_MS) out.push(`unregistered-work scan is ${Number.isFinite(age) ? ageText(age) : 'of unknown age'} old — run \`${status}\` (read-only) to refresh`);
+    // ONE coverage line, so the footer never exceeds its three lines: every gap the scan had, joined.
+    const gaps = [rec.notProbed ? `covered ${rec.counts.candidates - rec.notProbed} of ${rec.counts.candidates} worktrees/branches (${rec.notProbed} not probed)` : null, rec.branchesUnknown ?? null].filter(Boolean);
+    if (rec.partial && gaps.length) out.push(`unregistered-work scan ${gaps.join('; ')}`);
+    return out;
+  } catch (e) {
+    return [`unregistered-work footer not derived (${e.message})`];
   }
 }
 

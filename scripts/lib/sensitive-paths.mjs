@@ -118,6 +118,11 @@ export const SENSITIVE_PATTERNS = Object.freeze([
   /(^|\/)(private|\.aws|\.ssh)\//,                              // other sensitive directories
   /(^|\/)id_rsa.*$/,                                           // ssh keys + id_rsa.pub/.bak
   /(^|\/)id_ed25519.*$/,                                       // ed25519 ssh keys
+  // Credential stores that carry NO secret-shaped name, found missing by the archive lane's
+  // adversarial review (2026-10-12): each one holds plaintext credentials by design.
+  /(^|\/)(\.netrc|_netrc|\.git-credentials|\.pgpass|\.pypirc|\.htpasswd)$/,
+  /\.(keystore|jks)$/i,                                        // Java keystores
+  /\.tfvars$/,                                                 // terraform variable files (terraform.tfvars, *.auto.tfvars)
   // password.txt + password/ dir; avoids `password-strength/` AND code modules (Password.cs, password.mjs)
   new RegExp(`(^|\\/)password(?:\\/|$|\\.(?!([^/]*\\.)?(?:${CODE_FILE_EXT_ALT})$))`, 'i'),
   // token.json + tokens/ dir; avoids `tokenizer/`, `detokenize`, AND code/style

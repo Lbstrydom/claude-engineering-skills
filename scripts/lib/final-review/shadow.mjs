@@ -156,26 +156,37 @@ export async function buildShadowClient(canonicalProvider) {
     const c = resolveDeepseekCreds();
     return createOpenAIClient({ oss: { baseURL: c.baseUrl, apiKey: c.apiKey } });
   }
-  // `backend:'sdk'` PINNED, never the ambient CLAUDE_BACKEND (found live
-  // 2026-07-26 on the shadow's first real run). This transport gets its JSON
-  // contract from a PROMPT INSTRUCTION ("Output strictly valid JSON") with no
-  // provider-side enforcement — Gemini has `responseSchema`, Anthropic here has
-  // nothing. Under `CLAUDE_BACKEND=cli` the call is served by a conversational
-  // `claude -p`, which returned a markdown report ("# Final Gate Review … ##
-  // Verdict: **APPROVE**") — no JSON object anywhere, so `parseReviewJson`
-  // threw and the observation was dropped as `error-unavailable`. The shadow
-  // stayed enabled and silently recorded NOTHING: precisely the dead-experiment
-  // failure mode the A/B exists to avoid, and the same class as the tiered
-  // pipeline's discovery generator (AGENTS.md: any call needing a structured
-  // response must pin the sdk backend explicitly).
-  //
-  // Cost note: this bills ANTHROPIC_API_KEY rather than drawing Max-20x Agent
-  // SDK credit. Accepted deliberately — the pre-registered window is ~20 runs,
-  // and a shadow that produces no parseable verdict has zero value at any price.
-  // `azureRoute: null` keeps that cost note TRUE on an Azure machine: the shadow
-  // arm is named `claude-opus`, so it must stay the public service rather than
-  // adopting the tenant's route and quietly changing what the A/B compares.
-  return createAnthropicClient({ backend: 'sdk', azureRoute: null });
+  if (canonicalProvider === 'claude-opus') {
+    // `backend:'sdk'` PINNED, never the ambient CLAUDE_BACKEND (found live
+    // 2026-07-26 on the shadow's first real run). This transport gets its JSON
+    // contract from a PROMPT INSTRUCTION ("Output strictly valid JSON") with no
+    // provider-side enforcement — Gemini has `responseSchema`, Anthropic here has
+    // nothing. Under `CLAUDE_BACKEND=cli` the call is served by a conversational
+    // `claude -p`, which returned a markdown report ("# Final Gate Review … ##
+    // Verdict: **APPROVE**") — no JSON object anywhere, so `parseReviewJson`
+    // threw and the observation was dropped as `error-unavailable`. The shadow
+    // stayed enabled and silently recorded NOTHING: precisely the dead-experiment
+    // failure mode the A/B exists to avoid, and the same class as the tiered
+    // pipeline's discovery generator (AGENTS.md: any call needing a structured
+    // response must pin the sdk backend explicitly).
+    //
+    // Cost note: this bills ANTHROPIC_API_KEY rather than drawing Max-20x Agent
+    // SDK credit. Accepted deliberately — the pre-registered window is ~20 runs,
+    // and a shadow that produces no parseable verdict has zero value at any price.
+    // `azureRoute: null` keeps that cost note TRUE on an Azure machine: the shadow
+    // arm is named `claude-opus`, so it must stay the public service rather than
+    // adopting the tenant's route and quietly changing what the A/B compares.
+    return createAnthropicClient({ backend: 'sdk', azureRoute: null });
+  }
+  // EXPLICIT, never a fall-through. This used to be the unconditional last line, so ANY string
+  // that matched no branch above — a typo, or a provider added to SHADOW_PROVIDER_SPECS without
+  // a client branch here — silently built a PUBLIC ANTHROPIC client and the arm was billed to the
+  // wrong provider while recording itself under the right name. `runShadowAndPersist` catches
+  // this into a non-fatal `error-unavailable` block (shadowErrorBlock), so it costs nothing.
+  throw new Error(
+    `[shadow-review] buildShadowClient: unsupported shadow provider "${canonicalProvider}" — `
+    + 'a canonical provider needs a SHADOW_PROVIDER_SPECS entry AND a client branch here',
+  );
 }
 
 // ── Model-eval adjudicator Tier A/B override (model-swap-eval-harness

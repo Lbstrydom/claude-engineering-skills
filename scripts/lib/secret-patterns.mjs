@@ -28,6 +28,8 @@ export const SECRET_PATTERNS = Object.freeze([
   // AWS
   { name: 'aws-access-key-id', re: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g },
   { name: 'aws-secret-key', re: /\baws_secret_access_key\s*[:=]\s*['"]?[A-Za-z0-9/+=]{40}['"]?/gi },
+  // npm automation/publish tokens (`_authToken=npm_…` in an .npmrc)
+  { name: 'npm-token', re: /\bnpm_[A-Za-z0-9]{36}\b/g },
   // GitHub
   { name: 'github-pat', re: /\bghp_[A-Za-z0-9]{36}\b/g },
   { name: 'github-oauth', re: /\bgho_[A-Za-z0-9]{36}\b/g },

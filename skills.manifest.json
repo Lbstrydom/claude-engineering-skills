@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "78933dbd0a155233",
+  "bundleVersion": "572dc04016a20dc6",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -54,14 +54,14 @@
     },
     "audit-code": {
       "path": "skills/audit-code/SKILL.md",
-      "sha": "d9c8c43c0486",
-      "size": 56585,
+      "sha": "032b74e9d1a4",
+      "size": 57024,
       "summary": "Iteratively audit code against a plan with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "d9c8c43c0486",
-          "size": 56585
+          "sha": "032b74e9d1a4",
+          "size": 57024
         },
         {
           "relPath": "examples/contract-test-scaffold.md",
@@ -95,8 +95,8 @@
         },
         {
           "relPath": "references/r2-plus-mode.md",
-          "sha": "ad8c74a67075",
-          "size": 5793
+          "sha": "c52d90416773",
+          "size": 5890
         },
         {
           "relPath": "references/verification-discipline.md",
@@ -107,14 +107,14 @@
     },
     "audit-plan": {
       "path": "skills/audit-plan/SKILL.md",
-      "sha": "b31c91f5c88c",
-      "size": 28187,
+      "sha": "b25eaf5abed4",
+      "size": 28494,
       "summary": "Iteratively audit a plan file (docs/plans/*.md) with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "b31c91f5c88c",
-          "size": 28187
+          "sha": "b25eaf5abed4",
+          "size": 28494
         },
         {
           "relPath": "references/gemini-gate.md",
@@ -252,19 +252,19 @@
     },
     "fleet": {
       "path": "skills/fleet/SKILL.md",
-      "sha": "9867cbecc79b",
-      "size": 12561,
+      "sha": "6ada6e2137a6",
+      "size": 13553,
       "summary": "Coordinate SEVERAL CONCURRENT AI coding sessions (desktop chips, linked",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "9867cbecc79b",
-          "size": 12561
+          "sha": "6ada6e2137a6",
+          "size": 13553
         },
         {
           "relPath": "references/coordination.md",
-          "sha": "a0c050a1eced",
-          "size": 7586
+          "sha": "feab6a13b5b6",
+          "size": 15816
         },
         {
           "relPath": "references/landing.md",
@@ -273,8 +273,8 @@
         },
         {
           "relPath": "references/participant-rules.md",
-          "sha": "05af252ec860",
-          "size": 3065
+          "sha": "a5a780e2859d",
+          "size": 3841
         },
         {
           "relPath": "references/telemetry.md",

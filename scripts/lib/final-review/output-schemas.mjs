@@ -17,8 +17,26 @@ import { z } from 'zod';
 import { ProducerFindingSchema, zodToGeminiSchema } from '../schemas.mjs';
 import { zodToOpenAiJsonSchema } from '../oss-structured-output.mjs';
 
+/**
+ * Identifier fields wide enough for what actually flows through them. `original_finding_id`
+ * carries a short audit id (`H3`) OR a 12-hex ledger topicId (`713af1a3f1bc`) — the old 10-char
+ * limit clipped the latter to `713af1a3f1`, which joins to nothing. Both fields are also in
+ * `IDENTITY_PATHS` below, so `truncateToSchema` leaves them whole instead of repairing them like prose.
+ */
+const IDENTITY_MAX_CHARS = 40;
+
+/**
+ * `cited_lines[]` entries are `path:line` references the existence gate and
+ * `projectWronglyDismissed` read, so their bound has to exceed any real citation: 100 did not
+ * (a deep repository path plus a line number and a short note), which silently cut the `:line`
+ * — or the path itself — off a valid citation (audit-code R1 M1/M5). 300 covers any realistic
+ * path plus `:line` and a note. It is a VALIDATION bound, not a truncation point: the field is in
+ * `IDENTITY_PATHS`, so an over-long entry fails Zod loudly and is kept intact.
+ */
+const CITATION_MAX_CHARS = 300;
+
 const WronglyDismissedSchema = z.object({
-  original_finding_id: z.string().max(10).describe('The GPT finding ID that was dismissed (e.g. H3, M5)'),
+  original_finding_id: z.string().max(IDENTITY_MAX_CHARS).describe('The GPT finding ID that was dismissed (e.g. H3, M5)'),
   reason_claude_was_wrong: z.string().max(800).describe('Why Claude should not have dismissed this'),
   recommended_severity: z.enum(['HIGH', 'MEDIUM', 'LOW']),
   evidence_basis: z.string().max(600).optional().describe(
@@ -26,7 +44,7 @@ const WronglyDismissedSchema = z.object({
     'Explain NEW counter-evidence not already addressed in Claude\'s challenge. ' +
     'Omitting this on a previously-challenged finding signals reassertion without new evidence.'
   ),
-  cited_lines: z.array(z.string().max(100)).max(10).optional().describe(
+  cited_lines: z.array(z.string().max(CITATION_MAX_CHARS)).max(10).optional().describe(
     'Specific line references cited in your reasoning (e.g. ["auth.js:132", "auth.js:137"]). ' +
     'Include these so hallucinated citations can be detected and flagged post-hoc.'
   ),
@@ -58,6 +76,11 @@ export const BLOCKING_BASIS_VALUES = Object.freeze([
  * release-blocking judgement has no meaning.
  */
 export const FinalReviewFindingSchema = ProducerFindingSchema.extend({
+  // Wider than the shared 10: a reviewer-authored id is an IDENTITY, and two descriptive ids
+  // ("G-existence-claim-one" / "-two") must not collapse to one when clipped. `addSemanticIds`
+  // re-stamps `G<n>` on every kept finding, but stderr, the existence-gate report and the
+  // suppression audit trails read the id first.
+  id: z.string().max(IDENTITY_MAX_CHARS).describe('Finding ID, e.g. H1, M3, L2, G1'),
   release_blocking: z.boolean().describe(
     'TRUE only if this finding, in the reviewed change, names one of the blocking_basis grounds. '
     + 'FALSE for hardening, maintainability, DRY, style, "track as debt", or anything you would not stop a release for.'
@@ -142,6 +165,30 @@ export const ANTHROPIC_REVIEW_TOOL_NAME = 'submit_review';
 // stripping removes maxLength) so it stays in sync with the Zod definitions.
 
 /**
+ * Fields that carry IDENTITY or EVIDENCE, not prose. Truncation is a repair for verbose NARRATIVE
+ * — a clipped explanation is still an explanation — but a clipped identifier is a different
+ * identifier, and a clipped citation points somewhere else (or nowhere): two distinct ids collapse
+ * into one (`G-existence-claim-one` / `-two` both became `G-existenc`), a ledger topicId stops
+ * joining to its entry (`713af1a3f1bc` -> `713af1a3f1`), and a `path:line` loses its `:line` or
+ * part of its path. These paths are skipped when the map is built, so `truncateToSchema` leaves
+ * them whole; an over-long one then fails Zod validation LOUDLY (warn-and-keep in `callReviewer`)
+ * rather than being silently altered.
+ *
+ * `wrongly_dismissed[].cited_lines[]` is here since audit-code R1 M1/M5 and R2 M1: widening its
+ * bound (100 -> 300, `CITATION_MAX_CHARS`) made a valid citation fit but left the mechanism — a
+ * cutoff that can still change a reference — in place, and no maximum path length holds on every
+ * supported system. It keeps the 300 bound as its LOUD limit, not as a truncation point.
+ *
+ * Exported so a test can assert every entry still names a real string field — a renamed field
+ * would otherwise silently re-enable truncation, because skipping an absent path is a no-op.
+ */
+export const IDENTITY_PATHS = Object.freeze(new Set([
+  'new_findings[].id',
+  'wrongly_dismissed[].original_finding_id',
+  'wrongly_dismissed[].cited_lines[]',
+]));
+
+/**
  * Walk a JSON Schema tree and collect all path → maxLength entries.
  * Handles nested objects, arrays (path[]), and $defs references.
  * @param {object} schema - Raw JSON Schema node
@@ -156,7 +203,7 @@ function _collectMaxLengths(schema, path, map, defs) {
     if (defs?.[refName]) _collectMaxLengths(defs[refName], path, map, defs);
     return;
   }
-  if (schema.type === 'string' && schema.maxLength) {
+  if (schema.type === 'string' && schema.maxLength && !IDENTITY_PATHS.has(path)) {
     map.set(path, schema.maxLength);
   }
   if (schema.properties) {
@@ -172,6 +219,13 @@ function _collectMaxLengths(schema, path, map, defs) {
 const _rawGeminiReviewSchema = z.toJSONSchema(GeminiFinalReviewSchema);
 const _maxLengthMap = new Map();
 _collectMaxLengths(_rawGeminiReviewSchema, '', _maxLengthMap, _rawGeminiReviewSchema.$defs);
+
+/**
+ * Every bounded string path `truncateToSchema` is allowed to clip — i.e. the prose fields. Exported
+ * for a test that pins this list: a new bounded string field must be CLASSIFIED (prose → here,
+ * identifier or citation → `IDENTITY_PATHS`) instead of becoming truncatable by default.
+ */
+export const NARRATIVE_PATHS = Object.freeze([..._maxLengthMap.keys()].sort());
 
 /**
  * Recursively walk a parsed JSON result and truncate strings that exceed their

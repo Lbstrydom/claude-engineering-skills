@@ -224,6 +224,8 @@ import {
   recordNewFindings,
   recordGeminiOutcomes,
   applyPriorRoundSuppression,
+  buildDebtPromptBlock,
+  debtSuppressionContextOf,
 } from './lib/final-review/post-review.mjs';
 // Round cap + code-computed gate disposition (field report 2026-09-26).
 import { parseReviewArgs, REVIEW_FLAGS } from './lib/final-review/review-args.mjs';
@@ -316,29 +318,10 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
   const hunks = resolveFinalReviewHunks({ transcript, changedFiles: changedFilesDeclared });
   const renderCode = makeTieredCodeRenderer({ changedFiles: changedFilesDeclared, reduced, hunksFor: hunks.hunksFor });
 
-  // Phase D.4: extract debt-suppression context from transcript envelope.
-  // When the upstream audit already filtered debt, tell the reviewer so they
-  // don't re-surface the same topics.
-  const suppressionContext = transcript._debtMemory?.suppressionContext
-    || transcript.debt_memory?.suppressionContext
-    || [];
-  let debtBlock = '';
-  if (Array.isArray(suppressionContext) && suppressionContext.length > 0) {
-    const lines = suppressionContext.slice(0, 50).map(s =>
-      `- [${s.topicId}] ${s.category} (${s.section}) — ${s.deferredReason}`
-    );
-    debtBlock = [
-      '## Pre-filtered Debt (already suppressed this round — DO NOT resurface)',
-      `The following ${suppressionContext.length} topics were matched against the repo's`,
-      'persistent debt ledger and filtered from the transcript above. They are',
-      'pre-existing concerns explicitly deferred by the operator. If you see new',
-      'findings in your review that match any of these topics, EXCLUDE them —',
-      'the pipeline already handled them.',
-      '',
-      ...lines,
-      '',
-    ].join('\n');
-  }
+  // Phase D.4: tell the reviewer which debt topics the audit rounds already settled so it does not
+  // re-surface them. Read through the ONE accessor (the envelope is nested under rounds[], never
+  // top-level) and rendered by the block builder that shares the stage's eligibility predicate.
+  const debtBlock = buildDebtPromptBlock(debtSuppressionContextOf(transcript));
 
   // Scope block: when the transcript declares changed_files, surface them
   // explicitly so the reviewer knows which files are this PR's responsibility
