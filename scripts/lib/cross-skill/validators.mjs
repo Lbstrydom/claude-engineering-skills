@@ -36,6 +36,6 @@ export const isPgTimestamptzText = (s) => {
   const off = /(?:Z|([+-])(\d{2}):?(\d{2})?)$/.exec(iso);
   const offMin = off && off[1] ? (off[1] === '-' ? -1 : 1) * (Number(off[2]) * 60 + Number(off[3] || 0)) : 0;
   const d = new Date(ms + offMin * 60_000);
-  const ymd = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  const ymd = `${String(d.getUTCFullYear()).padStart(4, '0')}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
   return s.startsWith(ymd);
 };

@@ -35,6 +35,14 @@ describe('isPgTimestamptzText requires an explicit UTC offset', () => {
   it('control: the calendar check still refuses an impossible date that DOES carry an offset', () => {
     assert.equal(isPgTimestamptzText('2026-02-30 10:00:00+00'), false);
   });
+
+  it('a year below 1000 is a real date: the calendar round-trip must zero-pad the year', () => {
+    // `getUTCFullYear()` is 1 for year 0001; unpadded, `'1-01-01'` is never a prefix of
+    // `'0001-01-01 …'`, so a valid timestamp was refused (fail-safe, but wrong).
+    for (const good of ['0001-01-01 00:00:00+00', '0999-12-31 23:59:59.999999+00', '0100-06-15T12:00:00Z'])
+      assert.equal(isPgTimestamptzText(good), true, `must accept ${good}`);
+    assert.equal(isPgTimestamptzText('0001-02-30 00:00:00+00'), false, 'control: an impossible low-year date is still refused');
+  });
 });
 
 describe('every cursor decoder refuses an offset-less timestamp as BAD_INPUT, and accepts the same instant with one', () => {
