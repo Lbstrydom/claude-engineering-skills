@@ -1,6 +1,15 @@
 # Project Status Log
 
 ### Consumer Verification (previous ship)
+- **Commit**: 00db37e0520f3ff44c24568ba36030b8e00c8937 on `fix/final-review-debt-suppression-revival` (PR #203, NOT yet merged to `main`); it contains the ship commit `e8230e7a`.
+- **Retrieval**: the push itself ran NO pre-push gate (this worktree's `core.hooksPath` pointed at a removed worktree, so git ran no hook; found and repaired afterwards). The gate was then run by hand on the pushed head, in a clean sandbox of that commit via `node scripts/prepush-check.mjs --base d2dc4775 --head 00db37e0`: run 1 failed 2 `fleet-gh-batch` timing tests, run 2 failed 1 (`R1-H5`), and the post-reboot run 3 passed: 18,902 tests, 18,856 pass, 0 fail, 46 skipped. `fleet-gh-batch` passed 9/9 in six solo runs on this tree and on clean main. The destructive DB suites were skipped each time (another invocation owned the test container). No `npm ci` re-install was done, and no consumer-side retrieval was run.
+- **Result**: unverified, blocked: not merged. A branch push publishes nothing to consumers (the consumer sync runs only when the default branch is updated), so no consumer has this; verify with `sync-isolation-verify.mjs` in a consumer's MAIN checkout after the PR merges and the source repo re-syncs.
+
+- **Commit**: 16e4d335ff0405312090e20b597000b317531563 on `claude/silly-morse-164a75` (PR #208, open; NOT merged). It is the merge of `origin/main` f20031ed into the branch, carrying the 2026-10-12 status.md entry (1d0b3298) for the archive lane (#208) and the gate-cost chip (#212).
+- **Retrieval**: the pre-push hook ran `check` in a clean checkout of exactly this sha (not a second run by me): 19,185 tests, 19,139 passed, 0 failed, 46 skipped, 333 s on a quiet machine. The previous attempt (1d0b3298 alone, pushed after 05:00Z on 2026-10-12) failed five timing tests under a 75-minute gate with seven concurrent gates; one of those, the dashboard-home pid race, is fixed on main by #207 and came in with this merge.
+- **Result**: verified for the pushed commit (the hook's clean-checkout run). The synced consumer bundle is unverified (blocked: not merged) — a feature-branch push publishes nothing to consumers; sync from an up-to-date main after #208 merges.
+
+### Consumer Verification (previous ship)
 - **Commit**: f26da22b8ae32de3a071bfeeeb7e9631eced45e4 on `main` (PR #145, squash-merged; branch `claude/clever-kilby-250c6f`, deleted). Merge tree 21473ffe == pushed branch tip 56c8228e's tree — the pre-push clean-checkout `check` ran on exactly this tree.
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green. `scripts/lib/model-eval/**` is source-only, so the consumer-visible surface was `lib/pinned-worktree/paths.mjs`'s optional `env` on `resolveMainRoot`. The branch push's sync reached 3/3 targets (9 files updated, 1 error: ai-organiser's `.audit-loop/expected-schema.json` refused as diverged because that checkout predates its own open sync PR `chore/sync-e73a40ee`).
 - **Result**: verified for wine-cellar-app; ai-organiser unverified — blocked on its unmerged sync PR `chore/sync-e73a40ee` (merge it, `git pull --ff-only`, re-sync).
@@ -97,6 +106,13 @@
 - **Commit**: 8cadc841385a0f8f6b3786331d5029cf0b5d48e3 on `fix/burndown-runs-findings-boundary` (PR #202, NOT yet merged to `main`); code head 14444545d3e206716e3eb9dc35f20a5de60a3758 + the status.md ship commit.
 - **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of the pushed commit: 18,641 tests, 0 fail, 46 skipped, checks passed (the first attempt failed only on four load-timing tests while ~6 gates ran at once; re-run once, green). No consumer-side retrieval was run.
 - **Result**: unverified, blocked: not merged. The pre-push hook publishes to consumers only when the default branch is updated (since 2026-10-10), so this branch has reached no consumer; verify with `sync-isolation-verify.mjs` in a consumer's MAIN checkout after the PR merges and the source repo re-syncs.
+
+## 2026-10-12 — gate-cost chip (#212): rebased onto main after #214, ready for review
+
+What #212 does and what was measured is in the combined entry "pre-push archive lane (PR #208) and the gate-cost chip (PR #212)" below; since then #212 was brought up to date with main (d65f1e8d) after #214 split `fleet-cli`, its skip list and runbook now say the post-split tree is NOT re-measured, and the plan is marked Complete pending merge.
+Backlog 2026-10-12T09:42Z: Q1 182c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
+---
 
 ## 2026-10-12 — pre-push: a dead push's sandbox is swept at the next push, not 6 hours later (PR #210)
 
