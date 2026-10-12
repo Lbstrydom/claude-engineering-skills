@@ -128,8 +128,9 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
 - The footer's `FYI` line (unregistered work, from the last `status`) is
   information, not a `DO`: relay it; never claim, archive or prune on it alone.
 - Coordinating, not participating: the chip authority block, the session-list
-  cross-check, routing, the ship-ready end state and consumer sync are in
-  `references/coordination.md` ("Rules for a coordinator").
+  cross-check, routing, the ship-ready end state, consumer sync, session
+  titles, archive sweeps and push lanes are in `references/coordination.md`
+  ("Rules for a coordinator").
 - pr-mode `land --approve` refuses a draft, or a required check that failed or
   was SKIPPED (a skipped check never ran). It prints WAIT above a merge whose
   required checks are missing or pending; relay those lines.
