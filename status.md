@@ -1,5 +1,31 @@
 # Project Status Log
 
+<!-- ship-verification-a74c9267-20261012T170519Z.md -->
+### Consumer Verification (previous ship)
+- **Commit**: a74c9267394bcfb2b4c673d17b1b7f8e82271820 on `fix/burndown-close-finding` (PR #222, NOT yet merged to `main`); code commit 47f97552, ship commit a74c9267.
+- **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of the pushed commit: 19,547 tests, 19,501 pass, 0 fail, 46 skipped, checks passed, DB suites 503/52/3 green, status-log-integrity conserved against ccefb0fc. No consumer-side retrieval was run.
+- **Result**: unverified, blocked: not merged. A branch push publishes nothing to consumers (the consumer sync runs only when the default branch is updated); verify with `sync-isolation-verify.mjs` in a consumer's MAIN checkout after PR #222 merges and the source repo re-syncs.
+
+<!-- ship-verification-af173bea-20261012T134954Z.md -->
+### Consumer Verification (previous ship)
+- **Commit**: af173bea3fd28135369e91ad7adf9ecbbe5df99e on `claude/ship-trains-b` (PR #219, open, NOT merged; code head 871a111e plus the status.md ship commit).
+- **Retrieval**: the pre-push hook ran the full `check` in a clean sandbox of exactly this sha: 19,331 tests, 19,285 pass, 0 fail, 46 skipped. The first attempt failed one load-flaky timing test (`fleet-checks` H1/H3, "returned well within the 30s timeout (12432ms)") on a status.md-only commit; the single re-run was clean. No separate post-push re-run (it would repeat the same command on the same sha).
+- **Result**: pushed commit verified by the gate; synced consumer bundle unverified (blocked: #219 is not merged, and consumers sync only from the default branch). After the merge, sync from an up-to-date main and run `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in each consumer's MAIN checkout. Watch for: a consumer on stale synced tooling refuses a serial record carrying `messageRequired` until it re-syncs.
+
+<!-- ship-verification-d4b28b97-20261012T141005Z.md -->
+- **Commit**: d4b28b97f0124a5946a171d80cb09c0cec191cd2 on `fix/ship-nudge-keyset-paging` (PR #218, open; NOT merged). It is the merge of `origin/main` f858beb9 (#219) into the branch, carrying the 2026-10-12 keyset-paging status entry (ship commit `4069f1a3`).
+- **Retrieval**: the pre-push hook ran `check` in a clean sandbox checkout of exactly this sha (not a second run by me): 19,522 tests, 19,476 passed, 0 failed, 46 skipped, 373 s; `db-suites-gate: DB suites passed in 35.8s`, which includes the keyset DB suite and its 4 real-failure tests. A first push attempt was stopped by me mid-hook (to honour the coordinator's status.md hold) and transferred nothing.
+- **Result**: verified for the pushed commit (the hook's clean-checkout run). The synced consumer bundle is unverified (blocked: not merged) — a feature-branch push publishes nothing to consumers; sync from an up-to-date `main` after the PR merges. The new `scripts/lib/cross-skill/validators.mjs` is a lib module in the synced bundle, so confirm it reaches a consumer then.
+
+### Consumer Verification (previous ship)
+- **Commit**: 00db37e0520f3ff44c24568ba36030b8e00c8937 on `fix/final-review-debt-suppression-revival` (PR #203, NOT yet merged to `main`); it contains the ship commit `e8230e7a`.
+- **Retrieval**: the push itself ran NO pre-push gate (this worktree's `core.hooksPath` pointed at a removed worktree, so git ran no hook; found and repaired afterwards). The gate was then run by hand on the pushed head, in a clean sandbox of that commit via `node scripts/prepush-check.mjs --base d2dc4775 --head 00db37e0`: run 1 failed 2 `fleet-gh-batch` timing tests, run 2 failed 1 (`R1-H5`), and the post-reboot run 3 passed: 18,902 tests, 18,856 pass, 0 fail, 46 skipped. `fleet-gh-batch` passed 9/9 in six solo runs on this tree and on clean main. The destructive DB suites were skipped each time (another invocation owned the test container). No `npm ci` re-install was done, and no consumer-side retrieval was run.
+- **Result**: unverified, blocked: not merged. A branch push publishes nothing to consumers (the consumer sync runs only when the default branch is updated), so no consumer has this; verify with `sync-isolation-verify.mjs` in a consumer's MAIN checkout after the PR merges and the source repo re-syncs.
+
+- **Commit**: 16e4d335ff0405312090e20b597000b317531563 on `claude/silly-morse-164a75` (PR #208, open; NOT merged). It is the merge of `origin/main` f20031ed into the branch, carrying the 2026-10-12 status.md entry (1d0b3298) for the archive lane (#208) and the gate-cost chip (#212).
+- **Retrieval**: the pre-push hook ran `check` in a clean checkout of exactly this sha (not a second run by me): 19,185 tests, 19,139 passed, 0 failed, 46 skipped, 333 s on a quiet machine. The previous attempt (1d0b3298 alone, pushed after 05:00Z on 2026-10-12) failed five timing tests under a 75-minute gate with seven concurrent gates; one of those, the dashboard-home pid race, is fixed on main by #207 and came in with this merge.
+- **Result**: verified for the pushed commit (the hook's clean-checkout run). The synced consumer bundle is unverified (blocked: not merged) — a feature-branch push publishes nothing to consumers; sync from an up-to-date main after #208 merges.
+
 ### Consumer Verification (previous ship)
 - **Commit**: f26da22b8ae32de3a071bfeeeb7e9631eced45e4 on `main` (PR #145, squash-merged; branch `claude/clever-kilby-250c6f`, deleted). Merge tree 21473ffe == pushed branch tip 56c8228e's tree — the pre-push clean-checkout `check` ran on exactly this tree.
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green. `scripts/lib/model-eval/**` is source-only, so the consumer-visible surface was `lib/pinned-worktree/paths.mjs`'s optional `env` on `resolveMainRoot`. The branch push's sync reached 3/3 targets (9 files updated, 1 error: ai-organiser's `.audit-loop/expected-schema.json` refused as diverged because that checkout predates its own open sync PR `chore/sync-e73a40ee`).
@@ -86,6 +112,508 @@
 - **Commit**: 7de59ecd4d0414e2f224d8604383c833424a54a9 on `main` (PR #136, squash-merged; branch `claude/audit-csharp-support-a5971f`, deleted) — file-coverage contract + C# support.
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
+
+### Consumer Verification (previous ship)
+- **Commit**: b06f37490aae2324787e8e7b083a2bdb4aa88811 on `claude/fleet-skill-feedback-7c0b5f` (stack: PR #173 dc149797 → #174 e0804275 → #175 tip; not yet merged). The pre-push hook's sync reached 3/3 targets (36 created, 51 updated, 0 errors).
+- **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in the MAIN checkouts of wine-cellar-app and storyline — exit 0, gates 1..9 green in both. Subject check: all 10 new `scripts/.claude-skills/lib/fleet/` modules (merged-facts, required-checks, lifecycle, worktree-status, coordination, directives, obligations, restack, serial, union-merge) present in both bundles.
+- **Result**: verified for both reporting consumers. Note the synced bundle now carries the unmerged branch's fleet; if the PRs change before merge, re-sync from main afterwards.
+- **Commit**: 6114fc14f49fd44c1d0f113b765758d15565d14e on `claude/ship-trains-a` (PR #211, unmerged). The pre-push gate ran the full check in a clean sandbox at this commit: 18797 tests, 18751 pass, 0 fail, 46 skipped.
+- **Retrieval**: none run after the push. The synced bundle row is unverified because a branch push publishes nothing to consumers (the consumer sync was skipped: not main). The independent clean-worktree re-run was not done because a fleet hold (directive d-20261012051717-dafb) forbids new npm test runs.
+- **Result**: unverified (blocked: PR #211 not merged, so nothing reached consumers; and the fleet hold forbids a re-run). After merge, sync from an up-to-date main and run sync-isolation-verify in each consumer's MAIN checkout.
+- **Commit**: 8cadc841385a0f8f6b3786331d5029cf0b5d48e3 on `fix/burndown-runs-findings-boundary` (PR #202, NOT yet merged to `main`); code head 14444545d3e206716e3eb9dc35f20a5de60a3758 + the status.md ship commit.
+- **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of the pushed commit: 18,641 tests, 0 fail, 46 skipped, checks passed (the first attempt failed only on four load-timing tests while ~6 gates ran at once; re-run once, green). No consumer-side retrieval was run.
+- **Result**: unverified, blocked: not merged. The pre-push hook publishes to consumers only when the default branch is updated (since 2026-10-10), so this branch has reached no consumer; verify with `sync-isolation-verify.mjs` in a consumer's MAIN checkout after the PR merges and the source repo re-syncs.
+
+### Consumer Verification (previous ship)
+- **Commit**: 1b8447c6d1c0831a9307bbd5f4dbee7278d8c35f on `fix/cli-contract-hardening-flags-emit-replay` (PR #204, NOT yet merged to `main`); it contains the ship commit and a merge of `origin/main` (8874e710).
+- **Retrieval**: the pre-push hook ran the full `check` in a clean sandbox of the pushed commit ("Pre-push checks in a clean checkout of 1b8447c6"): 18,969 tests, 18,923 pass, 0 fail, 46 skipped, checks passed, and `db-suites-gate: DB suites passed in 44.6s`. The first attempt (merge 40792a3a) was blocked by one real test, `check-status-log-integrity` "a real ancestor exits 0", because my merge left drained notes outside the status.md preamble; fixed and re-pushed. No separate `npm ci` re-install was done, and no consumer-side retrieval was run.
+- **Result**: unverified, blocked: not merged. A branch push publishes nothing to consumers (the consumer sync runs only when the default branch is updated); verify with `sync-isolation-verify.mjs` in a consumer's MAIN checkout after the PR merges and the source repo re-syncs.
+- **Commit**: ac80d55743c74b3084ceeeadcccf12c6ffcee299 on `claude/dreamy-hypatia-5978fa` (PR #210, not yet merged to `main`; merge commit 1a0399a9 of origin/main d65f1e8d, runbook commit ac80d557)
+- **Retrieval**: pushed commit: the pre-push hook ran `npm run check` in a clean checkout of exactly ac80d557 (19,213 tests, 19,167 pass, 0 fail, 46 skipped, 516 s); no separate post-push re-run (it would repeat the same command on the same sha). Synced consumer bundle: not run. Skill manifest: no skill file changed by this PR.
+- **Result**: pushed commit verified by the gate; synced bundle unverified (blocked: the PR is not merged, and consumers sync only from the default branch). Re-verify with `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in each consumer's MAIN checkout after the merge and the source repo's re-sync.
+- **Commit**: 638980bbf48e09c708ca5c0dc9170e555df5c5d0 on `fleet/make-the-pre-push-gate-s-per-f-2dab` (PR #212, open; NOT merged). Plain fast-forward from fcfd42be; it merges origin/main 0aff90cc (#204), carries the #214 reconcile and the plan Complete/log, and the status.md pointer entry.
+- **Retrieval**: the pre-push hook ran `check` in a clean checkout of exactly this sha (not a second run by me): 19,396 tests, 19,350 passed, 0 failed, 46 skipped, 476 s. The first attempt (09e4a14c) was blocked by one test: tests/dashboard-home-status-entries.test.mjs, because the Backlog line in my status.md pointer entry carried a trailing command reference that parseBacklogLine cannot round-trip; fixed by making it the bare snapshot output (cdb4b919).
+- **Result**: verified for the pushed commit (the hook's clean-checkout run). The synced consumer bundle is unverified (blocked: not merged) - a feature-branch push publishes nothing to consumers; sync from an up-to-date main after #212 merges. GitHub: MERGEABLE, checks unit and db-suite still running when this was written.
+
+### Consumer Verification (previous ship)
+- **Commit**: d9b305538657235ff7340f052b32ace8891fe14a on `fix/fleet-hookspath-removal-guard` (PR #220, open; NOT merged). It is the merge of `origin/main` 44c4bbda into the branch plus the status.md ship commit (AI-Gate: converged, run 21ff263a).
+- **Retrieval**: the push's own pre-push hook run did NOT complete. Its process tree was hard-terminated mid-`npm test` (TAP stopped at top-level test 1954, no summary, neither "checks passed" nor "FAILED" printed, sandbox `ces-prepush-d9b30553-90492` left with a dead owner), yet git transferred the push. Killer unidentified: no Application/System event 14:18:30–14:24:20Z. The gate was then run by hand on exactly this sha, `node scripts/prepush-check.mjs --base e5147629 --head d9b30553` (clean sandbox): run 1 (14:29–14:40Z) exit 1, 19,544 tests with 1 fail, `tests/fleet-cli-approve.test.mjs` "the push is issued to the recorded pushUrl" (null envelope at 66s; passes 11/11 alone); run 2 (14:42–14:55Z) exit 0, 19,544 tests, 0 fail, 46 skipped.
+- **Result**: pushed commit verified by the second hand run, not by the hook. The synced consumer bundle is unverified (blocked: not merged); sync from an up-to-date main after #220 merges. Open: a killed pre-push hook can let a push through (coordinator to spawn a separate chip).
+
+## 2026-10-12 — `learning/replay.mjs`: an empty sample is `measured:false` on stdout, not a clean zero
+
+**Why.** `replay` with `sampleSize: 0` (store off or unreadable, a window/repo filter matching nothing, or nothing of that type ever recorded) printed `ok:true` and an all-zero delta on stdout, exit 0. #204 added a stderr WARNING and a markdown notice, but a caller reading only stdout or the exit code still saw a clean zero. Decision (user, 2026-10-12): the JSON envelope carries `measured: false`, keeping `ok: true` and exit 0 — AGENTS.md consumer shape (7), "end in measured:false, never a refusal and never a zero".
+
+- **Change**: `scripts/learning/replay.mjs` `runReplayCli` writes (and returns) `{...result, measured}`, where `measured` is `true` only for a finite `sampleSize > 0`; a missing or non-numeric `sampleSize` reads `measured:false` (fails closed). The stderr WARNING, the markdown "empty sample" block and the `{ok:false, error}` failure envelopes are unchanged. Header comment updated.
+- **Test pinned the old shape, updated on purpose**: `tests/learning-replay.test.mjs`'s "stdout JSON UNCHANGED and still ok:true" case now asserts `measured:false` (comment cites the decision), plus new cases for `measured:true` on a non-empty sample and `measured:false` on a missing `sampleSize`. Red first (3/3 new assertions failed), then green: 79/79 across `learning-replay` + `replay-positionals`.
+- **Consumers**: the library (`scripts/lib/learning/replay.mjs`) has no `measured` key. The only reader of replay's JSON is `learningReplayCmd` (`scripts/lib/cross-skill/commands/learning.mjs`, the `npm run learning:replay` dispatcher), which branches solely on `ok === false`, so it is unaffected; `cross-skill-registry-conformance` + `cross-skill-flag-registry-parity` 20/20. No skill reads it. `stdout:flush:gate` and `emit:exit:gate` at baseline.
+- **Audit** (SID `audit-code-1791825745992-75448`, against a spec written from the decision): R1 PASS H:0 M:0 L:0, file coverage complete (2/2); Gemini final gate APPROVE, 0 blocking, 0 debt.
+- **Other signals** (non-blocking): persona-test open P0 0, open P1 1; regression-lock gap 190 code fixes unlocked (+47 plan) and 3 dangling locks; 186 unremediated acceptances open (54 permanently accepted); auto-reconcile examined 0 (193 unresolvable paths skipped); migrations realized on the ambient store, the `storyline` store is behind (6 constraints, owner DSN needed); 2 upstream reports open (both wine-cellar-app).
+- Backlog 2026-10-12T17:28Z: Q1 190c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt 338 cloud/17 local (0 spilled) · upstream 2
+
+### Next Steps
+- Push held for the coordinator's gate slot (fourth in queue); then rebase onto `origin/main` keeping every status.md line, push, open the PR.
+
+## 2026-10-12 — a killed pre-push hook no longer reads as a pass (Git for Windows)
+
+**Why.** During the push of PR #220 (hook run 14:19–14:24Z) the pre-push hook's process tree was killed
+mid-`npm test`, most likely by the Git for Windows updater (a Restart Manager session was logged at 14:24:20Z). The
+TAP stream stopped at test 1954, neither verdict line printed, the sandbox survived with a dead owner, and git
+transferred the push anyway.
+
+**Root cause (measured, Git 2.56.0.windows.2 / bash 5.3.15).** Git for Windows reads a hook's status as `code & 0xff`
+(`compat/mingw-posix.h`: `WIFEXITED(x) 1`, `WIFSIGNALED(x) 0`, `WEXITSTATUS(x) ((x) & 0xff)`), and an MSYS bash
+killed by signal S exits `S << 8` (HUP 256, INT 512, KILL 2304, TERM 3840). So every signal death of the hook read
+as exit 0. The same truncation sits one seam lower: MSYS bash's `$?` keeps only the low byte of a native child's
+code (`node -e "process.exit(256)"; echo $?` prints 0). `taskkill /F` on the node child alone was never the hole:
+that exits 1 and the hook blocks.
+
+**What.**
+- L1: a marked `fail-closed-on-signal` block, byte-identical at the top of `.githooks/pre-push` and the consumer
+  `HOOK_BODY` (`scripts/install-prepush-hook.mjs`, hook-version 9 → 10), traps the nine POSIX terminating signals
+  unconditionally, plus the XSI ones wherever `kill -l NAME` succeeds, and exits 1.
+- L2: `toShellExitCode` (`scripts/lib/cli-io.mjs`) maps a zero-low-byte failure to 1, at the two places on the gate
+  path that forward a child's status (`scripts/prepush-check.mjs`, `scripts/run-tests.mjs` `adjudicateRun`).
+- L3: a hook-owned `prepush-inflight-record` block writes `<git-common-dir>/prepush-inflight/<pid>.rec` before any
+  real work, updates the sha after the range loop, and removes it from an EXIT trap. The next push reports a record
+  whose owner pid is dead (SIGKILL / TerminateProcess, which no trap can catch). It is advisory and never blocks.
+- `docs/runbooks/prepush-sandbox.md` §8 (cause, table, the three layers, the "unknown commit" procedure, and what
+  L3 cannot see); plan `docs/plans/prepush-hook-fail-closed-when-killed.md` + audit summary.
+- Tests: `tests/prepush-hook-fail-closed-on-signal.test.mjs` (21; real `git push` runs against throwaway bare
+  remotes, built from the shipped hook bytes), `tests/cli-io-shell-exit-code.test.mjs` (21),
+  `tests/helpers/git-bash.mjs` (resolves Git's own bash beside `git --exec-path`, because a bare `bash` can be WSL's;
+  provides a hermetic git env).
+
+**Verification.** In-suite: the unprotected hook killed by SIGHUP reads `fail-open` (exit 0, remote has the ref),
+and every protected case is `blocked`. Every new guard was mutation-proven (red, then restored to green). Against the
+REAL hook (throwaway bare remotes under `C:/tmp`, never origin): pre-fix hook + SIGHUP + kill of the check tree →
+push exit 0, remote RECEIVED the ref, no verdict line, a sandbox husk left behind (the incident's exact signature);
+fixed hook → blocked, `interrupted by SIGHUP`; child-only kill → blocked on both hooks. Full `npm test`: 19,589
+tests, 2 fail. Both failures were `rmsync-retry-guard` flagging this change's own new `fs.rmSync` calls; fixed, and
+the guard (1902/1902) and the integration file (21/21) re-run green. The full suite was not re-run after that
+(machine-sharing: one heavy job at a time); the pre-push gate re-runs it. `/audit-plan` 3 GPT rounds (9/9 accepted)
++ Gemini APPROVE; `/audit-code` 5 rounds (R4/R5 clean, coverage complete) + Gemini APPROVE (1 pre-existing LOW
+captured as debt). The hook is extensionless and the code auditor skips extensionless files, so R2–R5 audited a
+temporary `.sh` copy of it (never committed).
+
+**Rollout / follow-ups.** The fix runs only once the checkout that `core.hooksPath` points at fast-forwards past
+the merge; until then every push still runs the old, fail-open hook. Consumers get L1 on their next hook install.
+Out of scope: L3 in the consumer hook. A sandbox husk from the control run (`ces-prepush-8d862042-95972`) was left
+for the next push's dead-owner sweep rather than removed with `rm -rf`, because its `node_modules` may be a junction
+into the main checkout.
+
+Backlog 2026-10-12T17:28Z: Q1 190c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt 338 cloud/3 local (0 spilled) · upstream 2
+
+## 2026-10-12 — Ship trains Cluster C: the /ship --train skill surface and the provenance invariants
+
+### Changes
+- **`/ship --train` skill surface (Phase 6).** `skills/ship/SKILL.md` gets a usage row and a short "Train mode" section; the new `skills/ship/references/train-mode.md` is the runbook: the T0-T9 steps with the exact `ship-train.mjs` verbs, the three overrides (`--waive`, `--allow-unaudited`, `--end-of-day`) read only from the invocation, the refusal codes, what gate lands (planned versus actual, `passed` needing a server pin), and recovery from owned state. Human-only like the rest of `/ship`: `--train` does not relax the explicit-invocation rule.
+- **Records and invariants (Phase 7).** `status-md-format.md` gets the train-entry template (titled by date plus PR list, with a planned-gate and `identityProvable` column). `docs/reference/commit-provenance.md` gets "Two emission points, one renderer, one evaluator": content binding, the server-pin precondition for `passed` on a squash, and `converged`'s widened reading. `AGENTS.md`'s provenance paragraph now names both helpers and defines `converged` as "not asserted equal".
+- **Correction found by the relocation guard: `ship-train` is source-repo-only.** Adding it to the sync lists pulled `sync-inventory.mjs` and `consumer-repos.mjs` (both `path.resolve(import.meta.dirname, "..")`) into the consumer closure. So train mode is marked "Source-repo-gated" like Steps 0.5h and 0.5i, and `tests/skill-command-portability.test.mjs` exempts the script only inside the two docs that gate themselves, asserting each really says so (audit R1 M3, fixed; naming it in another skill fails the shipped-script test).
+- **Dropped from this cluster by coordinator ruling:** the `skills/fleet/references/landing.md` cross-reference (the fleet docs chip adds it). Cluster C touches no `skills/fleet/**`. The plan records both deviations.
+- **Audit**: `/audit-code` R1 M3 (1 fixed, 2 dismissed as stale plan references), **R2 and R3 PASS 0/0/0, coverage complete**. Gemini final gate over the A+B+C union: round 1 REJECT on two items in files this diff does not touch (G1 HIGH on `commit-trailers.mjs`, challenged with evidence: refusing `converged` on stale evidence would make it unreachable for the audited-then-remediated ship it exists for, and the train always passes fresh evidence; G2 MEDIUM on `serial.mjs`, captured as debt), round 2 **APPROVE**.
+
+### Files Affected
+- `skills/ship/SKILL.md`, `skills/ship/references/train-mode.md` (new), `skills/ship/references/status-md-format.md`, plus the regenerated `.claude/skills/ship/**` copies and `skills.manifest.json`.
+- `docs/reference/commit-provenance.md`, `AGENTS.md` — the invariant text.
+- `tests/skill-command-portability.test.mjs` — the scoped source-only exemption.
+- `docs/plans/ship-trains.md` — Cluster C unblock and the two amendments.
+
+### Decisions Made
+- **Train mode is source-repo-gated, not synced.** The tier oracle (`getSyncClosure()`) and the publication step (`sync-to-repos`, `sync-pr`) are this repository's own, and a consumer has neither. The plan's earlier note moving `CLI_SMOKE_SET` membership to this phase is superseded.
+- **G1 was challenged, not accepted** (see above); the stale-evidence behaviour is pre-existing, documented in `commit-provenance.md`, and outside this diff.
+- **G2 is debt**: a `gh pr merge` that fails immediately waits up to 120 s in `runSerial` before reporting. Cluster B's merged file; a later fleet change.
+
+### Next Steps
+- Push waits for the coordinator's "your turn" (after the fleet cluster 5 and docs chip), after a final fetch and rebase onto `origin/main`.
+- The held DB suite `tests/ship-train-provenance.db.test.mjs` plus its two enrolment lists (`scripts/db-test-container.mjs`, `.github/workflows/postgres-parity.yml`) is unblocked by the keyset merge and lands as its own small PR once this cluster is pushed.
+- **Cluster D** (the thinness metric) after the gate-cost plan's branch tier exists; it needs a focused `/audit-plan` of section 2.10's train side first.
+
+Backlog 2026-10-12T17:01Z: Q1 190c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt 338 cloud/1 local (0 spilled) · upstream 2
+
+---
+
+## 2026-10-12 — queue-burndown cluster 5: `close-finding`, the command that can discharge an accepted finding
+
+Fifth of the PRs landing the abandoned 2026-10-02 campaign (`archive/queue-burndown-2026-10-02`): clusters 1, 2, 3 and 6 are merged (#200, #202, #215, #217). This one is a feature, approved by the user as code only, with **no discharge run against the store, ever** (not even in testing).
+
+- **Why it exists**: `/ship` Step 0.5e told operators to close an unremediated acceptance with `final-review-record-fix`, but that command resolves only `pass_name IN ('final-review','final-review-shadow')`, so for an ordinary audit pass it could only answer no-match. On 2026-10-02 that was every one of the 142 rows in the queue: an obligation nothing could discharge.
+- **Change**: `cross-skill.mjs close-finding --finding <id> --as fixed|dismissed|accepted-permanent`. `fixed` needs `--commit`, the other two need `--reason`. By row id (the id both nudge readers print), repo-scoped by construction: a finding from another repo resolves to `not-found-in-repo` and nothing is written. Each disposition goes through the writer that already owns that state (`markFindingsRemediation`; `recordAdjudicationEvent` with ruling `overrule`; `user_action` for a permanent acceptance), so this adds an entry point, not a second write path. `skills/ship/SKILL.md` and its reference now name the working command. The writer check treats `close` as a write verb.
+- **Found by auditing the campaign's commit** (it had never been reviewed; five defects):
+  - Discharge-then-stamp left a finding OUT of the open set with no commit or reason recorded, reported as success if the second write failed or touched zero rows. Evidence is now stamped first and checked; a failure refuses before anything is discharged, and a discharge failure after the stamp leaves the finding open and the same call retried idempotent. Tested on real Postgres by injecting a failing trigger per ordering.
+  - The exported writer accepted `fixed` with no commit (only the CLI checked). The writer now refuses it.
+  - A `null` reason was stored as the text "null" (the parameter default covers only `undefined`); found by Gemini, fixed.
+  - The postgres-parity enrolment line carried a literal `\n`, which would have handed the test runner a stray argument `n`. Fixed in the unpushed commit.
+  - The test's fixture cleanup swallowed errors.
+- **DB suite RAN, not skipped** on a throwaway local container (`127.0.0.1:5433` only, torn down after): `tests/finding-disposition-db.test.mjs` 10/10 (4 fault-injection cases), and 21/21 with #218's keyset suite on the rebased tree. Five mutation checks, one defect at a time, each turn a named test red (old discharge-first order for `fixed` and for `dismissed`, no commit guard, a swallowed stamp failure, no null guard); the source was restored byte-identical each time.
+- **Audit** (SID `audit-code-1791805682529-80328`, 5 rounds): R1 9 findings: 7 fixed, 2 dismissed with evidence (the two-list DB-suite enrolment is the repo's documented "two edits, always" contract; `closeFindingCmd` returning `{ok:false}` matches its sibling writer and `emit()` couples `ok:false` to a non-zero exit). R2, R3 (wider passes), R4 (final tree) PASS 0 findings; Gemini final gate APPROVE (round 1), one LOW (G1, the null reason), fixed rather than deferred; R5 PASS 0 findings on the rebased base `44c4bbda`.
+- **Hold respected**: while #218 was open the audit's fixes stayed out of `ship.mjs`, `registry.mjs` and `db-test-container.mjs`; the rebase onto #218 merged cleanly there and took main's `postgres-parity.yml`, `db-test-container.mjs` and generated `skills.manifest.json`, re-adding only this suite's enrolment line.
+- **Not done**: not pushed and no PR yet. The fleet claim is still BLOCKED by `fix/ship-nudge-keyset-paging`, which fleet itself reports `done` (PR #218 merged) but whose claim still overlaps; it is another session's claim, so I did not override it. The push also waits on the coordinator's slot (the wine measurement window is quiet 15:00-17:30Z, and #220 holds the `status.md` lane). The pre-push gate has therefore not run on this commit.
+- **Other signals** (non-blocking): persona-test open P0 0, open P1 1; regression-lock gap 188 code fixes unlocked (+47 plan) and 3 dangling locks; 186 unremediated acceptances open (54 permanently accepted), which this command is the means to discharge, one verified row at a time on the user's say-so; auto-reconcile examined 0 (193 unresolvable paths skipped); the `storyline` store is behind this revision's migrations (6 constraints, owner DSN needed); 2 upstream reports open (both wine-cellar-app).
+- Backlog 2026-10-12T14:22Z: Q1 188c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt 336 cloud/17 local (0 spilled) · upstream 2
+
+### Next Steps
+- Coordinator's push slot, then one push, read the hook's clean-checkout result, open the PR (the merge needs the user's separate yes).
+- After merge: discharging the 186 open acceptances is a user decision, row by row with `close-finding`; each is a hypothesis about current code to verify first.
+- Cluster 4 still waits on `964c1d77`; owed after `a72426c6` lands: port `tests/replay-cli-false-zero.test.mjs`.
+
+## 2026-10-12 — fleet archive / prune --apply refuse removing a worktree another worktree's hooks live in (PR #220)
+
+**Why.** On 2026-10-12 three linked worktrees had `core.hooksPath` in `config.worktree` pointing at
+`.claude/worktrees/fleet-unclaimed-work-plan/.githooks`. That worktree was removed, git ran NO pre-push hook for
+them (a missing hooks directory is not an error), and #203 was pushed ungated — caught only from an empty hook log
+(see the #203 Consumer Verification note above). The fleet plan's recorded follow-up (#216).
+
+**What.** New `scripts/lib/fleet/hooks-path-guard.mjs` (`hooksPathDependents`, `hooksLocation`, `traversedEntries`,
+`canonicalEntry`, `remedyFor`, `hooksPathRefusals`). For every OTHER live, non-bare worktree it asks git for the hooks
+directory (`git rev-parse --git-path hooks` — `config.worktree`, inherited repo/global/system value, or the default),
+walks it one component at a time following each symlink/junction (POSIX resolves `..` physically, win32 lexically),
+plus every linked hook inside it, and refuses when any entry walked lies inside the worktree being removed. Fails
+closed on an unreadable config or an unwalkable path. The refusal names the dependent worktree and a remedy that
+re-points at the main checkout's own hooks directory (repo-local override for a global/system value; no command at
+all when no existing directory outside the worktree is known).
+- `scripts/lib/fleet/archive.mjs`: `planArchive` refuses (so the dry run carries the same verdict); `applyArchive`
+  re-checks under the registry lock immediately before `git worktree remove` (new `list` seam).
+- `scripts/lib/fleet/prune.mjs`: `planPrune` keeps such a worktree with the reason + remedy; `applyPrune` re-checks
+  under the lock. Prune stays read-only by default.
+- `skills/fleet/SKILL.md`, `skills/fleet/references/coordination.md` (+ regenerated `.claude/skills/fleet/**`,
+  `skills.manifest.json`); the two new SKILL.md lines dispositioned in `skills/fleet/gate-contract.json`.
+- `tests/fleet-hooks-path-guard.test.mjs` (new, 20 tests): red-then-green two-worktree controls for archive plan /
+  `--apply` / a post-plan race, prune dry run / `--apply` / the under-lock re-check; fail-closed on an unreadable
+  `config.worktree`, an unreadable hooks directory and an erroring git; POSIX vs win32 `..`, `A/..hooks`, `\\?\` and
+  `\\?\UNC\` link targets, 8.3 aliases, linked hooks.
+
+**Verification.** Guard neutralised → every guard test red; each of the 12 audit fixes reverted on its own → its test
+red, restored → green (one honest limit: on win32 the resolved-endpoint wiring cannot go red, because the Win32 API
+collapses `..` before the walk; the field is pinned on every platform by the `traversedEntries` unit, the wiring on
+POSIX by the real-filesystem test). Pre-push clean-checkout `check` on e5147629: 19,435 tests, 0 fail, 46 skipped.
+`/audit-code --scope diff`: GPT R1-R6 (round cap; R3 and R6 PASS 0/0/0; 17 findings, all accepted or deliberated,
+0 deferred; H2/H3 of R4 deliberated to a LOW compromise) → Gemini APPROVE (`gateDisposition: approve`). **Not 2/2
+stable across the whole branch**: R5 (whole-branch) raised three win32 path-spelling findings, fixed; R6 covered only
+that fix, then the cap. Summary: `docs/plans/fleet-hooks-path-removal-guard-audit-summary.md`. A read-only probe of this
+repo's 15 worktrees found no linked worktree that is currently a hooks target.
+
+**Ship-gate nudges (advisory).** Persona: 0 open P0 / 1 open P1. Unlocked fixes: 188 code / 47 plan (420 aged out,
+3 dangling locks). Unremediated acceptances: 110 code / 76 plan (54 permanently accepted, 274 aged out). Migrations
+realized on the ambient store; storyline's store is behind (6 constraints). Upstream: 2 open (wine-cellar-app),
+including 56773c7c "fleet prune evidence never reaches a person" — adjacent to this change, not addressed by it.
+
+Backlog 2026-10-12T14:18Z: Q1 188c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt 336 cloud/10 local (0 spilled) · upstream 2
+
+---
+
+## 2026-10-12 — keyset paging for the two /ship-nudge readers (#218): rebased from an archive tag, audited, five rounds of fixes
+
+- **Defect** (audit finding 5fbd8fec): `/ship` verifies a row and then closes it, and every close removes a row from `unlocked_fixes` / `unremediated_acceptances`. `--offset` counts positions in a set that has since shrunk, so page 2 skipped one unread row per row closed, while `skills/ship/SKILL.md` promised pages "neither repeat nor skip a row".
+- **Change**: `list-unlocked-fixes` and `list-unremediated-acceptances` return `nextCursor` and accept `--after <cursor>` (base64url, kind-tagged, value-domain validated; `--after` with `--offset` is `BAD_INPUT`). The store continues strictly after the cursor in each reader's total order and binds the timestamp as `::text`, so a microsecond tie neither repeats nor skips. `--offset` still works. `skills/ship/SKILL.md` documents the cursor walk with a real, decodable example.
+- **Provenance**: the change is commit `92eb975a`, abandoned in the archived worktree `archive/worktree-agent-aa03e61f5a6524a00` and rebased onto main. A same-subject copy on `archive/queue-burndown-2026-10-02` (`991bf21e`) differs only by regenerated skill files; the landing coordination assigned the `aa03e61f` copy to this PR.
+- **Audit** (run by the coordinator on this branch; I did not run these rounds): R1 found one HIGH, four MEDIUMs and a LOW; R2 on the fix commit PASS 0/0/0; R3 on the whole PR found one MEDIUM (a cursor timestamp with no UTC offset is read in two timezones), fixed; R4 PASS 0/0/0; R5 raised one LOW (the calendar round-trip dropped the year's zero padding), fixed. Fixed from R1: **H1** a failed query was swallowed into `[]`, which a cursor walk reads as "no more rows", so the readers take an opt-in `strict` and the two list commands raise `STORE_READ_FAILED` (exit 1, no `nextCursor`; the recommend-skills and lock-with-test callers keep the never-throw degrade); **M2** `UUID` / `isPgTimestamptzText` moved to `scripts/lib/cross-skill/validators.mjs`; **L1** the SKILL.md example cursor decoded to nothing. R1 M1, M3 and M4 were left unfixed on the coordinator's disposition; their rulings are in the coordinator's audit records, not repeated here. Gemini final review (run `audit-code-1791807588861-64124`): R1 CONCERNS with one HIGH (G1), ruled a false positive because `ship.mjs` already passes the clamped `resolveNudgePage` limit to `nextCursorFor`; R2 APPROVE, 0 blocking, one LOW (`tests/ship-nudge-keyset-db.test.mjs` is missing from `postgres-parity.yml`'s `paths` filters, so a PR touching only that file would not trigger the workflow), captured as debt `a06f58c2` and deliberately not fixed in this PR.
+- **Tests**: `tests/ship-nudge-keyset.test.mjs` (20: cursor round-trips and refusals; first-page and continuation-page failures for both commands, red with the wrapper reverted; a probe that decodes every `--after` example in SKILL.md), `tests/cross-skill-validators.test.mjs` (7: offset required, low years, the three decoders), and `tests/ship-nudge-keyset-db.test.mjs` on real Postgres (seeded `fixed_at` / `accepted_at` ties: OFFSET skips after closing page 1 and the cursor does not, across every SQL branch; plus a real `22007` that returns `[]` by default and throws under `strict`). The DB suite is enrolled once each in `scripts/db-test-container.mjs` and `.github/workflows/postgres-parity.yml`. Each negative control was seen red before restoring (one of my first revert scripts silently did nothing, so it was discarded and redone from a script file).
+- **Measured**: full `npm test` at `e6c832dd`: 19,318 tests, 19,271 pass, 1 fail, 46 skipped; the failure is `linter-msbuild` "on timeout the child AND its grandchild are gone", a process-tree timing test that passed 45/45 on three isolated reruns and shares no code with this diff. Docker DB lane (`npm run db:local`, before the last amend): 469 + 52 + 3 pass, 0 fail. All 33 static gates pass on `74f07419` and `skills:check` after the merge. Live: both commands against the real store return a working `nextCursor` (235 unlocked, 186 unremediated acceptances).
+- **Caught on the way**: my first commit passed the reader to `readPageStrict` by reference and broke the static guard in `cross-skill-unlocked-scope.test.mjs`, which wants a direct reader call. I made the call visible rather than loosen the guard, and amended the unpushed commit.
+- **Merge**: `git merge origin/main` (not a rebase, so the pre-push status-integrity check holds). The only conflict was the generated `skills.manifest.json`: took main's and regenerated.
+- **Not done / residual**: the `final-review-pending` example in `skills/ship/SKILL.md` (Step 6.7) still uses the same non-decoding placeholder cursor; it is outside this PR. Not merged; the merge needs the user's separate yes.
+- **Gate disposition**: `AI-Gate not-run`. The audit evidence lives in the coordinator's session, so no worktree holds an `.audit/last-audit-run.json`, and the marker was not hand-written; a verified `converged` was therefore not available. The code commits (`a599cf7d`, `e6c832dd`, `9f504f30`, `74f07419`) were made with plain `git commit` and carry no `AI-*` trailers; this entry's commit is the one `ship-commit.mjs` wrote.
+- **Other signals** (non-blocking): persona-test open P0 0, open P1 1; regression-lock gap 188 code fixes unlocked (+47 plan) and 3 dangling locks; 186 unremediated acceptances (54 permanently accepted); auto-reconcile examined 1, 0 resolved, 1 uncertain; the `storyline` store is behind this revision's migrations (6 constraints, repair with its owner DSN); 2 upstream reports open (both wine-cellar-app).
+- Backlog 2026-10-12T13:21Z: Q1 188c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt 335 cloud/1 local (0 spilled) · upstream 2
+
+### Next Steps
+- PR #218: push, read the hook's clean-checkout result, then merge on the user's separate yes (squash).
+- Follow-up: the Step 6.7 placeholder cursor in `skills/ship/SKILL.md`.
+
+## 2026-10-12 — Ship trains Cluster B: serial messageFor seam plus land and sync verbs (#219)
+
+### Changes
+- **Fleet serial landing takes an optional `messageFor` seam** (`scripts/lib/fleet/serial.mjs`). It is called once per PR immediately before its merge, on the exact head being merged (after any update-branch), with the destination tip read at that moment. It returns `{subject, body}`, `{stop}` or nothing. Absent, the merge argv is byte-identical. A throw, an empty or multi-line subject, a NUL or any other shape stops the run, so a caller that asked for a message never gets an unmessaged merge by accident. A `{stop}` ends the run before that merge; `--resume` decides again on the then-current head.
+- **The requirement is durable (audit R1 M4, contested by rebuttal, sustained by GPT).** An approval that supplies a provider records an immutable `messageRequired: true` in fleet's own serial record. A raw `fleet land --resume` without a provider, or a provider that answers nothing, stops before any merge. No body, decision or receipt is stored; it is a fixed constraint of the run, owned by the runner that enforces it.
+- **Message files are cleaned up.** The per-PR file is removed in a `finally` right after the `gh pr merge` call; a file left by a process that died is swept (under the run lease) when the next run starts, including on a resume that finds the PR already merged; a sweep that cannot finish stops the run with the reason. Both `rmSync` sites use `retrySync` (the first push was blocked by `rmsync-retry-guard`).
+- **`ship-train land`** (`--train`, `--resume`, `--accept-rerun`, `--composer`) drives that landing. The callback decides each message in a child running the same `message` verb a human previews with (fleet's loop is synchronous, the store query is not) and refuses a message decided on another head. The child has a 5 minute deadline.
+- **`ship-train sync`** re-verifies in the same invocation, then publishes the final merge OID from a clean detached worktree: it checks the tree, runs `sync-to-repos` then `sync-pr`, and always removes the worktree. It runs under a per-train exclusive lease (a second concurrent sync is refused before it can touch the first's worktree). Rollback protection is `sync-to-repos`'s own; `--allow-rollback` is never passed. Tool runs have a 30 minute deadline. The Step 6.8 note is written only for a publication that completed.
+- **Fault injection over REAL fleet serial landing** (`tests/ship-train-recovery.test.mjs`): death before and after a merge submission, a refusal that appears between attempts, and strict protection removed between attempts (the retry claims `converged`, not the `passed` the first attempt would have). The decision under test is the real `decideTrainGate` + `composeSquashMessage`; only the store read is canned.
+- **Audit**: `/audit-code` R1 H1 M9 L1 (7 accepted, 4 dismissed with reasons), R2 M1 (fixed), **R3 and R4 PASS 0/0/0, coverage complete**, Gemini final review **APPROVE**. Every new guard was proven red-then-green against a mutation. Pre-push gate on the pushed head: 19331 tests, 19285 pass, 0 fail, 46 skipped.
+
+### Files Affected
+- `scripts/lib/fleet/serial.mjs` — the seam, the `messageRequired` marker, the sweep.
+- `scripts/lib/ship-train/commands.mjs`, `scripts/ship-train.mjs` — `land` and `sync`, the lease, the child deadlines.
+- `tests/helpers/fleet-serial-fx.mjs` (new, fixtures shared by the serial and recovery suites), `tests/fleet-serial.test.mjs`, `tests/ship-train-cli.test.mjs`, `tests/ship-train-recovery.test.mjs` (new).
+- `docs/plans/ship-trains.md` — Phase 4/5 amendments and the Cluster B unblock note.
+
+### Decisions Made
+- **A behaviour change to a persisted contract, flagged in the PR body.** `messageRequired` is an additive optional field in fleet's strict v1 serial record, so a fleet older than this change refuses to read such a record. Only runs started by `ship-train land` write it; a consumer on stale synced tooling would refuse those runs until the next sync. This is why #219 needs this `/ship` before merge.
+- **`messageFor` stays synchronous; the store query rides a child process** rather than turning fleet's serial loop (a file lease plus blocking sleeps) async.
+- **No restack of #219** (coordinator ruling): GitHub reports it CLEAN, a force-push is not wanted, and if it goes DIRTY main is merged in instead.
+
+### Next Steps
+- Merge #219 on the user's go-ahead, then sync consumers from an up-to-date main.
+- **Cluster C** (the `/ship --train` skill surface, `skills/ship/references/train-mode.md`, the invariants docs) stays blocked on the keyset PR's hold on `skills/ship/SKILL.md`.
+- **Cluster D** (the thinness metric) after B and the gate-cost plan. The DB suite `tests/ship-train-provenance.db.test.mjs` and its two-list enrolment land after the keyset PR.
+
+Backlog 2026-10-12T13:06Z: Q1 188c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
+---
+
+## 2026-10-12 — round 1 of a code audit honours a supplied `--diff` (no head-cut under /cycle)
+
+- **Defect** (measured 2026-10-11, /cycle --autonomous Cluster A, fleet handover work): R1 reported `coverage: PARTIAL — 7 of 10 changed source file(s) not fully audited`. `scripts/lib/fleet/handover.mjs` (54K chars) was read only to its first 10K, so the changed code (lines ~250+) was never seen. R2, given the same `--diff`, logged `[diff] Parsed 8 files, 29 hunks` and reached `coverage complete`.
+- **Cause**: `legacy-production-audit.mjs` parsed `--diff` only inside the `isR2Plus` block. /cycle's cluster recipe passes `--files`, which skips the VCS change record, so R1 had no hunk evidence and head-cut every changed file over `maxPerFile`. The tiered discovery read (`readDiscoveryCode`) had the same R2-only gate.
+- **Fix**: a supplied `--diff` is hunk evidence in every round, matching the plan's own D7 rule ("keyed on the declared diff, never the round"). R1 keeps its rubric and the plain reader, so there is no annotation and no suppression. A new row in the D7 table of `docs/plans/audit-hunk-window-coverage.md`. The /cycle recipe comment no longer calls `--diff` "annotation context only". `legacy-production-audit.mjs` is 2 lines shorter (size ratchet).
+- **Tests**: `tests/coverage-orchestrator.test.mjs` runs R1 with `--files` + `--diff` through the real orchestrator. With the diff the read is `read.state === 'windowed'` and lines 300–303 reach the model; without it the read stays `head-cut`. The new test fails on the old code and passes with the fix. `final-review-hunk-windows.test.mjs`'s "R1 ignores it" test now asserts the opposite, with a no-diff control.
+- **Audit**: `/audit-code --scope diff` R1 PASS M:1 (the test patch's hunk had no body; fixed). R2 H:0 M:0 L:0, converged. Gemini APPROVE (0 blocking, 0 debt).
+- **npm test** (local, linked worktree): 18,616 pass, 4 fail.
+  - rmsync-guard: fixed (it was my test).
+  - sync-target-path: a load flake; it passes alone.
+  - skills-artifact-freshness: compares the committed blob, so it clears on commit.
+  - prepush-installed-tree-identity: the worktree's stale `node_modules` (micromatch/braces), already noted in the 10-11 entry.
+- Backlog 2026-10-12T04:31Z: Q1 173c/47p (+420 aged) · Q2 113c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
+## 2026-10-12 — gate-cost chip (#212): rebased onto main after #214, ready for review
+
+What #212 does and what was measured is in the combined entry "pre-push archive lane (PR #208) and the gate-cost chip (PR #212)" below; since then #212 was brought up to date with main (d65f1e8d) after #214 split `fleet-cli`, its skip list and runbook now say the post-split tree is NOT re-measured, and the plan is marked Complete pending merge.
+Backlog 2026-10-12T09:42Z: Q1 182c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
+---
+
+## 2026-10-12 — pre-push: a dead push's sandbox is swept at the next push, not 6 hours later (PR #210)
+
+Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
+- **Cause (measured from the pushing session's transcript, not guessed)**: two pushes were stopped mid-gate with TaskStop (15:52:50Z and 15:59:18Z on 2026-10-11). A killed process runs no cleanup handler, so `ces-prepush-a4d6ea00-77848` and `ces-prepush-fc2be6f7-82364` stayed on disk and registered in `git worktree list`. Both owner pids were gone, and both were under the 6h age rule, so nothing could sweep them. The fleet scan then counted them as unregistered work. Not the preserved-on-`npm ci`-failure case. The directories were already removed when this was investigated, so `.prepush-npm-ci.log` could not be stat'ed.
+- **Change** (`scripts/lib/prepush-sandbox-cleanup.mjs`, `scripts/prepush-check.mjs`):
+  - A husk whose owner pid (digits after the last `-`, a plain positive decimal) reads dead (ESRCH) is swept at once.
+  - Age (6h) stays the only rule when the owner is alive, liveness is unknown or throws, the name has no usable pid (`--123`, leading zero, `0`), or the husk holds `.prepush-npm-ci.log`.
+  - Pid reuse can only make a dead owner read alive, so it falls back to the age rule. A process-start-time probe was deliberately not built.
+  - `surveySandboxes`/`sweepStaleSandboxes` return `unsurveyed` (unreadable temp dir, non-ENOENT stat failure), so "found nothing" is never also "could not look".
+  - The log wording is the pure `describeSweep`, asserted on its emitted lines. `PRESERVED_EVIDENCE_FILE` is the one shared marker name.
+- **Tests**: `node --test tests/prepush-sandbox-cleanup.test.mjs tests/prepush-sandbox-honesty.test.mjs` → 73 pass. Dead owner = a real exited child's pid; live owner = a real running other process; plus a negative control. Mutation-checked in six directions (everything reads dead, no dead-owner rule, marker ignored, old unanchored grammar, stat errors swallowed, wording miscounted); an earlier `sed` mutation that had not applied was caught and redone.
+- **Live end-to-end**: stopped this branch's own push with TaskStop (the incident mechanism); the next push logged `swept 1 stale sandbox husk(s) from <tmp> (1 owner process dead)`. The husk left disk and `git worktree list`; two other sessions' live sandboxes were kept.
+- **Audit** (`audit-code-1791751589`, `--scope diff`): R1 H:1 M:5 (all fixed), R2 and R3 PASS 0/0/0, Gemini APPROVE (gate approve, 0 blocking, 0 debt).
+- **Pre-push gate** (full suite, 18,688 tests, ~28 min): attempts 1 and 2 failed on tests that do not reference these files and pass in isolation under load: `fleet-checks` (12.3s vs 10s bound), `hook-arch-memory-check` (6.2s vs 5s bound), `dashboard-home-deadline` pid.txt ENOENT (PR #207 fixes it). Attempt 3 passed. A fourth attempt (this entry's commit, 77 minutes under load) failed on the same three. No `--no-verify`; the push was held, then re-done after merging main (5 → 8 commits behind by then).
+- **Decisions**:
+  - The fleet half (treating `ces-prepush-*` worktrees as tooling in the unregistered-work scan) is not in this PR: the verdict classification exists only in open PR #206, and the fleet chip owns `scripts/lib/fleet/**`. The contract it will cite is unchanged: `SANDBOX_PREFIX` + `<tmpdir>/ces-prepush-<sha8>-<pid>`.
+  - `docs/runbooks/prepush-sandbox.md` was held back while PR #208 owned it; after #208 landed it is reworded here: #208's bullet "A sandbox that may still be live is never swept" stays, and a new bullet states the dead-owner rule and the cases that keep the age rule.
+- **Provenance**: the two code commits (`7f4ca1f4`, `13433853`) were made with plain `git commit`, so they carry no `AI-*` trailers; this entry's commit is the one `ship-commit.mjs` wrote.
+
+### Next Steps
+- PR #210: review, then merge (not merged).
+- Fleet chip: classify `ces-prepush-*` worktrees as tooling on top of #206's verdicts.
+
+## 2026-10-12 — Ship trains: plan (#209) + Cluster A, the stateless read side of `/ship --train` (#211)
+
+### Changes
+- **Plan `docs/plans/ship-trains.md`** (PR #209; its content is carried and extended by #211). It covers one human `/ship --train` per batch:
+  - sessions stop at ship-ready;
+  - the coordinator plans the train and writes one status.md entry;
+  - `fleet land` runs one combined test;
+  - serial landing gets a `messageFor` callback that writes each squash commit's parseable `AI-*` block;
+  - the train is verified, then one consumer sync.
+
+  The human gate stays: `/ship` keeps `disable-model-invocation`, because relaxing it would create a standing agent-held authority, which is a laundering path. Audit: `/audit-plan` R1–R3 accepted 11/11, then Gemini APPROVE.
+- **Measured motivation, figure and attribution kept separate (§1.1)**:
+  - Figure: 20 of 76 commits on `main` since 2026-09-25 carry `AI-Gate`.
+  - Attribution over 80 merged PRs: **54 never ran `/ship`**. **9 lost the trailer on the squash**: 4 had the body replaced (#162–#165); 5 had the block buried mid-list by GitHub's default body (#186, #187, #192, #196, #197). 17 kept it.
+- **Stateless amendment (§2.8)**. The first Cluster A built a persisted ship-train "receipt". `/audit-code` then raised fresh HIGHs in five consecutive rounds, every one in the lifecycle of a verify record that a later invocation consumes (staleness, refusal persistence, CAS, basis hash, phase invariants). So the receipt was deleted:
+  - fleet's immutable manifest pins the heads;
+  - squash messages are decided fresh per head;
+  - `verify` checks **source identity** (via fleet's `classifyUpdatedHead`) and then **claim truth**, not equality with a stored decision;
+  - `sync` re-verifies in the same invocation.
+
+  The amendment's §2.8 table maps each receipt item to the owned state that covers it. Audit: GPT plan R4–R5 (H2 rebutted with `sync-to-repos.mjs:1701` and dismissed by GPT), then Gemini plan round 2 APPROVE. Net −537 lines.
+- **Cluster A code** (PR #211):
+  - `impact.mjs`: urgent / standard / ride-along tiers, with the sync closure as the consumer oracle; a framed `-z` parse; both rename endpoints.
+  - `provenance.mjs`: binds a run by content (`audited_tree` = a PR commit's tree); decides the gate through the existing `evaluateGateVerification`; substantiated `AI-Models` only.
+  - `store/train-provenance.mjs`: `findCodeRunCandidates` and `findCodeRunForRepo` (repo-scoped, code-mode); schema faults fatal; input refusals distinct.
+  - `verify.mjs`: claim truth, the final merge OID, interleaving, `publicationClearance`.
+  - `commands.mjs` + `scripts/ship-train.mjs`: `plan`, `message`, `verify --train`.
+  - `commit-trailers.mjs` `evaluateGateVerification` gains `identityProvable` (default true, so existing callers are byte-identical).
+  - `.audit-loop/domain-map.json`: `scripts/lib/ship-train/**` tagged `ship`; `tests → ship` and `ship → fleet` declared with reasons.
+- **Audit (stateless code)**: `/audit-code` R1 H4 M6 L1 (9 accepted), R2 H1, **R3–R5 PASS 0/0/0, coverage COMPLETE**, then Gemini APPROVE. Every fix was proven red, then green. That includes the held real-Postgres suite (6/6), where removing the repo-scope clause turns its test red.
+
+### Files Affected
+- `docs/plans/ship-trains.md` — the plan, its audit trail, the stateless amendment and §2.10 (test cost).
+- `scripts/lib/ship-train/{impact,provenance,verify,commands}.mjs`, `scripts/ship-train.mjs` — new.
+- `scripts/lib/store/train-provenance.mjs` — new, read-only.
+- `scripts/lib/commit-trailers.mjs` — `identityProvable` input.
+- `.audit-loop/domain-map.json` — ship-train claim + two declared edges.
+- `tests/ship-train-{impact,provenance,verify,cli}.test.mjs` (new), `tests/commit-trailers.test.mjs` (+4).
+
+### Decisions Made
+- **`main` is unpinned** (measured: `rulesets` → `[]`, branch protection → 404). Trains therefore land audited PRs as `AI-Gate: converged`, never `passed`. `passed` becomes reachable only if the user enables "require branches up to date" with no bypass actors; that is a repo-settings decision, not made here. `converged`'s reading widens to "tree identity not asserted equal" (plan R7).
+- **Empirical `plan` on #202–#206, hand-checked against the store**: only #202 has a converged run whose content matches its commits. #203 and #204 match only single-round unconverged runs. #205 and #206 match none.
+- **§2.10 test cost, split by owner (coordinator ruling)**:
+  - Kept here: the train's one combined `npm test` is the authoritative suite on the landing bytes, plus a "combined run failed on a test the branch tier didn't select" metric (reads `unmeasured` until it can be computed).
+  - Owned by the gate-cost plan (`docs/plans/gate-cost-slice-1.md` (planned)): the cheaper branch-push tier; weakening the branch gate is the user's policy call.
+  - Option (b), trusting recorded per-PR gates, was rejected: no record exists, and the always-present log PR means it would never fire.
+
+### Next Steps
+- **DB suite follow-up**: `tests/ship-train-provenance.db.test.mjs` plus its two-list enrolment (`scripts/db-test-container.mjs`, `.github/workflows/postgres-parity.yml`), after the keyset PR (`fix/ship-nudge-keyset-paging`) merges and releases those lists.
+- **Cluster B** (serial `messageFor` seam, `land`, `sync`) after the `claude/fleet-unclaimed-work-impl` claim on `scripts/lib/fleet/**` releases. **Cluster C** (`/ship --train` skill surface + docs) after the keyset PR's hold on `skills/ship/SKILL.md` releases.
+- Cluster D (the thinness metric) lands after B and the gate-cost selector.
+
+Backlog 2026-10-12T04:23Z: Q1 173c/47p (+420 aged) · Q2 116c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
+---
+
+## 2026-10-12 — final-review debt suppression revived (#203): rebased, audited, three audit fixes
+
+### Changes
+- Revives the post-review debt-suppression stage (`scripts/lib/final-review/post-review.mjs`). It was dead in production: it read the debt context from the transcript top level while `build-audit-transcript` nests it under `rounds[]`, so 0 of 65 real transcripts reached it. One accessor now merges both; the matcher compares a symmetric category + section + detailSnapshot signature at 0.30 (chosen on the real 90-entry ledger, 10 of 10 judged pairs correct) and never suppresses a release-blocking or reopened finding.
+- `output-schemas.mjs`: identity fields (ids, `original_finding_id`, `cited_lines`) are no longer truncated. `shadow.mjs` throws on an unknown provider instead of returning an Anthropic client.
+- Audit round-1 follow-ups: `applyDebtSuppression` builds its metadata before it mutates the result (M2); `captureStderr` honours `write()` completion callbacks (M7); `NARRATIVE_PATHS` is exported and a test pins it, so a new bounded string field must be classified as prose or identity (M3). Each test was seen red with its fix reverted.
+
+### Audit (fresh, on the rebased change)
+- Origin: commit `964c1d77`, abandoned in an archived worktree (tag `archive/worktree-agent-a8895e6b04909c52f`). Original audit: 3 plan + 4 code rounds + Gemini (run `4226c467-ab12-45ae-9965-a9e7a39db84e`). This PR is that commit rebased onto main `5157ff65` plus a generated plans-index commit, so its head differs from the originally audited sha.
+- `/audit-code --scope diff` round 1 (SID `audit-code-1791748856049-89252`, store run `1f675e97-2ccc-4e55-a07b-b5c225dda820`): SIGNIFICANT_ISSUES, 1 HIGH + 8 MEDIUM, $1.46, none in the files that moved on main (`gemini-review.mjs`, `finding-assembly.mjs`). All 9 ruled: 3 fixed (M2, M3, M7); 5 dismissed (H1, M1, M5, M8 as stated design limits or tool bounds; M6 a sanitizer false positive); 1 captured as `blocked-by` debt (M4, topic `9f496923b0cd`, blocked by `archive/queue-burndown-2026-10-02#d9eda256`).
+- Only round 1 was run, not two stable rounds: the user chose "accept round 1 + Gemini" for a rebase of an already-audited change. Gemini final gate: APPROVE, 0 findings, but PARTIAL coverage (1,368 of 2,320 changed lines never shown), and it ran before the M3 guard commit `915f24ec`.
+- The audit ran in a worktree that was retired before this ship, so its run marker was absent here; the commit's `AI-Gate` is whatever `ship-commit` verifies, never hand-written.
+
+### Files Affected
+- `scripts/lib/final-review/{post-review,output-schemas,prompts,shadow}.mjs`, `scripts/gemini-review.mjs`, `scripts/lib/audit/finding-assembly.mjs`
+- Tests: `debt-transcript-suppression`, `final-review-round-gate`, `final-review-structured-output`, `shadow-client-dispatch`, `capture-stderr-helper` (new), `helpers/{anthropic-wire,capture-stderr}.mjs`, `fixtures/debt-memory/*`
+- `docs/plans/final-review-debt-suppression-revival.md` (plan), `docs/plans/README.md` (generated index)
+
+### Decisions Made
+- Round 1 + Gemini accepted as the fresh audit rather than running to convergence (cost proportion; the user's call).
+- M3 fixed in scope with a guard test instead of deferred: `IDENTITY_PATHS` is this change's own mechanism.
+- Ownership is split with the queue-burndown work (`archive/queue-burndown-2026-10-02`): this PR supersedes its debt-suppression commits (`537a49bb`, `3091c7c5`), which its landing chip drops.
+
+### Regression Lock Status
+⚠ 173 code fixes repo-wide have no locked regression coverage (Q1, measured by `list-unlocked-fixes`); not introduced by this change.
+
+### Next Steps
+- Merging #203 is the user's call, with the PR head equal to the shipped sha.
+- #204 (CLI contract hardening) and #205 (audit-skill SIDs) follow; the keyset-paging PR waits for #204 to merge.
+
+Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt 328 cloud/1 local (0 spilled) · upstream 2
+
+---
+
+## 2026-10-12 — fleet: unregistered work surfaced, `fleet archive`, claim binding, handover hardening (clusters B-D)
+
+`/cycle --autonomous` on `docs/plans/fleet-unclaimed-work-and-switch-friction.md`, clusters B to D (A is PR #206). Branch `claude/fleet-unclaimed-work-impl`; B-D ship as one PR after #206 merges (user's decision).
+
+- **B (Phases 3-4, `prune --apply`)**: `status` prints an "unregistered work" section (one verdict per uncovered worktree/branch) and writes `<git-common-dir>/fleet-cache/unregistered.json`; the `claim`/`touch`/`ready` footer reads only that cache (FYI count, refresh request, coverage notice). New `fleet archive` (`archive.mjs`): snapshot to a local `archive/*` tag, verify, revalidate under the lock, then remove the worktree; never pushes. `prune --apply` runs exactly the judged list (`update-ref -d` bound to the judged oid), skips fresh worktrees unless `--include-fresh`, lists orphan dirs (`prune-orphans.mjs`). `runGit` gained an allowlisted `env`.
+- **C (Phases 5-6)**: `claim --worktree` (`resolveClaimBinding`); binding warnings from the retained record (`bindingWarnings`); `add` records the worktree; `release` resolves it and survives a malformed `.fleet.json`; `ready` warns about commits no remote ref holds (`unpushedCount`). Handover: PR-state reachability (`ghReachability`, reusing `parseOriginRepo`), newer-manifest refusal + `--allow-older`, stale hydrated-tooling warning (`bundle-stamp.mjs`).
+- **D (Phases 7-8)**: receive outcome classes failed > refused > ok-with-`followUps`; whitelisted account identity from `.claude.json` (`accountIdentity`/`compareIdentity`); BEFORE YOU RELAUNCH + `--scheduler-checked` gate on prepare; `memory <dir> → <path>` lines; `human:account-switch` waits with a targeted unblock command. Rendering split into `handover-render.mjs`. Skill prose: usage lines, worktree removal needs the user + a desktop session-list check, footer FYI is not a DO, push early, coordinator rules cr1-cr5.
+- **Behaviour change**: `handover receive` with a missing scheduled task or a settings difference now exits 0 with `followUps` (was 3). `handover prepare` exits 3 while tasks are listed and `--scheduler-checked` is absent.
+
+Verification:
+- Audits: B 6 GPT rounds + 1 coordinator-ruled exception (not converged by the stability rule; every finding fixed red-then-green or dismissed with a reason; live negative control on a disposable clone). C 4 rounds, R4 PASS (`audit-code-clC-1791763339`). D 4 rounds, R4 PASS (`audit-code-clD-1791768416`).
+- Consolidated Gemini gate over A-D (19 rounds, 135 findings, 31 files): APPROVE, gate `approve`, 0 blocking.
+- Tests (final tree): fleet + skill + relocation suites 1,105, 1,103 pass, 0 fail, 2 skipped; `fleet-cli` 132/132. New suites: fleet-archive, fleet-unregistered-surfaces, fleet-binding, fleet-bundle-stamp, fleet-handover-receive.
+- Empirical (§9, under load, 69 node processes): `status` CEE 3.5-4.0 s, wine 12.4-12.8 s, storyline 8.0 s, ai-organiser 2.2 s; `handover prepare` across all four exit 3 with both reasons named, 49.7 s. The 5 s wine target was not met (needs an idle machine; 3.9 s idle in M19).
+- Follow-ups recorded in plan §8: fleet-cli test split + fixture template (chip spawned by the CE coordinator); memoised rev-parse and no `gh` in `claim`, together with the derived-done-claim fix (M21), after this PR.
+
+Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt 328 cloud/10 local (0 spilled) · upstream 2
+
+## 2026-10-12 — pre-push archive lane (PR #208) and the gate-cost chip (PR #212): both pushed, ready, not merged
+
+Backlog: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2 (`node scripts/backlog-snapshot.mjs`, 2026-10-12T04:31Z).
+
+### Changes
+- **PR #208, archive lane** (`claude/silly-morse-164a75`, tip 45a03d5f, full pre-push gate green on push): a pre-push lane for pushes whose refs are ALL under `refs/heads/archive/` or `refs/tags/archive/`. It still runs the secret scan and the sensitive-path check over exactly what the push publishes (objects the destination lacks, plus every path the published commits add or change), and skips only what cannot hold for an old commit. Any non-archive ref in the push, or any ref line it cannot parse, gets the full gate. Whitespace in a ref name is parsed from the right (a fail-open found by the adversarial review). Two shared oracles grew: `sensitive-paths.mjs` (`.netrc`, `_netrc`, `.git-credentials`, `.pgpass`, `.pypirc`, `.htpasswd`, `*.keystore`, `*.jks`, `*.tfvars`) and `secret-patterns.mjs` (`npm-token`), each with its own tests, negatives, and the INC-001 symlink route. Plan `docs/plans/prepush-archive-lane.md`; runbook `docs/runbooks/prepush-sandbox.md` §7.
+- **PR #212, gate cost** (`fleet/make-the-pre-push-gate-s-per-f-2dab`, tip fcfd42be, full gate green on push): `npm test` prints the slowest test files; `npm run test:preflight` runs the suite minus `tests/fleet-cli.test.mjs`; a preflight that cannot verify which files ran fails. `npm test -- --test-reporter=dot` no longer dies on node's reporter/destination count check. Plan `docs/plans/gate-cost-slice-1.md`; runbook `docs/runbooks/gate-cost.md`.
+- Measured (one full `npm test`, 949 files): 1,009 s wall, 7,344 s summed test-body time (worker-seconds, waiting included, not CPU). `fleet-cli` = 972 s: 13.2% of the sum but 96% of wall, because node runs a file's tests serially (wall >= longest file). `test:preflight` on the committed tree: 274 s, 18,626 tests, 0 failed.
+
+### Files Affected
+- #208: `.githooks/pre-push`, `scripts/lib/prepush-archive-lane.mjs`, `scripts/prepush-archive-lane.mjs`, `scripts/lib/sensitive-paths.mjs`, `scripts/lib/secret-patterns.mjs`, `tests/prepush-archive-lane*.test.mjs`, `tests/sensitive-paths*.test.mjs`, `tests/secret-patterns.test.mjs`.
+- #212: `scripts/run-tests.mjs`, `scripts/lib/test-timing-report.mjs`, `scripts/lib/test-timing-reporter.mjs`, `scripts/lib/test-runner-listener-ceiling.mjs`, `tests/run-tests-timing.test.mjs`, `tests/run-tests-preflight.test.mjs`, two guard fixtures.
+
+### Decisions Made
+- Gate cost is a critical-path cost, so the follow-up order is: measure `fleet-cli` alone on a quiet machine, split or parallelise it, then cut its work (template-copied fixture, memoised `rev-parse`). Held by the fleet-unclaimed-work session; the coordinator has the numbers.
+- #212's audit corrected three premises by running them: node REFUSES unbalanced reporter flags; `--disable-warning` is inherited by test files and hid a real leak, so the listener ceiling is raised in the runner process only (`--import` does not run there); and node refuses `--test-name-pattern --test-reporter=dot`, which the runner had turned into a passing run that selected nothing.
+- A consolidated `audit-code` over a train was not built: at most about 10% of merged PRs could skip an audit, and the wall time of the test step was the larger measured lever.
+
+### Next Steps / open decisions (the user's)
+- Merge #208 and #212 (nothing is merged). #212 still needs its own `/ship docs/plans/gate-cost-slice-1.md` from its worktree.
+- #208: should the lane skip all 34 `check` steps or only a subset; should the full gate also scan pushed content; the paid audits of the hook and the two oracle diffs were NOT run (the hook got an adversarial subagent review instead) and need an explicit go.
+- Branch pre-push DIRECT-impact tier (ship-trains §2.10) is a policy call; `docs/runbooks/gate-cost.md` §2 has the table to bring.
+- Pre-ship advisories this run (all non-blocking): 1 open persona P1 (2026-10-10), 173 code fixes without a locked regression spec (159 aged out), 111 accepted code findings never marked fixed, 3 dangling locks, the storyline store is behind this revision's migrations (6 constraints), 2 upstream reports open (both wine-cellar-app, MEDIUM).
+
+---
+
+## 2026-10-12 — CLI contract hardening (#204): rebased, audited, one audit fix
+
+### Changes
+- `hasFlag` (`scripts/lib/cli-io.mjs`): a `--name=value` now comes from a closed set (true/1/yes/on, false/0/no/off/empty); anything else throws `ArgvError`. Before, `--apply=fasle` ENABLED the flag, so a mistyped brake ran the mutating path.
+- `emit`: the `softFail` reason is validated BEFORE the envelope is written, so a refused call writes nothing and leaves the exit code untouched.
+- `scripts/learning/replay.mjs`: a failed result is written with `emit` + `finishAndExit` (it exited 1 with no output); one tokenizer handles the `=` form, last-wins and the `--` terminator; `--repo`/`--repo-id` are UUID-validated before any query; an empty sample warns instead of reading as a measured zero. The cross-skill registry declares `learning-replay`'s verbs and flags, so `npm run learning:replay -- pass_selection --since 7d` works again. `loadPolicy` picks its export with the predicate it validates.
+- Audit follow-up (`f8259e66`): `--repo` and `--repo-id` are one filter. Disagreeing values are refused before any store query; the same value repeated is accepted. Seen red with the fix reverted.
+
+### Audit (fresh, on the rebased change)
+- Origin: commit `a72426c6`, abandoned in an archived worktree (tag `archive/worktree-agent-ad8559f27235c40c9`). Original audit: 2 plan + 3 code rounds + Gemini (run `1020f8fa-4f10-4401-b0ff-0ae13c01acdc`). This PR is that commit rebased onto main `5157ff65` (one mechanical conflict, `.stdout-flush-baseline.json`, re-derived with the gate's own `--update`) plus a generated plans-index commit, so its head differs from the originally audited sha.
+- `/audit-code --scope diff` round 1 (SID `audit-code-1791749398536-116860`, store run `e9344808-6849-4cc0-84b3-a1c2a68b673d`): SIGNIFICANT_ISSUES, 1 HIGH + 4 MEDIUM, $0.43, coverage complete/pass. None was an interaction defect with what moved on main. All 5 ruled: 1 fixed (M3); H1 and M1 accepted and already tracked as existing debt `39e12039b646` and `3cca2ef20a9e` (not re-captured, to avoid duplicates); M2 and M4 dismissed.
+- Only round 1 was run, not two stable rounds: the user chose "accept round 1 + Gemini". Gemini final gate: APPROVE, 0 findings, but PARTIAL coverage (509 of 1,066 changed lines never shown); it ran on the tree that includes `f8259e66`.
+- Known gap carried, not fixed here: `emit()` validates the `softFail` reason only when `ok:false`, so `emit(env, {softFail:true})` with no reason and `ok:true` is accepted. Audited as-is; a follow-up.
+- The audit ran in a worktree retired before this ship, so its run marker was absent here and the commit's `AI-Gate` is recorded as not-run.
+
+### Files Affected
+- `scripts/lib/cli-io.mjs`, `scripts/learning/replay.mjs`, `scripts/lib/cross-skill/registry.mjs`, `scripts/check-cli-flags.mjs`, `scripts/check-emit-exit-agreement.mjs`, `.stdout-flush-baseline.json` (re-derived)
+- Tests: `cli-io-equals-flags`, `emit-exit-coupling`, `learning-replay`, `replay-positionals`, `cross-skill-registry-conformance`
+- `docs/plans/cli-contract-hardening-flags-emit-replay.md`, `docs/runbooks/learning-system.md`, `docs/plans/README.md` (generated index)
+
+### Decisions Made
+- Round 1 + Gemini accepted as the fresh audit rather than running to convergence (cost proportion; the user's call).
+- H1/M1 not re-captured: the same concern is already in the store. Two more existing entries, `af81be85` (UUID-only `--repo`) and `b445b4ba` (hand-written envelope), appear to be fixed by this change; verify before resolving them after merge.
+- Supersedes the `cli-io` softFail/`hasFlag` and replay commits in `archive/queue-burndown-2026-10-02` (`8cfbd071`, `b3f80832`).
+
+### Regression Lock Status
+⚠ 174 code fixes repo-wide have no locked regression coverage (Q1, `list-unlocked-fixes`); not introduced by this change.
+
+### Next Steps
+- Merging #204 is the user's call, with the PR head equal to the shipped sha. The keyset-paging PR rebases on it afterwards.
+- This status entry and #203's both add the top entry of `status.md`; whichever merges second keeps both entries.
+
+Backlog 2026-10-12T06:21Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt 328 cloud/1 local (0 spilled) · upstream 2
+
+
+---
+
+## 2026-10-12 — queue-burndown cluster 2: the runs-findings write boundary (PR #202)
+
+Second of the PRs landing the abandoned 2026-10-02 campaign (`archive/queue-burndown-2026-10-02`, 49 unreviewed commits). Cluster 1 merged as #200. Each cluster is cherry-picked, then audited as if new: the campaign's commits had never been reviewed.
+
+- **Landed here** (PR #202, head `14444545`, audited sha == head):
+  - `e5baca75`: an adjudication and a remediation projection of one finding no longer deadlock (`40P01`), because `recordAdjudicationEvent` takes the locks in the same order and asserts exactly one row. `updatePassStatsPostDeliberation` refuses the all-rounds fallback on an unresolved probe. The terminal `verified` write re-asserts eligibility, so a row that became `regressed` is not flipped back. `recordFindings` checks `RETURNING`. Capability probes inside a caller transaction run in a SAVEPOINT; they move to `scripts/lib/store/column-probes.mjs` (`runs-findings.mjs` 3071 to 2920 lines).
+  - `e2e8f94a`: regression tests for #118 fixes that had none.
+- **Found by auditing the cherry-picks** (five follow-ups):
+  - `recordPassStats` read an UNRESOLVED `audit_pass_stats.round` probe as "absent", omitted the round, and the row defaulted to round 1 on a migrated store: the INSERT-side twin of what e5baca75 fixes for the UPDATE. It now returns `applied:false` / `round-probe-unresolved`; `audit.passStats` is lost-only, so this surfaces as a kept `lost` artifact and an incomplete run, not a bad row. My first push was blocked by `tests/audit-store-durability-call-site.test.mjs` (every store reason must be classified) and I corrected an earlier claim that it would spill and replay.
+  - `column-probes.mjs` promised only definitive answers are cached but cached `false` when the cloud store was off.
+  - The lock-order and dismissal-race DB tests slept 400 ms and hoped; they now wait on an observed `pg_stat_activity` lock wait (`tests/helpers/pg-lock-wait.mjs`, with a negative control) and roll back on a failed path.
+- **DB suites RAN, not skipped** (repo step order and env builder, `127.0.0.1:5433` local container only): isolated 479/479, destructive 52/52, contract 3/3. Mutation checks: `runs-findings.mjs` reverted to main turns 9 tests red; the old lock order turns the lock-order test red; the `recordPassStats` guard disabled turns its test red.
+- **Audit** (5 rounds, SID `audit-code-1791738175`): R1 21 findings: 9 fixed, 5 deferred as independent debt, 7 dismissed with evidence. For example `finding_adjudication_events.remediation_state` is `NOT NULL` with no default on the live schema, so the "inconsistent omission" cannot occur. R2 to R5 PASS; R3 re-ran `runs-findings.mjs` alone because R2 only windowed it. Gemini final gate APPROVE, coverage PARTIAL (7/12 files whole, 174 of 864 changed lines not shown to the reviewer).
+- **Gate history**: pre-push passed on the third attempt (18,641 tests, 0 fail, 42 skipped). The second attempt failed on `tests/dashboard-home-deadline.test.mjs:195` (ENOENT on `pid.txt` under load; passes 3/3 alone), the same family as `backlog-gather.test.mjs:261`; fixed separately in #207.
+- **Pre-ship signals**: auto-reconcile applied 3/3 (1 verified, 2 still open); `stores:drift` shows storyline behind on 6 constraints (owner DSN needed); upstream has 2 open reports from wine-cellar-app; no open P0.
+- **Backlog** (`node scripts/backlog-snapshot.mjs`): Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt 328 cloud/13 local (0 spilled) · upstream 2
+- **Deferred as debt** (6 entries, store): verdict/model metadata written after the advisory lock; `recordSuppressionEvents` counts attempted rows; `updateRunMeta` partial result not propagated by `recordFinalReviewFindings`; `getAuditRunWindowCounts` `roundCount` naming.
+
+### Next Steps
+- Cluster 3 (store/ledger honesty, 8 commits) is built and DB-green; its audit round 1 has 14 findings to triage. Cluster 6 (test-only pins) is assembled. Cluster 5 (`close-finding`) is user-approved as its own PR with no discharge against the store. Cluster 4 waits on `964c1d77`.
+- Owed after `a72426c6` lands: port `tests/replay-cli-false-zero.test.mjs` (burndown-only, covers the dropped `b3f80832`).
+
+## 2026-10-12 — queue-burndown cluster 3: an outage is not an empty result (PR #215)
+
+Third of the PRs landing the abandoned 2026-10-02 campaign (`archive/queue-burndown-2026-10-02`): cluster 1 merged as #200, cluster 2 is #202. The campaign's commits had never been reviewed and main moved after they were written, so three were adapted rather than cherry-picked.
+
+- **Cherry-picked clean** (5): stage0 counts impact-lookup throws instead of swallowing them; an event-wiring lifecycle record is no longer pinned to a ref nothing can descend from; a model-eval cohort is one subject (refuse, never relabel); requirements overrides reach retained ledger entries; `debt-reconcile` names the real reason the store side is unavailable.
+- **Adapted** (3), each to what main now has:
+  - arch carried edges: #160 already gates the deleted-TARGET half on `fileStillExists`, so only the disowned-target half is applied (extraction drops an edge when EITHER endpoint is disowned, `extract.mjs`; the carry asked `isDisowned` of the importer only).
+  - debt cloud read: #193 made the events reader best-effort and gave reporters `readDebtEventsCloudResult`, so only `readDebtEntriesCloud` rethrows (both callers already catch) and `loadDebtLedger` reads the Result to mark `eventsUnavailable`.
+  - the `debt-reconcile` test's `rmSync` retry-hardening, as its own commit.
+- **Found by auditing the campaign's own commits** (5 follow-ups):
+  - `requirements reconcile` / `reassess-gaps` loaded the prior ledger with a never-throw loader, so a truncated `ledger.json` became an empty prior and the write overwrote the committed ledger. Strict mode for the two writers; readers keep the degrade contract.
+  - `computeAncestryDecisions` read "did not exit 0" as "not an ancestor", so exit 128 or git failing to run authorised the write. Exit 1 is now the proven negative; anything else fails closed.
+  - Gemini BLOCKED on a real data-loss bug: `upsertLifecycle` / `reconcileLifecycle` swallowed a JSON parse error and atomic-wrote a blank ledger over the corrupt one, dropping every adjudication entry and lifecycle record the run did not touch. They now refuse, file untouched, and also refuse valid JSON of the wrong shape (a `lifecycle` array silently stores nothing; my first fix missed that and R3 caught it).
+  - `tests/stage0-relevance-context.test.mjs` tested a hand-copied worker pool; it now drives the real builder via `opts.getImporters`.
+  - one bare `fs.rmSync` in a test I had just added (the rmSync retry guard blocked my first push).
+- **DB suites RAN** via the repo's own `npm run db:local` (its own container, torn down after): isolated 459/459, destructive 52/52, contract 3/3, 0 skipped, including the model-eval cohort suite. Mutation checks went red-then-green for each fix.
+- **Audit** (5 rounds, SID `audit-code-1791745114`): R1 9 findings: 6 fixed, 3 deferred as independent debt (all committed-requirements-ledger DATA quality: the 200-char assertion cap, equivalent obligations under distinct ids, one gap classification). R2 PASS; R3 two follow-ups fixed; R4 PASS; R5 PASS on the last delta. Gemini final gate: round 1 BLOCKED (fixed), round 2 APPROVE, coverage PARTIAL (7/21 files whole, 108 of 839 changed lines not shown to the reviewer).
+- **Gate history**: pre-push passed on the second attempt (18,844 tests, 0 fail, 46 skipped). Two pushes ran during the user-approved quiet-machine window for wine-cellar and disturbed its timing measurement; the coordinator's hold messages were queued behind my long tool waits. Lesson recorded: run `fleet next` before every push.
+- **Pre-ship signals**: auto-reconcile applied (1 verified, 1 still open); `stores:drift` shows storyline behind 6 constraints (owner DSN needed); upstream has 2 open reports from wine-cellar-app; no open P0.
+- **Backlog** (`node scripts/backlog-snapshot.mjs`): Backlog 2026-10-12T07:52Z: Q1 182c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt 334 cloud/17 local (0 spilled) · upstream 2
+
+### Next Steps
+- Cluster 6 (test-only pins) is audited and waits for its push turn; cluster 5 (`close-finding`) is user-approved as code only, with no discharge against the store, and follows #202's merge. Cluster 4 waits on `964c1d77`.
+- Owed after `a72426c6` lands: port `tests/replay-cli-false-zero.test.mjs`.
 
 ## 2026-10-11 — drift + backlog re-measured; five shipped plans closed; three honesty fixes
 

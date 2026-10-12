@@ -132,6 +132,19 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // proves the parent-not-found / parent-not-owned refusals against real
   // Postgres. Two edits, always — this list AND postgres-parity.yml.
   'tests/store-ownership-db.test.mjs',
+  // Enrolled 2026-10-02 with keyset paging for the /ship-nudge readers (audit
+  // finding 5fbd8fec). Seeds runs/findings, closes rows between page reads and
+  // proves OFFSET skips where the cursor does not — a property of the SQL, so
+  // only real Postgres can show it. Two edits, always — this list AND
+  // postgres-parity.yml.
+  'tests/ship-nudge-keyset-db.test.mjs',
+  // Enrolled 2026-10-02 with close-finding (by-id discharge of one finding).
+  // Seeds an owned run + findings and proves each disposition (fixed / dismissed /
+  // accepted-permanent) leaves the open set while final-review-record-fix cannot,
+  // that a foreign repo's finding is refused, and that a failed evidence write
+  // leaves the finding open - properties of the SQL, so only real Postgres can
+  // show them. Two edits, always - this list AND postgres-parity.yml.
+  'tests/finding-disposition-db.test.mjs',
   'tests/symbol-index-drift-justification.test.mjs',
   // Enrolled 2026-08-15 with D3a's cohort persistence (role-agnostic-
   // comparison-core.md Phase 4). Needs the model_eval_comparisons table and

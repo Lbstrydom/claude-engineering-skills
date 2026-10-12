@@ -9,6 +9,7 @@
 import { CommandError } from '../dispatch.mjs';
 import { groupIntoWorkUnits, wantsWorkUnits } from '../work-unit-grouping.mjs';
 import { findRepoRootFromCwd } from '../../assert-repo-root.mjs';
+import { isPgTimestamptzText, UUID } from '../validators.mjs';
 
 /**
  * The repo root every lock-related path check is anchored to. Resolved through
@@ -85,6 +86,81 @@ const storeScopeFor = (scope) => (scope.kind === 'global' ? { allRepos: true } :
 const pageArgs = (ctx) => ({ limit: ctx.flag('limit'), offset: ctx.flag('offset') });
 
 /**
+ * Keyset cursor for the two nudge readers — the LAST row of a page, in that
+ * reader's total order. Opaque to the caller (base64url JSON).
+ *
+ * Why not `--offset`: the /ship workflow is "verify each row, then close it",
+ * and every close removes a row from the view. An offset counts positions in a
+ * set that has since shrunk, so `--offset 20` after closing k rows of page 1
+ * silently skips k unread rows. A cursor names a POSITION IN THE ORDER, which a
+ * removed row cannot move. Same reason `final-review-pending` pages by cursor.
+ * Timestamps are the store's `::text` (microsecond-exact), never a JS Date.
+ */
+export function encodeNudgeCursor(kind, row) {
+  const body = kind === 'unlocked'
+    ? { v: 1, kind, fixedAt: row.fixed_at_cursor, findingId: row.audit_finding_id }
+    : { v: 1, kind, severityRank: row.severity === 'HIGH' ? 0 : 1, acceptedAt: row.accepted_at_cursor, findingId: row.audit_finding_id };
+  return Buffer.from(JSON.stringify(body), 'utf8').toString('base64url');
+}
+
+/** Inverse of `encodeNudgeCursor`; anything else is BAD_INPUT, never a silent first page. */
+export function decodeNudgeCursor(kind, raw) {
+  let p;
+  try {
+    p = JSON.parse(Buffer.from(String(raw), 'base64url').toString('utf8'));
+  } catch {
+    throw new CommandError('BAD_INPUT', '--after is not a cursor this command issued (undecodable)');
+  }
+  // Value domains, not just types: every member is bound into the ordering
+  // query, and the store answers a failed query with an empty page — so an
+  // out-of-domain value would read as "no more rows", not as an error.
+  const common = p && p.v === 1 && p.kind === kind && typeof p.findingId === 'string' && UUID.test(p.findingId);
+  const ok = common && (kind === 'unlocked'
+    ? typeof p.fixedAt === 'string' && isPgTimestamptzText(p.fixedAt)
+    : (p.severityRank === 0 || p.severityRank === 1)
+      && typeof p.acceptedAt === 'string' && isPgTimestamptzText(p.acceptedAt));
+  if (!ok) throw new CommandError('BAD_INPUT', `--after is not a ${kind === 'unlocked' ? 'list-unlocked-fixes' : 'list-unremediated-acceptances'} cursor`);
+  return kind === 'unlocked'
+    ? { fixedAt: p.fixedAt, findingId: p.findingId }
+    : { severityRank: p.severityRank, acceptedAt: p.acceptedAt, findingId: p.findingId };
+}
+
+/** `--after` for a nudge reader; refuses the ambiguous `--after` + `--offset`. */
+function afterArg(ctx, kind) {
+  const raw = ctx.flag('after');
+  if (raw == null) return null;
+  if (ctx.flag('offset') != null) {
+    throw new CommandError('BAD_INPUT', '--after and --offset both say where a page starts — pass one (prefer --after)');
+  }
+  return decodeNudgeCursor(kind, raw);
+}
+
+/** The cursor for the page after `rows`, or null when this page was not full. */
+const nextCursorFor = (kind, rows, limit) => (rows.length > 0 && rows.length >= limit
+  ? encodeNudgeCursor(kind, rows[rows.length - 1]) : null);
+
+/**
+ * One page from a nudge reader, with a failed query surfaced as a failure.
+ *
+ * The readers' default is to swallow a query error and return `[]` — right for
+ * a pre-push nudge, wrong here: an empty page ends a cursor walk
+ * (`nextCursor: null`), so a transient store error mid-walk would read as "no
+ * more rows" and the unread tail would silently never be examined. A thrown
+ * CommandError carries `measured:false` and NO `nextCursor`, so a caller cannot
+ * mistake it for exhaustion. The other reader callers (the /ship nudge cards)
+ * stay on the degrade path.
+ */
+async function readPageStrict(read) {
+  try {
+    return await read();
+  } catch (err) {
+    throw new CommandError('STORE_READ_FAILED',
+      `could not read this page, so the list is NOT known to be complete: ${err.message}`,
+      { measured: false, reason: 'store-read-failed' }, 1);
+  }
+}
+
+/**
  * Locks whose cited `spec_path` no longer resolves — a hole in exactly the coverage this
  * nudge reports, and invisible from the view itself.
  *
@@ -151,8 +227,8 @@ export async function listUnlockedFixesCmd(ctx) {
   // `--all-ages` opts out of the 14-day window. The window stays the default:
   // an unbounded ship-time nudge becomes noise and earns `--no-verify`.
   const allAges = ctx.hasFlag('all-ages');
-  const page = { ...pageArgs(ctx), allAges };
-  const rows = await ctx.deps.getUnlockedFixes(storeScope, page);
+  const page = { ...pageArgs(ctx), allAges, after: afterArg(ctx, 'unlocked') };
+  const rows = await readPageStrict(() => ctx.deps.getUnlockedFixes(storeScope, { ...page, strict: true }));
   const byMode = await ctx.deps.countUnlockedFixes(storeScope, { allAges });
   const aged = await ctx.deps.countAgedUnlockedFixes(storeScope);
   const danglingLocks = await danglingLocksFor(ctx, scope.repoId ?? null);
@@ -170,6 +246,7 @@ export async function listUnlockedFixesCmd(ctx) {
     // that asked for 10_000 and one that asked for nothing must be able to tell
     // what they actually received before concluding the tail is empty.
     limit, offset,
+    nextCursor: nextCursorFor('unlocked', rows, limit),
   };
 
   // Same grouper as list-unremediated-acceptances; this reader's recency column
@@ -200,8 +277,8 @@ export async function listUnremediatedAcceptancesCmd(ctx) {
 
   const storeScope = storeScopeFor(scope);
   const allAges = ctx.hasFlag('all-ages');
-  const page = { ...pageArgs(ctx), allAges };
-  const rows = await ctx.deps.getUnremediatedAcceptances(storeScope, page);
+  const page = { ...pageArgs(ctx), allAges, after: afterArg(ctx, 'unremediated') };
+  const rows = await readPageStrict(() => ctx.deps.getUnremediatedAcceptances(storeScope, { ...page, strict: true }));
   const byMode = await ctx.deps.countUnremediatedAcceptances(storeScope, { allAges });
   const aged = await ctx.deps.countAgedUnremediatedAcceptances(storeScope);
   const acceptedPermanent = await ctx.deps.countAcceptedPermanent(storeScope);
@@ -217,6 +294,7 @@ export async function listUnremediatedAcceptancesCmd(ctx) {
     notYetDue: aged.notYetDue,
     prePractice: aged.prePractice, practiceStart: aged.practiceStart,
     limit, offset,
+    nextCursor: nextCursorFor('unremediated', rows, limit),
   };
 
   const grouping = wantsWorkUnits(ctx);
@@ -510,6 +588,46 @@ async function lockWithTestWorksheet(ctx) {
  * two rows. Picking the newest would silently repair one citation and leave the
  * other — which is how the second dangling row in the report came to exist.
  */
+/**
+ * `close-finding` — discharge ONE finding by row id: `--as fixed` (with
+ * `--commit`), `--as dismissed`, or `--as accepted-permanent` (both with a
+ * mandatory `--reason`).
+ *
+ * The closing command `/ship` Step 0.5e printed, `final-review-record-fix`, is
+ * scoped to final-review passes, so it could not close any ordinary-pass
+ * finding — every row of the 2026-10-02 queue. By id, not run+fingerprint:
+ * the ids are what both nudge readers print, and an id cannot match a second
+ * row in another bucket or pass.
+ */
+export async function closeFindingCmd(ctx) {
+  if (!ctx.cloud.enabled) return { ...ctx.degrade(), closed: false };
+  const findingId = ctx.flag('finding');
+  const disposition = ctx.flag('as');
+  const reason = ctx.flag('reason') ?? '';
+  const commitSha = ctx.flag('commit') ?? null;
+  if (!findingId || !ctx.deps.FINDING_DISPOSITIONS.includes(disposition)) {
+    return { ok: false, closed: false, error: 'close-finding needs --finding and --as fixed|dismissed|accepted-permanent. Example: '
+      + 'node scripts/cross-skill.mjs close-finding --finding a4969127-d5d0-47bb-8b2e-0acb0ed71546 --as fixed --commit 41c4d194' };
+  }
+  if (disposition === 'fixed' && !commitSha) {
+    return { ok: false, closed: false, error: 'refusing: --as fixed needs --commit, the commit that fixed it — a fix with no commit cannot be checked.' };
+  }
+  const scope = await ctx.resolveScope();
+  const repoId = scope.kind === 'scoped' ? scope.repoId : null;
+  if (!repoId) {
+    return { ok: false, closed: false, error: 'refusing: repo identity unresolvable — a finding is closed within its own repo, never by an unscoped id.' };
+  }
+  const res = await ctx.deps.closeFindingById({ repoId, findingId, disposition, reason, commitSha });
+  if (!res.ok) {
+    const why = {
+      'reason-required': `--as ${disposition} needs a non-empty --reason: a dismissal or permanent acceptance is a claim, and an unexplained one cannot be checked`,
+      'not-found-in-repo': `no finding "${findingId}" in THIS repo`,
+    }[res.reason] ?? `${res.reason}${res.detail ? ` (${res.detail})` : ''}`;
+    return { ok: false, closed: false, error: `refusing: ${why}`, reason: res.reason };
+  }
+  return { ok: true, closed: true, ...res };
+}
+
 export async function repointRegressionSpecCmd(ctx) {
   if (!ctx.cloud.enabled) return { ...ctx.degrade(), repointed: false, deleted: false };
 

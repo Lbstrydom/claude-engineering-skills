@@ -38,20 +38,30 @@ function block(queried, payload = {}, reason) {
   return { queried, observedAt: nowIso(), ...(reason ? { reason } : {}), ...payload };
 }
 
+/** The only extra environment `runGit` passes through (see its `env` option). */
+export const RUN_GIT_ENV_ALLOWED = /^GIT_(INDEX_FILE|(AUTHOR|COMMITTER)_(NAME|EMAIL|DATE))$/;
+
 /**
- * Run git once. Never throws.
+ * Run git once. Never throws on a git failure (it is a result); throws only on a programming error — an
+ * `env` key outside `RUN_GIT_ENV_ALLOWED`.
  * @param {string[]} args
  * @param {string} cwd
- * @param {{timeoutMs?: number, input?: string}} [opts]
+ * @param {{timeoutMs?: number, input?: string, env?: Record<string, string>}} [opts]
  * @returns {{ok: boolean, status: number|null, stdout: string, stderr: string, reason: string|null}}
  */
-export function runGit(args, cwd, { timeoutMs = LOCAL_TIMEOUT_MS, input } = {}) {
+export function runGit(args, cwd, { timeoutMs = LOCAL_TIMEOUT_MS, input, env: extraEnv } = {}) {
   const sub = args.find((a, i) => !a.startsWith('-') && args[i - 1] !== '-c') ?? args[0];
+  // `env` admits ONLY a temporary index and a fixed commit identity/date (`fleet archive`'s deterministic
+  // snapshot): anything else could re-point git at another repository, so it is a programming error.
+  for (const k of Object.keys(extraEnv ?? {})) {
+    if (!RUN_GIT_ENV_ALLOWED.test(k)) throw new Error(`runGit: env key ${JSON.stringify(k)} is not allowed (only ${RUN_GIT_ENV_ALLOWED})`);
+  }
   const env = {
     ...sanitizeGitEnv(cwd),
     GIT_TERMINAL_PROMPT: '0',
     GIT_NO_LAZY_FETCH: '1',
     LC_ALL: 'C',
+    ...(extraEnv ?? {}),
   };
   const res = spawnSync('git', args, {
     cwd, env, encoding: 'utf-8', timeout: timeoutMs,

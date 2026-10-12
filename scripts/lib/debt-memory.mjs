@@ -43,7 +43,7 @@ import {
 } from './debt-events.mjs';
 import {
   removeDebtEntryCloud, readDebtEntriesCloud,
-  appendDebtEventsCloud, readDebtEventsCloud, readDebtEventsCloudResult, markSupersededCloud,
+  appendDebtEventsCloud, readDebtEventsCloudResult, markSupersededCloud,
   enrichDebtEntriesWithAliases,
   initLearningStore, isCloudEnabled, resolveRepoForStore,
 } from '../learning-store.mjs';
@@ -132,7 +132,9 @@ export async function resolveDebtReadContext({ noCloud = false } = {}, {
  * @param {object} [opts]
  * @param {string} [opts.ledgerPath=DEFAULT_DEBT_LEDGER_PATH]
  * @param {string} [opts.eventsPath=DEFAULT_DEBT_EVENTS_PATH]
- * @returns {Promise<{ version: 1, entries: object[], eventSource: string }>}
+ * @returns {Promise<{ version: 1, entries: object[], eventSource: string, eventsUnavailable?: string }>}
+ *   `eventsUnavailable` carries the reason when the cloud events read did not
+ *   happen and the entries were hydrated with no events.
  */
 export async function loadDebtLedger(context, {
   ledgerPath = DEFAULT_DEBT_LEDGER_PATH,
@@ -143,14 +145,23 @@ export async function loadDebtLedger(context, {
   }
 
   let events = [];
+  let eventsUnavailable = null;
   if (context.source === EventSource.CLOUD) {
-    events = await readDebtEventsCloud(context.repoId);
+    // The audit that loads this must not abort on a failed read, and must not
+    // pass for "no events" either: hydrate with none but SAY so, so this round's
+    // recurrence/escalation counts are not read as measured.
+    const res = await readDebtEventsCloudResult(context.repoId);
+    events = res.events;
+    if (!res.ok) {
+      eventsUnavailable = res.reason;
+      process.stderr.write(`  [debt] debt events could not be read (${res.reason}) — recurrence/escalation counts are UNMEASURED this run\n`);
+    }
   } else {
     events = readDebtEventsLocal(eventsPath);
   }
 
   const ledger = readDebtLedger({ ledgerPath, events });
-  return { ...ledger, eventSource: context.source };
+  return { ...ledger, eventSource: context.source, ...(eventsUnavailable ? { eventsUnavailable } : {}) };
 }
 
 /**

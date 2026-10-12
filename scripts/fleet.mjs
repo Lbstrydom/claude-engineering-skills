@@ -8,14 +8,17 @@
  *
  *   status                          read-only join of git, gh, registry, trains
  *   add <branch|#PR|--all>          adopt work that already exists (advisory)
- *   claim --id --intent --paths     register a NEW session (blocking gate) or update one
+ *   claim --id --intent --paths [--worktree <path>]  register a NEW session (blocking gate) or update one
  *   ready | touch                   record the head as ready / renew the lease
  *   hold on|off [--reason]          "hold heavy runs"
  *   start --task … [--paths …]…     atomic all-or-nothing batch of chip worktrees
  *   repair --quarantine <file>      move one invalid record aside (human-run)
  *   release [--id] [--abandoned]    retire a claim now (done / abandoned)
  *   archive-check [<id|branch|path>] what removing a worktree would lose (read-only)
- *   prune                           branches/worktrees removable with nothing lost, and the commands (read-only)
+ *   prune [--apply [--remote] [--include-fresh]]  branches/worktrees removable with nothing lost: the commands (read-only), or run them
+ *   archive <worktree|branch|id> [--apply] [--discard-ignored] [--include-fresh]  snapshot to a local archive/* tag, verify, remove
+ *   handover prepare [--repo …] [--scheduler-checked]   record account-bound + live state before an account switch
+ *   handover receive --from <json> [--dry-run] [--allow-older]  verify/copy it in the new account (exit 0 + followUps = done)
  *   next [--id]                     what this session should do now (read-only)
  *   directive --to|--list|--ack     coordinator requests in the shared registry
  *   restack [<branch>] [--replace]  replay a branch's own commits onto the base (patch-id checked)
@@ -47,6 +50,8 @@ import { cmdArchiveCheck, cmdRelease } from './lib/fleet/lifecycle.mjs';
 import { checkpointFooter, cmdDirective, cmdNext } from './lib/fleet/coordination.mjs';
 import { cmdRestack } from './lib/fleet/restack.mjs';
 import { cmdPrune } from './lib/fleet/prune.mjs';
+import { cmdArchive } from './lib/fleet/archive.mjs';
+import { HYDRATE_HINT, staleBundleWarning } from './lib/fleet/bundle-stamp.mjs';
 import { cmdHandover } from './lib/fleet/handover.mjs';
 import { renderCommand } from './lib/fleet/shell-quote.mjs';
 import { cmdLand } from './lib/fleet/land.mjs';
@@ -80,12 +85,17 @@ async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   const startedMs = Date.now();
   const verb = process.argv[2];
+  // A hydrated copy in a linked worktree may trail the main checkout's: say so once, on stderr, never failing.
+  let staleHint = null;
+  try { staleHint = staleBundleWarning({ scriptDir: path.dirname(fileURLToPath(import.meta.url)) }); } catch { staleHint = null; }
+  if (staleHint) process.stderr.write(`${staleHint}\n`);
   if (!verb || verb === '--help' || verb === '-h' || verb === 'help') {
     process.stdout.write(USAGE);
     return finishAndExit(verb ? 0 : 2);
   }
   if (!Object.hasOwn(VERBS, verb)) { // own keys only: `toString` is not a verb
-    process.stderr.write(`fleet: unknown verb ${JSON.stringify(verb)}\n${USAGE}`);
+    // An unknown verb is the classic symptom of stale tooling (`release` was missing in one): name the remedy.
+    process.stderr.write(`fleet: unknown verb ${JSON.stringify(verb)}${staleHint ? ` — this worktree's tooling may be stale; run ${HYDRATE_HINT}` : ''}\n${USAGE}`);
     return finishAndExit(2);
   }
 
@@ -113,7 +123,8 @@ async function main() {
       case 'repair': result = cmdRepair(ctx, flags); break;
       case 'release': result = cmdRelease(ctx, flags); break;
       case 'archive-check': result = cmdArchiveCheck(ctx, flags, positionals); break;
-      case 'prune': result = cmdPrune(ctx); break;
+      case 'prune': result = cmdPrune(ctx, flags); break;
+      case 'archive': result = cmdArchive(ctx, flags, positionals); break;
       case 'handover': result = await cmdHandover(ctx, flags, positionals); break;
       case 'next': result = cmdNext(ctx, flags); break;
       case 'directive': result = cmdDirective(ctx, flags); break;

@@ -141,6 +141,9 @@ export const CASES = [
   // --test it is mutually exclusive with.
   { id: 'repoint-regression-spec-missing', args: ['repoint-regression-spec'] },
   { id: 'repoint-regression-spec-delete-with-test', args: ['repoint-regression-spec', '--finding', 'a4969127-d5d0-47bb-8b2e-0acb0ed71546', '--delete', '--test', 'tests/x.test.mjs'] },
+  // close-finding (queue burn-down 2026-10-02): hermetic = cloud off, so this
+  // freezes the degrade shape; the refusals are pinned by its DB suite.
+  { id: 'close-finding-cloud-off', args: ['close-finding', '--finding', 'a4969127-d5d0-47bb-8b2e-0acb0ed71546', '--as', 'fixed', '--commit', 'abc1234'] },
 
   // ── Cluster C (Phase 4) — readers ────────────────────────────────────────
   // Captured from the LEGACY handlers before migration. Readers degrade rather

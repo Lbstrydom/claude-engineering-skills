@@ -19,88 +19,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { git } from './helpers/git.mjs';
 import { approveSerial, readSerial, resumeSerial } from '../scripts/lib/fleet/serial.mjs';
-import { defaultDeps } from '../scripts/lib/fleet/train.mjs';
 import { readTrain } from '../scripts/lib/fleet/registry.mjs';
+import { cleanupFleetRoots } from './helpers/fleet-repo.mjs';
 import {
-  addBranch, cleanupFleetRoots, installFakeGh, makeFleetRepo, prRow, runFleet, scrubbedEnv,
-} from './helpers/fleet-repo.mjs';
+  PR, REPO, ok, view, fast, depsWith, trainFx, updatedHead, scriptedGh,
+} from './helpers/fleet-serial-fx.mjs';
 
 after(cleanupFleetRoots);
-
-const REPO = 'o/n';
-const PR = 21;
-const RULES = { ok: true, status: 0, stdout: JSON.stringify([{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'ci' }] } }]), stderr: '' };
-const BRANCH = { ok: true, status: 0, stdout: JSON.stringify({ protected: false }), stderr: '' };
-const ok = (doc) => ({ ok: true, status: 0, stdout: doc === undefined ? '' : JSON.stringify(doc), stderr: '' });
-const check = (bucket) => [{ name: 'ci', bucket, state: bucket.toUpperCase(), completedAt: '2026-10-09T10:00:00Z' }];
-
-/** A pr-mode train with one ready session `feat` and a built (green) train. */
-function trainFx() {
-  const fx = makeFleetRepo({ fleetConfig: { mergeMethod: 'pr', testCommand: { tiers: [{ name: 'ok', command: ['node', '-e', '0'] }] } } });
-  git(['add', '.fleet.json'], fx.repo); git(['commit', '-q', '-m', 'cfg'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
-  const fake = installFakeGh(fx.root);
-  const env = scrubbedEnv({ FLEET_WORKTREE_ROOT: fx.wtRoot, ...fake.env }, { prependPath: [fake.bin] });
-  const f = (args) => runFleet(args, { cwd: fx.repo, env });
-  const base = git(['rev-parse', 'main'], fx.repo);
-  const tested = addBranch(fx.repo, 'feat', { 'f.txt': 'f\n' });
-  git(['push', '-q', 'origin', `${tested}:refs/pull/${PR}/head`], fx.repo);
-  git(['checkout', '-q', 'feat'], fx.repo);
-  assert.equal(f(['claim', '--id', 'feat', '--intent', 'feat', '--paths', 'f.txt']).status, 0);
-  assert.equal(f(['ready', '--id', 'feat']).status, 0);
-  git(['checkout', '-q', 'main'], fx.repo);
-  const row = prRow({ number: PR, branch: 'feat', headOid: tested, baseOid: base });
-  fake.setState({ list: [row], view: { [PR]: row } });
-  const built = f(['land', '--json']);
-  assert.equal(built.status, 0, built.stdout + built.stderr);
-  return { fx, tested, base, trainId: built.json.train.trainId };
-}
-
-/** Advance main (as another merge would) and build the updated head: a merge of `tested` and the new base. */
-function updatedHead(fx, tested, { foreign = false } = {}) {
-  git(['checkout', '-q', 'main'], fx.repo);
-  fs.writeFileSync(path.join(fx.repo, 'other.txt'), 'landed meanwhile\n');
-  git(['add', 'other.txt'], fx.repo); git(['commit', '-q', '-m', 'other (#20)'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
-  git(['checkout', '-q', '--detach', tested], fx.repo);
-  git(['merge', '-q', '--no-ff', '-m', 'Merge main into feat', 'main'], fx.repo);
-  if (foreign) {
-    fs.writeFileSync(path.join(fx.repo, 'sneaky.txt'), 'not a clean merge\n');
-    git(['add', 'sneaky.txt'], fx.repo); git(['commit', '-q', '--amend', '--no-edit'], fx.repo);
-  }
-  const u = git(['rev-parse', 'HEAD'], fx.repo);
-  git(['push', '-q', '-f', 'origin', `${u}:refs/pull/${PR}/head`], fx.repo);
-  git(['checkout', '-q', 'main'], fx.repo);
-  return u;
-}
-
-/**
- * A scripted gh. `views` is the sequence of `pr view` answers (the last repeats);
- * `checks` the sequence of `pr checks` buckets; calls are recorded.
- */
-function scriptedGh({ views, checks = [['pass']], onUpdate = () => ok({}), onMerge = () => ok() }) {
-  const calls = []; let v = 0; let c = 0;
-  const gh = (args) => {
-    calls.push(args);
-    if (args[0] === 'api' && args.includes('PUT')) return onUpdate(args);
-    if (args[0] === 'api' && /rules\/branches/.test(args[1])) return RULES;
-    if (args[0] === 'api' && /\/branches\//.test(args[1])) return BRANCH;
-    if (args[0] === 'pr' && args[1] === 'merge') return onMerge(args);
-    if (args[0] === 'pr' && args[1] === 'checks') {
-      const b = checks[Math.min(c++, checks.length - 1)];
-      return { ok: b[0] === 'pass', status: b[0] === 'pass' ? 0 : 8, stdout: b[0] === 'missing' ? '[]' : JSON.stringify(check(b[0])), stderr: '' };
-    }
-    if (args[0] === 'pr' && args[1] === 'view') {
-      const want = args[args.indexOf('--json') + 1];
-      const doc = typeof views === 'function' ? views() : views[Math.min(v++, views.length - 1)];
-      return want === 'headRefOid' ? ok({ headRefOid: doc.headRefOid }) : ok(doc);
-    }
-    return { ok: false, status: 1, stdout: '', stderr: `unexpected gh ${args.join(' ')}`, reason: 'unexpected' };
-  };
-  return { gh, calls };
-}
-
-const view = (head, over = {}) => ({ state: 'OPEN', isDraft: false, headRefOid: head, baseRefName: 'main', mergeStateStatus: 'CLEAN', mergeCommit: null, url: `https://github.com/${REPO}/pull/${PR}`, ...over });
-const fast = { poll: 1, updatePoll: 1, updateWait: 200, mergeWait: 200 };
-const depsWith = (gh) => defaultDeps({ gh, log: () => {} });
 
 describe('serial landing', () => {
   it('a CLEAN PR: waits for the required check, merges exactly the tested head, lands the train', () => {
@@ -183,5 +108,175 @@ describe('serial landing', () => {
     fs.writeFileSync(path.join(dir, 'serial', `${trainId}.lock`), JSON.stringify({ pid: process.pid, token: 'x', at: Date.now() }));
     const r = resumeSerial({ cwd: fx.repo, trainId, deps: depsWith(gh), sleep: () => {}, timings: fast });
     assert.match(r.reason, /another process is landing/);
+  });
+});
+
+describe('serial landing — the messageFor seam (docs/plans/ship-trains.md §2.4)', () => {
+  /** A CLEAN PR that merges on the first `pr merge`; `mergeSeen` records the argv AND the body file as it was at the call. */
+  function cleanRun({ messageFor } = {}) {
+    const { fx, tested, trainId } = trainFx();
+    let merged = false; const mergeSeen = [];
+    const { gh, calls } = scriptedGh({
+      views: () => (merged ? view(tested, { state: 'MERGED', mergeCommit: { oid: 'e'.repeat(40) } }) : view(tested)),
+      onMerge: (args) => {
+        const f = args.includes('--body-file') ? args[args.indexOf('--body-file') + 1] : null;
+        mergeSeen.push({ args, bodyFile: f, body: f ? fs.readFileSync(f, 'utf8') : null });
+        merged = true; return ok();
+      },
+    });
+    const r = approveSerial({ cwd: fx.repo, trainId, deps: depsWith(gh), sleep: () => {}, timings: fast, timeoutMs: 60_000, ...(messageFor ? { messageFor } : {}) });
+    return { fx, tested, trainId, r, calls, mergeSeen };
+  }
+
+  it('absent: the merge argv is byte-identical to the pre-seam call', () => {
+    const { r, tested, mergeSeen } = cleanRun();
+    assert.equal(r.landed, true, r.reason);
+    assert.deepEqual(mergeSeen[0].args, ['pr', 'merge', String(PR), '-R', REPO, '--squash', '--match-head-commit', tested]);
+  });
+
+  it('a null answer merges exactly as if the seam were absent — on a run that did not require a message', () => {
+    // Approved WITHOUT a provider (no requirement recorded), then resumed with one that answers null.
+    const { fx, tested, trainId } = trainFx();
+    const dirty = scriptedGh({ views: () => view(tested, { mergeStateStatus: 'DIRTY' }) });
+    approveSerial({ cwd: fx.repo, trainId, deps: depsWith(dirty.gh), sleep: () => {}, timings: fast, timeoutMs: 60_000 });
+    let merged = false; const seen = [];
+    const { gh } = scriptedGh({
+      views: () => (merged ? view(tested, { state: 'MERGED', mergeCommit: { oid: 'e'.repeat(40) } }) : view(tested)),
+      onMerge: (args) => { seen.push(args); merged = true; return ok(); },
+    });
+    const r = resumeSerial({ cwd: fx.repo, trainId, deps: depsWith(gh), sleep: () => {}, timings: fast, messageFor: () => null });
+    assert.equal(r.landed, true, r.reason);
+    assert.deepEqual(seen[0], ['pr', 'merge', String(PR), '-R', REPO, '--squash', '--match-head-commit', tested]);
+  });
+
+  it('a message adds --subject and --body-file, the file holds the body at call time, and is gone afterwards', () => {
+    const { r, tested, trainId, mergeSeen } = cleanRun({ messageFor: () => ({ subject: 'feat: the thing (#21)', body: 'body line\n\nAI-Skill: ship\n' }) });
+    assert.equal(r.landed, true, r.reason);
+    const { args, body, bodyFile } = mergeSeen[0];
+    assert.equal(args[args.indexOf('--subject') + 1], 'feat: the thing (#21)');
+    assert.equal(body, 'body line\n\nAI-Skill: ship\n');
+    assert.equal(args.at(-2), '--match-head-commit', 'the head bind stays last, so it still guards exactly this head');
+    assert.equal(args.at(-1), tested);
+    assert.match(path.basename(bodyFile), new RegExp(`^${trainId}\\.pr-${PR}\\.msg$`));
+    assert.equal(fs.existsSync(bodyFile), false, 'the temp body file is removed after the merge call');
+  });
+
+  it('is called with the POST-update head and the base tip, not the tested head', () => {
+    const { fx, tested, trainId } = trainFx();
+    let u = null; let state = 'behind'; let merged = false; const seen = [];
+    const { gh } = scriptedGh({
+      views: () => (merged ? view(u, { state: 'MERGED', mergeCommit: { oid: 'e'.repeat(40) } }) : state === 'behind' ? view(tested, { mergeStateStatus: 'BEHIND' }) : view(u)),
+      onUpdate: () => { u = updatedHead(fx, tested); state = 'updated'; return ok({}); },
+      onMerge: () => { merged = true; return ok(); },
+    });
+    const r = approveSerial({ cwd: fx.repo, trainId, deps: depsWith(gh), sleep: () => {}, timings: fast, timeoutMs: 60_000, messageFor: (a) => { seen.push(a); return { subject: 's (#21)', body: 'b' }; } });
+    assert.equal(r.landed, true, r.reason);
+    assert.equal(seen.length, 1, 'once per PR, not once per loop pass');
+    assert.equal(seen[0].headOid, u);
+    assert.notEqual(seen[0].headOid, tested);
+    assert.equal(seen[0].baseOid, git(['ls-remote', 'origin', 'refs/heads/main'], fx.repo).split(/\s+/)[0]);
+    assert.equal(seen[0].source.prNumber, PR);
+  });
+
+  it('the message requirement is durable: a run approved with a provider cannot be resumed WITHOUT one (raw fleet land --resume), and the marker survives progress writes', () => {
+    const { fx, tested, trainId } = trainFx();
+    const dir = path.join(git(['rev-parse', '--path-format=absolute', '--git-common-dir'], fx.repo), 'fleet');
+    let merged = false;
+    const gh1 = scriptedGh({ views: () => view(tested, { mergeStateStatus: 'DIRTY' }) });
+    approveSerial({ cwd: fx.repo, trainId, deps: depsWith(gh1.gh), sleep: () => {}, timings: fast, timeoutMs: 60_000, messageFor: () => ({ subject: 's (#21)', body: 'b' }) });
+    assert.equal(readSerial(dir, trainId).run.messageRequired, true, 'recorded at approval, after a progress write');
+    const gh2 = scriptedGh({ views: () => (merged ? view(tested, { state: 'MERGED', mergeCommit: { oid: 'e'.repeat(40) } }) : view(tested)), onMerge: () => { merged = true; return ok(); } });
+    const raw = resumeSerial({ cwd: fx.repo, trainId, deps: depsWith(gh2.gh), sleep: () => {}, timings: fast });
+    assert.equal(raw.landed, undefined);
+    assert.match(raw.reason, /may only merge with one; resume it with the same tool: node scripts\/ship-train\.mjs land --train .* --resume/);
+    assert.equal(gh2.calls.some((c) => c[1] === 'merge'), false, 'no merge without the provider');
+    assert.equal(readSerial(dir, trainId).run.messageRequired, true, 'the refusal does not clear it');
+    const again = resumeSerial({ cwd: fx.repo, trainId, deps: depsWith(gh2.gh), sleep: () => {}, timings: fast, messageFor: () => ({ subject: 's (#21)', body: 'b' }) });
+    assert.equal(again.landed, true, again.reason);
+  });
+
+  it('a required run refuses a provider that answers null; an ordinary run records no requirement and merges as before', () => {
+    const a = trainFx();
+    const { gh, calls } = scriptedGh({ views: () => view(a.tested) });
+    const r = approveSerial({ cwd: a.fx.repo, trainId: a.trainId, deps: depsWith(gh), sleep: () => {}, timings: fast, timeoutMs: 60_000, messageFor: () => null });
+    assert.match(r.reason, /requires a squash message and messageFor returned none/);
+    assert.equal(calls.some((c) => c[1] === 'merge'), false);
+    const b = trainFx();
+    const dirB = path.join(git(['rev-parse', '--path-format=absolute', '--git-common-dir'], b.fx.repo), 'fleet');
+    const plain = scriptedGh({ views: () => view(b.tested, { mergeStateStatus: 'DIRTY' }) });
+    approveSerial({ cwd: b.fx.repo, trainId: b.trainId, deps: depsWith(plain.gh), sleep: () => {}, timings: fast, timeoutMs: 60_000 });
+    assert.equal('messageRequired' in readSerial(dirB, b.trainId).run, false, 'no marker on an ordinary run');
+  });
+
+  it('a message file left by a run that died is swept when the next run starts; another train\'s files are left alone', () => {
+    const { fx, tested, trainId } = trainFx();
+    const dir = path.join(git(['rev-parse', '--path-format=absolute', '--git-common-dir'], fx.repo), 'fleet');
+    const dirty = scriptedGh({ views: () => view(tested, { mergeStateStatus: 'DIRTY' }) });
+    approveSerial({ cwd: fx.repo, trainId, deps: depsWith(dirty.gh), sleep: () => {}, timings: fast, timeoutMs: 60_000 });
+    const stale = path.join(dir, 'serial', `${trainId}.pr-${PR}.msg`);
+    const other = path.join(dir, 'serial', `t-20200101000000-ffff.pr-${PR}.msg`);
+    fs.writeFileSync(stale, 'left by a process that died mid-merge');
+    fs.writeFileSync(other, 'someone else\'s');
+    let merged = false;
+    const { gh } = scriptedGh({ views: () => (merged ? view(tested, { state: 'MERGED', mergeCommit: { oid: 'e'.repeat(40) } }) : view(tested)), onMerge: () => { merged = true; return ok(); } });
+    const r = resumeSerial({ cwd: fx.repo, trainId, deps: depsWith(gh), sleep: () => {}, timings: fast });
+    assert.equal(r.landed, true, r.reason);
+    assert.equal(fs.existsSync(stale), false, 'swept');
+    assert.equal(fs.existsSync(other), true, 'a different train\'s file is not ours to remove');
+  });
+
+  it('a stale message file that cannot be removed stops the run with the reason — it is not swallowed', () => {
+    const { fx, tested, trainId } = trainFx();
+    const dir = path.join(git(['rev-parse', '--path-format=absolute', '--git-common-dir'], fx.repo), 'fleet');
+    const dirty = scriptedGh({ views: () => view(tested, { mergeStateStatus: 'DIRTY' }) });
+    approveSerial({ cwd: fx.repo, trainId, deps: depsWith(dirty.gh), sleep: () => {}, timings: fast, timeoutMs: 60_000 });
+    // A non-empty DIRECTORY where the message file should be: rmSync without recursive refuses it.
+    const blocker = path.join(dir, 'serial', `${trainId}.pr-${PR}.msg`);
+    fs.mkdirSync(blocker); fs.writeFileSync(path.join(blocker, 'x'), 'x');
+    const { gh, calls } = scriptedGh({ views: () => view(tested) });
+    const r = resumeSerial({ cwd: fx.repo, trainId, deps: depsWith(gh), sleep: () => {}, timings: fast });
+    assert.equal(r.landed, undefined);
+    assert.match(r.reason, /cannot remove the stale message file .*\.pr-21\.msg/);
+    assert.equal(calls.some((c) => c[1] === 'merge'), false, 'nothing merged past an unclean serial directory');
+  });
+
+  it('{stop} ends the run BEFORE the merge, records the reason, and a resume recomputes on the current head', () => {
+    const { fx, tested, trainId } = trainFx();
+    let merged = false; const mergeArgs = [];
+    const { gh, calls } = scriptedGh({
+      views: () => (merged ? view(tested, { state: 'MERGED', mergeCommit: { oid: 'e'.repeat(40) } }) : view(tested)),
+      onMerge: (args) => { mergeArgs.push(args); merged = true; return ok(); },
+    });
+    const r1 = approveSerial({ cwd: fx.repo, trainId, deps: depsWith(gh), sleep: () => {}, timings: fast, timeoutMs: 60_000, messageFor: () => ({ stop: 'no run covers this head' }) });
+    assert.equal(r1.landed, undefined);
+    assert.match(r1.reason, /PR #21: no run covers this head/);
+    assert.equal(calls.some((c) => c[1] === 'merge'), false, 'never merged');
+    const dir = path.join(git(['rev-parse', '--path-format=absolute', '--git-common-dir'], fx.repo), 'fleet');
+    const rec = readSerial(dir, trainId).run;
+    assert.notEqual(rec.steps[0].step, 'merge', 'the merge intent was not recorded for a merge that never happened');
+    assert.match(rec.outcome.reason, /no run covers this head/);
+    let n = 0;
+    const r2 = resumeSerial({ cwd: fx.repo, trainId, deps: depsWith(gh), sleep: () => {}, timings: fast, messageFor: () => { n += 1; return { subject: 's (#21)', body: 'b' }; } });
+    assert.equal(r2.landed, true, r2.reason);
+    assert.equal(n, 1, 'the callback ran again on resume; nothing was replayed');
+    assert.ok(mergeArgs[0].includes('--subject'));
+  });
+
+  it('a throw, an empty or multi-line subject, or an unknown shape stops the run — never an unmessaged merge', () => {
+    for (const bad of [
+      () => { throw new Error('store exploded'); },
+      () => ({ subject: '', body: 'b' }),
+      () => ({ subject: 'two\nlines', body: 'b' }),
+      () => ({ subject: 's', body: 'b\0' }),
+      () => ({ subject: 's' }),
+      () => ({ stop: 'x', subject: 's', body: 'b' }),
+      () => 'a string',
+    ]) {
+      const { r, calls } = cleanRun({ messageFor: bad });
+      assert.equal(r.landed, undefined);
+      assert.equal(calls.some((c) => c[1] === 'merge'), false, 'no merge on a bad answer');
+    }
+    const thrown = cleanRun({ messageFor: () => { throw new Error('store exploded'); } });
+    assert.match(thrown.r.reason, /messageFor failed: store exploded/);
   });
 });

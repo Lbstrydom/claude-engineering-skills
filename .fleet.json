@@ -1,0 +1,12 @@
+{
+  "hotFiles": [
+    "skills.manifest.json",
+    "docs/plans/README.md",
+    ".file-size-baseline.json",
+    ".stdout-flush-baseline.json",
+    ".emit-exit-baseline.json",
+    ".knip-baseline.json",
+    ".skill-consumer-refs-baseline.json",
+    "scripts/lib/bundle-deps.json"
+  ]
+}

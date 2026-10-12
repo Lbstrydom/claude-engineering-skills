@@ -279,6 +279,8 @@ hooks.
 |---|---|
 | Run checks in-tree (old behaviour) | `AUDIT_PREPUSH_SANDBOX=0 git push` |
 | Skip the hook entirely | `git push --no-verify` |
+| Force the full gate for an archive push (a loosening: the full gate does not scan) | `AUDIT_PREPUSH_ARCHIVE_LANE=0 git push` |
+| Publish an archive push whose findings you have read | the `AUDIT_ARCHIVE_LANE_ACK` value the block message prints |
 | Run the sandbox by hand | `npm run prepush:check -- --base <sha> --head <sha>` |
 | Run the poison pills serially (debugging) | `GATES_POISON_CONCURRENCY=1 npm run gates:poison` |
 | Force a refresh of the DB test image | `AUDIT_LOOP_DB_IMAGE_PULL=always npm run db:suites:gate` |
@@ -316,9 +318,9 @@ hard-killed run. `git worktree prune` clears it. The runner removes its own
 worktree in a `finally` and on `SIGINT`/`SIGTERM`/`SIGHUP`.
 
 **`pre-push sandbox could not be removed: <path>`** — the husk named on that
-line is still on disk. A later push sweeps husks older than 6h automatically
-(`swept N stale sandbox husk(s)`), so this is informational; delete it by hand
-only if you want the space back now.
+line is still on disk. A later push sweeps husks older than 6h, and husks whose
+owner process is dead, automatically (`swept N stale sandbox husk(s)`), so this
+is informational; delete it by hand only if you want the space back now.
 
 ### Why husks leaked silently before 2026-08-01
 
@@ -340,10 +342,25 @@ with it:
 - **Prune metadata *after* removing the directory, never before.** The reverse
   turns a visible husk into an invisible one — `git worktree list`, the one
   command that would have surfaced it, then reads clean.
-- **Age, not liveness, gates the sweep.** Two sessions share this working tree,
-  so a concurrent push can have a live sandbox on disk right now; a live
-  sandbox is always young, and 6h clears a minutes-long `npm run check` by
-  orders of magnitude.
+- **A sandbox that may still be live is never swept.** Two sessions share this
+  working tree, so a concurrent push can have a live sandbox on disk right now.
+  Wherever the sweep cannot establish that the owner is gone, age is the guard:
+  a live sandbox is always young, and 6h clears a minutes-long `npm run check`
+  by orders of magnitude.
+- **A sandbox whose owner is provably dead is swept at once.** A push killed
+  with TaskStop, `taskkill /F`, SIGKILL or a closed terminal runs no cleanup
+  handler, so its worktree stays on disk *and registered* — measured 2026-10-11,
+  two such husks sat in `git worktree list` for hours, far under the 6h age rule.
+  The owner is the pid in `ces-prepush-<sha8>-<pid>` (the digits after the last
+  `-`, a plain positive decimal); ESRCH from `process.kill(pid, 0)` is the only
+  answer that licenses an early sweep. Everything else keeps the age rule: a
+  live owner (a concurrent push; EPERM counts as alive), a probe that returns
+  unknown or throws, a name with no usable pid, and a husk holding
+  `.prepush-npm-ci.log` (preserved as evidence by a process that exited
+  normally). Pid reuse can only make a dead owner read alive, so it fails safe
+  to the age rule. The sweep line says which husks went for a dead owner and
+  which for age, and what it left and why; a path it could not inspect is
+  named, never read as "nothing there".
 
 A failed sweep or removal **warns and never blocks** — temp-directory state is
 machine state, not repo state.
@@ -351,3 +368,144 @@ machine state, not repo state.
 **A check passes in-tree but fails in the sandbox** — that is the feature
 working. The commit is missing something your working tree has; most often a
 file that was never staged. `git status` will show it.
+
+## 7. The archive lane (`archive/*` refs)
+
+A push whose **every** ref lands under `refs/heads/archive/` or `refs/tags/archive/` is a
+backup of work in flight. `npm run check` fails on such a commit for reasons that say nothing
+about publishing it, which is how `--no-verify` became a habit. Those pushes take the **archive
+lane** instead (`.githooks/pre-push` §0.97): a scan of exactly what the push publishes, and
+nothing else. Plan, evidence and the full audit trail:
+[`docs/plans/prepush-archive-lane.md`](../plans/prepush-archive-lane.md).
+
+**What it checks.** The objects the destination lacks (secret-shaped content in blobs, commit
+messages and tag messages) and every path a published commit adds or changes (sensitive
+paths, including a blob the destination already holds). `npm run check` has **no** such scan
+(measured; plan §1.2), so the lane adds it rather than keeping it. What the destination
+holds comes from the destination itself (`git ls-remote` on the push URL), never from
+remote-tracking refs.
+
+**What it skips**, and why, step by step: plan §3 and
+`ARCHIVE_LANE_CHECK_CLASSIFICATION` in `scripts/lib/prepush-archive-lane.mjs`. A test makes
+that table executable: a new `check` step with no entry fails, and so does a class-P
+(publication-safety) step that names no lane scanner.
+
+**When it blocks.** A finding, or an eligible push that could not be scanned completely
+(unreachable destination, a limit hit, git output that does not add up). An incomplete scan is
+never clean. The message lists each finding (sensitive paths as `[redacted:<hash>].<ext>`,
+matched text never) and a fingerprint of the set. To publish exactly that set, re-run the same
+push with `AUDIT_ARCHIVE_LANE_ACK` set to the fingerprint; it covers only the findings it was
+computed from. Expect to need it: this repo tests its own scanner, so fixtures shaped like
+secrets are normal (13 findings, all synthetic, on `archive/queue-burndown-2026-10-02`), and
+so are `.env.example` templates, which the shared path classifier calls sensitive.
+
+**When it steps aside.** `not-applicable` (any other ref, a mixed push, a deletion of a
+non-archive ref) runs the full gate exactly as before. If the lane yields no valid result at
+all (script missing from the hook's checkout, a crash): an ordinary push still runs the full
+gate, with a warning; a push that **looks archive-only** is refused, because the full gate
+does not scan published content. `AUDIT_PREPUSH_ARCHIVE_LANE=0` is the explicit way past that.
+
+**Acknowledgements are for sets you can read in full.** The block message lists every finding
+up to 200 and offers the acknowledgement only then; above that it says to split the push, and
+a matching fingerprint is not accepted. The scan also ignores `git replace` refs (they change
+what `rev-list` shows while the push sends the originals) and runs every git call under one
+120 s deadline.
+
+**Where the lane's code comes from.** The checkout the hook itself lives in, found from
+`$0`, not the pusher's cwd: `core.hooksPath` points at one checkout while pushes come from
+any worktree. Until that checkout contains this change, pushes from any worktree run the old
+hook.
+
+## 8. A killed hook reads as a PASS on Git for Windows
+
+**Incident (2026-10-12).** During the push of PR #220 the hook's process tree was killed
+mid-`npm test` (most likely by the Git for Windows updater — a Restart Manager session was
+logged at 14:24:20Z). The TAP stream stopped at test 1954 of ~5,400, neither `✓ checks passed`
+nor `✗ … FAILED` printed, the sandbox survived with a dead owner — and **git transferred the
+push**.
+
+**Why — two truncations, both measured** (Git 2.56.0.windows.2, GNU bash 5.3.15, 2026-10-12):
+
+1. **Git for Windows reads a hook's status as `code & 0xff` and never sees a signal.**
+   `compat/mingw-posix.h`: `WIFEXITED(x) 1`, `WIFSIGNALED(x) 0`, `WEXITSTATUS(x) ((x) & 0xff)`;
+   `compat/mingw.c` `waitpid()` stores the raw `GetExitCodeProcess` value.
+2. **An MSYS process killed by signal S exits `S << 8`** when its parent is native:
+
+   | Signal | Windows exit code | what git sees |
+   |---|---|---|
+   | HUP (console closed) | 256 | 0 |
+   | INT (Ctrl+C) | 512 | 0 |
+   | KILL | 2304 | 0 |
+   | PIPE | 3328 | 0 |
+   | TERM | 3840 | 0 |
+   | USR1 | 7680 | 0 |
+
+So **every signal death of the hook read as success.** The same truncation sits one seam lower:
+MSYS bash's `$?` keeps only the low byte of a native child's code (`node -e "process.exit(256)";
+echo $?` prints `0`), so a runner forwarding a raw 256 would make the hook print `✓ checks passed`.
+
+`taskkill /F` on the node CHILD alone was never the hole: that exits the child with 1, the hook
+sees 1, and blocks. The hole is the hook's own shell dying.
+
+**The fix, three layers** (plan: `docs/plans/prepush-hook-fail-closed-when-killed.md`):
+
+- **L1 — trap every catchable terminating signal** and `exit 1`, a code with a non-zero low byte:
+  the nine POSIX ones (HUP INT QUIT ABRT ALRM TERM PIPE USR1 USR2) unconditionally, plus the XSI
+  ones (TRAP BUS FPE ILL SEGV SYS XCPU XFSZ VTALRM PROF) wherever `kill -l NAME` says the shell
+  knows them, so an unfamiliar `sh` never errors on `trap`. Only KILL and STOP are untrappable. The marked `fail-closed-on-signal` block, at the
+  top of `.githooks/pre-push` and, byte-identical, of the consumer hook (`hook-version: 10`). A
+  POSIX shell runs a trap only after the current foreground child returns: in the console-close /
+  updater case the child dies too and the trap fires at once; for a signal aimed at the hook
+  alone, the push is refused when the child finishes.
+- **L2 — `toShellExitCode`** (`scripts/lib/cli-io.mjs`): every place on the gate path that
+  forwards a child's status (`prepush-check.mjs`, `run-tests.mjs`) maps a zero-low-byte failure
+  to 1. Use it for any new CLI that forwards a child's exit code.
+- **L3 — report the untrappable remainder on the NEXT push.** SIGKILL, or a `TerminateProcess`
+  with a zero-low-byte code, runs no shell code, so nothing can stop that push. The marked
+  `prepush-inflight-record` block writes `<git-common-dir>/prepush-inflight/<pid>.rec`
+  (`pid sha started remote`) before any real work, updates the sha once the range is known, and
+  removes it from an EXIT trap. A record whose owner pid is dead was left by a hook that died
+  without running any shell code, and the next push prints:
+
+  ```
+  ⚠ an earlier pre-push (pid 1234, remote origin, started 2026-10-12T14:19:03Z) was KILLED before it
+    finished. Git for Windows reads a killed hook as a PASS, so if that push reached the remote it went UNGATED.
+    It was gating <sha>. Check: git branch -r --contains <sha>   (runbook §8)
+  ```
+
+  It is advisory and never blocks: the push it describes has already happened. If the check
+  shows the commit on a remote branch, run the gate on it now: `git switch --detach <sha> && npm
+  run check`, or push a follow-up commit and let the hook run in full.
+
+### Unknown commit
+
+`It died before the gated commit was known` means the record still read `pending`: the hook was
+killed during its first few statements, before the push range was parsed. The push's own
+remote-tracking update is the evidence. Look for an update near the record's `started` time:
+
+```bash
+git reflog show --date=iso origin/main
+git ls-remote origin
+```
+
+Then compare with what you expected to have pushed.
+
+### What L3 cannot see (stated, not hidden)
+
+- A kill before the record is published: the first few shell statements, including L1's own
+  installation.
+- Any run whose git common dir cannot be resolved or written. The block then skips itself; it
+  never builds a fallback path.
+- A kill between the hook's last command and the EXIT trap's `rm` leaves a record for a run that
+  DID finish, so the next push warns about a gated push. This is rare, and the warning is
+  advisory.
+- PID reuse can make a dead owner look alive. That only suppresses a warning; it never invents one.
+
+**Where the fix runs.** Like the archive lane (§7), the hook runs from the checkout that
+`core.hooksPath` points at. Until that checkout contains this change, pushes from any worktree
+still run the old, fail-open hook. Consumers get L1 on their next hook install (`hook-version: 10`).
+
+Tests: `tests/prepush-hook-fail-closed-on-signal.test.mjs` runs real `git push` runs against a
+throwaway bare remote, judged by what the remote received. It includes a characterisation of
+the unprotected hook, which reads `fail-open` on today's Git for Windows.
+`tests/cli-io-shell-exit-code.test.mjs` covers L2.

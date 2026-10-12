@@ -148,9 +148,20 @@ export function resolveNudgePage(opts = {}) {
  * page is reachable at all. Without them a caller shown `shown 20 / total 232`
  * can see that rows are missing but has no way to ever read one of them.
  *
+ * `opts.after` is the keyset alternative to `offset`, and the one to use while
+ * rows are being CLOSED between page reads (the /ship workflow): an offset
+ * counts positions in a set that shrank, so it skips one unread row per row
+ * closed. Each row carries `fixed_at_cursor` (`fixed_at::text`, microsecond-
+ * exact — a JS Date would truncate a tie) for building the next cursor.
+ *
+ * `opts.strict` rethrows a failed query instead of returning `[]`. Default off,
+ * because the nudge callers want the never-throw degrade; a cursor walk must
+ * turn it on, since an empty page there is indistinguishable from the end.
+ *
  * @param {{repoId?: string|null, allRepos?: boolean}} scope
  * @param {{mode?: 'code'|'plan'|null, limit?: number|null, offset?: number|null,
- *          allAges?: boolean}} [opts]
+ *          allAges?: boolean, after?: {fixedAt: string, findingId: string}|null,
+ *          strict?: boolean}} [opts]
  */
 export async function getUnlockedFixes(scope, opts = {}) {
   const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'getUnlockedFixes');
@@ -167,6 +178,15 @@ export async function getUnlockedFixes(scope, opts = {}) {
     // `code: 64` and `--mode code` would hand back 74 rows, and a reader cannot tell
     // which number is lying. The two must move together or not at all.
     if (mode) { params.push(mode); preds.push(`${EFFECTIVE_MODE_SQL} = $${params.length}`); }
+    // Keyset continuation (`opts.after`, the last row of the previous page in
+    // this ORDER BY): rows strictly AFTER it. Unlike OFFSET, a row closed between
+    // two page reads cannot shift the next page past an unread row. The mixed
+    // direction (fixed_at DESC, id ASC) rules out a plain row comparison.
+    if (opts?.after) {
+      params.push(opts.after.fixedAt, opts.after.findingId);
+      const t = `$${params.length - 1}::timestamptz`, id = `$${params.length}::uuid`;
+      preds.push(`(fixed_at < ${t} OR (fixed_at = ${t} AND audit_finding_id > ${id}))`);
+    }
     const where = preds.length ? ` WHERE ${preds.join(' AND ')}` : '';
     params.push(limit, offset);
     // `opts.allAges` reads the unwindowed base view. The default stays the
@@ -183,18 +203,23 @@ export async function getUnlockedFixes(scope, opts = {}) {
     // exact failure those floors exist to make visible, one notch under them.
     if (opts?.allAges) {
       return await many(
-        `SELECT * FROM unlocked_fixes_all${where} ORDER BY fixed_at DESC, audit_finding_id ` +
+        `SELECT *, fixed_at::text AS fixed_at_cursor FROM unlocked_fixes_all${where} ORDER BY fixed_at DESC, audit_finding_id ` +
         `LIMIT $${params.length - 1} OFFSET $${params.length}`,
         params
       );
     }
     return await many(
-      `SELECT * FROM unlocked_fixes${where} ORDER BY fixed_at DESC, audit_finding_id ` +
+      `SELECT *, fixed_at::text AS fixed_at_cursor FROM unlocked_fixes${where} ORDER BY fixed_at DESC, audit_finding_id ` +
       `LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
   } catch (err) {
     process.stderr.write(`  [learning] getUnlockedFixes failed: ${err.message}\n`);
+    // `strict` is for a caller that PAGES: a failed query degraded to `[]` is a
+    // short page, which a cursor walk reads as "no more rows" and stops — the
+    // unread tail silently never examined. Every other caller keeps the nudge's
+    // never-throw degrade.
+    if (opts?.strict) throw err;
     return [];
   }
 }
@@ -424,13 +449,27 @@ export async function countAgedUnlockedFixes(scope) {
  * across pages, which is how a paged reader shows one row twice and skips
  * another.
  *
+ * `opts.after` — the keyset continuation, for the same reason and with the same
+ * contract as `getUnlockedFixes`'s; rows carry `accepted_at_cursor`.
+ *
  * @param {{repoId?: string|null, allRepos?: boolean}} scope
- * @param {{limit?: number|null, offset?: number|null}} [opts]
+ * `opts.strict` — rethrow a failed query rather than return `[]`; same contract
+ * as `getUnlockedFixes`'s.
+ *
+ * @param {{limit?: number|null, offset?: number|null, allAges?: boolean,
+ *   after?: {severityRank: number, acceptedAt: string, findingId: string}|null,
+ *   strict?: boolean}} [opts]
  */
 export async function getUnremediatedAcceptances(scope, opts = {}) {
   const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'getUnremediatedAcceptances');
   if (!await isCloudEnabled()) return [];
   const { limit, offset } = resolveNudgePage(opts);
+  // Keyset continuation — see getUnlockedFixes. All three keys ascend, so a row
+  // comparison expresses "strictly after"; the NULL guard makes the predicate a
+  // no-op on a first page, keeping ONE literal per branch for the static scan.
+  const after = opts?.after
+    ? [opts.after.severityRank, opts.after.acceptedAt, opts.after.findingId]
+    : [null, null, null];
   // The ORDER BY is spelled out in BOTH branches rather than hoisted into a
   // `const order` and interpolated. That is deliberate: the guard in
   // `tests/cross-skill-unlocked-scope.test.mjs` is a static scan of the SQL
@@ -457,35 +496,47 @@ export async function getUnremediatedAcceptances(scope, opts = {}) {
     if (opts?.allAges) {
       if (!allRepos) {
         return await many(
-          `SELECT * FROM unremediated_acceptances_all WHERE repo_id = $1 AND is_open_disposition ` +
+          `SELECT *, accepted_at::text AS accepted_at_cursor FROM unremediated_acceptances_all ` +
+          `WHERE repo_id = $1 AND is_open_disposition ` +
+          `AND ($4::int IS NULL OR (CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at, audit_finding_id) ` +
+          `> ($4::int, $5::timestamptz, $6::uuid)) ` +
           `ORDER BY CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at ASC, audit_finding_id ` +
           `LIMIT $2 OFFSET $3`,
-          [repoId, limit, offset]
+          [repoId, limit, offset, ...after]
         );
       }
       return await many(
-        `SELECT * FROM unremediated_acceptances_all WHERE is_open_disposition ` +
+        `SELECT *, accepted_at::text AS accepted_at_cursor FROM unremediated_acceptances_all ` +
+        `WHERE is_open_disposition ` +
+        `AND ($3::int IS NULL OR (CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at, audit_finding_id) ` +
+        `> ($3::int, $4::timestamptz, $5::uuid)) ` +
         `ORDER BY CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at ASC, audit_finding_id ` +
         `LIMIT $1 OFFSET $2`,
-        [limit, offset]
+        [limit, offset, ...after]
       );
     }
     if (!allRepos) {
       return await many(
-        `SELECT * FROM unremediated_acceptances WHERE repo_id = $1 ` +
+        `SELECT *, accepted_at::text AS accepted_at_cursor FROM unremediated_acceptances WHERE repo_id = $1 ` +
+        `AND ($4::int IS NULL OR (CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at, audit_finding_id) ` +
+        `> ($4::int, $5::timestamptz, $6::uuid)) ` +
         `ORDER BY CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at ASC, audit_finding_id ` +
         `LIMIT $2 OFFSET $3`,
-        [repoId, limit, offset]
+        [repoId, limit, offset, ...after]
       );
     }
     return await many(
-      `SELECT * FROM unremediated_acceptances ` +
+      `SELECT *, accepted_at::text AS accepted_at_cursor FROM unremediated_acceptances ` +
+      `WHERE ($3::int IS NULL OR (CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at, audit_finding_id) ` +
+      `> ($3::int, $4::timestamptz, $5::uuid)) ` +
       `ORDER BY CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at ASC, audit_finding_id ` +
       `LIMIT $1 OFFSET $2`,
-      [limit, offset]
+      [limit, offset, ...after]
     );
   } catch (err) {
     process.stderr.write(`  [learning] getUnremediatedAcceptances failed: ${err.message}\n`);
+    // See getUnlockedFixes: a paging caller opts into the throw (`strict`).
+    if (opts?.strict) throw err;
     return [];
   }
 }

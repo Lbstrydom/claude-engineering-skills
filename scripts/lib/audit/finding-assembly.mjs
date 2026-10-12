@@ -56,6 +56,41 @@ import { getSeedTelemetry } from './map-reduce-scheduler.mjs';
 import { costFromUsage } from '../model-pricing.mjs';
 import { openaiConfig } from '../config.mjs';
 
+/** Per-topic cap on the `detailSnapshot` carried in the `_debtMemory` envelope — the persisted
+ *  debt entry's own cap (debt-capture.mjs `DETAIL_SNAPSHOT_MAX`) and `FinalReviewFindingSchema.detail`'s
+ *  maxLength, so both sides of the final-review symmetric topic signature sit in one length class. */
+const DEBT_CONTEXT_SNAPSHOT_MAX = 600;
+/** Per-round cap on `suppressionContext` (bounds the transcript the final reviewer reads). */
+const DEBT_CONTEXT_MAX_TOPICS = 50;
+
+/**
+ * The `_debtMemory.suppressionContext` envelope for the final reviewer: one entry per debt topic
+ * this round's findings matched. The PRODUCER half of a seam whose reader is
+ * `post-review.mjs::debtSuppressionContextOf` — `detailSnapshot` is what lets the reader compare a
+ * reviewer's finding with the settled concern like for like (category + section + detail on both
+ * sides). Omitted, not empty, when the ledger entry has none, so a reader reports "no snapshot".
+ * @param {Iterable<string>} topicIds - surfaced topic ids, in match order
+ * @param {Array<object>} debtEntries - the loaded debt ledger entries
+ * @returns {Array<object>}
+ */
+export function buildDebtSuppressionContext(topicIds, debtEntries) {
+  const out = [];
+  for (const topicId of topicIds) {
+    const entry = debtEntries.find((e) => e.topicId === topicId);
+    if (!entry) continue;
+    const snapshot = typeof entry.detailSnapshot === 'string' ? entry.detailSnapshot.slice(0, DEBT_CONTEXT_SNAPSHOT_MAX) : '';
+    out.push({
+      topicId,
+      category: entry.category,
+      section: entry.section,
+      affectedFiles: entry.affectedFiles,
+      deferredReason: entry.deferredReason,
+      ...(snapshot.trim() !== '' ? { detailSnapshot: snapshot } : {}),
+    });
+  }
+  return out.slice(0, DEBT_CONTEXT_MAX_TOPICS);
+}
+
 /**
  * A dedup-replacement's `id` must match the WINNING finding's severity — the
  * id's letter prefix (H/M/L) is severity-derived, so keeping a stale id
@@ -630,20 +665,6 @@ export async function assembleFindings(data) {
 
     // Build suppression context envelope for downstream Gemini review (Phase D.4)
     // so the final-gate doesn't resurface what we already filtered.
-    const debtSuppressionContext = [];
-    for (const [topicId] of surfacedTopics) {
-      const entry = debtLedger.entries.find(e => e.topicId === topicId);
-      if (entry) {
-        debtSuppressionContext.push({
-          topicId,
-          category: entry.category,
-          section: entry.section,
-          affectedFiles: entry.affectedFiles,
-          deferredReason: entry.deferredReason,
-        });
-      }
-    }
-
     debtMemoryData = {
       eventSource: debtContext.source,
       debtSuppressed: surfacedTopics.size,
@@ -651,7 +672,10 @@ export async function assembleFindings(data) {
       debtEntriesLoaded: debtLedger.entries.length,
       newlyEscalated: newlyEscalated.length,
       // Phase D.4: transcript envelope for Gemini (capped to 50 topics to bound context)
-      suppressionContext: debtSuppressionContext.slice(0, 50),
+      suppressionContext: buildDebtSuppressionContext(surfacedTopics.keys(), debtLedger.entries),
+      // The one event that un-settles a topic surfaced in an EARLIER round of this session:
+      // the final-review accessor (post-review.mjs `debtSuppressionContextOf`) drops these.
+      reopenedTopicIds: [...reopenedDebtTopics],
     };
   }
 

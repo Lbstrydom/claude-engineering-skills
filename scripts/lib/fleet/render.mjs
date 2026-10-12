@@ -51,7 +51,7 @@ function hiddenWhy(h) {
 }
 
 /** @param {object} it a status item @param {number|null} [nowMs] @param {Record<string, string>} [hosts] */
-function itemBlock(it, nowMs = null, hosts = {}) {
+function itemBlock(it, nowMs = null, hosts = {}, untrackedIds = null) {
   const lines = [];
   const head = [it.id, `[${it.display}]`];
   if (it.branch && it.branch !== it.id) head.push(`branch ${it.branch}`);
@@ -66,11 +66,17 @@ function itemBlock(it, nowMs = null, hosts = {}) {
   if (it.waitingOn.length) {
     lines.push(`    WAITING: ${it.waitingOn.map((w) => `${w.kind}:${w.ref}${w.unblocked ? ` (${w.unblocked})` : ''}${w.note ? ` — ${w.note}` : ''}`).join('; ')}`);
   }
+  // Between two UNTRACKED items an overlap is noise in the text view (v): it collapses to a count. Overlaps
+  // involving a live claim stay in full — that is what overlap detection is for. JSON and land see everything.
+  const collapse = untrackedIds && it.tracked === false;
+  const quiet = collapse ? it.overlaps.filter((o) => untrackedIds.has(o.with)) : [];
   for (const o of it.overlaps) {
+    if (quiet.includes(o)) continue;
     const what = o.files.length ? ` on ${o.files.join(', ')}` : '';
     const unc = o.uncommittedFiles?.length ? ` · uncommitted: ${o.uncommittedFiles.join(', ')}` : '';
     lines.push(`    overlaps ${o.with} (${o.via.join('+')})${what}${unc}${o.known ? ' [known]' : ''}`);
   }
+  if (quiet.length) lines.push(`    overlaps ${quiet.length} other untracked branch${quiet.length === 1 ? '' : 'es'} (--all)`);
   if (it.overlapsWithHidden?.length) {
     lines.push(`    + overlaps ${it.overlapsWithHidden.length} hidden item${it.overlapsWithHidden.length === 1 ? '' : 's'} — use --all`);
   }
@@ -112,7 +118,7 @@ export function describeMeasurement(m, name = 'base') {
  * @param {ReturnType<import('./overlap.mjs').buildStatus>} status
  * @returns {string}
  */
-export function renderStatus(status, { hidden, hosts = {}, directives = null, now = null } = {}) {
+export function renderStatus(status, { hidden, hosts = {}, directives = null, now = null, all = false, unregistered = null } = {}) {
   const out = [];
   if (!status.registry.complete) {
     out.push(BANNER(status.registry.invalid));
@@ -136,9 +142,12 @@ export function renderStatus(status, { hidden, hosts = {}, directives = null, no
     else out.push(`(nothing found — but ${missing.length} source${missing.length === 1 ? ' was' : 's were'} not fully queried: ${missing.join(', ')})`);
   }
   const nowMs = Number.isFinite(Date.parse(status.observedAt)) ? Date.parse(status.observedAt) : null;
-  for (const it of status.items) out.push(itemBlock(it, nowMs, hosts));
+  const untrackedIds = all ? null : new Set(status.items.filter((i) => i.tracked === false).map((i) => i.id));
+  for (const it of status.items) out.push(itemBlock(it, nowMs, hosts, untrackedIds));
   out.push(...directiveLines(directives, now));
-  if (hidden?.count) out.push(`${hidden.count} hidden (${hiddenWhy(hidden)}) — use --all`);
+  // The idle hide and the Unregistered-work section must agree: say how many hidden items are unlanded work.
+  const unlandedHidden = unregistered?.queried ? (hidden?.ids ?? []).filter((id) => unregistered.items.some((u) => u.branch === id && u.verdict === 'unlanded')).length : 0;
+  if (hidden?.count) out.push(`${hidden.count} hidden (${hiddenWhy(hidden)})${unlandedHidden ? ` (${unlandedHidden} of them unlanded — see Unregistered work)` : ''} — use --all`);
   if (hidden?.unchecked) out.push(`${hidden.unchecked} merged- or idle-looking worktree${hidden.unchecked === 1 ? '' : 's'} shown: cleanliness unchecked`);
   if (status.landingOrder.length) out.push('', `proposed landing order: ${status.landingOrder.join(' → ')}`);
   for (const c of status.cycles) out.push(`waiting cycle: ${c.join(' ↔ ')} (ordered by id for display only)`);
@@ -192,4 +201,55 @@ export function renderApprovable(r) {
   return r.ok
     ? `approvable: ${r.reason}${r.note ? `\n  ${r.note}` : ''}`
     : `NOT approvable: ${r.reason}`;
+}
+
+// ── unregistered work (status section, plan §2.2) ───────────────────────────
+
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** One unregistered item, the status line form: what, how idle, what is at stake, where it lives. */
+function unregisteredLine(i) {
+  const name = i.worktree ? (i.branch ?? `detached ${String(i.head ?? '').slice(0, 12)}`) : `${i.branch} (no worktree)`;
+  const idle = i.idleDays === null || i.idleDays === undefined ? 'idle ?' : `idle ${i.idleDays}d`;
+  const stake = [];
+  if (i.ahead) stake.push(`${i.ahead} ahead`);
+  if (i.risks?.unpushed) stake.push(`${i.risks.unpushed} unpushed`);
+  for (const k of ['staged', 'unstaged', 'untracked']) if (i.risks?.[k]) stake.push(`${i.risks[k]} ${k}`);
+  const where = i.preserved === 'none' ? 'local-only' : i.preserved === 'remote' ? 'on a remote-tracking ref' : null;
+  const parts = [idle, ...(stake.length ? [stake.join(', ')] : []), ...(where ? [where] : []), i.reason];
+  return `      ${name}  ${parts.join(' · ')}${i.worktree ? ` · ${i.worktree}` : ''}`;
+}
+
+/**
+ * The "Unregistered work" section of `fleet status`. Possibly-abandoned and unverified items are listed in
+ * full (ranked: work that exists nowhere else first); the other groups are counts unless `all`. A scan that did
+ * not reach everything says so; archive tags holding commits not on base are counted by where they live.
+ * @param {{queried: boolean, reason?: string, items: object[], partial: boolean, notProbed: number, staleDays: number, branchesUnknown?: string}} scan
+ * @param {{groups: object, all?: boolean, tags?: object|null}} opts `groups` = `groupUnregistered(scan.items)`
+ */
+export function renderUnregistered(scan, { groups, all = false, tags = null } = {}) {
+  if (!scan.queried) return [`Unregistered work — not measured (${scan.reason ?? 'unknown reason'})`];
+  const n = scan.items.length;
+  const out = [`Unregistered work — ${n ? `${plural(n, 'worktree/branch', 'worktrees/branches')} hold work no live claim covers` : 'none found'}`];
+  if (scan.partial) out.push(`  NOT FULLY MEASURED: ${[scan.notProbed ? `${scan.notProbed} not probed before the deadline` : null, scan.branchesUnknown ?? null].filter(Boolean).join('; ')}`);
+  const group = (label, list, full) => {
+    if (!list.length) return;
+    out.push(`  ${label} — ${list.length}`);
+    if (full || all) for (const i of list) out.push(unregisteredLine(i));
+  };
+  group(`possibly abandoned (idle > ${scan.staleDays}d, unlanded)`, groups.abandoned, true);
+  group('unverified (could not be measured or landing unknown)', groups.unverified, true);
+  group('superseded, on base (removable — see fleet prune)', groups.supersededOnBase, false);
+  group('covered by a live claim (same patch — not removable yet; leave it until that claim lands)', groups.coveredByClaim, false);
+  group('sync receipt only (sync-owned)', groups.syncOwned, false);
+  group(`fresh (idle ≤ ${scan.staleDays}d)`, groups.fresh, false);
+  if (scan.tooling?.length) out.push(`  pre-push sandboxes (tooling, not work; removed by the pre-push run that made them) — ${scan.tooling.length}`);
+  if (tags?.queried && tags.overflow && !tags.counts.unlanded) out.push(`  archive tags: ${tags.overflow} not judged (over the scan limit or the deadline); none of those judged hold commits off base`);
+  if (tags?.queried && tags.counts.unlanded) {
+    const c = tags.counts;
+    const kinds = ['local-only', 'last-fetch', 'remote', 'unknown'].filter((k) => c[k]).map((k) => `${c[k]} ${k}`).join(', ');
+    out.push(`  archive tags holding commits not on base — ${c.unlanded} (${kinds})${tags.overflow ? `; ${tags.overflow} more not judged` : ''}`);
+    if (all) for (const t of tags.tags.filter((x) => x.verdict === 'unlanded')) out.push(`      ${t.name} @ ${t.oid.slice(0, 12)} · ${t.preserved}`);
+  } else if (tags && !tags.queried) out.push(`  archive tags: not measured (${tags.reason})`);
+  return out;
 }

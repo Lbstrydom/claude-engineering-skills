@@ -121,6 +121,28 @@ older one: each names a different pushed artifact.
 - **Result**: …
 ```
 
+### Ship train entry — when the entry is the train log (`/ship --train`, step T3)
+
+ONE entry for the whole train, titled by **date + the PR list**, never by a train id (the
+id does not exist yet). The gate column says **planned**: it is written before any merge,
+and an update-branch can still turn a planned `passed` into `converged`. The ACTUAL gates
+arrive in the next entry via the verify note.
+
+```markdown
+## <date> — Ship train: #<n>, #<n>, #<n>
+
+### Changes
+| PR | Tier | Planned gate | Run | identityProvable | What |
+|---|---|---|---|---|---|
+| #<n> | urgent / standard / ride-along | passed / converged / waived / not-run | <8-char run id or —> | true / false | <one line> |
+
+Base pinning: <strict | none> (<evidence>). Overrides used: <flags, or none>.
+```
+
+`identityProvable` is `false` on an unpinned destination, where a train can land `converged`
+but never `passed`. The log PR itself is a ride-along row. Commit it with
+`ship-commit.mjs --gate not-run` as usual; the train's squash messages carry the real gates.
+
 ## Never commit these into status.md
 
 - Raw tool output (dumps, stack traces, lint output)

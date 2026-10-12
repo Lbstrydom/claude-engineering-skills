@@ -61,7 +61,8 @@ FILES="$CHANGED,scripts/gemini-review.mjs"  # changed + dependents
 PASSES="sustainability"  # always include
 # Add backend if any backend file changed, frontend if frontend changed, etc.
 
-PLAN_FILE=docs/plans/*.md   # the plan path /audit-code was invoked with
+# PLAN_FILE = the ONE plan path /audit-code was invoked with, assigned verbatim.
+# Not a glob: an assignment does not expand it, so the CLI would get the pattern itself.
 node scripts/openai-audit.mjs code "$PLAN_FILE" --round 2 --ledger .audit/$SID-ledger.json --diff .audit/$SID-diff.patch --changed $CHANGED --files $FILES --passes $PASSES --out .audit/$SID-r2-result.json 2>.audit/$SID-r2-stderr.log
 ```
 

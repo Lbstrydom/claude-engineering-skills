@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "78933dbd0a155233",
+  "bundleVersion": "828359ff587cd06e",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -54,14 +54,14 @@
     },
     "audit-code": {
       "path": "skills/audit-code/SKILL.md",
-      "sha": "d9c8c43c0486",
-      "size": 56585,
+      "sha": "032b74e9d1a4",
+      "size": 57024,
       "summary": "Iteratively audit code against a plan with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "d9c8c43c0486",
-          "size": 56585
+          "sha": "032b74e9d1a4",
+          "size": 57024
         },
         {
           "relPath": "examples/contract-test-scaffold.md",
@@ -95,8 +95,8 @@
         },
         {
           "relPath": "references/r2-plus-mode.md",
-          "sha": "ad8c74a67075",
-          "size": 5793
+          "sha": "c52d90416773",
+          "size": 5890
         },
         {
           "relPath": "references/verification-discipline.md",
@@ -107,14 +107,14 @@
     },
     "audit-plan": {
       "path": "skills/audit-plan/SKILL.md",
-      "sha": "b31c91f5c88c",
-      "size": 28187,
+      "sha": "b25eaf5abed4",
+      "size": 28494,
       "summary": "Iteratively audit a plan file (docs/plans/*.md) with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "b31c91f5c88c",
-          "size": 28187
+          "sha": "b25eaf5abed4",
+          "size": 28494
         },
         {
           "relPath": "references/gemini-gate.md",
@@ -196,14 +196,14 @@
     },
     "cycle": {
       "path": "skills/cycle/SKILL.md",
-      "sha": "c993a366b507",
-      "size": 47732,
+      "sha": "a6c0db7648a1",
+      "size": 47804,
       "summary": "End-to-end feature cycle orchestrator. Runs the full skill chain in",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "c993a366b507",
-          "size": 47732
+          "sha": "a6c0db7648a1",
+          "size": 47804
         },
         {
           "relPath": "references/gemini-gate.md",
@@ -252,19 +252,19 @@
     },
     "fleet": {
       "path": "skills/fleet/SKILL.md",
-      "sha": "9867cbecc79b",
-      "size": 12561,
+      "sha": "a1c48eb548de",
+      "size": 13836,
       "summary": "Coordinate SEVERAL CONCURRENT AI coding sessions (desktop chips, linked",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "9867cbecc79b",
-          "size": 12561
+          "sha": "a1c48eb548de",
+          "size": 13836
         },
         {
           "relPath": "references/coordination.md",
-          "sha": "a0c050a1eced",
-          "size": 7586
+          "sha": "18189c29f436",
+          "size": 19918
         },
         {
           "relPath": "references/landing.md",
@@ -273,8 +273,8 @@
         },
         {
           "relPath": "references/participant-rules.md",
-          "sha": "05af252ec860",
-          "size": 3065
+          "sha": "106432b3e322",
+          "size": 4182
         },
         {
           "relPath": "references/telemetry.md",
@@ -475,14 +475,14 @@
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "5a5c9a0063e2",
-      "size": 67933,
+      "sha": "9d53ad4d1647",
+      "size": 69611,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "5a5c9a0063e2",
-          "size": 67933
+          "sha": "9d53ad4d1647",
+          "size": 69611
         },
         {
           "relPath": "references/architecture-and-dashboard-refresh.md",
@@ -511,8 +511,8 @@
         },
         {
           "relPath": "references/pre-ship-gate-queries.md",
-          "sha": "cf7c1b5d54a8",
-          "size": 23830
+          "sha": "895f2ebd596d",
+          "size": 24046
         },
         {
           "relPath": "references/python-environment-discovery.md",
@@ -521,8 +521,13 @@
         },
         {
           "relPath": "references/status-md-format.md",
-          "sha": "a72c12e18511",
-          "size": 6094
+          "sha": "9a4c35391ec0",
+          "size": 7131
+        },
+        {
+          "relPath": "references/train-mode.md",
+          "sha": "78be9a81f06e",
+          "size": 7524
         },
         {
           "relPath": "references/verification-discipline.md",

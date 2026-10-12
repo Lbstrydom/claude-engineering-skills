@@ -184,6 +184,8 @@ export const KNOWN_FLAGS = [
   '--spool', '--days', '--fail-on',
   // lock-with-test: record a unit/integration test as a finding's regression lock
   '--finding', '--test', '--description',
+  // close-finding: discharge one finding by id (--as fixed|dismissed|accepted-permanent)
+  '--as', '--reason',
   '--commit', '--state',
   // ── model-ab-adjudicate ───────────────────────────────────────────────────
   '--suggestions', '--canonical', '--actor',

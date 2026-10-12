@@ -672,7 +672,10 @@ async function runLegacyProductionAuditImpl(ctx) {
 
   // ── R2+ initialization ──────────────────────────────────────────────────────
   const isR2Plus = round >= 2;
-  let ledger = null, diffMap = null, impactSet = [];
+  let ledger = null, impactSet = [];
+  // A supplied --diff is the hunk evidence in EVERY round: R1 renders its windows (plain reader, R1 rubric — no
+  // suppression); R2+ alone also annotates with it. Keyed on the declared diff, never the round (audit-hunk-window-coverage D7).
+  const diffMap = diffFile ? parseDiffFile(diffFile) : null;
   // Every pass's reads are measured here (`_coverage`); `renderFor` is byte-identical to the readers it replaces.
   const { recorder: coverageRecorder, renderFor } = startCoverage({ getDiffMap: () => diffMap, plain: readFilesAsContextDetailed, annotated: readFilesAsAnnotatedContextDetailed, setChunkingObserver, coverageChanged, changedFiles, fileFilter });
   let suppressionUnavailable = false;
@@ -728,11 +731,6 @@ async function runLegacyProductionAuditImpl(ctx) {
     } else {
       process.stderr.write(`  [ledger] No --ledger provided; R2+ suppression disabled\n`);
       ledger = { version: 1, entries: [] };
-    }
-
-    // Parse diff
-    if (diffFile) {
-      diffMap = parseDiffFile(diffFile);
     }
 
     // Compute impact set

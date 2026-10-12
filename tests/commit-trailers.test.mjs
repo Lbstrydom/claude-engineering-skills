@@ -363,6 +363,34 @@ test('gate verification: converged run → passed allowed', () => {
   );
 });
 
+// ---------------------------------------- identityProvable (ship trains §2.3)
+
+test('identityProvable defaults to true — an omitted flag keeps both tree-relation refusals', () => {
+  // The direct-commit contract, restated with the flag absent: equal trees
+  // refuse the under-claim, differing trees refuse the over-claim.
+  assert.match(evaluateGateVerification({ gate: 'converged', evidence: FRESH, cloudEnabled: true, convergence: CONVERGED, ...TREE }).custom, /understates/);
+  assert.match(evaluateGateVerification({ gate: 'passed', evidence: FRESH, cloudEnabled: true, convergence: CONVERGED, committedTree: OTHER_TREE }).custom, /not what run/);
+});
+
+test('identityProvable:false refuses passed even when the predicted tree equals the audited tree', () => {
+  const e = evaluateGateVerification({ gate: 'passed', evidence: FRESH, cloudEnabled: true, convergence: CONVERGED, ...TREE, identityProvable: false });
+  assert.equal(e.field, 'gate-evidence');
+  assert.match(e.custom, /prediction the destination does not enforce/);
+  assert.match(e.custom, /--gate converged/);
+});
+
+test('identityProvable:false permits converged on equal trees (no provable passed to under-claim)', () => {
+  assert.equal(evaluateGateVerification({ gate: 'converged', evidence: FRESH, cloudEnabled: true, convergence: CONVERGED, ...TREE, identityProvable: false }), null);
+});
+
+test('identityProvable:false never turns a store refusal into an accept', () => {
+  const base = { gate: 'converged', evidence: FRESH, ...TREE, identityProvable: false };
+  assert.match(evaluateGateVerification({ ...base, cloudEnabled: false, convergence: null }).custom, /verification is unavailable/);
+  assert.match(evaluateGateVerification({ ...base, cloudEnabled: true, convergence: null }).custom, /run not found/);
+  assert.match(evaluateGateVerification({ ...base, cloudEnabled: true, convergence: { roundConvergedAfter: null, rounds: 3 } }).custom, /did not converge/);
+  assert.match(evaluateGateVerification({ ...base, evidence: { ...FRESH, auditedTree: null }, cloudEnabled: true, convergence: CONVERGED }).custom, /no audited-tree identity/);
+});
+
 // -------------------------------------------------- message-file safety
 
 test('message-file safety: in-repo clean file passes; escape/sensitive/missing rejected (Gemini G1)', () => {

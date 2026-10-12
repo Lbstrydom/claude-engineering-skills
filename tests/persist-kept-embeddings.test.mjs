@@ -23,6 +23,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { persistKeptEmbeddings } from '../scripts/lib/store/runs-findings.mjs';
 import { findingKeyString } from '../scripts/lib/store/finding-identity.mjs';
+import { captureStderr } from './helpers/capture-stderr.mjs';
 
 const RUN_ID = 'run-aaaa';
 const VEC = [0.1, 0.2, 0.3];
@@ -47,20 +48,6 @@ function fakeExec(queryImpl) {
       return queryImpl(sql, params, calls.length);
     },
   };
-}
-
-/** Capture process.stderr.write output for the duration of `fn`, restoring
- *  the real writer afterward even if `fn` throws. */
-async function captureStderr(fn) {
-  const original = process.stderr.write;
-  const lines = [];
-  process.stderr.write = (chunk) => { lines.push(String(chunk)); return true; };
-  try {
-    const result = await fn();
-    return { result, lines };
-  } finally {
-    process.stderr.write = original;
-  }
 }
 
 describe('persistKeptEmbeddings — write-success verification + run scoping (contract, no DB)', () => {

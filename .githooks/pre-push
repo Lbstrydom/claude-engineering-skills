@@ -7,6 +7,8 @@
 # 1. CHECKS — runs `npm run check` against a CLEAN CHECKOUT of the pushed
 #    commit (a throwaway git worktree), NOT the working tree. BLOCKS on
 #    failure. Bypass when you must: git push --no-verify
+#    A push of ONLY refs/heads/archive/* or refs/tags/archive/* takes the archive
+#    lane instead (section 0.97): a scan of what it publishes, not the full check.
 # 2. SYNC   — propagates SKILL.md + scripts to consumer repos. Non-blocking:
 #    a missing consumer repo warns but never stops the push.
 #
@@ -27,6 +29,71 @@
 # `npm run check` is this repo's only gate — no workflow runs it on push or PR
 # (npm test runs solely in release.yml, on a version tag) — so an uninstallable
 # hook meant an unenforced repo. Edit here, never in .git/hooks/.
+#
+# FAIL CLOSED WHEN KILLED (2026-10-12): Git for Windows reads a hook's exit code
+# as `code & 0xff`, and an MSYS bash killed by signal S exits `S << 8` — so a
+# killed hook reads as exit 0 and the push went through. The two marked blocks
+# below trap every catchable terminating signal (L1) and leave a record that the
+# NEXT push reports if this hook died untrappably (L3).
+# docs/runbooks/prepush-sandbox.md §8.
+
+# >>> fail-closed-on-signal >>>
+prepush_killed() {
+  trap '' $PREPUSH_TRAPPED
+  echo "✗  pre-push hook interrupted by SIG$1 — push BLOCKED (a killed gate is not a pass)." >&2
+  exit 1
+}
+# Every POSIX terminating signal, unconditionally; then the XSI ones this shell knows
+# (`kill -l NAME` fails on an unknown name, so an exotic sh never errors on `trap`).
+PREPUSH_TRAPPED=""
+for prepush_sig in HUP INT QUIT ABRT ALRM TERM PIPE USR1 USR2 TRAP BUS FPE ILL SEGV SYS XCPU XFSZ VTALRM PROF; do
+  case "$prepush_sig" in
+    TRAP|BUS|FPE|ILL|SEGV|SYS|XCPU|XFSZ|VTALRM|PROF) kill -l "$prepush_sig" >/dev/null 2>&1 || continue ;;
+  esac
+  trap "prepush_killed $prepush_sig" "$prepush_sig"
+  PREPUSH_TRAPPED="$PREPUSH_TRAPPED $prepush_sig"
+done
+# <<< fail-closed-on-signal <<<
+
+# >>> prepush-inflight-record (see docs/runbooks/prepush-sandbox.md §8) >>>
+PREPUSH_INFLIGHT_REC=""
+prepush_inflight_write() {   # $1 = the gated sha, or "pending" before the range is known
+  [ -n "$PREPUSH_INFLIGHT_REC" ] || return 0
+  printf '%s %s %s %s\n' "$$" "$1" "$PREPUSH_STARTED" "${PREPUSH_REMOTE:--}" \
+    2>/dev/null > "$PREPUSH_INFLIGHT_REC.tmp" && mv -f "$PREPUSH_INFLIGHT_REC.tmp" "$PREPUSH_INFLIGHT_REC" 2>/dev/null
+}
+PREPUSH_REMOTE="$1"
+PREPUSH_STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+PREPUSH_COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+case "$?:$PREPUSH_COMMON_DIR" in
+  0:/*|0:[A-Za-z]:/*) PREPUSH_INFLIGHT_DIR="$PREPUSH_COMMON_DIR/prepush-inflight" ;;
+  *) PREPUSH_INFLIGHT_DIR="" ;;   # unresolved: no record, no reconciliation — never a fallback path
+esac
+if [ -n "$PREPUSH_INFLIGHT_DIR" ] && mkdir -p "$PREPUSH_INFLIGHT_DIR" 2>/dev/null; then
+  for rec in "$PREPUSH_INFLIGHT_DIR"/*.rec; do
+    [ -f "$rec" ] || continue
+    read -r rec_pid rec_sha rec_started rec_remote 2>/dev/null < "$rec"   # stderr first: a concurrent rm is silent
+    case "$rec_pid" in ''|*[!0-9]*) rm -f "$rec"; continue ;; esac
+    # Alive = a concurrent push: leave it. Never OUR pid, though: this hook has written
+    # nothing yet, so a record named for $$ is a dead predecessor whose pid was reused —
+    # treating it as alive would let the write below overwrite the evidence.
+    [ "$rec_pid" != "$$" ] && kill -0 "$rec_pid" 2>/dev/null && continue
+    echo "⚠ an earlier pre-push (pid $rec_pid, remote $rec_remote, started $rec_started) was KILLED before it" >&2
+    echo "  finished. Git for Windows reads a killed hook as a PASS, so if that push reached the remote it went UNGATED." >&2
+    case "$rec_sha" in ''|*[!0-9a-f]*) rec_sha="" ;; esac   # "pending", "unresolved", garbage
+    [ "${#rec_sha}" -ge 7 ] || rec_sha=""
+    if [ -n "$rec_sha" ]; then
+      echo "  It was gating $rec_sha. Check: git branch -r --contains $rec_sha   (runbook §8)" >&2
+    else
+      echo "  It died before the gated commit was known. Find what it pushed: runbook §8 'unknown commit'." >&2
+    fi
+    rm -f "$rec"
+  done
+  PREPUSH_INFLIGHT_REC="$PREPUSH_INFLIGHT_DIR/$$.rec"
+  trap 'rm -f "$PREPUSH_INFLIGHT_REC" "$PREPUSH_INFLIGHT_REC.tmp"' EXIT   # BEFORE the first write
+  prepush_inflight_write pending
+fi
+# <<< prepush-inflight-record <<<
 
 # ── -1. Self-heal a corrupted core.bare (2026-07-23 incident) ────────────
 # Traced live: `core.bare` was repeatedly found flipped to `true` on this
@@ -171,6 +238,7 @@ while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
 done <<EOF
 $PUSH_STDIN
 EOF
+prepush_inflight_write "${PUSH_HEAD:-unresolved}"   # L3: the gated sha is known from here on
 
 # ── 0.5 Delete-only push: nothing published, nothing to check ────────────
 # A push whose EVERY ref update is a deletion sends no commits, so there is no
@@ -223,8 +291,111 @@ if [ -f "$REPO_ROOT/package.json" ]; then
     echo "⚠ transcript harvest failed (non-blocking) — see docs/plans/audit-transcript-durability.md" >&2
 fi
 
+# ── 0.97 Archive lane (blocking) ─────────────────────────────────────────
+# A push whose EVERY ref lands under refs/heads/archive/ or refs/tags/archive/ is a
+# backup of work in flight. `npm run check` fails on such a commit for reasons that
+# say nothing about publishing it (docs-ref drift, a stale generated index, a
+# live-store gate), and the pusher then reaches for `git push --no-verify`, which
+# disarms every gate. The lane replaces that habit with the one check that matters
+# when commits become public: a scan of EXACTLY what this push publishes, for
+# secret-shaped content and sensitive paths. `check` has no such scan, so this is
+# added, not kept. Plan + evidence: docs/plans/prepush-archive-lane.md.
+#
+# The lane predicate lives in ONE place, scripts/prepush-archive-lane.mjs; this block
+# never re-derives it. The CLI prints a single `archive-lane/v1 <outcome>` line and
+# the hook acts on that token alone, never on exit status (node exits 1 on a syntax
+# error before any catch can run):
+#   not-applicable  → fall through to the full gate, silently
+#   clean           → skip the full check
+#   findings|error  → block (an eligible push that could not be scanned is refused)
+#   no valid token  → a push that LOOKS archive-only is refused (the full gate does not scan);
+#                     any other push warns loudly and runs the full gate
+# A `not-applicable` token for a push that nonetheless looks archive-only means the lane and
+# this hook disagree about the push; that is refused too, for the same reason.
+#
+# The lane's code comes from the checkout THIS HOOK lives in ($0), NOT from the
+# pusher's cwd. core.hooksPath points at one checkout's .githooks while pushes come
+# from any worktree (measured: it pointed into a linked worktree, in backslash form),
+# so REPO_ROOT/scripts may predate the lane while the hook is new. `\` is normalised
+# first: dirname on a backslash path returns "." and would resolve the PARENT of cwd.
+# AUDIT_PREPUSH_ARCHIVE_LANE=0 reverts to the full gate — a loosening, since the full
+# gate does not scan; it exists so a lane bug is never an outage.
+# Does this push LOOK archive-only? The one place bash spells the archive predicate
+# (scripts/lib/prepush-archive-lane.mjs isArchiveRef is the oracle). It can only ever
+# BLOCK, never choose the lane, and a drift test compares it with the oracle ref by ref
+# (tests/prepush-archive-lane-hook.test.mjs). Returns 0 = every destination is an archive
+# ref, 1 = not, 2 = could not tell. Fields are counted FROM THE RIGHT (`$(NF-1)` is the
+# remote ref): the local field is a revision expression and may hold spaces. awk over the
+# captured copy, not a second `while read`: the stdin-once invariant
+# (tests/prepush-sandbox-honesty.test.mjs) allows ONE loop, the range loop above.
+lane_looks_archive() {
+  local seen other
+  seen="$(printf '%s\n' "$PUSH_STDIN" | awk 'NF >= 4 && $(NF-1) ~ /^refs\/(heads|tags)\/archive\/./ { n++ } END { print n + 0 }')" || return 2
+  other="$(printf '%s\n' "$PUSH_STDIN" | awk 'NF >= 4 && $(NF-1) !~ /^refs\/(heads|tags)\/archive\/./ { n++ } END { print n + 0 }')" || return 2
+  case "$seen" in ''|*[!0-9]*) return 2 ;; esac
+  case "$other" in ''|*[!0-9]*) return 2 ;; esac
+  [ "$other" -eq 0 ] && [ "$seen" -gt 0 ] && return 0
+  return 1
+}
+
+LANE_HANDLED=0
+if [ "$AUDIT_PREPUSH_ARCHIVE_LANE" != "0" ] && [ "$PUBLISHED_REFS" -gt 0 ]; then
+  # Plain path arithmetic, deliberately NOT `git -C "$HOOK_DIR" rev-parse`: git exports
+  # GIT_DIR into a hook's environment, which overrides discovery and would answer with
+  # the PUSHER's checkout — the exact thing this block must not use. `pwd -W` gives a
+  # Windows-form path under Git Bash (falling back to plain `pwd` elsewhere).
+  HOOK_DIR="$(dirname "${0//\\//}")"
+  # CDPATH= and `--`: with CDPATH set, `cd` PRINTS the directory it resolved, which would
+  # corrupt HOOK_ROOT and make a healthy lane look "not found".
+  HOOK_ROOT="$(CDPATH= cd -- "$HOOK_DIR/.." >/dev/null 2>&1 && { pwd -W 2>/dev/null || pwd; })"
+  LANE_SCRIPT="$HOOK_ROOT/scripts/prepush-archive-lane.mjs"
+  if [ -n "$HOOK_ROOT" ] && [ -f "$LANE_SCRIPT" ]; then
+    LANE_OUT="$(printf '%s\n' "$PUSH_STDIN" | ( cd "$REPO_ROOT" && node "$LANE_SCRIPT" --remote="$1" --destination="$2" ))"
+    LANE_TOKEN="$(printf '%s\n' "$LANE_OUT" | grep -E '^archive-lane/v1 (not-applicable|clean|findings|error)$' | tail -n 1)"
+  else
+    LANE_TOKEN=""
+    LANE_WHY="its script was not found next to this hook"
+  fi
+  case "$LANE_TOKEN" in
+    "archive-lane/v1 clean")
+      LANE_HANDLED=1
+      echo "✓  archive lane clean — the full check was skipped (docs-ref drift, generated-artifact freshness, the suite do not apply to a backup ref)."
+      ;;
+    "archive-lane/v1 findings"|"archive-lane/v1 error")
+      echo "✗  pre-push archive lane blocked this push — the details are above."
+      exit 1
+      ;;
+    "archive-lane/v1 not-applicable")
+      # The lane says this is not an archive push. If this hook positively reads it as one,
+      # they disagree about the same bytes, and the full gate (which does not scan) would
+      # publish it unscanned. Refuse. (Could-not-tell, rc 2, trusts the lane: it was positive.)
+      lane_looks_archive
+      if [ $? -eq 0 ]; then
+        echo "✗  archive lane and pre-push hook disagree about this push (the lane says not-applicable, the hook reads it as archive-only): refusing, because the full gate does NOT scan published content." >&2
+        echo "   Force the full gate on purpose: AUDIT_PREPUSH_ARCHIVE_LANE=0 git push" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      # No valid result (script missing, crash, wrong protocol). Without the lane the
+      # hook cannot know a push was archive-only, so for an ordinary push this falls
+      # to the full gate as before. But for a push that LOOKS archive-only, or that cannot
+      # be classified, the full gate is the wrong answer: it fails on a backup for
+      # unrelated reasons AND does not scan, so it would either wave the push through
+      # unscanned or push the user to --no-verify. Only a positive "not archive" proceeds.
+      lane_looks_archive
+      if [ $? -ne 1 ]; then
+        echo "✗  archive lane unavailable (${LANE_WHY:-it produced no valid result}) for a push that looks archive-only or cannot be classified: refusing, because the full gate does NOT scan published content." >&2
+        echo "   Fix the lane, or revert to the full gate on purpose: AUDIT_PREPUSH_ARCHIVE_LANE=0 git push" >&2
+        exit 1
+      fi
+      echo "⚠ archive lane unavailable (${LANE_WHY:-it produced no valid result}): running the full gate, which does NOT scan published content." >&2
+      ;;
+  esac
+fi
+
 # ── 1. Checks (blocking) ────────────────────────────────────────────────
-if [ -f "$REPO_ROOT/package.json" ]; then
+if [ "$LANE_HANDLED" -ne 1 ] && [ -f "$REPO_ROOT/package.json" ]; then
   if [ "$AUDIT_PREPUSH_SANDBOX" = "0" ]; then
     echo "→ Pre-push checks: npm run check (in-tree; sandbox disabled) ..."
     ( cd "$REPO_ROOT" && AUDIT_PUSH_RANGE_BASE="$PUSH_BASE" AUDIT_PUSH_RANGE_HEAD="$PUSH_HEAD" npm run check )

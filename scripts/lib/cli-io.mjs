@@ -57,22 +57,25 @@ export function emit(obj, opts = {}) {
       + 'stdout is the machine-readable channel — writing "undefined" there is invalid JSON a consumer cannot parse.',
     );
   }
-  process.stdout.write(`${line}\n`);
-  if (obj && typeof obj === 'object' && obj.ok === false) {
-    if (opts.softFail === true) {
-      // A non-empty STRING, not any truthy value: `{}`, `[]` and `'   '` all
-      // pass a bare `!opts.reason` while explaining nothing, which is the
-      // silencer this requirement exists to prevent.
-      if (typeof opts.reason !== 'string' || !opts.reason.trim()) {
-        throw new Error(
-          'emit({ok:false}, {softFail:true}) requires a written `reason` — an unexplained '
-          + 'exemption from the exit-code coupling is exactly the silence §2b F4 removes.',
-        );
-      }
-      return;
+  const failing = Boolean(obj) && typeof obj === 'object' && obj.ok === false;
+  // Validated BEFORE the write, like the `undefined` check above. The reason
+  // check used to sit after `process.stdout.write`, so a refusal arrived with the
+  // failure envelope already on the machine channel — a caller that caught the
+  // throw and emitted its own envelope put two JSON values on one stdout.
+  // (ledger 25a36d16, executed 2026-10-03.)
+  if (failing && opts.softFail === true) {
+    // A non-empty STRING, not any truthy value: `{}`, `[]` and `'   '` all
+    // pass a bare `!opts.reason` while explaining nothing, which is the
+    // silencer this requirement exists to prevent.
+    if (typeof opts.reason !== 'string' || !opts.reason.trim()) {
+      throw new Error(
+        'emit({ok:false}, {softFail:true}) requires a written `reason` — an unexplained '
+        + 'exemption from the exit-code coupling is exactly the silence §2b F4 removes.',
+      );
     }
-    process.exitCode ||= 1;
   }
+  process.stdout.write(`${line}\n`);
+  if (failing && opts.softFail !== true) process.exitCode ||= 1;
 }
 
 /**
@@ -195,6 +198,10 @@ export function arg(argv, name, dflt = null) {
   return i >= 0 ? argv[i + 1] : dflt;
 }
 
+/** `--name=<v>` spellings `hasFlag` accepts (compared lower-cased, NOT trimmed). */
+const BOOL_TRUTHY = ['true', '1', 'yes', 'on'];
+const BOOL_FALSY = ['false', '0', 'no', 'off', ''];
+
 /**
  * Read a `--flag value` pair out of an explicit `argv`, treating a flag that is
  * present WITHOUT a usable value as an invocation error. Returns `null` when the
@@ -232,6 +239,8 @@ export function requiredFlagValue(argv, flag, cli) {
  *   checked in the same `--`-terminated region — see below for why this
  *   can't just be a second `args.includes('-h')` at the call site.
  * @returns {boolean}
+ * @throws {ArgvError} for a `--name=<v>` whose value is in neither the truthy
+ *   (`true|1|yes|on`) nor the falsy (`false|0|no|off|''`) set.
  */
 export function hasFlag(name, { short } = {}) {
   // `--name=<v>` is honoured for the same reason argOption had to learn it:
@@ -239,6 +248,14 @@ export function hasFlag(name, { short } = {}) {
   // otherwise be accepted and inert. The explicit falsy spellings mean OFF —
   // `--dry-run=false` reading as "dry-run enabled" is the one interpretation
   // nobody expects.
+  //
+  // The value set is CLOSED, both ways. Only the falsy side was enumerated, so
+  // every other value — `fasle`, `nope`, `n`, `" false"` — read as ON, and
+  // `defect-harvest --apply=fasle` ENABLED a write: accepted-and-inverted, one
+  // transposed letter from the opposite of what was asked (ledger 77cee58d,
+  // executed 2026-10-03). A value in neither set throws ArgvError. EVERY
+  // pre-terminator occurrence is classified, not only the last: a wrapper
+  // appending `--x=false` must not be able to launder an inherited typo.
   //
   // LAST occurrence wins, which is the standard CLI convention and what a
   // wrapper script relies on when it appends an override to an inherited
@@ -263,7 +280,17 @@ export function hasFlag(name, { short } = {}) {
   for (const a of region) {
     if (a === `--${name}`) present = true;
     else if (a.startsWith(`--${name}=`)) {
-      present = !['false', '0', 'no', 'off', ''].includes(a.slice(name.length + 3).toLowerCase());
+      const raw = a.slice(name.length + 3);
+      const v = raw.toLowerCase();
+      if (BOOL_TRUTHY.includes(v)) present = true;
+      else if (BOOL_FALSY.includes(v)) present = false;
+      else {
+        throw new ArgvError(
+          `--${name}=${raw}: "${raw}" is not a boolean. Accepted: ${BOOL_TRUTHY.join(', ')} (on) or `
+          + `${BOOL_FALSY.filter(Boolean).join(', ')} or empty (off), case-insensitive. Refusing to guess — `
+          + 'a mistyped value on a mutating flag would otherwise read as ON.',
+        );
+      }
     } else if (short && a === `-${short}`) present = true;
   }
   return present;
@@ -437,6 +464,33 @@ export function armExitWatchdog(ms, { label = 'cli', code = 124 } = {}) {
     void finishAndExit(code);
   }, ms);
   return { disarm: () => clearTimeout(timer) };
+}
+
+/**
+ * The exit code to use when FORWARDING a child process's status as this
+ * process's own: 0 stays 0, and every failure keeps a NON-ZERO LOW BYTE.
+ *
+ * WHY. A Windows exit code is 32 bits, but the shells and git read only its low
+ * byte. Measured 2026-10-12 (Git 2.56.0.windows.2, MSYS bash 5.3.15):
+ * `node -e "process.exit(256)"; echo $?` prints 0, and Git for Windows reads a
+ * hook's status as `code & 0xff` (`WEXITSTATUS` in compat/mingw-posix.h). So a
+ * child that failed with 256 — e.g. an MSYS process killed by SIGHUP, which
+ * exits `1 << 8` — forwarded verbatim reads as SUCCESS one hop up. That is how a
+ * gate prints "checks passed" for a run that failed
+ * (docs/runbooks/prepush-sandbox.md §8).
+ *
+ * A failure keeps its low byte when that byte is non-zero (1, 3 and 130 still
+ * mean what they meant); one whose low byte is zero becomes 1. A missing or
+ * non-integer status (`spawnSync` reports `null` for a signal death) is a
+ * failure, never a pass.
+ *
+ * @param {number|null|undefined} status
+ * @returns {number} 0..255
+ */
+export function toShellExitCode(status) {
+  if (status === 0) return 0;
+  if (!Number.isInteger(status)) return 1;
+  return (status & 0xff) || 1;
 }
 
 /** Tests only — the module-level terminal state is process-global. */

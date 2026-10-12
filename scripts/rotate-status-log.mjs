@@ -40,11 +40,80 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError, argOption } from './lib/cli-io.mjs';
 import { splitEntries, monthOf, canonicalize } from './lib/status-log-integrity.mjs';
+import { atomicWriteFileSync } from './lib/file-io.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT_LOG = path.join(REPO, 'status.md');
-const ARCHIVE_DIR = path.join(REPO, 'docs', 'status');
-const MANIFEST = path.join(ARCHIVE_DIR, 'rotation-manifest.json');
+
+/**
+ * The write phase, after the conservation proof has passed: the archives, then
+ * the manifest, then the truncated root log — in that order, so every copy
+ * exists before the original shrinks.
+ *
+ * **Each write is atomic (temp file + rename), and the ORDER is the
+ * transaction.** Three files cannot be replaced as one unit on a filesystem,
+ * but they do not need to be: with per-file atomicity a failure at any step
+ * leaves every file either old or complete-new, and because the root log is
+ * written LAST, every state a crash can produce still holds each entry whole in
+ * at least one file. A plain `writeFileSync` truncates then writes, so a crash
+ * during the root-log write tore `status.md` — the one write that removes
+ * content. Re-running after a partial apply is safe: an archive whose content
+ * already matches is not a collision.
+ *
+ * @param {{repo: string, archives: Array<{month: string, path: string, body: string}>, rootBody: string}} args
+ * @returns {{ok: true} | {ok: false, collisions: string[]}}
+ */
+export function applyRotation({ repo, archives, rootBody }) {
+  const archiveDir = path.join(repo, 'docs', 'status');
+  const manifestPath = path.join(archiveDir, 'rotation-manifest.json');
+  fs.mkdirSync(archiveDir, { recursive: true });
+
+  // REFUSE to clobber an existing archive whose content differs.
+  //
+  // A backdated or late entry for an already-archived month makes this run
+  // produce a DIFFERENT body for that month; writing it unconditionally would
+  // replace the archive and silently drop what the old one held. The integrity
+  // gate would catch it at the next push, but the content is gone from the
+  // working tree by then — refusing here is the cheaper failure.
+  const collisions = [];
+  for (const a of archives) {
+    const abs = path.join(repo, a.path);
+    if (!fs.existsSync(abs)) continue;
+    if (canonicalize(fs.readFileSync(abs, 'utf-8')) !== a.body) collisions.push(a.path);
+  }
+  if (collisions.length > 0) return { ok: false, collisions };
+
+  for (const a of archives) {
+    // No trailing newline beyond what the entries carry. Adding one changes the
+    // LAST entry's span when the file is read back — a one-byte difference that
+    // makes every archive fail its own manifest. Caught by the integrity guard
+    // on the first real rotation, which is exactly what it is for.
+    atomicWriteFileSync(path.join(repo, a.path), a.body);
+  }
+
+  const existing = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) : { archives: {} };
+  for (const a of archives) {
+    // Derive the recorded digests FROM THE WRITTEN FILE, re-read and re-split
+    // exactly as the guard will read it. The manifest must describe the artifact
+    // on disk, not an in-memory value that is merely believed to equal it.
+    const written = fs.readFileSync(path.join(repo, a.path), 'utf-8');
+    const readBack = splitEntries(written).entries;
+    existing.archives[a.month] = {
+      path: a.path,
+      entries: readBack.length,
+      bytes: written.length,
+      entryDigests: readBack.map((e) => e.digest),
+    };
+  }
+  existing._description = 'Committed evidence for status.md rotation. Every archived entry\'s '
+    + 'full-span digest, so scripts/check-status-log-integrity.mjs can prove no history was lost '
+    + 'without a runtime authorization flag. Append-only: it may grow, never shrink.';
+  atomicWriteFileSync(manifestPath, `${JSON.stringify(existing, null, 2)}\n`);
+
+  // Same reasoning as the archives: reproduce the original's own byte shape.
+  atomicWriteFileSync(path.join(repo, 'status.md'), rootBody);
+  return { ok: true };
+}
 
 function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
@@ -146,62 +215,20 @@ function main() {
     process.exit(0);
   }
 
-  fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
-
-  // REFUSE to clobber an existing archive whose content differs.
-  //
-  // A backdated or late entry for an already-archived month makes this run
-  // produce a DIFFERENT body for that month; writing it unconditionally would
-  // replace the archive and silently drop what the old one held. The integrity
-  // gate would catch it at the next push, but the content is gone from the
-  // working tree by then — refusing here is the cheaper failure.
-  const collisions = [];
-  for (const p of plan) {
-    const abs = path.join(REPO, p.path);
-    if (!fs.existsSync(abs)) continue;
-    const proposed = byMonth.get(p.month).map((e) => e.body).join('\n');
-    if (canonicalize(fs.readFileSync(abs, 'utf-8')) !== proposed) collisions.push(p.path);
-  }
-  if (collisions.length > 0) {
+  const applied = applyRotation({
+    repo: REPO,
+    archives: plan.map((p) => ({ month: p.month, path: p.path, body: byMonth.get(p.month).map((e) => e.body).join('\n') })),
+    rootBody: [preamble, retainedBody].filter((s) => s !== '').join('\n'),
+  });
+  if (!applied.ok) {
     process.stderr.write(
       'rotate-status-log: REFUSED — these archives already exist with different content:\n'
-      + collisions.map((c) => `  ${c}\n`).join('')
+      + applied.collisions.map((c) => `  ${c}\n`).join('')
       + '  A month is archived once. A late entry for an archived month means the root\n'
       + '  log and the archive disagree — resolve that by hand, never by overwrite.\n',
     );
     process.exit(1);
   }
-
-  for (const p of plan) {
-    const body = byMonth.get(p.month).map((e) => e.body).join('\n');
-    // No trailing newline beyond what the entries carry. Adding one changes the
-    // LAST entry's span when the file is read back — a one-byte difference that
-    // makes every archive fail its own manifest. Caught by the integrity guard
-    // on the first real rotation, which is exactly what it is for.
-    fs.writeFileSync(path.join(REPO, p.path), body, 'utf-8');
-  }
-
-  const existing = fs.existsSync(MANIFEST) ? JSON.parse(fs.readFileSync(MANIFEST, 'utf-8')) : { archives: {} };
-  for (const p of plan) {
-    // Derive the recorded digests FROM THE WRITTEN FILE, re-read and re-split
-    // exactly as the guard will read it. The manifest must describe the artifact
-    // on disk, not an in-memory value that is merely believed to equal it.
-    const written = fs.readFileSync(path.join(REPO, p.path), 'utf-8');
-    const readBack = splitEntries(written).entries;
-    existing.archives[p.month] = {
-      path: p.path,
-      entries: readBack.length,
-      bytes: written.length,
-      entryDigests: readBack.map((e) => e.digest),
-    };
-  }
-  existing._description = 'Committed evidence for status.md rotation. Every archived entry\'s '
-    + 'full-span digest, so scripts/check-status-log-integrity.mjs can prove no history was lost '
-    + 'without a runtime authorization flag. Append-only: it may grow, never shrink.';
-  fs.writeFileSync(MANIFEST, `${JSON.stringify(existing, null, 2)}\n`, 'utf-8');
-
-  // Same reasoning as the archives: reproduce the original's own byte shape.
-  fs.writeFileSync(ROOT_LOG, [preamble, retainedBody].filter((s) => s !== '').join('\n'), 'utf-8');
 
   process.stdout.write(`\n  Wrote ${plan.length} archive(s) + the manifest; root log is now ${retained.length} entries.\n`);
   process.stdout.write('  Verify: npm run status:integrity:gate\n');

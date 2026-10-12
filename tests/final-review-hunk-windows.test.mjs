@@ -387,13 +387,15 @@ describe('tiered readDiscoveryCode — the same windowed reader, only when evide
     assert.equal(typeof seen.hunksFor, 'function');
   });
 
-  test('R2+ uses the operator --diff like legacy; R1 ignores it', () => {
+  test('a supplied --diff is the evidence in EVERY round, like legacy (R1 --files + --diff included)', () => {
     const parsed = [];
     const parseDiff = (f) => { parsed.push(f); return new Map(); };
     const read = () => ({ context: '', stats: {} });
     readDiscoveryCode({ round: 1, diffFile: 'x.diff', changedFiles: ['a.js'] }, { read, parseDiff });
-    assert.deepEqual(parsed, []);
     readDiscoveryCode({ round: 2, diffFile: 'x.diff', changedFiles: ['a.js'] }, { read, parseDiff });
-    assert.deepEqual(parsed, ['x.diff']);
+    assert.deepEqual(parsed, ['x.diff', 'x.diff']);
+    // Negative control: no --diff → nothing parsed.
+    readDiscoveryCode({ round: 1, changedFiles: ['a.js'] }, { read, parseDiff });
+    assert.equal(parsed.length, 2);
   });
 });

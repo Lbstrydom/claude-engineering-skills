@@ -652,6 +652,10 @@
       "description": "Run the full Node built-in test suite (everything under tests/).",
       "category": "test"
     },
+    "test:preflight": {
+      "description": "The default test set minus the declared slow files (PREFLIGHT_SKIPPED_FILES in scripts/run-tests.mjs): a cheap run to catch a late guard-test failure BEFORE the first push. NOT the gate; it names what it skipped.",
+      "category": "test"
+    },
     "test:db": {
       "description": "Gated DB-integration tests (repo-identity stability + fragmentation guardrail). Requires a disposable AUDIT_DB_TEST_URL; skipped when unset. Never touches the live store.",
       "category": "test"
@@ -821,6 +825,10 @@
     "scripts/ship-commit.mjs": {
       "description": "The only writer of AI-* provenance trailers; /ship Step 6.3 commits through it.",
       "category": "hooks"
+    },
+    "scripts/ship-train.mjs": {
+      "description": "/ship --train CLI (source repo only): plan, message, land, verify and sync a batch of ship-ready PRs.",
+      "category": "skills"
     },
     "scripts/ux-lock-run.mjs": {
       "description": "Run locked regression specs and record regression_spec_runs (ship gate or ad hoc).",

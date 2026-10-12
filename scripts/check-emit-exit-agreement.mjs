@@ -17,6 +17,14 @@
  * What a static scan CAN see, and what nothing else can, is the population of
  * declared exemptions.
  *
+ * It likewise does NOT check that an opt-out carries a `reason` (ledger 3cf21fe3,
+ * accepted 2026-10-03): `emit()` refuses a missing/blank reason at runtime, BEFORE
+ * writing anything, so that is the one oracle; the scan below blanks string
+ * literals, so it could prove a `reason` KEY exists but never that it says
+ * anything; and every new opt-out already trips the ratchet as growth, forcing a
+ * deliberate `--update` whose diff shows the line. Revisit only if the baseline
+ * stops being empty.
+ *
  * Usage:
  *   node scripts/check-emit-exit-agreement.mjs           # gate (exit 1 on growth)
  *   node scripts/check-emit-exit-agreement.mjs --json    # machine-readable

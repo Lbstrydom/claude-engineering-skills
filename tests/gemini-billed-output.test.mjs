@@ -21,6 +21,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { normalizeGeminiUsage } from '../scripts/lib/gemini-usage.mjs';
 import { _internals as efficacy } from '../scripts/lib/efficacy-lints.mjs';
+import _traverse from '@babel/traverse';
+import { parseSource } from '../scripts/lib/ast.mjs';
+import { resolvesToNamedImport } from '../scripts/lib/import-binding.mjs';
+
+// @babel/traverse ships CJS; under ESM the callable lands on .default (same
+// normalisation as accepted-debt-check.mjs).
+const traverse = _traverse?.default?.default ?? _traverse?.default ?? _traverse;
+
+const ORACLE_MODULE = path.resolve('scripts/lib/gemini-usage.mjs');
+// Where the snippets in the negative controls pretend to live: a sibling of the oracle.
+const VIRTUAL_FILE = path.resolve('scripts/lib/__census-fixture__.mjs');
 
 /**
  * Source with comments and string literals blanked, so the census reads CODE.
@@ -114,17 +125,151 @@ describe('discovery census — no second place may decide what billed output mea
     assert.deepEqual(offenders, [], 'these decode Gemini usage themselves instead of via normalizeGeminiUsage()');
   });
 
-  it('any file that touches usageMetadata must route it through the oracle', () => {
+  /**
+   * Every READ of `.usageMetadata`, judged on the SYNTAX TREE - not "does the file
+   * mention the oracle somewhere", and not "does this line, or this file, contain
+   * the text". Both text rules were beaten by ordinary code: a file-wide search
+   * for `normalizeGeminiUsage(usage)` accepted a raw `usage` returned from a
+   * DIFFERENT function that merely reused the name, and a line-level exemption
+   * accepted any line that called the oracle on something else while returning
+   * the raw object next to it.
+   *
+   * A read is routed iff
+   *   - it is itself the argument of `normalizeGeminiUsage(...)`, or
+   *   - it is assigned to a local whose BINDING (resolved by Babel's scope
+   *     analysis, so a same-named parameter in a nested or sibling function is a
+   *     different binding) is passed to `normalizeGeminiUsage(...)` somewhere in
+   *     its scope - the streaming-accumulator shape, closures included, or
+   *   - it is only an existence test (`if (x.usageMetadata)`, `!x.usageMetadata`,
+   *     `x.usageMetadata ? a : b`), which hands nothing over.
+   * An unparseable file is reported, never skipped: a census that cannot read a
+   * file has not cleared it.
+   */
+  function unroutedUsageReads(source, fromFileAbsPath = VIRTUAL_FILE) {
+    const { ast, error } = parseSource(source);
+    if (!ast) return [`(unparseable: ${error})`];
+    // The callee must RESOLVE, through real lexical scope, to the named import from the
+    // oracle module - a parameter, local function or other module's export that merely
+    // shares the spelling is not the oracle.
+    const isOracleCall = (callPath) => callPath?.isCallExpression()
+      && callPath.get('callee').isIdentifier({ name: 'normalizeGeminiUsage' })
+      && resolvesToNamedImport(callPath.get('callee'), { importedName: 'normalizeGeminiUsage', moduleAbsPath: ORACLE_MODULE, fromFileAbsPath });
+
+    const routedBindings = new Set();
+    const reads = [];
+    traverse(ast, {
+      CallExpression(p) {
+        if (!isOracleCall(p)) return;
+        // The oracle's input is its FIRST argument; later ones are not the metadata.
+        const input = p.node.arguments[0];
+        if (input?.type !== 'Identifier') return;
+        const binding = p.scope.getBinding(input.name);
+        if (binding) routedBindings.add(binding);
+      },
+      'MemberExpression|OptionalMemberExpression'(p) {
+        if (!p.node.computed && p.node.property?.name === 'usageMetadata') reads.push(p);
+      },
+    });
+
+    const lines = source.split('\n');
+    const out = [];
+    for (const p of reads) {
+      const { node, parent } = p;
+      if (isOracleCall(p.parentPath) && parent.arguments[0] === node) continue;
+      const local = parent.type === 'VariableDeclarator' && parent.init === node && parent.id.type === 'Identifier' ? parent.id.name
+        : parent.type === 'AssignmentExpression' && parent.right === node && parent.left.type === 'Identifier' ? parent.left.name
+          : null;
+      const binding = local ? p.scope.getBinding(local) : null;
+      if (binding && routedBindings.has(binding)) continue;
+      const existenceTest = (parent.type === 'IfStatement' && parent.test === node)
+        || (parent.type === 'ConditionalExpression' && parent.test === node)
+        || (parent.type === 'UnaryExpression' && parent.operator === '!');
+      if (existenceTest) continue;
+      const line = node.loc?.start?.line ?? 0;
+      out.push(`${line}: ${lines[line - 1]?.trim()}`);
+    }
+    return out;
+  }
+
+  it('every read of usageMetadata is routed through the oracle - per read, per function', () => {
     // Closes the pass-through hole: handing callers Google's raw object (what
     // llm-wrappers.mjs did) mentions no field name at all, so the field rule
     // alone would miss it.
     const offenders = [];
     for (const f of walk('scripts')) {
       if (ALLOWLIST.has(f)) continue;
-      const src = codeOf(f, fs.readFileSync(f, 'utf8'));
-      if (src.includes('usageMetadata') && !src.includes('normalizeGeminiUsage')) offenders.push(f);
+      const bad = unroutedUsageReads(fs.readFileSync(f, 'utf8'), path.resolve(f));
+      if (bad.length > 0) offenders.push(`${f} -> ${bad.join(' | ')}`);
     }
-    assert.deepEqual(offenders, [], 'these see usageMetadata without importing the oracle');
+    assert.deepEqual(offenders, [], 'these hand out usageMetadata without the oracle');
+  });
+
+  const ORACLE = "import { normalizeGeminiUsage } from './gemini-usage.mjs';";
+
+  it('NEGATIVE CONTROL: a raw pass-through in a file that ALSO uses the oracle is caught; the accumulator and an existence test are not', () => {
+    const code = [
+      ORACLE,
+      'export function good(resp) { return normalizeGeminiUsage(resp.usageMetadata); }',
+      'export function bad(resp) { return { usage: resp.usageMetadata }; }',
+      'let acc = null;',
+      'for (const c of chunks) if (c.usageMetadata) acc = c.usageMetadata;',
+      'const g = normalizeGeminiUsage(acc);',
+    ].join('\n');
+    assert.deepEqual(unroutedUsageReads(code), ['3: export function bad(resp) { return { usage: resp.usageMetadata }; }']);
+  });
+
+  it('NEGATIVE CONTROL: a local that shares its NAME with a normalised one in ANOTHER function is still caught', () => {
+    // A file-wide search for normalizeGeminiUsage(usage) accepted both.
+    const code = [
+      ORACLE,
+      'export function good(resp) { const usage = resp.usageMetadata; return normalizeGeminiUsage(usage); }',
+      'export function bad(other) { const usage = other.usageMetadata; return usage; }',
+    ].join('\n');
+    assert.deepEqual(unroutedUsageReads(code), ['3: export function bad(other) { const usage = other.usageMetadata; return usage; }']);
+  });
+
+  it('NEGATIVE CONTROL: a nested function whose PARAMETER shadows the name does not route the outer raw local; a real closure reference does', () => {
+    const shadowed = [
+      ORACLE,
+      'export function bad(resp) { const usage = resp.usageMetadata; function inner(usage) { return normalizeGeminiUsage(usage); } return usage; }',
+    ].join('\n');
+    assert.equal(unroutedUsageReads(shadowed).length, 1, 'the inner parameter is a different binding');
+    const closure = [
+      ORACLE,
+      'export function ok(chunks) { let acc = null; for (const c of chunks) acc = c.usageMetadata; return () => normalizeGeminiUsage(acc); }',
+    ].join('\n');
+    assert.deepEqual(unroutedUsageReads(closure), [], 'normalising the SAME binding from a closure is routed');
+  });
+
+  it("NEGATIVE CONTROL: something that merely shares the oracle's NAME is not the oracle - a parameter, a local function, another module's export", () => {
+    const param = [ORACLE, 'export function bad(resp, normalizeGeminiUsage) { return normalizeGeminiUsage(resp.usageMetadata); }'].join('\n');
+    assert.equal(unroutedUsageReads(param).length, 1, 'a parameter shadows the import');
+    const local = [ORACLE, 'export function bad(resp) { function normalizeGeminiUsage(x) { return x; } return normalizeGeminiUsage(resp.usageMetadata); }'].join('\n');
+    assert.equal(unroutedUsageReads(local).length, 1, 'a local function shadows the import');
+    const other = ["import { normalizeGeminiUsage } from './something-else.mjs';", 'export function bad(resp) { return normalizeGeminiUsage(resp.usageMetadata); }'].join('\n');
+    assert.equal(unroutedUsageReads(other).length, 1, 'the same name from a different module is not the oracle');
+    const genuine = [ORACLE, 'export function ok(resp) { return normalizeGeminiUsage(resp.usageMetadata); }'].join('\n');
+    assert.deepEqual(unroutedUsageReads(genuine), [], 'control: the genuine import still routes');
+  });
+
+  it("NEGATIVE CONTROL: the metadata must be the oracle's INPUT (first argument), not merely somewhere in its argument list", () => {
+    const direct = [ORACLE, 'export function bad(resp) { return normalizeGeminiUsage({}, resp.usageMetadata); }'].join('\n');
+    assert.equal(unroutedUsageReads(direct).length, 1);
+    const viaLocal = [ORACLE, 'export function bad(resp) { const u = resp.usageMetadata; return normalizeGeminiUsage({}, u); }'].join('\n');
+    assert.equal(unroutedUsageReads(viaLocal).length, 1);
+  });
+
+  it('NEGATIVE CONTROL: calling the oracle on something ELSE on the same line does not excuse the raw read beside it', () => {
+    // A line-level "contains normalizeGeminiUsage(" exemption accepted this.
+    const code = [
+      ORACLE,
+      'export function bad(resp, x) { return { n: normalizeGeminiUsage(x), raw: resp.usageMetadata }; }',
+    ].join('\n');
+    assert.equal(unroutedUsageReads(code).length, 1);
+  });
+
+  it('NEGATIVE CONTROL: a file the parser cannot read is reported, not skipped', () => {
+    assert.match(unroutedUsageReads('export function (((')[0], /unparseable/);
   });
 
   it('the census actually SCANS something — a vacuous pass is a failing census', () => {
@@ -153,9 +298,8 @@ describe('call sites map the oracle into their OWN shape, and keep usageMissing'
     ['scripts/lib/audit-shadow.mjs', /output_tokens: g\.output_tokens/, /usageMissing: g\.usageMissing/],
     ['scripts/lib/brainstorm/gemini-adapter.mjs', /outputTokens: g\.output_tokens/, /usageMissing: g\.usageMissing/],
     ['scripts/lib/arm-eval/producers/model-call.mjs', /output_tokens: g\.output_tokens/, /usageMissing: g\.usageMissing/],
-    // Relocated from scripts/gemini-review.mjs (docs/plans/gemini-review-decomposition.md
-    // Phase 2) — the gemini transport adapter now lives in transport.mjs.
-    ['scripts/lib/final-review/transport.mjs', /output_tokens: g\.output_tokens/, /usageMissing: g\.usageMissing/],
+    // scripts/lib/final-review/transport.mjs is pinned BEHAVIOURALLY below
+    // (its adapter is reachable through _internals), not by a source regex.
   ];
 
   /**
@@ -179,6 +323,19 @@ describe('call sites map the oracle into their OWN shape, and keep usageMissing'
       assert.match(src, missingRe, 'dropping usageMissing here reconciles an unmeterable call to a fake €0');
     });
   }
+
+  it('the final-review gemini transport bills candidates+thoughts and carries usageMissing (behavioural)', async () => {
+    const { _internals } = await import('../scripts/gemini-review.mjs');
+    const IN = { model: 'm', maxTokens: 10, systemPrompt: 's', userPrompt: 'u', signal: new AbortController().signal };
+    const stream = (usageMetadata) => ({ models: { generateContentStream: async () => (async function* () {
+      yield { text: '{}', ...(usageMetadata ? { usageMetadata } : {}) };
+    })() } });
+    const billed = await _internals.REVIEW_TRANSPORTS.gemini(stream({ promptTokenCount: 1, candidatesTokenCount: 310, thoughtsTokenCount: 17792 }), IN);
+    assert.equal(billed.usage.output_tokens, 18102, 'thoughts are billed output');
+    assert.equal(billed.usage.usageMissing, false);
+    const absent = await _internals.REVIEW_TRANSPORTS.gemini(stream(null), IN);
+    assert.equal(absent.usage.usageMissing, true, 'an unmeterable call must not reconcile to a fake zero');
+  });
 
   it('provider-adapter preserves its null-usage contract while using the oracle', () => {
     // This one legitimately returns `null` (not a zeroed object) when metadata

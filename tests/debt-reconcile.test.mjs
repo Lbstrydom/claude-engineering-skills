@@ -13,6 +13,11 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import {
   classifyReconciliation,
@@ -22,6 +27,7 @@ import {
   CLOCK_SKEW_TOLERANCE_MS,
 } from '../scripts/lib/debt-reconcile.mjs';
 
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const JULY = '2026-07-01T00:00:00.000Z';
 const AUG = '2026-08-01T00:00:00.000Z';
 const SEP = '2026-09-01T00:00:00.000Z';
@@ -209,5 +215,31 @@ describe('a MISSING timestamp poisons it too (Gemini gate G1)', () => {
   test('a null ts poisons it as well', () => {
     assert.equal(latestLifecycleEvent([{ event: 'resolved', ts: JULY }, { event: 'reopened', ts: null }]).event,
       'unresolvable');
+  });
+});
+
+// ── The CLI's refusal names the REAL cause ──────────────────────────────────
+// `resolveRepoForStore(...).catch(() => null)` collapsed "the store could not be
+// reached" into the same `repoId = null` as an unregistered repo, so the refusal
+// said `repo-identity-unresolved` for an outage. Runs the CLI against an
+// unreachable store (127.0.0.1:1 refuses immediately) with a real local ledger.
+describe('debt-reconcile CLI — an unreachable store is not an identity problem', () => {
+  test('the refusal reason says the identity lookup ERRORED, and the CLI still refuses (exit 2)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'debt-reconcile-cli-'));
+    try {
+      const ledger = path.join(dir, 'tech-debt.json');
+      fs.writeFileSync(ledger, JSON.stringify({ version: 1, entries: [] }));
+      const r = spawnSync(process.execPath, ['scripts/debt-reconcile.mjs', '--json', '--ledger', ledger], {
+        cwd: REPO, encoding: 'utf8', timeout: 120_000,
+        env: { ...process.env, AUDIT_DB_URL: 'postgresql://u:p@127.0.0.1:1/unreachable' },
+      });
+      assert.equal(r.status, 2, `stderr: ${r.stderr.slice(-600)}`);
+      const out = JSON.parse(r.stdout.trim().split('\n').pop());
+      assert.equal(out.action, 'refused');
+      assert.equal(out.reason, 'repo-identity-error', JSON.stringify(out));
+      assert.match(out.error, /ECONNREFUSED/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
   });
 });

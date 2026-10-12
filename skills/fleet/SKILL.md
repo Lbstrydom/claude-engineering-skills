@@ -34,15 +34,16 @@ description: |
 Usage:
   /fleet status [--json] [--all] [--fetch]       # morning view; read-only
   /fleet start --task "..." [--paths a,b] [--task "..." [--paths c]]...
-  /fleet claim --id <id> --intent "..." --paths "a/**,b.mjs" [--override] [--host-session <id>]
+  /fleet claim --id <id> --intent "..." --paths "a/**,b.mjs" [--worktree <path>] [--override] [--host-session <id>]
   /fleet add <branch|#PR> | --all [--id <id>]    # adopt work that already exists
   /fleet ready | touch [--id <id>]               # mark ready at HEAD / renew lease
   /fleet next [--id <id>]                        # what this session should do now
   /fleet release [--id <id>] [--abandoned]       # retire a claim now
   /fleet archive-check [<id|branch|path>]        # what removing a worktree would lose
-  /fleet prune                                    # branches/worktrees removable with nothing lost (read-only)
-  /fleet handover prepare [--repo <path>]...     # moving to another Claude Code account on this machine
-  /fleet handover receive --from <json> [--dry-run]  # in the NEW account: verify/copy memory, list human steps
+  /fleet prune [--apply [--remote] [--include-fresh]]  # branches/worktrees removable with nothing lost; --apply runs exactly that list
+  /fleet archive <worktree|branch|id> [--apply] [--discard-ignored] [--include-fresh]  # snapshot to a local archive/* tag, then remove
+  /fleet handover prepare [--repo <path>]... [--scheduler-checked]  # moving to another Claude Code account on this machine
+  /fleet handover receive --from <json> [--dry-run] [--allow-older]  # in the NEW account: verify/copy memory, list follow-ups
   /fleet directive --to <id|all> --kind <k> --reason <r> [--ref] [--note] | --list | --ack <id> --outcome done|declined
   /fleet hold on [--reason "..."] [--notify] | off [--note "..."]
   /fleet repair --quarantine <file>
@@ -116,6 +117,20 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
   its worktree is clean. Run `archive-check` before archiving a worktree, because
   archiving can empty gitignored folders. Exit 3 means something would be lost,
   or a probe could not run.
+- **Removing a worktree is the user's decision.** `archive --apply` deletes one:
+  show the dry run and apply only on the user's go-ahead in chat. Before removing
+  ANY worktree (`archive --apply`, or a command `prune` printed), check the
+  desktop session list, pinned and dormant sessions included, for a session whose
+  cwd is that worktree; if one exists, do not remove it. Both verbs also refuse
+  while another worktree's `core.hooksPath` points inside the one being removed:
+  git would then run no hooks there, without a word. Run the printed re-point
+  command first; a config git cannot read refuses too.
+- The footer's `FYI` line (unregistered work, from the last `status`) is
+  information, not a `DO`: relay it; never claim, archive or prune on it alone.
+- Coordinating, not participating: the chip authority block, the session-list
+  cross-check, routing, the ship-ready end state, consumer sync, session
+  titles, archive sweeps and push lanes are in `references/coordination.md`
+  ("Rules for a coordinator").
 - pr-mode `land --approve` refuses a draft, or a required check that failed or
   was SKIPPED (a skipped check never ran). It prints WAIT above a merge whose
   required checks are missing or pending; relay those lines.
@@ -176,6 +191,6 @@ situations — read them only when the trigger applies.
 | File | Summary | Read when |
 |---|---|---|
 | `references/participant-rules.md` | The short rule block every spawned session receives, and why. | You spawn or brief a chip, or a session asks how to behave under /fleet. |
-| `references/coordination.md` | Coordinating sessions without host messages — next, directives, release, archive-check, prune, handover, hold notes. | You coordinate several sessions, post or read a directive, retire a session, archive a worktree, or move to another Claude Code account. |
+| `references/coordination.md` | Coordinating without host messages — next, directives, release, prune, archive, handover, coordinator rules. | You coordinate several sessions, post or read a directive, retire a session, archive or prune a worktree, move to another Claude Code account, or dispatch chips as a coordinator. |
 | `references/landing.md` | Landing beyond one combined run — required checks that ran, serial landing, restack, append-only files. | You approve a pr-mode train, land PRs one at a time, restack after a squash merge, or configure append-only files. |
 | `references/telemetry.md` | Usage telemetry — what each verb records, the weakness findings stats derives, and how to turn it off. | You want to know how fleet is performing, why stats flags a weakness, or what fleet sends to the store. |
