@@ -134,3 +134,20 @@ Not tested by spawning the whole suite: that is the gate's job, and the prefligh
 See §8 "Deferred". Memory note for later sessions: the full-suite-before-first-push habit this slice automates is recorded in `feedback_run_whole_suite_before_first_push.md`.
 
 **Acceptance (measured, not asserted)**: the first full pre-push gate after this lands prints the summary. The runbook then records the **within-run** share of `tests/fleet-cli.test.mjs` from that output and replaces the "derived, unverified" row in §1.1 with the measured number, with the command. If the share is not the dominant one, the follow-up ordering in §8 is revisited before anyone builds on it.
+
+## Remaining / debt (from the final gate)
+
+- **G1 (MEDIUM, not blocking) — positional reporter/destination pairing when a caller names a reporter without a destination.** Node pairs `--test-reporter` and `--test-reporter-destination` by position across the whole argv, so a caller who forwards `--test-reporter dot` with no destination shifts every later pairing by one. This hazard already exists for the guard pair today; adding the timing pair widens it by one. Handle in implementation: `buildReporterArgs` counts the forwarded reporters and destinations and appends `--test-reporter-destination stdout` to balance them before adding its own pairs, with a test for the unbalanced case. Not a design change.
+
+## Audit trail
+
+`/audit-plan` session `audit-plan-1791764228` (2026-10-12), `--mode plan`, economical cap of 2 rounds as requested.
+
+| Reviewer | Round | Result | Disposition |
+|---|---|---|---|
+| GPT | 1 | NEEDS_REVISION, H:1 M:2 | 3 of 3 accepted and fixed: telemetry must be contained at the source (best-effort own write, yields nothing) and tested against a baseline run without it; the event-to-report contract; the 85-90% attribution labelled derived and unverified |
+| GPT | 2 | NEEDS_REVISION, H:1 M:1 | 2 of 2 accepted and fixed: a canonical TAP comparison (durations are volatile); the enumerated file list is 34,209 characters against a 32,767 limit, so preflight uses negated globs |
+| Gemini | 1 | CONCERNS, blocking 2 | G2 accepted (regex applies to the basename); G1 challenged with evidence (negated globs measured to work on v22.23.2; now stated as undocumented, with three fail-closed guards and `run({files})` as the fallback) |
+| Gemini | 2 | **APPROVE**, 0 blocking, 1 debt | G1 above recorded as debt |
+
+Acceptance rate 100% in both GPT rounds; the finding count fell 3 → 2 → 2 → 1. Stopped at the cap with the final gate approving.
