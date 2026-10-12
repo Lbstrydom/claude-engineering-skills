@@ -826,6 +826,10 @@
       "description": "The only writer of AI-* provenance trailers; /ship Step 6.3 commits through it.",
       "category": "hooks"
     },
+    "scripts/ship-train.mjs": {
+      "description": "/ship --train CLI (source repo only): plan, message, land, verify and sync a batch of ship-ready PRs.",
+      "category": "skills"
+    },
     "scripts/ux-lock-run.mjs": {
       "description": "Run locked regression specs and record regression_spec_runs (ship gate or ad hoc).",
       "category": "test"

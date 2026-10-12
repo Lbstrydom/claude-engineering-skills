@@ -1264,11 +1264,13 @@ byte-checked in `npm run check`. **Edit the canonical, never a copy.**
 ## Commit provenance trailers (`AI-*`)
 
 `/ship` commits carry `AI-Skill`/`AI-Models`/`AI-Gate`/conditional `AI-Run-ID`
-git trailers written ONLY by `scripts/ship-commit.mjs` (`/ship` Step 6.3) —
-never hand-typed; the `AI-*` namespace is reserved. `AI-Gate` has **four**
+git trailers written ONLY by two helpers sharing ONE renderer and ONE gate
+evaluator: `scripts/ship-commit.mjs` (`/ship` Step 6.3) and, for the squash
+messages of a `/ship --train`, `scripts/ship-train.mjs` — never hand-typed; the
+`AI-*` namespace is reserved. `AI-Gate` has **four**
 values, two verified against the store's `audit_runs` row and two declared:
 `passed` (converged AND the committed tree IS the audited tree) · **`converged`**
-(converged AND the tree DIFFERS — the audited-then-**remediated** ship) ·
+(converged AND the tree is **not asserted equal** — it differs, the audited-then-**remediated** ship, or equality is unprovable on an unpinned squash) ·
 `waived` (declared, unverified) · `not-run` (no fresh evidence). Both verified
 values are fail-closed and clear the **same** store bar, so neither is cheaper;
 each refusal names the other — you may not over- *or* under-claim. **`passed` is

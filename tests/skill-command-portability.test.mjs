@@ -66,6 +66,22 @@ const SOURCE_REPO_ONLY = new Map([
   // consumer has no campaign to be stalled on, so shipping the CLI would add
   // a command whose only honest output in a consumer is silence.
   ['scripts/campaign.mjs', 'source-repo-gated: campaigns are declared in .campaigns/, which only this repo has'],
+  // /ship's "Train mode" section and references/train-mode.md open with
+  // "Source-repo-gated". The train classifies PRs against the sync closure and
+  // publishes through this repo's own sync tools; syncing the CLI would pull
+  // sync-inventory.mjs and consumer-repos.mjs (both path.resolve(import.meta.dirname,
+  // "..")) into the consumer closure, which the relocation guard rightly rejects.
+  ['scripts/ship-train.mjs', 'source-repo-gated: its tier oracle and its publication step are this repo\'s own sync closure and sync tools'],
+]);
+
+/**
+ * Narrower than SOURCE_REPO_ONLY: an entry here is exempt ONLY inside the listed skill files,
+ * each of which must itself carry a "Source-repo-gated" line (asserted below). A command named
+ * anywhere else is still held to the "bundle ships it" rule, so the exemption cannot silently
+ * widen to a skill that does not tell its reader to skip it in a consumer.
+ */
+const GATED_ONLY_IN = new Map([
+  ['scripts/ship-train.mjs', ['skills/ship/SKILL.md', 'skills/ship/references/train-mode.md']],
 ]);
 
 describe('skill commands survive the consumer-repo relocation', () => {
@@ -73,6 +89,17 @@ describe('skill commands survive the consumer-repo relocation', () => {
 
   test('precondition: the authoritative skills tree has markdown to scan', () => {
     assert.ok(files.length > 5, `expected many skill markdown files, found ${files.length}`);
+  });
+
+  test('a script exempt only inside gated skill files really is gated there', () => {
+    for (const [script, gatedFiles] of GATED_ONLY_IN) {
+      assert.ok(SOURCE_REPO_ONLY.has(script), `${script} must also be in SOURCE_REPO_ONLY`);
+      for (const rel of gatedFiles) {
+        const text = fs.readFileSync(path.join(SKILLS_DIR, '..', rel), 'utf8');
+        assert.match(text, /Source-repo-gated/, `${rel} names ${script} but never says it is source-repo-gated`);
+        assert.ok(text.includes(script), `${rel} is listed as gating ${script} but never names it (stale entry)`);
+      }
+    }
   });
 
   test('no skill references a bundle module by specifier — only as `node scripts/<path>`', () => {
@@ -117,7 +144,10 @@ describe('skill commands survive the consumer-repo relocation', () => {
         // here, so its absence in this repo is correct.
         if (tail.startsWith('.claude-skills/')) continue;
         const sourceRel = `scripts/${tail}`;
-        if (SOURCE_REPO_ONLY.has(sourceRel)) continue;
+        if (SOURCE_REPO_ONLY.has(sourceRel)) {
+          const only = GATED_ONLY_IN.get(sourceRel);
+          if (!only || only.some((g) => file.replace(/\\/g, '/').endsWith(g))) continue;
+        }
         if (!fs.existsSync(sourceRel)) missing.push(`${file} — node ${sourceRel}`);
         else if (!shipped.has(sourceRel)) unshipped.push(`${file} — node ${sourceRel}`);
       }
