@@ -87,6 +87,67 @@
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
 
+### Consumer Verification (previous ship)
+- **Commit**: b06f37490aae2324787e8e7b083a2bdb4aa88811 on `claude/fleet-skill-feedback-7c0b5f` (stack: PR #173 dc149797 → #174 e0804275 → #175 tip; not yet merged). The pre-push hook's sync reached 3/3 targets (36 created, 51 updated, 0 errors).
+- **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in the MAIN checkouts of wine-cellar-app and storyline — exit 0, gates 1..9 green in both. Subject check: all 10 new `scripts/.claude-skills/lib/fleet/` modules (merged-facts, required-checks, lifecycle, worktree-status, coordination, directives, obligations, restack, serial, union-merge) present in both bundles.
+- **Result**: verified for both reporting consumers. Note the synced bundle now carries the unmerged branch's fleet; if the PRs change before merge, re-sync from main afterwards.
+
+## 2026-10-12 — Ship trains: plan (#209) + Cluster A, the stateless read side of `/ship --train` (#211)
+
+### Changes
+- **Plan `docs/plans/ship-trains.md`** (PR #209; its content is carried and extended by #211). It covers one human `/ship --train` per batch:
+  - sessions stop at ship-ready;
+  - the coordinator plans the train and writes one status.md entry;
+  - `fleet land` runs one combined test;
+  - serial landing gets a `messageFor` callback that writes each squash commit's parseable `AI-*` block;
+  - the train is verified, then one consumer sync.
+
+  The human gate stays: `/ship` keeps `disable-model-invocation`, because relaxing it would create a standing agent-held authority, which is a laundering path. Audit: `/audit-plan` R1–R3 accepted 11/11, then Gemini APPROVE.
+- **Measured motivation, figure and attribution kept separate (§1.1)**:
+  - Figure: 20 of 76 commits on `main` since 2026-09-25 carry `AI-Gate`.
+  - Attribution over 80 merged PRs: **54 never ran `/ship`**. **9 lost the trailer on the squash**: 4 had the body replaced (#162–#165); 5 had the block buried mid-list by GitHub's default body (#186, #187, #192, #196, #197). 17 kept it.
+- **Stateless amendment (§2.8)**. The first Cluster A built a persisted ship-train "receipt". `/audit-code` then raised fresh HIGHs in five consecutive rounds, every one in the lifecycle of a verify record that a later invocation consumes (staleness, refusal persistence, CAS, basis hash, phase invariants). So the receipt was deleted:
+  - fleet's immutable manifest pins the heads;
+  - squash messages are decided fresh per head;
+  - `verify` checks **source identity** (via fleet's `classifyUpdatedHead`) and then **claim truth**, not equality with a stored decision;
+  - `sync` re-verifies in the same invocation.
+
+  The amendment's §2.8 table maps each receipt item to the owned state that covers it. Audit: GPT plan R4–R5 (H2 rebutted with `sync-to-repos.mjs:1701` and dismissed by GPT), then Gemini plan round 2 APPROVE. Net −537 lines.
+- **Cluster A code** (PR #211):
+  - `impact.mjs`: urgent / standard / ride-along tiers, with the sync closure as the consumer oracle; a framed `-z` parse; both rename endpoints.
+  - `provenance.mjs`: binds a run by content (`audited_tree` = a PR commit's tree); decides the gate through the existing `evaluateGateVerification`; substantiated `AI-Models` only.
+  - `store/train-provenance.mjs`: `findCodeRunCandidates` and `findCodeRunForRepo` (repo-scoped, code-mode); schema faults fatal; input refusals distinct.
+  - `verify.mjs`: claim truth, the final merge OID, interleaving, `publicationClearance`.
+  - `commands.mjs` + `scripts/ship-train.mjs`: `plan`, `message`, `verify --train`.
+  - `commit-trailers.mjs` `evaluateGateVerification` gains `identityProvable` (default true, so existing callers are byte-identical).
+  - `.audit-loop/domain-map.json`: `scripts/lib/ship-train/**` tagged `ship`; `tests → ship` and `ship → fleet` declared with reasons.
+- **Audit (stateless code)**: `/audit-code` R1 H4 M6 L1 (9 accepted), R2 H1, **R3–R5 PASS 0/0/0, coverage COMPLETE**, then Gemini APPROVE. Every fix was proven red, then green. That includes the held real-Postgres suite (6/6), where removing the repo-scope clause turns its test red.
+
+### Files Affected
+- `docs/plans/ship-trains.md` — the plan, its audit trail, the stateless amendment and §2.10 (test cost).
+- `scripts/lib/ship-train/{impact,provenance,verify,commands}.mjs`, `scripts/ship-train.mjs` — new.
+- `scripts/lib/store/train-provenance.mjs` — new, read-only.
+- `scripts/lib/commit-trailers.mjs` — `identityProvable` input.
+- `.audit-loop/domain-map.json` — ship-train claim + two declared edges.
+- `tests/ship-train-{impact,provenance,verify,cli}.test.mjs` (new), `tests/commit-trailers.test.mjs` (+4).
+
+### Decisions Made
+- **`main` is unpinned** (measured: `rulesets` → `[]`, branch protection → 404). Trains therefore land audited PRs as `AI-Gate: converged`, never `passed`. `passed` becomes reachable only if the user enables "require branches up to date" with no bypass actors; that is a repo-settings decision, not made here. `converged`'s reading widens to "tree identity not asserted equal" (plan R7).
+- **Empirical `plan` on #202–#206, hand-checked against the store**: only #202 has a converged run whose content matches its commits. #203 and #204 match only single-round unconverged runs. #205 and #206 match none.
+- **§2.10 test cost, split by owner (coordinator ruling)**:
+  - Kept here: the train's one combined `npm test` is the authoritative suite on the landing bytes, plus a "combined run failed on a test the branch tier didn't select" metric (reads `unmeasured` until it can be computed).
+  - Owned by the gate-cost plan (`docs/plans/gate-cost-slice-1.md` (planned)): the cheaper branch-push tier; weakening the branch gate is the user's policy call.
+  - Option (b), trusting recorded per-PR gates, was rejected: no record exists, and the always-present log PR means it would never fire.
+
+### Next Steps
+- **DB suite follow-up**: `tests/ship-train-provenance.db.test.mjs` plus its two-list enrolment (`scripts/db-test-container.mjs`, `.github/workflows/postgres-parity.yml`), after the keyset PR (`fix/ship-nudge-keyset-paging`) merges and releases those lists.
+- **Cluster B** (serial `messageFor` seam, `land`, `sync`) after the `claude/fleet-unclaimed-work-impl` claim on `scripts/lib/fleet/**` releases. **Cluster C** (`/ship --train` skill surface + docs) after the keyset PR's hold on `skills/ship/SKILL.md` releases.
+- Cluster D (the thinness metric) lands after B and the gate-cost selector.
+
+Backlog 2026-10-12T04:23Z: Q1 173c/47p (+420 aged) · Q2 116c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
+---
+
 ## 2026-10-11 — drift + backlog re-measured; five shipped plans closed; three honesty fixes
 
 Measured on `origin/main` 56eb0459. Each figure carries its command.
