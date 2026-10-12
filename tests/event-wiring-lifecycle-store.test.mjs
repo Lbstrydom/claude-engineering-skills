@@ -68,3 +68,34 @@ describe('NEGATIVE CONTROLS - the same calls on a usable ledger still write, and
     assert.ok(after.lifecycle['event-wiring-symmetry|other']);
   }));
 });
+
+describe('valid JSON of the WRONG SHAPE is refused too', () => {
+  // Writing a record onto a `lifecycle` ARRAY sets a property JSON.stringify drops,
+  // so the write would report success having stored nothing; a primitive or array
+  // root is not a ledger at all.
+  const WRONG = [
+    ['an array root', '[]'],
+    ['a null root', 'null'],
+    ['a string root', '"ledger"'],
+    ['a lifecycle array', '{"version":1,"entries":[],"lifecycle":[]}'],
+    ['an entries object', '{"version":1,"entries":{},"lifecycle":{}}'],
+    ['a lifecycle primitive', '{"version":1,"entries":[],"lifecycle":7}'],
+  ];
+  for (const [name, body] of WRONG) {
+    it('upsertLifecycle and reconcileLifecycle both throw on ' + name + ', and leave the file untouched', () => withLedger(body, (p) => {
+      assert.throws(() => upsertLifecycle(p, record), /wrong shape/);
+      assert.throws(
+        () => reconcileLifecycle(p, { kind: 'event-wiring-symmetry', observations: [], now: Date.now(), ancestryDecisions: new Map() }),
+        /wrong shape/,
+      );
+      assert.equal(fs.readFileSync(p, 'utf-8'), body);
+    }));
+  }
+
+  it('NEGATIVE CONTROL - an object with the optional keys simply absent is a usable ledger and gets its defaults', () => withLedger('{}', (p) => {
+    upsertLifecycle(p, record);
+    const after = JSON.parse(fs.readFileSync(p, 'utf-8'));
+    assert.deepEqual(after.entries, []);
+    assert.deepEqual(after.lifecycle['event-wiring-symmetry|mine'], record);
+  }));
+});

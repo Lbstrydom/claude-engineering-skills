@@ -44,6 +44,11 @@ function readLifecycleMap(absPath) {
  * file with it - silently and permanently dropping every adjudication entry and
  * every lifecycle record the run did not touch. (writeSingleLedgerEntry already
  * refuses this way.) The detector's caller turns a throw into an 'errored' wave.
+ *
+ * Valid JSON of the WRONG SHAPE is refused the same way: a root that is not an
+ * object, `entries` that is not an array, `lifecycle` that is not a plain object.
+ * Writing a record onto a `lifecycle` ARRAY sets a property JSON.stringify then
+ * drops, so the write would report success having stored nothing.
  */
 function readLedgerForWrite(absPath) {
   const blank = { version: 1, entries: [], lifecycle: {} };
@@ -60,7 +65,13 @@ function readLedgerForWrite(absPath) {
   } catch (err) {
     throw new Error(`event-wiring ledger ${absPath} exists but is not valid JSON (${err.message}) - left untouched; fix or restore it`, { cause: err });
   }
-  return parsed && typeof parsed === 'object' ? { entries: [], lifecycle: {}, ...parsed } : blank;
+  const plain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  const bad = !plain(parsed) ? 'its root is not a JSON object'
+    : (parsed.entries !== undefined && !Array.isArray(parsed.entries)) ? '`entries` is not an array'
+      : (parsed.lifecycle !== undefined && !plain(parsed.lifecycle)) ? '`lifecycle` is not an object'
+        : null;
+  if (bad) throw new Error(`event-wiring ledger ${absPath} is valid JSON of the wrong shape (${bad}) - left untouched; fix or restore it`);
+  return { ...blank, ...parsed };
 }
 
 /**
