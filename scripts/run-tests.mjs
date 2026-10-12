@@ -133,16 +133,19 @@ const DEFAULT_ARGS = DEFAULT_DIRS.map((d) => `${d}/*.test.mjs`);
  * Files `npm run test:preflight` leaves out, in ONE place. Each entry is a repo-relative
  * path directly inside one of DEFAULT_DIRS, with the reason beside it.
  *
- * `tests/fleet-cli.test.mjs`: 132 cases, 189 `fleet.mjs` spawns, a fixture built per test;
- * 96% of one measured run's wall time but 13% of its summed test time: node runs a file's tests serially,
- * so the file is a floor on wall time (docs/runbooks/gate-cost.md has the measurement and
- * the command that re-measures it). Preflight is for catching a late
- * guard-test failure cheaply BEFORE the first push; the gate still runs everything.
+ * `tests/fleet-cli.test.mjs`: before #214 it was 132 cases, 96% of one measured run's wall time
+ * but 13% of its summed test time (node runs a file's tests serially, so a file is a floor on wall
+ * time). #214 split it into 10 files; the original now holds 36 of the 132 tests and is still the
+ * largest of the family, which is all that is claimed here: the post-split tree has NOT been
+ * re-measured. Re-measure with the command in docs/runbooks/gate-cost.md and, if this file is no
+ * longer among the slowest, replace it with whatever is (the list must stay non-empty).
+ * Preflight is for catching a late guard-test failure cheaply BEFORE the first push; the gate
+ * still runs everything.
  */
 export const PREFLIGHT_SKIPPED_FILES = Object.freeze([
   Object.freeze({
     file: 'tests/fleet-cli.test.mjs',
-    why: 'the slowest file by far (132 cases, 189 fleet.mjs spawns, a fixture per test)',
+    why: 'the largest remaining part of the fleet-cli family after #214 (36 of its 132 tests); not re-measured',
   }),
 ]);
 

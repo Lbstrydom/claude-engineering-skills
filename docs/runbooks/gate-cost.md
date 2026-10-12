@@ -21,7 +21,8 @@ npm run test:preflight
 ```
 
 The default set minus `PREFLIGHT_SKIPPED_FILES` ([`run-tests.mjs`](../../scripts/run-tests.mjs)),
-currently `tests/fleet-cli.test.mjs`. It prints a banner before and a summary after,
+currently `tests/fleet-cli.test.mjs`, which after #214 holds 36 of the 132 original
+tests (the other nine files of the family now run in the preflight). It prints a banner before and a summary after,
 both naming the skipped files and saying **not the gate**. It exits non-zero on any
 failure it ran and never prints a bare pass. It is not a substitute for the push
 gate, which still runs everything.
@@ -45,7 +46,17 @@ verdict**: it writes its own file, yields nothing to stdout, and a failure insid
 is swallowed. `tests/run-tests-timing.test.mjs` runs the real fixtures with and
 without it and compares exit code and canonical TAP.
 
-## 2. What was measured (2026-10-12)
+## 2. What was measured (2026-10-12, on the tree BEFORE #214)
+
+> **#214 has since split the file.** Everything below describes the tree before
+> `tests/fleet-cli.test.mjs` was split into 10 files (#214, merged 2026-10-12: nine
+> new `tests/fleet-cli-*.test.mjs` files, the 36-test remainder in the original,
+> and a template-copied fixture). It is kept as the evidence for why the split was
+> the right lever, not as the current state. #214 measured, each a single sample on a
+> busy machine so read it as direction: full `npm test` 803 s after against 1,636 s
+> before, and its own gate's test step 522 s. **This runbook has not re-measured the
+> post-split tree.** Re-run the `TEST_TIMING_KEEP` command in §1 for the new floor
+> before quoting a number.
 
 One full `npm test` on a 32-CPU Windows machine under ordinary load, with
 `TEST_TIMING_KEEP` set: **949 test files, exit 0, 1,009 s wall**. All figures below
@@ -102,13 +113,13 @@ test step only).
 Re-measure with the `TEST_TIMING_KEEP` command above and, for the shares:
 
 ```powershell
-$r = Get-Content $env:TEMP	iming-full.json | ConvertFrom-Json; $c = $r.files | Where-Object file -eq 'tests/fleet-cli.test.mjs'; '{0:N1}% of summed test time; {1:N0} s' -f (100*$c.ms/$r.totalMs), ($c.ms/1000)
+$r = Get-Content "$env:TEMP/timing-full.json" | ConvertFrom-Json; $c = $r.files | Where-Object file -eq 'tests/fleet-cli.test.mjs'; '{0:N1}% of summed test time; {1:N0} s' -f (100*$c.ms/$r.totalMs), ($c.ms/1000)
 ```
 
 ## 3. Using the preflight
 
 - Run it once, before the first push. It takes roughly the wall time of the
-  slowest remaining file plus start-up. **Measured**: 274 s for the test step
+  slowest remaining file plus start-up. **Measured on the pre-#214 tree**: 274 s for the test step
   (948 files, 18,626 tests, 0 failed) on the same machine that took 1,009 s for
   the full run (73% less), against a derived floor of 218 s. The first real run,
   under heavier load, took 483 s; there is no full run at that load to compare it
@@ -116,9 +127,10 @@ $r = Get-Content $env:TEMP	iming-full.json | ConvertFrom-Json; $c = $r.files | W
 - It catches the guard tests (`tests/prepush-sandbox-honesty.test.mjs`,
   `tests/rmsync-retry-guard.test.mjs`) that targeted runs of the files you touched
   miss. That is its whole purpose: the measured case in §2 was exactly those two.
-- A green preflight means *the other 948 files passed on this tree*. It says
-  nothing about `fleet-cli`. If you touched `scripts/fleet.mjs`,
-  `scripts/lib/fleet/**` or `tests/fleet-*.test.mjs`, run those files directly too.
+- A green preflight means *every file except the declared ones passed on this tree*.
+  It says nothing about `tests/fleet-cli.test.mjs` (36 tests). If you touched
+  `scripts/fleet.mjs`, `scripts/lib/fleet/**` or `tests/fleet-*.test.mjs`, run those
+  files directly too.
 - Its selection is verified after the run from the timing report. If a declared
   file ran, an expected file did not, or the report is missing, unreadable or
   partial (so the selection cannot be verified), the preflight **fails** and says
@@ -128,18 +140,21 @@ $r = Get-Content $env:TEMP	iming-full.json | ConvertFrom-Json; $c = $r.files | W
 
 ## 4. Follow-ups, in the order the evidence now supports
 
-1. **Split or parallelise `tests/fleet-cli.test.mjs`.** First step is a
-   measurement, not a build: run the file alone on a quiet machine
-   (`node --test tests/fleet-cli.test.mjs`) and compare its test-body to the 972 s
-   above; the gap is contention, and the remainder is what splitting can recover.
-   Held by `claude/fleet-unclaimed-work-impl` (it owns `tests/fleet-*.test.mjs`,
-   `tests/helpers/fleet-repo.mjs`, `scripts/lib/fleet/**`); coordinate through the
-   fleet, do not edit it from this chip.
-2. **Cut `fleet-cli`'s own work** (the original proposal): build the fixture once per
-   file from a template copy; memoise duplicate `rev-parse` calls inside one command
-   (9× `rev-parse --verify` and 6× `--path-format=absolute` in one `claim`); skip
-   `gh pr list` in `claim` when nothing needs it. Worth doing after (1) because it
-   also shrinks the other 29 `fleet-*` files, which together hold 2,298 s.
+1. **DONE by #214: split `tests/fleet-cli.test.mjs`.** This runbook's first
+   recommendation, taken up in the same session it was written (nine files plus the
+   36-test remainder, `describe` bodies moved verbatim). Its own caution still holds:
+   a split only helps when there are spare cores, and nine files run concurrently on
+   a saturated machine took 2,282 s, worse than serial (#214's PR). **Next step:
+   re-measure** (`TEST_TIMING_KEEP`, §1) on a quiet machine, then decide whether
+   `PREFLIGHT_SKIPPED_FILES` still names the slowest file. If it no longer does, replace
+   it with whatever is now slowest; the list must stay non-empty, or the preflight
+   becomes the gate under another name.
+2. **Cut the fleet tests' own work, the part #214 did not.** #214 copies a
+   per-process template instead of rebuilding the fixture (9 git spawns each). Still
+   open: memoise duplicate `rev-parse` calls inside one command (9× `rev-parse
+   --verify` and 6× `--path-format=absolute` in one `claim`) and skip `gh pr list` in
+   `claim` when nothing needs it. It also shrinks the other 29 `fleet-*` files, which
+   together held 2,298 s before the split.
 3. **Train `testCommand` tiers in `.fleet.json`.** Moves the trust boundary (what
    runs per push versus per train); needs enforcement in the landing path, not
    prose. Do it after (1) and (2) shrink the number. Today `.fleet.json` has no
