@@ -18,7 +18,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { GUARD_REPORT_VERSION } from '../scripts/lib/test-guard-reporter.mjs';
-import { TIMING_REPORT_VERSION } from '../scripts/lib/test-timing-reporter.mjs';
+import { TIMING_REPORT_VERSION } from '../scripts/lib/test-timing-report.mjs';
 import { PREFLIGHT_SKIPPED_FILES, expectedPreflightFiles, finishRun, scrubChildEnv, selectTestArgs } from '../scripts/run-tests.mjs';
 
 const ROOT = path.join(import.meta.dirname, '..');

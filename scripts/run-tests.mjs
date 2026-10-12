@@ -60,7 +60,7 @@ import { pathToFileURL } from 'node:url';
 
 import { assertKnownFlags, hasFlag } from './lib/cli-io.mjs';
 import { GUARD_REPORT_VERSION } from './lib/test-guard-reporter.mjs';
-import { TIMING_REPORT_ENV, ranFiles, ranFilesUnavailableReason, summariseTiming } from './lib/test-timing-reporter.mjs';
+import { TIMING_REPORT_ENV, ranFiles, ranFilesUnavailableReason, summariseTiming } from './lib/test-timing-report.mjs';
 
 /**
  * Ambient provider-ROUTING vars scrubbed from the child env. Enumerated from

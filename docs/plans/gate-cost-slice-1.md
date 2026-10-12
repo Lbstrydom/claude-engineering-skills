@@ -89,7 +89,8 @@ flowchart LR
 
 | File | Intent | Purpose |
 |---|---|---|
-| `scripts/lib/test-timing-reporter.mjs` | create | `TIMING_REPORT_VERSION`, `testTimingReporter` (async generator that yields nothing and writes its report best-effort to `TEST_TIMING_REPORT`), pure `accumulateFileTimes(events)` and `summariseTiming(reportText, {top})` |
+| `scripts/lib/test-timing-report.mjs` | create | pure, no side effects on import (code audit round 2, M1): `TIMING_REPORT_VERSION`, the event contract and accumulator, `parseTimingReport`, `ranFiles`, `summariseTiming(reportText, {top})` |
+| `scripts/lib/test-timing-reporter.mjs` | create | the node entry point only: `testTimingReporter` (async generator that yields nothing and writes its report best-effort to `TEST_TIMING_REPORT`); the one importer of the listener-ceiling module |
 | `scripts/run-tests.mjs` | modify | `buildReporterArgs` gains an optional `timingEnabled` (the timing reporter paired with `stdout`, placed **before** the guard pair so the guard stays contiguous and last); `main()` passes `TEST_TIMING_REPORT` in the child env; `selectTestArgs({preflight, exists})` (returns the glob arguments and the skipped list), exported `PREFLIGHT_SKIPPED_FILES`; pure `finishRun`; `main()` wires them |
 | `package.json` | modify | `"test:preflight": "node scripts/run-tests.mjs --preflight"` |
 | `scripts/lib/test-runner-listener-ceiling.mjs` | create | D9: raise the runner process's default listener ceiling; inert in a test-file process |
@@ -102,7 +103,7 @@ Close-out (not a phase): `npm run docs:check`, `npm run plans:index`, `npm run k
 
 ### 7b. Implementation Phases
 
-**Phase 1 — Timing visible**: the reporter, `buildReporterArgs` option, `finishRun`, the summary on stderr. Files: `scripts/lib/test-timing-reporter.mjs` (create), `scripts/run-tests.mjs` (modify), `tests/run-tests-timing.test.mjs` (create).
+**Phase 1 — Timing visible**: the reporter, `buildReporterArgs` option, `finishRun`, the summary on stderr. Files: `scripts/lib/test-timing-report.mjs` (create), `scripts/lib/test-timing-reporter.mjs` (create), `scripts/run-tests.mjs` (modify), `tests/run-tests-timing.test.mjs` (create).
 **Phase 2 — Preflight and the record**: `selectTestArgs`, `PREFLIGHT_SKIPPED_FILES`, the `--preflight` flag and banner, the npm script, the runbook. Files: `scripts/run-tests.mjs` (modify), `package.json` (modify), `tests/run-tests-preflight.test.mjs` (create), `docs/runbooks/gate-cost.md` (create).
 
 ## 8. Risk & Trade-off Register
@@ -165,3 +166,4 @@ Acceptance rate 100% in both GPT rounds; the finding count fell 3 → 2 → 2 �
 | Round | Result | Disposition |
 |---|---|---|
 | GPT 1 | SIGNIFICANT_ISSUES, H:3 M:9 (11 passes, 481 s) | 12 findings ruled, acceptance 67%: 8 accepted and fixed (H1, H3, M2, M3, M4, M6, M7, M8; M6 and M8 duplicate H1 and M7), 1 documented limit with evidence (H2), 3 dismissed (M1 and M5: stderr before an exit is an AGENTS.md deliberate non-finding; M9: an adjacency enumeration bound, a coverage note). Each claim was run against real behaviour before ruling: node REFUSES unbalanced reporter flags (H1 real); `--disable-warning` is inherited by test files and hid a real leak (M7 real, and the first fix, `--import`, does not run in the runner process at all, so the ceiling moved into the reporter); all 949 default files are reported with none stray (H2 not manifesting). Every new guard was seen red under a mutation of its fix. The audit also caught a claim of mine: the 13% is a share of summed test-body time (worker-seconds), not CPU (M4); the critical-path conclusion is unchanged |
+| GPT 2 | PASS, H:0 M:1 (7 passes, 126 s); coverage partial: the plan file itself (28 KB) was windowed, 99 changed doc lines unread, so the round is not convergence evidence | M1 accepted and fixed: the reporter module doubled as the reader, so the runner wrapper and the tests inherited the process-wide listener-ceiling change by importing a utility. Split into a pure `test-timing-report.mjs` and a `test-timing-reporter.mjs` that is the node entry point and the only importer of the ceiling module; a test asserts the reader and the runner module leave the ceiling at 10 and the reporter raises it to 20, seen red under a mutation |

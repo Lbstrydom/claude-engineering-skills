@@ -1,5 +1,5 @@
 /**
- * @fileoverview Per-file test timing (scripts/lib/test-timing-reporter.mjs and its use in
+ * @fileoverview Per-file test timing (scripts/lib/test-timing-report.mjs, the reporter in test-timing-reporter.mjs, and their use in
  * scripts/run-tests.mjs). Plan: docs/plans/gate-cost-slice-1.md.
  *
  * THE GUARANTEE THAT MATTERS: telemetry cannot change a verdict. It is proved against the
@@ -16,7 +16,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { GUARD_REPORT_VERSION } from '../scripts/lib/test-guard-reporter.mjs';
-import testTimingReporter, {
+import testTimingReporter from '../scripts/lib/test-timing-reporter.mjs';
+import {
   TIMING_REPORT_ENV,
   TIMING_REPORT_VERSION,
   accumulateFileTimes,
@@ -25,7 +26,7 @@ import testTimingReporter, {
   ranFiles,
   ranFilesUnavailableReason,
   summariseTiming,
-} from '../scripts/lib/test-timing-reporter.mjs';
+} from '../scripts/lib/test-timing-report.mjs';
 import { adjudicateRun, buildReporterArgs, extractReporterFlags, finishRun, partitionArgs, scrubChildEnv } from '../scripts/run-tests.mjs';
 
 const ROOT = path.join(import.meta.dirname, '..');
@@ -468,5 +469,16 @@ describe('MaxListenersExceededWarning (three reporters trip node\'s default list
     assert.equal(runnerLike.stdout, '20');
     const testFileLike = spawnSync(process.execPath, ['-e', probe], { cwd: ROOT, encoding: 'utf8', env: { ...env, NODE_TEST_CONTEXT: 'child-v8' } });
     assert.equal(testFileLike.stdout, '10', 'it changed the ceiling inside a test-file process');
+  });
+
+  it('only the REPORTER module raises the ceiling; the pure report module is free of side effects on import (code audit round 2, M1)', () => {
+    // The runner wrapper and the tests import the reader. Importing a utility must not mutate
+    // process-wide state in whoever imported it, so the side effect lives in the node entry point only.
+    const probeOf = (specifier) => `import('${specifier}').then(async () => { const { EventEmitter } = await import('node:events'); process.stdout.write(String(EventEmitter.defaultMaxListeners)); });`;
+    const env = scrubChildEnv(process.env);
+    const run = (specifier) => spawnSync(process.execPath, ['-e', probeOf(specifier)], { cwd: ROOT, encoding: 'utf8', env }).stdout;
+    assert.equal(run('./scripts/lib/test-timing-report.mjs'), '10', 'importing the reader changed the ceiling');
+    assert.equal(run('./scripts/run-tests.mjs'), '10', 'importing the runner module changed the ceiling');
+    assert.equal(run('./scripts/lib/test-timing-reporter.mjs'), '20', 'the reporter no longer raises the ceiling: the runner will warn');
   });
 });
