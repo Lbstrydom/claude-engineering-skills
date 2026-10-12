@@ -51,6 +51,7 @@ commits and pushes. Follow every step in order.
 | `/ship --no-tests` | skip pre-push tests (override; logged in `ship_event`) |
 | `/ship --ignore-p0` | push despite an unresolved persona-test P0 finding |
 | `/ship --skip-ux-lock` | push despite an unlocked recent UI fix |
+| `/ship --train [--waive n,…] [--allow-unaudited n,…] [--end-of-day]` | land a batch of ship-ready PRs in one action (see **Train mode**) |
 
 The three override flags are honoured only when the **user** passes them; see
 Step 3's override handling. Never add one on the skill's own initiative to get
@@ -1277,6 +1278,20 @@ prints `{"ok":true,"cloud":false}` and returns 0.
 
 ---
 
+## Train mode (`/ship --train`)
+
+**Source-repo-gated** (`package.json.name === "claude-engineering-skills"`); a consumer has no
+sync closure to classify against and no sync tools to publish with, so it skips this.
+One human invocation lands several already-audited, `fleet ready` PRs: one status entry,
+per-PR provenance written into each squash commit, one combined test run, one consumer
+sync. **Human-only, like the rest of this skill** — `--train` does not relax the
+explicit-invocation rule above. Its three flags are read only from this invocation. The
+runbook, refusals, overrides and recovery are in `references/train-mode.md`; the verbs are
+`node scripts/ship-train.mjs plan | message | land | verify | sync`. Read that file before
+running any of them.
+
+---
+
 ## Quick Reference
 
 | Syntax | What happens |
@@ -1313,4 +1328,5 @@ situations — read them only when the trigger applies.
 | `references/pre-ship-gate-queries.md` | Step 0.5's pre-ship nudges (0.5a/b/e/g/h/i) — the incident history behind each rule, kept out of the routine flow. | Debugging a Step 0.5 nudge's behaviour, or before changing one. |
 | `references/python-environment-discovery.md` | Python pre-push command discovery — env wrapper detection + per-tool probe order. | detect-stack returned `python` or `mixed` with Python files in the diff. |
 | `references/status-md-format.md` | status.md session-log template + update rules + persona / UX status sections. | Step 2 — creating status.md for the first time, OR appending UX / Persona / Regression-Lock / Plan-Verify sections. |
+| `references/train-mode.md` | /ship --train runbook — plan, land, verify, sync a batch of ship-ready PRs; refusals, overrides, recovery. | `/ship --train` was invoked, or the user asked to land several ready PRs together. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 6.8 — the push succeeded and the artifact must be verified from the consumer side. |
