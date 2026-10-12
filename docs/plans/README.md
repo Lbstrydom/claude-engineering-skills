@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**8 active · 247 terminal · 33 audit summaries · 1 parked · 5 reference docs**
+**8 active · 248 terminal · 33 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -59,7 +59,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 244 completed plans</summary>
+<summary>Show all 245 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -108,6 +108,7 @@ source comments that no docs linter sees — stays valid.
 | [`/brainstorm --with-arch` — codebase architecture context for external LLMs](./brainstorm-arch-context.md) | `Complete` |  |
 | [Brainstorm-skill upgrades + Quick-fix detection (v1)](./brainstorm-quickfix-v1.md) | `Complete` | shipped — both halves: `/brainstorm` enhancements (see brainstorm-and-arch-discoverability) + quick-fix… |
 | [Campaign Arm-State and Snapshot-Identity Integrity](./campaign-arm-state-and-identity-integrity.md) | `Complete` | implemented via `/cycle --autonomous` (3 clusters, each audited to convergence), consolidated Gemini gate… |
+| [CLI contract hardening — strict boolean flags, emit ordering, replay CLI honesty](./cli-contract-hardening-flags-emit-replay.md) | `Complete` | plan audited: GPT 2 rounds NEEDS_REVISION to READY_TO_IMPLEMENT; Gemini plan gate APPROVE, round 1 |
 | [Wire the Cloud FP-Pattern Read Loop into Audit Suppression](./cloud-fp-suppression-read-loop.md) | `Complete` | implemented + audited. Plan audit: 5 GPT + 2 Gemini rounds. Code audit: 5 GPT rounds + 1 deliberation + 3… |
 | [Comparison-Tooling Consolidation](./comparison-tooling-consolidation.md) | `Complete` | all clusters (A/A′, B, C, D) implemented, individually audited to convergence, and the mandatory… |
 | [Concern identity for re-raise suppression, and a one-week observation window](./concern-identity-suppression.md) | `Complete` | readout done 2026-09-29 (§3.1): hard-suppress fires, no tuning |

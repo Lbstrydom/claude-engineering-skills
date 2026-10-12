@@ -87,6 +87,31 @@ describe('emit — the envelope and the exit code must agree', () => {
     );
   });
 
+  it('a refused softFail writes NOTHING — validation precedes the write (ledger 25a36d16)', () => {
+    // The check used to sit AFTER process.stdout.write, so the refusal arrived
+    // with the failure envelope already on the machine channel: a caller that
+    // caught the throw (or a wrapper that emitted its own envelope) put two JSON
+    // values on one stdout. Nothing may be written, and the exit code must be
+    // untouched, on every shape of bogus reason.
+    for (const bogus of [undefined, '', '   ', 0, true, {}, []]) {
+      written.length = 0;
+      process.exitCode = undefined;
+      assert.throws(
+        () => emit({ ok: false, error: 'boom' }, { softFail: true, reason: bogus }),
+        /requires a written `reason`/,
+        `reason: ${JSON.stringify(bogus)} must be refused`,
+      );
+      assert.equal(written.length, 0,
+        `reason: ${JSON.stringify(bogus)} — the envelope was written before the refusal: ${JSON.stringify(written)}`);
+      assert.equal(process.exitCode, undefined, 'a refusal must not set an exit code either');
+    }
+  });
+
+  it('a valid softFail still writes the envelope exactly once', () => {
+    emit({ ok: false, error: 'declined' }, { softFail: true, reason: 'a declined run is not a process failure' });
+    assert.equal(written.join(''), '{"ok":false,"error":"declined"}\n');
+  });
+
   it('softFail:false is not an opt-out (only an explicit true is)', () => {
     emit({ ok: false }, { softFail: false });
     assert.equal(process.exitCode, 1);

@@ -91,6 +91,12 @@
 - **Commit**: b06f37490aae2324787e8e7b083a2bdb4aa88811 on `claude/fleet-skill-feedback-7c0b5f` (stack: PR #173 dc149797 → #174 e0804275 → #175 tip; not yet merged). The pre-push hook's sync reached 3/3 targets (36 created, 51 updated, 0 errors).
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in the MAIN checkouts of wine-cellar-app and storyline — exit 0, gates 1..9 green in both. Subject check: all 10 new `scripts/.claude-skills/lib/fleet/` modules (merged-facts, required-checks, lifecycle, worktree-status, coordination, directives, obligations, restack, serial, union-merge) present in both bundles.
 - **Result**: verified for both reporting consumers. Note the synced bundle now carries the unmerged branch's fleet; if the PRs change before merge, re-sync from main afterwards.
+- **Commit**: 6114fc14f49fd44c1d0f113b765758d15565d14e on `claude/ship-trains-a` (PR #211, unmerged). The pre-push gate ran the full check in a clean sandbox at this commit: 18797 tests, 18751 pass, 0 fail, 46 skipped.
+- **Retrieval**: none run after the push. The synced bundle row is unverified because a branch push publishes nothing to consumers (the consumer sync was skipped: not main). The independent clean-worktree re-run was not done because a fleet hold (directive d-20261012051717-dafb) forbids new npm test runs.
+- **Result**: unverified (blocked: PR #211 not merged, so nothing reached consumers; and the fleet hold forbids a re-run). After merge, sync from an up-to-date main and run sync-isolation-verify in each consumer's MAIN checkout.
+- **Commit**: 8cadc841385a0f8f6b3786331d5029cf0b5d48e3 on `fix/burndown-runs-findings-boundary` (PR #202, NOT yet merged to `main`); code head 14444545d3e206716e3eb9dc35f20a5de60a3758 + the status.md ship commit.
+- **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of the pushed commit: 18,641 tests, 0 fail, 46 skipped, checks passed (the first attempt failed only on four load-timing tests while ~6 gates ran at once; re-run once, green). No consumer-side retrieval was run.
+- **Result**: unverified, blocked: not merged. The pre-push hook publishes to consumers only when the default branch is updated (since 2026-10-10), so this branch has reached no consumer; verify with `sync-isolation-verify.mjs` in a consumer's MAIN checkout after the PR merges and the source repo re-syncs.
 
 ## 2026-10-12 — pre-push: a dead push's sandbox is swept at the next push, not 6 hours later (PR #210)
 
@@ -247,6 +253,43 @@ Backlog: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt unmea
 - #208: should the lane skip all 34 `check` steps or only a subset; should the full gate also scan pushed content; the paid audits of the hook and the two oracle diffs were NOT run (the hook got an adversarial subagent review instead) and need an explicit go.
 - Branch pre-push DIRECT-impact tier (ship-trains §2.10) is a policy call; `docs/runbooks/gate-cost.md` §2 has the table to bring.
 - Pre-ship advisories this run (all non-blocking): 1 open persona P1 (2026-10-10), 173 code fixes without a locked regression spec (159 aged out), 111 accepted code findings never marked fixed, 3 dangling locks, the storyline store is behind this revision's migrations (6 constraints), 2 upstream reports open (both wine-cellar-app, MEDIUM).
+
+---
+
+## 2026-10-12 — CLI contract hardening (#204): rebased, audited, one audit fix
+
+### Changes
+- `hasFlag` (`scripts/lib/cli-io.mjs`): a `--name=value` now comes from a closed set (true/1/yes/on, false/0/no/off/empty); anything else throws `ArgvError`. Before, `--apply=fasle` ENABLED the flag, so a mistyped brake ran the mutating path.
+- `emit`: the `softFail` reason is validated BEFORE the envelope is written, so a refused call writes nothing and leaves the exit code untouched.
+- `scripts/learning/replay.mjs`: a failed result is written with `emit` + `finishAndExit` (it exited 1 with no output); one tokenizer handles the `=` form, last-wins and the `--` terminator; `--repo`/`--repo-id` are UUID-validated before any query; an empty sample warns instead of reading as a measured zero. The cross-skill registry declares `learning-replay`'s verbs and flags, so `npm run learning:replay -- pass_selection --since 7d` works again. `loadPolicy` picks its export with the predicate it validates.
+- Audit follow-up (`f8259e66`): `--repo` and `--repo-id` are one filter. Disagreeing values are refused before any store query; the same value repeated is accepted. Seen red with the fix reverted.
+
+### Audit (fresh, on the rebased change)
+- Origin: commit `a72426c6`, abandoned in an archived worktree (tag `archive/worktree-agent-ad8559f27235c40c9`). Original audit: 2 plan + 3 code rounds + Gemini (run `1020f8fa-4f10-4401-b0ff-0ae13c01acdc`). This PR is that commit rebased onto main `5157ff65` (one mechanical conflict, `.stdout-flush-baseline.json`, re-derived with the gate's own `--update`) plus a generated plans-index commit, so its head differs from the originally audited sha.
+- `/audit-code --scope diff` round 1 (SID `audit-code-1791749398536-116860`, store run `e9344808-6849-4cc0-84b3-a1c2a68b673d`): SIGNIFICANT_ISSUES, 1 HIGH + 4 MEDIUM, $0.43, coverage complete/pass. None was an interaction defect with what moved on main. All 5 ruled: 1 fixed (M3); H1 and M1 accepted and already tracked as existing debt `39e12039b646` and `3cca2ef20a9e` (not re-captured, to avoid duplicates); M2 and M4 dismissed.
+- Only round 1 was run, not two stable rounds: the user chose "accept round 1 + Gemini". Gemini final gate: APPROVE, 0 findings, but PARTIAL coverage (509 of 1,066 changed lines never shown); it ran on the tree that includes `f8259e66`.
+- Known gap carried, not fixed here: `emit()` validates the `softFail` reason only when `ok:false`, so `emit(env, {softFail:true})` with no reason and `ok:true` is accepted. Audited as-is; a follow-up.
+- The audit ran in a worktree retired before this ship, so its run marker was absent here and the commit's `AI-Gate` is recorded as not-run.
+
+### Files Affected
+- `scripts/lib/cli-io.mjs`, `scripts/learning/replay.mjs`, `scripts/lib/cross-skill/registry.mjs`, `scripts/check-cli-flags.mjs`, `scripts/check-emit-exit-agreement.mjs`, `.stdout-flush-baseline.json` (re-derived)
+- Tests: `cli-io-equals-flags`, `emit-exit-coupling`, `learning-replay`, `replay-positionals`, `cross-skill-registry-conformance`
+- `docs/plans/cli-contract-hardening-flags-emit-replay.md`, `docs/runbooks/learning-system.md`, `docs/plans/README.md` (generated index)
+
+### Decisions Made
+- Round 1 + Gemini accepted as the fresh audit rather than running to convergence (cost proportion; the user's call).
+- H1/M1 not re-captured: the same concern is already in the store. Two more existing entries, `af81be85` (UUID-only `--repo`) and `b445b4ba` (hand-written envelope), appear to be fixed by this change; verify before resolving them after merge.
+- Supersedes the `cli-io` softFail/`hasFlag` and replay commits in `archive/queue-burndown-2026-10-02` (`8cfbd071`, `b3f80832`).
+
+### Regression Lock Status
+⚠ 174 code fixes repo-wide have no locked regression coverage (Q1, `list-unlocked-fixes`); not introduced by this change.
+
+### Next Steps
+- Merging #204 is the user's call, with the PR head equal to the shipped sha. The keyset-paging PR rebases on it afterwards.
+- This status entry and #203's both add the top entry of `status.md`; whichever merges second keeps both entries.
+
+Backlog 2026-10-12T06:21Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt 328 cloud/1 local (0 spilled) · upstream 2
+
 
 ---
 

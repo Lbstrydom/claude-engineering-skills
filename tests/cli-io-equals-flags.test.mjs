@@ -13,7 +13,14 @@
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { argOption, hasFlag, assertKnownFlags } from '../scripts/lib/cli-io.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { argOption, hasFlag, assertKnownFlags, ArgvError } from '../scripts/lib/cli-io.mjs';
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 let realArgv;
 beforeEach(() => { realArgv = process.argv; });
@@ -76,6 +83,72 @@ describe('hasFlag reads both spellings, and an explicit falsy value means OFF', 
   it('an absent flag is absent', () => {
     argv('--other');
     assert.equal(hasFlag('dry-run'), false);
+  });
+});
+
+describe('hasFlag refuses a value it cannot classify (closed value set)', () => {
+  // THE DEFECT (ledger 77cee58d, executed 2026-10-03). Only false/0/no/off/'' meant
+  // OFF; every other `=value` meant ON. `scripts/defect-harvest.mjs` reads
+  // `hasFlag('apply')` on a MUTATING path, so `--apply=fasle` — one transposed
+  // letter — ENABLED the write. Accepted-and-inverted is worse than
+  // accepted-and-inert: the operator asked for less and got more.
+  for (const v of ['fasle', 'nope', 'n', 'y', '2', 'ture', ' false', 'false ', 'disabled']) {
+    it(`--apply=${JSON.stringify(v)} throws ArgvError naming the flag and BOTH accepted sets`, () => {
+      argv(`--apply=${v}`);
+      assert.throws(() => hasFlag('apply'), (err) => {
+        assert.ok(err instanceof ArgvError, 'must be ArgvError so an entry point can map it to a usage error');
+        assert.equal(err.code, 'ARGV_ERROR');
+        assert.match(err.message, /--apply/);
+        for (const accepted of ['true', 'yes', 'on', 'false', 'no', 'off']) {
+          assert.ok(err.message.includes(accepted), `message must list "${accepted}" — got: ${err.message}`);
+        }
+        return true;
+      });
+    });
+  }
+
+  for (const v of ['true', 'TRUE', 'True', '1', 'yes', 'Yes', 'ON', 'on']) {
+    it(`--apply=${v} is accepted as ON`, () => {
+      argv(`--apply=${v}`);
+      assert.equal(hasFlag('apply'), true);
+    });
+  }
+
+  it('an invalid EARLIER occurrence still throws although a later one is valid', () => {
+    // Last-wins is for VALID occurrences. A wrapper appending `--apply=false` to
+    // an inherited list must not be able to launder an upstream typo.
+    argv('--apply=fasle', '--apply=false');
+    assert.throws(() => hasFlag('apply'), ArgvError);
+  });
+
+  it('an invalid value after the -- terminator is a positional, not a flag', () => {
+    argv('--', '--apply=fasle');
+    assert.equal(hasFlag('apply'), false);
+  });
+
+  it('an invalid value on a DIFFERENT flag does not throw for this one', () => {
+    argv('--other=fasle');
+    assert.equal(hasFlag('apply'), false);
+  });
+
+  it('end-to-end: defect-harvest --apply=fasle refuses and writes nothing (negative control: unfixed code writes the file)', () => {
+    // NEGATIVE CONTROL, run by hand against the unfixed code (2026-10-03): with
+    // `--since 6` the typo'd run printed "Harvested 14 candidate(s)" and WROTE
+    // the file, exit 0. `--since 6` keeps that control fast — the default window
+    // (400 commits) blames every fix commit and takes minutes; fixed code throws
+    // before harvesting, so the small window costs this test nothing.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hasflag-typo-'));
+    const out = path.join(dir, 'candidates.json');
+    try {
+      const r = spawnSync(process.execPath,
+        ['scripts/defect-harvest.mjs', '--apply=fasle', '--since', '6', '--out', out],
+        { cwd: REPO_ROOT, encoding: 'utf8', timeout: 120_000 });
+      assert.notEqual(r.status, 0, `a typo'd boolean must not exit 0 — stderr: ${r.stderr}`);
+      assert.match(r.stderr, /--apply/, 'the refusal must name the flag');
+      assert.equal(fs.existsSync(out), false, 'the typo must NOT have enabled the mutation (the candidates file was written)');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
   });
 });
 
