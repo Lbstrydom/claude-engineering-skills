@@ -415,3 +415,97 @@ what `rev-list` shows while the push sends the originals) and runs every git cal
 `$0`, not the pusher's cwd: `core.hooksPath` points at one checkout while pushes come from
 any worktree. Until that checkout contains this change, pushes from any worktree run the old
 hook.
+
+## 8. A killed hook reads as a PASS on Git for Windows
+
+**Incident (2026-10-12).** During the push of PR #220 the hook's process tree was killed
+mid-`npm test` (most likely by the Git for Windows updater — a Restart Manager session was
+logged at 14:24:20Z). The TAP stream stopped at test 1954 of ~5,400, neither `✓ checks passed`
+nor `✗ … FAILED` printed, the sandbox survived with a dead owner — and **git transferred the
+push**.
+
+**Why — two truncations, both measured** (Git 2.56.0.windows.2, GNU bash 5.3.15, 2026-10-12):
+
+1. **Git for Windows reads a hook's status as `code & 0xff` and never sees a signal.**
+   `compat/mingw-posix.h`: `WIFEXITED(x) 1`, `WIFSIGNALED(x) 0`, `WEXITSTATUS(x) ((x) & 0xff)`;
+   `compat/mingw.c` `waitpid()` stores the raw `GetExitCodeProcess` value.
+2. **An MSYS process killed by signal S exits `S << 8`** when its parent is native:
+
+   | Signal | Windows exit code | what git sees |
+   |---|---|---|
+   | HUP (console closed) | 256 | 0 |
+   | INT (Ctrl+C) | 512 | 0 |
+   | KILL | 2304 | 0 |
+   | PIPE | 3328 | 0 |
+   | TERM | 3840 | 0 |
+   | USR1 | 7680 | 0 |
+
+So **every signal death of the hook read as success.** The same truncation sits one seam lower:
+MSYS bash's `$?` keeps only the low byte of a native child's code (`node -e "process.exit(256)";
+echo $?` prints `0`), so a runner forwarding a raw 256 would make the hook print `✓ checks passed`.
+
+`taskkill /F` on the node CHILD alone was never the hole: that exits the child with 1, the hook
+sees 1, and blocks. The hole is the hook's own shell dying.
+
+**The fix, three layers** (plan: `docs/plans/prepush-hook-fail-closed-when-killed.md`):
+
+- **L1 — trap every catchable terminating signal** and `exit 1`, a code with a non-zero low byte:
+  the nine POSIX ones (HUP INT QUIT ABRT ALRM TERM PIPE USR1 USR2) unconditionally, plus the XSI
+  ones (TRAP BUS FPE ILL SEGV SYS XCPU XFSZ VTALRM PROF) wherever `kill -l NAME` says the shell
+  knows them, so an unfamiliar `sh` never errors on `trap`. Only KILL and STOP are untrappable. The marked `fail-closed-on-signal` block, at the
+  top of `.githooks/pre-push` and, byte-identical, of the consumer hook (`hook-version: 10`). A
+  POSIX shell runs a trap only after the current foreground child returns: in the console-close /
+  updater case the child dies too and the trap fires at once; for a signal aimed at the hook
+  alone, the push is refused when the child finishes.
+- **L2 — `toShellExitCode`** (`scripts/lib/cli-io.mjs`): every place on the gate path that
+  forwards a child's status (`prepush-check.mjs`, `run-tests.mjs`) maps a zero-low-byte failure
+  to 1. Use it for any new CLI that forwards a child's exit code.
+- **L3 — report the untrappable remainder on the NEXT push.** SIGKILL, or a `TerminateProcess`
+  with a zero-low-byte code, runs no shell code, so nothing can stop that push. The marked
+  `prepush-inflight-record` block writes `<git-common-dir>/prepush-inflight/<pid>.rec`
+  (`pid sha started remote`) before any real work, updates the sha once the range is known, and
+  removes it from an EXIT trap. A record whose owner pid is dead was left by a hook that died
+  without running any shell code, and the next push prints:
+
+  ```
+  ⚠ an earlier pre-push (pid 1234, remote origin, started 2026-10-12T14:19:03Z) was KILLED before it
+    finished. Git for Windows reads a killed hook as a PASS, so if that push reached the remote it went UNGATED.
+    It was gating <sha>. Check: git branch -r --contains <sha>   (runbook §8)
+  ```
+
+  It is advisory and never blocks: the push it describes has already happened. If the check
+  shows the commit on a remote branch, run the gate on it now: `git switch --detach <sha> && npm
+  run check`, or push a follow-up commit and let the hook run in full.
+
+### Unknown commit
+
+`It died before the gated commit was known` means the record still read `pending`: the hook was
+killed during its first few statements, before the push range was parsed. The push's own
+remote-tracking update is the evidence. Look for an update near the record's `started` time:
+
+```bash
+git reflog show --date=iso origin/main
+git ls-remote origin
+```
+
+Then compare with what you expected to have pushed.
+
+### What L3 cannot see (stated, not hidden)
+
+- A kill before the record is published: the first few shell statements, including L1's own
+  installation.
+- Any run whose git common dir cannot be resolved or written. The block then skips itself; it
+  never builds a fallback path.
+- A kill between the hook's last command and the EXIT trap's `rm` leaves a record for a run that
+  DID finish, so the next push warns about a gated push. This is rare, and the warning is
+  advisory.
+- PID reuse can make a dead owner look alive. That only suppresses a warning; it never invents one.
+
+**Where the fix runs.** Like the archive lane (§7), the hook runs from the checkout that
+`core.hooksPath` points at. Until that checkout contains this change, pushes from any worktree
+still run the old, fail-open hook. Consumers get L1 on their next hook install (`hook-version: 10`).
+
+Tests: `tests/prepush-hook-fail-closed-on-signal.test.mjs` runs real `git push` runs against a
+throwaway bare remote, judged by what the remote received. It includes a characterisation of
+the unprotected hook, which reads `fail-open` on today's Git for Windows.
+`tests/cli-io-shell-exit-code.test.mjs` covers L2.

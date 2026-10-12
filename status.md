@@ -134,6 +134,56 @@
 - **Retrieval**: the push's own pre-push hook run did NOT complete. Its process tree was hard-terminated mid-`npm test` (TAP stopped at top-level test 1954, no summary, neither "checks passed" nor "FAILED" printed, sandbox `ces-prepush-d9b30553-90492` left with a dead owner), yet git transferred the push. Killer unidentified: no Application/System event 14:18:30–14:24:20Z. The gate was then run by hand on exactly this sha, `node scripts/prepush-check.mjs --base e5147629 --head d9b30553` (clean sandbox): run 1 (14:29–14:40Z) exit 1, 19,544 tests with 1 fail, `tests/fleet-cli-approve.test.mjs` "the push is issued to the recorded pushUrl" (null envelope at 66s; passes 11/11 alone); run 2 (14:42–14:55Z) exit 0, 19,544 tests, 0 fail, 46 skipped.
 - **Result**: pushed commit verified by the second hand run, not by the hook. The synced consumer bundle is unverified (blocked: not merged); sync from an up-to-date main after #220 merges. Open: a killed pre-push hook can let a push through (coordinator to spawn a separate chip).
 
+## 2026-10-12 — a killed pre-push hook no longer reads as a pass (Git for Windows)
+
+**Why.** During the push of PR #220 (hook run 14:19–14:24Z) the pre-push hook's process tree was killed
+mid-`npm test`, most likely by the Git for Windows updater (a Restart Manager session was logged at 14:24:20Z). The
+TAP stream stopped at test 1954, neither verdict line printed, the sandbox survived with a dead owner, and git
+transferred the push anyway.
+
+**Root cause (measured, Git 2.56.0.windows.2 / bash 5.3.15).** Git for Windows reads a hook's status as `code & 0xff`
+(`compat/mingw-posix.h`: `WIFEXITED(x) 1`, `WIFSIGNALED(x) 0`, `WEXITSTATUS(x) ((x) & 0xff)`), and an MSYS bash
+killed by signal S exits `S << 8` (HUP 256, INT 512, KILL 2304, TERM 3840). So every signal death of the hook read
+as exit 0. The same truncation sits one seam lower: MSYS bash's `$?` keeps only the low byte of a native child's
+code (`node -e "process.exit(256)"; echo $?` prints 0). `taskkill /F` on the node child alone was never the hole:
+that exits 1 and the hook blocks.
+
+**What.**
+- L1: a marked `fail-closed-on-signal` block, byte-identical at the top of `.githooks/pre-push` and the consumer
+  `HOOK_BODY` (`scripts/install-prepush-hook.mjs`, hook-version 9 → 10), traps the nine POSIX terminating signals
+  unconditionally, plus the XSI ones wherever `kill -l NAME` succeeds, and exits 1.
+- L2: `toShellExitCode` (`scripts/lib/cli-io.mjs`) maps a zero-low-byte failure to 1, at the two places on the gate
+  path that forward a child's status (`scripts/prepush-check.mjs`, `scripts/run-tests.mjs` `adjudicateRun`).
+- L3: a hook-owned `prepush-inflight-record` block writes `<git-common-dir>/prepush-inflight/<pid>.rec` before any
+  real work, updates the sha after the range loop, and removes it from an EXIT trap. The next push reports a record
+  whose owner pid is dead (SIGKILL / TerminateProcess, which no trap can catch). It is advisory and never blocks.
+- `docs/runbooks/prepush-sandbox.md` §8 (cause, table, the three layers, the "unknown commit" procedure, and what
+  L3 cannot see); plan `docs/plans/prepush-hook-fail-closed-when-killed.md` + audit summary.
+- Tests: `tests/prepush-hook-fail-closed-on-signal.test.mjs` (21; real `git push` runs against throwaway bare
+  remotes, built from the shipped hook bytes), `tests/cli-io-shell-exit-code.test.mjs` (21),
+  `tests/helpers/git-bash.mjs` (resolves Git's own bash beside `git --exec-path`, because a bare `bash` can be WSL's;
+  provides a hermetic git env).
+
+**Verification.** In-suite: the unprotected hook killed by SIGHUP reads `fail-open` (exit 0, remote has the ref),
+and every protected case is `blocked`. Every new guard was mutation-proven (red, then restored to green). Against the
+REAL hook (throwaway bare remotes under `C:/tmp`, never origin): pre-fix hook + SIGHUP + kill of the check tree →
+push exit 0, remote RECEIVED the ref, no verdict line, a sandbox husk left behind (the incident's exact signature);
+fixed hook → blocked, `interrupted by SIGHUP`; child-only kill → blocked on both hooks. Full `npm test`: 19,589
+tests, 2 fail. Both failures were `rmsync-retry-guard` flagging this change's own new `fs.rmSync` calls; fixed, and
+the guard (1902/1902) and the integration file (21/21) re-run green. The full suite was not re-run after that
+(machine-sharing: one heavy job at a time); the pre-push gate re-runs it. `/audit-plan` 3 GPT rounds (9/9 accepted)
++ Gemini APPROVE; `/audit-code` 5 rounds (R4/R5 clean, coverage complete) + Gemini APPROVE (1 pre-existing LOW
+captured as debt). The hook is extensionless and the code auditor skips extensionless files, so R2–R5 audited a
+temporary `.sh` copy of it (never committed).
+
+**Rollout / follow-ups.** The fix runs only once the checkout that `core.hooksPath` points at fast-forwards past
+the merge; until then every push still runs the old, fail-open hook. Consumers get L1 on their next hook install.
+Out of scope: L3 in the consumer hook. A sandbox husk from the control run (`ces-prepush-8d862042-95972`) was left
+for the next push's dead-owner sweep rather than removed with `rm -rf`, because its `node_modules` may be a junction
+into the main checkout.
+
+Backlog 2026-10-12T17:28Z: Q1 190c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt 338 cloud/3 local (0 spilled) · upstream 2
+
 ## 2026-10-12 — Ship trains Cluster C: the /ship --train skill surface and the provenance invariants
 
 ### Changes
