@@ -365,6 +365,48 @@ A terminal stop never auto-retries.
 
 ---
 
+### 2.10 Test cost across a train — PROPOSED, not yet audited (2026-10-12)
+
+*Raised by the coordinator from a measurement by session local_b7b4b056.* `.fleet.json` sets no `testCommand`, so `fleet land` runs `package.json`'s `npm test` (the full suite) once per train. That is on top of every PR's own pre-push gate, which already ran the full `check` in a clean sandbox at that PR's commit. A train therefore pays the full suite **N + 1** times. In practice it pays more, because a branch is pushed several times while it is iterated on.
+
+*Measured* 2026-10-12, from this cluster's own pre-push logs (`# duration_ms` in `$TEMP/push-plan2.log`): **1,713 s ≈ 28.6 min** for 18,618–18,797 tests on this machine, per run.
+
+**What each run actually proves.**
+- **The train's combined run** is the only one that tests **the bytes that land**: base + every source, squashed in landing order, under fleet's candidate-integrity checks (clean tree and unchanged `HEAD` tree before and after the run; `train.mjs:502`). It catches what no per-PR run can:
+  - two PRs that are each green but break together;
+  - a PR that is green against the base it was tested on but red against today's.
+- **A PR's pre-push full run** proves that PR, alone, against an older base. It is useful *early* feedback, but redundant as a *landing* gate once the train's run exists.
+
+**Option (b), rejected: trust each PR's recorded gate and run only what the combination can break.** Three problems:
+1. **No recorded gate exists.** `scripts/prepush-check.mjs` keeps no durable pass record; it writes only a failure's output. Trusting a gate needs a new persisted record of "tree T passed the full suite". §2.8 just removed a persisted record for generating exactly this class of defect.
+2. **It would almost never fire.** Every train carries the status.md log PR (T3), so the candidate tree never equals any tree a PR already tested. The saving needs "run only what the delta can break", which is affected-test selection over the combination. That is the hard version of the problem, not the easy one.
+3. "What the combination can break" is not the per-PR delta. Interactions are exactly what the combined run exists for.
+
+**Option (a), recommended, and split by owner (coordinator ruling, 2026-10-12).** The train's combined run is the authoritative full suite, and branch pushes may get a cheaper tier. The two halves have different owners:
+
+- **Train side — owned HERE.**
+  - `fleet land` keeps `npm test` as the train's combined run. It is the **one authoritative full suite on the bytes that land**; `.fleet.json` is not edited, and the train docs say so.
+  - **The thinness metric**: `ship-train verify` reports whether the train's combined run failed on a test that the branch tier did **not** select. It is the measurement that says whether a cheaper branch tier is too thin, so its fix is to widen the tier, never to drop the train's run.
+  - It reads fleet's own run record (`tierResults`/log) and the branch tier's selection for the PR's head. It is built once the gate-cost plan publishes how that selection can be asked for; until then it reports `unmeasured` (no branch tier to compare against), never a clean zero.
+- **Branch side — owned by the gate-cost plan** (`docs/plans/gate-cost-slice-1.md` (planned), chip `fleet/make-the-pre-push-gate-s-per-f-2dab`). Everything below is that plan's to design, measure and decide, and is NOT built here:
+  - a cheaper branch-push tier (e.g. static gates plus direct-impact tests);
+  - its vacuous-pass guard;
+  - a full-suite escape hatch;
+  - the `scripts/prepush-check.mjs` / `scripts/run-tests.mjs` changes.
+
+  The analysis above is handed to it as input. Weakening the branch gate is a policy decision for the user, made with that plan's numbers.
+
+**Cost:** unchanged on the train side (one full run per train). The branch-side saving is the gate-cost plan's to measure. The expected figure is a branch push dropping from the measured ~28.6 min.
+
+**Right-sizing (train side).**
+- *Band-aid*: drop the train's run because PRs already passed. That removes the only test of the landing bytes.
+- *Over-built*: (b)'s recorded-gate store.
+- *Chosen*: keep the one combined run, and add one read-only metric that keeps any future branch tier honest.
+
+**Not yet audited.** This section was added after the plan's GPT cap (5 rounds) and Gemini cap (2 rounds) were used. Its train-side half (Phase 8) gets a focused `/audit-plan` when it is scheduled. No audit now (coordinator ruling): Cluster A ships first.
+
+---
+
 ## 6. Sustainability Notes
 
 - **Assumptions that could change.** `passed` on a squash commit rests on two things holding together: the server refusing a merge whose head is not up to date, and GitHub squashing an up-to-date head to exactly that head's tree.
@@ -416,6 +458,13 @@ A terminal stop never auto-retries.
   Files: `scripts/ship-train.mjs` (modify), `scripts/lib/ship-train/commands.mjs` (modify), `tests/ship-train-cli.test.mjs` (modify), `tests/ship-train-recovery.test.mjs` (create), `.audit-loop/domain-map.json` (modify).
 - **Phase 6 — `/ship --train` skill surface**: a usage row, a pointer section and the reference doc, plus a one-line cross-reference from fleet's landing doc. Files: `skills/ship/SKILL.md` (modify), `skills/ship/references/train-mode.md` (create), `skills/fleet/references/landing.md` (modify).
 - **Phase 7 — Records and invariants docs**: the status.md train-entry template (titled by date + PR list, with a planned-gate and `identityProvable` column); in the provenance reference, the second emission point, the content-binding rule, the server-pin precondition for `passed` on squash, and `converged`'s widened reading; AGENTS.md's provenance paragraph ("written only by" → two emission points, one renderer, one evaluator; `converged` = "not asserted equal"). Files: `skills/ship/references/status-md-format.md` (modify), `docs/reference/commit-provenance.md` (modify), `AGENTS.md` (modify).
+
+- **Phase 8 — Train-run thinness metric** (§2.10 train side; PROPOSED):
+  - `ship-train verify` reports whether the train's combined run failed on a test the branch tier did not select, reading fleet's run record and the gate-cost plan's selection for each PR head.
+  - Until that selection exists, the field reads `unmeasured`, never zero.
+  - The branch tier itself is the gate-cost plan's, not built here.
+
+  Files: `scripts/lib/ship-train/verify.mjs` (modify), `scripts/lib/ship-train/commands.mjs` (modify), `tests/ship-train-verify.test.mjs` (modify).
 
 **Close-out (not a phase)**: `npm run skills:regenerate`, `npm run skills:check`, `npm run bundle:deps`, `npm run plans:index`, then `npm test`. The shared generated files in `.fleet.json` `hotFiles` are regenerated at rebase, never claimed.
 
@@ -543,7 +592,9 @@ A terminal stop never auto-retries.
   - Coupling: the seam and its only caller. `messageFor` (fleet) and `ship-train land` (ship) must be audited across the boundary, since the post-update-head timing is the correctness claim. **Blocked** until the `claude/fleet-unclaimed-work-impl` claim on `scripts/lib/fleet/**` is released. If `fleet claim` reports BLOCKED, stop and report; never `--override`.
 - **Cluster C** — Phases 6–7 — fix-gate: final
   - Coupling: the human-facing surface and the invariant docs. They describe A+B and must agree with the CLI as built. **Blocked** on the keyset PR's hold on `skills/ship/SKILL.md` and on the fleet claim for `skills/fleet/**`.
-- **Final gate**: the mandatory consolidated Gemini review over the union diff of A+B+C.
+- **Cluster D** — Phase 8 — fix-gate: yes
+  - Coupling: the metric reads fleet's combined-run record (needs Cluster B) and the branch tier's selection (needs the gate-cost plan), so it lands after both. **Proposed**: built only after a focused `/audit-plan` of §2.10's train side.
+- **Final gate**: the mandatory consolidated Gemini review over the union diff of A+B+C (+D when built).
 
 ## Audit Trail
 
