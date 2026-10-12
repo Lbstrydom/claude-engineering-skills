@@ -254,6 +254,55 @@ doing the work. On top of the participant rules:
    on a local push of the default branch. After a PR merges on GitHub, run the
    source repo's consumer sync and its sync-PR step for the affected consumers,
    or remind the user to.
+6. **Repo-prefixed session titles.** Title every session and chip
+   `<REPO>: <short task>`, with a PR number where one exists. Pick one short
+   prefix per repo and use it every time (e.g. `CES` for
+   claude-engineering-skills). Put the prefix in every `spawn_task` title, rename
+   an unprefixed session with `set_session_title`, and ask each other repo's
+   coordinator to follow the same convention. Why: with several repos' sessions
+   in one sidebar, unprefixed titles made it impossible to tell which repo a
+   session belonged to. The app generates worktree directory names, so the
+   title is the only place the prefix can go.
+7. **Archive sweep on every coordination pass.** Archive a desktop session (the
+   host's archive, which is reversible) when ALL of these hold: it is idle, its
+   PR is merged or closed (or its question is answered), its worktree is gone
+   or `archive-check` exits 0, and it is not pinned. This is not removing a
+   worktree, which stays the user's decision (see `fleet archive` above).
+   Measured 2026-10-12: the first sweep found 16 sessions idle since August
+   whose worktrees were already gone; nothing had swept them, because sessions
+   were archived only when a PR merged. Where the host offers a setting to
+   archive a session when its PR closes, it is the automatic complement.
+8. **Push lanes.** Every `/ship` appends to the shared status log, so pushes
+   that touch it go one at a time (the status lane): give one session the slot
+   ("your turn"), wait for its push to land, then hand the slot on. Test-,
+   docs- and config-only PRs run in a separate ride-along lane. A
+   work-in-progress push that adds no status-log entry needs no slot
+   (participant step 2), unless the launch prompt holds that session's pushes
+   for one, which then overrides step 2 for it. A branch already
+   on the remote merges the base in (a rebase needs a force-push, which the
+   status-integrity gate refuses); a branch never pushed may rebase. Merge as
+   soon as CI is green, pinned with `--match-head-commit <head>` (as
+   `references/landing.md` does). Do not use `gh pr merge --auto` on a repo
+   with no required checks: it merges at once, before CI finishes (observed
+   2026-10, #202). When path-filtered CI does not run, the local pre-push gate
+   is the evidence.
+9. **Confirm idle, not "told".** A message to a session that is mid-turn is
+   queued; it cannot stop what that session is doing. Before a quiet window
+   (e.g. handing the machine to another repo's coordinator), stop handing out
+   turns early and confirm each session reports not running (`isRunning: false`
+   in the session list). A sent hold message is not compliance.
+
+### Optional: a title reminder hook (Claude Code only)
+
+A repo can remind new sessions to title themselves with a project-level
+`SessionStart` hook in its committed `.claude/settings.json`, matcher
+`startup|clear`. The hook prints JSON whose `hookSpecificOutput.additionalContext`
+says "this session's title must start with `<PREFIX>: `; set it with
+`set_session_title`". Make it fail-open: on any error it prints nothing and
+exits 0. It is opt-in per repo, and it is Claude-Code-only acceleration, not
+cross-agent enforcement; other hosts rely on rule 6 and the participant block.
+Do not install it machine-wide in `~/.claude`: skills install repo-scoped, and
+one prefix cannot be right for every repo on the machine.
 
 ## Permission prompts
 
