@@ -52,7 +52,7 @@ describe('hooksPathDependents', () => {
     assert.match(v.dependents[0].remedy, /^git -C .*B.* config --worktree core\.hooksPath /);
     // The re-point target is the main checkout's OWN hooks directory (here git's default: nothing configured), not a guess.
     const mainHooks = path.join(fs.realpathSync.native(path.join(t.fx.repo, '.git')), 'hooks');
-    assert.ok(v.dependents[0].remedy.replace(/'/g, '').endsWith(mainHooks), v.dependents[0].remedy);
+    assert.ok(v.dependents[0].remedy.replace(/'/g, '').includes(`core.hooksPath ${mainHooks}  # the hooks directory the main checkout itself uses`), v.dependents[0].remedy);
     t.pointB(path.join(t.A, '.githooks'));
     assert.equal(t.verdict().dependents.length, 1, 'an absolute path into A is the same dependency');
     t.pointB(t.A);
@@ -70,10 +70,31 @@ describe('hooksPathDependents', () => {
     git(['config', '--worktree', 'core.hooksPath', path.join(t.fx.repo, '.githooks', 'sub', '..')], t.fx.repo);
     const expected = fs.realpathSync.native(path.join(t.fx.repo, '.githooks'));
     const remedy = t.verdict().dependents[0].remedy.replace(/'/g, '');
-    assert.ok(remedy.endsWith(`core.hooksPath ${expected}`), remedy);
+    assert.ok(remedy.includes(`core.hooksPath ${expected}  #`), remedy);
     // a main hooks directory that does not exist is no target: nothing would run there either
     git(['config', '--worktree', 'core.hooksPath', path.join(t.fx.repo, 'no-such-hooks')], t.fx.repo);
     assert.match(t.verdict().dependents[0].remedy, /move or re-install/);
+    // nor is one that resolves to a FILE
+    fs.writeFileSync(path.join(t.fx.repo, 'hooks-file'), 'not a directory\n');
+    git(['config', '--worktree', 'core.hooksPath', path.join(t.fx.repo, 'hooks-file')], t.fx.repo);
+    assert.match(t.verdict().dependents[0].remedy, /move or re-install/);
+  });
+
+  it('a hooks directory OUTSIDE A whose individual hook is a link into A is a dependency; an unreadable hooks directory refuses', () => {
+    const t = twoWorktrees();
+    const shared = path.join(tmpRoot('hooks-shared-'), 'hooks');
+    fs.mkdirSync(shared, { recursive: true });
+    fs.mkdirSync(path.join(t.A, '.githooks', 'pre-push'), { recursive: true });
+    t.pointB(shared);
+    assert.equal(t.verdict().ok, true, 'control: a plain shared hooks directory does not depend on A');
+    // A directory junction stands in for a hook link: a file symlink needs privilege on win32, and the walk treats both alike.
+    fs.symlinkSync(path.join(t.A, '.githooks', 'pre-push'), path.join(shared, 'pre-push'), 'junction');
+    const v = t.verdict();
+    assert.equal(v.dependents.length, 1, JSON.stringify(v));
+    assert.match(v.dependents[0].via, /pre-push$/);
+    const eacces = Object.assign(new Error('denied'), { code: 'EACCES' });
+    const blind = hooksPathDependents(t.A, listWorktrees(t.fx.repo).worktrees, { readdir: () => { throw eacces; } });
+    assert.ok(blind.unreadable.some((u) => /cannot be walked \(EACCES\)/.test(u.reason)), JSON.stringify(blind));
   });
 
   it('a dangling hooksPath into A (the directory not created yet) is still a dependency', () => {
@@ -180,7 +201,8 @@ describe('hooksPathDependents', () => {
       assert.ok(r.startsWith('git -C /w/main config --local core.hooksPath /w/main/.githooks '), r);
       assert.ok(!r.includes(`config --${scope}`), r);
     }
-    assert.equal(remedyFor({ worktree: '/w/B', scope: 'worktree' }, '/w/main', '/t'), 'git -C /w/B config --worktree core.hooksPath /t');
+    assert.ok(remedyFor({ worktree: '/w/B', scope: 'worktree' }, '/w/main', '/t').startsWith('git -C /w/B config --worktree core.hooksPath /t  # '));
+    assert.match(remedyFor({ worktree: '/w/B', scope: 'local' }, '/w/main', null), /^move or re-install/, 'no target, no command');
   });
 });
 

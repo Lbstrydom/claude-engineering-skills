@@ -99,7 +99,7 @@ export function isWithin(p, dir) {
  * Where a worktree's hooks are, as git itself answers, with the scope that set it and every entry the path walks.
  * @returns {{ok: true, scope: string, value: string, entries: string[], resolved: string} | {ok: false, reason: string}}
  */
-export function hooksLocation(worktree, { git = runGit, lstat, readlink } = {}) {
+export function hooksLocation(worktree, { git = runGit, lstat, readlink, readdir = fs.readdirSync } = {}) {
   // `-z --show-scope`: "<scope>\0<value>\0". Exit 1 is git's "unset at every scope": hooks are then the default.
   const cfg = git(['config', '--show-scope', '-z', '--type=path', '--get', 'core.hooksPath'], worktree);
   if (!cfg.ok && cfg.status !== 1) return { ok: false, reason: `core.hooksPath could not be read (${cfg.reason})` };
@@ -111,7 +111,15 @@ export function hooksLocation(worktree, { git = runGit, lstat, readlink } = {}) 
   const raw = loc.stdout.replace(/\r?\n$/, '');
   if (!raw) return { ok: false, reason: 'git named no hooks directory' };
   const abs = path.isAbsolute(raw) ? raw : `${worktree}${path.sep}${raw}`;
-  try { return { ok: true, scope: scope || 'unknown', value: value ?? raw, ...traversedEntries(abs, { lstat, readlink }) }; } catch (e) {
+  try {
+    const walked = traversedEntries(abs, { lstat, readlink });
+    // One level down: a hook in that directory (`pre-push`) may itself be a link into another worktree. Absent
+    // directory → no hooks; any other read failure throws, and refuses.
+    let names = [];
+    try { names = readdir(walked.resolved, { withFileTypes: true }); } catch (e) { if (e?.code !== 'ENOENT' && e?.code !== 'ENOTDIR') throw e; }
+    const hookLinks = names.filter((d) => d.isSymbolicLink()).flatMap((d) => traversedEntries(path.join(walked.resolved, d.name), { lstat, readlink }).entries);
+    return { ok: true, scope: scope || 'unknown', value: value ?? raw, entries: [...walked.entries, ...hookLinks], resolved: walked.resolved };
+  } catch (e) {
     return { ok: false, reason: `the hooks path ${JSON.stringify(raw)} cannot be walked (${e?.code ?? e?.message})` };
   }
 }
@@ -124,10 +132,12 @@ export function hooksLocation(worktree, { git = runGit, lstat, readlink } = {}) 
 export function remedyFor({ worktree, scope }, mainCheckout, target) {
   if (!target) return `move or re-install the hooks into a directory outside the worktree being removed, then point core.hooksPath (${scope} scope) at it — the main checkout has no existing hooks directory outside it, so there is no known-good one to point at`;
   const main = mainCheckout ?? worktree;
-  if (scope === 'worktree') return renderCommand(['git', '-C', worktree, 'config', '--worktree', 'core.hooksPath', target]);
-  if (scope === 'local') return renderCommand(['git', '-C', main, 'config', '--local', 'core.hooksPath', target]);
+  // A shell comment, so the line stays pasteable: what the command restores, and what it does NOT verify.
+  const note = "# the hooks directory the main checkout itself uses (its configuration, not a check that its gates are installed)";
+  if (scope === 'worktree') return `${renderCommand(['git', '-C', worktree, 'config', '--worktree', 'core.hooksPath', target])}  ${note}`;
+  if (scope === 'local') return `${renderCommand(['git', '-C', main, 'config', '--local', 'core.hooksPath', target])}  ${note}`;
   // A global or system value is shared with other repositories: override it for THIS repository only.
-  if (scope === 'global' || scope === 'system') return `${renderCommand(['git', '-C', main, 'config', '--local', 'core.hooksPath', target])} (a repository-local override; review the ${scope} setting itself)`;
+  if (scope === 'global' || scope === 'system') return `${renderCommand(['git', '-C', main, 'config', '--local', 'core.hooksPath', target])}  ${note}; a repository-local override — review the ${scope} setting itself`;
   return `re-point the hooks directory of ${worktree} (${scope} scope) outside the worktree being removed`;
 }
 
@@ -138,7 +148,7 @@ export function remedyFor({ worktree, scope }, mainCheckout, target) {
  * @returns {{ok: boolean, dependents: Array<{worktree: string, scope: string, value: string, via: string, remedy: string}>, unreadable: Array<{worktree: string, reason: string}>}}
  *   `ok` is true only when every other worktree was read and none depends on `target`.
  */
-export function hooksPathDependents(target, worktrees, { git = runGit, realpath = fs.realpathSync.native, lstat, readlink } = {}) {
+export function hooksPathDependents(target, worktrees, { git = runGit, realpath = fs.realpathSync.native, stat = fs.statSync, lstat, readlink, readdir } = {}) {
   const dependents = []; const unreadable = [];
   const done = () => ({ ok: !dependents.length && !unreadable.length, dependents, unreadable });
   let targetReal;
@@ -161,20 +171,21 @@ export function hooksPathDependents(target, worktrees, { git = runGit, realpath 
   const located = [];
   for (const w of worktrees) {
     if (w.bare || w.missing || samePath(w.path, target)) continue;
-    const loc = hooksLocation(w.path, { git, lstat, readlink });
+    const loc = hooksLocation(w.path, { git, lstat, readlink, readdir });
     if (!loc.ok) { unreadable.push({ worktree: w.path, reason: loc.reason }); continue; }
     let via;
     try { via = insideTarget(loc.entries); } catch (e) { unreadable.push({ worktree: w.path, reason: `the hooks path cannot be resolved (${e.message})` }); continue; }
     located.push({ w, loc });
     if (via) dependents.push({ worktree: w.path, scope: loc.scope, value: loc.value, via });
   }
-  // The re-point target: where the main checkout's own hooks resolve, when that EXISTS and does not depend on `target`.
-  // Otherwise none — never a guessed directory.
+  // The re-point target: where the main checkout's own hooks resolve, when that is an existing DIRECTORY and does not
+  // depend on `target`. Otherwise none — never a guessed directory.
   const mainCheckout = worktrees.find((x) => !x.bare)?.path ?? null;
   const mainLoc = located.find((x) => samePath(x.w.path, mainCheckout));
   let remedyTarget = null;
   if (mainLoc && !dependents.some((d) => samePath(d.worktree, mainCheckout))) {
-    try { remedyTarget = realpath(mainLoc.loc.resolved); } catch { remedyTarget = null; } // absent: nothing to point at
+    // Absent, a file, or unreadable: nothing to point at, so the remedy says what to do instead of naming a path.
+    try { const real = realpath(mainLoc.loc.resolved); if (stat(real).isDirectory()) remedyTarget = real; } catch { remedyTarget = null; }
   }
   for (const d of dependents) d.remedy = remedyFor(d, mainCheckout, remedyTarget);
   return done();
