@@ -14,6 +14,8 @@
  *                   are disclosed, never counted as conflicts, never blocking
  *  - `hideIdleAfterDays` the default `status` view hides an untracked branch with
  *                   no commit for this many days (default 14; `--all` shows it)
+ *  - `staleWorktreeDays` unregistered work idle longer than this many days is
+ *                   "possibly abandoned" in `status` and the footer (default 3)
  *
  * Validation is strict (`z.strictObject`): an unknown key is an error NAMING it.
  * Commands are argv arrays only — a shell string in a tier or a check is a
@@ -32,7 +34,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { runGit, gitCommonDir, repoToplevel } from './git-facts.mjs';
-import { DEFAULT_IDLE_DAYS, validateClaimPattern } from './overlap.mjs';
+import { DEFAULT_IDLE_DAYS, DEFAULT_STALE_WORKTREE_DAYS, validateClaimPattern } from './overlap.mjs';
 import { MAX_TIMER_MS, MERGE_METHODS, NoteSchema, TIER_NAME_RE, TierSchema as PersistedTierSchema, argvSchema, isInside } from './contracts.mjs';
 
 export { MERGE_METHODS };
@@ -83,6 +85,7 @@ const FleetFileSchema = z.strictObject({
   // matching and claim matching share one semantics.
   hotFiles: z.array(z.string(), { error: 'must be an array of path patterns' }).max(MAX_HOT_FILES).optional(),
   hideIdleAfterDays: z.number().int('must be a whole number of days').min(1).max(3650).optional(),
+  staleWorktreeDays: z.number().int('must be a whole number of days').min(1).max(3650).optional(),
   // Absent = "not declared" (inventory comes from rulesets, else unknown); [] = "this repo requires none".
   requiredChecks: z.array(z.string().min(1), { error: 'must be an array of check names' }).max(200).optional(),
   appendOnlyGlobs: patternList('path patterns'),
@@ -180,6 +183,7 @@ export function parseFleetConfig(raw, { hasPackageTest = false } = {}) {
       baseBranch: cfg.baseBranch ?? null, testCommand: tiers, testCommandSource,
       mergeMethod: cfg.mergeMethod ?? 'pr', mergeMethodSource: cfg.mergeMethod ? 'config' : 'default', checks,
       hotFiles: cfg.hotFiles ?? [], hideIdleAfterDays: cfg.hideIdleAfterDays ?? DEFAULT_IDLE_DAYS,
+      staleWorktreeDays: cfg.staleWorktreeDays ?? DEFAULT_STALE_WORKTREE_DAYS,
       ...(cfg.requiredChecks ? { requiredChecks: cfg.requiredChecks } : {}),
       appendOnlyGlobs: cfg.appendOnlyGlobs ?? [], restackIgnore: cfg.restackIgnore ?? [],
       archiveIgnore: cfg.archiveIgnore ?? [...DEFAULT_ARCHIVE_IGNORE], serialTimeoutMs: cfg.serialTimeoutMs ?? DEFAULT_SERIAL_TIMEOUT_MS,
@@ -242,9 +246,9 @@ function readJsonFile(file) {
  * @param {string} cwd
  * @param {{env?: NodeJS.ProcessEnv}} [opts]
  * @returns {{baseBranch: string, testCommand: object[], mergeMethod: string, checks: object[], worktreeRoot: string,
- *   hotFiles: string[], hideIdleAfterDays: number,
+ *   hotFiles: string[], hideIdleAfterDays: number, staleWorktreeDays: number,
  *   sources: {baseBranch: string, testCommand: string, mergeMethod: string, checks: string, worktreeRoot: string,
- *     hotFiles: string, hideIdleAfterDays: string}}}
+ *     hotFiles: string, hideIdleAfterDays: string, staleWorktreeDays: string}}}
  * @throws {ConfigError}
  */
 export function resolveConfig(cwd, { env = process.env } = {}) {
@@ -272,13 +276,14 @@ export function resolveConfig(cwd, { env = process.env } = {}) {
 
   return {
     baseBranch: base.baseBranch, testCommand: v.testCommand, mergeMethod: v.mergeMethod, checks: v.checks, worktreeRoot,
-    hotFiles: v.hotFiles, hideIdleAfterDays: v.hideIdleAfterDays,
+    hotFiles: v.hotFiles, hideIdleAfterDays: v.hideIdleAfterDays, staleWorktreeDays: v.staleWorktreeDays,
     ...(v.requiredChecks ? { requiredChecks: v.requiredChecks } : {}),
     appendOnlyGlobs: v.appendOnlyGlobs, restackIgnore: v.restackIgnore, archiveIgnore: v.archiveIgnore, serialTimeoutMs: v.serialTimeoutMs,
     sources: {
       baseBranch: base.source, testCommand: v.testCommandSource, mergeMethod: v.mergeMethodSource,
       checks: file.value?.checks ? 'config' : 'default', worktreeRoot: fromEnv ? 'env' : 'default',
       hotFiles: file.value?.hotFiles ? 'config' : 'default', hideIdleAfterDays: file.value?.hideIdleAfterDays ? 'config' : 'default',
+      staleWorktreeDays: file.value?.staleWorktreeDays ? 'config' : 'default',
     },
   };
 }

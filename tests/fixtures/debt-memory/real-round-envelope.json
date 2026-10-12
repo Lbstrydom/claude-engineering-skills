@@ -1,0 +1,101 @@
+{
+  "_note": "Trimmed from a real audit-code transcript (audit-code-1786194471-transcript-v2.json): rounds[].{round,verdict,_debtMemory} and changed_files only. The real envelope nests _debtMemory under rounds[], never at top level; its one non-empty suppressionContext entry (c054015e) predates the detailSnapshot field.",
+  "audit_mode": "code",
+  "changed_files": [
+    "scripts/build-audit-transcript.mjs",
+    "scripts/write-ledger-entries.mjs",
+    "scripts/lib/audit/transcript.mjs",
+    "scripts/lib/plan-paths.mjs",
+    "scripts/lib/language-profiles.mjs",
+    "scripts/lib/audit/detector.mjs",
+    "scripts/lib/plan-criteria-parser.mjs",
+    "scripts/lib/schemas.mjs",
+    "scripts/write-code-outcomes.mjs",
+    "scripts/audit-loop.mjs",
+    "scripts/lib/sync-inventory.mjs"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "verdict": "SIGNIFICANT_ISSUES",
+      "_debtMemory": {
+        "eventSource": "cloud",
+        "debtSuppressed": 0,
+        "debtReopened": 2,
+        "debtEntriesLoaded": 143,
+        "newlyEscalated": 0,
+        "suppressionContext": []
+      }
+    },
+    {
+      "round": 2,
+      "verdict": "NEEDS_FIXES",
+      "_debtMemory": {
+        "eventSource": "cloud",
+        "debtSuppressed": 0,
+        "debtReopened": 1,
+        "debtEntriesLoaded": 143,
+        "newlyEscalated": 0,
+        "suppressionContext": []
+      }
+    },
+    {
+      "round": 3,
+      "verdict": "NEEDS_FIXES",
+      "_debtMemory": {
+        "eventSource": "cloud",
+        "debtSuppressed": 0,
+        "debtReopened": 0,
+        "debtEntriesLoaded": 143,
+        "newlyEscalated": 0,
+        "suppressionContext": []
+      }
+    },
+    {
+      "round": 4,
+      "verdict": "SIGNIFICANT_ISSUES",
+      "_debtMemory": {
+        "eventSource": "cloud",
+        "debtSuppressed": 0,
+        "debtReopened": 0,
+        "debtEntriesLoaded": 143,
+        "newlyEscalated": 0,
+        "suppressionContext": []
+      }
+    },
+    {
+      "round": 5,
+      "verdict": "SIGNIFICANT_ISSUES",
+      "_debtMemory": {
+        "eventSource": "cloud",
+        "debtSuppressed": 1,
+        "debtReopened": 0,
+        "debtEntriesLoaded": 143,
+        "newlyEscalated": 0,
+        "suppressionContext": [
+          {
+            "topicId": "c054015e",
+            "category": "[Sustainability] DRY Violation",
+            "section": "scripts/lib/sync-inventory.mjs — CORE_ENTRY, CORE_NON_IMPORTABLE, CORE_ASSETS and related entry lists; scripts/sync-to-s",
+            "affectedFiles": [
+              "scripts/lib/sync-inventory.mjs"
+            ],
+            "deferredReason": "accepted-permanent"
+          }
+        ]
+      }
+    },
+    {
+      "round": 6,
+      "verdict": "SIGNIFICANT_ISSUES",
+      "_debtMemory": {
+        "eventSource": "cloud",
+        "debtSuppressed": 0,
+        "debtReopened": 0,
+        "debtEntriesLoaded": 143,
+        "newlyEscalated": 0,
+        "suppressionContext": []
+      }
+    }
+  ]
+}
