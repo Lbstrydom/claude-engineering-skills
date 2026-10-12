@@ -108,7 +108,13 @@ is delivered.
   session, no open PR, a readable PR list, and a worktree that passes the
   archive-check evidence (its "unpushed" commits excepted, because their content
   is proven on base). Idle branches, locked worktrees, the main checkout and the
-  current worktree are never listed. Every kept branch says why. A worktree or
+  current worktree are never listed. Nor is a worktree that another worktree's
+  `core.hooksPath` (its own `config.worktree` value or the inherited repo-level
+  one) resolves inside: once it is gone git runs no hooks there and says nothing.
+  The kept reason names the dependent worktree and the remedy,
+  `git -C <wt> config --worktree core.hooksPath <main checkout>/.githooks`; a
+  config git cannot read keeps it too, and `--apply` re-checks under the lock.
+  Every kept branch says why. A worktree or
   branch active within `staleWorktreeDays` (default 7) is skipped unless
   `--include-fresh`. `prune` also lists directories under the worktree root that
   git no longer knows (`empty`, `ignored-only`, `holds N files`), printing a
@@ -122,8 +128,10 @@ is delivered.
   tag holds it, re-checks everything under the registry lock, and only then
   removes the worktree; the branch is left alone. It refuses a live claim, a
   locked worktree, the main checkout, a partially staged or conflicted path, a
-  sensitive file, ignored data without `--discard-ignored`, an oversize tree, and
-  a worktree active within `staleWorktreeDays` without `--include-fresh`. It never
+  sensitive file, ignored data without `--discard-ignored`, an oversize tree,
+  a worktree another worktree's `core.hooksPath` points into (the same check and
+  remedy as `prune`, repeated under the lock), and a worktree active within
+  `staleWorktreeDays` without `--include-fresh`. It never
   pushes: the tag is local, and `status` reports archive tags as `local-only` or
   `remote`. **`--apply` deletes a worktree, so it runs only on the user's go-ahead**,
   after the session-list check above.

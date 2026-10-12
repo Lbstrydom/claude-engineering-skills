@@ -7,6 +7,8 @@
  *   resolve → refuse anything it cannot preserve → snapshot into a TEMPORARY index (the worktree, its real
  *   index and every ref untouched) → deterministic commit (fixed identity, HEAD's date) → tag → verify the tag's
  *   tree → under the registry lock: revalidate → `git worktree remove --force` → check the directory is gone.
+ * Planning and the revalidation both refuse while another worktree's `core.hooksPath` lies inside this one
+ * (`hooks-path-guard.mjs`): removing it would silently disable that worktree's hooks.
  *
  * Revalidation order is load-bearing, because hashing WRITES objects: `add -A` into even a temporary index puts
  * blobs into the shared object database. So the cheap, write-free checks come first — both status listings byte
@@ -30,6 +32,7 @@ import { samePath } from '../harness-paths.mjs';
 import { classifyPath, resolveAndClassify } from '../sensitive-paths.mjs';
 import { failed, ok, refused } from './commands.mjs';
 import { headOf, listWorktrees, repoToplevel, runGit } from './git-facts.mjs';
+import { hooksPathDependents, hooksPathRefusals } from './hooks-path-guard.mjs';
 import { archiveReport, resolveArchiveTarget } from './lifecycle.mjs';
 import { DEFAULT_STALE_WORKTREE_DAYS, isTerminalState } from './overlap.mjs';
 import { readSessions, transact } from './registry.mjs';
@@ -179,6 +182,8 @@ export function planArchive(ctx, target, { git = runGit, discardIgnored = false,
   const live = liveClaimOn(ctx.dir, rec.path, rec.branch);
   if (live) refusals.push(`a live claim covers it (${live})`);
   if (fs.existsSync(path.join(rec.path, '.gitmodules'))) refusals.push('.gitmodules exists: a submodule\'s inner changes cannot be snapshotted');
+  // Another worktree whose core.hooksPath lies inside this one would lose its hooks without a word (2026-10-12).
+  refusals.push(...hooksPathRefusals(hooksPathDependents(rec.path, wts.worktrees, { git }), rec.path));
   if (refusals.length) return out;
 
   const cap = capture(git, rec.path);
@@ -233,7 +238,7 @@ function liveClaimOn(dir, worktree, branch, sessions = null) {
  * Run the chain. Returns `{status, tag?, oid?, reason?, leftover?}`: `archived` (exit 0), `aborted` (exit 3,
  * tag and worktree kept), `failed` (exit 1).
  */
-export function applyArchive(ctx, plan, { git = runGit, tmpRoot = os.tmpdir() } = {}) {
+export function applyArchive(ctx, plan, { git = runGit, tmpRoot = os.tmpdir(), list = listWorktrees } = {}) {
   const wt = plan.target.worktree;
   const cap = plan.capture;
   const tmpDir = fs.mkdtempSync(path.join(tmpRoot, 'fleet-archive-'));
@@ -309,6 +314,11 @@ export function applyArchive(ctx, plan, { git = runGit, tmpRoot = os.tmpdir() } 
       if (!again.ok) return { abort: again.reason };
       if (again.oid !== tree) return { abort: 'file contents changed since the snapshot (working tree)' };
       if (!tagIsSnapshot(git, ctx.cwd, name, snap, tree)) return { abort: `tag ${name} no longer resolves to the verified snapshot commit` };
+      // A sibling may have pointed its hooks into this worktree since the plan: re-read every worktree's, fail closed.
+      const wtsNow = list(ctx.cwd);
+      if (!wtsNow.queried) return { abort: `the worktree list could not be re-read (${wtsNow.reason}), so no hooks dependency can be ruled out` };
+      const hooks = hooksPathRefusals(hooksPathDependents(wt, wtsNow.worktrees, { git }), wt);
+      if (hooks.length) return { abort: hooks.join('; ') };
       const rm = git(['worktree', 'remove', '--force', wt], ctx.cwd, { timeoutMs: 120_000 });
       return rm.ok ? { removed: true } : { removeFailed: rm.reason };
     });

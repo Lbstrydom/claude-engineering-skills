@@ -121,7 +121,10 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
   show the dry run and apply only on the user's go-ahead in chat. Before removing
   ANY worktree (`archive --apply`, or a command `prune` printed), check the
   desktop session list, pinned and dormant sessions included, for a session whose
-  cwd is that worktree; if one exists, do not remove it.
+  cwd is that worktree; if one exists, do not remove it. Both verbs also refuse
+  while another worktree's `core.hooksPath` points inside the one being removed:
+  git would then run no hooks there, without a word. Run the printed re-point
+  command first; a config git cannot read refuses too.
 - The footer's `FYI` line (unregistered work, from the last `status`) is
   information, not a `DO`: relay it; never claim, archive or prune on it alone.
 - Coordinating, not participating: the chip authority block, the session-list
