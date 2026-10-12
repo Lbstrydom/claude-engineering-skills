@@ -108,8 +108,11 @@ $r = Get-Content $env:TEMP	iming-full.json | ConvertFrom-Json; $c = $r.files | W
 ## 3. Using the preflight
 
 - Run it once, before the first push. It takes roughly the wall time of the
-  slowest remaining file plus start-up (*expected* ~4–8 minutes on an idle
-  machine; **first real run measured 483 s** under load).
+  slowest remaining file plus start-up. **Measured**: 274 s for the test step
+  (948 files, 18,626 tests, 0 failed) on the same machine that took 1,009 s for
+  the full run (73% less), against a derived floor of 218 s. The first real run,
+  under heavier load, took 483 s; there is no full run at that load to compare it
+  with, so quote the 274 s against 1,009 s pair, which shares a load.
 - It catches the guard tests (`tests/prepush-sandbox-honesty.test.mjs`,
   `tests/rmsync-retry-guard.test.mjs`) that targeted runs of the files you touched
   miss. That is its whole purpose: the measured case in §2 was exactly those two.
