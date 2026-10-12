@@ -107,6 +107,20 @@
 - **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of the pushed commit: 18,641 tests, 0 fail, 46 skipped, checks passed (the first attempt failed only on four load-timing tests while ~6 gates ran at once; re-run once, green). No consumer-side retrieval was run.
 - **Result**: unverified, blocked: not merged. The pre-push hook publishes to consumers only when the default branch is updated (since 2026-10-10), so this branch has reached no consumer; verify with `sync-isolation-verify.mjs` in a consumer's MAIN checkout after the PR merges and the source repo re-syncs.
 
+## 2026-10-12 — round 1 of a code audit honours a supplied `--diff` (no head-cut under /cycle)
+
+- **Defect** (measured 2026-10-11, /cycle --autonomous Cluster A, fleet handover work): R1 reported `coverage: PARTIAL — 7 of 10 changed source file(s) not fully audited`. `scripts/lib/fleet/handover.mjs` (54K chars) was read only to its first 10K, so the changed code (lines ~250+) was never seen. R2, given the same `--diff`, logged `[diff] Parsed 8 files, 29 hunks` and reached `coverage complete`.
+- **Cause**: `legacy-production-audit.mjs` parsed `--diff` only inside the `isR2Plus` block. /cycle's cluster recipe passes `--files`, which skips the VCS change record, so R1 had no hunk evidence and head-cut every changed file over `maxPerFile`. The tiered discovery read (`readDiscoveryCode`) had the same R2-only gate.
+- **Fix**: a supplied `--diff` is hunk evidence in every round, matching the plan's own D7 rule ("keyed on the declared diff, never the round"). R1 keeps its rubric and the plain reader, so there is no annotation and no suppression. A new row in the D7 table of `docs/plans/audit-hunk-window-coverage.md`. The /cycle recipe comment no longer calls `--diff` "annotation context only". `legacy-production-audit.mjs` is 2 lines shorter (size ratchet).
+- **Tests**: `tests/coverage-orchestrator.test.mjs` runs R1 with `--files` + `--diff` through the real orchestrator. With the diff the read is `read.state === 'windowed'` and lines 300–303 reach the model; without it the read stays `head-cut`. The new test fails on the old code and passes with the fix. `final-review-hunk-windows.test.mjs`'s "R1 ignores it" test now asserts the opposite, with a no-diff control.
+- **Audit**: `/audit-code --scope diff` R1 PASS M:1 (the test patch's hunk had no body; fixed). R2 H:0 M:0 L:0, converged. Gemini APPROVE (0 blocking, 0 debt).
+- **npm test** (local, linked worktree): 18,616 pass, 4 fail.
+  - rmsync-guard: fixed (it was my test).
+  - sync-target-path: a load flake; it passes alone.
+  - skills-artifact-freshness: compares the committed blob, so it clears on commit.
+  - prepush-installed-tree-identity: the worktree's stale `node_modules` (micromatch/braces), already noted in the 10-11 entry.
+- Backlog 2026-10-12T04:31Z: Q1 173c/47p (+420 aged) · Q2 113c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
 ## 2026-10-12 — gate-cost chip (#212): rebased onto main after #214, ready for review
 
 What #212 does and what was measured is in the combined entry "pre-push archive lane (PR #208) and the gate-cost chip (PR #212)" below; since then #212 was brought up to date with main (d65f1e8d) after #214 split `fleet-cli`, its skip list and runbook now say the post-split tree is NOT re-measured, and the plan is marked Complete pending merge.
