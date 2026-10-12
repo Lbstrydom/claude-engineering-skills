@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  runPlan, runMessage, runVerify, parsePrList, flagValue, hasOption, githubSlugFromUrl, readBasePinning, TrainRefusal,
+  runPlan, runMessage, runVerify, runLand, runSync, buildMessageFor, messageChildArgv, parsePrList, flagValue, hasOption, githubSlugFromUrl, readBasePinning, TrainRefusal,
 } from '../scripts/lib/ship-train/commands.mjs';
 import { composeSquashMessage } from '../scripts/lib/ship-train/provenance.mjs';
 import { ArgvError } from '../scripts/lib/cli-io.mjs';
@@ -379,6 +379,225 @@ describe('verify (stateless, over the fleet manifest)', () => {
     ctx.readTrain = (id) => { const t = orig(id); t.train.mergeMethod = 'direct-squash'; return t; };
     await assert.rejects(runVerify(ctx, { train: TRAIN }), /pr-mode trains only/);
   });
+
+  describe('sync (plan §2.1 T8)', () => {
+    const FINAL = oid('0');
+    /** The landed world plus a fake publication worktree: every call is recorded. */
+    function syncWorld(over = {}, fx = {}) {
+      const { ctx, notes } = landedWorld(over);
+      const calls = [];
+      const baseGit = ctx.git;
+      ctx.git = (args) => {
+        if (args[0] === 'rev-list' && args[1] === '--count') { calls.push(['git', ...args]); return `${fx.newer ?? 2}\n`; }
+        return baseGit(args);
+      };
+      ctx.gitIn = (d, args) => { calls.push(['gitIn', d, ...args]); return `${fx.tree ?? oid('b')}\n`; };
+      ctx.fixture = {
+        create: ({ name, rev }) => { calls.push(['create', name, rev]); return { dir: '/wt/ship-train' }; },
+        verify: ({ dir, expectedSha }) => { calls.push(['verify', dir, expectedSha]); return fx.verify ?? { ok: true, checks: [] }; },
+        remove: ({ dir }) => { calls.push(['remove', dir]); if (fx.removeThrows) throw new Error('EBUSY'); },
+      };
+      ctx.lease = async (train, fn) => { calls.push(['lease', train]); if (fx.leaseHeld) throw new TrainRefusal(`another ship-train sync of ${train} is running`, { trainId: train }); return fn(); };
+      ctx.runNode = (d, args) => { calls.push(['node', d, ...args]); const step = args[0].includes('sync-pr') ? 'sync-pr' : 'sync-to-repos'; return { status: fx.fail === step ? 1 : 0, output: `${step} output` }; };
+      return { ctx, notes, calls };
+    }
+    const names = (calls) => calls.map((c) => c[0]);
+
+    test('a clean train: re-verified, published from a detached worktree at the final merge OID, worktree removed, note written', async () => {
+      const { ctx, notes, calls } = syncWorld();
+      const env = await runSync(ctx, { train: TRAIN });
+      assert.equal(env.finalMergeOid, FINAL);
+      assert.deepEqual(calls.find((c) => c[0] === 'create'), ['create', `ship-train-${TRAIN}`, FINAL]);
+      assert.deepEqual(calls.filter((c) => c[0] === 'node').map((c) => c.slice(2)), [['scripts/sync-to-repos.mjs', '--no-prompt'], ['scripts/sync-pr.mjs']], 'sync-to-repos first, then sync-pr');
+      assert.equal(names(calls).at(-1), 'remove', 'the worktree is removed last');
+      assert.equal(env.cleanup, 'worktree removed');
+      assert.equal(env.newerOnDestination, 2);
+      assert.equal(notes.length, 1);
+      assert.equal(notes[0].sha, FINAL);
+      assert.match(notes[0].text, /2 newer commit\(s\) on main/);
+      assert.match(notes[0].text, /unverified \(blocked: sync-isolation-verify/);
+    });
+
+    test('verification is recomputed IN the invocation: a false claim blocks publication before any worktree exists', async () => {
+      const { ctx, notes, calls } = syncWorld({ msg202: msgFor(202, decision('passed')) });
+      await assert.rejects(runSync(ctx, { train: TRAIN }), (e) => e instanceof TrainRefusal && /publication blocked: provenance claims that do not hold: #202 \[--accept-provenance-mismatch\]/.test(e.message));
+      assert.equal(calls.length, 0, 'nothing was created, run or counted');
+      assert.equal(notes.length, 0);
+    });
+
+    test('--accept-provenance-mismatch proceeds and the note names what was acknowledged', async () => {
+      const { ctx, notes } = syncWorld({ msg202: msgFor(202, decision('passed')) });
+      const env = await runSync(ctx, { train: TRAIN, acks: { acceptProvenanceMismatch: true } });
+      assert.deepEqual(env.acknowledged, ['provenance mismatch: #202']);
+      assert.match(notes[0].text, /Acknowledged on this invocation: provenance mismatch: #202/);
+    });
+
+    test('an interleaved foreign commit blocks until --accept-interleaved, and the note names its oid', async () => {
+      const chain = [{ oid: oid('5'), subject: 'a' }, { oid: oid('7'), subject: 'foreign' }, { oid: oid('6'), subject: 'b' }, { oid: FINAL, subject: 'log' }];
+      const blocked = syncWorld({ chain });
+      await assert.rejects(runSync(blocked.ctx, { train: TRAIN }), /1 foreign commit\(s\) interleaved before the final merge \[--accept-interleaved\]/);
+      assert.equal(blocked.calls.length, 0);
+      const ok = syncWorld({ chain });
+      const env = await runSync(ok.ctx, { train: TRAIN, acks: { acceptInterleaved: true } });
+      assert.match(env.acknowledged[0], /interleaved: 777777777777/);
+    });
+
+    test('a worktree whose tree is not the final merge\'s is refused, and still removed', async () => {
+      const { ctx, notes, calls } = syncWorld({}, { tree: oid('f') });
+      await assert.rejects(runSync(ctx, { train: TRAIN }), /publication worktree's tree .* is not the final merge's/);
+      assert.equal(calls.some((c) => c[0] === 'node'), false, 'no sync tool ran against the wrong tree');
+      assert.equal(names(calls).at(-1), 'remove');
+      assert.equal(notes.length, 0);
+    });
+
+    test('a worktree fixture that fails its own verification is refused, and still removed', async () => {
+      const { ctx, calls } = syncWorld({}, { verify: { ok: false, checks: [{ ok: false, detail: 'HEAD is not the pinned sha' }] } });
+      await assert.rejects(runSync(ctx, { train: TRAIN }), /not at 000000000000: HEAD is not the pinned sha/);
+      assert.equal(names(calls).at(-1), 'remove');
+    });
+
+    test('sync-to-repos failing stops before sync-pr, removes the worktree, writes no note; a re-run starts from owned state', async () => {
+      const fx = { fail: 'sync-to-repos' };
+      const failing = syncWorld({}, fx);
+      const err = await runSync(failing.ctx, { train: TRAIN }).then(() => null, (e) => e);
+      assert.ok(err instanceof TrainRefusal);
+      assert.match(err.message, /sync-to-repos exited 1; re-run sync/);
+      assert.equal(failing.calls.filter((c) => c[0] === 'node').length, 1, 'sync-pr did not run');
+      assert.equal(err.details.cleanup, 'worktree removed');
+      assert.equal(failing.notes.length, 0);
+      // The retry is the SAME world (same ctx, same recorded calls); only the cause of the failure is gone.
+      fx.fail = null;
+      const env = await runSync(failing.ctx, { train: TRAIN });
+      assert.deepEqual(env.steps.map((s) => s.name), ['sync-to-repos', 'sync-pr']);
+      assert.equal(failing.calls.filter((c) => c[0] === 'create').length, 2, 'each attempt made its own worktree');
+      assert.equal(failing.calls.filter((c) => c[0] === 'remove').length, 2, 'and removed it');
+      assert.equal(failing.calls.filter((c) => c[0] === 'node').length, 3, 'one tool run failed, then both ran on the retry');
+      assert.equal(failing.notes.length, 1, 'the note exists only for the publication that completed');
+    });
+
+    test('sync-pr failing AFTER sync-to-repos succeeded reports both steps and writes no note', async () => {
+      const { ctx, notes } = syncWorld({}, { fail: 'sync-pr' });
+      const err = await runSync(ctx, { train: TRAIN }).then(() => null, (e) => e);
+      assert.deepEqual(err.details.steps, [{ name: 'sync-to-repos', status: 0 }, { name: 'sync-pr', status: 1 }]);
+      assert.equal(notes.length, 0, 'the verification note is only written for a publication that completed');
+    });
+
+    test('the process dying MID-publication (a throw, not an exit code) still removes the worktree and rethrows', async () => {
+      const { ctx, calls, notes } = syncWorld();
+      const boom = new Error('simulated process death');
+      ctx.runNode = (d, args) => { calls.push(['node', d, ...args]); throw boom; };
+      await assert.rejects(runSync(ctx, { train: TRAIN }), (e) => e === boom);
+      assert.equal(names(calls).at(-1), 'remove', 'the worktree is removed even when a sync tool dies');
+      assert.equal(notes.length, 0);
+    });
+
+    test('a worktree that cannot be removed is REPORTED, never swallowed, and never masks the original failure', async () => {
+      const ok = syncWorld({}, { removeThrows: true });
+      assert.match((await runSync(ok.ctx, { train: TRAIN })).cleanup, /worktree NOT removed \(EBUSY\)/);
+      const bad = syncWorld({}, { removeThrows: true, fail: 'sync-pr' });
+      const err = await runSync(bad.ctx, { train: TRAIN }).then(() => null, (e) => e);
+      assert.match(err.message, /sync-pr exited 1/);
+      assert.match(err.details.cleanup, /NOT removed/);
+    });
+
+    test('a second concurrent sync of the same train is refused BEFORE it can create or remove any worktree', async () => {
+      const { ctx, calls, notes } = syncWorld({}, { leaseHeld: true });
+      await assert.rejects(runSync(ctx, { train: TRAIN }), /another ship-train sync of .* is running/);
+      assert.deepEqual(calls.filter((c) => ['create', 'remove', 'node'].includes(c[0])), [], 'the holder\'s worktree was never touched');
+      assert.equal(notes.length, 0);
+    });
+
+    test('a train that is not on the destination yet is refused with no override', async () => {
+      const { ctx, calls } = syncWorld({ chain: [{ oid: oid('7'), subject: 'foreign only' }] });
+      await assert.rejects(runSync(ctx, { train: TRAIN, acks: { acceptInterleaved: true, acceptProvenanceMismatch: true } }), /publication blocked: .*no train merge is on the destination \[no override\]/);
+      assert.equal(calls.length, 0);
+    });
+  });
+});
+
+describe('land (plan §2.1 T5)', () => {
+  const TRAIN = 't-20261011233000-0001';
+  const HEAD = oid('1');
+  const goodOut = { ok: true, verb: 'message', pr: 202, headOid: HEAD, subject: 'fix(store): x (#202)', body: 'body\n\nAI-Skill: ship\n' };
+  const ctxWith = (over = {}) => {
+    const calls = [];
+    const ctx = {
+      cwd: dir,
+      repo: () => REPO,
+      readTrain: (id) => (id === TRAIN ? { ok: true, train: { trainId: TRAIN, mergeMethod: 'pr', destination: { remote: 'origin', ref: 'refs/heads/main' }, sources: [{ repo: REPO, prNumber: 202 }] } } : { ok: false, reason: 'no such train' }),
+      messageSync: over.messageSync ?? (() => goodOut),
+      serial: {
+        approve: (a) => { calls.push(['approve', a]); return over.result ?? { landed: true, run: { steps: [{ prNumber: 202, head: HEAD, mergedOid: oid('5') }] } }; },
+        resume: (a) => { calls.push(['resume', a]); return over.result ?? { landed: true, run: { steps: [{ prNumber: 202, head: HEAD, mergedOid: oid('5') }] } }; },
+      },
+    };
+    return { ctx, calls };
+  };
+  const o = { composer: 'claude', overrides: { waive: [], allowUnaudited: [], endOfDay: false } };
+
+  test('the message child is the same `message` verb a human previews with, and carries only this PR\'s overrides', () => {
+    assert.deepEqual(messageChildArgv({ pr: 202, composer: 'claude', overrides: { waive: [], allowUnaudited: [], endOfDay: false } }), ['message', '--pr', '202', '--composer', 'claude', '--json']);
+    assert.deepEqual(
+      messageChildArgv({ pr: 203, composer: 'claude', overrides: { waive: [203, 9], allowUnaudited: [203], endOfDay: true } }),
+      ['message', '--pr', '203', '--composer', 'claude', '--json', '--waive', '203', '--allow-unaudited', '203'],
+    );
+  });
+
+  test('buildMessageFor hands back the decided subject and body for the head serial is merging', () => {
+    const { ctx } = ctxWith();
+    assert.deepEqual(buildMessageFor(ctx, o)({ source: { prNumber: 202 }, headOid: HEAD }), { subject: goodOut.subject, body: goodOut.body });
+  });
+
+  test('buildMessageFor stops — never merges unmessaged — on a refusal, a child that refused, a throw, a malformed answer, or a message decided on another head', () => {
+    const run = (messageSync, headOid = HEAD) => buildMessageFor(ctxWith({ messageSync }).ctx, o)({ source: { prNumber: 202 }, headOid });
+    assert.match(run(() => ({ ok: true, pr: 202, headOid: HEAD, refusal: { code: 'no-run', message: 'no bound run' } })).stop, /^no-run: no bound run$/);
+    assert.match(run(() => ({ ok: false, refused: true, message: 'fleet status reports no usable base branch' })).stop, /^refused: fleet status/);
+    assert.match(run(() => { throw new Error('child exited 1'); }).stop, /could not decide the squash message: child exited 1/);
+    assert.match(run(() => ({ ok: true, headOid: HEAD })).stop, /returned no subject and body/);
+    assert.match(run(() => goodOut, oid('2')).stop, /decided on head 111111111111, but serial is merging 222222222222/);
+  });
+
+  test('approve vs resume: --resume re-enters the stopped run, a fresh land approves; the callback is always passed', async () => {
+    const a = ctxWith();
+    const env = await runLand(a.ctx, { train: TRAIN, ...o });
+    assert.equal(a.calls[0][0], 'approve');
+    assert.equal(typeof a.calls[0][1].messageFor, 'function');
+    assert.equal(a.calls[0][1].acceptRerun, false);
+    assert.deepEqual(env.merges, [{ pr: 202, mergedHead: HEAD, mergeCommit: oid('5') }]);
+    assert.equal(env.next, `node scripts/ship-train.mjs verify --train ${TRAIN}`);
+    const r = ctxWith();
+    await runLand(r.ctx, { train: TRAIN, resume: true, ...o });
+    assert.equal(r.calls[0][0], 'resume');
+    assert.equal(typeof r.calls[0][1].messageFor, 'function');
+    const rr = ctxWith();
+    await runLand(rr.ctx, { train: TRAIN, acceptRerun: true, ...o });
+    assert.equal(rr.calls[0][1].acceptRerun, true);
+  });
+
+  test('a serial stop is a refusal that says it is resumable and where it stopped', async () => {
+    const { ctx } = ctxWith({ result: { ok: false, reason: 'PR #203: no-run: no bound run', resumable: true, run: { steps: [{ prNumber: 202, step: 'merged' }, { prNumber: 203, step: 'wait' }] } } });
+    const err = await runLand(ctx, { train: TRAIN, ...o }).then(() => null, (e) => e);
+    assert.ok(err instanceof TrainRefusal);
+    assert.match(err.message, /PR #203: no-run/);
+    assert.deepEqual(err.details, { trainId: TRAIN, resumable: true, stoppedAt: 203 });
+  });
+
+  test('fleet refusing to approve (not approvable, shallow clone, …) surfaces its own reason', async () => {
+    const { ctx } = ctxWith({ result: { ok: false, code: 'refused', reason: 'train t-x: result is red' } });
+    await assert.rejects(runLand(ctx, { train: TRAIN, ...o }), /train t-x: result is red/);
+  });
+
+  test('an unknown train, a non-pr train and a foreign repo are refused before anything lands', async () => {
+    const { ctx, calls } = ctxWith();
+    await assert.rejects(runLand(ctx, { train: 't-20261011233000-9999', ...o }), /no such train/);
+    const orig = ctx.readTrain;
+    ctx.readTrain = (id) => { const t = orig(id); t.train.mergeMethod = 'direct-squash'; return t; };
+    await assert.rejects(runLand(ctx, { train: TRAIN, ...o }), /land pr-mode trains only/);
+    ctx.readTrain = (id) => { const t = orig(id); t.train.sources[0].repo = 'someone/else'; return t; };
+    await assert.rejects(runLand(ctx, { train: TRAIN, ...o }), /was built for someone\/else/);
+    await assert.rejects(runLand(ctx, { ...o }), ArgvError);
+    assert.equal(calls.length, 0, 'serial was never called');
+  });
 });
 
 describe('the real CLI process', () => {
@@ -396,7 +615,9 @@ describe('the real CLI process', () => {
     assert.match(r.out, /^OK$/m);
   });
   test('an unknown verb and an unknown flag both exit 2', () => {
-    assert.equal(node(['land']).code, 2);
+    assert.equal(node(['frobnicate']).code, 2);
+    assert.equal(node(['land']).code, 2, 'land without --composer is an argv error');
+    assert.equal(node(['sync']).code, 2, 'sync without --train is an argv error');
     assert.equal(node(['plan', '--frobnicate']).code, 2);
   });
 });

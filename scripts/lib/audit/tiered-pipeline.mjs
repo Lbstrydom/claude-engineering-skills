@@ -96,9 +96,9 @@ import { routePreExistingIndependent } from './stage0-debt-routing.mjs';
  */
 /**
  * The discovery read: the changed files, rendered through the SAME windowed reader and hunk map the legacy passes use
- * (docs/plans/final-review-hunk-windows.md D6). The map follows the legacy rule — the R1 change record, or an R2+
- * `--diff` — and is handed to the reader only when it applies; with no evidence the read options are exactly the
- * historical `{maxPerFile: 8000, maxTotal: 100000}`.
+ * (docs/plans/final-review-hunk-windows.md D6). The map follows the legacy rule — a supplied `--diff` in ANY round,
+ * else the R1 change record — and is handed to the reader only when it applies; with no evidence the read options are
+ * exactly the historical `{maxPerFile: 8000, maxTotal: 100000}`.
  *
  * @param {object} ctx - the audit run context
  * @param {{read?: Function, parseDiff?: Function}} [deps] - injected for tests
@@ -106,7 +106,7 @@ import { routePreExistingIndependent } from './stage0-debt-routing.mjs';
  */
 export function readDiscoveryCode(ctx, { read = readFilesAsContextDetailed, parseDiff = parseDiffFile } = {}) {
   const hunkMap = buildRoundHunkMap({
-    diffMap: (ctx.round ?? 1) >= 2 && ctx.diffFile ? parseDiff(ctx.diffFile) : null,
+    diffMap: ctx.diffFile ? parseDiff(ctx.diffFile) : null,
     coverageChanged: ctx.coverageChanged ?? null, changedFiles: ctx.changedFiles || [], fileFilter: ctx.fileFilter ?? null,
   });
   const opts = { maxPerFile: 8000, maxTotal: 100000, ...(hunkMap.applicable ? { hunksFor: hunkMap.hunksFor } : {}) };

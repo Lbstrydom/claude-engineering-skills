@@ -37,3 +37,27 @@ describe('reassess-gaps preserves ambiguity-driven needs-review status', () => {
       'inferring ambiguity AFTER overwriting req.gap would read the NEW gap, defeating the whole inference');
   });
 });
+
+describe('every command that WRITES the ledger loads its prior strictly', () => {
+  // A corrupt committed ledger.json read leniently is an EMPTY prior, and the
+  // write that follows overwrites the committed ledger with fresh candidates
+  // alone. The CLI refuses to run outside the repo root, so it cannot be driven
+  // from a scratch directory; the wiring is pinned in source and the strict
+  // loader's own behaviour is unit-tested in requirements-ledger.test.mjs.
+  const callLines = SRC.split('\n').filter((l) => l.includes('loadLedger({'));
+  const blockOf = (from, to) => SRC.slice(SRC.indexOf(from), SRC.indexOf(to));
+
+  it('cmdReconcile and cmdReassessGaps pass strict:true', () => {
+    const reconcileBlock = blockOf('async function cmdReconcile', 'async function cmdReassessGaps');
+    const reassessBlock = blockOf('async function cmdReassessGaps', 'function cmdIndex');
+    for (const [name, block] of [['cmdReconcile', reconcileBlock], ['cmdReassessGaps', reassessBlock]]) {
+      assert.ok(block.length > 100, `${name} must be locatable in source`);
+      assert.ok(block.includes('loadLedger({ baseDir, strict: true })'), `${name} writes the ledger, so it must load its prior strictly`);
+    }
+  });
+
+  it('NEGATIVE CONTROL — the read-only commands stay lenient (an unusable ledger degrades them, it must not abort)', () => {
+    assert.ok(callLines.length >= 4, `expected the CLI's loadLedger call sites, found ${callLines.length}`);
+    assert.ok(callLines.filter((l) => !l.includes('strict')).length >= 2, 'index and render must keep the never-throw contract');
+  });
+});

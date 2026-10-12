@@ -107,6 +107,81 @@
 - **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of the pushed commit: 18,641 tests, 0 fail, 46 skipped, checks passed (the first attempt failed only on four load-timing tests while ~6 gates ran at once; re-run once, green). No consumer-side retrieval was run.
 - **Result**: unverified, blocked: not merged. The pre-push hook publishes to consumers only when the default branch is updated (since 2026-10-10), so this branch has reached no consumer; verify with `sync-isolation-verify.mjs` in a consumer's MAIN checkout after the PR merges and the source repo re-syncs.
 
+### Consumer Verification (previous ship)
+- **Commit**: 1b8447c6d1c0831a9307bbd5f4dbee7278d8c35f on `fix/cli-contract-hardening-flags-emit-replay` (PR #204, NOT yet merged to `main`); it contains the ship commit and a merge of `origin/main` (8874e710).
+- **Retrieval**: the pre-push hook ran the full `check` in a clean sandbox of the pushed commit ("Pre-push checks in a clean checkout of 1b8447c6"): 18,969 tests, 18,923 pass, 0 fail, 46 skipped, checks passed, and `db-suites-gate: DB suites passed in 44.6s`. The first attempt (merge 40792a3a) was blocked by one real test, `check-status-log-integrity` "a real ancestor exits 0", because my merge left drained notes outside the status.md preamble; fixed and re-pushed. No separate `npm ci` re-install was done, and no consumer-side retrieval was run.
+- **Result**: unverified, blocked: not merged. A branch push publishes nothing to consumers (the consumer sync runs only when the default branch is updated); verify with `sync-isolation-verify.mjs` in a consumer's MAIN checkout after the PR merges and the source repo re-syncs.
+- **Commit**: ac80d55743c74b3084ceeeadcccf12c6ffcee299 on `claude/dreamy-hypatia-5978fa` (PR #210, not yet merged to `main`; merge commit 1a0399a9 of origin/main d65f1e8d, runbook commit ac80d557)
+- **Retrieval**: pushed commit: the pre-push hook ran `npm run check` in a clean checkout of exactly ac80d557 (19,213 tests, 19,167 pass, 0 fail, 46 skipped, 516 s); no separate post-push re-run (it would repeat the same command on the same sha). Synced consumer bundle: not run. Skill manifest: no skill file changed by this PR.
+- **Result**: pushed commit verified by the gate; synced bundle unverified (blocked: the PR is not merged, and consumers sync only from the default branch). Re-verify with `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in each consumer's MAIN checkout after the merge and the source repo's re-sync.
+- **Commit**: 638980bbf48e09c708ca5c0dc9170e555df5c5d0 on `fleet/make-the-pre-push-gate-s-per-f-2dab` (PR #212, open; NOT merged). Plain fast-forward from fcfd42be; it merges origin/main 0aff90cc (#204), carries the #214 reconcile and the plan Complete/log, and the status.md pointer entry.
+- **Retrieval**: the pre-push hook ran `check` in a clean checkout of exactly this sha (not a second run by me): 19,396 tests, 19,350 passed, 0 failed, 46 skipped, 476 s. The first attempt (09e4a14c) was blocked by one test: tests/dashboard-home-status-entries.test.mjs, because the Backlog line in my status.md pointer entry carried a trailing command reference that parseBacklogLine cannot round-trip; fixed by making it the bare snapshot output (cdb4b919).
+- **Result**: verified for the pushed commit (the hook's clean-checkout run). The synced consumer bundle is unverified (blocked: not merged) - a feature-branch push publishes nothing to consumers; sync from an up-to-date main after #212 merges. GitHub: MERGEABLE, checks unit and db-suite still running when this was written.
+
+## 2026-10-12 — keyset paging for the two /ship-nudge readers (#218): rebased from an archive tag, audited, five rounds of fixes
+
+- **Defect** (audit finding 5fbd8fec): `/ship` verifies a row and then closes it, and every close removes a row from `unlocked_fixes` / `unremediated_acceptances`. `--offset` counts positions in a set that has since shrunk, so page 2 skipped one unread row per row closed, while `skills/ship/SKILL.md` promised pages "neither repeat nor skip a row".
+- **Change**: `list-unlocked-fixes` and `list-unremediated-acceptances` return `nextCursor` and accept `--after <cursor>` (base64url, kind-tagged, value-domain validated; `--after` with `--offset` is `BAD_INPUT`). The store continues strictly after the cursor in each reader's total order and binds the timestamp as `::text`, so a microsecond tie neither repeats nor skips. `--offset` still works. `skills/ship/SKILL.md` documents the cursor walk with a real, decodable example.
+- **Provenance**: the change is commit `92eb975a`, abandoned in the archived worktree `archive/worktree-agent-aa03e61f5a6524a00` and rebased onto main. A same-subject copy on `archive/queue-burndown-2026-10-02` (`991bf21e`) differs only by regenerated skill files; the landing coordination assigned the `aa03e61f` copy to this PR.
+- **Audit** (run by the coordinator on this branch; I did not run these rounds): R1 found one HIGH, four MEDIUMs and a LOW; R2 on the fix commit PASS 0/0/0; R3 on the whole PR found one MEDIUM (a cursor timestamp with no UTC offset is read in two timezones), fixed; R4 PASS 0/0/0; R5 raised one LOW (the calendar round-trip dropped the year's zero padding), fixed. Fixed from R1: **H1** a failed query was swallowed into `[]`, which a cursor walk reads as "no more rows", so the readers take an opt-in `strict` and the two list commands raise `STORE_READ_FAILED` (exit 1, no `nextCursor`; the recommend-skills and lock-with-test callers keep the never-throw degrade); **M2** `UUID` / `isPgTimestamptzText` moved to `scripts/lib/cross-skill/validators.mjs`; **L1** the SKILL.md example cursor decoded to nothing. R1 M1, M3 and M4 were left unfixed on the coordinator's disposition; their rulings are in the coordinator's audit records, not repeated here. Gemini final review (run `audit-code-1791807588861-64124`): R1 CONCERNS with one HIGH (G1), ruled a false positive because `ship.mjs` already passes the clamped `resolveNudgePage` limit to `nextCursorFor`; R2 APPROVE, 0 blocking, one LOW (`tests/ship-nudge-keyset-db.test.mjs` is missing from `postgres-parity.yml`'s `paths` filters, so a PR touching only that file would not trigger the workflow), captured as debt `a06f58c2` and deliberately not fixed in this PR.
+- **Tests**: `tests/ship-nudge-keyset.test.mjs` (20: cursor round-trips and refusals; first-page and continuation-page failures for both commands, red with the wrapper reverted; a probe that decodes every `--after` example in SKILL.md), `tests/cross-skill-validators.test.mjs` (7: offset required, low years, the three decoders), and `tests/ship-nudge-keyset-db.test.mjs` on real Postgres (seeded `fixed_at` / `accepted_at` ties: OFFSET skips after closing page 1 and the cursor does not, across every SQL branch; plus a real `22007` that returns `[]` by default and throws under `strict`). The DB suite is enrolled once each in `scripts/db-test-container.mjs` and `.github/workflows/postgres-parity.yml`. Each negative control was seen red before restoring (one of my first revert scripts silently did nothing, so it was discarded and redone from a script file).
+- **Measured**: full `npm test` at `e6c832dd`: 19,318 tests, 19,271 pass, 1 fail, 46 skipped; the failure is `linter-msbuild` "on timeout the child AND its grandchild are gone", a process-tree timing test that passed 45/45 on three isolated reruns and shares no code with this diff. Docker DB lane (`npm run db:local`, before the last amend): 469 + 52 + 3 pass, 0 fail. All 33 static gates pass on `74f07419` and `skills:check` after the merge. Live: both commands against the real store return a working `nextCursor` (235 unlocked, 186 unremediated acceptances).
+- **Caught on the way**: my first commit passed the reader to `readPageStrict` by reference and broke the static guard in `cross-skill-unlocked-scope.test.mjs`, which wants a direct reader call. I made the call visible rather than loosen the guard, and amended the unpushed commit.
+- **Merge**: `git merge origin/main` (not a rebase, so the pre-push status-integrity check holds). The only conflict was the generated `skills.manifest.json`: took main's and regenerated.
+- **Not done / residual**: the `final-review-pending` example in `skills/ship/SKILL.md` (Step 6.7) still uses the same non-decoding placeholder cursor; it is outside this PR. Not merged; the merge needs the user's separate yes.
+- **Gate disposition**: `AI-Gate not-run`. The audit evidence lives in the coordinator's session, so no worktree holds an `.audit/last-audit-run.json`, and the marker was not hand-written; a verified `converged` was therefore not available. The code commits (`a599cf7d`, `e6c832dd`, `9f504f30`, `74f07419`) were made with plain `git commit` and carry no `AI-*` trailers; this entry's commit is the one `ship-commit.mjs` wrote.
+- **Other signals** (non-blocking): persona-test open P0 0, open P1 1; regression-lock gap 188 code fixes unlocked (+47 plan) and 3 dangling locks; 186 unremediated acceptances (54 permanently accepted); auto-reconcile examined 1, 0 resolved, 1 uncertain; the `storyline` store is behind this revision's migrations (6 constraints, repair with its owner DSN); 2 upstream reports open (both wine-cellar-app).
+- Backlog 2026-10-12T13:21Z: Q1 188c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt 335 cloud/1 local (0 spilled) · upstream 2
+
+### Next Steps
+- PR #218: push, read the hook's clean-checkout result, then merge on the user's separate yes (squash).
+- Follow-up: the Step 6.7 placeholder cursor in `skills/ship/SKILL.md`.
+
+## 2026-10-12 — Ship trains Cluster B: serial messageFor seam plus land and sync verbs (#219)
+
+### Changes
+- **Fleet serial landing takes an optional `messageFor` seam** (`scripts/lib/fleet/serial.mjs`). It is called once per PR immediately before its merge, on the exact head being merged (after any update-branch), with the destination tip read at that moment. It returns `{subject, body}`, `{stop}` or nothing. Absent, the merge argv is byte-identical. A throw, an empty or multi-line subject, a NUL or any other shape stops the run, so a caller that asked for a message never gets an unmessaged merge by accident. A `{stop}` ends the run before that merge; `--resume` decides again on the then-current head.
+- **The requirement is durable (audit R1 M4, contested by rebuttal, sustained by GPT).** An approval that supplies a provider records an immutable `messageRequired: true` in fleet's own serial record. A raw `fleet land --resume` without a provider, or a provider that answers nothing, stops before any merge. No body, decision or receipt is stored; it is a fixed constraint of the run, owned by the runner that enforces it.
+- **Message files are cleaned up.** The per-PR file is removed in a `finally` right after the `gh pr merge` call; a file left by a process that died is swept (under the run lease) when the next run starts, including on a resume that finds the PR already merged; a sweep that cannot finish stops the run with the reason. Both `rmSync` sites use `retrySync` (the first push was blocked by `rmsync-retry-guard`).
+- **`ship-train land`** (`--train`, `--resume`, `--accept-rerun`, `--composer`) drives that landing. The callback decides each message in a child running the same `message` verb a human previews with (fleet's loop is synchronous, the store query is not) and refuses a message decided on another head. The child has a 5 minute deadline.
+- **`ship-train sync`** re-verifies in the same invocation, then publishes the final merge OID from a clean detached worktree: it checks the tree, runs `sync-to-repos` then `sync-pr`, and always removes the worktree. It runs under a per-train exclusive lease (a second concurrent sync is refused before it can touch the first's worktree). Rollback protection is `sync-to-repos`'s own; `--allow-rollback` is never passed. Tool runs have a 30 minute deadline. The Step 6.8 note is written only for a publication that completed.
+- **Fault injection over REAL fleet serial landing** (`tests/ship-train-recovery.test.mjs`): death before and after a merge submission, a refusal that appears between attempts, and strict protection removed between attempts (the retry claims `converged`, not the `passed` the first attempt would have). The decision under test is the real `decideTrainGate` + `composeSquashMessage`; only the store read is canned.
+- **Audit**: `/audit-code` R1 H1 M9 L1 (7 accepted, 4 dismissed with reasons), R2 M1 (fixed), **R3 and R4 PASS 0/0/0, coverage complete**, Gemini final review **APPROVE**. Every new guard was proven red-then-green against a mutation. Pre-push gate on the pushed head: 19331 tests, 19285 pass, 0 fail, 46 skipped.
+
+### Files Affected
+- `scripts/lib/fleet/serial.mjs` — the seam, the `messageRequired` marker, the sweep.
+- `scripts/lib/ship-train/commands.mjs`, `scripts/ship-train.mjs` — `land` and `sync`, the lease, the child deadlines.
+- `tests/helpers/fleet-serial-fx.mjs` (new, fixtures shared by the serial and recovery suites), `tests/fleet-serial.test.mjs`, `tests/ship-train-cli.test.mjs`, `tests/ship-train-recovery.test.mjs` (new).
+- `docs/plans/ship-trains.md` — Phase 4/5 amendments and the Cluster B unblock note.
+
+### Decisions Made
+- **A behaviour change to a persisted contract, flagged in the PR body.** `messageRequired` is an additive optional field in fleet's strict v1 serial record, so a fleet older than this change refuses to read such a record. Only runs started by `ship-train land` write it; a consumer on stale synced tooling would refuse those runs until the next sync. This is why #219 needs this `/ship` before merge.
+- **`messageFor` stays synchronous; the store query rides a child process** rather than turning fleet's serial loop (a file lease plus blocking sleeps) async.
+- **No restack of #219** (coordinator ruling): GitHub reports it CLEAN, a force-push is not wanted, and if it goes DIRTY main is merged in instead.
+
+### Next Steps
+- Merge #219 on the user's go-ahead, then sync consumers from an up-to-date main.
+- **Cluster C** (the `/ship --train` skill surface, `skills/ship/references/train-mode.md`, the invariants docs) stays blocked on the keyset PR's hold on `skills/ship/SKILL.md`.
+- **Cluster D** (the thinness metric) after B and the gate-cost plan. The DB suite `tests/ship-train-provenance.db.test.mjs` and its two-list enrolment land after the keyset PR.
+
+Backlog 2026-10-12T13:06Z: Q1 188c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
+---
+
+## 2026-10-12 — round 1 of a code audit honours a supplied `--diff` (no head-cut under /cycle)
+
+- **Defect** (measured 2026-10-11, /cycle --autonomous Cluster A, fleet handover work): R1 reported `coverage: PARTIAL — 7 of 10 changed source file(s) not fully audited`. `scripts/lib/fleet/handover.mjs` (54K chars) was read only to its first 10K, so the changed code (lines ~250+) was never seen. R2, given the same `--diff`, logged `[diff] Parsed 8 files, 29 hunks` and reached `coverage complete`.
+- **Cause**: `legacy-production-audit.mjs` parsed `--diff` only inside the `isR2Plus` block. /cycle's cluster recipe passes `--files`, which skips the VCS change record, so R1 had no hunk evidence and head-cut every changed file over `maxPerFile`. The tiered discovery read (`readDiscoveryCode`) had the same R2-only gate.
+- **Fix**: a supplied `--diff` is hunk evidence in every round, matching the plan's own D7 rule ("keyed on the declared diff, never the round"). R1 keeps its rubric and the plain reader, so there is no annotation and no suppression. A new row in the D7 table of `docs/plans/audit-hunk-window-coverage.md`. The /cycle recipe comment no longer calls `--diff` "annotation context only". `legacy-production-audit.mjs` is 2 lines shorter (size ratchet).
+- **Tests**: `tests/coverage-orchestrator.test.mjs` runs R1 with `--files` + `--diff` through the real orchestrator. With the diff the read is `read.state === 'windowed'` and lines 300–303 reach the model; without it the read stays `head-cut`. The new test fails on the old code and passes with the fix. `final-review-hunk-windows.test.mjs`'s "R1 ignores it" test now asserts the opposite, with a no-diff control.
+- **Audit**: `/audit-code --scope diff` R1 PASS M:1 (the test patch's hunk had no body; fixed). R2 H:0 M:0 L:0, converged. Gemini APPROVE (0 blocking, 0 debt).
+- **npm test** (local, linked worktree): 18,616 pass, 4 fail.
+  - rmsync-guard: fixed (it was my test).
+  - sync-target-path: a load flake; it passes alone.
+  - skills-artifact-freshness: compares the committed blob, so it clears on commit.
+  - prepush-installed-tree-identity: the worktree's stale `node_modules` (micromatch/braces), already noted in the 10-11 entry.
+- Backlog 2026-10-12T04:31Z: Q1 173c/47p (+420 aged) · Q2 113c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
 ## 2026-10-12 — gate-cost chip (#212): rebased onto main after #214, ready for review
 
 What #212 does and what was measured is in the combined entry "pre-push archive lane (PR #208) and the gate-cost chip (PR #212)" below; since then #212 was brought up to date with main (d65f1e8d) after #214 split `fleet-cli`, its skip list and runbook now say the post-split tree is NOT re-measured, and the plan is marked Complete pending merge.
@@ -330,6 +405,31 @@ Second of the PRs landing the abandoned 2026-10-02 campaign (`archive/queue-burn
 ### Next Steps
 - Cluster 3 (store/ledger honesty, 8 commits) is built and DB-green; its audit round 1 has 14 findings to triage. Cluster 6 (test-only pins) is assembled. Cluster 5 (`close-finding`) is user-approved as its own PR with no discharge against the store. Cluster 4 waits on `964c1d77`.
 - Owed after `a72426c6` lands: port `tests/replay-cli-false-zero.test.mjs` (burndown-only, covers the dropped `b3f80832`).
+
+## 2026-10-12 — queue-burndown cluster 3: an outage is not an empty result (PR #215)
+
+Third of the PRs landing the abandoned 2026-10-02 campaign (`archive/queue-burndown-2026-10-02`): cluster 1 merged as #200, cluster 2 is #202. The campaign's commits had never been reviewed and main moved after they were written, so three were adapted rather than cherry-picked.
+
+- **Cherry-picked clean** (5): stage0 counts impact-lookup throws instead of swallowing them; an event-wiring lifecycle record is no longer pinned to a ref nothing can descend from; a model-eval cohort is one subject (refuse, never relabel); requirements overrides reach retained ledger entries; `debt-reconcile` names the real reason the store side is unavailable.
+- **Adapted** (3), each to what main now has:
+  - arch carried edges: #160 already gates the deleted-TARGET half on `fileStillExists`, so only the disowned-target half is applied (extraction drops an edge when EITHER endpoint is disowned, `extract.mjs`; the carry asked `isDisowned` of the importer only).
+  - debt cloud read: #193 made the events reader best-effort and gave reporters `readDebtEventsCloudResult`, so only `readDebtEntriesCloud` rethrows (both callers already catch) and `loadDebtLedger` reads the Result to mark `eventsUnavailable`.
+  - the `debt-reconcile` test's `rmSync` retry-hardening, as its own commit.
+- **Found by auditing the campaign's own commits** (5 follow-ups):
+  - `requirements reconcile` / `reassess-gaps` loaded the prior ledger with a never-throw loader, so a truncated `ledger.json` became an empty prior and the write overwrote the committed ledger. Strict mode for the two writers; readers keep the degrade contract.
+  - `computeAncestryDecisions` read "did not exit 0" as "not an ancestor", so exit 128 or git failing to run authorised the write. Exit 1 is now the proven negative; anything else fails closed.
+  - Gemini BLOCKED on a real data-loss bug: `upsertLifecycle` / `reconcileLifecycle` swallowed a JSON parse error and atomic-wrote a blank ledger over the corrupt one, dropping every adjudication entry and lifecycle record the run did not touch. They now refuse, file untouched, and also refuse valid JSON of the wrong shape (a `lifecycle` array silently stores nothing; my first fix missed that and R3 caught it).
+  - `tests/stage0-relevance-context.test.mjs` tested a hand-copied worker pool; it now drives the real builder via `opts.getImporters`.
+  - one bare `fs.rmSync` in a test I had just added (the rmSync retry guard blocked my first push).
+- **DB suites RAN** via the repo's own `npm run db:local` (its own container, torn down after): isolated 459/459, destructive 52/52, contract 3/3, 0 skipped, including the model-eval cohort suite. Mutation checks went red-then-green for each fix.
+- **Audit** (5 rounds, SID `audit-code-1791745114`): R1 9 findings: 6 fixed, 3 deferred as independent debt (all committed-requirements-ledger DATA quality: the 200-char assertion cap, equivalent obligations under distinct ids, one gap classification). R2 PASS; R3 two follow-ups fixed; R4 PASS; R5 PASS on the last delta. Gemini final gate: round 1 BLOCKED (fixed), round 2 APPROVE, coverage PARTIAL (7/21 files whole, 108 of 839 changed lines not shown to the reviewer).
+- **Gate history**: pre-push passed on the second attempt (18,844 tests, 0 fail, 46 skipped). Two pushes ran during the user-approved quiet-machine window for wine-cellar and disturbed its timing measurement; the coordinator's hold messages were queued behind my long tool waits. Lesson recorded: run `fleet next` before every push.
+- **Pre-ship signals**: auto-reconcile applied (1 verified, 1 still open); `stores:drift` shows storyline behind 6 constraints (owner DSN needed); upstream has 2 open reports from wine-cellar-app; no open P0.
+- **Backlog** (`node scripts/backlog-snapshot.mjs`): Backlog 2026-10-12T07:52Z: Q1 182c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt 334 cloud/17 local (0 spilled) · upstream 2
+
+### Next Steps
+- Cluster 6 (test-only pins) is audited and waits for its push turn; cluster 5 (`close-finding`) is user-approved as code only, with no discharge against the store, and follows #202's merge. Cluster 4 waits on `964c1d77`.
+- Owed after `a72426c6` lands: port `tests/replay-cli-false-zero.test.mjs`.
 
 ## 2026-10-11 — drift + backlog re-measured; five shipped plans closed; three honesty fixes
 

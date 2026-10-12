@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "86ed0d2a64f9b64e",
+  "bundleVersion": "ebd545badb3e30cf",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -196,14 +196,14 @@
     },
     "cycle": {
       "path": "skills/cycle/SKILL.md",
-      "sha": "c993a366b507",
-      "size": 47732,
+      "sha": "a6c0db7648a1",
+      "size": 47804,
       "summary": "End-to-end feature cycle orchestrator. Runs the full skill chain in",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "c993a366b507",
-          "size": 47732
+          "sha": "a6c0db7648a1",
+          "size": 47804
         },
         {
           "relPath": "references/gemini-gate.md",
@@ -475,14 +475,14 @@
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "5a5c9a0063e2",
-      "size": 67933,
+      "sha": "120ab78a170c",
+      "size": 68368,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "5a5c9a0063e2",
-          "size": 67933
+          "sha": "120ab78a170c",
+          "size": 68368
         },
         {
           "relPath": "references/architecture-and-dashboard-refresh.md",

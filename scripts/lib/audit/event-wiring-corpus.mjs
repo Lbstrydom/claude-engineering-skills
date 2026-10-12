@@ -697,24 +697,57 @@ export async function detectEventWiringAsymmetry({
   return { findings, counters: merged, partial: false };
 }
 
-function computeAncestryDecisions(repoPath, headRef, openRecords, env) {
+/**
+ * Per stored ref: may an observation at `headRef` be applied to a record last
+ * observed at that ref? (true = apply, false = drop as stale.)
+ *
+ * Dropped ONLY when `headRef` is PROVABLY OLDER — an ancestor of the stored
+ * ref — or when git itself cannot answer. Every non-descendant used to be
+ * dropped, and two ordinary histories made that permanent: after a
+ * squash-merge, main never descends from the PR commit a record was last seen
+ * at (exit 1 forever), and a GC'd / shallow-missing / force-pushed-away ref
+ * cannot be resolved at all (exit 128 forever). Either way every later
+ * observation was dropped and the record could never move again
+ * (final-review shadow 87a434bc). A ref that no reachable history can descend
+ * from cannot be "newer" than the head, so pinning the record to it protects
+ * nothing.
+ *
+ * Exported for its test; the caller is detectEventWiringAsymmetry.
+ */
+export function computeAncestryDecisions(repoPath, headRef, openRecords, env, { runGit = null } = {}) {
   const decisions = new Map();
   const distinctStoredRefs = new Set(openRecords.map(r => r.lastObservedRef).filter(Boolean));
+  const git = runGit ?? ((args) => execFileSync('git', args, {
+    cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}),
+  }));
+  // The exit status of one git call: 0, a non-zero status, or null when git could
+  // not be RUN at all (no binary, a signal, a timeout). Only the first two say
+  // anything about the commits; null is an operational failure.
+  const exitCode = (args) => { try { git(args); return 0; } catch (err) { return Number.isInteger(err?.status) ? err.status : null; } };
+  let headCode;
   for (const storedRef of distinctStoredRefs) {
     if (storedRef === headRef) { decisions.set(storedRef, true); continue; }
-    try {
-      // "is storedRef an ancestor of headRef" — i.e. is headRef newer-or-equal.
-      execFileSync('git', ['merge-base', '--is-ancestor', storedRef, headRef], {
-        cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}),
-      });
-      decisions.set(storedRef, true);
-    } catch (err) {
-      // Fail closed on ANY failure — a real "not an ancestor" (exit 1) and an
-      // unreachable-commit error (exit 128, shallow clone / gc / force-push)
-      // are handled identically: drop the observation, never throw
-      // (Gemini round-3 G2).
+    // "is storedRef an ancestor of headRef" — i.e. is headRef newer-or-equal.
+    if (exitCode(['merge-base', '--is-ancestor', storedRef, headRef]) === 0) { decisions.set(storedRef, true); continue; }
+    const storedCode = exitCode(['cat-file', '-e', `${storedRef}^{commit}`]);
+    if (headCode === undefined) headCode = exitCode(['cat-file', '-e', `${headRef}^{commit}`]); // loop-invariant: probed once
+    if (headCode !== 0 || storedCode === null) {
+      // git cannot evaluate this run's own head, or could not be run to look at
+      // the stored one — fail closed (Gemini round-3 G2: never throw, never apply
+      // on an unanswered question). A stored ref that git never got to inspect is
+      // not a stored ref that is gone.
       decisions.set(storedRef, false);
-      void err;
+    } else if (storedCode !== 0) {
+      // The stored ref is gone (gc / shallow / force-push): unanswerable
+      // forever, so it must not pin the record.
+      decisions.set(storedRef, true);
+    } else {
+      // Both exist and storedRef is not an ancestor of head. Exit 1 PROVES head
+      // is not an ancestor of storedRef either: divergent history (squash-merge,
+      // a deleted PR branch), so the observation applies. Exit 0 is an older
+      // checkout: stale. Any other outcome means the question went unanswered,
+      // and an unanswered question must not authorise a write.
+      decisions.set(storedRef, exitCode(['merge-base', '--is-ancestor', headRef, storedRef]) === 1);
     }
   }
   return decisions;

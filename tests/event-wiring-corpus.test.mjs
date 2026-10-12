@@ -640,3 +640,152 @@ describe('D12 — dismissLifecycle', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// computeAncestryDecisions — a record must not be pinned to a ref no later run
+// can descend from (final-review shadow 87a434bc). Every non-descendant used to
+// be dropped, so after a squash-merge (main never descends from the PR commit)
+// or a GC'd / shallow-missing ref (exit 128) the record's stored ref could never
+// be satisfied again and every later observation was dropped, forever. Only a
+// PROVABLY OLDER head (an ancestor of the stored ref) is stale.
+// ---------------------------------------------------------------------------
+describe('computeAncestryDecisions — only a provably older head is stale (87a434bc)', () => {
+  const rev = (repo, r = 'HEAD') => execFileSync('git', ['rev-parse', r], { cwd: repo, env: gitFixtureEnv() }).toString('utf8').trim();
+
+  it('a stored ref that is UNREACHABLE (gc / shallow / force-push) does not pin the record — the observation applies', async () => {
+    const { computeAncestryDecisions } = await import('../scripts/lib/audit/event-wiring-corpus.mjs');
+    const repo = newRepo();
+    try {
+      const gone = 'deadbeef'.repeat(5);
+      const d = computeAncestryDecisions(repo, rev(repo), [{ lastObservedRef: gone }], gitFixtureEnv());
+      assert.equal(d.get(gone), true);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('a DIVERGENT stored ref (squash-merged PR commit) does not pin the record — the observation applies', async () => {
+    const { computeAncestryDecisions } = await import('../scripts/lib/audit/event-wiring-corpus.mjs');
+    const repo = newRepo();
+    try {
+      const base = rev(repo);
+      sh(repo, 'checkout', '-q', '-b', 'pr');
+      writeFile(repo, 'a.js', 'export const a = 1;\n');
+      commit(repo, 'pr work');
+      const prSha = rev(repo);
+      sh(repo, 'checkout', '-q', base);
+      writeFile(repo, 'a.js', 'export const a = 1;\n');
+      commit(repo, 'squash of pr');
+      const d = computeAncestryDecisions(repo, rev(repo), [{ lastObservedRef: prSha }], gitFixtureEnv());
+      assert.equal(d.get(prSha), true);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('a head that is an ANCESTOR of the stored ref (an older checkout) is still dropped — the stale guard holds', async () => {
+    const { computeAncestryDecisions } = await import('../scripts/lib/audit/event-wiring-corpus.mjs');
+    const repo = newRepo();
+    try {
+      const older = rev(repo);
+      writeFile(repo, 'b.js', 'export const b = 1;\n');
+      commit(repo, 'newer');
+      const newer = rev(repo);
+      const d = computeAncestryDecisions(repo, older, [{ lastObservedRef: newer }], gitFixtureEnv());
+      assert.equal(d.get(newer), false);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('a stored ref that is an ancestor of head applies, as before', async () => {
+    const { computeAncestryDecisions } = await import('../scripts/lib/audit/event-wiring-corpus.mjs');
+    const repo = newRepo();
+    try {
+      const older = rev(repo);
+      writeFile(repo, 'b.js', 'export const b = 1;\n');
+      commit(repo, 'newer');
+      const d = computeAncestryDecisions(repo, rev(repo), [{ lastObservedRef: older }], gitFixtureEnv());
+      assert.equal(d.get(older), true);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeAncestryDecisions — three outcomes of a git call, not two. `merge-base
+// --is-ancestor` exits 1 for a PROVEN negative; any other failure (exit 128, no
+// git binary, a signal) leaves the question unanswered. The last probe used to
+// read "did not exit 0" as "head is not an ancestor", so an operational failure
+// AUTHORISED the observation - against the function's own documented contract
+// that it drops "when git itself cannot answer".
+// ---------------------------------------------------------------------------
+describe('computeAncestryDecisions — an unanswered git question fails closed', () => {
+  const STORED = 'a'.repeat(40);
+  const HEAD = 'b'.repeat(40);
+  const exits = (code) => Object.assign(new Error('git exit ' + code), { status: code });
+  // A scripted git: each command line maps to an exit code; 'spawn' = could not run at all.
+  const fakeGit = (script) => (args) => {
+    const key = args.join(' ');
+    const outcome = script[key];
+    if (outcome === undefined) throw new Error('unscripted git call: ' + key);
+    if (outcome === 0) return Buffer.from('');
+    if (outcome === 'spawn') throw Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' });
+    throw exits(outcome);
+  };
+  const KEYS = {
+    storedAncOfHead: 'merge-base --is-ancestor ' + STORED + ' ' + HEAD,
+    headAncOfStored: 'merge-base --is-ancestor ' + HEAD + ' ' + STORED,
+    storedExists: 'cat-file -e ' + STORED + '^{commit}',
+    headExists: 'cat-file -e ' + HEAD + '^{commit}',
+  };
+  const decide = async (script) => {
+    const { computeAncestryDecisions } = await import('../scripts/lib/audit/event-wiring-corpus.mjs');
+    return computeAncestryDecisions('/unused', HEAD, [{ lastObservedRef: STORED }], undefined, { runGit: fakeGit(script) }).get(STORED);
+  };
+  const BOTH_EXIST = { [KEYS.storedAncOfHead]: 1, [KEYS.storedExists]: 0, [KEYS.headExists]: 0 };
+
+  it('both refs resolve but the last ancestry probe FAILS operationally (exit 128) — nothing is authorised', async () => {
+    assert.equal(await decide({ ...BOTH_EXIST, [KEYS.headAncOfStored]: 128 }), false);
+  });
+
+  it('both refs resolve but git cannot be RUN for the last probe — nothing is authorised', async () => {
+    assert.equal(await decide({ ...BOTH_EXIST, [KEYS.headAncOfStored]: 'spawn' }), false);
+  });
+
+  it('NEGATIVE CONTROL — exit 1 is a PROVEN negative (divergent history): the observation applies', async () => {
+    assert.equal(await decide({ ...BOTH_EXIST, [KEYS.headAncOfStored]: 1 }), true);
+  });
+
+  it('exit 0 is an older checkout: stale, dropped', async () => {
+    assert.equal(await decide({ ...BOTH_EXIST, [KEYS.headAncOfStored]: 0 }), false);
+  });
+
+  it('git could not be RUN to look at the stored ref — that is not "the stored ref is gone"', async () => {
+    assert.equal(await decide({ [KEYS.storedAncOfHead]: 1, [KEYS.storedExists]: 'spawn', [KEYS.headExists]: 0 }), false);
+  });
+
+  it('NEGATIVE CONTROL — a stored ref git answered "no such object" for IS gone, and does not pin the record', async () => {
+    assert.equal(await decide({ [KEYS.storedAncOfHead]: 128, [KEYS.storedExists]: 128, [KEYS.headExists]: 0 }), true);
+  });
+});
+
+describe('computeAncestryDecisions — the head probe is loop-invariant', () => {
+  it('probes the head commit ONCE however many distinct stored refs there are, and still decides each ref', async () => {
+    const { computeAncestryDecisions } = await import('../scripts/lib/audit/event-wiring-corpus.mjs');
+    const HEAD = 'b'.repeat(40);
+    const refs = ['1'.repeat(40), '2'.repeat(40), '3'.repeat(40)];
+    const calls = [];
+    const runGit = (args) => {
+      calls.push(args.join(' '));
+      // every stored ref: not an ancestor of head (exit 1), exists, and head is not an ancestor of it (exit 1)
+      if (args[0] === 'merge-base') throw Object.assign(new Error('exit 1'), { status: 1 });
+      return Buffer.from('');
+    };
+    const d = computeAncestryDecisions('/unused', HEAD, refs.map((r) => ({ lastObservedRef: r })), undefined, { runGit });
+    assert.deepEqual(refs.map((r) => d.get(r)), [true, true, true], 'divergent history applies for each');
+    assert.equal(calls.filter((c) => c === 'cat-file -e ' + HEAD + '^{commit}').length, 1, 'the head probe ran once, not once per stored ref');
+    assert.equal(calls.filter((c) => c.startsWith('cat-file -e ' + '1'.repeat(40))).length, 1, 'while each stored ref is still probed itself');
+  });
+});

@@ -360,14 +360,17 @@ direction (`--state fixed` or a dismissal) rather than assuming either.
 
 If `> 0`, print — never blocks, no override flag. **Show the first 5 rows as
 returned** (HIGH first, then oldest first — do not re-sort). To read past the
-default 20-row page (order is total; pages neither repeat nor skip a row):
+default 20-row page, pass the payload's `nextCursor` back as `--after` — a
+keyset cursor, so closing rows between reads neither repeats nor skips one
+(`--offset` counts positions in a set your closes just shrank, so it skips one
+unread row per row closed). `nextCursor: null` is the end:
 
 ```bash
-node scripts/cross-skill.mjs list-unremediated-acceptances --limit 20 --offset 20
+node scripts/cross-skill.mjs list-unremediated-acceptances --limit 20 --after eyJ2IjoxLCJraW5kIjoidW5yZW1lZGlhdGVkIiwic2V2ZXJpdHlSYW5rIjowLCJhY2NlcHRlZEF0IjoiMjAyNi0wOS0xMyAxMDowMDowMC4wMDAwMDErMDAiLCJmaW5kaW5nSWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEifQ
 ```
 
-The payload echoes the resolved `limit`/`offset` (store clamps to 200), so a
-short page can be told from an exhausted one.
+The payload echoes the resolved `limit` (store clamps to 200), so a short page
+can be told from an exhausted one. `list-unlocked-fixes` pages the same way.
 
 ```
 ⚠ UNREMEDIATED ACCEPTANCES (non-blocking)
