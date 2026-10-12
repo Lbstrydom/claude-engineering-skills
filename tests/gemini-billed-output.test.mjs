@@ -150,11 +150,11 @@ describe('discovery census — no second place may decide what billed output mea
     traverse(ast, {
       CallExpression(p) {
         if (!isOracleCall(p.node)) return;
-        for (const a of p.node.arguments) {
-          if (a.type !== 'Identifier') continue;
-          const binding = p.scope.getBinding(a.name);
-          if (binding) routedBindings.add(binding);
-        }
+        // The oracle's input is its FIRST argument; later ones are not the metadata.
+        const input = p.node.arguments[0];
+        if (input?.type !== 'Identifier') return;
+        const binding = p.scope.getBinding(input.name);
+        if (binding) routedBindings.add(binding);
       },
       'MemberExpression|OptionalMemberExpression'(p) {
         if (!p.node.computed && p.node.property?.name === 'usageMetadata') reads.push(p);
@@ -165,7 +165,7 @@ describe('discovery census — no second place may decide what billed output mea
     const out = [];
     for (const p of reads) {
       const { node, parent } = p;
-      if (isOracleCall(parent)) continue;
+      if (isOracleCall(parent) && parent.arguments[0] === node) continue;
       const local = parent.type === 'VariableDeclarator' && parent.init === node && parent.id.type === 'Identifier' ? parent.id.name
         : parent.type === 'AssignmentExpression' && parent.right === node && parent.left.type === 'Identifier' ? parent.left.name
           : null;
@@ -229,6 +229,13 @@ describe('discovery census — no second place may decide what billed output mea
       'export function ok(chunks) { let acc = null; for (const c of chunks) acc = c.usageMetadata; return () => normalizeGeminiUsage(acc); }',
     ].join('\n');
     assert.deepEqual(unroutedUsageReads(closure), [], 'normalising the SAME binding from a closure is routed');
+  });
+
+  it("NEGATIVE CONTROL: the metadata must be the oracle's INPUT (first argument), not merely somewhere in its argument list", () => {
+    const direct = [ORACLE, 'export function bad(resp) { return normalizeGeminiUsage({}, resp.usageMetadata); }'].join('\n');
+    assert.equal(unroutedUsageReads(direct).length, 1);
+    const viaLocal = [ORACLE, 'export function bad(resp) { const u = resp.usageMetadata; return normalizeGeminiUsage({}, u); }'].join('\n');
+    assert.equal(unroutedUsageReads(viaLocal).length, 1);
   });
 
   it('NEGATIVE CONTROL: calling the oracle on something ELSE on the same line does not excuse the raw read beside it', () => {
