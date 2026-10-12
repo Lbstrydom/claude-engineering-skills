@@ -147,6 +147,8 @@
 
 Backlog 2026-10-12T13:06Z: Q1 188c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
 
+---
+
 ## 2026-10-12 — round 1 of a code audit honours a supplied `--diff` (no head-cut under /cycle)
 
 - **Defect** (measured 2026-10-11, /cycle --autonomous Cluster A, fleet handover work): R1 reported `coverage: PARTIAL — 7 of 10 changed source file(s) not fully audited`. `scripts/lib/fleet/handover.mjs` (54K chars) was read only to its first 10K, so the changed code (lines ~250+) was never seen. R2, given the same `--diff`, logged `[diff] Parsed 8 files, 29 hunks` and reached `coverage complete`.
