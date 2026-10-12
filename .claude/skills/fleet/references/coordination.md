@@ -109,11 +109,13 @@ is delivered.
   archive-check evidence (its "unpushed" commits excepted, because their content
   is proven on base). Idle branches, locked worktrees, the main checkout and the
   current worktree are never listed. Nor is a worktree that another worktree's
-  `core.hooksPath` (its own `config.worktree` value or the inherited repo-level
-  one) resolves inside: once it is gone git runs no hooks there and says nothing.
-  The kept reason names the dependent worktree and the remedy,
-  `git -C <wt> config --worktree core.hooksPath <main checkout>/.githooks`; a
-  config git cannot read keeps it too, and `--apply` re-checks under the lock.
+  hooks directory (as `git rev-parse --git-path hooks` names it there, so
+  `config.worktree`, the inherited repo-level value or the default) lies inside
+  or passes through via a link: once it is gone git runs no hooks there and says
+  nothing. The kept reason names the dependent worktree and the remedy, e.g.
+  `git -C <wt> config --worktree core.hooksPath <the main checkout's hooks dir>`
+  (never a rewrite of a global or system setting); a config git cannot read
+  keeps it too, and `--apply` re-checks under the lock.
   Every kept branch says why. A worktree or
   branch active within `staleWorktreeDays` (default 7) is skipped unless
   `--include-fresh`. `prune` also lists directories under the worktree root that
