@@ -34,7 +34,7 @@
  * @module scripts/lib/final-review/post-review
  */
 import { semanticId, appendOutcome, FalsePositiveTracker } from '../findings.mjs';
-import { affectedFilesOf, primaryFileOf, structuredFilesOf, sectionLociOf } from '../finding-match.mjs';
+import { affectedFilesOf, primaryFileOf, structuredFilesOf, sectionLociOf, signatureOf } from '../finding-match.mjs';
 import { isReleaseBlocking } from './round-gate.mjs';
 import { listRepoFiles } from '../repo-inventory.mjs';
 import { verifyExistenceFindings, isRefuted } from '../audit/finding-verification.mjs';
@@ -46,9 +46,14 @@ import { PromptBandit } from '../../bandit.mjs';
 // two strings (the reason text-similarity.mjs was extracted in the first place).
 import { jaccardSimilarity } from '../text-similarity.mjs';
 
-/** The topic signature both post-review topic matchers compare on. */
+/**
+ * The topic signature both post-review topic matchers compare on — `finding-match.mjs`'s
+ * `signatureOf` (category + section + detail), the repo's one finding signature. The debt
+ * stage builds ITS side of the comparison through the same function (`debtTopicSig`), which is
+ * what makes the symmetry structural.
+ */
 function findingTopicSig(f) {
-  return `${f?.category ?? ''} ${f?.section ?? ''} ${f?.detail ?? ''}`;
+  return signatureOf(f);
 }
 
 /**
@@ -140,6 +145,17 @@ export function applyPriorRoundSuppression(result, priorFindings, { threshold = 
       keptMatches.push({ ...decision(blockingMatch), reason: 'prior_release_blocking' });
       continue;
     }
+    // The mirror of H6, on the CURRENT finding: a re-raise the reviewer NOW marks release-blocking
+    // is never settled by a prior NON-blocking one — the judgement changed, and deleting it here
+    // would turn `blocked` into `approve_with_debt`. The same invariant the debt stage enforces
+    // (`applyDebtSuppression`): no suppression stage deletes a release blocker before the gate
+    // reads it. `isReleaseBlocking` fails closed, so a missing/invalid pair is kept too.
+    if (isReleaseBlocking(f)) {
+      kept.push(f);
+      const settledBy = sameLocus.reduce((a, c) => (a && a.score >= c.score ? a : c), null);
+      if (settledBy) keptMatches.push({ ...decision(settledBy), reason: 'current_release_blocking' });
+      continue;
+    }
     const best = sameLocus.reduce((a, c) => (a && a.score >= c.score ? a : c), null);
     if (best) { dropped.push(decision(best)); continue; }
     kept.push(f);
@@ -157,50 +173,204 @@ export function applyPriorRoundSuppression(result, priorFindings, { threshold = 
   return { suppressed: dropped.length };
 }
 
+// ── Debt re-suppression ─────────────────────────────────────────────────────
+// The stage, its envelope reader and the prompt block share ONE normalised topic shape and ONE
+// eligibility predicate (docs/plans/final-review-debt-suppression-revival.md §2.2b/§2.3b).
+
+/** Topics the accessor returns — one bound for the stage AND the prompt block. */
+export const MAX_DEBT_CONTEXT_TOPICS = 50;
+/** Consumer-side cap on a topic's `detailSnapshot` (the persisted debt entry's own cap). */
+export const MAX_DEBT_SNAPSHOT_CHARS = 600;
+/** Characters of each topic's snapshot the PROMPT shows (display only — matching uses the whole). */
+const DEBT_PROMPT_SNAPSHOT_CHARS = 200;
+/**
+ * `score > DEBT_MATCH_THRESHOLD` suppresses (strict, as it always was). 0.30 is the constant the
+ * debt path already used; what changed is its MEANING — both sides are now the symmetric
+ * category+section+detail signature, so it is no longer compensating for an asymmetric one.
+ * Calibrated on the real debt ledger: all 10 same-file pairs above it are the same concern, none
+ * of the 5 explicit different-defect negatives (<= 0.121) or the 3 distinct/arguable pairs
+ * (<= 0.210) reaches it, and it catches near-restatements only (~26% of same-concern pairs) —
+ * deliberately, since this stage's error is deleting a finding. Plan §2.2; the judged pairs are
+ * pinned in tests/fixtures/debt-memory/calibration-pairs.json. Do not lower it to buy recall.
+ */
+const DEBT_MATCH_THRESHOLD = 0.3;
+
+/** A debt topic as the symmetric signature sees it. */
+function debtTopicSig(topic) {
+  return signatureOf({ category: topic.category, section: topic.section, detail: topic.detailSnapshot });
+}
+
+/**
+ * Can this debt topic be compared like for like? Only a topic carrying a `detailSnapshot` can —
+ * every envelope written before the field existed cannot, and those degrade to INERT rather than
+ * falling back to the asymmetric comparison. The ONE predicate for both the stage and the prompt
+ * block: the prompt must not steer the reviewer on a topic the filter would never act on.
+ */
+export function isEligibleDebtTopic(topic) {
+  return typeof topic?.detailSnapshot === 'string' && topic.detailSnapshot.trim() !== '';
+}
+
+/** `{topic}` for a usable entry, `{reason}` for one that cannot be normalised. */
+function normaliseDebtTopic(raw) {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return { reason: 'not an object' };
+  const str = (v) => (typeof v === 'string' ? v : '');
+  const category = str(raw.category);
+  const section = str(raw.section);
+  const topicId = typeof raw.topicId === 'string' && raw.topicId !== ''
+    ? raw.topicId
+    : (category !== '' || section !== '' ? `${category}|${section}` : '');
+  if (topicId === '') return { reason: 'no usable identity (topicId, category, section)' };
+  const topic = {
+    topicId, category, section,
+    affectedFiles: Array.isArray(raw.affectedFiles) ? raw.affectedFiles.filter((f) => typeof f === 'string') : [],
+    deferredReason: str(raw.deferredReason),
+  };
+  const snapshot = typeof raw.detailSnapshot === 'string' ? raw.detailSnapshot.trim().slice(0, MAX_DEBT_SNAPSHOT_CHARS) : '';
+  if (snapshot !== '') topic.detailSnapshot = snapshot;
+  return { topic };
+}
+
+/**
+ * Every debt topic the audit rounds surfaced — the ONE reader of the `_debtMemory` envelope.
+ *
+ * Why this exists: `build-audit-transcript.mjs` nests each round's audit result under `rounds[]`,
+ * so the envelope is at `rounds[i]._debtMemory`, never at top level. Both consumers read the top
+ * level, so the stage and the "Pre-filtered Debt" prompt block saw nothing in all 65 real
+ * transcripts checked (2026-10-03) and were dead for their whole history.
+ *
+ * Contract (plan §2.2b): an envelope is an incremental, session-scoped OBSERVATION, not a
+ * current-state snapshot. Seed from the legacy top-level key as the OLDEST observation, then walk
+ * `rounds[]` oldest to newest: upsert each normalised entry (the newer entry wins whole; only a
+ * missing `detailSnapshot` is inherited from the older one), then delete that round's
+ * `reopenedTopicIds` — the one event that un-settles a surfaced topic. The result is newest-first,
+ * cut to `MAX_DEBT_CONTEXT_TOPICS`. Pure and deterministic.
+ *
+ * @param {object|null} transcript - the parsed transcript
+ * @param {{onInvalid?: (reason: string, entry: unknown) => void}} [opts] - called per excluded entry
+ * @returns {Array<{topicId: string, category: string, section: string, affectedFiles: string[],
+ *   deferredReason: string, detailSnapshot?: string}>}
+ */
+export function debtSuppressionContextOf(transcript, { onInvalid } = {}) {
+  const topics = new Map();
+  const upsert = (raw) => {
+    const n = normaliseDebtTopic(raw);
+    if (!n.topic) { onInvalid?.(n.reason, raw); return; }
+    const prev = topics.get(n.topic.topicId);
+    if (prev) {
+      topics.delete(n.topic.topicId); // re-insert at the newest end
+      if (n.topic.detailSnapshot === undefined && prev.detailSnapshot !== undefined) n.topic.detailSnapshot = prev.detailSnapshot;
+    }
+    topics.set(n.topic.topicId, n.topic);
+  };
+  const contextOf = (envelope) => (Array.isArray(envelope?.suppressionContext) ? envelope.suppressionContext : []);
+  for (const legacy of [transcript?._debtMemory, transcript?.debt_memory]) contextOf(legacy).forEach(upsert);
+  for (const round of Array.isArray(transcript?.rounds) ? transcript.rounds : []) {
+    contextOf(round?._debtMemory).forEach(upsert);
+    const reopened = round?._debtMemory?.reopenedTopicIds;
+    for (const id of Array.isArray(reopened) ? reopened : []) if (typeof id === 'string') topics.delete(id);
+  }
+  return [...topics.values()].reverse().slice(0, MAX_DEBT_CONTEXT_TOPICS);
+}
+
+/** Collapse all whitespace and cap — a display field must never span lines. */
+const oneLine = (value, max) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+
+/**
+ * The "Pre-filtered Debt" prompt block, from the accessor's canonical result. Eligible topics only
+ * (so a legacy envelope renders NO block at all), each field on one line, and it states what is
+ * NOT settled: a reviewer told "do not resurface" omits the finding BEFORE any deterministic
+ * exemption can act, and fail-open code downstream cannot recover a finding the model never emitted.
+ * `''` when there is nothing to say, so the caller's concatenation is unchanged.
+ * @param {ReturnType<typeof debtSuppressionContextOf>} context
+ * @returns {string}
+ */
+export function buildDebtPromptBlock(context) {
+  const eligible = (Array.isArray(context) ? context : []).filter(isEligibleDebtTopic).slice(0, MAX_DEBT_CONTEXT_TOPICS);
+  if (eligible.length === 0) return '';
+  const lines = eligible.map((t) => {
+    const reason = oneLine(t.deferredReason, 40);
+    return `- [${oneLine(t.topicId, 80)}] ${oneLine(t.category, 120)} (${oneLine(t.section, 160)})${reason ? ` {${reason}}` : ''} — ${oneLine(t.detailSnapshot, DEBT_PROMPT_SNAPSHOT_CHARS)}`;
+  });
+  return [
+    '## Pre-filtered Debt (settled concerns — do not re-report THESE concerns)',
+    `The following ${eligible.length} concern(s) were matched against the repo's persistent debt ledger and`,
+    'deliberately deferred by the operator; the pipeline already handled them. Do not re-report the same concern.',
+    'These are NOT settled and must still be reported: a different defect at the same location; a regression',
+    'or reopening that cites the changed line (set is_reopened: true); anything release-blocking; and any case',
+    'you are unsure about.',
+    '',
+    ...lines,
+    '',
+  ].join('\n');
+}
+
 export async function applyDebtSuppression(result, transcriptContent) {
+  let transcript;
   try {
-    const transcriptObj = JSON.parse(transcriptContent);
-    const suppressionCtx = transcriptObj._debtMemory?.suppressionContext
-      || transcriptObj.debt_memory?.suppressionContext
-      || [];
-    if (!Array.isArray(suppressionCtx) || suppressionCtx.length === 0) return;
-    if (!Array.isArray(result.new_findings)) return;
-    // Threshold 0.30 vs suppressReRaises' 0.35 — debt envelope signatures
-    // (category+section) are shorter than new_findings (which include detail
-    // text), so asymmetric lengths dilute Jaccard.
-    const THRESHOLD = 0.3;
+    transcript = JSON.parse(transcriptContent);
+  } catch {
+    return; // not JSON: the one expected, quiet case — a markdown transcript carries no envelope
+  }
+  try {
+    let malformed = 0;
+    const context = debtSuppressionContextOf(transcript, { onInvalid: () => { malformed += 1; } });
+    if (malformed > 0) {
+      process.stderr.write(`  [final-review] Debt re-suppression: ${malformed} malformed debt topic ${malformed === 1 ? 'entry' : 'entries'} ignored\n`);
+    }
+    if (context.length === 0 || !Array.isArray(result?.new_findings)) return;
+    // Fail OPEN on a topic with no detailSnapshot: it cannot be compared like for like, and a
+    // silent skip would read as "nothing matched". Say so.
+    const candidates = context.filter(isEligibleDebtTopic);
+    if (candidates.length < context.length) {
+      const n = context.length - candidates.length;
+      process.stderr.write(`  [final-review] Debt re-suppression: ${n} of ${context.length} debt topic${context.length === 1 ? '' : 's'} carr${n === 1 ? 'ies' : 'y'} no detailSnapshot — not eligible (kept, fail-open)\n`);
+    }
+    if (candidates.length === 0) return;
     const before = result.new_findings.length;
     const kept = [];
     const debtSuppressed = [];
-    // Same-locus requirement (audit H5/H17), applied ONLY to a debt entry that
-    // carries file info (`affectedFiles`, or a file path in `section`): an entry
-    // without any keeps the pre-existing similarity-only behaviour, since there
-    // is nothing to compare against. Candidates whose files do not intersect the
-    // finding's are excluded BEFORE the best match is chosen, so a same-worded
-    // debt topic in another module cannot swallow the finding.
+    // Same-locus requirement (audit H5/H17), applied ONLY to a debt entry that carries file info
+    // (`affectedFiles`, or a file path in `section`): an entry without any has nothing to compare,
+    // so similarity decides alone. Candidates whose files do not intersect the finding's are
+    // excluded BEFORE the best match is chosen, so a same-worded debt topic in another module
+    // cannot swallow the finding.
     for (const f of result.new_findings) {
+      // Never settled by debt: a reopening (the prompt obliges the reviewer to cite the changed
+      // line that reopened it) and anything release-blocking. This stage runs BEFORE
+      // `stampGateDisposition`, so deleting a blocker here would turn `blocked` into
+      // `approve_with_debt` — the H6 hazard `applyPriorRoundSuppression` guards the same way.
+      // `isReleaseBlocking` fails closed, so a finding with no valid pair is kept too.
+      if (f?.is_reopened === true || isReleaseBlocking(f)) { kept.push(f); continue; }
       const locus = suppressionLocusOf(f);
-      const eligible = suppressionCtx.filter((d) => {
+      const sameLocus = candidates.filter((d) => {
         const debtFiles = structuredFilesOf(d);
         return debtFiles.length === 0 || sharedLocus(locus, debtFiles) !== null;
       });
-      const { match, score } = bestTopicMatch(findingTopicSig(f), eligible, (d) => `${d.category} ${d.section}`);
-      if (match && score > THRESHOLD) {
-        debtSuppressed.push({ finding: f, matchedTopic: String(match.topicId ?? ''), score, file: sharedLocus(locus, structuredFilesOf(match)) });
+      const { match, score } = bestTopicMatch(findingTopicSig(f), sameLocus, debtTopicSig);
+      if (match && score > DEBT_MATCH_THRESHOLD) {
+        debtSuppressed.push({ finding: f, matchedTopic: match.topicId, score, file: sharedLocus(locus, structuredFilesOf(match)) });
       } else kept.push(f);
     }
     if (debtSuppressed.length === 0) return;
+    // `result` is written in ONE block, after everything that can throw has run — including
+    // building the replacement metadata, which reads fields of the findings — so no failure can
+    // leave it half-updated.
+    const suppressedMeta = debtSuppressed.map((s) => ({
+      id: s.finding.id ?? null, category: s.finding.category, matchedTopicId: s.matchedTopic,
+      score: Number(s.score.toFixed(2)), file: s.file,
+    }));
+    result.new_findings = kept;
+    result._debtSuppressedCount = debtSuppressed.length;
+    result._debtSuppressedFindings = suppressedMeta;
     process.stderr.write(`  [final-review] Debt re-suppression: ${debtSuppressed.length}/${before} new_findings matched pre-filtered debt\n`);
     for (const s of debtSuppressed.slice(0, 3)) {
       process.stderr.write(`    [debt-suppressed] ${s.matchedTopic.slice(0, 8)} score=${s.score.toFixed(2)}\n`);
     }
-    result.new_findings = kept;
-    result._debtSuppressedCount = debtSuppressed.length;
-    result._debtSuppressedFindings = debtSuppressed.map((s) => ({
-      id: s.finding.id ?? null, category: s.finding.category, matchedTopicId: s.matchedTopic,
-      score: Number(s.score.toFixed(2)), file: s.file,
-    }));
-  } catch { /* transcript not JSON or no _debtMemory — skip */ }
+  } catch (err) {
+    // The finding set is unchanged (nothing above mutates `result` before its single write), so
+    // this is fail-open — but it must be LOUD: an empty catch rendered a broken stage as a quiet one.
+    process.stderr.write(`  [final-review] Debt re-suppression NOT applied: ${err?.message ?? err}\n`);
+  }
 }
 
 /**

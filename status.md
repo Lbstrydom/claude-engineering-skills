@@ -148,6 +148,40 @@ Backlog 2026-10-12T04:23Z: Q1 173c/47p (+420 aged) · Q2 116c/76p (54 perm) · Q
 
 ---
 
+## 2026-10-12 — final-review debt suppression revived (#203): rebased, audited, three audit fixes
+
+### Changes
+- Revives the post-review debt-suppression stage (`scripts/lib/final-review/post-review.mjs`). It was dead in production: it read the debt context from the transcript top level while `build-audit-transcript` nests it under `rounds[]`, so 0 of 65 real transcripts reached it. One accessor now merges both; the matcher compares a symmetric category + section + detailSnapshot signature at 0.30 (chosen on the real 90-entry ledger, 10 of 10 judged pairs correct) and never suppresses a release-blocking or reopened finding.
+- `output-schemas.mjs`: identity fields (ids, `original_finding_id`, `cited_lines`) are no longer truncated. `shadow.mjs` throws on an unknown provider instead of returning an Anthropic client.
+- Audit round-1 follow-ups: `applyDebtSuppression` builds its metadata before it mutates the result (M2); `captureStderr` honours `write()` completion callbacks (M7); `NARRATIVE_PATHS` is exported and a test pins it, so a new bounded string field must be classified as prose or identity (M3). Each test was seen red with its fix reverted.
+
+### Audit (fresh, on the rebased change)
+- Origin: commit `964c1d77`, abandoned in an archived worktree (tag `archive/worktree-agent-a8895e6b04909c52f`). Original audit: 3 plan + 4 code rounds + Gemini (run `4226c467-ab12-45ae-9965-a9e7a39db84e`). This PR is that commit rebased onto main `5157ff65` plus a generated plans-index commit, so its head differs from the originally audited sha.
+- `/audit-code --scope diff` round 1 (SID `audit-code-1791748856049-89252`, store run `1f675e97-2ccc-4e55-a07b-b5c225dda820`): SIGNIFICANT_ISSUES, 1 HIGH + 8 MEDIUM, $1.46, none in the files that moved on main (`gemini-review.mjs`, `finding-assembly.mjs`). All 9 ruled: 3 fixed (M2, M3, M7); 5 dismissed (H1, M1, M5, M8 as stated design limits or tool bounds; M6 a sanitizer false positive); 1 captured as `blocked-by` debt (M4, topic `9f496923b0cd`, blocked by `archive/queue-burndown-2026-10-02#d9eda256`).
+- Only round 1 was run, not two stable rounds: the user chose "accept round 1 + Gemini" for a rebase of an already-audited change. Gemini final gate: APPROVE, 0 findings, but PARTIAL coverage (1,368 of 2,320 changed lines never shown), and it ran before the M3 guard commit `915f24ec`.
+- The audit ran in a worktree that was retired before this ship, so its run marker was absent here; the commit's `AI-Gate` is whatever `ship-commit` verifies, never hand-written.
+
+### Files Affected
+- `scripts/lib/final-review/{post-review,output-schemas,prompts,shadow}.mjs`, `scripts/gemini-review.mjs`, `scripts/lib/audit/finding-assembly.mjs`
+- Tests: `debt-transcript-suppression`, `final-review-round-gate`, `final-review-structured-output`, `shadow-client-dispatch`, `capture-stderr-helper` (new), `helpers/{anthropic-wire,capture-stderr}.mjs`, `fixtures/debt-memory/*`
+- `docs/plans/final-review-debt-suppression-revival.md` (plan), `docs/plans/README.md` (generated index)
+
+### Decisions Made
+- Round 1 + Gemini accepted as the fresh audit rather than running to convergence (cost proportion; the user's call).
+- M3 fixed in scope with a guard test instead of deferred: `IDENTITY_PATHS` is this change's own mechanism.
+- Ownership is split with the queue-burndown work (`archive/queue-burndown-2026-10-02`): this PR supersedes its debt-suppression commits (`537a49bb`, `3091c7c5`), which its landing chip drops.
+
+### Regression Lock Status
+⚠ 173 code fixes repo-wide have no locked regression coverage (Q1, measured by `list-unlocked-fixes`); not introduced by this change.
+
+### Next Steps
+- Merging #203 is the user's call, with the PR head equal to the shipped sha.
+- #204 (CLI contract hardening) and #205 (audit-skill SIDs) follow; the keyset-paging PR waits for #204 to merge.
+
+Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt 328 cloud/1 local (0 spilled) · upstream 2
+
+---
+
 ## 2026-10-12 — fleet: unregistered work surfaced, `fleet archive`, claim binding, handover hardening (clusters B-D)
 
 `/cycle --autonomous` on `docs/plans/fleet-unclaimed-work-and-switch-friction.md`, clusters B to D (A is PR #206). Branch `claude/fleet-unclaimed-work-impl`; B-D ship as one PR after #206 merges (user's decision).
@@ -165,6 +199,7 @@ Verification:
 - Follow-ups recorded in plan §8: fleet-cli test split + fixture template (chip spawned by the CE coordinator); memoised rev-parse and no `gh` in `claim`, together with the derived-done-claim fix (M21), after this PR.
 
 Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt 328 cloud/10 local (0 spilled) · upstream 2
+
 
 ## 2026-10-11 — drift + backlog re-measured; five shipped plans closed; three honesty fixes
 

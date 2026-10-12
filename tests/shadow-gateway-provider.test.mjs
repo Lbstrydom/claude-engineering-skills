@@ -27,8 +27,9 @@ import { readFileSync } from 'node:fs';
 import { _internals } from '../scripts/gemini-review.mjs';
 
 import { finalReviewConfig } from '../scripts/lib/config.mjs';
+import { fetchedUrlsUnderCli, isAnthropicMessagesUrl, MESSAGES_REQUEST } from './helpers/anthropic-wire.mjs';
 
-const { resolveShadow, GEMINI_THINKING_BUDGET_BY_EFFORT } = _internals;
+const { resolveShadow, GEMINI_THINKING_BUDGET_BY_EFFORT, PROVIDERS } = _internals;
 const KIMI = 'moonshotai/kimi-k2-thinking';
 const shadow = (cfg, env = {}, azureActive = false) =>
   resolveShadow({ shadowConfig: cfg, env, azureActive });
@@ -126,22 +127,20 @@ describe('gateway shadow — the OpenRouter routing pins are inherited, not re-p
     // CANONICAL name. If that name stopped matching, the shadow would silently
     // run unpinned and measure OpenRouter's router instead of the model.
     //
-    // Target path updated for the Phase 2 relocation
-    // (docs/plans/gemini-review-decomposition.md) — the PROVIDERS catalog
-    // moved to lib/final-review/providers.mjs; same pin, new location.
-    const src = await import('node:fs').then((fs) =>
-      fs.readFileSync(new URL('../scripts/lib/final-review/providers.mjs', import.meta.url), 'utf-8'));
-
+    // Asserted on the EXPORTED descriptor's behaviour — `requestExtras()` is exactly what
+    // runFinalReview calls — not on the text of providers.mjs. A source regex cannot tell a live
+    // field from the same words in a comment, and breaks on any reformat. (Ledger topic 251efde41d8d.)
     const canonical = shadow({ provider: 'openrouter', model: KIMI }, { OPENROUTER_API_KEY: 'k' }).provider;
     assert.equal(canonical, 'openrouter');
 
     // The descriptor keyed by that canonical name must still declare both pins.
-    const descriptor = src.slice(src.indexOf('  openrouter: {'));
-    const body = descriptor.slice(0, descriptor.indexOf('\n  },'));
-    assert.match(body, /require_parameters:\s*true/, 'require_parameters pin missing from the inherited descriptor');
-    assert.match(body, /sort:\s*'[a-z]+'/, 'provider sort pin missing from the inherited descriptor');
-    assert.match(body, /reasoning:\s*\{\s*effort:/, 'reasoning-effort pin missing — reasoning tokens count against max_tokens');
-    assert.match(body, /structuredOutput:\s*true/, 'the shadow needs the JSON schema, not prose');
+    const descriptor = PROVIDERS[canonical];
+    assert.ok(descriptor, `no PROVIDERS["${canonical}"] — the shadow would run unpinned`);
+    const extras = descriptor.requestExtras();
+    assert.equal(extras.provider?.require_parameters, true, 'require_parameters pin missing from the inherited descriptor');
+    assert.match(String(extras.provider?.sort), /^[a-z]+$/, 'provider sort pin missing from the inherited descriptor');
+    assert.equal(extras.reasoning?.effort, finalReviewConfig.reasoningEffort, 'reasoning-effort pin missing — reasoning tokens count against max_tokens');
+    assert.equal(descriptor.structuredOutput, true, 'the shadow needs the JSON schema, not prose');
   });
 });
 
@@ -192,24 +191,19 @@ describe('xAI shadow — the descriptor is DELIBERATELY NOT the OpenRouter shape
     // is the "accepted but inert" failure class the Grok pre-flight (plan §8)
     // exists to catch — this test catches it earlier, for free.
     //
-    // Target path updated for the Phase 2 relocation — PROVIDERS moved to
-    // lib/final-review/providers.mjs.
-    const src = readFileSync(new URL('../scripts/lib/final-review/providers.mjs', import.meta.url), 'utf-8');
-
+    // The EXPORTED descriptor's behaviour, not the text of providers.mjs: `requestExtras()` is what
+    // runFinalReview sends. (A source regex also had to dodge this descriptor's own comment, which
+    // names the OpenRouter-only fields in prose to explain their absence.) Ledger topic 251efde41d8d.
     const canonical = shadow({ provider: 'xai', model: null }, { XAI_API_KEY: 'k' }).provider;
     assert.equal(canonical, 'xai');
 
-    const descriptor = src.slice(src.indexOf('  xai: {'));
-    const body = descriptor.slice(0, descriptor.indexOf('\n  },'));
-    assert.match(body, /reasoning_effort:\s*finalReviewConfig\.reasoningEffort/, 'flat reasoning_effort pin missing');
-    assert.match(body, /structuredOutput:\s*true/, 'the shadow needs the JSON schema, not prose');
-    // Field-WITH-VALUE shape, not the bare word — this descriptor's own
-    // explanatory comment names `require_parameters`/`sort`/`reasoning.effort`
-    // in prose (to say why they're excluded), so a bare-word regex would match
-    // the comment explaining the absence and fail the very test asserting it.
-    assert.doesNotMatch(body, /require_parameters:\s*true/, 'require_parameters is OpenRouter-only — xai has one endpoint, nothing to require');
-    assert.doesNotMatch(body, /sort:\s*'[a-z]+'/, 'sort is OpenRouter-only routing — meaningless for a direct endpoint');
-    assert.doesNotMatch(body, /reasoning:\s*\{\s*effort:/, 'must NOT use OpenRouter\'s NESTED shape — xai would silently ignore it');
+    const descriptor = PROVIDERS[canonical];
+    const extras = descriptor.requestExtras();
+    assert.deepEqual(extras, { reasoning_effort: finalReviewConfig.reasoningEffort },
+      'exactly the flat reasoning_effort field xAI accepts — and nothing else');
+    assert.equal(descriptor.structuredOutput, true, 'the shadow needs the JSON schema, not prose');
+    assert.ok(!('provider' in extras), 'require_parameters/sort are OpenRouter-only — xai has one endpoint, nothing to require');
+    assert.ok(!('reasoning' in extras), 'must NOT use OpenRouter\'s NESTED shape — xai would silently ignore it');
   });
 
   // Asserted on the IMPORTED table, not on source text. The table moved to
@@ -279,36 +273,24 @@ describe('Alibaba shadow — resolution states (native replacement for the qwen 
 
 describe('Alibaba shadow — the descriptor is a direct endpoint, not an OpenRouter-style router', () => {
   it('carries no OpenRouter routing pins, and sends enable_thinking EXPLICITLY TRUE — reasoning parity is the whole point of a comparison arm', () => {
-    // Target path updated for the Phase 2 relocation — PROVIDERS moved to
-    // lib/final-review/providers.mjs.
-    const src = readFileSync(new URL('../scripts/lib/final-review/providers.mjs', import.meta.url), 'utf-8');
-
     const canonical = shadow({ provider: 'alibaba', model: 'qwen3.8-max' }, { ALIBABA_CLOUD_API_KEY: 'k', ALIBABA_CLOUD_BASE_URL: 'https://example.invalid/v1' }).provider;
     assert.equal(canonical, 'alibaba');
 
-    const descriptor = src.slice(src.indexOf('  alibaba: {'));
-    const body = descriptor.slice(0, descriptor.indexOf('\n  },'));
-    assert.match(body, /structuredOutput:\s*true/, 'the shadow needs the JSON schema, not prose');
-    assert.doesNotMatch(body, /require_parameters:\s*true/, 'OpenRouter-only — alibaba is one workspace endpoint, nothing to require');
-    assert.doesNotMatch(body, /sort:\s*'[a-z]+'/, 'sort is OpenRouter-only routing — meaningless for a direct endpoint');
+    // The EXPORTED descriptor's behaviour (what runFinalReview sends), not source text — a regex
+    // cannot tell a live field from a comment, nor a field gated behind a condition from an
+    // unconditional one. Ledger topic 251efde41d8d.
+    const descriptor = PROVIDERS[canonical];
+    const extras = descriptor.requestExtras();
+    assert.equal(descriptor.structuredOutput, true, 'the shadow needs the JSON schema, not prose');
+    assert.ok(!('provider' in extras), 'require_parameters/sort are OpenRouter-only — alibaba is one workspace endpoint, nothing to require');
     // Set at all: Alibaba documents enable_thinking as required top-level for
     // non-streaming calls to thinking models, and leaving it unset is what
-    // correlated with the observed stalls.
-    assert.match(body, /enable_thinking:\s*true/, 'must send enable_thinking explicitly — unset is the state that stalled');
-    // And TRUE specifically. `false` would be faster and cheaper and would
-    // WRECK the comparison: reasoningEffort:'high' binds every arm and is
-    // hashed into the cohort digest, so an arm with reasoning off measures
-    // the dial rather than the model (the campaign's own measured lesson:
-    // 0 findings at `low` vs 3 at `high` on one identical transcript).
-    assert.doesNotMatch(body, /enable_thinking:\s*false/, 'reasoning must NOT be disabled on a comparison arm — that measures the setting, not the model');
-  });
-
-  it('the alibaba requestExtras actually EMITS enable_thinking:true at runtime, not just in source text', () => {
-    // The assertion above reads source; this one exercises the function, so a
-    // future refactor that moves the field behind a condition cannot pass by
-    // leaving the literal in a comment.
-    const extras = _internals.PROVIDERS.alibaba.requestExtras();
-    assert.equal(extras.enable_thinking, true);
+    // correlated with the observed stalls. And TRUE specifically. `false` would be faster and
+    // cheaper and would WRECK the comparison: reasoningEffort:'high' binds every arm and is
+    // hashed into the cohort digest, so an arm with reasoning off measures the dial rather than
+    // the model (the campaign's own measured lesson: 0 findings at `low` vs 3 at `high` on one
+    // identical transcript).
+    assert.deepEqual(extras, { enable_thinking: true }, 'must send enable_thinking:true explicitly — unset is the state that stalled, false measures the setting not the model');
   });
 
   // Imported-table assertion, same reasoning as the xai case above.
@@ -362,16 +344,12 @@ describe('DeepSeek shadow — resolution states (direct API, replaces the Alibab
 
 describe('DeepSeek shadow — the descriptor degrades gracefully on this provider\'s json_schema rejection', () => {
   it('carries no OpenRouter routing pins, and requestExtras is empty', () => {
-    // Target path updated for the Phase 2 relocation — PROVIDERS moved to
-    // lib/final-review/providers.mjs.
-    const src = readFileSync(new URL('../scripts/lib/final-review/providers.mjs', import.meta.url), 'utf-8');
     const canonical = shadow({ provider: 'deepseek', model: 'deepseek-v4-pro' }, { DEEPSEEK_API_KEY: 'k' }).provider;
     assert.equal(canonical, 'deepseek');
-    const descriptor = src.slice(src.indexOf('  deepseek: {'));
-    const body = descriptor.slice(0, descriptor.indexOf('\n  },'));
-    assert.match(body, /structuredOutput:\s*true/, 'the shadow needs the JSON schema, not prose — the openai transport degrades to prompt-only automatically if DeepSeek rejects it');
-    assert.doesNotMatch(body, /require_parameters:\s*true/, 'OpenRouter-only — deepseek is one direct endpoint');
-    assert.match(body, /requestExtras:\s*\(\)\s*=>\s*\(\{\}\)/, 'no reasoning field is claimed until verified live');
+    // The EXPORTED descriptor's behaviour, not source text. Ledger topic 251efde41d8d.
+    const descriptor = PROVIDERS[canonical];
+    assert.equal(descriptor.structuredOutput, true, 'the shadow needs the JSON schema, not prose — the openai transport degrades to prompt-only automatically if DeepSeek rejects it');
+    assert.deepEqual(descriptor.requestExtras(), {}, 'no routing pins (OpenRouter-only) and no reasoning field — none is claimed until verified live');
   });
 
   // Imported-table assertion, same reasoning as the xai/alibaba cases above.
@@ -412,31 +390,25 @@ describe('Anthropic reviewer transports pin the sdk backend', () => {
   // The shadow path was pinned 2026-07-26; the PRIMARY path was missed until
   // 2026-08-03 because it is only reached when GEMINI_API_KEY is absent —
   // meaning the final gate's own fallback reviewer was dead on any machine
-  // running CLAUDE_BACKEND=cli. A source assertion, because reproducing it
-  // needs a real CLI spawn and a 50K-token payload.
+  // running CLAUDE_BACKEND=cli.
   //
-  // Two source files since the Phase 2/3 relocation (docs/plans/gemini-review-decomposition.md):
-  // `buildShadowClient` moved to lib/final-review/shadow.mjs (Phase 3); the
-  // `claude-opus` PROVIDERS descriptor moved to providers.mjs (Phase 2).
+  // OBSERVED ON THE WIRE (tests/helpers/anthropic-wire.mjs), no longer regexed from source: under
+  // `cli` an unpinned client never touches the network, a pinned one POSTs to
+  // api.anthropic.com/v1/messages. The shadow builder's twin of this pin lives in
+  // gemini-review-shadow.test.mjs (with its negative control). Ledger topics 251efde41d8d / 630ffd6e3f03.
+  //
+  // The `azureRoute: null` half stays SOURCE-pinned below on purpose: the Azure config is frozen
+  // at module import, so observing it needs a subprocess.
   const SHADOW_SRC = readFileSync(new URL('../scripts/lib/final-review/shadow.mjs', import.meta.url), 'utf-8');
   const PROVIDERS_SRC = readFileSync(new URL('../scripts/lib/final-review/providers.mjs', import.meta.url), 'utf-8');
 
-  // `backend: 'sdk'` as an OPTION, not as the sole option: since 2026-08-30
-  // both sites also pass `azureRoute: null`, pinned separately below. Requiring
-  // the exact two-character call shape would make every future option a false
-  // failure while proving nothing extra.
-  const PINS_SDK = /createAnthropicClient\(\{[^)]*backend:\s*'sdk'/;
-
-  it('the shadow builder pins backend sdk', () => {
-    const fn = SHADOW_SRC.slice(SHADOW_SRC.indexOf('async function buildShadowClient'));
-    assert.match(fn.slice(0, fn.indexOf('\n}\n')), PINS_SDK);
-  });
-
-  it('the PRIMARY claude-opus provider pins backend sdk — never the ambient env', () => {
-    const block = PROVIDERS_SRC.slice(PROVIDERS_SRC.indexOf("'claude-opus': {"));
-    const body = block.slice(0, block.indexOf("'azure-claude': {"));
-    assert.match(body, PINS_SDK);
-    assert.doesNotMatch(body, /createAnthropicClient\(\s*\)/, 'ambient-backend construction reintroduced');
+  it('the PRIMARY claude-opus provider pins backend sdk — observed: it reaches the API under CLAUDE_BACKEND=cli', async () => {
+    const urls = await fetchedUrlsUnderCli(async () => {
+      const client = await PROVIDERS['claude-opus'].buildClient();
+      await client.messages.create(MESSAGES_REQUEST);
+    });
+    assert.equal(urls.filter(isAnthropicMessagesUrl).length, 1,
+      `the primary claude-opus client must pin the sdk backend; saw ${JSON.stringify(urls)}`);
   });
 
   it('both Anthropic arms pin azureRoute:null — they MEAN the public service', () => {
