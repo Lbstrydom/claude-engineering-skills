@@ -799,6 +799,8 @@ export function buildStatus(facts) {
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** `.fleet.json` `hideIdleAfterDays` default: an untracked branch with no commit for this long reads as abandoned. */
 export const DEFAULT_IDLE_DAYS = 14;
+/** `.fleet.json` `staleWorktreeDays` default: unlanded work idle longer than this is "possibly abandoned". */
+export const DEFAULT_STALE_WORKTREE_DAYS = 3;
 
 /** The idle window in ms from a resolved config (`hideIdleAfterDays`, else the default). */
 export const idleMsFrom = (config) => (config?.hideIdleAfterDays ?? DEFAULT_IDLE_DAYS) * DAY_MS;
@@ -836,9 +838,23 @@ export function isIdleTip(tipTime, now, idleMs) {
 export function hideReason(item, { prsComplete, now = null, idleMs = DEFAULT_IDLE_DAYS * DAY_MS }) {
   if (!(item.tracked === false && item.kind === 'branch' && item.pr === null && prsComplete === true)) return null;
   if (!(item.worktree === null || item.worktreeClean === true)) return null;
+  const landed = landedReason(item);
+  if (landed) return landed;
+  if (Number.isInteger(item.ahead) && isIdleTip(item.tipTime, now, idleMs)) return 'idle';
+  return null;
+}
+
+/**
+ * Is this tip's committed work on base? THE one spelling, shared by `hideReason`, `planPrune` and the
+ * unregistered-work verdict: `'merged'` when the tip is contained in base (ahead 0), `'landed'` when merged
+ * evidence covers the exact tip (a merged PR's head, or a squash patch-id that postdates the fork), else
+ * null. Speaks only about COMMITTED history — whether the worktree holds more is each caller's question.
+ * @param {{ahead?: number|null, merged?: {merged?: boolean|'partially'}|null}} item
+ * @returns {'merged'|'landed'|null}
+ */
+export function landedReason(item) {
   if (item.ahead === 0) return 'merged';
   if (item.merged?.merged === true) return 'landed';
-  if (Number.isInteger(item.ahead) && isIdleTip(item.tipTime, now, idleMs)) return 'idle';
   return null;
 }
 

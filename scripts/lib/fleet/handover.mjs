@@ -25,11 +25,19 @@ import { ok, failed, refused } from './commands.mjs';
 import { resolveConfig } from './config.mjs';
 import { readDirectives } from './directives.mjs';
 import { buildStatusFrom, gatherFacts } from './facts.mjs';
-import { gitCommonDir, listWorktrees, repoToplevel } from './git-facts.mjs';
+import { gitCommonDir, listBranches, listWorktrees, repoToplevel, runGit } from './git-facts.mjs';
+import { parseOriginRepo } from '../branch-protection.mjs';
 import { archiveReport } from './lifecycle.mjs';
+import { RISK_KINDS, UNREGISTERED_BUDGET, VERDICTS, coveredBy, liveSessionsOf, unregisteredWork } from './unregistered.mjs';
+
+export { liveSessionsOf };
+import { isTerminalState } from './overlap.mjs';
 import { fleetDir, listTrains, readSessions, realWithTail } from './registry.mjs';
-import { renderChipPrompt } from './render-train.mjs';
-import { quoteArg, renderCommand } from './shell-quote.mjs';
+import { blocksHandover, ghUnknownLine, receiveCommand, renderBeforeRelaunch, renderHandoverMarkdown, renderReceiveText } from './handover-render.mjs';
+import { renderCommand } from './shell-quote.mjs';
+
+export { blocksHandover, ghUnknownLine, renderHandoverMarkdown };
+export { claimCommand } from './handover-render.mjs';
 
 export const HANDOVER_SCHEMA_VERSION = 1;
 export const OP_ID_RE = /^\d{8}T\d{9}Z-[0-9a-f]{6}$/;
@@ -44,8 +52,8 @@ export function handoverId(now = new Date(), rand = crypto.randomBytes(3).toStri
 }
 
 const FLAG_CONTRACT = {
-  prepare: { required: [], forbidden: ['--from', '--dry-run'] },
-  receive: { required: ['--from'], forbidden: ['--repo'] },
+  prepare: { required: [], forbidden: ['--from', '--dry-run', '--allow-older'] },
+  receive: { required: ['--from'], forbidden: ['--repo', '--scheduler-checked'] },
 };
 
 /** Validated before ANY discovery or I/O (R1-M3); a violation is an argv error (exit 2). */
@@ -139,10 +147,13 @@ function walkMemory(dir) {
 /** Every `projects/*\/memory` under the config root (account-wide, independent of the invoking repo). */
 export function collectMemory(configDir) {
   const projects = path.join(configDir, 'projects');
-  let names = [];
-  try { names = fs.readdirSync(projects, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name); }
+  let entries = [];
+  try { entries = fs.readdirSync(projects, { withFileTypes: true }); }
   catch (e) { if (e.code !== 'ENOENT') throw e; }
   const memory = []; const anomalies = []; const errors = [];
+  // Classify BEFORE filtering: a linked project dir is reported, never dropped as if it held no memory.
+  for (const e of entries) if (e.isSymbolicLink()) anomalies.push({ kind: 'project-is-link', detail: e.name });
+  const names = entries.filter((e) => e.isDirectory()).map((e) => e.name);
   for (const dirName of names.sort()) {
     const mem = path.join(projects, dirName, 'memory');
     // ENOENT = this project simply has no memory (most are transcript-only). ANY other failure means the
@@ -179,14 +190,64 @@ export function collectScheduledTasks(configDir) {
   });
 }
 
-/** User-level settings: presence + hash only. Contents are never copied or embedded (may hold tokens). */
+/** The account file: under the config root when CLAUDE_CONFIG_DIR is set, else beside the home directory. */
+export const claudeJsonPath = (configDir, env = process.env, homedir = os.homedir()) =>
+  (env.CLAUDE_CONFIG_DIR?.trim() ? path.join(configDir, '.claude.json') : path.join(homedir, '.claude.json'));
+
+/**
+ * User-level settings: presence + hash only. Contents are never copied or embedded (may hold tokens).
+ * `.claude.json` carries NO hash: the app rewrites it every minute or two (plan M13), so a hash could never read
+ * "same"; its identity is compared by `accountIdentity` instead.
+ */
 export function settingsFiles(configDir, env = process.env, homedir = os.homedir()) {
-  const account = env.CLAUDE_CONFIG_DIR?.trim() ? path.join(configDir, '.claude.json') : path.join(homedir, '.claude.json');
-  return [['settings.json', path.join(configDir, 'settings.json')], ['.claude.json', account]].map(([name, p]) => {
+  return [['settings.json', path.join(configDir, 'settings.json')], ['.claude.json', claudeJsonPath(configDir, env, homedir)]].map(([name, p]) => {
     const pr = probeFile(p);
+    if (name === '.claude.json') return { name, path: p, exists: pr.kind === 'file', sha256: null, volatile: true };
     return { name, path: p, exists: pr.kind === 'file', sha256: pr.kind === 'file' ? pr.hash : null };
   });
 }
+
+/**
+ * Account identity from `.claude.json`, by WHITELIST (plan o): `oauthAccount.accountUuid`, `.emailAddress`,
+ * `.organizationUuid`, and the NAMES of MCP servers (top-level and per project; projects with none omitted). The
+ * file also holds tokens, so nothing outside those keys is read into the result. Never throws: an absent or
+ * unparseable file is `account: null` with a reason.
+ */
+export function accountIdentity(file) {
+  let json;
+  try { json = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {
+    return { account: null, reason: e.code === 'ENOENT' ? '.claude.json absent' : `.claude.json unreadable (${e.code ?? 'not valid JSON'})`, mcp: null };
+  }
+  const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+  const str = (v) => (typeof v === 'string' && v ? v : null);
+  const o = isObj(json?.oauthAccount) ? json.oauthAccount : null;
+  const account = o ? { accountUuid: str(o.accountUuid), emailAddress: str(o.emailAddress), organizationUuid: str(o.organizationUuid) } : null;
+  const names = (v) => (isObj(v) ? Object.keys(v).sort() : []);
+  const projects = isObj(json?.projects)
+    ? Object.keys(json.projects).sort().map((p) => ({ path: p, names: names(json.projects[p]?.mcpServers) })).filter((p) => p.names.length)
+    : [];
+  return { account, ...(account ? {} : { reason: 'no oauthAccount in .claude.json' }), mcp: { global: names(json?.mcpServers), projects } };
+}
+
+/**
+ * Source identity against this account's (plan o). The key is `accountUuid`, else the address; either side missing
+ * a key is `unknown`, never "same". MCP servers are compared by name only, as `name` or `name (project)`.
+ */
+export function compareIdentity(src, mine) {
+  const key = (a) => a?.accountUuid ?? a?.emailAddress ?? null;
+  const account = !src ? { status: 'unknown', reason: 'not recorded at prepare (manifest predates identity)' }
+    : !key(src.account) ? { status: 'unknown', reason: `source: ${src.reason ?? 'no account id'}` }
+      : !key(mine.account) ? { status: 'unknown', reason: `this account: ${mine.reason ?? 'no account id'}` }
+        : { status: key(src.account) === key(mine.account) ? 'same' : 'different', source: src.account.emailAddress, mine: mine.account.emailAddress };
+  const flat = (mcp) => (mcp ? [...mcp.global, ...mcp.projects.flatMap((p) => p.names.map((n) => `${n} (${p.path})`))] : null);
+  const a = flat(src?.mcp); const b = flat(mine.mcp);
+  const mcp = a && b ? { added: b.filter((n) => !a.includes(n)), removed: a.filter((n) => !b.includes(n)) } : null;
+  return { account, mcp };
+}
+
+/** The documented wait token for "blocked on the account switch itself" (plan s): case, spaces, `_` and `-` folded. */
+export const SWITCH_TOKEN = 'account-switch';
+export const normaliseWaitRef = (ref) => String(ref ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '-');
 
 /**
  * A repo's identity is its MAIN checkout (the parent of the git common dir), whichever worktree runs
@@ -223,56 +284,89 @@ export function fleetCliFor(repo) {
   return fs.existsSync(path.join(repo, 'scripts', 'sync-to-repos.mjs')) ? 'node scripts/fleet.mjs' : 'node scripts/.claude-skills/fleet.mjs';
 }
 
-const RISK_KINDS = ['staged', 'unstaged', 'untracked', 'unpushed'];
+/**
+ * The branches a handover asks merged evidence for: every non-terminal claim's branch and every branch
+ * checked out in a listed worktree, never the base. A branch left out would always read "not merged" — an
+ * unasked question is not an empty answer — so a landed claim would stay live (defect h).
+ */
+export function mergedEvidenceNames({ registry, worktreeList, base, extra = [] }) {
+  const names = new Set(extra);
+  for (const s of registry?.sessions ?? []) if (s.source?.branch && !isTerminalState(s.state)) names.add(s.source.branch);
+  for (const w of worktreeList?.worktrees ?? []) if (w.branch && !w.bare) names.add(w.branch);
+  names.delete(base);
+  return [...names];
+}
 
 /**
- * Worktrees no LIVE claim covers that still hold work (staged/unstaged/untracked files or unpushed
- * commits). A coordinator that never claimed its branch is exactly the work a handover would otherwise
- * lose (2026-10-11: a storyline coordinator's branch was unregistered). Ignored files do not count —
- * they are caches/artifacts and would flag every worktree.
+ * ONE derivation of a repo's coordination state, shared by prepare and receive (defect h): the same
+ * `gatherFacts` + `buildStatusFrom` that `status` renders, with merged evidence for the branches that can
+ * retire a claim. The registry is read once here to name those branches; a claim registered between that
+ * read and gatherFacts' own simply has no evidence asked for, so it reads live (the safe direction).
  */
-export function unregisteredWork(repo, ctx, { worktrees: claimedWorktrees = [], branches: claimedBranches = [] } = {}, { list = listWorktrees, report = archiveReport } = {}) {
-  const wt = list(repo);
-  if (!wt.queried) return { queried: false, reason: wt.reason ?? 'git worktree list failed', items: [] };
-  const items = [];
-  for (const w of wt.worktrees) {
-    // Covered by a claim bound to this worktree, OR by one whose branch is checked out here (`fleet add`
-    // adopts a branch without binding a worktree).
-    if (w.bare || w.missing || w.prunable || claimedWorktrees.some((c) => samePath(c, w.path)) || (w.branch && claimedBranches.includes(w.branch))) continue;
-    // branch:null — the worktree's own HEAD is probed anyway, and a branch would cost a gh PR lookup per worktree.
-    const r = report(ctx, { branch: null, worktree: w.path });
-    const risks = Object.fromEntries(RISK_KINDS.map((k) => [k, (r.risks[k] ?? []).length]));
-    // An unborn HEAD (no commit yet) has no commits to lose: its unresolvable HEAD is not a gap in the evidence.
-    const unborn = /^0+$/.test(w.head ?? '');
-    const unverified = r.unverified.filter((u) => !(unborn && u.startsWith('cannot resolve HEAD')));
-    if (!RISK_KINDS.some((k) => risks[k] > 0) && !unverified.length) continue;
-    items.push({ worktree: path.resolve(w.path), branch: w.branch ?? null, detached: Boolean(w.detached), locked: Boolean(w.locked), risks, ...(unverified.length ? { unverified } : {}) });
-  }
-  return { queried: true, items };
+function gatherLive(repo, { config, env, now, deadlineAt = null }) {
+  const worktreeList = listWorktrees(repo);
+  // Branch-only unregistered candidates (ahead of base, or ahead unknown) need evidence too, or every one of
+  // them would read `unverified`: they come from ONE listBranches call made before gatherFacts.
+  const local = listBranches(repo, config.baseBranch);
+  const branchOnly = (local.branches ?? []).filter((b) => b.ahead !== 0).map((b) => b.name);
+  const names = mergedEvidenceNames({ registry: readSessions(fleetDir(repo)), worktreeList, base: config.baseBranch, extra: branchOnly });
+  const facts = gatherFacts({ cwd: repo, config, now, env, prs: false, patches: false, worktrees: true, untracked: false, merged: names, checks: false, uncommitted: 'all', deadlineAt });
+  const status = buildStatusFrom(facts);
+  return { facts, status, ...liveSessionsOf(facts, status) };
+}
+
+/**
+ * Unregistered work for a handover, as manifest fields. A scan that did not reach every candidate is NOT
+ * MEASURED (fail closed): its items are kept, and `unregisteredUnknown` says what was left out.
+ */
+function unregisteredFields(repo, ctx, claimed, deps) {
+  const u = unregisteredWork(repo, ctx, claimed, deps);
+  if (!u.queried) return { unregistered: [], unregisteredUnknown: u.reason };
+  const gaps = [u.notProbed ? `scan deadline reached: ${u.notProbed} worktree(s)/branch(es) not probed` : null, u.branchesUnknown ?? null].filter(Boolean);
+  return { unregistered: u.items, ...(gaps.length ? { unregisteredUnknown: gaps.join('; ') } : {}) };
+}
+
+/**
+ * A pasteable fleet command: `cli` is a rendered invocation prefix (`fleetCliFor`, or a manifest's copy of it), used
+ * as is and never re-split; only the arguments added here go through the shell quoter.
+ */
+export const cliCommand = (cli, args) => `${cli} ${renderCommand(args)}`;
+
+/** A merged-unreleased claim as a handover lists it: what landed, and the exact command that retires it. */
+function mergedUnreleasedEntry(i, fleetCli) {
+  return { id: i.id, branch: i.branch ?? null, note: i.notes.find((n) => n.startsWith('derived done')) ?? 'derived done', release: cliCommand(fleetCli, ['release', '--id', i.id]) };
+}
+
+/**
+ * Could this repo's PR state be read (plan e)? `facts.merged.prs` verbatim — the merged-PR query a handover already
+ * makes, so no extra gh call — plus `owner/repo` from `origin`, to name the account that is needed.
+ */
+export function ghReachability(repo, facts, { git = runGit } = {}) {
+  const prs = facts?.merged?.prs ?? { queried: false, reason: 'not measured' };
+  const url = git(['remote', 'get-url', 'origin'], repo);
+  const parsed = url.ok ? parseOriginRepo(url.stdout) : null;
+  return { gh: { queried: Boolean(prs.queried), ...(prs.queried ? {} : { reason: String(prs.reason ?? 'not queried') }) }, ghRepo: parsed?.slug ?? null };
 }
 
 /** Live coordination state for one repo; a repo without fleet state is reported, never an error. */
-function repoState(repo, { env, now }) {
+function repoState(repo, { env, now, deadlineAt }) {
   const fleetCli = fleetCliFor(repo);
   let dir;
   try { dir = fleetDir(repo); } catch (e) { return { path: repo, fleetCli, fleet: 'error', error: e.message, sessions: [], unregistered: [], unregisteredUnknown: `not a git repo: ${e.message}` }; }
   const wtList = listWorktrees(repo);
   let config;
   try { config = resolveConfig(repo, { env }); } catch (e) {
-    // Sessions cannot be read without config, but worktrees still can: probe them (nothing counts as claimed).
-    const u = unregisteredWork(repo, { cwd: repo, env, now }, {}, { list: () => wtList });
-    return { path: repo, fleetCli, fleet: 'error', error: `config: ${e.message}`, sessions: [], ...(u.queried ? { unregistered: u.items } : { unregistered: [], unregisteredUnknown: u.reason }) };
+    // Sessions cannot be read without config, but worktrees still can: probe them (nothing counts as claimed,
+    // and with no base nothing can be counted off it, so every candidate fails closed as `unverified`).
+    return { path: repo, fleetCli, fleet: 'error', error: `config: ${e.message}`, sessions: [], ...unregisteredFields(repo, { cwd: repo, env, now }, {}, { list: () => wtList, deadlineAt }) };
   }
-  const unregisteredFor = (claimed) => {
-    const u = unregisteredWork(repo, { cwd: repo, config, env, now }, claimed, { list: () => wtList });
-    return u.queried ? { unregistered: u.items } : { unregistered: [], unregisteredUnknown: u.reason };
-  };
   // A repo with no fleet registry can still hold unregistered work in its worktrees: always look.
-  if (!fs.existsSync(dir)) return { path: repo, fleetCli, fleet: 'absent', sessions: [], ...unregisteredFor({}) };
-  const f = gatherFacts({ cwd: repo, config, now, env, prs: false, patches: false, worktrees: true, untracked: false, merged: false, checks: false, uncommitted: 'all' });
-  const status = buildStatusFrom(f);
+  const { facts, live, mergedUnreleased } = gatherLive(repo, { config, env, now, deadlineAt });
+  const gh = ghReachability(repo, facts);
+  const unregisteredFor = (claimed) => unregisteredFields(repo, { cwd: repo, config, env, now }, claimed, { facts, list: () => wtList, deadlineAt });
+  if (!fs.existsSync(dir)) return { path: repo, fleetCli, fleet: 'absent', sessions: [], ...gh, ...unregisteredFor({}) };
   const ctx = { cwd: repo, config, env, now };
-  const sessions = status.items.filter((i) => i.tracked && !['done', 'abandoned'].includes(i.state)).map((i) => {
+  const sessions = live.map((i) => {
     // An adopted session (`fleet add`) records no worktree: resolve it from where its branch is checked out.
     const worktree = i.worktree ?? (i.branch ? (wtList.worktrees ?? []).find((w) => !w.bare && w.branch === i.branch)?.path ?? null : null);
     const s = {
@@ -289,10 +383,14 @@ function repoState(repo, { env, now }) {
   });
   const directives = readDirectives(dir);
   const trains = listTrains(dir);
+  // A registry that could not be read completely is NOT MEASURED here exactly as it is at receive: the sessions
+  // that were readable are kept, and the repo is marked so prepare refuses rather than reading "these are all".
+  const incomplete = facts.registry?.complete === false ? { fleet: 'error', error: 'registry incomplete (unreadable session records)' } : { fleet: 'present' };
   return {
-    path: repo, fleetCli, fleet: 'present', sessions,
+    path: repo, fleetCli, ...incomplete, sessions, mergedUnreleased: mergedUnreleased.map((i) => mergedUnreleasedEntry(i, fleetCli)), ...gh,
     directives: directives.active.length, trains: trains.trains.filter((t) => !['landed', 'abandoned'].includes(t.phase)).length,
-    ...unregisteredFor({ worktrees: sessions.map((s) => s.worktree).filter(Boolean), branches: sessions.map((s) => s.branch).filter(Boolean) }),
+    // A merged-unreleased record is still non-terminal, so it still covers its worktree until it is released.
+    ...unregisteredFor(coveredBy([...live, ...mergedUnreleased])),
   };
 }
 
@@ -304,11 +402,20 @@ const MemoryEntry = z.object({
   files: z.array(FileEntry),
   skipped: z.array(z.object({ rel: z.string(), reason: z.string() }).strict()),
 }).strict();
+// The verdict fields are optional: a manifest written before verdicts existed still parses (and every one of
+// its items blocks, `blocksHandover`). A branch-only candidate has no worktree.
 const UnregisteredEntry = z.object({
-  worktree: z.string(), branch: z.string().nullable(), detached: z.boolean(), locked: z.boolean(),
+  worktree: z.string().nullable(), branch: z.string().nullable(), detached: z.boolean(), locked: z.boolean(),
   risks: z.object(Object.fromEntries(RISK_KINDS.map((k) => [k, z.number().int().nonnegative()]))).strict(),
   unverified: z.array(z.string()).optional(),
+  kind: z.enum(['worktree', 'branch']).optional(), head: z.string().nullable().optional(), ahead: z.number().int().nonnegative().nullable().optional(),
+  committed: z.enum(['none', 'pushed', 'unpushed', 'unknown']).optional(), evidence: z.enum(['landed', 'duplicate', 'none', 'incomplete']).optional(),
+  duplicateOf: z.string().optional(), verdict: z.enum(VERDICTS).optional(), row: z.string().optional(), blocks: z.boolean().optional(),
+  preserved: z.string().optional(), reason: z.string().optional(), via: z.enum(['landed', 'duplicate']).optional(), syncOwnedDirty: z.literal(true).optional(),
+  idleDays: z.number().int().nonnegative().nullable().optional(), stale: z.boolean().optional(), lastActivity: z.string().nullable().optional(),
+  mtimeNotStatted: z.number().int().positive().optional(),
 }).strict();
+const MergedUnreleasedEntry = z.object({ id: z.string(), branch: z.string().nullable(), note: z.string(), release: z.string() }).strict();
 export const HandoverManifestSchema = z.object({
   schemaVersion: z.literal(HANDOVER_SCHEMA_VERSION),
   id: z.string().regex(OP_ID_RE),
@@ -322,15 +429,28 @@ export const HandoverManifestSchema = z.object({
     repos: z.array(z.object({
       path: z.string(), fleetCli: z.string().optional(), fleet: z.enum(['present', 'absent', 'error']), error: z.string().optional(),
       directives: z.number().optional(), trains: z.number().optional(), sessions: z.array(z.object({ id: z.string() }).passthrough()),
+      // optional: whether this repo's PR state could be read (plan e); absent in a manifest written before it
+      gh: z.object({ queried: z.boolean(), reason: z.string().optional() }).strict().optional(), ghRepo: z.string().nullable().optional(),
       // optional: a manifest written before unregistered-work detection still parses (it just reports none)
       unregistered: z.array(UnregisteredEntry).optional(), unregisteredUnknown: z.string().optional(),
+      // optional: a manifest written before defect h's fix lists merged-unreleased claims as sessions instead
+      mergedUnreleased: z.array(MergedUnreleasedEntry).optional(),
     }).strict()),
   }).strict(),
   memory: z.array(MemoryEntry),
   memoryErrors: z.array(z.object({ dirName: z.string(), reason: z.string() }).strict()),
   anomalies: z.array(z.object({ kind: z.string(), detail: z.string() }).strict()),
   scheduledTasks: z.array(z.object({ id: z.string(), description: z.string() }).strict()),
-  settings: z.array(z.object({ name: z.string(), path: z.string(), exists: z.boolean(), sha256: z.string().nullable() }).strict()),
+  // `volatile`: compared by identity, never by hash (plan o). A manifest written before it carries a `.claude.json`
+  // hash, which receive ignores.
+  settings: z.array(z.object({ name: z.string(), path: z.string(), exists: z.boolean(), sha256: z.string().nullable(), volatile: z.literal(true).optional() }).strict()),
+  // optional (plan o, r): absent in a manifest written before them
+  identity: z.object({
+    account: z.object({ accountUuid: z.string().nullable(), emailAddress: z.string().nullable(), organizationUuid: z.string().nullable() }).strict().nullable(),
+    reason: z.string().optional(),
+    mcp: z.object({ global: z.array(z.string()), projects: z.array(z.object({ path: z.string(), names: z.array(z.string()) }).strict()) }).strict().nullable(),
+  }).strict().optional(),
+  schedulerChecked: z.boolean().optional(),
 }).strict();
 
 /** Reserve `<dir>/handover-<id>.<ext>` exclusively; retry with a fresh suffix on EEXIST (R1-H3). */
@@ -354,7 +474,8 @@ export async function prepareHandover(ctx, flags = {}, { homedir = os.homedir() 
   const configDir = claudeConfigDir(ctx.env, { homedir });
   const { memory, anomalies, errors: memoryErrors } = collectMemory(configDir);
   const scope = await resolveRepoScope(ctx.cwd, flags['--repo'] ?? []);
-  const repos = scope.repos.map((r) => repoState(r, { env: ctx.env, now: ctx.now }));
+  const deadlineAt = Date.now() + UNREGISTERED_BUDGET.handoverMs;
+  const repos = scope.repos.map((r) => repoState(r, { env: ctx.env, now: ctx.now, deadlineAt }));
   const handoverDir = path.join(ctx.dir, 'handover');
   const art = reserveArtifacts(handoverDir, ctx.now instanceof Date ? ctx.now : new Date());
   const manifest = {
@@ -363,6 +484,8 @@ export async function prepareHandover(ctx, flags = {}, { homedir = os.homedir() 
     fleetCommand: ctx.cmd ?? 'node scripts/fleet.mjs',
     scope: { sourceRepo: scope.sourceRepo, repos }, memory, memoryErrors, anomalies,
     scheduledTasks: collectScheduledTasks(configDir), settings: settingsFiles(configDir, ctx.env, homedir),
+    identity: accountIdentity(claudeJsonPath(configDir, ctx.env, homedir)),
+    schedulerChecked: Boolean(flags['--scheduler-checked']),
   };
   HandoverManifestSchema.parse(manifest); // a manifest prepare cannot itself validate is a bug, never a file
   atomicWriteFileSync(art.json, `${JSON.stringify(manifest, null, 2)}\n`);
@@ -371,6 +494,17 @@ export async function prepareHandover(ctx, flags = {}, { homedir = os.homedir() 
 }
 
 // ── receive ─────────────────────────────────────────────────────────────────
+
+/**
+ * Ids of sibling `handover-<id>.json` manifests newer than `id` (ids sort chronologically); unparseable names ignored.
+ * A directory that cannot be listed is `{ok:false}`, never an empty list: "no newer manifest" must be a measurement.
+ * @returns {{ok: true, newer: string[]} | {ok: false, reason: string}}
+ */
+export function newerManifests(dir, id, { readdir = fs.readdirSync } = {}) {
+  let names;
+  try { names = readdir(dir); } catch (e) { return { ok: false, reason: `${dir} could not be listed (${e.code ?? e.message})` }; }
+  return { ok: true, newer: names.map((n) => /^handover-(.+)\.json$/.exec(n)?.[1]).filter((x) => x && OP_ID_RE.test(x) && x > id).sort() };
+}
 
 /** Parse + validate a manifest; every failure is a named reason, never a clean report. */
 export function loadManifest(file) {
@@ -485,11 +619,44 @@ function sweepStaging(stagingRoot) {
   return { swept, kept };
 }
 
+/**
+ * What a receive leaves for a human that is NOT a failure (plan p): scheduled tasks to confirm or recreate, settings
+ * or MCP differences, a repo whose PR state cannot be read, an account change (or an unknown one), and claims waiting
+ * on the switch itself. Each is `{kind, detail}`.
+ */
+export function receiveFollowUps({ tasks, settingsReview, identity, ghUnknown, waits }) {
+  const out = [];
+  if (tasks.length) {
+    const missing = tasks.filter((t) => t.file === 'missing').length;
+    out.push({ kind: 'scheduled-tasks', detail: `${tasks.length} scheduled task(s): ${tasks.length - missing} file(s) present, ${missing} missing here — confirm each in this account's scheduler, recreate what is still wanted` });
+  }
+  for (const s of settingsReview) out.push({ kind: 'settings', detail: `${s.name} ${s.status} — review by hand` });
+  const a = identity.account;
+  if (a.status === 'different') out.push({ kind: 'account', detail: `account changed: ${a.source ?? '?'} → ${a.mine ?? '?'}` });
+  else if (a.status === 'unknown') out.push({ kind: 'account', detail: `account not compared (${a.reason})` });
+  if (identity.mcp && (identity.mcp.added.length || identity.mcp.removed.length)) {
+    out.push({ kind: 'mcp', detail: `MCP servers${identity.mcp.added.length ? ` added here: ${identity.mcp.added.join(', ')}` : ''}${identity.mcp.removed.length ? `${identity.mcp.added.length ? ';' : ''} missing here: ${identity.mcp.removed.join(', ')}` : ''}` });
+  }
+  for (const g of ghUnknown) out.push({ kind: 'gh', detail: ghUnknownLine(g) });
+  for (const w of waits.filter((x) => x.onSwitch)) {
+    out.push({ kind: 'waiting-on-switch', detail: `${w.id} (${w.repo}) waits on the switch itself — unblock now: ${w.clear}${w.kept ? ` (clears every wait, then re-adds its ${w.kept} other wait(s) with a fresh since)` : ' (clears its waits)'}` });
+  }
+  return out;
+}
+
 /** receive: verify (same config root) or additively copy (different one) the memory; flag the human steps. */
-export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform = process.platform } = {}) {
-  const loaded = loadManifest(path.resolve(ctx.cwd, flags['--from']));
+export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform = process.platform, readdir = fs.readdirSync } = {}) {
+  const fromFile = path.resolve(ctx.cwd, flags['--from']);
+  const loaded = loadManifest(fromFile);
   if (!loaded.ok) return failed(`${loaded.reason}: ${loaded.detail}`, { handover: { reason: loaded.reason } });
   const m = loaded.manifest;
+  // A newer manifest beside this one means this one is stale (plan l): refuse unless told this is deliberate.
+  // A check that could not run refuses the same way — it never reads as "this is the newest".
+  const fresh = newerManifests(path.dirname(fromFile), m.id, { readdir });
+  if (!flags['--allow-older']) {
+    if (!fresh.ok) return refused(`could not check for a newer handover manifest: ${fresh.reason} — pass --allow-older to receive this one without that check`, { handover: { reason: 'newer-manifest-unknown', detail: fresh.reason } });
+    if (fresh.newer.length) return refused(`a newer handover manifest sits beside this one (handover-${fresh.newer.at(-1)}.json) — receive that one, or pass --allow-older to receive this older one deliberately`, { handover: { reason: 'newer-manifest', newer: fresh.newer } });
+  }
   const destConfigDir = claudeConfigDir(ctx.env, { homedir });
   const destReal = realWithTail(destConfigDir);
   const sameRoot = samePath(destReal, m.sourceConfigDirReal, platform);
@@ -541,188 +708,95 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
   }));
   const ownSettings = settingsFiles(destConfigDir, ctx.env, homedir);
   const settings = m.settings.map((s) => {
+    // `.claude.json` is compared by identity, never by hash: an older manifest's hash is ignored (plan o).
+    if (s.volatile || s.name === '.claude.json') return { name: s.name, status: 'by-identity', review: false };
     const mine = ownSettings.find((o) => o.name === s.name);
     const status = !mine?.exists ? (s.exists ? 'absent' : 'same') : mine.sha256 === s.sha256 ? 'same' : 'differs';
     return { name: s.name, status, review: status !== 'same' };
   });
+  const identity = compareIdentity(m.identity, accountIdentity(claudeJsonPath(destConfigDir, ctx.env, homedir)));
+  // Where each memory dir lands, in the spelling on disk (plan t), so "confirm the path" has something to compare.
+  const memoryDest = m.memory.map((mem) => ({ dirName: mem.dirName, dest: path.join(destConfigDir, 'projects', destDirName(destConfigDir, mem.dirName, platform), 'memory') }));
   // ONE live read per scoped repo drives both the live-session list and claimed-worktree coverage: a claim made
   // after prepare is a live session here AND covers its worktree. A registry that cannot be read completely is
   // UNKNOWN live state, never "no live sessions" (audit R1-H4/M4).
   const liveUnknown = [];
   const liveSessions = [];
+  const mergedUnreleased = [];
+  const ghUnknown = [];
   const unregistered = [];
+  const waits = [];
+  const deadlineAt = Date.now() + UNREGISTERED_BUDGET.handoverMs;
   for (const r of m.scope.repos) {
     if (!fs.existsSync(r.path)) { unregistered.push({ repo: r.path, unknown: 'repo path no longer exists' }); continue; }
     let claimed = { worktrees: [], branches: [] };
-    let dir = null;
+    let dir = null; let g = null; let config = null;
     try { dir = fleetDir(r.path); } catch (e) { liveUnknown.push({ repo: r.path, reason: e.message }); }
-    if (dir && fs.existsSync(dir)) {
+    if (dir) {
       try {
-        const reg = readSessions(dir);
-        if (!reg.complete) liveUnknown.push({ repo: r.path, reason: 'registry incomplete (unreadable session records)' });
-        const live = reg.sessions.filter((x) => !['done', 'abandoned'].includes(x.state));
-        claimed = { worktrees: live.map((x) => x.worktree).filter(Boolean), branches: live.map((x) => x.source?.branch).filter(Boolean) };
-        const atPrepare = new Set(r.sessions.map((x) => x.id));
-        for (const x of live) liveSessions.push({ repo: r.path, id: x.id, ...(atPrepare.has(x.id) ? {} : { sincePrepare: true }) });
+        // The same derivation prepare used (`gatherLive`): a claim whose work landed is not live here either.
+        config = resolveConfig(r.path, { env: ctx.env });
+        g = gatherLive(r.path, { config, env: ctx.env, now: ctx.now, deadlineAt });
       } catch (e) { liveUnknown.push({ repo: r.path, reason: e.message }); }
-    } else if (r.sessions.length) liveUnknown.push({ repo: r.path, reason: 'fleet registry missing, but prepare recorded live sessions' });
+    }
+    // gh reachability is re-measured here too: the new account may read what the old one could not (or not).
+    if (g) { const reach = ghReachability(r.path, g.facts); if (!reach.gh.queried) ghUnknown.push({ repo: r.path, ...reach }); }
+    if (g && fs.existsSync(dir)) {
+      if (!g.facts.registry.complete) liveUnknown.push({ repo: r.path, reason: 'registry incomplete (unreadable session records)' });
+      claimed = coveredBy([...g.live, ...g.mergedUnreleased]);
+      const atPrepare = new Set(r.sessions.map((x) => x.id));
+      const cli = r.fleetCli ?? fleetCliFor(r.path);
+      for (const x of g.live) {
+        liveSessions.push({ repo: r.path, id: x.id, ...(atPrepare.has(x.id) ? {} : { sincePrepare: true }) });
+        // A claim parked on a human wait: the switch token unblocks now; any other human wait gets a note (plan s).
+        const human = (x.waitingOn ?? []).filter((w) => w.kind === 'human');
+        if (!human.length) continue;
+        const isSwitch = (w) => w.kind === 'human' && normaliseWaitRef(w.ref) === SWITCH_TOKEN;
+        const onSwitch = human.some(isSwitch);
+        // `--clear-waiting` clears every wait, then `--waiting-on` re-adds: the command re-adds the session's OTHER
+        // waits in the same call, so only the switch wait goes (their `since` restarts, and the line says so).
+        const keep = (x.waitingOn ?? []).filter((w) => !isSwitch(w));
+        const clear = onSwitch ? cliCommand(cli, ['touch', '--id', x.id, '--clear-waiting', ...keep.flatMap((w) => ['--waiting-on', `${w.kind}:${w.ref}${w.note ? `:${w.note}` : ''}`])]) : null;
+        waits.push({ repo: r.path, id: x.id, onSwitch, refs: human.map((w) => w.ref), ...(onSwitch ? { clear, kept: keep.length } : {}) });
+      }
+      for (const x of g.mergedUnreleased) mergedUnreleased.push({ repo: r.path, ...mergedUnreleasedEntry(x, cli) });
+    } else if (dir && !fs.existsSync(dir) && r.sessions.length) liveUnknown.push({ repo: r.path, reason: 'fleet registry missing, but prepare recorded live sessions' });
     // Unregistered work is MEASURED NOW — the prepare snapshot never decides what counts.
-    const u = unregisteredWork(r.path, { cwd: r.path, env: ctx.env, now: ctx.now }, claimed);
-    if (!u.queried) { unregistered.push({ repo: r.path, unknown: u.reason }); continue; }
-    for (const item of u.items) unregistered.push({ repo: r.path, ...item });
+    const u = unregisteredFields(r.path, { cwd: r.path, config, env: ctx.env, now: ctx.now }, claimed, { facts: g?.facts ?? null, deadlineAt });
+    if (u.unregisteredUnknown) unregistered.push({ repo: r.path, unknown: u.unregisteredUnknown });
+    for (const item of u.unregistered) unregistered.push({ repo: r.path, ...item });
   }
 
   const count = (o) => files.filter((f) => f.outcome === o).length;
   const errors = files.filter((f) => f.human && f.outcome !== 'conflict');
   const conflicts = files.filter((f) => f.outcome === 'conflict');
   const missingTasks = tasks.filter((t) => t.file === 'missing');
+  const settingsReview = settings.filter((x) => x.review);
+  const followUps = receiveFollowUps({ tasks, settingsReview, identity, ghUnknown, waits });
   const handover = {
-    id: m.id, mode: sameRoot ? 'same-config-root' : 'copy', dryRun, destConfigDir, sourceConfigDir: m.sourceConfigDir,
-    files, sweep, lockContention, tasks, settings, liveSessions, liveUnknown, unregistered, anomalies: m.anomalies, memoryErrors: m.memoryErrors,
+    id: m.id, mode: sameRoot ? 'same-config-root' : 'copy', dryRun, destConfigDir, sourceConfigDir: m.sourceConfigDir, createdAt: m.createdAt,
+    files, sweep, lockContention, tasks, settings, identity, memoryDest, liveSessions, waits, mergedUnreleased, ghUnknown, liveUnknown, unregistered,
+    anomalies: m.anomalies, memoryErrors: m.memoryErrors, followUps,
     summary: {
       verified: count('verified'), copied: count('copied') + count('copied-source-changed'), present: count('present') + count('present-source-changed'),
       changedSincePrepare: count('changed-since-prepare'), missingSincePrepare: count('missing-since-prepare'),
-      conflicts: conflicts.length, errors: errors.length, missingTasks: missingTasks.length, settingsReview: settings.filter((x) => x.review).length,
+      conflicts: conflicts.length, errors: errors.length, missingTasks: missingTasks.length, settingsReview: settingsReview.length,
     },
   };
   const text = renderReceiveText(handover);
+  // Three classes, worst first (plan p): FAILED (a file could not be decided, copied or verified) outranks REFUSED
+  // (a blocking human step), which outranks OK-with-follow-ups. Follow-ups are never failures: exit 0, listed.
   if (errors.length) return failed(`${errors.length} memory file(s) could not be decided or written`, { handover, text });
   if (lockContention) return refused('another handover receive holds the lock on this config root', { handover, text });
-  const settingsReview = settings.filter((x) => x.review);
   const unmeasured = m.memoryErrors ?? [];
-  if (conflicts.length || missingTasks.length || settingsReview.length || liveUnknown.length || unmeasured.length || unregistered.length) {
+  const blocking = unregistered.filter(blocksHandover);
+  if (conflicts.length || liveUnknown.length || unmeasured.length || blocking.length) {
     // An incomplete prepare (unreadable memory dirs) can never receive clean (audit R2-H1).
-    return refused(`human steps remain: ${conflicts.length} conflict(s), ${missingTasks.length} scheduled task(s) to recreate, ${settingsReview.length} settings file(s) to review${liveUnknown.length ? `, live state unknown in ${liveUnknown.length} repo(s)` : ''}${unmeasured.length ? `, ${unmeasured.length} memory dir(s) NOT measured at prepare — fix and re-prepare` : ''}${unregistered.length ? `, ${unregistered.length} worktree(s) with unregistered work` : ''}`, { handover, text });
+    const parts = [conflicts.length ? `${conflicts.length} memory conflict(s)` : null, liveUnknown.length ? `live state unknown in ${liveUnknown.length} repo(s)` : null,
+      unmeasured.length ? `${unmeasured.length} memory dir(s) NOT measured at prepare — fix and re-prepare` : null, blocking.length ? `${blocking.length} item(s) of blocking unregistered work` : null].filter(Boolean);
+    return refused(`blocking steps remain: ${parts.join(', ')}${followUps.length ? ` (plus ${followUps.length} follow-up(s))` : ''}`, { handover, text });
   }
   return ok({ handover, text });
-}
-
-// ── rendering ───────────────────────────────────────────────────────────────
-
-/** Repos that need a coordinator: live sessions or unregistered work. */
-const reposNeedingCoordination = (m) => m.scope.repos.filter((r) => r.fleet === 'error' || r.sessions.length || r.unregistered?.length || r.unregisteredUnknown);
-
-/**
- * Step 6: ONE coordinator chip per repo with work, each started IN its repo (spawn_task `cwd`) and handed only
- * its own section. Every repo — the one prepare ran in included — gets an explicit cwd, so the prompt means the
- * same thing whichever repo the receiving session was opened in.
- */
-function coordinationStep6(m, art) {
-  const repos = reposNeedingCoordination(m);
-  if (!repos.length) return ['6. No live sessions or unregistered work in any repo — nothing to resume.'];
-  const L = ['6. Resume the work — spin out ONE coordinator chip per repo below with spawn_task, using the cwd given (whatever repo you are in):'];
-  for (const r of repos) {
-    const unmeasured = r.fleet === 'error' || r.unregisteredUnknown ? ' Its state was NOT fully measured at prepare (see the handover): run fleet status first and report what it shows.' : '';
-    L.push(`   - cwd "${r.path}", prompt: "You coordinate ${path.basename(r.path)} after an account handover. Read the ${r.path} sections of ${art.md} (Sessions to resume, Unregistered work). Run ${r.fleetCli ?? 'node scripts/.claude-skills/fleet.mjs'} status, spin out one chip per session with its resume prompt, and ask the user about each unregistered worktree before touching it.${unmeasured}"`);
-  }
-  return L;
-}
-
-function coordinationPrompt(m, art) {
-  return [
-    'You are taking over coordination of Claude Code work on this machine from another account.',
-    `1. Read the handover: ${art.md}`,
-    `2. From any repo with the skills bundle, run: ${m.fleetCommand} handover receive --from "${art.json}"`,
-    '   (in a consumer repo the CLI is node scripts/.claude-skills/fleet.mjs). Resolve every error and conflict it lists first.',
-    '3. Confirm each repo\'s harness memory path matches the target receive printed (memory must land where this account reads it).',
-    '4. Recreate every scheduled task listed under "Scheduled tasks" with your scheduling tool — the CLI cannot see the scheduler.',
-    '5. Review user-level settings differences by hand (MCP servers, permissions); they are never copied.',
-    ...coordinationStep6(m, art),
-    '7. Only the user approves a merge or push. Run `node scripts/check-setup.mjs` once to confirm this account\'s environment.',
-  ].join('\n');
-}
-
-/** The human-readable handover (no memory CONTENT — only names, counts and hashes). */
-export function renderHandoverMarkdown(m, art) {
-  const L = [`# Fleet handover ${m.id}`, '', `- Created: ${m.createdAt}`, `- Source config root: \`${m.sourceConfigDir}\``,
-    `- Invoking repo: \`${m.invokingRepo}\``, `- Machine-readable manifest: \`${art.json}\``, ''];
-  const sr = m.scope.sourceRepo;
-  L.push('## Scope', '', sr.type === 'resolved'
-    ? `Source repo resolved (\`${sr.path}\`); registered consumers included.${sr.registryError ? ` Registry read failed: ${sr.registryError}` : ''}`
-    : `**Source repo NOT resolved (${sr.type}: ${sr.reason ?? ''}) — the per-repo layer covers only the invoking repo and --repo.**`, '');
-  for (const r of m.scope.repos) L.push(`- \`${r.path}\` — fleet ${r.fleet}${r.error ? ` (${r.error})` : ''}${r.fleet === 'present' ? ` · ${r.sessions.length} live session(s), ${r.directives ?? 0} directive(s), ${r.trains ?? 0} open train(s)` : ''}`);
-  L.push('', '## Memory (account-wide)', '');
-  for (const mem of m.memory) L.push(`- \`${mem.dirName}\`: ${mem.files.length} file(s)${mem.skipped.length ? `, ${mem.skipped.length} skipped (links/specials)` : ''}`);
-  if (!m.memory.length) L.push('- (no memory dirs under this config root)');
-  L.push('', '### Folder anomalies', '');
-  L.push(...(m.anomalies.length ? m.anomalies.map((a) => `- ${a.kind}: \`${a.detail}\` — review; never auto-merged`) : ['- none']));
-  L.push('', '## Sessions to resume', '');
-  const sessions = m.scope.repos.flatMap((r) => r.sessions.map((s) => ({ ...s, repo: r.path, cmd: r.fleetCli ?? m.fleetCommand })));
-  if (!sessions.length) L.push('- none live');
-  let lastRepo = null;
-  for (const s of sessions) {
-    if (s.repo !== lastRepo) { L.push(`### ${s.repo}`, ''); lastRepo = s.repo; }
-    const unc = s.uncommittedUnknown ? `UNKNOWN (${s.uncommittedUnknown})` : `${(s.uncommittedFiles ?? []).length}`;
-    L.push(`#### ${s.id}`, '', `- state ${s.state}${s.ready ? `, ready at ${String(s.ready.oid ?? '').slice(0, 12)}${s.readyStale ? ' (stale)' : ''}` : ''}; uncommitted files: ${unc}`,
-      ...(s.waitingOn?.length ? [`- waiting on: ${s.waitingOn.map((w) => `${w.kind}:${w.ref}`).join(', ')}`] : []),
-      ...(s.risks ? [`- worktree risks: ${Object.entries(s.risks).filter(([, n]) => n).map(([k, n]) => `${n} ${k}`).join(', ') || 'none'}`] : []),
-      '', '```text', renderChipPrompt({ branch: s.branch ?? s.id, worktree: s.worktree ?? '(none)', task: s.intent || s.id, paths: s.paths ?? [], cmd: s.cmd }), '```', '');
-  }
-  L.push(...renderUnregistered(m));
-  L.push('## Scheduled tasks (recreate in the new account; registration is never visible to the CLI)', '');
-  L.push(...(m.scheduledTasks.length ? m.scheduledTasks.map((t) => `- \`${t.id}\` — ${t.description}`) : ['- none']));
-  L.push('', '## User settings (presence only; never copied)', '');
-  for (const s of m.settings) L.push(`- ${s.name}: ${s.exists ? 'present' : 'absent'} (\`${s.path}\`)`);
-  L.push('', '## Coordination prompt for the new account', '', '```text', coordinationPrompt(m, art), '```', '');
-  return L.join('\n');
-}
-
-/**
- * A pasteable claim for an unregistered worktree. A claim binds the worktree it runs FROM, so the directory
- * change is fail-closed: if it fails, the claim never runs against whatever directory the shell was in. The
- * CLI is the main checkout's, by absolute path — a linked worktree of a consumer has no synced tooling unless
- * hydrated. Every data argument goes through the one shell quoter.
- */
-export function claimCommand(u, fleetCli, repo, platform = process.platform) {
-  const [bin, script, ...rest] = fleetCli.split(' ');
-  const claim = renderCommand([bin, path.resolve(repo, script), ...rest, 'claim', '--id', u.branch, '--intent', 'what it is', '--paths', 'changed/paths/**'], platform);
-  return platform === 'win32'
-    ? `Set-Location -LiteralPath ${quoteArg(u.worktree, platform)} -ErrorAction Stop; ${claim}`
-    : `cd ${quoteArg(u.worktree, platform)} && ${claim}`;
-}
-
-/** "Unregistered work" section: worktrees holding work that no live claim covers. */
-function renderUnregistered(m) {
-  const L = ['## Unregistered work (worktrees holding work no live fleet claim covers)', '',
-    'Claim each one from INSIDE its worktree (a claim binds the worktree it is run from), commit and push it, or confirm with the user it can go. Re-run prepare afterwards; receive re-checks these and refuses while any remain.', ''];
-  const unreg = m.scope.repos.filter((r) => r.unregistered?.length || r.unregisteredUnknown);
-  if (!unreg.length) L.push('- none', '');
-  for (const r of unreg) {
-    L.push(`### ${r.path}`, '');
-    if (r.unregisteredUnknown) L.push(`- NOT MEASURED: ${r.unregisteredUnknown}`);
-    for (const u of r.unregistered ?? []) {
-      const risk = RISK_KINDS.filter((k) => u.risks[k]).map((k) => `${u.risks[k]} ${k}`).join(', ') || 'unverifiable';
-      L.push(`- \`${u.worktree}\` — ${u.branch ? `branch \`${u.branch}\`` : 'detached HEAD'}${u.locked ? ' (locked)' : ''}: ${risk}${u.unverified?.length ? `; UNVERIFIED: ${u.unverified.join('; ')}` : ''}`);
-      if (u.risks.unpushed && RISK_KINDS.every((k) => k === 'unpushed' || !u.risks[k])) L.push('  - only unpushed commits: if the branch was squash-merged and its remote deleted, they are already on the base — check before claiming');
-      if (u.branch) L.push(`  - claim (from inside the worktree; replace the intent and paths): \`${claimCommand(u, r.fleetCli ?? m.fleetCommand, r.path)}\``);
-    }
-    L.push('');
-  }
-  return L;
-}
-
-function renderReceiveText(h) {
-  const s = h.summary;
-  const L = [`fleet handover receive ${h.id} — ${h.mode}${h.dryRun ? ' (dry run: nothing written)' : ''}`,
-    `  destination config root: ${h.destConfigDir}`,
-    h.mode === 'same-config-root'
-      ? `  memory: same config root — ${s.verified} verified, ${s.changedSincePrepare} changed since prepare, ${s.missingSincePrepare} missing since prepare`
-      : `  memory: ${s.copied} copied${h.dryRun ? ' (would copy)' : ''}, ${s.present} already present, ${s.conflicts} conflict(s), ${s.errors} error(s)`];
-  for (const f of h.files.filter((x) => x.human)) L.push(`  ${f.outcome.toUpperCase()}: ${f.dirName}/${f.rel}${f.reason ? ` (${f.reason})` : ''}${f.target ? ` -> ${f.target}` : ''}`);
-  if (h.sweep.swept.length) L.push(`  swept ${h.sweep.swept.length} dead staging run(s)`);
-  if (h.sweep.kept.length) L.push(`  staging entries left alone (not ours): ${h.sweep.kept.join(', ')}`);
-  if (h.lockContention) L.push('  LOCKED: another receive holds this config root — rerun when it finishes');
-  L.push(`  scheduled tasks: ${h.tasks.length} — ${s.missingTasks} missing here (recreate), all registrations UNVERIFIED (confirm in this account's scheduler)`);
-  for (const t of h.tasks.filter((x) => x.file === 'missing')) L.push(`    recreate: ${t.id} — ${t.description}`);
-  for (const st of h.settings.filter((x) => x.review)) L.push(`  settings ${st.name}: ${st.status} — review by hand (MCP servers, permissions)`);
-  L.push(`  sessions still live (adopt or resume from the handover prompts): ${h.liveSessions.length ? h.liveSessions.map((x) => x.id).join(', ') : 'none'}`);
-  const since = h.liveSessions.filter((x) => x.sincePrepare);
-  if (since.length) L.push(`  claimed since prepare (no resume prompt in the handover — run fleet status in their repo): ${since.map((x) => `${x.id} (${x.repo})`).join(', ')}`);
-  for (const u of h.liveUnknown) L.push(`  LIVE STATE UNKNOWN in ${u.repo}: ${u.reason}`);
-  for (const u of h.unregistered ?? []) L.push(u.unknown ? `  UNREGISTERED WORK UNKNOWN in ${u.repo}: ${u.unknown}` : `  UNREGISTERED WORK: ${u.worktree}${u.branch ? ` (${u.branch})` : ''} — ${RISK_KINDS.filter((k) => u.risks[k]).map((k) => `${u.risks[k]} ${k}`).join(', ') || 'unverifiable'}; claim it or settle it with the user`);
-  for (const e of h.memoryErrors ?? []) L.push(`  memory dir NOT measured at prepare: ${e.dirName} (${e.reason})`);
-  for (const a of h.anomalies) L.push(`  folder anomaly: ${a.kind} ${a.detail}`);
-  return L.join('\n');
 }
 
 /** CLI entry. */
@@ -733,19 +807,29 @@ export async function cmdHandover(ctx, flags, positionals) {
     const { manifest, artifacts } = await prepareHandover(ctx, flags);
     const sessions = manifest.scope.repos.reduce((n, r) => n + r.sessions.length, 0);
     const files = manifest.memory.reduce((n, mm) => n + mm.files.length, 0);
-    const scopeNote = manifest.scope.sourceRepo.type === 'resolved' ? '' : `\n  WARNING: source repo not resolved (${manifest.scope.sourceRepo.type}) — per-repo scope limited to the invoking repo and --repo`;
+    const ghNote = manifest.scope.repos.filter((r) => r.gh && !r.gh.queried).map((r) => `\n  ${ghUnknownLine(r)}`).join('');
+    const scopeNote = ghNote + (manifest.scope.sourceRepo.type === 'resolved' ? '' : `\n  WARNING: source repo not resolved (${manifest.scope.sourceRepo.type}) — per-repo scope limited to the invoking repo and --repo`);
     // A memory dir prepare could not read was NOT measured: the run says so and is not a clean exit.
     const memNote = manifest.memoryErrors.length ? `\n  NOT MEASURED: ${manifest.memoryErrors.map((e) => `${e.dirName} (${e.reason})`).join(', ')} — fix access and re-run prepare` : '';
-    const unreg = manifest.scope.repos.reduce((n, r) => n + (r.unregistered?.length ?? 0), 0);
+    const unreg = manifest.scope.repos.reduce((n, r) => n + (r.unregistered ?? []).filter(blocksHandover).length, 0);
     const unregUnknown = manifest.scope.repos.filter((r) => r.unregisteredUnknown || r.fleet === 'error');
-    // Unregistered work is a human step: the manifest is written, but the switch is not ready (exit 3).
-    const unregNote = unreg || unregUnknown.length ? `\n  UNREGISTERED WORK: ${unreg} worktree(s) hold work no claim covers${unregUnknown.length ? `; NOT MEASURED in ${unregUnknown.map((r) => r.path).join(', ')}` : ''} — see "Unregistered work", claim or settle, re-run prepare` : '';
-    const out = manifest.memoryErrors.length ? (x) => refused('memory dir(s) could not be read at prepare', x)
-      : unreg || unregUnknown.length ? (x) => refused(unreg ? 'worktrees hold unregistered work' : 'repo state could not be measured', x) : ok;
-    return out({
-      handover: { id: manifest.id, json: artifacts.json, md: artifacts.md, memoryDirs: manifest.memory.length, memoryFiles: files, memoryErrors: manifest.memoryErrors, sessions, unregistered: unreg, scheduledTasks: manifest.scheduledTasks.length, anomalies: manifest.anomalies.length, sourceRepo: manifest.scope.sourceRepo },
-      text: `fleet handover prepare ${manifest.id}${memNote}${unregNote}\n  memory: ${manifest.memory.length} dir(s), ${files} file(s) · sessions: ${sessions} · scheduled tasks: ${manifest.scheduledTasks.length} · anomalies: ${manifest.anomalies.length}${scopeNote}\n  read: ${artifacts.md}\n  new account: ${manifest.fleetCommand} handover receive --from "${artifacts.json}"`,
-    });
+    const unregNote = unreg || unregUnknown.length ? `\n  UNREGISTERED WORK: ${unreg} blocking item(s) hold work no claim covers${unregUnknown.length ? `; NOT MEASURED in ${unregUnknown.map((r) => r.path).join(', ')}` : ''} — see "Unregistered work", claim or settle, re-run prepare` : '';
+    // The pre-switch gate (plan r): while tasks are listed, the switch is not ready until the operator says the
+    // scheduler step was done. A forcing function, not a verification — the CLI cannot read the scheduler.
+    const schedulerUnconfirmed = manifest.scheduledTasks.length > 0 && !manifest.schedulerChecked;
+    // Each refusal names its own reason; when several apply, all are named (the artefacts are written either way).
+    const reasons = [
+      manifest.memoryErrors.length ? 'memory dir(s) could not be read at prepare' : null,
+      unreg ? 'worktrees hold unregistered work' : unregUnknown.length ? 'repo state could not be measured' : null,
+      schedulerUnconfirmed ? 'not ready: scheduler step unconfirmed' : null,
+    ].filter(Boolean);
+    const relaunch = renderBeforeRelaunch(manifest);
+    const head = relaunch.length ? `${relaunch.join('\n')}\n` : '';
+    const payload = {
+      handover: { id: manifest.id, json: artifacts.json, md: artifacts.md, memoryDirs: manifest.memory.length, memoryFiles: files, memoryErrors: manifest.memoryErrors, sessions, unregistered: unreg, scheduledTasks: manifest.scheduledTasks.length, schedulerChecked: manifest.schedulerChecked, anomalies: manifest.anomalies.length, sourceRepo: manifest.scope.sourceRepo },
+      text: `${head}fleet handover prepare ${manifest.id}${memNote}${unregNote}\n  memory: ${manifest.memory.length} dir(s), ${files} file(s) · sessions: ${sessions} · scheduled tasks: ${manifest.scheduledTasks.length} · anomalies: ${manifest.anomalies.length}${scopeNote}\n  read: ${artifacts.md}\n  new account: ${receiveCommand(manifest.fleetCommand, artifacts.json)}`,
+    };
+    return reasons.length ? refused(reasons.join('; '), payload) : ok(payload);
   }
   return receiveHandover(ctx, flags);
 }

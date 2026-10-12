@@ -102,9 +102,11 @@ export function resolveUpstream(cwd, base, trains = []) {
  *   against registered sessions (claim, add, ready, start — `othersFor` reads sessions only) passes
  *   `false`: each skipped branch is recorded in `changed` as `{queried:false, reason}`, never as an
  *   empty change set, and costs no git call.
+ * @param {number|null} [args.deadlineAt] epoch ms; past it, per-branch merged evidence is not computed and reads
+ *   incomplete (`known:false`). Omitted ⇒ unbounded, as before.
  * @returns {object} facts for `buildStatus`, plus `dir`
  */
-export function gatherFacts({ cwd, config, now, env = process.env, prs = true, patches = true, worktrees = true, cmd = 'fleet', checks = true, maxBranches, untracked = true, merged, uncommitted }) {
+export function gatherFacts({ cwd, config, now, env = process.env, prs = true, patches = true, worktrees = true, cmd = 'fleet', checks = true, maxBranches, untracked = true, merged, uncommitted, deadlineAt = null }) {
   const dir = fleetDir(cwd);
   const base = config.baseBranch;
   const registry = readSessions(dir);
@@ -142,7 +144,7 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
   const worktreeList = worktrees ? listWorktrees(cwd) : { queried: false, reason: 'not requested', worktrees: [] };
   const mergedFacts = mergedWanted === false
     ? { prs: { queried: false, reason: 'not requested' }, squash: { queried: false, reason: 'not requested' }, evidence: {} }
-    : gatherMerged({ cwd, base, baseRev, names: mergedWanted === 'all' ? [...sel.names] : mergedWanted, branches, patchIds, env, prefetchedMerged: gh.merged });
+    : gatherMerged({ cwd, base, baseRev, names: mergedWanted === 'all' ? [...sel.names] : mergedWanted, branches, patchIds, env, prefetchedMerged: gh.merged, deadlineAt });
   const tracked = new Set(registry.sessions.map((s) => s.source?.branch).filter(Boolean));
   const landed = new Set(Object.entries(mergedFacts.evidence).filter(([n, e]) => e.merged === true && !tracked.has(n)).map(([n]) => n));
   // Uncommitted evidence: every non-terminal session's worktree (`'all'`), the named branches, or none.
@@ -332,13 +334,15 @@ const samePathLoose = (a, b) => String(a).replace(/\\/g, '/').replace(/\/+$/, ''
  * merged`, one squash patch-id window over base, then `mergedEvidenceFor` per
  * branch at its CAPTURED tip. Each source keeps its own provenance.
  */
-export function gatherMerged({ cwd, base, baseRev, names, branches, patchIds, env, prefetchedMerged }) {
+export function gatherMerged({ cwd, base, baseRev, names, branches, patchIds, env, prefetchedMerged, deadlineAt = null, clock = Date.now }) {
   const prs = listMergedPullRequests(cwd, { base, env, prefetched: prefetchedMerged });
   const squash = squashPatchIds(cwd, baseRev);
   const tipOid = new Map((branches?.branches ?? []).map((b) => [b.name, b.oid]));
   const adapters = gitAdapters(cwd);
   const evidence = {};
   for (const n of names) {
+    // Past the caller's deadline no per-branch evidence is computed: the branch reads incomplete, never "not merged".
+    if (deadlineAt !== null && clock() >= deadlineAt) { evidence[n] = { known: false, merged: false, reason: 'merged evidence not computed: deadline reached' }; continue; }
     const tip = tipOid.get(n) ?? null;
     let pid = patchIds?.[n]?.queried ? patchIds[n].patchId : null;
     if (!pid && tip && squash.queried && squash.byPatchId.size) {

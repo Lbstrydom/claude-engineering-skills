@@ -182,6 +182,25 @@ Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q
 
 ---
 
+## 2026-10-12 — fleet: unregistered work surfaced, `fleet archive`, claim binding, handover hardening (clusters B-D)
+
+`/cycle --autonomous` on `docs/plans/fleet-unclaimed-work-and-switch-friction.md`, clusters B to D (A is PR #206). Branch `claude/fleet-unclaimed-work-impl`; B-D ship as one PR after #206 merges (user's decision).
+
+- **B (Phases 3-4, `prune --apply`)**: `status` prints an "unregistered work" section (one verdict per uncovered worktree/branch) and writes `<git-common-dir>/fleet-cache/unregistered.json`; the `claim`/`touch`/`ready` footer reads only that cache (FYI count, refresh request, coverage notice). New `fleet archive` (`archive.mjs`): snapshot to a local `archive/*` tag, verify, revalidate under the lock, then remove the worktree; never pushes. `prune --apply` runs exactly the judged list (`update-ref -d` bound to the judged oid), skips fresh worktrees unless `--include-fresh`, lists orphan dirs (`prune-orphans.mjs`). `runGit` gained an allowlisted `env`.
+- **C (Phases 5-6)**: `claim --worktree` (`resolveClaimBinding`); binding warnings from the retained record (`bindingWarnings`); `add` records the worktree; `release` resolves it and survives a malformed `.fleet.json`; `ready` warns about commits no remote ref holds (`unpushedCount`). Handover: PR-state reachability (`ghReachability`, reusing `parseOriginRepo`), newer-manifest refusal + `--allow-older`, stale hydrated-tooling warning (`bundle-stamp.mjs`).
+- **D (Phases 7-8)**: receive outcome classes failed > refused > ok-with-`followUps`; whitelisted account identity from `.claude.json` (`accountIdentity`/`compareIdentity`); BEFORE YOU RELAUNCH + `--scheduler-checked` gate on prepare; `memory <dir> → <path>` lines; `human:account-switch` waits with a targeted unblock command. Rendering split into `handover-render.mjs`. Skill prose: usage lines, worktree removal needs the user + a desktop session-list check, footer FYI is not a DO, push early, coordinator rules cr1-cr5.
+- **Behaviour change**: `handover receive` with a missing scheduled task or a settings difference now exits 0 with `followUps` (was 3). `handover prepare` exits 3 while tasks are listed and `--scheduler-checked` is absent.
+
+Verification:
+- Audits: B 6 GPT rounds + 1 coordinator-ruled exception (not converged by the stability rule; every finding fixed red-then-green or dismissed with a reason; live negative control on a disposable clone). C 4 rounds, R4 PASS (`audit-code-clC-1791763339`). D 4 rounds, R4 PASS (`audit-code-clD-1791768416`).
+- Consolidated Gemini gate over A-D (19 rounds, 135 findings, 31 files): APPROVE, gate `approve`, 0 blocking.
+- Tests (final tree): fleet + skill + relocation suites 1,105, 1,103 pass, 0 fail, 2 skipped; `fleet-cli` 132/132. New suites: fleet-archive, fleet-unregistered-surfaces, fleet-binding, fleet-bundle-stamp, fleet-handover-receive.
+- Empirical (§9, under load, 69 node processes): `status` CEE 3.5-4.0 s, wine 12.4-12.8 s, storyline 8.0 s, ai-organiser 2.2 s; `handover prepare` across all four exit 3 with both reasons named, 49.7 s. The 5 s wine target was not met (needs an idle machine; 3.9 s idle in M19).
+- Follow-ups recorded in plan §8: fleet-cli test split + fixture template (chip spawned by the CE coordinator); memoised rev-parse and no `gh` in `claim`, together with the derived-done-claim fix (M21), after this PR.
+
+Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt 328 cloud/10 local (0 spilled) · upstream 2
+
+
 ## 2026-10-11 — drift + backlog re-measured; five shipped plans closed; three honesty fixes
 
 Measured on `origin/main` 56eb0459. Each figure carries its command.
