@@ -18,6 +18,15 @@ import { runGit } from './git-facts.mjs';
 export const CLEAN_PROBE = Object.freeze({ timeoutMs: 5_000, maxCandidates: 20, deadlineMs: 15_000 });
 
 /**
+ * The two `git status` argv lists the loss checks run, spelled ONCE: `archiveReport` captures with them and
+ * `fleet archive` revalidates with them, so a capture and its re-check cannot be spelled differently.
+ * `--ignore-submodules=none`: a repo's submodule-ignore config must not hide a dirty submodule. The ignored
+ * listing collapses ignored directories (`node_modules/` is one line, not 100k), so it stays bounded.
+ */
+export const STATUS_ARGS = Object.freeze(['status', '--porcelain=v1', '-z', '--no-renames', '--ignore-submodules=none', '--untracked-files=all']);
+export const IGNORED_STATUS_ARGS = Object.freeze(['status', '--porcelain=v1', '-z', '--no-renames', '--ignored=traditional', '--untracked-files=normal']);
+
+/**
  * Parse `git status --porcelain=v1 -z --no-renames` output into entries. With
  * `--no-renames` every record is exactly `XY <path>` (no second path), so the
  * NUL split is unambiguous.
@@ -76,7 +85,7 @@ export const uncommittedPaths = (entries) => entries.filter((e) => !(e.x === '!'
  * @param {{clock?: () => number, probe?: (dir: string) => object, bounds?: typeof CLEAN_PROBE}} [opts]
  * @returns {Record<string, {queried: boolean, entries?: object[], reason?: string}>}
  */
-export function probeWorktrees(dirs, { clock = Date.now, probe = (d) => worktreeStatus(d), bounds = CLEAN_PROBE } = {}) {
+export function probeWorktrees(dirs, { clock = Date.now, bounds = CLEAN_PROBE, git = runGit, probe = (d) => worktreeStatus(d, { timeoutMs: bounds.timeoutMs, git }) } = {}) {
   const out = {};
   const start = clock();
   [...new Set(dirs)].forEach((d, i) => {

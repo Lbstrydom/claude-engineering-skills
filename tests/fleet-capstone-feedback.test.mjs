@@ -16,6 +16,8 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import { git } from './helpers/git.mjs';
 import {
   DEFAULT_IDLE_DAYS, buildStatus, decideClaim, hideReason, idleMsFrom, isBlockingConflict, isHotFile, isIdleTip, splitHidden,
@@ -328,15 +330,25 @@ describe('fleet CLI — idle hiding and hot files, end to end', () => {
   const scene = (s) => {
     commitAt(s.fx.repo, 'squashed-long-ago', { 'shared.txt': 'old\n' }, new Date(ago(60)).toISOString());
     commitAt(s.fx.repo, 'fresh', { 'shared.txt': 'new\n' }, new Date(ago(1)).toISOString());
+    // A branch made 60 days ago also has a 60-day-old reflog and loose ref (the unregistered-work scan reads them as
+    // activity); a fixture that only backdates the commit would describe a branch created seconds ago.
+    const common = git(['rev-parse', '--path-format=absolute', '--git-common-dir'], s.fx.repo);
+    const old = new Date(ago(60));
+    for (const p of [path.join(common, 'logs', 'refs', 'heads', 'squashed-long-ago'), path.join(common, 'refs', 'heads', 'squashed-long-ago')]) {
+      if (fs.existsSync(p)) fs.utimesSync(p, old, old);
+    }
   };
 
   it('default hides the 60-day branch (and folds its overlap); --all shows it', () => {
     const s = setup(); scene(s);
     const r = s.f(['status']);
     assert.equal(r.status, 0, r.stderr);
-    assert.doesNotMatch(r.stdout, /squashed-long-ago/);
+    // Hidden from the items, but listed under "Unregistered work" (which ignores the idle hide, by design), and
+    // the hidden line says so — the two views agree.
+    assert.doesNotMatch(r.stdout, /^squashed-long-ago {2}\[untracked\]/m);
+    assert.match(r.stdout, /Unregistered work[\s\S]*squashed-long-ago/);
     assert.match(r.stdout, /^fresh {2}\[untracked\]/m);
-    assert.match(r.stdout, /1 hidden \(1 idle > 14 days\) — use --all/);
+    assert.match(r.stdout, /1 hidden \(1 idle > 14 days\) \(1 of them unlanded — see Unregistered work\) — use --all/);
     assert.match(r.stdout, /\+ overlaps 1 hidden item — use --all/);
     const all = s.f(['status', '--all']);
     assert.match(all.stdout, /^squashed-long-ago {2}\[untracked\]/m);

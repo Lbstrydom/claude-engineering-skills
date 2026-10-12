@@ -113,6 +113,15 @@ export function validateGroup(group) {
   return problems;
 }
 
+/**
+ * Escape the key's own separators (`,` between patterns, `|` between fields)
+ * and the escape character itself. All three are legal literal characters in a
+ * .gitignore pattern, and unescaped two distinct groups could share a key — a
+ * new group then inherits a baselined group's acceptance. A value with none of
+ * them is returned unchanged, so existing baseline keys stay byte-identical.
+ */
+const escapeKeyPart = (s) => s.replace(/[\\,|]/g, (c) => `\\${c}`);
+
 /** Stable key for a group: its patterns plus the declaration it carries. */
 export function keyFor(group) {
   const cat = token(group.comment, 'Category') || '-';
@@ -121,7 +130,7 @@ export function keyFor(group) {
   const dis = token(group.comment, 'Disposable') || '-';
   // Keyed on the DECLARATION, not the line number: reordering the file is not
   // drift, but weakening a P rule's recoverability claim is.
-  return `${group.patterns.join(',')}|${cat}|${home}|${rec}|${dis}`;
+  return [group.patterns.map(escapeKeyPart).join(','), ...[cat, home, rec, dis].map(escapeKeyPart)].join('|');
 }
 
 export function analyse(text) {

@@ -94,6 +94,41 @@ describe('scanForSecrets', () => {
   });
 });
 
+describe('npm-token (archive-lane review, 2026-10-12)', () => {
+  // The deliberately GENTLE final-pass redactor must not grow blanket patterns (the sanitizer.mjs
+  // trap). This one is anchored three ways: the literal `npm_` prefix, exactly 36 alphanumerics,
+  // and a word boundary on both sides. The negatives below are the shapes that would betray a
+  // pattern that was too loose.
+  const token = (n) => `npm_${'Qq8W'.repeat(9).slice(0, n)}`;
+
+  test('detects a real-shaped npm automation token, bare and in an .npmrc line', () => {
+    assert.deepEqual(scanForSecrets(token(36)).patterns, ['npm-token']);
+    assert.deepEqual(scanForSecrets(`//registry.npmjs.org/:_authToken=${token(36)}`).patterns, ['npm-token']);
+  });
+
+  test('redacts it by name', () => {
+    const r = redactSecrets(`//registry.npmjs.org/:_authToken=${token(36)}`);
+    assert.ok(!r.text.includes(token(36)));
+    assert.match(r.text, /\[REDACTED:npm-token\]/);
+  });
+
+  test('does NOT match ordinary prose, environment-variable names, hashes, or near-miss lengths', () => {
+    const negatives = {
+      prose: 'we publish to the npm_registry nightly and clear npm_config_cache afterwards',
+      'npm env var names': 'npm_config_registry npm_lifecycle_event npm_package_version npm_execpath',
+      'sha1 (40 hex, no prefix)': 'a94a8fe5ccb19ba61c4c0873d391e987982fbbd3',
+      'sha256 (64 hex)': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      '35 characters after the prefix': token(35),
+      '37 characters after the prefix': `npm_${'a'.repeat(37)}`,
+      'a longer identifier that contains npm_': `my_npm_${'a'.repeat(36)}`,
+      'no boundary before the prefix': `mynpm_${'a'.repeat(36)}`,
+    };
+    for (const [name, text] of Object.entries(negatives)) {
+      assert.deepEqual(scanForSecrets(text).patterns, [], name);
+    }
+  });
+});
+
 describe('redactSecrets', () => {
   test('returns input unchanged when no secret present', () => {
     const r = redactSecrets('normal text about refactoring');

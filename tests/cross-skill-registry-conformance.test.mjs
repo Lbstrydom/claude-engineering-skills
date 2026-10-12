@@ -62,8 +62,18 @@ describe('registry entries — every policy tuple is valid', () => {
         `${e.name}: positionals must be 'none' or {verbs:[…]}`);
       if (e.forward) {
         assert.equal(typeof e.forward.to, 'string', `${e.name}: forward.to must name the target CLI`);
-        assert.ok(!(e.flags ?? []).length,
-          `${e.name}: forward entries delegate their grammar — they must not also declare flags`);
+        // This used to assert the OPPOSITE — "forward entries delegate their
+        // grammar — they must not also declare flags" — which encoded the registry
+        // docstring's "validation is delegated to the target CLI". The dispatcher
+        // never implemented that delegation: dispatch.mjs builds its allowlist from
+        // the declared `flags` and refuses a bare word when `positionals` is
+        // 'none', so an UNDECLARED forwarder grammar is refused before the
+        // forwarder runs (measured 2026-10-03: `cross-skill.mjs learning-replay
+        // pass_selection --since 7d` exited 2). A forwarder that takes flags or a
+        // positional must declare them; the declaration is kept honest against the
+        // target CLI by a per-forwarder parity test (learning-replay: see
+        // tests/learning-replay.test.mjs), and against the dispatcher's global
+        // allowlist by cross-skill-flag-registry-parity.test.mjs.
       }
       if (e.portExempt) {
         assert.ok(e.forward,

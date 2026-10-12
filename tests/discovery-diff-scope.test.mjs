@@ -166,3 +166,23 @@ describe('resolveEligibleDiffPathMap', () => {
     assert.ok(skipped.every((s) => s.category === 'sensitive'));
   });
 });
+
+// final-review shadow e99e38e9: existsOnDisk returns TRUE for every non-ENOENT/ENOTDIR
+// lstat error and defers the policy to resolveAndClassify, on the strength of a prose
+// claim that the latter fails closed on the same errors. Pinned here instead of
+// trusted: a path lstat cannot stat must be DROPPED, for every such error code.
+describe('an unstattable path fails CLOSED end-to-end (existsOnDisk defers to resolveAndClassify)', () => {
+  for (const code of ['EACCES', 'EPERM', 'ELOOP', 'EIO']) {
+    test(`lstat ${code} on a lexically-innocent path => dropped as sensitive, never eligible`, (t) => {
+      const target = path.resolve(repoRoot, 'src/locked.mjs');
+      const fail = (p) => { if (path.resolve(String(p)) === target) throw Object.assign(new Error(code), { code }); };
+      const realLstat = fs.lstatSync.bind(fs);
+      const realRealpath = fs.realpathSync.bind(fs);
+      t.mock.method(fs, 'lstatSync', (p, ...rest) => { fail(p); return realLstat(p, ...rest); });
+      t.mock.method(fs, 'realpathSync', (p, ...rest) => { fail(p); return realRealpath(p, ...rest); });
+      const { map, skipped } = resolveEligibleDiffPathMap(diffFor('src/locked.mjs'), { repoRoot });
+      assert.equal(map.kind, 'empty', 'the unstattable path must not reach the enum');
+      assert.deepEqual(skipped.map((s) => [s.path, s.category]), [['src/locked.mjs', 'sensitive']]);
+    });
+  }
+});

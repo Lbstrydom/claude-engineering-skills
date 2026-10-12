@@ -113,12 +113,34 @@ export async function repoId() {
  * @param {Record<string, Set<string|null>>} existingPlanHashesByArm
  * @returns {Array<{armId: string, oldHash: string|null, newHash: string|null}>}
  */
+/**
+ * PURE. Index the live, non-excluded arm-run rows' plan hashes by arm id — the
+ * `existingPlanHashesByArm` argument above.
+ *
+ * @param {Array<{armId: string, planContentHash?: string|null}>} rows
+ * @param {(row: object) => boolean} isExcluded - true for a quarantined attempt
+ * @returns {Record<string, Set<string|null>>}
+ */
+export function indexPlanHashesByArm(rows, isExcluded) {
+  // Null-prototype: an arm id is caller data, and `constructor` is a legal one
+  // (ARM_ID_PATTERN) that a plain `{}` answers with an INHERITED function.
+  const byArm = Object.create(null);
+  for (const r of rows) {
+    if (isExcluded(r)) continue;
+    if (!byArm[r.armId]) byArm[r.armId] = new Set();
+    byArm[r.armId].add(r.planContentHash ?? null);
+  }
+  return byArm;
+}
+
 export function detectPlanHashMismatches(armEntries, existingPlanHashesByArm) {
   const mismatches = [];
   for (const [armId, arm] of armEntries) {
     const attemptHash = arm?.planContentHash ?? null;
+    // OWN properties only — a caller's plain `{}` still inherits `constructor`,
+    // and an inherited property is not stored history.
+    if (!Object.hasOwn(existingPlanHashesByArm, armId)) continue;
     const existingHashes = existingPlanHashesByArm[armId];
-    if (!existingHashes) continue;
     for (const oldHash of existingHashes) {
       if ((oldHash ?? null) !== attemptHash) mismatches.push({ armId, oldHash: oldHash ?? null, newHash: attemptHash });
     }
@@ -343,12 +365,10 @@ export async function promoteFromLog({ config, lock, configDigest, entries, conf
 
       const exclusions = await store.activeExclusionsForCohort(cohort.id);
       const liveRows = await store.liveArmRunRows({ cohortId: cohort.id, snapshotId: entry.snapshotId });
-      const existingPlanHashesByArm = {};
-      for (const r of liveRows.rows ?? []) {
-        if (store.isAttemptExcluded({ snapshotId: entry.snapshotId, planContentHash: r.planContentHash }, exclusions)) continue;
-        if (!existingPlanHashesByArm[r.armId]) existingPlanHashesByArm[r.armId] = new Set();
-        existingPlanHashesByArm[r.armId].add(r.planContentHash ?? null);
-      }
+      const existingPlanHashesByArm = indexPlanHashesByArm(
+        liveRows.rows ?? [],
+        (r) => store.isAttemptExcluded({ snapshotId: entry.snapshotId, planContentHash: r.planContentHash }, exclusions),
+      );
 
       const cls = classifyLogEntry(entry, {
         campaignId: config.id, lockDigest: lock.lockDigest, shaByRunId: shas.byRunId,

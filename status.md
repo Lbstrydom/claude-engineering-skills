@@ -1,6 +1,15 @@
 # Project Status Log
 
 ### Consumer Verification (previous ship)
+- **Commit**: 00db37e0520f3ff44c24568ba36030b8e00c8937 on `fix/final-review-debt-suppression-revival` (PR #203, NOT yet merged to `main`); it contains the ship commit `e8230e7a`.
+- **Retrieval**: the push itself ran NO pre-push gate (this worktree's `core.hooksPath` pointed at a removed worktree, so git ran no hook; found and repaired afterwards). The gate was then run by hand on the pushed head, in a clean sandbox of that commit via `node scripts/prepush-check.mjs --base d2dc4775 --head 00db37e0`: run 1 failed 2 `fleet-gh-batch` timing tests, run 2 failed 1 (`R1-H5`), and the post-reboot run 3 passed: 18,902 tests, 18,856 pass, 0 fail, 46 skipped. `fleet-gh-batch` passed 9/9 in six solo runs on this tree and on clean main. The destructive DB suites were skipped each time (another invocation owned the test container). No `npm ci` re-install was done, and no consumer-side retrieval was run.
+- **Result**: unverified, blocked: not merged. A branch push publishes nothing to consumers (the consumer sync runs only when the default branch is updated), so no consumer has this; verify with `sync-isolation-verify.mjs` in a consumer's MAIN checkout after the PR merges and the source repo re-syncs.
+
+- **Commit**: 16e4d335ff0405312090e20b597000b317531563 on `claude/silly-morse-164a75` (PR #208, open; NOT merged). It is the merge of `origin/main` f20031ed into the branch, carrying the 2026-10-12 status.md entry (1d0b3298) for the archive lane (#208) and the gate-cost chip (#212).
+- **Retrieval**: the pre-push hook ran `check` in a clean checkout of exactly this sha (not a second run by me): 19,185 tests, 19,139 passed, 0 failed, 46 skipped, 333 s on a quiet machine. The previous attempt (1d0b3298 alone, pushed after 05:00Z on 2026-10-12) failed five timing tests under a 75-minute gate with seven concurrent gates; one of those, the dashboard-home pid race, is fixed on main by #207 and came in with this merge.
+- **Result**: verified for the pushed commit (the hook's clean-checkout run). The synced consumer bundle is unverified (blocked: not merged) — a feature-branch push publishes nothing to consumers; sync from an up-to-date main after #208 merges.
+
+### Consumer Verification (previous ship)
 - **Commit**: f26da22b8ae32de3a071bfeeeb7e9631eced45e4 on `main` (PR #145, squash-merged; branch `claude/clever-kilby-250c6f`, deleted). Merge tree 21473ffe == pushed branch tip 56c8228e's tree — the pre-push clean-checkout `check` ran on exactly this tree.
 - **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in wine-cellar-app's MAIN checkout — exit 0, gates 1..9 green. `scripts/lib/model-eval/**` is source-only, so the consumer-visible surface was `lib/pinned-worktree/paths.mjs`'s optional `env` on `resolveMainRoot`. The branch push's sync reached 3/3 targets (9 files updated, 1 error: ai-organiser's `.audit-loop/expected-schema.json` refused as diverged because that checkout predates its own open sync PR `chore/sync-e73a40ee`).
 - **Result**: verified for wine-cellar-app; ai-organiser unverified — blocked on its unmerged sync PR `chore/sync-e73a40ee` (merge it, `git pull --ff-only`, re-sync).
@@ -86,6 +95,219 @@
 - **Commit**: 7de59ecd4d0414e2f224d8604383c833424a54a9 on `main` (PR #136, squash-merged; branch `claude/audit-csharp-support-a5971f`, deleted) — file-coverage contract + C# support.
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
+
+### Consumer Verification (previous ship)
+- **Commit**: b06f37490aae2324787e8e7b083a2bdb4aa88811 on `claude/fleet-skill-feedback-7c0b5f` (stack: PR #173 dc149797 → #174 e0804275 → #175 tip; not yet merged). The pre-push hook's sync reached 3/3 targets (36 created, 51 updated, 0 errors).
+- **Retrieval**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in the MAIN checkouts of wine-cellar-app and storyline — exit 0, gates 1..9 green in both. Subject check: all 10 new `scripts/.claude-skills/lib/fleet/` modules (merged-facts, required-checks, lifecycle, worktree-status, coordination, directives, obligations, restack, serial, union-merge) present in both bundles.
+- **Result**: verified for both reporting consumers. Note the synced bundle now carries the unmerged branch's fleet; if the PRs change before merge, re-sync from main afterwards.
+- **Commit**: 6114fc14f49fd44c1d0f113b765758d15565d14e on `claude/ship-trains-a` (PR #211, unmerged). The pre-push gate ran the full check in a clean sandbox at this commit: 18797 tests, 18751 pass, 0 fail, 46 skipped.
+- **Retrieval**: none run after the push. The synced bundle row is unverified because a branch push publishes nothing to consumers (the consumer sync was skipped: not main). The independent clean-worktree re-run was not done because a fleet hold (directive d-20261012051717-dafb) forbids new npm test runs.
+- **Result**: unverified (blocked: PR #211 not merged, so nothing reached consumers; and the fleet hold forbids a re-run). After merge, sync from an up-to-date main and run sync-isolation-verify in each consumer's MAIN checkout.
+- **Commit**: 8cadc841385a0f8f6b3786331d5029cf0b5d48e3 on `fix/burndown-runs-findings-boundary` (PR #202, NOT yet merged to `main`); code head 14444545d3e206716e3eb9dc35f20a5de60a3758 + the status.md ship commit.
+- **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of the pushed commit: 18,641 tests, 0 fail, 46 skipped, checks passed (the first attempt failed only on four load-timing tests while ~6 gates ran at once; re-run once, green). No consumer-side retrieval was run.
+- **Result**: unverified, blocked: not merged. The pre-push hook publishes to consumers only when the default branch is updated (since 2026-10-10), so this branch has reached no consumer; verify with `sync-isolation-verify.mjs` in a consumer's MAIN checkout after the PR merges and the source repo re-syncs.
+
+## 2026-10-12 — gate-cost chip (#212): rebased onto main after #214, ready for review
+
+What #212 does and what was measured is in the combined entry "pre-push archive lane (PR #208) and the gate-cost chip (PR #212)" below; since then #212 was brought up to date with main (d65f1e8d) after #214 split `fleet-cli`, its skip list and runbook now say the post-split tree is NOT re-measured, and the plan is marked Complete pending merge.
+Backlog 2026-10-12T09:42Z: Q1 182c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
+---
+
+## 2026-10-12 — pre-push: a dead push's sandbox is swept at the next push, not 6 hours later (PR #210)
+
+Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
+- **Cause (measured from the pushing session's transcript, not guessed)**: two pushes were stopped mid-gate with TaskStop (15:52:50Z and 15:59:18Z on 2026-10-11). A killed process runs no cleanup handler, so `ces-prepush-a4d6ea00-77848` and `ces-prepush-fc2be6f7-82364` stayed on disk and registered in `git worktree list`. Both owner pids were gone, and both were under the 6h age rule, so nothing could sweep them. The fleet scan then counted them as unregistered work. Not the preserved-on-`npm ci`-failure case. The directories were already removed when this was investigated, so `.prepush-npm-ci.log` could not be stat'ed.
+- **Change** (`scripts/lib/prepush-sandbox-cleanup.mjs`, `scripts/prepush-check.mjs`):
+  - A husk whose owner pid (digits after the last `-`, a plain positive decimal) reads dead (ESRCH) is swept at once.
+  - Age (6h) stays the only rule when the owner is alive, liveness is unknown or throws, the name has no usable pid (`--123`, leading zero, `0`), or the husk holds `.prepush-npm-ci.log`.
+  - Pid reuse can only make a dead owner read alive, so it falls back to the age rule. A process-start-time probe was deliberately not built.
+  - `surveySandboxes`/`sweepStaleSandboxes` return `unsurveyed` (unreadable temp dir, non-ENOENT stat failure), so "found nothing" is never also "could not look".
+  - The log wording is the pure `describeSweep`, asserted on its emitted lines. `PRESERVED_EVIDENCE_FILE` is the one shared marker name.
+- **Tests**: `node --test tests/prepush-sandbox-cleanup.test.mjs tests/prepush-sandbox-honesty.test.mjs` → 73 pass. Dead owner = a real exited child's pid; live owner = a real running other process; plus a negative control. Mutation-checked in six directions (everything reads dead, no dead-owner rule, marker ignored, old unanchored grammar, stat errors swallowed, wording miscounted); an earlier `sed` mutation that had not applied was caught and redone.
+- **Live end-to-end**: stopped this branch's own push with TaskStop (the incident mechanism); the next push logged `swept 1 stale sandbox husk(s) from <tmp> (1 owner process dead)`. The husk left disk and `git worktree list`; two other sessions' live sandboxes were kept.
+- **Audit** (`audit-code-1791751589`, `--scope diff`): R1 H:1 M:5 (all fixed), R2 and R3 PASS 0/0/0, Gemini APPROVE (gate approve, 0 blocking, 0 debt).
+- **Pre-push gate** (full suite, 18,688 tests, ~28 min): attempts 1 and 2 failed on tests that do not reference these files and pass in isolation under load: `fleet-checks` (12.3s vs 10s bound), `hook-arch-memory-check` (6.2s vs 5s bound), `dashboard-home-deadline` pid.txt ENOENT (PR #207 fixes it). Attempt 3 passed. A fourth attempt (this entry's commit, 77 minutes under load) failed on the same three. No `--no-verify`; the push was held, then re-done after merging main (5 → 8 commits behind by then).
+- **Decisions**:
+  - The fleet half (treating `ces-prepush-*` worktrees as tooling in the unregistered-work scan) is not in this PR: the verdict classification exists only in open PR #206, and the fleet chip owns `scripts/lib/fleet/**`. The contract it will cite is unchanged: `SANDBOX_PREFIX` + `<tmpdir>/ces-prepush-<sha8>-<pid>`.
+  - `docs/runbooks/prepush-sandbox.md` was held back while PR #208 owned it; after #208 landed it is reworded here: #208's bullet "A sandbox that may still be live is never swept" stays, and a new bullet states the dead-owner rule and the cases that keep the age rule.
+- **Provenance**: the two code commits (`7f4ca1f4`, `13433853`) were made with plain `git commit`, so they carry no `AI-*` trailers; this entry's commit is the one `ship-commit.mjs` wrote.
+
+### Next Steps
+- PR #210: review, then merge (not merged).
+- Fleet chip: classify `ces-prepush-*` worktrees as tooling on top of #206's verdicts.
+
+## 2026-10-12 — Ship trains: plan (#209) + Cluster A, the stateless read side of `/ship --train` (#211)
+
+### Changes
+- **Plan `docs/plans/ship-trains.md`** (PR #209; its content is carried and extended by #211). It covers one human `/ship --train` per batch:
+  - sessions stop at ship-ready;
+  - the coordinator plans the train and writes one status.md entry;
+  - `fleet land` runs one combined test;
+  - serial landing gets a `messageFor` callback that writes each squash commit's parseable `AI-*` block;
+  - the train is verified, then one consumer sync.
+
+  The human gate stays: `/ship` keeps `disable-model-invocation`, because relaxing it would create a standing agent-held authority, which is a laundering path. Audit: `/audit-plan` R1–R3 accepted 11/11, then Gemini APPROVE.
+- **Measured motivation, figure and attribution kept separate (§1.1)**:
+  - Figure: 20 of 76 commits on `main` since 2026-09-25 carry `AI-Gate`.
+  - Attribution over 80 merged PRs: **54 never ran `/ship`**. **9 lost the trailer on the squash**: 4 had the body replaced (#162–#165); 5 had the block buried mid-list by GitHub's default body (#186, #187, #192, #196, #197). 17 kept it.
+- **Stateless amendment (§2.8)**. The first Cluster A built a persisted ship-train "receipt". `/audit-code` then raised fresh HIGHs in five consecutive rounds, every one in the lifecycle of a verify record that a later invocation consumes (staleness, refusal persistence, CAS, basis hash, phase invariants). So the receipt was deleted:
+  - fleet's immutable manifest pins the heads;
+  - squash messages are decided fresh per head;
+  - `verify` checks **source identity** (via fleet's `classifyUpdatedHead`) and then **claim truth**, not equality with a stored decision;
+  - `sync` re-verifies in the same invocation.
+
+  The amendment's §2.8 table maps each receipt item to the owned state that covers it. Audit: GPT plan R4–R5 (H2 rebutted with `sync-to-repos.mjs:1701` and dismissed by GPT), then Gemini plan round 2 APPROVE. Net −537 lines.
+- **Cluster A code** (PR #211):
+  - `impact.mjs`: urgent / standard / ride-along tiers, with the sync closure as the consumer oracle; a framed `-z` parse; both rename endpoints.
+  - `provenance.mjs`: binds a run by content (`audited_tree` = a PR commit's tree); decides the gate through the existing `evaluateGateVerification`; substantiated `AI-Models` only.
+  - `store/train-provenance.mjs`: `findCodeRunCandidates` and `findCodeRunForRepo` (repo-scoped, code-mode); schema faults fatal; input refusals distinct.
+  - `verify.mjs`: claim truth, the final merge OID, interleaving, `publicationClearance`.
+  - `commands.mjs` + `scripts/ship-train.mjs`: `plan`, `message`, `verify --train`.
+  - `commit-trailers.mjs` `evaluateGateVerification` gains `identityProvable` (default true, so existing callers are byte-identical).
+  - `.audit-loop/domain-map.json`: `scripts/lib/ship-train/**` tagged `ship`; `tests → ship` and `ship → fleet` declared with reasons.
+- **Audit (stateless code)**: `/audit-code` R1 H4 M6 L1 (9 accepted), R2 H1, **R3–R5 PASS 0/0/0, coverage COMPLETE**, then Gemini APPROVE. Every fix was proven red, then green. That includes the held real-Postgres suite (6/6), where removing the repo-scope clause turns its test red.
+
+### Files Affected
+- `docs/plans/ship-trains.md` — the plan, its audit trail, the stateless amendment and §2.10 (test cost).
+- `scripts/lib/ship-train/{impact,provenance,verify,commands}.mjs`, `scripts/ship-train.mjs` — new.
+- `scripts/lib/store/train-provenance.mjs` — new, read-only.
+- `scripts/lib/commit-trailers.mjs` — `identityProvable` input.
+- `.audit-loop/domain-map.json` — ship-train claim + two declared edges.
+- `tests/ship-train-{impact,provenance,verify,cli}.test.mjs` (new), `tests/commit-trailers.test.mjs` (+4).
+
+### Decisions Made
+- **`main` is unpinned** (measured: `rulesets` → `[]`, branch protection → 404). Trains therefore land audited PRs as `AI-Gate: converged`, never `passed`. `passed` becomes reachable only if the user enables "require branches up to date" with no bypass actors; that is a repo-settings decision, not made here. `converged`'s reading widens to "tree identity not asserted equal" (plan R7).
+- **Empirical `plan` on #202–#206, hand-checked against the store**: only #202 has a converged run whose content matches its commits. #203 and #204 match only single-round unconverged runs. #205 and #206 match none.
+- **§2.10 test cost, split by owner (coordinator ruling)**:
+  - Kept here: the train's one combined `npm test` is the authoritative suite on the landing bytes, plus a "combined run failed on a test the branch tier didn't select" metric (reads `unmeasured` until it can be computed).
+  - Owned by the gate-cost plan (`docs/plans/gate-cost-slice-1.md` (planned)): the cheaper branch-push tier; weakening the branch gate is the user's policy call.
+  - Option (b), trusting recorded per-PR gates, was rejected: no record exists, and the always-present log PR means it would never fire.
+
+### Next Steps
+- **DB suite follow-up**: `tests/ship-train-provenance.db.test.mjs` plus its two-list enrolment (`scripts/db-test-container.mjs`, `.github/workflows/postgres-parity.yml`), after the keyset PR (`fix/ship-nudge-keyset-paging`) merges and releases those lists.
+- **Cluster B** (serial `messageFor` seam, `land`, `sync`) after the `claude/fleet-unclaimed-work-impl` claim on `scripts/lib/fleet/**` releases. **Cluster C** (`/ship --train` skill surface + docs) after the keyset PR's hold on `skills/ship/SKILL.md` releases.
+- Cluster D (the thinness metric) lands after B and the gate-cost selector.
+
+Backlog 2026-10-12T04:23Z: Q1 173c/47p (+420 aged) · Q2 116c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
+---
+
+## 2026-10-12 — final-review debt suppression revived (#203): rebased, audited, three audit fixes
+
+### Changes
+- Revives the post-review debt-suppression stage (`scripts/lib/final-review/post-review.mjs`). It was dead in production: it read the debt context from the transcript top level while `build-audit-transcript` nests it under `rounds[]`, so 0 of 65 real transcripts reached it. One accessor now merges both; the matcher compares a symmetric category + section + detailSnapshot signature at 0.30 (chosen on the real 90-entry ledger, 10 of 10 judged pairs correct) and never suppresses a release-blocking or reopened finding.
+- `output-schemas.mjs`: identity fields (ids, `original_finding_id`, `cited_lines`) are no longer truncated. `shadow.mjs` throws on an unknown provider instead of returning an Anthropic client.
+- Audit round-1 follow-ups: `applyDebtSuppression` builds its metadata before it mutates the result (M2); `captureStderr` honours `write()` completion callbacks (M7); `NARRATIVE_PATHS` is exported and a test pins it, so a new bounded string field must be classified as prose or identity (M3). Each test was seen red with its fix reverted.
+
+### Audit (fresh, on the rebased change)
+- Origin: commit `964c1d77`, abandoned in an archived worktree (tag `archive/worktree-agent-a8895e6b04909c52f`). Original audit: 3 plan + 4 code rounds + Gemini (run `4226c467-ab12-45ae-9965-a9e7a39db84e`). This PR is that commit rebased onto main `5157ff65` plus a generated plans-index commit, so its head differs from the originally audited sha.
+- `/audit-code --scope diff` round 1 (SID `audit-code-1791748856049-89252`, store run `1f675e97-2ccc-4e55-a07b-b5c225dda820`): SIGNIFICANT_ISSUES, 1 HIGH + 8 MEDIUM, $1.46, none in the files that moved on main (`gemini-review.mjs`, `finding-assembly.mjs`). All 9 ruled: 3 fixed (M2, M3, M7); 5 dismissed (H1, M1, M5, M8 as stated design limits or tool bounds; M6 a sanitizer false positive); 1 captured as `blocked-by` debt (M4, topic `9f496923b0cd`, blocked by `archive/queue-burndown-2026-10-02#d9eda256`).
+- Only round 1 was run, not two stable rounds: the user chose "accept round 1 + Gemini" for a rebase of an already-audited change. Gemini final gate: APPROVE, 0 findings, but PARTIAL coverage (1,368 of 2,320 changed lines never shown), and it ran before the M3 guard commit `915f24ec`.
+- The audit ran in a worktree that was retired before this ship, so its run marker was absent here; the commit's `AI-Gate` is whatever `ship-commit` verifies, never hand-written.
+
+### Files Affected
+- `scripts/lib/final-review/{post-review,output-schemas,prompts,shadow}.mjs`, `scripts/gemini-review.mjs`, `scripts/lib/audit/finding-assembly.mjs`
+- Tests: `debt-transcript-suppression`, `final-review-round-gate`, `final-review-structured-output`, `shadow-client-dispatch`, `capture-stderr-helper` (new), `helpers/{anthropic-wire,capture-stderr}.mjs`, `fixtures/debt-memory/*`
+- `docs/plans/final-review-debt-suppression-revival.md` (plan), `docs/plans/README.md` (generated index)
+
+### Decisions Made
+- Round 1 + Gemini accepted as the fresh audit rather than running to convergence (cost proportion; the user's call).
+- M3 fixed in scope with a guard test instead of deferred: `IDENTITY_PATHS` is this change's own mechanism.
+- Ownership is split with the queue-burndown work (`archive/queue-burndown-2026-10-02`): this PR supersedes its debt-suppression commits (`537a49bb`, `3091c7c5`), which its landing chip drops.
+
+### Regression Lock Status
+⚠ 173 code fixes repo-wide have no locked regression coverage (Q1, measured by `list-unlocked-fixes`); not introduced by this change.
+
+### Next Steps
+- Merging #203 is the user's call, with the PR head equal to the shipped sha.
+- #204 (CLI contract hardening) and #205 (audit-skill SIDs) follow; the keyset-paging PR waits for #204 to merge.
+
+Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt 328 cloud/1 local (0 spilled) · upstream 2
+
+---
+
+## 2026-10-12 — fleet: unregistered work surfaced, `fleet archive`, claim binding, handover hardening (clusters B-D)
+
+`/cycle --autonomous` on `docs/plans/fleet-unclaimed-work-and-switch-friction.md`, clusters B to D (A is PR #206). Branch `claude/fleet-unclaimed-work-impl`; B-D ship as one PR after #206 merges (user's decision).
+
+- **B (Phases 3-4, `prune --apply`)**: `status` prints an "unregistered work" section (one verdict per uncovered worktree/branch) and writes `<git-common-dir>/fleet-cache/unregistered.json`; the `claim`/`touch`/`ready` footer reads only that cache (FYI count, refresh request, coverage notice). New `fleet archive` (`archive.mjs`): snapshot to a local `archive/*` tag, verify, revalidate under the lock, then remove the worktree; never pushes. `prune --apply` runs exactly the judged list (`update-ref -d` bound to the judged oid), skips fresh worktrees unless `--include-fresh`, lists orphan dirs (`prune-orphans.mjs`). `runGit` gained an allowlisted `env`.
+- **C (Phases 5-6)**: `claim --worktree` (`resolveClaimBinding`); binding warnings from the retained record (`bindingWarnings`); `add` records the worktree; `release` resolves it and survives a malformed `.fleet.json`; `ready` warns about commits no remote ref holds (`unpushedCount`). Handover: PR-state reachability (`ghReachability`, reusing `parseOriginRepo`), newer-manifest refusal + `--allow-older`, stale hydrated-tooling warning (`bundle-stamp.mjs`).
+- **D (Phases 7-8)**: receive outcome classes failed > refused > ok-with-`followUps`; whitelisted account identity from `.claude.json` (`accountIdentity`/`compareIdentity`); BEFORE YOU RELAUNCH + `--scheduler-checked` gate on prepare; `memory <dir> → <path>` lines; `human:account-switch` waits with a targeted unblock command. Rendering split into `handover-render.mjs`. Skill prose: usage lines, worktree removal needs the user + a desktop session-list check, footer FYI is not a DO, push early, coordinator rules cr1-cr5.
+- **Behaviour change**: `handover receive` with a missing scheduled task or a settings difference now exits 0 with `followUps` (was 3). `handover prepare` exits 3 while tasks are listed and `--scheduler-checked` is absent.
+
+Verification:
+- Audits: B 6 GPT rounds + 1 coordinator-ruled exception (not converged by the stability rule; every finding fixed red-then-green or dismissed with a reason; live negative control on a disposable clone). C 4 rounds, R4 PASS (`audit-code-clC-1791763339`). D 4 rounds, R4 PASS (`audit-code-clD-1791768416`).
+- Consolidated Gemini gate over A-D (19 rounds, 135 findings, 31 files): APPROVE, gate `approve`, 0 blocking.
+- Tests (final tree): fleet + skill + relocation suites 1,105, 1,103 pass, 0 fail, 2 skipped; `fleet-cli` 132/132. New suites: fleet-archive, fleet-unregistered-surfaces, fleet-binding, fleet-bundle-stamp, fleet-handover-receive.
+- Empirical (§9, under load, 69 node processes): `status` CEE 3.5-4.0 s, wine 12.4-12.8 s, storyline 8.0 s, ai-organiser 2.2 s; `handover prepare` across all four exit 3 with both reasons named, 49.7 s. The 5 s wine target was not met (needs an idle machine; 3.9 s idle in M19).
+- Follow-ups recorded in plan §8: fleet-cli test split + fixture template (chip spawned by the CE coordinator); memoised rev-parse and no `gh` in `claim`, together with the derived-done-claim fix (M21), after this PR.
+
+Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt 328 cloud/10 local (0 spilled) · upstream 2
+
+## 2026-10-12 — pre-push archive lane (PR #208) and the gate-cost chip (PR #212): both pushed, ready, not merged
+
+Backlog: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2 (`node scripts/backlog-snapshot.mjs`, 2026-10-12T04:31Z).
+
+### Changes
+- **PR #208, archive lane** (`claude/silly-morse-164a75`, tip 45a03d5f, full pre-push gate green on push): a pre-push lane for pushes whose refs are ALL under `refs/heads/archive/` or `refs/tags/archive/`. It still runs the secret scan and the sensitive-path check over exactly what the push publishes (objects the destination lacks, plus every path the published commits add or change), and skips only what cannot hold for an old commit. Any non-archive ref in the push, or any ref line it cannot parse, gets the full gate. Whitespace in a ref name is parsed from the right (a fail-open found by the adversarial review). Two shared oracles grew: `sensitive-paths.mjs` (`.netrc`, `_netrc`, `.git-credentials`, `.pgpass`, `.pypirc`, `.htpasswd`, `*.keystore`, `*.jks`, `*.tfvars`) and `secret-patterns.mjs` (`npm-token`), each with its own tests, negatives, and the INC-001 symlink route. Plan `docs/plans/prepush-archive-lane.md`; runbook `docs/runbooks/prepush-sandbox.md` §7.
+- **PR #212, gate cost** (`fleet/make-the-pre-push-gate-s-per-f-2dab`, tip fcfd42be, full gate green on push): `npm test` prints the slowest test files; `npm run test:preflight` runs the suite minus `tests/fleet-cli.test.mjs`; a preflight that cannot verify which files ran fails. `npm test -- --test-reporter=dot` no longer dies on node's reporter/destination count check. Plan `docs/plans/gate-cost-slice-1.md`; runbook `docs/runbooks/gate-cost.md`.
+- Measured (one full `npm test`, 949 files): 1,009 s wall, 7,344 s summed test-body time (worker-seconds, waiting included, not CPU). `fleet-cli` = 972 s: 13.2% of the sum but 96% of wall, because node runs a file's tests serially (wall >= longest file). `test:preflight` on the committed tree: 274 s, 18,626 tests, 0 failed.
+
+### Files Affected
+- #208: `.githooks/pre-push`, `scripts/lib/prepush-archive-lane.mjs`, `scripts/prepush-archive-lane.mjs`, `scripts/lib/sensitive-paths.mjs`, `scripts/lib/secret-patterns.mjs`, `tests/prepush-archive-lane*.test.mjs`, `tests/sensitive-paths*.test.mjs`, `tests/secret-patterns.test.mjs`.
+- #212: `scripts/run-tests.mjs`, `scripts/lib/test-timing-report.mjs`, `scripts/lib/test-timing-reporter.mjs`, `scripts/lib/test-runner-listener-ceiling.mjs`, `tests/run-tests-timing.test.mjs`, `tests/run-tests-preflight.test.mjs`, two guard fixtures.
+
+### Decisions Made
+- Gate cost is a critical-path cost, so the follow-up order is: measure `fleet-cli` alone on a quiet machine, split or parallelise it, then cut its work (template-copied fixture, memoised `rev-parse`). Held by the fleet-unclaimed-work session; the coordinator has the numbers.
+- #212's audit corrected three premises by running them: node REFUSES unbalanced reporter flags; `--disable-warning` is inherited by test files and hid a real leak, so the listener ceiling is raised in the runner process only (`--import` does not run there); and node refuses `--test-name-pattern --test-reporter=dot`, which the runner had turned into a passing run that selected nothing.
+- A consolidated `audit-code` over a train was not built: at most about 10% of merged PRs could skip an audit, and the wall time of the test step was the larger measured lever.
+
+### Next Steps / open decisions (the user's)
+- Merge #208 and #212 (nothing is merged). #212 still needs its own `/ship docs/plans/gate-cost-slice-1.md` from its worktree.
+- #208: should the lane skip all 34 `check` steps or only a subset; should the full gate also scan pushed content; the paid audits of the hook and the two oracle diffs were NOT run (the hook got an adversarial subagent review instead) and need an explicit go.
+- Branch pre-push DIRECT-impact tier (ship-trains §2.10) is a policy call; `docs/runbooks/gate-cost.md` §2 has the table to bring.
+- Pre-ship advisories this run (all non-blocking): 1 open persona P1 (2026-10-10), 173 code fixes without a locked regression spec (159 aged out), 111 accepted code findings never marked fixed, 3 dangling locks, the storyline store is behind this revision's migrations (6 constraints), 2 upstream reports open (both wine-cellar-app, MEDIUM).
+
+---
+
+## 2026-10-12 — CLI contract hardening (#204): rebased, audited, one audit fix
+
+### Changes
+- `hasFlag` (`scripts/lib/cli-io.mjs`): a `--name=value` now comes from a closed set (true/1/yes/on, false/0/no/off/empty); anything else throws `ArgvError`. Before, `--apply=fasle` ENABLED the flag, so a mistyped brake ran the mutating path.
+- `emit`: the `softFail` reason is validated BEFORE the envelope is written, so a refused call writes nothing and leaves the exit code untouched.
+- `scripts/learning/replay.mjs`: a failed result is written with `emit` + `finishAndExit` (it exited 1 with no output); one tokenizer handles the `=` form, last-wins and the `--` terminator; `--repo`/`--repo-id` are UUID-validated before any query; an empty sample warns instead of reading as a measured zero. The cross-skill registry declares `learning-replay`'s verbs and flags, so `npm run learning:replay -- pass_selection --since 7d` works again. `loadPolicy` picks its export with the predicate it validates.
+- Audit follow-up (`f8259e66`): `--repo` and `--repo-id` are one filter. Disagreeing values are refused before any store query; the same value repeated is accepted. Seen red with the fix reverted.
+
+### Audit (fresh, on the rebased change)
+- Origin: commit `a72426c6`, abandoned in an archived worktree (tag `archive/worktree-agent-ad8559f27235c40c9`). Original audit: 2 plan + 3 code rounds + Gemini (run `1020f8fa-4f10-4401-b0ff-0ae13c01acdc`). This PR is that commit rebased onto main `5157ff65` (one mechanical conflict, `.stdout-flush-baseline.json`, re-derived with the gate's own `--update`) plus a generated plans-index commit, so its head differs from the originally audited sha.
+- `/audit-code --scope diff` round 1 (SID `audit-code-1791749398536-116860`, store run `e9344808-6849-4cc0-84b3-a1c2a68b673d`): SIGNIFICANT_ISSUES, 1 HIGH + 4 MEDIUM, $0.43, coverage complete/pass. None was an interaction defect with what moved on main. All 5 ruled: 1 fixed (M3); H1 and M1 accepted and already tracked as existing debt `39e12039b646` and `3cca2ef20a9e` (not re-captured, to avoid duplicates); M2 and M4 dismissed.
+- Only round 1 was run, not two stable rounds: the user chose "accept round 1 + Gemini". Gemini final gate: APPROVE, 0 findings, but PARTIAL coverage (509 of 1,066 changed lines never shown); it ran on the tree that includes `f8259e66`.
+- Known gap carried, not fixed here: `emit()` validates the `softFail` reason only when `ok:false`, so `emit(env, {softFail:true})` with no reason and `ok:true` is accepted. Audited as-is; a follow-up.
+- The audit ran in a worktree retired before this ship, so its run marker was absent here and the commit's `AI-Gate` is recorded as not-run.
+
+### Files Affected
+- `scripts/lib/cli-io.mjs`, `scripts/learning/replay.mjs`, `scripts/lib/cross-skill/registry.mjs`, `scripts/check-cli-flags.mjs`, `scripts/check-emit-exit-agreement.mjs`, `.stdout-flush-baseline.json` (re-derived)
+- Tests: `cli-io-equals-flags`, `emit-exit-coupling`, `learning-replay`, `replay-positionals`, `cross-skill-registry-conformance`
+- `docs/plans/cli-contract-hardening-flags-emit-replay.md`, `docs/runbooks/learning-system.md`, `docs/plans/README.md` (generated index)
+
+### Decisions Made
+- Round 1 + Gemini accepted as the fresh audit rather than running to convergence (cost proportion; the user's call).
+- H1/M1 not re-captured: the same concern is already in the store. Two more existing entries, `af81be85` (UUID-only `--repo`) and `b445b4ba` (hand-written envelope), appear to be fixed by this change; verify before resolving them after merge.
+- Supersedes the `cli-io` softFail/`hasFlag` and replay commits in `archive/queue-burndown-2026-10-02` (`8cfbd071`, `b3f80832`).
+
+### Regression Lock Status
+⚠ 174 code fixes repo-wide have no locked regression coverage (Q1, `list-unlocked-fixes`); not introduced by this change.
+
+### Next Steps
+- Merging #204 is the user's call, with the PR head equal to the shipped sha. The keyset-paging PR rebases on it afterwards.
+- This status entry and #203's both add the top entry of `status.md`; whichever merges second keeps both entries.
+
+Backlog 2026-10-12T06:21Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt 328 cloud/1 local (0 spilled) · upstream 2
+
+
+---
 
 ## 2026-10-12 — queue-burndown cluster 2: the runs-findings write boundary (PR #202)
 

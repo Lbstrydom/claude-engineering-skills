@@ -214,3 +214,40 @@ test('smoke variant 3 — deny-path (noCloudRecording): the bandit state file is
     cleanup(tmp);
   }
 });
+
+// final-review shadow 9db9dd4e: the Theme-1 gate on finalizePriorRoundOutcomes
+// (062e1be1) shipped with no test — the hardening suite passed UNMODIFIED after
+// the fix, which is evidence of no coverage, not of correctness. Its behavioural
+// observable is the prior-round result artifact: the capture STAMPS it with
+// `_outcomeCapture`. A shadow (noCloudRecording) run must leave it untouched;
+// the allow-side twin proves the observable is live (a vacuity guard).
+function withPriorRound(ctx, tmp) {
+  const prior = path.join(tmp, 'smoke-sess-r1-result.json');
+  fs.writeFileSync(prior, JSON.stringify({ findings: [] }));
+  ctx.outFile = path.join(tmp, 'smoke-sess-r2-result.json');
+  return prior;
+}
+
+test('smoke variant 4 — deny-path: an observation-only R2 run does NOT finalize prior-round outcomes', async () => {
+  const { ctx, tmp } = makeSmokeInput({ round: 2, noCloudRecording: true });
+  try {
+    const prior = withPriorRound(ctx, tmp);
+    await runLegacyProductionAudit(ctx);
+    assert.equal(JSON.parse(fs.readFileSync(prior, 'utf-8'))._outcomeCapture, undefined,
+      'a shadow run must not write learning-outcome state for the prior round');
+  } finally {
+    cleanup(tmp);
+  }
+});
+
+test('smoke variant 5 — allow-path twin: a recording R2 run DOES finalize prior-round outcomes', async () => {
+  const { ctx, tmp } = makeSmokeInput({ round: 2, noCloudRecording: false });
+  try {
+    const prior = withPriorRound(ctx, tmp);
+    await runLegacyProductionAudit(ctx);
+    assert.ok(JSON.parse(fs.readFileSync(prior, 'utf-8'))._outcomeCapture,
+      'the allow side must stamp the prior result — otherwise variant 4 proves nothing');
+  } finally {
+    cleanup(tmp);
+  }
+});

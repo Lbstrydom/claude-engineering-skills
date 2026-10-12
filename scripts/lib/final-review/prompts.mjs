@@ -75,9 +75,12 @@ RULES:
 3. Quality over quantity — 3 real findings beat 10 vague ones.
 4. Quick-fix detection still applies — flag band-aids.
 5. If the deliberation was fair and the plan/code is good, say APPROVE. Don't manufacture issues.
-6. If the prompt includes a "Pre-filtered Debt" section, DO NOT re-raise any topic listed there.
-   Those concerns are pre-existing, operator-deferred, and tracked outside this audit's scope.
-   They were explicitly filtered from the transcript by the upstream pipeline.
+6. If the prompt includes a "Pre-filtered Debt" section, do not re-report the SAME CONCERN as a
+   topic listed there. Those concerns are pre-existing, operator-deferred, and tracked outside
+   this audit's scope; the upstream pipeline already filtered them from the transcript. The listing
+   settles only that concern — it does NOT settle: a different defect at the same location; a
+   regression or reopening that cites the changed line (set is_reopened: true); anything that is
+   release-blocking; or a case you are unsure about. Report those.
 7. Wrongly-dismissed escalation cap: If the transcript shows Claude challenged a dismissed finding
    with cited code evidence (file paths, line numbers, existing code), you MUST either:
    (a) Accept the challenge — do not include it in wrongly_dismissed, OR

@@ -1,0 +1,236 @@
+{
+  "_note": "Judged pairs from the real .audit/tech-debt.json debt ledger (docs/plans/final-review-debt-suppression-revival.md section 2.2). Labels are hand-assigned after reading both full snapshots. scoreAtCapture is informational; the test recomputes every score from the committed text.",
+  "pairs": [
+    {
+      "label": "same-concern-above",
+      "rationale": "Both state that the AUDIT_LOOP_STATE_DIR override redirects the heartbeat AND the sole single-instance lock, so a normal and an overriding invocation no longer contend. One concern, two reviewers.",
+      "scoreAtCapture": 0.426,
+      "a": {
+        "topicId": "d233a4880890",
+        "category": "[Sustainability] Concurrency control defect",
+        "section": "scripts/maintenance-checks.mjs — AUDIT_LOOP_STATE_DIR / STATE_DIR, LOCK_PATH, and HEARTBEAT_PATH",
+        "affectedFiles": [
+          "scripts/maintenance-checks.mjs"
+        ],
+        "detail": "The process-level AUDIT_LOOP_STATE_DIR seam redirects the only single-instance lock as well as the heartbeat. A normal invocation and an invocation with this environment variable set therefore acquire different locks and can run concurrently."
+      },
+      "b": {
+        "topicId": "feb7319abd65",
+        "category": "[Sustainability] Unsafe locking seam",
+        "section": "scripts/maintenance-checks.mjs — AUDIT_LOOP_STATE_DIR / STATE_DIR",
+        "affectedFiles": [
+          "scripts/maintenance-checks.mjs"
+        ],
+        "detail": "`AUDIT_LOOP_STATE_DIR` redirects both `HEARTBEAT_PATH` and the sole `LOCK_PATH`. A normal maintenance invocation and one inheriting this environment variable therefore acquire different locks and are not mutually excluded."
+      }
+    },
+    {
+      "label": "same-concern-above",
+      "rationale": "Resolved by reading both full snapshots: each says the accepted-debt check section 5 (\"local-only, never blocks a push\") contradicts test case (b), which runs under npm test and hard-fails on any edit to the AGENTS.md table. One contradiction, restated.",
+      "scoreAtCapture": 0.42,
+      "a": {
+        "topicId": "9c03b530",
+        "category": "Contradictory Blocking Semantics",
+        "section": "tests/accepted-debt-check.test.mjs",
+        "affectedFiles": [
+          "tests/accepted-debt-check.test.mjs"
+        ],
+        "detail": "Test case (b) asserts the parser against the REAL `AGENTS.md` yields exactly 6 rows whose anchors AND fingerprints match `ACCEPTED_DEBT_ROWS` 1:1, and §6 explicitly wants it to \"fail immediately\" on divergence. That test is Tier 1, i.e. it runs inside the blocking check chain / pre-push hook. This directly contradicts §5's load-bearing trade-off — \"local-only, not wired into `npm run check`\" and \"never blocks a push\" — and it defeats the carefully-designed exit-1 'attention' channel: adding a 7th debt row, or fixing a typo in any of the six rows' prose, becomes a hard test failure that blocks "
+      },
+      "b": {
+        "topicId": "ab0b35dd",
+        "category": "Contradictory Risk Posture / Hidden Blocking Gate",
+        "section": "tests/accepted-debt-check.test.mjs",
+        "affectedFiles": [
+          "tests/accepted-debt-check.test.mjs"
+        ],
+        "detail": "§5 states the check is deliberately \"local-only, not wired into `npm run check`\" and \"never blocks a push\", with a documented graduation path (drift-only mode) before it could gate anything. But §4 test case (b) asserts the REAL AGENTS.md parses to exactly 6 rows whose anchors AND rowFingerprints match ACCEPTED_DEBT_ROWS 1:1, and §6 explicitly frames that as \"that test fails immediately\" on divergence. That test runs under `npm test` — the repo's blocking check chain. So editing the AGENTS.md accepted-debt table (adding a 7th row, or fixing a typo in a Rationale cell) hard-fails the test suite"
+      }
+    },
+    {
+      "label": "same-concern-above",
+      "rationale": "Both state that debt suppression compares the finding long category+section+detail against only the debt category and section, so unrelated findings can be deleted. A near-restatement; scores just above the threshold.",
+      "scoreAtCapture": 0.304,
+      "a": {
+        "topicId": "713af1a3f1bc",
+        "category": "[be-services] Incorrect Finding Suppression",
+        "section": "scripts/lib/final-review/post-review.mjs — applyDebtSuppression",
+        "affectedFiles": [
+          "scripts/lib/final-review/post-review.mjs"
+        ],
+        "detail": "Debt matching compares a new finding's category, section, and detail against only the deferred topic's category and section. Findings can therefore be removed based on topic overlap without establishing that they describe the same underlying defect."
+      },
+      "b": {
+        "topicId": "c4c69f5a1020",
+        "category": "[Sustainability] Unsafe Finding Suppression",
+        "section": "scripts/lib/final-review/post-review.mjs — applyDebtSuppression",
+        "affectedFiles": [
+          "scripts/lib/final-review/post-review.mjs"
+        ],
+        "detail": "Debt suppression compares a new finding's category, section, and detail against only the debt entry's category and section. It does not compare the previously accepted claim, allowing unrelated findings in similar locations or categories to be deleted."
+      }
+    },
+    {
+      "label": "same-concern-below",
+      "rationale": "Both state that the catch in applyDebtSuppression covers more than the documented non-JSON case, swallowing operational failures. Same concern, looser paraphrase: an expected-KEPT false negative.",
+      "scoreAtCapture": 0.217,
+      "a": {
+        "topicId": "3501a8b4e9c0",
+        "category": "[be-services] Missing Error Handling",
+        "section": "scripts/lib/final-review/post-review.mjs — applyDebtSuppression catch block and suppression logging",
+        "affectedFiles": [
+          "scripts/lib/final-review/post-review.mjs"
+        ],
+        "detail": "An empty catch covers JSON parsing, ledger import, matching, and logging rather than only the documented non-JSON transcript case. Operational failures in suppression processing are consequently swallowed alongside expected parse failures."
+      },
+      "b": {
+        "topicId": "c5ee9c704c95",
+        "category": "[Sustainability] Error Swallowing",
+        "section": "scripts/lib/final-review/post-review.mjs — applyDebtSuppression catch block",
+        "affectedFiles": [
+          "scripts/lib/final-review/post-review.mjs"
+        ],
+        "detail": "The JSON-parsing catch also covers dependency loading, similarity computation, logging, and mutation failures, misreporting them as ordinary non-JSON transcripts. This is distinct from, but compounds, the unsafe suppression logic in H2."
+      }
+    },
+    {
+      "label": "same-concern-below",
+      "rationale": "Both state that truncateToSchema truncates identity and evidence fields (original_finding_id, cited_lines) like prose. Same concern, looser paraphrase: an expected-KEPT false negative.",
+      "scoreAtCapture": 0.22,
+      "a": {
+        "topicId": "8e8d3625feca",
+        "category": "[Sustainability] Lossy Contract Repair",
+        "section": "scripts/lib/final-review/output-schemas.mjs — WronglyDismissedSchema, _collectMaxLengths(), truncateToSchema()",
+        "affectedFiles": [
+          "scripts/lib/final-review/output-schemas.mjs"
+        ],
+        "detail": "The truncation policy treats all bounded strings as disposable prose, including original_finding_id at 10 characters and cited_lines entries at 100 characters. This applies narrative-repair behavior to identifiers and evidence."
+      },
+      "b": {
+        "topicId": "dcd761b7035f",
+        "category": "[Sustainability] Lossy Error Recovery",
+        "section": "scripts/lib/final-review/output-schemas.mjs — _collectMaxLengths() and truncateToSchema()",
+        "affectedFiles": [
+          "scripts/lib/final-review/output-schemas.mjs"
+        ],
+        "detail": "Schema recovery truncates every bounded string indiscriminately, including original_finding_id and cited_lines. These fields carry identity or evidence, not merely display text."
+      }
+    },
+    {
+      "label": "same-concern-below",
+      "rationale": "Both state that AUDIT_LOOP_STATE_DIR redirects both the heartbeat and the single-instance lock. Same concern as the first pair, a looser paraphrase: an expected-KEPT false negative.",
+      "scoreAtCapture": 0.231,
+      "a": {
+        "topicId": "092ee1cf7dd7",
+        "category": "[Sustainability] Concurrency control",
+        "section": "scripts/maintenance-checks.mjs — AUDIT_LOOP_STATE_DIR / LOCK_PATH override",
+        "affectedFiles": [
+          "scripts/maintenance-checks.mjs"
+        ],
+        "detail": "`AUDIT_LOOP_STATE_DIR` redirects both the heartbeat and the single-instance lock. A process using the override does not contend on the repository canonical `.audit-loop/.maintenance.lock`, allowing concurrent maintenance processes that should be mutually exclusive."
+      },
+      "b": {
+        "topicId": "feb7319abd65",
+        "category": "[Sustainability] Unsafe locking seam",
+        "section": "scripts/maintenance-checks.mjs — AUDIT_LOOP_STATE_DIR / STATE_DIR",
+        "affectedFiles": [
+          "scripts/maintenance-checks.mjs"
+        ],
+        "detail": "`AUDIT_LOOP_STATE_DIR` redirects both `HEARTBEAT_PATH` and the sole `LOCK_PATH`. A normal maintenance invocation and one inheriting this environment variable therefore acquire different locks and are not mutually excluded."
+      }
+    },
+    {
+      "label": "distinct",
+      "rationale": "Same file (post-review.mjs applyDebtSuppression), DIFFERENT defects: the matcher signature versus the catch scope.",
+      "scoreAtCapture": 0.121,
+      "a": {
+        "topicId": "713af1a3f1bc",
+        "category": "[be-services] Incorrect Finding Suppression",
+        "section": "scripts/lib/final-review/post-review.mjs — applyDebtSuppression",
+        "affectedFiles": [
+          "scripts/lib/final-review/post-review.mjs"
+        ],
+        "detail": "Debt matching compares a new finding's category, section, and detail against only the deferred topic's category and section. Findings can therefore be removed based on topic overlap without establishing that they describe the same underlying defect."
+      },
+      "b": {
+        "topicId": "3501a8b4e9c0",
+        "category": "[be-services] Missing Error Handling",
+        "section": "scripts/lib/final-review/post-review.mjs — applyDebtSuppression catch block and suppression logging",
+        "affectedFiles": [
+          "scripts/lib/final-review/post-review.mjs"
+        ],
+        "detail": "An empty catch covers JSON parsing, ledger import, matching, and logging rather than only the documented non-JSON transcript case. Operational failures in suppression processing are consequently swallowed alongside expected parse failures."
+      }
+    },
+    {
+      "label": "distinct",
+      "rationale": "Same file, DIFFERENT defects: the matcher signature versus the catch scope.",
+      "scoreAtCapture": 0.074,
+      "a": {
+        "topicId": "713af1a3f1bc",
+        "category": "[be-services] Incorrect Finding Suppression",
+        "section": "scripts/lib/final-review/post-review.mjs — applyDebtSuppression",
+        "affectedFiles": [
+          "scripts/lib/final-review/post-review.mjs"
+        ],
+        "detail": "Debt matching compares a new finding's category, section, and detail against only the deferred topic's category and section. Findings can therefore be removed based on topic overlap without establishing that they describe the same underlying defect."
+      },
+      "b": {
+        "topicId": "c5ee9c704c95",
+        "category": "[Sustainability] Error Swallowing",
+        "section": "scripts/lib/final-review/post-review.mjs — applyDebtSuppression catch block",
+        "affectedFiles": [
+          "scripts/lib/final-review/post-review.mjs"
+        ],
+        "detail": "The JSON-parsing catch also covers dependency loading, similarity computation, logging, and mutation failures, misreporting them as ordinary non-JSON transcripts. This is distinct from, but compounds, the unsafe suppression logic in H2."
+      }
+    },
+    {
+      "label": "distinct",
+      "rationale": "Same file (cli-io.mjs emit): exit-code coupling enforced only for emit() callers, versus emit() validating the softFail contract AFTER its first stdout write. Related area, two defects.",
+      "scoreAtCapture": 0.196,
+      "a": {
+        "topicId": "14ae944f",
+        "category": "Incomplete Invariant Enforcement",
+        "section": "scripts/lib/cli-io.mjs",
+        "affectedFiles": [
+          "scripts/lib/cli-io.mjs"
+        ],
+        "detail": "The exit-code coupling is enforced only for callers that go through `emit()`, and the new gate only enumerates `softFail` opt-outs — nothing enumerates CLIs that emit a JSON envelope WITHOUT `emit()`. scripts/learning/replay.mjs, changed in this very PR, does exactly that: `process.stdout.write(JSON.stringify(result) + '\\n')` for both the JSON and the markdown paths, so any `ok:false`-shaped result it prints is outside the invariant entirely. The gate's docstring claims it counts the opt-outs \"across the repo's CLIs\"; the population it cannot see is the larger one. This is the repo's own defec"
+      },
+      "b": {
+        "topicId": "25a36d16",
+        "category": "Validation After Side Effect",
+        "section": "scripts/lib/cli-io.mjs",
+        "affectedFiles": [
+          "scripts/lib/cli-io.mjs"
+        ],
+        "detail": "`emit()` performs `process.stdout.write(JSON.stringify(obj) + '\\n')` as its FIRST statement, then validates the softFail contract and throws on a missing reason. The envelope is therefore already on stdout when the exception is raised. Any caller with a top-level try/catch (the standard shape across this repo's CLIs — see cross-skill.mjs's ArgvError handling and the EXCEPTION→exit-1 mapping the plan's D5 preserves) will catch it and emit a SECOND envelope, producing two JSON lines on a stream whose documented contract in this very file is one machine-readable line. Callers without a catch get "
+      }
+    },
+    {
+      "label": "arguable-below",
+      "rationale": "Sync inventory: \"implemented in two modules, lock-step comments\" versus \"distributed across large literal arrays\". Arguably one DRY/coupling concern, arguably two; scores below the threshold either way and is kept.",
+      "scoreAtCapture": 0.21,
+      "a": {
+        "topicId": "3627c83a",
+        "category": "[Sustainability] DRY Violation",
+        "section": "scripts/lib/sync-inventory.mjs and scripts/sync-to-repos.mjs — CORE_ENTRY, CORE_NON_IMPORTABLE, and related inventory/om",
+        "affectedFiles": [
+          "scripts/lib/sync-inventory.mjs",
+          "scripts/sync-to-repos.mjs"
+        ],
+        "detail": "The sync file inventory remains implemented in two modules, with comments requiring the arrays to stay “in lock-step” with `sync-to-repos.mjs`. These are two independently editable copies of deployment inventory and omission rules."
+      },
+      "b": {
+        "topicId": "72be9c56",
+        "category": "[Sustainability] Coupling concern",
+        "section": "scripts/lib/sync-inventory.mjs — CORE_ENTRY, CORE_NON_IMPORTABLE, CORE_ASSETS and related entry arrays",
+        "affectedFiles": [
+          "scripts/lib/sync-inventory.mjs"
+        ],
+        "detail": "The sync inventory remains distributed across large literal entry-point and asset arrays even though comments describe an authoritative inventory. The extraction therefore did not establish one source of truth for the synchronized surface."
+      }
+    }
+  ]
+}

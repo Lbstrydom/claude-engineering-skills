@@ -12,6 +12,7 @@ import path from 'node:path';
 import { semanticId, setRepoProfileCache } from './findings.mjs';
 import { briefConfig } from './config.mjs';
 import { SOURCE_CODE_EXTENSIONS } from './file-taxonomy.mjs';
+import { readClassifiedFile } from './path-validation.mjs';
 
 // ── Module-Level Caches ─────────────────────────────────────────────────────
 
@@ -58,14 +59,7 @@ const INSTRUCTION_FILE_CANDIDATES = [
  */
 function _getClaudeMd() {
   if (_claudeMdCache !== null) return _claudeMdCache;
-  for (const name of INSTRUCTION_FILE_CANDIDATES) {
-    const p = path.resolve(name);
-    if (fs.existsSync(p)) {
-      _claudeMdCache = fs.readFileSync(p, 'utf-8');
-      return _claudeMdCache;
-    }
-  }
-  _claudeMdCache = '';
+  _claudeMdCache = _resolveInstructionFile()?.content ?? '';
   return _claudeMdCache;
 }
 
@@ -74,11 +68,42 @@ function _getClaudeMd() {
  * @returns {string|null} Path to instruction file, or null
  */
 function _getClaudeMdPath() {
+  return _resolveInstructionFile()?.path ?? null;
+}
+
+let _instructionFile; // undefined = not yet resolved; null = none readable
+
+/**
+ * The first readable instruction file, resolved ONCE through the
+ * sensitive-path oracle (`readClassifiedFile` → `resolveAndClassify`).
+ *
+ * This is a Tier-3 egress read: the content becomes the audit brief and the
+ * project context sent to a third-party LLM. `existsSync` + `readFileSync` on
+ * the bare name followed an `AGENTS.md` symlink anywhere — out of the repo, or
+ * onto `.env` inside it — and shipped the target (INC-001 class). A candidate
+ * that is refused (escaping, sensitive, unresolvable) is skipped LOUDLY and the
+ * next one is tried; it is never read.
+ *
+ * @returns {{path: string, content: string} | null}
+ */
+function _resolveInstructionFile() {
+  if (_instructionFile !== undefined) return _instructionFile;
+  // Canonical root, so a checkout reached through a symlink/junction contains
+  // its own files (the realpath of each candidate is compared against it).
+  let repoRoot = process.cwd();
+  try { repoRoot = fs.realpathSync(repoRoot); } catch { /* keep the lexical cwd */ }
   for (const name of INSTRUCTION_FILE_CANDIDATES) {
-    const p = path.resolve(name);
-    if (fs.existsSync(p)) return p;
+    const v = readClassifiedFile({ repoRoot, candidate: name });
+    if (v.ok) {
+      _instructionFile = { path: v.canonical, content: v.content };
+      return _instructionFile;
+    }
+    if (v.reason !== 'not-found') {
+      process.stderr.write(`  [context] ${name} not read (${v.reason}) — it is never sent to a model\n`);
+    }
   }
-  return null;
+  _instructionFile = null;
+  return _instructionFile;
 }
 
 /**

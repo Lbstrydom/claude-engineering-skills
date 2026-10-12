@@ -66,7 +66,7 @@ substitute when the GPT legs have no route, and which of `AUDIT_DEGRADED` /
 `AUDIT_NOT_RUN` to report so a run that did not happen stays distinguishable
 from one that passed.
 
-Initialise session ID: `SID=audit-plan-$(date +%s)`.
+Initialise session ID: `SID=audit-plan-$(node -e "process.stdout.write(Date.now()+'-'+process.pid)")` — epoch ms plus a PID, so two sessions started in the same second get separate result, stderr and ledger files (a bare `$(date +%s)` gave both the same ones).
 
 Show kickoff card:
 ```
@@ -102,7 +102,8 @@ to audit (no child-plan merging like the old flow).
 ## Step 2 — Run Plan Audit
 
 ```bash
-PLAN_FILE=docs/plans/*.md   # the plan path /audit-plan was invoked with
+# PLAN_FILE = the ONE plan path /audit-plan was invoked with, assigned verbatim.
+# Not a glob: an assignment does not expand it, so the CLI would get the pattern itself.
 node scripts/openai-audit.mjs plan "$PLAN_FILE" --mode plan --out .audit/$SID-r1-result.json 2>.audit/$SID-r1-stderr.log
 ```
 

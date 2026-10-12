@@ -107,6 +107,14 @@
     {
       "line": "how fleet is performing and where it fails: `node scripts/cross-skill.mjs",
       "reason": "Names the read command for the telemetry (`cross-skill.mjs fleet-telemetry stats`). Its findings are produced by scripts/lib/fleet/telemetry-insights.mjs deriveWeaknesses and pinned by tests/fleet-telemetry.test.mjs (weakness findings suite) and tests/cross-skill-fleet-telemetry.test.mjs; it is advisory and never exits non-zero on a weakness."
+    },
+    {
+      "line": "information, not a `DO`: relay it; never claim, archive or prune on it alone.",
+      "reason": "An instruction to the AGENT (how to treat the footer line / where the coordinator rules live), added by plan fleet-unclaimed-work-and-switch-friction.md Phase 8. No CLI exit code expresses it, and the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
+    },
+    {
+      "line": "Coordinating, not participating: the chip authority block, the session-list",
+      "reason": "An instruction to the AGENT (how to treat the footer line / where the coordinator rules live), added by plan fleet-unclaimed-work-and-switch-friction.md Phase 8. No CLI exit code expresses it, and the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
     }
   ]
 }
