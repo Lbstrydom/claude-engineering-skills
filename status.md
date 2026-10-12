@@ -107,6 +107,17 @@
 - **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of the pushed commit: 18,641 tests, 0 fail, 46 skipped, checks passed (the first attempt failed only on four load-timing tests while ~6 gates ran at once; re-run once, green). No consumer-side retrieval was run.
 - **Result**: unverified, blocked: not merged. The pre-push hook publishes to consumers only when the default branch is updated (since 2026-10-10), so this branch has reached no consumer; verify with `sync-isolation-verify.mjs` in a consumer's MAIN checkout after the PR merges and the source repo re-syncs.
 
+### Consumer Verification (previous ship)
+- **Commit**: 1b8447c6d1c0831a9307bbd5f4dbee7278d8c35f on `fix/cli-contract-hardening-flags-emit-replay` (PR #204, NOT yet merged to `main`); it contains the ship commit and a merge of `origin/main` (8874e710).
+- **Retrieval**: the pre-push hook ran the full `check` in a clean sandbox of the pushed commit ("Pre-push checks in a clean checkout of 1b8447c6"): 18,969 tests, 18,923 pass, 0 fail, 46 skipped, checks passed, and `db-suites-gate: DB suites passed in 44.6s`. The first attempt (merge 40792a3a) was blocked by one real test, `check-status-log-integrity` "a real ancestor exits 0", because my merge left drained notes outside the status.md preamble; fixed and re-pushed. No separate `npm ci` re-install was done, and no consumer-side retrieval was run.
+- **Result**: unverified, blocked: not merged. A branch push publishes nothing to consumers (the consumer sync runs only when the default branch is updated); verify with `sync-isolation-verify.mjs` in a consumer's MAIN checkout after the PR merges and the source repo re-syncs.
+- **Commit**: ac80d55743c74b3084ceeeadcccf12c6ffcee299 on `claude/dreamy-hypatia-5978fa` (PR #210, not yet merged to `main`; merge commit 1a0399a9 of origin/main d65f1e8d, runbook commit ac80d557)
+- **Retrieval**: pushed commit: the pre-push hook ran `npm run check` in a clean checkout of exactly ac80d557 (19,213 tests, 19,167 pass, 0 fail, 46 skipped, 516 s); no separate post-push re-run (it would repeat the same command on the same sha). Synced consumer bundle: not run. Skill manifest: no skill file changed by this PR.
+- **Result**: pushed commit verified by the gate; synced bundle unverified (blocked: the PR is not merged, and consumers sync only from the default branch). Re-verify with `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in each consumer's MAIN checkout after the merge and the source repo's re-sync.
+- **Commit**: 638980bbf48e09c708ca5c0dc9170e555df5c5d0 on `fleet/make-the-pre-push-gate-s-per-f-2dab` (PR #212, open; NOT merged). Plain fast-forward from fcfd42be; it merges origin/main 0aff90cc (#204), carries the #214 reconcile and the plan Complete/log, and the status.md pointer entry.
+- **Retrieval**: the pre-push hook ran `check` in a clean checkout of exactly this sha (not a second run by me): 19,396 tests, 19,350 passed, 0 failed, 46 skipped, 476 s. The first attempt (09e4a14c) was blocked by one test: tests/dashboard-home-status-entries.test.mjs, because the Backlog line in my status.md pointer entry carried a trailing command reference that parseBacklogLine cannot round-trip; fixed by making it the bare snapshot output (cdb4b919).
+- **Result**: verified for the pushed commit (the hook's clean-checkout run). The synced consumer bundle is unverified (blocked: not merged) - a feature-branch push publishes nothing to consumers; sync from an up-to-date main after #212 merges. GitHub: MERGEABLE, checks unit and db-suite still running when this was written.
+
 ## 2026-10-12 — keyset paging for the two /ship-nudge readers (#218): rebased from an archive tag, audited, five rounds of fixes
 
 - **Defect** (audit finding 5fbd8fec): `/ship` verifies a row and then closes it, and every close removes a row from `unlocked_fixes` / `unremediated_acceptances`. `--offset` counts positions in a set that has since shrunk, so page 2 skipped one unread row per row closed, while `skills/ship/SKILL.md` promised pages "neither repeat nor skip a row".
@@ -125,6 +136,37 @@
 ### Next Steps
 - PR #218: push, read the hook's clean-checkout result, then merge on the user's separate yes (squash).
 - Follow-up: the Step 6.7 placeholder cursor in `skills/ship/SKILL.md`.
+
+## 2026-10-12 — Ship trains Cluster B: serial messageFor seam plus land and sync verbs (#219)
+
+### Changes
+- **Fleet serial landing takes an optional `messageFor` seam** (`scripts/lib/fleet/serial.mjs`). It is called once per PR immediately before its merge, on the exact head being merged (after any update-branch), with the destination tip read at that moment. It returns `{subject, body}`, `{stop}` or nothing. Absent, the merge argv is byte-identical. A throw, an empty or multi-line subject, a NUL or any other shape stops the run, so a caller that asked for a message never gets an unmessaged merge by accident. A `{stop}` ends the run before that merge; `--resume` decides again on the then-current head.
+- **The requirement is durable (audit R1 M4, contested by rebuttal, sustained by GPT).** An approval that supplies a provider records an immutable `messageRequired: true` in fleet's own serial record. A raw `fleet land --resume` without a provider, or a provider that answers nothing, stops before any merge. No body, decision or receipt is stored; it is a fixed constraint of the run, owned by the runner that enforces it.
+- **Message files are cleaned up.** The per-PR file is removed in a `finally` right after the `gh pr merge` call; a file left by a process that died is swept (under the run lease) when the next run starts, including on a resume that finds the PR already merged; a sweep that cannot finish stops the run with the reason. Both `rmSync` sites use `retrySync` (the first push was blocked by `rmsync-retry-guard`).
+- **`ship-train land`** (`--train`, `--resume`, `--accept-rerun`, `--composer`) drives that landing. The callback decides each message in a child running the same `message` verb a human previews with (fleet's loop is synchronous, the store query is not) and refuses a message decided on another head. The child has a 5 minute deadline.
+- **`ship-train sync`** re-verifies in the same invocation, then publishes the final merge OID from a clean detached worktree: it checks the tree, runs `sync-to-repos` then `sync-pr`, and always removes the worktree. It runs under a per-train exclusive lease (a second concurrent sync is refused before it can touch the first's worktree). Rollback protection is `sync-to-repos`'s own; `--allow-rollback` is never passed. Tool runs have a 30 minute deadline. The Step 6.8 note is written only for a publication that completed.
+- **Fault injection over REAL fleet serial landing** (`tests/ship-train-recovery.test.mjs`): death before and after a merge submission, a refusal that appears between attempts, and strict protection removed between attempts (the retry claims `converged`, not the `passed` the first attempt would have). The decision under test is the real `decideTrainGate` + `composeSquashMessage`; only the store read is canned.
+- **Audit**: `/audit-code` R1 H1 M9 L1 (7 accepted, 4 dismissed with reasons), R2 M1 (fixed), **R3 and R4 PASS 0/0/0, coverage complete**, Gemini final review **APPROVE**. Every new guard was proven red-then-green against a mutation. Pre-push gate on the pushed head: 19331 tests, 19285 pass, 0 fail, 46 skipped.
+
+### Files Affected
+- `scripts/lib/fleet/serial.mjs` — the seam, the `messageRequired` marker, the sweep.
+- `scripts/lib/ship-train/commands.mjs`, `scripts/ship-train.mjs` — `land` and `sync`, the lease, the child deadlines.
+- `tests/helpers/fleet-serial-fx.mjs` (new, fixtures shared by the serial and recovery suites), `tests/fleet-serial.test.mjs`, `tests/ship-train-cli.test.mjs`, `tests/ship-train-recovery.test.mjs` (new).
+- `docs/plans/ship-trains.md` — Phase 4/5 amendments and the Cluster B unblock note.
+
+### Decisions Made
+- **A behaviour change to a persisted contract, flagged in the PR body.** `messageRequired` is an additive optional field in fleet's strict v1 serial record, so a fleet older than this change refuses to read such a record. Only runs started by `ship-train land` write it; a consumer on stale synced tooling would refuse those runs until the next sync. This is why #219 needs this `/ship` before merge.
+- **`messageFor` stays synchronous; the store query rides a child process** rather than turning fleet's serial loop (a file lease plus blocking sleeps) async.
+- **No restack of #219** (coordinator ruling): GitHub reports it CLEAN, a force-push is not wanted, and if it goes DIRTY main is merged in instead.
+
+### Next Steps
+- Merge #219 on the user's go-ahead, then sync consumers from an up-to-date main.
+- **Cluster C** (the `/ship --train` skill surface, `skills/ship/references/train-mode.md`, the invariants docs) stays blocked on the keyset PR's hold on `skills/ship/SKILL.md`.
+- **Cluster D** (the thinness metric) after B and the gate-cost plan. The DB suite `tests/ship-train-provenance.db.test.mjs` and its two-list enrolment land after the keyset PR.
+
+Backlog 2026-10-12T13:06Z: Q1 188c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
+---
 
 ## 2026-10-12 — round 1 of a code audit honours a supplied `--diff` (no head-cut under /cycle)
 

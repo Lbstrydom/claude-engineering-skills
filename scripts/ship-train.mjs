@@ -10,16 +10,22 @@
  * recomputes from owned state — fleet's train manifest, GitHub, git and the
  * audit store — so there is no ship-train record to go stale or race.
  *
- * Verbs in this cluster (none of them merges anything):
+ * Verbs:
  *   plan     read-only: per ship-ready PR, its impact tier, the audit run bound
  *            to it by CONTENT, the planned AI-Gate or the refusal, and whether
  *            a train is due.
  *   message  read-only: the squash message one PR would land with right now.
+ *   land     MERGES. Drives fleet's serial landing of a built, approvable train;
+ *            fleet calls back at merge time and each squash commit gets the
+ *            message decided on the exact head being merged. A stop is resumable
+ *            with --resume. Only ever on the user's go-ahead (`/ship --train`).
  *   verify   after landing: proves each merged PR is the source the train
  *            tested, checks that every AI-* claim on its squash commit is TRUE,
  *            and reports the final merge OID, interleaved commits and the
  *            publication verdict. `--write-note` files the actual gates and
  *            deviations for the next status entry.
+ *   sync     re-verifies in the same invocation, then publishes the final merge
+ *            to consumers from a clean detached worktree. Re-runnable.
  *
  * Exit codes: 0 ok · 1 error · 2 argv · 3 refused (fleet's convention).
  *
@@ -33,19 +39,30 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { ArgvError, assertKnownFlags, emit, finishAndExit } from './lib/cli-io.mjs';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
+import { withFileLock, LockTimeoutError } from './lib/file-lock.mjs';
 import {
-  TrainRefusal, parsePrList, flagValue, hasOption, githubSlugFromUrl, runPlan, runMessage, runVerify,
+  TrainRefusal, parsePrList, flagValue, hasOption, githubSlugFromUrl, messageChildArgv,
+  runPlan, runMessage, runVerify, runLand, runSync,
 } from './lib/ship-train/commands.mjs';
 
-const VERBS = ['plan', 'message', 'verify'];
+const VERBS = ['plan', 'message', 'land', 'verify', 'sync'];
 const KNOWN_FLAGS = [
-  '--json', '--pr', '--waive', '--allow-unaudited', '--end-of-day', '--composer', '--train', '--write-note', '--selfcheck-relocation',
+  '--json', '--pr', '--waive', '--allow-unaudited', '--end-of-day', '--composer', '--train', '--write-note',
+  '--resume', '--accept-rerun', '--accept-interleaved', '--accept-provenance-mismatch', '--selfcheck-relocation',
 ];
+/** The verbs that decide a squash message, and so need the composing model named. */
+const NEEDS_COMPOSER = ['plan', 'message', 'land'];
 const EXIT_REFUSED = 3;
+/**
+ * Deadlines for the two kinds of child. The message child runs INSIDE fleet's serial lease, so a hang
+ * there would hold it; publication runs the consumer sync tools, which touch every consumer and open PRs.
+ */
+const MESSAGE_CHILD_TIMEOUT_MS = 5 * 60 * 1000;
+const PUBLISH_CHILD_TIMEOUT_MS = 30 * 60 * 1000;
 
 // ── real context ────────────────────────────────────────────────────────────
 
@@ -75,11 +92,26 @@ async function realContext(cwd) {
   const store = await import('./lib/store/train-provenance.mjs');
   const { writePendingNote, resolveMainCheckout } = await import('./lib/worktree-preflight.mjs');
   const { fleetDir, readTrain } = await import('./lib/fleet/registry.mjs');
-  const { classifyUpdatedHead } = await import('./lib/fleet/serial.mjs');
+  const { classifyUpdatedHead, approveSerial, resumeSerial } = await import('./lib/fleet/serial.mjs');
+  const { resolveConfig } = await import('./lib/fleet/config.mjs');
   const { defaultDeps } = await import('./lib/fleet/train.mjs');
+  const pinned = await import('./lib/pinned-worktree/manage.mjs');
+  const pinnedPaths = await import('./lib/pinned-worktree/paths.mjs');
   const git = (args) => run('git', args, cwd);
   const fleetDeps = defaultDeps();
   let repoSlug = null;
+  // .fleet.json's requiredChecks, exactly as `fleet land` reads it: a config that fails to load is
+  // carried as an ERROR (the inventory then reads unknown), never as "nothing declared".
+  const fleetLandOptions = () => {
+    try {
+      const cfg = resolveConfig(cwd, { env: process.env });
+      return { requiredChecks: cfg.requiredChecks, timeoutMs: cfg.serialTimeoutMs };
+    } catch (e) { return { requiredChecksError: e.message }; }
+  };
+  const nodeChild = (childCwd, args, timeout) => spawnSync(process.execPath, args, {
+    cwd: childCwd, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, windowsHide: true, env: ghEnv(), timeout,
+  });
+  const timedOut = (r) => r.error?.code === 'ETIMEDOUT';
   return {
     cwd,
     git,
@@ -95,6 +127,47 @@ async function realContext(cwd) {
     }),
     closure: () => new Set(getSyncClosure().files.map((f) => f.split(path.sep).join('/'))),
     store,
+    // Fleet's serial landing, with the squash-message callback (plan §2.4).
+    serial: {
+      approve: ({ trainId, acceptRerun, messageFor }) => approveSerial({ cwd, trainId, acceptRerun, deps: fleetDeps, messageFor, ...fleetLandOptions() }),
+      resume: ({ trainId, messageFor }) => resumeSerial({ cwd, trainId, deps: fleetDeps, messageFor, ...fleetLandOptions() }),
+    },
+    // The SAME `message` verb a human previews with, as a child: fleet's serial loop is synchronous.
+    messageSync: ({ pr, composer, overrides }) => {
+      const r = nodeChild(cwd, [path.join(SCRIPT_DIR, 'ship-train.mjs'), ...messageChildArgv({ pr, composer, overrides })], MESSAGE_CHILD_TIMEOUT_MS);
+      if (timedOut(r)) throw new Error(`the message child timed out after ${MESSAGE_CHILD_TIMEOUT_MS / 1000}s; --resume once the store and GitHub respond`);
+      if (r.error) throw r.error;
+      if (r.status !== 0 && r.status !== 3) throw new Error(`the message child exited ${r.status}: ${String(r.stderr ?? '').slice(-500)}`);
+      try { return JSON.parse(r.stdout); } catch { throw new Error(`the message child printed unparseable output: ${String(r.stdout ?? '').slice(0, 200)}`); }
+    },
+    gitIn: (dir, args) => run('git', args, dir),
+    runNode: (dir, args) => {
+      const r = nodeChild(dir, args, PUBLISH_CHILD_TIMEOUT_MS);
+      const why = timedOut(r) ? `timed out after ${PUBLISH_CHILD_TIMEOUT_MS / 1000}s` : (r.error ? String(r.error) : '');
+      return { status: r.status ?? 1, output: `${r.stdout ?? ''}${r.stderr ?? ''}${why}` };
+    },
+    // One publication per train. Refuses at once rather than waiting: the holder is mid-publication.
+    lease: async (train, fn) => {
+      const root = pinnedPaths.defaultFixtureRoot(pinnedPaths.resolveMainRoot(cwd));
+      fs.mkdirSync(root, { recursive: true });
+      try {
+        return await withFileLock(path.join(root, `ship-train-${train}.lock`), { maxWaitMs: 0 }, fn);
+      } catch (err) {
+        if (err instanceof LockTimeoutError) throw new TrainRefusal(`another ship-train sync of ${train} is running (its lock is held); wait for it, then re-run`, { trainId: train });
+        throw err;
+      }
+    },
+    // The publication worktree: a clean, detached checkout at an exact revision. A leftover from an
+    // interrupted sync is cleared first (removal is idempotent), because the fixture refuses to reuse one.
+    fixture: {
+      create: ({ name, rev }) => {
+        const dir = pinnedPaths.fixturePath(pinnedPaths.defaultFixtureRoot(pinnedPaths.resolveMainRoot(cwd)), name);
+        pinned.removeFixture({ dir, cwd });
+        return pinned.createFixture({ name, rev, cwd });
+      },
+      verify: ({ dir, expectedSha }) => pinned.verifyFixture({ dir, expectedSha }),
+      remove: ({ dir }) => pinned.removeFixture({ dir, cwd }),
+    },
     writePendingNote: (sha, text) => writePendingNote(resolveMainCheckout((c, a) => run(c, a, cwd)), sha, text),
     now: () => new Date(),
   };
@@ -126,6 +199,18 @@ function renderText(env) {
     if (env.pendingNote) out.push(`pending-note: ${env.pendingNote}`);
     return out.join('\n');
   }
+  if (env.verb === 'land') {
+    return [`ship train land — ${env.trainId}: landed`,
+      ...env.merges.map((m) => `  #${m.pr} merged at ${String(m.mergedHead).slice(0, 12)} → ${String(m.mergeCommit).slice(0, 12)}`),
+      `next: ${env.next}`].join('\n');
+  }
+  if (env.verb === 'sync') {
+    return [`ship train sync — ${env.trainId}: published ${env.finalMergeOid.slice(0, 12)}`,
+      ...env.steps.map((s) => `  ${s.name}: exit ${s.status}`),
+      `  not part of this publication: ${env.newerOnDestination} newer commit(s) on the destination`,
+      ...env.acknowledged.map((a) => `  acknowledged: ${a}`),
+      `  ${env.cleanup}`, `pending-note: ${env.pendingNote}`].join('\n');
+  }
   return JSON.stringify(env, null, 2);
 }
 
@@ -138,7 +223,7 @@ export async function main(argv = process.argv) {
     // Declared, not evidenced: the model running /ship --train names itself. No
     // silent default — an omitted flag would publish a guess as a participant.
     const composer = flagValue(argv, '--composer');
-    if (['plan', 'message'].includes(verb) && !composer) {
+    if (NEEDS_COMPOSER.includes(verb) && !composer) {
       throw new ArgvError('--composer <model-line> is required: the model composing the squash messages (e.g. --composer claude)');
     }
     if (composer && !/^[a-z][a-z0-9.-]*$/.test(composer)) throw new ArgvError(`--composer "${composer}" is not a model-line token`);
@@ -148,11 +233,15 @@ export async function main(argv = process.argv) {
       prs: parsePrList(argv, '--pr'),
       train,
       writeNote: hasOption(argv, '--write-note'),
+      resume: hasOption(argv, '--resume'),
+      acceptRerun: hasOption(argv, '--accept-rerun'),
+      // Acknowledgements are read only from THIS invocation, never from anything stored.
+      acks: { acceptInterleaved: hasOption(argv, '--accept-interleaved'), acceptProvenanceMismatch: hasOption(argv, '--accept-provenance-mismatch') },
       composer,
       overrides: { waive: parsePrList(argv, '--waive'), allowUnaudited: parsePrList(argv, '--allow-unaudited'), endOfDay: hasOption(argv, '--end-of-day') },
     };
     const ctx = await realContext(process.cwd());
-    const fn = { plan: runPlan, message: runMessage, verify: runVerify }[verb];
+    const fn = { plan: runPlan, message: runMessage, land: runLand, verify: runVerify, sync: runSync }[verb];
     const env = await fn(ctx, opts);
     if (hasOption(argv, '--json')) emit(env); else process.stdout.write(`${renderText(env)}\n`);
     return finishAndExit(0);

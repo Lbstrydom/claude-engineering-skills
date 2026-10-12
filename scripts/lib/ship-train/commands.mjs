@@ -297,7 +297,9 @@ export async function runMessage(ctx, opts) {
   const row = plan.prs[0];
   if (!row.decision) return { ok: true, verb: 'message', pr: row.pr, refusal: row.refusal };
   const { subject, body } = composeSquashMessage({ number: row.pr, title: row.title, commitSubjects: row.commitSubjects, decision: row.decision, models: row.decision.models });
-  return { ok: true, verb: 'message', pr: row.pr, basePinning: plan.basePinning.verdict, decision: row.decision, subject, body };
+  // headOid names the head this message was decided on: `land` refuses a message whose head is
+  // not the one serial is about to merge.
+  return { ok: true, verb: 'message', pr: row.pr, headOid: row.headOid, basePinning: plan.basePinning.verdict, decision: row.decision, subject, body };
 }
 
 /**
@@ -307,17 +309,27 @@ export async function runMessage(ctx, opts) {
  * the audit store (each claimed run, repo-scoped and code-mode). Nothing is
  * read from, or written to, a ship-train record — there is none (plan §2.8).
  */
-export async function gatherTrainFacts(ctx, trainId) {
+/**
+ * Fleet's manifest for a train this tool may act on: it exists, lands by PR
+ * (plan D2), and was built for the repository this checkout's origin names.
+ * @returns {{train: object, branch: string, repo: string}}
+ */
+function readPrTrain(ctx, trainId, verb) {
   const t = ctx.readTrain(trainId);
   if (!t.ok) throw new TrainRefusal(`fleet train ${trainId}: ${t.reason}`);
   const train = t.train;
-  if (train.mergeMethod !== 'pr') throw new TrainRefusal(`train ${trainId} lands by ${train.mergeMethod}; ship trains verify pr-mode trains only (plan D2)`);
+  if (train.mergeMethod !== 'pr') throw new TrainRefusal(`train ${trainId} lands by ${train.mergeMethod}; ship trains ${verb} pr-mode trains only (plan D2)`);
   const branch = train.destination.ref.replace(/^refs\/heads\//, '');
   const repo = ctx.repo();
   const recorded = train.sources.find((s) => s.repo)?.repo;
   if (recorded && recorded.toLowerCase() !== repo.toLowerCase()) {
-    throw new TrainRefusal(`train ${trainId} was built for ${recorded}, but origin here is ${repo} — verify from a checkout of the same repository`);
+    throw new TrainRefusal(`train ${trainId} was built for ${recorded}, but origin here is ${repo} — ${verb} from a checkout of the same repository`);
   }
+  return { train, branch, repo };
+}
+
+export async function gatherTrainFacts(ctx, trainId) {
+  const { train, branch, repo } = readPrTrain(ctx, trainId, 'verify');
   const tip = fetchDestination(ctx, branch);
   const repoRow = await ctx.store.resolveRepoRowIdForRead(ctx.cwd);
   failFatal(repoRow);
@@ -419,4 +431,146 @@ export async function runVerify(ctx, { train, writeNote = false, acks = {} }) {
     ok: true, verb: 'verify', trainId: train, storeState: facts.storeState,
     finalMergeOid: v.finalMergeOid, actualGates: v.actualGates, deviations, notes, clearance, pendingNote,
   };
+}
+
+// ── land ────────────────────────────────────────────────────────────────────
+
+/**
+ * argv, after the script path, of the child that decides ONE PR's squash message.
+ * It is the same `message` verb a human previews with, so what is previewed is what
+ * lands. A child, because fleet's serial loop is synchronous (a file lease and
+ * blocking sleeps) while the store query is not.
+ */
+export function messageChildArgv({ pr, composer, overrides }) {
+  return [
+    'message', '--pr', String(pr), '--composer', composer, '--json',
+    ...(overrides.waive.includes(pr) ? ['--waive', String(pr)] : []),
+    ...(overrides.allowUnaudited.includes(pr) ? ['--allow-unaudited', String(pr)] : []),
+  ];
+}
+
+/**
+ * The `messageFor` seam fleet's serial landing calls, per PR, with the head it is
+ * about to merge. Decides FRESH each time (nothing is stored), and refuses to hand
+ * back a message decided on any other head.
+ */
+export function buildMessageFor(ctx, { composer, overrides }) {
+  return ({ source, headOid }) => {
+    let out;
+    try { out = ctx.messageSync({ pr: source.prNumber, composer, overrides }); } catch (err) {
+      return { stop: `could not decide the squash message: ${err?.message ?? err}` };
+    }
+    if (out?.refused) return { stop: `refused: ${out.message}` };
+    if (out?.refusal) return { stop: `${out.refusal.code}: ${out.refusal.message}` };
+    if (out?.headOid !== headOid) {
+      return { stop: `the message was decided on head ${String(out?.headOid).slice(0, 12)}, but serial is merging ${String(headOid).slice(0, 12)}` };
+    }
+    if (typeof out.subject !== 'string' || typeof out.body !== 'string') return { stop: 'the message verb returned no subject and body' };
+    return { subject: out.subject, body: out.body };
+  };
+}
+
+/**
+ * Land a built fleet train serially, writing each squash commit's message at merge
+ * time. Fleet decides whether the train is approvable and refuses otherwise; this
+ * only supplies the seam. A stop is resumable with `--resume` and recomputes on
+ * the then-current head.
+ */
+export async function runLand(ctx, { train, resume = false, acceptRerun = false, composer, overrides }) {
+  if (!train) throw new ArgvError('land needs --train <trainId>');
+  readPrTrain(ctx, train, 'land');
+  const messageFor = buildMessageFor(ctx, { composer, overrides });
+  const r = resume
+    ? ctx.serial.resume({ trainId: train, messageFor })
+    : ctx.serial.approve({ trainId: train, acceptRerun, messageFor });
+  if (!r.landed) {
+    const at = r.run?.steps?.find((s) => s.step !== 'merged');
+    throw new TrainRefusal(r.reason ?? 'serial landing stopped', {
+      trainId: train, resumable: r.resumable === true, ...(at ? { stoppedAt: at.prNumber } : {}),
+    });
+  }
+  return {
+    ok: true, verb: 'land', trainId: train, landed: true,
+    merges: r.run.steps.map((s) => ({ pr: s.prNumber, mergedHead: s.head, mergeCommit: s.mergedOid })),
+    next: `node scripts/ship-train.mjs verify --train ${train}`,
+  };
+}
+
+// ── sync ────────────────────────────────────────────────────────────────────
+
+const SYNC_STEPS = Object.freeze([
+  { name: 'sync-to-repos', args: ['scripts/sync-to-repos.mjs', '--no-prompt'] },
+  { name: 'sync-pr', args: ['scripts/sync-pr.mjs'] },
+]);
+
+/** The publication itself, inside the lease: create, verify, run the tools, and ALWAYS remove. */
+async function publishFromWorktree(ctx, { train, finalOid, wantTree }) {
+  const steps = [];
+  let failure = null;
+  let fixtureDir = null;
+  try {
+    const fx = ctx.fixture.create({ name: `ship-train-${train}`, rev: finalOid });
+    fixtureDir = fx.dir;
+    const ver = ctx.fixture.verify({ dir: fx.dir, expectedSha: finalOid });
+    if (!ver.ok) throw new TrainRefusal(`the publication worktree is not at ${finalOid.slice(0, 12)}: ${ver.checks.filter((c) => !c.ok).map((c) => c.detail).join('; ')}`, { trainId: train });
+    const gotTree = ctx.gitIn(fx.dir, ['rev-parse', 'HEAD^{tree}']).trim();
+    if (gotTree !== wantTree) throw new TrainRefusal(`the publication worktree's tree ${gotTree.slice(0, 12)} is not the final merge's ${wantTree.slice(0, 12)}`, { trainId: train });
+    for (const step of SYNC_STEPS) {
+      const r = ctx.runNode(fx.dir, step.args);
+      steps.push({ name: step.name, status: r.status });
+      if (r.status !== 0) {
+        throw new TrainRefusal(`${step.name} exited ${r.status}; re-run sync (consumers already current are left alone)`, { trainId: train, steps, tail: String(r.output ?? '').slice(-1500) });
+      }
+    }
+  } catch (err) { failure = err; }
+  let cleanup = 'no worktree was created';
+  if (fixtureDir) {
+    try { ctx.fixture.remove({ dir: fixtureDir }); cleanup = 'worktree removed'; } catch (err) { cleanup = `worktree NOT removed (${err?.message ?? err})`; }
+  }
+  if (failure) {
+    if (failure instanceof TrainRefusal) failure.details = { ...(failure.details ?? {}), cleanup };
+    throw failure;
+  }
+  return { steps, cleanup };
+}
+
+/**
+ * Publish a landed train to consumers. Verification is recomputed IN THIS
+ * INVOCATION and must clear (or every remaining block be acknowledged by a flag
+ * given now). The tools then run from a clean detached worktree at the derived
+ * final merge OID, never a re-read branch tip, so a commit that landed after the
+ * train is not published under its name. Safe to re-run after any interruption:
+ * the sync tools are no-ops for a consumer that is already current.
+ */
+export async function runSync(ctx, { train, acks = {} }) {
+  if (!train) throw new ArgvError('sync needs --train <trainId>');
+  const facts = await gatherTrainFacts(ctx, train);
+  const v = verifyTrain({ sources: facts.sources, chain: facts.chain });
+  const clearance = publicationClearance(v, acks);
+  if (!clearance.clear) {
+    throw new TrainRefusal(
+      `publication blocked: ${clearance.blocks.map((b) => `${b.reason}${b.flag ? ` [${b.flag}]` : ' [no override]'}`).join('; ')}`,
+      { trainId: train, blocks: clearance.blocks },
+    );
+  }
+  const finalOid = v.finalMergeOid;
+  const newerOnDestination = Number(ctx.git(['rev-list', '--count', `${finalOid}..${facts.tip}`]).trim());
+  const wantTree = ctx.git(['rev-parse', `${finalOid}^{tree}`]).trim();
+
+  // One publication per train at a time: the worktree's name is the train's, and creating it clears
+  // whatever sits there, so a second concurrent sync must be refused BEFORE it can touch the first's.
+  const { steps, cleanup } = await ctx.lease(train, () => publishFromWorktree(ctx, { train, finalOid, wantTree }));
+
+  const acknowledged = [
+    ...(acks.acceptInterleaved && v.interleaved.length ? [`interleaved: ${v.interleaved.map((c) => c.oid.slice(0, 12)).join(', ')}`] : []),
+    ...(acks.acceptProvenanceMismatch && v.falseClaims.length ? [`provenance mismatch: ${v.falseClaims.map((p) => `#${p}`).join(', ')}`] : []),
+  ];
+  const pendingNote = ctx.writePendingNote(finalOid, [
+    `Ship train ${train} — consumers synced from ${finalOid} (tree ${wantTree.slice(0, 12)} verified in a clean detached worktree)`,
+    `Steps: ${steps.map((s) => `${s.name} exit ${s.status}`).join('; ')}`,
+    `Not part of this publication: ${newerOnDestination} newer commit(s) on ${facts.branch}`,
+    ...(acknowledged.length ? [`Acknowledged on this invocation: ${acknowledged.join('; ')}`] : []),
+    'Consumer-side result: unverified (blocked: sync-isolation-verify has not been run in each consumer\'s MAIN checkout; ship-train sync does not run it)',
+  ].join('\n'));
+  return { ok: true, verb: 'sync', trainId: train, finalMergeOid: finalOid, newerOnDestination, steps, acknowledged, cleanup, pendingNote };
 }
