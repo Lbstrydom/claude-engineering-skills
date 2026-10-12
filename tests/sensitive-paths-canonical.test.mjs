@@ -168,6 +168,22 @@ describe('resolveAndClassify — fs injection (drives all paths without real sym
   });
 });
 
+describe('resolveAndClassify — the new credential-store names are caught through a symlink too (INC-001 class)', () => {
+  // INC-001: a lexical classifier is not enough when a name can be rewritten to another target,
+  // so the canonical target is re-classified. The names added on 2026-10-12 must ride that same
+  // route, not only the lexical one. Injected fs: no real symlink, so it runs on Windows too.
+  for (const target of ['.git-credentials', '.netrc', '.pgpass', 'infra/prod.auto.tfvars', 'release.keystore']) {
+    it(`an innocent name resolving to ${target} is sensitive`, () => {
+      const r = resolveAndClassify('notes.txt', {
+        repoRoot: '/anywhere',
+        fs: { realpathSync: () => `/anywhere/${target}` },
+      });
+      assert.equal(r.category, 'sensitive');
+      assert.equal(r.lexical, null, 'the visible name alone must not be what classified it');
+    });
+  }
+});
+
 // Sanity: ensure classifyPath (unchanged) still returns the same values.
 describe('classifyPath regression-lock', () => {
   it('returns sensitive for .env, null for an innocent .ts', () => {

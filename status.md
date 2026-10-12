@@ -188,6 +188,50 @@ Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q
 
 ---
 
+## 2026-10-12 — fleet: unregistered work surfaced, `fleet archive`, claim binding, handover hardening (clusters B-D)
+
+`/cycle --autonomous` on `docs/plans/fleet-unclaimed-work-and-switch-friction.md`, clusters B to D (A is PR #206). Branch `claude/fleet-unclaimed-work-impl`; B-D ship as one PR after #206 merges (user's decision).
+
+- **B (Phases 3-4, `prune --apply`)**: `status` prints an "unregistered work" section (one verdict per uncovered worktree/branch) and writes `<git-common-dir>/fleet-cache/unregistered.json`; the `claim`/`touch`/`ready` footer reads only that cache (FYI count, refresh request, coverage notice). New `fleet archive` (`archive.mjs`): snapshot to a local `archive/*` tag, verify, revalidate under the lock, then remove the worktree; never pushes. `prune --apply` runs exactly the judged list (`update-ref -d` bound to the judged oid), skips fresh worktrees unless `--include-fresh`, lists orphan dirs (`prune-orphans.mjs`). `runGit` gained an allowlisted `env`.
+- **C (Phases 5-6)**: `claim --worktree` (`resolveClaimBinding`); binding warnings from the retained record (`bindingWarnings`); `add` records the worktree; `release` resolves it and survives a malformed `.fleet.json`; `ready` warns about commits no remote ref holds (`unpushedCount`). Handover: PR-state reachability (`ghReachability`, reusing `parseOriginRepo`), newer-manifest refusal + `--allow-older`, stale hydrated-tooling warning (`bundle-stamp.mjs`).
+- **D (Phases 7-8)**: receive outcome classes failed > refused > ok-with-`followUps`; whitelisted account identity from `.claude.json` (`accountIdentity`/`compareIdentity`); BEFORE YOU RELAUNCH + `--scheduler-checked` gate on prepare; `memory <dir> → <path>` lines; `human:account-switch` waits with a targeted unblock command. Rendering split into `handover-render.mjs`. Skill prose: usage lines, worktree removal needs the user + a desktop session-list check, footer FYI is not a DO, push early, coordinator rules cr1-cr5.
+- **Behaviour change**: `handover receive` with a missing scheduled task or a settings difference now exits 0 with `followUps` (was 3). `handover prepare` exits 3 while tasks are listed and `--scheduler-checked` is absent.
+
+Verification:
+- Audits: B 6 GPT rounds + 1 coordinator-ruled exception (not converged by the stability rule; every finding fixed red-then-green or dismissed with a reason; live negative control on a disposable clone). C 4 rounds, R4 PASS (`audit-code-clC-1791763339`). D 4 rounds, R4 PASS (`audit-code-clD-1791768416`).
+- Consolidated Gemini gate over A-D (19 rounds, 135 findings, 31 files): APPROVE, gate `approve`, 0 blocking.
+- Tests (final tree): fleet + skill + relocation suites 1,105, 1,103 pass, 0 fail, 2 skipped; `fleet-cli` 132/132. New suites: fleet-archive, fleet-unregistered-surfaces, fleet-binding, fleet-bundle-stamp, fleet-handover-receive.
+- Empirical (§9, under load, 69 node processes): `status` CEE 3.5-4.0 s, wine 12.4-12.8 s, storyline 8.0 s, ai-organiser 2.2 s; `handover prepare` across all four exit 3 with both reasons named, 49.7 s. The 5 s wine target was not met (needs an idle machine; 3.9 s idle in M19).
+- Follow-ups recorded in plan §8: fleet-cli test split + fixture template (chip spawned by the CE coordinator); memoised rev-parse and no `gh` in `claim`, together with the derived-done-claim fix (M21), after this PR.
+
+Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt 328 cloud/10 local (0 spilled) · upstream 2
+
+## 2026-10-12 — pre-push archive lane (PR #208) and the gate-cost chip (PR #212): both pushed, ready, not merged
+
+Backlog: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2 (`node scripts/backlog-snapshot.mjs`, 2026-10-12T04:31Z).
+
+### Changes
+- **PR #208, archive lane** (`claude/silly-morse-164a75`, tip 45a03d5f, full pre-push gate green on push): a pre-push lane for pushes whose refs are ALL under `refs/heads/archive/` or `refs/tags/archive/`. It still runs the secret scan and the sensitive-path check over exactly what the push publishes (objects the destination lacks, plus every path the published commits add or change), and skips only what cannot hold for an old commit. Any non-archive ref in the push, or any ref line it cannot parse, gets the full gate. Whitespace in a ref name is parsed from the right (a fail-open found by the adversarial review). Two shared oracles grew: `sensitive-paths.mjs` (`.netrc`, `_netrc`, `.git-credentials`, `.pgpass`, `.pypirc`, `.htpasswd`, `*.keystore`, `*.jks`, `*.tfvars`) and `secret-patterns.mjs` (`npm-token`), each with its own tests, negatives, and the INC-001 symlink route. Plan `docs/plans/prepush-archive-lane.md`; runbook `docs/runbooks/prepush-sandbox.md` §7.
+- **PR #212, gate cost** (`fleet/make-the-pre-push-gate-s-per-f-2dab`, tip fcfd42be, full gate green on push): `npm test` prints the slowest test files; `npm run test:preflight` runs the suite minus `tests/fleet-cli.test.mjs`; a preflight that cannot verify which files ran fails. `npm test -- --test-reporter=dot` no longer dies on node's reporter/destination count check. Plan `docs/plans/gate-cost-slice-1.md`; runbook `docs/runbooks/gate-cost.md`.
+- Measured (one full `npm test`, 949 files): 1,009 s wall, 7,344 s summed test-body time (worker-seconds, waiting included, not CPU). `fleet-cli` = 972 s: 13.2% of the sum but 96% of wall, because node runs a file's tests serially (wall >= longest file). `test:preflight` on the committed tree: 274 s, 18,626 tests, 0 failed.
+
+### Files Affected
+- #208: `.githooks/pre-push`, `scripts/lib/prepush-archive-lane.mjs`, `scripts/prepush-archive-lane.mjs`, `scripts/lib/sensitive-paths.mjs`, `scripts/lib/secret-patterns.mjs`, `tests/prepush-archive-lane*.test.mjs`, `tests/sensitive-paths*.test.mjs`, `tests/secret-patterns.test.mjs`.
+- #212: `scripts/run-tests.mjs`, `scripts/lib/test-timing-report.mjs`, `scripts/lib/test-timing-reporter.mjs`, `scripts/lib/test-runner-listener-ceiling.mjs`, `tests/run-tests-timing.test.mjs`, `tests/run-tests-preflight.test.mjs`, two guard fixtures.
+
+### Decisions Made
+- Gate cost is a critical-path cost, so the follow-up order is: measure `fleet-cli` alone on a quiet machine, split or parallelise it, then cut its work (template-copied fixture, memoised `rev-parse`). Held by the fleet-unclaimed-work session; the coordinator has the numbers.
+- #212's audit corrected three premises by running them: node REFUSES unbalanced reporter flags; `--disable-warning` is inherited by test files and hid a real leak, so the listener ceiling is raised in the runner process only (`--import` does not run there); and node refuses `--test-name-pattern --test-reporter=dot`, which the runner had turned into a passing run that selected nothing.
+- A consolidated `audit-code` over a train was not built: at most about 10% of merged PRs could skip an audit, and the wall time of the test step was the larger measured lever.
+
+### Next Steps / open decisions (the user's)
+- Merge #208 and #212 (nothing is merged). #212 still needs its own `/ship docs/plans/gate-cost-slice-1.md` from its worktree.
+- #208: should the lane skip all 34 `check` steps or only a subset; should the full gate also scan pushed content; the paid audits of the hook and the two oracle diffs were NOT run (the hook got an adversarial subagent review instead) and need an explicit go.
+- Branch pre-push DIRECT-impact tier (ship-trains §2.10) is a policy call; `docs/runbooks/gate-cost.md` §2 has the table to bring.
+- Pre-ship advisories this run (all non-blocking): 1 open persona P1 (2026-10-10), 173 code fixes without a locked regression spec (159 aged out), 111 accepted code findings never marked fixed, 3 dangling locks, the storyline store is behind this revision's migrations (6 constraints), 2 upstream reports open (both wine-cellar-app, MEDIUM).
+
+---
+
 ## 2026-10-12 — CLI contract hardening (#204): rebased, audited, one audit fix
 
 ### Changes
@@ -221,6 +265,7 @@ Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q
 - This status entry and #203's both add the top entry of `status.md`; whichever merges second keeps both entries.
 
 Backlog 2026-10-12T06:21Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt 328 cloud/1 local (0 spilled) · upstream 2
+
 
 ---
 
