@@ -39,7 +39,12 @@
  * CI-verified baseline.
  *
  * Usage: `npm test` (default globs) · `npm test -- tests/foo.test.mjs [args]`
- * (forwarded verbatim to `node --test`).
+ * (forwarded verbatim to `node --test`) · `npm run test:preflight` (the default set
+ * minus PREFLIGHT_SKIPPED_FILES; NOT the gate — see below).
+ *
+ * **Per-file cost is printed at the end of every run** (stderr), from a second reporter
+ * (scripts/lib/test-timing-reporter.mjs) that is deliberately independent of the guard:
+ * it can only ever add lines, never change the verdict. Plan: docs/plans/gate-cost-slice-1.md.
  *
  * @module scripts/run-tests
  */
@@ -50,7 +55,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { assertKnownFlags, hasFlag } from './lib/cli-io.mjs';
 import { GUARD_REPORT_VERSION } from './lib/test-guard-reporter.mjs';
+import { TIMING_REPORT_ENV, ranFiles, summariseTiming } from './lib/test-timing-reporter.mjs';
 
 /**
  * Ambient provider-ROUTING vars scrubbed from the child env. Enumerated from
@@ -111,12 +118,92 @@ export function scrubChildEnv(env) {
 }
 
 /** The default file set — kept byte-identical to the pre-runner npm script. */
-const DEFAULT_ARGS = ['tests/*.test.mjs', 'tests/claudemd/*.test.mjs', 'tests/install/*.test.mjs'];
+const DEFAULT_DIRS = Object.freeze(['tests', 'tests/claudemd', 'tests/install']);
+const DEFAULT_ARGS = DEFAULT_DIRS.map((d) => `${d}/*.test.mjs`);
+
+/**
+ * Files `npm run test:preflight` leaves out, in ONE place. Each entry is a repo-relative
+ * path directly inside one of DEFAULT_DIRS, with the reason beside it.
+ *
+ * `tests/fleet-cli.test.mjs`: 132 cases, 189 `fleet.mjs` spawns, a fixture built per test;
+ * a large share of the pre-push gate's wall time (docs/runbooks/gate-cost.md has the
+ * measurement and the command that re-measures it). Preflight is for catching a late
+ * guard-test failure cheaply BEFORE the first push; the gate still runs everything.
+ */
+export const PREFLIGHT_SKIPPED_FILES = Object.freeze([
+  Object.freeze({
+    file: 'tests/fleet-cli.test.mjs',
+    why: 'the slowest file by far (132 cases, 189 fleet.mjs spawns, a fixture per test)',
+  }),
+]);
+
+/**
+ * Flags put BEFORE `--test` on the child. Node's test runner attaches a fixed number of
+ * 'end' listeners per reporter to its internal TestsStream, and the default limit is 10:
+ * two reporters (tap + guard) stay under it, three (tap + timing + guard) do not, so every run
+ * printed "MaxListenersExceededWarning: Possible EventEmitter memory leak" — measured 0 warnings
+ * with two reporters and 1 with three, independent of how many files ran. It is a count of
+ * reporters, not a leak, so exactly that warning code is silenced; nothing else is.
+ * tests/run-tests-timing.test.mjs pins both halves (the hazard is still real; the runner is quiet).
+ */
+export const CHILD_NODE_FLAGS = Object.freeze(['--disable-warning=MaxListenersExceededWarning']);
+
+const SKIP_NAME_RE = /^[\w.-]+\.test\.mjs$/;
+
+/**
+ * Decide the file arguments for `node --test`.
+ *
+ * Preflight uses NEGATED GLOBS, not a file list: the default set is 927 files and 34,209
+ * characters joined, over the 32,767-character limit on a Windows command line, so a list
+ * cannot even be launched here. `<dir>/!(a|b).test.mjs` is an observed capability of
+ * node's glob engine (measured on v22.23.2), not a documented one, so the runner checks
+ * the selection AFTER the run (finishRun) rather than trusting it.
+ *
+ * @param {{preflight?: boolean, exists?: (p: string) => boolean, skipped?: ReadonlyArray<{file: string, why: string}>}} [opts]
+ * @returns {{args: string[], skipped: Array<{file: string, why: string}>}}
+ * @throws {Error} on a malformed or missing skip-list entry, or a skip list that would empty a run
+ */
+export function selectTestArgs({ preflight = false, exists = fs.existsSync, skipped = PREFLIGHT_SKIPPED_FILES } = {}) {
+  if (!preflight) return { args: [...DEFAULT_ARGS], skipped: [] };
+
+  /** @type {Map<string, string[]>} dir -> basenames without the .test.mjs suffix */
+  const byDir = new Map();
+  for (const { file } of skipped) {
+    const dir = path.posix.dirname(file);
+    const base = path.posix.basename(file);
+    if (!DEFAULT_DIRS.includes(dir) || !SKIP_NAME_RE.test(base)) {
+      throw new Error(`PREFLIGHT_SKIPPED_FILES entry "${file}" must be directly inside one of ${DEFAULT_DIRS.join(', ')} and match ${SKIP_NAME_RE}`);
+    }
+    if (!exists(file)) throw new Error(`PREFLIGHT_SKIPPED_FILES entry "${file}" does not exist; remove or fix it`);
+    byDir.set(dir, [...(byDir.get(dir) ?? []), base.slice(0, -'.test.mjs'.length)]);
+  }
+  const args = DEFAULT_DIRS.map((d) => (byDir.has(d) ? `${d}/!(${byDir.get(d).join('|')}).test.mjs` : `${d}/*.test.mjs`));
+  return { args, skipped: skipped.map((x) => ({ ...x })) };
+}
+
+/**
+ * The files a preflight is EXPECTED to run: every default-set file minus the declared ones.
+ * Compared with what the run reports having executed.
+ */
+export function expectedPreflightFiles({ readdir = fs.readdirSync, skipped = PREFLIGHT_SKIPPED_FILES } = {}) {
+  const skip = new Set(skipped.map((x) => x.file));
+  const out = new Set();
+  for (const d of DEFAULT_DIRS) {
+    for (const name of readdir(d)) {
+      const rel = `${d}/${name}`;
+      if (name.endsWith('.test.mjs') && !skip.has(rel)) out.add(rel);
+    }
+  }
+  // A skip list that removes everything would "pass" having run nothing.
+  if (out.size === 0) throw new Error('the preflight selection is empty: PREFLIGHT_SKIPPED_FILES removes every default test file');
+  return out;
+}
 
 /** The guard reporter, as a file URL resolved from THIS file's location — node
  *  resolves a RELATIVE reporter specifier against cwd, which would break the
  *  runner when invoked from anywhere but the repo root. */
 const GUARD_REPORTER = pathToFileURL(path.join(import.meta.dirname, 'lib', 'test-guard-reporter.mjs')).href;
+const TIMING_REPORTER = pathToFileURL(path.join(import.meta.dirname, 'lib', 'test-timing-reporter.mjs')).href;
 
 /**
  * Build the `--test-reporter` argv pairs.
@@ -131,15 +218,21 @@ const GUARD_REPORTER = pathToFileURL(path.join(import.meta.dirname, 'lib', 'test
  * appended last as a unit and never interleaves with a caller's.
  *
  * @param {string[]} forwarded - argv the caller forwarded to `npm test`.
- * @param {{isTTY: boolean, reportPath: string}} opts
+ * @param {{isTTY: boolean, reportPath: string, timingEnabled?: boolean}} opts
  * @returns {string[]} argv fragment to splice in ahead of the file globs.
  */
-export function buildReporterArgs(forwarded, { isTTY, reportPath }) {
+export function buildReporterArgs(forwarded, { isTTY, reportPath, timingEnabled = false }) {
   const callerNamedReporter = forwarded.some((a) => a.startsWith('--test-reporter'));
   const base = callerNamedReporter
     ? []
     : ['--test-reporter', isTTY ? 'spec' : 'tap', '--test-reporter-destination', 'stdout'];
-  return [...base, '--test-reporter', GUARD_REPORTER, '--test-reporter-destination', reportPath];
+  // The timing reporter yields nothing and writes its own file (TIMING_REPORT_ENV), so the
+  // destination it is paired with is only there to keep node's positional pairing intact.
+  // It goes BEFORE the guard pair: the guard stays contiguous and last in this fragment, and
+  // the whole fragment precedes any forwarded flag, so a caller's later reporter without a
+  // destination pairs with nothing and defaults to stdout instead of stealing ours.
+  const timing = timingEnabled ? ['--test-reporter', TIMING_REPORTER, '--test-reporter-destination', 'stdout'] : [];
+  return [...base, ...timing, '--test-reporter', GUARD_REPORTER, '--test-reporter-destination', reportPath];
 }
 
 /**
@@ -210,34 +303,121 @@ export function adjudicateRun({ status, reportText }) {
   };
 }
 
+/**
+ * Everything the runner prints and exits with after the child has finished. Pure.
+ *
+ * The exit code is `adjudicateRun`'s, computed from the SAME inputs it always was: the
+ * timing report is read only for lines to print, so no timing input — absent, garbage,
+ * wrong version, valid — can move the verdict. The one exception is a PREFLIGHT whose
+ * selection is positively wrong (it ran a declared-skipped file, or missed an expected
+ * one): that fails, because a preflight that quietly ran the wrong files is the vacuous
+ * pass this repo's honesty rule exists to refuse.
+ *
+ * @param {{status: number|null, reportText: string|null, timingText?: string|null,
+ *          preflight?: {skipped: Array<{file: string, why: string}>, expected: Set<string>}|null}} input
+ * @returns {{exitCode: number, lines: string[]}}
+ */
+export function finishRun({ status, reportText, timingText = null, preflight = null }) {
+  const verdict = adjudicateRun({ status, reportText });
+  const lines = [];
+  if (verdict.message) lines.push(verdict.message);
+  lines.push(...summariseTiming(timingText).lines);
+
+  let exitCode = verdict.exitCode;
+  if (preflight) {
+    const ran = ranFiles(timingText);
+    if (ran === null) {
+      lines.push('Preflight: selection unverified (no usable timing report), so it cannot be confirmed that the right files ran.');
+    } else {
+      const skippedSet = new Set(preflight.skipped.map((x) => x.file));
+      const ranSkipped = [...ran].filter((x) => skippedSet.has(x)).sort();
+      const missing = [...preflight.expected].filter((x) => !ran.has(x)).sort();
+      if (ranSkipped.length || missing.length) {
+        if (exitCode === 0) exitCode = 1;
+        lines.push('Preflight: the files that ran are not the files that were selected.');
+        if (ranSkipped.length) lines.push(`  ran although declared skipped: ${ranSkipped.join(', ')}`);
+        if (missing.length) lines.push(`  expected but did not run: ${missing.slice(0, 10).join(', ')}${missing.length > 10 ? ` (+${missing.length - 10} more)` : ''}`);
+      }
+    }
+    lines.push(
+      'PREFLIGHT — this was NOT the gate. Skipped: ' + preflight.skipped.map((x) => `${x.file} (${x.why})`).join('; ') + '.',
+      'A pass here means the files it ran passed. The pre-push gate runs everything.',
+    );
+  }
+  return { exitCode, lines };
+}
+
 function main() {
   const forwarded = process.argv.slice(2);
-  const args = forwarded.length > 0 ? forwarded : DEFAULT_ARGS;
+  // This CLI forwards every other flag to `node --test`, which rejects what it does not know,
+  // so only the flag THIS file owns is validated here: `--preflight` and anything spelled like
+  // it (a typo such as `--preflite` would otherwise be handed to node and rejected there, but
+  // `--preflight=false` must mean OFF, not "accepted and inert", which `hasFlag` honours).
+  const ours = forwarded.filter((a) => a.startsWith('--preflight'));
+  try {
+    assertKnownFlags(ours, ['--preflight'], { cli: 'run-tests', from: 0 });
+  } catch (err) {
+    process.stderr.write(`${err.message}\n`);
+    process.exit(2);
+  }
+  const preflight = hasFlag('preflight');
+  const rest = forwarded.filter((a) => !a.startsWith('--preflight'));
+  if (preflight && rest.length > 0) {
+    process.stderr.write(`test:preflight takes no other arguments (got: ${rest.join(' ')}). It runs the default set minus PREFLIGHT_SKIPPED_FILES.\n`);
+    process.exit(2);
+  }
+
+  let selection;
+  try {
+    selection = selectTestArgs({ preflight });
+  } catch (err) {
+    process.stderr.write(`test:preflight: ${err.message}\n`);
+    process.exit(2);
+  }
+  // `rest` is what node sees: our own flag (in any spelling, including an explicit =false) is never forwarded.
+  const args = preflight ? selection.args : (rest.length > 0 ? rest : selection.args);
+  if (preflight) {
+    process.stderr.write(`PREFLIGHT — this is NOT the gate. Skipping: ${selection.skipped.map((x) => x.file).join(', ')}. The pre-push gate runs them.\n`);
+  }
 
   const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-guard-'));
   const reportPath = path.join(reportDir, 'report.json');
+  const timingPath = path.join(reportDir, 'timing.json');
 
   // NOTE: no try/finally around the exit — `process.exit()` does not run
   // `finally` blocks, so cleanup happens explicitly before exiting.
-  const reporterArgs = buildReporterArgs(forwarded, {
+  const reporterArgs = buildReporterArgs(rest, {
     isTTY: Boolean(process.stdout.isTTY),
     reportPath,
+    timingEnabled: true,
   });
-  const res = spawnSync(process.execPath, ['--test', ...reporterArgs, ...args], {
+  const res = spawnSync(process.execPath, [...CHILD_NODE_FLAGS, '--test', ...reporterArgs, ...args], {
     stdio: 'inherit',
-    env: scrubChildEnv(process.env),
+    env: { ...scrubChildEnv(process.env), [TIMING_REPORT_ENV]: timingPath },
   });
 
-  let reportText = null;
-  try {
-    reportText = fs.readFileSync(reportPath, 'utf-8');
-  } catch {
-    reportText = null;   // adjudicateRun fails closed on this.
+  const readOrNull = (p) => {
+    try { return fs.readFileSync(p, 'utf-8'); } catch { return null; }   // adjudicateRun fails closed on a missing guard report
+  };
+  const reportText = readOrNull(reportPath);
+  const timingText = readOrNull(timingPath);
+  // TEST_TIMING_KEEP=<file> keeps the full per-file report (the printed table is only the top 8,
+  // and a family's share needs every row). Best-effort: a failed copy is a note, never a verdict.
+  const keep = process.env.TEST_TIMING_KEEP;
+  let keepNote = null;
+  if (keep && timingText !== null) {
+    try { fs.writeFileSync(keep, timingText); } catch (err) { keepNote = `TEST_TIMING_KEEP: could not write ${keep} (${err.code ?? 'error'})`; }
   }
   fs.rmSync(reportDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 
-  const { exitCode, message } = adjudicateRun({ status: res.status, reportText });
-  if (message) process.stderr.write(`\n${message}\n`);
+  const { exitCode, lines } = finishRun({
+    status: res.status,
+    reportText,
+    timingText,
+    preflight: preflight ? { skipped: selection.skipped, expected: expectedPreflightFiles() } : null,
+  });
+  if (keepNote) lines.push(keepNote);
+  if (lines.length) process.stderr.write(`\n${lines.join('\n')}\n`);
   process.exit(exitCode);
 }
 
