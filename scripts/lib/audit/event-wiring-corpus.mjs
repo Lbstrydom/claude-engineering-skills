@@ -714,32 +714,39 @@ export async function detectEventWiringAsymmetry({
  *
  * Exported for its test; the caller is detectEventWiringAsymmetry.
  */
-export function computeAncestryDecisions(repoPath, headRef, openRecords, env) {
+export function computeAncestryDecisions(repoPath, headRef, openRecords, env, { runGit = null } = {}) {
   const decisions = new Map();
   const distinctStoredRefs = new Set(openRecords.map(r => r.lastObservedRef).filter(Boolean));
-  const git = (args) => execFileSync('git', args, {
+  const git = runGit ?? ((args) => execFileSync('git', args, {
     cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}),
-  });
-  const succeeds = (args) => { try { git(args); return true; } catch { return false; } };
+  }));
+  // The exit status of one git call: 0, a non-zero status, or null when git could
+  // not be RUN at all (no binary, a signal, a timeout). Only the first two say
+  // anything about the commits; null is an operational failure.
+  const exitCode = (args) => { try { git(args); return 0; } catch (err) { return Number.isInteger(err?.status) ? err.status : null; } };
   for (const storedRef of distinctStoredRefs) {
     if (storedRef === headRef) { decisions.set(storedRef, true); continue; }
     // "is storedRef an ancestor of headRef" — i.e. is headRef newer-or-equal.
-    if (succeeds(['merge-base', '--is-ancestor', storedRef, headRef])) { decisions.set(storedRef, true); continue; }
-    const storedResolves = succeeds(['cat-file', '-e', `${storedRef}^{commit}`]);
-    const headResolves = succeeds(['cat-file', '-e', `${headRef}^{commit}`]);
-    if (!headResolves) {
-      // git cannot evaluate this run's own head — fail closed (Gemini
-      // round-3 G2: never throw, never apply on an unanswered question).
+    if (exitCode(['merge-base', '--is-ancestor', storedRef, headRef]) === 0) { decisions.set(storedRef, true); continue; }
+    const storedCode = exitCode(['cat-file', '-e', `${storedRef}^{commit}`]);
+    const headCode = exitCode(['cat-file', '-e', `${headRef}^{commit}`]);
+    if (headCode !== 0 || storedCode === null) {
+      // git cannot evaluate this run's own head, or could not be run to look at
+      // the stored one — fail closed (Gemini round-3 G2: never throw, never apply
+      // on an unanswered question). A stored ref that git never got to inspect is
+      // not a stored ref that is gone.
       decisions.set(storedRef, false);
-    } else if (!storedResolves) {
+    } else if (storedCode !== 0) {
       // The stored ref is gone (gc / shallow / force-push): unanswerable
       // forever, so it must not pin the record.
       decisions.set(storedRef, true);
     } else {
-      // Both exist and storedRef is not an ancestor of head: stale only if
-      // head is an ancestor of storedRef (an older checkout); divergent
-      // history (squash-merge, a deleted PR branch) applies.
-      decisions.set(storedRef, !succeeds(['merge-base', '--is-ancestor', headRef, storedRef]));
+      // Both exist and storedRef is not an ancestor of head. Exit 1 PROVES head
+      // is not an ancestor of storedRef either: divergent history (squash-merge,
+      // a deleted PR branch), so the observation applies. Exit 0 is an older
+      // checkout: stale. Any other outcome means the question went unanswered,
+      // and an unanswered question must not authorise a write.
+      decisions.set(storedRef, exitCode(['merge-base', '--is-ancestor', headRef, storedRef]) === 1);
     }
   }
   return decisions;

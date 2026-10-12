@@ -712,3 +712,61 @@ describe('computeAncestryDecisions — only a provably older head is stale (87a4
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// computeAncestryDecisions — three outcomes of a git call, not two. `merge-base
+// --is-ancestor` exits 1 for a PROVEN negative; any other failure (exit 128, no
+// git binary, a signal) leaves the question unanswered. The last probe used to
+// read "did not exit 0" as "head is not an ancestor", so an operational failure
+// AUTHORISED the observation - against the function's own documented contract
+// that it drops "when git itself cannot answer".
+// ---------------------------------------------------------------------------
+describe('computeAncestryDecisions — an unanswered git question fails closed', () => {
+  const STORED = 'a'.repeat(40);
+  const HEAD = 'b'.repeat(40);
+  const exits = (code) => Object.assign(new Error('git exit ' + code), { status: code });
+  // A scripted git: each command line maps to an exit code; 'spawn' = could not run at all.
+  const fakeGit = (script) => (args) => {
+    const key = args.join(' ');
+    const outcome = script[key];
+    if (outcome === undefined) throw new Error('unscripted git call: ' + key);
+    if (outcome === 0) return Buffer.from('');
+    if (outcome === 'spawn') throw Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' });
+    throw exits(outcome);
+  };
+  const KEYS = {
+    storedAncOfHead: 'merge-base --is-ancestor ' + STORED + ' ' + HEAD,
+    headAncOfStored: 'merge-base --is-ancestor ' + HEAD + ' ' + STORED,
+    storedExists: 'cat-file -e ' + STORED + '^{commit}',
+    headExists: 'cat-file -e ' + HEAD + '^{commit}',
+  };
+  const decide = async (script) => {
+    const { computeAncestryDecisions } = await import('../scripts/lib/audit/event-wiring-corpus.mjs');
+    return computeAncestryDecisions('/unused', HEAD, [{ lastObservedRef: STORED }], undefined, { runGit: fakeGit(script) }).get(STORED);
+  };
+  const BOTH_EXIST = { [KEYS.storedAncOfHead]: 1, [KEYS.storedExists]: 0, [KEYS.headExists]: 0 };
+
+  it('both refs resolve but the last ancestry probe FAILS operationally (exit 128) — nothing is authorised', async () => {
+    assert.equal(await decide({ ...BOTH_EXIST, [KEYS.headAncOfStored]: 128 }), false);
+  });
+
+  it('both refs resolve but git cannot be RUN for the last probe — nothing is authorised', async () => {
+    assert.equal(await decide({ ...BOTH_EXIST, [KEYS.headAncOfStored]: 'spawn' }), false);
+  });
+
+  it('NEGATIVE CONTROL — exit 1 is a PROVEN negative (divergent history): the observation applies', async () => {
+    assert.equal(await decide({ ...BOTH_EXIST, [KEYS.headAncOfStored]: 1 }), true);
+  });
+
+  it('exit 0 is an older checkout: stale, dropped', async () => {
+    assert.equal(await decide({ ...BOTH_EXIST, [KEYS.headAncOfStored]: 0 }), false);
+  });
+
+  it('git could not be RUN to look at the stored ref — that is not "the stored ref is gone"', async () => {
+    assert.equal(await decide({ [KEYS.storedAncOfHead]: 1, [KEYS.storedExists]: 'spawn', [KEYS.headExists]: 0 }), false);
+  });
+
+  it('NEGATIVE CONTROL — a stored ref git answered "no such object" for IS gone, and does not pin the record', async () => {
+    assert.equal(await decide({ [KEYS.storedAncOfHead]: 128, [KEYS.storedExists]: 128, [KEYS.headExists]: 0 }), true);
+  });
+});
