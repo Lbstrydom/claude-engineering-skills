@@ -98,6 +98,30 @@
 - **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of the pushed commit: 18,641 tests, 0 fail, 46 skipped, checks passed (the first attempt failed only on four load-timing tests while ~6 gates ran at once; re-run once, green). No consumer-side retrieval was run.
 - **Result**: unverified, blocked: not merged. The pre-push hook publishes to consumers only when the default branch is updated (since 2026-10-10), so this branch has reached no consumer; verify with `sync-isolation-verify.mjs` in a consumer's MAIN checkout after the PR merges and the source repo re-syncs.
 
+## 2026-10-12 — pre-push: a dead push's sandbox is swept at the next push, not 6 hours later (PR #210)
+
+Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
+- **Cause (measured from the pushing session's transcript, not guessed)**: two pushes were stopped mid-gate with TaskStop (15:52:50Z and 15:59:18Z on 2026-10-11). A killed process runs no cleanup handler, so `ces-prepush-a4d6ea00-77848` and `ces-prepush-fc2be6f7-82364` stayed on disk and registered in `git worktree list`. Both owner pids were gone, and both were under the 6h age rule, so nothing could sweep them. The fleet scan then counted them as unregistered work. Not the preserved-on-`npm ci`-failure case. The directories were already removed when this was investigated, so `.prepush-npm-ci.log` could not be stat'ed.
+- **Change** (`scripts/lib/prepush-sandbox-cleanup.mjs`, `scripts/prepush-check.mjs`):
+  - A husk whose owner pid (digits after the last `-`, a plain positive decimal) reads dead (ESRCH) is swept at once.
+  - Age (6h) stays the only rule when the owner is alive, liveness is unknown or throws, the name has no usable pid (`--123`, leading zero, `0`), or the husk holds `.prepush-npm-ci.log`.
+  - Pid reuse can only make a dead owner read alive, so it falls back to the age rule. A process-start-time probe was deliberately not built.
+  - `surveySandboxes`/`sweepStaleSandboxes` return `unsurveyed` (unreadable temp dir, non-ENOENT stat failure), so "found nothing" is never also "could not look".
+  - The log wording is the pure `describeSweep`, asserted on its emitted lines. `PRESERVED_EVIDENCE_FILE` is the one shared marker name.
+- **Tests**: `node --test tests/prepush-sandbox-cleanup.test.mjs tests/prepush-sandbox-honesty.test.mjs` → 73 pass. Dead owner = a real exited child's pid; live owner = a real running other process; plus a negative control. Mutation-checked in six directions (everything reads dead, no dead-owner rule, marker ignored, old unanchored grammar, stat errors swallowed, wording miscounted); an earlier `sed` mutation that had not applied was caught and redone.
+- **Live end-to-end**: stopped this branch's own push with TaskStop (the incident mechanism); the next push logged `swept 1 stale sandbox husk(s) from <tmp> (1 owner process dead)`. The husk left disk and `git worktree list`; two other sessions' live sandboxes were kept.
+- **Audit** (`audit-code-1791751589`, `--scope diff`): R1 H:1 M:5 (all fixed), R2 and R3 PASS 0/0/0, Gemini APPROVE (gate approve, 0 blocking, 0 debt).
+- **Pre-push gate** (full suite, 18,688 tests, ~28 min): attempts 1 and 2 failed on tests that do not reference these files and pass in isolation under load: `fleet-checks` (12.3s vs 10s bound), `hook-arch-memory-check` (6.2s vs 5s bound), `dashboard-home-deadline` pid.txt ENOENT (PR #207 fixes it). Attempt 3 passed. A fourth attempt (this entry's commit, 77 minutes under load) failed on the same three. No `--no-verify`; the push was held, then re-done after merging main (5 → 8 commits behind by then).
+- **Decisions**:
+  - The fleet half (treating `ces-prepush-*` worktrees as tooling in the unregistered-work scan) is not in this PR: the verdict classification exists only in open PR #206, and the fleet chip owns `scripts/lib/fleet/**`. The contract it will cite is unchanged: `SANDBOX_PREFIX` + `<tmpdir>/ces-prepush-<sha8>-<pid>`.
+  - `docs/runbooks/prepush-sandbox.md` was held back while PR #208 owned it; after #208 landed it is reworded here: #208's bullet "A sandbox that may still be live is never swept" stays, and a new bullet states the dead-owner rule and the cases that keep the age rule.
+- **Provenance**: the two code commits (`7f4ca1f4`, `13433853`) were made with plain `git commit`, so they carry no `AI-*` trailers; this entry's commit is the one `ship-commit.mjs` wrote.
+
+### Next Steps
+- PR #210: review, then merge (not merged).
+- Fleet chip: classify `ces-prepush-*` worktrees as tooling on top of #206's verdicts.
+
 ## 2026-10-12 — Ship trains: plan (#209) + Cluster A, the stateless read side of `/ship --train` (#211)
 
 ### Changes

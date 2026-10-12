@@ -57,7 +57,9 @@ import { GIT_LOCK_RETRY_DELAYS_MS, withGitLockRetry } from './lib/git-lock-retry
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
 import { resolveMainRoot } from './lib/pinned-worktree/paths.mjs';
 import {
+  PRESERVED_EVIDENCE_FILE,
   STALE_SANDBOX_AGE_MS,
+  describeSweep,
   removeSandboxDir,
   sweepStaleSandboxes,
 } from './lib/prepush-sandbox-cleanup.mjs';
@@ -359,7 +361,9 @@ function reportFailedInstall(sandbox, detail) {
   if (npmLog) log(`  npm debug log (may already be rotated): ${npmLog[1].trim()}`);
 
   try {
-    const dest = path.join(sandbox, '.prepush-npm-ci.log');
+    // The name is the sweeper's "kept on purpose" marker: a husk holding it is
+    // never swept for a dead owner, only for age (prepush-sandbox-cleanup.mjs).
+    const dest = path.join(sandbox, PRESERVED_EVIDENCE_FILE);
     fs.writeFileSync(dest, detail.output);
     log(`  full npm output: ${dest}`);
   } catch (err) {
@@ -505,23 +509,18 @@ function main() {
   // not. Deliberately advisory: an uncleanable temp directory is MACHINE
   // state, and machine state may warn but must never block a push.
   try {
-    const { swept, failed, young } = sweepStaleSandboxes(os.tmpdir());
-    if (swept.length) log(`  swept ${swept.length} stale sandbox husk(s) from ${os.tmpdir()}`);
-    if (failed.length) log(`  ⚠ ${failed.length} stale sandbox husk(s) still un-removable, e.g. ${failed[0]}`);
-    // Say what was seen and left. Without this, "no sweep line" means both "temp
-    // is clean" and "three husks are sitting there, all too young to sweep" —
-    // and on 2026-08-30 that ambiguity was read as a broken sweeper for hours.
-    // Only printed when there IS something, so a clean machine stays silent.
-    if (!swept.length && young.length) {
-      const oldestH = (Math.max(...young.map((h) => h.ageMs)) / 3_600_000).toFixed(1);
-      log(`  ${young.length} sandbox husk(s) present, none swept — oldest is ${oldestH}h old, `
-        + `under the ${STALE_SANDBOX_AGE_MS / 3_600_000}h threshold (a concurrent push's sandbox is always young)`);
-    }
+    const sweep = sweepStaleSandboxes(os.tmpdir());
+    // The wording lives in describeSweep (a pure function, asserted on its output in
+    // tests/prepush-sandbox-cleanup.test.mjs). It says WHY a husk went — dead owner
+    // vs age — and what was seen and left, because on 2026-08-30 "no sweep line"
+    // read as both "temp is clean" and "three husks, all too young" for hours.
+    // Silent only when there is genuinely nothing to say.
+    for (const line of describeSweep(sweep, os.tmpdir())) log(line);
     // Metadata written only when there was something to reconcile: a husk from
     // an interrupted run can still be REGISTERED, so its directory disappearing
     // is exactly when `git worktree list` needs pruning to stop showing a
     // corpse pointing into temp.
-    if (swept.length) {
+    if (sweep.swept.length) {
       try { gitWithLockRetry(repoRoot, ['worktree', 'prune']); } catch { /* noop */ }
     }
   } catch (err) {
