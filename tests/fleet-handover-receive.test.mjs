@@ -85,7 +85,7 @@ describe('receive outcome classes (p): failed > refused > ok with follow-ups', (
     git(['remote', 'set-url', 'origin', 'https://github.com/owner-x/repo-y.git'], fx.repo);
     const A = account(tmpRoot('rcv-src-'), { claude: who('a@x.test', 'uuid-a', { alpha: { command: 'a' } }) });
     const B = account(tmpRoot('rcv-dst-'), { task: null, settings: '{"permissions":{"allow":["x"]}}\n', claude: who('b@x.test', 'uuid-b', { beta: { command: 'b' } }) });
-    fs.rmSync(path.join(B, 'projects'), { recursive: true, force: true }); // nothing to conflict with
+    fs.rmSync(path.join(B, 'projects'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); // nothing to conflict with
     const p = prepare(fx, A);
     assert.equal(p.status, 0, p.stdout);
     return { fx, A, B, json: p.json.handover.json };
@@ -164,7 +164,7 @@ describe('account identity (o)', () => {
     assert.match(same.json.text, /account: same account/);
     assert.ok(!same.json.handover.followUps.some((x) => x.kind === 'account'));
     const B = account(tmpRoot('rcv-other-'), { task: null, claude: who('you@x.test', 'uuid-you') });
-    fs.rmSync(path.join(B, 'projects'), { recursive: true, force: true });
+    fs.rmSync(path.join(B, 'projects'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const diff = receive(fx, B, p.json.handover.json);
     assert.match(diff.json.text, /account: source me@x\.test → this you@x\.test \(different account\)/);
     assert.equal(diff.status, 0, 'an account change is a follow-up');
@@ -214,7 +214,7 @@ describe('the scheduled-task line (q) and memory destinations (t)', () => {
     const p = prepare(fx, A);
     assert.match(receive(fx, A, p.json.handover.json).json.text, /scheduled tasks: 1 file\(s\) present; scheduler registration not checked here/);
     const B = account(tmpRoot('rcv-q2-'), { task: null });
-    fs.rmSync(path.join(B, 'projects'), { recursive: true, force: true });
+    fs.rmSync(path.join(B, 'projects'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     assert.match(receive(fx, B, p.json.handover.json).json.text, /scheduled tasks: 0 file\(s\) present, 1 missing here; scheduler registration not checked here/);
   });
   it('one memory line per dir in same-root AND copy mode; copy mode uses the destination\'s on-disk spelling on win32', () => {
@@ -223,7 +223,7 @@ describe('the scheduled-task line (q) and memory destinations (t)', () => {
     const p = prepare(fx, A, []);
     assert.match(receive(fx, A, p.json.handover.json).json.text, new RegExp(`memory ${SLUG} → .*projects[\\\\/]${SLUG}[\\\\/]memory`));
     const B = account(tmpRoot('rcv-t2-'), { task: null, slug: 'C--GIT-demo' }); // the destination spells the drive letter upper-case
-    fs.rmSync(memFile(B, 'a.md', 'C--GIT-demo'));
+    fs.rmSync(memFile(B, 'a.md', 'C--GIT-demo'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const r = receive(fx, B, p.json.handover.json);
     const want = process.platform === 'win32' ? 'C--GIT-demo' : SLUG;
     assert.match(r.json.text, new RegExp(`memory ${SLUG} → .*projects[\\\\/]${want}[\\\\/]memory`));

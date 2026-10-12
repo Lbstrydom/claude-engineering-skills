@@ -275,7 +275,7 @@ describe('fleet archive — round-2 audit fixes (cluster B)', () => {
     const r = applyArchive(ctx, plan(), { git: raceAfterTag(() => { fs.mkdirSync(sessions, { recursive: true }); fs.writeFileSync(path.join(sessions, 'corrupt.json'), '{ nope'); }) });
     assert.equal(r.status, 'aborted');
     assert.match(r.reason, /registry is unreadable/);
-    fs.rmSync(path.join(sessions, 'corrupt.json'));
+    fs.rmSync(path.join(sessions, 'corrupt.json'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     assert.equal(applyArchive(ctx, plan()).status, 'archived', 'control');
   });
   it('the tag must name the snapshot COMMIT, not merely a commit with the same tree', () => {
