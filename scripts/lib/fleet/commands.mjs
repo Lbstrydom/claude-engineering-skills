@@ -17,8 +17,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ArgvError } from '../cli-io.mjs';
 import {
-  runGit, headOf, tipSubject, repoToplevel,
+  runGit, headOf, listWorktrees, tipSubject, repoToplevel,
 } from './git-facts.mjs';
+import { samePath as samePathOnPlatform } from '../harness-paths.mjs';
 import { listPullRequests, materializePrRef, prSourceIdentity } from './gh-facts.mjs';
 import {
   claimMode, decideClaim, idleMsFrom, isBlockingConflict, isTerminalState, splitHidden, validateClaimPatterns,
@@ -189,18 +190,56 @@ export function fetchBase(ctx, { git = runGit } = {}) {
 // ── claim ───────────────────────────────────────────────────────────────────
 
 /** `fleet claim` — first registration (blocking gate) or an update (advisory). */
+/**
+ * What a claim binds: the cwd's branch and toplevel, or with `--worktree <path>` THAT listed worktree's (realpath
+ * compared, so a claim made from the wrong directory can name the right one). A detached worktree needs `--id`
+ * and binds no branch. Validated before the lock, like every other git fact a claim reads. Warnings are NOT derived
+ * here: an update keeps its recorded source, so they come from the retained record (`bindingWarnings`).
+ * @returns {{id: string, branch: string|null, worktree: string|null, explicit: boolean}}
+ */
+export function resolveClaimBinding(ctx, flags, { list = listWorktrees } = {}) {
+  const spec = flags['--worktree'];
+  let binding;
+  if (spec === undefined) {
+    const top = repoToplevel(ctx.cwd);
+    binding = { id: selfId(ctx, flags), branch: currentBranch(ctx.cwd), worktree: top.ok ? top.dir : null, explicit: false };
+  } else {
+    const wts = list(ctx.cwd);
+    if (!wts.queried) throw new GitUnavailableError(`fleet claim: the worktree list could not be read (${wts.reason})`);
+    const real = (p) => { try { return fs.realpathSync.native(p); } catch { return null; } };
+    const want = real(path.resolve(ctx.cwd, spec));
+    const w = want && wts.worktrees.find((x) => !x.bare && !x.missing && real(x.path) !== null && samePathOnPlatform(real(x.path), want));
+    if (!w) throw new ArgvError(`fleet claim: --worktree ${spec} is not a listed worktree of this repo (see git worktree list)`);
+    if (!w.branch && flags['--id'] === undefined) throw new ArgvError(`fleet claim: --worktree ${spec} is detached — pass --id (a detached worktree binds no branch)`);
+    binding = { id: flags['--id'] ?? w.branch, branch: w.branch ?? null, worktree: path.resolve(w.path), explicit: true };
+  }
+  return binding;
+}
+
+/**
+ * What a claim record's OWN binding should warn about. Merged evidence retires a claim by its BRANCH: an id that is
+ * not the bound branch is how a claim made from the wrong worktree goes unnoticed (plan M12), and a branch-kind
+ * claim with no branch (a detached worktree) can never be retired by evidence at all.
+ */
+export function bindingWarnings(record) {
+  const src = record?.source;
+  if (src?.kind !== 'branch') return [];
+  if (!src.branch) return ['this claim is on a detached worktree and binds no branch: merged evidence can never retire it, so release it when done'];
+  return src.branch === record.id ? [] : [`claim id ${record.id} is not its bound branch ${src.branch}: merged evidence retires a claim by its BRANCH — claim from that branch's worktree, or pass --worktree`];
+}
+
 export function cmdClaim(ctx, flags) {
-  const id = selfId(ctx, flags);
+  const bind = resolveClaimBinding(ctx, flags);
+  const { id, branch } = bind;
   const hasPaths = flags['--paths'] !== undefined;
   const paths = splitPaths(flags['--paths']);
   const pv = validateClaimPatterns(paths);
   if (!pv.ok) throw new ArgvError(`fleet claim: ${pv.errors.join('; ')}`);
   const waiting = waitingFromFlags(flags, ctx);
-  const branch = currentBranch(ctx.cwd);
-  const top = repoToplevel(ctx.cwd);
   // The `claim` fact profile: every live session's worktree is probed for UNCOMMITTED edits (advisory evidence).
   const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: true, untracked: false, uncommitted: 'all' });
-  const start = startOidFor(ctx, branch, facts.base.measure);
+  // A detached `--worktree` claim starts from THAT worktree's HEAD, not the cwd's.
+  const start = startOidFor(branch || !bind.worktree ? ctx : { ...ctx, cwd: bind.worktree }, branch, facts.base.measure);
   const startOid = start.ok ? start.oid : null; // claim stays lenient but never substitutes; the reason is surfaced below
 
   // Gathered BEFORE the lock (a git subprocess), like every other fact this gate reads (audit R1-M1/M2).
@@ -208,6 +247,16 @@ export function cmdClaim(ctx, flags) {
   const tx = transact(ctx.dir, (t) => {
     const cur = t.sessions.find((s) => s.id === id) ?? null;
     const mode = claimMode(cur);
+    // `--worktree` fills an adopted session's missing worktree once; a recorded one is never re-pointed.
+    if (bind.explicit && cur && !isTerminalState(cur.state) && cur.worktree && !samePathOnPlatform(cur.worktree, bind.worktree)) {
+      return { code: 'argv', reason: `fleet claim: ${id} is already bound to ${cur.worktree} — a claim's worktree is never re-pointed (release it and claim again)` };
+    }
+    // ...and only with the worktree that has the claim's OWN branch checked out: a record whose source names one branch
+    // and whose worktree holds another would scan, archive and retire the wrong work.
+    const curBranch = cur?.source?.branch ?? null;
+    if (bind.explicit && cur && !isTerminalState(cur.state) && curBranch && bind.branch !== curBranch) {
+      return { code: 'argv', reason: `fleet claim: --worktree ${bind.worktree} has ${bind.branch ?? 'a detached HEAD'} checked out, but ${id} is bound to branch ${curBranch} — name the worktree that has ${curBranch} checked out` };
+    }
     const intent = flags['--intent'] ?? (mode === 'adopt' ? cur.intent : undefined);
     if (intent === undefined || String(intent).trim() === '') return { code: 'argv', reason: 'fleet claim: --intent is required to register a new session' };
     const claimPaths = hasPaths || mode === 'new' ? paths : cur.paths;
@@ -237,7 +286,7 @@ export function cmdClaim(ctx, flags) {
     if (flags['--host-session'] !== undefined) writeHost(ctx.dir, { id, hostSession: flags['--host-session'], at: stamp });
     const record = t.writeSession({
       schemaVersion: 1, rev: cur ? cur.rev + 1 : 1, id, ...base,
-      worktree: fresh ? (top.ok ? top.dir : null) : cur.worktree, intent, paths: claimPaths,
+      worktree: fresh ? bind.worktree : (cur.worktree ?? (bind.explicit ? bind.worktree : null)), intent, paths: claimPaths,
       waitingOn: applyWaiting(base.waitingOn, waiting), knownOverlaps: [...base.knownOverlaps, ...known],
       leaseExpiresAt: leaseIso(ctx), updatedAt: stamp,
     });
@@ -249,7 +298,8 @@ export function cmdClaim(ctx, flags) {
   const text = renderClaimVerdict(v.verdict, { id, cmd: ctx.cmd, measure: facts.base.measure, baseName: ctx.config.baseBranch })
     + (!start.ok && v.mode === 'new' && v.record ? `
 warning: startOid not recorded — ${start.reason}` : '')
-    + (v.record ? `\n${v.mode === 'new' ? 'registered' : 'updated'} ${id} (gen ${v.record.gen}, rev ${v.record.rev}): ${v.record.intent}${v.verdict.overridden ? '\n  --override: recorded as a known overlap on both sessions' : ''}` : '');
+    + (v.record ? `\n${v.mode === 'new' ? 'registered' : 'updated'} ${id} (gen ${v.record.gen}, rev ${v.record.rev}): ${v.record.intent}${v.verdict.overridden ? '\n  --override: recorded as a known overlap on both sessions' : ''}` : '')
+    + (v.record ? bindingWarnings(v.record).map((w) => `\nwarning: ${w}`).join('') : '');
   const good = v.verdict.verdict === 'ok' || v.verdict.verdict === 'warn' || v.verdict.overridden;
   return {
     ok: Boolean(good), code: good ? 'ok' : 'refused', id, mode: v.mode, verdict: v.verdict.verdict, overridden: Boolean(v.verdict.overridden),
@@ -265,7 +315,9 @@ export function cmdAdd(ctx, flags, positionals) {
   if (flags['--all'] && positionals.length) throw new ArgvError('fleet add: pass a branch/#PR OR --all, not both');
   if (!flags['--all'] && !positionals.length) throw new ArgvError('fleet add: pass a branch, #<PR> or --all');
   if (flags['--all'] && flags['--id']) throw new ArgvError('fleet add: --id cannot be combined with --all');
-  const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: Boolean(positionals[0]?.startsWith('#')), patches: false, worktrees: false, untracked: false });
+  const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: Boolean(positionals[0]?.startsWith('#')), patches: false, worktrees: true, untracked: false });
+  // Where each adopted branch is checked out: recorded, so every reader (release first) sees the same worktree.
+  const worktreeOf = (branch) => (branch && facts.worktrees.queried ? facts.worktrees.worktrees.find((w) => !w.bare && w.branch === branch)?.path ?? null : null);
   const targets = [];
   const base = ctx.config.baseBranch;
   if (flags['--all']) {
@@ -313,7 +365,7 @@ export function cmdAdd(ctx, flags, positionals) {
       const rec = tr.writeSession({
         schemaVersion: 1, rev: cur ? cur.rev + 1 : 1, id: t.id,
         source: t.source ?? { kind: 'branch', branch: t.branch, repo: null, prNumber: null, headRepo: null, headRef: t.branch, baseRef: base },
-        worktree: null, intent: t.intent, paths: [], state: 'working', gen: cur ? cur.gen + 1 : 1, startOid: t.startOid,
+        worktree: t.kind === 'branch' ? worktreeOf(t.branch) : null, intent: t.intent, paths: [], state: 'working', gen: cur ? cur.gen + 1 : 1, startOid: t.startOid,
         waitingOn: [], ready: null, knownOverlaps: [], leaseExpiresAt: leaseIso(ctx), updatedAt: stamp, createdAt: stamp,
       });
       added.push(rec.id);
@@ -371,7 +423,26 @@ export function cmdReady(ctx, flags) {
   });
   if (!tx.ok) return lockFailed();
   if (tx.value.gone) return refused(`session ${id} is no longer live`);
-  return ok({ id, record: tx.value.record, checks: gate.results, text: [`ready: ${id} @ ${oid.slice(0, 12)} (lease renewed)`, ...gateLines].join('\n') });
+  // Work only this disk holds is the highest-severity case (plan u): say so at the checkpoint where it matters.
+  // Advisory: `ready` still succeeds, but a count that could not be taken is said, never read as "all pushed".
+  const branch = peek.source.kind === 'branch' ? peek.source.branch : null;
+  const unpushed = branch ? unpushedCount(ctx.cwd, branch) : null;
+  const pushLine = !unpushed ? []
+    : !unpushed.ok ? [`note: could not check whether ${branch}'s commits are held by a remote ref (${unpushed.reason})`]
+      : unpushed.count > 0 ? [`warning: ${unpushed.count} commit(s) on ${branch} are held by no remote ref — push your branch (pushing the base still needs the user)`] : [];
+  return ok({ id, record: tx.value.record, checks: gate.results, ...(unpushed ? { unpushed } : {}), text: [`ready: ${id} @ ${oid.slice(0, 12)} (lease renewed)`, ...gateLines, ...pushLine].join('\n') });
+}
+
+/**
+ * Commits on `branch` that no remote-tracking ref holds. A count that could not be taken is `{ok:false, reason}`,
+ * never a guessed 0.
+ * @returns {{ok: true, count: number} | {ok: false, reason: string}}
+ */
+export function unpushedCount(cwd, branch, { git = runGit } = {}) {
+  const r = git(['rev-list', '--count', `refs/heads/${branch}`, '--not', '--remotes'], cwd);
+  if (!r.ok) return { ok: false, reason: `git rev-list failed: ${r.reason ?? 'unknown'}` };
+  const n = Number.parseInt(String(r.stdout).trim(), 10);
+  return Number.isInteger(n) ? { ok: true, count: n } : { ok: false, reason: `unreadable count ${JSON.stringify(String(r.stdout).trim())}` };
 }
 
 /** `fleet touch` — explicit heartbeat. */

@@ -488,6 +488,67 @@ describe('defect h — a claim whose work landed is not a live session in a hand
   });
 });
 
+describe('handover hardening (cluster C: e, l)', () => {
+  const envFor = (cfg) => scrubbedEnv({ FLEET_TELEMETRY: 'off', CLAUDE_CONFIG_DIR: cfg, CLAUDE_AUDIT_LOOP_DIR: '' });
+  const prepareIn = (fx, A) => runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+
+  it('a NEWER manifest beside the given one refuses (exit 3); --allow-older receives it deliberately (control)', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-l-'), { task: null });
+    const first = prepareIn(fx, A);
+    const second = prepareIn(fx, A);
+    assert.equal(first.status, 0, first.stdout);
+    assert.ok(second.json.handover.id > first.json.handover.id, 'ids sort chronologically');
+    const old = runFleet(['handover', 'receive', '--from', first.json.handover.json, '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(old.status, 3, old.stdout);
+    assert.match(old.json.reason, /newer handover manifest sits beside this one/);
+    const deliberate = runFleet(['handover', 'receive', '--from', first.json.handover.json, '--allow-older', '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(deliberate.status, 0, deliberate.stdout);
+    const newest = runFleet(['handover', 'receive', '--from', second.json.handover.json, '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(newest.status, 0, 'the newest receives without the flag');
+    assert.equal(runFleet(['handover', 'prepare', '--allow-older'], { cwd: fx.repo, env: envFor(A) }).status, 2, '--allow-older is receive-only');
+  });
+
+  it('a repo whose PR state cannot be read says so and names the account needed; a manifest without the field still receives', () => {
+    const fx = makeFleetRepo();
+    git(['remote', 'set-url', 'origin', 'https://github.com/owner-x/repo-y.git'], fx.repo); // no gh on PATH: unreadable
+    const A = seedConfig(tmpRoot('handover-acct-e-'), { task: null });
+    const prep = prepareIn(fx, A);
+    const [entry] = JSON.parse(fs.readFileSync(prep.json.handover.json, 'utf8')).scope.repos;
+    assert.deepEqual([entry.gh.queried, entry.ghRepo], [false, 'owner-x/repo-y']);
+    assert.match(prep.json.text, /PR state unknown in .* sign in to gh with an account that can read owner-x\/repo-y/);
+    assert.match(fs.readFileSync(prep.json.handover.md, 'utf8'), /PR state unknown/);
+    const recv = runFleet(['handover', 'receive', '--from', prep.json.handover.json, '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(recv.json.handover.ghUnknown[0].ghRepo, 'owner-x/repo-y', 're-measured at receive');
+    // A manifest written before these fields existed still parses and receives.
+    const m = JSON.parse(fs.readFileSync(prep.json.handover.json, 'utf8'));
+    for (const r of m.scope.repos) { delete r.gh; delete r.ghRepo; delete r.mergedUnreleased; }
+    const legacy = prep.json.handover.json.replace(/\.json$/, '-legacy.json');
+    fs.writeFileSync(legacy, JSON.stringify(m));
+    const r2 = runFleet(['handover', 'receive', '--from', legacy, '--allow-older', '--json'], { cwd: fx.repo, env: envFor(A) });
+    assert.equal(r2.status, 0, r2.stdout);
+    assert.equal(r2.json.ok, true, r2.stdout);
+    assert.equal(r2.json.handover.id, prep.json.handover.id, 'the legacy manifest is the one received');
+    assert.equal(r2.json.handover.ghUnknown[0].ghRepo, 'owner-x/repo-y', 'the missing fields are re-measured, not required');
+  });
+
+  it('a directory that cannot be listed refuses (the newer-manifest check did not run); --allow-older receives (control)', () => {
+    const fx = makeFleetRepo();
+    const A = seedConfig(tmpRoot('handover-acct-l2-'), { task: null });
+    const prep = prepareIn(fx, A);
+    const ctx = { cwd: fx.repo, env: envFor(A), now: new Date() };
+    const broken = () => { const e = new Error('denied'); e.code = 'EACCES'; throw e; };
+    const r = receiveHandover(ctx, { '--from': prep.json.handover.json }, { readdir: broken });
+    assert.equal(r.code, 'refused');
+    assert.equal(r.handover.reason, 'newer-manifest-unknown');
+    assert.match(r.reason, /could not check for a newer handover manifest: .* \(EACCES\)/);
+    const deliberate = receiveHandover(ctx, { '--from': prep.json.handover.json, '--allow-older': true }, { readdir: broken });
+    assert.equal(deliberate.code, 'ok', JSON.stringify(deliberate.reason ?? null));
+    assert.equal(deliberate.ok, true);
+    assert.equal(deliberate.handover.id, prep.json.handover.id);
+  });
+});
+
 describe('claimCommand (H2/M3, R2-H1)', () => {
   const cli = (platform) => quoteArg(path.resolve('/r', 'scripts/fleet.mjs'), platform);
   it('quotes every data argument on POSIX, and only claims after a successful cd', () => {

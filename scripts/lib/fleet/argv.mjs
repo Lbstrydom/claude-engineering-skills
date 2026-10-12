@@ -16,7 +16,7 @@ import { ArgvError } from '../cli-io.mjs';
 export const VERBS = Object.freeze({
   status: { bool: ['--json', '--all', '--fetch'], value: [], repeat: [], positionals: [0, 0] },
   add: { bool: ['--json', '--all'], value: ['--id'], repeat: [], positionals: [0, 1] },
-  claim: { bool: ['--json', '--override', '--clear-waiting'], value: ['--id', '--intent', '--paths', '--host-session'], repeat: ['--waiting-on'], positionals: [0, 0] },
+  claim: { bool: ['--json', '--override', '--clear-waiting'], value: ['--id', '--intent', '--paths', '--host-session', '--worktree'], repeat: ['--waiting-on'], positionals: [0, 0] },
   ready: { bool: ['--json', '--clear-waiting'], value: ['--id'], repeat: ['--waiting-on'], positionals: [0, 0] },
   touch: { bool: ['--json', '--clear-waiting'], value: ['--id'], repeat: ['--waiting-on'], positionals: [0, 0] },
   hold: { bool: ['--json', '--notify'], value: ['--reason', '--note', '--id'], repeat: [], positionals: [1, 1] },
@@ -26,7 +26,7 @@ export const VERBS = Object.freeze({
   'archive-check': { bool: ['--json'], value: ['--id', '--min-kb'], repeat: [], positionals: [0, 1] },
   prune: { bool: ['--json', '--apply', '--remote', '--include-fresh'], value: [], repeat: [], positionals: [0, 0] },
   archive: { bool: ['--json', '--apply', '--discard-ignored', '--include-fresh'], value: [], repeat: [], positionals: [1, 1] },
-  handover: { bool: ['--json', '--dry-run'], value: ['--from'], repeat: ['--repo'], positionals: [1, 1] },
+  handover: { bool: ['--json', '--dry-run', '--allow-older'], value: ['--from'], repeat: ['--repo'], positionals: [1, 1] },
   next: { bool: ['--json'], value: ['--id'], repeat: [], positionals: [0, 0] },
   restack: { bool: ['--json', '--replace'], value: ['--onto', '--from'], repeat: [], positionals: [0, 1] },
   directive: {

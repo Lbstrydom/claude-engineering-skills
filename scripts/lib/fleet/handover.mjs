@@ -25,7 +25,8 @@ import { ok, failed, refused } from './commands.mjs';
 import { resolveConfig } from './config.mjs';
 import { readDirectives } from './directives.mjs';
 import { buildStatusFrom, gatherFacts } from './facts.mjs';
-import { gitCommonDir, listBranches, listWorktrees, repoToplevel } from './git-facts.mjs';
+import { gitCommonDir, listBranches, listWorktrees, repoToplevel, runGit } from './git-facts.mjs';
+import { parseOriginRepo } from '../branch-protection.mjs';
 import { archiveReport } from './lifecycle.mjs';
 import { RISK_KINDS, UNREGISTERED_BUDGET, VERDICTS, coveredBy, liveSessionsOf, unregisteredWork } from './unregistered.mjs';
 
@@ -48,7 +49,7 @@ export function handoverId(now = new Date(), rand = crypto.randomBytes(3).toStri
 }
 
 const FLAG_CONTRACT = {
-  prepare: { required: [], forbidden: ['--from', '--dry-run'] },
+  prepare: { required: [], forbidden: ['--from', '--dry-run', '--allow-older'] },
   receive: { required: ['--from'], forbidden: ['--repo'] },
 };
 
@@ -280,6 +281,20 @@ function mergedUnreleasedEntry(i, fleetCli) {
   return { id: i.id, branch: i.branch ?? null, note: i.notes.find((n) => n.startsWith('derived done')) ?? 'derived done', release: renderCommand([...fleetCli.split(' '), 'release', '--id', i.id]) };
 }
 
+/**
+ * Could this repo's PR state be read (plan e)? `facts.merged.prs` verbatim — the merged-PR query a handover already
+ * makes, so no extra gh call — plus `owner/repo` from `origin`, to name the account that is needed.
+ */
+export function ghReachability(repo, facts, { git = runGit } = {}) {
+  const prs = facts?.merged?.prs ?? { queried: false, reason: 'not measured' };
+  const url = git(['remote', 'get-url', 'origin'], repo);
+  const parsed = url.ok ? parseOriginRepo(url.stdout) : null;
+  return { gh: { queried: Boolean(prs.queried), ...(prs.queried ? {} : { reason: String(prs.reason ?? 'not queried') }) }, ghRepo: parsed?.slug ?? null };
+}
+
+/** The line a repo whose PR state is unknown gets: what is needed, never a silent "no PRs". */
+export const ghUnknownLine = (r) => `PR state unknown in ${r.path ?? r.repo} (${r.gh?.reason ?? 'not queried'}) — sign in to gh with an account that can read ${r.ghRepo ?? "this repo's origin"}`;
+
 /** Live coordination state for one repo; a repo without fleet state is reported, never an error. */
 function repoState(repo, { env, now, deadlineAt }) {
   const fleetCli = fleetCliFor(repo);
@@ -294,8 +309,9 @@ function repoState(repo, { env, now, deadlineAt }) {
   }
   // A repo with no fleet registry can still hold unregistered work in its worktrees: always look.
   const { facts, live, mergedUnreleased } = gatherLive(repo, { config, env, now, deadlineAt });
+  const gh = ghReachability(repo, facts);
   const unregisteredFor = (claimed) => unregisteredFields(repo, { cwd: repo, config, env, now }, claimed, { facts, list: () => wtList, deadlineAt });
-  if (!fs.existsSync(dir)) return { path: repo, fleetCli, fleet: 'absent', sessions: [], ...unregisteredFor({}) };
+  if (!fs.existsSync(dir)) return { path: repo, fleetCli, fleet: 'absent', sessions: [], ...gh, ...unregisteredFor({}) };
   const ctx = { cwd: repo, config, env, now };
   const sessions = live.map((i) => {
     // An adopted session (`fleet add`) records no worktree: resolve it from where its branch is checked out.
@@ -318,7 +334,7 @@ function repoState(repo, { env, now, deadlineAt }) {
   // that were readable are kept, and the repo is marked so prepare refuses rather than reading "these are all".
   const incomplete = facts.registry?.complete === false ? { fleet: 'error', error: 'registry incomplete (unreadable session records)' } : { fleet: 'present' };
   return {
-    path: repo, fleetCli, ...incomplete, sessions, mergedUnreleased: mergedUnreleased.map((i) => mergedUnreleasedEntry(i, fleetCli)),
+    path: repo, fleetCli, ...incomplete, sessions, mergedUnreleased: mergedUnreleased.map((i) => mergedUnreleasedEntry(i, fleetCli)), ...gh,
     directives: directives.active.length, trains: trains.trains.filter((t) => !['landed', 'abandoned'].includes(t.phase)).length,
     // A merged-unreleased record is still non-terminal, so it still covers its worktree until it is released.
     ...unregisteredFor(coveredBy([...live, ...mergedUnreleased])),
@@ -360,6 +376,8 @@ export const HandoverManifestSchema = z.object({
     repos: z.array(z.object({
       path: z.string(), fleetCli: z.string().optional(), fleet: z.enum(['present', 'absent', 'error']), error: z.string().optional(),
       directives: z.number().optional(), trains: z.number().optional(), sessions: z.array(z.object({ id: z.string() }).passthrough()),
+      // optional: whether this repo's PR state could be read (plan e); absent in a manifest written before it
+      gh: z.object({ queried: z.boolean(), reason: z.string().optional() }).strict().optional(), ghRepo: z.string().nullable().optional(),
       // optional: a manifest written before unregistered-work detection still parses (it just reports none)
       unregistered: z.array(UnregisteredEntry).optional(), unregisteredUnknown: z.string().optional(),
       // optional: a manifest written before defect h's fix lists merged-unreleased claims as sessions instead
@@ -412,6 +430,17 @@ export async function prepareHandover(ctx, flags = {}, { homedir = os.homedir() 
 }
 
 // ── receive ─────────────────────────────────────────────────────────────────
+
+/**
+ * Ids of sibling `handover-<id>.json` manifests newer than `id` (ids sort chronologically); unparseable names ignored.
+ * A directory that cannot be listed is `{ok:false}`, never an empty list: "no newer manifest" must be a measurement.
+ * @returns {{ok: true, newer: string[]} | {ok: false, reason: string}}
+ */
+export function newerManifests(dir, id, { readdir = fs.readdirSync } = {}) {
+  let names;
+  try { names = readdir(dir); } catch (e) { return { ok: false, reason: `${dir} could not be listed (${e.code ?? e.message})` }; }
+  return { ok: true, newer: names.map((n) => /^handover-(.+)\.json$/.exec(n)?.[1]).filter((x) => x && OP_ID_RE.test(x) && x > id).sort() };
+}
 
 /** Parse + validate a manifest; every failure is a named reason, never a clean report. */
 export function loadManifest(file) {
@@ -527,10 +556,18 @@ function sweepStaging(stagingRoot) {
 }
 
 /** receive: verify (same config root) or additively copy (different one) the memory; flag the human steps. */
-export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform = process.platform } = {}) {
-  const loaded = loadManifest(path.resolve(ctx.cwd, flags['--from']));
+export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform = process.platform, readdir = fs.readdirSync } = {}) {
+  const fromFile = path.resolve(ctx.cwd, flags['--from']);
+  const loaded = loadManifest(fromFile);
   if (!loaded.ok) return failed(`${loaded.reason}: ${loaded.detail}`, { handover: { reason: loaded.reason } });
   const m = loaded.manifest;
+  // A newer manifest beside this one means this one is stale (plan l): refuse unless told this is deliberate.
+  // A check that could not run refuses the same way — it never reads as "this is the newest".
+  const fresh = newerManifests(path.dirname(fromFile), m.id, { readdir });
+  if (!flags['--allow-older']) {
+    if (!fresh.ok) return refused(`could not check for a newer handover manifest: ${fresh.reason} — pass --allow-older to receive this one without that check`, { handover: { reason: 'newer-manifest-unknown', detail: fresh.reason } });
+    if (fresh.newer.length) return refused(`a newer handover manifest sits beside this one (handover-${fresh.newer.at(-1)}.json) — receive that one, or pass --allow-older to receive this older one deliberately`, { handover: { reason: 'newer-manifest', newer: fresh.newer } });
+  }
   const destConfigDir = claudeConfigDir(ctx.env, { homedir });
   const destReal = realWithTail(destConfigDir);
   const sameRoot = samePath(destReal, m.sourceConfigDirReal, platform);
@@ -592,6 +629,7 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
   const liveUnknown = [];
   const liveSessions = [];
   const mergedUnreleased = [];
+  const ghUnknown = [];
   const unregistered = [];
   const deadlineAt = Date.now() + UNREGISTERED_BUDGET.handoverMs;
   for (const r of m.scope.repos) {
@@ -606,6 +644,8 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
         g = gatherLive(r.path, { config, env: ctx.env, now: ctx.now, deadlineAt });
       } catch (e) { liveUnknown.push({ repo: r.path, reason: e.message }); }
     }
+    // gh reachability is re-measured here too: the new account may read what the old one could not (or not).
+    if (g) { const reach = ghReachability(r.path, g.facts); if (!reach.gh.queried) ghUnknown.push({ repo: r.path, ...reach }); }
     if (g && fs.existsSync(dir)) {
       if (!g.facts.registry.complete) liveUnknown.push({ repo: r.path, reason: 'registry incomplete (unreadable session records)' });
       claimed = coveredBy([...g.live, ...g.mergedUnreleased]);
@@ -625,7 +665,7 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
   const missingTasks = tasks.filter((t) => t.file === 'missing');
   const handover = {
     id: m.id, mode: sameRoot ? 'same-config-root' : 'copy', dryRun, destConfigDir, sourceConfigDir: m.sourceConfigDir,
-    files, sweep, lockContention, tasks, settings, liveSessions, mergedUnreleased, liveUnknown, unregistered, anomalies: m.anomalies, memoryErrors: m.memoryErrors,
+    files, sweep, lockContention, tasks, settings, liveSessions, mergedUnreleased, ghUnknown, liveUnknown, unregistered, anomalies: m.anomalies, memoryErrors: m.memoryErrors,
     summary: {
       verified: count('verified'), copied: count('copied') + count('copied-source-changed'), present: count('present') + count('present-source-changed'),
       changedSincePrepare: count('changed-since-prepare'), missingSincePrepare: count('missing-since-prepare'),
@@ -688,7 +728,7 @@ export function renderHandoverMarkdown(m, art) {
   L.push('## Scope', '', sr.type === 'resolved'
     ? `Source repo resolved (\`${sr.path}\`); registered consumers included.${sr.registryError ? ` Registry read failed: ${sr.registryError}` : ''}`
     : `**Source repo NOT resolved (${sr.type}: ${sr.reason ?? ''}) — the per-repo layer covers only the invoking repo and --repo.**`, '');
-  for (const r of m.scope.repos) L.push(`- \`${r.path}\` — fleet ${r.fleet}${r.error ? ` (${r.error})` : ''}${r.fleet === 'present' ? ` · ${r.sessions.length} live session(s), ${r.directives ?? 0} directive(s), ${r.trains ?? 0} open train(s)` : ''}`);
+  for (const r of m.scope.repos) L.push(`- \`${r.path}\` — fleet ${r.fleet}${r.error ? ` (${r.error})` : ''}${r.fleet === 'present' ? ` · ${r.sessions.length} live session(s), ${r.directives ?? 0} directive(s), ${r.trains ?? 0} open train(s)` : ''}${r.gh && !r.gh.queried ? ` · **${ghUnknownLine(r)}**` : ''}`);
   L.push('', '## Memory (account-wide)', '');
   for (const mem of m.memory) L.push(`- \`${mem.dirName}\`: ${mem.files.length} file(s)${mem.skipped.length ? `, ${mem.skipped.length} skipped (links/specials)` : ''}`);
   if (!m.memory.length) L.push('- (no memory dirs under this config root)');
@@ -784,6 +824,7 @@ function renderReceiveText(h) {
   for (const x of h.mergedUnreleased ?? []) L.push(`  merged but not released (${x.note}) — release it: ${x.release}${x.repo ? ` (in ${x.repo})` : ''}`);
   const since = h.liveSessions.filter((x) => x.sincePrepare);
   if (since.length) L.push(`  claimed since prepare (no resume prompt in the handover — run fleet status in their repo): ${since.map((x) => `${x.id} (${x.repo})`).join(', ')}`);
+  for (const u of h.ghUnknown ?? []) L.push(`  ${ghUnknownLine(u)}`);
   for (const u of h.liveUnknown) L.push(`  LIVE STATE UNKNOWN in ${u.repo}: ${u.reason}`);
   for (const u of h.unregistered ?? []) {
     if (u.unknown) L.push(`  UNREGISTERED WORK UNKNOWN in ${u.repo}: ${u.unknown}`);
@@ -803,7 +844,8 @@ export async function cmdHandover(ctx, flags, positionals) {
     const { manifest, artifacts } = await prepareHandover(ctx, flags);
     const sessions = manifest.scope.repos.reduce((n, r) => n + r.sessions.length, 0);
     const files = manifest.memory.reduce((n, mm) => n + mm.files.length, 0);
-    const scopeNote = manifest.scope.sourceRepo.type === 'resolved' ? '' : `\n  WARNING: source repo not resolved (${manifest.scope.sourceRepo.type}) — per-repo scope limited to the invoking repo and --repo`;
+    const ghNote = manifest.scope.repos.filter((r) => r.gh && !r.gh.queried).map((r) => `\n  ${ghUnknownLine(r)}`).join('');
+    const scopeNote = ghNote + (manifest.scope.sourceRepo.type === 'resolved' ? '' : `\n  WARNING: source repo not resolved (${manifest.scope.sourceRepo.type}) — per-repo scope limited to the invoking repo and --repo`);
     // A memory dir prepare could not read was NOT measured: the run says so and is not a clean exit.
     const memNote = manifest.memoryErrors.length ? `\n  NOT MEASURED: ${manifest.memoryErrors.map((e) => `${e.dirName} (${e.reason})`).join(', ')} — fix access and re-run prepare` : '';
     const unreg = manifest.scope.repos.reduce((n, r) => n + (r.unregistered ?? []).filter(blocksHandover).length, 0);

@@ -49,6 +49,7 @@ import { checkpointFooter, cmdDirective, cmdNext } from './lib/fleet/coordinatio
 import { cmdRestack } from './lib/fleet/restack.mjs';
 import { cmdPrune } from './lib/fleet/prune.mjs';
 import { cmdArchive } from './lib/fleet/archive.mjs';
+import { HYDRATE_HINT, staleBundleWarning } from './lib/fleet/bundle-stamp.mjs';
 import { cmdHandover } from './lib/fleet/handover.mjs';
 import { renderCommand } from './lib/fleet/shell-quote.mjs';
 import { cmdLand } from './lib/fleet/land.mjs';
@@ -82,12 +83,17 @@ async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   const startedMs = Date.now();
   const verb = process.argv[2];
+  // A hydrated copy in a linked worktree may trail the main checkout's: say so once, on stderr, never failing.
+  let staleHint = null;
+  try { staleHint = staleBundleWarning({ scriptDir: path.dirname(fileURLToPath(import.meta.url)) }); } catch { staleHint = null; }
+  if (staleHint) process.stderr.write(`${staleHint}\n`);
   if (!verb || verb === '--help' || verb === '-h' || verb === 'help') {
     process.stdout.write(USAGE);
     return finishAndExit(verb ? 0 : 2);
   }
   if (!Object.hasOwn(VERBS, verb)) { // own keys only: `toString` is not a verb
-    process.stderr.write(`fleet: unknown verb ${JSON.stringify(verb)}\n${USAGE}`);
+    // An unknown verb is the classic symptom of stale tooling (`release` was missing in one): name the remedy.
+    process.stderr.write(`fleet: unknown verb ${JSON.stringify(verb)}${staleHint ? ` — this worktree's tooling may be stale; run ${HYDRATE_HINT}` : ''}\n${USAGE}`);
     return finishAndExit(2);
   }
 

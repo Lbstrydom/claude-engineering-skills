@@ -58,7 +58,10 @@ export function cmdRelease(ctx, flags) {
   const v = tx.value;
   if (v.missing) return refused(`no session ${id} is registered`);
   const session = v.record ?? v.already;
-  const arch = archiveReport(ctx, { session });
+  // An adopted session (`fleet add`) may record no worktree: resolve it from where its branch is checked out, as
+  // `status` and `archive-check` do — without this, a dirty worktree read CLEAN here (plan §1c, finding a).
+  const resolved = resolveArchiveTarget(ctx, id);
+  const arch = archiveReport(ctx, { session, worktree: session.worktree ?? resolved?.worktree ?? null, inventoryError: resolved?.inventoryError ?? null });
   const head = v.already ? `${id} was already ${v.already.state} — nothing changed` : `released: ${id} (${target})`;
   return ok({ id, state: session.state, changed: Boolean(v.record), archive: arch, text: [head, ...renderArchive(arch, { advisory: true })].join('\n') });
 }
@@ -151,7 +154,10 @@ export function archiveReport(ctx, { session = null, branch = session?.source?.b
   };
   const risks = { staged: [], unstaged: [], untracked: [], ignored: [], unpushed: [] };
   const sizes = {};
-  const ignore = ctx.config?.archiveIgnore ?? [];
+  // Config loads lazily and may be malformed. `release` calls this AFTER its state change has committed, so an
+  // unreadable config is said, never thrown: with no archiveIgnore, every ignored file counts as a risk.
+  let ignore = [];
+  try { ignore = ctx.config?.archiveIgnore ?? []; } catch (e) { unverified.push(`archiveIgnore not read (${e.message}); every ignored file is listed`); }
   const budget = sizeBudget();
   // Commits nothing else holds may sit on the recorded branch AND on whatever the worktree has checked
   // out now (it may have switched since registration): both are probed.
