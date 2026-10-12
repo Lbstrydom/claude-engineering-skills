@@ -131,8 +131,9 @@ const DEFAULT_ARGS = DEFAULT_DIRS.map((d) => `${d}/*.test.mjs`);
  * path directly inside one of DEFAULT_DIRS, with the reason beside it.
  *
  * `tests/fleet-cli.test.mjs`: 132 cases, 189 `fleet.mjs` spawns, a fixture built per test;
- * a large share of the pre-push gate's wall time (docs/runbooks/gate-cost.md has the
- * measurement and the command that re-measures it). Preflight is for catching a late
+ * 96% of one measured run's wall time but 13% of its CPU: node runs a file's tests serially,
+ * so the file is a floor on wall time (docs/runbooks/gate-cost.md has the measurement and
+ * the command that re-measures it). Preflight is for catching a late
  * guard-test failure cheaply BEFORE the first push; the gate still runs everything.
  */
 export const PREFLIGHT_SKIPPED_FILES = Object.freeze([

@@ -19,7 +19,9 @@ All figures *measured* 2026-10-11/12 unless marked. The commands are the evidenc
 |---|---|---|
 | One full pre-push gate, same branch, two runs | **1,647 s** and **2,416 s** | the `# duration_ms` line at the end of each push's TAP (`git push` logged to a file) |
 | The suite without `tests/fleet-cli.test.mjs` | **159.6 s**, 6,860 tests, 928 files | `ls tests/*.test.mjs \| grep -v fleet-cli.test \| xargs node --test --test-reporter=tap` → `# duration_ms 159640.27` |
-| So that one file is, **if** the two runs are comparable | **~85-90%** of gate wall time. **Derived and not yet verified**: the 159.6 s run used only `tests/*.test.mjs` (not the `claudemd/` and `install/` globs the default set also has), under different machine load from the 1,647 s and 2,416 s gate runs, so it cannot attribute that difference to one file. The first full run with this slice's summary measures the share *within a single run* (§9 Acceptance) | derived from the two rows above; verified only by the criterion below |
+| So that one file is, **if** the two runs are comparable | **~85-90%** of gate wall time. **Derived across two runs, not attributable**: the 159.6 s run used only `tests/*.test.mjs`, under different machine load from the 1,647 s and 2,416 s gate runs. Superseded by the next two rows, which measure it inside ONE run | derived from the two rows above |
+| **Within one run (the acceptance measurement, 2026-10-12)** | one full `npm test`: **949 files, 1,009 s wall, Σ test-body 7,344 s** (summed over parallel workers). `tests/fleet-cli.test.mjs` = **972 s: 13.2% of Σ, 96% of wall**. The whole `fleet-*` family is 44.5% of Σ. Next-longest file 218 s; median 76 ms | `TEST_TIMING_KEEP=… node scripts/run-tests.mjs`; analysis in `docs/runbooks/gate-cost.md` §2 |
+| **Why 13% of CPU is 96% of wall** | `node --test` parallelises across files but runs the tests inside one file serially, so a file's body is a floor on wall time: `max(longest file, Σ / workers)` = **972 s** with the file, **218 s** without (derived). Wall time is a *critical-path* cost; the earlier "dominant cost" framing read it as a CPU share. The 85-90% estimate is directionally confirmed (96% of this run's wall) by a different mechanism than assumed | derived from the row above; not measured: how much of the 972 s is contention with the other 31 workers |
 | `tests/fleet-cli.test.mjs` | 132 `it()` cases, 189 `fleet.mjs` spawns, a fixture built per test | `grep -c -E '^\s*it\(' …`, `grep -o -E '\bf\(\[' … \| wc -l`, `setup()` → `makeFleetRepo` at `tests/fleet-cli.test.mjs:46` (5157ff65) |
 | Why a spawn is slow | node start **0.07 s**, `import fleet.mjs` **0.2 s**, `claim` **2.0 s** wall with **39** subprocesses, `status` **1.7 s** / **21**, `next` **0.37 s** / **4**; the cost is subprocess count × Windows spawn time × load, not interpreter start | a `--import` preload that wraps `child_process` and logs count and wall time per call, run against a throwaway fixture repo |
 | Enumerating the default test files does not fit on a Windows command line | `ls tests/*.test.mjs` is **927** files and **34,209** characters joined (limit for one process: 32,767), so a preflight that passes filenames to `node --test` would fail to launch on this machine; `node --test` does accept a negated glob, and `fs.globSync('tests/!(fleet-cli).test.mjs')` returns 926 of the 927 | `ls tests/*.test.mjs \| tr '\n' ' ' \| wc -c`; `node --test 'tests/!(fleet-cli).test.mjs'` (926 files ran) |
@@ -90,14 +92,14 @@ flowchart LR
 | `package.json` | modify | `"test:preflight": "node scripts/run-tests.mjs --preflight"` |
 | `tests/run-tests-timing.test.mjs` | create | reporter, summary, degradation and verdict-independence |
 | `tests/run-tests-preflight.test.mjs` | create | selection, skip-list integrity, usage errors, banner |
-| `docs/runbooks/gate-cost.md` (planned) | create | the §1.1 table with commands, when to use preflight, follow-ups |
+| `docs/runbooks/gate-cost.md` | create | the §1.1 table with commands, when to use preflight, follow-ups |
 
 Close-out (not a phase): `npm run docs:check`, `npm run plans:index`, `npm run knip:gate`, `npm run cli:flags:gate`, `npm run size:ratchet:gate`, `npm run stdout:flush:gate`.
 
 ### 7b. Implementation Phases
 
 **Phase 1 — Timing visible**: the reporter, `buildReporterArgs` option, `finishRun`, the summary on stderr. Files: `scripts/lib/test-timing-reporter.mjs` (create), `scripts/run-tests.mjs` (modify), `tests/run-tests-timing.test.mjs` (create).
-**Phase 2 — Preflight and the record**: `selectTestArgs`, `PREFLIGHT_SKIPPED_FILES`, the `--preflight` flag and banner, the npm script, the runbook. Files: `scripts/run-tests.mjs` (modify), `package.json` (modify), `tests/run-tests-preflight.test.mjs` (create), `docs/runbooks/gate-cost.md` (planned) (create).
+**Phase 2 — Preflight and the record**: `selectTestArgs`, `PREFLIGHT_SKIPPED_FILES`, the `--preflight` flag and banner, the npm script, the runbook. Files: `scripts/run-tests.mjs` (modify), `package.json` (modify), `tests/run-tests-preflight.test.mjs` (create), `docs/runbooks/gate-cost.md` (create).
 
 ## 8. Risk & Trade-off Register
 
@@ -110,7 +112,7 @@ Close-out (not a phase): `npm run docs:check`, `npm run plans:index`, `npm run k
 | Another session edits `scripts/run-tests.mjs` | It is in this chip's fleet claim; `fleet next` at each checkpoint |
 
 **Deferred, with reasons** (each is a follow-up, none is a band-aid for this slice):
-1. **`fleet-cli` fixture sharing and spawn memoisation** — the dominant cost (~85-90%). Held by `claude/fleet-unclaimed-work-impl` (`tests/fleet-*.test.mjs`, `tests/helpers/fleet-repo.mjs`, `scripts/lib/fleet/**`). Findings handed to the CE coordinator: build the fixture once per file from a template copy; memoise the duplicate `rev-parse` calls inside one command (9× `rev-parse --verify`, 6× `--path-format=absolute` in one `claim`); skip `gh pr list` in `claim` when nothing needs it.
+1. **Take `fleet-cli` off the critical path — split or parallelise it, THEN cut its CPU.** Re-ordered by the §1.1 measurement: the file is 96% of wall but 13% of CPU, so the lever that moves wall time is splitting the file (or running its independent `describe` blocks with `concurrency`) with no assertion changed; fixture sharing and spawn memoisation shrink CPU and help the other 29 `fleet-*` files (2,298 s) but do not by themselves move a single-file floor. First step is a measurement: the file alone on a quiet machine versus its 972 s here (the gap is contention). Held by `claude/fleet-unclaimed-work-impl` (`tests/fleet-*.test.mjs`, `tests/helpers/fleet-repo.mjs`, `scripts/lib/fleet/**`). Findings handed to the CE coordinator: build the fixture once per file from a template copy; memoise the duplicate `rev-parse` calls inside one command (9× `rev-parse --verify`, 6× `--path-format=absolute` in one `claim`); skip `gh pr list` in `claim` when nothing needs it.
 2. **Train `testCommand` tiers in `.fleet.json`** — moves the trust boundary (what runs per push versus per train). Needs enforcement in the landing path, not prose; do it after (1) shrinks the number.
 3. **Shadow train-interaction audit** — a read-only, human-invoked audit over a frozen batch, to measure whether cross-branch findings are worth building anything for. Not before there is a baseline.
 4. **Impact-tiered audit depth** — sized in §1.1 at ≤10% of PRs; revisit only with a better classifier than file extension.
@@ -133,7 +135,7 @@ Not tested by spawning the whole suite: that is the gate's job, and the prefligh
 
 See §8 "Deferred". Memory note for later sessions: the full-suite-before-first-push habit this slice automates is recorded in `feedback_run_whole_suite_before_first_push.md`.
 
-**Acceptance (measured, not asserted)**: the first full pre-push gate after this lands prints the summary. The runbook then records the **within-run** share of `tests/fleet-cli.test.mjs` from that output and replaces the "derived, unverified" row in §1.1 with the measured number, with the command. If the share is not the dominant one, the follow-up ordering in §8 is revisited before anyone builds on it.
+**Acceptance (measured, not asserted) — MET 2026-10-12**: a full `npm test` with the summary and `TEST_TIMING_KEEP` measured the **within-run** share: `tests/fleet-cli.test.mjs` is 13.2% of Σ test-body (972 s of 7,344 s) and 96% of the 1,009 s wall. The §1.1 "derived, unverified" row is replaced with that, with the command, in `docs/runbooks/gate-cost.md` §2. The measurement did what the criterion asked: it changed the follow-up ordering in §8 (split or parallelise first, CPU second), because the cost is a critical-path cost and not a CPU share.
 
 ## Remaining / debt (from the final gate)
 
