@@ -44,6 +44,18 @@ test('normalizeRemediationUpdates rejects malformed updates with a reason', () =
   assert.match(rejected[2].reason, /non-terminal/);
 });
 
+test('Phase 9: a null / non-object entry is REJECTED, never a TypeError past the per-row fail-open loop', () => {
+  const { valid, rejected } = normalizeRemediationUpdates([null, 'x', { findingFingerprint: 'a', state: 'fixed' }]);
+  assert.deepEqual(valid, [{ fingerprint: 'a', state: 'fixed', resolvedRound: null }]);
+  assert.deepEqual(rejected.map((r) => r.reason), ['update is not an object', 'update is not an object']);
+});
+
+test('Phase 5: reconcile targets and normalized updates carry the selected row id through', () => {
+  const targets = selectReconcileTargets([{ id: 'row-7', finding_fingerprint: 'a', remediation_state: 'pending' }], new Map([['a', 'fixed']]));
+  assert.deepEqual(targets, [{ fingerprint: 'a', state: 'fixed', id: 'row-7' }]);
+  assert.equal(normalizeRemediationUpdates(targets).valid[0].id, 'row-7');
+});
+
 test('normalizeRemediationUpdates tolerates a non-array input', () => {
   assert.deepEqual(normalizeRemediationUpdates(undefined), { valid: [], rejected: [] });
 });

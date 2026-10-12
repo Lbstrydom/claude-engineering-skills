@@ -664,6 +664,7 @@ describe('a declined write is `skipped`, not `lost`', () => {
       'no-persistable-rows': 'terminal success: the payload maps to zero rows on every attempt',
       'no-rows': 'terminal success: the payload maps to zero rows on every attempt',
       'repo-identity-unresolved': 'a non-null, non-UUID identity is a genuine mislabel attempt — the sync would have written repo-scoped patterns as cross-repo GLOBAL. A failure worth counting. (A NULL identity is `no-repo-identity`, a decline.)',
+      'round-probe-unresolved': 'recordPassStats could not resolve whether audit_pass_stats.round exists (the probe failed twice), so it writes nothing: attempted, not declined. Filing the row without its round would default it to round 1 on a migrated store — wrong data, silently. audit.passStats is lost-only, so this surfaces as a kept `lost` artifact and an incomplete run.',
       'no-pool': 'final gate G1: classified as a FAILURE deliberately. getPool() returning null means no DSN resolved, which looks like a decline — but the state is barely reachable, so no test can pin the reading down, and mistaking a real failure for a decline DELETES the envelope while the converse only spills one.',
     };
 
