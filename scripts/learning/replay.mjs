@@ -21,7 +21,10 @@
  *   - a FAILURE is an `{ok:false, error}` envelope on stdout AND exit 1 — a
  *     non-zero exit with empty stdout was the old behaviour for every refusal.
  *   - `sampleSize: 0` is NOT "no difference": the store may be off or unreadable,
- *     or nothing matched. A stderr WARNING (and a markdown block) says so.
+ *     or nothing matched. A stderr WARNING (and a markdown block) says so, and the
+ *     JSON envelope carries `measured: false` (`measured: true` for a non-empty
+ *     sample) — still `ok: true`, exit 0: an empty sample is unmeasured, never a
+ *     refusal and never a zero (decision 2026-10-12).
  *
  * Plan: docs/plans/adaptive-learning-phase-3-replay.md §2 (replay CLI)
  *
@@ -358,12 +361,16 @@ export async function runReplayCli(args, { replayFn = replay } = {}) {
 
   const notice = emptySampleNotice(result);
   if (notice) process.stderr.write(`[replay] WARNING: ${notice}\n`);
+  // `measured` rides the stdout envelope so a caller reading only stdout or the
+  // exit code cannot mistake an empty sample for a clean zero. Fails closed: a
+  // missing or non-numeric sampleSize is not a measurement either.
+  const envelope = { ...result, measured: Number.isFinite(result?.sampleSize) && result.sampleSize > 0 };
   if (format === 'markdown') {
-    process.stdout.write(renderMarkdownReport(result) + '\n');
+    process.stdout.write(renderMarkdownReport(envelope) + '\n');
   } else {
-    process.stdout.write(JSON.stringify(result) + '\n');
+    process.stdout.write(JSON.stringify(envelope) + '\n');
   }
-  return result;
+  return envelope;
 }
 
 if (isMain) {

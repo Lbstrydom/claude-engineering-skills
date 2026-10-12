@@ -582,14 +582,34 @@ describe('replay CLI / an empty sample is not a clean result (ledger af81be85)',
     assert.equal(emptySampleNotice(undefined), null);
   });
 
-  it('sampleSize 0 ⇒ stderr WARNING, stdout JSON UNCHANGED and still ok:true (the library contract)', async () => {
+  // Decision 2026-10-12 (user): this used to pin "stdout JSON UNCHANGED", so a
+  // caller reading only stdout or the exit code saw ok:true + a zero delta — a
+  // clean zero. The envelope now carries `measured:false` (AGENTS.md shape (7):
+  // end in measured:false, never a refusal and never a zero). ok:true and exit 0
+  // are deliberately KEPT; only the stderr WARNING is not on stdout.
+  it('sampleSize 0 ⇒ stderr WARNING, stdout JSON ok:true AND measured:false', async () => {
     const { result, out, err } = await runCaptured(['pass_selection'], { replayFn: spy(zeroResult()) });
     assert.equal(result.ok, true);
+    assert.equal(result.measured, false, 'the returned result is the written envelope');
     assert.match(err, /\[replay\] WARNING:.*NOT evidence/);
     const parsed = JSON.parse(out);
     assert.equal(parsed.ok, true);
     assert.equal(parsed.sampleSize, 0);
-    assert.equal(Object.hasOwn(parsed, 'warning'), false, 'stdout JSON is a contract — the notice rides stderr and markdown only');
+    assert.equal(parsed.measured, false);
+    assert.equal(Object.hasOwn(parsed, 'warning'), false, 'the notice prose rides stderr and markdown only');
+  });
+
+  it('a non-empty sample ⇒ stdout JSON measured:true', async () => {
+    const { result, out } = await runCaptured(['pass_selection'], { replayFn: spy(zeroResult({ sampleSize: 7 })) });
+    assert.equal(result.measured, true);
+    const parsed = JSON.parse(out);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.measured, true);
+  });
+
+  it('a result with no numeric sampleSize is NOT measured (fails closed)', async () => {
+    const { out } = await runCaptured(['pass_selection'], { replayFn: spy(zeroResult({ sampleSize: undefined })) });
+    assert.equal(JSON.parse(out).measured, false);
   });
 
   it('sampleSize 0 with --format=markdown carries the warning in the report', async () => {
