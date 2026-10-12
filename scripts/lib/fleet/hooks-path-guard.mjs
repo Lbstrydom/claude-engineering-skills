@@ -45,6 +45,15 @@ export function realpathLenient(p, { realpath = fs.realpathSync.native } = {}) {
 }
 
 /**
+ * A win32 link target without its `\\?\` namespace prefix: `\\?\UNC\srv\share\x` is `\\srv\share\x`, `\\?\C:\x` is
+ * `C:\x`. win32 only — on POSIX a backslash is an ordinary filename character.
+ */
+export function unNamespace(target) {
+  if (/^\\\\\?\\UNC\\/i.test(target)) return `\\\\${target.slice(8)}`;
+  return target.replace(/^\\\\\?\\/, '');
+}
+
+/**
  * Every directory entry the filesystem passes through to reach absolute path `p`, in order, symlink and junction
  * entries and their targets included; past the first missing entry the rest is joined lexically (there is no disk
  * left to consult). POSIX resolves `..` physically, after the symlink before it; the Win32 API collapses `..`
@@ -77,7 +86,7 @@ export function traversedEntries(p, { lstat = fs.lstatSync, readlink = fs.readli
       }
       if (!st.isSymbolicLink()) { cur = entry; continue; }
       if (++hops > MAX_SYMLINK_HOPS) throw Object.assign(new Error(`more than ${MAX_SYMLINK_HOPS} symlinks resolving ${p}`), { code: 'ELOOP' });
-      const target = String(readlink(entry)).replace(/^\\\\\?\\/, ''); // a junction's target may carry the \\?\ prefix
+      const target = platform === 'win32' ? unNamespace(String(readlink(entry))) : String(readlink(entry));
       const rest = parts.slice(i + 1).join(P.sep);
       const base = P.isAbsolute(target) ? target : `${cur}${cur.endsWith(P.sep) ? '' : P.sep}${target}`;
       next = rest ? `${base}${P.sep}${rest}` : base;
@@ -86,6 +95,22 @@ export function traversedEntries(p, { lstat = fs.lstatSync, readlink = fs.readli
     if (next === null) return { entries, resolved: cur };
     pending = platform === 'win32' ? P.resolve(next) : next;
   }
+}
+
+/**
+ * The canonical spelling of a walked entry (case, 8.3 short names, symlinked parents). An existing entry that is not
+ * a link is realpathed whole — its own name may be a short-name alias; a link or an absent entry keeps its own name
+ * under a canonical parent, since realpathing a link would follow it away from the entry being judged.
+ * @returns {{ok: true, path: string} | {ok: false, reason: string}}
+ */
+export function canonicalEntry(e, { realpath = fs.realpathSync.native, lstat = fs.lstatSync } = {}) {
+  let st = null;
+  try { st = lstat(e); } catch (err) { if (err?.code !== 'ENOENT' && err?.code !== 'ENOTDIR') return { ok: false, reason: `lstat ${e}: ${err?.code ?? err?.message}` }; }
+  if (st && !st.isSymbolicLink()) {
+    try { return { ok: true, path: realpath(e) }; } catch (err) { return { ok: false, reason: `realpath ${e}: ${err?.code ?? err?.message}` }; }
+  }
+  const parent = realpathLenient(path.dirname(e), { realpath });
+  return parent.ok ? { ok: true, path: path.join(parent.path, path.basename(e)) } : parent;
 }
 
 /** Is `p` the directory `dir` or inside it? Compared by path COMPONENT (`A/..hooks` is inside A); case folds on win32. */
@@ -157,14 +182,13 @@ export function hooksPathDependents(target, worktrees, { git = runGit, realpath 
     return done();
   }
   // The DEEPEST entry inside `target` (the link or directory that dies with it, not merely `target` itself), compared
-  // by canonical spelling: the entry's parent realpathed, its own name kept.
+  // by canonical spelling.
   const insideTarget = (entries) => {
     let hit = null;
     for (const e of entries) {
-      const parent = realpathLenient(path.dirname(e), { realpath });
-      if (!parent.ok) throw Object.assign(new Error(parent.reason), { code: 'EUNRESOLVED' });
-      const canonical = path.join(parent.path, path.basename(e));
-      if (isWithin(canonical, targetReal)) hit = canonical;
+      const c = canonicalEntry(e, { realpath, ...(lstat ? { lstat } : {}) });
+      if (!c.ok) throw Object.assign(new Error(c.reason), { code: 'EUNRESOLVED' });
+      if (isWithin(c.path, targetReal)) hit = c.path;
     }
     return hit;
   };

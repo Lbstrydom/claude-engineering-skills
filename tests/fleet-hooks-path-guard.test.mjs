@@ -12,7 +12,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { git } from './helpers/git.mjs';
 import { addBranch, cleanupFleetRoots, installFakeGh, makeFleetRepo, runFleet, scrubbedEnv, tmpRoot } from './helpers/fleet-repo.mjs';
-import { hooksLocation, hooksPathDependents, hooksPathRefusals, isWithin, realpathLenient, remedyFor, traversedEntries } from '../scripts/lib/fleet/hooks-path-guard.mjs';
+import {
+  canonicalEntry, hooksLocation, hooksPathDependents, hooksPathRefusals, isWithin, realpathLenient, remedyFor, traversedEntries, unNamespace,
+} from '../scripts/lib/fleet/hooks-path-guard.mjs';
 import { applyArchive, planArchive } from '../scripts/lib/fleet/archive.mjs';
 import { applyPrune } from '../scripts/lib/fleet/prune.mjs';
 import { resolveArchiveTarget } from '../scripts/lib/fleet/lifecycle.mjs';
@@ -193,6 +195,28 @@ describe('hooksPathDependents', () => {
     assert.equal(loc.scope, 'default');
     assert.equal(path.basename(loc.resolved), 'hooks');
     assert.equal(path.basename(path.dirname(loc.resolved)), '.git', 'the common dir, shared by every worktree');
+  });
+
+  it('link targets: the \\\\?\\ namespace is stripped on win32 only, and a namespaced UNC target stays an absolute UNC path', () => {
+    assert.equal(unNamespace('\\\\?\\C:\\w\\A'), 'C:\\w\\A');
+    assert.equal(unNamespace('\\\\?\\UNC\\srv\\share\\W\\.githooks'), '\\\\srv\\share\\W\\.githooks');
+    assert.equal(unNamespace('\\\\srv\\share\\x'), '\\\\srv\\share\\x', 'an ordinary UNC path is untouched');
+    const viaUnc = traversedEntries('C:\\w\\l', { lstat: (p) => ({ isSymbolicLink: () => p === 'C:\\w\\l' }), readlink: () => '\\\\?\\UNC\\srv\\share\\W', platform: 'win32' });
+    assert.equal(viaUnc.resolved, '\\\\srv\\share\\W');
+    // POSIX: a backslash is a filename character — a link named target is joined verbatim, never "un-namespaced"
+    const literal = traversedEntries('/w/l', { lstat: (p) => ({ isSymbolicLink: () => p === '/w/l' }), readlink: () => '\\\\?\\odd', platform: 'linux' });
+    assert.equal(literal.resolved, '/w/\\\\?\\odd');
+  });
+
+  it('canonicalEntry realpaths an existing non-link entry WHOLE (a short-name alias of the worktree root), but never follows a link', () => {
+    const realpath = (p) => ({ '/w/ALIAS~1': '/w/A', '/w': '/w', '/w/A': '/w/A' })[p] ?? p;
+    const dir = { isSymbolicLink: () => false }; const link = { isSymbolicLink: () => true };
+    assert.deepEqual(canonicalEntry('/w/ALIAS~1', { realpath, lstat: () => dir }), { ok: true, path: '/w/A' }, 'the alias IS the worktree root');
+    assert.deepEqual(canonicalEntry('/w/ALIAS~1', { realpath, lstat: () => link }), { ok: true, path: path.join('/w', 'ALIAS~1') }, 'a link keeps its own name');
+    const enoent = Object.assign(new Error('absent'), { code: 'ENOENT' });
+    assert.deepEqual(canonicalEntry('/w/A/not-yet', { realpath, lstat: () => { throw enoent; } }), { ok: true, path: path.join('/w/A', 'not-yet') });
+    const eacces = Object.assign(new Error('denied'), { code: 'EACCES' });
+    assert.equal(canonicalEntry('/w/x', { realpath, lstat: () => { throw eacces; } }).ok, false, 'only absence is tolerated');
   });
 
   it('remedyFor never rewrites configuration shared with other repositories', () => {
