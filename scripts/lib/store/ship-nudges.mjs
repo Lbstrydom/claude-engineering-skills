@@ -154,9 +154,14 @@ export function resolveNudgePage(opts = {}) {
  * closed. Each row carries `fixed_at_cursor` (`fixed_at::text`, microsecond-
  * exact — a JS Date would truncate a tie) for building the next cursor.
  *
+ * `opts.strict` rethrows a failed query instead of returning `[]`. Default off,
+ * because the nudge callers want the never-throw degrade; a cursor walk must
+ * turn it on, since an empty page there is indistinguishable from the end.
+ *
  * @param {{repoId?: string|null, allRepos?: boolean}} scope
  * @param {{mode?: 'code'|'plan'|null, limit?: number|null, offset?: number|null,
- *          allAges?: boolean, after?: {fixedAt: string, findingId: string}|null}} [opts]
+ *          allAges?: boolean, after?: {fixedAt: string, findingId: string}|null,
+ *          strict?: boolean}} [opts]
  */
 export async function getUnlockedFixes(scope, opts = {}) {
   const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'getUnlockedFixes');
@@ -210,6 +215,11 @@ export async function getUnlockedFixes(scope, opts = {}) {
     );
   } catch (err) {
     process.stderr.write(`  [learning] getUnlockedFixes failed: ${err.message}\n`);
+    // `strict` is for a caller that PAGES: a failed query degraded to `[]` is a
+    // short page, which a cursor walk reads as "no more rows" and stops — the
+    // unread tail silently never examined. Every other caller keeps the nudge's
+    // never-throw degrade.
+    if (opts?.strict) throw err;
     return [];
   }
 }
@@ -443,8 +453,12 @@ export async function countAgedUnlockedFixes(scope) {
  * contract as `getUnlockedFixes`'s; rows carry `accepted_at_cursor`.
  *
  * @param {{repoId?: string|null, allRepos?: boolean}} scope
+ * `opts.strict` — rethrow a failed query rather than return `[]`; same contract
+ * as `getUnlockedFixes`'s.
+ *
  * @param {{limit?: number|null, offset?: number|null, allAges?: boolean,
- *   after?: {severityRank: number, acceptedAt: string, findingId: string}|null}} [opts]
+ *   after?: {severityRank: number, acceptedAt: string, findingId: string}|null,
+ *   strict?: boolean}} [opts]
  */
 export async function getUnremediatedAcceptances(scope, opts = {}) {
   const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'getUnremediatedAcceptances');
@@ -521,6 +535,8 @@ export async function getUnremediatedAcceptances(scope, opts = {}) {
     );
   } catch (err) {
     process.stderr.write(`  [learning] getUnremediatedAcceptances failed: ${err.message}\n`);
+    // See getUnlockedFixes: a paging caller opts into the throw (`strict`).
+    if (opts?.strict) throw err;
     return [];
   }
 }

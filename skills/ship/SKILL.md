@@ -366,7 +366,7 @@ keyset cursor, so closing rows between reads neither repeats nor skips one
 unread row per row closed). `nextCursor: null` is the end:
 
 ```bash
-node scripts/cross-skill.mjs list-unremediated-acceptances --limit 20 --after eyJ2IjoxLC4uLn0
+node scripts/cross-skill.mjs list-unremediated-acceptances --limit 20 --after eyJ2IjoxLCJraW5kIjoidW5yZW1lZGlhdGVkIiwic2V2ZXJpdHlSYW5rIjowLCJhY2NlcHRlZEF0IjoiMjAyNi0wOS0xMyAxMDowMDowMC4wMDAwMDErMDAiLCJmaW5kaW5nSWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEifQ
 ```
 
 The payload echoes the resolved `limit` (store clamps to 200), so a short page

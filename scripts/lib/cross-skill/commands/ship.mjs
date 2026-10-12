@@ -9,7 +9,7 @@
 import { CommandError } from '../dispatch.mjs';
 import { groupIntoWorkUnits, wantsWorkUnits } from '../work-unit-grouping.mjs';
 import { findRepoRootFromCwd } from '../../assert-repo-root.mjs';
-import { isPgTimestamptzText, UUID } from './final-review.mjs';
+import { isPgTimestamptzText, UUID } from '../validators.mjs';
 
 /**
  * The repo root every lock-related path check is anchored to. Resolved through
@@ -140,6 +140,27 @@ const nextCursorFor = (kind, rows, limit) => (rows.length > 0 && rows.length >= 
   ? encodeNudgeCursor(kind, rows[rows.length - 1]) : null);
 
 /**
+ * One page from a nudge reader, with a failed query surfaced as a failure.
+ *
+ * The readers' default is to swallow a query error and return `[]` — right for
+ * a pre-push nudge, wrong here: an empty page ends a cursor walk
+ * (`nextCursor: null`), so a transient store error mid-walk would read as "no
+ * more rows" and the unread tail would silently never be examined. A thrown
+ * CommandError carries `measured:false` and NO `nextCursor`, so a caller cannot
+ * mistake it for exhaustion. The other reader callers (the /ship nudge cards)
+ * stay on the degrade path.
+ */
+async function readPageStrict(read) {
+  try {
+    return await read();
+  } catch (err) {
+    throw new CommandError('STORE_READ_FAILED',
+      `could not read this page, so the list is NOT known to be complete: ${err.message}`,
+      { measured: false, reason: 'store-read-failed' }, 1);
+  }
+}
+
+/**
  * Locks whose cited `spec_path` no longer resolves — a hole in exactly the coverage this
  * nudge reports, and invisible from the view itself.
  *
@@ -207,7 +228,7 @@ export async function listUnlockedFixesCmd(ctx) {
   // an unbounded ship-time nudge becomes noise and earns `--no-verify`.
   const allAges = ctx.hasFlag('all-ages');
   const page = { ...pageArgs(ctx), allAges, after: afterArg(ctx, 'unlocked') };
-  const rows = await ctx.deps.getUnlockedFixes(storeScope, page);
+  const rows = await readPageStrict(() => ctx.deps.getUnlockedFixes(storeScope, { ...page, strict: true }));
   const byMode = await ctx.deps.countUnlockedFixes(storeScope, { allAges });
   const aged = await ctx.deps.countAgedUnlockedFixes(storeScope);
   const danglingLocks = await danglingLocksFor(ctx, scope.repoId ?? null);
@@ -257,7 +278,7 @@ export async function listUnremediatedAcceptancesCmd(ctx) {
   const storeScope = storeScopeFor(scope);
   const allAges = ctx.hasFlag('all-ages');
   const page = { ...pageArgs(ctx), allAges, after: afterArg(ctx, 'unremediated') };
-  const rows = await ctx.deps.getUnremediatedAcceptances(storeScope, page);
+  const rows = await readPageStrict(() => ctx.deps.getUnremediatedAcceptances(storeScope, { ...page, strict: true }));
   const byMode = await ctx.deps.countUnremediatedAcceptances(storeScope, { allAges });
   const aged = await ctx.deps.countAgedUnremediatedAcceptances(storeScope);
   const acceptedPermanent = await ctx.deps.countAcceptedPermanent(storeScope);

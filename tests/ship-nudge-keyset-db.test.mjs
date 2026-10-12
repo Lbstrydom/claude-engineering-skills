@@ -131,4 +131,33 @@ describe('nudge readers — keyset paging survives rows closed between reads (di
     const p2 = await nudges.getUnlockedFixes({ allRepos: true }, { limit: 2, allAges: true, after: cursorOf('unlocked', full[1]) });
     assert.deepEqual(ids(p2), ids(full.slice(2, 4)));
   });
+
+  // A REAL failed query, no stub: an out-of-domain cursor member (which `decodeNudgeCursor` would
+  // refuse, so it can only arrive here from a caller that skips it) makes Postgres reject the
+  // cast with 22007. By default the reader swallows that into `[]` — the nudge callers want the
+  // never-throw degrade — but to a cursor walk `[]` is indistinguishable from the end of the
+  // list, so `strict` must surface it.
+  const BAD_TS = 'not-a-timestamp';
+  const FAILING = [
+    ['getUnlockedFixes', { fixedAt: BAD_TS, findingId: '11111111-1111-4111-8111-111111111111' }],
+    ['getUnremediatedAcceptances', { severityRank: 0, acceptedAt: BAD_TS, findingId: '11111111-1111-4111-8111-111111111111' }],
+  ];
+  for (const [reader, after] of FAILING) {
+    it(`${reader}: a failed query degrades to [] by default (the nudge contract)…`, async () => {
+      const { captureStderr } = await import('./helpers/capture-stderr.mjs');
+      const { result, text } = await captureStderr(() => nudges[reader]({ repoId }, { limit: 2, after }));
+      assert.deepEqual(result, []);
+      assert.match(text, new RegExp(`${reader} failed`), 'the degrade is still LOUD on stderr');
+    });
+
+    it(`${reader}: …and with strict it THROWS, so a paging caller cannot read it as the end of the list`, async () => {
+      const { captureStderr } = await import('./helpers/capture-stderr.mjs');
+      let thrown;
+      await captureStderr(async () => {
+        try { await nudges[reader]({ repoId }, { limit: 2, after, strict: true }); } catch (e) { thrown = e; }
+      });
+      assert.ok(thrown, 'strict must rethrow the Postgres error');
+      assert.equal(thrown.code, '22007', 'the real SQLSTATE for an invalid timestamp reaches the caller');
+    });
+  }
 });
