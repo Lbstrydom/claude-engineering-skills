@@ -770,3 +770,22 @@ describe('computeAncestryDecisions — an unanswered git question fails closed',
     assert.equal(await decide({ [KEYS.storedAncOfHead]: 128, [KEYS.storedExists]: 128, [KEYS.headExists]: 0 }), true);
   });
 });
+
+describe('computeAncestryDecisions — the head probe is loop-invariant', () => {
+  it('probes the head commit ONCE however many distinct stored refs there are, and still decides each ref', async () => {
+    const { computeAncestryDecisions } = await import('../scripts/lib/audit/event-wiring-corpus.mjs');
+    const HEAD = 'b'.repeat(40);
+    const refs = ['1'.repeat(40), '2'.repeat(40), '3'.repeat(40)];
+    const calls = [];
+    const runGit = (args) => {
+      calls.push(args.join(' '));
+      // every stored ref: not an ancestor of head (exit 1), exists, and head is not an ancestor of it (exit 1)
+      if (args[0] === 'merge-base') throw Object.assign(new Error('exit 1'), { status: 1 });
+      return Buffer.from('');
+    };
+    const d = computeAncestryDecisions('/unused', HEAD, refs.map((r) => ({ lastObservedRef: r })), undefined, { runGit });
+    assert.deepEqual(refs.map((r) => d.get(r)), [true, true, true], 'divergent history applies for each');
+    assert.equal(calls.filter((c) => c === 'cat-file -e ' + HEAD + '^{commit}').length, 1, 'the head probe ran once, not once per stored ref');
+    assert.equal(calls.filter((c) => c.startsWith('cat-file -e ' + '1'.repeat(40))).length, 1, 'while each stored ref is still probed itself');
+  });
+});

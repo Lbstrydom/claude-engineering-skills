@@ -724,12 +724,13 @@ export function computeAncestryDecisions(repoPath, headRef, openRecords, env, { 
   // not be RUN at all (no binary, a signal, a timeout). Only the first two say
   // anything about the commits; null is an operational failure.
   const exitCode = (args) => { try { git(args); return 0; } catch (err) { return Number.isInteger(err?.status) ? err.status : null; } };
+  let headCode;
   for (const storedRef of distinctStoredRefs) {
     if (storedRef === headRef) { decisions.set(storedRef, true); continue; }
     // "is storedRef an ancestor of headRef" — i.e. is headRef newer-or-equal.
     if (exitCode(['merge-base', '--is-ancestor', storedRef, headRef]) === 0) { decisions.set(storedRef, true); continue; }
     const storedCode = exitCode(['cat-file', '-e', `${storedRef}^{commit}`]);
-    const headCode = exitCode(['cat-file', '-e', `${headRef}^{commit}`]);
+    if (headCode === undefined) headCode = exitCode(['cat-file', '-e', `${headRef}^{commit}`]); // loop-invariant: probed once
     if (headCode !== 0 || storedCode === null) {
       // git cannot evaluate this run's own head, or could not be run to look at
       // the stored one — fail closed (Gemini round-3 G2: never throw, never apply
