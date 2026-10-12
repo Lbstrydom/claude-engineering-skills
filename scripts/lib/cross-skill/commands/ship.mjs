@@ -588,6 +588,46 @@ async function lockWithTestWorksheet(ctx) {
  * two rows. Picking the newest would silently repair one citation and leave the
  * other — which is how the second dangling row in the report came to exist.
  */
+/**
+ * `close-finding` — discharge ONE finding by row id: `--as fixed` (with
+ * `--commit`), `--as dismissed`, or `--as accepted-permanent` (both with a
+ * mandatory `--reason`).
+ *
+ * The closing command `/ship` Step 0.5e printed, `final-review-record-fix`, is
+ * scoped to final-review passes, so it could not close any ordinary-pass
+ * finding — every row of the 2026-10-02 queue. By id, not run+fingerprint:
+ * the ids are what both nudge readers print, and an id cannot match a second
+ * row in another bucket or pass.
+ */
+export async function closeFindingCmd(ctx) {
+  if (!ctx.cloud.enabled) return { ...ctx.degrade(), closed: false };
+  const findingId = ctx.flag('finding');
+  const disposition = ctx.flag('as');
+  const reason = ctx.flag('reason') ?? '';
+  const commitSha = ctx.flag('commit') ?? null;
+  if (!findingId || !ctx.deps.FINDING_DISPOSITIONS.includes(disposition)) {
+    return { ok: false, closed: false, error: 'close-finding needs --finding and --as fixed|dismissed|accepted-permanent. Example: '
+      + 'node scripts/cross-skill.mjs close-finding --finding a4969127-d5d0-47bb-8b2e-0acb0ed71546 --as fixed --commit 41c4d194' };
+  }
+  if (disposition === 'fixed' && !commitSha) {
+    return { ok: false, closed: false, error: 'refusing: --as fixed needs --commit, the commit that fixed it — a fix with no commit cannot be checked.' };
+  }
+  const scope = await ctx.resolveScope();
+  const repoId = scope.kind === 'scoped' ? scope.repoId : null;
+  if (!repoId) {
+    return { ok: false, closed: false, error: 'refusing: repo identity unresolvable — a finding is closed within its own repo, never by an unscoped id.' };
+  }
+  const res = await ctx.deps.closeFindingById({ repoId, findingId, disposition, reason, commitSha });
+  if (!res.ok) {
+    const why = {
+      'reason-required': `--as ${disposition} needs a non-empty --reason: a dismissal or permanent acceptance is a claim, and an unexplained one cannot be checked`,
+      'not-found-in-repo': `no finding "${findingId}" in THIS repo`,
+    }[res.reason] ?? `${res.reason}${res.detail ? ` (${res.detail})` : ''}`;
+    return { ok: false, closed: false, error: `refusing: ${why}`, reason: res.reason };
+  }
+  return { ok: true, closed: true, ...res };
+}
+
 export async function repointRegressionSpecCmd(ctx) {
   if (!ctx.cloud.enabled) return { ...ctx.degrade(), repointed: false, deleted: false };
 

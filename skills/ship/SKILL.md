@@ -378,9 +378,9 @@ can be told from an exhausted one. `list-unlocked-fixes` pages the same way.
   <n> finding(s) you accepted were never marked fixed (showing <=5):
     • [<severity>] <primary_file> — accepted <days_open>d ago
   Either remediate them, or close the loop honestly — per row:
-    node scripts/cross-skill.mjs final-review-record-fix \
-      --run-id <audit_run_id> --fingerprint <finding_fingerprint> \
-      --commit <sha that fixed it> --state fixed
+    node scripts/cross-skill.mjs close-finding --finding <audit_finding_id> \
+      --as fixed --commit <sha that fixed it>
+    (or --as dismissed / --as accepted-permanent, each with --reason "...")
   Leaving them open is fine — leaving them open SILENTLY is what this catches.
 ```
 
@@ -403,17 +403,18 @@ only while its plan is still in flight):
   <agedOutBySeverity.HIGH> of the <agedOut> are HIGH, across both modes.
   They will not appear above again. Read them:
     node scripts/cross-skill.mjs list-unremediated-acceptances --all-ages
-  Then remediate, or close the loop with final-review-record-fix, or write them
-  off in status.md — an obligation discharged by silence is what this counts.
+  Then remediate, or close the loop with close-finding, or write them off
+  (close-finding --as dismissed, reasoning in status.md) — an obligation
+  discharged by silence is what this counts.
 ```
 
-**Close rows with `final-review-record-fix`, not `finalize-outcomes`** — the
-latter needs a live round's `--ledger`/`--result`, which a finding accepted
-weeks ago has neither. `final-review-record-fix` takes `--run-id` +
-`--fingerprint` (optional `--bucket`) — both keys come from the row
-(`audit_run_id`, `finding_fingerprint`). If your store predates migration
-`20260808200000` the fingerprint is absent: run
-`node scripts/setup-postgres.mjs --migrate` rather than hand-deriving it.
+**Close rows with `close-finding`, by the row's `audit_finding_id`** — not
+`finalize-outcomes` (it needs a live round's `--ledger`/`--result`) and not
+`final-review-record-fix`, which only resolves final-review-pass rows and so
+answers `no-match` for an ordinary audit finding (all 142 rows of one queue,
+2026-10-02). `--as fixed` takes `--commit`; `--as dismissed` (not a defect, or
+a written-off plan section) and `--as accepted-permanent` (real, declined on
+the merits) take `--reason`. A finding outside this repo is refused.
 
 Judge the list before echoing it — two rows look identical but are not:
 
