@@ -87,6 +87,31 @@
 - **Retrieval**: pre-push ran the full `check` in a clean checkout of the pushed commit (all gates green, 17,017 tests, 0 fail). The hook's consumer sync ran from the feature branch and exited 1: ai-organiser and storyline each REFUSED one file (`.audit-loop/expected-schema.json`, "checkout predates the last sync's own commit — merge that sync PR and pull"); wine reached without that refusal.
 - **Result**: unverified — `sync-isolation-verify.mjs` was not run in any consumer's MAIN checkout, and two consumers first need their open sync PR (`chore/sync-e73a40ee`) merged and pulled before a re-sync can land. Never `--overwrite-diverged`. Re-run `npm run sync -- --target <name>` from main, then verify that a consumer's `scripts/.claude-skills/lib/file-taxonomy.mjs` exists.
 
+## 2026-10-12 — pre-push: a dead push's sandbox is swept at the next push, not 6 hours later (PR #210)
+
+Backlog 2026-10-12T04:32Z: Q1 174c/47p (+420 aged) · Q2 111c/76p (54 perm) · Q3 35 · debt unmeasured · upstream 2
+
+- **Cause (measured from the pushing session's transcript, not guessed)**: two pushes were stopped mid-gate with TaskStop (15:52:50Z and 15:59:18Z on 2026-10-11). A killed process runs no cleanup handler, so `ces-prepush-a4d6ea00-77848` and `ces-prepush-fc2be6f7-82364` stayed on disk and registered in `git worktree list`. Both owner pids were gone, and both were under the 6h age rule, so nothing could sweep them. The fleet scan then counted them as unregistered work. Not the preserved-on-`npm ci`-failure case. The directories were already removed when this was investigated, so `.prepush-npm-ci.log` could not be stat'ed.
+- **Change** (`scripts/lib/prepush-sandbox-cleanup.mjs`, `scripts/prepush-check.mjs`):
+  - A husk whose owner pid (digits after the last `-`, a plain positive decimal) reads dead (ESRCH) is swept at once.
+  - Age (6h) stays the only rule when the owner is alive, liveness is unknown or throws, the name has no usable pid (`--123`, leading zero, `0`), or the husk holds `.prepush-npm-ci.log`.
+  - Pid reuse can only make a dead owner read alive, so it falls back to the age rule. A process-start-time probe was deliberately not built.
+  - `surveySandboxes`/`sweepStaleSandboxes` return `unsurveyed` (unreadable temp dir, non-ENOENT stat failure), so "found nothing" is never also "could not look".
+  - The log wording is the pure `describeSweep`, asserted on its emitted lines. `PRESERVED_EVIDENCE_FILE` is the one shared marker name.
+- **Tests**: `node --test tests/prepush-sandbox-cleanup.test.mjs tests/prepush-sandbox-honesty.test.mjs` → 73 pass. Dead owner = a real exited child's pid; live owner = a real running other process; plus a negative control. Mutation-checked in six directions (everything reads dead, no dead-owner rule, marker ignored, old unanchored grammar, stat errors swallowed, wording miscounted); an earlier `sed` mutation that had not applied was caught and redone.
+- **Live end-to-end**: stopped this branch's own push with TaskStop (the incident mechanism); the next push logged `swept 1 stale sandbox husk(s) from <tmp> (1 owner process dead)`. The husk left disk and `git worktree list`; two other sessions' live sandboxes were kept.
+- **Audit** (`audit-code-1791751589`, `--scope diff`): R1 H:1 M:5 (all fixed), R2 and R3 PASS 0/0/0, Gemini APPROVE (gate approve, 0 blocking, 0 debt).
+- **Pre-push gate** (full suite, 18,688 tests, ~28 min): attempts 1 and 2 failed on tests that do not reference these files and pass in isolation under load: `fleet-checks` (12.3s vs 10s bound), `hook-arch-memory-check` (6.2s vs 5s bound), `dashboard-home-deadline` pid.txt ENOENT (PR #207 fixes it). Attempt 3 passed. No `--no-verify`.
+- **Decisions**:
+  - The fleet half (treating `ces-prepush-*` worktrees as tooling in the unregistered-work scan) is not in this PR: the verdict classification exists only in open PR #206, and the fleet chip owns `scripts/lib/fleet/**`. The contract it will cite is unchanged: `SANDBOX_PREFIX` + `<tmpdir>/ces-prepush-<sha8>-<pid>`.
+  - `docs/runbooks/prepush-sandbox.md` was not edited (PR #208 holds a claim on it). Its bullet "Age, not liveness, gates the sweep" is now partly wrong.
+- **Provenance**: the two code commits (`7f4ca1f4`, `13433853`) were made with plain `git commit`, so they carry no `AI-*` trailers; this entry's commit is the one `ship-commit.mjs` wrote.
+
+### Next Steps
+- PR #210: review, then merge (not merged).
+- Reword the runbook bullet once #208 lands.
+- Fleet chip: classify `ces-prepush-*` worktrees as tooling on top of #206's verdicts.
+
 ## 2026-10-11 — drift + backlog re-measured; five shipped plans closed; three honesty fixes
 
 Measured on `origin/main` 56eb0459. Each figure carries its command.
