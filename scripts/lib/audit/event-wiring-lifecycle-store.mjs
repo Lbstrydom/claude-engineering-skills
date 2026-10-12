@@ -37,6 +37,44 @@ function readLifecycleMap(absPath) {
 }
 
 /**
+ * Read the whole ledger for a read-modify-WRITE. An ABSENT file is a blank
+ * ledger; a file that exists but is not valid JSON THROWS and is left exactly as
+ * it is. The two writers below used to swallow the parse error and start from a
+ * blank ledger, and the atomic write that followed then replaced the corrupt
+ * file with it - silently and permanently dropping every adjudication entry and
+ * every lifecycle record the run did not touch. (writeSingleLedgerEntry already
+ * refuses this way.) The detector's caller turns a throw into an 'errored' wave.
+ *
+ * Valid JSON of the WRONG SHAPE is refused the same way: a root that is not an
+ * object, `entries` that is not an array, `lifecycle` that is not a plain object.
+ * Writing a record onto a `lifecycle` ARRAY sets a property JSON.stringify then
+ * drops, so the write would report success having stored nothing.
+ */
+function readLedgerForWrite(absPath) {
+  const blank = { version: 1, entries: [], lifecycle: {} };
+  let raw;
+  try {
+    raw = fs.readFileSync(absPath, 'utf-8');
+  } catch (err) {
+    if (err?.code === 'ENOENT') return blank;
+    throw err;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`event-wiring ledger ${absPath} exists but is not valid JSON (${err.message}) - left untouched; fix or restore it`, { cause: err });
+  }
+  const plain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  const bad = !plain(parsed) ? 'its root is not a JSON object'
+    : (parsed.entries !== undefined && !Array.isArray(parsed.entries)) ? '`entries` is not an array'
+      : (parsed.lifecycle !== undefined && !plain(parsed.lifecycle)) ? '`lifecycle` is not an object'
+        : null;
+  if (bad) throw new Error(`event-wiring ledger ${absPath} is valid JSON of the wrong shape (${bad}) - left untouched; fix or restore it`);
+  return { ...blank, ...parsed };
+}
+
+/**
  * Read one lifecycle record by fingerprint. Not locked — a single-record
  * read has no torn-write hazard to guard against.
  * @param {string} ledgerPath
@@ -82,13 +120,7 @@ export function upsertLifecycle(ledgerPath, record) {
   let release;
   try {
     release = lockfile.lockSync(absPath, { stale: 10000 });
-    let ledger = { version: 1, entries: [], lifecycle: {} };
-    if (fs.existsSync(absPath)) {
-      try {
-        const parsed = JSON.parse(fs.readFileSync(absPath, 'utf-8'));
-        if (parsed && typeof parsed === 'object') ledger = { entries: [], lifecycle: {}, ...parsed };
-      } catch { /* start fresh on corruption — NOTE writeSingleLedgerEntry no longer does this (it throws and leaves the file); this site still overwrites a corrupt ledger, dropping its entries */ }
-    }
+    const ledger = readLedgerForWrite(absPath);
     if (!ledger.lifecycle || typeof ledger.lifecycle !== 'object') ledger.lifecycle = {};
     ledger.lifecycle[record.fingerprint] = record;
     atomicWriteFileSync(absPath, JSON.stringify(ledger, null, 2));
@@ -265,23 +297,17 @@ export function reconcileLifecycle(ledgerPath, { kind, observations, now, ancest
   let release;
   try {
     release = lockfile.lockSync(absPath, { stale: 10000 });
-    let ledger = { version: 1, entries: [], lifecycle: {} };
-    if (fs.existsSync(absPath)) {
-      try {
-        const parsed = JSON.parse(fs.readFileSync(absPath, 'utf-8'));
-        if (parsed && typeof parsed === 'object') ledger = { entries: [], lifecycle: {}, ...parsed };
-      } catch { /* start fresh on corruption */ }
-    }
+    const ledger = readLedgerForWrite(absPath);
     if (!ledger.lifecycle || typeof ledger.lifecycle !== 'object') ledger.lifecycle = {};
 
     for (const obs of observations) {
       const fingerprint = `${kind}|${obs.eventName}`;
       const existing = ledger.lifecycle[fingerprint] ?? null;
       // Stale-observation guard: an observation for an EXISTING record is
-      // only applied when its ref is the record's stored ref or a
-      // descendant of it. A non-descendant (or a ref with no entry in the
-      // precomputed map — e.g. the ancestry check itself failed/was
-      // unreachable) is dropped, fail-closed, never applied.
+      // applied only when the precomputed map says so for the record's stored
+      // ref — `computeAncestryDecisions` answers true unless this run's head
+      // is PROVABLY OLDER than that ref (or git cannot evaluate the head). A
+      // ref with no entry in the map is dropped, fail-closed, never applied.
       if (existing && existing.lastObservedRef && existing.lastObservedRef !== obs.ref) {
         if (ancestryDecisions?.get(existing.lastObservedRef) !== true) continue;
       }

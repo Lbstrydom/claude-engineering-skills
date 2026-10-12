@@ -165,7 +165,7 @@ async function cmdReconcile(argv, baseDir) {
         coveredFiles: candidatesFile.coveredFiles,
         gapAssessments: gapsFile.assessments,
         overrides,
-        priorLedger: loadLedger({ baseDir }),
+        priorLedger: loadLedger({ baseDir, strict: true }),
         commitSha: gitSha(),
         extractionSourceSha: candidatesFile.extractionSourceSha,
       });
@@ -202,7 +202,7 @@ async function cmdReassessGaps(argv, baseDir) {
   const dryRun = argv.includes('--dry-run');
   try {
     await withFileLock(path.join(baseDir, LOCK), {}, async () => {
-      const ledger = loadLedger({ baseDir });
+      const ledger = loadLedger({ baseDir, strict: true });
       const overrides = (() => {
         if (!fs.existsSync(path.join(baseDir, OVERRIDES))) return {};
         try { return OverridesSchema.parse(JSON.parse(fs.readFileSync(path.join(baseDir, OVERRIDES), 'utf-8'))); }

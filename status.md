@@ -331,6 +331,31 @@ Second of the PRs landing the abandoned 2026-10-02 campaign (`archive/queue-burn
 - Cluster 3 (store/ledger honesty, 8 commits) is built and DB-green; its audit round 1 has 14 findings to triage. Cluster 6 (test-only pins) is assembled. Cluster 5 (`close-finding`) is user-approved as its own PR with no discharge against the store. Cluster 4 waits on `964c1d77`.
 - Owed after `a72426c6` lands: port `tests/replay-cli-false-zero.test.mjs` (burndown-only, covers the dropped `b3f80832`).
 
+## 2026-10-12 — queue-burndown cluster 3: an outage is not an empty result (PR #215)
+
+Third of the PRs landing the abandoned 2026-10-02 campaign (`archive/queue-burndown-2026-10-02`): cluster 1 merged as #200, cluster 2 is #202. The campaign's commits had never been reviewed and main moved after they were written, so three were adapted rather than cherry-picked.
+
+- **Cherry-picked clean** (5): stage0 counts impact-lookup throws instead of swallowing them; an event-wiring lifecycle record is no longer pinned to a ref nothing can descend from; a model-eval cohort is one subject (refuse, never relabel); requirements overrides reach retained ledger entries; `debt-reconcile` names the real reason the store side is unavailable.
+- **Adapted** (3), each to what main now has:
+  - arch carried edges: #160 already gates the deleted-TARGET half on `fileStillExists`, so only the disowned-target half is applied (extraction drops an edge when EITHER endpoint is disowned, `extract.mjs`; the carry asked `isDisowned` of the importer only).
+  - debt cloud read: #193 made the events reader best-effort and gave reporters `readDebtEventsCloudResult`, so only `readDebtEntriesCloud` rethrows (both callers already catch) and `loadDebtLedger` reads the Result to mark `eventsUnavailable`.
+  - the `debt-reconcile` test's `rmSync` retry-hardening, as its own commit.
+- **Found by auditing the campaign's own commits** (5 follow-ups):
+  - `requirements reconcile` / `reassess-gaps` loaded the prior ledger with a never-throw loader, so a truncated `ledger.json` became an empty prior and the write overwrote the committed ledger. Strict mode for the two writers; readers keep the degrade contract.
+  - `computeAncestryDecisions` read "did not exit 0" as "not an ancestor", so exit 128 or git failing to run authorised the write. Exit 1 is now the proven negative; anything else fails closed.
+  - Gemini BLOCKED on a real data-loss bug: `upsertLifecycle` / `reconcileLifecycle` swallowed a JSON parse error and atomic-wrote a blank ledger over the corrupt one, dropping every adjudication entry and lifecycle record the run did not touch. They now refuse, file untouched, and also refuse valid JSON of the wrong shape (a `lifecycle` array silently stores nothing; my first fix missed that and R3 caught it).
+  - `tests/stage0-relevance-context.test.mjs` tested a hand-copied worker pool; it now drives the real builder via `opts.getImporters`.
+  - one bare `fs.rmSync` in a test I had just added (the rmSync retry guard blocked my first push).
+- **DB suites RAN** via the repo's own `npm run db:local` (its own container, torn down after): isolated 459/459, destructive 52/52, contract 3/3, 0 skipped, including the model-eval cohort suite. Mutation checks went red-then-green for each fix.
+- **Audit** (5 rounds, SID `audit-code-1791745114`): R1 9 findings: 6 fixed, 3 deferred as independent debt (all committed-requirements-ledger DATA quality: the 200-char assertion cap, equivalent obligations under distinct ids, one gap classification). R2 PASS; R3 two follow-ups fixed; R4 PASS; R5 PASS on the last delta. Gemini final gate: round 1 BLOCKED (fixed), round 2 APPROVE, coverage PARTIAL (7/21 files whole, 108 of 839 changed lines not shown to the reviewer).
+- **Gate history**: pre-push passed on the second attempt (18,844 tests, 0 fail, 46 skipped). Two pushes ran during the user-approved quiet-machine window for wine-cellar and disturbed its timing measurement; the coordinator's hold messages were queued behind my long tool waits. Lesson recorded: run `fleet next` before every push.
+- **Pre-ship signals**: auto-reconcile applied (1 verified, 1 still open); `stores:drift` shows storyline behind 6 constraints (owner DSN needed); upstream has 2 open reports from wine-cellar-app; no open P0.
+- **Backlog** (`node scripts/backlog-snapshot.mjs`): Backlog 2026-10-12T07:52Z: Q1 182c/47p (+420 aged) · Q2 110c/76p (54 perm) · Q3 35 · debt 334 cloud/17 local (0 spilled) · upstream 2
+
+### Next Steps
+- Cluster 6 (test-only pins) is audited and waits for its push turn; cluster 5 (`close-finding`) is user-approved as code only, with no discharge against the store, and follows #202's merge. Cluster 4 waits on `964c1d77`.
+- Owed after `a72426c6` lands: port `tests/replay-cli-false-zero.test.mjs`.
+
 ## 2026-10-11 — drift + backlog re-measured; five shipped plans closed; three honesty fixes
 
 Measured on `origin/main` 56eb0459. Each figure carries its command.
