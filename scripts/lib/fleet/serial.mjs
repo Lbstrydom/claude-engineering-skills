@@ -33,6 +33,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { atomicWriteFileSync } from '../file-io.mjs';
+import { retrySync } from '../retry-transient-fs.mjs';
 import { withFileLockSync } from '../file-lock.mjs';
 import { OID_RE } from './contracts.mjs';
 import { TRAIN_ID_RE, assertManaged, fleetDir, readTrain } from './registry.mjs';
@@ -109,7 +110,7 @@ function sweepMessageFiles(dir, trainId) {
   for (const n of names) {
     if (!n.startsWith(prefix) || !n.endsWith('.msg')) continue;
     const file = assertManaged(dir, path.join(serialDir(dir), n));
-    try { fs.rmSync(file, { force: true }); } catch (e) { return `cannot remove the stale message file ${n} (${e.code ?? e.message})`; }
+    try { retrySync(() => fs.rmSync(file, { force: true })); } catch (e) { return `cannot remove the stale message file ${n} (${e.code ?? e.message})`; }
   }
   return null;
 }
@@ -329,7 +330,7 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
         mergeArgs.splice(mergeArgs.indexOf('--match-head-commit'), 0, '--subject', message.subject, '--body-file', bodyFile);
       }
       let m;
-      try { m = deps.gh(mergeArgs, cwd); } finally { if (bodyFile) fs.rmSync(bodyFile, { force: true }); }
+      try { m = deps.gh(mergeArgs, cwd); } finally { if (bodyFile) retrySync(() => fs.rmSync(bodyFile, { force: true })); }
       const until = Date.now() + T.mergeWait;
       for (;;) {
         const o = viewPr(deps, cwd, s);
