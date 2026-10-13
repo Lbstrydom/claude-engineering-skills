@@ -38,11 +38,12 @@ import {
   parseThresholdDays,
 } from './lib/context-staleness.mjs';
 import { parsePlanStatus } from './lib/plan-status.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const ACK_FILE = '.context-staleness-ack.json';
 const G = '\x1b[32m', Y = '\x1b[33m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
 
-if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+if (process.argv.includes('--selfcheck-relocation') && isInvokedAsScript(import.meta.url)) { console.log('OK'); process.exit(0); }
 
 // stderr is piped, not inherited: an untracked doc makes `git blame` print
 // "no such path ... in HEAD", which is expected here (the file simply has no
@@ -209,10 +210,6 @@ function main() {
   process.exit(0);
 }
 
-const isMain = (() => {
-  const argv1 = process.argv[1]?.replace(/\\/g, '/');
-  if (!argv1) return false;
-  return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) main();

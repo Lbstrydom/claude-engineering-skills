@@ -46,6 +46,7 @@ import {
   detectGitHubRepoUrl,
 } from './lib/debt-git-history.mjs';
 import { hasFlag } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 /** Magic marker that identifies our sticky PR comment. */
 export const STICKY_MARKER = '<!-- audit-loop:debt-comment -->';
@@ -342,9 +343,8 @@ function main() {
 }
 
 // Only run main() when this file is invoked directly as a CLI, not when imported
-// by tests. import.meta.url is a file:// URL; process.argv[1] is the script path.
-const isDirectInvocation = import.meta.url === `file://${process.argv[1].replaceAll(/\\/g, '/')}`
-  || import.meta.url.endsWith(process.argv[1].replaceAll(/\\/g, '/'));
+// by tests.
+const isDirectInvocation = isInvokedAsScript(import.meta.url);
 if (isDirectInvocation) {
   main();
 }

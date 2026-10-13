@@ -28,7 +28,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isInvokedAsScript } from './cli-entry.mjs';
 
 const VALID_SEVERITIES = new Set(['P0', 'P1', 'P2', 'P3']);
 const VALID_CATEGORIES = new Set([
@@ -229,7 +229,7 @@ export function summariseCriteria(criteria) {
 //
 // Exit 0 = parsed (read `found`/`errors` from the JSON, which is the real
 // verdict); exit 1 = the plan file could not be read.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isInvokedAsScript(import.meta.url)) {
   const planFile = process.argv[2];
   if (!planFile) {
     process.stderr.write('Usage: node scripts/lib/plan-criteria-parser.mjs <plan-file.md>\n');

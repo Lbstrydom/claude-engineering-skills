@@ -26,6 +26,7 @@ import { classifyGaps, classifyGapsBatched, isDegradedGapAssessment } from './li
 import { loadLedger, writeLedger, reconcile, deriveIndex, statusFor, inferAmbiguousFromStatus } from './lib/requirements/ledger.mjs';
 import { renderRequirementsMap } from './lib/requirements/render.mjs';
 import { CandidatesFileSchema, GapsFileSchema, OverridesSchema } from './lib/requirements/schema.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const REQ_DIR = '.requirements';
 const MAX_RUNS = 5;   // upper bound on --runs (cost/latency guard — audit M11)
@@ -353,11 +354,7 @@ async function main() {
 // CLI — it printed help and called process.exit(1). That made the file
 // untestable from a test runner and is a landmine for any future importer.
 // Same isMain guard the other CLIs here use (check-rls.mjs, security-triage.mjs).
-const isMain = (() => {
-  const argv1 = process.argv[1]?.replace(/\\/g, '/');
-  if (!argv1) return false;
-  return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   main().catch((err) => {

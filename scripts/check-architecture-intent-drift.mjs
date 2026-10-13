@@ -25,6 +25,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { makeFenceTracker } from './lib/markdown-fence-tracker.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const DEFAULT_DOMAIN_MAP = '.audit-loop/domain-map.json';
 const DEFAULT_DOC = 'docs/architecture-intent.md';
@@ -179,14 +180,8 @@ function main() {
   process.exit(1);
 }
 
-// Run only when invoked as a script (Windows-safe — match by basename).
-const invokedDirectly = (() => {
-  try {
-    const metaPath = new URL(import.meta.url).pathname.toLowerCase();
-    const argvPath = process.argv[1] ? new URL(`file://${process.argv[1].replaceAll(/\\/g, '/')}`).pathname.toLowerCase() : '';
-    return metaPath.endsWith('/check-architecture-intent-drift.mjs') && argvPath.endsWith('/check-architecture-intent-drift.mjs');
-  } catch { return false; }
-})();
+// Run only when invoked as a script (canonical-path match: lib/cli-entry.mjs).
+const invokedDirectly = isInvokedAsScript(import.meta.url);
 
 if (invokedDirectly) {
   try {

@@ -29,6 +29,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isInvokedAsScript } from '../lib/cli-entry.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -244,8 +245,7 @@ function main() {
   }
 }
 
-const isMain = import.meta.url === `file://${process.argv[1]}` ||
-  import.meta.url === pathToFileUrl(process.argv[1]);
+const isMain = isInvokedAsScript(import.meta.url);
 function pathToFileUrl(p) { return new URL(`file://${path.resolve(p).replace(/\\/g, '/')}`).href; }
 
 if (isMain) {

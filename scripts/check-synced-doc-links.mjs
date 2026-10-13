@@ -50,6 +50,7 @@ import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { getSyncClosure } from './lib/sync-inventory.mjs';
 import { sourceRelToDestRel } from './lib/sync-path-map.mjs';
 import { findUnfollowableLinks, upstreamUrlFor } from './lib/synced-doc-links.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const G = '\x1b[32m', R = '\x1b[31m', X = '\x1b[0m', B = '\x1b[1m', D = '\x1b[2m';
@@ -171,16 +172,7 @@ async function main() {
   process.exit(1);
 }
 
-const invokedDirectly = (() => {
-  try {
-    const metaPath = new URL(import.meta.url).pathname.toLowerCase();
-    const argvPath = process.argv[1]
-      ? new URL(`file://${process.argv[1].replaceAll(/\\/g, '/')}`).pathname.toLowerCase()
-      : '';
-    return metaPath.endsWith('/check-synced-doc-links.mjs')
-      && argvPath.endsWith('/check-synced-doc-links.mjs');
-  } catch { return false; }
-})();
+const invokedDirectly = isInvokedAsScript(import.meta.url);
 
 if (invokedDirectly) {
   main().catch((err) => {

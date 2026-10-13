@@ -29,8 +29,8 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
+import { isInvokedAsScript } from '../cli-entry.mjs';
 
 /** Closed set — `regex` is the only kind v1 needs; adding one is a schema change, not a string. */
 export const DetectorSchema = z.object({
@@ -251,7 +251,7 @@ export function isCrossCutting(finding) {
 // self-check on 2026-08-08.
 //
 // Exit 1 when blocked — convergence requires exit 0.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isInvokedAsScript(import.meta.url)) {
   const ledgerPath = process.argv[2];
   if (!ledgerPath) {
     process.stderr.write('Usage: node scripts/lib/audit/detector.mjs <ledger.json>\n');

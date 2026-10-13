@@ -54,6 +54,7 @@ import { resolveModel, resolveXaiCreds } from './lib/model-resolver.mjs';
 import { priceFor } from './lib/model-pricing.mjs';
 import { readClassifiedFile } from './lib/path-validation.mjs';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = Object.freeze(['--build-fixture', '--run', '--selfcheck-relocation', '--help', '-h']);
 
@@ -466,12 +467,7 @@ async function main() {
   throw new ArgvError('[grok-preflight] no action given — pass --build-fixture or --run (see --help).');
 }
 
-const invokedDirectly = (() => {
-  try {
-    const a = (process.argv[1] || '').replace(/\\/g, '/').toLowerCase();
-    return a.endsWith('/grok-effort-preflight.mjs');
-  } catch { return false; }
-})();
+const invokedDirectly = isInvokedAsScript(import.meta.url);
 
 if (invokedDirectly) {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }

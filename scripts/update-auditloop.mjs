@@ -61,9 +61,9 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { npmInvocation } from './lib/install/deps.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--selfcheck-relocation'];
 
@@ -274,8 +274,7 @@ export function main(argv = process.argv) {
   return 0;
 }
 
-const isDirect = process.argv[1]
-  && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+const isDirect = isInvokedAsScript(import.meta.url);
 
 if (isDirect) {
   try {

@@ -45,7 +45,7 @@
 
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 import './lib/load-env.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
@@ -54,6 +54,7 @@ import {
   discoverStores, describeStore, readRepoEnvText, readSharedEnvText,
 } from './lib/upstream/store-discovery.mjs';
 import { storeFingerprint } from './lib/db/client.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SETUP_CLI = path.join(REPO_ROOT, 'scripts', 'setup-postgres.mjs');
@@ -271,6 +272,6 @@ function main() {
 // executed none of its assertions, because the import exited the test process.
 // A suite that cannot fail is the unearned green this repo's own test guard
 // exists to catch, arriving through the module system instead of the runner.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isInvokedAsScript(import.meta.url)) {
   main();
 }

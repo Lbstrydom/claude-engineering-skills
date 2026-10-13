@@ -62,6 +62,7 @@ import { execFileSync } from 'node:child_process';
 
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { detectPackageManager, displayDlx } from './lib/package-manager.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--json', '--from'];
 /**
@@ -388,6 +389,6 @@ function main() {
   process.exit(plan.action === 'fail' ? 1 : 0);
 }
 
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('skills-hydrate.mjs')) {
+if (isInvokedAsScript(import.meta.url)) {
   main();
 }

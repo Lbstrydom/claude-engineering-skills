@@ -45,6 +45,7 @@ import { listSurfaceNames, compareSkillSurfaces } from './skill-surface-identity
 import { lintSkillTree } from './skill-frontmatter-layout.mjs';
 import { assertKnownFlags, ArgvError } from './cli-io.mjs';
 import { detectCheckout } from './checkout-kind.mjs';
+import { isInvokedAsScript } from './cli-entry.mjs';
 
 // NOTE: this module intentionally does NOT import sync-inventory.mjs.
 // Inventory is source-only (depends on consumer-repos.mjs which uses
@@ -1019,8 +1020,7 @@ async function main() {
   process.exit(0);
 }
 
-const isCli = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isCli) {
+if (isInvokedAsScript(import.meta.url)) {
   main().catch((err) => {
     // A usage mistake (unknown/empty flag) is not a crash — same convention as
     // reconcile-repo-identity.mjs: print the diagnostic only, exit 2.

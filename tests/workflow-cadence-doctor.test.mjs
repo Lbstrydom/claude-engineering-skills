@@ -771,9 +771,10 @@ test('it RUNS under a consumer scripts/.claude-skills/ layout, not only this rep
   // a watcher shipped as a silent no-op, which is precisely the defect it exists
   // to detect.
   //
-  // `--selfcheck-relocation` cannot see this -- its handler sits above the
-  // direct-run guard and returns before it -- so the assertion has to be that
-  // real OUTPUT appears from the relocated path. An empty stdout is the bug.
+  // `--selfcheck-relocation` could not see this at the time -- its handler sat
+  // above the direct-run guard (it is gated on the guard since 2026-10-13) -- so
+  // the assertion is that real OUTPUT appears from the relocated path. An empty
+  // stdout is the bug.
   withTempDir((dir) => {
     const skills = path.join(dir, 'scripts', '.claude-skills', 'lib');
     fs.mkdirSync(skills, { recursive: true });
@@ -782,7 +783,7 @@ test('it RUNS under a consumer scripts/.claude-skills/ layout, not only this rep
       ['on:', '  schedule:', '    - cron: "0 3 * * *"', ''].join('\n'));
     const relocated = path.join(dir, 'scripts', '.claude-skills', 'workflow-cadence-doctor.mjs');
     fs.copyFileSync(CLI, relocated);
-    for (const lib of ['cli-io.mjs', 'branch-protection.mjs', 'assert-repo-root.mjs', 'measurement-marker.mjs']) {
+    for (const lib of ['cli-io.mjs', 'branch-protection.mjs', 'assert-repo-root.mjs', 'measurement-marker.mjs', 'cli-entry.mjs']) {
       fs.copyFileSync(path.join(REPO_ROOT, 'scripts', 'lib', lib), path.join(skills, lib));
     }
 

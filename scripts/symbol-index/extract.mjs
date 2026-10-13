@@ -44,6 +44,7 @@ import { ignoredUntrackedPaths } from '../lib/disowned-paths.mjs';
 import { COVERAGE_DEFAULTS } from '../lib/symbol-index/graph-verdict.mjs';
 import { parseFilesManifest } from '../lib/symbol-index/files-manifest.mjs';
 import { emit, assertKnownFlags } from '../lib/cli-io.mjs';
+import { isInvokedAsScript } from '../lib/cli-entry.mjs';
 
 /**
  * Every flag this CLI accepts. `assertKnownFlags` rejects anything else.
@@ -1210,7 +1211,7 @@ export const _internals = {
 // `scripts/spikes/observed-graph-discovery-spike.mjs`, which needs the real
 // enumerator. Same idiom as gemini-review.mjs / cache-hitrate-check.mjs;
 // `node scripts/symbol-index/extract.mjs ...` behaves exactly as before.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isInvokedAsScript(import.meta.url)) {
   main().catch(err => {
     process.stderr.write(`extract: fatal: ${err.stack || err.message}\n`);
     process.exit(1);

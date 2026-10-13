@@ -37,10 +37,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
 import { LAYOUT_CONSTANTS } from './sync-path-map.mjs';
 import { SyncManifestSchema } from './sync-manifest.mjs';
 import { assertKnownFlags } from './cli-io.mjs';
+import { isInvokedAsScript } from './cli-entry.mjs';
 
 /**
  * Every flag this CLI accepts — must list only flags `parseArgs` HANDLES.
@@ -335,7 +335,7 @@ function main() {
   process.exit(summary.errors.length ? 2 : 0);
 }
 
-const isCli = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const isCli = isInvokedAsScript(import.meta.url);
 if (isCli) {
   try {
     main();

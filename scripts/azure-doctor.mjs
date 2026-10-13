@@ -34,6 +34,7 @@ import { resolve, dirname, sep } from 'node:path';
 import readline from 'node:readline';
 import { azureConfig } from './lib/config.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { applyEnvSetting, resolveEnvValue } from './lib/env-setting.mjs';
 import { selectEmbedDeployment as realSelectEmbed } from './lib/azure/embed-discovery.mjs';
 import { selectGptDeployment as realSelectGpt } from './lib/azure/gpt-discovery.mjs';
@@ -432,9 +433,7 @@ async function main() {
 }
 
 // Run as a CLI only — importing for tests must not execute main().
-import { fileURLToPath } from 'node:url';
-const invoked = process.argv[1] ? resolve(process.argv[1]) : '';
-if (invoked === fileURLToPath(import.meta.url)) {
+if (isInvokedAsScript(import.meta.url)) {
   main();
 }
 

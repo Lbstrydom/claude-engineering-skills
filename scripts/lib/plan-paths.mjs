@@ -8,7 +8,6 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import {
   matchFileKind, SOURCE_CODE_EXTENSIONS, AUDITABLE_EXTENSIONS, COMPOUND_REFERENCE_SUFFIXES, toExtensionAlternation,
 } from './file-taxonomy.mjs';
@@ -17,6 +16,7 @@ export { COMPOUND_REFERENCE_SUFFIXES };
 import { normalizePath } from './file-io.mjs';
 import { isSensitiveFile, isAuditInfraFile } from './audit-scope.mjs';
 import { listRepoFiles, resolveUniqueSuffix } from './repo-inventory.mjs';
+import { isInvokedAsScript } from './cli-entry.mjs';
 
 /**
  * Below this many REGEX-resolvable paths, Phase 2 fuzzy keyword discovery
@@ -378,7 +378,7 @@ function _scanRepoFiles({ allowInfraFiles = false } = {}) {
 // module lives under `scripts/.claude-skills/lib/`. Reported 2026-08-08. The
 // check that guards against the fuzzy-discovery trap must not itself be the
 // thing that is broken.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isInvokedAsScript(import.meta.url)) {
   const planFile = process.argv[2];
   if (!planFile) {
     process.stderr.write('Usage: node scripts/lib/plan-paths.mjs <plan-file.md>\n');

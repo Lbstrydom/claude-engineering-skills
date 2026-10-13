@@ -42,6 +42,7 @@ import {
   archMemoryBandReward,
   historicalBaseline,
 } from '../lib/learning/replay.mjs';
+import { isInvokedAsScript } from '../lib/cli-entry.mjs';
 
 const DEFAULT_REWARDS = {
   pass_selection:      passSelectionReward,
@@ -148,12 +149,7 @@ async function loadPolicy(modulePath, fallback) {
 
 // ── CLI entry ─────────────────────────────────────────────────────────────
 
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 /**
  * Every flag here takes a VALUE, so the token after it is not a positional.

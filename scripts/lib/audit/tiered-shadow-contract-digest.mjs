@@ -62,6 +62,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { parseSource, walk } from '../ast.mjs';
 import { canonicaliseForHash } from '../canonical-hash.mjs';
+import { isInvokedAsScript } from '../cli-entry.mjs';
 
 export const COMPARE_FILE = 'scripts/lib/audit/tiered-shadow-compare.mjs';
 export const SUMMARY_FILE = 'scripts/lib/audit/tiered-shadow-summary.mjs';
@@ -249,12 +250,7 @@ export function computeDigestFromSources(sourcesByPath, regions = SEMANTICS_REGI
 // Self-check / regeneration: `node scripts/lib/audit/tiered-shadow-contract-digest.mjs`
 // prints the live digest so a developer bumping the epoch can paste the new
 // pinned value in the same commit.
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 if (isMain) {
   console.log(computeContractSemanticsDigest());
 }

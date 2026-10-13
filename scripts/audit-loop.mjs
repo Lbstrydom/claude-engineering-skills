@@ -22,8 +22,8 @@ import path from 'node:path';
 import { buildAuditTranscript, readRoundResult } from './lib/audit/transcript.mjs';
 import { isClaudeAvailable } from './lib/anthropic-client.mjs';
 import { archiveTranscript, formatArchiveOutcome, isArchiveFailure } from './lib/audit/transcript-archive.mjs';
-import { pathToFileURL } from 'node:url';
 import { formatCoverageSuffix, coverageMissingNote } from './lib/coverage-format.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
 
@@ -625,7 +625,7 @@ async function main() {
 // would have started a real audit loop.
 export { countFindings, isConverged };
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isInvokedAsScript(import.meta.url)) {
   main().catch(err => {
     console.error(`${R}Audit loop failed${X}: ${err.message}`);
     process.exit(1);

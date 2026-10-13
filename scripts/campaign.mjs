@@ -71,6 +71,7 @@ import { resolveModel } from './lib/model-resolver.mjs';
 import { costFromUsage, sumUsage } from './lib/model-pricing.mjs';
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
 import * as store from './lib/store/campaign.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = Object.freeze([
   '--campaign', '--finding', '--verdict', '--note', '--reason', '--limit',
@@ -997,10 +998,7 @@ function assertOutcome(value) {
   return value;
 }
 
-const invokedDirectly = (() => {
-  try { return (process.argv[1] || '').replace(/\\/g, '/').toLowerCase().endsWith('/campaign.mjs'); }
-  catch { return false; }
-})();
+const invokedDirectly = isInvokedAsScript(import.meta.url);
 
 if (invokedDirectly) {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }

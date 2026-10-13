@@ -49,6 +49,7 @@ import {
   computeDomainMapDigest,
   computeObservedDomainDepsWithCoverage,
 } from '../lib/observed-deps.mjs';
+import { isInvokedAsScript } from '../lib/cli-entry.mjs';
 
 /** Every flag this CLI accepts. `assertKnownFlags` rejects anything else. */
 export const KNOWN_FLAGS = Object.freeze(['--out']);
@@ -519,12 +520,7 @@ async function main() {
 // real AUDIT_DB_URL set, would render + overwrite the artifact for real (safe
 // today only because the test env has the store off). Same module-scope-main
 // coupling fixed in build-manifest.mjs / refresh.mjs.
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   main().catch(err => {

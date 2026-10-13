@@ -28,6 +28,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { argOption, assertKnownFlags, emit } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--plan', '--diff', '--phases', '--branch', '--selfcheck-relocation'];
 
@@ -277,10 +278,5 @@ async function main() {
 // testing without also triggering main() against the TEST RUNNER's own argv
 // (`node --test ...`) — assertKnownFlags would reject `--test` and abort the
 // import. Same pattern as check-plan-status.mjs.
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 if (isMain) main();

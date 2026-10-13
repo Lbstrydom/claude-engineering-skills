@@ -31,11 +31,11 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import pg from 'pg';
 
 import { assertRepoRoot, findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 import { fmtMs } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 // ── CI-parity constants (single source; guarded by tests/db-test-container.test.mjs) ──
 
@@ -940,7 +940,7 @@ async function main() {
 // Direct-execution guard (R2-M3): importing this module for its constants/
 // helpers in the hermetic unit test must never trigger Docker preflight or
 // container startup.
-if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+if (isInvokedAsScript(import.meta.url)) {
   main();
 }
 

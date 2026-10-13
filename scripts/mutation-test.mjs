@@ -44,6 +44,7 @@ import { fileURLToPath } from 'node:url';
 
 import { retrySync } from './lib/retry-transient-fs.mjs';
 import { assertKnownFlags } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -331,5 +332,5 @@ function main() {
 
 // Only run as a CLI. Importing this module for its registry or its pure guard
 // must not spawn Stryker — the test below does exactly that.
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain = isInvokedAsScript(import.meta.url);
 if (isMain) main();

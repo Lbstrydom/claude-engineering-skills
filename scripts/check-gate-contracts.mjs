@@ -21,7 +21,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { loadGateContracts, loadCliGateContracts, formatSummaryLines } from './lib/gate-honesty/loader.mjs';
 import { resolvePushRange, PUSH_RANGE_ENV } from './lib/push-range.mjs';
 import {
@@ -29,6 +29,7 @@ import {
 } from './lib/gate-honesty/verb-pattern.mjs';
 import { GateContractBaselineSchema } from './lib/gate-honesty/schema.mjs';
 import { computeRatchetDivergences } from './lib/gate-honesty/ratchet.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 export const BASELINE_FILENAME = '.gate-contract-baseline.json';
 
@@ -262,6 +263,6 @@ function main() {
 
 // Only self-execute as a CLI, so `parseChangedSkillCandidates` (and any future
 // export) stays importable by its tests without running the whole check.
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+if (isInvokedAsScript(import.meta.url)) {
   main();
 }

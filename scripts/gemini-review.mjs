@@ -24,7 +24,6 @@
 // dotenv loaded by lib/config.mjs (worktree-safe discovery)
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { once } from 'node:events';
 import crypto from 'node:crypto';
 import { z } from 'zod';
@@ -54,6 +53,7 @@ import { serializePrimaryForGap } from './lib/final-review/gap-projection.mjs';
 import { summariseCodeCoverage, applyCoverageGate, formatCodeCoverageSegment } from './lib/final-review/code-coverage.mjs';
 import { makeTieredCodeRenderer } from './lib/final-review/code-render.mjs';
 import { resolveFinalReviewHunks } from './lib/audit/final-review-hunks.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 // NOTE: lib/llm-wrappers.mjs provides shared wrappers for learning/refinement/evolution paths.
 // This subsystem keeps the specialized `callReviewer` seam (lib/final-review/transport.mjs;
 // thinkingConfig + one abort-correct timeout across all transports) because the final
@@ -1113,6 +1113,6 @@ export const _internals = {
 
 // Auto-run only when invoked directly (node scripts/gemini-review.mjs ...),
 // not when imported by a test — lets tests exercise selectProvider() in-process.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isInvokedAsScript(import.meta.url)) {
   main();
 }

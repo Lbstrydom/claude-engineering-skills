@@ -71,13 +71,13 @@
  *   node scripts/slice-recurrence-check.mjs --force    — ignore the due date
  *   node scripts/slice-recurrence-check.mjs --json     — machine-readable envelope
  */
-import { pathToFileURL } from 'node:url';
 // The repo's ONE env loader (config.mjs calls the same function at module load).
 // A bare `import 'dotenv/config'` here would read only the cwd `.env` and miss
 // the per-user shared `~/.audit-loop.env`, so this check alone would conclude
 // "no AUDIT_DB_URL" on a machine where every other check resolves the DSN fine.
 import { loadSharedEnv } from './lib/load-shared-env.mjs';
 import { assertKnownFlags } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 loadSharedEnv();
 
@@ -262,5 +262,5 @@ async function main() {
 // `decideVerdict`, and an unguarded `await main()` would execute the whole
 // database measurement on import — silently harmless today only because the
 // due-date short-circuit fires first, and a live bug the moment it stops.
-const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const isMain = isInvokedAsScript(import.meta.url);
 if (isMain) await main();

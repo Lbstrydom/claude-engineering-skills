@@ -40,13 +40,13 @@
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { createUpstreamOwnershipOracle } from './lib/upstream-ownership.mjs';
 import { MANIFEST_RELATIVE_PATH, hashFile } from './lib/sync-manifest.mjs';
 import {
   parsePorcelainZ, classifyDirtyEntries, createProvenanceVerifier, buildCommitSuggestion,
 } from './lib/sync-status.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--format', '--repo-root', '--selfcheck-relocation'];
 const KNOWN_FORMATS = new Set(['json', 'text']);
@@ -56,7 +56,7 @@ const G = '\x1b[32m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m
 // consumer's `scripts/.claude-skills/`. Answered before anything else, and
 // before `assertKnownFlags` — a probe that itself required valid flags could
 // never prove the file loads at all.
-if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+if (process.argv.includes('--selfcheck-relocation') && isInvokedAsScript(import.meta.url)) { console.log('OK'); process.exit(0); }
 
 /**
  * `scripts/.sync-manifest.json`'s `files` map (destination-relative path →
@@ -244,8 +244,7 @@ export function main(argv = process.argv, out = process.stdout, err = process.st
 // Compare the RESOLVED file, not a path suffix — a suffix match is true in
 // this repo and false at the consumer path `scripts/.claude-skills/sync-status.mjs`
 // (the exact class workflow-cadence-doctor.mjs's own guard comment records).
-const isDirectRun = process.argv[1]
-  && import.meta.url === pathToFileURL(process.argv[1]).href;
+const isDirectRun = isInvokedAsScript(import.meta.url);
 if (isDirectRun) {
   try {
     await finishAndExit(main());

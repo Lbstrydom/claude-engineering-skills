@@ -39,6 +39,7 @@ import {
   probeGitHubPermissions, readGhKeyringToken, resolveDefaultBranch,
   resolveTokenSources, tokenFingerprint, tokenKind, tokenSourceKind,
 } from './lib/doctor/github-permissions.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 // ── Arg parsing ───────────────────────────────────────────────────────────────
 
@@ -970,8 +971,7 @@ async function main() {
 // the instant any importer loaded this module. Same invocation-detection
 // pattern every other dual CLI/library entry point in this repo uses
 // (skills-hydrate.mjs, sync-isolation-verify.mjs).
-const invokedDirectly = import.meta.url === `file://${process.argv[1]}`
-  || process.argv[1]?.endsWith('check-setup.mjs');
+const invokedDirectly = isInvokedAsScript(import.meta.url);
 
 if (invokedDirectly) {
   try {

@@ -48,6 +48,7 @@ import {
   TrainRefusal, parsePrList, flagValue, hasOption, githubSlugFromUrl, messageChildArgv,
   runPlan, runMessage, runVerify, runLand, runSync,
 } from './lib/ship-train/commands.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const VERBS = ['plan', 'message', 'land', 'verify', 'sync'];
 const KNOWN_FLAGS = [
@@ -260,9 +261,7 @@ export async function main(argv = process.argv) {
   }
 }
 
-// Direct-run guard, both sides canonicalised (fleet.mjs's pattern): a symlinked or
+// Direct-run guard, both sides canonicalised (lib/cli-entry.mjs): a symlinked or
 // differently-cased entry path must never turn a command into a silent no-op.
 // --selfcheck-relocation stays the first statement of main().
-const canon = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
-const here = canon(fileURLToPath(import.meta.url));
-if (process.argv[1] && here === canon(path.resolve(process.argv[1]))) await main();
+if (isInvokedAsScript(import.meta.url)) await main();

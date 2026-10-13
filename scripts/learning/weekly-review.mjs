@@ -38,6 +38,7 @@ import {
   readRecentFriction,
 } from '../learning-store.mjs';
 import { assertKnownFlags, ArgvError } from '../lib/cli-io.mjs';
+import { isInvokedAsScript } from '../lib/cli-entry.mjs';
 
 // Every flag this CLI accepts. `--repo` and `--format` take a value; `--dry-run`
 // is a boolean.
@@ -421,8 +422,7 @@ export async function runWeeklyReview(opts = {}) {
 
 // ── CLI entrypoint ─────────────────────────────────────────────────────────
 
-const isMain = import.meta.url === `file://${process.argv[1]}`
-  || import.meta.url === `file:///${(process.argv[1] || '').replace(/\\/g, '/')}`;
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   try {

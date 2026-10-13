@@ -40,6 +40,7 @@ import { runWithConcurrency } from './lib/concurrency.mjs';
 import { findNodeModules } from './lib/node-modules-resolver.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(path.dirname(SELF), '..');
@@ -807,6 +808,5 @@ async function main() {
   );
 }
 
-const isMain = import.meta.url === `file://${process.argv[1]}`
-  || import.meta.url === `file:///${(process.argv[1] || '').replace(/\\/g, '/')}`;
+const isMain = isInvokedAsScript(import.meta.url);
 if (isMain) main();

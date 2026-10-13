@@ -30,13 +30,13 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError, argOption, hasFlag, finishAndExit } from './lib/cli-io.mjs';
 import {
   DEFAULT_AUDIT_DIR, findRoundLedgers, readDeferredEntries, collectDebtIdentities, executeCheck,
   auditDirAvailable as auditDirAvailableFn,
 } from './lib/debt-capture-trail.mjs';
 import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--json', '--out', '--audit-dir', '--ledger', '--help', '-h', '--selfcheck-relocation'];
 
@@ -200,9 +200,5 @@ async function main() {
   await finishAndExit(exitCode);
 }
 
-const isMain = (() => {
-  try {
-    return Boolean(process.argv[1]) && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 if (isMain) main();

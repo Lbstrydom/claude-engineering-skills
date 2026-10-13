@@ -60,6 +60,7 @@ import { fileURLToPath } from 'node:url';
 import { emit, hasFlag, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
 import { getSyncClosure } from './lib/sync-inventory.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--json', '--list', '--update', '--selfcheck-relocation', '--help'];
 
@@ -398,6 +399,6 @@ function main() {
 // `process.argv[1]` is undefined under `node --input-type=module -e`, which is
 // how a test imports this module for its `scanFile`/`tally`/`adjudicate`
 // exports — guard it, or the import runs main() before the exports are usable.
-if (process.argv[1]?.endsWith('check-skill-consumer-refs.mjs')) {
+if (isInvokedAsScript(import.meta.url)) {
   main();
 }

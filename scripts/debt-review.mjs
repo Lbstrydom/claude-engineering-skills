@@ -43,6 +43,7 @@ import { createUpstreamOwnershipOracle } from './lib/upstream-ownership.mjs';
 import { findPossiblyStaleEntries } from './lib/debt-git-history.mjs';
 import { openaiConfig } from './lib/config.mjs';
 import { hasFlag } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 // ── CLI Arg Parsing ─────────────────────────────────────────────────────────
 
@@ -558,10 +559,7 @@ export { runLocalClustering, runLLMClustering, renderMarkdown, writeTopRefactorP
 
 // ── CLI entry point ────────────────────────────────────────────────────────
 // Only runs when invoked directly (not when imported as a module).
-const isDirectRun = process.argv[1] && (
-  process.argv[1].endsWith('debt-review.mjs') ||
-  process.argv[1].endsWith('debt-review')
-);
+const isDirectRun = isInvokedAsScript(import.meta.url);
 if (isDirectRun) {
   main().catch(err => {
     console.error('Unhandled error:', err.message);

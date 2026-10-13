@@ -83,7 +83,6 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
@@ -110,6 +109,7 @@ import { normalizeGeminiUsage } from './lib/gemini-usage.mjs';
 import { readLedger, aggregateBudgetSpent, aggregateCostForArm, sharedPassCreditRows } from './lib/solo-control/ledger.mjs';
 import { commitsCompleteForAllArms, coveredCommits, gateCellState, resumeArmFile, runMeasuredReview, reviewCommitState, unmeasuredCommits } from './lib/solo-control/completion.mjs';
 import { resolveDeepseekCreds } from './lib/model-resolver.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 // The generation passes an arm runs — IMPORTED from audit-shadow.mjs, never
 // re-derived. The previous line here was `PASS_PROMPTS keys minus quickfix`,
@@ -2459,7 +2459,7 @@ async function main() {
 
 // Guarded so tests can `import` this module for `_internals` (pure helpers
 // like chunkDiff) without triggering a live CLI run + process.exit.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (isInvokedAsScript(import.meta.url)) main();
 
 export const _internals = {
   chunkDiff, continuationMarker, planIncrementalRun, repoIdentityFor, buildColdPassPrompt,

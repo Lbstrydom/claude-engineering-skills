@@ -50,6 +50,7 @@ import { assertKnownFlags, ArgvError, argOption, hasFlag } from './lib/cli-io.mj
 // predicate is how the pre-flight and the CLI would silently disagree.
 import { isAuditInfraFile } from './lib/audit-scope.mjs';
 import { resolveReferenceExtension } from './lib/plan-paths.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 // The extension policy is IMPORTED from the module the auditor itself uses
 // (`mergeScopeFiles` resolves admission through the same oracle). An earlier
@@ -268,12 +269,7 @@ function main() {
   process.exit(0);
 }
 
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   try {

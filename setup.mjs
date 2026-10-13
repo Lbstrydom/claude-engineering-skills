@@ -28,6 +28,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { execSync, execFileSync } from 'node:child_process';
 import { createPrompter } from './scripts/lib/install/prompt.mjs';
+import { isInvokedAsScript } from './scripts/lib/cli-entry.mjs';
 
 const SELF_DIR = path.dirname(fileURLToPath(import.meta.url));
 // Lazy: createPrompter() opens a readline interface on stdin, which keeps the
@@ -508,8 +509,7 @@ ${B}╔════════════════════════�
 // Run only when invoked directly. Without this guard the wizard starts on
 // import, which is why nothing could test it — the first thing every user runs
 // had no coverage at all. `node setup.mjs` is unaffected.
-const invokedDirectly = process.argv[1]
-  && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+const invokedDirectly = isInvokedAsScript(import.meta.url);
 if (invokedDirectly) {
   main().catch(err => { console.error(`Setup failed: ${err.message}`); process.exit(1); });
 }

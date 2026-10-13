@@ -35,6 +35,7 @@ import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { resolveOutcomeSource } from './lib/assessment-source.mjs';
 import { resolveRepoIdentity } from './lib/repo-identity.mjs';
 import { getRepoIdByUuid } from './lib/store/repo.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
 
@@ -612,7 +613,7 @@ async function main() {
 }
 
 // CLI entry point — only when invoked directly
-const isDirectRun = process.argv[1]?.endsWith('meta-assess.mjs') || process.argv[1]?.endsWith('meta-assess');
+const isDirectRun = isInvokedAsScript(import.meta.url);
 if (isDirectRun) {
   main().catch(err => {
     console.error(`Meta-assessment failed: ${err.message}`);

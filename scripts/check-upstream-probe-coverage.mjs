@@ -33,6 +33,7 @@ import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { computeDispositionDivergences } from './lib/upstream/dispositions.mjs';
 import { probeIds, validateRegistry } from './lib/doctor/registry.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const LEDGER_PATH = path.join(REPO_ROOT, 'scripts', 'upstream-dispositions.json');
@@ -173,7 +174,6 @@ function main() {
   process.exitCode = gateMode && !ok ? 1 : 0;
 }
 
-const invokedDirectly = import.meta.url === `file://${process.argv[1]}`
-  || process.argv[1]?.endsWith('check-upstream-probe-coverage.mjs');
+const invokedDirectly = isInvokedAsScript(import.meta.url);
 
 if (invokedDirectly) main();

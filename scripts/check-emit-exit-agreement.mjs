@@ -36,6 +36,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { emit, hasFlag, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--json', '--update', '--selfcheck-relocation', '--help'];
 
@@ -349,6 +350,6 @@ function main() {
 // `process.argv[1]` is undefined under `node --input-type=module -e`, which is
 // how a test or a probe imports this module for its `scanOptOuts` export —
 // guard it, or importing the module throws before the export is reachable.
-if (process.argv[1]?.endsWith('check-emit-exit-agreement.mjs')) {
+if (isInvokedAsScript(import.meta.url)) {
   main();
 }

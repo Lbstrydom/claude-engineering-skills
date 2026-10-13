@@ -20,6 +20,7 @@ import path from 'node:path';
 import { detectShape } from './lib/fit-check/detect.mjs';
 import { applyRules, groupByLabel } from './lib/fit-check/rules.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const FIT_CHECK_REPORT_PATH = '.skills-fit-check.json';
 
@@ -152,7 +153,7 @@ function main() {
   process.exit(exitCode);
 }
 
-const isMain = import.meta.url.endsWith(process.argv[1]?.replace(/\\/g, '/').split('/').pop() || '');
+const isMain = isInvokedAsScript(import.meta.url);
 if (isMain) {
   main();
 }

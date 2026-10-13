@@ -23,6 +23,7 @@
 
 import './lib/load-env.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 // Config errors from an EXPLICITLY-set-but-invalid env var (never from an
 // absent one — absence is a normal default, not a misconfiguration).
@@ -520,12 +521,7 @@ async function main() {
 
 export const _internals = { atomicWrite, evaluateClusterDensity, capNote, THRESHOLDS, numEnv, CONFIG_ERRORS, RPC_TIMEOUT_MS };
 
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   main().catch(err => {
