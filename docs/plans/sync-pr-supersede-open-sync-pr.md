@@ -353,3 +353,10 @@ cleanup via `rmrfBestEffort` (rmsync-retry guard).
   policy-based (M1, LOW). Dismissed in deliberation: byte-reproducing the
   older sync (H4). Deferred as blocked-by: the retry path (M2, see Out of
   Scope). M3 is an adjacency-wave coverage bound.
+- Code audit R2 (backend + sustainability over the R1 fix diff): PASS, H0 M0
+  L0. R3 (all passes and waves over the full feature diff, file coverage
+  complete): PASS, H0 M0 L0. **Converged: 2 stable clean rounds.** Census:
+  structure, wiring, backend, sustainability, quickfix, duplication,
+  adjacency, orphan-introduced and event-wiring-symmetry completed; frontend
+  ineligible (0 frontend files).
+- Code final gate R1 (Gemini): **APPROVE**, gate approve, 0 blocking, 0 debt.
