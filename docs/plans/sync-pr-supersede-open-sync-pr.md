@@ -336,6 +336,32 @@ cleanup via `rmrfBestEffort` (rmsync-retry guard).
   plus a warning with the exact close command, and the next newer sync
   re-supersedes every older open sync PR. `supersedeOlderSyncPrs` is exported
   so the wiring is a call, not a rewrite.
+  **Done (follow-up branch `claude/sync-pr-supersede-retry`):** whenever a
+  run opens no PR while the current bundle's sync branch exists
+  (`supersessionRetryTarget`: the `BRANCH_EXISTS` re-run after a fresh sync,
+  and the bare `sync:pr` re-run that skips at `CLEAN` because the first run
+  committed the synced files; code audit R1 M2), the CLI calls
+  `retrySupersession`, which resolves the
+  branch's existing PR (`gh pr view <branch>`, through the same account
+  fallback, now one `createGhWithAccountFallback` shared with
+  `runConsumerPr`) and, only when it is OPEN on this base, runs
+  `supersedeOlderSyncPrs` against the freshly fetched origin sha. It creates
+  no commit, branch or PR and never arms auto-merge; `--dry-run` asks gh
+  nothing. Limit: it does not close the residual race above — if the older
+  PR merged before the close, there is nothing open to supersede and the
+  existing PR stays DIRTY on the receipt (fleet proposal
+  p-20261013191133-2c93).
+  Retry audit (`--scope diff`): R1 H0 M5. Fixed: M2 (a bare re-run on a
+  clean tree never retried; now `supersessionRetryTarget`). Dismissed in
+  deliberation (GPT overruled its own findings): M1/M3 stdout routing (no
+  machine stdout contract in this CLI), M4 exit code (the plan's
+  "supersession never fails the run" contract, shared with the creating
+  path), M5 adjacency bound. R2 PASS. R3 (all passes, full feature diff) H1:
+  the retry trusted a remote PR as successor; fixed by proving its fetched
+  head and its own receipt attest this bundle (`successor-unverified`).
+  R4 and R5 PASS, H0 M0 L0, file coverage complete. **Converged.** Final
+  gate R1 (Gemini): **APPROVE**, 0 blocking, 0 debt. Each fix's test was
+  watched red with the fix reverted.
 - **Dry-run preview** of what would be superseded — same file, same reason.
 - Final gate R1 (Gemini): G1 HIGH accepted — guard 3 judged the older PR
   against the NEW sidecar, which would keep every PR whose bundle a newer one
