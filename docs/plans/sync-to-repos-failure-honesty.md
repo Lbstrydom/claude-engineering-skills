@@ -108,7 +108,7 @@ graph LR
   1. GC failures, managed-block write failures and unsafe manifest keys now exit 1. That is intended, since a partial sync must not read as success.
   2. A broad glob override no longer holds a tooling file. No current consumer uses one.
   3. An unreadable migrations dir is fatal.
-- **Deferred: H6.** Concurrent same-consumer syncs are unsupported. The fix shape, if that changes, is a per-target `withFileLock` (`scripts/lib/file-lock.mjs`) over the read-prior-state → write-manifest/receipt window, **not** a receipt compare-and-swap.
+- **Deferred: H6** (debt `a81c4d350fa3`). Concurrent same-consumer syncs are unsupported. The fix shape, if that changes, is a per-target `withFileLock` (`scripts/lib/file-lock.mjs`) over the read-prior-state → write-manifest/receipt window, **not** a receipt compare-and-swap.
 - **Deferred: repo-wide entry-guard migration.** About 60 CLIs have the same `argv[1]` comparison, many even weaker (`file://${argv1}`). That is a separate, mechanical-but-verifiable change, suggested as its own task.
 
 ## 9. Testing Strategy
