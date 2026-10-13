@@ -1,5 +1,16 @@
 # Project Status Log
 
+<!-- ship-verification-af095029-20261013T121639Z.md -->
+### Consumer Verification (previous ship)
+- **Commit**: af09502908860668ddbd773b0ca9bc53945a47e9 on `fix/fleet-prune-surface-count` (PR #235, open, NOT merged), rebased onto main 9ba0c687. Commits: feature b8fad08b, plans index 4c72e756, status.json fix 56ba995f, index regen 64f74267, ship commit af095029.
+- **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of exactly this sha: 19,717 tests, 19,671 pass, 0 fail, 46 skipped, "checks passed"; status-log-integrity conserved against 9ba0c687. Two earlier pushes in the same gate slot were blocked by one real failure each (fleet-oid-cache cold/warm status JSON, `prune.at`; check-status-log-integrity HEAD~1 conservation after an in-place entry edit), both fixed before this push. No separate post-push re-run.
+- **Result**: pushed commit verified by the gate; synced consumer bundle unverified (blocked: not merged). `scripts/lib/fleet/prune-summary.mjs` is a new lib module in the synced bundle: after #235 merges and main re-syncs, confirm it reaches a consumer with `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in that consumer's MAIN checkout.
+
+<!-- ship-verification-df02c37b-20261013T125510Z.md -->
+- **Commit**: df02c37bb89b96a299abef57971c639dbfc6f9ec on `claude/zen-sanderson-9ba76a` (PR #236, open; NOT merged), rebased onto main b458551d; 7 commits, the last being the status.md ship commit (AI-Gate converged, run b66b596e).
+- **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of exactly this sha on one plain push (12:32-12:54Z): 19,738 tests, 19,692 pass, 0 fail, 46 skipped, "checks passed"; status-log-integrity conserved against b458551d. No separate consumer-side retrieval was run.
+- **Result**: pushed commit verified by the gate; the synced consumer bundle is unverified (blocked: not merged). After #236 merges and main re-syncs: in each consumer's MAIN checkout run `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` and confirm `scripts/.claude-skills/lib/cli-entry.mjs` is now PRESENT (synced CLIs import it), then `node scripts/.claude-skills/cross-skill.mjs --selfcheck-relocation` prints OK (the CLI_SMOKE_SET gate exercises the migrated guard).
+
 <!-- ship-verification-3d47b067-20261013T093758Z.md -->
 ### Consumer Verification (previous ship)
 - **Commit**: 3d47b0672e00d833770c5e7dcc7e46e57b40271b on `claude/loving-mcclintock-d57154` (PR #233, open; NOT merged), based on main be057735; ship commit 61562fa8 (AI-Gate waived, run 49bcb42b) plus a test fix 3d47b067.
@@ -178,6 +189,32 @@
 - **Commit**: d9b305538657235ff7340f052b32ace8891fe14a on `fix/fleet-hookspath-removal-guard` (PR #220, open; NOT merged). It is the merge of `origin/main` 44c4bbda into the branch plus the status.md ship commit (AI-Gate: converged, run 21ff263a).
 - **Retrieval**: the push's own pre-push hook run did NOT complete. Its process tree was hard-terminated mid-`npm test` (TAP stopped at top-level test 1954, no summary, neither "checks passed" nor "FAILED" printed, sandbox `ces-prepush-d9b30553-90492` left with a dead owner), yet git transferred the push. Killer unidentified: no Application/System event 14:18:30–14:24:20Z. The gate was then run by hand on exactly this sha, `node scripts/prepush-check.mjs --base e5147629 --head d9b30553` (clean sandbox): run 1 (14:29–14:40Z) exit 1, 19,544 tests with 1 fail, `tests/fleet-cli-approve.test.mjs` "the push is issued to the recorded pushUrl" (null envelope at 66s; passes 11/11 alone); run 2 (14:42–14:55Z) exit 0, 19,544 tests, 0 fail, 46 skipped.
 - **Result**: pushed commit verified by the second hand run, not by the hook. The synced consumer bundle is unverified (blocked: not merged); sync from an up-to-date main after #220 merges. Open: a killed pre-push hook can let a push through (coordinator to spawn a separate chip).
+
+## 2026-10-13 — sync-pr supersedes an older open sync PR (upstream 2f933809)
+
+**Why.** Two `chore/sync-*` PRs open at once for one consumer both prepend to `.sync-receipt.json`, so whichever merges second is DIRTY, and resolving it by hand either drops an event or hand-computes the rotation (wine-cellar-app #851/#852). #230 fixed the stale base and #231 accepts a correct union merge; neither covered two PRs built on the same fresh origin. Plan + audit trail: `docs/plans/sync-pr-supersede-open-sync-pr.md`.
+
+- **Change** (`scripts/lib/sync-pr.mjs`, header rule 4): `runConsumerPr` now runs `supersedeOlderSyncPrs` after `gh pr create` and before any auto-merge is armed. Each older open sync PR on the same base is closed with a comment naming its successor. Nothing is merged, and the branch is kept so the PR can be reopened. The close happens only when git evidence proves the new PR replaces it:
+  - one commit over the merge-base;
+  - every changed path owned by that PR's own sidecar (the merge-base sidecar may authorise a deletion only);
+  - its own receipt attests a full bundle sha from this repo, matching the branch;
+  - that sha is strictly older than this sync's (via `createGitAncestry`);
+  - a re-read just before closing still shows OPEN at the same base and head, and the successor is open.
+
+  Anything else stays open with a named `SUPERSEDE_KEEP_REASON` and a warning. While supersession is unsettled, B's auto-merge is withheld (`merged: 'not-armed'`). The gh account fallback is reused; `--no-merge` and the CLI are unchanged.
+- **Options rejected**:
+  - A merge driver: GitHub's server-side merge never runs one, so the PR would still read DIRTY.
+  - Regenerating the receipt when the base moves: no trigger exists, and it would be a second implementation of the sync, which rule 3 refuses.
+- **Tests**: 76/76 across `tests/sync-pr.test.mjs` and `tests/sync-pr-git.test.mjs`.
+  - Real git with a scripted gh covers: an older open PR is superseded; none open means nothing is closed; and these are kept open: a newer PR, a hand edit outside the synced surface, a second commit, an amended receipt, and a change to a retired file (while a retired deletion is superseded).
+  - Red before implementation on the missing exports. Each of the 10 guards was disabled in turn, and every one turned its test red.
+- **Audit**:
+  - `/audit-plan`: GPT 2 rounds, Gemini 2 rounds, all findings accepted.
+  - `/audit-code`: R1 H5 M3 → fixed H1 (compromised to MEDIUM), H2, H3, H5 and M1 (LOW). H4 (byte-reproduce the older sync) was dismissed in deliberation. M2 is deferred as `blocked-by`, see below.
+  - R2 and R3 PASS H0 M0 L0, coverage complete; Gemini **APPROVE** (gate approve).
+- **Deferred**: a same-bundle re-run never retries a failed supersession, because `scripts/sync-pr.mjs` skips at `BRANCH_EXISTS` first. That file was held by #236 then. Follow-up chip: "CES: Wire sync-pr supersession retry into the CLI". `--dry-run` does not preview supersession.
+- **Consumer impact**: none to sync — `sync-pr` runs from this repo. The change shows on the next `npm run sync:pr` after merge.
+- Backlog 2026-10-13T13:26Z: Q1 225c/52p (+420 aged) · Q2 215c/108p (54 perm) · Q3 35 · debt 366 cloud/1 local (0 spilled) · upstream 2
 
 ## 2026-10-13 — every CLI entry guard goes through `isInvokedAsScript`; import-time selfcheck handlers gated
 
