@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**12 active · 249 terminal · 35 audit summaries · 1 parked · 5 reference docs**
+**12 active · 249 terminal · 36 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -322,7 +322,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 (they carry a free-text convergence sentence by convention).
 
 <details>
-<summary>Show all 35 audit summaries</summary>
+<summary>Show all 36 audit summaries</summary>
 
 | Plan | Notes |
 |---|---|
@@ -358,6 +358,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 | [Audit convergence summary — runs-findings write-boundary hardening](./runs-findings-write-boundary-hardening-audit-summary.md) |  |
 | [Audit Summary — symbol-index-bugs](./symbol-index-bugs-audit-summary.md) |  |
 | [/audit-code summary — sync-output-drift-classification](./sync-output-drift-classification-audit-summary.md) |  |
+| [Audit summary: sync-to-repos failure honesty](./sync-to-repos-failure-honesty-audit-summary.md) |  |
 | [Audit Summary: triage-independence-test-and-write-boundary-fixes](./triage-independence-test-and-write-boundary-fixes-audit-summary.md) |  |
 | [Audit Summary — vcs-parsing-and-rmsync-scope-hardening](./vcs-parsing-and-rmsync-scope-hardening-audit-summary.md) |  |
 | [Audit Summary: visual-contract-semantic-validation](./visual-contract-semantic-validation-audit-summary.md) |  |
