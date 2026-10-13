@@ -38,7 +38,7 @@ import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { resolveTargets, consumerAliases } from './lib/consumer-repos.mjs';
 import { MANIFEST_RELATIVE_PATH } from './lib/sync-manifest.mjs';
 import { classifyRepo } from './sync-status.mjs';
-import { SKIP_REASON, planConsumerPr, runConsumerPr, gatherConsumerFacts, retrySupersession } from './lib/sync-pr.mjs';
+import { planConsumerPr, runConsumerPr, gatherConsumerFacts, retrySupersession, supersessionRetryTarget } from './lib/sync-pr.mjs';
 import { scratchPath } from './lib/temp-paths.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
@@ -171,17 +171,13 @@ export async function main(argv = process.argv, out = process.stdout, deps = {})
 
     if (plan.action === 'skip') {
       out.write(`  ${Y}skip${X} ${plan.reason}${plan.detail ? ` ${D}— ${plan.detail}${X}` : ''}\n`);
-      if (plan.reason === SKIP_REASON.BRANCH_EXISTS) {
-        // This bundle's sync PR already exists: retry its supersession, which
-        // a first run may have left unsettled (lib/sync-pr.mjs header rule 4).
-        if (dryRun) {
-          out.write(`  ${D}dry run: supersession retry not attempted${X}\n`);
-          continue;
-        }
-        const retry = retrySupersession({
-          branch: plan.branch, bundleSha: plan.bundleSha, repo: plan.repo, repoRoot, baseBranch, baseSha: facts.baseSha, run, log, ancestry,
-        });
-        out.write(formatRetry(retry));
+      // This bundle's sync PR may already exist: retry its supersession, which
+      // a first run may have left unsettled (lib/sync-pr.mjs header rule 4).
+      const target = supersessionRetryTarget({ plan, manifest, branchExists: facts.branchExists });
+      if (target && dryRun) {
+        out.write(`  ${D}dry run: supersession retry not attempted${X}\n`);
+      } else if (target) {
+        out.write(formatRetry(retrySupersession({ ...target, repoRoot, baseBranch, baseSha: facts.baseSha, run, log, ancestry })));
       }
       continue;
     }

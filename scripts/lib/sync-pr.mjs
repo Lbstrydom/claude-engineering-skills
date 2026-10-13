@@ -59,9 +59,10 @@
  *    driver (GitHub's server-side merge never runs one, so the PR still reads
  *    DIRTY), and regenerating the receipt when the base moves (no trigger
  *    exists, and it would be the second implementation rule 3 refuses).
- *    A same-bundle re-run (which stops at `BRANCH_EXISTS`) retries a failed
- *    supersession for the already-open PR via `retrySupersession` — creating
- *    nothing and arming nothing.
+ *    A re-run that opens no PR while this bundle's sync branch exists
+ *    (`supersessionRetryTarget`) retries a failed supersession for the
+ *    already-open PR via `retrySupersession` — creating nothing and arming
+ *    nothing.
  *    Plan: docs/plans/sync-pr-supersede-open-sync-pr.md.
  *
  * PURE planning (`planConsumerPr`, `branchNameFor`, `buildPrText`,
@@ -233,12 +234,11 @@ export function planConsumerPr({
     }
   }
   const branch = branchNameFor(commitSha);
-  const repo = manifest.repo ?? DEFAULT_REPO;
   if (branchExists) {
-    // Carries what `retrySupersession` needs: a same-bundle re-run lands here.
-    return { action: 'skip', reason: SKIP_REASON.BRANCH_EXISTS, detail: branch, branch, bundleSha: commitSha, repo };
+    return { action: 'skip', reason: SKIP_REASON.BRANCH_EXISTS, detail: branch };
   }
   const leftBehind = classified.needsReview.map((e) => e.path).sort();
+  const repo = manifest.repo ?? DEFAULT_REPO;
   const text = buildPrText({ repo, commitSha, surface, leftBehind, consumerName });
   return {
     action: 'pr',
@@ -743,20 +743,39 @@ function createGhWithAccountFallback({ run, repoRoot, log = () => {} }) {
   return { gh, restore };
 }
 
+/**
+ * Which existing sync PR a run that opens none should retry supersession for,
+ * or null. PURE. The retry is remote-only (it never touches the working tree),
+ * so ANY skip qualifies once the current bundle's sync branch exists: the
+ * same-bundle re-run that reaches `BRANCH_EXISTS` after a fresh `sync`, AND
+ * the bare `sync:pr` re-run that reaches `CLEAN` because the first run
+ * committed the synced files onto that branch (code audit R1 M2).
+ *
+ * @param {{plan: ReturnType<typeof planConsumerPr>, manifest: {repo?: string, commitSha?: string|null}|null, branchExists: boolean}} input
+ * @returns {{branch: string, bundleSha: string, repo: string}|null}
+ */
+export function supersessionRetryTarget({ plan, manifest, branchExists }) {
+  const commitSha = manifest?.commitSha;
+  if (plan?.action !== 'skip' || !branchExists || typeof commitSha !== 'string' || !FULL_OID.test(commitSha)) return null;
+  return { branch: branchNameFor(commitSha), bundleSha: commitSha, repo: manifest.repo ?? DEFAULT_REPO };
+}
+
 /** Why `retrySupersession` ran nothing. Strings are the CLI's contract. */
 export const SUPERSEDE_RETRY_SKIP = Object.freeze({
   NO_PR: 'no-pr',
   PR_UNREADABLE: 'pr-unreadable',
   NOT_OPEN: 'not-open',
   OTHER_BASE: 'other-base',
+  SUCCESSOR_UNVERIFIED: 'successor-unverified',
 });
 
 /**
- * Header rule 4, retried (audit M2 of the supersede change). A same-bundle
- * re-run stops at `BRANCH_EXISTS` — the sync PR for this bundle is already
- * open — so a supersession that failed on the first run (a list or close
- * failure, incomplete discovery) would otherwise never be retried, and that
- * PR's auto-merge stays withheld. This resolves the EXISTING PR for the branch
+ * Header rule 4, retried (audit M2 of the supersede change). A re-run of the
+ * same bundle never reaches `runConsumerPr` — it skips at `BRANCH_EXISTS`
+ * (after a fresh sync) or `CLEAN` (the first run committed the synced files) —
+ * so a supersession that failed on the first run (a list or close failure,
+ * incomplete discovery) would otherwise never be retried, and that PR's
+ * auto-merge stays withheld. This resolves the EXISTING PR for the branch
  * and runs `supersedeOlderSyncPrs` for it against the freshly fetched base.
  *
  * It never creates a commit, a branch or a PR, never switches the checkout,
@@ -764,7 +783,7 @@ export const SUPERSEDE_RETRY_SKIP = Object.freeze({
  * supersession settles stays a person's call (its own run withheld it).
  *
  * @param {{
- *   branch: string, bundleSha: string, repo: string, — from the BRANCH_EXISTS plan
+ *   branch: string, bundleSha: string, repo: string, — from `supersessionRetryTarget`
  *   repoRoot: string, baseBranch: string, baseSha: string, — `baseSha`: origin/<base> as freshly fetched
  *   run: Runner, log?: (line: string) => void,
  *   ancestry?: (a: string, b: string) => 'yes'|'no'|'unknown',
@@ -793,6 +812,16 @@ export function retrySupersession({
     }
     if (pr.state !== 'OPEN') return skip(SUPERSEDE_RETRY_SKIP.NOT_OPEN, `${pr.url} is ${pr.state}`);
     if (pr.baseRefName !== baseBranch) return skip(SUPERSEDE_RETRY_SKIP.OTHER_BASE, `${pr.url} targets ${pr.baseRefName}, not ${baseBranch}`);
+    // The creating run KNOWS its successor carries this bundle; a retry is
+    // handed a remote PR, so it proves it the way a candidate is proven: the
+    // head gh names is the head git fetched, and that head's own receipt
+    // attests exactly this bundle from this repo (code audit R3 H1).
+    const ev = collectSupersedeEvidence(run, { repoRoot, record: { branch, headRefOid: pr.headRefOid }, baseSha, ancestry, newBundleSha: bundleSha });
+    const source = ev.receiptEntry?.source;
+    if (ev.fetchedOid !== pr.headRefOid || source?.commitSha !== bundleSha || source?.repo !== repo) {
+      return skip(SUPERSEDE_RETRY_SKIP.SUCCESSOR_UNVERIFIED, ev.detail
+        ?? `${pr.url}'s receipt attests ${source?.repo ?? '(no repo)'} ${source?.commitSha ?? '(no sha)'}, not ${repo} ${bundleSha}`);
+    }
 
     const supersede = supersedeOlderSyncPrs({
       gh, run, ancestry, repoRoot, repo, baseBranch, baseSha, newBranch: branch, newBundleSha: bundleSha, newUrl: pr.url, log,

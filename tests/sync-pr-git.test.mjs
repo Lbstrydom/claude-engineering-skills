@@ -438,14 +438,27 @@ describe('sync-pr CLI on real git — a same-bundle re-run retries a failed supe
     };
   }
 
-  /** One `npm run sync` (same bundle) followed by `npm run sync:pr`, through the CLI. */
-  async function syncThenSyncPr(gh, flags = []) {
-    fx.syncWrites();
+  /**
+   * One `npm run sync` (same bundle) followed by `npm run sync:pr`, through the
+   * CLI. `resync: false` is a bare `sync:pr` re-run: no sync rewrote anything,
+   * so the classification is the clean tree the first run left behind.
+   */
+  async function syncThenSyncPr(gh, flags = [], { resync = true } = {}) {
+    if (resync) {
+      fx.syncWrites();
+      // A real receipt event for this bundle: the retry proves the existing PR
+      // carries it before superseding anything in its favour.
+      write(fx.consumer, RECEIPT_PATH, `${JSON.stringify({
+        version: 2, olderSyncsDropped: 0,
+        recentSyncs: [{ syncedAt: '2026-10-13T12:00:00.000Z', source: { repo: REPO, commitSha: up.current } }],
+      })}\n`);
+    }
     write(fx.consumer, MANIFEST_RELATIVE_PATH, `${JSON.stringify({ repo: REPO, commitSha: up.current })}\n`);
     const { run, ghCalls } = makeRunner(gh);
     let printed = '';
+    const clean = { ...classified, clean: true, syncOwned: [] };
     const code = await main(['node', 'sync-pr.mjs', ...flags], { write: (s) => { printed += s; } }, {
-      run, resolve: () => [{ name: 'fixture', path: fx.consumer }], classify: () => classified, ancestry: createGitAncestry(up.dir),
+      run, resolve: () => [{ name: 'fixture', path: fx.consumer }], classify: () => (resync ? classified : clean), ancestry: createGitAncestry(up.dir),
     });
     return { code, ghCalls, printed: printed.replace(/\x1b\[\d+m/g, '') };
   }
@@ -479,6 +492,22 @@ describe('sync-pr CLI on real git — a same-bundle re-run retries a failed supe
     assert.match(second.printed, /supersession retried for https:\/\/github\.com\/o\/r\/pull\/9: complete/);
     assert.deepEqual(snapshot(), before, 'no commit, branch or push: the existing PR is untouched');
     assert.equal(fx.git(['rev-parse', '--abbrev-ref', 'HEAD'], fx.consumer).trim(), 'trunk');
+  });
+
+  it('a bare sync:pr re-run on the clean tree the first run left also retries (code audit R1 M2)', async () => {
+    const older = pushSyncBranch(fx, up.old);
+    await syncThenSyncPr(scriptedGh(older, { closeFails: true }));
+    assert.equal(fx.git(['status', '--porcelain', '--', SKILL, RECEIPT_PATH], fx.consumer), '',
+      'fixture: the first run committed the synced files onto its branch, so the base tree is clean');
+
+    const before = snapshot();
+    const bare = await syncThenSyncPr(scriptedGh(older, { closeFails: false }), [], { resync: false });
+    assert.equal(bare.code, 0, bare.printed);
+    assert.match(bare.printed, /skip.*clean/);
+    assert.deepEqual(bare.ghCalls.filter((a) => a[1] === 'close').map((a) => a[2]), ['4']);
+    assert.ok(!verbs(bare.ghCalls).some((v) => v === 'create' || v === 'merge'));
+    assert.match(bare.printed, /supersession retried for https:\/\/github\.com\/o\/r\/pull\/9: complete/);
+    assert.deepEqual(snapshot(), before);
   });
 
   it('--dry-run on a same-bundle re-run asks gh nothing', async () => {
