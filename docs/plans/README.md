@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**15 active · 249 terminal · 37 audit summaries · 1 parked · 5 reference docs**
+**15 active · 249 terminal · 38 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -325,7 +325,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 (they carry a free-text convergence sentence by convention).
 
 <details>
-<summary>Show all 37 audit summaries</summary>
+<summary>Show all 38 audit summaries</summary>
 
 | Plan | Notes |
 |---|---|
@@ -333,6 +333,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 | [Audit Summary — Architecture-Intent PR-C (Postgres Adapter)](./arch-intent-pr-c-audit-summary.md) |  |
 | [Audit Summary: audit-target-identity-commit-sha-correction](./audit-target-identity-commit-sha-correction-audit-summary.md) |  |
 | [Audit Summary — brainstorm-arch-context](./brainstorm-arch-context-audit-summary.md) |  |
+| [Audit summary: cli-entry-guard-migration](./cli-entry-guard-migration-audit-summary.md) |  |
 | [`/audit-code` summary — `machine/git-autocrlf` probe (8620cfe8)](./consumer-friction-doctor-audit-summary.md) |  |
 | [Audit convergence summary — debt readers ask the store](./debt-readers-ask-store-audit-summary.md) |  |
 | [Audit Summary — discovery-portfolio-secret-redaction](./discovery-portfolio-secret-redaction-audit-summary.md) |  |
