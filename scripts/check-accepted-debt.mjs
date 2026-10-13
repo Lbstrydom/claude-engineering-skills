@@ -41,12 +41,12 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError, argOption, hasFlag, finishAndExit, safeErrorClass } from './lib/cli-io.mjs';
 import { checkAll, parseAgentsDebtTable } from './lib/accepted-debt-check.mjs';
 import { loadRegistry } from './lib/accepted-debt-registry.mjs';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 // No --selfcheck-relocation handler: this script is never relocated (it's
 // deliberately excluded from the sync manifest — see the module header), so
@@ -339,12 +339,5 @@ async function main() {
   await finishAndExit(result.exitCode);
 }
 
-// path.resolve(argv[1]) vs fileURLToPath(import.meta.url): both are OS-native
-// decoded paths, so a checkout path needing URL-encoding (e.g. containing a
-// space) can never desync them the way a raw string/URL comparison could.
-const isMain = (() => {
-  try {
-    return Boolean(process.argv[1]) && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 if (isMain) main();

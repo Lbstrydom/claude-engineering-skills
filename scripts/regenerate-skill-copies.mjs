@@ -39,6 +39,7 @@ import path from 'node:path';
 import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
 import { sha, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { atomicWriteFileSync, canonicalizeEol } from './lib/file-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SRC_ROOT = path.join(ROOT, 'skills');
@@ -327,12 +328,7 @@ export const _internals = Object.freeze({ copyFileIfChanged, pruneFilesNotInSour
 // main() OVERWRITES the real .claude/skills tree and calls process.exit(0), so
 // the import would regenerate the tree and kill the test process. Same
 // module-scope-main coupling as the sibling generate-plans-index.mjs.
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   try {

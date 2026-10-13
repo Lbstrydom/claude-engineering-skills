@@ -137,6 +137,7 @@ import { dispatch } from './lib/cross-skill/dispatch.mjs';
 import { computeShadowOverlap } from './lib/model-eval/shadow-overlap.mjs';
 import { firstSeenFromHistory } from './lib/nav/drift.mjs';
 import { z } from 'zod';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 // ── Arg parsing ─────────────────────────────────────────────────────────────
 
@@ -1122,7 +1123,6 @@ async function main() {
 // executing the CLI against the importing process's own argv — matching the
 // `invokedDirectly` convention every other top-level CLI script in this
 // bundle already follows.
-const invokedDirectly = import.meta.url === `file://${process.argv[1]}`
-  || process.argv[1]?.endsWith('cross-skill.mjs');
+const invokedDirectly = isInvokedAsScript(import.meta.url);
 
 if (invokedDirectly) main();

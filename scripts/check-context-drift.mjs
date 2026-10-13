@@ -37,6 +37,7 @@ import { scanInstructionFiles } from './lib/claudemd/file-scanner.mjs';
 import { toSarif } from './lib/claudemd/sarif-formatter.mjs';
 import { makeFenceTracker } from './lib/markdown-fence-tracker.mjs';
 import { readContextConfig, DEFAULT_MAX_AGENTS_MD_CHARS, agentsMdCharCount } from './lib/claudemd/context-size.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 // Config schema + the AGENTS.md cap live in lib/claudemd/context-size.mjs (shared with the dashboard).
 
@@ -473,14 +474,8 @@ async function main() {
   process.exit(0);
 }
 
-// Run only when invoked as a script (Windows-safe — match by basename).
-const invokedDirectly = (() => {
-  try {
-    const metaPath = new URL(import.meta.url).pathname.toLowerCase();
-    const argvPath = process.argv[1] ? new URL(`file://${process.argv[1].replaceAll(/\\/g, '/')}`).pathname.toLowerCase() : '';
-    return metaPath.endsWith('/check-context-drift.mjs') && argvPath.endsWith('/check-context-drift.mjs');
-  } catch { return false; }
-})();
+// Run only when invoked as a script (canonical-path match: lib/cli-entry.mjs).
+const invokedDirectly = isInvokedAsScript(import.meta.url);
 
 if (invokedDirectly) {
   main().catch(err => {

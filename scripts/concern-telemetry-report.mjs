@@ -24,11 +24,11 @@
 import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { many } from './lib/db/query.mjs';
 import { getPool, storeDescriptor } from './lib/db/client.mjs';
 import { finishAndExit, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { CONCERN_TELEMETRY_EPOCH, HARD_SUPPRESS_THRESHOLD } from './lib/concern-identity.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--days', '--json', '--out', '--selfcheck-relocation'];
 const BAND_KEYS = ['lt10', 'lt20', 'lt35', 'gte35'];
@@ -209,7 +209,7 @@ async function main() {
   await finishAndExit(0);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+if (isInvokedAsScript(import.meta.url)) {
   main().catch(async (err) => {
     process.stderr.write(`concern-telemetry-report: ${err.message}\n`);
     await finishAndExit(1);   // an open pg pool would otherwise hold the process

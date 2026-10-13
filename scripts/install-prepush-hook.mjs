@@ -34,6 +34,7 @@ import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 // The generated hook's static unset list IS this baseline — one list, not two.
 import { GIT_LOCAL_ENV_VARS } from './lib/git-env-sanitize.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 // Every accepted flag. `--target` and `--format` TAKE A VALUE (both the
 // `--flag value` and `--flag=value` forms are accepted by the guard).
@@ -621,12 +622,7 @@ function main() {
 // Test-only surface (mirrors the file-io/shared.mjs `_internals` pattern).
 export const _internals = { HOOK_BODY, HOOK_VERSION_MARKER, isManagedHook, installInRepo };
 
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 if (isMain) {
   try {
     main();

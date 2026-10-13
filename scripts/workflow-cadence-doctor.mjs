@@ -141,13 +141,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
 import {
   assertKnownFlags, ArgvError, emit, argOption, hasFlag, finishAndExit,
 } from './lib/cli-io.mjs';
 import { parseOriginRepo } from './lib/branch-protection.mjs';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 import { NO_MEASUREMENT_TITLE, isNoMeasurementAnnotation } from './lib/measurement-marker.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
@@ -817,8 +817,7 @@ export async function main(argv = process.argv, env = process.env, out = process
 // exists to detect. `--selfcheck-relocation` cannot catch this (its handler sits
 // above this line and returns before it), so the guard against it is
 // `runs under a scripts/.claude-skills/ layout` in this module's test file.
-const isDirectRun = process.argv[1]
-  && import.meta.url === pathToFileURL(process.argv[1]).href;
+const isDirectRun = isInvokedAsScript(import.meta.url);
 if (isDirectRun) {
   try {
     await finishAndExit(await main());

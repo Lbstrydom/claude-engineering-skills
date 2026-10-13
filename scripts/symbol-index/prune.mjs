@@ -28,6 +28,7 @@ import {
 } from '../learning-store.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 import { assertKnownFlags, finishAndExit } from '../lib/cli-io.mjs';
+import { isInvokedAsScript } from '../lib/cli-entry.mjs';
 
 /**
  * Every flag this CLI accepts — must list only flags `parseArgs` HANDLES.
@@ -117,12 +118,7 @@ async function main() {
 // without this guard, that import runs main() and, with a real AUDIT_DB_URL set,
 // would prune for real (safe today only because the test env has the store off).
 // Same module-scope-main coupling fixed in build-manifest.mjs / refresh.mjs.
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   main().catch(async (err) => {

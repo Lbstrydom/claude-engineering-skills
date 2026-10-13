@@ -40,6 +40,7 @@ import { withMigrationContext } from './lib/db/schema-realization.mjs';
 import { canonicalise, denseRankColumnPositions, diffSchemas } from './lib/db/schema-diff.mjs';
 import { captureLiveSchema, SHARED_CATALOG_QUERIES } from './lib/db/live-catalog.mjs';
 import { checkLiveConstraints, renderConstraintDrift } from './lib/db/constraint-drift.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1346,7 +1347,7 @@ async function main() {
 }
 
 // Allow imports for tests; only run when invoked as a script.
-const invoked = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename);
+const invoked = isInvokedAsScript(import.meta.url);
 if (invoked) {
   main();
 }

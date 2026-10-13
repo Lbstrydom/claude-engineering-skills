@@ -30,6 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { sha, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { upstreamUrlFor } from './lib/synced-doc-links.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CANONICAL_DIR = path.join(ROOT, 'docs', 'audit', 'shared-references');
@@ -430,13 +431,7 @@ function main() {
   process.exit(0);
 }
 
-const invokedDirectly = (() => {
-  try {
-    const metaPath = new URL(import.meta.url).pathname.toLowerCase();
-    const argvPath = process.argv[1] ? new URL(`file://${process.argv[1].replaceAll(/\\/g, '/')}`).pathname.toLowerCase() : '';
-    return metaPath.endsWith('/sync-shared-audit-refs.mjs') && argvPath.endsWith('/sync-shared-audit-refs.mjs');
-  } catch { return false; }
-})();
+const invokedDirectly = isInvokedAsScript(import.meta.url);
 
 if (invokedDirectly) {
   try {

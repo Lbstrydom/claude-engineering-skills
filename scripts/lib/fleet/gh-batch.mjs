@@ -17,10 +17,9 @@
  * @module scripts/lib/fleet/gh-batch
  */
 import { spawn, spawnSync } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertKnownFlags } from '../cli-io.mjs';
+import { isInvokedAsScript } from '../cli-entry.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 
@@ -90,8 +89,7 @@ async function worker() {
 }
 
 // Worker entry: only when THIS file is the script being run, with the worker flag.
-const canon = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
-if (process.argv.includes('--gh-batch-worker') && process.argv[1] && canon(process.argv[1]) === canon(SELF)) {
+if (process.argv.includes('--gh-batch-worker') && isInvokedAsScript(import.meta.url)) {
   assertKnownFlags(process.argv, ['--gh-batch-worker'], { cli: 'gh-batch worker' });
   await worker();
 }

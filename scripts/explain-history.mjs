@@ -27,6 +27,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { ArgvError } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const HELP_TEXT = `explain-history — "did we already solve this?" cross-source search
 
@@ -426,9 +427,8 @@ async function main() {
 }
 
 // Run main() only when invoked as a script, not when imported by tests.
-// pathToFileURL match handles the Windows file:///C:/... vs unix /... differences.
-import { pathToFileURL, fileURLToPath } from 'node:url';
-const isMain = import.meta.url === pathToFileURL(process.argv[1] || '').href;
+import { fileURLToPath } from 'node:url';
+const isMain = isInvokedAsScript(import.meta.url);
 if (isMain) {
   main().catch(err => {
     process.stderr.write(`  [explain-history] FATAL: ${err.message}\n${err.stack || ''}\n`);

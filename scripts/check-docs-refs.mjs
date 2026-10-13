@@ -42,6 +42,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 /** Bump when the grammar changes shape; the contract doc records the semantics. */
 export const REFS_GRAMMAR_VERSION = 1;
@@ -797,11 +798,6 @@ function main() {
   process.exit(r.ok ? 0 : 1);
 }
 
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) main();

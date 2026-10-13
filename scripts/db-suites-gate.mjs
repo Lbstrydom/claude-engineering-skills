@@ -80,9 +80,10 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 import { ArgvError, assertKnownFlags, fmtMs } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 /** Every flag this CLI accepts. Enforced below — see `cli:flags:gate`. */
 const KNOWN_FLAGS = Object.freeze(['--selfcheck-relocation']);
@@ -242,7 +243,7 @@ function main() {
 }
 
 // Only self-execute as a CLI, so the module stays importable by its tests.
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+if (isInvokedAsScript(import.meta.url)) {
   try {
     process.exit(main());
   } catch (err) {

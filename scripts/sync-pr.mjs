@@ -32,13 +32,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
 import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { resolveTargets, consumerAliases } from './lib/consumer-repos.mjs';
 import { MANIFEST_RELATIVE_PATH } from './lib/sync-manifest.mjs';
 import { classifyRepo } from './sync-status.mjs';
 import { planConsumerPr, runConsumerPr, gatherConsumerFacts } from './lib/sync-pr.mjs';
 import { scratchPath } from './lib/temp-paths.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--target', '--dry-run', '--no-merge', '--base'];
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
@@ -178,7 +178,7 @@ export async function main(argv = process.argv, out = process.stdout) {
   return errored === 0 ? 0 : 1;
 }
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const isDirectRun = isInvokedAsScript(import.meta.url);
 if (isDirectRun) {
   try {
     const code = await main();

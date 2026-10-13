@@ -40,6 +40,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { assertKnownFlags, emit, ArgvError } from './lib/cli-io.mjs';
 import { VisualContractSchema } from './lib/visual/schema.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DOC_PATH = path.join(REPO_ROOT, 'skills/visual-audit/references/contract-and-bootstrap.md');
@@ -50,8 +51,7 @@ const KNOWN_FLAGS = ['--json', '--help', '-h', '--selfcheck-relocation'];
 const ARRAY_FIELDS = ['surfaces', 'tokenSources', 'themes'];
 const NESTED_OBJECT_FIELDS = ['tolerances', 'propertyPolicy'];
 
-const isMain = import.meta.url === `file://${process.argv[1]}`
-  || import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`;
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   try {

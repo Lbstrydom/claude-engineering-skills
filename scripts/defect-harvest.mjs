@@ -23,6 +23,7 @@ import path from 'node:path';
 import { classifyPath } from './lib/sensitive-paths.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { log, argOption, hasFlag } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 // Delimiters: git's `%x00` placeholder emits a real NUL byte in the output; we
 // split the output on that NUL. Fields per commit: hash, subject, body.
@@ -212,6 +213,6 @@ async function main() {
   return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}` || (process.argv[1] && process.argv[1].endsWith('defect-harvest.mjs'))) {
+if (isInvokedAsScript(import.meta.url)) {
   main().then((code) => { process.exitCode = code || 0; }).catch((e) => { log(`FATAL: ${e && e.stack || e}`); process.exitCode = 1; });
 }

@@ -40,6 +40,7 @@ import { atomicWriteFileSync } from '../lib/file-io.mjs';
 import { retrySync } from '../lib/retry-transient-fs.mjs';
 import { findRepoPragmas } from '../lib/duplicate-justification-pragma.mjs';
 import { assertKnownFlags, ArgvError } from '../lib/cli-io.mjs';
+import { isInvokedAsScript } from '../lib/cli-entry.mjs';
 
 // Every flag this CLI accepts. `--repo` takes a value; the rest are booleans.
 const KNOWN_FLAGS = [
@@ -941,12 +942,7 @@ export function computeOutcomeFromFileState(row, deps = {}) {
 
 // ── CLI entrypoint ────────────────────────────────────────────────────────
 
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   try {

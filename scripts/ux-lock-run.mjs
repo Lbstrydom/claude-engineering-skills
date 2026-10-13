@@ -40,6 +40,7 @@ import {
 import {
   scanSpecClosure, resolveTestRoot, readAliasMapFromTsconfig, readPlaywrightTestDirs,
 } from './lib/ux-lock/selector-policy.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const [subcommand, ...rest] = process.argv.slice(2);
 
@@ -634,6 +635,6 @@ async function main() {
 // `process.argv[1]` is undefined under `node --input-type=module -e`, which is
 // how a test imports this module for its `valueAfterFlagAt` export — guard it,
 // or importing the module for that export would run the whole CLI.
-if (process.argv[1]?.endsWith('ux-lock-run.mjs')) {
+if (isInvokedAsScript(import.meta.url)) {
   main().catch((err) => { process.stderr.write(`${err.stack || err.message}\n`); process.exit(3); });
 }

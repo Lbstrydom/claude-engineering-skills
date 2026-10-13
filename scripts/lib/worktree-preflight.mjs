@@ -25,7 +25,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { isInvokedAsScript } from './cli-entry.mjs';
 
 /**
  * The consumer-side `skills:hydrate` npm script, as documented in
@@ -587,7 +587,7 @@ async function pendingNoteMain(argv) {
   return finishAndExit(2);
 }
 
-const _isCli = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const _isCli = isInvokedAsScript(import.meta.url);
 if (_isCli) {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   if (process.argv[2] === 'pending-note') {

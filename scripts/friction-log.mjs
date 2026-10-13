@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const VALID_SEVERITIES = ['note', 'annoyance', 'blocker'];
 const FALLBACK_PATH    = '.audit/friction-log.jsonl';
@@ -175,12 +176,7 @@ Examples:
 
 // ── CLI entry ────────────────────────────────────────────────────────────
 
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 async function main() {
   assertRepoRoot(import.meta.url);

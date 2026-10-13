@@ -27,6 +27,7 @@ import path from 'node:path';
 import { assertKnownFlags, emit, requiredFlagValue } from './lib/cli-io.mjs';
 import { buildCorpus, loadEventWiringConfig } from './lib/audit/event-wiring-corpus.mjs';
 import { resolveSymmetry } from './lib/audit/event-wiring.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--repo', '--json', '--oracle', '--selfcheck-relocation'];
 
@@ -34,8 +35,7 @@ const KNOWN_FLAGS = ['--repo', '--json', '--oracle', '--selfcheck-relocation'];
 // test, to reach compareOracle/validateOracleShape via `_internals` below)
 // must not run the top-level flag-check/relocation-check/main() side
 // effects against the IMPORTING process's own argv.
-const isMain = import.meta.url === `file://${process.argv[1]}`
-  || import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`;
+const isMain = isInvokedAsScript(import.meta.url);
 
 // audit-code R2/M3,M6,M8 fix: validate flags FIRST, matching cross-skill.mjs's
 // precedent (assertKnownFlags before its own --selfcheck-relocation check) —

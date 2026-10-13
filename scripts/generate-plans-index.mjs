@@ -40,6 +40,7 @@ import { execFileSync } from 'node:child_process';
 import { parsePlanStatus, isAuditSummary } from './lib/plan-status.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 /**
  * Every flag this CLI accepts. None take a value.
@@ -342,12 +343,7 @@ function main() {
   console.log(`${G}✓${X} plans:index — wrote ${PLANS_DIR}/${INDEX_NAME}`);
 }
 
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 if (isMain) {
   try {
     main();

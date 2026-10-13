@@ -37,6 +37,7 @@ import {
   checkDocumentedRecipes,
   skillsInvokingSyncedTooling,
 } from './lib/worktree-preflight.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const G = '\x1b[32m', R = '\x1b[31m', X = '\x1b[0m', B = '\x1b[1m', D = '\x1b[2m';
@@ -154,16 +155,7 @@ function main() {
   process.exit(ok ? 0 : 1);
 }
 
-const invokedDirectly = (() => {
-  try {
-    const metaPath = new URL(import.meta.url).pathname.toLowerCase();
-    const argvPath = process.argv[1]
-      ? new URL(`file://${process.argv[1].replaceAll(/\\/g, '/')}`).pathname.toLowerCase()
-      : '';
-    return metaPath.endsWith('/check-worktree-preflight.mjs')
-      && argvPath.endsWith('/check-worktree-preflight.mjs');
-  } catch { return false; }
-})();
+const invokedDirectly = isInvokedAsScript(import.meta.url);
 
 if (invokedDirectly) {
   try {

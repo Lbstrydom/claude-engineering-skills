@@ -48,6 +48,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { enumerateFiles } from '../symbol-index/extract.mjs';
+import { isInvokedAsScript } from '../lib/cli-entry.mjs';
 
 /**
  * Resolve a package's directory the way Node's own module resolution would,
@@ -411,7 +412,7 @@ async function main() {
 // `findPackageDir`/`loadCruiseFn` WITHOUT — this file was un-importable
 // before this guard existed, for the same reason extract.mjs's own
 // enumerateFiles was.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isInvokedAsScript(import.meta.url)) {
   main().catch((err) => {
     process.stderr.write(`spike failed: ${err.stack || err.message}\n`);
     process.exit(1);

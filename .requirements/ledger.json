@@ -5271,7 +5271,7 @@
       "provenance": [
         {
           "file": "scripts/solo-control-audit.mjs",
-          "anchor": "main invocation guard: import.meta.url === pathToFileURL(process.argv[1]).href"
+          "anchor": "main invocation guard: isInvokedAsScript(import.meta.url)"
         }
       ],
       "appliesTo": [
@@ -102091,7 +102091,7 @@
       ],
       "evidence": {
         "code": [
-          "scripts/openai-audit.mjs: if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) { main(); }"
+          "scripts/openai-audit.mjs: if (isInvokedAsScript(import.meta.url)) { main(); }"
         ],
         "tests": []
       },
@@ -118731,7 +118731,7 @@
         },
         {
           "file": "scripts/model-eval-discovery.mjs",
-          "anchor": "if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)"
+          "anchor": "if (isInvokedAsScript(import.meta.url))"
         }
       ],
       "appliesTo": [

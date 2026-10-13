@@ -14,10 +14,10 @@
  */
 
 import './lib/load-env.mjs';
-import { pathToFileURL } from 'node:url';
 import { loadOutcomes } from './lib/findings-outcomes.mjs';
 import { many } from './lib/db/query.mjs';
 import { getPool } from './lib/db/client.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
 
@@ -207,6 +207,6 @@ async function main() {
 // Only run the CLI when invoked directly — `fetchCloudMetrics` /
 // `computeLocalMetrics` are also imported by the dashboard telemetry
 // collector, and importing must not trigger the CLI.
-if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+if (isInvokedAsScript(import.meta.url)) {
   main().catch(err => { console.error(err.message); process.exit(1); });
 }

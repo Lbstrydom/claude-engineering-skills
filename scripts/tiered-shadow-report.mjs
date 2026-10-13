@@ -23,7 +23,6 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL, fileURLToPath } from 'node:url';
 import { argOption } from './lib/cli-io.mjs';
 import { SHADOW_LOG_PATH } from './lib/audit/tiered-shadow-compare.mjs';
 import { resolveRepoIdentity } from './lib/repo-identity.mjs';
@@ -33,6 +32,7 @@ import {
   WINDOW_MIN, WINDOW_MAX, normalizeDbRow, median, mean, readRecords, summarize, windowProgress,
   TIERED_SHADOW_CONTRACT_EPOCH, phase14Decided, PHASE14_DECISION_DOC,
 } from './lib/audit/tiered-shadow-summary.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 // Re-exported for backward compatibility — tests and any external caller
 // importing these from this file (rather than the new lib module) keep
@@ -264,8 +264,7 @@ function reportRows(records, jsonMode, { source, logPath, repoLabels, repoCount,
 // when imported by tests for its exported median/mean/summarize (2026-07-13
 // bug: main() ran unconditionally at import time, using the TEST RUNNER's
 // own process.argv — harmless while main() was pure-local, a real cloud
-// leak once it started querying Supabase). Mirrors model-eval-auditor.mjs's
-// own pathToFileURL guard (Windows drive-letter robustness).
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// leak once it started querying Supabase).
+if (isInvokedAsScript(import.meta.url)) {
   process.exitCode = await main();
 }

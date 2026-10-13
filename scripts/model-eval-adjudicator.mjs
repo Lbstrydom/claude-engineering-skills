@@ -29,7 +29,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 import { refreshModelCatalog } from './lib/model-resolver.mjs';
 import { resolveCandidateRoute, buildComparisonEvidenceFromRoutes } from './lib/model-eval/route-catalog.mjs';
@@ -52,6 +52,7 @@ import { scoreAgainstGroundTruth, selectBalancedSample, degenerateBaselines, DEG
 // THIS entry point, not the auditor one, even though both call the same
 // lib function.
 import { runManifestDriver } from './lib/model-eval/manifest-driver.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_THRESHOLDS_PATH = path.join(__dirname, 'lib', 'model-eval', 'config', 'adjudicator-thresholds.json');
@@ -280,6 +281,6 @@ async function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isInvokedAsScript(import.meta.url)) {
   main();
 }

@@ -39,6 +39,7 @@ import {
 } from './lib/upstream/dispositions.mjs';
 import { probeIds } from './lib/doctor/registry.mjs';
 import { readTrackedTestFiles } from './check-upstream-probe-coverage.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--ledger', '--out', '--dry-run', '--selfcheck-relocation'];
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -247,7 +248,6 @@ function main() {
   process.exit(0);
 }
 
-const invokedDirectly = import.meta.url === `file://${process.argv[1]}`
-  || process.argv[1]?.endsWith('backfill-upstream-dispositions.mjs');
+const invokedDirectly = isInvokedAsScript(import.meta.url);
 
 if (invokedDirectly) main();

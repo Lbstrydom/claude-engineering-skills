@@ -68,6 +68,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { findStdoutExitSites } from './lib/find-stdout-exit-sites.mjs';
 import { emit, hasFlag, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--json', '--report', '--update', '--selfcheck-relocation'];
 const BASELINE_PATH = '.stdout-flush-baseline.json';
@@ -332,6 +333,6 @@ function main() {
 // reasoning `emit` records for setting `process.exitCode` instead of exiting.
 // A gate for this class that itself truncated its own report would be the
 // funniest possible way to be wrong.
-if (process.argv[1]?.endsWith('check-stdout-flush.mjs')) {
+if (isInvokedAsScript(import.meta.url)) {
   main();
 }

@@ -34,6 +34,7 @@ import { azureConfig } from '../lib/config.mjs';
 import { createAnthropicClient } from '../lib/anthropic-client.mjs';
 import { azureThrottle } from '../lib/azure-throttle.mjs';
 import { finishAndExit } from '../lib/cli-io.mjs';
+import { isInvokedAsScript } from '../lib/cli-entry.mjs';
 
 // Bump on ANY prompt change. Forces cache invalidation across all repos.
 export const PROMPT_TEMPLATE_VERSION = 1;
@@ -244,7 +245,7 @@ async function main() {
   await finishAndExit(0);
 }
 
-if (import.meta.url === `file://${process.argv[1].replace(/\\/g, '/')}`) {
+if (isInvokedAsScript(import.meta.url)) {
   main().catch(async (err) => {
     process.stderr.write(`arch:summarise-domains: fatal: ${err.stack || err.message}\n`);
     await finishAndExit(1);

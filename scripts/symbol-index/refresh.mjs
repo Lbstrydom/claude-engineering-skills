@@ -46,7 +46,6 @@
 
 import path from 'node:path';
 import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import * as vcs from '../lib/vcs.mjs';
 import {
   initLearningStore,
@@ -85,6 +84,7 @@ import { findRepoPragmas, resolvePragmasToDefinitions, PRAGMA_RESOLUTION_MAX_GAP
 import { isDriftPathExempt } from '../lib/symbol-index/drift-path-exemptions.mjs';
 import { SUBPROC_ERROR_CODES } from '../lib/subprocess.mjs';
 import { finishAndExit } from '../lib/cli-io.mjs';
+import { isInvokedAsScript } from '../lib/cli-entry.mjs';
 import { parseArgs } from './refresh-args.mjs';
 import { RepoRegistrationError, RefreshInFlightError, LockAbortError, RefreshAbortedError } from './refresh-errors.mjs';
 import { resolveAndRegisterRepo } from './refresh-repo-setup.mjs';
@@ -830,9 +830,7 @@ export const _internals = { runWithHeartbeat };
 
 // Run as a CLI only — importing this module (e.g. from tests) must NOT kick
 // off the whole pipeline.
-const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
-const thisPath = fileURLToPath(import.meta.url);
-if (invokedPath === thisPath) {
+if (isInvokedAsScript(import.meta.url)) {
   main().catch(err => {
     process.stderr.write(`refresh: fatal: ${err.stack || err.message}\n`);
     process.exit(2);

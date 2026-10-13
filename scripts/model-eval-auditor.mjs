@@ -21,7 +21,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 import { refreshModelCatalog } from './lib/model-resolver.mjs';
 import { mulberry32 } from './lib/rng.mjs';
@@ -57,6 +57,7 @@ import { createArmBudgetMeter } from './lib/comparison/spend.mjs';
 // auditorPrepareContext needs it too — one definition, not two).
 import { runManifestDriver } from './lib/model-eval/manifest-driver.mjs';
 import { DEFAULT_CORPUS_PATH } from './lib/model-eval/executors.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_THRESHOLDS_PATH = path.join(__dirname, 'lib', 'model-eval', 'config', 'auditor-thresholds.json');
@@ -760,9 +761,8 @@ async function main() {
 }
 
 // CLI entry — only fire main() when this module is executed directly, not
-// when imported by tests (mirrors openai-audit.mjs's own pattern — pathToFileURL
-// for cross-platform robustness, notably Windows drive-letter paths).
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// when imported by tests (mirrors openai-audit.mjs's own guard).
+if (isInvokedAsScript(import.meta.url)) {
   main();
 }
 

@@ -55,6 +55,7 @@ import { OPTIONAL_DEPS } from './lib/install/deps.mjs';
 import { getAllConsumerInventories } from './lib/sync-inventory.mjs';
 import { sourceRelToDestRel } from './lib/sync-path-map.mjs';
 import { IMPORT_PKG_ALLOW } from './lib/ux-lock/selector-policy.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--check', '--json'];
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
@@ -162,7 +163,7 @@ async function main() {
   return finishAndExit(0);
 }
 
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('generate-bundle-deps.mjs')) {
+if (isInvokedAsScript(import.meta.url)) {
   main().catch((err) => {
     process.stderr.write(`[bundle-deps] fatal: ${err?.message || err}\n`);
     process.exit(1);

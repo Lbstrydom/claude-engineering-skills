@@ -46,6 +46,7 @@ import { planLooksRelated } from './lib/bakeoff/relatedness.mjs';
 import { repoId } from './lib/campaign/promote.mjs';
 import { resolveCohort, liveArmRunsForSnapshot, isAttemptExcluded } from './lib/store/campaign.mjs';
 import { isCloudEnabled } from './lib/store/repo.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = Object.freeze([
   '--transcript', '--plan', '--mode', '--progress', '--target', '--campaign',
@@ -749,12 +750,7 @@ async function main() {
   printProgress(LOG_PATH, target, { ok: true, scope: resolved.scope });
 }
 
-const invokedDirectly = (() => {
-  try {
-    const a = (process.argv[1] || '').replace(/\\/g, '/').toLowerCase();
-    return a.endsWith('/bakeoff-collect.mjs');
-  } catch { return false; }
-})();
+const invokedDirectly = isInvokedAsScript(import.meta.url);
 
 if (invokedDirectly) {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }

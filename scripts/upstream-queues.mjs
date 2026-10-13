@@ -65,6 +65,7 @@ import {
   discoverStores, describeStore, readRepoEnvText, readSharedEnvText,
 } from './lib/upstream/store-discovery.mjs';
 import { storeFingerprint } from './lib/db/client.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = path.join(REPO_ROOT, 'scripts', 'cross-skill.mjs');
@@ -245,9 +246,5 @@ function main() {
   process.exit(0);
 }
 
-const invokedAsScript = (() => {
-  try {
-    return path.resolve(process.argv[1] || '') === path.resolve(fileURLToPath(import.meta.url));
-  } catch { return false; }
-})();
+const invokedAsScript = isInvokedAsScript(import.meta.url);
 if (invokedAsScript) main();

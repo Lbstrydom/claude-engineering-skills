@@ -35,6 +35,7 @@ import {
 import { routeFindings } from './lib/security/triage-router.mjs';
 import { resolveAndClassify } from './lib/sensitive-paths.mjs';
 import { redactSecrets } from './lib/secret-patterns.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 // ---------------------------------------------------------------------------
 // D5a — one run-status state machine; exit-code precedence is total.
@@ -667,11 +668,7 @@ async function main() {
   process.exit(report.exitCode);
 }
 
-const isMain = (() => {
-  const argv1 = process.argv[1]?.replace(/\\/g, '/');
-  if (!argv1) return false;
-  return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   main().catch((err) => {

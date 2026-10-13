@@ -44,7 +44,6 @@
 import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 
 /**
@@ -75,6 +74,7 @@ const ADVISORY_LOCK_KEY = 760414233; // 'reconcile-repo-identity' arbitrary fixe
  * caught immediately by the existing suite when it was written that way.
  */
 import { repoBaseName } from './lib/repo-scope.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 export { repoBaseName };
 
@@ -375,8 +375,7 @@ function argValue(flag) {
 }
 
 // Run only as a CLI entry point — not when imported (e.g. by unit tests).
-const _invokedDirectly =
-  process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const _invokedDirectly = isInvokedAsScript(import.meta.url);
 if (_invokedDirectly) {
   main().catch((err) => {
     // A usage mistake is not a crash: print the diagnostic only, exit 2.

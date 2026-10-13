@@ -43,6 +43,7 @@ import {
   compareVersions,
 } from './lib/model-resolver.mjs';
 import { toSarif } from './lib/claudemd/sarif-formatter.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const FILE = 'scripts/lib/model-resolver.mjs';
 
@@ -420,13 +421,7 @@ async function main() {
   process.exit(0);
 }
 
-const invokedDirectly = (() => {
-  try {
-    const metaPath = new URL(import.meta.url).pathname.toLowerCase();
-    const argvPath = process.argv[1] ? new URL(`file://${process.argv[1].replaceAll(/\\/g, '/')}`).pathname.toLowerCase() : '';
-    return metaPath.endsWith('/check-model-freshness.mjs') && argvPath.endsWith('/check-model-freshness.mjs');
-  } catch { return false; }
-})();
+const invokedDirectly = isInvokedAsScript(import.meta.url);
 
 if (invokedDirectly) {
   main().catch(err => {

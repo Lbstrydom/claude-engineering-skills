@@ -34,9 +34,10 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError, hasFlag } from './lib/cli-io.mjs';
 import { compareMcpSurfaces } from './lib/mcp-parity.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 // Root is derived from THIS FILE's location, never process.cwd(): the poison-pill
 // runner executes a copy of the repo in a tmpdir, and a cwd-derived root would
@@ -163,18 +164,10 @@ function main() {
   });
 }
 
-// Repo idiom (e.g. arch-coverage-gate.mjs, audit-loop.mjs, gemini-review.mjs):
-// `pathToFileURL` produces the same percent-encoding `import.meta.url` uses,
-// so this compares two properly-encoded URLs instead of one encoded and one
-// not — the hand-rolled backslash-replace this replaced broke on any repo or
-// tmpdir path containing a space or non-ASCII character (audit finding
-// 0add0755, HIGH), because `import.meta.url` percent-encodes those and the
-// raw `process.argv[1]` string never did.
-const isMain = (() => {
-  try {
-    return !!process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-  } catch { return false; }
-})();
+// Canonical-path entry guard (lib/cli-entry.mjs). The hand-rolled
+// backslash-replace it superseded broke on any repo or tmpdir path containing
+// a space or non-ASCII character (audit finding 0add0755, HIGH).
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   try {

@@ -1,4 +1,4 @@
-import { pathToFileURL } from 'node:url';
+import { isInvokedAsScript } from './cli-entry.mjs';
 
 // Shared device-emulation presets for /persona-test and /click-test.
 //
@@ -214,7 +214,7 @@ function parseCliFlag(argv, name) {
   return argv[idx + 1];
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isInvokedAsScript(import.meta.url)) {
   const sub = process.argv[2];
   const rest = process.argv.slice(3);
   try {

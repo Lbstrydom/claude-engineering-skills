@@ -61,6 +61,7 @@ import { pathToFileURL } from 'node:url';
 import { assertKnownFlags, hasFlag, toShellExitCode } from './lib/cli-io.mjs';
 import { GUARD_REPORT_VERSION } from './lib/test-guard-reporter.mjs';
 import { TIMING_REPORT_ENV, ranFiles, ranFilesUnavailableReason, summariseTiming } from './lib/test-timing-report.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 /**
  * Ambient provider-ROUTING vars scrubbed from the child env. Enumerated from
@@ -509,6 +510,6 @@ function main() {
 }
 
 // Import-safe: tests import { scrubRoutingEnv } without spawning anything.
-if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/').split('/').pop())) {
+if (isInvokedAsScript(import.meta.url)) {
   main();
 }

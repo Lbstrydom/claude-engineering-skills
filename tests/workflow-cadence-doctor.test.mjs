@@ -782,7 +782,7 @@ test('it RUNS under a consumer scripts/.claude-skills/ layout, not only this rep
       ['on:', '  schedule:', '    - cron: "0 3 * * *"', ''].join('\n'));
     const relocated = path.join(dir, 'scripts', '.claude-skills', 'workflow-cadence-doctor.mjs');
     fs.copyFileSync(CLI, relocated);
-    for (const lib of ['cli-io.mjs', 'branch-protection.mjs', 'assert-repo-root.mjs', 'measurement-marker.mjs']) {
+    for (const lib of ['cli-io.mjs', 'branch-protection.mjs', 'assert-repo-root.mjs', 'measurement-marker.mjs', 'cli-entry.mjs']) {
       fs.copyFileSync(path.join(REPO_ROOT, 'scripts', 'lib', lib), path.join(skills, lib));
     }
 

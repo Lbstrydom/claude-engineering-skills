@@ -67,7 +67,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { runTieredAuditPipeline } from './lib/audit/tiered-pipeline.mjs';
 import { TieredUnavailableError } from './lib/audit/discovery-fallback.mjs';
 import { filterDiffFiles, formatSkipLog } from './lib/sensitive-paths.mjs';
@@ -80,6 +80,7 @@ import { tieredAuditConfig } from './lib/config.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 import { argOption } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 /**
  * The pinned known-good fixture revision (§9a: "a pinned known-good sha
@@ -824,11 +825,10 @@ async function main() {
 }
 
 // CLI entry — only fire main() when executed directly, never when a test
-// imports this module for its exported pure graders. Mirrors
-// tiered-shadow-report.mjs's pathToFileURL guard (Windows drive-letter
-// robustness); the same guard's absence there once turned an import into a
-// live cloud query using the test runner's own argv.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// imports this module for its exported pure graders. The same guard's absence
+// in tiered-shadow-report.mjs once turned an import into a live cloud query
+// using the test runner's own argv.
+if (isInvokedAsScript(import.meta.url)) {
   main().catch((err) => {
     process.stderr.write(`verify-anchor-contract: ${err?.stack || err}\n`);
     process.exit(2); // an unexpected crash is COULD-NOT-RUN, never a pass

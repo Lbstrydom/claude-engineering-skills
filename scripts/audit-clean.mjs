@@ -32,6 +32,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { sweepStaleOrphanPreimages } from './lib/audit/diff-scope-resolver.mjs';
 import { retrySync } from './lib/retry-transient-fs.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
@@ -320,7 +321,6 @@ function main() {
 export const _internals = { collectCandidates, listStalePreimages, splitRetained, BENIGN_FS_CODES, TRANSIENT, KEEP };
 
 // isMain guard — importing this module (from a test) must not run a sweep.
-const isMain = import.meta.url === `file://${process.argv[1]}`
-  || import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`;
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) main();

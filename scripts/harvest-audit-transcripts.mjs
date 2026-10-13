@@ -48,12 +48,12 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { assertKnownFlags } from './lib/cli-io.mjs';
 import { resolveMainRoot } from './lib/pinned-worktree/paths.mjs';
 import {
   ARCHIVE_REASONS, TRANSCRIPT_BASENAME_RE, archiveTranscript, canonicalPathKey, resolveArchiveDir,
 } from './lib/audit/transcript-archive.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--json', '--quiet', '--selfcheck-relocation'];
 
@@ -319,6 +319,6 @@ function main() {
 
 // Guarded so the enumeration helpers can be imported by tests without the
 // sweep firing as an import side effect against the real repository.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isInvokedAsScript(import.meta.url)) {
   main();
 }
