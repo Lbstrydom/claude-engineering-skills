@@ -354,6 +354,15 @@ if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); proces
 
 at the head of `main()`. Today: `check-setup.mjs`, `doctor.mjs`, `cross-skill.mjs`, plus others in `CLI_SMOKE_SET`. Library modules (no `main()`) get an import-test in [`tests/relocation-guard.test.mjs`](tests/relocation-guard.test.mjs); the CI guard fails if a `CLI_SMOKE_SET` script lacks the handler.
 
+**The entry guard itself is `if (isInvokedAsScript(import.meta.url))`**
+([cli-entry.mjs](scripts/lib/cli-entry.mjs)) — never a hand comparison of
+`process.argv[1]` with `import.meta.url`. Node realpaths one side and not the
+other, so through a symlink or junction the hand guard is false and the CLI exits
+0 having run nothing (16 of 26 did, measured 2026-10-13). No smoke run goes
+through a link, so the census in
+[`tests/cli-entry-guards.test.mjs`](tests/cli-entry-guards.test.mjs) is what
+enforces it.
+
 ### Adopting these skills in a new consumer repo
 
 See [`docs/runbooks/consumer-adoption.md`](docs/runbooks/consumer-adoption.md) §Diagnostics for the migration recipe and `doctor` — one command over every adoption-friction class, ratcheted by `npm run upstream:coverage:gate`.
