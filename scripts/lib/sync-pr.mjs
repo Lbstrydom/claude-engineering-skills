@@ -23,10 +23,28 @@
  *    the tracked surface changed (`.claude/skills/**`, the ownership sidecar,
  *    the schema fixture, …); the receipt then rides along.
  * 2. **The consumer must be on its base branch with no unpushed commits.**
- *    The new branch forks from HEAD. Forking from a feature branch would put
- *    that branch's commits in the PR; forking from a `main` that is ahead of
- *    `origin/main` would publish commits the human has not pushed. Both are
- *    refused with a named reason, never silently "handled".
+ *    The sync computed its output against that checkout. A feature branch, or
+ *    a `main` ahead of `origin/main`, is a base the PR cannot honestly sit on
+ *    (its commits would leak into the PR, or the output would rest on commits
+ *    origin has never seen). Both are refused with a named reason, never
+ *    silently "handled".
+ * 3. **The branch forks from a FRESHLY FETCHED `origin/<default>`, never from
+ *    the checkout's local default branch.** The default branch is asked of the
+ *    remote (`ls-remote --symref origin HEAD`), fetched, and a failure of
+ *    either is an ERROR, never a fall-back to the local ref. Incident
+ *    2026-10-12: wine-cellar-app's local `main` sat 30+ commits behind origin,
+ *    missing the previous sync PR, so the new branch conflicted on
+ *    `.sync-receipt.json` and the consumer's hook refused the push.
+ *    The synced files reach the fresh base by carrying the working tree
+ *    across `git switch -c <branch> <origin sha>` — and that carry is only
+ *    honest when origin changed NONE of the paths the sync wrote (nor
+ *    `.sync-overrides.json`, the declared divergence the sync honoured) since
+ *    the stale base: then each written file sits on exactly the content the
+ *    sync's three-way decision saw. When origin did touch one — every landed
+ *    sync touches the append-only receipt — the output is refused with the
+ *    colliding paths named, and the remedy is to re-run the sync on a current
+ *    checkout. Rebuilding the receipt or re-deciding divergence here would be
+ *    a second implementation of the sync; the sync is the one that may do it.
  *
  * PURE planning (`planConsumerPr`, `branchNameFor`, `buildPrText`,
  * `parseGhAccounts`, `isRepoNotResolvable`) plus an executor
@@ -36,7 +54,10 @@
  *
  * @module scripts/lib/sync-pr
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { RECEIPT_PATH } from './sync-receipt.mjs';
+import { OVERRIDES_PATH } from './sync-overrides.mjs';
 import { comparisonKey } from './sync-owned-sidecar.mjs';
 import { pathspecsForCommit } from './sync-status.mjs';
 import { SYNC_BRANCH_PREFIX } from './sync-divergence.mjs';
@@ -49,10 +70,22 @@ export const SKIP_REASON = Object.freeze({
   NO_MANIFEST: 'no-manifest',
   NOT_ON_BASE: 'not-on-base',
   AHEAD: 'local-commits-ahead',
+  STALE_BASE_COLLISION: 'stale-base-collision',
   BRANCH_EXISTS: 'branch-exists',
 });
 
 const RECEIPT_KEY = comparisonKey(RECEIPT_PATH);
+
+/**
+ * The remote's default branch from `git ls-remote --symref origin HEAD`
+ * (`ref: refs/heads/<name>	HEAD`). PURE.
+ * @param {string} text
+ * @returns {string|null}
+ */
+export function parseSymrefHead(text) {
+  const m = /^ref:\s+refs\/heads\/(\S+)\s+HEAD\s*$/m.exec(String(text ?? ''));
+  return m ? m[1] : null;
+}
 
 /**
  * @param {string|null|undefined} commitSha — the consumer manifest's `commitSha`
@@ -118,15 +151,20 @@ export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName
  *   classified: ReturnType<typeof import('../sync-status.mjs').classifyRepo>,
  *   manifest: {repo?: string, commitSha?: string|null}|null,
  *   baseBranch: string,
+ *   baseSha: string|null,          — `origin/<baseBranch>` as freshly fetched
  *   currentBranch: string|null,
- *   aheadCount: number|null,
+ *   aheadCount: number|null,       — commits on HEAD not on baseSha
+ *   behindCount: number|null,      — commits on baseSha not on HEAD
+ *   upstreamChanged?: string[],    — paths that differ between HEAD and baseSha
  *   branchExists: boolean,
  * }} input
  * @returns {{action:'skip', reason:string, detail?:string}
- *   | {action:'pr', branch:string, addPaths:string[], commitPathspecs:string[], surface:string[],
- *      leftBehind:string[], title:string, message:string, body:string}}
+ *   | {action:'pr', branch:string, startPoint:string, behindCount:number, addPaths:string[],
+ *      commitPathspecs:string[], surface:string[], leftBehind:string[], title:string, message:string, body:string}}
  */
-export function planConsumerPr({ consumerName, classified, manifest, baseBranch, currentBranch, aheadCount, branchExists }) {
+export function planConsumerPr({
+  consumerName, classified, manifest, baseBranch, baseSha, currentBranch, aheadCount, behindCount, upstreamChanged = [], branchExists,
+}) {
   if (!classified || !classified.ok) {
     return { action: 'skip', reason: SKIP_REASON.UNCLASSIFIABLE, detail: classified?.error ?? 'no classification' };
   }
@@ -148,12 +186,28 @@ export function planConsumerPr({ consumerName, classified, manifest, baseBranch,
   if (currentBranch !== baseBranch) {
     return { action: 'skip', reason: SKIP_REASON.NOT_ON_BASE, detail: `on ${currentBranch ?? '(detached)'}, expected ${baseBranch}` };
   }
-  if (aheadCount === null || aheadCount > 0) {
+  if (typeof baseSha !== 'string' || !baseSha || aheadCount === null || behindCount === null || aheadCount > 0) {
     return {
       action: 'skip',
       reason: SKIP_REASON.AHEAD,
-      detail: aheadCount === null ? `could not compare against origin/${baseBranch}` : `${aheadCount} local commit(s) not on origin/${baseBranch}`,
+      detail: aheadCount > 0 ? `${aheadCount} local commit(s) not on origin/${baseBranch}` : `could not compare against origin/${baseBranch}`,
     };
+  }
+  const commitPathspecs = [...new Set(pathspecsForCommit(classified.syncOwned))].sort();
+  if (behindCount > 0) {
+    // Header rule 3: the working tree may ride onto origin's head only if
+    // origin left every path the sync wrote (and the overrides it honoured)
+    // exactly as the sync saw them.
+    const changed = new Set(upstreamChanged.map(comparisonKey));
+    const collisions = [...commitPathspecs, OVERRIDES_PATH].filter((p) => changed.has(comparisonKey(p)));
+    if (collisions.length > 0) {
+      return {
+        action: 'skip',
+        reason: SKIP_REASON.STALE_BASE_COLLISION,
+        detail: `this checkout is ${behindCount} commit(s) behind origin/${baseBranch}, which has since changed ${collisions.join(', ')}`
+          + ' — the sync ran against a stale base. Discard the synced changes, `git pull --ff-only`, re-run the sync, then sync:pr',
+      };
+    }
   }
   const branch = branchNameFor(commitSha);
   if (branchExists) {
@@ -164,12 +218,133 @@ export function planConsumerPr({ consumerName, classified, manifest, baseBranch,
   return {
     action: 'pr',
     branch,
+    startPoint: baseSha,
+    behindCount,
     addPaths,
-    commitPathspecs: [...new Set(pathspecsForCommit(classified.syncOwned))].sort(),
+    commitPathspecs,
     surface,
     leftBehind,
     ...text,
   };
+}
+
+/**
+ * Facts about the consumer checkout that `planConsumerPr` needs and cannot
+ * derive itself. Header rule 3: the base is asked of the REMOTE and fetched
+ * fresh; either failing is an error — never a quiet fall-back to the local
+ * default branch, which is exactly the stale base of the 2026-10-12 incident.
+ *
+ * @param {Runner} run
+ * @param {string} repoRoot
+ * @param {{baseBranch?: string|null, commitSha?: string|null}} [opts] — `baseBranch` overrides the remote default
+ * @returns {{ok: false, step: string, error: string}
+ *   | {ok: true, baseBranch: string, baseSha: string, currentBranch: string|null, aheadCount: number|null,
+ *      behindCount: number|null, upstreamChanged: string[], branchExists: boolean}}
+ */
+export function gatherConsumerFacts(run, repoRoot, { baseBranch = null, commitSha = null } = {}) {
+  const git = (args) => run('git', ['-C', repoRoot, ...args]);
+  let base = baseBranch;
+  if (!base) {
+    const symref = git(['ls-remote', '--symref', 'origin', 'HEAD']);
+    base = ok(symref) ? parseSymrefHead(symref.stdout) : null;
+    if (!base) {
+      return { ok: false, step: 'resolve default branch', error: ok(symref) ? 'origin advertises no HEAD symref — pass --base' : why(symref) };
+    }
+  }
+  const fetched = git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${base}:refs/remotes/origin/${base}`]);
+  if (!ok(fetched)) return { ok: false, step: `fetch origin ${base}`, error: why(fetched) };
+  const resolved = git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}^{commit}`]);
+  const baseSha = ok(resolved) ? resolved.stdout.trim() : '';
+  if (!/^[0-9a-f]{40,64}$/.test(baseSha)) return { ok: false, step: `resolve origin/${base}`, error: why(resolved) };
+
+  const head = git(['rev-parse', '--abbrev-ref', 'HEAD']);
+  const currentBranch = ok(head) ? head.stdout.trim() : null;
+  const count = (range) => {
+    const r = git(['rev-list', '--count', range]);
+    return ok(r) && /^\d+$/.test(r.stdout.trim()) ? Number(r.stdout.trim()) : null;
+  };
+  const aheadCount = count(`${baseSha}..HEAD`);
+  const behindCount = count(`HEAD..${baseSha}`);
+  let upstreamChanged = [];
+  if (behindCount > 0) {
+    const diff = git(['diff', '--name-only', '--no-renames', '-z', 'HEAD', baseSha, '--']);
+    if (!ok(diff)) return { ok: false, step: `diff HEAD..origin/${base}`, error: why(diff) };
+    upstreamChanged = diff.stdout.split('\0').filter(Boolean);
+  }
+  const branch = branchNameFor(commitSha ?? 'unknown');
+  const local = git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]);
+  const remote = git(['ls-remote', '--heads', 'origin', branch]);
+  const branchExists = ok(local) || (ok(remote) && remote.stdout.trim() !== '');
+  return { ok: true, baseBranch: base, baseSha, currentBranch, aheadCount, behindCount, upstreamChanged, branchExists };
+}
+
+/** CSI / OSC escape sequences, so a coloured reporter's lines still match. */
+// eslint-disable-next-line no-control-regex
+const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+
+/**
+ * Failing test names out of a consumer hook's output, so a refused push
+ * names WHAT failed rather than only "Tests 2 failed | 19805 passed". Tries
+ * one reporter shape at a time and returns the first that matches, so one
+ * failure is never listed twice in two spellings. PURE; [] when nothing parses.
+ *   - vitest summary:   ` FAIL  tests/a.test.js > suite > name`
+ *   - node:test / tap:  `not ok 3 - name`
+ *   - jest:             `  ● Suite › name`
+ *   - per-test marks:   `  × name 12ms` / `✖ name (3ms)` (vitest list, node spec)
+ *
+ * @param {string} text
+ * @param {number} [cap]
+ * @returns {string[]}
+ */
+export function parseFailingTests(text, cap = 25) {
+  const lines = String(text ?? '').replace(ANSI, '').split(/\r?\n/);
+  const shapes = [
+    /^\s*FAIL\s+(\S.*?)\s*$/,
+    /^\s*not ok \d+ - (.+?)\s*(?:#.*)?$/,
+    /^\s*● (?!Console\b)(.+?)\s*$/,
+    /^\s*[×✖✗]\s+(.+?)(?:\s+\(?\d+(?:\.\d+)?\s*m?s\)?)?\s*$/,
+  ];
+  for (const re of shapes) {
+    const found = [];
+    for (const line of lines) {
+      const m = re.exec(line);
+      if (m && !found.includes(m[1])) found.push(m[1]);
+    }
+    if (found.length > 0) return found.slice(0, cap);
+  }
+  return [];
+}
+
+/**
+ * Persist a refused push's FULL output (the consumer hook's report rides in
+ * it) where a person or agent can read it later, and name the failing tests.
+ * The terminal only ever shows a tail; the 2026-10-12 incident printed the
+ * vitest summary line alone, so the two failures could never be identified.
+ * A write failure is reported in the return, never thrown — the caller still
+ * has the tail to print.
+ *
+ * @param {{dir: string, consumerName: string, branch: string, startPoint?: string, text: string, now?: Date}} input
+ * @returns {{logPath: string|null, writeError: string|null, failingTests: string[]}}
+ */
+export function writePushFailureLog({ dir, consumerName, branch, startPoint, text, now = new Date() }) {
+  const failingTests = parseFailingTests(text);
+  const stamp = now.toISOString().replace(/[:.]/g, '-');
+  const safe = (s) => String(s).replace(/[^A-Za-z0-9._-]+/g, '_');
+  const logPath = path.join(dir, `${safe(consumerName)}-${safe(branch)}-${stamp}.log`);
+  const header = [
+    `# sync-pr: push refused for ${consumerName}`,
+    `# branch: ${branch}${startPoint ? ` (from ${startPoint})` : ''}`,
+    `# at: ${now.toISOString()}`,
+    `# failing tests parsed: ${failingTests.length > 0 ? failingTests.join(' | ') : '(none — read the output below)'}`,
+    '',
+  ].join('\n');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(logPath, `${header}${text}\n`, 'utf-8');
+    return { logPath, writeError: null, failingTests };
+  } catch (err) {
+    return { logPath: null, writeError: err.message, failingTests };
+  }
 }
 
 /**
@@ -230,11 +405,15 @@ const why = (r) => (r.error?.message || `${r.stderr || ''}${r.stdout || ''}`.tri
  *   plan: Extract<ReturnType<typeof planConsumerPr>, {action:'pr'}>,
  *   repoRoot: string, baseBranch: string, currentBranch: string, merge: boolean,
  *   run: Runner, log?: (line: string) => void,
+ *   consumerName?: string, pushLogDir?: string|null, — where a refused push's full output is kept
  * }} input
  * @returns {{ok: true, branch: string, url: string|null, merged: 'armed'|'not-armed'|'skipped', warnings: string[]}
- *   | {ok: false, branch: string, step: string, error: string, warnings: string[]}}
+ *   | {ok: false, branch: string, step: string, error: string, warnings: string[],
+ *      pushLog?: ReturnType<typeof writePushFailureLog>}}
  */
-export function runConsumerPr({ plan, repoRoot, baseBranch, currentBranch, merge, run, log = () => {} }) {
+export function runConsumerPr({
+  plan, repoRoot, baseBranch, currentBranch, merge, run, log = () => {}, consumerName = path.basename(repoRoot), pushLogDir = null,
+}) {
   const warnings = [];
   // `--literal-pathspecs` ONLY on the two commands that take our pathspecs.
   // As a global flag git exports it as GIT_LITERAL_PATHSPECS to every child —
@@ -270,7 +449,11 @@ export function runConsumerPr({ plan, repoRoot, baseBranch, currentBranch, merge
   };
   const fail = (step, r) => ({ ok: false, branch: plan.branch, step, error: why(r), warnings });
 
-  const created = git(['switch', '-c', plan.branch]);
+  // Header rule 3: fork from the freshly fetched origin sha, carrying the
+  // synced working tree across. git refuses the carry when a dirty path
+  // differs between HEAD and the start point — the planner already refused
+  // that case by name; this is the backstop.
+  const created = git(['switch', '--no-track', '-c', plan.branch, plan.startPoint]);
   if (!ok(created)) return fail('switch -c', created);
 
   const switchBack = () => {
@@ -285,7 +468,16 @@ export function runConsumerPr({ plan, repoRoot, baseBranch, currentBranch, merge
     if (!ok(committed)) { switchBack(); return fail('commit', committed); }
     log(`  pushing ${plan.branch} (the consumer's own pre-push hook runs now — this can take a while)`);
     const pushed = git(['push', '-u', 'origin', plan.branch]);
-    if (!ok(pushed)) { switchBack(); return fail('push', pushed); }
+    if (!ok(pushed)) {
+      switchBack();
+      const failure = fail('push', pushed);
+      if (pushLogDir) {
+        failure.pushLog = writePushFailureLog({
+          dir: pushLogDir, consumerName, branch: plan.branch, startPoint: plan.startPoint, text: failure.error,
+        });
+      }
+      return failure;
+    }
 
     const create = gh(['pr', 'create', '--base', baseBranch, '--head', plan.branch, '--title', plan.title, '--body-file', '-'], { input: plan.body });
     if (!ok(create)) { switchBack(); return fail('gh pr create', create); }

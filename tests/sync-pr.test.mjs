@@ -4,13 +4,15 @@
  * rules that carry the design are pinned by name: a receipt-only change earns
  * no PR (else every upstream push spawns a consumer PR), and a checkout that
  * is off its base branch or ahead of origin is refused, never "handled".
+ * The fresh-base and refused-push rules are pinned on REAL git in
+ * sync-pr-git.test.mjs; here, their pure halves.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
   SKIP_REASON, branchNameFor, buildPrText, planConsumerPr, runConsumerPr,
-  parseGhAccounts, isRepoNotResolvable,
+  parseGhAccounts, isRepoNotResolvable, parseSymrefHead, parseFailingTests,
 } from '../scripts/lib/sync-pr.mjs';
 import { RECEIPT_PATH } from '../scripts/lib/sync-receipt.mjs';
 import { OWNED_SIDECAR_RELATIVE_PATH } from '../scripts/lib/sync-owned-sidecar.mjs';
@@ -21,7 +23,8 @@ const entry = (p, origPath = null) => ({ status: ' M', path: p, origPath });
 const classified = (syncOwned, needsReview = [], extra = {}) => ({
   ok: true, clean: false, syncOwned, needsReview, other: [], manifestFound: true, degraded: false, partial: false, blindTo: [], ...extra,
 });
-const facts = { baseBranch: 'main', currentBranch: 'main', aheadCount: 0, branchExists: false };
+const ORIGIN_SHA = '1e538526d0000000000000000000000000000000';
+const facts = { baseBranch: 'main', baseSha: ORIGIN_SHA, currentBranch: 'main', aheadCount: 0, behindCount: 0, upstreamChanged: [], branchExists: false };
 const plan = (over = {}) => planConsumerPr({
   consumerName: 'wine-cellar-app',
   classified: classified([entry(RECEIPT_PATH), entry('.claude/skills/plan/SKILL.md')]),
@@ -45,6 +48,7 @@ describe('planConsumerPr — decision table', () => {
     assert.deepEqual(p.addPaths, ['.claude/skills/plan/SKILL.md', RECEIPT_PATH]);
     assert.deepEqual(p.surface, ['.claude/skills/plan/SKILL.md']);
     assert.match(p.title, /^chore\(sync\): bundle sync from Lbstrydom\/claude-engineering-skills cb0903cf$/);
+    assert.equal(p.startPoint, ORIGIN_SHA, 'the branch forks from the fetched origin sha, never "HEAD"');
   });
 
   it('a receipt-only change earns NO PR (the receipt changes on every sync run)', () => {
@@ -87,6 +91,31 @@ describe('planConsumerPr — decision table', () => {
   it('refuses when local base is ahead of origin, or the distance is unknown', () => {
     assert.equal(plan({ aheadCount: 2 }).reason, SKIP_REASON.AHEAD);
     assert.equal(plan({ aheadCount: null }).reason, SKIP_REASON.AHEAD);
+    assert.equal(plan({ behindCount: null }).reason, SKIP_REASON.AHEAD);
+    assert.equal(plan({ baseSha: null }).reason, SKIP_REASON.AHEAD, 'no fetched base, no plan — never a fall-back to the local branch');
+  });
+
+  it('behind origin: proceeds when origin left every synced path alone, from origin\'s sha', () => {
+    const p = plan({ behindCount: 30, upstreamChanged: ['server/app.js', 'docs/x.md'] });
+    assert.equal(p.action, 'pr');
+    assert.equal(p.startPoint, ORIGIN_SHA);
+    assert.equal(p.behindCount, 30);
+  });
+
+  it('behind origin: refuses by name when origin changed a path the sync wrote (incident 2026-10-12: the receipt)', () => {
+    const p = plan({ behindCount: 30, upstreamChanged: ['server/app.js', RECEIPT_PATH] });
+    assert.equal(p.reason, SKIP_REASON.STALE_BASE_COLLISION);
+    assert.match(p.detail, /30 commit\(s\) behind origin\/main/);
+    assert.match(p.detail, /\.sync-receipt\.json/);
+    assert.doesNotMatch(p.detail, /server\/app\.js/, 'only the colliding paths are named');
+  });
+
+  it('behind origin: a collision is matched by comparison key, and covers a rename\'s source and the overrides file', () => {
+    assert.equal(plan({ behindCount: 1, upstreamChanged: ['.CLAUDE/Skills/plan/SKILL.md'] }).reason, SKIP_REASON.STALE_BASE_COLLISION);
+    const renamed = classified([entry(RECEIPT_PATH), entry('.claude/skills/new/SKILL.md', '.claude/skills/old/SKILL.md')]);
+    assert.equal(plan({ classified: renamed, behindCount: 1, upstreamChanged: ['.claude/skills/old/SKILL.md'] }).reason, SKIP_REASON.STALE_BASE_COLLISION);
+    const p = plan({ behindCount: 1, upstreamChanged: ['.sync-overrides.json'] });
+    assert.equal(p.reason, SKIP_REASON.STALE_BASE_COLLISION, 'the sync honoured the overrides it saw; origin has since declared others');
   });
 
   it('refuses when the branch already exists (a prior run, possibly with an open PR)', () => {
@@ -124,6 +153,42 @@ describe('buildPrText', () => {
     // The consumer check greps for a line-anchored `AI-Models:` with tokens ^[a-z][a-z0-9.-]*$.
     assert.match(t.body, /^AI-Models: none$/m);
     assert.doesNotMatch(t.message, /AI-Models/);
+  });
+});
+
+describe('parseSymrefHead', () => {
+  it('reads the default branch out of `ls-remote --symref origin HEAD`', () => {
+    assert.equal(parseSymrefHead('ref: refs/heads/main\tHEAD\n1e538526d\tHEAD\n'), 'main');
+    assert.equal(parseSymrefHead('ref: refs/heads/release/v2\tHEAD\r\nabc\tHEAD\r\n'), 'release/v2');
+    assert.equal(parseSymrefHead('1e538526d\tHEAD\n'), null, 'no symref advertised');
+    assert.equal(parseSymrefHead(''), null);
+  });
+});
+
+describe('parseFailingTests', () => {
+  it('vitest: the FAIL summary lines, ANSI-coloured, each once — never the bare summary count', () => {
+    const text = [
+      ' \x1b[31m×\x1b[39m receipt > keeps both events 4ms',
+      ' \x1b[41m FAIL \x1b[49m tests/unit/receipt.test.js > receipt > keeps both events',
+      ' FAIL  tests/unit/budget.test.js > domainBudgets > tests line',
+      ' FAIL  tests/unit/budget.test.js > domainBudgets > tests line',
+      '      Tests  2 failed | 19805 passed (19807)',
+    ].join('\n');
+    assert.deepEqual(parseFailingTests(text), [
+      'tests/unit/receipt.test.js > receipt > keeps both events',
+      'tests/unit/budget.test.js > domainBudgets > tests line',
+    ]);
+  });
+
+  it('node:test tap, jest, and per-test marks', () => {
+    assert.deepEqual(parseFailingTests('ok 1 - a\nnot ok 2 - writes the receipt # TODO\n'), ['writes the receipt']);
+    assert.deepEqual(parseFailingTests('  ● Console\n  ● Sync › keeps order\n'), ['Sync › keeps order']);
+    assert.deepEqual(parseFailingTests('✖ keeps order (3.2ms)\n✔ other (1ms)\n'), ['keeps order']);
+  });
+
+  it('nothing parseable is an empty list (the caller then says so and points at the log)', () => {
+    assert.deepEqual(parseFailingTests('error: failed to push some refs\n Tests  2 failed | 5 passed'), []);
+    assert.deepEqual(parseFailingTests(undefined), []);
   });
 });
 
@@ -169,14 +234,15 @@ const exec = (run, over = {}) => runConsumerPr({
 const gitArgs = (c) => c.args.filter((a) => a !== '--literal-pathspecs' && a !== '-C' && a !== 'C:/consumer');
 
 describe('runConsumerPr — command sequence', () => {
-  it('switch -c → add → commit (scoped) → push → pr create → merge --auto → switch back', () => {
+  it('switch -c <origin sha> → add → commit (scoped) → push → pr create → merge --auto → switch back', () => {
     const { run, calls } = fakeRunner({ 'gh pr create': { stdout: 'https://github.com/o/r/pull/7\n' } });
     const r = exec(run);
     assert.equal(r.ok, true);
     assert.equal(r.url, 'https://github.com/o/r/pull/7');
     assert.equal(r.merged, 'armed');
     const seq = calls.map((c) => (c.cmd === 'git' ? gitArgs(c).slice(0, 2).join(' ') : `${c.cmd} ${c.args.slice(0, 2).join(' ')}`));
-    assert.deepEqual(seq, ['switch -c', 'add --', 'commit -q', 'push -u', 'gh pr create', 'gh pr merge', 'switch main']);
+    assert.deepEqual(seq, ['switch --no-track', 'add --', 'commit -q', 'push -u', 'gh pr create', 'gh pr merge', 'switch main']);
+    assert.deepEqual(gitArgs(calls[0]), ['switch', '--no-track', '-c', 'chore/sync-cb0903cf', ORIGIN_SHA]);
     const commit = calls.find((c) => gitArgs(c)[0] === 'commit');
     assert.deepEqual(gitArgs(commit).slice(-3), ['--', '.claude/skills/plan/SKILL.md', RECEIPT_PATH]);
     const create = calls.find((c) => c.cmd === 'gh' && c.args[1] === 'create');
@@ -209,10 +275,11 @@ describe('runConsumerPr — command sequence', () => {
     assert.match(r.error, /unit tests failed/);
     assert.deepEqual(gitArgs(calls.at(-1)), ['switch', 'main']);
     assert.ok(!calls.some((c) => c.cmd === 'gh'), 'no PR attempted after a failed push');
+    assert.equal(r.pushLog, undefined, 'no log directory given, no log written');
   });
 
   it('a failed switch -c leaves the checkout alone and does nothing else', () => {
-    const { run, calls } = fakeRunner({ 'git -C C:/consumer switch -c': { status: 128, stderr: 'fatal: a branch named x already exists' } });
+    const { run, calls } = fakeRunner({ 'git -C C:/consumer switch --no-track -c': { status: 128, stderr: 'fatal: a branch named x already exists' } });
     const r = exec(run);
     assert.equal(r.ok, false);
     assert.equal(r.step, 'switch -c');

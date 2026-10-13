@@ -15,11 +15,16 @@
  *   node scripts/sync-pr.mjs --target wine       # one consumer, by alias or name
  *   node scripts/sync-pr.mjs --dry-run           # print the plan, touch nothing
  *   node scripts/sync-pr.mjs --no-merge          # open the PR, leave merging to a human
- *   node scripts/sync-pr.mjs --base develop      # consumer's base branch (default: main)
+ *   node scripts/sync-pr.mjs --base develop      # consumer's base branch (default: the remote's HEAD)
+ *
+ * The branch forks from a freshly fetched origin/<base>, never the checkout's
+ * local branch; a refused push keeps the consumer hook's full output under
+ * .claude/tmp/sync-pr/ and names the failing tests (lib/sync-pr.mjs header).
  *
  * Exit codes:
  *   0  every consumer was either handled or skipped for a named reason
- *   1  at least one consumer errored mid-sequence (its branch is left for inspection)
+ *   1  at least one consumer errored: its base could not be resolved or fetched,
+ *      or it failed mid-sequence (its branch is left for inspection)
  *   2  bad CLI input
  *
  * @module scripts/sync-pr
@@ -32,7 +37,8 @@ import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { resolveTargets, consumerAliases } from './lib/consumer-repos.mjs';
 import { MANIFEST_RELATIVE_PATH } from './lib/sync-manifest.mjs';
 import { classifyRepo } from './sync-status.mjs';
-import { planConsumerPr, runConsumerPr, branchNameFor } from './lib/sync-pr.mjs';
+import { planConsumerPr, runConsumerPr, gatherConsumerFacts } from './lib/sync-pr.mjs';
+import { scratchPath } from './lib/temp-paths.mjs';
 
 const KNOWN_FLAGS = ['--target', '--dry-run', '--no-merge', '--base'];
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
@@ -57,29 +63,25 @@ function readManifest(repoRoot) {
 }
 
 /**
- * Facts about the consumer checkout that `planConsumerPr` needs and cannot
- * derive itself: current branch, distance ahead of `origin/<base>`, and
- * whether the would-be branch already exists locally or on the remote.
- * @param {import('./lib/sync-pr.mjs').Runner} run
+ * The lines printed for a failed `runConsumerPr`. A refused push names where
+ * its full output was kept and which tests failed — the tail alone is the
+ * consumer's summary line, which identified nothing on 2026-10-12.
+ * @param {Extract<ReturnType<typeof runConsumerPr>, {ok: false}>} result
+ * @returns {string}
  */
-function gatherFacts(run, repoRoot, baseBranch, commitSha) {
-  const git = (args) => run('git', ['-C', repoRoot, ...args]);
-  const head = git(['rev-parse', '--abbrev-ref', 'HEAD']);
-  const currentBranch = head.status === 0 ? head.stdout.trim() : null;
-  // Refresh the base ref first so "ahead" is measured against what is on the
-  // remote NOW, not what this checkout last saw. A fetch failure (offline)
-  // leaves aheadCount null, which the planner refuses rather than guesses.
-  const fetched = git(['fetch', '--quiet', 'origin', baseBranch]);
-  let aheadCount = null;
-  if (fetched.status === 0) {
-    const ahead = git(['rev-list', '--count', `origin/${baseBranch}..HEAD`]);
-    if (ahead.status === 0 && /^\d+$/.test(ahead.stdout.trim())) aheadCount = Number(ahead.stdout.trim());
+export function formatFailure(result) {
+  const lines = [`  ${R}failed at ${result.step}${X}: ${result.error.split('\n').slice(-6).join('\n    ')}`];
+  if (result.pushLog) {
+    const { logPath, writeError, failingTests } = result.pushLog;
+    lines.push(logPath ? `  full push/hook output: ${logPath}` : `  ${R}could not write the push log${X}: ${writeError}`);
+    if (failingTests.length > 0) {
+      lines.push('  failing test(s):', ...failingTests.map((n) => `    ${R}✗${X} ${n}`));
+    } else {
+      lines.push(`  ${D}no failing test names parsed — read the full output${X}`);
+    }
   }
-  const branch = branchNameFor(commitSha ?? 'unknown');
-  const local = git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]);
-  const remote = git(['ls-remote', '--heads', 'origin', branch]);
-  const branchExists = local.status === 0 || (remote.status === 0 && remote.stdout.trim() !== '');
-  return { currentBranch, aheadCount, branchExists, fetchFailed: fetched.status !== 0 };
+  lines.push(`  ${D}branch ${result.branch} left in place for inspection${X}`);
+  return `${lines.join('\n')}\n`;
 }
 
 /**
@@ -99,7 +101,7 @@ export async function main(argv = process.argv, out = process.stdout) {
   };
   const dryRun = rest.includes('--dry-run');
   const merge = !rest.includes('--no-merge');
-  const baseBranch = flagValue('--base') ?? 'main';
+  const baseOverride = flagValue('--base') ?? null;
   const target = flagValue('--target');
   const targets = resolveTargets(target);
   if (targets.length === 0) {
@@ -109,7 +111,7 @@ export async function main(argv = process.argv, out = process.stdout) {
   const run = spawnRunner;
   const log = (line) => out.write(`${line}\n`);
   let errored = 0;
-  out.write(`${B}sync-pr${X} ${D}${dryRun ? '(dry run) ' : ''}${targets.length} consumer(s), base ${baseBranch}${X}\n`);
+  out.write(`${B}sync-pr${X} ${D}${dryRun ? '(dry run) ' : ''}${targets.length} consumer(s), base ${baseOverride ?? "each remote's default branch"}${X}\n`);
 
   for (const t of targets) {
     const repoRoot = t.path;
@@ -120,31 +122,41 @@ export async function main(argv = process.argv, out = process.stdout) {
     }
     const classified = classifyRepo(repoRoot);
     const manifest = readManifest(repoRoot);
-    const facts = gatherFacts(run, repoRoot, baseBranch, manifest?.commitSha);
-    const plan = planConsumerPr({ consumerName: t.name, classified, manifest, baseBranch, ...facts });
+    const facts = gatherConsumerFacts(run, repoRoot, { baseBranch: baseOverride, commitSha: manifest?.commitSha });
+    if (!facts.ok) {
+      // Never fall back to the checkout's local branch: that is the stale base
+      // the 2026-10-12 incident forked from.
+      errored++;
+      out.write(`  ${R}failed at ${facts.step}${X}: ${facts.error.split('\n').slice(-4).join('\n    ')}\n`);
+      continue;
+    }
+    const { baseBranch } = facts;
+    const plan = planConsumerPr({ consumerName: t.name, classified, manifest, ...facts });
 
     if (plan.action === 'skip') {
       out.write(`  ${Y}skip${X} ${plan.reason}${plan.detail ? ` ${D}— ${plan.detail}${X}` : ''}\n`);
-      if (facts.fetchFailed) out.write(`  ${D}(git fetch origin ${baseBranch} failed — offline?)${X}\n`);
       continue;
     }
 
-    out.write(`  branch ${plan.branch}: ${plan.surface.length} surface path(s) + receipt, commit "${plan.title}"\n`);
+    const behind = plan.behindCount > 0 ? ` ${D}(this checkout is ${plan.behindCount} behind; origin left every synced path as the sync saw it)${X}` : '';
+    out.write(`  branch ${plan.branch} from origin/${baseBranch} ${plan.startPoint.slice(0, 8)}${behind}\n`);
+    out.write(`  ${plan.surface.length} surface path(s) + receipt, commit "${plan.title}"\n`);
     for (const p of plan.addPaths) out.write(`    ${D}${p}${X}\n`);
     if (plan.leftBehind.length > 0) {
       out.write(`  ${Y}left uncommitted (needs review)${X}: ${plan.leftBehind.join(', ')}\n`);
     }
     if (dryRun) continue;
 
-    const result = runConsumerPr({ plan, repoRoot, baseBranch, currentBranch: facts.currentBranch, merge, run, log });
+    const result = runConsumerPr({
+      plan, repoRoot, baseBranch, currentBranch: facts.currentBranch, merge, run, log, consumerName: t.name, pushLogDir: scratchPath('sync-pr'),
+    });
     for (const w of result.warnings) out.write(`  ${Y}⚠${X} ${w}\n`);
     if (result.ok) {
       const mergeNote = { armed: 'squash auto-merge armed', 'not-armed': 'auto-merge NOT armed', skipped: 'no auto-merge (--no-merge)' }[result.merged];
       out.write(`  ${G}PR opened${X} ${result.url ?? '(url not parsed)'} ${D}— ${mergeNote}${X}\n`);
     } else {
       errored++;
-      out.write(`  ${R}failed at ${result.step}${X}: ${result.error.split('\n').slice(-6).join('\n    ')}\n`);
-      out.write(`  ${D}branch ${result.branch} left in place for inspection${X}\n`);
+      out.write(formatFailure(result));
     }
   }
 
