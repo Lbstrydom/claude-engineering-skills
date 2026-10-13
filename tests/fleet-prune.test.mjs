@@ -173,6 +173,56 @@ describe('fleet prune', () => {
     assert.match(r.json.prune.notJudged.join(' '), /open-PR list/);
   });
 
+  test('upstream 56773c7c: post-merge and no-PR branches are classified for review, never made removable', () => {
+    const fx = makeFleetRepo();
+    const fake = installFakeGh(fx.root);
+    const env = scrubbedEnv({ FLEET_TELEMETRY: 'off', ...fake.env }, { prependPath: [fake.bin] });
+    const { repo } = fx;
+    const rev = (r) => git(['rev-parse', r], repo);
+    const onBranch = (b, rel, body) => { git(['switch', '-q', b], repo); commitFile(repo, rel, body, `${b}: ${rel}`); git(['switch', '-q', 'main'], repo); };
+    const merged = [];
+    // Post-merge: PR merged at head H, then one more commit on the branch. pm-on's extra file also reached base
+    // by another commit (content equal); pm-off's did not.
+    for (const b of ['pm-on', 'pm-off']) {
+      const head = addBranch(repo, b, { [`${b}-a.txt`]: 'A\n' });
+      squashInto(repo, b, `${b} (#${merged.length + 10})`);
+      merged.push({ number: merged.length + 10, headRefName: b, headRefOid: head, mergedAt: '2026-10-09T00:00:00Z', mergeCommit: { oid: rev('main') }, url: `https://github.com/o/n/pull/${merged.length + 10}`, baseRefName: 'main', isCrossRepository: false });
+      onBranch(b, `${b}-late.txt`, 'late\n');
+    }
+    commitFile(repo, 'pm-on-late.txt', 'late\n', 'the same late fix, landed separately');
+    // No PR: np-on's two files reached base as two separate commits (so no squash patch-id matches); np-off's did not.
+    addBranch(repo, 'np-on', { 'np-1.txt': '1\n', 'np-2.txt': '2\n' });
+    commitFile(repo, 'np-1.txt', '1\n', 'np-1 elsewhere');
+    commitFile(repo, 'np-2.txt', '2\n', 'np-2 elsewhere');
+    addBranch(repo, 'np-off', { 'np-off.txt': 'fresh work\n' });
+    fake.setState({ list: [], merged });
+
+    const r = runFleet(['prune', '--json'], { cwd: repo, env });
+    assert.equal(r.status, 0, r.stderr);
+    const p = r.json.prune;
+    assert.equal(p.complete, true);
+    const cand = p.candidates.map((c) => c.branch);
+    for (const b of ['pm-on', 'pm-off', 'np-on', 'np-off']) assert.ok(!cand.includes(b), `${b} is never a removal candidate`);
+    const pm = Object.fromEntries(p.review.postMerge.map((i) => [i.branch, i]));
+    assert.deepEqual(Object.keys(pm).sort(), ['pm-off', 'pm-on']);
+    assert.equal(pm['pm-on'].pr, 10);
+    assert.deepEqual(pm['pm-on'].files, [{ path: 'pm-on-late.txt', onBase: true }]);
+    assert.equal(pm['pm-on'].allOnBase, true);
+    assert.deepEqual(pm['pm-off'].files, [{ path: 'pm-off-late.txt', onBase: false }]);
+    assert.equal(pm['pm-off'].allOnBase, false);
+    const np = Object.fromEntries(p.review.noPr.map((i) => [i.branch, i]));
+    assert.deepEqual(Object.keys(np).sort(), ['np-off', 'np-on']);
+    assert.equal(np['np-on'].allOnBase, true);
+    assert.deepEqual(np['np-on'].files.map((f) => f.onBase), [true, true]);
+    assert.equal(np['np-off'].allOnBase, false);
+    assert.equal(p.review.unjudged, 0);
+
+    const t = runFleet(['prune'], { cwd: repo, env });
+    assert.match(t.stdout, /review \(4\) — not removable/);
+    assert.match(t.stdout, /pm-on — PR #10 merged, 1 commit after its head · every changed file's committed content equals base/);
+    assert.match(t.stdout, /np-off — no PR covers it · 1 of 1 changed file differs from base/);
+  });
+
   test('the read-only listing says how to run exactly what it printed', () => {
     const fx = makeFleetRepo();
     const fake = installFakeGh(fx.root);

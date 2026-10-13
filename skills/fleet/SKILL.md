@@ -125,7 +125,7 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
   while another worktree's `core.hooksPath` points inside the one being removed:
   git would then run no hooks there, without a word. Run the printed re-point
   command first; a config git cannot read refuses too.
-- The footer's `FYI` line (unregistered work, from the last `status`) is
+- Each `FYI` line in `next` or the footer (prune counts, unregistered work; from the last `status`) is
   information, not a `DO`: relay it; never claim, archive or prune on it alone.
 - Coordinating, not participating: the chip authority block, the session-list
   cross-check, routing, the ship-ready end state, consumer sync, session

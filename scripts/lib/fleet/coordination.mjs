@@ -24,6 +24,7 @@ import {
 } from './directives.mjs';
 import { deriveObligations, renderObligations } from './obligations.mjs';
 import { readUnregisteredCache, unregisteredCacheDir } from './unregistered.mjs';
+import { pruneCountText, pruneIsEmpty, readPruneCache } from './prune-summary.mjs';
 import { currentBranch, lockFailed, nowIso, ok, refused, selfId } from './commands.mjs';
 
 /**
@@ -114,12 +115,57 @@ export function unregisteredFooter(dir, now, cmd = 'fleet', { read = readUnregis
   }
 }
 
-/** `fleet next [--id] [--json]` — read-only. Exit 0; 3 when the session is unknown. */
+/** A prune count older than this asks for one `fleet status` run instead of being relayed. */
+export const PRUNE_CACHE_MAX_AGE_MS = UNREGISTERED_CACHE_MAX_AGE_MS;
+
+/**
+ * The prune count (upstream 56773c7c), read from the cache `status` and `prune` write — never computed here. The state
+ * of the read, plus at most one line: FYI for the user/coordinator, never an action for this session (a branch
+ * removal is the user's decision). Missing, unreadable or stale is UNMEASURED and says how to re-measure; a complete
+ * count of nothing is silent. Never throws.
+ */
+export function pruneNext(dir, now, cmd = 'fleet', { read = readPruneCache } = {}) {
+  const status = `${cmd} status`;
+  const refresh = (why) => [`prune count unmeasured: ${why} — run \`${status}\` (read-only) to refresh`];
+  try {
+    const c = read(dir);
+    if (c.state === 'missing') return { state: 'missing', lines: refresh('no status run has measured it yet') };
+    if (c.state !== 'ok') return { state: 'unreadable', lines: refresh(`its cache is unreadable (${c.reason})`) };
+    const rec = c.record;
+    const age = (now instanceof Date ? now.getTime() : Date.now()) - Date.parse(rec.at);
+    // A record from the future (a clock moved back) has no knowable age: re-measure rather than relay it as fresh.
+    if (!Number.isFinite(age) || age < 0 || age > PRUNE_CACHE_MAX_AGE_MS) return { state: 'stale', record: rec, lines: refresh(Number.isFinite(age) && age >= 0 ? `last measured ${ageText(age)} ago` : 'its age is unknown') };
+    if (!rec.complete) return { state: 'ok', record: rec, lines: [`FYI for the user/coordinator: prune count unmeasured (${rec.reason}) — \`${status}\` (read-only) re-measures`] };
+    if (pruneIsEmpty(rec)) return { state: 'ok', record: rec, lines: [] };
+    return { state: 'ok', record: rec, lines: [`FYI for the user/coordinator, not an action for this session: ${pruneCountText(rec)} — \`${cmd} prune\` (read-only) lists them (measured ${ageText(age)} ago)`] };
+  } catch (e) {
+    return { state: 'unreadable', lines: [`prune count not derived (${e.message})`] };
+  }
+}
+
+/** Just the lines of `pruneNext`. */
+export function pruneNextLines(read, now, cmd = 'fleet') {
+  return pruneNext(null, now, cmd, { read: () => read }).lines;
+}
+
+/**
+ * `fleet next [--id] [--json]` — read-only. Exit 0; 3 when the session is unknown. After the obligations, the FYI
+ * counts for the user/coordinator: what `prune` would remove or wants reviewed, and abandoned unregistered work
+ * (`archive`). Both come from caches `status` writes; neither is a DO.
+ */
 export function cmdNext(ctx, flags) {
   const id = selfId(ctx, flags);
   const r = obligationsFor(ctx, id);
   if (!r.ok) return refused(r.reason);
-  return ok({ id, ...r.result, text: [`next for ${id}:`, ...renderObligations(r.result, { cmd: ctx.cmd }).map((l) => `  ${l}`)].join('\n') });
+  const dir = unregisteredCacheDir(ctx.cwd);
+  const prune = pruneNext(dir, ctx.now, ctx.cmd);
+  let unregistered;
+  try { unregistered = unregisteredFooter(dir, ctx.now, ctx.cmd); } catch (e) { unregistered = [`unregistered-work footer not derived (${e.message})`]; }
+  const fyi = [...prune.lines, ...unregistered];
+  return ok({
+    id, ...r.result, prune: { state: prune.state, ...(prune.record ? { record: prune.record } : {}) },
+    text: [`next for ${id}:`, ...renderObligations(r.result, { cmd: ctx.cmd }).map((l) => `  ${l}`), ...fyi].join('\n'),
+  });
 }
 
 // ── directive ───────────────────────────────────────────────────────────────
