@@ -1,6 +1,6 @@
 # Plan: pre-push gate cost, slice 2 — a cheaper branch-push test tier
 - **Date**: 2026-10-13
-- **Status**: In Progress (Cluster A, stages 0 and 1)
+- **Status**: In Progress (stages 0 and 1 built; stage 2, the default flip, awaits a separate user decision)
 - **Author**: Claude + Louis
 - **Scope**: backend (pre-push hook, test runner, one CLI; no UI) · stack `js-ts` (`detect-stack`: `js-ts`)
 - **Target domain(s)**: `scripts`, `shared-lib`
@@ -363,3 +363,15 @@ The user approved option B, stages 0 and 1, on 2026-10-13 (stage 2, the default 
 |---|---|---|---|
 | GPT | focused rounds 1-2 on §13 before implementing | R1 NEEDS_REVISION H:1 M:2 (2 accepted, 1 severity-adjusted, 100% acted on); R2 READY_TO_IMPLEMENT | items 6 and 7 added, item 5 clarified |
 | Gemini | round 1 on §13 | CONCERNS, 1 MEDIUM blocking: `.fleet.json` is read at runtime and is in nobody's reach | accepted; item 8 added. The capped second round was not run: a concrete declared-reach correction, covered by a unit test and the code audit |
+
+## Implementation Log
+
+### 2026-10-13
+- **Completed (Cluster A, stages 0 and 1).** The oracle (`scripts/lib/test-tier.mjs`, pure over an injected tree) with its git adapters (`test-tier-git.mjs`), the sandbox's tiered run (`prepush-tier.mjs`), the `test-tier` CLI (`select`, `plan`, `refresh-heavy`), the `--tier-skip` runner flag with the post-run guard in `finishRun`, the hook wiring (`.githooks/pre-push`), the 48-file heavy list (`.test-tiers.json`), and the split of `check` into `check:static` + `npm test` (`scripts/lib/check-chain.mjs`, which `guards:preflight` now expands). Every push prints the stage-0 shadow line and the one-line `test-tier/v1` summary; `AUDIT_PREPUSH_TIER=branch` opts a push into the branch tier; the default stays `full`.
+- **Not built, by decision.** Cluster B (stage 2, flipping the work-in-progress default) is not authorised and is not in this change. Its entry condition stays as written in §12: stage 1's exit check finding no real failure in a skipped file.
+- **Tests.** 112 new test cases in six files (`test-tier` 48, `test-tier-git` 19, `test-tier-replay` 8, `test-tier-gate` 16, `prepush-tier` 15, `pre-push-tier-label` 6), plus eight existing suites updated for the split `check` and the hook's new flags. The replay suite re-runs the oracle over the recorded failing heads.
+- **Audit.** `/audit-plan` (see the Audit Trail): GPT 3 rounds, Gemini approve then concerns, all accepted and fixed. `/audit-code` on the implementation: R1 H8 M18, R2 H2, R3 H1 M1, R4 PASS H0 M0 L0, with 27 of 30 findings accepted and fixed and 3 dismissed with reasons (R1 H8 the computed-`import()` rule, R1 M11 the threshold, R1 M17 a coverage notice); Gemini final gate **APPROVE**, no new findings, nothing wrongly dismissed.
+- **Deviations.**
+  1. **Computed `import()` (D3), approved by the user 2026-10-13.** The rule applies only to the test layer; inside `scripts/**` a non-literal `import()` does not mark a heavy file reached. Measured: applied to every module in the closure, 40 of 48 heavy files were reached by any diff, so the tier could never skip. The backstops are enforced instead: every heavy file declares a `scripts/**` reach, no test-layer file may hold a computed or unresolvable import, blind spots ride in the envelope (`blind`, `blindCount`), and a merge candidate still needs a full verdict. See §13 item 9.
+  2. **Three details beyond the plan text**, all in §13: items 6 and 7 (one dependency list; the summary grammar), item 8 (`.fleet.json` in the declared reach), and item 10 (three added modules).
+- **Remaining.** (1) The 48-file stage-0 variant has not been timed beside a full run (§13 item 5); that measurement needs a coordinator gate slot and gates stage 2 and §12's figures, not the opt-in. (2) The stage-2 decision. (3) Cluster D (`ship-trains.md`) can now call the §2.6 selection query.
