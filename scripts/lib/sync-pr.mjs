@@ -290,7 +290,8 @@ const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
  *   - vitest summary:   ` FAIL  tests/a.test.js > suite > name`
  *   - node:test / tap:  `not ok 3 - name`
  *   - jest:             `  ● Suite › name`
- *   - per-test marks:   `  × name 12ms` / `✖ name (3ms)` (vitest list, node spec)
+ *   - per-test marks:   `  × name 12ms` / `✕ name` / `✖ name (3ms)` (vitest, jest, node spec)
+ *   - fallback:         ` FAIL  tests/a.test.js` (file only, when no test-level line exists)
  *
  * @param {string} text
  * @param {number} [cap]
@@ -298,21 +299,31 @@ const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
  */
 export function parseFailingTests(text, cap = 25) {
   const lines = String(text ?? '').replace(ANSI, '').split(/\r?\n/);
-  const shapes = [
-    /^\s*FAIL\s+(\S.*?)\s*$/,
-    /^\s*not ok \d+ - (.+?)\s*(?:#.*)?$/,
-    /^\s*● (?!Console\b)(.+?)\s*$/,
-    /^\s*[×✖✗]\s+(.+?)(?:\s+\(?\d+(?:\.\d+)?\s*m?s\)?)?\s*$/,
-  ];
-  for (const re of shapes) {
+  const collect = (re) => {
     const found = [];
     for (const line of lines) {
       const m = re.exec(line);
       if (m && !found.includes(m[1])) found.push(m[1]);
     }
+    return found;
+  };
+  // Test-level shapes, most specific first. Reporters overlap (vitest prints
+  // both `×` marks and FAIL summary lines for one failure; jest prints a
+  // file-level `FAIL path` header above its `●` test names), so only the first
+  // shape that matches is used.
+  const testLevel = [
+    /^\s*FAIL\s+(\S.*? > .+?)\s*$/,
+    /^\s*not ok \d+ - (.+?)\s*(?:#.*)?$/,
+    /^\s*● (?!Console\b)(.+?)\s*$/,
+    /^\s*[×✕✖✗]\s+(.+?)(?:\s+\(?\d+(?:\.\d+)?\s*m?s\)?)?\s*$/,
+  ];
+  for (const re of testLevel) {
+    const found = collect(re);
     if (found.length > 0) return found.slice(0, cap);
   }
-  return [];
+  // File-level only (a jest `FAIL path` with no `●` detail, or a suite that
+  // failed to load): the file is still better than the summary line.
+  return collect(/^\s*FAIL\s+(\S.*?)\s*$/).slice(0, cap);
 }
 
 /**
@@ -473,7 +484,12 @@ export function runConsumerPr({
       const failure = fail('push', pushed);
       if (pushLogDir) {
         failure.pushLog = writePushFailureLog({
-          dir: pushLogDir, consumerName, branch: plan.branch, startPoint: plan.startPoint, text: failure.error,
+          // Not `why()`: it returns the spawn error ALONE when one is set
+          // (e.g. ENOBUFS past the runner's buffer), dropping the partial
+          // output that still came back.
+          dir: pushLogDir, consumerName, branch: plan.branch, startPoint: plan.startPoint,
+          text: [pushed.error && `[spawn error] ${pushed.error.message}`, pushed.stderr, pushed.stdout].filter(Boolean).join('\n')
+            || `push exited ${pushed.status} with no output`,
         });
       }
       return failure;

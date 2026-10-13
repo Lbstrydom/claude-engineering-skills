@@ -12,7 +12,7 @@
  *   2. a refused push leaves a log naming the failing tests.
  * `gh` is the only stubbed command; nothing here reaches a network.
  */
-import { describe, it, before, after } from 'node:test';
+import { describe, it, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -96,12 +96,13 @@ const classified = {
 const planFor = (facts) => planConsumerPr({ consumerName: 'fixture', classified, manifest: MANIFEST, ...facts });
 
 describe('sync-pr on real git — a consumer whose local default branch is behind origin', () => {
-  let fx;
-  before(() => { fx = makeFixture(); });
-  after(() => rmrfBestEffort(fx.root));
+  let fx, originHead;
+  // Each test gets its own stale-consumer / moved-origin fixture: origin
+  // gained a commit touching only a path the sync never writes.
+  beforeEach(() => { fx = makeFixture(); originHead = fx.advanceOrigin('app.js', 'two\n'); });
+  afterEach(() => rmrfBestEffort(fx.root));
 
   it('asks the REMOTE for its default branch and fetches it fresh (never the stale local ref)', () => {
-    const originHead = fx.advanceOrigin('app.js', 'two\n');
     const staleLocal = fx.git(['rev-parse', 'HEAD'], fx.consumer).trim();
     assert.notEqual(staleLocal, originHead, 'fixture: the consumer has not seen origin move');
     const facts = gatherConsumerFacts(makeRunner().run, fx.consumer, { commitSha: SHA });
@@ -114,6 +115,7 @@ describe('sync-pr on real git — a consumer whose local default branch is behin
   });
 
   it('forks the sync branch from origin\'s head and carries the synced files across', () => {
+    assert.notEqual(fx.git(['rev-parse', 'HEAD'], fx.consumer).trim(), originHead, 'fixture: the consumer is behind');
     fx.syncWrites();
     const { run, ghCalls } = makeRunner();
     const facts = gatherConsumerFacts(run, fx.consumer, { commitSha: SHA });
@@ -123,7 +125,6 @@ describe('sync-pr on real git — a consumer whose local default branch is behin
     assert.equal(result.ok, true, result.error);
     const branch = branchNameFor(SHA);
     const parent = fx.git(['rev-parse', `${branch}^`], fx.consumer).trim();
-    const originHead = fx.git(['rev-parse', 'trunk'], fx.publisher).trim();
     assert.equal(parent, originHead, 'the sync commit sits on the fetched origin head, not the stale local trunk');
     assert.equal(fx.git(['show', `${branch}:app.js`], fx.consumer), 'two\n', 'origin\'s newer commit is in the PR base');
     assert.equal(fx.git(['show', `${branch}:${SKILL}`], fx.consumer), 'plan v2\n', 'the synced content is what was committed');

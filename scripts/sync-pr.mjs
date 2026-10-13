@@ -85,13 +85,16 @@ export function formatFailure(result) {
 }
 
 /**
- * @param {string[]} argv
- * @param {NodeJS.WriteStream} out
- * @returns {Promise<number>} exit code
+ * Parse sync-pr's flags. Options end at `--`, the same boundary
+ * `assertKnownFlags` honours; this CLI takes no positionals, so anything
+ * after it is ignored, never read as a flag.
+ * @param {string[]} argv — full process argv
+ * @returns {{dryRun: boolean, merge: boolean, baseOverride: string|null, target: string|undefined}}
  */
-export async function main(argv = process.argv, out = process.stdout) {
+export function parseArgs(argv) {
   assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'sync-pr' });
-  const rest = argv.slice(2);
+  const all = argv.slice(2);
+  const rest = all.includes('--') ? all.slice(0, all.indexOf('--')) : all;
   const flagValue = (name) => {
     const i = rest.indexOf(name);
     if (i === -1) return undefined;
@@ -99,10 +102,21 @@ export async function main(argv = process.argv, out = process.stdout) {
     if (v === undefined || v.startsWith('--')) throw new ArgvError(`sync-pr: ${name} requires a value`);
     return v;
   };
-  const dryRun = rest.includes('--dry-run');
-  const merge = !rest.includes('--no-merge');
-  const baseOverride = flagValue('--base') ?? null;
-  const target = flagValue('--target');
+  return {
+    dryRun: rest.includes('--dry-run'),
+    merge: !rest.includes('--no-merge'),
+    baseOverride: flagValue('--base') ?? null,
+    target: flagValue('--target'),
+  };
+}
+
+/**
+ * @param {string[]} argv
+ * @param {NodeJS.WriteStream} out
+ * @returns {Promise<number>} exit code
+ */
+export async function main(argv = process.argv, out = process.stdout) {
+  const { dryRun, merge, baseOverride, target } = parseArgs(argv);
   const targets = resolveTargets(target);
   if (targets.length === 0) {
     throw new ArgvError(`sync-pr: unknown --target "${target}" — known: ${consumerAliases().join(', ')}`);

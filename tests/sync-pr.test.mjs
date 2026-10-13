@@ -9,11 +9,15 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   SKIP_REASON, branchNameFor, buildPrText, planConsumerPr, runConsumerPr,
   parseGhAccounts, isRepoNotResolvable, parseSymrefHead, parseFailingTests,
 } from '../scripts/lib/sync-pr.mjs';
+import { parseArgs } from '../scripts/sync-pr.mjs';
 import { RECEIPT_PATH } from '../scripts/lib/sync-receipt.mjs';
 import { OWNED_SIDECAR_RELATIVE_PATH } from '../scripts/lib/sync-owned-sidecar.mjs';
 
@@ -156,6 +160,18 @@ describe('buildPrText', () => {
   });
 });
 
+describe('sync-pr parseArgs', () => {
+  const argv = (...a) => ['node', 'sync-pr.mjs', ...a];
+  it('reads the flags; --base defaults to null (the remote\'s default branch is asked, not assumed)', () => {
+    assert.deepEqual(parseArgs(argv('--target', 'wine', '--no-merge')), { dryRun: false, merge: false, baseOverride: null, target: 'wine' });
+    assert.equal(parseArgs(argv('--base', 'develop')).baseOverride, 'develop');
+  });
+  it('options end at `--`: nothing after it is read as a flag (assertKnownFlags already stops there)', () => {
+    assert.deepEqual(parseArgs(argv('--dry-run', '--', '--target', 'wine', '--no-merge', '--base')),
+      { dryRun: true, merge: true, baseOverride: null, target: undefined });
+  });
+});
+
 describe('parseSymrefHead', () => {
   it('reads the default branch out of `ls-remote --symref origin HEAD`', () => {
     assert.equal(parseSymrefHead('ref: refs/heads/main\tHEAD\n1e538526d\tHEAD\n'), 'main');
@@ -184,6 +200,24 @@ describe('parseFailingTests', () => {
     assert.deepEqual(parseFailingTests('ok 1 - a\nnot ok 2 - writes the receipt # TODO\n'), ['writes the receipt']);
     assert.deepEqual(parseFailingTests('  ● Console\n  ● Sync › keeps order\n'), ['Sync › keeps order']);
     assert.deepEqual(parseFailingTests('✖ keeps order (3.2ms)\n✔ other (1ms)\n'), ['keeps order']);
+  });
+
+  it('jest: the `●` test names win over the file-level `FAIL path` header printed above them', () => {
+    const text = [
+      'FAIL tests/receipt.test.js',
+      '  Receipt',
+      '    ✕ keeps both events (5 ms)',
+      '    ✓ rotates (1 ms)',
+      '  ● Receipt › keeps both events',
+      '    expect(received).toBe(expected)',
+      'Tests:       1 failed, 1 passed, 2 total',
+    ].join('\n');
+    assert.deepEqual(parseFailingTests(text), ['Receipt › keeps both events']);
+  });
+
+  it('a file-level FAIL alone (suite failed to load) still names the file', () => {
+    assert.deepEqual(parseFailingTests(' FAIL  tests/broken.test.js [ tests/broken.test.js ]\nError: Cannot find module'),
+      ['tests/broken.test.js [ tests/broken.test.js ]']);
   });
 
   it('nothing parseable is an empty list (the caller then says so and points at the log)', () => {
@@ -276,6 +310,22 @@ describe('runConsumerPr — command sequence', () => {
     assert.deepEqual(gitArgs(calls.at(-1)), ['switch', 'main']);
     assert.ok(!calls.some((c) => c.cmd === 'gh'), 'no PR attempted after a failed push');
     assert.equal(r.pushLog, undefined, 'no log directory given, no log written');
+  });
+
+  it('a push whose runner reported a spawn error still logs the partial output, not the error message alone', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-pr-log-'));
+    try {
+      const { run } = fakeRunner({
+        'git -C C:/consumer push': { status: null, error: new Error('spawnSync git ENOBUFS'), stderr: ' FAIL  t.test.js > s > late failure\n', stdout: '' },
+      });
+      const r = exec(run, { pushLogDir: dir, consumerName: 'wine-cellar-app' });
+      assert.equal(r.step, 'push');
+      assert.match(r.error, /ENOBUFS/);
+      const text = fs.readFileSync(r.pushLog.logPath, 'utf-8');
+      assert.match(text, /\[spawn error\] spawnSync git ENOBUFS/);
+      assert.match(text, /late failure/, 'the output that did come back is kept');
+      assert.deepEqual(r.pushLog.failingTests, ['t.test.js > s > late failure']);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
 
   it('a failed switch -c leaves the checkout alone and does nothing else', () => {
