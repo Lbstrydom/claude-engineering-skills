@@ -340,7 +340,7 @@ describe('runConsumerPr — command sequence', () => {
       assert.match(text, /\[spawn error\] spawnSync git ENOBUFS/);
       assert.match(text, /late failure/, 'the output that did come back is kept');
       assert.deepEqual(r.pushLog.failingTests, ['t.test.js > s > late failure']);
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('a failed switch -c leaves the checkout alone and does nothing else', () => {
