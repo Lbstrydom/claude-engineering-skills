@@ -28,6 +28,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { assertKnownFlags } from '../cli-io.mjs';
+import { isInvokedAsScript } from '../cli-entry.mjs';
 
 /** k MUST match production. The UserPromptSubmit hook hardcodes k:5, and that
  *  is the consultation that actually fires on most prompts — calibrating at
@@ -557,8 +558,7 @@ async function main() {
   process.exit(metrics.verdict === 'pass' ? 0 : 2);
 }
 
-const isDirect = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname.replace(/^\//, ''));
-if (isDirect || process.argv[1]?.endsWith('calibrate.mjs')) {
+if (isInvokedAsScript(import.meta.url)) {
   main().catch(err => {
     // A usage mistake is not an operational failure: exit 2 with the message
     // alone (a stack trace buries the one line the operator needs to read).

@@ -32,6 +32,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const DEFAULT_BASELINE = '.gitignore-policy-baseline.json';
@@ -203,4 +204,4 @@ function main() {
   process.exit(reportOnly ? 0 : 1);
 }
 
-if (process.argv[1]?.endsWith('check-gitignore-policy.mjs')) main();
+if (isInvokedAsScript(import.meta.url)) main();

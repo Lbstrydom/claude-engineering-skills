@@ -26,6 +26,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError, hasFlag } from '../lib/cli-io.mjs';
+import { isInvokedAsScript } from '../lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--recapture', '--confirm-fresh-capture', '--selfcheck-relocation', '--help'];
 
@@ -410,6 +411,6 @@ async function main() {
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isInvokedAsScript(import.meta.url)) {
   main();
 }

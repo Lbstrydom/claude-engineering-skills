@@ -32,6 +32,7 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 import { assertKnownFlags } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 /** Issue types we gate on. `exports`/`types` are deliberately excluded — they
  *  are the high-volume, low-precision half (630 in wine-cellar-app). Run
@@ -168,6 +169,6 @@ async function main() {
   process.exit(1);
 }
 
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('knip-gate.mjs')) {
+if (isInvokedAsScript(import.meta.url)) {
   main().catch(err => { console.error(`knip-gate: ${err.message}`); process.exit(1); });
 }

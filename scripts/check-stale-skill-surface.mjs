@@ -53,6 +53,7 @@ import {
   STALE_SURFACE, LIVE_SURFACE, AGENTS_SURFACE, SHADOWING_SURFACES,
   listSurfaceNames, compareSkillSurfaces, classifyOrphans,
 } from './lib/skill-surface-identity.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 // Deliberately NOT in `lib/skill-surface-identity.mjs`. That module is the shared
 // SKILL-surface vocabulary, imported by gate 8, which is synced to consumers. This
@@ -413,13 +414,7 @@ function reportRetiredSurfaces(root) {
   }
 }
 
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    if (!argv1) return false;
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   try {

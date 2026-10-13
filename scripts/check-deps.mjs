@@ -25,12 +25,12 @@ import './lib/load-env.mjs';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import {
   detectPackageManager, packageManagerInvocation, displayCommand,
 } from './lib/package-manager.mjs';
 import { installTimeouts, isInstallTimeout, isInstalledPackage } from './lib/install/deps.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0m';
 
@@ -350,7 +350,7 @@ export function run({
   return code;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+if (isInvokedAsScript(import.meta.url)) {
   let code;
   try {
     code = run();

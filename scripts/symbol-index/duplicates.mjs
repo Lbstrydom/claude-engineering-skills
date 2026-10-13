@@ -30,7 +30,7 @@ import {
 import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 import { assertKnownFlags, ArgvError, finishAndExit } from '../lib/cli-io.mjs';
-import { pathToFileURL } from 'node:url';
+import { isInvokedAsScript } from '../lib/cli-entry.mjs';
 
 /**
  * Every flag this CLI accepts. Enforced, not merely documented: `--limit` now
@@ -208,7 +208,7 @@ async function main() {
 
 // CLI-only entry guard, same idiom as extract.mjs / gemini-review.mjs. Without
 // it, importing this module to unit-test `paginate` starts a real cloud query.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isInvokedAsScript(import.meta.url)) {
   main().catch(err => {
     process.stderr.write(`arch:duplicates: fatal: ${err.stack || err.message}\n`);
     process.exit(2);

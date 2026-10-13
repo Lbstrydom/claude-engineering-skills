@@ -41,6 +41,7 @@ import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError, argOption } from './lib/cli-io.mjs';
 import { splitEntries, monthOf, canonicalize } from './lib/status-log-integrity.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT_LOG = path.join(REPO, 'status.md');
@@ -235,4 +236,4 @@ function main() {
   process.exit(0);
 }
 
-if (process.argv[1]?.endsWith('rotate-status-log.mjs')) main();
+if (isInvokedAsScript(import.meta.url)) main();

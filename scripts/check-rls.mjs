@@ -42,6 +42,7 @@
  */
 
 /** Gate mode: block only on exploitable exposure (no-RLS + anon/authenticated grant). */
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 const GATE_MODE = process.argv.includes('--gate');
 
 /**
@@ -203,13 +204,7 @@ ${D}gate: not blocking — ${noRls.length} no-RLS table(s) carry no anon/authent
 // process.exit — which is how the gate-semantics test first "failed" while
 // every one of its assertions passed. Mirrors the isMain pattern already used
 // by ship-commit.mjs and install-prepush-hook.mjs.
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    if (!argv1) return false;
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   main().catch((err) => {

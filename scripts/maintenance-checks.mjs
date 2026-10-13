@@ -76,8 +76,9 @@ import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { withFileLock, LockTimeoutError } from './lib/file-lock.mjs';
 import { isSourceRepo } from './lib/is-source-repo.mjs';
 import { loadHeartbeat as readHeartbeat, isOverdue as heartbeatOverdue, DEFAULT_INTERVAL_DAYS, HEARTBEAT_FILE } from './lib/maintenance-heartbeat.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
-if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+if (process.argv.includes('--selfcheck-relocation') && isInvokedAsScript(import.meta.url)) { console.log('OK'); process.exit(0); }
 
 const REPO_ROOT = findRepoRootFromScript(import.meta.url);
 const SCRIPTS_DIR = import.meta.dirname;
@@ -626,13 +627,7 @@ export async function main() {
   printHuman(results);
 }
 
-const invokedDirectly = (() => {
-  try {
-    const metaPath = new URL(import.meta.url).pathname.toLowerCase();
-    const argvPath = process.argv[1] ? new URL(`file://${process.argv[1].replaceAll(/\\/g, '/')}`).pathname.toLowerCase() : '';
-    return metaPath.endsWith('/maintenance-checks.mjs') && argvPath.endsWith('/maintenance-checks.mjs');
-  } catch { return false; }
-})();
+const invokedDirectly = isInvokedAsScript(import.meta.url);
 
 if (invokedDirectly) {
   main().catch((err) => {

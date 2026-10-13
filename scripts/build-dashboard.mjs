@@ -21,7 +21,6 @@
  */
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
 import { ArgvError, emit, ensureDir } from './lib/cli-io.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { collectReference } from './lib/dashboard/collect-reference.mjs';
@@ -31,6 +30,7 @@ import { renderDocument } from './lib/dashboard/render.mjs';
 import { loadAssets } from './lib/dashboard/load-assets.mjs';
 import { serve } from './lib/dashboard/serve.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const HELP = `build-dashboard — generate the local navigable dashboard
 
@@ -263,7 +263,7 @@ async function main() {
   process.exit(degraded ? 1 : 0);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+if (isInvokedAsScript(import.meta.url)) {
   main().catch((err) => {
     process.stderr.write(`  [build-dashboard] FATAL: ${err.stack || err.message}\n`);
     process.exit(1);

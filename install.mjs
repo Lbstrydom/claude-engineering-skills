@@ -55,6 +55,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 
 import { createPrompter } from './scripts/lib/install/prompt.mjs';
 import { execGit as git } from './scripts/lib/cli-io.mjs';
+import { isInvokedAsScript } from './scripts/lib/cli-entry.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', B = '\x1b[1m', D = '\x1b[2m', X = '\x1b[0m';
 
@@ -651,8 +652,7 @@ ${B}═════════════════════════�
   }
 }
 
-const isMain = import.meta.url === `file://${process.argv[1]}`
-  || import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`;
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   main()

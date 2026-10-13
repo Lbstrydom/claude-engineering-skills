@@ -14,8 +14,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { LAYOUT_CONSTANTS } from './sync-path-map.mjs';
+import { isInvokedAsScript } from './cli-entry.mjs';
 
 // Allowed chars in an npm script name. The name must START and END with
 // an alphanumeric (or `_/@`); middle chars may include `:`, `.`, `-`.
@@ -96,7 +96,7 @@ function main() {
   process.exit(failures.length ? 2 : 0);
 }
 
-const isCli = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const isCli = isInvokedAsScript(import.meta.url);
 if (isCli) main();
 
 export const _internals = { NPM_RUN_REGEX, findSyncedMarkdownFiles };

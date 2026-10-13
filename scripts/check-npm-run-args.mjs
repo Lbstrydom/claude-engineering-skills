@@ -51,6 +51,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
 
@@ -306,12 +307,7 @@ function main() {
   process.exit(r.ok ? 0 : 1);
 }
 
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   try {

@@ -34,6 +34,7 @@ import { REGISTRY, validateRegistry, runProbe, probeIds } from './lib/doctor/reg
 import { resolveCloudConfig, discoverLocalEnvPath } from './lib/shared-cloud-config.mjs';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--json', '--gate', '--only', '--consumer-root', '--bundle-sha', '--selfcheck-relocation'];
 
@@ -243,8 +244,7 @@ async function main() {
   process.exit(gateMode && gating.length > 0 ? 1 : 0);
 }
 
-const invokedDirectly = import.meta.url === `file://${process.argv[1]}`
-  || process.argv[1]?.endsWith('doctor.mjs');
+const invokedDirectly = isInvokedAsScript(import.meta.url);
 
 if (invokedDirectly) {
   try {

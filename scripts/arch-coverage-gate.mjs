@@ -25,11 +25,11 @@
 import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { OBSERVED_FILE, ObservedDepsSchema } from './lib/observed-deps.mjs';
 import { loadCoverageConfig } from './lib/symbol-index/domain-tagger.mjs';
 import { coverageGateExitCode, GRAPH_STATUS } from './lib/symbol-index/graph-verdict.mjs';
 import { log } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 function main() {
   // AGENTS.md CLI smoke contract — proves imports survive relocation into a
@@ -146,6 +146,6 @@ function main() {
   process.exit(exitCode);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isInvokedAsScript(import.meta.url)) {
   main();
 }

@@ -32,6 +32,7 @@ import { log, argOption, hasFlag } from './lib/cli-io.mjs';
 // values) rather than re-declared — this file's local copy was byte-identical
 // (flagged by `arch:duplicates`).
 import { SEV_WEIGHTS, sevWeight } from './lib/solo-control/scoring.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 /** Bucket a raw `round_raised` into `1` vs `2+` (the P1-gate lever). A null/absent
  * round is bucketed `unknown` — NOT silently folded into round 1 (which would
@@ -187,6 +188,6 @@ async function main() {
 }
 
 // Only run main() when invoked directly (tests import decompose/renderMarkdown).
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('ledger-decompose.mjs')) {
+if (isInvokedAsScript(import.meta.url)) {
   main().then((code) => { process.exitCode = code || 0; }).catch((e) => { log(`FATAL: ${e?.stack || e}`); process.exitCode = 1; });
 }

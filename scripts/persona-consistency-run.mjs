@@ -32,6 +32,7 @@ import { diffClaims, manifestQualityWarnings, appliesToCurrent, routePatternCove
   from './lib/persona-test/consistency.mjs';
 import { attachNetworkListener, captureWitness }
   from './lib/ux-lock/capture.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 // Exit codes — also used by tests to assert behaviour without spawning.
 export const EXIT = Object.freeze({
   HEALTHY:            0,
@@ -772,12 +773,7 @@ export const _internals = Object.freeze({ safeCurrentRoute });
 // Main entry (skipped when imported as a module).
 // ────────────────────────────────────────────────────────────────────────────
 
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   // CLI relocation smoke contract (AGENTS.md) — proves imports survive a

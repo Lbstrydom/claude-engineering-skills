@@ -26,8 +26,9 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 const DEFAULT_GLOB_DIRS = [path.join(REPO_ROOT, 'docs', 'plans')];
@@ -327,9 +328,5 @@ export const _internals = Object.freeze({
   lintFile,
 });
 
-const invokedAsScript = (() => {
-  if (!process.argv[1]) return false;
-  try { return import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href; }
-  catch { return false; }
-})();
+const invokedAsScript = isInvokedAsScript(import.meta.url);
 if (invokedAsScript) main();

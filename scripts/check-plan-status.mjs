@@ -26,6 +26,7 @@ import {
   parsePlanStatus, selectAuditPlan, isAuditSummary, checkPlanDependencies,
 } from './lib/plan-status.mjs';
 import { resolvePushRange } from './lib/push-range.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const PLANS_DIR = 'docs/plans';
 const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
@@ -238,10 +239,5 @@ function main() {
   );
 }
 
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 if (isMain) main();

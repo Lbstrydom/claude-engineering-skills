@@ -28,7 +28,6 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 // Import config.mjs (not bare 'dotenv/config') for its env-loading side effect:
 // it loads the cwd/git-root .env AND the shared ~/.audit-loop.env, where the
 // AUDIT_DB_URL DSN usually lives. Bare 'dotenv/config' only reads cwd .env, so
@@ -37,8 +36,9 @@ import { pathToFileURL } from 'node:url';
 // INSUFFICIENT_DATA — even though the DB has plenty of R2+ runs.
 import './lib/config.mjs';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
-if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+if (process.argv.includes('--selfcheck-relocation') && isInvokedAsScript(import.meta.url)) { console.log('OK'); process.exit(0); }
 
 // Resolve `.audit/` via the canonical repo-root finder. This script always
 // lives under a `scripts/` ancestor (in source: `scripts/`; in consumer:
@@ -351,7 +351,7 @@ function renderHuman(result) {
 
 // Run as a CLI only when invoked directly — import the module (e.g. tests)
 // without triggering analyse()/process.exit().
-const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const isMain = isInvokedAsScript(import.meta.url);
 if (isMain) {
   const result = await analyse();
   if (JSON_OUT) {

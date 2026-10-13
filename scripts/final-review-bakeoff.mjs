@@ -47,8 +47,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
 import { assertKnownFlags, ArgvError, argOption, hasFlag, emit } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--status', '--run', '--arms', '--min', '--out', '--dir', '--json', '--timeout-ms', '--selfcheck-relocation'];
 
@@ -200,7 +200,7 @@ function main() {
 // Direct-invocation guard (repo idiom, e.g. arch-coverage-gate.mjs): without it
 // a plain `import` of this module for its pure helpers would execute the CLI —
 // scanning .audit/ and printing a status listing as an import side effect.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isInvokedAsScript(import.meta.url)) {
   try { main(); } catch (err) {
     if (err instanceof ArgvError) { console.error(err.message); process.exit(2); }
     throw err;

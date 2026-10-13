@@ -23,6 +23,7 @@
  */
 import { assertKnownFlags, emit, requiredFlagValue } from './lib/cli-io.mjs';
 import { listOpenLifecycle, dismissLifecycle } from './lib/audit/event-wiring-lifecycle-store.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KIND = 'event-wiring-symmetry';
 const KNOWN_FLAGS = ['--ledger', '--list-open', '--dismiss', '--reason', '--json', '--selfcheck-relocation'];
@@ -31,8 +32,7 @@ const KNOWN_FLAGS = ['--ledger', '--list-open', '--dismiss', '--reason', '--json
 // this module (e.g. from a test, to reach _internals) must not run the
 // top-level flag-check/main() side effects against the importing process's
 // own argv.
-const isMain = import.meta.url === `file://${process.argv[1]}`
-  || import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`;
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   try {

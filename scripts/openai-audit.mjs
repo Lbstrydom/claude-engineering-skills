@@ -102,6 +102,7 @@ import {
 } from './lib/audit/legacy-production-audit.mjs';
 import { runTieredAuditPipeline } from './lib/audit/tiered-pipeline.mjs';
 import { runTieredShadowComparison } from './lib/audit/tiered-shadow-compare.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 /**
  * Print a one-line cost-estimate preflight to stderr so users see what
@@ -1318,9 +1319,7 @@ export const __testExports = process.env.AUDIT_EXPORTS_FOR_TESTS === '1'
   : undefined;
 
 // CLI entry — only fire main() when this module is executed directly,
-// not when imported (e.g. by tests). Uses node:url pathToFileURL for
-// cross-platform robustness.
-import { pathToFileURL } from 'node:url';
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// not when imported (e.g. by tests).
+if (isInvokedAsScript(import.meta.url)) {
   main();
 }

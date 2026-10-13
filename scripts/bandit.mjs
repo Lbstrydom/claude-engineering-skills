@@ -15,6 +15,7 @@ import {
   GLOBAL_CONTEXT_BUCKET, normalizeLanguage, learningConfig
 } from './lib/config.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const MIN_BUCKET_SAMPLES = learningConfig.minBucketSamples;
 const UCB_MIN_PULLS = learningConfig.ucbMinPulls;
@@ -485,6 +486,6 @@ function main() {
   }
 }
 
-if (process.argv[1]?.endsWith('bandit.mjs')) {
+if (isInvokedAsScript(import.meta.url)) {
   main();
 }

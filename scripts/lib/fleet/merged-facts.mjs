@@ -149,7 +149,8 @@ function squashPatchIdsLive(cwd, baseRev, { depth, git }) {
  * @param {{queried: boolean, byPatchId?: Map<string, string>}} [a.squash]
  * @param {(x: string, y: string) => {ok: boolean, value?: boolean}} [a.ancestor] is x an ancestor of y?
  * @param {(from: string, to: string) => number|null} [a.countRange] commits in from..to
- * @returns {{known: boolean, merged: boolean|'partially', via?: 'pr'|'squash', pr?: number, commit?: string|null, extraCommits?: number|null}}
+ * @returns {{known: boolean, merged: boolean|'partially', via?: 'pr'|'squash', pr?: number, commit?: string|null, head?: string, extraCommits?: number|null}}
+ *   `head` (partial verdicts only) is the merged PR's head: the tip's commits after it are what the PR did not carry.
  */
 export function mergedEvidenceFor({ branch, tipOid, patchId = null, mergedPrs, squash, ancestor = () => ({ ok: false }), countRange = () => null }) {
   if (!tipOid) return { known: false, merged: false };
@@ -166,7 +167,7 @@ export function mergedEvidenceFor({ branch, tipOid, patchId = null, mergedPrs, s
       if (contained.ok && contained.value) return { known: true, merged: true, via: 'pr', pr: p.number, commit: p.mergeOid, extraCommits: 0 };
       const extends_ = ancestor(p.headOid, tipOid);
       if (extends_.ok && extends_.value && !partial) {
-        partial = { known: true, merged: 'partially', via: 'pr', pr: p.number, commit: p.mergeOid, extraCommits: countRange(p.headOid, tipOid) };
+        partial = { known: true, merged: 'partially', via: 'pr', pr: p.number, commit: p.mergeOid, head: p.headOid, extraCommits: countRange(p.headOid, tipOid) };
       }
       // Same name, unrelated history (a reused branch name): not this branch's PR.
     }

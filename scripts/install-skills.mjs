@@ -61,6 +61,7 @@ import { readReceipt, writeReceipt, buildReceipt } from './lib/install/receipt.m
 import { executeTransaction, recoverFromJournal } from './lib/install/transaction.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
 import { assertKnownFlags } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
 
@@ -569,8 +570,7 @@ export const _internals = {
 
 // isMain guard — importing this module (e.g. from a test) must not run a
 // cleanup. Matches the pattern used by memory-health.mjs / symbol-index/drift.mjs.
-const isMain = import.meta.url === `file://${process.argv[1]}`
-  || import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`;
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   try {

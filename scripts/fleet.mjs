@@ -36,7 +36,6 @@
  *
  * @module scripts/fleet
  */
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ArgvError, assertKnownFlags, emit, finishAndExit } from './lib/cli-io.mjs';
@@ -57,6 +56,7 @@ import { renderCommand } from './lib/fleet/shell-quote.mjs';
 import { cmdLand } from './lib/fleet/land.mjs';
 import { fleetDir, RegistryError } from './lib/fleet/registry.mjs';
 import { recordInvocation } from './lib/fleet/telemetry.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const EXIT = { ok: 0, error: 1, argv: 2, refused: 3, pending: 3 };
 const USAGE = `usage: fleet <verb> [flags]\nverbs: ${Object.keys(VERBS).join(', ')}\n`;
@@ -162,9 +162,8 @@ async function main() {
   }
 }
 
-// Direct-run guard. BOTH sides are canonicalised before comparing: a symlinked entry path (or
-// --preserve-symlinks-main, which leaves import.meta.url unresolved) must never turn a mutating
-// command into a silent no-op. (--selfcheck-relocation stays the first statement of main().)
-const canon = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
-const here = canon(fileURLToPath(import.meta.url));
-if (process.argv[1] && here === canon(path.resolve(process.argv[1]))) await main();
+// Direct-run guard. BOTH sides are canonicalised before comparing (lib/cli-entry.mjs): a
+// symlinked entry path (or --preserve-symlinks-main, which leaves import.meta.url unresolved)
+// must never turn a mutating command into a silent no-op. (--selfcheck-relocation stays the
+// first statement of main().)
+if (isInvokedAsScript(import.meta.url)) await main();

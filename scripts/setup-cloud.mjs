@@ -25,11 +25,10 @@
  * @module scripts/setup-cloud
  */
 import readline from 'node:readline';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 import { runSetupCloud, OUTCOMES, EXIT_CODE_FOR } from './lib/shared-cloud-config.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 /**
  * Every accepted flag. `--format` and `--source-repo` take a value; the short
@@ -108,17 +107,10 @@ async function main() {
 }
 
 // R1-audit H6: catch unhandled rejections from main() and convert to a
-// stable exit code. Also R1-audit M14: compare canonical paths (resolved
-// + URL-decoded) instead of basenames so unrelated scripts with the same
+// stable exit code. Also R1-audit M14: compare canonical paths
+// (lib/cli-entry.mjs), never basenames, so unrelated scripts with the same
 // filename don't accidentally trigger `main()`.
-const invokedAsScript = (() => {
-  if (!process.argv[1]) return false;
-  try {
-    return import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
-  } catch {
-    return false;
-  }
-})();
+const invokedAsScript = isInvokedAsScript(import.meta.url);
 if (invokedAsScript) {
   main().catch((err) => {
     // A usage mistake is not a fatal crash: print the diagnostic only, exit 2

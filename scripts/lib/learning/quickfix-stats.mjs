@@ -34,6 +34,7 @@ import {
   parseValidatedThreshold, parseValidatedMinHits,
   QUICKFIX_SKIP_THRESHOLD_DEFAULT, QUICKFIX_MIN_HITS_DEFAULT,
 } from '../quickfix-policy.mjs';
+import { isInvokedAsScript } from '../cli-entry.mjs';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -316,12 +317,7 @@ function writeAtomic(targetPath, content) {
 
 // ── CLI entrypoint ─────────────────────────────────────────────────────────
 
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 async function cliMain() {
   const args = process.argv.slice(2);

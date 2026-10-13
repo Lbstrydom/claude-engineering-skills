@@ -45,7 +45,6 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import './lib/load-env.mjs';
 import { assertKnownFlags, ArgvError, argOption, hasFlag, finishAndExit, safeErrorClass } from './lib/cli-io.mjs';
 import {
@@ -56,6 +55,7 @@ import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 import {
   initLearningStore, isCloudEnabled, resolveRepoForStoreResult, readDebtEntriesCloud,
 } from './learning-store.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--json', '--out', '--local-only', '--help', '-h', '--selfcheck-relocation'];
 
@@ -256,9 +256,5 @@ async function main() {
   await finishAndExit(exitCode);
 }
 
-const isMain = (() => {
-  try {
-    return Boolean(process.argv[1]) && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 if (isMain) main();

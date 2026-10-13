@@ -19,10 +19,10 @@
  * @module scripts/skills-help
  */
 import fs from 'node:fs';
-import { pathToFileURL } from 'node:url';
 import { ArgvError } from './lib/cli-io.mjs';
 import { loadAllSkills, resolveSkillsRoot, SKILL_ROOT_CANDIDATES } from './lib/skills-index.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const HELP_TEXT = `skills-help — quick reference for all available skills
 
@@ -213,7 +213,7 @@ async function main() {
   process.exit(0);
 }
 
-const isMain = import.meta.url === pathToFileURL(process.argv[1] || '').href;
+const isMain = isInvokedAsScript(import.meta.url);
 if (isMain) {
   main().catch(err => {
     process.stderr.write(`  [skills-help] FATAL: ${err.message}\n`);

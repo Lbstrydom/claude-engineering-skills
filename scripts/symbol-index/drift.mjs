@@ -36,6 +36,7 @@ import { makeGitRunner } from '../lib/worktree-identity.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 import { atomicWriteFileSync } from '../lib/file-io.mjs';
 import { assertKnownFlags, ArgvError } from '../lib/cli-io.mjs';
+import { isInvokedAsScript } from '../lib/cli-entry.mjs';
 
 /**
  * Every flag this CLI accepts. Enforced rather than documented: `arch:drift`'s
@@ -420,12 +421,7 @@ async function main() {
 
 export const _internals = { atomicWrite, parseArgs, PRAGMA_CANDIDATE_POOL_CAP, isPragmaPoolCapped, resolveStoreGateExit };
 
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   main().catch(err => {

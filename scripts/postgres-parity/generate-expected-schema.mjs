@@ -50,6 +50,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 import { atomicWriteFileSync } from '../lib/file-io.mjs';
+import { isInvokedAsScript } from '../lib/cli-entry.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const __filename = fileURLToPath(import.meta.url);
@@ -308,7 +309,7 @@ export const _internals = Object.freeze({ QUERIES });
 // was previously called unconditionally on import, so a test importing this
 // module for QUERIES would trigger a real DB preflight (or a hard
 // process.exit(2) with AUDIT_DB_URL unset) as a side effect of the import.
-const invoked = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename);
+const invoked = isInvokedAsScript(import.meta.url);
 if (invoked) {
   main().catch((err) => {
     process.stderr.write(`ERROR: ${err.stack || err.message}\n`);

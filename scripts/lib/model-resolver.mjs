@@ -33,6 +33,7 @@
 // to STATIC_POOL with no error at all — the self-check reports "no live
 // catalog" even when the keys and network are both fine.
 import './load-env.mjs';
+import { isInvokedAsScript } from './cli-entry.mjs';
 
 // ── Static fallback pool ────────────────────────────────────────────────────
 // IMPORTANT: only pin model IDs that exist in the provider's current catalog.
@@ -1099,16 +1100,8 @@ async function _cli() {
   return 1;
 }
 
-// Run CLI only when executed directly (Windows-safe check)
-const invokedDirectly = (() => {
-  try {
-    const metaPath = new URL(import.meta.url).pathname;
-    const argvPath = process.argv[1] ? new URL(`file://${process.argv[1].replaceAll(/\\/g, '/')}`).pathname : '';
-    // Compare basenames to avoid path-separator mismatches
-    return metaPath.toLowerCase().endsWith('/model-resolver.mjs') &&
-      argvPath.toLowerCase().endsWith('/model-resolver.mjs');
-  } catch { return false; }
-})();
+// Run CLI only when executed directly (canonical-path match: lib/cli-entry.mjs)
+const invokedDirectly = isInvokedAsScript(import.meta.url);
 
 if (invokedDirectly) {
   _cli().then(code => process.exit(code ?? 0)).catch(err => {

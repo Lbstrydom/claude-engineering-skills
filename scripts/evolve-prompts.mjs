@@ -30,6 +30,7 @@ import { createLearningAdapter } from './lib/llm-wrappers.mjs';
 import { createAnthropicClient, isClaudeAvailable } from './lib/anthropic-client.mjs';
 import { zodToGeminiSchema } from './lib/schemas.mjs';
 import { PASS_NAMES, GLOBAL_CONTEXT_BUCKET, learningConfig } from './lib/config.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const MIN_EXAMPLES_THRESHOLD = learningConfig.minExamplesThreshold;
 
@@ -468,6 +469,6 @@ async function main() {
   process.exit(1);
 }
 
-if (process.argv[1]?.endsWith('evolve-prompts.mjs')) {
+if (isInvokedAsScript(import.meta.url)) {
   main();
 }

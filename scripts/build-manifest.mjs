@@ -24,6 +24,7 @@ import crypto from 'node:crypto';
 import { ManifestSchema } from './lib/schemas-install.mjs';
 import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 /**
  * Every flag this CLI accepts. None take a value.
@@ -326,12 +327,7 @@ function readManifestTextOrNull() {
 // `node --test` child gets an empty argv.slice(2), so the guard no-ops. Anyone
 // forwarding flags into per-file test children would have made the import
 // throw. Matches the sibling generate-plans-index.mjs.
-const isMain = (() => {
-  try {
-    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
-    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
-  } catch { return false; }
-})();
+const isMain = isInvokedAsScript(import.meta.url);
 
 if (isMain) {
   try {

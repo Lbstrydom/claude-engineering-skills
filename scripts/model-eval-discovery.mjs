@@ -47,7 +47,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 
 import { ossStructuredCall } from './lib/oss-structured-output.mjs';
@@ -60,6 +59,7 @@ import { readFilesAsContext } from './lib/file-io.mjs';
 import { redactSecrets } from './lib/sensitive-egress-gate.mjs';
 import { boundMalformedDetails } from './lib/audit/malformed-details.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 // Every flag this CLI accepts. `--n`, `--concurrency`, `--arms` and `--out` take
 // a value; `--dry-run` and `--selfcheck-relocation` are booleans.
@@ -372,11 +372,10 @@ async function main() {
 // Entry-point guard (2026-07-17 incident): this module previously executed its
 // whole body at top level — importing it "to check it loads" launched a REAL
 // paid multi-arm eval run (killed within seconds; the same import-runs-main
-// class as the 2026-07-13 tiered-shadow-report incident, same fix). Same
-// pathToFileURL form as tiered-shadow-report.mjs — Windows drive-letter
-// robustness. Import-safety is regression-locked by
+// class as the 2026-07-13 tiered-shadow-report incident, same fix).
+// Import-safety is regression-locked by
 // tests/model-eval-discovery-import-safety.test.mjs.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isInvokedAsScript(import.meta.url)) {
   await main();
 }
 

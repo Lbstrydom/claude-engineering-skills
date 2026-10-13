@@ -63,8 +63,8 @@
 
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { SurfaceManifestSchema } from './lib/persona-test/schemas.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 /**
  * Consumer repo root. Synced into `scripts/.claude-skills/`, so resolve from the
@@ -393,6 +393,5 @@ function main() {
 }
 
 // Skip main() when imported as a module (e.g. by the contract test).
-const isDirectInvocation =
-  process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+const isDirectInvocation = isInvokedAsScript(import.meta.url);
 if (isDirectInvocation) main();
