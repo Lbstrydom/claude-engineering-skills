@@ -16,6 +16,7 @@
   "scripts": {
     "test": "node scripts/run-tests.mjs",
     "test:preflight": "node scripts/run-tests.mjs --preflight",
+    "guards:preflight": "node scripts/guards-preflight.mjs",
     "test:db": "node --test tests/repo-identity-store.test.mjs tests/repo-last-audited-at.test.mjs",
     "audit": "node scripts/audit-loop.mjs",
     "audit:full": "node scripts/audit-full.mjs",

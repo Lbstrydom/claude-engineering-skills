@@ -14,6 +14,33 @@ Plan: [`docs/plans/gate-cost-slice-1.md`](../plans/gate-cost-slice-1.md).
 
 ---
 
+## 0. `guards:preflight` — the whole-suite guards, before you ask for a gate slot
+
+```bash
+npm run guards:preflight
+```
+
+**What it is.** Every static gate of `check` plus a declared list of whole-suite guard tests, in
+about 30 s to 2 min (measured 2026-10-13: 25 s for the 24 guard test files, ~100 s for the 31 static gates on a loaded
+machine). **Why.** At least four full gate runs of 12–20 min failed *only* on such a guard after
+green targeted runs (`rmsync-retry-guard` x3, `dashboard-cli`, `check-status-log-integrity`,
+`prepush-sandbox-honesty`; [gate-cost-slice-2.md](../plans/gate-cost-slice-2.md) §1.4): a guard's subject is
+repo content, so no targeted run of the changed files reaches it. **When you need it.** Before asking the
+coordinator for a gate slot, and before the first push of a branch.
+
+- **Real checks, never copies.** The static half is *derived* from the `check` script in `package.json`
+  (each `npm run <gate>` step before the final `npm test`), so a gate added to `check` joins it with no edit;
+  the tests go through `scripts/run-tests.mjs`, the same runner and false-green guard as `npm test`.
+- **Declared omissions.** `db:suites:gate` (72 s) and `gates:poison` (64 s) are left out, each with its measured cost and
+  reason in `DECLARED_SLOW_GATES`; a stale entry (not a `check` step) fails `tests/guards-preflight.test.mjs`.
+- **Never a bare pass.** Exit 0 PASS, 1 FAIL, 2 cannot plan or run (a stale list entry, an unreadable `package.json`), 3 INCOMPLETE. The status-log gate needs commits ahead of
+  `origin/main` to compare; on a branch with none it is reported **NOT MEASURED** (exit 3), not skipped quietly.
+- **Not the gate.** The line it prints says so. The pre-push gate and `npm run check` still run everything.
+- **Adding a guard.** When a full gate fails on a corpus guard the preflight did not run, add that test file to
+  `GUARD_TESTS` in [`scripts/lib/guards-preflight.mjs`](../../scripts/lib/guards-preflight.mjs) with the failure that
+  earned it. The list is hand-kept because a heuristic for "corpus guard" missed 2 of 10 real failures
+  (gate-cost-slice-2.md §1.4).
+
 ## 1. Commands
 
 ```bash

@@ -106,6 +106,8 @@ Returns `{ stack, pythonFramework, environmentManager, detectedFrom }`.
 | `mixed` | Run BOTH stacks' checks — required-tool absence in either blocks |
 | `unknown` | Skip stack-specific checks; proceed with universal git workflow |
 
+**Source repo, before the full push check:** `npm run guards:preflight` (about 1-2 min) runs the whole-suite guard tests and static checks that a targeted test run cannot reach, as the real checks and not copies. It is an early look, and the pre-push run still covers everything; a result marked INCOMPLETE is not a pass. Rationale: the source repo's test-cost runbook, section 0.
+
 Python framework (if detected) shapes status.md section titles — see
 `references/status-md-format.md`.
 

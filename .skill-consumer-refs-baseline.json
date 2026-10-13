@@ -172,6 +172,11 @@
       "reason": "Alias only; audit-clean.mjs itself is now synced and the references name it by path, so the sweep the text promises actually runs in a consumer.",
       "sites": 5
     },
+    "npm guards:preflight": {
+      "disposition": "source-repo-only",
+      "reason": "Runs this repo's own declared whole-suite guard tests (tests/ files a consumer does not carry) before a gate slot is requested; the prose says source repo only. A consumer's equivalent is its own test entry point.",
+      "sites": 2
+    },
     "npm build": {
       "disposition": "source-repo-only",
       "reason": "Illustrative example of a consumer script name inside a doc snippet, not a command this bundle offers.",

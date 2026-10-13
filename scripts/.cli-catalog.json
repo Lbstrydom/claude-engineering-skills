@@ -656,6 +656,10 @@
       "description": "The default test set minus the declared slow files (PREFLIGHT_SKIPPED_FILES in scripts/run-tests.mjs): a cheap run to catch a late guard-test failure BEFORE the first push. NOT the gate; it names what it skipped.",
       "category": "test"
     },
+    "guards:preflight": {
+      "description": "Run the push gate's whole-suite guards in ~2 minutes BEFORE asking for a gate slot: every static gate of `check` (derived from package.json) except the declared slow ones, then the declared guard test files through the real test runner. Real checks, not copies; NOT the full gate; a step it cannot measure is reported INCOMPLETE (exit 3), never a pass.",
+      "category": "test"
+    },
     "test:db": {
       "description": "Gated DB-integration tests (repo-identity stability + fragmentation guardrail). Requires a disposable AUDIT_DB_TEST_URL; skipped when unset. Never touches the live store.",
       "category": "test"
