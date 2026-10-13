@@ -101,6 +101,32 @@ describe('validateOverrides — accepts a well-formed document', () => {
   });
 });
 
+describe('matchOverride — the upstream-owned tree is never held, whatever a glob says', () => {
+  // Validation tests what a declaration SAYS: `**/*.mjs` does not start with
+  // `scripts/.claude-skills/`, so it passed — and then held a synced
+  // upstream-owned file, making a consumer's local patch durable (verified
+  // 2026-10-13 by fixture; docs/plans/sync-to-repos-failure-honesty.md H5′).
+  const { overrides, errors } = validateOverrides({
+    version: 1,
+    overrides: [{ glob: '**/*.mjs', reason: 'broad glob' }, { glob: '**', reason: 'everything' }],
+  });
+
+  test('the broad globs validate (the bypass needs no invalid document)', () => {
+    assert.deepEqual(errors, []);
+  });
+
+  test('they never match a tooling-tree path or the sync bookkeeping', () => {
+    assert.equal(matchOverride('scripts/.claude-skills/cross-skill.mjs', overrides), null);
+    assert.equal(matchOverride('scripts/.claude-skills/lib/x.mjs', overrides), null);
+    assert.equal(matchOverride('scripts/.sync-manifest.json', overrides), null);
+  });
+
+  test('…and still match everything else (vacuous-pass guard)', () => {
+    assert.ok(matchOverride('tools/x.mjs', overrides));
+    assert.ok(matchOverride('.claude/skills/plan/SKILL.md', overrides));
+  });
+});
+
 describe('validateOverrides — rejects', () => {
   const reject = (doc, pattern) => {
     const r = validateOverrides(doc);
