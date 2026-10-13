@@ -45,6 +45,9 @@ Usage:
   /fleet handover prepare [--repo <path>]... [--scheduler-checked]  # moving to another Claude Code account on this machine
   /fleet handover receive --from <json> [--dry-run] [--allow-older]  # in the NEW account: verify/copy memory, list follow-ups
   /fleet directive --to <id|all> --kind <k> --reason <r> [--ref] [--note] | --list | --ack <id> --outcome done|declined
+  /fleet propose --what "..." --where "..." --why "..." [--evidence "..."] [--theme <slug>] [--blocked-by <#PR|branch>]  # record a finding durably; it outlives the worktree
+  /fleet proposal <id> --folded <session> | --queued <reason> | --declined <reason> | --done <PR>  # set its outcome; history only grows
+  /fleet proposals [--all]                       # the findings queue grouped by theme; blocked-by rechecked from facts
   /fleet hold on [--reason "..."] [--notify] | off [--note "..."]
   /fleet repair --quarantine <file>
   /fleet land [--select a,b] [--dry-run]         # build a train, one test run
@@ -125,7 +128,7 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
   while another worktree's `core.hooksPath` points inside the one being removed:
   git would then run no hooks there, without a word. Run the printed re-point
   command first; a config git cannot read refuses too.
-- Each `FYI` line in `next` or the footer (prune counts, unregistered work; from the last `status`) is
+- Each `FYI` line in `next` or the footer (prune counts, unregistered work, pending proposals) is
   information, not a `DO`: relay it; never claim, archive or prune on it alone.
 - Coordinating, not participating: the chip authority block, the session-list
   cross-check, routing, the ship-ready end state, consumer sync, session

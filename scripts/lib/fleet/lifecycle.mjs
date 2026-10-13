@@ -18,6 +18,7 @@ import { isMatch } from '../glob.mjs';
 import { ArgvError } from '../cli-io.mjs';
 import { runGit, listWorktrees } from './git-facts.mjs';
 import { listPullRequests } from './gh-facts.mjs';
+import { originatedBy, readProposals } from './proposals.mjs';
 import { readSessions, transact } from './registry.mjs';
 import { isTerminalState } from './overlap.mjs';
 import { IGNORED_STATUS_ARGS, STATUS_ARGS, classifyEntries, parsePorcelainZ } from './worktree-status.mjs';
@@ -25,7 +26,7 @@ import { currentBranch, lockFailed, nowIso, ok, refused, selfId } from './comman
 
 /** Size walk bounds: display only, so over budget is "not measured", never a verdict change. */
 export const SIZE_WALK = Object.freeze({ maxFiles: 5_000, deadlineMs: 10_000 });
-/** The fixed "what do you still owe?" checklist (participant rule 7's report fields). */
+/** The fixed "what do you still owe?" checklist (participant step 9's report fields). */
 export const OWED = Object.freeze([
   'final report: branch, PR numbers, the files you changed, any waitingOn',
   'every deliverable outside git (reports, decks, screenshots) copied somewhere durable',
@@ -205,7 +206,20 @@ export function archiveReport(ctx, { session = null, branch = session?.source?.b
   }
   const atRisk = Object.values(risks).some((l) => l.length);
   const verdict = atRisk ? 'AT RISK' : unverified.length ? 'UNVERIFIED' : 'CLEAN';
-  return { verdict, target: { session: session?.id ?? null, branch, worktree }, risks, unverified, pr, waitingOn: session?.waitingOn ?? [], sizes, stashes, owed: OWED };
+  // Proposals this session recorded and nobody has triaged yet. They live in the git common dir, so removing the
+  // worktree loses none of them: this is a reminder of what is still owed, and it never changes the verdict.
+  const proposals = scanIgnored && ctx.dir ? proposalsOwed(ctx.dir, session?.id ?? branch) : null;
+  return { verdict, target: { session: session?.id ?? null, branch, worktree }, risks, unverified, pr, waitingOn: session?.waitingOn ?? [], sizes, stashes, owed: OWED, proposals };
+}
+
+/** The pending proposals `id` originated, from the shared store. An unreadable store is said, never "none". */
+function proposalsOwed(dir, id) {
+  if (!id) return { state: 'unverifiable', reason: 'this target has no session id or branch to attribute proposals to' };
+  try {
+    const read = readProposals(dir);
+    if (read.unmeasured) return { state: 'unmeasured', reason: read.reason };
+    return { state: 'ok', complete: read.complete, truncated: read.truncated, unreadable: read.unreadable.length + read.unsupported.length, open: originatedBy(read.records, id).map((p) => ({ id: p.id, what: p.what })) };
+  } catch (e) { return { state: 'unmeasured', reason: e.message }; }
 }
 
 const kb = (b) => `${Math.max(1, Math.round(b / 1024))} KB`;
@@ -231,6 +245,17 @@ export function renderArchive(r, { minKb = 256, advisory = false } = {}) {
   show('gitignored files (not in archiveIgnore)', r.risks.ignored, true);
   if (r.risks.unpushed.length) L.push(`  unpushed commits: ${r.risks.unpushed.length}${r.risks.unpushed.length >= 50 ? '+' : ''} (${r.risks.unpushed.slice(0, 3).map((o) => o.slice(0, 12)).join(', ')}${r.risks.unpushed.length > 3 ? ', …' : ''})`);
   for (const u of r.unverified) L.push(`  NOT VERIFIED: ${u}`);
+  if (r.proposals?.state === 'ok' && r.proposals.open.length) {
+    const lb = r.proposals.complete ? '' : '≥';
+    L.push(`  open proposals you originated (${lb}${r.proposals.open.length} awaiting an outcome; they are kept in the git common dir, not lost with this worktree):`);
+    for (const p of r.proposals.open.slice(0, 10)) L.push(`    ${p.id}  ${p.what}`);
+    if (r.proposals.open.length > 10) L.push(`    +${r.proposals.open.length - 10} more`);
+  }
+  if (r.proposals?.state === 'ok' && !r.proposals.complete) {
+    const why = [r.proposals.truncated ? 'the read was truncated at its limit' : null, r.proposals.unreadable ? `${r.proposals.unreadable} record(s) unreadable` : null].filter(Boolean).join(' and ');
+    L.push(`  proposals: ${why || 'the read was incomplete'}, so attribution may be incomplete (fleet proposals names them)`);
+  }
+  if (r.proposals && r.proposals.state !== 'ok') L.push(`  proposals: unmeasured (${r.proposals.reason})`);
   if (r.pr?.unknown) L.push(`  open PR: not queried (${r.pr.unknown})`);
   else if (r.pr) L.push(`  open PR: #${r.pr.number}${r.pr.isDraft ? ' (draft)' : ''}`);
   for (const w of r.waitingOn) L.push(`  waiting on ${w.kind}:${w.ref}${w.note ? ` — ${w.note}` : ''}`);

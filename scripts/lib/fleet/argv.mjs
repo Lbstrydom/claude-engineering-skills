@@ -33,6 +33,9 @@ export const VERBS = Object.freeze({
     bool: ['--json', '--list', '--all'],
     value: ['--to', '--kind', '--reason', '--ref', '--note', '--expires-hours', '--ack', '--outcome', '--id'], repeat: [], positionals: [0, 0],
   },
+  propose: { bool: ['--json'], value: ['--what', '--where', '--why', '--evidence', '--theme', '--blocked-by', '--id'], repeat: [], positionals: [0, 0] },
+  proposal: { bool: ['--json'], value: ['--folded', '--queued', '--declined', '--done', '--id'], repeat: [], positionals: [1, 1] },
+  proposals: { bool: ['--json', '--all'], value: [], repeat: [], positionals: [0, 0] },
   land: {
     bool: ['--json', '--dry-run', '--accept-rerun', '--serial'],
     value: ['--select', '--approve', '--confirm', '--reconcile', '--resume', '--abandon'], repeat: [], positionals: [0, 0],
