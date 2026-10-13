@@ -116,8 +116,9 @@ describe('a migrated CLI reaches main() through a junction (real process)', () =
     fs.symlinkSync(ROOT, link, 'junction');
   });
   after(() => {
-    fs.rmSync(link, { force: true });
-    fs.rmSync(tmp, { recursive: true, force: true });
+    // Removes the junction itself, never its target (verified: rm does not follow links).
+    fs.rmSync(link, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   // check-plan-status.mjs: --selfcheck-relocation is main()'s first statement,
