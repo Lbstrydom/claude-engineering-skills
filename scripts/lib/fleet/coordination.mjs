@@ -27,6 +27,7 @@ import { readUnregisteredCache, unregisteredCacheDir } from './unregistered.mjs'
 import { pruneCountText, pruneIsEmpty, readPruneCache } from './prune-summary.mjs';
 import { proposalsLine, proposalsQuiet, readProposalsSummary } from './proposals.mjs';
 import { currentBranch, lockFailed, nowIso, ok, refused, selfId } from './commands.mjs';
+import { leaseForNext } from './lease-cmd.mjs';
 
 /**
  * The `checkpoint` fact profile for ONE session: its own merged evidence, its own
@@ -165,9 +166,11 @@ export function cmdNext(ctx, flags) {
   // The findings queue (information for the coordinator, never an action for this session); silent only when measured, complete and empty.
   const proposals = readProposalsSummary(ctx.dir, ctx.now).summary;
   const proposalLines = proposalsQuiet(proposals) ? [] : [`FYI for the user/coordinator, not an action for this session: ${proposalsLine(proposals, ctx.cmd)}`];
-  const fyi = [...prune.lines, ...unregistered, ...proposalLines];
+  // The machine-wide lease (information for the user/coordinator: who holds the heavy slot, announced windows, peak hours).
+  const lease = leaseForNext(ctx);
+  const fyi = [...prune.lines, ...unregistered, ...proposalLines, ...lease.lines];
   return ok({
-    id, ...r.result, prune: { state: prune.state, ...(prune.record ? { record: prune.record } : {}) }, proposals,
+    id, ...r.result, prune: { state: prune.state, ...(prune.record ? { record: prune.record } : {}) }, proposals, lease: lease.lease,
     text: [`next for ${id}:`, ...renderObligations(r.result, { cmd: ctx.cmd }).map((l) => `  ${l}`), ...fyi].join('\n'),
   });
 }

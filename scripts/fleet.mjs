@@ -23,6 +23,7 @@
  *   propose --what --where --why [--evidence --theme --blocked-by <#PR|branch>]  record a finding durably (outlives the worktree)
  *   proposal <id> --folded <session>|--queued <reason>|--declined <reason>|--done <PR>  set an outcome (never deletes)
  *   proposals [--all]               the findings queue grouped by theme; blockedBy rechecked against facts (read-only)
+ *   lease acquire|attach|release|status|announce|peak  the machine-wide heavy slot, announced windows and peak hours (shared by every repo's fleet)
  *   directive --to|--list|--ack     coordinator requests in the shared registry
  *   restack [<branch>] [--replace]  replay a branch's own commits onto the base (patch-id checked)
  *   land [--select a,b] [--dry-run] build + test one combined train
@@ -58,6 +59,7 @@ import { cmdHandover } from './lib/fleet/handover.mjs';
 import { renderCommand } from './lib/fleet/shell-quote.mjs';
 import { cmdLand } from './lib/fleet/land.mjs';
 import { cmdPropose, cmdProposal, cmdProposals } from './lib/fleet/proposals-cmd.mjs';
+import { cmdLease } from './lib/fleet/lease-cmd.mjs';
 import { fleetDir, RegistryError } from './lib/fleet/registry.mjs';
 import { recordInvocation } from './lib/fleet/telemetry.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
@@ -137,6 +139,7 @@ async function main() {
       case 'propose': result = cmdPropose(ctx, flags); break;
       case 'proposal': result = cmdProposal(ctx, flags, positionals); break;
       case 'proposals': result = cmdProposals(ctx, flags); break;
+      case 'lease': result = cmdLease(ctx, flags, positionals); break;
       default: throw new ArgvError(`fleet: unhandled verb ${verb}`);
     }
     // Checkpoint footer: a session sees its obligations (hold, merged PR, directives) at the verbs it
