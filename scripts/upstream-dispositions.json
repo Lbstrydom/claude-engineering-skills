@@ -641,6 +641,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "bf23718a-1482-46ba-b71c-45974bb5d286",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/bundle-deps-undeclared.test.mjs"
+      },
+      "recordedAt": "2026-10-13T07:15:33.879Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "bf44711e-81a7-404d-bc0b-33fa68b84903",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
@@ -836,6 +847,17 @@
         "value": "tests/remediation-verification-selection.test.mjs"
       },
       "recordedAt": "2026-09-06T14:00:46.554Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "fc843d6b-4f1a-49f5-ad11-4b9db5725086",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/sync-isolation-receipt-structural.test.mjs"
+      },
+      "recordedAt": "2026-10-13T07:14:43.420Z"
     },
     {
       "schemaVersion": 1,
