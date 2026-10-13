@@ -305,7 +305,9 @@ doing the work. On top of the participant rules:
    (`AUDIT_PREPUSH_TIER=branch`), merge only a sha whose output carries a
    `test-tier/v1 full <sha>` line: push the candidate with
    `AUDIT_PREPUSH_TIER=full`, or verify it without a push with
-   `node scripts/prepush-check.mjs --tier full --head <sha> --base <merge-base>`,
+   `node scripts/prepush-check.mjs --tier full --head <sha> --base <merge-base>`
+   (Source-repo-gated: that script is this repo's own gate, so a consumer
+   uses the push form),
    then merge pinned to that sha. A `branch` line, or `tier NOT reported`, is
    not that verdict.
 9. **Confirm idle, not "told".** A message to a session that is mid-turn is

@@ -115,6 +115,8 @@ const CAPABILITY_BOUND = {
   'scripts/lib/efficacy-lints.mjs': { max: 3, reason: 'AST-vs-regex gate (Babel) and a comment-syntax table' },
   'scripts/lib/quickfix-patterns.mjs': { max: 6, reason: 'JS/TS-syntax pattern language guards' },
   'scripts/lib/module-graph.mjs': { max: 1, reason: 'Node module-specifier resolution' },
+  'scripts/lib/test-tier.mjs': { max: 1, reason: 'which files the import-closure parser (module-graph) can read: the same Node-module capability' },
+  'scripts/lib/test-tier-git.mjs': { max: 1, reason: 'which tree blobs are read as JS source for that same import-closure parse' },
   'scripts/lib/ux-lock/selector-policy.mjs': { max: 1, reason: 'JS import resolution for generated Playwright specs' },
   // tables that are not source-file predicates
   'scripts/lib/config.mjs': { max: 1, reason: 'LANGUAGES bandit-bucket enum (learning context), not a file predicate' },
