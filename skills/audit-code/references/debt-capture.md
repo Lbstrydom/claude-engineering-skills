@@ -4,10 +4,20 @@ summary: Phase D debt ledger — persist out-of-scope valid findings so they don
 
 # Debt Capture (Step 3.6) + Resolution (Step 5.1)
 
-**Purpose**: Persist out-of-scope valid findings to `.audit/tech-debt.json`
-so future audits suppress them automatically. Without this step, the same
-pre-existing concerns get re-raised every audit, burning tokens and
-diluting signal.
+**Purpose**: Persist out-of-scope valid findings to the debt ledger
+(`.audit/tech-debt/`, one file per entry — or the legacy single file
+`.audit/tech-debt.json` until it is migrated) so future audits suppress them
+automatically. Without this step, the same pre-existing concerns get
+re-raised every audit, burning tokens and diluting signal.
+
+**Storage.** One file per entry, so two branches that both record debt never
+conflict when they merge. An untracked legacy `.audit/tech-debt.json` is
+migrated automatically on the next write. A **committed** one is not — moving
+committed state belongs in one deliberate commit on the default branch:
+`node scripts/debt-ledger-migrate.mjs` (it refuses, changing nothing, if git
+would ignore any destination, and prints the one staging command). Writers keep
+the committed single file working until then, without the `lastUpdated` line
+that used to make every two debt-recording branches conflict.
 
 **Eligible candidates**: findings from Step 3 triage with `action = defer`
 — meaning `validity = valid` AND (`scope = out-of-scope` OR an explicit
@@ -176,7 +186,7 @@ node scripts/debt-resolve.mjs abc12345 --rationale "fixed in commit a1b2c3d — 
 
 Exit codes: 0 = resolved, 1 = op error, 2 = entry not found / lock contention.
 
-Removes the entry from `.audit/tech-debt.json` (and cloud mirror when
+Removes the entry from the debt ledger (and cloud mirror when
 configured); logs a `resolved` event to the event source. Audit trail
 stays in the event log.
 

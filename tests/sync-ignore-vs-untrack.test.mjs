@@ -27,7 +27,10 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { gitignoreToRegExp } from '../scripts/lib/sync-untrack.mjs';
+import { renderGitignoreExtras, validateOverrides } from '../scripts/lib/sync-overrides.mjs';
+import { gitInit, gitFixtureEnv, mkdtemp, rmrfBestEffort } from './helpers/fixtures.mjs';
 
 const SRC = fs.readFileSync(
   path.join(process.cwd(), 'scripts', 'sync-to-repos.mjs'), 'utf-8',
@@ -51,16 +54,20 @@ describe('managed-ignore vs untrack allow-list are separate contracts', () => {
     );
   });
 
-  it('the ignore list covers ALL of .audit/ as a directory, not by filename', () => {
+  it('the ignore list covers ALL of .audit/ by its children, not by filename', () => {
     const ignore = arrayLiterals('MANAGED_IGNORE_PATTERNS');
     assert.ok(
-      ignore.includes('.audit/'),
+      ignore.includes('.audit/*'),
       'a filename enumeration silently loses to every new `--out .audit/…` artifact',
     );
-    const perFile = ignore.filter(p => p.startsWith('.audit/') && p !== '.audit/');
+    // `.audit/*`, not `.audit/`: git cannot re-include under an excluded
+    // DIRECTORY, so the bare-directory spelling left a consumer that commits its
+    // debt ledger no rule it could write (upstream d338aa8a).
+    assert.ok(!ignore.includes('.audit/'), 'the directory spelling blocks every re-include');
+    const perFile = ignore.filter(p => p.startsWith('.audit/') && p !== '.audit/*');
     assert.deepEqual(
       perFile, [],
-      `the blanket '.audit/' makes per-file .audit entries dead weight: ${perFile.join(', ')}`,
+      `the blanket '.audit/*' makes per-file .audit entries dead weight: ${perFile.join(', ')}`,
     );
   });
 
@@ -84,8 +91,9 @@ describe('managed-ignore vs untrack allow-list are separate contracts', () => {
     // Untracking a file the managed block does NOT ignore would remove it from
     // the index and then immediately re-nag it as untracked — churn, not repair.
     const ignore = arrayLiterals('MANAGED_IGNORE_PATTERNS');
-    const dirPrefixes = ignore.filter(p => p.endsWith('/'));
-    const filePats = ignore.filter(p => !p.endsWith('/')).map(gitignoreToRegExp);
+    // `X/` and `X/*` both cover every child of X.
+    const dirPrefixes = ignore.filter(p => p.endsWith('/') || p.endsWith('/*')).map(p => p.replace(/\*$/, ''));
+    const filePats = ignore.filter(p => !p.endsWith('/') && !p.endsWith('/*')).map(gitignoreToRegExp);
 
     for (const u of arrayLiterals('UNTRACK_PATTERNS')) {
       const covered =
@@ -124,5 +132,59 @@ describe('managed-ignore vs untrack allow-list are separate contracts', () => {
         `${p} must never match a tracked consumer migration`,
       );
     }
+  });
+});
+
+/**
+ * The rule change, proven on git itself rather than on a model of gitignore
+ * (docs/plans/debt-ledger-per-entry-files.md §2.6).
+ */
+describe('managed rule .audit/* — real git check-ignore', () => {
+  const SAMPLE = [
+    '.audit/tech-debt.json', '.audit/tech-debt/entries/aa00.json', '.audit/tech-debt/budgets.json',
+    '.audit/tech-debt.json.lock/x', '.audit/tech-debt.migrating/entries/aa00.json',
+    '.audit/sid-ledger.json', '.audit/transcripts/t.json', '.audit/local/debt-events.jsonl',
+  ];
+
+  function ignoredUnder(gitignore) {
+    const dir = mkdtemp('managed-audit-rule-');
+    try {
+      gitInit(dir);
+      fs.writeFileSync(path.join(dir, '.gitignore'), gitignore);
+      const r = spawnSync('git', ['check-ignore', '--stdin', '-z'], {
+        cwd: dir, env: gitFixtureEnv(), encoding: 'utf-8', input: SAMPLE.join('\0') + '\0',
+      });
+      assert.ok(r.status === 0 || r.status === 1, `git check-ignore failed: ${r.stderr}`);
+      return new Set(r.stdout.split('\0').filter(Boolean));
+    } finally {
+      rmrfBestEffort(dir);
+    }
+  }
+
+  it('for a consumer that adds nothing, .audit/* ignores exactly what .audit/ did', () => {
+    const before = ignoredUnder('.audit/\n');
+    const after = ignoredUnder('.audit/*\n');
+    assert.deepEqual([...after].sort(), [...before].sort());
+    assert.equal(after.size, SAMPLE.length, 'every sampled .audit path is ignored');
+  });
+
+  it('the declared negation, rendered where the sync renders it, re-includes ONLY the ledger directory', () => {
+    const { gitignoreExtra, errors } = validateOverrides({
+      version: 1, overrides: [],
+      gitignoreExtra: [{ pattern: '!.audit/tech-debt/', reason: 'debt ledger is committed here' }],
+    });
+    assert.deepEqual(errors, [], 'the overrides contract accepts a negation');
+    const block = [...arrayLiterals('MANAGED_IGNORE_PATTERNS'), ...renderGitignoreExtras(gitignoreExtra)].join('\n');
+    const ignored = ignoredUnder(`${block}\n`);
+    assert.equal(ignored.has('.audit/tech-debt/entries/aa00.json'), false, 'entry files are committable');
+    assert.equal(ignored.has('.audit/tech-debt/budgets.json'), false);
+    for (const p of ['.audit/tech-debt.json.lock/x', '.audit/tech-debt.migrating/entries/aa00.json', '.audit/sid-ledger.json', '.audit/local/debt-events.jsonl']) {
+      assert.ok(ignored.has(p), `${p} stays ignored`);
+    }
+  });
+
+  it('negative control: under the OLD .audit/ spelling the same negation re-includes nothing', () => {
+    const ignored = ignoredUnder('.audit/\n!.audit/tech-debt/\n');
+    assert.ok(ignored.has('.audit/tech-debt/entries/aa00.json'), 'git cannot re-include under an excluded directory');
   });
 });

@@ -1,7 +1,7 @@
 # Plan: Tech-Debt Ledger — One File Per Entry (merge conflict-free by construction)
 
 - **Date**: 2026-10-13
-- **Status**: Draft
+- **Status**: In Progress
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend (js-ts) — CLI/library + consumer sync contract; no UI
 - **Target domain(s)**: `tech-debt`, `install`
@@ -183,7 +183,7 @@ Crash between 4 and 5 → both forms exist → for an untracked ledger the union
 **Stale-branch reconcile — the tracked both-forms case** (R3 H2, corrected R4 H1/H2). A legacy file that a branch cut *before* the migration commit carried back in. The CLI decides which case it is from git, never from the files:
 
 - **Initial (or resumed) migration** — no commit reachable from `HEAD` deleted the legacy file (`git log --full-history --diff-filter=D -1 --format=%H -- <legacyFile>` is empty; `--full-history` because after a merge that kept the file, default history simplification can hide the side where it was deleted). Steps 1–5.
-- **Stale-branch reconcile** — such a commit `M` exists. This needs **explicit provenance**: `--stale-ref <rev>`, the stale branch's tip *before* the merge (the runbook gives the exact spelling for each merge direction: `ORIG_HEAD` / `HEAD^1` / `HEAD^2`). Without it the CLI refuses and says so — guessing which parent is the stale side is the error class R4 H1 found, so it is not guessed.
+- **Stale-branch reconcile** — such a commit `M` exists. This needs **explicit provenance**: `--stale-ref <rev>`, the stale branch's tip *before* the merge (the runbook gives the exact spelling for each merge direction: `HEAD^2` when the stale branch was merged into main, `HEAD^1` when main was merged into it; the other side contains `M` and is refused). Without it the CLI refuses and says so — guessing which parent is the stale side is the error class R4 H1 found, so it is not guessed.
   - **Inputs are immutable git blobs, never the working file** (R4 H2): stale `S` = `<stale-ref>:<legacyFile>`; baseline `B` = the legacy file at **`git merge-base <stale-ref> M`** — the common ancestor of the stale branch and the migration lineage, **not** `M^` (R4 H1: entries main added or edited after the fork but before migrating are in `M^` and would read as stale-side deletions or edits). `D` = the current entry files.
   - **Validation, all before any write**: `S` and `B` must both exist and parse; `<stale-ref>` must not itself contain `M` (else it is not stale); if a working legacy file is present it must have the **same blob id as `S`** — compared as `git hash-object --path=<repo-relative legacy path> <file>` (which applies the repository's clean filters and EOL conversion) against `git rev-parse <stale-ref>:<legacyFile>`, never byte-for-byte (R5 H2: with `core.autocrlf=true` or an `eol=crlf` attribute the working copy has CRLF while the blob has LF, with no edit made). A different blob id means the file was edited after the merge and its provenance is unknown → refuse.
   - **Plan, then apply all-or-nothing.** Per id, compare `B`, `S`, `D` and compute *only the stale branch's own change*:
@@ -275,6 +275,14 @@ This changes what every consumer's managed `.gitignore` block contains, so it is
 - **`docs/runbooks/consumer-adoption.md`** (modify) — "Tech-debt ledger: per-entry format (2026-10)" section: what changed, default consumers need nothing, the tracking-consumer rollout in §2.6, the migrate command by path (`scripts/.claude-skills/debt-ledger-migrate.mjs`).
 - **`skills/audit-code/references/debt-capture.md`** (modify) + regenerated **`.claude/skills/audit-code/references/debt-capture.md`** — where it names `.audit/tech-debt.json` as *the* file, say "the ledger (`.audit/tech-debt/`, or the legacy `.audit/tech-debt.json` until migrated)".
 - **Not changed, deliberately**: `DEFAULT_DEBT_LEDGER_PATH`'s value and the `--ledger` help strings of eight debt CLIs (still accepted, still resolve); `DebtLedgerSchema` (its optional `lastUpdated` still describes legacy files); `UNTRACK_PATTERNS`; `audit-clean.mjs` (verified unaffected, §1). The help-string wording is a cosmetic follow-up for `fleet propose`.
+
+### Implementation deviations (recorded 2026-10-13, before /audit-code)
+
+- **Module split.** `scripts/lib/debt-ledger-files.mjs` holds the storage *primitives* — location, `fileKey`, canonical bytes, the path boundary, directory/legacy reads, **and** the one lock (`withLedgerLock`) and the git facts (`legacyTrackingState`, `ignoredPaths`) — so that `scripts/lib/debt-ledger-migration.mjs` can use them without importing `debt-ledger.mjs` (which imports it): no cycle. `serializeLedgerForDisk` moved there for the same reason and is re-exported from `debt-ledger.mjs`.
+- **A raw reader the Code Trace missed.** `scripts/debt-resolve.mjs` `--accept-permanent` parsed the single ledger file to get the un-hydrated row. It now calls the new `readPersistedDebtEntries(ledgerPath)` (the authoritative view without event-derived fields). Found by its CLI test, not by the grep in §1 (which searched `readFileSync.*[Ll]edger` and missed a `path.resolve(opts.ledgerPath)` spelling).
+- **Shallow-clone guard** in migration (not in the plan): with both forms present in a shallow clone, the deletion commit `M` can be invisible, which would misclassify a stale-branch file as a resumed migration and fold it whole — resurrecting deletions. Refused instead (`no-baseline: shallow clone`), tested.
+- **Two more tests read the file raw** and now go through `readDebtLedger`: `tests/debt-auto-capture-partial-capture-cli.test.mjs`, `tests/tiered-pipeline-stage0-wiring.test.mjs`.
+- **`scripts/sync-to-repos.mjs` is size-ratcheted** (over 1000 lines; may not grow): its rationale is a 3-line pointer here, and the migrate CLI shares a line in `DEBT_ENTRY`.
 
 ### Tests
 

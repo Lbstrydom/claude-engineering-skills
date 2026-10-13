@@ -58,7 +58,7 @@ import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildDebtEntry } from './lib/debt-capture.mjs';
-import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
+import { readDebtLedger, debtLedgerExists, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
 import { markDebtSuperseded, persistDebtEntries, selectEventSource as selectDebtEventSource } from './lib/debt-memory.mjs';
 import {
   findRoundLedgers, readDeferredEntries, collectDebtIdentities, findUncapturedDeferrals,
@@ -474,8 +474,8 @@ function checkCaptureTrail(justProcessedLedgerPath) {
   try {
     const auditDir = path.dirname(justProcessedLedgerPath);
     const roundLedgers = findRoundLedgers(auditDir).map(readDeferredEntries);
-    const debtLedgerPath = path.resolve(DEFAULT_DEBT_LEDGER_PATH);
-    const debtIdentities = fs.existsSync(debtLedgerPath)
+    // Either storage form (single file or per-entry directory) counts.
+    const debtIdentities = debtLedgerExists(DEFAULT_DEBT_LEDGER_PATH)
       ? collectDebtIdentities(readDebtLedger({ events: [] }).entries)
       : new Set();
     return findUncapturedDeferrals({ roundLedgers, debtIdentities });

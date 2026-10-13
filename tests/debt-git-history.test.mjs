@@ -421,3 +421,52 @@ describe('findPossiblyStaleEntries', () => {
     assert.deepEqual(result, [{ topicId: 'stale1', commitsSinceDefer: 1 }]);
   });
 });
+
+// ── Per-entry storage continuity (docs/plans/debt-ledger-per-entry-files.md §6)
+
+describe('history across the move to per-entry storage', () => {
+  function writeEntryFile(topicId, rationale) {
+    const dir = path.join(tmpDir, '.audit', 'tech-debt', 'entries');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${topicId}.json`), JSON.stringify({ ...makeEntry(topicId), deferredRationale: rationale }, null, 2));
+  }
+
+  test('a topic added in a LATER commit of the legacy file is found (not only one present when the file was created)', () => {
+    writeLedger([makeEntry('aa11bb22')]);
+    git(['add', '.audit/tech-debt.json']);
+    git(['commit', '-q', '-m', 'create ledger']);
+    writeLedger([makeEntry('aa11bb22'), makeEntry('cc33dd44')]);
+    git(['add', '.audit/tech-debt.json']);
+    git(['commit', '-q', '-m', 'defer cc33dd44']);
+    const r = findFirstDeferCommit('cc33dd44', { cwd: tmpDir, env: gitFixtureEnv() });
+    assert.ok(r, 'used to be null: --diff-filter=A matched only the file-creating commit');
+    assert.equal(r.subject, 'defer cc33dd44');
+  });
+
+  test('after migration, the first deferral is still the legacy commit, and counts union both files', () => {
+    writeLedger([makeEntry('aa11bb22')]);
+    git(['add', '.audit/tech-debt.json']);
+    git(['commit', '-q', '-m', 'legacy: defer aa11bb22']);
+    fs.rmSync(path.join(tmpDir, '.audit', 'tech-debt.json'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    writeEntryFile('aa11bb22', 'a sufficiently long testing rationale');
+    git(['add', '-A', '.audit']);
+    git(['commit', '-q', '-m', 'migrate the debt ledger']);
+    writeEntryFile('aa11bb22', 'an updated rationale, long enough to count');
+    git(['add', '-A', '.audit']);
+    git(['commit', '-q', '-m', 'update aa11bb22']);
+
+    const first = findFirstDeferCommit('aa11bb22', { cwd: tmpDir, env: gitFixtureEnv() });
+    assert.equal(first.subject, 'legacy: defer aa11bb22', 'not the migration commit');
+    // legacy add + legacy removal (pickaxe) + entry add + entry update; the
+    // migration commit appears in both and is counted once.
+    assert.equal(countCommitsTouchingTopic('aa11bb22', { cwd: tmpDir, env: gitFixtureEnv() }), 3);
+  });
+
+  test('a topic first deferred after the migration dates from its entry file', () => {
+    writeEntryFile('ee55ff66', 'a sufficiently long testing rationale');
+    git(['add', '-A', '.audit']);
+    git(['commit', '-q', '-m', 'defer ee55ff66']);
+    assert.equal(findFirstDeferCommit('ee55ff66', { cwd: tmpDir, env: gitFixtureEnv() }).subject, 'defer ee55ff66');
+    assert.equal(countCommitsTouchingTopic('ee55ff66', { cwd: tmpDir, env: gitFixtureEnv() }), 1);
+  });
+});

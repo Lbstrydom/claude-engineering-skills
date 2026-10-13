@@ -34,6 +34,7 @@ import os from 'node:os';
 import { PersistedDebtEntrySchema } from '../scripts/lib/schemas.mjs';
 import { writeRoundLedger } from './helpers/fixtures.mjs';
 import { makeRunCli } from './helpers/run-cli.mjs';
+import { readDebtLedger } from '../scripts/lib/debt-ledger.mjs';
 
 let tmpDir;
 let auditDir;
@@ -73,9 +74,8 @@ function makeDeferEntry(topicId, rulingRationale, extra = {}) {
 const runCli = makeRunCli(scriptPath, { cwd: () => tmpDir, buildEnv: () => ({ ...process.env, AUDIT_DB_URL: '' }) });
 
 function readCapturedTopicIds() {
-  const p = path.join(auditDir, 'tech-debt.json');
-  if (!fs.existsSync(p)) return [];
-  return JSON.parse(fs.readFileSync(p, 'utf-8')).entries.map((e) => e.topicId);
+  // Through the ledger's reader: it is one file per entry now, not one parseable file.
+  return readDebtLedger({ ledgerPath: path.join(auditDir, 'tech-debt.json'), events: [] }).entries.map((e) => e.topicId);
 }
 
 beforeEach(() => {

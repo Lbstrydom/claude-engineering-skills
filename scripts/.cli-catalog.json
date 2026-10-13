@@ -822,6 +822,10 @@
       "description": "Capture deferred audit findings into the tech-debt ledger.",
       "category": "audit"
     },
+    "scripts/debt-ledger-migrate.mjs": {
+      "description": "Move a committed single-file tech-debt ledger to per-entry files (conflict-free merges), or reconcile a stale branch's legacy file after that move.",
+      "category": "audit"
+    },
     "scripts/explain-history.mjs": {
       "description": "/explain --history: trace a topic through commits, plans and status.md.",
       "category": "skills"
