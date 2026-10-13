@@ -713,9 +713,20 @@ runs that same classification against every registered consumer and, for the
 sync-owned group only, creates a `chore/sync-<upstream-sha>` branch, commits by
 pathspec, pushes (your pre-push hook still runs), opens the PR and arms squash
 auto-merge — so the artifacts land once your required checks pass, without a
-ruleset bypass. Two rules to know: a receipt-only change opens no PR (the receipt
+ruleset bypass. Rules to know: a receipt-only change opens no PR (the receipt
 changes on every run), and a checkout that is off its base branch or ahead of
-`origin/<base>` is skipped with a named reason rather than forked from.
+`origin/<base>` is skipped with a named reason rather than forked from. The
+branch always forks from a **freshly fetched** `origin/<base>` (the base is
+the remote's default branch unless `--base` names one) — never from the
+checkout's local branch, which in the 2026-10-12 wine incident sat 30+ commits
+behind and missed the previous sync PR. A checkout that is behind is fine when
+origin left every synced path alone; when origin changed one (any landed sync
+changes `.sync-receipt.json`) or `.sync-overrides.json`, it is skipped as
+`stale-base-collision` naming the paths: discard the synced changes,
+`git pull --ff-only`, re-run the sync, then `sync:pr`. A fetch that fails is
+an error, not a skip. If your pre-push hook refuses the push, its full output
+is kept under the upstream repo's `.claude/tmp/sync-pr/` and the failing tests
+are listed by name.
 
 ---
 

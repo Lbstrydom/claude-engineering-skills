@@ -1,5 +1,11 @@
 # Project Status Log
 
+<!-- ship-verification-c4115fdc-20261012T195032Z.md -->
+### Consumer Verification (previous ship)
+- **Commit**: c4115fdc96663d6ee54a16d7787b32fef16f3c81 on `claude/coordinator-ship-catchup`, squash-merged as 83fc038a (PR #229). It changes status.md only.
+- **Retrieval**: the pre-push hook (the fail-closed one from #225) ran the full `check` in a clean-checkout sandbox of exactly this sha: 19,597 tests, 19,551 pass, 0 fail, 46 skipped, "checks passed". status-log-integrity conserved against f3991844.
+- **Result**: verified for the pushed commit. Synced consumer bundle: not applicable as a change, because status.md is not in the sync closure, so no consumer content changes. The bundle consumers hold is f3991844 (synced 19:3xZ: storyline#310, wine-cellar-app#893, ai-organiser receipt-only). `sync-isolation-verify.mjs` in each consumer's MAIN checkout is pending until those sync PRs merge.
+
 <!-- ship-verification-6c923eab-20261012T175846Z.md -->
 ### Consumer Verification (previous ship)
 - **Commit**: 6c923eaba6df0054882b7c9ee62b2e17e01b6425 on `claude/ship-trains-c` (PR #224, open, NOT merged): the Cluster C docs commit, the status.md ship commit (AI-Gate converged, run 316eeb4e) and a CLI-catalogue fix.
@@ -155,6 +161,34 @@
 - **Commit**: d9b305538657235ff7340f052b32ace8891fe14a on `fix/fleet-hookspath-removal-guard` (PR #220, open; NOT merged). It is the merge of `origin/main` 44c4bbda into the branch plus the status.md ship commit (AI-Gate: converged, run 21ff263a).
 - **Retrieval**: the push's own pre-push hook run did NOT complete. Its process tree was hard-terminated mid-`npm test` (TAP stopped at top-level test 1954, no summary, neither "checks passed" nor "FAILED" printed, sandbox `ces-prepush-d9b30553-90492` left with a dead owner), yet git transferred the push. Killer unidentified: no Application/System event 14:18:30–14:24:20Z. The gate was then run by hand on exactly this sha, `node scripts/prepush-check.mjs --base e5147629 --head d9b30553` (clean sandbox): run 1 (14:29–14:40Z) exit 1, 19,544 tests with 1 fail, `tests/fleet-cli-approve.test.mjs` "the push is issued to the recorded pushUrl" (null envelope at 66s; passes 11/11 alone); run 2 (14:42–14:55Z) exit 0, 19,544 tests, 0 fail, 46 skipped.
 - **Result**: pushed commit verified by the second hand run, not by the hook. The synced consumer bundle is unverified (blocked: not merged); sync from an up-to-date main after #220 merges. Open: a killed pre-push hook can let a push through (coordinator to spawn a separate chip).
+
+## 2026-10-13 — `sync-pr` branches from a freshly fetched `origin/<default>` and keeps a refused push's hook output
+
+**Why.** On 2026-10-12 `sync-pr --target wine` built `chore/sync-f3991844` on wine-cellar-app's stale LOCAL `main` (8f96bc200, 30+ commits behind origin, missing sync PR #883). The receipt conflicted, wine's pre-push hook refused the push, and only the vitest summary line ("Tests 2 failed | 19805 passed") was printed, so the two failures could never be named. WCA rebuilt it by hand as wine-cellar-app#893.
+
+### Changes
+- **Fresh base** (`scripts/lib/sync-pr.mjs` `gatherConsumerFacts`, `planConsumerPr`, `runConsumerPr`): the default branch is asked of the remote (`git ls-remote --symref origin HEAD`, or `--base`), fetched with an explicit refspec, and the branch is created with `git switch --no-track -c <branch> <fetched sha>`, carrying the synced working tree across. A failed resolve or fetch is an ERROR (exit 1), never a fall-back to the local branch.
+- **Stale-base rule**: a checkout behind origin proceeds only when origin changed none of the paths the sync wrote (rename sources included) and not `.sync-overrides.json` since the stale base; otherwise it is skipped as `stale-base-collision`, naming the paths. Any landed sync touches the append-only receipt, so the incident case is refused before any branch exists. Remedy printed: discard the synced changes, `git pull --ff-only`, re-run the sync, then `sync:pr`.
+- **Refused push**: the full push/hook output (spawn error plus both streams) goes to `.claude/tmp/sync-pr/<consumer>-<branch>-<time>.log` in the source repo; the CLI prints its path and the failing tests parsed from it (`parseFailingTests`: vitest FAIL lines, jest `●`/`✕`, node:test tap/spec; one spelling per runner, runners unioned, ANSI stripped; a file-level `FAIL` only as a fallback). `formatFailure` in `scripts/sync-pr.mjs` renders it.
+- `scripts/sync-pr.mjs`: argv parsing moved to `parseArgs`, which stops at `--` like `assertKnownFlags`.
+
+### Files Affected
+- `scripts/lib/sync-pr.mjs`, `scripts/sync-pr.mjs`; `tests/sync-pr.test.mjs` (recorded runner), `tests/sync-pr-git.test.mjs` (new: real git, bare origin with default branch `trunk`, a consumer left behind, a refusing pre-push hook; `gh` is the only stub); `docs/runbooks/consumer-adoption.md` §Zero-touch variant.
+
+### Decisions Made
+- **Carry the working tree onto the fresh base, refuse on overlap**, rather than a temporary worktree plus copy: the copy would have to rebuild the append-only receipt and re-decide declared divergence outside the sync, a second implementation of the sync. When origin left the synced paths alone, each written file sits on exactly the content the sync's three-way decision saw.
+- **The consumer's checkout is left where it was**: after a successful PR it is back on its local default branch at the same (possibly stale) sha, tree clean, the synced files only on the PR branch (measured on the fixture: HEAD unchanged, 1 behind origin, SKILL.md on disk still v1). This is the existing switch-back behaviour, unchanged. Disk shows what merged only after the PR lands and someone runs `git pull --ff-only` there, so `sync-isolation-verify` gate 2B fails in a stale main checkout until then. Fast-forwarding main inside `sync-pr` would not help, because the PR has not merged yet.
+- Output stays on one stream (deliberation overruled moving diagnostics to stderr: `sync-pr` has no machine-readable stdout). Hook output past the 64 MiB spawn buffer is not streamed to a file (deliberation: LOW); an overflow now shows in the log as `[spawn error] … ENOBUFS` with the output that did arrive.
+
+### Verification
+- `/audit-code --scope diff` (SID `audit-code-1791869353795-44564`): R1 H1 M6 L1 (H1 `--` parsing, M2/M4/M5 jest FAIL header shadowing `●` names, M1 log dropping partial output, L1 test order: fixed; M3 stdout/stderr: overruled; M6 adjacency bound: instrument limit). R2 clean; R3 one re-raise of the overruled M3 (dismissed, linked); Gemini R1 `approve_with_debt` with one MEDIUM (G1, a second test runner's failures hidden), fixed with a per-runner union; R4 clean.
+- Red/green: the new test files fail to load on the old code; each rule was then reverted alone and its test went red (fork from local HEAD, no collision check, no push log, assume `main`, no ANSI strip, no `--` boundary, log built from `why()` only, file-level FAIL first, no per-runner union, no per-runner break). 43/43 sync-pr tests green; bundle-deps, file-size, stdout-flush and knip gates clean.
+- Upstream 2f933809: partly addressed. The stale-base variant (a sync PR already merged on origin but not in the local checkout) is now refused by name instead of producing a conflicting PR. Two sync PRs OPEN at once from the same fresh origin still conflict on the receipt when the second merges; that needs one of the report's own options (merge driver, supersede, regenerate). Left open.
+- Backlog 2026-10-13T06:25Z: Q1 192c/47p (+420 aged) · Q2 178c/96p (54 perm) · Q3 35 · debt 338 cloud/1 local (0 spilled) · upstream 3
+
+### Next Steps
+- 2f933809's concurrent-open-PR half (the receipt merge strategy), probably with the live sync-receipt plan (`docs/plans/sync-receipt-structural-and-undeclared-deps.md`).
+- After merge: re-sync consumers from an up-to-date main; then `git pull --ff-only` in wine's and storyline's MAIN checkouts (36 and 6 behind) before `sync-isolation-verify`.
 
 ## 2026-10-12 — Coordinator day: 10 CES PRs landed, a shared machine tuned, the coordination rules written into /fleet
 
