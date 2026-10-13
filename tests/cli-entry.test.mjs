@@ -25,8 +25,8 @@ describe('isInvokedAsScript', () => {
     fs.symlinkSync(path.join(tmp, 'real'), link, 'junction');
   });
   after(() => {
-    fs.rmSync(link, { force: true });
-    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(link, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   // Node realpaths the main module, so import.meta.url is always the real path.

@@ -148,7 +148,7 @@ describe('H4 — a failed gc deletion is an error, stays tracked, and is retried
     assert.ok(!(lastReceipt(root).gcDeleted || []).includes(RETIRED), 'receipt claims a deletion that did not happen');
     assert.ok(RETIRED in readJson(root, MANIFEST).files, 'manifest dropped a path it failed to delete — it can never be retried');
 
-    fs.rmSync(abs, { recursive: true });
+    fs.rmSync(abs, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     fs.writeFileSync(abs, '// retired\n');
     const retried = await sync(root);
     assert.equal(retried.code, 0, whySyncFailed(retried));
@@ -176,7 +176,7 @@ describe('H3 corollary — a failed write on a file owned only by adoption stays
     assert.ok(MIG in m.files, 'positive control: the migration should have been delivered');
     delete m.files[MIG];
     fs.writeFileSync(path.join(root, MANIFEST), JSON.stringify(m, null, 2) + '\n');
-    fs.rmSync(path.join(root, 'scripts', '.claude-skills', '.sync-watermark.json'), { force: true });
+    fs.rmSync(path.join(root, 'scripts', '.claude-skills', '.sync-watermark.json'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     fs.appendFileSync(path.join(root, MIG), '\n-- local edit\n');
     fs.writeFileSync(path.join(root, JOURNAL), JSON.stringify({ startedAt: new Date().toISOString(), destinations: [MIG] }) + '\n');
 
@@ -203,7 +203,7 @@ describe('H2 — gc never deletes through a link out of the consumer', () => {
     const tooling = path.join(root, 'scripts', '.claude-skills');
     fs.cpSync(tooling, outside, { recursive: true });
     fs.writeFileSync(path.join(outside, 'lib', 'retired-by-upstream.mjs'), '// NOT the consumer repo\n');
-    fs.rmSync(tooling, { recursive: true, force: true });
+    fs.rmSync(tooling, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     fs.symlinkSync(outside, tooling, 'junction');   // 'junction' is ignored on posix (a dir symlink)
     recordPriorKey(root, RETIRED, '// retired\n');
     try {
@@ -214,7 +214,7 @@ describe('H2 — gc never deletes through a link out of the consumer', () => {
       assert.match(r.text, /gc FAILED\s+scripts\/\.claude-skills\/lib\/retired-by-upstream\.mjs[^\n]*refused/,
         'the run failed, but not because containment refused the deletion');
     } finally {
-      fs.rmSync(tooling, { force: true });   // the link itself, never its target
+      fs.rmSync(tooling, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });   // the link itself, never its target
     }
   });
 });
@@ -263,7 +263,7 @@ describe('H8 — the CLI runs when invoked through a link', () => {
       assert.equal(code, 2, `expected the flag diagnostic (exit 2) — main() did not run:\n${out}`);
       assert.match(out, /unknown flag/);
     } finally {
-      fs.rmSync(link, { force: true });
+      fs.rmSync(link, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });

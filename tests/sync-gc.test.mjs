@@ -61,7 +61,7 @@ describe('planGarbageCollection', () => {
 describe('executeGarbageCollection', () => {
   let tmp;
   before(() => { tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ces-gc-'))); });
-  after(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+  after(() => { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
   it('deletes, and records deleted / absent / failed per path', () => {
     const root = path.join(tmp, 'outcomes');
@@ -92,7 +92,7 @@ describe('executeGarbageCollection', () => {
       assert.match(r.failed[0].reason, /^refused: /);
       assert.ok(fs.existsSync(path.join(outside, 'lib', 'victim.mjs')), 'deleted through the link');
     } finally {
-      fs.rmSync(path.join(root, TOOLING), { force: true });
+      fs.rmSync(path.join(root, TOOLING), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -126,7 +126,7 @@ describe('mayStillExist', () => {
       fs.symlinkSync(path.join(dir, 'gone'), path.join(dir, 'dangling'), 'junction');
       assert.equal(mayStillExist(path.join(dir, 'dangling')), false);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -179,7 +179,7 @@ describe('countCitations', () => {
       execFileSync('git', ['add', '-A'], { cwd: root });
       assert.deepEqual(countCitations(root, 'docs/café.md'), { count: 1 });
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -195,7 +195,7 @@ describe('countCitations', () => {
       assert.deepEqual(countCitations(root, 'docs/old.md'), { count: 1 });
       assert.deepEqual(countCitations(root, 'docs/nothing-cites-this.md'), { count: 0 });
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
