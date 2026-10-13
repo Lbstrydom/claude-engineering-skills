@@ -30,6 +30,14 @@
  * would silently disable that worktree's hooks; `hooks-path-guard.mjs`, re-checked
  * by `--apply` under the lock).
  *
+ * Two classes are never candidates, only listed for a person to look at (`review`; upstream 56773c7c): a branch
+ * whose merged PR's head is BEHIND its tip (post-merge commits the PR did not carry), and a branch no PR covers.
+ * Each names its files and whether each file's COMMITTED tip content already equals base. Content equality is
+ * weaker evidence than ancestry or a merged head, and removal is irreversible, so neither class gets `steps`.
+ *
+ * With `deadlineAt` (`fleet status`'s budget) a branch reached after the deadline is counted as `unjudged`,
+ * never dropped and never kept; `complete:false` says no count is a measurement at all.
+ *
  * Cleanliness is judged HERE, by `archiveReport`, not by the status probe
  * (which only probes up to a cap and may leave a worktree unchecked): the hide
  * rule is evaluated as if clean, then the archive evidence decides.
@@ -49,6 +57,8 @@ import { samePath as samePathOnPlatform } from '../harness-paths.mjs';
 import { ok } from './commands.mjs';
 import { branchRefFiles, lastActivity, provablyIdle } from './unregistered.mjs';
 import { renderOrphans, scanOrphanDirs } from './prune-orphans.mjs';
+import { invalidatePruneCache, summarisePrune, writePruneCache } from './prune-summary.mjs';
+import { unregisteredCacheDir } from './unregistered.mjs';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -56,15 +66,61 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const SESSION_LIST_CHECK = 'Before --apply: confirm in the desktop session list that no session, pinned or dormant included, uses these directories or branches';
 
 const REMOTE_TIMEOUT_MS = 30_000;
+/** Cap on one review diff. Under a deadline it is clipped further to the time left. */
+const REVIEW_DIFF_TIMEOUT_MS = 30_000;
+/** Files named per review branch in the text; the JSON keeps them all. */
+const REVIEW_FILES_SHOWN = 10;
+
+const nulList = (out) => String(out).split('\0').filter(Boolean);
+
+/**
+ * `git`, clipped to a deadline the way `archiveReport` clips its calls: past the deadline the call is NOT made (a
+ * zero or negative `timeout` would mean "none" to spawnSync), otherwise it gets at most the time left.
+ */
+function clippedGit(git, deadlineAt, clock) {
+  if (deadlineAt === null) return git;
+  return (args, cwd, opts = {}) => {
+    const left = deadlineAt - clock();
+    if (left <= 0) return { ok: false, stdout: '', reason: 'the status budget was spent' };
+    return git(args, cwd, { ...opts, timeoutMs: Math.min(opts.timeoutMs ?? REVIEW_DIFF_TIMEOUT_MS, left) });
+  };
+}
+
+/** Which review class a status item falls in, or null. Same gates as a candidate, except cleanliness (reported instead). */
+function reviewClassOf(item, { base, prsComplete }) {
+  if (!(item.kind === 'branch' && item.branch && item.branch !== base && item.tracked === false && item.pr === null && prsComplete === true)) return null;
+  if (!(item.ahead > 0) || !item.oid) return null;
+  const m = item.merged;
+  if (m?.merged === 'partially' && m.via === 'pr' && m.head) return 'postMerge';
+  if (m?.known === true && m.merged === false) return 'noPr';
+  return null;
+}
+
+/**
+ * The review evidence for one branch: the files `range` changed (the merged PR head..tip, or `base...tip` from the
+ * fork point) and, per file, whether the tip's committed content equals base's (absent from `base..tip`; a
+ * deletion base also lacks counts as equal). No pathspec is passed, so the command line never grows with the file
+ * count. Null when a diff could not run.
+ */
+function reviewEvidence(cwd, { range, baseRev, tip }, git) {
+  const changed = git(['diff', '--name-only', '-z', '--no-renames', range], cwd, { timeoutMs: REVIEW_DIFF_TIMEOUT_MS });
+  if (!changed.ok) return null;
+  const vsBase = git(['diff', '--name-only', '-z', '--no-renames', baseRev, tip], cwd, { timeoutMs: REVIEW_DIFF_TIMEOUT_MS });
+  if (!vsBase.ok) return null;
+  const differs = new Set(nulList(vsBase.stdout));
+  const files = [...new Set(nulList(changed.stdout))].sort().map((path) => ({ path, onBase: !differs.has(path) }));
+  return { files, allOnBase: files.every((f) => f.onBase) };
+}
 
 // Platform-aware path identity (case and separators fold only on win32) — the helper handover and unregistered use.
 const samePath = (a, b) => Boolean(a && b) && samePathOnPlatform(a, b);
 
 /**
  * @param {{cwd: string, config: object, now: Date, env: NodeJS.ProcessEnv, cmd: string}} ctx
- * @param {{facts?: object, report?: typeof archiveReport}} [deps] test seams
+ * @param {{facts?: object, report?: typeof archiveReport, deadlineAt?: number|null, git?: typeof runGit, clock?: () => number}} [deps]
+ *   `facts` lets `fleet status` reuse what it gathered; `deadlineAt` bounds the per-branch work (status only)
  */
-export function planPrune(ctx, { facts = null, report = archiveReport } = {}) {
+export function planPrune(ctx, { facts = null, report = archiveReport, deadlineAt = null, git: rawGit = runGit, clock = Date.now } = {}) {
   const f = facts ?? gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, cmd: ctx.cmd });
   const status = buildStatusFrom(f);
   const base = ctx.config.baseBranch;
@@ -75,9 +131,13 @@ export function planPrune(ctx, { facts = null, report = archiveReport } = {}) {
   const candidates = [];
   const excluded = [];
   const notJudged = [];
+  const review = { postMerge: [], noPr: [], unjudged: 0 };
+  let unjudged = 0;
+  const past = () => deadlineAt !== null && clock() >= deadlineAt;
+  const git = clippedGit(rawGit, deadlineAt, clock);
   if (!hctx.prsComplete) notJudged.push('the open-PR list is incomplete or was not read, so no branch can be shown to have no open PR');
   // Without the worktree list a branch's checkout cannot be found, so no branch is judged removable.
-  if (!wt.queried) return { candidates, excluded, notJudged: [...notJudged, `the worktree list could not be read (${wt.reason}), so no branch can be shown to be checked out nowhere`], orphans: null, upstreamGone: [] };
+  if (!wt.queried) return { candidates, excluded, notJudged: [...notJudged, `the worktree list could not be read (${wt.reason}), so no branch can be shown to be checked out nowhere`], complete: false, unjudged, review, orphans: null, upstreamGone: [] };
   const staleMs = (ctx.config.staleWorktreeDays ?? DEFAULT_STALE_WORKTREE_DAYS) * DAY_MS;
   // Every `branch.*` config key, read once (names only; matched in JS, so no regex escaping of branch names). Exit 1
   // is git's "no match" — none at all; any other failure is UNREAD (null), never "no config".
@@ -98,11 +158,16 @@ export function planPrune(ctx, { facts = null, report = archiveReport } = {}) {
   // hide rules call merged/landed. (2) local branches with NOTHING ahead of base: status does
   // not list those at all, yet they are the plainest "merged" case — same rules applied here.
   const inputs = [];
+  const reviewInputs = [];
   for (const item of status.items) {
     if (item.kind !== 'branch' || !item.branch) continue;
     // hideReason gates (untracked, no open PR, complete PR list); landedReason names WHY it is removable.
     const reason = hideReason(item.worktree ? { ...item, worktreeClean: true } : item, hctx) && landedReason(item);
     if (reason) inputs.push({ ...item, reason });
+    else {
+      const cls = reviewClassOf(item, { base, prsComplete: hctx.prsComplete });
+      if (cls) reviewInputs.push({ item, cls });
+    }
   }
   const listed = new Set(status.items.map((i) => i.branch).filter(Boolean));
   const tracked = new Set((f.registry?.sessions ?? []).map((s) => s.source?.branch).filter(Boolean));
@@ -117,6 +182,7 @@ export function planPrune(ctx, { facts = null, report = archiveReport } = {}) {
   for (const item of inputs) {
     const { reason } = item;
     if (item.branch === base) continue;
+    if (past()) { unjudged += 1; continue; }
     const wtRec = item.worktree && wt.queried ? wt.worktrees.find((w) => samePath(w.path, item.worktree)) : null;
     if (wtRec?.locked) { excluded.push({ branch: item.branch, worktree: item.worktree, reason: 'its worktree is locked (in use)' }); continue; }
     // `update-ref -d` (unlike `branch -d`) does not refuse a branch some checkout still has: every checkout counts.
@@ -137,10 +203,12 @@ export function planPrune(ctx, { facts = null, report = archiveReport } = {}) {
     if (item.worktree) {
       // branch:null — the PR question is already answered (hideReason requires pr === null), and
       // asking gh once per branch would make prune as slow as the clutter it removes.
-      const r = report(ctx, { branch: null, worktree: item.worktree });
+      const r = report(ctx, { branch: null, worktree: item.worktree, ...(deadlineAt === null ? {} : { deadlineAt, clock }) });
       // Unpushed commits are not a risk here ONLY because the worktree's HEAD is the judged tip (checked above),
       // whose exact commits the merged evidence covers.
       const risky = Object.entries(r.risks).filter(([k, v]) => k !== 'unpushed' && v.length);
+      // A probe the deadline cut short says nothing about the worktree: not judged, rather than kept.
+      if (r.unverified.length && past()) { unjudged += 1; continue; }
       if (risky.length || r.unverified.length) {
         excluded.push({
           branch: item.branch, worktree: item.worktree,
@@ -186,8 +254,24 @@ export function planPrune(ctx, { facts = null, report = archiveReport } = {}) {
       remote: remoteStep ? renderCommand(remoteStep.argv) : null, ...(remoteNote ? { remoteNote } : {}),
     });
   }
+  // Review classes: the same skip set as a candidate (in use, the main checkout, here), then the evidence.
+  const baseRev = f.base?.measure?.ok ? f.base.measure.oid : f.baseOid ?? null;
+  for (const { item, cls } of reviewInputs) {
+    const wtRec = item.worktree ? wt.worktrees.find((w) => samePath(w.path, item.worktree)) : null;
+    if (wtRec?.locked || (item.worktree && (samePath(item.worktree, mainCheckout) || (here.ok && samePath(item.worktree, here.dir))))) continue;
+    const range = cls === 'postMerge' ? `${item.merged.head}..${item.oid}` : `${baseRev}...${item.oid}`;
+    const ev = baseRev && !past() ? reviewEvidence(ctx.cwd, { range, baseRev, tip: item.oid }, git) : null;
+    if (!ev) { review.unjudged += 1; continue; }
+    review[cls].push({
+      branch: item.branch, oid: item.oid, worktree: item.worktree ?? null, worktreeClean: item.worktree ? (item.worktreeClean ?? null) : null,
+      ...(cls === 'postMerge' ? { pr: item.merged.pr, extraCommits: item.merged.extraCommits ?? null } : {}),
+      ...ev,
+    });
+  }
   const roots = [...new Set([mainCheckout ? path.join(mainCheckout, '.claude', 'worktrees') : null, ctx.config.worktreeRoot].filter(Boolean))];
-  return { candidates, excluded, notJudged, orphans: scanOrphanDirs({ roots, worktrees: wt.worktrees, archiveIgnore: ctx.config.archiveIgnore ?? [] }), upstreamGone: upstreamGoneBranches(ctx.cwd) };
+  // The orphan scan is a filesystem walk under its own entry caps (ORPHAN_WALK), so it needs no deadline; the
+  // upstream read is git, so it goes through the clipped runner (past the deadline it is simply not shown).
+  return { candidates, excluded, notJudged, complete: hctx.prsComplete, unjudged, review, orphans: scanOrphanDirs({ roots, worktrees: wt.worktrees, archiveIgnore: ctx.config.archiveIgnore ?? [] }), upstreamGone: upstreamGoneBranches(ctx.cwd, { git }) };
 }
 
 /** Local branches whose upstream is gone (`%(upstream:track)` = `[gone]`). Display only: a deleted remote is not evidence the commits landed. */
@@ -195,6 +279,37 @@ export function upstreamGoneBranches(cwd, { git = runGit } = {}) {
   const r = git(['for-each-ref', '--format=%(refname:short)%00%(upstream:track)', 'refs/heads'], cwd);
   if (!r.ok) return [];
   return String(r.stdout).split('\n').map((l) => l.split('\0')).filter(([n, t]) => n && /\bgone\b/.test(t ?? '')).map(([n]) => n);
+}
+
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** One review branch's headline: what it is, then what its committed content says. */
+function reviewHeadline(i, cls) {
+  const what = cls === 'postMerge'
+    ? `PR #${i.pr} merged, ${i.extraCommits === null ? 'commits' : plural(i.extraCommits, 'commit')} after its head`
+    : 'no PR covers it';
+  const differs = i.files.filter((x) => !x.onBase).length;
+  const content = i.allOnBase ? "every changed file's committed content equals base" : `${differs} of ${plural(i.files.length, 'changed file')} ${differs === 1 ? 'differs' : 'differ'} from base`;
+  const wtNote = !i.worktree ? '' : ` · worktree ${i.worktree}${i.worktreeClean === true ? '' : i.worktreeClean === false ? ' (not clean: its uncommitted work is not in this comparison)' : ' (not checked)'}`;
+  return `  ${i.branch} — ${what} · ${content}${wtNote}`;
+}
+
+/** The review section: never removable, listed so a person can decide in seconds (upstream 56773c7c). */
+function reviewLines(p) {
+  const r = p.review;
+  if (!r) return [];
+  const n = r.postMerge.length + r.noPr.length;
+  if (!n && !r.unjudged) return [];
+  const lines = ['', `review (${n}) — not removable; look before deciding (committed content only, nothing is run):`];
+  for (const [cls, items] of [['postMerge', r.postMerge], ['noPr', r.noPr]]) {
+    for (const i of items) {
+      lines.push(reviewHeadline(i, cls));
+      for (const x of i.files.slice(0, REVIEW_FILES_SHOWN)) lines.push(`      ${x.path} (${x.onBase ? 'on base' : 'differs'})`);
+      if (i.files.length > REVIEW_FILES_SHOWN) lines.push(`      … ${i.files.length - REVIEW_FILES_SHOWN} more`);
+    }
+  }
+  if (r.unjudged) lines.push(`  ${plural(r.unjudged, 'branch', 'branches')} not classified (a diff could not run, or the budget was spent)`);
+  return lines;
 }
 
 const keptLines = (p) => (p.excluded.length
@@ -289,7 +404,8 @@ export function renderPrune(p, cmd = null) {
     if (c.remote) lines.push(`    ${c.remote}    # optional: the remote branch too`);
     if (c.remoteNote) lines.push(`    # ${c.remoteNote}`);
   }
-  lines.push(...keptLines(p), ...goneLines(p), ...renderOrphans(p.orphans));
+  if (p.unjudged) lines.push(`  not judged: ${plural(p.unjudged, 'branch', 'branches')} reached after the budget was spent`);
+  lines.push(...keptLines(p), ...reviewLines(p), ...goneLines(p), ...renderOrphans(p.orphans));
   if (p.candidates.length && cmd) lines.push('', `to run exactly these (local only): ${cmd} prune --apply   ·   add --remote for the leased remote deletes`);
   lines.push('', SESSION_LIST_CHECK);
   return lines.join('\n');
@@ -322,9 +438,14 @@ export function cmdPrune(ctx, flags = {}) {
   if (remote && !apply) throw new ArgvError('fleet prune: --remote only applies with --apply (it deletes the remote branches the plan judged removable)');
   if (includeFresh && !apply) throw new ArgvError('fleet prune: --include-fresh only applies with --apply');
   const p = planPrune(ctx);
-  if (!apply) return ok({ prune: p, text: renderPrune(p, ctx.cmd) });
+  // The same count `status` writes, so `next` relays this run too; after --apply the count is wrong, so it is replaced.
+  if (!apply) {
+    const w = writePruneCache(unregisteredCacheDir(ctx.cwd), summarisePrune(p, new Date(ctx.now ?? Date.now()).toISOString()));
+    return ok({ prune: p, text: renderPrune(p, ctx.cmd) + (w.ok ? '' : `\nwarning: prune-count cache not written (${w.reason})`) });
+  }
   const applied = applyPrune(ctx, p, { remote, includeFresh });
-  const text = renderApplied(p, applied);
+  const inv = invalidatePruneCache(unregisteredCacheDir(ctx.cwd), 'prune --apply changed the branches since the last count', new Date(ctx.now ?? Date.now()).toISOString());
+  const text = renderApplied(p, applied) + (inv.ok ? '' : `\nwarning: the prune-count cache could not be invalidated (${inv.reason}); next may relay a stale count until \`${ctx.cmd} status\` runs`);
   if (applied.counts.failed) return { ok: false, code: 'error', reason: `${applied.counts.failed} removal(s) failed`, prune: p, applied, text };
   return ok({ prune: p, applied, text });
 }

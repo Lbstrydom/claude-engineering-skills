@@ -36,6 +36,8 @@ import {
 } from './facts.mjs';
 import { parseWaitingOn, splitPaths } from './argv.mjs';
 import { newDirectiveId, readDirectives, readHosts, writeDirective, writeHost } from './directives.mjs';
+import { planPrune } from './prune.mjs';
+import { PRUNE_STATUS_BUDGET_MS, invalidatePruneCache, pruneStatusLine, summarisePrune, writePruneCache } from './prune-summary.mjs';
 
 
 /**
@@ -134,6 +136,31 @@ export function startOidFor(ctx, branch, measure, { git = runGit } = {}) {
 
 // ── status ──────────────────────────────────────────────────────────────────
 
+/**
+ * The prune count for `status` (upstream 56773c7c): `planPrune` over the facts status already gathered (no second
+ * gh round trip), under a budget, summarised into one line and the derived cache `next` reads. Never throws: a plan
+ * that could not be made REPLACES the cached count with an unmeasured record (the previous count is no longer known
+ * to hold), never a zero; a cache that cannot be written is a warning.
+ */
+export function statusPrune(ctx, facts, observedAt, { plan = planPrune, write = writePruneCache, dir = unregisteredCacheDir(ctx.cwd) } = {}) {
+  let record; let w;
+  try {
+    record = summarisePrune(plan(ctx, { facts, deadlineAt: Date.now() + PRUNE_STATUS_BUDGET_MS }), observedAt);
+    w = write(dir, record);
+  } catch (e) {
+    const reason = `the prune plan could not be made: ${e.message}`;
+    w = invalidatePruneCache(dir, reason, observedAt);
+    record = { complete: false, reason };
+  }
+  return { record, line: pruneStatusLine(record, ctx.cmd), warning: w.ok ? null : `prune-count cache not written (${w.reason})` };
+}
+
+/**
+ * The prune record as `status --json` shows it: without `at`, which is this status's own `observedAt` under another
+ * name. A second clock in the payload would make two runs over the same repo differ by more than `observedAt`.
+ */
+const statusPruneView = ({ at: _at, ...rest }) => rest;
+
 /** `fleet status` — strictly read-only: no lock, no registry write, no lease renewal. */
 export function cmdStatus(ctx, flags = {}) {
   const fetched = flags['--fetch'] ? fetchBase(ctx) : null;
@@ -160,13 +187,15 @@ export function cmdStatus(ctx, flags = {}) {
     const w = writeUnregisteredCache(unregisteredCacheDir(ctx.cwd), cacheRecord(unregistered, ctx.now));
     if (!w.ok) warnings.push(`unregistered-work cache not written (${w.reason})`);
   }
-  const lines = [renderStatus({ ...status, items: view.items }, { hidden: view.hidden, hosts: hosts.hosts, directives, now: ctx.now, all: Boolean(flags['--all']), unregistered })];
+  const prune = statusPrune(ctx, facts, status.observedAt ?? new Date(ctx.now ?? Date.now()).toISOString());
+  if (prune.warning) warnings.push(prune.warning);
+  const lines = [renderStatus({ ...status, items: view.items }, { hidden: view.hidden, hosts: hosts.hosts, directives, now: ctx.now, all: Boolean(flags['--all']), unregistered }), prune.line];
   lines.push('', ...renderUnregistered(unregistered, { groups: groupUnregistered(unregistered.items), all: Boolean(flags['--all']), tags: archiveTags }));
   if (general.length) lines.push('', 'checks:', ...general.map((f) => `  ${f.level}: ${f.message}`));
   const todo = renderOpenTrains(facts.trains, ctx.cmd);
   if (todo) lines.push('', todo);
   if (warnings.length) lines.push('', ...warnings.map((w) => `warning: ${w}`));
-  return ok({ status: { ...status, items: view.items, hidden: view.hidden, hosts: hosts.hosts, directives: { active: directives.active, unsupported: directives.unsupported, invalid: directives.invalid, complete: directives.complete }, unregistered: { ...unregistered, archiveTags } }, checks: hook.results, warnings, text: lines.join('\n') });
+  return ok({ status: { ...status, items: view.items, hidden: view.hidden, hosts: hosts.hosts, directives: { active: directives.active, unsupported: directives.unsupported, invalid: directives.invalid, complete: directives.complete }, unregistered: { ...unregistered, archiveTags }, prune: statusPruneView(prune.record) }, checks: hook.results, warnings, text: lines.join('\n') });
 }
 
 /**

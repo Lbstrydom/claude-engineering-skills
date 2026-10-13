@@ -121,9 +121,25 @@ is delivered.
   `--include-fresh`. `prune` also lists directories under the worktree root that
   git no longer knows (`empty`, `ignored-only`, `holds N files`), printing a
   removal command only for the first two, and shows `upstream gone` as a hint
-  (never as a reason to delete). Its output ends with the session-list check line:
+  (never as a reason to delete). A `review` section lists two classes that are
+  never removable, so a person can decide quickly: a branch whose merged PR's
+  head is behind its tip (post-merge commits), and a branch no PR covers. Each
+  names its files and whether each file's committed content already equals base;
+  uncommitted work in its worktree is not part of that comparison, and the line
+  says so. Its output ends with the session-list check line:
   before running any printed removal, check the desktop session list (pinned and
   dormant sessions included) for a session whose cwd is that worktree.
+- **The prune count reaches you without running prune.** `fleet status` plans a
+  prune under a 30 s budget and prints one `prune:` line (removable, fresh,
+  review classes, orphan directories). It writes the count to
+  `<git-common-dir>/fleet-cache/prune.json`, as does a read-only `fleet prune`.
+  `fleet next` reads it and prints an `FYI for the user/coordinator` line: relay
+  it, never act on it. A count that could not be measured says `unmeasured`
+  with the reason, never 0. A budget-cut count is a lower bound (`≥N`, with how
+  many were not judged). A count over 24 h old, or missing, asks for a `status`
+  run. `prune --apply`, or a status run that could not plan, replaces the count
+  with an unmeasured one, never leaving the old number readable. Bring the list to the user on a cadence;
+  removal stays their decision.
 - `fleet archive <worktree|branch|id>` is a dry run by default: what it would
   snapshot, and every refusal. `--apply` snapshots the worktree's committed,
   staged, unstaged and untracked state into a local `archive/*` tag, verifies the
