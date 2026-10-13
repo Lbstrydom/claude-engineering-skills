@@ -309,19 +309,30 @@ doing the work. On top of the participant rules:
    in the session list). A sent hold message is not compliance.
 10. **Queue findings, not sessions.** A chip is admission for ready work, not a
     record of every finding. Workers never spawn chips (participant step 9);
-    they report findings, and the coordinator writes each one down durably at
-    once (outside chat, outside the worker's session). Each finding then gets
-    exactly one outcome, never a silent drop:
-    - **folded**: into a named running session, only when that session's
-      current PR's acceptance needs it;
-    - **queued**: grouped under a theme, waiting for a worker slot or a
-      dependency;
-    - **declined**: with the reason written down;
-    - **done**: with the PR that resolved it.
+    they report findings, and each one is written down at once with
+    `fleet propose --what --where --why [--evidence] [--theme] [--blocked-by]`
+    (a worker may record its own adjacent finding the same way). The record
+    lives in the git common dir, so it outlives the session, its worktree and
+    its archive; it replaces any private list a coordinator kept in memory.
+    Each finding then gets exactly one outcome, set with
+    `fleet proposal <id> <flag>` and a required reason or ref, and the history
+    only grows:
+    - **folded** (`--folded <session>`): into a named running session, only
+      when that session's current PR's acceptance needs it;
+    - **queued** (`--queued <reason>`): grouped under a theme, waiting for a
+      worker slot or a dependency;
+    - **declined** (`--declined <reason>`): with the reason written down;
+    - **done** (`--done <PR>`): with the PR that resolved it.
 
-    Show the open queue to the user at every check-in, grouped by theme.
-    Before archiving a session, check its final report's Findings are all
-    recorded.
+    Show `fleet proposals` (the open queue, grouped by theme) to the user at
+    every check-in. `fleet status` and `fleet next` print how many proposals
+    are pending and how old the oldest is, and flag any pending more than 3
+    days; an unreadable store reads `unmeasured`, not zero. `--blocked-by`
+    records a PR or branch the item waits on; the listing rechecks it against
+    the PR and git state and labels it, and nothing is scheduled from it.
+    Before archiving a session, `archive-check` lists the proposals that
+    session recorded and nobody has triaged yet, and its final report's
+    Findings should all be recorded.
 11. **Triage continuously, with an expedite lane.** New findings arrive at any
     time; decide them on every coordination pass, not in batches. Order the
     queue by impact, then by whether its dependencies are ready. Expedite an

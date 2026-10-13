@@ -25,6 +25,7 @@ import {
 import { deriveObligations, renderObligations } from './obligations.mjs';
 import { readUnregisteredCache, unregisteredCacheDir } from './unregistered.mjs';
 import { pruneCountText, pruneIsEmpty, readPruneCache } from './prune-summary.mjs';
+import { proposalsLine, proposalsQuiet, readProposalsSummary } from './proposals.mjs';
 import { currentBranch, lockFailed, nowIso, ok, refused, selfId } from './commands.mjs';
 
 /**
@@ -161,9 +162,12 @@ export function cmdNext(ctx, flags) {
   const prune = pruneNext(dir, ctx.now, ctx.cmd);
   let unregistered;
   try { unregistered = unregisteredFooter(dir, ctx.now, ctx.cmd); } catch (e) { unregistered = [`unregistered-work footer not derived (${e.message})`]; }
-  const fyi = [...prune.lines, ...unregistered];
+  // The findings queue (information for the coordinator, never an action for this session); silent only when measured, complete and empty.
+  const proposals = readProposalsSummary(ctx.dir, ctx.now).summary;
+  const proposalLines = proposalsQuiet(proposals) ? [] : [`FYI for the user/coordinator, not an action for this session: ${proposalsLine(proposals, ctx.cmd)}`];
+  const fyi = [...prune.lines, ...unregistered, ...proposalLines];
   return ok({
-    id, ...r.result, prune: { state: prune.state, ...(prune.record ? { record: prune.record } : {}) },
+    id, ...r.result, prune: { state: prune.state, ...(prune.record ? { record: prune.record } : {}) }, proposals,
     text: [`next for ${id}:`, ...renderObligations(r.result, { cmd: ctx.cmd }).map((l) => `  ${l}`), ...fyi].join('\n'),
   });
 }
