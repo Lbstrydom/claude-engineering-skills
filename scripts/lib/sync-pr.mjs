@@ -59,15 +59,18 @@
  *    driver (GitHub's server-side merge never runs one, so the PR still reads
  *    DIRTY), and regenerating the receipt when the base moves (no trigger
  *    exists, and it would be the second implementation rule 3 refuses).
+ *    A same-bundle re-run (which stops at `BRANCH_EXISTS`) retries a failed
+ *    supersession for the already-open PR via `retrySupersession` — creating
+ *    nothing and arming nothing.
  *    Plan: docs/plans/sync-pr-supersede-open-sync-pr.md.
  *
  * PURE planning (`planConsumerPr`, `branchNameFor`, `buildPrText`,
  * `parseGhAccounts`, `isRepoNotResolvable`, `parseOpenSyncPrs`,
  * `decideSupersession`) plus an executor (`runConsumerPr`, and the
  * `supersedeOlderSyncPrs` step it runs) whose every process call goes through
- * an injected `run` (bundle order through an injected `ancestry` oracle), so
- * the full sequence — including the switch-back on failure — is tested
- * without git or gh.
+ * an injected `run` (bundle order through an injected `ancestry` oracle), as
+ * does `retrySupersession`'s, so the full sequence — including the
+ * switch-back on failure — is tested without git or gh.
  *
  * @module scripts/lib/sync-pr
  */
@@ -230,11 +233,12 @@ export function planConsumerPr({
     }
   }
   const branch = branchNameFor(commitSha);
+  const repo = manifest.repo ?? DEFAULT_REPO;
   if (branchExists) {
-    return { action: 'skip', reason: SKIP_REASON.BRANCH_EXISTS, detail: branch };
+    // Carries what `retrySupersession` needs: a same-bundle re-run lands here.
+    return { action: 'skip', reason: SKIP_REASON.BRANCH_EXISTS, detail: branch, branch, bundleSha: commitSha, repo };
   }
   const leftBehind = classified.needsReview.map((e) => e.path).sort();
-  const repo = manifest.repo ?? DEFAULT_REPO;
   const text = buildPrText({ repo, commitSha, surface, leftBehind, consumerName });
   return {
     action: 'pr',
@@ -703,16 +707,113 @@ export function supersedeOlderSyncPrs({
 }
 
 /**
+ * `gh` with the account fallback: if the active account cannot resolve the
+ * repo (this machine signs in to two GitHub accounts; each consumer belongs to
+ * one), the other signed-in accounts are tried in turn. `restore()` switches
+ * back to the original active account and returns a warning when it cannot.
+ * The ONE implementation, shared by `runConsumerPr` and `retrySupersession`.
+ *
+ * @param {{run: Runner, repoRoot: string, log?: (line: string) => void}} input
+ * @returns {{gh: (args: string[], opts?: {input?: string}) => ReturnType<Runner>, restore: () => string|null}}
+ */
+function createGhWithAccountFallback({ run, repoRoot, log = () => {} }) {
+  const state = { original: null, current: null };
+  const gh = (args, opts = {}) => {
+    let r = run('gh', args, { cwd: repoRoot, ...opts });
+    if (ok(r) || !isRepoNotResolvable(`${r.stderr}\n${r.stdout}`)) return r;
+    const status = run('gh', ['auth', 'status'], { cwd: repoRoot });
+    const accounts = parseGhAccounts(`${status.stdout}\n${status.stderr}`);
+    const active = accounts.find((a) => a.active);
+    if (state.original === null) state.original = active?.login ?? null;
+    for (const acct of accounts.filter((a) => !a.active)) {
+      log(`  gh: ${active?.login ?? '(unknown)'} cannot see this repo — retrying as ${acct.login}`);
+      const sw = run('gh', ['auth', 'switch', '-u', acct.login], { cwd: repoRoot });
+      if (!ok(sw)) continue;
+      state.current = acct.login;
+      r = run('gh', args, { cwd: repoRoot, ...opts });
+      if (ok(r)) return r;
+    }
+    return r;
+  };
+  const restore = () => {
+    if (!state.original || !state.current || state.current === state.original) return null;
+    const back = run('gh', ['auth', 'switch', '-u', state.original], { cwd: repoRoot });
+    return ok(back) ? null : `gh active account left as ${state.current}; \`gh auth switch -u ${state.original}\` to restore`;
+  };
+  return { gh, restore };
+}
+
+/** Why `retrySupersession` ran nothing. Strings are the CLI's contract. */
+export const SUPERSEDE_RETRY_SKIP = Object.freeze({
+  NO_PR: 'no-pr',
+  PR_UNREADABLE: 'pr-unreadable',
+  NOT_OPEN: 'not-open',
+  OTHER_BASE: 'other-base',
+});
+
+/**
+ * Header rule 4, retried (audit M2 of the supersede change). A same-bundle
+ * re-run stops at `BRANCH_EXISTS` — the sync PR for this bundle is already
+ * open — so a supersession that failed on the first run (a list or close
+ * failure, incomplete discovery) would otherwise never be retried, and that
+ * PR's auto-merge stays withheld. This resolves the EXISTING PR for the branch
+ * and runs `supersedeOlderSyncPrs` for it against the freshly fetched base.
+ *
+ * It never creates a commit, a branch or a PR, never switches the checkout,
+ * and never arms auto-merge: whether to merge the existing PR once its
+ * supersession settles stays a person's call (its own run withheld it).
+ *
+ * @param {{
+ *   branch: string, bundleSha: string, repo: string, — from the BRANCH_EXISTS plan
+ *   repoRoot: string, baseBranch: string, baseSha: string, — `baseSha`: origin/<base> as freshly fetched
+ *   run: Runner, log?: (line: string) => void,
+ *   ancestry?: (a: string, b: string) => 'yes'|'no'|'unknown',
+ * }} input
+ * @returns {{retried: true, url: string, supersede: ReturnType<typeof supersedeOlderSyncPrs>, warnings: string[]}
+ *   | {retried: false, reason: string, detail: string, warnings: string[]}}
+ */
+export function retrySupersession({
+  branch, bundleSha, repo, repoRoot, baseBranch, baseSha, run, log = () => {}, ancestry = createGitAncestry(MODULE_DIR),
+}) {
+  const warnings = [];
+  const { gh, restore } = createGhWithAccountFallback({ run, repoRoot, log });
+  try {
+    const skip = (reason, detail) => ({ retried: false, reason, detail, warnings });
+    const view = gh(['pr', 'view', branch, '--json', 'url,state,headRefOid,baseRefName']);
+    if (!ok(view)) {
+      // An absent PR and an unreadable one must not leave as the same value.
+      const text = why(view);
+      return /no (open )?pull requests? found/i.test(text) ? skip(SUPERSEDE_RETRY_SKIP.NO_PR, `${branch} has no PR`) : skip(SUPERSEDE_RETRY_SKIP.PR_UNREADABLE, text);
+    }
+    let pr = null;
+    try { pr = JSON.parse(view.stdout); } catch { /* validated below */ }
+    if (!pr || typeof pr.url !== 'string' || typeof pr.state !== 'string' || typeof pr.baseRefName !== 'string'
+      || typeof pr.headRefOid !== 'string' || !FULL_OID.test(pr.headRefOid)) {
+      return skip(SUPERSEDE_RETRY_SKIP.PR_UNREADABLE, 'gh returned a record that failed validation');
+    }
+    if (pr.state !== 'OPEN') return skip(SUPERSEDE_RETRY_SKIP.NOT_OPEN, `${pr.url} is ${pr.state}`);
+    if (pr.baseRefName !== baseBranch) return skip(SUPERSEDE_RETRY_SKIP.OTHER_BASE, `${pr.url} targets ${pr.baseRefName}, not ${baseBranch}`);
+
+    const supersede = supersedeOlderSyncPrs({
+      gh, run, ancestry, repoRoot, repo, baseBranch, baseSha, newBranch: branch, newBundleSha: bundleSha, newUrl: pr.url, log,
+    });
+    warnings.push(...supersede.warnings);
+    return { retried: true, url: pr.url, supersede, warnings };
+  } finally {
+    const warning = restore();
+    if (warning) warnings.push(warning);
+  }
+}
+
+/**
  * Execute one planned PR. Every process call goes through `run`; nothing here
  * touches git or gh directly. On ANY failure after the branch was created the
  * consumer is switched back to `currentBranch` and the branch is left in
  * place for inspection — a half-done sync PR must never leave the human's
  * checkout on a branch they did not ask for.
  *
- * `gh` account fallback: if the active account cannot resolve the repo (this
- * machine signs in to two GitHub accounts; each consumer belongs to one), the
- * other signed-in accounts are tried in turn, and the original active account
- * is restored before returning.
+ * Every gh call goes through `createGhWithAccountFallback`, and the original
+ * active account is restored before returning.
  *
  * @param {{
  *   plan: Extract<ReturnType<typeof planConsumerPr>, {action:'pr'}>,
@@ -739,31 +840,12 @@ export function runConsumerPr({
   // instrument had been poisoned from outside.
   const git = (args, opts = {}) => run('git', ['-C', repoRoot, ...args], opts);
   const gitLiteral = (args, opts = {}) => run('git', ['--literal-pathspecs', '-C', repoRoot, ...args], opts);
-  const ghState = { original: null, current: null };
-  const gh = (args, opts = {}) => {
-    let r = run('gh', args, { cwd: repoRoot, ...opts });
-    if (ok(r) || !isRepoNotResolvable(`${r.stderr}\n${r.stdout}`)) return r;
-    const status = run('gh', ['auth', 'status'], { cwd: repoRoot });
-    const accounts = parseGhAccounts(`${status.stdout}\n${status.stderr}`);
-    const active = accounts.find((a) => a.active);
-    if (ghState.original === null) ghState.original = active?.login ?? null;
-    for (const acct of accounts.filter((a) => !a.active)) {
-      log(`  gh: ${active?.login ?? '(unknown)'} cannot see this repo — retrying as ${acct.login}`);
-      const sw = run('gh', ['auth', 'switch', '-u', acct.login], { cwd: repoRoot });
-      if (!ok(sw)) continue;
-      ghState.current = acct.login;
-      r = run('gh', args, { cwd: repoRoot, ...opts });
-      if (ok(r)) return r;
-    }
-    return r;
-  };
+  const { gh, restore } = createGhWithAccountFallback({ run, repoRoot, log });
   const restoreGhAccount = () => {
-    if (ghState.original && ghState.current && ghState.current !== ghState.original) {
-      const back = run('gh', ['auth', 'switch', '-u', ghState.original], { cwd: repoRoot });
-      if (!ok(back)) warnings.push(`gh active account left as ${ghState.current}; \`gh auth switch -u ${ghState.original}\` to restore`);
-    }
+    const warning = restore();
+    if (warning) warnings.push(warning);
   };
-  const fail = (step, r) => ({ ok: false, branch: plan.branch, step, error: why(r), warnings });
+  const fail =(step, r) => ({ ok: false, branch: plan.branch, step, error: why(r), warnings });
 
   // Header rule 3: fork from the freshly fetched origin sha, carrying the
   // synced working tree across. git refuses the carry when a dirty path

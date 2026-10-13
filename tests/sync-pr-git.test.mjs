@@ -23,7 +23,8 @@ import {
 } from '../scripts/lib/sync-pr.mjs';
 import { createGitAncestry } from '../scripts/lib/sync-rollback-guard.mjs';
 import { buildOwnedSidecar } from '../scripts/lib/sync-owned-sidecar.mjs';
-import { formatFailure } from '../scripts/sync-pr.mjs';
+import { formatFailure, main } from '../scripts/sync-pr.mjs';
+import { MANIFEST_RELATIVE_PATH } from '../scripts/lib/sync-manifest.mjs';
 import { RECEIPT_PATH } from '../scripts/lib/sync-receipt.mjs';
 import { gitFixtureEnv, makeGitRunner, mkdtemp, rmrfBestEffort } from './helpers/fixtures.mjs';
 
@@ -403,5 +404,89 @@ describe('sync-pr on real git — a newer sync PR supersedes an older OPEN one',
     const { result, ghCalls } = runNewSync(fx, up.current, [{ number: 8, ...amended }], createGitAncestry(up.dir));
     assert.equal(result.supersede.kept[0].reason, SUPERSEDE_KEEP_REASON.PROVENANCE_MISMATCH);
     assert.deepEqual(closes(ghCalls), []);
+  });
+});
+
+// ── Retrying a failed supersession (audit M2). A same-bundle re-run stops at
+// BRANCH_EXISTS before runConsumerPr, so a first run whose close failed left
+// the older PR open and the new PR's auto-merge withheld, with nothing that
+// would ever try again. Driven through the CLI's `main` against the fixture
+// (never a registered consumer): real git, real ancestry, gh scripted.
+describe('sync-pr CLI on real git — a same-bundle re-run retries a failed supersession', () => {
+  let fx, up;
+  beforeEach(() => { fx = makeFixture(); up = makeUpstream(fx.root); });
+  afterEach(() => rmrfBestEffort(fx.root));
+
+  /** gh as the host sees it: A (#4, older) and, once pushed, B (#9, this bundle). */
+  function scriptedGh(older, { closeFails }) {
+    const newBranch = branchNameFor(up.current);
+    const bHead = () => fx.git(['ls-remote', '--heads', 'origin', newBranch], fx.consumer).trim().split(/\s+/)[0] || null;
+    const bUrl = 'https://github.com/o/r/pull/9';
+    const view = (state, headRefOid) => ({ stdout: JSON.stringify({ state, headRefOid, baseRefName: 'trunk', isCrossRepository: false, url: bUrl }) });
+    return (args) => {
+      const [, verb, ref] = args;
+      if (verb === 'create') return { stdout: `${bUrl}\n` };
+      if (verb === 'list') {
+        const open = [{ number: 4, url: 'https://github.com/o/r/pull/4', headRefName: older.branch, headRefOid: older.head }];
+        if (bHead()) open.push({ number: 9, url: bUrl, headRefName: newBranch, headRefOid: bHead() });
+        return { stdout: JSON.stringify(open.map((p) => ({ ...p, baseRefName: 'trunk', isCrossRepository: false }))) };
+      }
+      if (verb === 'view' && ref === '4') return view('OPEN', older.head);
+      if (verb === 'view' && (ref === newBranch || ref === bUrl)) return view('OPEN', bHead());
+      if (verb === 'close') return closeFails ? { status: 1, stderr: 'GraphQL: something broke' } : { stdout: '' };
+      return undefined;
+    };
+  }
+
+  /** One `npm run sync` (same bundle) followed by `npm run sync:pr`, through the CLI. */
+  async function syncThenSyncPr(gh, flags = []) {
+    fx.syncWrites();
+    write(fx.consumer, MANIFEST_RELATIVE_PATH, `${JSON.stringify({ repo: REPO, commitSha: up.current })}\n`);
+    const { run, ghCalls } = makeRunner(gh);
+    let printed = '';
+    const code = await main(['node', 'sync-pr.mjs', ...flags], { write: (s) => { printed += s; } }, {
+      run, resolve: () => [{ name: 'fixture', path: fx.consumer }], classify: () => classified, ancestry: createGitAncestry(up.dir),
+    });
+    return { code, ghCalls, printed: printed.replace(/\x1b\[\d+m/g, '') };
+  }
+
+  const verbs = (ghCalls) => ghCalls.map((a) => a[1]);
+  const snapshot = () => ({
+    refs: fx.git(['for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads'], fx.consumer),
+    remoteB: fx.git(['ls-remote', '--heads', 'origin', branchNameFor(up.current)], fx.consumer),
+    commits: fx.git(['rev-list', '--count', '--all'], fx.consumer).trim(),
+  });
+
+  it('first run: the close fails and auto-merge is withheld; the re-run supersedes, creating nothing and arming nothing', async () => {
+    const older = pushSyncBranch(fx, up.old);
+
+    const first = await syncThenSyncPr(scriptedGh(older, { closeFails: true }));
+    assert.equal(first.code, 0, first.printed);
+    assert.equal(verbs(first.ghCalls).filter((v) => v === 'create').length, 1);
+    assert.ok(!verbs(first.ghCalls).includes('merge'), 'auto-merge withheld while #4 is still open');
+    assert.match(first.printed, /close-failed/);
+    assert.match(first.printed, /auto-merge withheld/);
+
+    const before = snapshot();
+    const second = await syncThenSyncPr(scriptedGh(older, { closeFails: false }));
+    assert.equal(second.code, 0, second.printed);
+    assert.match(second.printed, /skip.*branch-exists/);
+    assert.ok(!verbs(second.ghCalls).includes('create'), 'no second PR');
+    assert.ok(!verbs(second.ghCalls).includes('merge'), 'the retry never arms auto-merge');
+    const closed = second.ghCalls.filter((a) => a[1] === 'close');
+    assert.deepEqual(closed.map((a) => a[2]), ['4'], 'the older sync PR is superseded on the retry');
+    assert.match(closed[0][closed[0].indexOf('--comment') + 1], /Superseded by https:\/\/github\.com\/o\/r\/pull\/9/);
+    assert.match(second.printed, /supersession retried for https:\/\/github\.com\/o\/r\/pull\/9: complete/);
+    assert.deepEqual(snapshot(), before, 'no commit, branch or push: the existing PR is untouched');
+    assert.equal(fx.git(['rev-parse', '--abbrev-ref', 'HEAD'], fx.consumer).trim(), 'trunk');
+  });
+
+  it('--dry-run on a same-bundle re-run asks gh nothing', async () => {
+    const older = pushSyncBranch(fx, up.old);
+    await syncThenSyncPr(scriptedGh(older, { closeFails: true }));
+    const dry = await syncThenSyncPr(scriptedGh(older, { closeFails: false }), ['--dry-run']);
+    assert.equal(dry.code, 0, dry.printed);
+    assert.deepEqual(dry.ghCalls, []);
+    assert.match(dry.printed, /dry run: supersession retry not attempted/);
   });
 });

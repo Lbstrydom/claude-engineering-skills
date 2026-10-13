@@ -336,6 +336,18 @@ cleanup via `rmrfBestEffort` (rmsync-retry guard).
   plus a warning with the exact close command, and the next newer sync
   re-supersedes every older open sync PR. `supersedeOlderSyncPrs` is exported
   so the wiring is a call, not a rewrite.
+  **Done (follow-up branch `claude/sync-pr-supersede-retry`):** on
+  `BRANCH_EXISTS` the CLI calls `retrySupersession`, which resolves the
+  branch's existing PR (`gh pr view <branch>`, through the same account
+  fallback, now one `createGhWithAccountFallback` shared with
+  `runConsumerPr`) and, only when it is OPEN on this base, runs
+  `supersedeOlderSyncPrs` against the freshly fetched origin sha. It creates
+  no commit, branch or PR and never arms auto-merge; `--dry-run` asks gh
+  nothing. Limits: it fires only when the re-run reaches `BRANCH_EXISTS`,
+  i.e. after a same-bundle `sync` rewrote the files (a bare `sync:pr` re-run
+  on a clean tree skips at `clean`), and it does not close the residual race
+  above — if the older PR merged before the close, there is nothing open to
+  supersede and the existing PR stays DIRTY on the receipt.
 - **Dry-run preview** of what would be superseded — same file, same reason.
 - Final gate R1 (Gemini): G1 HIGH accepted — guard 3 judged the older PR
   against the NEW sidecar, which would keep every PR whose bundle a newer one

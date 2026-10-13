@@ -20,6 +20,8 @@
  * The branch forks from a freshly fetched origin/<base>, never the checkout's
  * local branch; a refused push keeps the consumer hook's full output under
  * .claude/tmp/sync-pr/ and names the failing tests (lib/sync-pr.mjs header).
+ * A consumer whose sync branch already exists (a same-bundle re-run) gets its
+ * open PR's supersession retried — nothing is created or merged.
  *
  * Exit codes:
  *   0  every consumer was either handled or skipped for a named reason
@@ -36,7 +38,7 @@ import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { resolveTargets, consumerAliases } from './lib/consumer-repos.mjs';
 import { MANIFEST_RELATIVE_PATH } from './lib/sync-manifest.mjs';
 import { classifyRepo } from './sync-status.mjs';
-import { planConsumerPr, runConsumerPr, gatherConsumerFacts } from './lib/sync-pr.mjs';
+import { SKIP_REASON, planConsumerPr, runConsumerPr, gatherConsumerFacts, retrySupersession } from './lib/sync-pr.mjs';
 import { scratchPath } from './lib/temp-paths.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
@@ -85,6 +87,24 @@ export function formatFailure(result) {
 }
 
 /**
+ * The lines printed for a `retrySupersession` result. A retry that ran prints
+ * its status and every warning; one that did not names why. Never an error:
+ * the existing PR is open either way, as on the first run.
+ * @param {ReturnType<typeof retrySupersession>} retry
+ * @returns {string}
+ */
+function formatRetry(retry) {
+  const lines = retry.retried
+    ? [`  supersession retried for ${retry.url}: ${retry.supersede.status}`]
+    : [`  ${D}no supersession retry: ${retry.reason} — ${retry.detail}${X}`];
+  for (const w of retry.warnings) lines.push(`  ${Y}⚠${X} ${w}`);
+  if (retry.retried && retry.supersede.status === 'complete') {
+    lines.push(`  ${D}auto-merge is not armed by a retry — merge ${retry.url} once its checks pass${X}`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+/**
  * Parse sync-pr's flags. Options end at `--`, the same boundary
  * `assertKnownFlags` honours; this CLI takes no positionals, so anything
  * after it is ignored, never read as a flag.
@@ -113,16 +133,18 @@ export function parseArgs(argv) {
 /**
  * @param {string[]} argv
  * @param {NodeJS.WriteStream} out
+ * @param {{run?: import('./lib/sync-pr.mjs').Runner, resolve?: typeof resolveTargets, classify?: typeof classifyRepo,
+ *   ancestry?: (a: string, b: string) => 'yes'|'no'|'unknown'}} [deps] — test seam: fixture repos, never real consumers
  * @returns {Promise<number>} exit code
  */
-export async function main(argv = process.argv, out = process.stdout) {
+export async function main(argv = process.argv, out = process.stdout, deps = {}) {
+  const { run = spawnRunner, resolve = resolveTargets, classify = classifyRepo, ancestry } = deps;
   const { dryRun, merge, baseOverride, target } = parseArgs(argv);
-  const targets = resolveTargets(target);
+  const targets = resolve(target);
   if (targets.length === 0) {
     throw new ArgvError(`sync-pr: unknown --target "${target}" — known: ${consumerAliases().join(', ')}`);
   }
 
-  const run = spawnRunner;
   const log = (line) => out.write(`${line}\n`);
   let errored = 0;
   out.write(`${B}sync-pr${X} ${D}${dryRun ? '(dry run) ' : ''}${targets.length} consumer(s), base ${baseOverride ?? "each remote's default branch"}${X}\n`);
@@ -134,7 +156,7 @@ export async function main(argv = process.argv, out = process.stdout) {
       out.write(`  ${Y}skip${X} not a git checkout on this machine\n`);
       continue;
     }
-    const classified = classifyRepo(repoRoot);
+    const classified = classify(repoRoot);
     const manifest = readManifest(repoRoot);
     const facts = gatherConsumerFacts(run, repoRoot, { baseBranch: baseOverride, commitSha: manifest?.commitSha });
     if (!facts.ok) {
@@ -149,6 +171,18 @@ export async function main(argv = process.argv, out = process.stdout) {
 
     if (plan.action === 'skip') {
       out.write(`  ${Y}skip${X} ${plan.reason}${plan.detail ? ` ${D}— ${plan.detail}${X}` : ''}\n`);
+      if (plan.reason === SKIP_REASON.BRANCH_EXISTS) {
+        // This bundle's sync PR already exists: retry its supersession, which
+        // a first run may have left unsettled (lib/sync-pr.mjs header rule 4).
+        if (dryRun) {
+          out.write(`  ${D}dry run: supersession retry not attempted${X}\n`);
+          continue;
+        }
+        const retry = retrySupersession({
+          branch: plan.branch, bundleSha: plan.bundleSha, repo: plan.repo, repoRoot, baseBranch, baseSha: facts.baseSha, run, log, ancestry,
+        });
+        out.write(formatRetry(retry));
+      }
       continue;
     }
 
@@ -162,7 +196,7 @@ export async function main(argv = process.argv, out = process.stdout) {
     if (dryRun) continue;
 
     const result = runConsumerPr({
-      plan, repoRoot, baseBranch, currentBranch: facts.currentBranch, merge, run, log, consumerName: t.name, pushLogDir: scratchPath('sync-pr'),
+      plan, repoRoot, baseBranch, currentBranch: facts.currentBranch, merge, run, log, consumerName: t.name, pushLogDir: scratchPath('sync-pr'), ancestry,
     });
     for (const w of result.warnings) out.write(`  ${Y}⚠${X} ${w}\n`);
     if (result.ok) {

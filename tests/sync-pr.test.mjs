@@ -17,6 +17,7 @@ import {
   SKIP_REASON, branchNameFor, buildPrText, planConsumerPr, runConsumerPr,
   parseGhAccounts, isRepoNotResolvable, parseSymrefHead, parseFailingTests,
   SUPERSEDE_KEEP_REASON, SUPERSEDE_LIST_LIMIT, parseOpenSyncPrs, parseNameStatus, decideSupersession, supersedeOlderSyncPrs,
+  SUPERSEDE_RETRY_SKIP, retrySupersession,
 } from '../scripts/lib/sync-pr.mjs';
 import { parseArgs } from '../scripts/sync-pr.mjs';
 import { RECEIPT_PATH } from '../scripts/lib/sync-receipt.mjs';
@@ -656,5 +657,82 @@ describe('supersedeOlderSyncPrs — exported for a retry path', () => {
     assert.equal(r.status, 'incomplete-discovery');
     assert.deepEqual(r.superseded.map((p) => p.number), [5]);
     assert.ok(r.warnings.some((w) => /incomplete/i.test(w)));
+  });
+});
+
+describe('retrySupersession — a same-bundle re-run (BRANCH_EXISTS) retries, creating and arming nothing', () => {
+  const NEW_URL = 'https://github.com/o/r/pull/7';
+  const NEW_HEAD = 'f'.repeat(40);
+  const viewNew = (over = {}) => ({ stdout: JSON.stringify({ url: NEW_URL, state: 'OPEN', headRefOid: NEW_HEAD, baseRefName: 'main', ...over }) });
+  const retry = (run) => {
+    const skipPlan = plan({ branchExists: true });
+    return retrySupersession({
+      branch: skipPlan.branch, bundleSha: skipPlan.bundleSha, repo: skipPlan.repo,
+      repoRoot: 'C:/consumer', baseBranch: 'main', baseSha: ORIGIN_SHA, run, ancestry: olderAncestry,
+    });
+  };
+  const mutations = (calls) => calls.filter((c) => (c.cmd === 'gh' && ['create', 'merge'].includes(c.args[1]))
+    || (c.cmd === 'git' && ['switch', 'add', 'commit', 'push'].some((v) => gitArgs(c).includes(v))));
+
+  it('the BRANCH_EXISTS plan carries the branch, the full bundle sha and the repo the retry needs', () => {
+    const p = plan({ branchExists: true });
+    assert.deepEqual([p.branch, p.bundleSha, p.repo], ['chore/sync-cb0903cf', SHA, MANIFEST.repo]);
+  });
+
+  it('resolves the existing open PR by branch and supersedes for it against the fresh base', () => {
+    const { run, calls } = fakeRunner(supersedeScript({ 'gh pr view chore/sync-cb0903cf': viewNew() }));
+    const r = retry(run);
+    assert.equal(r.retried, true);
+    assert.equal(r.url, NEW_URL);
+    assert.equal(r.supersede.status, 'complete');
+    assert.deepEqual(r.supersede.superseded.map((p) => p.number), [5]);
+    assert.deepEqual(calls.find((c) => c.cmd === 'gh').args, ['pr', 'view', 'chore/sync-cb0903cf', '--json', 'url,state,headRefOid,baseRefName']);
+    assert.ok(calls.some((c) => c.cmd === 'git' && gitArgs(c).join(' ') === `rev-list --count ${ORIGIN_SHA}..${OLD_HEAD}`), 'evidence is taken against the fresh base');
+    assert.match(calls.find((c) => c.args[1] === 'close').args.at(-1), /Superseded by https:\/\/github\.com\/o\/r\/pull\/7/);
+    assert.deepEqual(mutations(calls), [], 'no commit, push, PR or merge');
+  });
+
+  it('a close that fails again is partial, still arming nothing', () => {
+    const { run, calls } = fakeRunner(supersedeScript({ 'gh pr view chore/sync-cb0903cf': viewNew(), 'gh pr close 5': { status: 1, stderr: 'boom' } }));
+    const r = retry(run);
+    assert.equal(r.supersede.status, 'partial');
+    assert.ok(r.warnings.some((w) => w.includes('gh pr close 5 --comment')));
+    assert.deepEqual(mutations(calls), []);
+  });
+
+  it('runs nothing — with a NAMED reason — when there is no open PR on this base to supersede for', () => {
+    for (const [label, view, reason] of [
+      ['no PR', { status: 1, stderr: 'no pull requests found for branch "chore/sync-cb0903cf"' }, SUPERSEDE_RETRY_SKIP.NO_PR],
+      ['gh broke', { status: 1, stderr: 'HTTP 502' }, SUPERSEDE_RETRY_SKIP.PR_UNREADABLE],
+      ['malformed', { stdout: '{"state":"OPEN"}' }, SUPERSEDE_RETRY_SKIP.PR_UNREADABLE],
+      ['merged', viewNew({ state: 'MERGED' }), SUPERSEDE_RETRY_SKIP.NOT_OPEN],
+      ['closed', viewNew({ state: 'CLOSED' }), SUPERSEDE_RETRY_SKIP.NOT_OPEN],
+      ['retargeted', viewNew({ baseRefName: 'release' }), SUPERSEDE_RETRY_SKIP.OTHER_BASE],
+    ]) {
+      const { run, calls } = fakeRunner(supersedeScript({ 'gh pr view chore/sync-cb0903cf': view }));
+      const r = retry(run);
+      assert.equal(r.retried, false, label);
+      assert.equal(r.reason, reason, label);
+      assert.deepEqual(calls.filter((c) => c.cmd === 'gh').map((c) => c.args[1]), ['view'], `${label}: no list, no close`);
+    }
+  });
+
+  it('uses the same gh account fallback as runConsumerPr, and restores the original account', () => {
+    const notVisible = { status: 1, stderr: "GraphQL: Could not resolve to a Repository with the name 'o/r'." };
+    const auth = { stdout: [
+      'Logged in to github.com account work-user (keyring)', '  - Active account: true',
+      'Logged in to github.com account home-user (keyring)', '  - Active account: false',
+    ].join('\n') };
+    let switched = false;
+    const { run: base, calls } = fakeRunner(supersedeScript({ 'gh auth status': auth, 'gh pr view chore/sync-cb0903cf': viewNew() }));
+    const run = (cmd, args, opts) => {
+      if (cmd === 'gh' && args[0] === 'auth' && args[1] === 'switch') switched = args[3] === 'home-user';
+      if (cmd === 'gh' && args[0] === 'pr' && !switched) { calls.push({ cmd, args }); return { stdout: '', ...notVisible }; }
+      return base(cmd, args, opts);
+    };
+    const r = retry(run);
+    assert.equal(r.retried, true, JSON.stringify(r));
+    const switches = calls.filter((c) => c.args[0] === 'auth' && c.args[1] === 'switch').map((c) => c.args[3]);
+    assert.deepEqual(switches, ['home-user', 'work-user'], 'falls back, then restores the original active account');
   });
 });
