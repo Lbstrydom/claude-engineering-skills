@@ -298,8 +298,14 @@ export function formatUndeclaredBundleDeps(r, { Y = '', D = '', X = '' } = {}) {
     ...list(r.optionalOnly));
     parts.push(`${names(r.optionalOnly)} (optional-only)`);
   }
-  if (r.command) lines.push(`    ${D}declare them:${X} ${r.command}`);
+  if (r.command) lines.push(`    ${D}declare them as devDependencies:${X} ${r.command}`);
   else if (r.pmNote && (r.undeclared.length || r.optionalOnly.length)) lines.push(`    ${D}${r.pmNote}${X}`);
+  // The only importers live in the gitignored tooling tree, so a dead-code tool
+  // that scans package.json (knip, depcheck) reports the new declaration as
+  // unused (wine-cellar-app hit this; it keeps a "synced tooling" ignore group).
+  if (r.undeclared.length || r.optionalOnly.length) {
+    lines.push(`    ${D}and add them to your knip/depcheck ignore list (e.g. knip ignoreDependencies) — their only importers are in the gitignored synced tooling tree (its lib/${BUNDLE_DEPS_FILENAME} lists them)${X}`);
+  }
   if (r.uncommitted.length) {
     lines.push(`  ${Y}⚠ ${r.uncommitted.length} required bundle package(s) declared in the working tree but not in the committed package.json${X} `
       + `${D}— ${r.committedKnown ? 'commit package.json and the lockfile' : 'HEAD could not be read, so the declaration is not known to be committed'}${X}`,

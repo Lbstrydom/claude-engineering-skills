@@ -166,7 +166,10 @@ describe('formatUndeclaredBundleDeps', () => {
     assert.match(text, /package\.json does not declare 2 required bundle package/);
     assert.match(text, /^ {4}- picomatch \(imported by scripts\/\.claude-skills\/lib\/glob\.mjs\)$/m);
     assert.match(text, /^ {4}- zod \(imported by /m);
-    assert.match(text, /declare them: npm i -D picomatch zod$/m);
+    assert.match(text, /declare them as devDependencies: npm i -D picomatch zod$/m);
+    // Declaring a bundle-only package trips knip/depcheck "unused" in consumers
+    // that scan package.json, because its importers are gitignored.
+    assert.match(text, /add them to your knip\/depcheck ignore list/);
     assert.equal(out.summary, 'picomatch, zod');
   });
 });
