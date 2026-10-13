@@ -215,6 +215,21 @@ describe('parseFailingTests', () => {
     assert.deepEqual(parseFailingTests(text), ['Receipt › keeps both events']);
   });
 
+  it('a hook running two runners lists BOTH runners\' failures, each once', () => {
+    const text = [
+      '   × receipt > keeps both events 4ms',
+      ' FAIL  tests/unit/receipt.test.js > receipt > keeps both events',
+      '      Tests  1 failed | 30 passed (31)',
+      '✖ guard › rejects stale base (2.1ms)',
+      '✖ guard › rejects stale base (2.1ms)',
+      'ℹ fail 1',
+    ].join('\n');
+    assert.deepEqual(parseFailingTests(text), [
+      'tests/unit/receipt.test.js > receipt > keeps both events',
+      'guard › rejects stale base',
+    ]);
+  });
+
   it('a file-level FAIL alone (suite failed to load) still names the file', () => {
     assert.deepEqual(parseFailingTests(' FAIL  tests/broken.test.js [ tests/broken.test.js ]\nError: Cannot find module'),
       ['tests/broken.test.js [ tests/broken.test.js ]']);

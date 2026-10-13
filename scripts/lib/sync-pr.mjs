@@ -284,9 +284,10 @@ const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 
 /**
  * Failing test names out of a consumer hook's output, so a refused push
- * names WHAT failed rather than only "Tests 2 failed | 19805 passed". Tries
- * one reporter shape at a time and returns the first that matches, so one
- * failure is never listed twice in two spellings. PURE; [] when nothing parses.
+ * names WHAT failed rather than only "Tests 2 failed | 19805 passed". Each
+ * runner contributes its first matching shape (so one failure is never listed
+ * twice in two spellings), and the runners are unioned. PURE; [] when nothing
+ * parses.
  *   - vitest summary:   ` FAIL  tests/a.test.js > suite > name`
  *   - node:test / tap:  `not ok 3 - name`
  *   - jest:             `  ● Suite › name`
@@ -307,20 +308,28 @@ export function parseFailingTests(text, cap = 25) {
     }
     return found;
   };
-  // Test-level shapes, most specific first. Reporters overlap (vitest prints
-  // both `×` marks and FAIL summary lines for one failure; jest prints a
-  // file-level `FAIL path` header above its `●` test names), so only the first
-  // shape that matches is used.
-  const testLevel = [
-    /^\s*FAIL\s+(\S.*? > .+?)\s*$/,
-    /^\s*not ok \d+ - (.+?)\s*(?:#.*)?$/,
-    /^\s*● (?!Console\b)(.+?)\s*$/,
-    /^\s*[×✕✖✗]\s+(.+?)(?:\s+\(?\d+(?:\.\d+)?\s*m?s\)?)?\s*$/,
+  // Test-level shapes grouped by runner, most specific first within each.
+  // One runner spells one failure several ways (vitest: a `×` mark AND a FAIL
+  // summary line; jest: `✕` AND `●`), so a runner contributes only its first
+  // matching shape. A hook may run several runners, so the runners' lists are
+  // unioned — the first runner's failures never hide the second's.
+  const MARK_TAIL = '(?:\\s+\\(?\\d+(?:\\.\\d+)?\\s*m?s\\)?)?\\s*$';
+  const families = [
+    [/^\s*FAIL\s+(\S.*? > .+?)\s*$/, new RegExp(`^\\s*×\\s+(.+?)${MARK_TAIL}`)], // vitest
+    [/^\s*● (?!Console\b)(.+?)\s*$/, new RegExp(`^\\s*✕\\s+(.+?)${MARK_TAIL}`)], // jest
+    [/^\s*not ok \d+ - (.+?)\s*(?:#.*)?$/], // node:test tap
+    [new RegExp(`^\\s*[✖✗]\\s+(.+?)${MARK_TAIL}`)], // node:test spec
   ];
-  for (const re of testLevel) {
-    const found = collect(re);
-    if (found.length > 0) return found.slice(0, cap);
+  const found = [];
+  for (const shapes of families) {
+    for (const re of shapes) {
+      const names = collect(re);
+      if (names.length === 0) continue;
+      for (const n of names) if (!found.includes(n)) found.push(n);
+      break;
+    }
   }
+  if (found.length > 0) return found.slice(0, cap);
   // File-level only (a jest `FAIL path` with no `●` detail, or a suite that
   // failed to load): the file is still better than the summary line.
   return collect(/^\s*FAIL\s+(\S.*?)\s*$/).slice(0, cap);
