@@ -256,6 +256,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "56773c7c-9e05-4cef-b249-24c9480aa88d",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/fleet-prune-summary.test.mjs"
+      },
+      "recordedAt": "2026-10-13T12:17:14.621Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "575256de-a3ce-48f6-b77a-de061feccf37",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
