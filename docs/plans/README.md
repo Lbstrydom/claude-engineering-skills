@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**13 active · 249 terminal · 36 audit summaries · 1 parked · 5 reference docs**
+**14 active · 249 terminal · 37 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -324,7 +324,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 (they carry a free-text convergence sentence by convention).
 
 <details>
-<summary>Show all 36 audit summaries</summary>
+<summary>Show all 37 audit summaries</summary>
 
 | Plan | Notes |
 |---|---|
