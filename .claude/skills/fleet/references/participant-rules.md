@@ -35,7 +35,11 @@ You are one of several concurrent sessions coordinated by /fleet.
 7. Before your worktree is archived: node scripts/fleet.mjs archive-check, then node scripts/fleet.mjs release.
 8. Title this session <PREFIX>: <short task> with set_session_title (session_id "self") unless the launch
    prompt already gave it one; the coordinator names the prefix.
-9. In your final report give: branch, PR numbers, the files you changed, and any waitingOn.
+9. Never spawn a chip or a new session yourself. When you find something outside your task, fold it in ONLY if
+   your current PR's acceptance needs it; otherwise record it and carry on. Report each finding to the coordinator
+   (what, where, why, evidence) and list it under "Findings" in your final report. The coordinator decides:
+   fold, queue or decline.
+10. In your final report give: branch, PR numbers, the files you changed, any waitingOn, and your Findings.
 ```
 
 Why each rule exists: step 0 is what makes step 1 runnable in a worktree that
@@ -50,7 +54,10 @@ what `land` selects on; step 6 stops one session from
 authorising another's push; step 7 stops archiving from destroying gitignored
 deliverables; step 8 lets the user tell which repo a session belongs to when
 several repos share one sidebar (worktree names are app-generated, so the title
-is the only place for it).
+is the only place for it); step 9 exists because a chip a worker spawns sits on
+that worker's card, unseen by the user, and vanishes when the worker is archived.
+Measured 2026-10-13: one repo filed ~25 chips in a day, mostly worker-spawned,
+with up to 16 sessions live and many of them idle on one dependency chain.
 
 **A session that brings its own worktree and branch** (a desktop chip, or a repo
 with its own branch convention such as `team/wp12-slug`) does not need `start`:

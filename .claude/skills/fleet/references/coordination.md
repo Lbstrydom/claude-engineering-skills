@@ -307,6 +307,49 @@ doing the work. On top of the participant rules:
    (e.g. handing the machine to another repo's coordinator), stop handing out
    turns early and confirm each session reports not running (`isRunning: false`
    in the session list). A sent hold message is not compliance.
+10. **Queue findings, not sessions.** A chip is admission for ready work, not a
+    record of every finding. Workers never spawn chips (participant step 9);
+    they report findings, and the coordinator writes each one down durably at
+    once (outside chat, outside the worker's session). Each finding then gets
+    exactly one outcome, never a silent drop:
+    - **folded**: into a named running session, only when that session's
+      current PR's acceptance needs it;
+    - **queued**: grouped under a theme, waiting for a worker slot or a
+      dependency;
+    - **declined**: with the reason written down;
+    - **done**: with the PR that resolved it.
+
+    Show the open queue to the user at every check-in, grouped by theme.
+    Before archiving a session, check its final report's Findings are all
+    recorded.
+11. **Triage continuously, with an expedite lane.** New findings arrive at any
+    time; decide them on every coordination pass, not in batches. Order the
+    queue by impact, then by whether its dependencies are ready. Expedite an
+    item straight to a chip or a fold when it is a broken default branch, data
+    loss, a security exposure, or something blocking a running session.
+    Everything else waits in the queue, visible and costing nothing.
+12. **Work-in-progress limits, not volume caps.** Run at most **4 worker
+    sessions machine-wide and 2 per repo**; coordinators do not count. There
+    is no cap on how much work flows through. Blocked work holds no session:
+    it stays queued with what it waits on, and gets a chip only when that
+    lands. Measured 2026-10-12/13: about 4 full gates an hour fitted
+    machine-wide, so more workers only added waiting.
+13. **Theme sessions ship sequential PRs.** Batch related queued items into one
+    theme chip that ships them as consecutive PRs, so setup, planning and the
+    plan audit are paid once. A running theme absorbs a ready in-theme finding
+    as its next PR instead of a new chip. Default length is about 3 PRs or one
+    working day: extend it while the theme is still one coherent outcome, say
+    so, and close it early if it drifts. Release the claim between PRs.
+14. **One heavy job at a time on a shared machine.** When several repos' work
+    or CI share one machine, run at most one full gate or full test suite at a
+    time (a "gate slot"), and no installs or disk-heavy maintenance alongside
+    another repo's announced timing or CI window. Measured 2026-10-12/13: two
+    parallel gates plus maintenance pushed another repo's CI past its time cap
+    twice.
+15. **Mind the message budget.** A host may pause a coordinator's outbound
+    session messages after a burst (observed: 10 per user turn). Batch messages
+    to the same session, skip acknowledgements that change nothing, and keep
+    sends in reserve for time-critical ones (all clear, gate slot, hold).
 
 ### Optional: a title reminder hook (Claude Code only)
 
