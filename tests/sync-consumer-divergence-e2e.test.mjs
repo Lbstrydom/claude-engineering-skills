@@ -118,6 +118,25 @@ describe('sync into a fresh consumer', () => {
     assert.ok(r.created.includes(SUBJECT));
   });
 
+  it('names every REQUIRED bundle package the consumer package.json does not declare — and still exits 0', () => {
+    // This fixture's deps are SEEDED into node_modules and declared nowhere:
+    // storyline's shape (picomatch hand-installed, never declared, pruned by the
+    // next `pnpm install`). Both existing probes — ensureAuditDeps (presence)
+    // and check-setup (resolution) — are green on it, so only the declaration
+    // check can see it. A warning, not a refusal: `first.code` is 0 above.
+    const out = stripAnsi(first.out);
+    const required = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'bundle-deps.json'), 'utf-8'))
+      .packages.filter((p) => p.required).map((p) => p.name);
+    assert.ok(required.includes('picomatch'), 'positive control: picomatch should be a required bundle package');
+    assert.match(out, new RegExp(`package\\.json does not declare ${required.length} required bundle package`), out.slice(-3000));
+    for (const name of required) {
+      assert.match(out, new RegExp(`^\\s+- ${name.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')} \\(imported by `, 'm'), `${name} not named`);
+    }
+    // The final summary repeats it per consumer: the per-repo block scrolls past
+    // inside a pre-push hook log, the summary is what gets read.
+    assert.match(out, /undeclared required bundle packages[^\n]*consumer/i);
+  });
+
   it("the managed .gitignore block carries .audit-loop/cache/", () => {
     // Our own tooling writes it in every consumer, and it was missing from the
     // block — which is how a consumer that added the line itself, inside our

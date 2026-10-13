@@ -39,6 +39,7 @@ import { parseGitignoreState } from './sync-gitignore.mjs';
 import { LAYOUT_CONSTANTS } from './sync-path-map.mjs';
 import { SyncManifestSchema, hashFile } from './sync-manifest.mjs';
 import { loadOverrides, matchOverride, OVERRIDES_PATH } from './sync-overrides.mjs';
+import { RECEIPT_PATH, verifyReceiptStructure } from './sync-receipt.mjs';
 import { enumerateNpmRunRefs } from './npm-script-enumerator.mjs';
 import { listSurfaceNames, compareSkillSurfaces } from './skill-surface-identity.mjs';
 import { lintSkillTree } from './skill-frontmatter-layout.mjs';
@@ -372,6 +373,7 @@ function gate2B(consumerRoot, manifest) {
   const missing = [];
   const mismatched = [];
   const held = [];
+  let receipt = null;
   for (const [destRel, expected] of Object.entries(manifest.files || {})) {
     // The manifest cannot record its own final hash: writing the self-entry
     // mutates the file, which changes the hash (chicken-and-egg). Skip it —
@@ -385,27 +387,33 @@ function gate2B(consumerRoot, manifest) {
     // is not on disk, so an entry that is both claimed and missing is a real
     // fault whatever the overrides say.
     if (!fs.existsSync(abs)) { missing.push(destRel); continue; }
-    let actual;
-    try { actual = hashFile(abs); } catch (err) { missing.push(destRel); continue; }
+    let actual, text;   // the receipt's text is read inside the same error boundary as its hash
+    try { actual = hashFile(abs); if (destRel === RECEIPT_PATH) text = fs.readFileSync(abs, 'utf-8'); } catch (err) { missing.push(destRel); continue; }
     if (actual === expected) continue;
+    // The receipt is an append-only ledger MERGED by design (upstream fc843d6b), so
+    // judge its structure, not its bytes; a failure still meets the override decision
+    // below. No manifest sha → entry 0 is unattestable and the hash verdict stands.
+    const v = destRel === RECEIPT_PATH && manifest.commitSha
+      ? verifyReceiptStructure(text, manifest.commitSha) : null;
+    if (v?.ok) { receipt = { verified: 'structural', entries: v.entries, entry0: manifest.commitSha.slice(0, 8) }; continue; }
     if (matchOverride(destRel, overrides)) {
       held.push({ path: destRel, reason: matchOverride(destRel, overrides).reason });
       continue;
     }
-    mismatched.push({ path: destRel, expected, actual });
+    mismatched.push(v ? { path: destRel, expected, actual, problems: v.problems } : { path: destRel, expected, actual });
   }
   if (missing.length || mismatched.length) {
     return {
       gate: '2B',
       pass: false,
       error: `${missing.length} missing + ${mismatched.length} hash-mismatched manifest entries.`,
-      details: { missing: missing.slice(0, 50), mismatched: mismatched.slice(0, 50), held },
+      details: { missing: missing.slice(0, 50), mismatched: mismatched.slice(0, 50), held, ...(receipt && { receipt }) },
     };
   }
   // Passing, and still saying what it excused — an operator must be able to see
   // that N paths were skipped on the strength of a declaration they can review.
-  return held.length
-    ? { gate: '2B', pass: true, details: { held } }
+  return held.length || receipt
+    ? { gate: '2B', pass: true, details: { held, ...(receipt && { receipt }) } }
     : { gate: '2B', pass: true };
 }
 
@@ -973,6 +981,7 @@ function formatText(results) {
       for (const h of r.details?.held ?? []) {
         lines.push(`     held  ${h.path} ${h.reason ? `(${String(h.reason).slice(0, 120)})` : ''}`);
       }
+      if (r.details?.receipt) lines.push(`     receipt  ${RECEIPT_PATH} differs from the bytes this sync wrote (a merged ledger); verified structurally — ${r.details.receipt.entries} entries, newest = this sync (${r.details.receipt.entry0})`);
     } else {
       allPass = false;
       lines.push(`  ✗ gate ${r.gate}: ${r.error || '(no message)'}`);
@@ -1028,5 +1037,5 @@ if (isCli) {
 export const _internals = {
   CLI_SMOKE_SET, LIB_IMPORT_SET, CMD_SCAN_PATHS, COMMAND_REGEX,
   parseArgs, gate1, gate2A, gate2B, gate2C, gate3, gate4, gate5, gate6, gate7, gate8, gate9,
-  ownedSkillNamesFromManifest, runGates,
+  ownedSkillNamesFromManifest, runGates, formatText,
 };

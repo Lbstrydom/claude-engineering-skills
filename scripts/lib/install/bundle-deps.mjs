@@ -18,8 +18,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { execFileSync } from 'node:child_process';
 
 import { detectPackageManager, displayAddDev } from '../package-manager.mjs';
+import { sanitizeGitEnv } from '../git-env-sanitize.mjs';
 
 /** Bundle-relative location. Lives beside the other `lib/` assets in both layouts. */
 export const BUNDLE_DEPS_FILENAME = 'bundle-deps.json';
@@ -132,4 +134,197 @@ export function checkBundleDependencies(report, repoRoot, scriptsDir, io = {}) {
         ? `${spec.length - specMissing.length}/${spec.length} present — ${specMissing.join(', ')} needed only to RUN the specs /ux-lock generates (${displayAddDev(pm, specMissing, repoRoot)})`
         : `${spec.length}/${spec.length} present`);
   }
+}
+
+// ── Declaration, not presence ───────────────────────────────────────────────
+//
+// THE GAP THIS CLOSES (2026-10-13). `picomatch` became a REQUIRED bundle
+// package (importer lib/glob.mjs) and nothing told storyline at sync time; two
+// of its chips crashed on `Cannot find package 'picomatch'` and the package was
+// hand-installed. Every existing probe stayed green, for one shared reason:
+// each asks whether the package is PRESENT (`ensureAuditDeps`: a
+// `node_modules/<pkg>/package.json` path; `checkBundleDependencies` above:
+// `require.resolve`). A transitively hoisted or hand-installed copy satisfies
+// both, so nothing is installed and nothing is declared — until a dependency
+// upgrade drops the transitive copy, or pnpm prunes the undeclared one on its
+// next install. Measured that day: storyline, wine-cellar-app and ai-organiser
+// all import picomatch without declaring it.
+//
+// The durable question is the consumer's own manifest: does `package.json`
+// declare it, and is that declaration COMMITTED? Reported, never installed —
+// the remedy edits a consumer-owned manifest and lockfile with the consumer's
+// own package manager.
+
+/** Sections that make a package part of every install of this repo. */
+const DURABLE_SECTIONS = ['dependencies', 'devDependencies'];
+
+/**
+ * EFFECTIVE declaration, not section membership: npm documents that an
+ * `optionalDependencies` entry OVERRIDES a same-name `dependencies` entry, so a
+ * package listed in both is still optional and never durable (code-audit H9).
+ */
+const sectionsOf = (pkg, name) => {
+  const optional = Object.hasOwn(pkg?.optionalDependencies ?? {}, name);
+  return { optional, durable: !optional && DURABLE_SECTIONS.some((k) => Object.hasOwn(pkg?.[k] ?? {}, name)) };
+};
+
+/**
+ * The consumer's COMMITTED `package.json`, read from git.
+ *
+ * `HEAD:./package.json` — the `./` makes git resolve the path relative to
+ * `cwd`, so a consumer that is a sub-package of a larger repository reads ITS
+ * manifest, not the top-level one. `sanitizeGitEnv` strips `GIT_DIR` /
+ * `GIT_WORK_TREE`: the sync runs inside the source repo's pre-push hook, where
+ * git exports both and they outrank `cwd` — read naively, this would answer
+ * with the SOURCE repo's manifest. Any failure is `known:false`, never a
+ * fallback to some other repository's data.
+ *
+ * @param {string} repoRoot
+ * @returns {{known: true, pkg: object} | {known: false}}
+ */
+export function readCommittedPackageJson(repoRoot) {
+  try {
+    const text = execFileSync('git', ['show', 'HEAD:./package.json'], {
+      cwd: repoRoot, env: sanitizeGitEnv(repoRoot), encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, timeout: 15_000,
+    });
+    return { known: true, pkg: JSON.parse(text) };
+  } catch {
+    return { known: false };
+  }
+}
+
+/**
+ * Which REQUIRED bundle packages does the consumer fail to declare durably?
+ *
+ * The WORKING-TREE manifest decides the obligation (it is what the next install
+ * reads); HEAD is only evidence that the declaration will reach another
+ * checkout. Per required package, first matching row wins:
+ *
+ *   | working tree  | HEAD                                     | bucket       |
+ *   |---------------|------------------------------------------|--------------|
+ *   | deps/devDeps  | deps/devDeps                             | clean        |
+ *   | deps/devDeps  | absent / optional-only / unreadable      | uncommitted  |
+ *   | optional      | any                                      | optionalOnly |
+ *   | absent        | any (incl. declared — a pending removal) | undeclared   |
+ *
+ * "optional" means listed in `optionalDependencies`, WHETHER OR NOT it is also
+ * in deps/devDeps — the optional entry wins (see `sectionsOf`). Optional
+ * tolerates omission and install failure, which is what `required: true` rules
+ * out, so it is never clean. `peerDependencies` does not
+ * count at all: a peer entry is a requirement on a host, not an install here.
+ *
+ * Unmeasurable is SAID (`measured:false` + reason), never a zero.
+ *
+ * @param {string} repoRoot — the consumer
+ * @param {string} scriptsDir — the bundle whose bundle-deps.json is the obligation
+ * @param {{readCommitted?: (repoRoot: string) => ({known: true, pkg: object}|{known: false})}} [io]
+ */
+export function assessDeclaredBundleDeps(repoRoot, scriptsDir, { readCommitted = readCommittedPackageJson } = {}) {
+  const declared = readBundleDeps(scriptsDir);
+  if (!declared) return { measured: false, reason: `${BUNDLE_DEPS_RELATIVE_PATH} is missing or unreadable in the bundle` };
+  const pkgPath = path.join(repoRoot, 'package.json');
+  if (!fs.existsSync(pkgPath)) return { measured: false, reason: 'no package.json' };
+  let pkg;
+  try { pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8')); } catch (err) {
+    return { measured: false, reason: `package.json does not parse (${err.message})` };
+  }
+  if (!pkg || typeof pkg !== 'object' || Array.isArray(pkg)) return { measured: false, reason: 'package.json is not a JSON object' };
+
+  const committed = readCommitted(repoRoot);
+  const required = declared.packages.filter((p) => p.required);
+  const undeclared = [];
+  const optionalOnly = [];
+  const uncommitted = [];
+  for (const p of required) {
+    const item = { name: p.name, importer: p.importers?.[0] ?? null };
+    const wt = sectionsOf(pkg, p.name);
+    if (wt.durable) {
+      if (!committed.known || !sectionsOf(committed.pkg, p.name).durable) uncommitted.push(item);
+    } else if (wt.optional) optionalOnly.push(item);
+    else undeclared.push(item);
+  }
+
+  // The remedy command comes from the package-manager oracle, never a guess:
+  // an ambiguous or mis-declared manager gets no command at all.
+  const pm = detectPackageManager(repoRoot);
+  const toAdd = [...undeclared, ...optionalOnly].map((p) => p.name);
+  const unsure = pm.ambiguous || pm.invalidDeclaration;
+  return {
+    measured: true,
+    required: required.length,
+    undeclared, optionalOnly, uncommitted,
+    committedKnown: committed.known,
+    command: toAdd.length && !unsure ? displayAddDev(pm.name, toAdd, repoRoot) : null,
+    pmNote: !unsure ? null
+      : pm.ambiguous
+        ? `package manager is ambiguous (${pm.candidates.join(', ')}) — declare them with the one this repo uses`
+        : 'package.json "packageManager" is unrecognised — fix it, then declare them with that manager',
+  };
+}
+
+/**
+ * Render an assessment as sync-output lines plus a one-line summary for the
+ * end-of-run block. `summary` is null ONLY for a measured, fully clean result.
+ *
+ * @param {ReturnType<typeof assessDeclaredBundleDeps>} r
+ * @param {{Y?: string, D?: string, X?: string}} [colors]
+ * @returns {{lines: string[], summary: string|null}}
+ */
+export function formatUndeclaredBundleDeps(r, { Y = '', D = '', X = '' } = {}) {
+  if (!r.measured) {
+    return {
+      lines: [`  ${Y}⚠ could not check which required bundle packages package.json declares${X} ${D}(${r.reason})${X}`],
+      summary: `not checked — ${r.reason}`,
+    };
+  }
+  const MAX = 20;
+  const list = (items) => [
+    ...items.slice(0, MAX).map((p) => `    - ${p.name} ${D}(imported by ${p.importer ?? 'the bundle'})${X}`),
+    ...(items.length > MAX ? [`    ${D}… +${items.length - MAX} more${X}`] : []),
+  ];
+  const names = (items) => items.map((p) => p.name).join(', ');
+  const lines = [];
+  const parts = [];
+  if (r.undeclared.length) {
+    lines.push(`  ${Y}⚠ package.json does not declare ${r.undeclared.length} required bundle package(s)${X} `
+      + `${D}— any copy present is hoisted or hand-installed, and the next install may drop it${X}`,
+    ...list(r.undeclared));
+    parts.push(names(r.undeclared));
+  }
+  if (r.optionalOnly.length) {
+    lines.push(`  ${Y}⚠ ${r.optionalOnly.length} required bundle package(s) declared in optionalDependencies${X} `
+      + `${D}— optional overrides any same-name dependencies entry and its install may be skipped; move them to devDependencies only${X}`,
+    ...list(r.optionalOnly));
+    parts.push(`${names(r.optionalOnly)} (optional-only)`);
+  }
+  if (r.command) lines.push(`    ${D}declare them as devDependencies:${X} ${r.command}`);
+  else if (r.pmNote && (r.undeclared.length || r.optionalOnly.length)) lines.push(`    ${D}${r.pmNote}${X}`);
+  // The only importers live in the gitignored tooling tree, so a dead-code tool
+  // that scans package.json (knip, depcheck) reports the new declaration as
+  // unused (wine-cellar-app hit this; it keeps a "synced tooling" ignore group).
+  if (r.undeclared.length || r.optionalOnly.length) {
+    lines.push(`    ${D}and add them to your knip/depcheck ignore list (e.g. knip ignoreDependencies) — their only importers are in the gitignored synced tooling tree (its lib/${BUNDLE_DEPS_FILENAME} lists them)${X}`);
+  }
+  if (r.uncommitted.length) {
+    lines.push(`  ${Y}⚠ ${r.uncommitted.length} required bundle package(s) declared in the working tree but not in the committed package.json${X} `
+      + `${D}— ${r.committedKnown ? 'commit package.json and the lockfile' : 'HEAD could not be read, so the declaration is not known to be committed'}${X}`,
+    ...list(r.uncommitted));
+    parts.push(`${names(r.uncommitted)} (uncommitted)`);
+  }
+  if (!parts.length) {
+    return { lines: [`  ${D}✓ package.json declares all ${r.required} required bundle packages${X}`], summary: null };
+  }
+  return { lines, summary: parts.join('; ') };
+}
+
+/**
+ * The one entry point the sync calls: assess, then format.
+ *
+ * @param {string} repoRoot
+ * @param {string} scriptsDir
+ * @param {{Y?: string, D?: string, X?: string}} [colors]
+ */
+export function reportDeclaredBundleDeps(repoRoot, scriptsDir, colors) {
+  return formatUndeclaredBundleDeps(assessDeclaredBundleDeps(repoRoot, scriptsDir), colors);
 }

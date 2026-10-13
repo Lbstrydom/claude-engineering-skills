@@ -381,11 +381,13 @@ describe('main() wiring — a decideShadowFailure result actually drives repoErr
     const block = /const shadowFailure = decideShadowFailure\(inspection, repo\.name\);\s*\n\s*if \(shadowFailure\) \{([\s\S]*?)\n\s*\}/.exec(src);
     assert.ok(block, 'expected main() to call decideShadowFailure(inspection, repo.name) and branch on its result');
     assert.match(block[1], /repoErrors\+\+/, 'a genuine shadow must increment repoErrors');
-    assert.match(block[1], /totalErrors\+\+/, 'a genuine shadow must increment totalErrors — the signal the final process.exit(totalErrors > 0 ? 1 : 0) reads');
+    assert.match(block[1], /totalErrors\+\+/, 'a genuine shadow must increment totalErrors — the signal the final finishAndExit(totalErrors > 0 ? 1 : 0) reads');
   });
 
   it('the final exit code is driven by totalErrors (so a shadow failure is never silently swallowed at the end)', () => {
     const src = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs'), 'utf8');
-    assert.match(src, /process\.exit\(totalErrors > 0 \? 1 : 0\)/);
+    // Drained since the undeclared-deps summary began printing just before it: a
+    // bare process.exit can truncate a piped stdout (AGENTS.md, finishAndExit).
+    assert.match(src, /await finishAndExit\(totalErrors > 0 \? 1 : 0\)/);
   });
 });

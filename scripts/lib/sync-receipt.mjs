@@ -214,6 +214,84 @@ export function readSyncReceipt(raw) {
   return { status: 'unreadable', entries: [], dropped: 0, version };
 }
 
+/**
+ * PURE. Is this receipt a well-formed ledger whose newest entry is the sync
+ * that produced this checkout's tooling?
+ *
+ * The consumer-side verifier's question (gate 2B, upstream fc843d6b). The file
+ * is append-only and merged BY DESIGN — two concurrent sync PRs both prepend, and
+ * the right conflict resolution is a union of both sides' `recentSyncs` — so its
+ * bytes cannot be pinned to what any one sync wrote. Its STRUCTURE can:
+ *
+ *   1. a v2 object (a FUTURE version is reported as unjudgeable, not corrupt);
+ *   2. `recentSyncs` non-empty and within `limit`;
+ *   3. `olderSyncsDropped` a non-negative integer;
+ *   4. every entry an entry, with a parseable `syncedAt` and a string-or-null sha;
+ *   5. entry 0 is `expectedCommitSha` — this checkout's sync is the newest record;
+ *   6. newest-first;
+ *   7. no entry twice (a merge that kept the shared ancestry from both sides).
+ *
+ * Deliberately STRICT, unlike `readSyncReceipt`: that reader is lenient because a
+ * writer must never clobber history it half-understands; a verifier that
+ * forgave a malformed entry would pass the very file it exists to reject. Every
+ * violated rule is listed, so one run says everything that is wrong.
+ *
+ * "Subset of both histories" is not checked — it needs git history, and the
+ * rules above are what a correct merge guarantees and an incorrect one breaks.
+ *
+ * @param {unknown} raw — the parsed file, or its text
+ * @param {string} expectedCommitSha — the manifest's `commitSha` for this checkout
+ * @param {{limit?: number}} [opts]
+ * @returns {{ok: boolean, problems: string[], entries: number}}
+ */
+export function verifyReceiptStructure(raw, expectedCommitSha, { limit = RECEIPT_HISTORY_LIMIT } = {}) {
+  if (typeof raw === 'string') {
+    // The file's TEXT is accepted too, so a parse failure is one more finding
+    // rather than a throw the caller has to remember to catch.
+    try { raw = JSON.parse(raw); } catch (err) { return { ok: false, problems: [`receipt is not valid JSON: ${err.message}`], entries: 0 }; }
+  }
+  const problems = [];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, problems: ['receipt is not a JSON object'], entries: 0 };
+  }
+  if (typeof raw.version === 'number' && raw.version > RECEIPT_VERSION) {
+    return { ok: false, problems: [`receipt is version ${raw.version}, newer than this bundle's v${RECEIPT_VERSION} — it cannot be judged here; re-sync from a current bundle`], entries: 0 };
+  }
+  if (raw.version !== RECEIPT_VERSION) problems.push(`version is ${JSON.stringify(raw.version)}, expected ${RECEIPT_VERSION}`);
+  if (!Number.isInteger(raw.olderSyncsDropped) || raw.olderSyncsDropped < 0) {
+    problems.push(`olderSyncsDropped is ${JSON.stringify(raw.olderSyncsDropped)}, expected a non-negative integer`);
+  }
+  const list = Array.isArray(raw.recentSyncs) ? raw.recentSyncs : null;
+  if (!list || list.length === 0) {
+    problems.push('recentSyncs is missing or empty');
+    return { ok: false, problems, entries: 0 };
+  }
+  if (list.length > limit) problems.push(`recentSyncs holds ${list.length} entries, over the history limit of ${limit}`);
+
+  const seen = new Set();
+  let prevTime = Infinity;
+  list.forEach((e, i) => {
+    const sha = e?.source?.commitSha;
+    const time = looksLikeEntry(e) ? Date.parse(e.syncedAt) : NaN;
+    if (Number.isNaN(time) || !(typeof sha === 'string' || sha === null)) {
+      problems.push(`recentSyncs[${i}] is not a well-formed entry (needs a parseable syncedAt and a source.commitSha)`);
+      return;
+    }
+    if (time > prevTime) problems.push(`recentSyncs[${i}] (${e.syncedAt}) is newer than the entry before it — not newest-first`);
+    prevTime = time;
+    const key = `${e.syncedAt}\0${sha}`;
+    if (seen.has(key)) problems.push(`recentSyncs[${i}] is a duplicate of an earlier entry (${e.syncedAt}, ${sha})`);
+    seen.add(key);
+  });
+
+  const head = list[0]?.source?.commitSha ?? null;
+  if (head !== expectedCommitSha) {
+    problems.push(`recentSyncs[0] is the sync of ${head}, but this checkout's tooling came from ${expectedCommitSha} `
+      + '— the newest recorded sync is not the one on disk; re-sync, or the receipt was merged from a sync this checkout never received');
+  }
+  return { ok: problems.length === 0, problems, entries: list.length };
+}
+
 /** The newest recorded sync, or null — i.e. "what did the last sync do". */
 export function latestReceiptEntry(readResult) {
   return readResult?.entries?.[0] ?? null;
