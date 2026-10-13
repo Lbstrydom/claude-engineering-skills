@@ -1,5 +1,11 @@
 # Project Status Log
 
+<!-- ship-verification-7b6b1736-20261013T184547Z.md -->
+### Consumer Verification (previous ship)
+- **Commit**: 7b6b1736b8ef66b32f2d890fedf4c10bb6ac151c on `claude/gate-cost-tier` (PR #241, open; NOT merged), based on main 653ab7ce; feature commit af435385, ship commit e0562731 (AI-Gate converged, run a982278b), fix 7b6b1736.
+- **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of exactly this sha: 20,016 tests, 19,970 pass, 0 fail, 46 skipped; verdict line `test-tier/v1 full 7b6b1736b8ef66b32f2d890fedf4c10bb6ac151c skipped=0 base=653ab7ce4bed39a2f5aec505e6ca314ae56111ae reason=default`. The first push (e0562731) was refused by the same gate on 2 tests this branch broke (extension-list-drift, skill-command-portability), both fixed in 7b6b1736. No separate consumer-side retrieval was run.
+- **Result**: pushed commit verified by the gate; the synced consumer bundle is unverified (blocked: not merged). After #241 merges and main re-syncs: run `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in each consumer's MAIN checkout and confirm `lib/module-graph.mjs` still exports `parseImports` with the new optional `reportComputed` and that no `test-tier` module is imported by a synced file.
+
 <!-- ship-verification-af095029-20261013T121639Z.md -->
 ### Consumer Verification (previous ship)
 - **Commit**: af09502908860668ddbd773b0ca9bc53945a47e9 on `fix/fleet-prune-surface-count` (PR #235, open, NOT merged), rebased onto main 9ba0c687. Commits: feature b8fad08b, plans index 4c72e756, status.json fix 56ba995f, index regen 64f74267, ship commit af095029.
@@ -195,6 +201,23 @@
 - **Commit**: 63688915d17b2c0122dc9491906b79e2f3a90b76 on `claude/sync-pr-supersede` (PR #238, open; NOT merged), merged up to main 03d81e74; code commits 6c3841ae and 9921c5eb, the plan audit trail 700a6b1a, and the status.md ship commit (AI-Gate converged, run a8bd9bd3).
 - **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of exactly this sha on one plain push: 19,771 tests, 19,725 pass, 0 fail, 46 skipped, "checks passed"; status-log-integrity conserved against 03d81e74. No separate consumer-side retrieval was run.
 - **Result**: pushed commit verified by the gate; the consumer side is unverified (blocked: not merged). `scripts/lib/sync-pr.mjs` is source-side: sync-pr runs from this repo against consumers, so nothing changes in a consumer bundle. After #238 merges, the next `npm run sync:pr` that finds an older open `chore/sync-*` PR should close it with a "Superseded by" comment and keep its branch. Check that on the first consumer where two sync PRs overlap (wine-cellar-app runs with --no-merge).
+
+## 2026-10-13 — `fleet lease`: one machine-wide record of the heavy slot, announced windows and peak hours
+
+**Why.** Coordination rule 14 (one heavy job at a time on a shared machine) was kept by asking the coordinator "is the slot free", and on 2026-10-13 those cross-repo relays hit the host's 10-messages-per-turn cap (rule 15). The slot, the quiet and CI windows and the peak-cost hours now live in one file every repo's fleet reads.
+
+- **Change** (`scripts/lib/fleet/lease.mjs`, `lease-cmd.mjs`, `argv.mjs`, `scripts/fleet.mjs`, `coordination.mjs`, `telemetry.mjs`):
+  - One file, `~/.claude-fleet/lease.json` (or `FLEET_MACHINE_DIR`, which must be absolute), written under `lease.lock`. `fleet lease acquire|attach|release|status|announce|peak`; `fleet next` adds a lease line only when something is worth saying (slot held or expired, a window within 4 hours, peak now) and says `unmeasured (reason)` when the file cannot be read, never "free".
+  - **Identity is the pair (repo key, session name)**, so two repos that both use `main` are different holders. `acquire` prints a token; a supplied token must match (a stale fence), and a bare re-acquire rotates it.
+  - **An expired lease is not proof its job stopped.** A takeover needs a recorded pid that is dead in the same process scope (platform:hostname); no pid, or another scope, is refused as unverifiable, and the only way past it is `release --force --reason`, which is recorded and never allowed on a live lease. The CLI's own pid is never recorded; `attach --pid` records the job's after it starts.
+  - Windows (`announce`) refuse another repo's overlapping `acquire`; peak hours are informational. Limits are inclusive maxima and refuse rather than trim (50 windows, 10 per repo, 14 days ahead, 24 hours long, 80-character labels); the 20-entry event ring is the one exception.
+  - A newer `schemaVersion` is read-only for an older checkout; unknown keys within a version are kept; an unreadable file, a directory that is a file and a symbolic link are errors (`status` exits 1), never an empty lease.
+- **Docs**: participant step 4b (take and give back the slot), step 9 (`fleet propose` for findings; the wording Part 2 deferred), coordination rules 14 and 15, the `/fleet` verb table, `docs/runbooks/gate-cost.md` section 0. The `/fleet lease` verb row is dispositioned in `skills/fleet/gate-contract.json`.
+- **Tests**: 77 new cases in `tests/fleet-lease.test.mjs` (59, the policy, hermetic), `tests/fleet-lease-cli.test.mjs` (7) and `tests/fleet-lease-state-cli.test.mjs` (11), the last two driving the real binary across two repos sharing one machine directory; plus one in `relocation-guard`. `scrubbedEnv` now points `FLEET_MACHINE_DIR` at a throwaway directory and `runFleet` refuses an env without it, so no fleet CLI test can read the machine's real slot. Each policy rule was seen to fail when broken (identity by name, no scope check, ignoring a live pid, boundary off by one, a rebuilt renewal, unclipped events, unchecked window ids).
+- **Audit**: `/audit-plan` GPT 3 rounds (6, 2, 0 findings; 8 of 8 accepted) and Gemini 2 rounds (the last fix was not re-reviewed: cap of two). `/audit-code` R1 H6 M10 (15 accepted, 1 dismissed as a coverage notice), R2 PASS; Gemini 2 rounds, both `CONCERNS`: a long-branch-name crash and a `--pid 0` crash were challenged with CLI tests that fail if the guard is removed, and an empty repo label at a filesystem root was fixed.
+- **Consumer impact**: `scripts/fleet.mjs` and `scripts/lib/fleet/**` are in the sync closure, so consumers get the verb on the next sync after merge. A consumer that never calls it sees only the new `fleet next` line when a lease exists. Two OS users, or WSL beside Windows, must set `FLEET_MACHINE_DIR` to one shared path.
+- **Open**: the plan's Status and Implementation Log were not updated by this ship (`/ship` was invoked without the plan path). Whether a session may take a free slot without asking the coordinator stays the coordinator's rule (the lease is cooperative).
+- Backlog 2026-10-13T20:05Z: Q1 252c/62p (+420 aged) · Q2 194c/103p (54 perm) · Q3 35 · debt 366 cloud/2 local (0 spilled) · upstream 1
 
 ## 2026-10-13 — pre-push test tier, stages 0-1: a shadow verdict on every push, an opt-in branch tier, a full verdict for merge candidates
 
