@@ -132,17 +132,23 @@ export function executeGarbageCollection({
  * @param {string} rel
  * @param {{run?: (file: string, args: string[], opts: object) => string}} [opts]
  * @returns {{count: number} | {count: null, reason: string}}
- *   `{count: 0}` on git grep's "no match" (exit 1); `count: null` when the
+ *   `{count: 0}` on git grep's "no match" (exit 1, stderr empty); `count: null` when the
  *   question could not be answered — never rendered as "no citations".
  */
 export function countCitations(repoRoot, rel, { run = execFileSync } = {}) {
   try {
-    const out = run('git', ['grep', '-l', '-F', '-e', rel], {
+    // `-z`: NUL-terminated, UNQUOTED names. The default output quotes a path
+    // with non-ASCII bytes (core.quotePath), so `docs/café.md` would never
+    // compare equal to itself and would count as its own citation.
+    const out = run('git', ['grep', '-l', '-z', '-F', '-e', rel], {
       cwd: repoRoot, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
     });
-    return { count: String(out).split('\n').filter((l) => l.trim() && l.trim() !== rel).length };
+    return { count: String(out).split('\0').filter((name) => name !== '' && name !== rel).length };
   } catch (err) {
-    if (err?.status === 1) return { count: 0 };
+    // Exit 1 is "no match" only when git said nothing else: an unreadable file
+    // is reported on stderr, and a search that skipped one cannot claim zero.
+    if (err?.status === 1 && !String(err.stderr ?? '').trim()) return { count: 0 };
+    if (err?.status === 1) return { count: null, reason: `incomplete search: ${String(err.stderr).trim().split('\n')[0].slice(0, 120)}` };
     const why = err?.status != null ? `git exited ${err.status}` : (err?.code ?? err?.signal ?? 'spawn failed');
     return { count: null, reason: String(why) };
   }

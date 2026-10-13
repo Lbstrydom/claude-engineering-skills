@@ -61,7 +61,7 @@ graph LR
    - `countCitations` returns `{count}` on success: the matching files, minus the orphan itself. It returns `{count: 0}` when git exits **1**, which is git grep's documented "no match". Any other failure (spawn error, exit ≥ 2, signal) returns `{count: null, reason}`. The caller prints `citation count unavailable (<reason>)` for `null`, never "no inbound citations". The count is advisory only and never changes deletion eligibility: a tracked orphan is never deleted either way.
    - `unifiedDiff` keeps today's contract. Exit 0 returns stdout. Exit **1** (`--no-index` "files differ", the normal case) returns `err.stdout`. Anything else returns `(diff unavailable: …)`.
    - Neither lets a path be read as an option. `unifiedDiff` passes `--` before its two paths. `countCitations` passes the orphan path as the pattern via `-e <rel>` (`git grep -l -F -e <rel>`), because after `--` git grep reads pathspecs, not a pattern.
-7. **M2: `syncMigrations(dir = <default>)` treats only ENOENT as empty and rethrows anything else.** Because `REPOS` is computed at import, an unreadable migrations dir becomes a fatal, non-zero sync naming the errno, never a silent empty bundle (AGENTS.md: "an unasked question must never render as an empty result"). The `dir` parameter plus an `_internals` export is the test seam.
+7. **M2: `syncMigrations()` treats only ENOENT as empty and throws on anything else.** It uses the same error and message as its existing mirror in `scripts/lib/sync-inventory.mjs`, which already did this. Because `REPOS` is computed at import, an unreadable migrations dir becomes a fatal, non-zero sync naming the errno, never a silent empty bundle (AGENTS.md: "an unasked question must never render as an empty result"). The test seam is the existing `fs.readdirSync` patch in `tests/sync-inventory-parity.test.mjs`, now applied to both copies, plus an `_internals` export.
 8. **H5′: `matchOverride` never matches an unoverridable path.** A shared `isUnoverridable(p)` is used by `validateOverrides` (unchanged behaviour) and by `matchOverride`. The governance rule then holds for what a glob *matches*, not just what it *says*. Writes and GC now share one override decision: the tooling tree is never overridable.
 
 ## 6. Sustainability Notes
@@ -79,7 +79,7 @@ graph LR
   - `failedWrites` set.
   - Managed-block error accounting.
   - `execFileSync` in `unifiedDiff`.
-  - `syncMigrations` ENOENT-only, plus a `dir` param.
+  - `syncMigrations` ENOENT-only (aligned with the `sync-inventory.mjs` mirror).
   - Entry guard → `isInvokedAsScript`.
   - `_internals` gains `syncMigrations`.
   - **Net line count must fall.** Re-baseline `.file-size-baseline.json` downward (the ratchet fails on an unrecorded shrink).
@@ -87,7 +87,7 @@ graph LR
 - `tests/sync-gc.test.mjs` (create): unit tests for plan/execute: junction or symlink containment refusal (a real link on both OSes); injected unlink failure; ENOENT → absent; unsafe keys; orphan advisory; `countCitations` on a path containing `%OS%`/`$HOME`.
 - `tests/cli-entry.test.mjs` (create): direct path → true; through a junction or symlink → true; a different file → false; missing argv → false; nonexistent argv → lexical fallback.
 - `tests/sync-overrides.test.mjs` (modify): a `**/*.mjs` glob does not match `scripts/.claude-skills/x.mjs` but still matches `tools/x.mjs`.
-- `tests/sync-migrations-listing.test.mjs` (create): `_internals.syncMigrations(<a file>)` throws ENOTDIR; a missing dir → `[]`; the real dir → only `.sql`, sorted.
+- `tests/sync-inventory-parity.test.mjs` (modify): its existing "syncMigrations distinguishes no-migrations from could-not-look" cases now run against BOTH copies. Implementation found that `lib/sync-inventory.mjs`'s mirror already had the ENOENT-only contract, so `sync-to-repos.mjs` was aligned to it; the planned new `tests/sync-migrations-listing.test.mjs` and its `dir` parameter were dropped as a second seam for one contract.
 - `tests/sync-failure-accounting-e2e.test.mjs` (create): the real CLI against fixture consumers.
   - **H3:** a failed consented write, then an unconsented run → REFUSE, exit 1, consumer bytes intact.
   - **H4:** a failed GC → exit 1, manifest still tracks the path, `gcDeleted` excludes it, the next run retries and deletes it.
@@ -115,7 +115,7 @@ graph LR
 
 - **Two kinds of evidence, never conflated.**
   - **Baseline-compatible black-box regressions.** `tests/sync-failure-accounting-e2e.test.mjs` drives only the CLI and the fixture filesystem, with no new imports. It is run against be057735 by copying the test file into a detached `git worktree add <tmp> be057735` checkout, with no stash involved. There it must fail for the stated reason (exit status, file state, output), and then pass on the fix. The recorded red output goes in the PR.
-  - **Post-extraction unit tests.** `tests/sync-gc.test.mjs`, `tests/cli-entry.test.mjs`, `tests/sync-migrations-listing.test.mjs` and the `matchOverride` case verify the new contracts. They are **not** claimed as red-at-baseline, because an import failure proves nothing. For defects with no baseline seam (M2), the original evidence is the §1 reproduction plus the code reading.
+  - **Post-extraction unit tests.** `tests/sync-gc.test.mjs`, `tests/cli-entry.test.mjs`, the parity `syncMigrations` cases and the `matchOverride` case verify the new contracts. They are **not** claimed as red-at-baseline, because an import failure proves nothing. For defects with no baseline seam (M2), the original evidence is the §1 reproduction plus the code reading.
 - Unit tests cover the pure planners and executors, with injected `unlink`/`contain`/`run`.
 - The e2e test proves the wiring through the real CLI (Tier 3, consumer sync contract).
 - Existing sync suites must stay green: `sync-consumer-divergence-e2e`, `sync-target-path`, `sync-overrides`, `sync-isolation-*`, `sync-receipt`, `sync-delivery-postcondition`.

@@ -119,8 +119,11 @@ describe('carriedForFailedDeletions', () => {
 
 describe('countCitations', () => {
   it('maps git grep exit 1 to zero, other failures to null-with-reason, never to zero', () => {
-    const exit = (status) => () => { const e = new Error(`exit ${status}`); e.status = status; throw e; };
+    const exit = (status, stderr = '') => () => { const e = new Error(`exit ${status}`); e.status = status; e.stderr = stderr; throw e; };
     assert.deepEqual(countCitations('/r', 'x.md', { run: exit(1) }), { count: 0 });
+    const partial = countCitations('/r', 'x.md', { run: exit(1, 'error: unable to read docs/refs.md\n') });
+    assert.equal(partial.count, null, 'a search that skipped a file cannot claim zero citations');
+    assert.match(partial.reason, /incomplete search: error: unable to read docs\/refs\.md/);
     assert.deepEqual(countCitations('/r', 'x.md', { run: exit(128) }), { count: null, reason: 'git exited 128' });
     const spawnFail = () => { const e = new Error('spawn git ENOENT'); e.code = 'ENOENT'; throw e; };
     assert.deepEqual(countCitations('/r', 'x.md', { run: spawnFail }), { count: null, reason: 'ENOENT' });
@@ -130,7 +133,22 @@ describe('countCitations', () => {
     let seen;
     countCitations('/r', '-rf.md', { run: (file, args) => { seen = { file, args }; return ''; } });
     assert.equal(seen.file, 'git');
-    assert.deepEqual(seen.args, ['grep', '-l', '-F', '-e', '-rf.md']);
+    assert.deepEqual(seen.args, ['grep', '-l', '-z', '-F', '-e', '-rf.md']);
+  });
+
+  it('a non-ASCII orphan does not count itself — names are compared unquoted', () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ces-cite-utf8-')));
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: root });
+      execFileSync('git', ['config', 'core.quotePath', 'true'], { cwd: root });
+      fs.mkdirSync(path.join(root, 'docs'));
+      fs.writeFileSync(path.join(root, 'docs', 'café.md'), 'see docs/café.md\n');
+      fs.writeFileSync(path.join(root, 'a.md'), 'link: docs/café.md\n');
+      execFileSync('git', ['add', '-A'], { cwd: root });
+      assert.deepEqual(countCitations(root, 'docs/café.md'), { count: 1 });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('counts real citations in a repo whose path a shell would expand, excluding the orphan itself', () => {

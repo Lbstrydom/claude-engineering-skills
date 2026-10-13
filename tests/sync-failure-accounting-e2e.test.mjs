@@ -103,9 +103,10 @@ function makeUnreplaceable(abs) {
 }
 
 describe('H3 — a failed write never becomes the base', () => {
-  let root;
-  it('a consented overwrite whose WRITE fails exits non-zero', async (t) => {
-    root = makeConsumer('h3');
+  // One test, not two: the second run is only meaningful after the first, and
+  // a test that depends on another's mutations can pass or skip in isolation.
+  it('a consented overwrite whose WRITE fails exits non-zero, and the NEXT unconsented run refuses', async (t) => {
+    const root = makeConsumer('h3');
     const first = await sync(root);
     assert.equal(first.code, 0, whySyncFailed(first));
     git(['add', '-A'], root);
@@ -114,27 +115,23 @@ describe('H3 — a failed write never becomes the base', () => {
     git(['commit', '-q', '-am', 'consumer change', '--no-gpg-sign'], root);
 
     const undo = makeUnreplaceable(path.join(root, SUBJECT));
-    if (!undo) { t.skip('no write-failure injection when running as root'); root = null; return; }
-    let r;
-    try { r = await sync(root, ['--overwrite-diverged']); } finally { undo(); }
-    assert.notEqual(r.code, 0, 'the failed write must fail the run');
-    assert.match(r.text, /ERR\s+\.claude\/skills\/plan\/SKILL\.md/);
-  });
+    if (!undo) { t.skip('no write-failure injection when running as root'); return; }
+    let consented;
+    try { consented = await sync(root, ['--overwrite-diverged']); } finally { undo(); }
+    assert.notEqual(consented.code, 0, 'the failed write must fail the run');
+    assert.match(consented.text, /ERR\s+\.claude\/skills\/plan\/SKILL\.md/, 'positive control: the injected write failure did not happen');
 
-  it('the NEXT, unconsented run refuses — the committed consumer content survives', async (t) => {
-    if (!root) { t.skip('previous step skipped'); return; }
-    const r = await sync(root);
+    const next = await sync(root);
     assert.equal(fs.readFileSync(path.join(root, SUBJECT), 'utf-8'), '# consumer-condensed plan skill\n',
       'committed consumer work was overwritten by a run that never had consent');
-    assert.notEqual(r.code, 0, `an unconsented diverged path must be REFUSED (exit 1):\n${r.text.slice(-1500)}`);
+    assert.notEqual(next.code, 0, `an unconsented diverged path must be REFUSED (exit 1):\n${next.text.slice(-1500)}`);
     assert.ok(lastReceipt(root).divergenceRefused.some((d) => d.path === SUBJECT), 'receipt does not record the refusal');
   });
 });
 
 describe('H4 — a failed gc deletion is an error, stays tracked, and is retried', () => {
-  let root;
-  it('reports the failure and does not claim the deletion', async () => {
-    root = makeConsumer('h4');
+  it('reports the failure without claiming the deletion; the next run retries and records it', async () => {
+    const root = makeConsumer('h4');
     const first = await sync(root);
     assert.equal(first.code, 0, whySyncFailed(first));
     // Injection, portable: unlink() of a non-empty DIRECTORY fails non-ENOENT
@@ -144,20 +141,17 @@ describe('H4 — a failed gc deletion is an error, stays tracked, and is retried
     fs.writeFileSync(path.join(abs, 'x'), 'x');
     recordPriorKey(root, RETIRED, '// retired\n');
 
-    const r = await sync(root);
-    assert.notEqual(r.code, 0, `a failed gc deletion must fail the run:\n${r.text.slice(-1500)}`);
+    const failed = await sync(root);
+    assert.notEqual(failed.code, 0, `a failed gc deletion must fail the run:\n${failed.text.slice(-1500)}`);
     assert.ok(fs.existsSync(abs), 'positive control: the injected entry should still be there');
-    assert.match(r.text, /gc FAILED\s+scripts\/\.claude-skills\/lib\/retired-by-upstream\.mjs/, 'the failed path is not named');
+    assert.match(failed.text, /gc FAILED\s+scripts\/\.claude-skills\/lib\/retired-by-upstream\.mjs/, 'the failed path is not named');
     assert.ok(!(lastReceipt(root).gcDeleted || []).includes(RETIRED), 'receipt claims a deletion that did not happen');
     assert.ok(RETIRED in readJson(root, MANIFEST).files, 'manifest dropped a path it failed to delete — it can never be retried');
-  });
 
-  it('the next run retries it and the deletion is recorded', async () => {
-    const abs = path.join(root, RETIRED);
     fs.rmSync(abs, { recursive: true });
     fs.writeFileSync(abs, '// retired\n');
-    const r = await sync(root);
-    assert.equal(r.code, 0, whySyncFailed(r));
+    const retried = await sync(root);
+    assert.equal(retried.code, 0, whySyncFailed(retried));
     assert.equal(fs.existsSync(abs), false, 'the retried deletion did not happen');
     assert.ok(lastReceipt(root).gcDeleted.includes(RETIRED));
     assert.ok(!(RETIRED in readJson(root, MANIFEST).files));
