@@ -22,6 +22,8 @@
  *
  * @module scripts/lib/guards-preflight
  */
+import { expandedCheckScript } from './check-chain.mjs';
+
 
 /**
  * Whole-suite guard tests: tests whose subject is repo content (a scan of every test or
@@ -104,7 +106,8 @@ export function staticGatesFromCheck(checkScript) {
  * @throws {Error} on a stale or missing entry, or an empty selection
  */
 export function planPreflight({ pkg, exists, tests = GUARD_TESTS, slow = DECLARED_SLOW_GATES }) {
-  const chain = staticGatesFromCheck(pkg?.scripts?.check);
+  // `check` is `check:static` then the suite (docs/plans/gate-cost-slice-2.md D7); the gates are the expanded chain.
+  const chain = staticGatesFromCheck(expandedCheckScript(pkg?.scripts));
   for (const entry of slow) {
     const { script, measuredS, measuredAt, why } = entry;
     if (!chain.includes(script)) throw new Error(`DECLARED_SLOW_GATES entry "${script}" is not a step of "check"; remove or fix it`);

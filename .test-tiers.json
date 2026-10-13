@@ -1,0 +1,675 @@
+{
+  "version": 1,
+  "maxAgeDays": 30,
+  "heavyThresholdMs": 60000,
+  "heavy": [
+    {
+      "file": "tests/fleet-abstract-overlap.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 55186,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-archive.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 515663,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-base-measurement.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 176921,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-binding.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 286489,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-bounds.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 20119,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-bundle-stamp.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 49880,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-capstone-feedback.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 102906,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-checks.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 299343,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-claim-analysis-scope.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 253719,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-cli-approve.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 737625,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-cli-audit-rounds.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 248754,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-cli-done-cache.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 247645,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-cli-facts.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 349895,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-cli-fixture.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 47134,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-cli-land.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 765949,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-cli-pr-mode.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 725334,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-cli-recovery.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 135526,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-cli-tiers.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 538325,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-cli.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 627373,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-config.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 33586,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-contracts.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 15,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-coordination.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 142805,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-directives.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 1274,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-events-db.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 1,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-gh-batch.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 14265,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-gh-facts.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 2661,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-git-facts.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 236331,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-handover-receive.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 346149,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-handover.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 567557,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-hardening.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 43874,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-hooks-path-guard.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 233870,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-lifecycle.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 252265,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-merged-facts.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 106251,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-oid-cache.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 60110,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-overlap.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 1074,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-prune.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 580028,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-registry.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 16722,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-required-checks.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 213769,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-restack.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 245008,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-serial.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 809466,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-storyline-feedback.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 9496,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-supervisor-lifecycle.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 46714,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-telemetry.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 27072,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-union-merge.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 422324,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-unregistered-surfaces.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 33267,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/fleet-unregistered.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 160115,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json"
+      ]
+    },
+    {
+      "file": "tests/prepush-archive-lane-hook.test.mjs",
+      "why": "archive-lane family: drives .githooks/pre-push against throwaway remotes",
+      "measuredMs": 583768,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        ".githooks/pre-push",
+        "scripts/lib/prepush-archive-lane.mjs",
+        "tests/helpers/git-bash.mjs",
+        "tests/helpers/git.mjs"
+      ]
+    },
+    {
+      "file": "tests/prepush-archive-lane.test.mjs",
+      "why": "archive-lane family: drives .githooks/pre-push against throwaway remotes",
+      "measuredMs": 428334,
+      "measuredAt": "2026-10-13",
+      "reach": [
+        ".githooks/pre-push",
+        "scripts/lib/prepush-archive-lane.mjs",
+        "tests/helpers/git-bash.mjs",
+        "tests/helpers/git.mjs"
+      ]
+    }
+  ]
+}

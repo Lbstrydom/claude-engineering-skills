@@ -652,8 +652,16 @@
       "description": "Run the full Node built-in test suite (everything under tests/).",
       "category": "test"
     },
+    "check:static": {
+      "description": "The static gates of `check` (everything before the test suite), in order. `check` is `check:static` then `npm test`; the pre-push sandbox runs them separately so it can ask the test-tier oracle in between.",
+      "category": "test"
+    },
+    "test:tier": {
+      "description": "The test-tier CLI: `select --head <sha> [--base <sha>] --json` (would the branch tier skip a heavy file for that head: the query ship-trains Cluster D asks), `plan` (the push-time envelope the sandbox uses), `refresh-heavy --timing <file>` (report-only). Docs: docs/runbooks/gate-cost.md section 6.",
+      "category": "test"
+    },
     "test:preflight": {
-      "description": "The default test set minus the declared slow files (PREFLIGHT_SKIPPED_FILES in scripts/run-tests.mjs): a cheap run to catch a late guard-test failure BEFORE the first push. NOT the gate; it names what it skipped.",
+      "description": "The default test set minus the heavy files in .test-tiers.json (PREFLIGHT_SKIPPED_FILES in scripts/run-tests.mjs): a cheap run to catch a late guard-test failure BEFORE the first push. NOT the gate; it names what it skipped.",
       "category": "test"
     },
     "guards:preflight": {

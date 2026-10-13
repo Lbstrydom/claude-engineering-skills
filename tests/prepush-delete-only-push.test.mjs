@@ -90,7 +90,10 @@ function runHook(repo, stdin) {
     env: { ...process.env, AUDIT_PREPUSH_SANDBOX: '' },
   });
   const markerPath = path.join(repo, MARKER);
-  const argv = fs.existsSync(markerPath) ? JSON.parse(fs.readFileSync(markerPath, 'utf-8')) : null;
+  // The hook also hands the sandbox the test-tier request (docs/plans/gate-cost-slice-2.md section 13): those flags say HOW the
+  // tests run, not WHICH range is checked, so this case compares the range arguments only.
+  const rangeOnly = (a) => { const out = []; for (let i = 0; i < a.length; i += 1) { if (a[i] === '--summary-file' || a[i] === '--tier') { i += 1; continue; } if (a[i] === '--pushes-default') continue; out.push(a[i]); } return out; };
+  const argv = fs.existsSync(markerPath) ? rangeOnly(JSON.parse(fs.readFileSync(markerPath, 'utf-8'))) : null;
   return { ...r, argv };
 }
 

@@ -301,7 +301,13 @@ doing the work. On top of the participant rules:
    `references/landing.md` does). Do not use `gh pr merge --auto` on a repo
    with no required checks: it merges at once, before CI finishes (observed
    2026-10, #202). When path-filtered CI does not run, the local pre-push gate
-   is the evidence.
+   is the evidence. Once any push may take the branch test tier
+   (`AUDIT_PREPUSH_TIER=branch`), merge only a sha whose output carries a
+   `test-tier/v1 full <sha>` line: push the candidate with
+   `AUDIT_PREPUSH_TIER=full`, or verify it without a push with
+   `node scripts/prepush-check.mjs --tier full --head <sha> --base <merge-base>`,
+   then merge pinned to that sha. A `branch` line, or `tier NOT reported`, is
+   not that verdict.
 9. **Confirm idle, not "told".** A message to a session that is mid-turn is
    queued; it cannot stop what that session is doing. Before a quiet window
    (e.g. handing the machine to another repo's coordinator), stop handing out

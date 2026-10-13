@@ -155,9 +155,18 @@ function stripComments(src) {
  * @param {object} [opts]
  * @param {boolean} [opts.dynamic=false] - also capture string-literal
  *   `import('x')` specifiers
- * @returns {string[]} unique specifiers, in first-seen order
+ * @param {boolean} [opts.reportComputed=false] - opt-in: return
+ *   `{specifiers, computed}` instead of the bare array, where `computed` counts
+ *   the `import(` calls whose argument is NOT a single string literal (a
+ *   template literal, an identifier, a concatenation). Those edges cannot be
+ *   followed statically; a caller that needs a safe reach (the test-tier
+ *   selector) treats any non-zero count as "this file may import anything".
+ *   Without the option the return value is byte-identical to before, so every
+ *   existing caller is unchanged.
+ * @returns {string[]|{specifiers: string[], computed: number}} unique
+ *   specifiers, in first-seen order
  */
-export function parseImports(content, { dynamic = false } = {}) {
+export function parseImports(content, { dynamic = false, reportComputed = false } = {}) {
   const src = stripComments(content);
   const found = [];
   const add = (s) => { if (s && !found.includes(s)) found.push(s); };
@@ -169,7 +178,12 @@ export function parseImports(content, { dynamic = false } = {}) {
   if (dynamic) {
     for (const m of src.matchAll(/\bimport\s*\(\s*['"]([^'"\n]+)['"]\s*\)/g)) add(m[1]);
   }
-  return found;
+  if (!reportComputed) return found;
+  // Every `import(` call minus the ones captured above as a lone string literal. A static `import x from` and
+  // `import.meta` are not calls, so `\bimport\s*\(` counts calls only.
+  const calls = [...src.matchAll(/\bimport\s*\(/g)].length;
+  const literal = [...src.matchAll(/\bimport\s*\(\s*['"][^'"\n]+['"]\s*\)/g)].length;
+  return { specifiers: found, computed: Math.max(0, calls - literal) };
 }
 
 /**

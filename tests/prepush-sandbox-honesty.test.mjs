@@ -242,7 +242,7 @@ describe('the sandbox forbids the silent-skip paths', () => {
     assert.match(runnerSrc, /sandbox PRESERVED as evidence/);
 
     const flagIdx = runnerSrc.indexOf('err.preserveSandbox = true;');
-    const checkSpawnIdx = runnerSrc.indexOf("NPM, ['run', 'check']");
+    const checkSpawnIdx = runnerSrc.indexOf('const tiered = runTieredChecks(');
     assert.ok(flagIdx !== -1 && checkSpawnIdx !== -1 && flagIdx < checkSpawnIdx,
       'only a PROVISIONING failure may set the flag — it must not be reachable from the check run');
   });
@@ -314,7 +314,7 @@ describe('the sandbox forbids the silent-skip paths', () => {
     assert.ok(snapshotIdx !== -1 && provisionIdx !== -1 && snapshotIdx < provisionIdx,
       'the pre-run snapshot must be taken before provisioning, not after');
 
-    const checkIdx = runnerSrc.indexOf("NPM, ['run', 'check']");
+    const checkIdx = runnerSrc.indexOf('const tiered = runTieredChecks(');
     const guardIdx = runnerSrc.indexOf("modules === 'linked' && mainModulesForGuard");
     assert.ok(checkIdx !== -1 && guardIdx !== -1 && guardIdx > checkIdx,
       'the postcondition must be checked AFTER the run, not before');
