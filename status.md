@@ -1,5 +1,16 @@
 # Project Status Log
 
+<!-- ship-verification-4b4d36c2-20261013T064950Z.md -->
+### Consumer Verification (previous ship)
+- **Commit**: 4b4d36c2c58315cee11554c24a5c3e28d2104a0f on `fix/sync-pr-fresh-base` (PR #230, open; NOT merged): 3 code commits, the status.md ship commit 5ea6150b (AI-Gate converged) and a one-line test fix.
+- **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of exactly this sha: 19,617 tests, 19,571 pass, 0 fail, 46 skipped; DB suites passed (59.2 s); status-log-integrity conserved against 83fc038a. The first attempt on 5ea6150b was blocked by one real failure (tests/rmsync-retry-guard: a bare fs.rmSync in the new push-log test), fixed in 4b4d36c2; nothing reached the remote from that attempt. No separate consumer-side retrieval was run.
+- **Result**: pushed commit verified by the gate; the synced consumer bundle is unverified (blocked: not merged). scripts/sync-pr.mjs and lib/sync-pr.mjs are source-side (sync-pr runs from this repo against consumers), so the consumer-visible change is the behaviour of the NEXT sync:pr run after merge: its branch should sit on the consumer's fetched origin head. Check the first post-merge sync PR's parent against origin/main in that consumer.
+
+<!-- ship-verification-93e7d753-20261013T071428Z.md -->
+- **Commit**: 93e7d75340e658e162f11fc88a5b47d619a31495 on `claude/lucid-hypatia-4cbd66` (PR #231, open; NOT merged), based on main 8b16c58b; ship commit 7a791e15 plus a test fix 93e7d753.
+- **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of exactly this sha on a plain push: 19,655 tests, 19,609 pass, 0 fail, 46 skipped; DB suites passed (40.8s); "checks passed"; status-log-integrity conserved against 8b16c58b. The first push (7a791e15) was refused by the same gate on 2 tests this branch broke (a pinned `process.exit` literal, one bare `fs.rmSync` in a new fixture), both fixed in 93e7d753. No separate consumer-side retrieval was run.
+- **Result**: pushed commit verified by the gate; the synced consumer bundle is unverified (blocked: not merged). After #231 merges and main re-syncs: run `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in each consumer's MAIN checkout (gate 2B should accept a union-merged receipt), and confirm the sync output names picomatch for storyline and wine-cellar-app and @babel/parser, minimatch, picomatch, yaml for ai-organiser.
+
 <!-- ship-verification-c4115fdc-20261012T195032Z.md -->
 ### Consumer Verification (previous ship)
 - **Commit**: c4115fdc96663d6ee54a16d7787b32fef16f3c81 on `claude/coordinator-ship-catchup`, squash-merged as 83fc038a (PR #229). It changes status.md only.
@@ -161,6 +172,52 @@
 - **Commit**: d9b305538657235ff7340f052b32ace8891fe14a on `fix/fleet-hookspath-removal-guard` (PR #220, open; NOT merged). It is the merge of `origin/main` 44c4bbda into the branch plus the status.md ship commit (AI-Gate: converged, run 21ff263a).
 - **Retrieval**: the push's own pre-push hook run did NOT complete. Its process tree was hard-terminated mid-`npm test` (TAP stopped at top-level test 1954, no summary, neither "checks passed" nor "FAILED" printed, sandbox `ces-prepush-d9b30553-90492` left with a dead owner), yet git transferred the push. Killer unidentified: no Application/System event 14:18:30–14:24:20Z. The gate was then run by hand on exactly this sha, `node scripts/prepush-check.mjs --base e5147629 --head d9b30553` (clean sandbox): run 1 (14:29–14:40Z) exit 1, 19,544 tests with 1 fail, `tests/fleet-cli-approve.test.mjs` "the push is issued to the recorded pushUrl" (null envelope at 66s; passes 11/11 alone); run 2 (14:42–14:55Z) exit 0, 19,544 tests, 0 fail, 46 skipped.
 - **Result**: pushed commit verified by the second hand run, not by the hook. The synced consumer bundle is unverified (blocked: not merged); sync from an up-to-date main after #220 merges. Open: a killed pre-push hook can let a push through (coordinator to spawn a separate chip).
+
+## 2026-10-13 — sync failure honesty: nine sync-to-repos audit hypotheses verified; seven real, fixed
+
+**Why.** PR #231's cluster-B audit raised nine findings against pre-existing `scripts/sync-to-repos.mjs` code. They were dismissed as out of scope, and none was verified. Each was reproduced at be057735 with a throwaway fixture consumer under `C:/tmp/ces-sync-findings` (no real consumer synced). Plan: `docs/plans/sync-to-repos-failure-honesty.md`. Audit summary: `docs/plans/sync-to-repos-failure-honesty-audit-summary.md`.
+
+- **Verdicts.**
+  - **Real:**
+    - **H1:** shell strings; cmd.exe expanded `%OS%` in a consumer path.
+    - **H2:** GC unlinked through a junctioned `scripts/.claude-skills`, deleting a file OUTSIDE the consumer, exit 0.
+    - **H3:** a failed write was hashed in as the base. A one-time `--overwrite-diverged` became a standing one: the next unconsented run overwrote committed consumer work, exit 0.
+    - **H4:** a failed GC unlink was claimed in `gcDeleted`, dropped from the manifest and never retried.
+    - **H7:** a failed managed-block write gave exit 0, with all 931 tooling files left unignored.
+    - **H8:** run through a junction, `main()` was skipped silently.
+    - **M2:** a non-ENOENT readdir error read as "no migrations".
+  - **H5 is a false positive as stated:** GC never reaches an overridable path. Checking it surfaced the real **H5′:** the glob `**/*.mjs` passed the prefix ban and held an upstream-owned tooling file.
+  - **H6 is a real race in an unsupported mode:** concurrent syncs into one consumer checkout. Recorded as debt `a81c4d350fa3`. The fix shape is a per-target lock, not a receipt-only CAS.
+- **Fix.**
+  - New `scripts/lib/sync-gc.mjs`:
+    - `planGarbageCollection` (refuses unsafe keys);
+    - `executeGarbageCollection` (every unlink through `assertContainedDestination`, with a per-path deleted/absent/failed outcome);
+    - `countCitations` (git argv, `-z`, `-e`; an incomplete search is `null`, not 0);
+    - `mayStillExist` (only a confirmed absence counts as gone);
+    - `carriedForFailedDeletions`.
+  - New `scripts/lib/cli-entry.mjs` `isInvokedAsScript`: realpath on both sides.
+  - `scripts/lib/sync-overrides.mjs`: `matchOverride` refuses `isUnoverridable` paths.
+  - `scripts/sync-to-repos.mjs`, call sites only:
+    - failed and skipped writes join `notWrittenByUs`;
+    - the in-progress journal is kept for a failed write with no base;
+    - managed-block failures are counted;
+    - four shell strings become argv;
+    - `syncMigrations` is aligned with its `lib/sync-inventory.mjs` mirror.
+  - File size 2709 → 2690 (baseline 2683).
+- **Tests, red then green.** `tests/sync-failure-accounting-e2e.test.mjs` failed at be057735 for each stated reason (H3, H4, H2, H7, H1, H8) and passes after the fix. Its later adoption case was red with the keep-journal guard disabled. Unit suites: `tests/sync-gc.test.mjs`, `tests/cli-entry.test.mjs`, `tests/sync-overrides.test.mjs`, and `tests/sync-inventory-parity.test.mjs` (now covering both `syncMigrations` copies). Every guard was reverted once and seen red. Sync-related suites: 696/696.
+- **Audit.** Plan: GPT R1 H:1 M:2, all fixed; R2 clean; Gemini APPROVE. Code: R1 H:2 M:5 (5 fixed, 2 dismissed); R2-R3 PASS. The audit tool excludes `scripts/sync-to-repos.mjs` as infrastructure, and with `--allow-infra-scope` it rendered only about 15K of 147K chars, so an adversarial review agent read the full diff (2 LOW, fixed). R5 H:2 M:1, fixed; R6 H:1, fixed after the 6-round cap. Gemini final gate APPROVE in R1 and R2, 0 blocking.
+- **Other signals** (non-blocking):
+  - persona-test open P0 0 / P1 1;
+  - regression-lock gap 197 code (+48 plan), 3 dangling locks;
+  - 286 unremediated acceptances open (54 permanent);
+  - migrations realized on the ambient store; storyline's store is 6 constraints behind (owner DSN needed);
+  - 2 upstream reports open (56773c7c, 2f933809).
+- Backlog 2026-10-13T09:05Z: Q1 197c/48p (+420 aged) · Q2 178c/108p (54 perm) · Q3 35 · debt 339 cloud/2 local (0 spilled) · upstream 2
+
+### Next Steps
+- Push held for the coordinator's gate slot; then rebase onto `origin/main`, push, open one PR.
+- After merge + re-sync: a consumer whose sync now hits a GC, write or managed-block failure exits 1 where it used to exit 0. That is intended, but say so in the consumer sync PRs.
+- Separate task suggested: move the ~60 other CLIs' ad-hoc entry guards onto `isInvokedAsScript`.
 
 ## 2026-10-13 — sync contract: gate 2B verifies the receipt structurally; the sync names undeclared required bundle packages
 
