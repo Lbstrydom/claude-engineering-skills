@@ -12,7 +12,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import {
-  planGarbageCollection, executeGarbageCollection, countCitations, carriedForFailedDeletions,
+  planGarbageCollection, executeGarbageCollection, countCitations, carriedForFailedDeletions, mayStillExist,
 } from '../scripts/lib/sync-gc.mjs';
 
 const TOOLING = 'scripts/.claude-skills';
@@ -108,11 +108,43 @@ describe('executeGarbageCollection', () => {
   });
 });
 
+describe('mayStillExist', () => {
+  const failWith = (code) => () => { throw Object.assign(new Error(code), { code }); };
+  it('false only for a confirmed absence', () => {
+    assert.equal(mayStillExist('/x', { stat: failWith('ENOENT') }), false);
+    assert.equal(mayStillExist('/x', { stat: failWith('ENOTDIR') }), false);
+  });
+  it('true when inspection FAILS — "could not look" is never "gone"', () => {
+    assert.equal(mayStillExist('/x', { stat: failWith('EACCES') }), true);
+    assert.equal(mayStillExist('/x', { stat: failWith('EIO') }), true);
+  });
+  it('true for a real file, false for a dangling link (follows links)', () => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ces-maystill-')));
+    try {
+      fs.writeFileSync(path.join(dir, 'f'), 'x');
+      assert.equal(mayStillExist(path.join(dir, 'f')), true);
+      fs.symlinkSync(path.join(dir, 'gone'), path.join(dir, 'dangling'), 'junction');
+      assert.equal(mayStillExist(path.join(dir, 'dangling')), false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('carriedForFailedDeletions', () => {
   it('carries the prior entry for each failed path, and nothing it never had', () => {
     assert.deepEqual(
-      carriedForFailedDeletions([{ path: 'a' }, { path: 'b' }], { a: 'sha256:1', c: 'sha256:3' }),
+      carriedForFailedDeletions([{ path: 'a' }, { path: 'b' }], { a: 'sha256:1', c: 'sha256:3' }, () => true),
       { a: 'sha256:1' },
+    );
+  });
+
+  it('never carries a path that no longer resolves — the manifest would claim an undelivered file', () => {
+    // A dangling leaf link, or a file missing behind a refused junction:
+    // carried, it trips the delivery post-condition on every later run.
+    assert.deepEqual(
+      carriedForFailedDeletions([{ path: 'a' }, { path: 'b' }], { a: 'sha256:1', b: 'sha256:2' }, (rel) => rel === 'b'),
+      { b: 'sha256:2' },
     );
   });
 });

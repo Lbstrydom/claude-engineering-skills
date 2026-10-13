@@ -158,6 +158,42 @@ describe('H4 — a failed gc deletion is an error, stays tracked, and is retried
   });
 });
 
+describe('H3 corollary — a failed write on a file owned only by adoption stays adoptable', () => {
+  // A failed write with no prior base is OMITTED from the manifest (recording
+  // the disk bytes would be the H3 laundering). If the run then deleted the
+  // in-progress journal, nothing would claim the file next run: no manifest
+  // entry, no journal, no banner, content differs — an unowned collision that
+  // aborts the WHOLE target. Found by adversarial review, 2026-10-13.
+  it('keeps the journal, and the next run adopts and writes the file', async (t) => {
+    const MIG = '.audit-loop/migrations/20260330063355_learning_store.sql';
+    const JOURNAL = 'scripts/.sync-in-progress.json';
+    const root = makeConsumer('h3-adopted');
+    const first = await sync(root);
+    assert.equal(first.code, 0, whySyncFailed(first));
+    // Owned ONLY by an interrupted run's journal: no manifest entry, no watermark,
+    // and content that no longer matches source (no banner on a .sql).
+    const m = readJson(root, MANIFEST);
+    assert.ok(MIG in m.files, 'positive control: the migration should have been delivered');
+    delete m.files[MIG];
+    fs.writeFileSync(path.join(root, MANIFEST), JSON.stringify(m, null, 2) + '\n');
+    fs.rmSync(path.join(root, 'scripts', '.claude-skills', '.sync-watermark.json'), { force: true });
+    fs.appendFileSync(path.join(root, MIG), '\n-- local edit\n');
+    fs.writeFileSync(path.join(root, JOURNAL), JSON.stringify({ startedAt: new Date().toISOString(), destinations: [MIG] }) + '\n');
+
+    const undo = makeUnreplaceable(path.join(root, MIG));
+    if (!undo) { t.skip('no write-failure injection when running as root'); return; }
+    let failed;
+    try { failed = await sync(root); } finally { undo(); }
+    assert.match(failed.text, /ERR\s+\.audit-loop\/migrations\/20260330063355_learning_store\.sql/, 'positive control: the write did not fail');
+    assert.ok(fs.existsSync(path.join(root, JOURNAL)), 'journal deleted — the file is now owned by nothing');
+
+    const next = await sync(root);
+    assert.doesNotMatch(next.text, /collide\s+\.audit-loop\/migrations\/20260330063355_learning_store\.sql/,
+      'the next run treated the file as an unowned collision');
+    assert.equal(next.code, 0, whySyncFailed(next));
+  });
+});
+
 describe('H2 — gc never deletes through a link out of the consumer', () => {
   it('a junctioned tooling dir: the outside file survives and the run fails', async () => {
     const root = makeConsumer('h2');

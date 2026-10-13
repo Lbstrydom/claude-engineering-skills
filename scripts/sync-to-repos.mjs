@@ -57,7 +57,7 @@ import { getGitLocalEnvVarNames } from './lib/git-env-sanitize.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { deepMerge } from './lib/json-merge.mjs';
 import { assertContainedDestination } from './lib/install/safe-destination.mjs';
-import { planGarbageCollection, executeGarbageCollection, countCitations, carriedForFailedDeletions } from './lib/sync-gc.mjs';
+import { planGarbageCollection, executeGarbageCollection, countCitations, carriedForFailedDeletions, mayStillExist } from './lib/sync-gc.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
 import { retireLegacyCopilotBlock } from './lib/sync-legacy-copilot-block.mjs';
@@ -1422,6 +1422,7 @@ async function main() {
     const receiptDivergedOverwritten = [];
     const divergenceRefusals = [];
     const failedWrites = new Set();   // ERR'd destinations: their base is carried forward, never re-hashed
+    const skippedWrites = new Set();  // source absent: likewise carried, but not a reason to keep the journal
 
     console.log(`${B}→ ${repo.name}${X} (${repo.path})`);
 
@@ -1863,6 +1864,7 @@ async function main() {
 
       if (!fs.existsSync(srcPath)) {
         console.log(`  ${Y}skip${X}  ${srcRel} ${D}(not in source)${X}`);
+        skippedWrites.add(dstRel);   // not written: carry its base, never hash the disk bytes
         continue;
       }
 
@@ -2158,6 +2160,7 @@ async function main() {
     // aborts the WHOLE target, so the consumer silently stops receiving every
     // future update. A failure here is therefore a failed sync, not a warning.
     let manifestWritten = false;
+    let keepJournal = false;   // a failed write with no prior base must stay adoptable next run
     // Declared outside the try so the post-condition below can read the map
     // that was actually written, rather than re-deriving it from the manifest
     // on disk — re-reading would test the file parser, not the delivery.
@@ -2194,7 +2197,7 @@ async function main() {
         const notWrittenByUs = new Set([
           ...divergenceRefusals.map((d) => d.path),
           ...receiptOverridesHeld.map((h) => h.path),
-          ...failedWrites,
+          ...failedWrites, ...skippedWrites,
         ]);
         const consumerFileMap = {};
         for (const dstRel of intendedDests) {
@@ -2214,6 +2217,7 @@ async function main() {
             // decision an absent file already produces.
             const stillThere = fs.existsSync(path.join(repo.path, dstRel));
             if (carried && stillThere) consumerFileMap[dstRel] = carried;
+            else if (stillThere && failedWrites.has(dstRel)) keepJournal = true;
             continue;
           }
           const abs = path.join(repo.path, dstRel);
@@ -2221,7 +2225,8 @@ async function main() {
           const buf = fs.readFileSync(abs);
           consumerFileMap[dstRel] = 'sha256:' + crypto.createHash('sha256').update(buf).digest('hex');
         }
-        Object.assign(consumerFileMap, carriedForFailedDeletions(gcResult.failed, priorFiles));
+        Object.assign(consumerFileMap, carriedForFailedDeletions(gcResult.failed, priorFiles,
+          (rel) => mayStillExist(path.join(repo.path, rel))));
         // Field-ownership contract (which fields describe the consumer vs the
         // source) lives in `buildConsumerManifest` — extracted so it is
         // testable; the inline literal this replaced could not be exercised by
@@ -2368,7 +2373,9 @@ async function main() {
     // into a permanent unowned-collision that aborts every subsequent sync to
     // that consumer. Keeping it costs one stale file; deleting it early costs
     // the consumer every future update.
-    if (!DRY_RUN && manifestWritten) {
+    // Also kept when a write FAILED on a file owned only through this run's
+    // adoption (no prior base): the journal is then its only ownership record.
+    if (!DRY_RUN && manifestWritten && !keepJournal) {
       try { fs.unlinkSync(inProgressJournalPath); }
       catch (err) { if (err.code !== 'ENOENT') { /* leave dangling — next run will reconcile */ } }
     }

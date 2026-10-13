@@ -155,17 +155,41 @@ export function countCitations(repoRoot, rel, { run = execFileSync } = {}) {
 }
 
 /**
+ * Might `abs` still exist? `false` ONLY for a confirmed absence (ENOENT /
+ * ENOTDIR, following links — a dangling link is absent). An inspection that
+ * FAILS (EACCES, EIO, …) answers `true`: "could not look" must never be read as
+ * "gone", or a deletion that failed behind an unreadable directory would be
+ * dropped from the manifest and never retried. `fs.existsSync` folds both into
+ * `false`, which is why it is not used here.
+ *
+ * @param {string} abs
+ * @param {{stat?: (p: string) => unknown}} [opts]
+ * @returns {boolean}
+ */
+export function mayStillExist(abs, { stat = fs.statSync } = {}) {
+  try { stat(abs); return true; } catch (err) { return err?.code !== 'ENOENT' && err?.code !== 'ENOTDIR'; }
+}
+
+/**
  * Prior manifest entries to carry forward for deletions that FAILED, so the
- * next run sees them again and retries. PURE.
+ * next run sees them again and retries.
+ *
+ * Only while the path still resolves — the same "still there" rule the sync
+ * applies to refused/held paths. A carried entry for something absent (a
+ * dangling leaf link, a file missing behind a refused junction) would make the
+ * manifest claim delivery of a file upstream no longer ships, and the delivery
+ * post-condition would then fail every run with advice to "re-deliver" it.
  *
  * @param {Array<{path: string}>} failed
  * @param {Record<string, string>} priorFiles
+ * @param {(rel: string) => boolean} exists  pass a `mayStillExist`-based probe:
+ *   only a CONFIRMED absence may drop an entry
  * @returns {Record<string, string>}
  */
-export function carriedForFailedDeletions(failed, priorFiles) {
+export function carriedForFailedDeletions(failed, priorFiles, exists) {
   const out = {};
   for (const { path: rel } of failed) {
-    if (priorFiles?.[rel]) out[rel] = priorFiles[rel];
+    if (priorFiles?.[rel] && exists(rel)) out[rel] = priorFiles[rel];
   }
   return out;
 }
