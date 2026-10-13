@@ -79,6 +79,22 @@ const UNOVERRIDABLE_EXACT = new Set([
 ]);
 
 /**
+ * May an override claim this (normalised) path at all?
+ *
+ * Asked of the DECLARATION at validation time and again of every concrete path
+ * at match time. The validation-time check alone tests what a glob SAYS, not
+ * what it MATCHES: the glob `**&#47;*.mjs` passes it, then held
+ * `scripts/.claude-skills/cross-skill.mjs` (verified 2026-10-13) — making a local
+ * edit to an upstream-owned file durable, the one thing this ban exists to stop.
+ *
+ * @param {string} p — POSIX, repo-relative
+ * @returns {boolean}
+ */
+export function isUnoverridable(p) {
+  return UNOVERRIDABLE_EXACT.has(p) || UNOVERRIDABLE_PREFIXES.some((prefix) => p.startsWith(prefix));
+}
+
+/**
  * Compile a glob to a RegExp over POSIX-separated repo-relative paths.
  *
  * Deliberately tiny: `*` matches within one segment, `**` crosses segments.
@@ -172,9 +188,7 @@ export function validateOverrides(raw) {
       }
       const kind = hasPath ? 'path' : 'glob';
       const match = normaliseOverridePath(hasPath ? entry.path : entry.glob);
-      const banned = UNOVERRIDABLE_EXACT.has(match)
-        || UNOVERRIDABLE_PREFIXES.some((p) => match.startsWith(p));
-      if (banned) {
+      if (isUnoverridable(match)) {
         errors.push(
           `${at}: "${match}" may not be overridden — that tree is upstream-owned. `
           + 'A defect there is an UPSTREAM bug: report it with '
@@ -260,7 +274,9 @@ export function loadOverrides(repoRoot) {
  * Which override, if any, claims this destination?
  *
  * First match wins, in declaration order, so a consumer can read the file
- * top-to-bottom and know which entry applies.
+ * top-to-bottom and know which entry applies. An unoverridable path matches
+ * nothing, whatever a glob says (see `isUnoverridable`) — so the writes and gc
+ * share one answer: the tooling tree is never held.
  *
  * @param {string} dstRel — POSIX, repo-relative
  * @param {Array<{test: RegExp}>} overrides
@@ -268,6 +284,7 @@ export function loadOverrides(repoRoot) {
  */
 export function matchOverride(dstRel, overrides) {
   const p = normaliseOverridePath(dstRel);
+  if (isUnoverridable(p)) return null;
   for (const entry of overrides) {
     if (entry.test.test(p)) return entry;
   }

@@ -17,7 +17,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
 import { ensureAuditDeps } from './lib/install/deps.mjs';
 import { reportDeclaredBundleDeps } from './lib/install/bundle-deps.mjs';
@@ -57,6 +57,8 @@ import { getGitLocalEnvVarNames } from './lib/git-env-sanitize.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { deepMerge } from './lib/json-merge.mjs';
 import { assertContainedDestination } from './lib/install/safe-destination.mjs';
+import { planGarbageCollection, executeGarbageCollection, countCitations, carriedForFailedDeletions } from './lib/sync-gc.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
 import { retireLegacyCopilotBlock } from './lib/sync-legacy-copilot-block.mjs';
 import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
@@ -608,8 +610,15 @@ function syncMigrations() {
       .filter((f) => f.endsWith('.sql'))
       .sort()
       .map((f) => `supabase/migrations/${f}`);
-  } catch {
-    return [];
+  } catch (err) {
+    // Only ENOENT means "no migrations" — same contract as lib/sync-inventory.mjs's
+    // mirror (pinned for both by tests/sync-inventory-parity.test.mjs).
+    if (err.code === 'ENOENT') return [];
+    throw new Error(
+      `syncMigrations: cannot read ${dir} (${err.code || err.message}). Refusing to report an empty `
+      + 'migration set — that would ship a bundle whose schema is silently absent.',
+      { cause: err },
+    );
   }
 }
 
@@ -1120,14 +1129,12 @@ function sha256(filePath) {
 function unifiedDiff(srcPath, dstPath, relFile) {
   try {
     // Use git diff --no-index for a proper unified diff
-    const result = execSync(
-      `git diff --no-index --unified=3 "${dstPath}" "${srcPath}"`,
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
-    );
-    return result;
+    // argv, no shell: a consumer path is data, never `%VAR%`/`$VAR` to expand
+    return execFileSync('git', ['diff', '--no-index', '--unified=3', '--', dstPath, srcPath],
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   } catch (err) {
     // git diff --no-index exits 1 when files differ (that's normal)
-    if (err.stdout) return err.stdout;
+    if (err.status === 1 && err.stdout) return err.stdout;
     return `  (diff unavailable: ${err.message})`;
   }
 }
@@ -1414,6 +1421,7 @@ async function main() {
     const receiptOverridesHeld = [];
     const receiptDivergedOverwritten = [];
     const divergenceRefusals = [];
+    const failedWrites = new Set();   // ERR'd destinations: their base is carried forward, never re-hashed
 
     console.log(`${B}→ ${repo.name}${X} (${repo.path})`);
 
@@ -1867,7 +1875,7 @@ async function main() {
       try { srcContent = fs.readFileSync(srcPath, 'utf-8'); }
       catch (err) {
         console.log(`  ${R}ERR${X}  ${srcRel}: read failed: ${err.message?.slice(0, 100)}`);
-        repoErrors++; totalErrors++;
+        repoErrors++; totalErrors++; failedWrites.add(dstRel);
         continue;
       }
 
@@ -1916,7 +1924,7 @@ async function main() {
           outContent = JSON.stringify(guarded.value, null, 2) + '\n';
         } catch (err) {
           console.log(`  ${R}ERR${X}  ${dstRel}: JSON merge failed: ${err.message?.slice(0, 100)}`);
-          repoErrors++; totalErrors++;
+          repoErrors++; totalErrors++; failedWrites.add(dstRel);
           continue;
         }
       }
@@ -2002,7 +2010,7 @@ async function main() {
           console.log(`  ${D}eol${X}   ${dstRel} ${D}(rewrote CRLF → LF; content unchanged)${X}`);
         } catch (err) {
           console.log(`  ${R}ERR${X}  ${dstRel}: ${err.message}`);
-          repoErrors++; totalErrors++;
+          repoErrors++; totalErrors++; failedWrites.add(dstRel);
         }
         continue;
       }
@@ -2099,7 +2107,7 @@ async function main() {
           atomicWriteFileSync(safeDst, outContent);
         } catch (err) {
           console.log(`  ${R}ERR${X}  ${dstRel}: ${err.message}`);
-          repoErrors++; totalErrors++;
+          repoErrors++; totalErrors++; failedWrites.add(dstRel);
           continue;
         }
       }
@@ -2111,73 +2119,36 @@ async function main() {
       }
     }
 
-    // ── GC: delete files removed from upstream (Gemini v3 G3 fix) ──────────
-    // Compute set diff: priorFiles' isolated keys MINUS intendedWrites.
+    // ── GC: delete what upstream no longer ships — plan, delete through the
+    // containment oracle, record ONLY what happened (lib/sync-gc.mjs). Orphans
+    // outside the tooling dir are TRACKED consumer files: advise, never delete,
+    // and count what still cites them before suggesting removal.
     const intendedDests = new Set(intendedWrites.keys());
-    const gcDeletions = [];
-    // Orphans OUTSIDE the tooling dir. We sync a few files to real, TRACKED
-    // consumer paths (e.g. docs/reference/consistency-contract.md). When such a
-    // file is renamed upstream, GC must not delete the old copy — deleting a
-    // tracked file is a commit in someone's repo, not sync bookkeeping, and the
-    // consumer may have edited it. But saying NOTHING leaves a stale duplicate
-    // sitting next to the live one indefinitely, silently authoritative-looking.
-    // (The consistency contract survived a move into `docs/reference/` this way:
-    // its pre-move copy went stale on 2026-06-29 while the real file kept
-    // syncing. Naming that dead path literally here is what broke the
-    // reference-integrity gate on 2026-07-18 — the note is history, not a
-    // `(planned)` ref, so it is phrased without the path rather than exempted.)
-    // So: advise, never act.
-    const orphanedTracked = [];
-    for (const priorDestRel of Object.keys(priorFiles)) {
-      if (intendedDests.has(priorDestRel)) continue;
-      if (priorDestRel.startsWith(`${LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR}/`)) {
-        gcDeletions.push(priorDestRel);   // gitignored + regenerable ⇒ safe to delete
-      } else if (fs.existsSync(path.join(repo.path, priorDestRel))) {
-        orphanedTracked.push(priorDestRel);
-      }
-    }
+    const gcPlan = planGarbageCollection({
+      priorFiles, intendedDests, toolingDir: LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR,
+      exists: (rel) => fs.existsSync(path.join(repo.path, rel)),
+    });
+    const { orphanedTracked } = gcPlan;
     if (orphanedTracked.length) {
       console.log(`  ${Y}↳ ${orphanedTracked.length} file(s) we no longer sync are still present${X} ${D}(likely renamed upstream; sync will NOT delete a tracked file):${X}`);
       for (const f of orphanedTracked.slice(0, 8)) {
-        // Count what still CITES the orphan before suggesting its removal.
-        // Naming the path alone is a trap: the first real case (the
-        // consistency-contract doc, before it moved under docs/reference/) had
-        // 7 inbound citations including live source comments in a consumer, so
-        // a bare `git rm` would have traded a stale
-        // duplicate for 7 dangling references — the exact failure the
-        // reference-integrity gate exists to prevent. Generated surfaces
-        // (.gitattributes) self-heal on a rename because they're derived from
-        // the sync file list; hand-written prose and code comments do not.
-        // So: count them here, and let the operator decide.
-        let citations = 0;
-        try {
-          const out = execSync(`git grep -l -F -- "${f}"`, {
-            cwd: repo.path, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'],
-          });
-          citations = out.split('\n').filter(l => l.trim() && l.trim() !== f).length;
-        } catch { /* exit 1 = no matches; any git failure ⇒ report 0, never block */ }
-        const hint = citations > 0
-          ? `${Y}— ${citations} file(s) still cite it; repoint before removing${X}`
-          : `${D}— no inbound citations${X}`;
+        const { count, reason } = countCitations(repo.path, f);
+        const hint = count === null ? `${Y}— citation count unavailable (${reason})${X}`
+          : count > 0 ? `${Y}— ${count} file(s) still cite it; repoint before removing${X}` : `${D}— no inbound citations${X}`;
         console.log(`    ${D}${f}${X} ${hint}`);
       }
     }
-    if (gcDeletions.length) {
-      if (DRY_RUN) {
-        console.log(`  ${D}gc dry-run: ${gcDeletions.length} file(s) would be deleted${X}`);
-      } else {
-        for (const dRel of gcDeletions) {
-          const abs = path.join(repo.path, dRel);
-          try { fs.unlinkSync(abs); repoGcDeletions++; }
-          catch (err) {
-            if (err.code !== 'ENOENT') {
-              console.log(`  ${Y}gc warn${X}  ${dRel}: ${err.message?.slice(0, 80)}`);
-            }
-          }
-        }
-        if (repoGcDeletions) console.log(`  ${D}gc: removed ${repoGcDeletions} stale file(s)${X}`);
-      }
+    let gcResult = { deleted: [], absent: [], failed: [] };
+    if (gcPlan.deletions.length && DRY_RUN) {
+      console.log(`  ${D}gc dry-run: ${gcPlan.deletions.length} file(s) would be deleted${X}`);
+    } else if (gcPlan.deletions.length) {
+      gcResult = executeGarbageCollection({ root: repo.path, deletions: gcPlan.deletions });
+      repoGcDeletions = gcResult.deleted.length;
+      if (repoGcDeletions) console.log(`  ${D}gc: removed ${repoGcDeletions} stale file(s)${X}`);
     }
+    for (const f of gcResult.failed) console.log(`  ${R}gc FAILED${X} ${f.path} ${D}(${f.reason.slice(0, 160)}; still tracked — the next run retries)${X}`);
+    for (const k of gcPlan.unsafeKeys) console.log(`  ${R}gc REFUSED${X} ${k} ${D}(manifest key is not a plain relative path — nothing this sync writes; dropped)${X}`);
+    if (gcResult.failed.length || gcPlan.unsafeKeys.length) { repoErrors++; totalErrors++; }
 
     // ── Commit point: write per-consumer manifest with layout: 'isolated' ──
     //
@@ -2197,7 +2168,9 @@ async function main() {
         // (post-rewrite). The source-side `.sync-manifest.json` produced
         // earlier is independent and stays.
         // Paths we did NOT write this run: refused (consumer content we must
-        // not clobber) or held (a declared override).
+        // not clobber), held (a declared override), or FAILED (an ERR above —
+        // hashing those bytes would launder one-time consent into a standing
+        // base; verified 2026-10-13, docs/plans/sync-to-repos-failure-honesty.md).
         //
         // **The manifest records what WE last wrote, and for these we wrote
         // nothing.** Hashing the bytes on disk here would record the CONSUMER's
@@ -2221,6 +2194,7 @@ async function main() {
         const notWrittenByUs = new Set([
           ...divergenceRefusals.map((d) => d.path),
           ...receiptOverridesHeld.map((h) => h.path),
+          ...failedWrites,
         ]);
         const consumerFileMap = {};
         for (const dstRel of intendedDests) {
@@ -2247,6 +2221,7 @@ async function main() {
           const buf = fs.readFileSync(abs);
           consumerFileMap[dstRel] = 'sha256:' + crypto.createHash('sha256').update(buf).digest('hex');
         }
+        Object.assign(consumerFileMap, carriedForFailedDeletions(gcResult.failed, priorFiles));
         // Field-ownership contract (which fields describe the consumer vs the
         // source) lives in `buildConsumerManifest` — extracted so it is
         // testable; the inline literal this replaced could not be exercised by
@@ -2343,6 +2318,7 @@ async function main() {
         atomicWriteFileSync(gaPath, gaPreview.content);
       } catch (err) {
         console.log(`  ${R}.gitattributes write failed${X}: ${err.message?.slice(0, 120)}`);
+        repoErrors++; totalErrors++;
       }
     }
 
@@ -2352,6 +2328,7 @@ async function main() {
         atomicWriteFileSync(giPath, giPreview.content);
       } catch (err) {
         console.log(`  ${R}.gitignore write failed${X}: ${err.message?.slice(0, 120)}`);
+        repoErrors++; totalErrors++;
       }
     }
     // ── Retire the old installer's stale copilot-instructions block (never throws).
@@ -2435,7 +2412,7 @@ async function main() {
           },
           created: receiptCreated,
           updated: receiptUpdated,
-          gcDeleted: gcDeletions,
+          gcDeleted: gcResult.deleted,
           overridesHeld: receiptOverridesHeld,
           divergedOverwritten: receiptDivergedOverwritten,
           divergenceRefused: divergenceRefusals,
@@ -2516,10 +2493,8 @@ async function main() {
     // Post-sync setup check — skip in dry-run (nothing was written)
     if (!DRY_RUN) {
       try {
-        execSync(
-          `node "${path.join(SOURCE_ROOT, 'scripts/check-setup.mjs')}" --repo-path "${repo.path}"`,
-          { stdio: 'inherit', timeout: 30000 }
-        );
+        execFileSync(process.execPath, [path.join(SOURCE_ROOT, 'scripts/check-setup.mjs'), '--repo-path', repo.path],
+          { stdio: 'inherit', timeout: 30000, windowsHide: true });
       } catch {
         // check-setup exits 1 on failures — already printed the report, just continue
       }
@@ -2535,10 +2510,8 @@ async function main() {
         console.log('');
         console.log(`  ${B}First sync — running skills fit-check${X}`);
         try {
-          execSync(
-            `node "${path.join(SOURCE_ROOT, 'scripts/skills-fit-check.mjs')}" --repo-root "${repo.path}"`,
-            { stdio: 'inherit', timeout: 15000 }
-          );
+          execFileSync(process.execPath, [path.join(SOURCE_ROOT, 'scripts/skills-fit-check.mjs'), '--repo-root', repo.path],
+            { stdio: 'inherit', timeout: 15000, windowsHide: true });
         } catch {
           // Advisory diagnostic — never block the sync flow.
         }
@@ -2687,22 +2660,13 @@ export const _internals = Object.freeze({
   maybePromptSharedCloudUpdate, classifyConsumerRuntime, assessConsumerAzureEmbed,
   CORE_ENTRY, CORE_ASSETS, LEARNING_ENTRY, ARCH_ENTRY, DEBT_ENTRY, SYNC_ISOLATION_ENTRY,
   extractLiveSkillNames, inspectTargetSkillSurfaces, decideShadowFailure,
-  scrubAmbientGitEnv,
+  scrubAmbientGitEnv, syncMigrations,
 });
 
-// Only execute when invoked as a script (canonical-path compare). When
-// imported by a test, the module's exports are available without main()
-// running and clobbering consumer repos.
-import { pathToFileURL } from 'node:url';
-const invokedAsScript = (() => {
-  if (!process.argv[1]) return false;
-  try {
-    return import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
-  } catch {
-    return false;
-  }
-})();
-if (invokedAsScript) {
+// Only execute when invoked as a script — compared on CANONICAL paths, so a
+// run through a symlink/junction is not silently a no-op (lib/cli-entry.mjs).
+// When imported by a test, main() does not run and clobber consumer repos.
+if (isInvokedAsScript(import.meta.url)) {
   main().catch((err) => {
     // A usage mistake is not a crash: print the flag diagnostic alone (no stack)
     // and exit 2, matching the other guarded CLIs. Burying "unknown flag
