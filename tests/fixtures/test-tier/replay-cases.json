@@ -1,0 +1,213 @@
+{
+  "version": 1,
+  "note": "Change lists are `git diff --name-only` of the named commits (provenance only, informational): the test never reads history. mustRun is checked against the run set (light files always run), mustSkip against the skip set.",
+  "cases": [
+    {
+      "case": "status-md-only",
+      "sourceHead": "83fc038a",
+      "why": "a status.md-only push (the log entry): the fleet family reads no status.md, so every heavy file is skipped, and the corpus guards that DO read it still run (they are light, never selected against)",
+      "changed": [
+        "status.md"
+      ],
+      "mustRun": [
+        "tests/dashboard-home-status-entries.test.mjs",
+        "tests/check-status-log-integrity.test.mjs",
+        "tests/rmsync-retry-guard.test.mjs"
+      ],
+      "mustSkip": [
+        "tests/fleet-checks.test.mjs",
+        "tests/fleet-cli-approve.test.mjs"
+      ]
+    },
+    {
+      "case": "docs-and-plans-only",
+      "sourceHead": "09e4a14c",
+      "why": "plan docs, the plans index and status.md: nothing a heavy file reaches",
+      "changed": [
+        "docs/plans/README.md",
+        "docs/plans/gate-cost-slice-1.md",
+        "status.md"
+      ],
+      "mustRun": [
+        "tests/rmsync-retry-guard.test.mjs"
+      ],
+      "mustSkip": [
+        "tests/fleet-serial.test.mjs",
+        "tests/prepush-archive-lane-hook.test.mjs"
+      ]
+    },
+    {
+      "case": "prepush-hook-and-runner",
+      "sourceHead": "ee0779ca",
+      "why": "a hook + sandbox + runner change (#225): it touches the selector's own dependencies, so the tier is full and NOTHING is skipped, including the unrelated fleet files",
+      "changed": [
+        ".githooks/pre-push",
+        "docs/plans/README.md",
+        "docs/plans/prepush-hook-fail-closed-when-killed-audit-summary.md",
+        "docs/plans/prepush-hook-fail-closed-when-killed.md",
+        "docs/runbooks/prepush-sandbox.md",
+        "scripts/install-prepush-hook.mjs",
+        "scripts/lib/cli-io.mjs",
+        "scripts/prepush-check.mjs",
+        "scripts/run-tests.mjs",
+        "status.md",
+        "tests/cli-io-shell-exit-code.test.mjs",
+        "tests/helpers/git-bash.mjs",
+        "tests/prepush-hook-fail-closed-on-signal.test.mjs"
+      ],
+      "mustRun": [
+        "tests/rmsync-retry-guard.test.mjs",
+        "tests/prepush-archive-lane-hook.test.mjs",
+        "tests/fleet-cli-approve.test.mjs"
+      ],
+      "mustSkip": [],
+      "expectEscape": "selector-changed"
+    },
+    {
+      "case": "gate-cost-slice-1",
+      "sourceHead": "68570ae9",
+      "why": "package.json and run-tests.mjs (slice 1): shared environment and selector dependency, so full",
+      "changed": [
+        "docs/plans/README.md",
+        "docs/plans/gate-cost-slice-1.md",
+        "docs/plans/ship-trains.md",
+        "docs/runbooks/gate-cost.md",
+        "package.json",
+        "scripts/.cli-catalog.json",
+        "scripts/lib/test-runner-listener-ceiling.mjs",
+        "scripts/lib/test-timing-report.mjs",
+        "scripts/lib/test-timing-reporter.mjs",
+        "scripts/run-tests.mjs",
+        "status.md",
+        "tests/fixtures/test-guard/listener-leak.fixture.mjs",
+        "tests/fixtures/test-guard/pattern-value.fixture.mjs",
+        "tests/run-tests-preflight.test.mjs",
+        "tests/run-tests-timing.test.mjs"
+      ],
+      "mustRun": [
+        "tests/prepush-sandbox-honesty.test.mjs",
+        "tests/fleet-checks.test.mjs"
+      ],
+      "mustSkip": [],
+      "expectEscape": "shared-environment"
+    },
+    {
+      "case": "ship-train-serial",
+      "sourceHead": "f858beb9",
+      "why": "a change inside scripts/lib/fleet/ and its own fleet test (#219): the fleet tests that import or spawn fleet code run",
+      "changed": [
+        "docs/plans/ship-trains.md",
+        "scripts/lib/fleet/serial.mjs",
+        "scripts/lib/ship-train/commands.mjs",
+        "scripts/ship-train.mjs",
+        "status.md",
+        "tests/fleet-serial.test.mjs",
+        "tests/helpers/fleet-serial-fx.mjs",
+        "tests/ship-train-cli.test.mjs",
+        "tests/ship-train-recovery.test.mjs"
+      ],
+      "mustRun": [
+        "tests/rmsync-retry-guard.test.mjs",
+        "tests/fleet-serial.test.mjs",
+        "tests/fleet-cli-approve.test.mjs"
+      ],
+      "mustSkip": [
+        "tests/prepush-archive-lane-hook.test.mjs"
+      ]
+    },
+    {
+      "case": "fleet-lib-hooks-path-guard",
+      "sourceHead": "d9b30553",
+      "why": "#220's shape: a fleet library change reaches the fleet files that import it (the load flake fleet-cli-approve ran for this one)",
+      "changed": [
+        "scripts/lib/fleet/hooks-path-guard.mjs",
+        "tests/fleet-hooks-path-guard.test.mjs",
+        "status.md"
+      ],
+      "mustRun": [
+        "tests/fleet-hooks-path-guard.test.mjs",
+        "tests/fleet-cli-approve.test.mjs"
+      ],
+      "mustSkip": [
+        "tests/prepush-archive-lane-hook.test.mjs"
+      ]
+    },
+    {
+      "case": "cli-entry-shared-lib",
+      "sourceHead": "ff3c790b",
+      "why": "a shared lib imported by scripts/fleet.mjs (cli-entry.mjs) plus sync files: reaches the fleet family through the import graph",
+      "changed": [
+        ".file-size-baseline.json",
+        "scripts/lib/cli-entry.mjs",
+        "scripts/lib/sync-gc.mjs",
+        "scripts/lib/sync-overrides.mjs",
+        "scripts/sync-to-repos.mjs",
+        "tests/cli-entry.test.mjs",
+        "tests/sync-failure-accounting-e2e.test.mjs",
+        "tests/sync-gc.test.mjs",
+        "tests/sync-inventory-parity.test.mjs",
+        "tests/sync-overrides.test.mjs"
+      ],
+      "mustRun": [
+        "tests/fleet-cli-approve.test.mjs",
+        "tests/cli-entry.test.mjs"
+      ],
+      "mustSkip": [
+        "tests/prepush-archive-lane-hook.test.mjs"
+      ]
+    },
+    {
+      "case": "merge-of-main-into-a-branch",
+      "sourceHead": "00db37e0",
+      "why": "a large merge touching shared libraries: most of the fleet family is reached through the import graph and runs; only the few unreached files can be skipped, and the archive-lane hook test (a different family) is among the skippable",
+      "changed": [
+        ".audit-loop/domain-map.json",
+        ".claude/skills/audit-code/SKILL.md",
+        ".claude/skills/audit-code/references/r2-plus-mode.md",
+        ".claude/skills/audit-plan/SKILL.md",
+        "docs/plans/README.md",
+        "docs/plans/ship-trains.md",
+        "scripts/lib/audit/transcript.mjs",
+        "scripts/lib/commit-trailers.mjs",
+        "scripts/lib/ship-train/commands.mjs",
+        "scripts/lib/ship-train/impact.mjs",
+        "scripts/lib/ship-train/provenance.mjs",
+        "scripts/lib/ship-train/verify.mjs",
+        "scripts/lib/store/train-provenance.mjs",
+        "scripts/ship-train.mjs",
+        "skills.manifest.json",
+        "skills/audit-code/SKILL.md",
+        "skills/audit-code/references/r2-plus-mode.md",
+        "skills/audit-plan/SKILL.md",
+        "status.md",
+        "tests/audit-skill-shell-recipes.test.mjs",
+        "tests/backlog-gather.test.mjs",
+        "tests/commit-trailers.test.mjs",
+        "tests/dashboard-home-deadline.test.mjs",
+        "tests/fleet-cli-approve.test.mjs",
+        "tests/fleet-cli-audit-rounds.test.mjs",
+        "tests/fleet-cli-done-cache.test.mjs",
+        "tests/fleet-cli-facts.test.mjs",
+        "tests/fleet-cli-fixture.test.mjs",
+        "tests/fleet-cli-land.test.mjs",
+        "tests/fleet-cli-pr-mode.test.mjs",
+        "tests/fleet-cli-recovery.test.mjs",
+        "tests/fleet-cli-tiers.test.mjs",
+        "tests/fleet-cli.test.mjs",
+        "tests/helpers/child-ready.mjs",
+        "tests/helpers/fleet-cli-harness.mjs",
+        "tests/helpers/fleet-repo.mjs",
+        "tests/ship-train-cli.test.mjs",
+        "tests/ship-train-impact.test.mjs",
+        "tests/ship-train-provenance.test.mjs",
+        "tests/ship-train-verify.test.mjs"
+      ],
+      "mustRun": [
+        "tests/rmsync-retry-guard.test.mjs"
+      ],
+      "mustSkip": [
+        "tests/prepush-archive-lane-hook.test.mjs"
+      ]
+    }
+  ]
+}

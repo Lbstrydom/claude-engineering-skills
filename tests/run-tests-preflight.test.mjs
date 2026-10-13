@@ -14,12 +14,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { GUARD_REPORT_VERSION } from '../scripts/lib/test-guard-reporter.mjs';
 import { TIMING_REPORT_VERSION } from '../scripts/lib/test-timing-report.mjs';
-import { PREFLIGHT_SKIPPED_FILES, expectedPreflightFiles, finishRun, scrubChildEnv, selectTestArgs } from '../scripts/run-tests.mjs';
+import { PREFLIGHT_SKIPPED_FILES, TIER_PROTOCOL, expectedPreflightFiles, finishRun, readTierSkip, scrubChildEnv, selectTestArgs } from '../scripts/run-tests.mjs';
 
 const ROOT = path.join(import.meta.dirname, '..');
 const RUNNER = path.join(ROOT, 'scripts', 'run-tests.mjs');
@@ -208,5 +209,89 @@ describe('the flag this file owns is validated, not silently ignored', () => {
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /PREFLIGHT/);
     assert.match(r.stderr, /healthy\.fixture\.mjs/, 'the explicit file ran');
+  });
+});
+
+describe('the branch tier (--tier-skip; docs/plans/gate-cost-slice-2.md section 2.4)', () => {
+  const guard = JSON.stringify({ version: GUARD_REPORT_VERSION, failures: [] });
+  const timing = (files, complete = true) => JSON.stringify({ version: TIMING_REPORT_VERSION, complete, files: files.map((file) => ({ file, ms: 1, tests: 1 })), totalMs: files.length, ignored: 0 });
+  const skipped = [entry('tests/slow.test.mjs', 'the slow one')];
+  const expected = new Set(['tests/a.test.mjs', 'tests/b.test.mjs']);
+  const run = (t, status = 0) => finishRun({ status, reportText: guard, timingText: t, tier: { skipped, expected } });
+
+  it('PREFLIGHT_SKIPPED_FILES is the heavy list: one place a slow file is named', () => {
+    const heavy = JSON.parse(fs.readFileSync(path.join(ROOT, '.test-tiers.json'), 'utf8')).heavy.map((h) => h.file);
+    assert.deepEqual(PREFLIGHT_SKIPPED_FILES.map((x) => x.file), heavy);
+    assert.ok(heavy.length >= 1, 'vacuous-pass guard: an empty list would make the preflight the gate under another name');
+  });
+  it('declares the protocol the sandbox looks for in the head\'s file text (D7b)', () => {
+    assert.equal(TIER_PROTOCOL, 'test-tier/v1');
+    assert.match(fs.readFileSync(RUNNER, 'utf8'), /export const TIER_PROTOCOL\b/);
+  });
+  it('ran-set equals expected: exit 0, and the output says it was NOT the full suite and what it skipped', () => {
+    const r = run(timing(['tests/a.test.mjs', 'tests/b.test.mjs']));
+    assert.equal(r.exitCode, 0);
+    const text = r.lines.join('\n');
+    assert.match(text, /BRANCH TIER — this was NOT the full suite\. Skipped 1 heavy file\(s\): tests\/slow\.test\.mjs/);
+    assert.match(text, /test-tier\/v1 full <sha>/);
+    assert.doesNotMatch(text, /PREFLIGHT/);
+  });
+  it('a skipped file that ran, an expected file that did not, and unverifiable evidence all FAIL (guard 2)', () => {
+    assert.equal(run(timing(['tests/a.test.mjs', 'tests/b.test.mjs', 'tests/slow.test.mjs'])).exitCode, 1);
+    assert.match(run(timing(['tests/a.test.mjs', 'tests/b.test.mjs', 'tests/slow.test.mjs'])).lines.join('\n'), /Branch tier: the files that ran are not the files that were selected/);
+    assert.equal(run(timing(['tests/a.test.mjs'])).exitCode, 1);
+    assert.equal(run(null).exitCode, 1);
+    assert.match(run(null).lines.join('\n'), /Branch tier: selection UNVERIFIED/);
+    assert.equal(run(timing(['tests/a.test.mjs', 'tests/b.test.mjs'], false)).exitCode, 1);
+  });
+  it('a file that ran although it was neither selected nor declared skipped FAILS, in both modes (audit M9)', () => {
+    const files = ['tests/a.test.mjs', 'tests/b.test.mjs', 'tests/stranger.test.mjs'];
+    for (const sel of [{ tier: { skipped, expected } }, { preflight: { skipped, expected } }]) {
+      const r = finishRun({ status: 0, reportText: guard, timingText: timing(files), ...sel });
+      assert.equal(r.exitCode, 1);
+      assert.match(r.lines.join('\n'), /ran but were not selected: tests\/stranger\.test\.mjs/);
+    }
+    assert.equal(run(timing(['tests/a.test.mjs', 'tests/b.test.mjs'])).exitCode, 0, 'control: exactly the expected set passes');
+  });
+  it('a failing run keeps its own exit code under a tier', () => assert.equal(run(timing(['tests/a.test.mjs', 'tests/b.test.mjs']), 3).exitCode, 3));
+
+  describe('readTierSkip: every envelope defect is a hard error (guards 1 and 4)', () => {
+    const list = { version: 1, maxAgeDays: 30, heavyThresholdMs: 1, heavy: ['tests/h1.test.mjs', 'tests/h2.test.mjs'].map((file) => ({ file, why: 'a heavy family member', measuredMs: 1, measuredAt: '2026-10-13', reach: ['x'] })) };
+    const env = (over = {}) => ({ version: 'test-tier/v1', kind: 'push', tier: 'branch', head: 'a'.repeat(40), escapes: [], heavy: [{ file: 'tests/h1.test.mjs', reached: false }, { file: 'tests/h2.test.mjs', reached: true }], wouldSkip: ['tests/h1.test.mjs'], skipped: ['tests/h1.test.mjs'], ...over });
+    const read = (e) => readTierSkip('env.json', { readFile: () => (typeof e === 'string' ? e : JSON.stringify(e)), list });
+    it('green on a good envelope, carrying each file\'s reason from the list', () => {
+      const r = read(env());
+      assert.deepEqual(r.skipped, [{ file: 'tests/h1.test.mjs', why: 'a heavy family member' }]);
+    });
+    it('each mutation is refused', () => {
+      assert.throws(() => read(env({ skipped: ['tests/light.test.mjs'] })), /not on the heavy list/);
+      assert.throws(() => read(env({ skipped: ['tests/h2.test.mjs'] })), /the diff reaches/);
+      assert.throws(() => read(env({ tier: 'full' })), /full-tier envelope must skip nothing/);
+      assert.throws(() => read('{'), /not JSON/);
+      assert.throws(() => read(env({ version: 'test-tier/v0' })), /invalid/);
+      assert.throws(() => readTierSkip('env.json', { readFile: () => { throw Object.assign(new Error('x'), { code: 'ENOENT' }); }, list }), /cannot read the tier envelope/);
+    });
+  });
+
+  describe('the command line', () => {
+    const cli = (...args) => spawnSync(process.execPath, [RUNNER, ...args], { cwd: ROOT, encoding: 'utf8', env: scrubChildEnv(process.env) });
+    it('a missing or corrupt envelope is exit 2 that runs nothing and tells you to run the full suite', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tmp-tier-'));
+      try {
+        const bad = path.join(dir, 'bad.json');
+        fs.writeFileSync(bad, '{ nope');
+        for (const args of [['--tier-skip', path.join(dir, 'absent.json')], ['--tier-skip', bad], [`--tier-skip=${bad}`]]) {
+          const r = cli(...args);
+          assert.equal(r.status, 2, args.join(' '));
+          assert.match(r.stderr, /Refusing to guess a selection: run the full suite/);
+          assert.doesNotMatch(r.stdout + r.stderr, /^# tests/m, 'it must not have started a run');
+        }
+      } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+    });
+    it('--tier-skip needs a value, takes no file arguments, and does not combine with --preflight', () => {
+      assert.equal(cli('--tier-skip').status, 2);
+      assert.match(cli('--tier-skip', 'x.json', 'tests/a.test.mjs').stderr, /takes no other arguments/);
+      assert.match(cli('--preflight', '--tier-skip', 'x.json').stderr, /takes no other arguments|two different selections/);
+    });
   });
 });

@@ -29,11 +29,12 @@ import { spawnSync, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { buildManifest, extractSkillSummary } from '../scripts/build-manifest.mjs';
 import { canonicaliseForHash } from '../scripts/lib/canonical-hash.mjs';
+import { expandedCheckScript } from '../scripts/lib/check-chain.mjs';
 
 const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf-8'));
 const regenerate = pkg.scripts['skills:regenerate'];
 const check = pkg.scripts['skills:check'];
-const fullCheck = pkg.scripts.check;
+const fullCheck = expandedCheckScript(pkg.scripts);
 
 /** Generator scripts invoked by a chained npm script, e.g. `node scripts/x.mjs --check`. */
 function scriptsIn(cmd) {

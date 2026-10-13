@@ -24,6 +24,7 @@ import {
   runPillsInParallel, resolveConcurrency, _internals,
 } from '../scripts/check-gate-poison-pills.mjs';
 import { validateCliGateContract } from '../scripts/lib/gate-honesty/schema.mjs';
+import { expandedCheckScript } from '../scripts/lib/check-chain.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf-8'));
@@ -524,7 +525,7 @@ test('contracts go through the SHARED schema — a malformed one throws, never l
 });
 
 test('gates:poison is wired into the check chain — an uninvoked gate protects nothing', () => {
-  assert.match(pkg.scripts.check, /gates:poison/,
+  assert.match(expandedCheckScript(pkg.scripts), /gates:poison/,
     'the manifest gate was correct and simply never called; that is the precedent here');
   assert.ok(pkg.scripts['gates:poison'], 'the script must exist');
 });

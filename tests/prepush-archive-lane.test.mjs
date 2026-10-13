@@ -45,6 +45,7 @@ import {
   scanBodyPatterns,
   validateClassification,
 } from '../scripts/lib/prepush-archive-lane.mjs';
+import { expandedCheckScript } from '../scripts/lib/check-chain.mjs';
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 const CLI = path.join(REPO_ROOT, 'scripts', 'prepush-archive-lane.mjs');
@@ -802,7 +803,7 @@ describe('scan coverage: the places a secret hid from the first version', () => 
 
 describe('ARCHIVE_LANE_CHECK_CLASSIFICATION', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
-  const steps = checkStepNames(pkg.scripts.check);
+  const steps = checkStepNames(expandedCheckScript(pkg.scripts));
 
   it('classifies every step of check and names no step check lacks (both directions)', () => {
     assert.ok(steps.length >= 30, `parsed ${steps.length} steps: the census itself must not be vacuous`);

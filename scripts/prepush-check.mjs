@@ -37,7 +37,15 @@
  * behaviour); `git push --no-verify` skips the hook entirely.
  *
  * Usage (normally invoked by .githooks/pre-push, not by hand):
- *   node scripts/prepush-check.mjs --base <sha> --head <sha>
+ *   node scripts/prepush-check.mjs --base <sha> --head <sha> [--tier full|branch] [--pushes-default] [--summary-file <f>]
+ *
+ * **Tier** (docs/plans/gate-cost-slice-2.md): by default every push runs the FULL suite and prints what the branch
+ * tier WOULD have skipped (stage 0, shadow). `--tier branch` (the hook passes `AUDIT_PREPUSH_TIER`) opts a
+ * work-in-progress push into skipping the unreached heavy files; a push that updates the default branch, a diff that
+ * touches the selector, a stale list or any selector failure is full. A head that predates the tier runs the legacy
+ * `npm run check`. Each successful run ends with ONE `test-tier/v1 <tier> <head> …` line, also written to
+ * `--summary-file` for the hook. Verifying an already-pushed candidate (no push to trigger the hook) is:
+ *   node scripts/prepush-check.mjs --tier full --head <candidate sha> --base <merge-base sha>
  *
  * Exit codes: the checks' own exit code, or 1 on a sandbox setup failure.
  *   A setup failure is NEVER reported as success — an unbuildable sandbox
@@ -55,6 +63,7 @@ import { installedTreeStale } from './lib/installed-tree-identity.mjs';
 import { countTopLevelEntries, findNodeModules } from './lib/node-modules-resolver.mjs';
 import { GIT_LOCK_RETRY_DELAYS_MS, withGitLockRetry } from './lib/git-lock-retry.mjs';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
+import { runTieredChecks, sandboxTierSupport } from './lib/prepush-tier.mjs';
 import { resolveMainRoot } from './lib/pinned-worktree/paths.mjs';
 import {
   PRESERVED_EVIDENCE_FILE,
@@ -534,9 +543,16 @@ function main() {
   // why, and rebuilding it by hand is minutes of work.
   let preserveSandbox = false;
   let cleanedUp = false;
+  // The oracle's scratch envelope lives OUTSIDE the sandbox (so a sandbox that is preserved as evidence holds no
+  // stale selection); it is removed with the sandbox on every exit path.
+  let envelopeFile = null;
   const cleanup = () => {
     if (cleanedUp) return;
     cleanedUp = true;
+    // Independently exception-safe (audit M4/M13): a failing scratch removal must not stop the sandbox teardown below.
+    if (envelopeFile) {
+      try { fs.rmSync(envelopeFile, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch (e) { log(`  ⚠ could not remove ${envelopeFile}: ${e.message}`); }
+    }
     if (preserveSandbox) {
       log(`  sandbox PRESERVED as evidence: ${sandbox}`);
       log('    Inspect it, then remove it with:');
@@ -659,8 +675,22 @@ function main() {
       log('  ⚠ no push base supplied — drift gates will infer their range (may under-scope)');
     }
 
-    const r = spawnSync(NPM, ['run', 'check'], { cwd: sandbox, stdio: 'inherit', shell: IS_WIN, env });
-    if (r.error) throw new Error(`could not run checks: ${r.error.message}`);
+    const tierRequest = argValue('--tier') ?? process.env.AUDIT_PREPUSH_TIER ?? '';
+    const readText = (rel) => { try { return fs.readFileSync(path.isAbsolute(rel) ? rel : path.join(sandbox, rel), 'utf8'); } catch { return null; } };
+    const run = (kind, args, opts = {}) => (kind === 'npm'
+      ? spawnSync(NPM, args, { cwd: sandbox, stdio: 'inherit', shell: IS_WIN, env })
+      : spawnSync(process.execPath, args, { cwd: sandbox, stdio: opts.capture ? ['ignore', 'pipe', 'inherit'] : 'inherit', env, encoding: 'utf8' }));
+    envelopeFile = path.join(os.tmpdir(), `ces-tier-${shortSha}-${process.pid}.json`);
+    const tiered = runTieredChecks({
+      head: headSha,
+      tier: tierRequest,
+      pushesDefault: process.argv.includes('--pushes-default'),
+      support: sandboxTierSupport({ readText, exists: (rel) => fs.existsSync(path.join(sandbox, rel)) }),
+      run, readText,
+      envelopePath: envelopeFile,
+      log,
+    });
+    const r = { status: tiered.status };
 
     // Postcondition, not a hope: only 'linked' means the sandbox's
     // node_modules IS the main checkout's directory (a junction, not a
@@ -681,6 +711,14 @@ function main() {
           + 'scripts/lib/prepush-sandbox-cleanup.mjs.',
         );
       }
+    }
+
+    // Success is PUBLISHED last (audit H5): the one summary line (stdout, and the file the hook reads back for its
+    // label, D8) is only written once every postcondition above has held.
+    if (tiered.summary && r.status === 0) {
+      console.log(tiered.summary);
+      const summaryFile = argValue('--summary-file');
+      if (summaryFile) fs.writeFileSync(summaryFile, `${tiered.summary}\n`);
     }
 
     // NOT `r.status ?? 1`: the hook reads this through MSYS bash's `$?`, which keeps

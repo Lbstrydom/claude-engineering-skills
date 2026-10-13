@@ -7,6 +7,7 @@ import {
   DECLARED_SLOW_GATES, EXIT_CANNOT_RUN, GUARD_TESTS, STATUS_GATE, executePreflight, gateExtraArgs, planPreflight,
   staticGatesFromCheck, summarise,
 } from '../scripts/lib/guards-preflight.mjs';
+import { expandedCheckScript } from '../scripts/lib/check-chain.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
@@ -14,8 +15,8 @@ const exists = (p) => fs.existsSync(path.join(ROOT, p));
 
 describe('guards:preflight derives the real gates', () => {
   it('the static gates are exactly the npm-run steps of the real check script', () => {
-    const gates = staticGatesFromCheck(pkg.scripts.check);
-    const steps = pkg.scripts.check.split('&&').map((s) => s.trim());
+    const gates = staticGatesFromCheck(expandedCheckScript(pkg.scripts));
+    const steps = expandedCheckScript(pkg.scripts).split('&&').map((s) => s.trim());
     assert.equal(steps.at(-1), 'npm test', 'subject probe: check still ends in the suite');
     assert.deepEqual(gates, steps.slice(0, -1).map((s) => s.replace('npm run ', '')));
     for (const g of ['size:ratchet:gate', 'knip:gate', 'status:integrity:gate', 'cli:flags:gate']) assert.ok(gates.includes(g), g);
@@ -35,7 +36,7 @@ describe('guards:preflight derives the real gates', () => {
     assert.equal(plan.testFiles.length, GUARD_TESTS.length);
     assert.equal(new Set(plan.testFiles).size, plan.testFiles.length);
     const omitted = new Set(DECLARED_SLOW_GATES.map((o) => o.script));
-    assert.deepEqual(plan.gates, staticGatesFromCheck(pkg.scripts.check).filter((g) => !omitted.has(g)), 'exact ordered selection');
+    assert.deepEqual(plan.gates, staticGatesFromCheck(expandedCheckScript(pkg.scripts)).filter((g) => !omitted.has(g)), 'exact ordered selection');
     for (const o of DECLARED_SLOW_GATES) assert.ok(!plan.gates.includes(o.script));
   });
 

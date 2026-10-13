@@ -27,6 +27,7 @@ import { checkRatchet, BASELINE_FILENAME } from '../scripts/check-gate-contracts
 import { GateContractBaselineSchema } from '../scripts/lib/gate-honesty/schema.mjs';
 import { sanitizeGitEnv } from '../scripts/lib/git-env-sanitize.mjs';
 import { rmrf } from './helpers/fixtures.mjs';
+import { expandedCheckScript } from '../scripts/lib/check-chain.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -318,7 +319,7 @@ describe('ratchet wiring (non-opt-in)', () => {
   it('the committed `check` script transitively invokes check-gate-contracts.mjs', () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf-8'));
     // Resolve `npm run check` one level: it chains member scripts by name.
-    const memberNames = pkg.scripts.check.split('&&').map((s) => s.trim().replace(/^npm run /, ''));
+    const memberNames = expandedCheckScript(pkg.scripts).split('&&').map((s) => s.trim().replace(/^npm run /, ''));
     assert.ok(memberNames.includes('skills:check'), 'check must run skills:check');
     assert.match(pkg.scripts['skills:check'], /check-gate-contracts\.mjs/,
       'skills:check must run check-gate-contracts.mjs — the ratchet cannot be opt-in');

@@ -72,6 +72,9 @@ const SOURCE_REPO_ONLY = new Map([
   // sync-inventory.mjs and consumer-repos.mjs (both path.resolve(import.meta.dirname,
   // "..")) into the consumer closure, which the relocation guard rightly rejects.
   ['scripts/ship-train.mjs', 'source-repo-gated: its tier oracle and its publication step are this repo\'s own sync closure and sync tools'],
+  // Fleet coordination rule 8 names it as the no-push way to get a full verdict for a merge candidate
+  // and says in its own text that it is this repo's own gate (a consumer pushes the candidate instead).
+  ['scripts/prepush-check.mjs', 'source-repo-gated: this repo\'s own pre-push sandbox runner, not part of the consumer bundle'],
 ]);
 
 /**
@@ -82,6 +85,7 @@ const SOURCE_REPO_ONLY = new Map([
  */
 const GATED_ONLY_IN = new Map([
   ['scripts/ship-train.mjs', ['skills/ship/SKILL.md', 'skills/ship/references/train-mode.md']],
+  ['scripts/prepush-check.mjs', ['skills/fleet/references/coordination.md']],
 ]);
 
 describe('skill commands survive the consumer-repo relocation', () => {

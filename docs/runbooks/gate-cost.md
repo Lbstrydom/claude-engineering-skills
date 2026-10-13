@@ -48,8 +48,9 @@ npm run test:preflight
 ```
 
 The default set minus `PREFLIGHT_SKIPPED_FILES` ([`run-tests.mjs`](../../scripts/run-tests.mjs)),
-currently `tests/fleet-cli.test.mjs`, which after #214 holds 36 of the 132 original
-tests (the other nine files of the family now run in the preflight). It prints a banner before and a summary after,
+which is now every heavy file in `.test-tiers.json` (the 48-file fleet and archive-lane family, 57% of the suite's
+test time; see section 6). Before 2026-10-13 it skipped `tests/fleet-cli.test.mjs` alone, which after #214 saved about
+3%. It prints a banner before and a summary after,
 both naming the skipped files and saying **not the gate**. It exits non-zero on any
 failure it ran and never prints a bare pass. It is not a substitute for the push
 gate, which still runs everything.
@@ -208,3 +209,54 @@ $r = Get-Content "$env:TEMP/timing-full.json" | ConvertFrom-Json; $c = $r.files 
 - **Compare timings only from the same run.** Two full gates of the same branch took
   1,647 s and 2,416 s; machine load alone moves a figure by 1.5x. The table above
   takes every share from one run for that reason.
+
+## 6. The test tier (stages 0 and 1)
+
+Plan: [`gate-cost-slice-2.md`](../plans/gate-cost-slice-2.md). **What it is.** A work-in-progress push may leave out the
+heavy test files its diff cannot reach. **When you need it.** Reading a `test-tier/v1` line in a gate's output, opting a
+push in, or maintaining `.test-tiers.json`.
+
+| Stage | What a push does | Status |
+|---|---|---|
+| 0, shadow | runs the FULL suite and prints `test-tier/v1 shadow: would skip N of M heavy file(s)` | live: this is the default |
+| 1, opt-in | `AUDIT_PREPUSH_TIER=branch git push` skips the unreached heavy files | live, per push, by your choice |
+| 2, default | the default flips to the branch tier for work-in-progress pushes | NOT built; needs the user's approval and stage 1's evidence |
+
+```bash
+AUDIT_PREPUSH_TIER=branch git push        # opt this push in
+AUDIT_PREPUSH_TIER=full git push          # force the full suite (also the default)
+node scripts/test-tier.mjs select --head <sha> [--base <sha>] --json   # what the branch tier would skip for that head
+node scripts/prepush-check.mjs --tier full --head <sha> --base <merge-base>   # full verdict for an already-pushed sha
+node scripts/test-tier.mjs refresh-heavy --timing <TEST_TIMING_KEEP file>      # report-only: drifted timings, unlisted heavy files
+```
+
+**The list.** `.test-tiers.json` names the heavy files, each with a measured time and date and the reach the import graph
+cannot compute (the fleet family declares `scripts/fleet.mjs`, `scripts/lib/fleet/**`, `tests/helpers/fleet-*.mjs`,
+`.fleet.json`, and so on). Only listed files are ever skipped; every other file always runs, because the measured late
+failures are cheap corpus guards no import graph can see. `npm run test:preflight` skips the same list, so a slow file is
+named in one place.
+
+**Reach.** A heavy file runs when the diff touches it, anything in its import closure, a literal repo path its tests
+name, or its declared reach. An import that cannot be resolved, or a non-literal `import()` in the test layer, counts as
+reached. **Measured deviation from the plan:** a non-literal `import()` inside a `scripts/**` module does NOT count (14
+modules have one and the fleet tests reach them, so 40 of 48 heavy files were "reached" by every diff and the tier could
+never skip); it is recorded as a blind spot, and the declared reach plus the full verdict before merge are its backstops.
+
+**When a push is full anyway** (the envelope lists every reason): it updates the default branch; `AUDIT_PREPUSH_TIER=full`;
+the diff touches the selector or what it reads (`SELECTOR_DEPENDENCIES` in `scripts/lib/test-tier.mjs`);
+`package.json`, `package-lock.json` or `.nvmrc` changed; the list is stale (a missing file, or a timing older than
+`maxAgeDays`, 30); there is no selection base; the selector fails in any way; or the pushed head predates the tier (then
+the legacy `npm run check` runs).
+
+**Reading the output.** A run ends with ONE line, `test-tier/v1 <full|branch> <sha> skipped=<n> base=<sha|none>
+[reason=<why>]`, and the hook's success line repeats it: `checks passed (full)`, `(branch tier: N heavy files skipped -
+NOT the full suite)`, or `(tier NOT reported: <why>)`. Only a `full` line is a full verdict. **A merge candidate needs a
+`test-tier/v1 full <sha>` line for the sha it merges**: push it with `AUDIT_PREPUSH_TIER=full`, or run the command above,
+then merge pinned with `--match-head-commit <sha>`.
+
+**Re-measuring.** Run `TEST_TIMING_KEEP=<file> npm test` in a gate slot, then `refresh-heavy` and edit
+`.test-tiers.json` by hand (report-only on purpose). **Open:** the 48-file variant has not been timed beside a full run,
+so the savings quoted in the plan are *derived*, not measured; that measurement gates stage 2.
+
+**Revert.** One line: `DEFAULT_BRANCH_TIER` in `scripts/lib/test-tier.mjs` (already `full`), or per machine
+`AUDIT_PREPUSH_TIER=full`. Nothing persisted, nothing to migrate.

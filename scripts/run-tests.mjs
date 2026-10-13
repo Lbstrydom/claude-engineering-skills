@@ -43,7 +43,9 @@
  *
  * Usage: `npm test` (default globs) · `npm test -- tests/foo.test.mjs [args]`
  * (forwarded verbatim to `node --test`) · `npm run test:preflight` (the default set
- * minus PREFLIGHT_SKIPPED_FILES; NOT the gate — see below).
+ * minus PREFLIGHT_SKIPPED_FILES; NOT the gate — see below) · `node scripts/run-tests.mjs
+ * --tier-skip <envelope.json>` (the default set minus the heavy files a `test-tier/v1`
+ * envelope skips; the pre-push sandbox's branch tier, NOT the full suite — see below).
  *
  * **Per-file cost is printed at the end of every run** (stderr), from a second reporter
  * (scripts/lib/test-timing-reporter.mjs) that is deliberately independent of the guard:
@@ -58,8 +60,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { assertKnownFlags, hasFlag, toShellExitCode } from './lib/cli-io.mjs';
+import { argOption, assertKnownFlags, hasFlag, toShellExitCode } from './lib/cli-io.mjs';
 import { GUARD_REPORT_VERSION } from './lib/test-guard-reporter.mjs';
+import { TEST_TIER_VERSION, parseHeavyList, parseTierEnvelope, validateEnvelopeAgainstList } from './lib/test-tier.mjs';
 import { TIMING_REPORT_ENV, ranFiles, ranFilesUnavailableReason, summariseTiming } from './lib/test-timing-report.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
@@ -131,24 +134,40 @@ const DEFAULT_DIRS = Object.freeze(['tests', 'tests/claudemd', 'tests/install'])
 const DEFAULT_ARGS = DEFAULT_DIRS.map((d) => `${d}/*.test.mjs`);
 
 /**
- * Files `npm run test:preflight` leaves out, in ONE place. Each entry is a repo-relative
- * path directly inside one of DEFAULT_DIRS, with the reason beside it.
- *
- * `tests/fleet-cli.test.mjs`: before #214 it was 132 cases, 96% of one measured run's wall time
- * but 13% of its summed test time (node runs a file's tests serially, so a file is a floor on wall
- * time). #214 split it into 10 files; the original now holds 36 of the 132 tests and is still the
- * largest of the family, which is all that is claimed here: the post-split tree has NOT been
- * re-measured. Re-measure with the command in docs/runbooks/gate-cost.md and, if this file is no
- * longer among the slowest, replace it with whatever is (the list must stay non-empty).
+ * The protocol this runner speaks to `prepush-check.mjs`. The sandbox decides whether the tiered path exists by reading
+ * THIS declaration from the pushed head's file text (docs/plans/gate-cost-slice-2.md D7b), so a head that predates it
+ * runs the legacy `npm run check` and is never handed a flag it does not know.
+ */
+export const TIER_PROTOCOL = TEST_TIER_VERSION;
+
+const HEAVY_LIST_PATH = path.join(import.meta.dirname, '..', '.test-tiers.json');
+let preflightListError = null;
+
+/** The heavy list (`.test-tiers.json`), read and validated, or an Error naming why it cannot be used. */
+function loadHeavyList() {
+  let text;
+  try { text = fs.readFileSync(HEAVY_LIST_PATH, 'utf-8'); } catch (e) { throw new Error(`cannot read .test-tiers.json (${e.code ?? e.message})`); }
+  const parsed = parseHeavyList(text);
+  if (!parsed.ok) throw new Error(parsed.reason);
+  return parsed.list;
+}
+
+/**
+ * Files `npm run test:preflight` leaves out, in ONE place: every heavy file in `.test-tiers.json` (the 48-file fleet and
+ * archive-lane family, 57% of the suite's test time), each with the reason beside it. This used to be a one-entry list
+ * (`tests/fleet-cli.test.mjs`) that, after #214 split that file, saved about 3% (docs/plans/gate-cost-slice-2.md F5);
+ * there is now ONE place a slow file is named, shared with the tier oracle, so the two cannot drift.
  * Preflight is for catching a late guard-test failure cheaply BEFORE the first push; the gate
  * still runs everything.
  */
-export const PREFLIGHT_SKIPPED_FILES = Object.freeze([
-  Object.freeze({
-    file: 'tests/fleet-cli.test.mjs',
-    why: 'the largest remaining part of the fleet-cli family after #214 (36 of its 132 tests); not re-measured',
-  }),
-]);
+export const PREFLIGHT_SKIPPED_FILES = (() => {
+  // A broken `.test-tiers.json` must never take the FULL suite down with it: `npm test` does not use the list at all.
+  // The error is kept and surfaces where the list IS used (a preflight, or a tier envelope check).
+  try { return Object.freeze(loadHeavyList().heavy.map((h) => Object.freeze({ file: h.file, why: h.why }))); } catch (e) {
+    preflightListError = e.message;
+    return Object.freeze([]);
+  }
+})();
 
 // A third reporter (tap + timing + guard) crosses node's default listener ceiling of 10 and printed
 // "MaxListenersExceededWarning" on every run. The ceiling is raised in the runner process only, by the
@@ -173,6 +192,7 @@ const SKIP_NAME_RE = /^[\w.-]+\.test\.mjs$/;
  */
 export function selectTestArgs({ preflight = false, exists = fs.existsSync, skipped = PREFLIGHT_SKIPPED_FILES } = {}) {
   if (!preflight) return { args: [...DEFAULT_ARGS], skipped: [] };
+  if (skipped === PREFLIGHT_SKIPPED_FILES && preflightListError) throw new Error(`the heavy list is unusable (${preflightListError}), so the preflight has nothing to skip; run npm test`);
 
   /** @type {Map<string, string[]>} dir -> basenames without the .test.mjs suffix */
   const byDir = new Map();
@@ -392,39 +412,78 @@ export function adjudicateRun({ status, reportText }) {
  * honesty rule exists to refuse (audit round 1, H3); the cost of failing closed is one
  * re-run, and the message says which.
  *
+ * The same check serves the branch TIER (`tier`: the heavy files a `test-tier/v1` envelope skipped): a tiered run that
+ * may have run the wrong files, or whose evidence cannot be read, fails closed exactly like a preflight, and says
+ * plainly it was not the full suite (docs/plans/gate-cost-slice-2.md section 2.4 items 1-3).
+ *
  * @param {{status: number|null, reportText: string|null, timingText?: string|null,
- *          preflight?: {skipped: Array<{file: string, why: string}>, expected: Set<string>}|null}} input
+ *          preflight?: {skipped: Array<{file: string, why: string}>, expected: Set<string>}|null,
+ *          tier?: {skipped: Array<{file: string, why: string}>, expected: Set<string>}|null}} input
  * @returns {{exitCode: number, lines: string[]}}
  */
-export function finishRun({ status, reportText, timingText = null, preflight = null }) {
+export function finishRun({ status, reportText, timingText = null, preflight = null, tier = null }) {
   const verdict = adjudicateRun({ status, reportText });
   const lines = [];
   if (verdict.message) lines.push(verdict.message);
   lines.push(...summariseTiming(timingText).lines);
 
   let exitCode = verdict.exitCode;
-  if (preflight) {
+  const selection = preflight ?? tier;
+  if (selection) {
+    const label = preflight ? 'Preflight' : 'Branch tier';
     const ran = ranFiles(timingText);
     if (ran === null) {
       if (exitCode === 0) exitCode = 1;
-      lines.push(`Preflight: selection UNVERIFIED (${ranFilesUnavailableReason(timingText)}), so it cannot be confirmed that the right files ran. Failing rather than reporting a pass; re-run, or use npm test.`);
+      lines.push(`${label}: selection UNVERIFIED (${ranFilesUnavailableReason(timingText)}), so it cannot be confirmed that the right files ran. Failing rather than reporting a pass; re-run, or use npm test.`);
     } else {
-      const skippedSet = new Set(preflight.skipped.map((x) => x.file));
+      const skippedSet = new Set(selection.skipped.map((x) => x.file));
       const ranSkipped = [...ran].filter((x) => skippedSet.has(x)).sort();
-      const missing = [...preflight.expected].filter((x) => !ran.has(x)).sort();
-      if (ranSkipped.length || missing.length) {
+      const missing = [...selection.expected].filter((x) => !ran.has(x)).sort();
+      // Equality, both directions: a file that ran and was neither expected nor declared skipped is a selection that
+      // does not mean what it says (audit M9).
+      const unexpected = [...ran].filter((x) => !selection.expected.has(x) && !skippedSet.has(x)).sort();
+      if (ranSkipped.length || missing.length || unexpected.length) {
         if (exitCode === 0) exitCode = 1;
-        lines.push('Preflight: the files that ran are not the files that were selected.');
+        lines.push(`${label}: the files that ran are not the files that were selected.`);
         if (ranSkipped.length) lines.push(`  ran although declared skipped: ${ranSkipped.join(', ')}`);
+        if (unexpected.length) lines.push(`  ran but were not selected: ${unexpected.slice(0, 10).join(', ')}${unexpected.length > 10 ? ` (+${unexpected.length - 10} more)` : ''}`);
         if (missing.length) lines.push(`  expected but did not run: ${missing.slice(0, 10).join(', ')}${missing.length > 10 ? ` (+${missing.length - 10} more)` : ''}`);
       }
     }
-    lines.push(
-      'PREFLIGHT — this was NOT the gate. Skipped: ' + preflight.skipped.map((x) => `${x.file} (${x.why})`).join('; ') + '.',
-      'A pass here means the files it ran passed. The pre-push gate runs everything.',
-    );
+    if (preflight) {
+      lines.push(
+        'PREFLIGHT — this was NOT the gate. Skipped: ' + preflight.skipped.map((x) => `${x.file} (${x.why})`).join('; ') + '.',
+        'A pass here means the files it ran passed. The pre-push gate runs everything.',
+      );
+    } else {
+      lines.push(
+        `BRANCH TIER — this was NOT the full suite. Skipped ${tier.skipped.length} heavy file(s): ${tier.skipped.map((x) => x.file).join(', ') || 'none'}.`,
+        'A pass here means the files it ran passed. A merge candidate needs a full verdict (test-tier/v1 full <sha>).',
+      );
+    }
   }
   return { exitCode, lines };
+}
+
+/**
+ * Read a `test-tier/v1` envelope file for `--tier-skip` and turn it into the skip list. Every check is a hard error
+ * (the caller exits 2): an envelope that is unreadable, unparseable, of the wrong version, skips a file that is not on
+ * the heavy list, skips a file the diff reaches, or would leave nothing to run, is never "skip as last time" and never
+ * "skip nothing silently" (docs/plans/gate-cost-slice-2.md section 2.4 items 1 and 4).
+ *
+ * @param {string} file
+ * @param {{readFile?: (p: string) => string, list?: ReturnType<typeof loadHeavyList>}} [io]
+ * @returns {{skipped: Array<{file: string, why: string}>, envelope: object}}
+ */
+export function readTierSkip(file, { readFile = (p) => fs.readFileSync(p, 'utf-8'), list = loadHeavyList() } = {}) {
+  let text;
+  try { text = readFile(file); } catch (e) { throw new Error(`cannot read the tier envelope ${file} (${e.code ?? e.message})`); }
+  const parsed = parseTierEnvelope(text);
+  if (!parsed.ok) throw new Error(parsed.reason);
+  const valid = validateEnvelopeAgainstList(parsed.envelope, list);
+  if (!valid.ok) throw new Error(valid.reason);
+  const why = new Map(list.heavy.map((h) => [h.file, h.why]));
+  return { envelope: parsed.envelope, skipped: parsed.envelope.skipped.map((f) => ({ file: f, why: why.get(f) })) };
 }
 
 function main() {
@@ -435,25 +494,50 @@ function main() {
   // `--preflight=false` must mean OFF, not "accepted and inert", which `hasFlag` honours).
   // Only the part before a `--` terminator is ours to read; after it, everything is node's.
   const { head, tail } = partitionArgs(forwarded);
-  const ours = head.filter((a) => a.startsWith('--preflight'));
+  const ours = head.filter((a) => a.startsWith('--preflight') || a.startsWith('--tier-skip'));
   try {
-    assertKnownFlags(ours, ['--preflight'], { cli: 'run-tests', from: 0 });
+    assertKnownFlags(ours, ['--preflight', '--tier-skip'], { cli: 'run-tests', from: 0 });
   } catch (err) {
     process.stderr.write(`${err.message}\n`);
     process.exit(2);
   }
-  const preflight = ours.length > 0 && hasFlag('preflight');
-  const rest = [...head.filter((a) => !a.startsWith('--preflight')), ...tail];
-  if (preflight && rest.length > 0) {
-    process.stderr.write(`test:preflight takes no other arguments (got: ${rest.join(' ')}). It runs the default set minus PREFLIGHT_SKIPPED_FILES.\n`);
+  const preflight = ours.some((a) => a.startsWith('--preflight')) && hasFlag('preflight');
+  // `--tier-skip <file>`: its VALUE is ours too, so it is stripped with the flag (a bare path is not a file to run).
+  const tierSkipFile = ours.some((a) => a.startsWith('--tier-skip')) ? argOption('tier-skip') : null;
+  if (ours.some((a) => a.startsWith('--tier-skip')) && !tierSkipFile) {
+    process.stderr.write('run-tests: --tier-skip needs the path of a test-tier/v1 envelope file.\n');
+    process.exit(2);
+  }
+  const rest = [];
+  for (let i = 0; i < head.length; i += 1) {
+    const a = head[i];
+    if (a.startsWith('--preflight')) continue;
+    if (a === '--tier-skip') { i += 1; continue; }
+    if (a.startsWith('--tier-skip=')) continue;
+    rest.push(a);
+  }
+  rest.push(...tail);
+  if ((preflight || tierSkipFile) && rest.length > 0) {
+    process.stderr.write(`${preflight ? 'test:preflight' : '--tier-skip'} takes no other arguments (got: ${rest.join(' ')}). It runs the default set minus the files it skips.\n`);
+    process.exit(2);
+  }
+  if (preflight && tierSkipFile) {
+    process.stderr.write('run-tests: --preflight and --tier-skip are two different selections; pass one.\n');
     process.exit(2);
   }
 
+  let tierSkip = null;
+  if (tierSkipFile) {
+    try { tierSkip = readTierSkip(tierSkipFile); } catch (err) {
+      process.stderr.write(`run-tests: ${err.message}\n  Refusing to guess a selection: run the full suite (npm test) instead.\n`);
+      process.exit(2);
+    }
+  }
   let selection;
   try {
-    selection = selectTestArgs({ preflight });
+    selection = tierSkip ? selectTestArgs({ preflight: true, skipped: tierSkip.skipped }) : selectTestArgs({ preflight });
   } catch (err) {
-    process.stderr.write(`test:preflight: ${err.message}\n`);
+    process.stderr.write(`${tierSkip ? '--tier-skip' : 'test:preflight'}: ${err.message}\n`);
     process.exit(2);
   }
   // `rest` is what node sees: our own flag (in any spelling, including an explicit =false) is never forwarded.
@@ -463,9 +547,12 @@ function main() {
   const split = partitionArgs(rest);
   const caller = extractReporterFlags(split.head);
   const userArgs = [...caller.others, ...split.tail];
-  const args = preflight ? selection.args : (userArgs.length > 0 ? userArgs : selection.args);
+  const args = (preflight || tierSkip) ? selection.args : (userArgs.length > 0 ? userArgs : selection.args);
   if (preflight) {
     process.stderr.write(`PREFLIGHT — this is NOT the gate. Skipping: ${selection.skipped.map((x) => x.file).join(', ')}. The pre-push gate runs them.\n`);
+  }
+  if (tierSkip) {
+    process.stderr.write(`BRANCH TIER — not the full suite. Skipped ${selection.skipped.length} heavy file(s): ${selection.skipped.map((x) => x.file.replace(/^tests\//, '')).join(', ') || 'none'}.\n`);
   }
 
   const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-guard-'));
@@ -503,6 +590,7 @@ function main() {
     reportText,
     timingText,
     preflight: preflight ? { skipped: selection.skipped, expected: expectedPreflightFiles() } : null,
+    tier: tierSkip ? { skipped: selection.skipped, expected: expectedPreflightFiles({ skipped: selection.skipped }) } : null,
   });
   if (keepNote) lines.push(keepNote);
   if (lines.length) process.stderr.write(`\n${lines.join('\n')}\n`);

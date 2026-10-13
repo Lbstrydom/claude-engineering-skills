@@ -404,15 +404,50 @@ if [ "$LANE_HANDLED" -ne 1 ] && [ -f "$REPO_ROOT/package.json" ]; then
     ARGS=()
     [ -n "$PUSH_BASE" ] && ARGS+=(--base "$PUSH_BASE")
     [ -n "$PUSH_HEAD" ] && ARGS+=(--head "$PUSH_HEAD")
+    # The test tier (docs/plans/gate-cost-slice-2.md): AUDIT_PREPUSH_TIER=branch opts a work-in-progress push into
+    # skipping the unreached heavy files; unset (the default) is the FULL suite plus a shadow line. A push to the
+    # default branch is always full (the sandbox decides from --pushes-default). The sandbox writes ONE summary line
+    # to a file this hook owns and removes; the success label below is read from it, never assumed.
+    TIER_SUMMARY_FILE="$(mktemp 2>/dev/null)"
+    TIER_SUMMARY_ARG="$TIER_SUMMARY_FILE"
+    if [ -n "$TIER_SUMMARY_FILE" ] && command -v cygpath >/dev/null 2>&1; then TIER_SUMMARY_ARG="$(cygpath -w "$TIER_SUMMARY_FILE")"; fi
+    [ -n "$TIER_SUMMARY_FILE" ] && ARGS+=(--summary-file "$TIER_SUMMARY_ARG")
+    [ -n "${AUDIT_PREPUSH_TIER:-}" ] && ARGS+=(--tier "$AUDIT_PREPUSH_TIER")
+    [ "$PUSHES_DEFAULT" = "1" ] && ARGS+=(--pushes-default)
     ( cd "$REPO_ROOT" && node scripts/prepush-check.mjs "${ARGS[@]}" )
     CHECK_EXIT=$?
   fi
   if [ $CHECK_EXIT -ne 0 ]; then
+    [ -n "${TIER_SUMMARY_FILE:-}" ] && rm -f "$TIER_SUMMARY_FILE"
     echo "✗  pre-push checks FAILED (exit $CHECK_EXIT) — push blocked."
     echo "   Fix the issues above, or bypass with: git push --no-verify"
     exit 1
   fi
-  echo "✓  checks passed"
+  # The label is what the checks REPORTED for the pushed head: exactly one line in the test-tier/v1 grammar naming
+  # PUSH_HEAD. Anything else (missing, truncated, malformed, duplicated, another sha) is said as "tier NOT reported"
+  # and is never read as full or branch, so nothing here can pass for a full verdict (audit M1).
+# >>> tier-label (the success label is read from the sandbox's summary; tests/pre-push-tier-label.test.mjs runs this block)
+  TIER_LABEL=""
+  if [ "$AUDIT_PREPUSH_SANDBOX" = "0" ]; then
+    TIER_LABEL=" (full, in-tree)"
+  else
+    TIER_RE='^test-tier/v1 (full|branch) ([0-9a-f]{40,64}) skipped=([0-9]+) base=([0-9a-f]{40,64}|none)( reason=[A-Za-z0-9._:-]+)?$'
+    TIER_WHY="no summary file"
+    if [ -n "${TIER_SUMMARY_FILE:-}" ] && [ -s "$TIER_SUMMARY_FILE" ]; then
+      TIER_LINES=$(grep -c . "$TIER_SUMMARY_FILE")
+      TIER_LINE=$(grep . "$TIER_SUMMARY_FILE" | head -n 1 | tr -d '\015')
+      if [ "$TIER_LINES" != "1" ]; then TIER_WHY="the summary has $TIER_LINES lines"
+      elif ! [[ "$TIER_LINE" =~ $TIER_RE ]]; then TIER_WHY="the summary is malformed"
+      elif [ -n "$PUSH_HEAD" ] && [ "${BASH_REMATCH[2]}" != "$PUSH_HEAD" ]; then TIER_WHY="the summary names another commit"
+      elif [ "${BASH_REMATCH[1]}" = "branch" ]; then TIER_LABEL=" (branch tier: ${BASH_REMATCH[3]} heavy files skipped - NOT the full suite)"; TIER_WHY=""
+      else TIER_LABEL=" (full)"; TIER_WHY=""
+      fi
+    fi
+    [ -n "$TIER_WHY" ] && TIER_LABEL=" (tier NOT reported: $TIER_WHY)"
+  fi
+# <<< tier-label <<<
+  [ -n "${TIER_SUMMARY_FILE:-}" ] && rm -f "$TIER_SUMMARY_FILE"
+  echo "✓  checks passed${TIER_LABEL}"
 fi
 
 # ── 1.5 Remote-gate observability (non-blocking) ─────────────────────────
