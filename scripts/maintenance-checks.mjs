@@ -78,7 +78,7 @@ import { isSourceRepo } from './lib/is-source-repo.mjs';
 import { loadHeartbeat as readHeartbeat, isOverdue as heartbeatOverdue, DEFAULT_INTERVAL_DAYS, HEARTBEAT_FILE } from './lib/maintenance-heartbeat.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
-if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+if (process.argv.includes('--selfcheck-relocation') && isInvokedAsScript(import.meta.url)) { console.log('OK'); process.exit(0); }
 
 const REPO_ROOT = findRepoRootFromScript(import.meta.url);
 const SCRIPTS_DIR = import.meta.dirname;

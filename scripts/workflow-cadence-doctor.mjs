@@ -149,7 +149,7 @@ import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 import { NO_MEASUREMENT_TITLE, isNoMeasurementAnnotation } from './lib/measurement-marker.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
-if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+if (process.argv.includes('--selfcheck-relocation') && isInvokedAsScript(import.meta.url)) { console.log('OK'); process.exit(0); }
 
 const KNOWN_FLAGS = [
   '--repo', '--config', '--workflow', '--event', '--max-age-days', '--require-measurement',
@@ -814,9 +814,9 @@ export async function main(argv = process.argv, env = process.env, out = process
 // FALSE at the consumer path `scripts/.claude-skills/workflow-cadence-doctor.mjs`
 // -- so the promoted copy ran nothing, printed nothing and exited 0 in every
 // consumer: a watcher shipped as a silent no-op, which is the exact defect it
-// exists to detect. `--selfcheck-relocation` cannot catch this (its handler sits
-// above this line and returns before it), so the guard against it is
-// `runs under a scripts/.claude-skills/ layout` in this module's test file.
+// exists to detect. The `--selfcheck-relocation` handler is gated on this same
+// guard (since 2026-10-13), and the test `runs under a scripts/.claude-skills/
+// layout` asserts real output from the relocated path.
 const isDirectRun = isInvokedAsScript(import.meta.url);
 if (isDirectRun) {
   try {

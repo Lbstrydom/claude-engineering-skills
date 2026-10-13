@@ -56,7 +56,7 @@ const G = '\x1b[32m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m
 // consumer's `scripts/.claude-skills/`. Answered before anything else, and
 // before `assertKnownFlags` — a probe that itself required valid flags could
 // never prove the file loads at all.
-if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+if (process.argv.includes('--selfcheck-relocation') && isInvokedAsScript(import.meta.url)) { console.log('OK'); process.exit(0); }
 
 /**
  * `scripts/.sync-manifest.json`'s `files` map (destination-relative path →

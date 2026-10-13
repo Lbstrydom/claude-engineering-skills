@@ -38,7 +38,7 @@ import './lib/config.mjs';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
-if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+if (process.argv.includes('--selfcheck-relocation') && isInvokedAsScript(import.meta.url)) { console.log('OK'); process.exit(0); }
 
 // Resolve `.audit/` via the canonical repo-root finder. This script always
 // lives under a `scripts/` ancestor (in source: `scripts/`; in consumer:

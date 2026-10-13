@@ -50,6 +50,47 @@ function findAdHocEntryGuards(src) {
   return hits;
 }
 
+/**
+ * Module-top-level `if (...)` statements (a column-0 `if`; ones inside main()
+ * are indented) whose CONDITION mentions `--selfcheck-relocation` without
+ * consulting the entry guard. The condition is read to its balancing `)`, so
+ * one split across lines is still seen whole.
+ * @param {string} src
+ * @returns {number[]} 1-based line numbers of the `if`
+ */
+function findImportTimeSelfchecks(src) {
+  const hits = [];
+  const re = /^if \(/gm;
+  for (let m; (m = re.exec(src));) {
+    let depth = 0; let end = -1;
+    for (let i = m.index + 3; i < src.length; i++) {
+      if (src[i] === '(') depth++;
+      else if (src[i] === ')' && --depth === 0) { end = i; break; }
+    }
+    const cond = src.slice(m.index, end < 0 ? src.length : end + 1);
+    if (cond.includes('--selfcheck-relocation') && !cond.includes('isInvokedAsScript(')) {
+      hits.push(src.slice(0, m.index).split('\n').length);
+    }
+  }
+  return hits;
+}
+
+describe('findImportTimeSelfchecks — both directions', () => {
+  it('flags a single-line top-level handler', () => {
+    assert.deepEqual(findImportTimeSelfchecks("if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); }"), [1]);
+  });
+  it('flags a condition split across lines', () => {
+    assert.deepEqual(findImportTimeSelfchecks("x;\nif (\n  process.argv.includes('--selfcheck-relocation')\n) { process.exit(0); }"), [2]);
+  });
+  it('ignores a gated handler, single- or multi-line', () => {
+    assert.deepEqual(findImportTimeSelfchecks("if (process.argv.includes('--selfcheck-relocation') && isInvokedAsScript(import.meta.url)) {}"), []);
+    assert.deepEqual(findImportTimeSelfchecks("if (\n  process.argv.includes('--selfcheck-relocation')\n  && isInvokedAsScript(import.meta.url)\n) {}"), []);
+  });
+  it('ignores a handler inside main() (indented)', () => {
+    assert.deepEqual(findImportTimeSelfchecks("async function main() {\n  if (process.argv.includes('--selfcheck-relocation')) { return; }\n}"), []);
+  });
+});
+
 function census() {
   const files = [];
   const walk = (dir) => {
@@ -100,6 +141,20 @@ describe('entry-guard census over scripts/** and root *.mjs', () => {
       if (hits.length) offenders.push(`${rel}:${hits.join(',')}`);
     }
     assert.deepEqual(offenders, [], `ad-hoc entry guards (import { isInvokedAsScript } from '${HELPER}'):\n  ${offenders.join('\n  ')}`);
+  });
+
+  // A module with an entry guard must not act at import time either: a
+  // top-level `--selfcheck-relocation` handler printed OK and exited the
+  // IMPORTING process when its argv carried the flag, and it bypassed the
+  // guard, so the smoke never exercised the guard it exists to smoke.
+  it('no import-time --selfcheck-relocation handler in a module that has an entry guard', () => {
+    const offenders = [];
+    for (const rel of census()) {
+      const src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+      if (!src.includes('isInvokedAsScript(import.meta.url)')) continue;
+      for (const line of findImportTimeSelfchecks(src)) offenders.push(`${rel}:${line}`);
+    }
+    assert.deepEqual(offenders, [], `gate the handler: && isInvokedAsScript(import.meta.url)\n  ${offenders.join('\n  ')}`);
   });
 
   it('the census is not vacuous: it sees the migrated guards', () => {

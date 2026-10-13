@@ -34,7 +34,7 @@ import { sweepStaleOrphanPreimages } from './lib/audit/diff-scope-resolver.mjs';
 import { retrySync } from './lib/retry-transient-fs.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
-if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+if (process.argv.includes('--selfcheck-relocation') && isInvokedAsScript(import.meta.url)) { console.log('OK'); process.exit(0); }
 
 /** Orphaned preimage WORKTREES (os.tmpdir()/orphan-preimage-*) — left by a
  *  hard-killed audit run; registered git worktrees, so they must go through
