@@ -20,6 +20,7 @@ import crypto from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
 import { ensureAuditDeps } from './lib/install/deps.mjs';
+import { reportDeclaredBundleDeps } from './lib/install/bundle-deps.mjs';
 import {
   CONSUMER_REPOS, resolveAdHocTarget, canonicaliseRegistryTarget, localRegistryStatus,
 } from './lib/consumer-repos.mjs';
@@ -58,7 +59,7 @@ import { deepMerge } from './lib/json-merge.mjs';
 import { assertContainedDestination } from './lib/install/safe-destination.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
 import { retireLegacyCopilotBlock } from './lib/sync-legacy-copilot-block.mjs';
-import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import {
   compareSkillSurfaces, listSurfaceNames, classifyOrphans, LIVE_SURFACE, SHADOWING_SURFACES,
 } from './lib/skill-surface-identity.mjs';
@@ -1278,6 +1279,7 @@ async function main() {
   // can distinguish "synced, nothing to change" from "reached nothing at all" —
   // see the coverage line at the end of main().
   let totalSkipped = 0;
+  const undeclaredDeps = []; // per-consumer `name: packages` lines for the end-of-run summary
 
   // `--target` (registry) and `--target-path` (arbitrary) are mutually
   // exclusive: they answer the same question differently, and silently
@@ -2498,10 +2500,8 @@ async function main() {
       }
     }
 
-    // Post-sync: ensure audit-loop npm deps are installed. Idempotent — no-op
-    // when the target already has everything. Without this step, sync can keep
-    // skill + script files current forever while the scripts silently fail to
-    // import at runtime because devDeps were never installed.
+    // Post-sync deps: install what is ABSENT (ensureAuditDeps, idempotent), then name required packages
+    // present but UNDECLARED — presence alone let picomatch crash storyline once pnpm pruned it. Warned only.
     if (!DRY_RUN) {
       try {
         ensureAuditDeps(repo.path, { dryRun: false, quiet: false });
@@ -2509,6 +2509,9 @@ async function main() {
         console.log(`  ${R}deps check failed${X}: ${err.message?.slice(0, 120)}`);
       }
     }
+    const depDecl = reportDeclaredBundleDeps(repo.path, path.join(SOURCE_ROOT, 'scripts'), { Y, D, X });
+    console.log(depDecl.lines.join('\n'));
+    if (depDecl.summary) undeclaredDeps.push(`${repo.name}: ${depDecl.summary}`);
 
     // Post-sync setup check — skip in dry-run (nothing was written)
     if (!DRY_RUN) {
@@ -2609,6 +2612,7 @@ async function main() {
     }
   }
 
+  if (undeclaredDeps.length) console.log(`${Y}⚠ undeclared required bundle packages${X} ${D}(per consumer; each line above names the command):${X}\n  ${undeclaredDeps.join('\n  ')}`);
   // D2b — sync-time shared-cloud-config trigger. Skip on dry-run, errors,
   // non-TTY, or --no-prompt. Silent on `already_current`; prompts on
   // create/update divergence. Never overwrites without operator Y.
@@ -2634,7 +2638,7 @@ async function main() {
   // both pages). No pre-push rebuild needed. See docs/plans/local-dashboard.md
   // §2.1 addendum + .gitignore.
 
-  process.exit(totalErrors > 0 ? 1 : 0);
+  await finishAndExit(totalErrors > 0 ? 1 : 0);   // drain first: the summary above is the last thing a piped run sees
 }
 
 async function maybePromptSharedCloudUpdate({ sourceRepoDir, stdio }) {
