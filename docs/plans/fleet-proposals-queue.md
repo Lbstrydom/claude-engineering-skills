@@ -1,6 +1,6 @@
 # Plan: fleet findings intake queue (`fleet propose`)
 - **Date**: 2026-10-13
-- **Status**: Draft
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend (Node CLI, `scripts/lib/fleet/**`). Stack `js-ts`.
 - **Target domain(s)**: `fleet`
@@ -132,3 +132,19 @@ Edge cases: a record written by a future `schemaVersion` is `unsupported` and ne
 - `fleet status` and `fleet next` print `N proposals pending, oldest Xd`, flag pending >3 days, and print `unmeasured (<reason>)` rather than `0`/`none` when the store cannot be read.
 - `fleet archive-check` lists open proposals the session originated without changing its verdict.
 - `fleet proposals` groups open items by theme and labels `blockedBy` from facts; a failed probe reads `unknown`.
+
+## Audit trail and Implementation Log
+
+**`/audit-plan`** (session audit-plan-fp1, `--mode plan`): GPT 3 rounds (R1 H3 M3, R2 H2, R3 H2, 100% accepted each), then Gemini round 1 **approve_with_debt** (one MEDIUM debt, G1, later superseded, see deviations). Stopped at the 3-round default with every finding a design correction accepted and fixed.
+
+**`/audit-code`** (session audit-code-fp1): R1 H9 M9 (17 accepted and fixed, 1 dismissed as an audit-tool coverage notice), R2 H1 M1 (both fixed), R3 PASS M1 (fixed), R4 PASS M1 (fixed), R5 PASS H0 M0 L0 on the full `proposals.mjs`. Gemini **APPROVE** (gate approve). Each guard added in a fix was shown red on a mutation of the code it protects.
+
+### 2026-10-13
+- **Completed**: `fleet propose`, `fleet proposal <id> --folded|--queued|--declined|--done`, `fleet proposals [--all]` (`scripts/lib/fleet/proposals.mjs`, `proposals-cmd.mjs`); the `proposals:` line on `status` and `next`; the originated-proposals reminder in `archive-check`; docs in `skills/fleet`. 57 tests across `tests/fleet-proposals.test.mjs` and `tests/fleet-proposals-cli.test.mjs`, and neighbouring fleet suites green.
+- **Remaining**: `participant-rules.md` step 9 still says "report findings" rather than "record them with `fleet propose`". It was held by the Part 1 claim at the time; the coordinator folded it into Part 4 of the theme. Migrating the coordinator's interim memory list into the store is a one-time coordinator action, offered, not code.
+- **Deviations** (each an audit-driven tightening of what the plan above said):
+  1. **Vanished active files** (section 2): an active-only read does NOT skip a file that vanished between listing and opening on the strength of "only terminal records move". It looks for the closed copy (one file name per month directory); with none the read is `complete:false` and names the file. Supersedes Gemini's G1 debt note.
+  2. **Record size**: the 64 KiB limit is enforced on the SERIALIZED bytes at write time, and non-final writes keep a 4 KiB reserve so a record can always be closed (R2 H1).
+  3. **Identity**: ids are unique across active and closed (an unreadable `closed/` fails closed as `EPROPOSAL_UNVERIFIABLE`); a transition checks embedded id against filename like the reader; archival never overwrites a closed record; timestamps are canonical UTC ISO.
+  4. **`blockedBy`**: a PR URL on a host other than github.com keeps the host in the stored repo and is passed to `gh --repo`; a branch blocker is a literal ref name (no tilde, caret, colon, question mark, asterisk, bracket or backslash, no `@{`, `//` or `.lock` component); a branch counts as merged only when EVERY existing tip (local and origin) is in a base; a config that cannot be loaded is carried into the `unknown` text.
+  5. **Listing**: a definitive "no open proposals" is printed only for a COMPLETE read.
