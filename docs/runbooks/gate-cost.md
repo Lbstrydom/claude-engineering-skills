@@ -16,6 +16,11 @@ Plan: [`docs/plans/gate-cost-slice-1.md`](../plans/gate-cost-slice-1.md).
 
 ## 0. `guards:preflight` — the whole-suite guards, before you ask for a gate slot
 
+**Then take the slot from the machine lease, not from a message:** `node scripts/fleet.mjs lease acquire --kind gate --for 30`,
+`lease attach --pid <pid>` once the run starts, `lease release` after. The lease is one file shared by every repo's fleet
+(`~/.claude-fleet/lease.json`, or `FLEET_MACHINE_DIR`; two OS users or WSL beside Windows must set that variable to one
+shared path). Plan: [`docs/plans/fleet-machine-lease.md`](../plans/fleet-machine-lease.md).
+
 ```bash
 npm run guards:preflight
 ```

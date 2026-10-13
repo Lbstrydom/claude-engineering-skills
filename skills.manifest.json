@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "29447a22626e02ca",
+  "bundleVersion": "5f95b103fedac6b1",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -252,19 +252,19 @@
     },
     "fleet": {
       "path": "skills/fleet/SKILL.md",
-      "sha": "0d2a1e1058a4",
-      "size": 14292,
+      "sha": "76ca09af9c9f",
+      "size": 15020,
       "summary": "Coordinate SEVERAL CONCURRENT AI coding sessions (desktop chips, linked",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "0d2a1e1058a4",
-          "size": 14292
+          "sha": "76ca09af9c9f",
+          "size": 15020
         },
         {
           "relPath": "references/coordination.md",
-          "sha": "4b11409d6caf",
-          "size": 25407
+          "sha": "908d55f38d22",
+          "size": 26392
         },
         {
           "relPath": "references/landing.md",
@@ -273,8 +273,8 @@
         },
         {
           "relPath": "references/participant-rules.md",
-          "sha": "42e1205c08e3",
-          "size": 5454
+          "sha": "2710eba063fd",
+          "size": 6868
         },
         {
           "relPath": "references/telemetry.md",

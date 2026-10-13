@@ -149,6 +149,14 @@ function shimDirFor(dir) {
  * @param {object} [extra] env overrides
  * @param {{prependPath?: string[], basePath?: string[]}} [opts] `basePath` replaces the inherited PATH entries (tests)
  */
+/**
+ * A throwaway machine-lease directory for this test process. `fleet` reads and writes ONE lease shared by every repo
+ * on the machine (`FLEET_MACHINE_DIR`, default `~/.claude-fleet`); a test that inherited the default would read a real
+ * gate slot, so its output would depend on what else the machine is doing. Never created unless a test writes a lease.
+ */
+export const TEST_MACHINE_DIR = path.join(os.tmpdir(), `fleet-machine-test-${process.pid}`);
+process.on('exit', () => { try { fs.rmSync(TEST_MACHINE_DIR, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ } });
+
 export function scrubbedEnv(extra = {}, { prependPath = [], basePath } = {}) {
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (/^GIT_/i.test(k)) delete env[k];
@@ -165,7 +173,7 @@ export function scrubbedEnv(extra = {}, { prependPath = [], basePath } = {}) {
   env[key] = [...prependPath, ...kept].join(path.delimiter);
   delete env.NODE_OPTIONS;
   delete env.FLEET_NOW;
-  return { ...env, ...extra };
+  return { ...env, FLEET_MACHINE_DIR: TEST_MACHINE_DIR, ...extra };
 }
 
 /** Install the fake `gh`; returns the dir to prepend to PATH plus helpers to drive it. */
@@ -267,8 +275,14 @@ export function prRow({ number, branch, headOid, baseOid, repo = 'o/n', state = 
 
 // ── running the CLI ─────────────────────────────────────────────────────────
 
+/** A fleet CLI test must build its env with `scrubbedEnv` (or set the lease directory itself): see TEST_MACHINE_DIR. */
+function assertHermetic(env) {
+  if (!env || env.FLEET_MACHINE_DIR === undefined) throw new Error('runFleet: env has no FLEET_MACHINE_DIR; build it with scrubbedEnv() so the test cannot read the real machine lease');
+}
+
 /** Run `fleet.mjs` synchronously. `json` is the parsed stdout when it is JSON. */
 export function runFleet(args, { cwd, env }) {
+  assertHermetic(env);
   const r = spawnSync(process.execPath, [FLEET_CLI, ...args], { cwd, env, encoding: 'utf-8', timeout: 180_000 });
   let json = null;
   try { json = JSON.parse(r.stdout); } catch { /* human output */ }
@@ -281,6 +295,7 @@ export function runFleet(args, { cwd, env }) {
  * `timeoutMs` overrides it for tests) kills the child and rejects with a clear message.
  */
 export function runFleetAsync(args, { cwd, env, timeoutMs = 180_000 }) {
+  assertHermetic(env);
   return new Promise((resolve, reject) => {
     const c = spawn(process.execPath, [FLEET_CLI, ...args], { cwd, env });
     let stdout = ''; let stderr = ''; let settled = false;

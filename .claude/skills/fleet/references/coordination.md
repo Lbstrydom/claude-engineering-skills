@@ -364,11 +364,19 @@ doing the work. On top of the participant rules:
     time (a "gate slot"), and no installs or disk-heavy maintenance alongside
     another repo's announced timing or CI window. Measured 2026-10-12/13: two
     parallel gates plus maintenance pushed another repo's CI past its time cap
-    twice.
+    twice. The slot is recorded, not only agreed: `fleet lease acquire|attach|release|status` keeps one file for the
+    whole machine (the heavy slot with its holder, repo, pid and expiry; the quiet and CI windows each repo announces
+    with `lease announce`; the peak-cost hours with `lease peak`), and `fleet next` shows it. An expired lease is not
+    proof its job stopped: a takeover needs a recorded pid that is dead on this machine, and anything unverifiable is
+    forced only by a person (`lease release --force --reason`, never on a live lease). The file lives in
+    `~/.claude-fleet` unless `FLEET_MACHINE_DIR` says otherwise; set that variable to one shared path when two OS
+    users, or WSL beside Windows, run the same machine's work. It is cooperative like the rest of fleet: it answers
+    "is the slot free", while you still decide who goes next (`hold` and directives outrank it).
 15. **Mind the message budget.** A host may pause a coordinator's outbound
     session messages after a burst (observed: 10 per user turn). Batch messages
     to the same session, skip acknowledgements that change nothing, and keep
-    sends in reserve for time-critical ones (all clear, gate slot, hold).
+    sends in reserve for time-critical ones (all clear, gate slot, hold). The lease (rule 14) replaces most slot
+    relays: a session reads it instead of asking you.
 
 ### Optional: a title reminder hook (Claude Code only)
 
