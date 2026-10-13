@@ -2217,7 +2217,7 @@ async function main() {
             // decision an absent file already produces.
             const stillThere = fs.existsSync(path.join(repo.path, dstRel));
             if (carried && stillThere) consumerFileMap[dstRel] = carried;
-            else if (stillThere && failedWrites.has(dstRel)) keepJournal = true;
+            else if (failedWrites.has(dstRel) && mayStillExist(path.join(repo.path, dstRel))) keepJournal = true;
             continue;
           }
           const abs = path.join(repo.path, dstRel);
