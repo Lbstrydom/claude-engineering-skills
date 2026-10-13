@@ -356,3 +356,13 @@ This changes what every consumer's managed `.gitignore` block contains, so it is
 
 - **/audit-plan (GPT), 5 rounds — the absolute cap.** R1 H:5 M:2 · R2 H:2 M:1 · R3 H:3 · R4 H:3 · R5 H:2 M:1 — 22 findings, **22 accepted, 0 dismissed, 0 deferred** (acceptance 100% every round). Continued past the 3-round default because every round was concrete *design* defects at full acceptance (the rigor-pressure test), not polish: the single lock (R1), the reader race and encoded-length bound (R2), stale-branch deletion resurrection (R3), the merge-base baseline and idempotent all-or-nothing reconcile (R4), staged publication and CRLF-safe provenance (R5). Stopped at R5 because 5 is the absolute cap; the remaining surface is the reconcile path, which the code audit verifies against real code and the real-git fixtures in §9.
 - **Final gate (Gemini, round 1 of 2)**: `CONCERNS` → disposition **`approve_with_debt`** (0 release-blocking, 0 wrongly dismissed). Its single MEDIUM, G1 (ordinary writers must not mutate a tracked stale legacy file pending reconcile), was folded into §2.4 rather than carried as debt — a one-line contract with no design change. No second Gemini round needed.
+
+## Checkpoint — 2026-10-13 20:15Z (hard stop: account switch)
+
+**Done**: plan audited (above); implementation committed (`db821333`) with its tests in the same commit. Red at `972e5077`: the neighbouring-topicId merge gives `UU .audit/tech-debt.json` (7 of 8 merge tests failed; the legacy control passed). Green: per-entry merge 8/8, migrate CLI 19/19, debt-ledger 61/61, git-history 36/36, sync-ignore 10/10, the debt-* group otherwise green. Negative controls run (each guard reverted, its test seen red): shallow-clone guard, merge-base baseline, preservation manifest, staged publication, CRLF provenance, read order, bytes re-check, symlink boundary, shared lock name, `--diff-filter=A` fix, entry-file history. `npm run guards:preflight`: PASS (32 steps).
+
+**Not done**:
+1. `/audit-code docs/plans/debt-ledger-per-entry-files.md`: round 1 was started and STOPPED at the hard stop, with no result. Restart from round 1 (`--scope diff`, clean tree → base `HEAD~1` = `db821333` alone), triage, then the Gemini gate.
+2. Ask the coordinator for a gate slot (full `npm test` + pre-push). Nothing has run beyond single test files and the preflight.
+3. Stop at the `/ship` handoff. The PR description carries the red/green evidence above.
+4. After merge: wine's adoption is the runbook's 5 steps (`docs/runbooks/consumer-adoption.md` §"Tech-debt ledger: one file per entry"); upstream `d338aa8a` can close once wine has migrated.
