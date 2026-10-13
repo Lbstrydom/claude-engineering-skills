@@ -1,5 +1,11 @@
 # Project Status Log
 
+<!-- ship-verification-7b6b1736-20261013T184547Z.md -->
+### Consumer Verification (previous ship)
+- **Commit**: 7b6b1736b8ef66b32f2d890fedf4c10bb6ac151c on `claude/gate-cost-tier` (PR #241, open; NOT merged), based on main 653ab7ce; feature commit af435385, ship commit e0562731 (AI-Gate converged, run a982278b), fix 7b6b1736.
+- **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of exactly this sha: 20,016 tests, 19,970 pass, 0 fail, 46 skipped; verdict line `test-tier/v1 full 7b6b1736b8ef66b32f2d890fedf4c10bb6ac151c skipped=0 base=653ab7ce4bed39a2f5aec505e6ca314ae56111ae reason=default`. The first push (e0562731) was refused by the same gate on 2 tests this branch broke (extension-list-drift, skill-command-portability), both fixed in 7b6b1736. No separate consumer-side retrieval was run.
+- **Result**: pushed commit verified by the gate; the synced consumer bundle is unverified (blocked: not merged). After #241 merges and main re-syncs: run `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in each consumer's MAIN checkout and confirm `lib/module-graph.mjs` still exports `parseImports` with the new optional `reportComputed` and that no `test-tier` module is imported by a synced file.
+
 <!-- ship-verification-af095029-20261013T121639Z.md -->
 ### Consumer Verification (previous ship)
 - **Commit**: af09502908860668ddbd773b0ca9bc53945a47e9 on `fix/fleet-prune-surface-count` (PR #235, open, NOT merged), rebased onto main 9ba0c687. Commits: feature b8fad08b, plans index 4c72e756, status.json fix 56ba995f, index regen 64f74267, ship commit af095029.
@@ -195,6 +201,20 @@
 - **Commit**: 63688915d17b2c0122dc9491906b79e2f3a90b76 on `claude/sync-pr-supersede` (PR #238, open; NOT merged), merged up to main 03d81e74; code commits 6c3841ae and 9921c5eb, the plan audit trail 700a6b1a, and the status.md ship commit (AI-Gate converged, run a8bd9bd3).
 - **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of exactly this sha on one plain push: 19,771 tests, 19,725 pass, 0 fail, 46 skipped, "checks passed"; status-log-integrity conserved against 03d81e74. No separate consumer-side retrieval was run.
 - **Result**: pushed commit verified by the gate; the consumer side is unverified (blocked: not merged). `scripts/lib/sync-pr.mjs` is source-side: sync-pr runs from this repo against consumers, so nothing changes in a consumer bundle. After #238 merges, the next `npm run sync:pr` that finds an older open `chore/sync-*` PR should close it with a "Superseded by" comment and keep its branch. Check that on the first consumer where two sync PRs overlap (wine-cellar-app runs with --no-merge).
+
+## 2026-10-13 — sync-pr: a re-run retries a failed supersession, and proves the existing PR first (audit M2 of upstream 2f933809)
+
+**Why.** #238 made a new consumer sync PR close older open ones. When that step failed (a list or close failure, incomplete discovery), the new PR's auto-merge was withheld, but nothing would ever try again. A same-bundle re-run never reaches `runConsumerPr`: it skips at `branch-exists` after a fresh `sync`, or at `clean` on a bare `sync:pr`, because the first run committed the synced files onto its branch. #238's code audit deferred this as M2, blocked by #236's claim on `scripts/sync-pr.mjs`. Plan: `docs/plans/sync-pr-supersede-open-sync-pr.md`, Out of Scope.
+
+- **Change** (`scripts/lib/sync-pr.mjs`, `scripts/sync-pr.mjs`):
+  - `supersessionRetryTarget`, a pure function, names the current bundle's sync branch whenever a run opens no PR and that branch exists. The retry never touches the working tree, so the reason for the skip does not matter.
+  - `retrySupersession` resolves the branch's existing PR (`gh pr view <branch> --json url,state,headRefOid,baseRefName`). It acts only when the PR is OPEN on this base, and only after proving the PR the way a candidate is proven: the head gh lists is the head git fetched, and that head's own receipt attests this exact bundle and repo. Then it runs `supersedeOlderSyncPrs` against the freshly fetched origin sha. It creates no commit, branch or PR, never switches the checkout and never arms auto-merge. Every other outcome is a named skip (`no-pr`, `pr-unreadable`, `not-open`, `other-base`, `successor-unverified`), and an unreadable PR is not reported as an absent one. `--dry-run` asks gh nothing.
+  - The gh account fallback is now one `createGhWithAccountFallback`, shared by `runConsumerPr` and the retry. `main()` gains a `deps` seam (run, resolve, classify, ancestry) so the CLI path is tested on fixture repos, never real consumers.
+- **Tests** (`tests/sync-pr.test.mjs`, `tests/sync-pr-git.test.mjs`): the real-git CLI tests drive `main()` on fixture repos. The first run's close fails and auto-merge is withheld; then a re-run, both after a fresh sync and as a bare re-run on the clean tree, closes the older PR with no create, no merge and an unchanged ref snapshot. Unit tests cover each skip reason, the unprovable successor (another bundle, another repo, no receipt, a moved head), the account fallback and its restore, and dry-run. Focused suites 86/0. Each fix's test was seen red with the fix reverted.
+- **Audit**: `/audit-code --scope diff` R1 H0 M5: M2 fixed (the bare re-run). GPT overruled its own M1/M3 (stdout routing: this CLI has no machine stdout contract), M4 (exit code: the plan's "supersession never fails the run" contract, shared with the creating path) and M5 (adjacency bound) in deliberation. R2 PASS. R3 over the full feature diff H1: the retry trusted a remote PR as successor; fixed by the proof above. R4 and R5 PASS H0 M0 L0, file coverage complete. Gemini **APPROVE**, 0 blocking, 0 debt.
+- **Open**: if the older PR merges between the new PR's base fetch and the close, the new PR is DIRTY on the receipt and a same-bundle re-run cannot rebuild it (fleet proposal `p-20261013191133-2c93`).
+- **Consumer impact**: none directly. `sync-pr` runs from this repo against consumers; the change is the behaviour of the next `sync:pr` re-run after a failed supersession.
+- Backlog 2026-10-13T20:05Z: Q1 252c/62p (+420 aged) · Q2 194c/103p (54 perm) · Q3 35 · debt unmeasured · upstream 1
 
 ## 2026-10-13 — pre-push test tier, stages 0-1: a shadow verdict on every push, an opt-in branch tier, a full verdict for merge candidates
 
